@@ -11,7 +11,7 @@ Last updated: 2026-08-27.
 | Milestone | Status | Notes |
 |---|---|---|
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
-| **M1 — Rust PSP bootstrap** | 🟡 BUILDS | EBOOT.PBP produced; **PPSSPP boot not yet verified** — see below |
+| **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | 🟢 60% | Archive + VPK0 done and verified; texture/model conversion pending |
 | **M3 — Rendering** | 🔴 5% | DL parser written; no geometry converted yet |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
@@ -63,17 +63,33 @@ Last updated: 2026-08-27.
 86 host tests passing across `ssb-rom` (25), `ssb-engine` (36) and
 `ssb-game` (25).
 
+## M1 verification (PPSSPP)
+
+Verified 2026-08-27 under PPSSPP 1.20.4, OpenGL backend, X11:
+
+* Module loads — `tag=ELF/ssb64_psp` at `0x08804000`, imports resolved for
+  `sceGeListEnQueue`, `sceCtrlReadBufferPositive`, `sceCtrlSetSamplingMode`,
+  `sceDisplaySetMode`, `sceDisplayWaitVblankStart`.
+* `PARAM.SFO` title reads correctly ("Super Smash Bros. 64").
+* GE display lists submit; `sceDisplaySetMode(0, 480, 272)` and
+  `sceDisplaySetFrameBuf` run each frame.
+* **Locked 60.0 FPS.**
+* Geometry renders with correct vertex-colour interpolation and depth.
+* Animation advances (rotation differs between captures).
+* Physics runs on-device: the test object falls under gravity, lands on the
+  test floor, and drifts horizontally in response to nub input.
+
 ## Known gaps and honest caveats
 
-1. **The EBOOT has not been observed running.** `cargo psp` produces a valid
-   9.6 MB `EBOOT.PBP` with correct PBP magic, in both debug and release. But
-   PPSSPP could not initialise a graphics backend in this development
-   environment (Vulkan unavailable, no usable window), so the binary has
-   never actually been seen to boot. **M1 is not complete until it has.**
-   Next step: run it on a desktop session or on real hardware.
+1. **Nothing has run on real PSP hardware.** Per §37 of the plan, PPSSPP is
+   not proof of hardware behaviour. This is now the single biggest unknown.
 
-2. **Nothing has run on real PSP hardware.** Per §37 of the plan, PPSSPP is
-   not proof of hardware behaviour, and neither is a successful link.
+2. **The on-screen debug overlay does not display under PPSSPP.** See RE-013.
+   `sceGuDebugFlush` paints glyphs into VRAM with the CPU rather than through
+   the GE, and those writes are not reflected in PPSSPP's output. The frame
+   counters, timings and physics values are therefore computed but invisible.
+   The proper fix is to render text as GE geometry, which is Renderer 3 work
+   (`docs/rendering.md`) and is needed for the real HUD anyway.
 
 3. **Extracted assets are unparsed.** `romtool extract` produces byte-exact
    file payloads, but nothing yet interprets them as textures, meshes or

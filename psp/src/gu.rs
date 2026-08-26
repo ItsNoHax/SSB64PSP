@@ -61,6 +61,42 @@ impl GuVertex {
     }
 }
 
+/// A stack-allocated, NUL-terminated string builder.
+///
+/// `sceGuDebugPrint` wants a C string, and formatting into the heap every frame
+/// is exactly what the "no allocation in hot paths" rule forbids. Writes past
+/// capacity are dropped rather than panicking.
+struct FixedStr<const N: usize> {
+    buf: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> FixedStr<N> {
+    fn new() -> Self {
+        FixedStr {
+            buf: [0; N],
+            len: 0,
+        }
+    }
+
+    /// Pointer to the NUL-terminated contents. The last byte is reserved for
+    /// the terminator and is never written by `write_str`.
+    fn as_c_str(&self) -> *const u8 {
+        self.buf.as_ptr()
+    }
+}
+
+impl<const N: usize> core::fmt::Write for FixedStr<N> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        // Leave room for the trailing NUL.
+        let space = N - 1 - self.len;
+        let take = s.len().min(space);
+        self.buf[self.len..self.len + take].copy_from_slice(&s.as_bytes()[..take]);
+        self.len += take;
+        Ok(())
+    }
+}
+
 /// Owns the GU context and the frame lifecycle.
 pub struct Gpu {
     frame_open: bool,
@@ -165,6 +201,11 @@ impl Gpu {
         unsafe {
             sys::sceGuFinish();
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
+            // Debug text must be painted *here*, not earlier. sceGuDebugFlush
+            // writes glyphs straight into the draw buffer rather than queueing
+            // a GE command, so flushing before the sync would just get erased
+            // by the sceGuClear that is still sitting in the display list.
+            sys::sceGuDebugFlush();
             sys::sceDisplayWaitVblankStart();
             sys::sceGuSwapBuffers();
         }
@@ -209,6 +250,30 @@ impl Gpu {
                 z: rot_radians[2],
             });
         }
+    }
+
+    /// Queues a block of debug text for this frame. Embedded `\n` starts a new
+    /// line. Call **once** per frame.
+    ///
+    /// Two hard-won constraints are encoded here:
+    ///
+    /// * Do not use `psp::dprintln!` per-frame. It re-runs `sceDisplaySetMode`
+    ///   on every call; measured under PPSSPP it took a 4-triangle scene from
+    ///   60 FPS to 2 FPS.
+    /// * Call this once with newlines rather than once per line. rust-psp's
+    ///   `sceGuDebugPrint` always writes from the start of its internal
+    ///   character buffer while still advancing the "used" counter, so
+    ///   successive calls overwrite each other and render garbage. A single
+    ///   call sidesteps that entirely.
+    ///
+    /// The text is copied immediately, so the caller's buffer need not outlive
+    /// the call. It is painted onto the draw buffer by [`Gpu::end_frame`],
+    /// after the GE has finished — see there for why.
+    pub fn debug_text(&mut self, x: i32, y: i32, color: u32, args: core::fmt::Arguments<'_>) {
+        let mut text: FixedStr<512> = FixedStr::new();
+        // Truncated diagnostics beat a panic in a no_std frame loop.
+        let _ = core::fmt::Write::write_fmt(&mut text, args);
+        unsafe { sys::sceGuDebugPrint(x, y, color, text.as_c_str()) }
     }
 
     /// Draws untextured, vertex-coloured triangles.

@@ -289,3 +289,87 @@ was verified to still export it.
 **Confidence: certain.** Documented in the toolchain file itself, with a note
 that a successful compile is not sufficient evidence for a bump — the result
 must boot.
+
+---
+
+## RE-013 — `psp::dprintln!` is a 30x performance trap
+
+**Question.** Why did a 4-triangle scene run at 2 FPS under PPSSPP?
+
+**Evidence.** PPSSPP's debug log showed `sceDisplaySetMode(0, 480, 272)` being
+issued *every frame*, which our code never calls. Tracing it to rust-psp's
+debug-print path: `psp::dprintln!` writes into the framebuffer directly and
+re-establishes display mode on each call. We were making eight such calls per
+frame.
+
+**Measurement.** Removing the per-frame `dprintln!` calls took the frame rate
+from **2.0 FPS to a locked 60.0 FPS**, and shrank the EBOOT from 9.6 MB to
+3.3 MB. Emulator debug logging (`-d`) was ruled out as the cause by measuring
+both with and without it.
+
+**Implementation.** `Gpu::debug_text` in `psp/src/gu.rs`, with the constraint
+documented at the call site.
+
+**Confidence: certain.** Directly measured, before and after.
+
+**Lesson worth keeping:** `dprintln!` is fine for one-shot boot diagnostics and
+must never appear in a frame loop.
+
+---
+
+## RE-014 — GU debug text is invisible under PPSSPP *(OPEN)*
+
+**Question.** Why does `sceGuDebugPrint` + `sceGuDebugFlush` render nothing?
+
+**Evidence.** Reading rust-psp's implementation
+(`psp/src/sys/gu.rs:3523-3661`):
+
+* `sceGuDebugPrint` copies characters into a static buffer, so passing a
+  short-lived stack string is safe.
+* It has a bug: `char_struct_ptr` always starts at the beginning of
+  `CHAR_BUFFER` while `CHAR_BUFFER_USED` keeps accumulating, so successive
+  calls in one frame overwrite each other. Worked around by emitting a single
+  newline-separated string.
+* `sceGuDebugFlush` does **not** queue a GE command. It computes pixel
+  addresses and writes glyphs straight into VRAM with the CPU.
+
+That last point explains the first failure mode — flushing before
+`sceGuSync` meant the still-queued `sceGuClear` erased the text. Moving the
+flush to after the sync (in `Gpu::end_frame`) fixed the ordering, but the text
+is *still* invisible.
+
+**Hypothesis.** PPSSPP does not reflect CPU writes to emulated VRAM into its
+rendered output. A run with `--graphics=software` also showed no text, but the
+log did not confirm which GPU core actually initialised, so that test is
+inconclusive.
+
+**Implementation.** Left in place. It costs little and may well work on real
+hardware.
+
+**Confidence: low** on the root cause. Two ways to resolve it: test on real
+PSP hardware, or — better — stop depending on CPU framebuffer writes and render
+text as GE geometry. The latter is required for the real HUD regardless, so it
+is the intended fix rather than a workaround.
+
+---
+
+## RE-015 — Uncentred analog input reads as full deflection
+
+**Question.** With no gamepad attached, the test object drifts steadily left.
+Bug or expected?
+
+**Evidence.** `nub_axis_to_n64` maps the PSP nub's 0..=255 range around a
+centre of 128. PPSSPP with no gamepad connected appears to report 0 rather than
+128, which maps to a legitimate −80 (full left) and drives
+`apply_air_drift` accordingly.
+
+**Assessment.** The mapping is behaving correctly; the *input* is what is
+unusual. A real PSP always has a physical nub resting near centre.
+
+**Worth noting this is positive evidence:** it demonstrates the full chain —
+`sceCtrl` → button/axis mapping → `ssb-game` physics → rendered position — is
+wired end to end and running on-device.
+
+**Confidence: medium.** The exact value PPSSPP reports without a pad has not
+been logged directly. Re-check when testing on hardware, and consider whether
+a centre-calibration step is warranted for drifting nubs (related: RE-009).

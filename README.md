@@ -7,8 +7,15 @@ hardware, using the [Super Smash Bros. decompilation][decomp] as the reference
 for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
 > **Status: early.** The asset pipeline is complete and verified against a real
-> ROM. The PSP executable builds. **It has not yet been observed booting** —
-> see [Current status](#current-status).
+> ROM, and the PSP executable **boots in PPSSPP at a locked 60 FPS**. There is
+> no Smash content on screen yet — see [Current status](#current-status).
+
+![M1 platform baseline running in PPSSPP at 60 FPS](docs/images/m1-ppsspp-60fps.png)
+
+*M1 baseline: a vertex-coloured tetrahedron driven by the ported `ftphysics`
+gravity and air-drift code, at 60 FPS. Not Smash yet — this is the platform
+proving that rendering, input, the fixed 60 Hz clock and the physics port all
+work on-device.*
 
 ## Legal
 
@@ -102,12 +109,16 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * 15 fighter physics functions ported from `ftphysics.c`
 * 86 host tests passing
 
-**Builds but unverified:**
+* **Boots in PPSSPP** (1.20.4, OpenGL). Module loads, GE display lists submit,
+  geometry renders with correct vertex-colour interpolation, animation
+  advances, and the ported physics runs on-device — all at a locked **60 FPS**.
 
-* `EBOOT.PBP` (9.6 MB, valid PBP header, debug and release). PPSSPP could not
-  initialise a graphics backend in the development environment used, so the
-  binary has **never actually been seen to run**. M1 is not complete until it
-  has been booted in PPSSPP and on real hardware.
+**Known limitations:**
+
+* **Never run on real PSP hardware.** PPSSPP is not proof of hardware
+  behaviour; this is the biggest open risk.
+* The on-screen debug overlay computes but does not display under PPSSPP
+  (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 
 **Not started:** texture/model conversion to PSP formats, scene graph, the
 match loop, audio, menus, save data, VFPU work.
