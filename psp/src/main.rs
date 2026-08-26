@@ -80,6 +80,7 @@ unsafe fn run() -> ! {
     let aspect = vw as f32 / vh as f32;
 
     let mut spin = 0.0f32;
+    let mut last_frame_us = 0u32;
 
     loop {
         let frame = Stopwatch::start();
@@ -126,46 +127,54 @@ unsafe fn run() -> ! {
         let cpu_us = cpu.elapsed_us();
 
         // ---- on-screen diagnostics ---------------------------------------
-        // dprintln writes into the debug text overlay; cheap enough to run
-        // every frame while bringing the platform up.
-        psp::dprint!("\x1b[0;0H"); // home the cursor
-        psp::dprintln!("SSB64-PSP  M1 platform baseline");
-        psp::dprintln!(
-            "frame {:>6}  tick {:>8}",
-            gpu.frame_count(),
-            sim.tick
+        // One call, newline-separated: see Gpu::debug_text for why multiple
+        // calls per frame would render garbage.
+        //
+        // Frame time is carried over from the *previous* iteration on purpose —
+        // measuring it after end_frame would include the vblank wait and always
+        // report ~16.7 ms, which tells us nothing about headroom.
+        //
+        // Positions and velocities are printed as integers scaled by 100:
+        // no_std float formatting is slow, and this runs every frame.
+        const WHITE: u32 = 0xFFFF_FFFF;
+        let s = &pad.state(0);
+        gpu.debug_text(
+            8,
+            8,
+            WHITE,
+            format_args!(
+                "SSB64-PSP  M1 baseline\n\
+                 \n\
+                 frame {}  tick {}\n\
+                 ticks/frame {}  dropped {}\n\
+                 cpu {}us / budget {}us\n\
+                 frame {}us  view {}x{}\n\
+                 \n\
+                 pos  x{} y{} z{}   (x100)\n\
+                 vel  x{} y{}       (x100)\n\
+                 stick {}  buttons {:04X}\n\
+                 \n\
+                 nub: drift    X: jump",
+                gpu.frame_count(),
+                sim.tick,
+                ticks,
+                sim.dropped,
+                cpu_us,
+                FRAME_BUDGET_US,
+                last_frame_us,
+                vw,
+                vh,
+                (fighter.pos.x * 100.0) as i32,
+                (fighter.pos.y * 100.0) as i32,
+                (fighter.pos.z * 100.0) as i32,
+                (fighter.physics.vel_air.x * 100.0) as i32,
+                (fighter.physics.vel_air.y * 100.0) as i32,
+                s.stick_x,
+                s.buttons.0,
+            ),
         );
-        psp::dprintln!(
-            "ticks/frame {}  dropped {}",
-            ticks,
-            sim.dropped
-        );
-        psp::dprintln!(
-            "cpu {:>5}us / budget {}us",
-            cpu_us,
-            FRAME_BUDGET_US
-        );
-        psp::dprintln!(
-            "frame {:>5}us  viewport {}x{} @x{}",
-            frame.elapsed_us(),
-            vw,
-            vh,
-            vx
-        );
-        psp::dprintln!(
-            "pos  x{:>7.2} y{:>7.2} z{:>7.2}",
-            fighter.pos.x,
-            fighter.pos.y,
-            fighter.pos.z
-        );
-        psp::dprintln!(
-            "vel  x{:>7.2} y{:>7.2}  stick {:>4}",
-            fighter.physics.vel_air.x,
-            fighter.physics.vel_air.y,
-            pad.state(0).stick_x
-        );
-        psp::dprintln!("nub: drift   X: jump   HOME: exit");
 
         gpu.end_frame();
+        last_frame_us = frame.elapsed_us();
     }
 }
