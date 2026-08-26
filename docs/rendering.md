@@ -41,6 +41,103 @@ PSP vertex/index buffers + material records
 GE
 ```
 
+## Measured usage (`romtool scan`)
+
+Plan §8: *"Measure actual Smash usage from the decompilation. Do not assume all
+N64 rendering features are needed."*
+
+Display lists are discovered by scanning every aligned offset and keeping the
+ones that **convert cleanly** — a real list fills its own vertex cache before
+drawing, so garbage fails almost immediately. Using relocation targets as
+candidate list starts does *not* work: most reloc targets are the vertex-array
+pointers carried by `G_VTX`, not list starts.
+
+Result: **135 files, 1,864 display lists, 22,515 triangles, 0 conversion
+failures.**
+
+**Opcodes actually emitted:**
+
+| Opcode | Count | | Opcode | Count |
+|---|---:|---|---|---:|
+| `G_TRI2` | 10954 | | `G_SETCOMBINE` | 1360 |
+| `G_RDPPIPESYNC` | 6987 | | `G_LOADTLUT` | 1288 |
+| `G_VTX` | 3918 | | `G_TEXTURE` | 1272 |
+| `G_SETTILE` | 3483 | | `G_NOOP` | 1072 |
+| `G_RDPLOADSYNC` | 2854 | | `G_RDPTILESYNC` | 776 |
+| `G_SETTIMG` | 2549 | | `G_DL` | 680 |
+| `G_SETTILESIZE` | 1804 | | `G_TRI1` | 607 |
+| `G_GEOMETRYMODE` | 1766 | | `G_SETBLENDCOLOR` | 355 |
+| `G_LOADBLOCK` | 1566 | | `G_SETPRIMCOLOR` | 209 |
+| `G_SETOTHERMODE_H` | 1526 | | `G_SETENVCOLOR` | 92 |
+| `G_SETOTHERMODE_L` | 1415 | | `G_SETFOGCOLOR` | 2 |
+
+**Never emitted** — not worth implementing: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`,
+`G_MODIFYVTX`, `G_TEXRECT`, `G_FILLRECT`, `G_LOADTILE`, `G_SETSCISSOR`,
+`G_MOVEMEM`, `G_MOVEWORD`.
+
+`G_TRI2` outnumbers `G_TRI1` 18:1, so geometry is overwhelmingly paired
+triangles. `G_SETFOGCOLOR` appears twice in the entire game — **fog is
+effectively unused** and should not cost anything at runtime.
+
+**Texture formats**, by `G_SETTILE` count:
+
+| Format | Count | PSP destination |
+|---|---:|---|
+| **CI4** | 1192 | `PsmT4` + 16-entry CLUT — the dominant case |
+| RGBA16 | 92 | `Psm5551` |
+| IA16 | 83 | expand to `Psm8888` |
+| CI8 / I4 / I8 / IA8 / RGBA32 | few | `PsmT8` / `Psm8888` |
+
+TLUT loads are overwhelmingly **16 entries**. So the common case is a CI4
+texture with a 16-colour palette — 4 bits per texel, natively supported by the
+PSP. That matters because only ~700 KiB of VRAM is left after framebuffers
+(`docs/memory.md`).
+
+Counts against `Ci 16bpp` and `Rgba 4bpp` are tile *descriptors* used to stage
+TLUT loads, not real texture formats — CI is only ever 4- or 8-bit.
+
+**Geometry modes set:** `G_LIGHTING`, `G_SHADING_SMOOTH`, `G_CULL_BACK`,
+`G_CULL_FRONT`, `G_ZBUFFER`. No `G_FOG`.
+
+Two hardware invariants are used as validity tests, and both earn their keep:
+the vertex cache holds at most 32 entries, and triangle indices must fall
+within it. Before those checks the scan reported an impossible 160-vertex
+`G_VTX`.
+
+## Geometry conversion results
+
+`romtool mesh` converts every root display list into indexed meshes:
+
+```
+display lists converted  1768      (0 failures)
+triangles                25562
+triangle corners         76686
+unique vertices          36693
+vertex reuse             2.09x
+draw calls after merge   2505
+textured draws           1361
+
+geometry memory
+  triangle soup, float     1797.3 KiB
+  triangle soup, 16-bit     898.7 KiB
+  indexed, 16-bit           579.8 KiB
+  saving vs float soup         67.7%
+```
+
+Three compounding wins, all paid for at build time:
+
+1. **Indexing** — the RSP re-uploads shared vertices because its cache holds
+   only 32. Undoing that gives 2.09x reuse.
+2. **16-bit vertex components** — N64 positions are already `i16` and UVs are
+   S10.5, so they map onto `GU_VERTEX_16BIT` / `GU_TEXTURE_16BIT` directly.
+   12 bytes per vertex instead of 24. Converting to `f32` would double vertex
+   bandwidth for no fidelity gain, on a machine that is bandwidth-bound.
+3. **Material merging** — primitives sharing a material are merged into single
+   draws, because GE state changes cost far more than draw calls.
+
+All the game's geometry fits in **580 KiB**, comfortable against 32 MiB of main
+RAM.
+
 ## Display list translation
 
 F3DEX2's model maps cleanly onto an indexed draw:

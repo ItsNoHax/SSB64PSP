@@ -10,7 +10,9 @@
 use alloc::vec::Vec;
 
 /// RDP texel format (`G_IM_FMT_*`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Ord is derived so materials keying on a texture can be sorted, which is how
+// draws get grouped to minimise GE state changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Format {
     Rgba = 0,
     Yuv = 1,
@@ -33,7 +35,7 @@ impl Format {
 }
 
 /// RDP texel size (`G_IM_SIZ_*`), in bits per texel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BitSize {
     Bits4 = 0,
     Bits8 = 1,

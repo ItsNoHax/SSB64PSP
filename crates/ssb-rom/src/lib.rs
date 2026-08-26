@@ -13,7 +13,9 @@ extern crate alloc;
 
 pub mod archive;
 pub mod dl;
+pub mod mesh;
 pub mod rom;
+pub mod scan;
 pub mod texture;
 pub mod vpk0;
 
