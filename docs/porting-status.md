@@ -65,7 +65,7 @@ Last updated: 2026-08-27.
 
 ## M1 verification (PPSSPP)
 
-Verified 2026-08-27 under PPSSPP 1.20.4, OpenGL backend, X11:
+Verified 2026-08-27 under PPSSPP 1.20.4 (OpenGL and software rasteriser), X11:
 
 * Module loads — `tag=ELF/ssb64_psp` at `0x08804000`, imports resolved for
   `sceGeListEnQueue`, `sceCtrlReadBufferPositive`, `sceCtrlSetSamplingMode`,
@@ -76,20 +76,34 @@ Verified 2026-08-27 under PPSSPP 1.20.4, OpenGL backend, X11:
 * **Locked 60.0 FPS.**
 * Geometry renders with correct vertex-colour interpolation and depth.
 * Animation advances (rotation differs between captures).
-* Physics runs on-device: the test object falls under gravity, lands on the
-  test floor, and drifts horizontally in response to nub input.
+* Physics runs on-device: the test object falls under gravity and lands on the
+  test floor at exactly y = -3.00.
+
+Measured from the on-screen diagnostics (RE-016):
+
+```
+frame 701  tick 701          <- exact 60 Hz lockstep, no drift over 700 frames
+ticks/frame 1  dropped 0     <- no catch-up, no dropped ticks
+cpu 13us / budget 16667us    <- 0.08% of the frame budget
+frame 16682us  view 362x272  <- 59.94 Hz; pillarboxed 4:3 viewport confirmed
+```
+
+These are *baseline* numbers on a four-triangle scene under an emulator, not a
+performance prediction for a real match on real hardware.
+
+Reproduce with `tools/run-ppsspp.sh`.
 
 ## Known gaps and honest caveats
 
 1. **Nothing has run on real PSP hardware.** Per §37 of the plan, PPSSPP is
    not proof of hardware behaviour. This is now the single biggest unknown.
 
-2. **The on-screen debug overlay does not display under PPSSPP.** See RE-013.
-   `sceGuDebugFlush` paints glyphs into VRAM with the CPU rather than through
-   the GE, and those writes are not reflected in PPSSPP's output. The frame
-   counters, timings and physics values are therefore computed but invisible.
-   The proper fix is to render text as GE geometry, which is Renderer 3 work
-   (`docs/rendering.md`) and is needed for the real HUD anyway.
+2. **The debug overlay only displays under PPSSPP's software rasteriser.**
+   Resolved as an emulator limitation, not a port bug (RE-014):
+   `sceGuDebugFlush` paints VRAM with the CPU, and PPSSPP's hardware backends
+   do not reflect those writes. `tools/run-ppsspp.sh` forces the software
+   renderer so diagnostics are always visible. The real HUD will render as GE
+   geometry (Renderer 3), which removes the dependency entirely.
 
 3. **Extracted assets are unparsed.** `romtool extract` produces byte-exact
    file payloads, but nothing yet interprets them as textures, meshes or

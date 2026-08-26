@@ -317,7 +317,7 @@ must never appear in a frame loop.
 
 ---
 
-## RE-014 — GU debug text is invisible under PPSSPP *(OPEN)*
+## RE-014 — GU debug text is invisible under PPSSPP's hardware backends
 
 **Question.** Why does `sceGuDebugPrint` + `sceGuDebugFlush` render nothing?
 
@@ -338,38 +338,98 @@ That last point explains the first failure mode — flushing before
 flush to after the sync (in `Gpu::end_frame`) fixed the ordering, but the text
 is *still* invisible.
 
-**Hypothesis.** PPSSPP does not reflect CPU writes to emulated VRAM into its
-rendered output. A run with `--graphics=software` also showed no text, but the
-log did not confirm which GPU core actually initialised, so that test is
-inconclusive.
+**Hypothesis.** PPSSPP's *hardware* backends (OpenGL, Vulkan) render into a
+GPU-side framebuffer and do not reflect CPU writes to emulated VRAM. Its
+*software* rasteriser emulates VRAM directly and should show them.
 
-**Implementation.** Left in place. It costs little and may well work on real
-hardware.
+**Verification.** Confirmed. Forcing `SoftwareRenderer = True` (via
+`--appendconfig`, so the user's own config is untouched) renders the overlay
+perfectly — see `docs/images/m1-ppsspp-diagnostics.png`. The identical binary
+shows no text under OpenGL.
 
-**Confidence: low** on the root cause. Two ways to resolve it: test on real
-PSP hardware, or — better — stop depending on CPU framebuffer writes and render
-text as GE geometry. The latter is required for the real HUD regardless, so it
-is the intended fix rather than a workaround.
+Note an earlier `--graphics=software` attempt appeared to fail; that flag did
+not take effect, and the config-file route is the reliable one. Do not trust a
+negative result from the command-line flag alone.
+
+**Conclusion.** The code is correct. This is an emulator-backend limitation,
+not a port bug.
+
+**Implementation.** Kept as-is. `tools/run-ppsspp.sh` passes the software-render
+config so diagnostics are always visible during development.
+
+**Confidence: certain.**
+
+**Caveat for later:** relying on CPU framebuffer writes still means the overlay
+is invisible under the fast backends. The real HUD must render as GE geometry
+(Renderer 3), at which point this mechanism should be retired for anything a
+developer needs to watch at full speed.
 
 ---
 
-## RE-015 — Uncentred analog input reads as full deflection
+## RE-015 — Unexplained horizontal drift *(RESOLVED — earlier hypothesis was wrong)*
 
-**Question.** With no gamepad attached, the test object drifts steadily left.
-Bug or expected?
+**Question.** In one run the test object drifted steadily left with no input.
+Why?
 
-**Evidence.** `nub_axis_to_n64` maps the PSP nub's 0..=255 range around a
-centre of 128. PPSSPP with no gamepad connected appears to report 0 rather than
-128, which maps to a legitimate −80 (full left) and drives
-`apply_air_drift` accordingly.
+**Original hypothesis (WRONG).** That PPSSPP reports the analog nub as 0
+rather than centred 128 when no gamepad is attached, which `nub_axis_to_n64`
+would legitimately map to −80 (full left) and feed to `apply_air_drift`.
 
-**Assessment.** The mapping is behaving correctly; the *input* is what is
-unusual. A real PSP always has a physical nub resting near centre.
+**Evidence that refutes it.** Once the on-screen diagnostics became visible
+(RE-014), the same build under the same conditions reports:
 
-**Worth noting this is positive evidence:** it demonstrates the full chain —
-`sceCtrl` → button/axis mapping → `ssb-game` physics → rendered position — is
-wired end to end and running on-device.
+```
+pos  x0 y-300 z0   (x100)
+vel  x0 y0         (x100)
+stick 0  buttons 0000
+```
 
-**Confidence: medium.** The exact value PPSSPP reports without a pad has not
-been logged directly. Re-check when testing on hardware, and consider whether
-a centre-calibration step is warranted for drifting nubs (related: RE-009).
+`stick 0` is dead centre and horizontal velocity is exactly zero. The nub is
+being read correctly and the deadzone is doing its job.
+
+**Actual cause: unknown.** The drift was most likely stray input — PPSSPP's
+default keyboard mapping with the window focused, or its on-screen touch
+controls — rather than anything in the input path.
+
+**Lesson.** The original entry reasoned from a *plausible* mechanism to a
+confident conclusion without measuring the value. The instrumentation existed
+but was not visible, and the hypothesis was written anyway. Measure the
+variable before explaining it.
+
+**Confidence: certain** that the nub reads centred; **low** on what caused the
+one-off drift, and it is not worth chasing further unless it recurs.
+
+---
+
+## RE-016 — Measured frame budget at M1
+
+**Question.** How much CPU headroom does the M1 baseline actually have?
+
+**Evidence.** On-screen diagnostics, PPSSPP software rasteriser, steady state:
+
+```
+frame 701  tick 701
+ticks/frame 1  dropped 0
+cpu 13us / budget 16667us
+frame 16682us  view 362x272
+```
+
+**Readings.**
+
+* `frame == tick` — exactly one simulation tick per displayed frame. The fixed
+  60 Hz clock (RE-006) holds in lockstep with no accumulated error over 700
+  frames, and no catch-up ticks or drops.
+* `frame 16682us` — 59.94 Hz, the expected PSP vblank cadence.
+* `cpu 13us` against a 16667us budget — **0.08%** consumed by simulation plus
+  render submission.
+* `view 362x272` — `coord::pillarboxed_viewport()` confirmed on-device.
+
+**Caveat.** The scene is four triangles and one fighter's worth of physics, so
+13us says nothing about how a real match will perform. Its value is as a
+**baseline**: the platform layer, clock and submission path cost essentially
+nothing, so future frame time can be attributed to the game rather than to
+scaffolding.
+
+**Confidence: high** for the measurement; explicitly **not** a performance
+prediction. Real PSP hardware is ~333 MHz against an emulator on a desktop CPU
+— these numbers do not transfer (plan §37).

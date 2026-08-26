@@ -17,6 +17,17 @@ gravity and air-drift code, at 60 FPS. Not Smash yet — this is the platform
 proving that rendering, input, the fixed 60 Hz clock and the physics port all
 work on-device.*
 
+With the on-screen diagnostics enabled (`tools/run-ppsspp.sh`):
+
+![On-screen diagnostics showing 60 Hz lockstep and frame timing](docs/images/m1-ppsspp-diagnostics.png)
+
+```
+frame 701  tick 701          exact 60 Hz lockstep, no drift over 700 frames
+ticks/frame 1  dropped 0     no catch-up, no dropped ticks
+cpu 13us / budget 16667us    0.08% of the frame budget
+frame 16682us  view 362x272  59.94 Hz; pillarboxed 4:3 viewport confirmed
+```
+
 ## Legal
 
 You must supply your own legally obtained ROM dump.
@@ -61,7 +72,15 @@ cargo test
 # 6. Build the PSP executable
 cd psp && cargo psp --release
 # -> psp/target/mipsel-sony-psp/release/EBOOT.PBP
+
+# 7. Build and run it under PPSSPP, with a screenshot
+tools/run-ppsspp.sh
 ```
+
+> `tools/run-ppsspp.sh` forces PPSSPP's **software rasteriser**. That is not a
+> preference — PPSSPP's hardware backends do not reflect CPU writes to emulated
+> VRAM, and that is exactly how `sceGuDebugFlush` paints the debug overlay. Run
+> under OpenGL and the diagnostics are computed but invisible. See RE-014.
 
 ## Architecture
 
