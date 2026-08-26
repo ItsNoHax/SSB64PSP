@@ -29,6 +29,8 @@ fn main() -> ExitCode {
         ["verify", rom_path] => verify(rom_path.as_ref()),
         ["info", rom_path] => info(rom_path.as_ref()),
         ["check", rom_path] => check(rom_path.as_ref()),
+        ["scan", rom_path, rest @ ..] => scan(rom_path.as_ref(), rest),
+        ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
         ["textures", rom_path, id] => textures(rom_path.as_ref(), id),
@@ -55,6 +57,8 @@ USAGE:
     romtool verify   <rom.z64>
     romtool info     <rom.z64>
     romtool check    <rom.z64>
+    romtool scan     <rom.z64> [--exhaustive]
+    romtool mesh     <rom.z64>
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64> <file-id>
@@ -182,6 +186,205 @@ fn check(path: &Path) -> Res {
     } else {
         Err("archive self-check failed".into())
     }
+}
+
+/// Inventories every display list in the archive.
+///
+/// This is the measurement plan §8 asks for: rather than speculatively
+/// supporting the whole RDP feature set, find out what Smash actually emits and
+/// build a converter for that.
+fn scan(path: &Path, opts: &[&str]) -> Res {
+    let how = if opts.contains(&"--exhaustive") {
+        ssb_rom::scan::Candidates::Exhaustive
+    } else {
+        ssb_rom::scan::Candidates::RelocTargets
+    };
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    // Load everything once, then build the cross-file pointer graph. A display
+    // list can live in one file and be referenced only from another, so
+    // scanning files in isolation misses them.
+    let files: Vec<_> = (0..archive.len() as u32)
+        .filter_map(|id| archive.load(id).ok())
+        .collect();
+    let mut inv = ssb_rom::scan::Inventory::default();
+    let mut biggest: Vec<(u32, usize)> = Vec::new();
+
+    for file in &files {
+        let dls = if how == ssb_rom::scan::Candidates::Exhaustive {
+            ssb_rom::scan::find_display_lists_with(file, how)
+        } else {
+            ssb_rom::scan::find_root_display_lists(file)
+        };
+
+        if !dls.is_empty() {
+            let tris: usize = dls.iter().map(|d| d.triangle_count()).sum();
+            biggest.push((file.id, tris));
+        }
+        inv.add_file(&dls);
+    }
+
+    println!("display list inventory ({} archive files)", archive.len());
+    println!("  files containing DLs   {}", inv.files_with_dls);
+    println!("  display lists          {}", inv.display_lists);
+    println!("  triangles              {}", inv.triangles);
+    println!(
+        "  vertex loads           {} ({} vertices)",
+        inv.vertex_loads, inv.vertices_loaded
+    );
+    println!("  max vertices per G_VTX {}", inv.max_vtx_batch);
+    println!("  longest DL             {} commands", inv.max_commands);
+
+    println!("\nopcodes actually used:");
+    let mut ops: Vec<_> = inv.opcodes.iter().collect();
+    ops.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    for (op, n) in ops {
+        println!(
+            "  0x{op:02X} {:<18} {n:>8}",
+            ssb_rom::scan::opcode_name(*op)
+        );
+    }
+
+    println!("\ntexture formats (G_SETTILE):");
+    if inv.texture_formats.is_empty() {
+        println!("  (none)");
+    }
+    let mut fmts: Vec<_> = inv.texture_formats.iter().collect();
+    fmts.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    for ((f, s), n) in fmts {
+        let name = ssb_rom::texture::Format::from_raw(*f)
+            .map(|f| format!("{f:?}"))
+            .unwrap_or_else(|| format!("raw{f}"));
+        let bits = ssb_rom::texture::BitSize::from_raw(*s)
+            .map(|b| b.bits())
+            .unwrap_or(0);
+        println!("  {name:<5}{bits:>3}bpp  {n:>8}");
+    }
+
+    println!("\nTLUT load sizes (palette entries):");
+    for (size, n) in &inv.tlut_sizes {
+        println!("  {size:>4} entries  {n:>8}");
+    }
+
+    println!("\ngeometry mode bits set:");
+    for (bit, n) in &inv.geometry_mode_set {
+        println!("  0x{bit:08X}  {n:>8}  {}", geometry_mode_name(*bit));
+    }
+
+    biggest.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+    println!("\nheaviest files by triangle count:");
+    for (id, tris) in biggest.iter().take(12) {
+        println!("  file {id:<5} {tris:>7} triangles");
+    }
+
+    Ok(())
+}
+
+/// F3DEX2 geometry mode bit names (`gbi.h`).
+fn geometry_mode_name(bit: u32) -> &'static str {
+    match bit {
+        0x0000_0001 => "G_ZBUFFER",
+        0x0000_0002 => "G_SHADE",
+        0x0000_0200 => "G_CULL_FRONT",
+        0x0000_0400 => "G_CULL_BACK",
+        0x0001_0000 => "G_FOG",
+        0x0002_0000 => "G_LIGHTING",
+        0x0004_0000 => "G_TEXTURE_GEN",
+        0x0008_0000 => "G_TEXTURE_GEN_LINEAR",
+        0x0020_0000 => "G_SHADING_SMOOTH",
+        0x0100_0000 => "G_CLIPPING",
+        _ => "",
+    }
+}
+
+/// Converts every discovered display list into indexed meshes and reports how
+/// well the conversion compresses the geometry.
+///
+/// The headline number is the vertex dedup ratio: the RSP re-uploads shared
+/// vertices constantly because its cache holds only 32, and undoing that is
+/// pure win on PSP -- less memory and less GE vertex fetch.
+fn mesh(path: &Path) -> Res {
+    use ssb_rom::mesh;
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    let files: Vec<_> = (0..archive.len() as u32)
+        .filter_map(|id| archive.load(id).ok())
+        .collect();
+    let mut converted = 0usize;
+    let mut failed: BTreeMap<String, usize> = BTreeMap::new();
+    let mut index_refs = 0usize; // triangle corners
+    let mut uniq_vertices = 0usize; // after dedup
+    let mut triangles = 0usize;
+    let mut draws_after = 0usize; // after merging
+    let mut textured = 0usize;
+
+    for file in &files {
+        let all = ssb_rom::scan::find_root_display_lists(file);
+
+        // convert() inlines G_DL callees, so a discovered list that another
+        // discovered list calls would be counted twice. Keep only true roots.
+        let called: std::collections::BTreeSet<u32> =
+            all.iter().flat_map(|d| d.referenced_lists()).collect();
+
+        for dl in all.iter().filter(|d| !called.contains(&d.offset)) {
+            match mesh::convert(&dl.commands, &file.data) {
+                Ok(m) => {
+                    converted += 1;
+                    uniq_vertices += m.vertex_count();
+                    triangles += m.triangle_count();
+                    index_refs += m.triangle_count() * 3;
+                    draws_after += m.primitives.len();
+                    textured += m
+                        .primitives
+                        .iter()
+                        .filter(|p| p.material.texture.is_some())
+                        .count();
+                }
+                Err(e) => *failed.entry(format!("{e:?}")).or_default() += 1,
+            }
+        }
+    }
+
+    println!("mesh conversion");
+    println!("  display lists converted  {converted}");
+    println!(
+        "  failed                   {}",
+        failed.values().sum::<usize>()
+    );
+    for (kind, n) in &failed {
+        println!("    {kind:<40} {n}");
+    }
+    println!("  triangles                {triangles}");
+    println!("  triangle corners         {index_refs}");
+    println!("  unique vertices          {uniq_vertices}");
+    if uniq_vertices > 0 {
+        println!(
+            "  vertex reuse             {:.2}x",
+            index_refs as f64 / uniq_vertices as f64
+        );
+    }
+    println!("  draw calls after merge   {draws_after}");
+    println!("  textured draws           {textured}");
+
+    // Geometry memory, comparing the three representations that matter.
+    // PSP vertex = 12 bytes at 16-bit components; 24 bytes with float pos/uv.
+    let soup_float = index_refs * 24; // expanded triangles, float vertices
+    let soup_16 = index_refs * 12; // expanded triangles, 16-bit vertices
+    let indexed_16 = uniq_vertices * 12 + index_refs * 2; // + u16 indices
+    let kib = |b: usize| b as f64 / 1024.0;
+    println!("\ngeometry memory");
+    println!("  triangle soup, float     {:>8.1} KiB", kib(soup_float));
+    println!("  triangle soup, 16-bit    {:>8.1} KiB", kib(soup_16));
+    println!("  indexed, 16-bit          {:>8.1} KiB", kib(indexed_16));
+    println!(
+        "  saving vs float soup     {:>8.1}%",
+        100.0 - (indexed_16 as f64 / soup_float as f64 * 100.0)
+    );
+
+    Ok(())
 }
 
 fn parse_id(s: &str) -> Result<u32, Box<dyn std::error::Error>> {

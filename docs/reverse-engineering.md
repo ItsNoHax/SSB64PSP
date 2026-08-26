@@ -401,6 +401,77 @@ one-off drift, and it is not worth chasing further unless it recurs.
 
 ---
 
+## RE-017 — `G_VTX` destination index encoding
+
+**Question.** How does F3DEX2 encode the destination slot of a vertex load?
+
+**Evidence.** `gbi.h`:
+
+```c
+#define gSPVertex(pkt, v, n, v0) \
+    gDma0p(pkt, G_VTX, v, ((n) << 12) | (((v0) + (n)) * 2))
+```
+
+The low byte holds `(v0 + n) * 2` — the **end** of the destination range, not
+its start. Therefore `v0 = (w0 & 0xFF) / 2 - n`.
+
+**The bug this caused.** The first implementation computed
+`dest_index = ((w0 >> 1) & 0x7F) / 2`, which evaluates to `(v0 + n) / 2`. That
+is correct **only when `v0 == n`** — and the unit test happened to use
+`v0 = n = 8`, so it passed.
+
+Consequence: nearly every real display list decoded with vertices loaded into
+the wrong cache slots, so triangles indexed slots that were never filled.
+`romtool mesh` reported **666 of 762 lists failing** with `EmptyCacheSlot`,
+which was misread as "these are continuation lists" and sent the design down a
+blind alley (root-detection, call-inlining as a *fix* rather than a feature).
+
+**How it was actually found.** By decoding a display list the decomp names
+explicitly — file 105 at offset `0xCDA0`, documented in `relocData.md` — and
+reading the commands:
+
+```
++0A8 01 VTX   w0=01004008 w1=0000CD20     n=4, v0=0  (not v0=2)
++0B0 06 TRI2  w0=06060402 w1=00020006     slots 3,2,1 and 1,0,3
+```
+
+The triangle references slots 0 and 1, which the broken decode never filled.
+
+**After the fix:** 1,768 root lists convert with **zero failures**, yielding
+25,562 triangles.
+
+**Confidence: certain.** Verified against known-good data, with a regression
+test using `v0 != n`.
+
+**Lesson.** A unit test with `v0 == n` cannot distinguish the correct formula
+from a wrong one. When testing an encoding, choose values where the candidate
+formulas *disagree*. And when a decoder reports mass failures, suspect the
+decoder before inventing a theory that explains the failures away.
+
+---
+
+## RE-018 — Segmented addresses survive relocation
+
+**Question.** `G_DL` targets in relocated files sometimes hold values like
+`0x0E000000`, far past the end of the file. Corrupt?
+
+**Evidence.** File 105 at `0xCDA0+0x80`: `DE000000 0E000000`. Segment `0x0E` is
+the graphics heap — `objdisplay.c` does
+`gSPSegment(dl_head[0]++, 0xE, gSYTaskmanGraphicsHeap.ptr)`.
+
+**Conclusion.** Not all display-list pointers are relocated file offsets. Some
+are **segmented addresses** the RSP resolves at draw time against a segment
+table the game sets per frame. They point at runtime-generated lists that do
+not exist in the ROM at all.
+
+**Implementation.** `scan::is_plausible` bounds-checks only segment-0
+addresses, and `mesh::convert` skips non-zero segments when inlining. Treating
+them as file offsets previously rejected valid display lists outright.
+
+**Confidence: certain.**
+
+---
+
 ## RE-016 — Measured frame budget at M1
 
 **Question.** How much CPU headroom does the M1 baseline actually have?

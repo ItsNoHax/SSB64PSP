@@ -223,13 +223,24 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
             Cmd::Sync(opcode)
         }
 
-        // gSPVertex: w0 = _SHIFTL(numv, 12, 8) | _SHIFTL(vbidx*2, 1, 7)
-        // The destination index is stored pre-doubled, so halve it back.
-        G_VTX => Cmd::Vtx {
-            count: ((w0 >> 12) & 0xFF) as u8,
-            dest_index: (((w0 >> 1) & 0x7F) / 2) as u8,
-            addr: SegAddr(w1),
-        },
+        // gSPVertex(pkt, v, n, v0) => gDma0p(G_VTX, v, ((n)<<12) | (((v0)+(n))*2))
+        //
+        // The low byte holds `(v0 + n) * 2` — the *end* of the destination
+        // range, not its start. So `v0 = (w0 & 0xFF) / 2 - n`.
+        //
+        // Getting this wrong is quiet and costly: an earlier version computed
+        // `(v0 + n) / 2`, which is only correct when `v0 == n`, so triangles
+        // indexed vertex-cache slots that were never filled. Verified against a
+        // real list (file 105, offset 0xCDA0: `01004008` is n=4, v0=0).
+        G_VTX => {
+            let count = ((w0 >> 12) & 0xFF) as u8;
+            let end = ((w0 & 0xFF) >> 1) as u8;
+            Cmd::Vtx {
+                count,
+                dest_index: end.saturating_sub(count),
+                addr: SegAddr(w1),
+            }
+        }
 
         // Triangle indices are stored as index*2.
         G_TRI1 => Cmd::Tri1(tri(w0 >> 16, w0 >> 8, w0)),
@@ -413,14 +424,39 @@ mod tests {
 
     #[test]
     fn decodes_vtx_count_and_dest() {
-        // gSPVertex(v, 8, 0): numv=8 at bit 12, (0+8)*2 at bit 1.
-        let w0 = 0x0100_0000 | (8 << 12) | (16 << 1);
+        // gSPVertex(v, n=8, v0=8): low byte is (v0 + n) * 2 = 32.
+        let w0 = 0x0100_0000 | (8 << 12) | 32;
         assert_eq!(
             cmd(w0, 0x0600_1234),
             Cmd::Vtx {
                 count: 8,
                 dest_index: 8,
                 addr: SegAddr(0x0600_1234)
+            }
+        );
+    }
+
+    /// Regression: `dest_index` must not be derived as `(v0 + n) / 2`, which
+    /// coincidentally matches only when `v0 == n`.
+    #[test]
+    fn decodes_vtx_when_dest_differs_from_count() {
+        // Real command from file 105 @ 0xCDA0: n = 4, v0 = 0.
+        assert_eq!(
+            cmd(0x0100_4008, 0x0000_CD20),
+            Cmd::Vtx {
+                count: 4,
+                dest_index: 0,
+                addr: SegAddr(0x0000_CD20)
+            }
+        );
+
+        // gSPVertex(v, n=2, v0=6): low byte = (6 + 2) * 2 = 16.
+        assert_eq!(
+            cmd(0x0100_0000 | (2 << 12) | 16, 0),
+            Cmd::Vtx {
+                count: 2,
+                dest_index: 6,
+                addr: SegAddr(0)
             }
         );
     }
