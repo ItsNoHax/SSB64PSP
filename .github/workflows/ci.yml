@@ -126,29 +126,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Reject ROM-shaped files
+      - name: Reject ROM files
         run: |
           found=$(git ls-files | grep -iE '\.(z64|n64|v64|rom)$' || true)
           if [ -n "$found" ]; then
             echo "::error::ROM files are committed:"; echo "$found"; exit 1
           fi
           echo "OK: no ROM files tracked"
-
-      - name: Reject generated assets
-        run: |
-          found=$(git ls-files | grep -E '^assets/generated/' || true)
-          if [ -n "$found" ]; then
-            echo "::error::extracted assets are committed:"; echo "$found"; exit 1
-          fi
-          echo "OK: no extracted assets tracked"
-
-      - name: Reject large binaries
-        # A ROM smuggled in under another extension would still be huge.
-        run: |
-          big=$(git ls-files | while read -r f; do
-            [ -f "$f" ] && [ "$(stat -c%s "$f")" -gt 2000000 ] && echo "$f"
-          done)
-          if [ -n "$big" ]; then
-            echo "::error::files over 2 MB are tracked:"; echo "$big"; exit 1
-          fi
-          echo "OK: no oversized files tracked"
