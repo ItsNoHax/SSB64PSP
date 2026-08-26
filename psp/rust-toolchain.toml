@@ -1,0 +1,15 @@
+# rust-psp reaches into unstable `core` internals (`core::panic::PanicPayload`
+# for its panic handler, plus `-Z build-std`), so it only builds on a narrow
+# band of nightlies and breaks whenever those internals move. Pinning is not
+# optional here.
+#
+# Verified working: nightly-2026-08-01 with rust-psp 0.3.13.
+# Known broken: nightly-2026-08-26 and later, where `core::panic::PanicPayload`
+# no longer resolves.
+#
+# Before bumping this, build with the new nightly and boot the result in
+# PPSSPP -- a successful compile is not sufficient evidence.
+[toolchain]
+channel = "nightly-2026-08-01"
+components = ["rust-src"]
+targets = []

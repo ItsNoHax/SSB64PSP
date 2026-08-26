@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ssb-rom",
+    "crates/ssb-engine",
+    "crates/ssb-game",
+    "tools/romtool",
+]
+
+# The PSP binary lives in `psp/ssb64-psp` and is deliberately NOT a workspace
+# member: it targets `mipsel-sony-psp`, is `no_std`, and is built with
+# `cargo psp` (which needs nightly + `-Z build-std`). Keeping it out lets
+# `cargo test` at the root run on stable for every host-side crate.
+exclude = ["psp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ItsNoHax/SSB64PSP"
+
+[workspace.dependencies]
+# `default-features = false` must live here, not at the use site: a member
+# crate cannot turn off a workspace dependency's default features (cargo warns
+# and ignores it), and if `std` leaks in this way the PSP build fails with a
+# confusing "can't find crate for `std`". Crates that want `std` opt in through
+# their own `std` feature.
+ssb-rom = { path = "crates/ssb-rom", default-features = false }
+ssb-engine = { path = "crates/ssb-engine", default-features = false }
+ssb-game = { path = "crates/ssb-game", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

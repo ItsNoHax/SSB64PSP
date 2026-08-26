@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Host-side crates and tools. No ROM required -- every test either uses
+  # synthetic data or asserts on constants, so CI never needs copyrighted
+  # material.
+  host:
+    name: Host tests (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        run: cargo test --workspace --all-targets
+
+      - name: Build host tools
+        run: cargo build --release -p romtool
+
+      - name: romtool rejects a non-ROM
+        # The validator must fail loudly on bad input rather than producing
+        # garbage assets, so assert the failure rather than just running it.
+        run: |
+          head -c 16777216 /dev/zero > /tmp/fake.z64
+          if cargo run --release -q -p romtool -- verify /tmp/fake.z64; then
+            echo "::error::romtool accepted a ROM it should have rejected"
+            exit 1
+          fi
+          echo "OK: bad ROM rejected"
+
+  # The no_std crates must build for the device target as well as the host.
+  # `std` leaking in through a default feature is a recurring failure mode
+  # (see the note in the root Cargo.toml), so this job exists to catch it
+  # without needing the full PSP toolchain.
+  no_std:
+    name: no_std build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build without std
+        run: |
+          cargo build -p ssb-engine --no-default-features --target thumbv7em-none-eabi
+          cargo build -p ssb-game   --no-default-features --target thumbv7em-none-eabi
+          cargo build -p ssb-rom    --no-default-features --target thumbv7em-none-eabi
+
+  psp:
+    name: PSP build (EBOOT.PBP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The toolchain is pinned by psp/rust-toolchain.toml; rustup picks it up
+      # automatically. rust-psp reaches into unstable core internals and only
+      # builds on a narrow band of nightlies.
+      - name: Install pinned nightly
+        run: |
+          rustup show active-toolchain || true
+          cd psp && rustup show
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: psp
+
+      - name: Install cargo-psp
+        run: cargo install cargo-psp --locked
+
+      - name: Build EBOOT.PBP
+        working-directory: psp
+        # rust-psp's linker emits benign abicalls warnings, so -D warnings
+        # would fail the build for no reason here.
+        env:
+          RUSTFLAGS: ""
+        run: cargo psp --release
+
+      - name: Verify the artifact is a real PBP
+        working-directory: psp
+        run: |
+          PBP=target/mipsel-sony-psp/release/EBOOT.PBP
+          test -f "$PBP" || { echo "::error::EBOOT.PBP not produced"; exit 1; }
+          # PBP files start with 0x00 'P' 'B' 'P' == 00504250.
+          magic=$(head -c 4 "$PBP" | xxd -p)
+          if [ "$magic" != "00504250" ]; then
+            echo "::error::unexpected PBP magic: $magic (expected 00504250)"
+            exit 1
+          fi
+          ls -la "$PBP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EBOOT.PBP
+          path: psp/target/mipsel-sony-psp/release/EBOOT.PBP
+          if-no-files-found: error
+
+  # Guard against ever committing copyrighted material.
+  no_rom:
+    name: No ROM data committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject ROM-shaped files
+        run: |
+          found=$(git ls-files | grep -iE '\.(z64|n64|v64|rom)$' || true)
+          if [ -n "$found" ]; then
+            echo "::error::ROM files are committed:"; echo "$found"; exit 1
+          fi
+          echo "OK: no ROM files tracked"
+
+      - name: Reject generated assets
+        run: |
+          found=$(git ls-files | grep -E '^assets/generated/' || true)
+          if [ -n "$found" ]; then
+            echo "::error::extracted assets are committed:"; echo "$found"; exit 1
+          fi
+          echo "OK: no extracted assets tracked"
+
+      - name: Reject large binaries
+        # A ROM smuggled in under another extension would still be huge.
+        run: |
+          big=$(git ls-files | while read -r f; do
+            [ -f "$f" ] && [ "$(stat -c%s "$f")" -gt 2000000 ] && echo "$f"
+          done)
+          if [ -n "$big" ]; then
+            echo "::error::files over 2 MB are tracked:"; echo "$big"; exit 1
+          fi
+          echo "OK: no oversized files tracked"

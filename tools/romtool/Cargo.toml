@@ -1,0 +1,10 @@
+[package]
+name = "romtool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validates a user-supplied SSB64 ROM and extracts assets for the PSP build."
+
+[dependencies]
+ssb-rom = { workspace = true, features = ["std"] }

@@ -1,0 +1,25 @@
+[package]
+name = "ssb64-psp"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Layer C: the PSP backend and executable for the SSB64 port."
+
+# Deliberately outside the root workspace: this crate targets mipsel-sony-psp,
+# is no_std, and is built with `cargo psp`. See the root Cargo.toml.
+[workspace]
+
+[dependencies]
+psp = "0.3.13"
+ssb-engine = { path = "../crates/ssb-engine", default-features = false }
+ssb-game = { path = "../crates/ssb-game", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Debug symbols cost nothing at runtime and make psplink/psp-gdb usable.
+debug = true
+
+[profile.dev]
+opt-level = 1

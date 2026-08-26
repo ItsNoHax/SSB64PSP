@@ -1,0 +1,13 @@
+[package]
+name = "ssb-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Platform-agnostic engine abstractions (Layer B) for the SSB64 PSP port."
+
+[dependencies]
+
+[features]
+default = ["std"]
+std = []

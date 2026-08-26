@@ -1,0 +1,18 @@
+[package]
+name = "ssb-rom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reads Super Smash Bros. 64 ROM data: validation, VPK0, relocData archive, N64 asset formats."
+
+[dependencies]
+sha1_smol = { version = "1.0", default-features = false }
+
+[features]
+default = ["std"]
+std = []
+
+[dev-dependencies]
+# Tests that touch the real ROM are gated behind the SSB64_ROM env var so the
+# suite still passes in CI, where no ROM is available.
