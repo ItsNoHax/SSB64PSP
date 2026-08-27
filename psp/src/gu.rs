@@ -151,7 +151,20 @@ impl Gpu {
         // The GE's screen space is centred on 2048; this offsets it so that
         // (0,0) is the top-left of the visible area.
         sys::sceGuOffset(2048 - (SCREEN_WIDTH / 2), 2048 - (SCREEN_HEIGHT / 2));
-        sys::sceGuViewport(2048, 2048, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+
+        // Pillarbox to 4:3. The projection is built with the *N64's* aspect
+        // (`coord::pillarboxed_viewport`, 362x272), so the GE viewport has to
+        // be that same 362 wide or the image is stretched across the full 480
+        // -- a horizontal exaggeration of 480/362 = 1.33x that makes every
+        // character a third too wide.
+        //
+        // This was measured, not guessed: Mario's collision diamond is 300
+        // units across and 320 tall, so it should render very slightly taller
+        // than wide. On device it came out 27 px wide against 22 px tall, a
+        // width/height of 1.23 where 0.94 was expected. The ratio between
+        // those, 1.31, is 480/362.
+        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        sys::sceGuViewport(2048, 2048, vw as i32, vh as i32);
 
         // The PSP's depth buffer is inverted relative to what you'd expect:
         // near maps to 65535, far to 0, so the depth test is GreaterOrEqual.
@@ -159,7 +172,8 @@ impl Gpu {
         sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
         sys::sceGuEnable(GuState::DepthTest);
 
-        sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+        // Scissor to the same region, so nothing bleeds into the black bars.
+        sys::sceGuScissor(vx as i32, 0, (vx + vw) as i32, vh as i32);
         sys::sceGuEnable(GuState::ScissorTest);
 
         sys::sceGuFrontFace(FrontFaceDirection::Clockwise);

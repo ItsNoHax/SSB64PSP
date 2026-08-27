@@ -14,7 +14,7 @@ Last updated: 2026-08-27.
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 485 textures packed into a 2.9 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🟡 45% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-on-stage.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033). No attacks, no damage, no opponent, no match loop |
+| **M4 — Gameplay vertical slice** | 🟡 45% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants out of the pack (RE-034). No attacks, no damage, no opponent, no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
 | **M7 — Menus / save** | 🔴 0% | |
@@ -90,7 +90,7 @@ Measured from the on-screen diagnostics (RE-016):
 frame 701  tick 701          <- exact 60 Hz lockstep, no drift over 700 frames
 ticks/frame 1  dropped 0     <- no catch-up, no dropped ticks
 cpu 13us / budget 16667us    <- 0.08% of the frame budget
-frame 16682us  view 362x272  <- 59.94 Hz; pillarboxed 4:3 viewport confirmed
+frame 16682us  view 362x272  <- 59.94 Hz; the value the helper returns
 ```
 
 These are *baseline* numbers on a four-triangle scene under an emulator, not a

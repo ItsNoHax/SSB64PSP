@@ -264,7 +264,11 @@ See `docs/reverse-engineering.md` RE-004 and RE-005. Summary:
   dimension to normalize.
 * **Aspect ratio.** The game renders 320x240 (4:3); the PSP is 480x272.
   Stretching would distort every character, so the default is a pillarboxed
-  362x272 viewport, centred. `coord::pillarboxed_viewport()`.
+  362x272 viewport, centred. `coord::pillarboxed_viewport()` computes it, and
+  `Gpu::init` must apply it to **both** `sceGuViewport` and `sceGuScissor` --
+  feeding its aspect to the projection while leaving the GE viewport at the
+  full 480 stretches the image by 480/362 = 1.33x, which is exactly the
+  distortion the pillarbox exists to prevent (RE-034).
 
 ## Depth
 
