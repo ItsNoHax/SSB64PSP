@@ -31,7 +31,6 @@ use ssb_engine::input::{Input, N64Buttons};
 use ssb_engine::renderer::Color;
 use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 
-
 use ssb_rom::pack::{Pack, PackError};
 
 use gu::{Gpu, GuVertex};
@@ -41,8 +40,16 @@ use timing::{PspClock, Stopwatch};
 psp::module!("ssb64_psp", 1, 0);
 
 /// Scratch for the texture-inspection quad. Align16 because the GE DMAs it.
-static mut TEX_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> =
-    Align16([meshdraw::TexQuadVertex { u: 0.0, v: 0.0, color: 0, x: 0.0, y: 0.0, z: 0.0 }; 6]);
+static mut TEX_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> = Align16(
+    [meshdraw::TexQuadVertex {
+        u: 0.0,
+        v: 0.0,
+        color: 0,
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    }; 6],
+);
 
 /// A unit tetrahedron, vertex-coloured. Stands in for a fighter until real
 /// geometry conversion lands.
@@ -154,24 +161,54 @@ unsafe fn run() -> ! {
     // actually puts it. C_DOWN falls back to single-mesh browsing.
     let object_count = pack.as_ref().map_or(0, |p| p.object_count());
     let mut object_view = object_count > 0;
-    // Start on the object with the most *geometry*, not the most nodes. Ranking
-    // by node count picked a 51-node skybox whose panels are two triangles
-    // each -- lots of hierarchy, almost nothing to look at.
+    // Start on the deepest hierarchy, tie-broken by triangle count.
+    //
+    // Three rankings were tried before this one and all picked something that
+    // misrepresents the mode. Most nodes got a 51-node skybox whose panels are
+    // two triangles each; most triangles got an `LBTransition` screen wipe,
+    // 1000 triangles of subdivided flat plane on a single node; most *placed*
+    // nodes got `MVCommon`, 38 cutscene panels that fill the screen with
+    // texture and look exactly like a rendering bug.
+    //
+    // Depth is the metric that means "assembled hierarchy" -- the one thing
+    // this mode shows that the mesh view does not. A fighter is seven joints
+    // deep; a panel mosaic is one.
     let mut object_index: u32 = pack
         .as_ref()
         .map(|p| {
-            let mut best = (0u32, 0u32);
+            let mut best = (0u32, 0u32, 0u32);
             for i in 0..p.object_count() {
                 let Some(o) = p.object(i) else { continue };
-                let tris: u32 = (0..o.node_count)
-                    .filter_map(|k| p.node(o.first_node + k))
-                    .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
-                    .filter_map(|n| p.mesh(n.mesh))
-                    .flat_map(|m| (0..m.prim_count).filter_map(move |k| p.prim(m.first_prim + k)))
-                    .map(|pr| pr.index_count / 3)
-                    .sum();
-                if tris > best.1 {
-                    best = (i, tris);
+                let mut depth = 0u32;
+                let mut tris = 0u32;
+                for k in 0..o.node_count {
+                    let Some(n) = p.node(o.first_node + k) else {
+                        continue;
+                    };
+                    // Node parents always precede their children, so walking up
+                    // terminates; cap anyway rather than trust the data.
+                    let mut d = 0u32;
+                    let mut at = n.parent;
+                    while at != ssb_rom::pack::NodeDesc::NO_PARENT && d < 32 {
+                        d += 1;
+                        let Some(up) = p.node(at) else { break };
+                        at = up.parent;
+                    }
+                    depth = depth.max(d);
+
+                    if n.mesh == ssb_rom::pack::NodeDesc::NO_MESH {
+                        continue;
+                    }
+                    if let Some(m) = p.mesh(n.mesh) {
+                        for j in 0..m.prim_count {
+                            if let Some(pr) = p.prim(m.first_prim + j) {
+                                tris += pr.index_count / 3;
+                            }
+                        }
+                    }
+                }
+                if (depth, tris) > (best.1, best.2) {
+                    best = (i, depth, tris);
                 }
             }
             best.0
@@ -215,6 +252,39 @@ unsafe fn run() -> ! {
                 }
                 if pressed.contains(N64Buttons::D_DOWN) {
                     object_index = (object_index + object_count - 10) % object_count;
+                }
+                // 363 objects but only 134 source files, and neighbouring
+                // objects almost always come from the same one. Stepping by
+                // file is how you get from a stage to a fighter without
+                // holding right for a minute.
+                let step_file = |from: u32, dir: u32| -> u32 {
+                    let Some(p) = pack.as_ref() else { return from };
+                    let of = |i: u32| p.object(i).map(|o| o.source_file);
+                    let start = of(from);
+                    let mut i = from;
+                    for _ in 0..object_count {
+                        i = (i + dir) % object_count;
+                        if of(i) != start {
+                            break;
+                        }
+                    }
+                    // Landing on a file's *last* object when stepping back is
+                    // disorienting; walk to its first.
+                    if dir != 1 {
+                        let f = of(i);
+                        while of((i + object_count - 1) % object_count) == f {
+                            i = (i + object_count - 1) % object_count;
+                        }
+                    }
+                    i
+                };
+                // R-trigger and C-up: the only inputs the default mapping
+                // leaves free here (L-trigger is Z, which zooms).
+                if pressed.contains(N64Buttons::R) {
+                    object_index = step_file(object_index, 1);
+                }
+                if pressed.contains(N64Buttons::C_UP) {
+                    object_index = step_file(object_index, object_count - 1);
                 }
             } else if mesh_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
@@ -287,23 +357,31 @@ unsafe fn run() -> ! {
                                 (min[1] + max[1]) * 0.5,
                                 (min[2] + max[2]) * 0.5,
                             ];
-                            let e = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+                            let e = ssb_engine::math::Vec3 {
+                                x: max[0] - min[0],
+                                y: max[1] - min[1],
+                                z: max[2] - min[2],
+                            };
                             // object_bounds works in normalised units; the
                             // camera works in game units, like the mesh path.
                             let s = meshdraw::MODEL_SCALE;
+                            // Bounding *sphere*, not the largest extent: the
+                            // model spins, so a box that fits axis-aligned
+                            // swings outside the frame a quarter turn later.
+                            // That is what kept clipping Samus's head.
                             (
                                 [c[0] * s, c[1] * s, c[2] * s],
-                                (e[0].max(e[1]).max(e[2]) * s).max(1.0),
+                                (e.length() * 0.5 * s).max(1.0),
                             )
                         }
                         None => ([0.0; 3], 100.0),
                     };
-                    // Fit the extent to the 60-degree vertical FOV:
-                    // d = size / (2 tan 30) ~= 0.87 * size. The mesh path's
-                    // 2x-extent rule leaves an object filling a ninth of the
-                    // frame, which for a stage whose parts are spread over
-                    // 33000 units means specks.
-                    const FIT: f32 = 0.87;
+                    // Fit the radius to the 60-degree vertical FOV:
+                    // d = r / tan 30 ~= 1.73 * r. The mesh path's 2x-extent
+                    // rule leaves an object filling a ninth of the frame,
+                    // which for a stage whose parts are spread over 33000
+                    // units means specks.
+                    const FIT: f32 = 1.733;
                     let dist = radius * FIT * cam_distance / 200.0;
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
@@ -344,15 +422,23 @@ unsafe fn run() -> ! {
 
                     if let Some((mn, mx)) = bb {
                         dbg_bb = [
-                            mn[0] as i32, mn[1] as i32, mn[2] as i32,
-                            mx[0] as i32, mx[1] as i32, mx[2] as i32,
+                            mn[0] as i32,
+                            mn[1] as i32,
+                            mn[2] as i32,
+                            mx[0] as i32,
+                            mx[1] as i32,
+                            mx[2] as i32,
                         ];
                     }
                     dbg_radius = radius;
                     dbg_cam = centre[2] + radius * cam_distance / 100.0;
 
                     gpu.model_transform(
-                        [-centre[0], -centre[1], -centre[2] - radius * cam_distance / 100.0],
+                        [
+                            -centre[0],
+                            -centre[1],
+                            -centre[2] - radius * cam_distance / 100.0,
+                        ],
                         [0.0, spin, 0.0],
                         meshdraw::MODEL_SCALE,
                     );
@@ -394,11 +480,19 @@ unsafe fn run() -> ! {
                  TEXVIEW {}  tex {}/{}\n\
                  cam {} r {}\n\
                  \n\
-                 dpad: browse  C-dn: obj/mesh  A/Z: zoom",
+                 dpad: browse  R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
                 pack_status,
                 if object_view { "obj " } else { "mesh" },
-                if object_view { object_index } else { mesh_index },
-                if object_view { object_count } else { mesh_count },
+                if object_view {
+                    object_index
+                } else {
+                    mesh_index
+                },
+                if object_view {
+                    object_count
+                } else {
+                    mesh_count
+                },
                 pack.as_ref()
                     .and_then(|p| if object_view {
                         p.object(object_index).map(|o| o.source_file)
@@ -425,7 +519,12 @@ unsafe fn run() -> ! {
                 last_frame_us,
                 sim.tick,
                 dbg_tex,
-                dbg_bb[0], dbg_bb[1], dbg_bb[2], dbg_bb[3], dbg_bb[4], dbg_bb[5],
+                dbg_bb[0],
+                dbg_bb[1],
+                dbg_bb[2],
+                dbg_bb[3],
+                dbg_bb[4],
+                dbg_bb[5],
                 tex_view,
                 tex_index,
                 tex_count,

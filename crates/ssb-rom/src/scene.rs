@@ -314,6 +314,66 @@ impl Mat4 {
     pub fn translation(&self) -> [f32; 3] {
         [self.0[12], self.0[13], self.0[14]]
     }
+
+    /// Transforms a point (w = 1).
+    pub fn transform_point(&self, p: [f32; 3]) -> [f32; 3] {
+        let m = &self.0;
+        [
+            m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
+            m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
+            m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14],
+        ]
+    }
+
+    /// Inverse of an affine matrix, or `None` when the linear part is singular.
+    ///
+    /// General 4x4 inversion is not needed: every matrix here is `T * R * S`,
+    /// so the bottom row is `(0, 0, 0, 1)` and the inverse is
+    /// `inv(linear)` with translation `-inv(linear) * t`. Scales are per-axis
+    /// and occasionally non-uniform, so the linear part is inverted properly by
+    /// cofactors rather than assumed orthonormal.
+    pub fn inverse_affine(&self) -> Option<Mat4> {
+        let m = &self.0;
+        let a = [
+            m[0], m[1], m[2], //
+            m[4], m[5], m[6], //
+            m[8], m[9], m[10],
+        ];
+
+        let c = [
+            a[4] * a[8] - a[5] * a[7],
+            a[5] * a[6] - a[3] * a[8],
+            a[3] * a[7] - a[4] * a[6],
+            a[2] * a[7] - a[1] * a[8],
+            a[0] * a[8] - a[2] * a[6],
+            a[1] * a[6] - a[0] * a[7],
+            a[1] * a[5] - a[2] * a[4],
+            a[2] * a[3] - a[0] * a[5],
+            a[0] * a[4] - a[1] * a[3],
+        ];
+
+        let det = a[0] * c[0] + a[3] * c[3] + a[6] * c[6];
+        if !det.is_finite() || det.abs() < 1e-20 {
+            return None;
+        }
+        let inv_det = 1.0 / det;
+
+        // `c` is the adjugate in *row*-major order, `out` is column-major, so
+        // the copy transposes.
+        let mut out = [0f32; 16];
+        for row in 0..3 {
+            for col in 0..3 {
+                out[col * 4 + row] = c[row * 3 + col] * inv_det;
+            }
+        }
+
+        let t = [m[12], m[13], m[14]];
+        for row in 0..3 {
+            out[12 + row] = -(out[row] * t[0] + out[4 + row] * t[1] + out[8 + row] * t[2]);
+        }
+        out[15] = 1.0;
+        Some(Mat4(out))
+    }
 }
 
 /// `no_std`-friendly sine/cosine.
@@ -407,24 +467,142 @@ pub fn parse_dl_links(data: &[u8], intern_slots: &BTreeSet<u32>, at: u32) -> Opt
     }
 }
 
-/// Resolves a node's `dl` field to the display lists it actually draws.
+/// Size of a `Gfx *dls[2]` pre/post-matrix pair.
+pub const DL_PAIR_SIZE: usize = 8;
+
+/// Parses a `Gfx *dls[2]` pre/post-matrix pair, if one starts at `at`.
 ///
-/// `DObj`'s display-list field is a union — `Gfx*`, `Gfx**`, `DObjDLLink*`,
-/// `DObjDistDL*` and more — and **nothing in the data says which**. The
-/// discriminator is the `proc_display` callback the GObj was registered with,
-/// which lives in game code, not in the archive.
+/// Fighter models use this member. From `ftDisplayMainDrawDefault` case 1
+/// (`src/ft/ftdisplaymain.c`):
 ///
-/// So this disambiguates structurally. `DObjDLLink` is much the more
-/// constrained shape (a small `list_id`, then a relocated pointer, terminated
-/// by `list_id == 4`), so trying it first and falling back to "the field is a
-/// `Gfx*`" resolves the two cases that between them cover the stage and model
-/// files. The remaining union members are not handled yet.
-pub fn resolve_node_lists(file: &File, node_dl: u32) -> Vec<u32> {
-    let intern_slots: BTreeSet<u32> = file.intern_relocs.iter().map(|r| r.at).collect();
-    match parse_dl_links(&file.data, &intern_slots, node_dl) {
-        Some(links) => links.iter().filter_map(|l| l.dl).collect(),
-        None => alloc::vec![node_dl],
+/// ```c
+/// dls = dobj->dls;
+/// if (dls != NULL && dls[0] != NULL) gSPDisplayList(..., dls[0]);
+/// sp58 = gcPrepDObjMatrix(gSYTaskmanDLHeads, dobj);
+/// if (dls != NULL && dls[1] != NULL) gSPDisplayList(..., dls[1]);
+/// ```
+///
+/// So `dls[0]` draws in the **parent's** space and `dls[1]` in the node's own —
+/// which makes `dls[1]` the one a node places, and `dls[0]` geometry that
+/// belongs one level up. Yoshi's array is 19 such pairs back to back, and the
+/// decomp labels it exactly that way (`338_YoshiModel.c`: "DObj.dls pre/post-
+/// matrix DL pairs @ 0x3308 (19 pairs, 152 bytes)").
+///
+/// The shape is only two words, so the relocation test carries all the weight:
+/// `dls[1]` must be a relocated pointer and `dls[0]` must be NULL or one too.
+/// That is what separates a pair from a display list starting with `G_VTX`,
+/// whose first word is `0x01xxxxxx` — non-zero and never a relocation target.
+/// A `{ NULL, NULL }` pair — a joint that draws nothing — is two zero words and
+/// carries no evidence of its own. `BossModel` ships two of them. They are only
+/// accepted when a neighbouring pair vouches for them, which is sound because
+/// pairs only ever occur as elements of an array.
+pub fn parse_dl_pair(
+    data: &[u8],
+    intern_slots: &BTreeSet<u32>,
+    at: u32,
+) -> Option<[Option<u32>; 2]> {
+    let [pre, post] = read_pair(data, intern_slots, at)?;
+    if pre.is_some() || post.is_some() {
+        return Some([pre, post]);
     }
+
+    let neighbour = |off: u32| {
+        read_pair(data, intern_slots, off).is_some_and(|[a, b]| a.is_some() || b.is_some())
+    };
+    let vouched = at.checked_sub(DL_PAIR_SIZE as u32).is_some_and(neighbour)
+        || neighbour(at + DL_PAIR_SIZE as u32);
+    vouched.then_some([pre, post])
+}
+
+fn read_pair(data: &[u8], intern_slots: &BTreeSet<u32>, at: u32) -> Option<[Option<u32>; 2]> {
+    let raw = data.get(at as usize..at as usize + DL_PAIR_SIZE)?;
+    let word = |i: usize| u32::from_be_bytes([raw[i], raw[i + 1], raw[i + 2], raw[i + 3]]);
+
+    let slot = |off: u32, value: u32| -> Option<Option<u32>> {
+        match value {
+            0 => Some(None),
+            _ if intern_slots.contains(&off) => Some(Some(value)),
+            _ => None,
+        }
+    };
+    Some([slot(at, word(0))?, slot(at + 4, word(4))?])
+}
+
+/// What a node's `dl` field turned out to be. `DObj`'s display-list field is a
+/// union — `Gfx*`, `Gfx**`, `DObjDLLink*`, `DObjDistDL*` and more — and
+/// **nothing in the data says which**. The discriminator is the `proc_display`
+/// callback the GObj was registered with, which lives in game code, not in the
+/// archive, so the member has to be recovered structurally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeDl {
+    /// A `DObjDLLink[]` selecting which task display-list head to append to.
+    Links(Vec<DlLink>),
+    /// A `Gfx *dls[2]` pre/post-matrix pair; see [`parse_dl_pair`].
+    Pair { pre: Option<u32>, post: Option<u32> },
+    /// A plain `Gfx*` — the field is the display list.
+    Direct(u32),
+}
+
+impl NodeDl {
+    /// The display lists this node draws, **most node-local first**.
+    ///
+    /// Callers that can only place one mesh per node should take the first:
+    /// for a pair that is `dls[1]`, the list drawn under the node's own matrix.
+    pub fn lists(&self) -> Vec<u32> {
+        match self {
+            NodeDl::Links(links) => links.iter().filter_map(|l| l.dl).collect(),
+            NodeDl::Pair { pre, post } => post.iter().chain(pre.iter()).copied().collect(),
+            NodeDl::Direct(dl) => alloc::vec![*dl],
+        }
+    }
+}
+
+/// Resolves node `dl` fields for one file.
+///
+/// Holds the file's intern-relocation slots, which every discriminator below
+/// consults. Building that set is the expensive part, and a file has hundreds
+/// of nodes, so it is built once here rather than per node.
+pub struct DlResolver<'a> {
+    data: &'a [u8],
+    intern_slots: BTreeSet<u32>,
+}
+
+impl<'a> DlResolver<'a> {
+    pub fn new(file: &'a File) -> Self {
+        Self {
+            data: &file.data,
+            intern_slots: file.intern_relocs.iter().map(|r| r.at).collect(),
+        }
+    }
+
+    /// Decides which union member `at` points at.
+    ///
+    /// Order matters: the members are tried most-constrained first, so a shape
+    /// that could read as either is claimed by the one with more evidence
+    /// behind it. `DObjDLLink` needs a terminator and small `list_id`s; a pair
+    /// needs two relocation-backed words; a `Gfx*` needs nothing, so it is the
+    /// fallback. Where links and pairs overlap — `{ 0, dl }, { 4, NULL }` reads
+    /// as both — they name the same display list anyway.
+    pub fn resolve(&self, at: u32) -> NodeDl {
+        if let Some(links) = parse_dl_links(self.data, &self.intern_slots, at) {
+            return NodeDl::Links(links);
+        }
+        if let Some([pre, post]) = parse_dl_pair(self.data, &self.intern_slots, at) {
+            return NodeDl::Pair { pre, post };
+        }
+        NodeDl::Direct(at)
+    }
+
+    /// Shorthand for `self.resolve(at).lists()`.
+    pub fn lists(&self, at: u32) -> Vec<u32> {
+        self.resolve(at).lists()
+    }
+}
+
+/// Resolves a single node's `dl` field. Convenience over [`DlResolver`]; use
+/// the resolver directly when walking a whole file.
+pub fn resolve_node_lists(file: &File, node_dl: u32) -> Vec<u32> {
+    DlResolver::new(file).lists(node_dl)
 }
 
 /// Recovers every `DObjDesc` array in a loaded file.
@@ -729,6 +907,107 @@ mod tests {
             [0x3EE0]
         );
         assert_eq!(resolve_node_lists(&file_with(data, &[]), 16), [16]);
+    }
+
+    #[test]
+    fn resolves_a_pre_post_matrix_pair() {
+        // The exact shape of dYoshiModel_Joint_0x3148_post_post_post[0..2]:
+        // { NULL, DL } then { pre_DL, DL }. Neither reads as a link array --
+        // the second pair's first word is a pointer, far above list_id 4 --
+        // and the post-matrix list must come first, since that is the one the
+        // node itself places.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&0x2050u32.to_be_bytes());
+        data.extend_from_slice(&0x31C0u32.to_be_bytes());
+        data.extend_from_slice(&0x2248u32.to_be_bytes());
+        let file = file_with(data, &[20, 24, 28]);
+
+        let r = DlResolver::new(&file);
+        assert_eq!(
+            r.resolve(16),
+            NodeDl::Pair {
+                pre: None,
+                post: Some(0x2050)
+            }
+        );
+        assert_eq!(
+            r.resolve(24),
+            NodeDl::Pair {
+                pre: Some(0x31C0),
+                post: Some(0x2248)
+            }
+        );
+        assert_eq!(r.lists(24), [0x2248, 0x31C0]);
+    }
+
+    #[test]
+    fn an_empty_pair_needs_a_neighbour_to_vouch_for_it() {
+        // BossModel's array holds a { NULL, NULL } joint. Read as a `Gfx*` the
+        // two zero words decode as G_SPNOOP and the walk runs on into whatever
+        // follows -- which is how that node ended up reporting
+        // VertexDataOutOfBounds against an unrelocated extern pointer.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend_from_slice(&[0u8; 8]); // { NULL, NULL } at 16
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&0x1478u32.to_be_bytes()); // a real pair at 24
+
+        assert!(matches!(
+            DlResolver::new(&file_with(data.clone(), &[28])).resolve(16),
+            NodeDl::Pair {
+                pre: None,
+                post: None
+            }
+        ));
+
+        // Alone, the same two zero words are just two zero words.
+        assert_eq!(
+            DlResolver::new(&file_with(alloc::vec![0u8; 24], &[])).resolve(16),
+            NodeDl::Direct(16)
+        );
+    }
+
+    #[test]
+    fn an_unrelocated_pair_is_rejected() {
+        // Constraint 5 again, and it is the whole discriminator here: a pair is
+        // only two words, so without the relocation evidence any display list
+        // beginning with a zero word would read as one.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&0x2050u32.to_be_bytes());
+
+        assert!(matches!(
+            DlResolver::new(&file_with(data.clone(), &[20])).resolve(16),
+            NodeDl::Pair { .. }
+        ));
+        assert_eq!(
+            DlResolver::new(&file_with(data, &[])).resolve(16),
+            NodeDl::Direct(16)
+        );
+    }
+
+    #[test]
+    fn affine_inverse_undoes_a_scaled_rotated_translation() {
+        // Non-uniform scale on purpose: an orthonormal-transpose shortcut would
+        // pass a rotation-only test and be wrong here.
+        let m = Mat4::from_trs([12.0, -3.0, 40.0], [0.4, -1.1, 2.0], [2.0, 0.5, 3.0]);
+        let inv = m.inverse_affine().expect("non-singular");
+
+        for p in [[0.0; 3], [1.0, 2.0, 3.0], [-100.0, 40.0, 7.5]] {
+            let round = inv.transform_point(m.transform_point(p));
+            for k in 0..3 {
+                assert!((round[k] - p[k]).abs() < 1e-3, "{round:?} vs {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_singular_matrix_has_no_inverse() {
+        // A zero scale on one axis: the game ships these to hide a joint, and
+        // inverting one anyway would produce infinities in every vertex that
+        // borrowed from it.
+        let m = Mat4::from_trs([0.0; 3], [0.0; 3], [1.0, 0.0, 1.0]);
+        assert!(m.inverse_affine().is_none());
     }
 
     #[test]

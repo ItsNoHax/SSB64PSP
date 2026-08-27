@@ -13,7 +13,7 @@ Last updated: 2026-08-27.
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; meshes (1768 lists, 0 failures) and textures (336/469) packed into a 1.7 MB runtime pack that round-trips |
-| **M3 — Rendering** | 🟢 85% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`). No animation yet |
+| **M3 — Rendering** | 🟢 88% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included (`docs/images/m4-fighter-joints.png`). No animation yet |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
@@ -31,13 +31,13 @@ Last updated: 2026-08-27.
 | Asset extraction CLI | ✅ COMPLETE | `romtool extract` produces 16.29 MiB + manifest |
 | F3DEX2 DL parser | ✅ COMPLETE | All opcodes Smash emits, verified against real lists; `G_VTX` encoding regression-tested (RE-017) |
 | N64 texture decode | 🟢 70% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; not yet run on real ROM textures |
-| Texture → PSP conversion | 🟢 85% | 340 packed, 75.4% VRAM saved. Round-trip tested through swizzle+CLUT; verified on device (RE-022) |
+| Texture → PSP conversion | 🟢 85% | 511 packed, 75.4% VRAM saved. Round-trip tested through swizzle+CLUT; verified on device (RE-022) |
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 80% | 25,562 tris, 2.09x vertex reuse, material merging; 0 failures. No skinning yet |
 | Model conversion | 🟡 30% | Meshes extracted; DObj hierarchy/animation not applied |
 | Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 1768 meshes round-trip |
 | PSP asset loading | ✅ COMPLETE | 1.7 MB pack loads aligned, cache-flushed, verified on device |
-| PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. 268-tri assembled scene at 60 FPS, 495us CPU |
+| PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. Yoshi's 28-joint hierarchy at 60 FPS, 589us CPU |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
 | VFPU optimization | 🔴 0% | Deliberately not started |
@@ -51,7 +51,7 @@ Last updated: 2026-08-27.
 | Fighter state | 🟡 25% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff |
 | Collision | 🔴 0% | |
 | Animation | 🔴 0% | |
-| Scene graph (DObj) | 🟢 70% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. `GObj` layer and animation still absent |
+| Scene graph (DObj) | 🟢 80% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `GObj` layer and animation still absent |
 | Stages | 🔴 0% | |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |

@@ -2,9 +2,7 @@
 
 use psp::sys::{self, SceCtrlData};
 
-use ssb_engine::input::{
-    map_psp_to_n64, ControllerState, Input, PspButtons, DEFAULT_MAPPING,
-};
+use ssb_engine::input::{map_psp_to_n64, ControllerState, Input, PspButtons, DEFAULT_MAPPING};
 
 /// The PSP has one controller; ports 1-3 exist so multiplayer code compiles
 /// and CPU players can occupy them.

@@ -460,50 +460,73 @@ impl PackWriter {
 
     /// Adds a scene graph, returning the object's index.
     ///
-    /// `mesh_for` maps a node's display-list offset to a mesh index already
+    /// `mesh_for` maps a node's index within `graph` to a mesh index already
     /// added via [`PackWriter::add_mesh`]; nodes whose display list did not
     /// convert (or which have none) become pure transforms.
+    ///
+    /// `extra` carries geometry a node cannot hold, since a node has room for
+    /// exactly one mesh: `(space, mesh)`, where `space` is the node index whose
+    /// world matrix the mesh draws under, or `None` for the object root. Each
+    /// becomes an extra leaf node sharing that matrix.
+    ///
+    /// Across the archive these are 20 lists, all of them second and later
+    /// entries of a `DObjDLLink` array — the same joint drawn again into a
+    /// different task display-list head, which is how the game splits a joint
+    /// across render layers. The `space` indirection exists for the other
+    /// source, a `Gfx *dls[2]` pair's first list, which runs *before* the
+    /// node's matrix is pushed and so belongs to the parent; no shipped pre
+    /// list turns out to carry triangles, but the geometry is placed correctly
+    /// if one ever does.
     pub fn add_object(
         &mut self,
         graph: &crate::scene::SceneGraph,
         source_file: u32,
-        mesh_for: impl Fn(u32) -> Option<u32>,
+        mesh_for: impl Fn(usize) -> Option<u32>,
+        extra: &[(Option<usize>, u32)],
     ) -> u32 {
         let first_node = self.nodes.len() as u32;
-
-        for (i, node) in graph.nodes.iter().enumerate() {
-            // `world_transforms` is O(n) over the whole graph, so hoisting it
-            // out of the loop matters for the 33-node fighter hierarchies.
-            let mesh = node
-                .desc
-                .dl
-                .and_then(&mesh_for)
-                .unwrap_or(NodeDesc::NO_MESH);
-            let parent = match node.parent {
-                Some(p) => first_node + p as u32,
-                None => NodeDesc::NO_PARENT,
-            };
-            self.nodes.push(NodeDesc {
-                mesh,
-                parent,
-                world: [0.0; 16],
-            });
-            debug_assert_eq!(self.nodes.len() - 1, first_node as usize + i);
-        }
-
-        for (i, m) in graph.world_transforms().into_iter().enumerate() {
+        // `world_transforms` is O(n) over the whole graph, so it is computed
+        // once here rather than per node.
+        let worlds = graph.world_transforms();
+        let normalised = |m: &crate::scene::Mat4| {
             let mut world = m.0;
             // Bring the translation into the same normalised space as the
             // `i16` vertex positions; see `MODEL_SCALE`.
             world[12] /= MODEL_SCALE;
             world[13] /= MODEL_SCALE;
             world[14] /= MODEL_SCALE;
-            self.nodes[first_node as usize + i].world = world;
+            world
+        };
+
+        for (i, node) in graph.nodes.iter().enumerate() {
+            self.nodes.push(NodeDesc {
+                mesh: mesh_for(i).unwrap_or(NodeDesc::NO_MESH),
+                parent: match node.parent {
+                    Some(p) => first_node + p as u32,
+                    None => NodeDesc::NO_PARENT,
+                },
+                world: normalised(&worlds[i]),
+            });
+            debug_assert_eq!(self.nodes.len() - 1, first_node as usize + i);
+        }
+
+        for &(space, mesh) in extra {
+            self.nodes.push(NodeDesc {
+                mesh,
+                parent: match space {
+                    Some(p) => first_node + p as u32,
+                    None => NodeDesc::NO_PARENT,
+                },
+                world: match space {
+                    Some(p) => normalised(&worlds[p]),
+                    None => normalised(&crate::scene::Mat4::IDENTITY),
+                },
+            });
         }
 
         self.objects.push(ObjectDesc {
             first_node,
-            node_count: graph.nodes.len() as u32,
+            node_count: (graph.nodes.len() + extra.len()) as u32,
             source_file,
             source_offset: graph.offset,
         });
@@ -693,6 +716,11 @@ impl<'a> Pack<'a> {
     }
     pub fn node_count(&self) -> u32 {
         self.node_count
+    }
+    /// Total primitives: one GE draw call each, so this is the pack's draw-call
+    /// budget if every mesh were on screen at once.
+    pub fn prim_count(&self) -> u32 {
+        self.prim_count
     }
 
     fn mesh_table(&self) -> usize {
@@ -1040,8 +1068,9 @@ mod tests {
         // Two objects, so a wrong ObjectDesc::SIZE shows up as a misread second
         // entry rather than passing by luck -- the trap that made every texture
         // after the first read from the wrong offset.
-        w.add_object(&chain_graph(3), 11, |dl| Some(dl / 0x100));
-        w.add_object(&chain_graph(2), 22, |_| None);
+        // Node index -> mesh index, the mapping the packer supplies.
+        w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        w.add_object(&chain_graph(2), 22, |_| None, &[]);
 
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
@@ -1070,7 +1099,7 @@ mod tests {
     #[test]
     fn node_transforms_accumulate_and_are_scaled_into_vertex_space() {
         let mut w = PackWriter::new();
-        w.add_object(&chain_graph(3), 0, |_| None);
+        w.add_object(&chain_graph(3), 0, |_| None, &[]);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
 

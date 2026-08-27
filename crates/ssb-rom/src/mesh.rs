@@ -125,9 +125,29 @@ pub enum MeshError {
     TooManyVertices,
 }
 
+/// A cached vertex plus the space it was loaded in.
+///
+/// `G_VTX` transforms vertices by the modelview matrix *as it stands at load
+/// time*, and the cache survives across display lists. A fighter therefore
+/// stitches its joints together by loading half a triangle's vertices under one
+/// joint's matrix and the other half under the next joint's — the N64's version
+/// of skinning. `space` records which node was current, so [`convert_sequence`]
+/// can put the vertex back where it belongs.
+#[derive(Debug, Clone, Copy)]
+struct CacheEntry {
+    vertex: MeshVertex,
+    space: u16,
+}
+
 /// Tracks RDP/RSP state while walking a display list.
 struct State {
-    cache: [Option<MeshVertex>; VTX_CACHE_SIZE as usize],
+    cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
+    /// The space `G_VTX` loads into and triangles are emitted in.
+    space: u16,
+    /// World matrix of each space, and the inverse of the current one. Empty
+    /// for a standalone conversion, where every vertex is in the same space.
+    spaces: Vec<crate::scene::Mat4>,
+    inv_current: crate::scene::Mat4,
     material: MeshMaterial,
     /// Address of the current texture image, from `G_SETTIMG`.
     ///
@@ -149,6 +169,9 @@ impl State {
     fn new() -> Self {
         State {
             cache: [None; VTX_CACHE_SIZE as usize],
+            space: 0,
+            spaces: Vec::new(),
+            inv_current: crate::scene::Mat4::IDENTITY,
             material: MeshMaterial::default(),
             timg_addr: None,
             tile0_fmt: None,
@@ -156,6 +179,32 @@ impl State {
             palette_offset: None,
             palette_entries: 0,
             texture_enabled: false,
+        }
+    }
+
+    /// Moves a cached vertex into the current space.
+    ///
+    /// The overwhelmingly common case is that it was loaded here, and that path
+    /// is returned untouched — going through `inv * world` would perturb every
+    /// coordinate by a float ulp or two and, since positions round back to
+    /// `i16`, could shift a vertex by a whole game unit for no reason.
+    fn rebase(&self, e: CacheEntry) -> MeshVertex {
+        if e.space == self.space {
+            return e.vertex;
+        }
+        let Some(world) = self.spaces.get(e.space as usize) else {
+            return e.vertex;
+        };
+        let p = e.vertex.pos.map(|c| c as f32);
+        let local = self.inv_current.transform_point(world.transform_point(p));
+        MeshVertex {
+            pos: local.map(|c| {
+                // `as` saturates on overflow and truncates towards zero, so
+                // round explicitly first.
+                let r = if c < 0.0 { c - 0.5 } else { c + 0.5 };
+                r.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+            }),
+            ..e.vertex
         }
     }
 
@@ -244,6 +293,81 @@ pub fn convert(cmds: &[Cmd], file: &[u8]) -> Result<Mesh, MeshError> {
     })
 }
 
+/// One node's display list, ready to be drawn in sequence.
+pub struct SequenceItem<'a> {
+    pub cmds: &'a [Cmd],
+    /// The node's world matrix — the modelview in effect while this list runs.
+    pub world: crate::scene::Mat4,
+}
+
+/// Converts display lists that share one RSP vertex cache, in draw order.
+///
+/// [`convert`] treats a list as self-contained, which is wrong for every
+/// fighter in the game. `gcDrawDObjTree*` walks the node tree emitting each
+/// node's list into a single command stream, so the vertex cache carries over:
+/// a joint's list routinely draws triangles whose other vertices a *previous*
+/// joint loaded. Converting those in isolation fails with
+/// [`MeshError::EmptyCacheSlot`] — 144 of the archive's node lists did.
+///
+/// Because `G_VTX` bakes in the modelview at load time, such a triangle spans
+/// two joint spaces. Each result is still a mesh in its own node's space, with
+/// borrowed vertices carried across by `inv(world_here) * world_there`. That is
+/// exact for the rest pose. It cannot survive animation — under a moving joint
+/// the seam would tear — but reproducing that needs the runtime to keep the
+/// cache, which is a decision for when animation lands.
+///
+/// RDP material state is threaded too, not just the cache — the hardware keeps
+/// it, so a list that draws before setting a texture is drawing with whatever
+/// the previous one bound. Resetting per list instead resolves 378 textures
+/// against 394, so inheritance is a real but modest win.
+///
+/// It is also where this gets dangerous. `gcDrawMObjForDObj` injects a material
+/// display list at segment `0x0E` — the runtime graphics heap — and that is
+/// where a fighter's texture binding actually comes from. Those lists are not
+/// in the archive (RE-021), so a segmented call invalidates the texture binding
+/// rather than letting the previous node's survive. Inheriting past one bound
+/// another joint's texels over Samus's torso, and cost 117 spurious textures.
+///
+/// Returns one result per item, in the order given; a failing item does not
+/// stop the rest, since its state contribution has still been applied.
+pub fn convert_sequence(items: &[SequenceItem], file: &[u8]) -> Vec<Result<Mesh, MeshError>> {
+    let mut state = State::new();
+    state.spaces = items.iter().map(|i| i.world).collect();
+
+    let mut out = Vec::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate() {
+        state.space = i as u16;
+        // A singular node matrix (zero scale) means nothing borrowed from
+        // elsewhere can be expressed here; identity keeps it in its own space
+        // rather than producing infinities.
+        state.inv_current = item
+            .world
+            .inverse_affine()
+            .unwrap_or(crate::scene::Mat4::IDENTITY);
+
+        // Seed the builder from the state carried in, not from the default.
+        // RDP state persists across lists exactly as the vertex cache does, and
+        // starting at the default made every triangle a list emitted *before*
+        // its first state command land in a spurious untextured primitive.
+        let mut builder = Builder {
+            material: MeshMaterial {
+                texture: state.current_texture(),
+                ..state.material
+            },
+            ..Builder::default()
+        };
+        let mut prims: Vec<Primitive> = Vec::new();
+        let result = walk(item.cmds, file, &mut state, &mut builder, &mut prims, 0);
+        builder.flush(&mut prims);
+
+        out.push(result.map(|()| Mesh {
+            vertices: builder.vertices,
+            primitives: merge_by_material(prims),
+        }));
+    }
+    out
+}
+
 fn walk(
     cmds: &[Cmd],
     file: &[u8],
@@ -272,10 +396,13 @@ fn walk(
                         .map_err(|_| MeshError::VertexDataOutOfBounds { offset: at as u32 })?;
                     let slot = dest_index as usize + i;
                     if slot < state.cache.len() {
-                        state.cache[slot] = Some(MeshVertex {
-                            pos: v.pos,
-                            uv: v.uv,
-                            rgba: v.rgba,
+                        state.cache[slot] = Some(CacheEntry {
+                            vertex: MeshVertex {
+                                pos: v.pos,
+                                uv: v.uv,
+                                rgba: v.rgba,
+                            },
+                            space: state.space,
                         });
                     }
                 }
@@ -294,6 +421,19 @@ fn walk(
                 // heap) are resolved by the RSP at draw time and simply do not
                 // exist in the file; skip them rather than treating them as
                 // offsets.
+                if addr.segment() != 0 {
+                    // Segment 0x0E is the runtime graphics heap, and what lands
+                    // there is the display list `gcDrawMObjForDObj` builds from
+                    // the node's `MObj` -- which is where a fighter's texture
+                    // binding actually comes from. We cannot follow it, but we
+                    // do know it *replaces* the binding, so carrying the
+                    // previous list's texture across is worse than admitting we
+                    // do not know. Samus rendered with another joint's texels
+                    // smeared over her torso until this was added.
+                    state.timg_addr = None;
+                    state.palette_offset = None;
+                    state.texture_enabled = false;
+                }
                 if depth < MAX_DL_DEPTH && addr.segment() == 0 {
                     let at = addr.0 as usize;
                     if at < file.len() {
@@ -386,13 +526,13 @@ fn walk(
 
 fn emit_tri(builder: &mut Builder, state: &State, tri: [u8; 3]) -> Result<(), MeshError> {
     for slot in tri {
-        let v = state
+        let e = state
             .cache
             .get(slot as usize)
             .copied()
             .flatten()
             .ok_or(MeshError::EmptyCacheSlot(slot))?;
-        let idx = builder.push_vertex(v)?;
+        let idx = builder.push_vertex(state.rebase(e))?;
         builder.indices.push(idx);
     }
     Ok(())
@@ -471,6 +611,62 @@ mod tests {
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.vertex_count(), 3);
         assert_eq!(mesh.primitives[0].indices, [0, 1, 2]);
+    }
+
+    #[test]
+    fn a_later_list_draws_from_the_cache_an_earlier_one_filled() {
+        use crate::scene::Mat4;
+
+        // Yoshi's shape, minimally: joint A loads two vertices and draws
+        // nothing with them; joint B loads one more and draws a triangle
+        // spanning both. Standalone that is EmptyCacheSlot(0) -- 144 of the
+        // archive's node lists failed exactly this way.
+        let file = vertex_data(3);
+        let a = [
+            Cmd::Vtx {
+                count: 2,
+                dest_index: 0,
+                addr: SegAddr(0),
+            },
+            Cmd::End,
+        ];
+        let b = [
+            Cmd::Vtx {
+                count: 1,
+                dest_index: 2,
+                addr: SegAddr(2 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+
+        assert_eq!(
+            convert(&b, &file).unwrap_err(),
+            MeshError::EmptyCacheSlot(0)
+        );
+
+        // Joint B sits 100 units along x from joint A.
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::from_trs([100.0, 0.0, 0.0], [0.0; 3], [1.0; 3]),
+            },
+        ];
+        let out = convert_sequence(&items, &file);
+
+        assert_eq!(out[0].as_ref().unwrap().triangle_count(), 0);
+        let mesh = out[1].as_ref().unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+
+        // vertex_data puts vertex i at x = 10i. The two borrowed from joint A
+        // must land 100 units earlier in joint B's space; the one loaded here
+        // must be untouched.
+        let xs: Vec<i16> = mesh.vertices.iter().map(|v| v.pos[0]).collect();
+        assert_eq!(xs, [-100, -90, 20]);
     }
 
     #[test]
