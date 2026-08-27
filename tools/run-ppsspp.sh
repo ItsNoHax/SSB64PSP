@@ -76,6 +76,28 @@ EBOOT="$REPO/psp/target/mipsel-sony-psp/release/EBOOT.PBP"
 mkdir -p "$OUT"
 cp "$EBOOT" "$OUT/"
 
+# Report what is actually being run. `cargo psp` only works from psp/; invoked
+# from the repo root it exits 0 without rebuilding, so a hand-run build can
+# leave a stale EBOOT that the next --no-build run happily screenshots. Two
+# consecutive runs then "prove" a change that was never compiled.
+echo "==> staged EBOOT $(du -h "$EBOOT" | cut -f1) ($(date -r "$EBOOT" '+%H:%M:%S'))"
+
+# Stage the asset pack alongside the EBOOT.
+#
+# This was missing, and the failure was quiet in the worst way: a stale pack
+# from an earlier format version stayed behind, the new EBOOT rejected it on
+# version, and the viewer fell back to the built-in tetrahedron -- which looks
+# exactly like "no assets yet" rather than "you are running last week's data".
+# Copy it every run, and say so, so the screenshot can never silently describe
+# a different build than the one just compiled.
+PACK="$REPO/assets/generated/ssb64.pak"
+if [ -f "$PACK" ]; then
+  cp -f "$PACK" "$OUT/"
+  echo "==> staged pack $(du -h "$PACK" | cut -f1) ($(date -r "$PACK" '+%H:%M:%S'))"
+else
+  echo "==> no asset pack at $PACK; run: cargo run --release -p romtool -- pack <rom>" >&2
+fi
+
 PPSSPP_INI="$HOME/.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
 
 # Only the rasteriser is overridden, through --appendconfig, because

@@ -269,6 +269,31 @@ impl Gpu {
         }
     }
 
+    /// Reads back the current model matrix.
+    ///
+    /// Object drawing needs the camera transform as a *base* to compose each
+    /// node's baked world matrix onto. Storing it here rather than rebuilding
+    /// it keeps one definition of how the camera is placed.
+    pub fn model_matrix(&self) -> sys::ScePspFMatrix4 {
+        let zero = sys::ScePspFVector4 {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+            w: 0.0,
+        };
+        let mut m = sys::ScePspFMatrix4 {
+            x: zero,
+            y: zero,
+            z: zero,
+            w: zero,
+        };
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumStoreMatrix(&mut m);
+        }
+        m
+    }
+
     /// Queues a block of debug text for this frame. Embedded `\n` starts a new
     /// line. Call **once** per frame.
     ///

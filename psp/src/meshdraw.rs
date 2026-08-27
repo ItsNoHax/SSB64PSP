@@ -18,9 +18,12 @@
 
 use core::ffi::c_void;
 
-use psp::sys::{self, ClutPixelFormat, GuPrimitive, GuState, TexturePixelFormat, VertexType};
+use psp::sys::{
+    self, ClutPixelFormat, GuPrimitive, GuState, ScePspFMatrix4, ScePspFVector4,
+    TexturePixelFormat, VertexType,
+};
 
-use ssb_rom::pack::{flags, MeshDesc, Pack, PrimDesc, TextureDesc};
+use ssb_rom::pack::{flags, MeshDesc, NodeDesc, ObjectDesc, Pack, PrimDesc, TextureDesc};
 
 /// What the GE divides 16-bit vertex components by.
 ///
@@ -219,6 +222,95 @@ pub unsafe fn draw_mesh(pack: &Pack<'_>, mesh: &MeshDesc, st: &mut DrawState) ->
 
     st.triangles += tris;
     tris
+}
+
+/// Draws every node of one assembled object.
+///
+/// The per-node world matrix is baked into the pack (`ssb_rom::pack::NodeDesc`),
+/// so this costs one `sceGumLoadMatrix` per node and no matrix maths at all —
+/// the whole point of baking. `base` is the camera/model transform the object
+/// sits under; each node's matrix is composed onto it by the GE.
+///
+/// Returns the number of triangles submitted.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`]: the pack buffer must stay valid and cache-flushed
+/// until the frame is submitted.
+pub unsafe fn draw_object(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+) -> u32 {
+    let mut tris = 0;
+    for i in 0..object.node_count {
+        let Some(node) = pack.node(object.first_node + i) else {
+            continue;
+        };
+        if node.mesh == NodeDesc::NO_MESH {
+            continue; // pure transform: a joint with no geometry
+        }
+        let Some(mesh) = pack.mesh(node.mesh) else {
+            continue;
+        };
+
+        // `world` is already the node's full ancestor-composed transform, so
+        // there is nothing to push or pop -- load base * world and draw.
+        let local = ScePspFMatrix4 {
+            x: ScePspFVector4 { x: node.world[0], y: node.world[1], z: node.world[2], w: node.world[3] },
+            y: ScePspFVector4 { x: node.world[4], y: node.world[5], z: node.world[6], w: node.world[7] },
+            z: ScePspFVector4 { x: node.world[8], y: node.world[9], z: node.world[10], w: node.world[11] },
+            w: ScePspFVector4 { x: node.world[12], y: node.world[13], z: node.world[14], w: node.world[15] },
+        };
+        sys::sceGumMatrixMode(sys::MatrixMode::Model);
+        sys::sceGumLoadMatrix(base);
+        sys::sceGumMultMatrix(&local);
+
+        tris += draw_mesh(pack, &mesh, st);
+    }
+    tris
+}
+
+/// Bounding box of a whole object, in the pack's normalised units.
+///
+/// Node transforms place geometry that is itself in `i16` units divided by
+/// [`VERTEX_16BIT_DIVISOR`], so this works in that same normalised space and
+/// the caller scales once. Only the translation is applied — a rotated bound
+/// would need the full eight corners, and the extra tightness does not change
+/// how the camera frames anything.
+pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], [f32; 3])> {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    let mut any = false;
+
+    for i in 0..object.node_count {
+        let Some(node) = pack.node(object.first_node + i) else {
+            continue;
+        };
+        if node.mesh == NodeDesc::NO_MESH {
+            continue;
+        }
+        let Some(mesh) = pack.mesh(node.mesh) else {
+            continue;
+        };
+        let Some((lo, hi)) = bounds(pack, &mesh) else {
+            continue;
+        };
+        any = true;
+        for axis in 0..3 {
+            let t = node.world[12 + axis];
+            let a = lo[axis] / VERTEX_16BIT_DIVISOR + t;
+            let b = hi[axis] / VERTEX_16BIT_DIVISOR + t;
+            if a < min[axis] {
+                min[axis] = a;
+            }
+            if b > max[axis] {
+                max[axis] = b;
+            }
+        }
+    }
+    any.then_some((min, max))
 }
 
 /// Draws a texture on a screen-filling quad with known UVs.

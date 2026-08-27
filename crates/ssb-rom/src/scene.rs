@@ -165,7 +165,8 @@ impl DObjDesc {
         for (v, dst) in vecs.iter_mut().enumerate() {
             for (c, out) in dst.iter_mut().enumerate() {
                 let f = f32::from_bits(word(2 + v * 3 + c));
-                if f != 0.0 && !(f.is_finite() && (MIN_COMPONENT..=MAX_COMPONENT).contains(&f.abs()))
+                if f != 0.0
+                    && !(f.is_finite() && (MIN_COMPONENT..=MAX_COMPONENT).contains(&f.abs()))
                 {
                     return None;
                 }
@@ -344,6 +345,88 @@ fn sin_cos(x: f32) -> (f32, f32) {
     }
 }
 
+/// Size of one `DObjDLLink`: `s32 list_id`, `Gfx *dl`.
+pub const DL_LINK_SIZE: usize = 8;
+
+/// `ARRAY_COUNT(gSYTaskmanDLHeads)`. Doubles as the `DObjDLLink` terminator,
+/// exactly as [`DOBJ_ARRAY_MAX`] does for `DObjDesc`:
+///
+/// ```c
+/// while ((++dl_link)->list_id != ARRAY_COUNT(gSYTaskmanDLHeads))
+/// ```
+pub const DL_HEAD_COUNT: u32 = 4;
+
+/// One entry of a `DObjDLLink` array: which task display-list head to append
+/// to, and what to append.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DlLink {
+    pub list_id: u32,
+    /// File-relative offset of the display list, or `None` to skip.
+    pub dl: Option<u32>,
+}
+
+/// Parses a `DObjDLLink` array, if one starts at `at`.
+///
+/// Returns `None` when the bytes are not a link array — in particular when they
+/// are a display list, which is the other thing a node's `dl` field can be.
+pub fn parse_dl_links(data: &[u8], intern_slots: &BTreeSet<u32>, at: u32) -> Option<Vec<DlLink>> {
+    let mut out = Vec::new();
+    let mut off = at as usize;
+
+    loop {
+        let raw = data.get(off..off + DL_LINK_SIZE)?;
+        let list_id = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
+        if list_id == DL_HEAD_COUNT {
+            // Terminator. A zero-entry array is not a link array, just two
+            // words that happen to read as one.
+            return (!out.is_empty()).then_some(out);
+        }
+        if list_id >= DL_HEAD_COUNT {
+            return None;
+        }
+
+        let dl_raw = u32::from_be_bytes([raw[4], raw[5], raw[6], raw[7]]);
+        // Same discriminator as `DObjDesc::dl`, and it is what keeps a real
+        // display list from being misread as a link array: a `Gfx` command word
+        // small enough to pass as a `list_id` would have to be followed by a
+        // word the archive relocated, and `G_VTX`'s own high byte is 0x01 with
+        // 24 bits of payload below it, far above 4.
+        let dl = match dl_raw {
+            0 => None,
+            _ if intern_slots.contains(&(off as u32 + 4)) => Some(dl_raw),
+            _ => return None,
+        };
+        out.push(DlLink { list_id, dl });
+
+        off += DL_LINK_SIZE;
+        // Real arrays are tiny: 564 of the 589 in the decomp hold a single
+        // entry plus the terminator, and the largest holds 64.
+        if out.len() > 128 {
+            return None;
+        }
+    }
+}
+
+/// Resolves a node's `dl` field to the display lists it actually draws.
+///
+/// `DObj`'s display-list field is a union — `Gfx*`, `Gfx**`, `DObjDLLink*`,
+/// `DObjDistDL*` and more — and **nothing in the data says which**. The
+/// discriminator is the `proc_display` callback the GObj was registered with,
+/// which lives in game code, not in the archive.
+///
+/// So this disambiguates structurally. `DObjDLLink` is much the more
+/// constrained shape (a small `list_id`, then a relocated pointer, terminated
+/// by `list_id == 4`), so trying it first and falling back to "the field is a
+/// `Gfx*`" resolves the two cases that between them cover the stage and model
+/// files. The remaining union members are not handled yet.
+pub fn resolve_node_lists(file: &File, node_dl: u32) -> Vec<u32> {
+    let intern_slots: BTreeSet<u32> = file.intern_relocs.iter().map(|r| r.at).collect();
+    match parse_dl_links(&file.data, &intern_slots, node_dl) {
+        Some(links) => links.iter().filter_map(|l| l.dl).collect(),
+        None => alloc::vec![node_dl],
+    }
+}
+
 /// Recovers every `DObjDesc` array in a loaded file.
 ///
 /// Results are ordered by file offset and never overlap.
@@ -427,7 +510,10 @@ fn resolve(descs: Vec<DObjDesc>, offset: u32) -> Option<SceneGraph> {
             Some(slots[depth - 1]?)
         };
         slots[depth] = Some(i);
-        nodes.push(DObjNode { desc: *desc, parent });
+        nodes.push(DObjNode {
+            desc: *desc,
+            parent,
+        });
     }
 
     Some(SceneGraph { offset, nodes })
@@ -475,7 +561,10 @@ mod tests {
         data.extend(emit(0x4002, 0x2110, [0.0; 3], [0.0; 3], [1.0, 1.0, 1.0]));
         data.extend(terminator());
         // `dl` sits at +4 within each entry.
-        let slots = vec![64 + DOBJ_DESC_SIZE as u32 + 4, 64 + 2 * DOBJ_DESC_SIZE as u32 + 4];
+        let slots = vec![
+            64 + DOBJ_DESC_SIZE as u32 + 4,
+            64 + 2 * DOBJ_DESC_SIZE as u32 + 4,
+        ];
         (data, slots)
     }
 
@@ -579,18 +668,83 @@ mod tests {
         assert_eq!(graphs[1].offset, graphs[0].end_offset());
     }
 
+    /// Serialises a `DObjDLLink` entry.
+    fn link(list_id: u32, dl: u32) -> Vec<u8> {
+        let mut out = list_id.to_be_bytes().to_vec();
+        out.extend_from_slice(&dl.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn resolves_a_dobjdllink_array_to_its_display_lists() {
+        // The exact shape of dStageSectorFile2_gap_0x3EE0_sub_0x558:
+        //   { 0, DL_0x3EE0 }, { 4, NULL }
+        let mut data = alloc::vec![0u8; 32];
+        data.extend(link(0, 0x3EE0));
+        data.extend(link(DL_HEAD_COUNT, 0));
+        let file = file_with(data, &[36]); // the `dl` word at 32 + 4
+
+        assert_eq!(resolve_node_lists(&file, 32), [0x3EE0]);
+    }
+
+    #[test]
+    fn a_link_entry_with_a_null_list_is_skipped_not_terminating() {
+        // `if (dl_link->dl != NULL)` skips the entry; only list_id == 4 ends
+        // the walk. Reading NULL as a terminator would silently drop the
+        // entries after it.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend(link(0, 0));
+        data.extend(link(1, 0xAA0));
+        data.extend(link(DL_HEAD_COUNT, 0));
+        let file = file_with(data, &[16 + 8 + 4]);
+
+        assert_eq!(resolve_node_lists(&file, 16), [0xAA0]);
+    }
+
+    #[test]
+    fn a_display_list_is_not_mistaken_for_a_link_array() {
+        // A node's `dl` may point straight at a Gfx list, and that must fall
+        // through to "use this offset". G_VTX's command word is 0x01xxxxxx,
+        // far above a valid list_id, so it cannot pass as one.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend_from_slice(&0x0100_1010u32.to_be_bytes());
+        data.extend_from_slice(&0x0000_0040u32.to_be_bytes());
+        data.extend_from_slice(&0xDF00_0000u32.to_be_bytes()); // G_ENDDL
+        data.extend_from_slice(&0u32.to_be_bytes());
+        let file = file_with(data, &[20]);
+
+        assert_eq!(resolve_node_lists(&file, 16), [16]);
+    }
+
+    #[test]
+    fn an_unrelocated_link_pointer_is_rejected() {
+        // Same bytes, no intern reloc backing the `dl` word: this is what stops
+        // arbitrary `{small int, plausible offset}` pairs reading as links.
+        let mut data = alloc::vec![0u8; 16];
+        data.extend(link(0, 0x3EE0));
+        data.extend(link(DL_HEAD_COUNT, 0));
+
+        assert_eq!(
+            resolve_node_lists(&file_with(data.clone(), &[20]), 16),
+            [0x3EE0]
+        );
+        assert_eq!(resolve_node_lists(&file_with(data, &[]), 16), [16]);
+    }
+
     #[test]
     fn transform_kind_follows_the_runtime_priority_order() {
         // `gcSetupCommonDObjs` tests 0x8000 before 0x4000 before 0x2000, so a
         // hypothetical combination resolves to the highest bit.
-        let k = |id| DObjDesc {
-            id,
-            dl: None,
-            translate: [0.0; 3],
-            rotate: [0.0; 3],
-            scale: [1.0; 3],
-        }
-        .transform_kind();
+        let k = |id| {
+            DObjDesc {
+                id,
+                dl: None,
+                translate: [0.0; 3],
+                rotate: [0.0; 3],
+                scale: [1.0; 3],
+            }
+            .transform_kind()
+        };
         assert_eq!(k(0x0001), TransformKind::TraRotSca);
         assert_eq!(k(0x8001), TransformKind::RecalcRotRpyRSca);
         assert_eq!(k(0x4001), TransformKind::Kind46);

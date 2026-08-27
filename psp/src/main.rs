@@ -32,7 +32,7 @@ use ssb_engine::renderer::Color;
 use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 
 
-use ssb_rom::pack::Pack;
+use ssb_rom::pack::{Pack, PackError};
 
 use gu::{Gpu, GuVertex};
 use input::PspInput;
@@ -85,7 +85,22 @@ unsafe fn run() -> ! {
         Ok((b, p)) => (Some(b), *p),
         Err(e) => (None, e.as_str()),
     };
-    let pack = pack_buf.and_then(|b| Pack::open(b.as_slice()).ok());
+    // A pack that loads from disk but fails to *parse* is a different problem
+    // from having no pack, and discarding the error made the two look
+    // identical: a stale pack from an older format version silently showed the
+    // fallback tetrahedron, exactly like a first run with no assets.
+    let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    let pack = match &opened {
+        Some(Ok(p)) => Some(p),
+        _ => None,
+    };
+    let pack_status: &str = match &opened {
+        Some(Ok(_)) | None => pack_path,
+        Some(Err(PackError::BadVersion(_))) => "REJECTED: stale pack, re-run romtool pack",
+        Some(Err(PackError::BadMagic(_))) => "REJECTED: not a pack file",
+        Some(Err(PackError::TooSmall)) => "REJECTED: truncated",
+        Some(Err(PackError::OutOfBounds)) => "REJECTED: descriptor out of bounds",
+    };
     let mesh_count = pack.as_ref().map_or(0, |p| p.mesh_count());
 
     // Which mesh is on screen, and how far back the camera sits.
@@ -133,6 +148,36 @@ unsafe fn run() -> ! {
     let mut tex_index: u32 = 0;
     let tex_count = pack.as_ref().map_or(0, |p| p.texture_count());
 
+    // Object view: a whole DObjDesc hierarchy assembled from its baked node
+    // transforms, rather than one mesh floating at the origin. This is the
+    // default because it is the only mode that shows geometry where the game
+    // actually puts it. C_DOWN falls back to single-mesh browsing.
+    let object_count = pack.as_ref().map_or(0, |p| p.object_count());
+    let mut object_view = object_count > 0;
+    // Start on the object with the most *geometry*, not the most nodes. Ranking
+    // by node count picked a 51-node skybox whose panels are two triangles
+    // each -- lots of hierarchy, almost nothing to look at.
+    let mut object_index: u32 = pack
+        .as_ref()
+        .map(|p| {
+            let mut best = (0u32, 0u32);
+            for i in 0..p.object_count() {
+                let Some(o) = p.object(i) else { continue };
+                let tris: u32 = (0..o.node_count)
+                    .filter_map(|k| p.node(o.first_node + k))
+                    .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                    .filter_map(|n| p.mesh(n.mesh))
+                    .flat_map(|m| (0..m.prim_count).filter_map(move |k| p.prim(m.first_prim + k)))
+                    .map(|pr| pr.index_count / 3)
+                    .sum();
+                if tris > best.1 {
+                    best = (i, tris);
+                }
+            }
+            best.0
+        })
+        .unwrap_or(0);
+
     let mut sim = FixedClock::new(clock.now_us());
 
     let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
@@ -155,7 +200,23 @@ unsafe fn run() -> ! {
             // D-pad steps through the pack; held Z zooms out, A zooms in.
             let prev = pad.previous(0).buttons;
             let pressed = ssb_engine::input::newly_pressed(prev, state.buttons);
-            if mesh_count > 0 {
+            if pressed.contains(N64Buttons::C_DOWN) && object_count > 0 {
+                object_view = !object_view;
+            }
+            if object_view && object_count > 0 {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    object_index = (object_index + 1) % object_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    object_index = (object_index + object_count - 1) % object_count;
+                }
+                if pressed.contains(N64Buttons::D_UP) {
+                    object_index = (object_index + 10) % object_count;
+                }
+                if pressed.contains(N64Buttons::D_DOWN) {
+                    object_index = (object_index + object_count - 10) % object_count;
+                }
+            } else if mesh_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     mesh_index = (mesh_index + 1) % mesh_count;
                 }
@@ -213,6 +274,53 @@ unsafe fn run() -> ! {
                 // Flat orthographic-ish view of one texture.
                 gpu.model_transform([0.0, 0.0, -2.2], [0.0, 0.0, 0.0], 1.0);
                 meshdraw::draw_texture_quad(p, tex_index, &mut TEX_QUAD.0);
+            }
+            Some(p) if object_view => {
+                if let Some(obj) = p.object(object_index) {
+                    // Frame the whole hierarchy, not one node: an object's
+                    // nodes are spread over the stage, so bounding only the
+                    // first would put the camera inside the scene.
+                    let (centre, radius) = match meshdraw::object_bounds(p, &obj) {
+                        Some((min, max)) => {
+                            let c = [
+                                (min[0] + max[0]) * 0.5,
+                                (min[1] + max[1]) * 0.5,
+                                (min[2] + max[2]) * 0.5,
+                            ];
+                            let e = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+                            // object_bounds works in normalised units; the
+                            // camera works in game units, like the mesh path.
+                            let s = meshdraw::MODEL_SCALE;
+                            (
+                                [c[0] * s, c[1] * s, c[2] * s],
+                                (e[0].max(e[1]).max(e[2]) * s).max(1.0),
+                            )
+                        }
+                        None => ([0.0; 3], 100.0),
+                    };
+                    // Fit the extent to the 60-degree vertical FOV:
+                    // d = size / (2 tan 30) ~= 0.87 * size. The mesh path's
+                    // 2x-extent rule leaves an object filling a ninth of the
+                    // frame, which for a stage whose parts are spread over
+                    // 33000 units means specks.
+                    const FIT: f32 = 0.87;
+                    let dist = radius * FIT * cam_distance / 200.0;
+                    dbg_radius = radius;
+                    dbg_cam = centre[2] + dist;
+
+                    gpu.model_transform(
+                        [-centre[0], -centre[1], -centre[2] - dist],
+                        [0.0, spin, 0.0],
+                        meshdraw::MODEL_SCALE,
+                    );
+                    let base = gpu.model_matrix();
+                    let tris = meshdraw::draw_object(p, &obj, &base, &mut draw_state);
+                    let placed = (0..obj.node_count)
+                        .filter_map(|k| p.node(obj.first_node + k))
+                        .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                        .count() as u32;
+                    shown = (tris, obj.node_count, placed);
+                }
             }
             Some(p) => {
                 if let Some(desc) = p.mesh(mesh_index) {
@@ -272,11 +380,11 @@ unsafe fn run() -> ! {
             8,
             WHITE,
             format_args!(
-                "SSB64-PSP  M3 mesh viewer\n\
+                "SSB64-PSP  M4 scene viewer\n\
                  pack: {}\n\
                  \n\
-                 mesh {}/{}  file {}  @0x{:X}\n\
-                 tris {}  verts {}  prims {}\n\
+                 {} {}/{}  file {}  @0x{:X}\n\
+                 tris {}  {} {}  {} {}\n\
                  draws {}  state changes {}\n\
                  \n\
                  cpu {}us / budget {}us\n\
@@ -286,18 +394,29 @@ unsafe fn run() -> ! {
                  TEXVIEW {}  tex {}/{}\n\
                  cam {} r {}\n\
                  \n\
-                 dpad: browse   A/Z: zoom   nub: spin",
-                pack_path,
-                mesh_index,
-                mesh_count,
+                 dpad: browse  C-dn: obj/mesh  A/Z: zoom",
+                pack_status,
+                if object_view { "obj " } else { "mesh" },
+                if object_view { object_index } else { mesh_index },
+                if object_view { object_count } else { mesh_count },
                 pack.as_ref()
-                    .and_then(|p| p.mesh(mesh_index))
-                    .map_or(0, |m| m.source_file),
+                    .and_then(|p| if object_view {
+                        p.object(object_index).map(|o| o.source_file)
+                    } else {
+                        p.mesh(mesh_index).map(|m| m.source_file)
+                    })
+                    .unwrap_or(0),
                 pack.as_ref()
-                    .and_then(|p| p.mesh(mesh_index))
-                    .map_or(0, |m| m.source_offset),
+                    .and_then(|p| if object_view {
+                        p.object(object_index).map(|o| o.source_offset)
+                    } else {
+                        p.mesh(mesh_index).map(|m| m.source_offset)
+                    })
+                    .unwrap_or(0),
                 shown.0,
+                if object_view { "nodes" } else { "verts" },
                 shown.1,
+                if object_view { "placed" } else { "prims" },
                 shown.2,
                 draw_state.draws,
                 draw_state.state_changes,

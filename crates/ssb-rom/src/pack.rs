@@ -24,6 +24,8 @@
 //! MeshDesc[mesh_count]
 //! PrimDesc[prim_count]
 //! TextureDesc[texture_count]
+//! ObjectDesc[object_count]
+//! NodeDesc[node_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data
 //! ```
@@ -37,7 +39,9 @@ use alloc::vec::Vec;
 pub const MAGIC: u32 = 0x5342_5350;
 
 /// Bumped whenever the layout changes incompatibly.
-pub const VERSION: u32 = 1;
+///
+/// 2 added the object and node tables.
+pub const VERSION: u32 = 2;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -61,7 +65,9 @@ pub struct Header {
     /// Byte offset of the blob region.
     pub blob_offset: u32,
     pub blob_len: u32,
-    pub _pad: [u32; 9],
+    pub object_count: u32,
+    pub node_count: u32,
+    pub _pad: [u32; 7],
 }
 
 impl Header {
@@ -171,6 +177,61 @@ impl TextureDesc {
     pub const SIZE: usize = 24;
 }
 
+/// An assembled object: a run of nodes forming one `DObjDesc` hierarchy.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectDesc {
+    /// Index of the first node in the node table.
+    pub first_node: u32,
+    pub node_count: u32,
+    /// Which archive file this came from, for debugging.
+    pub source_file: u32,
+    /// Byte offset of the source `DObjDesc` array, for debugging.
+    pub source_offset: u32,
+}
+
+impl ObjectDesc {
+    pub const SIZE: usize = 16;
+}
+
+/// One node of an object: an optional mesh under a baked world transform.
+///
+/// The matrix is **baked at build time**, not composed on device. A static
+/// stage then costs one `sceGumLoadMatrix` per node and no trigonometry at all,
+/// which matters because the PSP has no fast `sin`/`cos` outside the VFPU.
+/// Animation will need the local TRS back, but only for the nodes that actually
+/// move, so paying 64 bytes a node for every joint now would be premature.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NodeDesc {
+    /// Index into the mesh table, or [`NodeDesc::NO_MESH`]. Just over half the
+    /// nodes in the archive are pure transforms with no geometry of their own.
+    pub mesh: u32,
+    /// Index into the node table, or [`NodeDesc::NO_PARENT`] for a root.
+    /// Absolute, not object-relative, so it can be followed without the object.
+    pub parent: u32,
+    /// Column-major world matrix, laid out for `sceGumLoadMatrix`.
+    ///
+    /// The translation column is pre-divided by [`MODEL_SCALE`] so it lives in
+    /// the same normalised space as the `i16` vertex positions the GE reads.
+    pub world: [f32; 16],
+}
+
+impl NodeDesc {
+    /// `4 + 4 + 64`.
+    pub const SIZE: usize = 72;
+    pub const NO_MESH: u32 = u32::MAX;
+    pub const NO_PARENT: u32 = u32::MAX;
+}
+
+/// Divisor the GE applies to `GU_VERTEX_16BIT` positions.
+///
+/// Vertex positions arrive as `i16` and the hardware normalises them by 32768
+/// (RE-020). A node's translation is in raw N64 world units — up to 23364 —
+/// so it has to be divided by the same factor or the hierarchy would be
+/// assembled 32768x too large relative to the geometry inside it.
+pub const MODEL_SCALE: f32 = 32768.0;
+
 /// Direction the baked key light comes from, normalised.
 ///
 /// Smash's real lighting comes from per-material `MObj` light colours, which
@@ -248,6 +309,8 @@ pub struct PackWriter {
     meshes: Vec<MeshDesc>,
     prims: Vec<PrimDesc>,
     textures: Vec<TextureDesc>,
+    objects: Vec<ObjectDesc>,
+    nodes: Vec<NodeDesc>,
     blob: Vec<u8>,
 }
 
@@ -395,11 +458,65 @@ impl PackWriter {
         (self.meshes.len() - 1) as u32
     }
 
+    /// Adds a scene graph, returning the object's index.
+    ///
+    /// `mesh_for` maps a node's display-list offset to a mesh index already
+    /// added via [`PackWriter::add_mesh`]; nodes whose display list did not
+    /// convert (or which have none) become pure transforms.
+    pub fn add_object(
+        &mut self,
+        graph: &crate::scene::SceneGraph,
+        source_file: u32,
+        mesh_for: impl Fn(u32) -> Option<u32>,
+    ) -> u32 {
+        let first_node = self.nodes.len() as u32;
+
+        for (i, node) in graph.nodes.iter().enumerate() {
+            // `world_transforms` is O(n) over the whole graph, so hoisting it
+            // out of the loop matters for the 33-node fighter hierarchies.
+            let mesh = node
+                .desc
+                .dl
+                .and_then(&mesh_for)
+                .unwrap_or(NodeDesc::NO_MESH);
+            let parent = match node.parent {
+                Some(p) => first_node + p as u32,
+                None => NodeDesc::NO_PARENT,
+            };
+            self.nodes.push(NodeDesc {
+                mesh,
+                parent,
+                world: [0.0; 16],
+            });
+            debug_assert_eq!(self.nodes.len() - 1, first_node as usize + i);
+        }
+
+        for (i, m) in graph.world_transforms().into_iter().enumerate() {
+            let mut world = m.0;
+            // Bring the translation into the same normalised space as the
+            // `i16` vertex positions; see `MODEL_SCALE`.
+            world[12] /= MODEL_SCALE;
+            world[13] /= MODEL_SCALE;
+            world[14] /= MODEL_SCALE;
+            self.nodes[first_node as usize + i].world = world;
+        }
+
+        self.objects.push(ObjectDesc {
+            first_node,
+            node_count: graph.nodes.len() as u32,
+            source_file,
+            source_offset: graph.offset,
+        });
+        (self.objects.len() - 1) as u32
+    }
+
     /// Serialises the pack.
     pub fn finish(self) -> Vec<u8> {
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
-            + self.textures.len() * TextureDesc::SIZE;
+            + self.textures.len() * TextureDesc::SIZE
+            + self.objects.len() * ObjectDesc::SIZE
+            + self.nodes.len() * NodeDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
@@ -412,6 +529,8 @@ impl PackWriter {
         out.extend_from_slice(&(self.textures.len() as u32).to_le_bytes());
         out.extend_from_slice(&(blob_offset as u32).to_le_bytes());
         out.extend_from_slice(&(self.blob.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.objects.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -448,6 +567,18 @@ impl PackWriter {
             out.extend_from_slice(&t.data_len.to_le_bytes());
             out.extend_from_slice(&t.palette_offset.to_le_bytes());
             out.extend_from_slice(&t.palette_len.to_le_bytes());
+        }
+        for o in &self.objects {
+            for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for n in &self.nodes {
+            out.extend_from_slice(&n.mesh.to_le_bytes());
+            out.extend_from_slice(&n.parent.to_le_bytes());
+            for f in n.world {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
         }
 
         out.resize(blob_offset, 0);
@@ -489,6 +620,8 @@ pub struct Pack<'a> {
     mesh_count: u32,
     prim_count: u32,
     texture_count: u32,
+    object_count: u32,
+    node_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -498,6 +631,9 @@ fn u32_at(d: &[u8], at: usize) -> u32 {
 }
 fn u16_at(d: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([d[at], d[at + 1]])
+}
+fn f32_at(d: &[u8], at: usize) -> f32 {
+    f32::from_bits(u32_at(d, at))
 }
 
 impl<'a> Pack<'a> {
@@ -520,11 +656,15 @@ impl<'a> Pack<'a> {
         let texture_count = u32_at(data, 16);
         let blob_offset = u32_at(data, 20) as usize;
         let blob_len = u32_at(data, 24) as usize;
+        let object_count = u32_at(data, 28);
+        let node_count = u32_at(data, 32);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
             + prim_count as usize * PrimDesc::SIZE
-            + texture_count as usize * TextureDesc::SIZE;
+            + texture_count as usize * TextureDesc::SIZE
+            + object_count as usize * ObjectDesc::SIZE
+            + node_count as usize * NodeDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -535,6 +675,8 @@ impl<'a> Pack<'a> {
             mesh_count,
             prim_count,
             texture_count,
+            object_count,
+            node_count,
             blob_offset,
             blob_len,
         })
@@ -546,6 +688,12 @@ impl<'a> Pack<'a> {
     pub fn texture_count(&self) -> u32 {
         self.texture_count
     }
+    pub fn object_count(&self) -> u32 {
+        self.object_count
+    }
+    pub fn node_count(&self) -> u32 {
+        self.node_count
+    }
 
     fn mesh_table(&self) -> usize {
         Header::SIZE
@@ -555,6 +703,41 @@ impl<'a> Pack<'a> {
     }
     fn texture_table(&self) -> usize {
         self.prim_table() + self.prim_count as usize * PrimDesc::SIZE
+    }
+    fn object_table(&self) -> usize {
+        self.texture_table() + self.texture_count as usize * TextureDesc::SIZE
+    }
+    fn node_table(&self) -> usize {
+        self.object_table() + self.object_count as usize * ObjectDesc::SIZE
+    }
+
+    pub fn object(&self, i: u32) -> Option<ObjectDesc> {
+        if i >= self.object_count {
+            return None;
+        }
+        let at = self.object_table() + i as usize * ObjectDesc::SIZE;
+        Some(ObjectDesc {
+            first_node: u32_at(self.data, at),
+            node_count: u32_at(self.data, at + 4),
+            source_file: u32_at(self.data, at + 8),
+            source_offset: u32_at(self.data, at + 12),
+        })
+    }
+
+    pub fn node(&self, i: u32) -> Option<NodeDesc> {
+        if i >= self.node_count {
+            return None;
+        }
+        let at = self.node_table() + i as usize * NodeDesc::SIZE;
+        let mut world = [0f32; 16];
+        for (k, w) in world.iter_mut().enumerate() {
+            *w = f32_at(self.data, at + 8 + k * 4);
+        }
+        Some(NodeDesc {
+            mesh: u32_at(self.data, at),
+            parent: u32_at(self.data, at + 4),
+            world,
+        })
     }
 
     pub fn mesh(&self, i: u32) -> Option<MeshDesc> {
@@ -801,11 +984,13 @@ mod tests {
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
 
-        // The blob must start exactly after the three tables.
+        // The blob must start exactly after all five tables.
         let expected_tables = Header::SIZE
             + pack.mesh_count as usize * MeshDesc::SIZE
             + pack.prim_count as usize * PrimDesc::SIZE
-            + pack.texture_count as usize * TextureDesc::SIZE;
+            + pack.texture_count as usize * TextureDesc::SIZE
+            + pack.object_count as usize * ObjectDesc::SIZE
+            + pack.node_count as usize * NodeDesc::SIZE;
         assert!(
             pack.blob_offset >= expected_tables,
             "blob overlaps the descriptor tables: {} < {}",
@@ -824,6 +1009,79 @@ mod tests {
                 n as u8,
                 "texture {n} points at the wrong bytes"
             );
+        }
+    }
+
+    /// Builds a graph of `n` nodes: a root plus a descending chain, each node
+    /// translated 100 units along +x and carrying display list `0x100 * i`.
+    fn chain_graph(n: usize) -> crate::scene::SceneGraph {
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let nodes = (0..n)
+            .map(|i| DObjNode {
+                desc: DObjDesc {
+                    id: i as u32,
+                    dl: Some(0x100 * i as u32),
+                    translate: [100.0, 0.0, 0.0],
+                    rotate: [0.0; 3],
+                    scale: [1.0; 3],
+                },
+                parent: i.checked_sub(1),
+            })
+            .collect();
+        SceneGraph {
+            offset: 0x2000,
+            nodes,
+        }
+    }
+
+    #[test]
+    fn objects_and_nodes_round_trip() {
+        let mut w = PackWriter::new();
+        // Two objects, so a wrong ObjectDesc::SIZE shows up as a misread second
+        // entry rather than passing by luck -- the trap that made every texture
+        // after the first read from the wrong offset.
+        w.add_object(&chain_graph(3), 11, |dl| Some(dl / 0x100));
+        w.add_object(&chain_graph(2), 22, |_| None);
+
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.object_count(), 2);
+        assert_eq!(pack.node_count(), 5);
+
+        let a = pack.object(0).unwrap();
+        let b = pack.object(1).unwrap();
+        assert_eq!((a.first_node, a.node_count, a.source_file), (0, 3, 11));
+        assert_eq!((b.first_node, b.node_count, b.source_file), (3, 2, 22));
+        assert_eq!(a.source_offset, 0x2000);
+
+        // Parent indices are absolute, so object 1's root must still be a root
+        // and its child must point at node 3, not node 0.
+        assert_eq!(pack.node(0).unwrap().parent, NodeDesc::NO_PARENT);
+        assert_eq!(pack.node(1).unwrap().parent, 0);
+        assert_eq!(pack.node(2).unwrap().parent, 1);
+        assert_eq!(pack.node(3).unwrap().parent, NodeDesc::NO_PARENT);
+        assert_eq!(pack.node(4).unwrap().parent, 3);
+
+        // Nodes without a resolvable display list become pure transforms.
+        assert_eq!(pack.node(2).unwrap().mesh, 2);
+        assert_eq!(pack.node(4).unwrap().mesh, NodeDesc::NO_MESH);
+    }
+
+    #[test]
+    fn node_transforms_accumulate_and_are_scaled_into_vertex_space() {
+        let mut w = PackWriter::new();
+        w.add_object(&chain_graph(3), 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        // Each link adds 100 world units, and the translation column is divided
+        // by MODEL_SCALE so it matches the i16 vertex positions the GE
+        // normalises by the same factor (RE-020). Without this the hierarchy
+        // would assemble 32768x too large relative to its own geometry.
+        for (i, expect) in [100.0f32, 200.0, 300.0].into_iter().enumerate() {
+            let n = pack.node(i as u32).unwrap();
+            let got = n.world[12] * MODEL_SCALE;
+            assert!((got - expect).abs() < 1e-2, "node {i}: {got} != {expect}");
         }
     }
 

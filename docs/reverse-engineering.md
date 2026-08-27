@@ -706,6 +706,61 @@ reference is a suspect too.
 
 ---
 
+## RE-025 — A `DObj`'s display-list field is an undiscriminated union
+
+**Question.** With scene graphs recovered (RE-023), only **3 of 22** of Sector
+Z's node display lists converted. The rest failed with `EmptyCacheSlot(76)` —
+and slot 76 is beyond the 32-entry vertex cache, so those bytes were not a
+display list at all.
+
+**Cause.** `DObj`'s display-list field is a union:
+
+```c
+union { void *dv; Gfx *dl; Gfx **dls; DObjMultiList *multi_list;
+        DObjDLLink *dl_link; DObjDistDL *dist_dl; ... };
+```
+
+**Nothing in the data says which member is live.** The discriminator is the
+`proc_display` callback the `GObj` was registered with — `gcDrawDObjTree` reads
+it as `Gfx*`, `gcDrawDObjDLLinks` reads it as `DObjDLLink*` — and that lives in
+game code, not in the archive.
+
+Sector Z's nodes point at `DObjDLLink` arrays, confirmed against the decomp:
+
+```c
+DObjDLLink dStageSectorFile2_gap_0x3EE0_sub_0x558[2] = {
+    { 0, dStageSectorFile2_DL_0x3EE0 },
+    { 4, NULL },
+};
+```
+
+The terminator is `list_id == ARRAY_COUNT(gSYTaskmanDLHeads)`, i.e. 4 — the
+same "out-of-range index terminates" idiom as `DObjDesc`:
+
+```c
+while ((++dl_link)->list_id != ARRAY_COUNT(gSYTaskmanDLHeads))
+```
+
+**Resolution.** Disambiguate structurally. `DObjDLLink` is much the more
+constrained shape — a `list_id` under 4, then a **relocated** pointer — so try
+it first and fall back to "the field is a `Gfx*`". A real display list cannot
+pass as a link array: `G_VTX`'s command word is `0x01xxxxxx`, far above 4.
+
+Measured over all 2132 files: 1661 node fields resolve to 1661 lists, of which
+**1417 convert with triangles**, 32 convert empty, and 212 fail (mostly
+segmented or cross-file vertex pointers).
+
+**Also found here:** feeding those authoritative offsets back through
+`find_display_lists_at` — which re-applies the *discovery* heuristics — placed
+only 742 of 1661. Decoding them directly places 1417. Once the game itself has
+told you where a list starts, a heuristic can only lose information.
+
+**Confidence: certain** for `DObjDLLink`. The other union members
+(`Gfx**`, `DObjMultiList`, `DObjDistDL`) are not handled and account for part
+of the remaining 264.
+
+---
+
 ## RE-024 — The shipped light colours really are neutral
 
 **Question.** RE-021 substituted a single neutral key light for
