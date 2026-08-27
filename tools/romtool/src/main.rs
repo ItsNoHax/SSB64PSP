@@ -68,7 +68,7 @@ USAGE:
     romtool scene    <rom.z64> [--file <id>] [--list] [--nodes] [--why]
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
-    romtool stages   <rom.z64> [--file <id>]
+    romtool stages   <rom.z64> [--file <id>] [--lines]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
@@ -1226,10 +1226,12 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
 /// object. See `ssb_rom::stage`.
 fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
+    let mut verbose = false;
     let mut it = opts.iter();
     while let Some(o) = it.next() {
         match *o {
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            "--lines" => verbose = true,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -1240,6 +1242,8 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
 
     let mut layers = 0usize;
     let mut with_table = 0usize;
+    let mut collision_ok = 0usize;
+    let mut collision_bad = 0usize;
     for s in &loaded.stages {
         if only_file.is_some_and(|f| f != s.file) {
             continue;
@@ -1276,7 +1280,49 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
             );
         }
         if let Some((f, at)) = s.map_geometry {
-            println!("  collision  file {f} @ 0x{at:X}  (not decoded)");
+            let decoded = loaded
+                .files
+                .get(f as usize)
+                .and_then(Option::as_ref)
+                .and_then(|cf| ssb_rom::collision::read(cf, at));
+            match decoded {
+                Some(map) => {
+                    let n = |k| map.lines_of(k).count();
+                    use ssb_rom::collision::LineKind::*;
+                    println!(
+                        "  collision  file {f} @ 0x{at:X}  {} lines (floor {}, ceiling {}, walls {}), {} map objects",
+                        map.lines.len(), n(Floor), n(Ceiling), n(RightWall) + n(LeftWall),
+                        map.map_objects.len()
+                    );
+                    if verbose {
+                        for l in &map.lines {
+                            let pts: Vec<String> = l
+                                .points
+                                .iter()
+                                .map(|p| format!("({},{})", p.pos[0], p.pos[1]))
+                                .collect();
+                            println!(
+                                "    line {:3} {:?} yak {}  {}",
+                                l.id,
+                                l.kind,
+                                l.yakumono,
+                                pts.join(" ")
+                            );
+                        }
+                        for o in &map.map_objects {
+                            println!(
+                                "    object kind {:2} at ({},{})",
+                                o.kind, o.pos[0], o.pos[1]
+                            );
+                        }
+                    }
+                    collision_ok += 1;
+                }
+                None => {
+                    println!("  collision  file {f} @ 0x{at:X}  DOES NOT DECODE");
+                    collision_bad += 1;
+                }
+            }
         }
         if let Some((f, at)) = s.map_nodes {
             println!("  map nodes  file {f} @ 0x{at:X}");
@@ -1286,6 +1332,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
         "\n{} stage headers, {layers} render layers ({with_table} with a material table)",
         loaded.stages.len()
     );
+    println!("collision maps decoded: {collision_ok}, failed: {collision_bad}");
     Ok(())
 }
 
