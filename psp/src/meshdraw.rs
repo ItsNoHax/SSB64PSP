@@ -557,14 +557,16 @@ pub unsafe fn draw_collision(
     segments
 }
 
-/// Draws a marker where the simulated fighter is.
+/// Draws the simulated fighter as its collision body.
 ///
-/// Not a character model: the pack has no record naming which object is
-/// Mario, and guessing one would be a fingerprint rather than a fact. What is
-/// being shown here is the *simulation* — where the ported physics and the
-/// ported collision put a body on real stage data — so the marker is drawn as
-/// the thing the collision code actually tests: a vertical stem standing on
-/// the contact point, with a crossbar at the origin.
+/// Not a character model: the pack has no record naming which object is Mario,
+/// and guessing one would be a fingerprint rather than a fact. What is drawn
+/// instead is `MPObjectColl` — the **diamond** the collision code actually
+/// tests, with points at `(0, top)`, `(±width, center)` and `(0, bottom)`.
+/// Those four numbers are real extracted data (Mario's are `320, 190, 0, 150`),
+/// so this is the body the game uses and not a stand-in sized by eye. Seeing
+/// the waist sit at 190 of 320 rather than halfway is the visible confirmation
+/// that `center` is a height and not a midpoint.
 ///
 /// White while airborne, green once it has a floor, so landing is visible as a
 /// colour change on the exact frame it happens.
@@ -578,15 +580,11 @@ pub unsafe fn draw_collision(
 /// until the list is submitted.
 pub unsafe fn draw_fighter(
     pos: [f32; 3],
+    coll: &ssb_game::ground::BodyColl,
     grounded: bool,
     base: &ScePspFMatrix4,
     gpu: &mut crate::gu::Gpu,
 ) {
-    // Roughly a fighter's height in game units, so the marker reads at the
-    // same scale as the stage rather than as a dot or a tower.
-    const HEIGHT: f32 = 260.0;
-    const ARM: f32 = 90.0;
-
     let color = if grounded { 0xFF40_FF40 } else { 0xFFFF_FFFF };
     let s = 1.0 / MODEL_SCALE;
     let (x, y, z) = (pos[0] * s, pos[1] * s, pos[2] * s);
@@ -597,14 +595,26 @@ pub unsafe fn draw_fighter(
     let v = |dx: f32, dy: f32| crate::gu::GuVertex::new(x + dx, y + dy, z, 0.0, 0.0, color);
     let buf = &mut *core::ptr::addr_of_mut!(LINE_BUF);
 
-    // The stem: feet at the contact point, head above it.
-    buf.0[0] = v(0.0, 0.0);
-    buf.0[1] = v(0.0, HEIGHT * s);
-    gpu.draw_line_strip(&buf.0[..2]);
+    let (top, center, bottom, half) = (
+        coll.top * s,
+        coll.center * s,
+        coll.bottom * s,
+        coll.width * s,
+    );
 
-    // The crossbar, at the height the floor query runs.
-    buf.0[0] = v(-ARM * s, 0.0);
-    buf.0[1] = v(ARM * s, 0.0);
+    // The diamond, closed: bottom -> right -> top -> left -> bottom.
+    buf.0[0] = v(0.0, bottom);
+    buf.0[1] = v(half, center);
+    buf.0[2] = v(0.0, top);
+    buf.0[3] = v(-half, center);
+    buf.0[4] = v(0.0, bottom);
+    gpu.draw_line_strip(&buf.0[..5]);
+
+    // A short tick at the origin: the floor query runs at `pos.y + bottom`,
+    // and `bottom` is zero for every playable character, so this marks the
+    // point that is actually tested against the surface.
+    buf.0[0] = v(-half * 0.25, bottom);
+    buf.0[1] = v(half * 0.25, bottom);
     gpu.draw_line_strip(&buf.0[..2]);
 }
 

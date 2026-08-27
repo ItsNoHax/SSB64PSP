@@ -24,31 +24,39 @@
 use crate::collision::{self, FloorBelow, Segment};
 use ssb_engine::math::{Vec2, Vec3};
 
-/// A body's collision offsets — `MPObjectColl`.
+/// A body's collision shape — `MPObjectColl`.
 ///
-/// These are offsets from the body's origin to the corners of the collision
-/// diamond the original tests with. Only `bottom` is used so far, because only
-/// floors are ported: the floor query runs at `pos.y + bottom`, and landing
-/// puts the body back at `surface - bottom`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// A **diamond**, not a box. The four points are `(0, top)`, `(±width,
+/// center)` and `(0, bottom)`, all as offsets from the body's origin, so
+/// `center` is a *height* — the waist where the body is widest — and not a
+/// centre point. Mario's `{320, 190, 0, 150}` is a body 320 tall whose widest
+/// span is 300 across, at hip height.
+///
+/// Only `bottom` is read so far, because only floors are ported: the floor
+/// query runs at `pos.y + bottom` and landing puts the body back at
+/// `surface - bottom`. `top` and `width` are what the unported ceiling and
+/// wall queries will use, and `ftDisplayMain` already sizes the shadow from
+/// `width` and `center`.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BodyColl {
     pub top: f32,
+    pub center: f32,
+    /// Zero for every playable character: the origin is at the feet. That is
+    /// why the grounded update can put the translation straight on the
+    /// surface with no offset.
     pub bottom: f32,
-    pub left: f32,
-    pub right: f32,
+    pub width: f32,
 }
 
-impl Default for BodyColl {
-    fn default() -> Self {
-        // A fighter's origin sits at its feet, so the floor probe is the
-        // origin itself. Real per-character values come from `FTAttributes`.
-        BodyColl {
-            top: 0.0,
-            bottom: 0.0,
-            left: 0.0,
-            right: 0.0,
-        }
-    }
+impl BodyColl {
+    /// Mario's, from `dMarioMain_attr.map_coll`. Used where a test wants a
+    /// real body rather than a point.
+    pub const MARIO: BodyColl = BodyColl {
+        top: 320.0,
+        center: 190.0,
+        bottom: 0.0,
+        width: 150.0,
+    };
 }
 
 /// The floor a body is standing on.

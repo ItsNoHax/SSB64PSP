@@ -1375,3 +1375,115 @@ scaffolding.
 **Confidence: high** for the measurement; explicitly **not** a performance
 prediction. Real PSP hardware is ~333 MHz against an emulator on a desktop CPU
 — these numbers do not transfer (plan §37).
+
+---
+
+## RE-032 — The fighters' real numbers, and what a guessed constant hides
+
+**Question.** RE-031 stood a fighter on a stage using physics constants I made
+up. `PhysicsAttributes::default()` carried a comment calling them "a neutral
+baseline for tests". Where are the real ones, and does using invented numbers
+actually cost anything if the shape of the physics is right?
+
+**Answer to the second question first: yes, and not subtly.** Mario's real
+gravity is `2.4` per frame and his terminal velocity `44.0`. My baseline used
+`0.09` and `1.7` — off by 26x. Smash 64 works in the same large world units as
+its collision geometry, where a stage spans several thousand units and Mario
+stands 320 tall, so a constant that looks like a sensible small acceleration is
+not conservative, it is a different game. The old numbers still produced a
+fighter that fell and landed in the right place; it simply took 300 frames to
+drop what should take 20. Nothing failed. That is what made it worth fixing.
+
+**Where they live.** Every per-character constant is one `FTAttributes` struct
+at a fixed offset inside that character's main archive file:
+
+```c
+attr = lbRelocGetFileData(FTAttributes*, *fp->data->p_file_main, fp->data->o_attributes);
+```
+
+So the record that matters is `(file id, byte offset)`, and it sits in
+`dFT<Name>Data` — in the game code's data segment, not in any archive file.
+The decompilation's `relocData` sources annotate each fighter main file with
+the size of everything preceding the attribute struct, which is where the
+offsets in `ssb_rom::fighter::FIGHTER_FILES` come from. That is a record naming
+both sides, not a value picked because it looked plausible in a hex dump — the
+distinction RE-027 turns on.
+
+**Validation: two independent readings of the same bytes.** An offset table is
+a claim about where 27 structs begin, and the cheapest way to be wrong is to be
+*almost* right: a table off by one word still decodes into floats that look
+like numbers. So `romtool fighters --verify` decodes all 27 out of the ROM and
+compares every scalar against the values the decompilation writes out in its
+own C literals — one reading from the compressed archive, one transcribed by
+hand years ago by somebody else.
+
+```
+27/27 decode to plausible values
+verified    27 fighters, 1215 fields against the decompilation
+            all agree
+```
+
+Five of the 27 have no size comment to read the offset from and had to be
+derived from the last annotated block instead; those five are in the 27 that
+agree, which is what makes the derivation trustworthy rather than assumed. A
+wrong offset does not yield 44 matches and one miss.
+
+The table also reads correctly against the game as played: Kirby and Jigglypuff
+have 6 jumps where everyone else has 2, Metal Mario's gravity is 4.8 against
+Mario's 2.4 with terminal velocity 100 against 44, Giant DK is heaviest and
+fastest-falling, Link's jumpsquat is 7 frames. None of that was used to find
+the offsets, so it is a free check.
+
+**The collision body is a diamond.** `MPObjectColl` is `{top, center, bottom,
+width}` and I had ported it as a box named `{top, bottom, left, right}`. The
+four points are `(0, top)`, `(±width, center)` and `(0, bottom)` — so `center`
+is a *height*, the waist where the body is widest, not a centre point. Mario's
+`{320, 190, 0, 150}` is a body 320 tall whose widest span is 300 across, at hip
+height. `bottom` is `0.0` for every playable character, which is why the
+grounded update can put the translation straight onto the surface with no
+offset. `ftDisplayMain` sizes the shadow from `width` and `center`, so these
+are not physics-only numbers.
+
+**A bug the real numbers exposed.** With `air_accel = 0.025` the ported air
+drift barely moved the fighter, and chasing that found two errors in
+`ftPhysicsApplyAirVelDrift`:
+
+* Drift scales with **how far** the stick is pushed — `vel_air.x += stick_x *
+  air_accel` — not just which way. My port used the sign only, making drift 80x
+  too weak at full deflection. Under the invented `air_accel = 0.05` that
+  looked like "drifting is a bit sluggish"; under the real value it takes 1200
+  frames to reach a cap the game reaches in 17.
+* Friction runs **every** frame, including while the stick is held. So the real
+  steady-state drift speed is not the clamp but the clamp minus one frame of
+  friction, and releasing the stick does not change which function runs.
+* The deadzone is a band, `|stick_x| < 8`, not just zero.
+
+The first of those is the kind of error a hand-picked constant can hide
+indefinitely, because both the constant and the formula were wrong in
+compensating directions.
+
+**Re-validation.** RE-031's whole simulation was proven under the fake
+constants. Re-run under the real ones, terminal velocity 44 instead of 1.7:
+
+```
+agree       158/158 land where the vertical probe says they should
+at rest     158/158 do not move over 60 ticks (worst drift 0)
+```
+
+Unchanged — and the resting heights are identical to the last digit
+(`557.00`, `303.50`, `-269.00`), while the fall times drop from 18 ticks to 4.
+That is the right invariant: where a fighter lands must not depend on how fast
+it fell. Had the swept query been resolving to a substep boundary rather than
+the true crossing, a 26x change in fall speed would have moved those fractions.
+
+**Confidence: high** for the values — 1215 fields agreeing with an independent
+transcription is not a coincidence, and the roster reads true against the game
+as played. The pack now carries all 27 characters' constants (5 KB, format
+version 4), including camera, shadow and shield fields no subsystem reads yet.
+
+**Not verified on device this round.** The session was locked when the
+screenshot was taken, so the capture is the lock screen rather than the
+emulator — the failure mode `tools/run-ppsspp.sh` documents at length and the
+one that has cost this project the most time. The EBOOT builds for the PSP
+target and PPSSPP loads it; the on-device overlay showing `attrs pack` and
+Mario's real constants is unconfirmed until the next run.

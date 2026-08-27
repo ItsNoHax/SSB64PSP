@@ -30,6 +30,7 @@
 //! LineDesc[line_count]
 //! CollisionVertex[coll_vertex_count]
 //! MapPoint[point_count]
+//! FighterDesc[fighter_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data
 //! ```
@@ -50,7 +51,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///
 /// 2 added the object and node tables.
 /// 3 added the stage tables: collision lines, their vertices, and map points.
-pub const VERSION: u32 = 3;
+/// 4 added the fighter table.
+pub const VERSION: u32 = 4;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -81,7 +83,9 @@ pub struct Header {
     pub line_count: u32,
     pub coll_vertex_count: u32,
     pub point_count: u32,
-    pub _pad: [u32; 3],
+    /// Characters in the fighter table. 27 when built from a full ROM.
+    pub fighter_count: u32,
+    pub _pad: [u32; 2],
 }
 
 impl Header {
@@ -351,6 +355,196 @@ impl MapPoint {
     pub const SIZE: usize = 8;
 }
 
+/// One character's constants, extracted from its `FTAttributes`.
+///
+/// The full struct (`ssb_rom::fighter::FighterAttributes`) is carried across
+/// verbatim rather than pared down to the fields physics reads today: the
+/// camera, shadow and shield numbers are already correct in the ROM, and
+/// storing them now costs 5 KB for the whole roster and saves a format bump
+/// when those subsystems land.
+///
+/// 192 bytes exactly — 48 words, so the table stays 16-byte aligned and a
+/// fighter's constants land in a whole number of cache lines.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FighterDesc {
+    /// `FTKind` ordinal. The table is dense and in this order, so it can be
+    /// indexed directly, but the field is stored so a reader can assert it.
+    pub kind: u32,
+    /// Archive file the attributes came from, and where in it. Kept for the
+    /// same reason meshes keep theirs: so a wrong number can be traced back to
+    /// the bytes it was read from.
+    pub source_file: u32,
+    pub source_offset: u32,
+    pub jumps_max: i32,
+    pub is_metallic: u32,
+    pub size: f32,
+    pub walkslow_anim_length: f32,
+    pub walkmiddle_anim_length: f32,
+    pub walkfast_anim_length: f32,
+    pub throw_walkslow_anim_length: f32,
+    pub throw_walkmiddle_anim_length: f32,
+    pub throw_walkfast_anim_length: f32,
+    pub rebound_anim_length: f32,
+    pub walk_speed_mul: f32,
+    pub traction: f32,
+    pub dash_speed: f32,
+    pub dash_decel: f32,
+    pub run_speed: f32,
+    pub kneebend_anim_length: f32,
+    pub jump_vel_x: f32,
+    pub jump_height_mul: f32,
+    pub jump_height_base: f32,
+    pub jumpaerial_vel_x: f32,
+    pub jumpaerial_height: f32,
+    pub air_accel: f32,
+    pub air_speed_max_x: f32,
+    pub air_friction: f32,
+    pub gravity: f32,
+    pub tvel_base: f32,
+    pub tvel_fast: f32,
+    pub weight: f32,
+    pub attack1_followup_frames: f32,
+    pub dash_to_run: f32,
+    pub shield_size: f32,
+    pub shield_break_vel_y: f32,
+    pub shadow_size: f32,
+    pub jostle_width: f32,
+    pub jostle_x: f32,
+    pub cam_offset_y: f32,
+    pub closeup_camera_zoom: f32,
+    pub camera_zoom: f32,
+    pub camera_zoom_base: f32,
+    /// The collision diamond: `(0, top)`, `(±width, center)`, `(0, bottom)`.
+    pub coll_top: f32,
+    pub coll_center: f32,
+    pub coll_bottom: f32,
+    pub coll_width: f32,
+    pub cliffcatch_width: f32,
+    pub cliffcatch_height: f32,
+}
+
+impl FighterDesc {
+    /// 48 words: 5 integers then the 43 floats [`fighter_scalars`] lists.
+    /// The 45 scalars of the original `FTAttributes` head, with `jumps_max`
+    /// and `is_metallic` moved up into the integer group so no consumer has to
+    /// bit-cast. No padding is needed — it lands on 16 bytes as it is.
+    pub const SIZE: usize = 192;
+}
+
+/// The float fields of a [`FighterDesc`], in the order they are stored.
+///
+/// Writer and reader both go through this, so a field added in one place
+/// cannot silently disagree with the other.
+fn fighter_scalars(d: &FighterDesc) -> [f32; 43] {
+    [
+        d.size,
+        d.walkslow_anim_length,
+        d.walkmiddle_anim_length,
+        d.walkfast_anim_length,
+        d.throw_walkslow_anim_length,
+        d.throw_walkmiddle_anim_length,
+        d.throw_walkfast_anim_length,
+        d.rebound_anim_length,
+        d.walk_speed_mul,
+        d.traction,
+        d.dash_speed,
+        d.dash_decel,
+        d.run_speed,
+        d.kneebend_anim_length,
+        d.jump_vel_x,
+        d.jump_height_mul,
+        d.jump_height_base,
+        d.jumpaerial_vel_x,
+        d.jumpaerial_height,
+        d.air_accel,
+        d.air_speed_max_x,
+        d.air_friction,
+        d.gravity,
+        d.tvel_base,
+        d.tvel_fast,
+        d.weight,
+        d.attack1_followup_frames,
+        d.dash_to_run,
+        d.shield_size,
+        d.shield_break_vel_y,
+        d.shadow_size,
+        d.jostle_width,
+        d.jostle_x,
+        d.cam_offset_y,
+        d.closeup_camera_zoom,
+        d.camera_zoom,
+        d.camera_zoom_base,
+        d.coll_top,
+        d.coll_center,
+        d.coll_bottom,
+        d.coll_width,
+        d.cliffcatch_width,
+        d.cliffcatch_height,
+    ]
+}
+
+/// Rebuilds a [`FighterDesc`] from the integer head and [`fighter_scalars`].
+fn fighter_from_parts(
+    kind: u32,
+    source_file: u32,
+    source_offset: u32,
+    jumps_max: i32,
+    is_metallic: u32,
+    s: [f32; 43],
+) -> FighterDesc {
+    FighterDesc {
+        kind,
+        source_file,
+        source_offset,
+        jumps_max,
+        is_metallic,
+        size: s[0],
+        walkslow_anim_length: s[1],
+        walkmiddle_anim_length: s[2],
+        walkfast_anim_length: s[3],
+        throw_walkslow_anim_length: s[4],
+        throw_walkmiddle_anim_length: s[5],
+        throw_walkfast_anim_length: s[6],
+        rebound_anim_length: s[7],
+        walk_speed_mul: s[8],
+        traction: s[9],
+        dash_speed: s[10],
+        dash_decel: s[11],
+        run_speed: s[12],
+        kneebend_anim_length: s[13],
+        jump_vel_x: s[14],
+        jump_height_mul: s[15],
+        jump_height_base: s[16],
+        jumpaerial_vel_x: s[17],
+        jumpaerial_height: s[18],
+        air_accel: s[19],
+        air_speed_max_x: s[20],
+        air_friction: s[21],
+        gravity: s[22],
+        tvel_base: s[23],
+        tvel_fast: s[24],
+        weight: s[25],
+        attack1_followup_frames: s[26],
+        dash_to_run: s[27],
+        shield_size: s[28],
+        shield_break_vel_y: s[29],
+        shadow_size: s[30],
+        jostle_width: s[31],
+        jostle_x: s[32],
+        cam_offset_y: s[33],
+        closeup_camera_zoom: s[34],
+        camera_zoom: s[35],
+        camera_zoom_base: s[36],
+        coll_top: s[37],
+        coll_center: s[38],
+        coll_bottom: s[39],
+        coll_width: s[40],
+        cliffcatch_width: s[41],
+        cliffcatch_height: s[42],
+    }
+}
+
 /// Divisor the GE applies to `GU_VERTEX_16BIT` positions.
 ///
 /// Vertex positions arrive as `i16` and the hardware normalises them by 32768
@@ -442,6 +636,7 @@ pub struct PackWriter {
     lines: Vec<LineDesc>,
     coll_vertices: Vec<CollisionVertex>,
     points: Vec<MapPoint>,
+    fighters: Vec<FighterDesc>,
     blob: Vec<u8>,
 }
 
@@ -748,6 +943,65 @@ impl PackWriter {
     }
 
     /// Serialises the pack.
+    /// Adds one character's constants. Call in `FTKind` order.
+    pub fn add_fighter(&mut self, f: &crate::fighter::Fighter) {
+        let a = &f.attributes;
+        self.fighters.push(FighterDesc {
+            kind: f.file.kind as u32,
+            source_file: f.file.file,
+            source_offset: f.file.offset,
+            jumps_max: a.jumps_max,
+            is_metallic: a.is_metallic as u32,
+            size: a.size,
+            walkslow_anim_length: a.walkslow_anim_length,
+            walkmiddle_anim_length: a.walkmiddle_anim_length,
+            walkfast_anim_length: a.walkfast_anim_length,
+            throw_walkslow_anim_length: a.throw_walkslow_anim_length,
+            throw_walkmiddle_anim_length: a.throw_walkmiddle_anim_length,
+            throw_walkfast_anim_length: a.throw_walkfast_anim_length,
+            rebound_anim_length: a.rebound_anim_length,
+            walk_speed_mul: a.walk_speed_mul,
+            traction: a.traction,
+            dash_speed: a.dash_speed,
+            dash_decel: a.dash_decel,
+            run_speed: a.run_speed,
+            kneebend_anim_length: a.kneebend_anim_length,
+            jump_vel_x: a.jump_vel_x,
+            jump_height_mul: a.jump_height_mul,
+            jump_height_base: a.jump_height_base,
+            jumpaerial_vel_x: a.jumpaerial_vel_x,
+            jumpaerial_height: a.jumpaerial_height,
+            air_accel: a.air_accel,
+            air_speed_max_x: a.air_speed_max_x,
+            air_friction: a.air_friction,
+            gravity: a.gravity,
+            tvel_base: a.tvel_base,
+            tvel_fast: a.tvel_fast,
+            weight: a.weight,
+            attack1_followup_frames: a.attack1_followup_frames,
+            dash_to_run: a.dash_to_run,
+            shield_size: a.shield_size,
+            shield_break_vel_y: a.shield_break_vel_y,
+            shadow_size: a.shadow_size,
+            jostle_width: a.jostle_width,
+            jostle_x: a.jostle_x,
+            cam_offset_y: a.cam_offset_y,
+            closeup_camera_zoom: a.closeup_camera_zoom,
+            camera_zoom: a.camera_zoom,
+            camera_zoom_base: a.camera_zoom_base,
+            coll_top: a.map_coll.top,
+            coll_center: a.map_coll.center,
+            coll_bottom: a.map_coll.bottom,
+            coll_width: a.map_coll.width,
+            cliffcatch_width: a.cliffcatch_coll.0,
+            cliffcatch_height: a.cliffcatch_coll.1,
+        });
+    }
+
+    pub fn fighter_count(&self) -> usize {
+        self.fighters.len()
+    }
+
     pub fn finish(self) -> Vec<u8> {
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -757,7 +1011,8 @@ impl PackWriter {
             + self.stages.len() * StageDesc::SIZE
             + self.lines.len() * LineDesc::SIZE
             + self.coll_vertices.len() * CollisionVertex::SIZE
-            + self.points.len() * MapPoint::SIZE;
+            + self.points.len() * MapPoint::SIZE
+            + self.fighters.len() * FighterDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
@@ -776,6 +1031,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.lines.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.coll_vertices.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.points.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.fighters.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -859,6 +1115,16 @@ impl PackWriter {
             out.extend_from_slice(&p.y.to_le_bytes());
             out.extend_from_slice(&p._pad.to_le_bytes());
         }
+        for d in &self.fighters {
+            for v in [d.kind, d.source_file, d.source_offset] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&d.jumps_max.to_le_bytes());
+            out.extend_from_slice(&d.is_metallic.to_le_bytes());
+            for v in fighter_scalars(d) {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -908,6 +1174,7 @@ pub struct Pack<'a> {
     line_count: u32,
     coll_vertex_count: u32,
     point_count: u32,
+    fighter_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -959,6 +1226,7 @@ impl<'a> Pack<'a> {
         let line_count = u32_at(data, 40);
         let coll_vertex_count = u32_at(data, 44);
         let point_count = u32_at(data, 48);
+        let fighter_count = u32_at(data, 52);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -969,7 +1237,8 @@ impl<'a> Pack<'a> {
             + stage_count as usize * StageDesc::SIZE
             + line_count as usize * LineDesc::SIZE
             + coll_vertex_count as usize * CollisionVertex::SIZE
-            + point_count as usize * MapPoint::SIZE;
+            + point_count as usize * MapPoint::SIZE
+            + fighter_count as usize * FighterDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -986,6 +1255,7 @@ impl<'a> Pack<'a> {
             line_count,
             coll_vertex_count,
             point_count,
+            fighter_count,
             blob_offset,
             blob_len,
         })
@@ -1015,6 +1285,10 @@ impl<'a> Pack<'a> {
     }
     pub fn point_count(&self) -> u32 {
         self.point_count
+    }
+    /// Characters whose constants are in the pack.
+    pub fn fighter_count(&self) -> u32 {
+        self.fighter_count
     }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
@@ -1048,6 +1322,29 @@ impl<'a> Pack<'a> {
     }
     fn point_table(&self) -> usize {
         self.coll_vertex_table() + self.coll_vertex_count as usize * CollisionVertex::SIZE
+    }
+    fn fighter_table(&self) -> usize {
+        self.point_table() + self.point_count as usize * MapPoint::SIZE
+    }
+
+    /// One character's constants, by `FTKind` ordinal.
+    pub fn fighter(&self, i: u32) -> Option<FighterDesc> {
+        if i >= self.fighter_count {
+            return None;
+        }
+        let at = self.fighter_table() + i as usize * FighterDesc::SIZE;
+        let mut s = [0.0f32; 43];
+        for (k, v) in s.iter_mut().enumerate() {
+            *v = f32_at(self.data, at + 20 + k * 4);
+        }
+        Some(fighter_from_parts(
+            u32_at(self.data, at),
+            u32_at(self.data, at + 4),
+            u32_at(self.data, at + 8),
+            u32_at(self.data, at + 12) as i32,
+            u32_at(self.data, at + 16),
+            s,
+        ))
     }
 
     pub fn object(&self, i: u32) -> Option<ObjectDesc> {
@@ -1935,5 +2232,125 @@ mod tests {
         assert!(pack.line(0).is_none());
         assert!(pack.coll_vertex(0).is_none());
         assert!(pack.map_point(0).is_none());
+        assert_eq!(pack.fighter_count(), 0);
+        assert!(pack.fighter(0).is_none());
+    }
+
+    fn sample_fighter(kind: u8) -> crate::fighter::Fighter {
+        use crate::fighter::{FighterAttributes, FighterFile, ObjectColl};
+        crate::fighter::Fighter {
+            file: FighterFile {
+                kind,
+                name: "Mario",
+                file: 203,
+                offset: 0x0428,
+            },
+            attributes: FighterAttributes {
+                size: 1.12,
+                walkslow_anim_length: 90.0,
+                walkmiddle_anim_length: 60.0,
+                walkfast_anim_length: 40.0,
+                throw_walkslow_anim_length: 0.0,
+                throw_walkmiddle_anim_length: 0.0,
+                throw_walkfast_anim_length: 0.0,
+                rebound_anim_length: 16.0,
+                walk_speed_mul: 0.3,
+                traction: 1.5,
+                dash_speed: 54.0,
+                dash_decel: 2.8,
+                run_speed: 44.0,
+                kneebend_anim_length: 3.0,
+                jump_vel_x: 0.35,
+                jump_height_mul: 0.7,
+                jump_height_base: 26.0,
+                jumpaerial_vel_x: 0.35,
+                jumpaerial_height: 0.9,
+                air_accel: 0.025,
+                air_speed_max_x: 30.0,
+                air_friction: 0.2,
+                gravity: 2.4,
+                tvel_base: 44.0,
+                tvel_fast: 70.0,
+                jumps_max: 2,
+                weight: 1.0,
+                attack1_followup_frames: 24.0,
+                dash_to_run: 14.0,
+                shield_size: 260.0,
+                shield_break_vel_y: 70.0,
+                shadow_size: 200.0,
+                jostle_width: 112.5,
+                jostle_x: 0.0,
+                is_metallic: false,
+                cam_offset_y: 250.0,
+                closeup_camera_zoom: 1600.0,
+                camera_zoom: 1.0,
+                camera_zoom_base: 500.0,
+                map_coll: ObjectColl {
+                    top: 320.0,
+                    center: 190.0,
+                    bottom: 0.0,
+                    width: 150.0,
+                },
+                cliffcatch_coll: (400.0, 360.0),
+            },
+        }
+    }
+
+    #[test]
+    fn a_fighter_round_trips_through_the_pack() {
+        let mut w = PackWriter::new();
+        w.add_fighter(&sample_fighter(0));
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(pack.fighter_count(), 1);
+        let f = pack.fighter(0).unwrap();
+        assert_eq!(f.kind, 0);
+        assert_eq!(f.source_file, 203);
+        assert_eq!(f.source_offset, 0x0428);
+        // One field from each group, so a mis-ordered writer shows up.
+        assert_eq!(f.walk_speed_mul, 0.3);
+        assert_eq!(f.gravity, 2.4);
+        assert_eq!(f.jumps_max, 2);
+        assert_eq!(f.is_metallic, 0);
+        assert_eq!(f.coll_top, 320.0);
+        assert_eq!(f.coll_width, 150.0);
+        assert_eq!(f.cliffcatch_height, 360.0);
+    }
+
+    #[test]
+    fn the_fighter_stride_matches_what_the_writer_emits() {
+        // The reader indexes by `FighterDesc::SIZE`, so a struct that does not
+        // serialise to exactly that many bytes reads the next fighter's data
+        // rather than failing.
+        let mut w = PackWriter::new();
+        for k in 0..3 {
+            w.add_fighter(&sample_fighter(k));
+        }
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.fighter_count(), 3);
+        for k in 0..3 {
+            assert_eq!(pack.fighter(k).unwrap().kind, k);
+            assert_eq!(pack.fighter(k).unwrap().gravity, 2.4);
+        }
+        assert!(pack.fighter(3).is_none());
+    }
+
+    #[test]
+    fn fighters_do_not_disturb_the_tables_before_them() {
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
+        w.add_stage(&ground, Some(&map), |_, _| None);
+        w.add_fighter(&sample_fighter(0));
+
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let m = pack.mesh(0).unwrap();
+        assert_eq!(pack.vertices(&m).unwrap().len(), 3 * VERTEX_SIZE);
+        assert_eq!(pack.stage(0).unwrap().bgm_id, 0x11);
+        assert_eq!(pack.point_count(), 2);
+        assert_eq!(pack.fighter(0).unwrap().coll_top, 320.0);
     }
 }

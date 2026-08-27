@@ -15,6 +15,7 @@
 //! romtool stages   <rom>          recover MPGroundData headers and collision
 //! romtool collide  <pack>         run the collision query on every stage
 //! romtool simulate <pack>         drop a real fighter on every stage's spawns
+//! romtool fighters <rom>          extract every character's FTAttributes
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
+        ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
@@ -77,6 +79,7 @@ USAGE:
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
+    romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -990,6 +993,22 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         });
     }
 
+    // Fighters: 27 small reads, in `FTKind` order so the table can be indexed
+    // by kind. A character whose attributes will not decode is skipped rather
+    // than packed as zeros, which would look like a fighter with no gravity.
+    let mut fighters = 0usize;
+    let mut fighters_failed: Vec<&str> = Vec::new();
+    for f in ssb_rom::fighter::decode_all(&archive) {
+        match f {
+            Ok(f) if f.attributes.looks_plausible() => {
+                writer.add_fighter(&f);
+                fighters += 1;
+            }
+            Ok(f) => fighters_failed.push(f.file.name),
+            Err(_) => fighters_failed.push("?"),
+        }
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -1032,6 +1051,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         pack.coll_vertex_count(),
         pack.point_count()
     );
+    println!(
+        "  fighters    {fighters}/{}",
+        ssb_rom::fighter::FIGHTER_FILES.len()
+    );
+    if !fighters_failed.is_empty() {
+        println!(
+            "              did not decode: {}",
+            fighters_failed.join(", ")
+        );
+    }
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
 
@@ -1413,6 +1442,281 @@ fn collide(path: &Path, opts: &[&str]) -> Res {
         );
     }
     Ok(())
+}
+
+/// Prints every character's constants, extracted from the ROM.
+///
+/// `--verify` cross-checks the offsets in [`ssb_rom::fighter::FIGHTER_FILES`]
+/// against the decompilation's own transcription of the same structs. It needs
+/// `refs/ssb-decomp-re`, so it is a development check and not part of `check`.
+///
+/// The comparison is the point. An offset table is a claim about where 27
+/// structs begin, and the cheapest way to be wrong is to be *almost* right —
+/// a table off by one word still decodes into floats that look like numbers.
+/// Forty-five fields matching values written down independently, for every
+/// character, is not something a wrong offset survives.
+fn fighters(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::fighter;
+
+    let mut verify = false;
+    let mut refs = PathBuf::from("refs/ssb-decomp-re/src/relocData");
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--verify" | "-v" => verify = true,
+            "--refs" => {
+                refs = it.next().ok_or("--refs needs a path")?.into();
+                verify = true;
+            }
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    println!(
+        "{:<10} {:>4} {:>7}  {:>7} {:>6} {:>6} {:>6} {:>5} {:>5}  {:>4}",
+        "fighter", "file", "attrs", "gravity", "tvel", "walk", "dash", "jsq", "jumps", "top"
+    );
+
+    let mut ok = 0usize;
+    let mut implausible = Vec::new();
+    let mut decoded = Vec::new();
+    for entry in fighter::FIGHTER_FILES {
+        let file = archive.load(entry.file)?;
+        let f = fighter::decode_file(entry, &file)?;
+        let a = &f.attributes;
+        println!(
+            "{:<10} {:>4} {:>#7x}  {:>7} {:>6} {:>6} {:>6} {:>5} {:>5}  {:>4}",
+            entry.name,
+            entry.file,
+            entry.offset,
+            a.gravity,
+            a.tvel_base,
+            a.walk_speed_mul,
+            a.dash_speed,
+            a.kneebend_anim_length,
+            a.jumps_max,
+            a.map_coll.top,
+        );
+        if a.looks_plausible() {
+            ok += 1;
+        } else {
+            implausible.push(entry.name);
+        }
+        decoded.push((entry, f));
+    }
+
+    println!();
+    println!("{ok}/{} decode to plausible values", decoded.len());
+    if !implausible.is_empty() {
+        return Err(format!("implausible attributes: {}", implausible.join(", ")).into());
+    }
+
+    if !verify {
+        println!("(pass --verify to cross-check against the decompilation)");
+        return Ok(());
+    }
+
+    if !refs.exists() {
+        return Err(format!(
+            "{} not found; --verify needs the decompilation checked out",
+            refs.display()
+        )
+        .into());
+    }
+
+    let mut checked = 0usize;
+    let mut fields = 0usize;
+    let mut mismatches = Vec::new();
+    for (entry, f) in &decoded {
+        let Some(src) = find_reloc_source(&refs, entry.file)? else {
+            mismatches.push(format!("{}: no relocData source found", entry.name));
+            continue;
+        };
+        let want = parse_attr_literals(&src)?;
+        if want.len() != fighter::SCALAR_COUNT {
+            mismatches.push(format!(
+                "{}: parsed {} literals, expected {}",
+                entry.name,
+                want.len(),
+                fighter::SCALAR_COUNT
+            ));
+            continue;
+        }
+        let got = attr_scalars(&f.attributes);
+        for (i, (name, w)) in want.iter().enumerate() {
+            fields += 1;
+            if (got[i] - w).abs() > 1e-6 * w.abs().max(1.0) {
+                mismatches.push(format!(
+                    "{}.{name}: rom {} vs decomp {w}",
+                    entry.name, got[i]
+                ));
+            }
+        }
+        checked += 1;
+    }
+
+    println!("verified    {checked} fighters, {fields} fields against the decompilation");
+    if mismatches.is_empty() {
+        println!("            all agree");
+        Ok(())
+    } else {
+        for m in mismatches.iter().take(20) {
+            println!("  !! {m}");
+        }
+        Err(format!("{} field(s) disagree", mismatches.len()).into())
+    }
+}
+
+/// The scalar head of [`ssb_rom::fighter::FighterAttributes`] as a flat array,
+/// in the declaration order the C literal also uses.
+fn attr_scalars(a: &ssb_rom::fighter::FighterAttributes) -> [f32; 45] {
+    [
+        a.size,
+        a.walkslow_anim_length,
+        a.walkmiddle_anim_length,
+        a.walkfast_anim_length,
+        a.throw_walkslow_anim_length,
+        a.throw_walkmiddle_anim_length,
+        a.throw_walkfast_anim_length,
+        a.rebound_anim_length,
+        a.walk_speed_mul,
+        a.traction,
+        a.dash_speed,
+        a.dash_decel,
+        a.run_speed,
+        a.kneebend_anim_length,
+        a.jump_vel_x,
+        a.jump_height_mul,
+        a.jump_height_base,
+        a.jumpaerial_vel_x,
+        a.jumpaerial_height,
+        a.air_accel,
+        a.air_speed_max_x,
+        a.air_friction,
+        a.gravity,
+        a.tvel_base,
+        a.tvel_fast,
+        a.jumps_max as f32,
+        a.weight,
+        a.attack1_followup_frames,
+        a.dash_to_run,
+        a.shield_size,
+        a.shield_break_vel_y,
+        a.shadow_size,
+        a.jostle_width,
+        a.jostle_x,
+        a.is_metallic as u32 as f32,
+        a.cam_offset_y,
+        a.closeup_camera_zoom,
+        a.camera_zoom,
+        a.camera_zoom_base,
+        a.map_coll.top,
+        a.map_coll.center,
+        a.map_coll.bottom,
+        a.map_coll.width,
+        a.cliffcatch_coll.0,
+        a.cliffcatch_coll.1,
+    ]
+}
+
+/// Finds the decompilation's source for one archive file, named `<id>_<Name>.c`.
+fn find_reloc_source(dir: &Path, file: u32) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let prefix = format!("{file}_");
+    for e in fs::read_dir(dir)? {
+        let e = e?;
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(&prefix) && name.ends_with(".c") {
+            return Ok(Some(fs::read_to_string(e.path())?));
+        }
+    }
+    Ok(None)
+}
+
+/// Pulls the leading scalar initialisers out of an `FTAttributes` C literal.
+///
+/// Only the flat `value, /* name */` lines and the two small aggregates
+/// (`map_coll`, `cliffcatch_coll`) are parsed; the first aggregate after those
+/// ends the scan. Where the source branches on region, the US arm is taken,
+/// matching the ROM this project targets.
+fn parse_attr_literals(src: &str) -> Result<Vec<(String, f32)>, Box<dyn std::error::Error>> {
+    let start = src
+        .find("FTAttributes d")
+        .ok_or("no FTAttributes literal in source")?;
+    let body = &src[start..];
+    let body = &body[body.find('{').ok_or("malformed literal")? + 1..];
+
+    let mut out: Vec<(String, f32)> = Vec::new();
+    // `None` outside any #if; otherwise the region the current arm is for.
+    let mut arm: Option<bool> = None;
+    for line in body.lines() {
+        let s = line.trim();
+        if s.starts_with("#if") {
+            arm = Some(!s.contains("REGION_JP"));
+            continue;
+        }
+        if s.starts_with("#else") {
+            arm = arm.map(|keep| !keep);
+            continue;
+        }
+        if s.starts_with("#endif") {
+            arm = None;
+            continue;
+        }
+        if arm == Some(false) {
+            continue;
+        }
+
+        if let Some((value, name)) = split_initialiser(s) {
+            if value.starts_with('{') {
+                // The two aggregates we model; anything else ends the scan.
+                if name != "map_coll" && name != "cliffcatch_coll" {
+                    break;
+                }
+                let inner = value.trim_start_matches('{').trim_end_matches('}');
+                for (i, part) in inner.split(',').enumerate() {
+                    let part = part.trim();
+                    if part.is_empty() {
+                        continue;
+                    }
+                    out.push((format!("{name}[{i}]"), parse_c_float(part)?));
+                }
+            } else {
+                match parse_c_float(value) {
+                    Ok(v) => out.push((name.to_string(), v)),
+                    // A non-numeric initialiser (an enum, a pointer) means we
+                    // have run past the scalar head.
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Splits `value, /* name */` into its two halves.
+fn split_initialiser(s: &str) -> Option<(&str, &str)> {
+    let comment = s.find("/*")?;
+    let value = s[..comment].trim().trim_end_matches(',').trim();
+    let name = s[comment + 2..].trim().trim_end_matches("*/").trim();
+    if value.is_empty() || name.is_empty() || name.contains(' ') {
+        return None;
+    }
+    Some((value, name))
+}
+
+fn parse_c_float(s: &str) -> Result<f32, Box<dyn std::error::Error>> {
+    match s {
+        "TRUE" => return Ok(1.0),
+        "FALSE" => return Ok(0.0),
+        _ => {}
+    }
+    let t = s.trim_end_matches('f').trim_end_matches('F');
+    t.parse::<f32>()
+        .map_err(|_| format!("not a scalar literal: {s}").into())
 }
 
 /// Runs a real fighter against every stage in a built pack.
