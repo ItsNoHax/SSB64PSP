@@ -2,6 +2,7 @@
 name = "ssb-game"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Layer A: portable Smash 64 game logic, free of platform dependencies."

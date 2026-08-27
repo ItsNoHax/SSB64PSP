@@ -363,7 +363,7 @@ fn tri(a: u32, b: u32, c: u32) -> [u8; 3] {
 /// needs a segment table the caller owns. `romtool` drives the traversal.
 pub fn decode_list(data: &[u8]) -> Result<Vec<Cmd>> {
     let mut out = Vec::new();
-    for raw in data.chunks_exact(CMD_SIZE) {
+    for raw in data.as_chunks::<CMD_SIZE>().0 {
         let cmd = decode(raw)?;
         let end = cmd == Cmd::End;
         out.push(cmd);

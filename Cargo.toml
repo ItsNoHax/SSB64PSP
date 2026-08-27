@@ -16,6 +16,9 @@ exclude = ["psp"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# `slice::as_chunks` is used in the byte-parsing hot paths and stabilised here.
+# Keep in step with RUST_STABLE in .github/workflows/ci.yml.
+rust-version = "1.98"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ItsNoHax/SSB64PSP"
 
