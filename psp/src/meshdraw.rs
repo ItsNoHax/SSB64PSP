@@ -95,7 +95,16 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
 
     // Paletted formats need the CLUT uploaded before the image.
     if let Some(pal) = pack.palette_data(t) {
-        sys::sceGuClutMode(ClutPixelFormat::Psm8888, 0, 0xFF, 0);
+        // The mask selects which bits of the texel index address the CLUT, and
+        // it must match the index width: 0x0F for 4-bit, 0xFF for 8-bit.
+        // Leaving it at 0xFF for a PsmT4 texture lets the upper nibble leak in,
+        // indexing past a 16-entry palette and producing coloured speckle.
+        let mask: u32 = if matches!(psm, TexturePixelFormat::PsmT4) {
+            0x0F
+        } else {
+            0xFF
+        };
+        sys::sceGuClutMode(ClutPixelFormat::Psm8888, 0, mask, 0);
         // sceGuClutLoad counts blocks of 8 entries, rounded up.
         let blocks = (t.palette_len as i32 + 7) / 8;
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
@@ -120,10 +129,15 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
     // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,
     // so scale = 32768 / (32 * dim) = 1024 / dim.
     const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0; // 1024
-    sys::sceGuTexScale(
-        UV_SCALE / t.stride as f32,
-        UV_SCALE / (t.height as f32).max(1.0),
-    );
+    // Both axes normalise against the dimensions actually handed to
+    // sceGuTexImage -- the padded ones. Using the logical height here stretches
+    // V on any texture whose height is not already a power of two.
+    let padded_h = (t.height as u32).next_power_of_two().max(1) as f32;
+    sys::sceGuTexScale(UV_SCALE / t.stride as f32, UV_SCALE / padded_h);
+
+    // Mesh UVs routinely run outside 0..1 (measured -55..119 texels on a
+    // 64-wide texture), so the texture must tile rather than clamp.
+    sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
     sys::sceGuTexOffset(0.0, 0.0);
 }
 
@@ -205,6 +219,67 @@ pub unsafe fn draw_mesh(pack: &Pack<'_>, mesh: &MeshDesc, st: &mut DrawState) ->
 
     st.triangles += tris;
     tris
+}
+
+/// Draws a texture on a screen-filling quad with known UVs.
+///
+/// A diagnostic that isolates the texture *upload* from everything else. If the
+/// image appears here but a mesh renders as noise, the upload (format, CLUT,
+/// swizzle, buffer width) is fine and the fault is in the mesh's UVs or
+/// per-primitive state. Uses float positions and UVs so neither 16-bit
+/// normalisation nor the S10.5 conversion is in the picture.
+///
+/// # Safety
+///
+/// The pack buffer must outlive the frame.
+pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQuadVertex; 6]) {
+    let Some(t) = pack.texture(index) else { return };
+    bind_texture(pack, &t);
+
+    // Two triangles covering a square in front of the camera.
+    let quad = [
+        (0.0f32, 0.0f32, -1.0f32, 1.0f32),
+        (1.0, 0.0, 1.0, 1.0),
+        (1.0, 1.0, 1.0, -1.0),
+        (0.0, 0.0, -1.0, 1.0),
+        (1.0, 1.0, 1.0, -1.0),
+        (0.0, 1.0, -1.0, -1.0),
+    ];
+    for (i, (u, v, x, y)) in quad.into_iter().enumerate() {
+        verts[i] = TexQuadVertex {
+            u,
+            v,
+            color: 0xFFFF_FFFF,
+            x,
+            y,
+            z: 0.0,
+        };
+    }
+
+    // Undo the tex scale set for 16-bit mesh UVs: these UVs are already 0..1.
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_3D,
+        6,
+        core::ptr::null(),
+        verts.as_ptr() as *const c_void,
+    );
+}
+
+/// Vertex layout for [`draw_texture_quad`].
+#[repr(C, align(4))]
+#[derive(Clone, Copy, Default)]
+pub struct TexQuadVertex {
+    pub u: f32,
+    pub v: f32,
+    pub color: u32,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 /// Computes a mesh's bounding box in game units, for framing the camera.

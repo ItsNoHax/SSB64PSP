@@ -316,6 +316,7 @@ pub fn pack_paletted(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::texture::rgba5551;
 
     #[test]
     fn abgr_packing_is_byte_reversed() {
@@ -401,6 +402,84 @@ mod tests {
         // No PSP equivalent: expand.
         assert_eq!(choose_psm(Format::Ia, BitSize::Bits16), Psm::Psm8888);
         assert_eq!(choose_psm(Format::Rgba, BitSize::Bits32), Psm::Psm8888);
+    }
+
+    /// Expands a packed CI4 texture back to RGBA, reversing swizzle and CLUT.
+    ///
+    /// Exists to answer one question precisely: is the *packing* correct, or is
+    /// a bad on-device image the GE's fault? Without this, a texture that
+    /// renders as noise gives no way to tell those apart.
+    fn unpack_ci4(tex: &PspTexture) -> Vec<[u8; 4]> {
+        let stride_bytes = (tex.stride as usize * 4).div_ceil(8);
+        let padded_h = tex.data.len() / stride_bytes.max(1);
+        let linear = if tex.swizzled {
+            unswizzle(&tex.data, stride_bytes, padded_h)
+        } else {
+            tex.data.clone()
+        };
+
+        let mut out = Vec::new();
+        for y in 0..tex.height as usize {
+            for x in 0..tex.width as usize {
+                let byte = linear[y * stride_bytes + x / 2];
+                // The N64 stores the first texel in the high nibble.
+                let idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F } as usize;
+                let entry = tex.palette[idx];
+                out.push([
+                    entry as u8,
+                    (entry >> 8) as u8,
+                    (entry >> 16) as u8,
+                    (entry >> 24) as u8,
+                ]);
+            }
+        }
+        out
+    }
+
+    /// The packed texture must reproduce the source image exactly.
+    #[test]
+    fn ci4_packing_round_trips_through_swizzle_and_clut() {
+        let w = 64u32;
+        let h = 32u32;
+
+        // A recognisable pattern: index varies with both axes, so a transposed
+        // or block-shuffled result cannot pass by coincidence.
+        let mut indices = alloc::vec![0u8; (w * h / 2) as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let idx = ((x / 4 + y / 2) % 16) as u8;
+                let at = y * (w as usize / 2) + x / 2;
+                if x % 2 == 0 {
+                    indices[at] = (indices[at] & 0x0F) | (idx << 4);
+                } else {
+                    indices[at] = (indices[at] & 0xF0) | idx;
+                }
+            }
+        }
+        // A palette where every entry is distinguishable.
+        let tlut: Vec<u16> = (0..16u16)
+            .map(|i| (i << 11) | (i << 6) | (i << 1) | 1)
+            .collect();
+
+        for swizzled in [false, true] {
+            let tex = pack_paletted(&indices, w, h, BitSize::Bits4, &tlut, swizzled).unwrap();
+            assert_eq!(tex.swizzled, swizzled, "swizzle flag must be honoured");
+
+            let got = unpack_ci4(&tex);
+            assert_eq!(got.len(), (w * h) as usize);
+
+            for y in 0..h as usize {
+                for x in 0..w as usize {
+                    let expect_idx = (x / 4 + y / 2) % 16;
+                    let expect = rgba5551(tlut[expect_idx]);
+                    let actual = got[y * w as usize + x];
+                    assert_eq!(
+                        actual, expect,
+                        "texel ({x},{y}) wrong (swizzled={swizzled})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
