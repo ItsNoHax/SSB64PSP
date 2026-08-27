@@ -38,6 +38,36 @@ pub mod flags {
     pub const MATERIAL: u16 = 0x00FF;
 }
 
+/// Per-material friction multipliers — `dMPCollisionMaterialFrictions`
+/// @ 0x8012C4E0.
+///
+/// A floor's material scales the character's own traction, which is the whole
+/// of Smash 64's surface variety: there is no other per-surface physics. Index
+/// with [`Segment::material`].
+///
+/// `nMPMaterial3` is 1.0, a quarter of the common material's 4.0. The decomp
+/// guesses "presumably ice due to low traction", and the number says the same:
+/// nothing else in the table is anywhere near that slippery.
+pub const MATERIAL_FRICTION: [f32; 16] = [
+    4.0, 3.0, 3.0, 1.0, 2.0, 2.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0,
+];
+
+/// The friction multiplier of a surface's material.
+///
+/// The original indexes `dMPCollisionMaterialFrictions` with the masked low
+/// byte and the table has exactly the 16 entries the enum needs, so an index
+/// can only escape it if a surface carries a material the game never defined.
+/// Such a surface falls back to the common material rather than reading past
+/// the table as the original would.
+pub fn material_friction(flags: u16) -> f32 {
+    let m = (flags & flags::MATERIAL) as usize;
+    if m < MATERIAL_FRICTION.len() {
+        MATERIAL_FRICTION[m]
+    } else {
+        MATERIAL_FRICTION[0]
+    }
+}
+
 /// The slack the original allows on every edge test, in game units.
 ///
 /// Not a tuning knob: `0.001` appears literally throughout `mpcollision.c`,
@@ -137,6 +167,163 @@ where
         });
     }
     best
+}
+
+/// The floor a body is standing over, and how far away it is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloorBelow {
+    /// The surface height directly below the queried point.
+    pub y: f32,
+    /// Signed distance from the point down to the surface, so never positive.
+    /// The original calls this `ga_dist` and uses it to decide when a falling
+    /// body is close enough to start its landing animation.
+    pub dist: f32,
+    pub line: u16,
+    pub flags: u16,
+    pub normal: Vec2,
+}
+
+/// Finds the floor directly below a point.
+///
+/// Ports `mpCollisionCheckProjectFloor`. Unlike [`check_floor`] this is a
+/// straight downward probe, not a swept test: it answers "what am I above and
+/// by how much", which is what tells an airborne fighter when to start its
+/// landing animation and where a spawn will come to rest.
+///
+/// Only surfaces at or below the point count, and the nearest wins. There is
+/// deliberately no epsilon on the horizontal containment test — the original
+/// has none here, and a body exactly at a segment's end is left to the
+/// neighbouring segment.
+pub fn project_floor<I>(segments: I, pos: Vec2) -> Option<FloorBelow>
+where
+    I: IntoIterator<Item = (u16, Segment)>,
+{
+    let mut best: Option<FloorBelow> = None;
+    let mut best_dist = f32::MAX;
+
+    for (line, s) in segments {
+        let (near, far) = min_max(s.x1, s.x2);
+        if pos.x < near || far < pos.x {
+            continue;
+        }
+        let y = surface_y(&s, pos.x);
+        // A floor above the point is not something the point is standing over.
+        if y > pos.y {
+            continue;
+        }
+        let dist = y - pos.y;
+        if dist.abs() >= best_dist {
+            continue;
+        }
+        best_dist = dist.abs();
+        best = Some(FloorBelow {
+            y,
+            dist,
+            line,
+            flags: s.flags,
+            normal: normal_of(&s),
+        });
+    }
+    best
+}
+
+/// The height of one floor *line* at `x`, for the line a body just landed on.
+///
+/// Ports `mpCollisionGetFCCommonFloor`, so `segments` must be the segments of
+/// a single polyline, in order. `x` is clamped into the line's horizontal
+/// span first, exactly as the original does after its `±0.001` span test —
+/// which is what lets a fighter standing on the last millimetre of a platform
+/// still be given that platform's height.
+///
+/// Returns `None` when `x` is outside the line entirely; the caller then has
+/// walked off, and [`line_edge`] gives the corner to fall from.
+pub fn floor_height<I>(segments: I, x: f32) -> Option<FloorBelow>
+where
+    I: IntoIterator<Item = (u16, Segment)>,
+{
+    // The original scans the line twice: once for its endpoints, once for the
+    // segment under `x`. One pass does both — it costs three extra comparisons
+    // per segment and saves re-reading the line out of the pack.
+    let mut lo = f32::MAX;
+    let mut hi = f32::MIN;
+    let mut at_lo = None;
+    let mut at_hi = None;
+    let mut found = None;
+
+    for (line, s) in segments {
+        let (near, far) = min_max(s.x1, s.x2);
+        if near < lo {
+            lo = near;
+            at_lo = Some((line, s));
+        }
+        if far > hi {
+            hi = far;
+            at_hi = Some((line, s));
+        }
+        // The first segment spanning `x` wins, as the original's `break` does.
+        if found.is_none() && near <= x && x <= far {
+            found = Some((line, s));
+        }
+    }
+    if lo > hi || x <= lo - EPS || hi + EPS <= x {
+        return None;
+    }
+
+    // Outside the span but within tolerance: clamp onto the nearer end, which
+    // is what lets a fighter on the last millimetre of a platform still be
+    // given that platform's height.
+    let (x, (line, s)) = match found {
+        Some(seg) => (x, seg),
+        None if x <= lo => (lo, at_lo?),
+        None => (hi, at_hi?),
+    };
+
+    let y = surface_y(&s, x);
+    Some(FloorBelow {
+        y,
+        dist: 0.0,
+        line,
+        flags: s.flags,
+        normal: normal_of(&s),
+    })
+}
+
+/// The end of a floor line nearest `x`, as `mpCollisionGetFloorEdgeL` and
+/// `mpCollisionGetFloorEdgeR` report them.
+///
+/// When a body's x leaves the line it is standing on, the original does not
+/// let it hang in the air: it moves it to whichever corner it left by.
+pub fn line_edge<I>(segments: I, x: f32) -> Option<Vec2>
+where
+    I: IntoIterator<Item = (u16, Segment)>,
+{
+    let mut left: Option<Vec2> = None;
+    let mut right: Option<Vec2> = None;
+    for (_, s) in segments {
+        for (px, py) in [(s.x1, s.y1), (s.x2, s.y2)] {
+            let p = Vec2::new(px as f32, py as f32);
+            if left.is_none_or(|l| p.x < l.x) {
+                left = Some(p);
+            }
+            if right.is_none_or(|r| p.x > r.x) {
+                right = Some(p);
+            }
+        }
+    }
+    let (l, r) = (left?, right?);
+    Some(if x <= l.x { l } else { r })
+}
+
+/// The height of a segment's surface at `x`, from `mpCollisionGetLineDistanceFC`.
+fn surface_y(s: &Segment, x: f32) -> f32 {
+    let dx = (s.x2 - s.x1) as f32;
+    if dx == 0.0 {
+        // The original divides here and the game's own assert says a floor
+        // never has two vertices at the same x. Report the near end rather
+        // than a NaN that would propagate into a position.
+        return s.y1 as f32;
+    }
+    s.y1 as f32 + ((x - s.x1 as f32) / dx) * (s.y2 - s.y1) as f32
 }
 
 /// The upward unit normal of a floor segment, from `mpCollisionGetFCAngle`
@@ -435,5 +622,89 @@ mod tests {
     #[test]
     fn an_empty_stage_is_not_an_error() {
         assert!(check_floor([], v(0.0, 100.0), v(0.0, -100.0)).is_none());
+    }
+
+    #[test]
+    fn a_projection_reports_the_gap_down_to_the_floor() {
+        // How a spawn point relates to its stage: a little above the surface.
+        let below = project_floor([(3, MAIN)], v(1000.0, 4.0)).expect("above the stage");
+        assert_eq!(below.y, 0.0);
+        assert_eq!(below.dist, -4.0);
+        assert_eq!(below.line, 3);
+    }
+
+    #[test]
+    fn a_projection_ignores_floors_above_the_point() {
+        // Standing on the main platform, Dream Land's floating platforms are
+        // overhead and must not be reported as what you are above.
+        let below =
+            project_floor([(3, MAIN), (5, PLATFORM)], v(1000.0, 10.0)).expect("above the stage");
+        assert_eq!(below.line, 3, "the platform at y 907 is not underfoot");
+    }
+
+    #[test]
+    fn a_projection_takes_the_nearest_floor_below() {
+        // Standing on a floating platform, the main platform is far below and
+        // the platform underfoot is what counts.
+        let below =
+            project_floor([(3, MAIN), (5, PLATFORM)], v(1000.0, 910.0)).expect("above the stage");
+        assert_eq!(below.line, 5);
+        assert_eq!(below.y, 907.0);
+    }
+
+    #[test]
+    fn a_projection_off_the_side_of_the_stage_finds_nothing() {
+        assert!(project_floor([(3, MAIN)], v(5000.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn a_surface_height_is_read_at_the_body_s_own_x() {
+        // A slope from (0,0) to (200,100), sampled a quarter along.
+        let slope = Segment {
+            x1: 0,
+            y1: 0,
+            x2: 200,
+            y2: 100,
+            flags: 0,
+        };
+        let at = floor_height([(1, slope)], 50.0).expect("on the slope");
+        assert_eq!(at.y, 25.0);
+    }
+
+    #[test]
+    fn a_surface_height_clamps_within_tolerance_and_refuses_beyond_it() {
+        // The `±0.001` span test is what keeps a fighter on the very edge of a
+        // platform standing on it rather than falling off.
+        assert!(floor_height([(3, MAIN)], 2318.0005).is_some());
+        assert!(floor_height([(3, MAIN)], 2319.0).is_none());
+    }
+
+    #[test]
+    fn a_multi_segment_line_picks_the_segment_under_the_body() {
+        // Peach's Castle's sloped top is several segments of one line; the
+        // right one has to be chosen or the height is wrong by the slope.
+        let a = Segment {
+            x1: 0,
+            y1: 0,
+            x2: 100,
+            y2: 0,
+            flags: 0,
+        };
+        let b = Segment {
+            x1: 100,
+            y1: 0,
+            x2: 200,
+            y2: 200,
+            flags: 0,
+        };
+        assert_eq!(floor_height([(1, a), (1, b)], 50.0).unwrap().y, 0.0);
+        assert_eq!(floor_height([(1, a), (1, b)], 150.0).unwrap().y, 100.0);
+    }
+
+    #[test]
+    fn a_line_s_edges_are_its_outermost_corners() {
+        assert_eq!(line_edge([(3, MAIN)], -9000.0), Some(v(-2318.0, 0.0)));
+        assert_eq!(line_edge([(3, MAIN)], 9000.0), Some(v(2318.0, 0.0)));
+        assert_eq!(line_edge::<[(u16, Segment); 0]>([], 0.0), None);
     }
 }

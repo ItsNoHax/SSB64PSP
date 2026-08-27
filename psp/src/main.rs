@@ -20,6 +20,7 @@ mod assets;
 mod gu;
 mod input;
 mod meshdraw;
+mod play;
 mod timing;
 
 use core::f32::consts::PI;
@@ -227,6 +228,18 @@ unsafe fn run() -> ! {
     let mut stage_index: u32 = 0;
     let mut show_collision = true;
 
+    // The gameplay slice: one fighter, placed at the stage's first spawn and
+    // ticked against its collision every simulation step. This is the join
+    // between the ported physics and the ported collision, and running it here
+    // is the only way to see it happen at 60 Hz rather than in a test.
+    let mut sim_fighter = true;
+    let mut player = match (&pack, stage_count > 0) {
+        (Some(p), true) => p
+            .stage(stage_index)
+            .map(|s| play::Play::at_spawn(p, &s)),
+        _ => None,
+    };
+
     let mut sim = FixedClock::new(clock.now_us());
 
     let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
@@ -256,6 +269,7 @@ unsafe fn run() -> ! {
                 object_view = !object_view;
             }
             if stage_view && stage_count > 0 {
+                let was = stage_index;
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     stage_index = (stage_index + 1) % stage_count;
                 }
@@ -267,6 +281,30 @@ unsafe fn run() -> ! {
                 // only the stage, with it on you see only whether they line up.
                 if pressed.contains(N64Buttons::B) {
                     show_collision = !show_collision;
+                }
+                if pressed.contains(N64Buttons::C_UP) {
+                    sim_fighter = !sim_fighter;
+                }
+                // Walking off a ledge is a *correct* outcome, so there has to
+                // be a way back onto the stage without restarting.
+                let respawn = pressed.contains(N64Buttons::C_RIGHT) || was != stage_index;
+                if respawn {
+                    if let Some(p) = &pack {
+                        player = p
+                            .stage(stage_index)
+                            .map(|s| play::Play::at_spawn(p, &s));
+                    }
+                }
+
+                // The tick itself. Ordered after input so a respawn this frame
+                // starts falling this frame rather than next.
+                if sim_fighter {
+                    if let (Some(p), Some(pl)) = (&pack, player.as_mut()) {
+                        if let Some(s) = p.stage(stage_index) {
+                            pl.fighter.input = state;
+                            pl.tick(p, &s);
+                        }
+                    }
                 }
             } else if object_view && object_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
@@ -418,6 +456,18 @@ unsafe fn run() -> ! {
                     } else {
                         0
                     };
+                    // Drawn last so the marker is never hidden behind a layer
+                    // it is standing in front of.
+                    if sim_fighter {
+                        if let Some(pl) = &player {
+                            meshdraw::draw_fighter(
+                                pl.fighter.pos.to_array(),
+                                pl.fighter.is_grounded(),
+                                &base,
+                                &mut gpu,
+                            );
+                        }
+                    }
                     shown = (tris, layers, segments);
                 }
             }
@@ -558,6 +608,27 @@ unsafe fn run() -> ! {
             })
             .unwrap_or((0, 0));
 
+        // The fighter's own line. Positions are cast to integers because the
+        // debug text has no float formatting, and a unit of game space is far
+        // below what the overlay could show anyway.
+        let (ft_state, ft_x, ft_y, ft_line, ft_mat, ft_air) = match &player {
+            Some(pl) if sim_fighter => (
+                if !pl.placed {
+                    "no-spawn"
+                } else if pl.fighter.is_grounded() {
+                    "ground  "
+                } else {
+                    "air     "
+                },
+                pl.fighter.pos.x as i32,
+                pl.fighter.pos.y as i32,
+                pl.fighter.floor.map_or(-1, |f| f.line as i32),
+                pl.material().unwrap_or(0),
+                pl.airborne_ticks,
+            ),
+            _ => ("off     ", 0, 0, -1, 0, 0),
+        };
+
         const WHITE: u32 = 0xFFFF_FFFF;
         gpu.debug_text(
             8,
@@ -568,6 +639,7 @@ unsafe fn run() -> ! {
                  pack: {}\n\
                  \n\
                  {} {}/{}  file {}  @0x{:X}\n\
+                 fighter {}  x {} y {}  line {}  mat {}  air {}\n\
                  tris {}  {} {}  {} {}\n\
                  draws {}  state changes {}\n\
                  \n\
@@ -579,6 +651,7 @@ unsafe fn run() -> ! {
                  cam {} r {}\n\
                  \n\
                  dpad: browse  start: stage  B: collision\n\
+                 C-up: fighter  C-right: respawn\n\
                  R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
                 pack_status,
                 mode,
@@ -586,6 +659,12 @@ unsafe fn run() -> ! {
                 count,
                 src_file,
                 src_offset,
+                ft_state,
+                ft_x,
+                ft_y,
+                ft_line,
+                ft_mat,
+                ft_air,
                 shown.0,
                 if stage_view {
                     "layers"

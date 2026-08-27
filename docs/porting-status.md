@@ -14,7 +14,7 @@ Last updated: 2026-08-27.
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 485 textures packed into a 2.9 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🟡 20% | Physics core ported; stages render on device with collision, and the swept floor query runs against real stage data. No match loop, no fighter standing on a stage yet |
+| **M4 — Gameplay vertical slice** | 🟡 30% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-on-stage.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift (RE-031). No fighter state machine, so it cannot walk, jump or be hit; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
 | **M7 — Menus / save** | 🔴 0% | |
@@ -47,12 +47,12 @@ Last updated: 2026-08-27.
 | PSP GU backend | 🟡 40% | Init, frame lifecycle, matrices, untextured triangles. No textures, no mesh path |
 | PSP input backend | 🟢 70% | `sceCtrl` analog read wired to the shared mapping |
 | PSP audio backend | 🔴 0% | |
-| Physics | 🟢 40% | 15 functions ported with original addresses cited; ground/air/gravity/friction/drift verified |
-| Fighter state | 🟡 25% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff |
-| Collision | 🟢 45% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query ported from `mpCollisionCheckFloorLineCollisionSame`, level and sloped surfaces both; surface flags (drop-through, ledge) confirmed against how Dream Land plays. **158/162 player spawns land on a floor**, almost all 2–6 units below where they start (RE-030). No ceiling or wall queries; moving groups are tested at rest |
+| Physics | 🟢 50% | 15 functions ported with original addresses cited; ground/air/gravity/friction/drift verified, and now *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick, on device (RE-031) |
+| Fighter state | 🟡 30% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff, spawn placement and the per-tick update. No status/state machine (`ftcommonstatus`), so no walk, jump or attack |
+| Collision | 🟢 60% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query, vertical floor projection, per-line surface height and the `mpprocess` floor path (substepping, landing snap, ledge corner, follow-the-surface) all ported. Surface flags confirmed against how Dream Land plays; `dMPCollisionMaterialFrictions` recovered. **158/158 spawns hold a simulated fighter still for 60 ticks at zero drift**, and the swept and projected solvers agree on every one (RE-030, RE-031). No ceiling or wall queries; moving groups are tested at rest |
 | Animation | 🔴 0% | |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
-| Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view renders Dream Land's four layers with its collision polylines landing exactly on the platforms, 658 us at 60 FPS (`docs/images/m4-stage-collision.png`); Peach's Castle cross-checks it on sloped ground. No stage *loader* — the viewer browses stages, a match does not select one |
+| Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view renders Dream Land's four layers with its collision polylines landing exactly on the platforms, 658 us at 60 FPS (`docs/images/m4-stage-collision.png`); Peach's Castle cross-checks it on sloped ground. A fighter now stands on them (RE-031). No stage *loader* — the viewer browses stages, a match does not select one |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |
 | Menus | 🔴 0% | |
@@ -65,8 +65,8 @@ Last updated: 2026-08-27.
 
 ## Test coverage
 
-196 host tests passing across `ssb-rom` (123), `ssb-engine` (36) and
-`ssb-game` (37).
+224 host tests passing across `ssb-rom` (123), `ssb-engine` (36) and
+`ssb-game` (65).
 
 ## M1 verification (PPSSPP)
 

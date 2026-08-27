@@ -14,6 +14,7 @@
 //! romtool scene    <rom>          recover DObjDesc scene graphs
 //! romtool stages   <rom>          recover MPGroundData headers and collision
 //! romtool collide  <pack>         run the collision query on every stage
+//! romtool simulate <pack>         drop a real fighter on every stage's spawns
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,6 +40,7 @@ fn main() -> ExitCode {
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
+        ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
@@ -74,6 +76,7 @@ USAGE:
     romtool stages   <rom.z64> [--file <id>] [--lines]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
+    romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -1407,6 +1410,225 @@ fn collide(path: &Path, opts: &[&str]) -> Res {
         println!(
             "a spawn with nothing under it means its platform is in a moving group's \
              own space; group transforms are not extracted yet"
+        );
+    }
+    Ok(())
+}
+
+/// Runs a real fighter against every stage in a built pack.
+///
+/// `collide` asks whether a spawn has a floor under it. This asks the harder
+/// question: does the ported physics, driven a tick at a time through the
+/// ported collision process, actually leave a fighter standing there?
+///
+/// Three checks, each using something the pack does not contain:
+///
+/// * **Two solvers agree.** A fighter dropped from its spawn lands via the
+///   swept line/line query; `project_floor` finds the same surface with a
+///   straight vertical probe. These share no arithmetic, so agreement on 158
+///   real spawns is not something a common bug would produce.
+/// * **It stays put.** After landing, a second of ticks must not move it. Any
+///   sign error in the landing snap or the ground update shows up as drift,
+///   and drift compounds — a stage that holds still for 60 ticks is not
+///   holding still by luck.
+/// * **It cannot be launched through the stage.** Dropped from 3000 units up
+///   at maximum knockback velocity, one tick's movement is longer than most
+///   stages are wide. Only `mpProcessUpdateMain`'s substepping catches that.
+fn simulate(path: &Path, opts: &[&str]) -> Res {
+    use ssb_engine::math::Vec2;
+    use ssb_game::fighter::{Fighter, FighterKind};
+
+    /// Ticks to fall from a spawn to its surface. Spawns sit single-digit
+    /// units up, so this is generous by two orders of magnitude.
+    const SETTLE_TICKS: u32 = 240;
+    /// Ticks a landed fighter must hold still for.
+    const REST_TICKS: u32 = 60;
+
+    let mut only: Option<u32> = None;
+    let mut verbose = false;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--stage" => only = Some(parse_id(it.next().ok_or("--stage needs an index")?)?),
+            "--verbose" | "-v" => verbose = true,
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+
+    let mut spawns = 0usize;
+    let mut settled = 0usize;
+    let mut agreed = 0usize;
+    let mut at_rest = 0usize;
+    let mut caught = 0usize;
+    let mut substep_mattered = 0usize;
+    let mut worst_drift = 0.0f32;
+    let mut disagreements = Vec::new();
+
+    for i in 0..pack.stage_count() {
+        if only.is_some_and(|s| s != i) {
+            continue;
+        }
+        let Some(stage) = pack.stage(i) else { continue };
+        let segments = floor_segments(&pack, &stage);
+        let floors = || segments.iter().copied();
+
+        for player in 0..4u16 {
+            let Some(spawn) = pack.spawn(&stage, player) else {
+                continue;
+            };
+            spawns += 1;
+
+            // The vertical probe: what the game thinks this spawn is above.
+            let mut probe = Fighter::new(FighterKind::Mario, player as u8, 3);
+            probe.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
+            if !probe.place_on_stage(floors()) {
+                if verbose {
+                    println!("  stage {i:2} P{}  nothing beneath the spawn", player + 1);
+                }
+                continue;
+            }
+            settled += 1;
+            let expected = probe.floor.expect("placed").line;
+
+            // The swept path: let it fall there under real gravity.
+            let mut f = Fighter::new(FighterKind::Mario, player as u8, 3);
+            f.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
+            let mut ticks = 0;
+            while !f.is_grounded() && ticks < SETTLE_TICKS {
+                f.tick(floors);
+                ticks += 1;
+            }
+            if !f.is_grounded() {
+                disagreements.push(format!(
+                    "stage {i:2} P{}  still falling after {SETTLE_TICKS} ticks",
+                    player + 1
+                ));
+                continue;
+            }
+            let landed = f.floor.expect("grounded").line;
+            if landed == expected && (f.pos.y - probe.pos.y).abs() < 0.01 {
+                agreed += 1;
+            } else {
+                disagreements.push(format!(
+                    "stage {i:2} P{}  fell onto line {landed} at y {:.2}, \
+                     but sits above line {expected} at y {:.2}",
+                    player + 1,
+                    f.pos.y,
+                    probe.pos.y
+                ));
+            }
+
+            // Now hold still.
+            let rested_at = f.pos;
+            for _ in 0..REST_TICKS {
+                f.tick(floors);
+            }
+            let drift = (f.pos.x - rested_at.x)
+                .abs()
+                .max((f.pos.y - rested_at.y).abs());
+            if drift > worst_drift {
+                worst_drift = drift;
+            }
+            if drift == 0.0 && f.is_grounded() {
+                at_rest += 1;
+            } else {
+                disagreements.push(format!(
+                    "stage {i:2} P{}  drifted {drift} units while standing still",
+                    player + 1
+                ));
+            }
+
+            // And the tunnelling case: maximum knockback straight down, from
+            // high enough that one tick's movement overshoots the stage.
+            // Knockback goes in its own vector because gravity clamps
+            // `vel_air` at terminal velocity — a launched fighter is the only
+            // thing in the game that moves this fast.
+            let mut launched = Fighter::new(FighterKind::Mario, player as u8, 3);
+            let high = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32 + 2000.0, 0.0);
+            launched.pos = high;
+            launched.physics.vel_knockback.y = -2500.0;
+            launched.tick(floors);
+
+            // Whether subdividing that movement changed the answer. The swept
+            // query is exact along a straight line, so for a pure fall it
+            // should not — this counts how often it does, rather than
+            // assuming either way.
+            let whole = ssb_game::collision::check_floor(
+                floors(),
+                Vec2::new(high.x, high.y),
+                Vec2::new(high.x, high.y - 2500.0),
+            );
+            let stepped = launched.floor.map(|f| f.line);
+            if whole.map(|h| h.line) != stepped {
+                substep_mattered += 1;
+            }
+
+            if launched.is_grounded() {
+                caught += 1;
+            } else {
+                disagreements.push(format!(
+                    "stage {i:2} P{}  fell through the stage at maximum velocity, \
+                     reaching y {:.0}",
+                    player + 1,
+                    launched.pos.y
+                ));
+            }
+
+            if verbose {
+                let s = probe.floor.expect("placed");
+                println!(
+                    "  stage {i:2} P{}  spawn ({:6},{:6})  lands line {landed:3} \
+                     y {:8.2} after {ticks:3} ticks  {}",
+                    player + 1,
+                    spawn.x,
+                    spawn.y,
+                    f.pos.y,
+                    surface_flags(s.flags)
+                );
+            }
+        }
+    }
+
+    // A last sanity check that costs nothing: the projection and the swept
+    // query must also agree about open air.
+    let void = ssb_game::collision::project_floor(
+        floor_segments(&pack, &pack.stage(0).ok_or("no stages in the pack")?)
+            .iter()
+            .copied(),
+        Vec2::new(1.0e6, 0.0),
+    );
+    if void.is_some() {
+        return Err("a point a million units off-stage found a floor under it".into());
+    }
+
+    println!("spawns      {spawns}");
+    println!("settle      {settled} have a floor beneath them");
+    println!("agree       {agreed}/{settled} land where the vertical probe says they should");
+    println!("at rest     {at_rest}/{settled} do not move over {REST_TICKS} ticks (worst drift {worst_drift})");
+    println!("substep     {caught}/{settled} caught when dropped at maximum knockback velocity");
+    println!("            subdividing changed the outcome for {substep_mattered} of them");
+    if substep_mattered == 0 {
+        println!(
+            "            expected while only floors are ported: the swept query is exact \n\
+             \x20           along a straight line, so substepping earns its keep once a wall \n\
+             \x20           can deflect a fighter mid-tick"
+        );
+    }
+
+    if !disagreements.is_empty() {
+        println!("\n{} to explain:", disagreements.len());
+        for d in &disagreements {
+            println!("  {d}");
+        }
+    }
+    if settled < spawns {
+        println!(
+            "\n{} spawn(s) have nothing beneath them: their platforms belong to a moving \
+             group and are stored in that group's own space, which is not extracted yet",
+            spawns - settled
         );
     }
     Ok(())
