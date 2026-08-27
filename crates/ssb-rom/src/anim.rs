@@ -45,6 +45,7 @@
 use alloc::vec::Vec;
 
 use crate::archive::{Archive, File};
+use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
 pub const SLOT_COUNT: usize = 7;
@@ -142,70 +143,33 @@ impl std::error::Error for AnimError {}
 /// first word is a large offset is not a figatree.
 const MAX_JOINTS: usize = 64;
 
-/// Commands whose payload advances the animation clock (`anim_wait += payload`
-/// in `ftAnimParseDObjFigatree`). The non-`Block` variants set a track's
-/// interpolation length without consuming time.
-const fn is_block(opcode: u16) -> bool {
-    matches!(opcode, 1 | 2 | 4 | 7 | 9 | 14)
-}
-
-/// Words each command reads per set track flag.
-const fn values_per_track(opcode: u16) -> usize {
-    match opcode {
-        // SetValRate / SetValRateBlock carry a (value, rate) pair per track.
-        4 | 5 => 2,
-        2 | 3 | 6 | 7 | 8 | 9 | 10 => 1,
-        _ => 0,
-    }
-}
-
 const OP_END: u16 = 0;
-const OP_TRANSLATE_INTERP: u16 = 12;
 const OP_LOOP: u16 = 13;
-
-fn u16_be(data: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([data[at], data[at + 1]])
-}
 
 fn u32_be(data: &[u8], at: usize) -> u32 {
     u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
 }
 
 /// Walks one joint's script, returning how long it runs.
+///
+/// Runs on the same decoder [`figatree`](crate::figatree) plays scripts with,
+/// so the 189 lengths verified against the decompilation are a test of that
+/// decoder's word counts rather than of a second copy of them.
 fn script_length(data: &[u8], start: usize) -> Option<AnimLength> {
     let mut frames: u16 = 0;
     let mut at = start;
     loop {
-        if at + 2 > data.len() {
-            return None;
-        }
-        let word = u16_be(data, at);
-        let (opcode, flags, toggle) = (word >> 11, (word >> 1) & 0x3FF, word & 1);
-        at += 2;
+        let cmd = figatree::command(data, at).ok()?;
+        at = cmd.next;
 
-        match opcode {
+        match cmd.opcode {
             OP_END => return Some(AnimLength::Frames(frames)),
             OP_LOOP => return Some(AnimLength::Loops),
-            // Carries a jump offset rather than track data.
-            OP_TRANSLATE_INTERP => {
-                at += 2;
-                continue;
-            }
             _ => {}
         }
-
-        let mut payload = 0u16;
-        if toggle == 1 {
-            if at + 2 > data.len() {
-                return None;
-            }
-            payload = u16_be(data, at);
-            at += 2;
+        if figatree::is_block(cmd.opcode) {
+            frames = frames.saturating_add(cmd.payload);
         }
-        if is_block(opcode) {
-            frames = frames.saturating_add(payload);
-        }
-        at += values_per_track(opcode) * flags.count_ones() as usize * 2;
     }
 }
 

@@ -41,6 +41,8 @@
 use alloc::vec::Vec;
 
 use crate::archive::{Archive, File};
+#[cfg(test)]
+use crate::archive::{ExternReloc, InternReloc};
 
 /// Number of `f32`/`s32` scalars decoded from the head of `FTAttributes`.
 ///
@@ -305,6 +307,134 @@ impl std::error::Error for FighterError {}
 pub struct Fighter {
     pub file: FighterFile,
     pub attributes: FighterAttributes,
+    /// Which `DObjDesc` entries become joints — see [`setup_parts`].
+    pub setup_parts: u64,
+    /// Which joints an animation is not allowed to move — see [`animlock`].
+    pub animlock: u64,
+}
+
+/// Byte offset of `setup_parts` within `FTAttributes`.
+///
+/// Counted back from `unused_0x2CC`, the one field in the struct the
+/// decompilation names after its own offset: `cliff_status_ga[5]` and
+/// `effect_joint_ids[5]` are 20 bytes each and `animlock` is a pointer, which
+/// puts `setup_parts` at `0x2CC - 20 - 20 - 4 - 4`.
+pub const SETUP_PARTS_OFFSET: u32 = 0x29C;
+
+/// Byte offset of `animlock`, immediately after `setup_parts`.
+pub const ANIMLOCK_OFFSET: u32 = 0x2A0;
+
+/// Byte offset of `commonparts_container` within `FTAttributes`.
+///
+/// Counted forward from `unused_0x2CC` through `hiddenparts`, and checked
+/// against the next field the decompilation names after its offset:
+/// `dobj_lookup`, `shield_anim_joints[8]` and the four foot-joint fields put
+/// the following filler at `0x30C`, which is what it is called.
+pub const COMMONPARTS_OFFSET: u32 = 0x2D4;
+
+/// Size of one `FTCommonPart`: three pointers and a `u8`, padded to 16.
+const COMMONPART_SIZE: u32 = 16;
+
+/// A fighter's skeleton: the `DObjDesc` array its `FTCommonPart` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommonPart {
+    /// Archive file the descriptor array lives in.
+    pub model_file: u32,
+    /// Byte offset of the array within that file.
+    pub graph: u32,
+}
+
+/// The high- and low-detail skeletons a fighter's `FTAttributes` names.
+///
+/// ```c
+/// struct FTCommonPartContainer { FTCommonPart commonparts[2]; };
+/// ```
+///
+/// indexed by `FTPartsLevelDetail` — high poly, then low. Both entries name
+/// the same model file; a fighter's *other* graphs (Mario and Luigi share a
+/// 26-node one) are named by other records and are not its skeleton.
+///
+/// Reading it takes two hops, each an archive relocation rather than a guess:
+/// an intern relocation from the attribute struct to the container, then an
+/// extern relocation from the container into the model file.
+pub fn common_parts(file: &File, entry: FighterFile) -> [Option<CommonPart>; 2] {
+    let container = file
+        .intern_relocs
+        .iter()
+        .find(|r| r.at == entry.offset + COMMONPARTS_OFFSET)
+        .map(|r| r.target);
+    let mut out = [None; 2];
+    let Some(container) = container else {
+        return out;
+    };
+    for (detail, slot) in out.iter_mut().enumerate() {
+        let at = container + detail as u32 * COMMONPART_SIZE;
+        *slot = file
+            .extern_relocs
+            .iter()
+            .find(|r| r.at == at)
+            .map(|r| CommonPart {
+                model_file: r.target_file as u32,
+                graph: r.target_offset,
+            });
+    }
+    out
+}
+
+/// Reads a `u32 *flags` field of `FTAttributes` as one 64-bit mask.
+///
+/// Both `setup_parts` and `animlock` point at "two sets of flags" — two
+/// big-endian `u32`s, the first covering joints 0..31 and the second 32..63,
+/// each read most-significant bit first (`current_flags & (1 << 31)`, then
+/// `flags <<= 1`). Storing them as one `u64` with bit *n* meaning joint *n*
+/// puts them in the order the caller wants to index them.
+///
+/// The field is a pointer, so it only means anything if the archive relocated
+/// that slot; an unrelocated slot is a null pointer, and the answer is `None`.
+fn joint_mask(file: &File, at: u32) -> Option<u64> {
+    let target = file
+        .intern_relocs
+        .iter()
+        .find(|r| r.at == at)
+        .map(|r| r.target)? as usize;
+    let word = |i: usize| -> Option<u32> {
+        let raw = file.data.get(target + i * 4..target + i * 4 + 4)?;
+        Some(u32::from_be_bytes(raw.try_into().ok()?))
+    };
+    let (lo, hi) = (word(0)?, word(1)?);
+    let bit = |w: u32, i: u32| u64::from(w >> (31 - i) & 1);
+    Some((0..32).fold(0u64, |m, i| m | bit(lo, i) << i | bit(hi, i) << (i + 32)))
+}
+
+/// Which `DObjDesc` entries of a fighter's model become real joints.
+///
+/// `lbCommonSetupFighterPartsDObjs` walks the descriptor array and the mask
+/// together, and only creates a `DObj` where the mask's bit is set:
+///
+/// ```c
+/// for (i = 0; ((flags0 != 0) || (flags1 != 0)) && (dobjdesc->id != DOBJ_ARRAY_MAX); i++) {
+///     current_flags = (i < NBITS(u32)) ? flags0 : flags1;
+///     if (current_flags & (1 << 31)) { ... gcAddChildForDObj(...) ... }
+///     dobjdesc++;
+///     if (i < NBITS(u32)) flags0 <<= 1; else flags1 <<= 1;
+/// }
+/// ```
+///
+/// So a fighter's joint count is the mask's population count, not its model's
+/// node count, and the two differ: Mario's model has 25 descriptors and 24
+/// joints. That gap is exactly what a figatree's pointer table is sized to —
+/// one entry per joint — so this mask is what maps animation joint *n* onto a
+/// descriptor index.
+pub fn setup_parts(file: &File, entry: FighterFile) -> Option<u64> {
+    joint_mask(file, entry.offset + SETUP_PARTS_OFFSET)
+}
+
+/// Which joints an animation may not move.
+///
+/// "Ignores joints 0 through 3" — those are `TopN`, `TransN`, `XRotN` and
+/// `YRotN`, the four the fighter code drives itself.
+pub fn animlock(file: &File, entry: FighterFile) -> Option<u64> {
+    joint_mask(file, entry.offset + ANIMLOCK_OFFSET)
 }
 
 /// Decodes one fighter out of a loaded archive file.
@@ -313,6 +443,8 @@ pub fn decode_file(entry: FighterFile, file: &File) -> Result<Fighter, FighterEr
     Ok(Fighter {
         file: entry,
         attributes,
+        setup_parts: setup_parts(file, entry).unwrap_or(0),
+        animlock: animlock(file, entry).unwrap_or(0),
     })
 }
 
@@ -455,5 +587,90 @@ mod tests {
         bytes.extend_from_slice(&[0u8; 64]);
         let a = FighterAttributes::decode(&bytes, 203, 0x48).unwrap();
         assert!(!a.looks_plausible());
+    }
+
+    /// Builds a `*Main` file holding an attribute struct at `attrs`, with
+    /// `setup_parts` pointing at `mask` and `commonparts_container` pointing
+    /// at a container whose two entries name graphs in `model`.
+    fn main_file(attrs: u32, mask: (u32, u32), model: u16) -> File {
+        let mask_at = 0x800u32;
+        let container_at = 0x810u32;
+        let mut data = alloc::vec![0u8; 0x900];
+        data[mask_at as usize..mask_at as usize + 4].copy_from_slice(&mask.0.to_be_bytes());
+        data[mask_at as usize + 4..mask_at as usize + 8].copy_from_slice(&mask.1.to_be_bytes());
+        File {
+            id: 203,
+            data,
+            intern_relocs: alloc::vec![
+                InternReloc {
+                    at: attrs + SETUP_PARTS_OFFSET,
+                    target: mask_at
+                },
+                InternReloc {
+                    at: attrs + COMMONPARTS_OFFSET,
+                    target: container_at
+                },
+            ],
+            extern_relocs: alloc::vec![
+                ExternReloc {
+                    at: container_at,
+                    target_file: model,
+                    target_offset: 0x2200
+                },
+                ExternReloc {
+                    at: container_at + 16,
+                    target_file: model,
+                    target_offset: 0x4590
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn setup_parts_reads_its_two_words_most_significant_bit_first() {
+        // `current_flags & (1 << 31)` then `flags <<= 1`, so joint 0 is the
+        // top bit of the first word and joint 32 the top bit of the second.
+        // Reading them as plain little-endian bitmasks would reverse every
+        // joint in the fighter.
+        let entry = FIGHTER_FILES[0];
+        let f = main_file(entry.offset, (0x8000_0001, 0x4000_0000), 296);
+        let mask = setup_parts(&f, entry).unwrap();
+        assert_eq!(mask & 1, 1, "joint 0 is the first word's top bit");
+        assert_eq!(mask >> 31 & 1, 1, "joint 31 is its bottom bit");
+        assert_eq!(mask >> 33 & 1, 1, "joint 33 is the second word's bit 30");
+        assert_eq!(mask.count_ones(), 3);
+    }
+
+    #[test]
+    fn a_fighter_whose_mask_slot_was_never_relocated_has_no_mask() {
+        // The field is a pointer; an unrelocated slot is a null one, and
+        // inventing a mask from the raw bytes would silently drop joints.
+        let entry = FIGHTER_FILES[0];
+        let mut f = main_file(entry.offset, (0xFFFF_FFFF, 0), 296);
+        f.intern_relocs.clear();
+        assert_eq!(setup_parts(&f, entry), None);
+    }
+
+    #[test]
+    fn the_common_part_container_names_a_high_and_a_low_detail_skeleton() {
+        let entry = FIGHTER_FILES[0];
+        let f = main_file(entry.offset, (0xFFFF_FF00, 0), 296);
+        let parts = common_parts(&f, entry);
+        assert_eq!(
+            parts[0],
+            Some(CommonPart {
+                model_file: 296,
+                graph: 0x2200
+            })
+        );
+        // `commonparts[1]` is one 16-byte FTCommonPart further on, and both
+        // detail levels live in the same model file.
+        assert_eq!(
+            parts[1],
+            Some(CommonPart {
+                model_file: 296,
+                graph: 0x4590
+            })
+        );
     }
 }
