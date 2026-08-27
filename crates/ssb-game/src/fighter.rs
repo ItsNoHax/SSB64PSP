@@ -194,6 +194,12 @@ pub struct Fighter {
     pub floor: Option<Standing>,
     /// A drop-through platform being fallen past — `ignore_line_id`.
     pub ignore_line: Option<u16>,
+    /// Which status the fighter is in, and its working state.
+    pub status: crate::status::StatusState,
+    /// The derived stick state the status machine reads — tap counters and
+    /// all. Kept beside `input` rather than inside it because `ControllerState`
+    /// is the raw pad and this is what `ftMainProcessInput` makes of it.
+    pub stick: crate::status::StickState,
 }
 
 impl Fighter {
@@ -215,6 +221,8 @@ impl Fighter {
             coll: BodyColl::default(),
             floor: None,
             ignore_line: None,
+            status: crate::status::StatusState::default(),
+            stick: crate::status::StickState::new(),
         }
     }
 
@@ -260,12 +268,23 @@ impl Fighter {
     }
 
     /// Lands, clearing air state.
+    ///
+    /// The air-to-ground velocity transfer is guarded on actually being
+    /// airborne, mirroring [`Fighter::become_airborne`]. Without the guard a
+    /// caller that has already entered a grounded status — which does the
+    /// transfer itself — would run it a second time against an already-zeroed
+    /// `vel_air` and silently delete the fighter's horizontal momentum. That
+    /// is not a crash; it is a fighter that lands from a running jump and
+    /// stops dead, which reads as a physics problem rather than an ordering
+    /// one.
     pub fn land(&mut self, floor_y: f32) {
+        if self.situation == Situation::Air {
+            self.physics.vel_ground.x = self.physics.vel_air.x;
+            self.physics.vel_air = Vec3::ZERO;
+            self.physics.is_fastfall = false;
+        }
         self.situation = Situation::Ground;
         self.pos.y = floor_y;
-        self.physics.vel_ground.x = self.physics.vel_air.x;
-        self.physics.vel_air = Vec3::ZERO;
-        self.physics.is_fastfall = false;
         self.physics.jumps_used = 0;
     }
 
@@ -290,12 +309,28 @@ impl Fighter {
         }
     }
 
+    /// Feeds one frame of controller input in — `ftMainProcessInput`.
+    ///
+    /// Call before [`Fighter::tick`]. This is separate because the derived
+    /// stick state has to be advanced exactly once per frame whether or not
+    /// the fighter is frozen: the original updates it before the hitlag check,
+    /// which is how a frozen fighter can still buffer a direction.
+    pub fn set_input(&mut self, input: ControllerState, jump_tapped: bool, jump_released: bool) {
+        self.prev_input = self.input;
+        self.input = input;
+        self.stick
+            .step(input.stick_x, input.stick_y, jump_tapped, jump_released);
+    }
+
     /// Advances one tick against a stage.
     ///
-    /// The order is the original's: timers, then the frame's physics, then the
-    /// move is handed to [`ground`] to be tested against the stage. Velocity is
-    /// never applied to position directly here — [`ground::move_air`] owns that,
-    /// because it is the only thing that can subdivide the movement.
+    /// The order is the original's, and it is the order the four per-status
+    /// callbacks run in: timers, then the status's own update and interrupt
+    /// (which may replace the status outright), then the physics of whatever
+    /// status is now current, then the move is handed to [`ground`] to be
+    /// tested against the stage. Velocity is never applied to position
+    /// directly here — [`ground::move_air`] owns that, because it is the only
+    /// thing that can subdivide the movement.
     ///
     /// `floors` is called more than once per tick and must yield every floor
     /// segment worth testing. Passing a closure rather than an iterator is what
@@ -309,6 +344,11 @@ impl Fighter {
         if self.is_in_hitlag() {
             return;
         }
+
+        // `proc_update` + `proc_interrupt`. This can move the fighter between
+        // ground and air (a jumpsquat ending, a platform drop), so the
+        // situation is re-read afterwards rather than captured before.
+        crate::status::update(self);
 
         match self.situation {
             Situation::Ground => self.tick_ground(floors),
@@ -328,14 +368,24 @@ impl Fighter {
             return;
         };
 
-        // The surface's material scales traction, which is the only thing a
-        // floor's material does — `ftPhysicsApplyGroundVelFriction`.
+        // `proc_physics`: each grounded status drives the along-floor velocity
+        // its own way — a walk is set from the stick, a dash decelerates only
+        // after frame 7, a run holds. Friction is the default, and the floor's
+        // material scales it (`ftPhysicsApplyGroundVelFriction`).
         let friction = collision::material_friction(standing.flags);
-        crate::physics::apply_ground_friction_with_material(
+        crate::status::apply_status_physics(
             &mut self.physics,
             &self.attributes,
+            self.status.status,
+            self.status.anim_frame,
+            self.input.stick_x,
             friction,
         );
+
+        // A walk's speed is a magnitude; the facing decides its sign.
+        if self.status.status.is_walk() {
+            self.physics.vel_ground.x = self.physics.vel_ground.x.abs() * self.facing.sign();
+        }
 
         let want = Vec3::new(
             self.pos.x + self.physics.vel_ground.x + self.physics.vel_knockback.x,
@@ -347,10 +397,13 @@ impl Fighter {
 
         match moved.floor {
             Some(f) => self.floor = Some(f),
-            // Walked off the end of the line.
+            // Walked off the end of the line. `mpCommonSetFighterFallOnGroundBreak`
+            // drops the fighter into a fall rather than leaving it in a walk
+            // with no ground under it.
             None => {
                 self.floor = None;
                 self.become_airborne();
+                crate::status::set_fall(self);
             }
         }
     }
@@ -382,6 +435,10 @@ impl Fighter {
             Some(f) => {
                 self.floor = Some(f);
                 self.ignore_line = None;
+                // The landing status is chosen from the velocity *before*
+                // `land` clears it — a fastfall still at terminal velocity on
+                // contact is what earns the heavy landing.
+                crate::status::set_landing(self);
                 self.land(moved.pos.y);
             }
             None => {
@@ -642,6 +699,208 @@ mod tests {
         assert!(
             slide(3) > slide(0),
             "material 3 is the slippery one in dMPCollisionMaterialFrictions"
+        );
+    }
+
+    /// Holds a controller input for one frame and ticks against Dream Land.
+    fn step(f: &mut Fighter, x: i8, y: i8) {
+        let input = ControllerState {
+            stick_x: x,
+            stick_y: y,
+            ..Default::default()
+        };
+        f.set_input(input, false, false);
+        f.tick(dream_land);
+    }
+
+    #[test]
+    fn a_fighter_walks_along_the_stage_and_stops_when_the_stick_is_released() {
+        use crate::status::Status;
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(0.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_wait(&mut f);
+
+        // Ease the stick out so this is a walk and not a dash.
+        for _ in 0..8 {
+            step(&mut f, 30, 0);
+        }
+        assert!(f.status.status.is_walk(), "{:?}", f.status.status);
+        assert!(f.pos.x > 0.0, "should have moved forward");
+        assert_eq!(f.pos.y, 0.0, "and stayed on the floor");
+        assert_eq!(f.facing, Facing::Right);
+
+        // Release: the fighter waits and slides to a stop under traction.
+        let walked_to = f.pos.x;
+        for _ in 0..60 {
+            step(&mut f, 0, 0);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+        assert_eq!(f.physics.vel_ground.x, 0.0);
+        assert!(f.pos.x > walked_to, "momentum carries a little further");
+        assert_eq!(f.pos.y, 0.0);
+    }
+
+    #[test]
+    fn a_harder_push_walks_faster() {
+        let mut slow = Fighter::new(FighterKind::Mario, 0, 3);
+        let mut fast = Fighter::new(FighterKind::Mario, 0, 3);
+        for f in [&mut slow, &mut fast] {
+            f.pos = Vec3::new(0.0, 4.0, 0.0);
+            assert!(f.place_on_stage(dream_land()));
+            crate::status::set_wait(f);
+        }
+        for _ in 0..20 {
+            step(&mut slow, 30, 0);
+            step(&mut fast, 80, 0);
+        }
+        assert!(
+            fast.pos.x > slow.pos.x,
+            "fast {} vs slow {}",
+            fast.pos.x,
+            slow.pos.x
+        );
+    }
+
+    #[test]
+    fn a_fighter_jumps_off_the_stage_and_lands_back_on_it() {
+        use crate::status::Status;
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(0.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_wait(&mut f);
+
+        // Flick up. Entering jumpsquat takes the frame the input arrives on,
+        // then Mario's `kneebend_anim_length` of 3 elapse before takeoff.
+        step(&mut f, 0, 80);
+        assert_eq!(f.status.status, Status::KneeBend);
+
+        let mut squat_frames = 0;
+        while f.is_grounded() && squat_frames < 10 {
+            step(&mut f, 0, 80);
+            squat_frames += 1;
+        }
+        assert_eq!(squat_frames, 3, "Mario's jumpsquat is 3 frames");
+        assert!(f.pos.y > 0.0);
+
+        let mut peak = f.pos.y;
+        let mut landed = None;
+        for tick in 0..200 {
+            step(&mut f, 0, 0);
+            peak = peak.max(f.pos.y);
+            if f.is_grounded() {
+                landed = Some(tick);
+                break;
+            }
+        }
+        let airtime = landed.expect("never came back down") + 1;
+        // Mario is 320 units tall (his collision diamond's `top`), so a full
+        // hop clearing ~1360 is a little over four times his own height, in
+        // the air for about 1.2 seconds. That is the floaty jump Smash 64
+        // actually has, and it falls out of the extracted numbers alone:
+        // `80 * 0.7 + 26 = 82` initial velocity against gravity 2.4.
+        assert!(
+            (1300.0..1450.0).contains(&peak),
+            "full hop peaked at {peak}, expected ~1360"
+        );
+        assert!(
+            peak > 4.0 * f.coll.top.max(320.0),
+            "should clear his own height several times over"
+        );
+        assert!(
+            (65..85).contains(&airtime),
+            "airtime {airtime} frames, expected ~74"
+        );
+        assert_eq!(f.pos.y, 0.0, "landed back exactly on the floor");
+        assert_eq!(f.status.status, Status::LandingLight);
+    }
+
+    #[test]
+    fn a_double_jump_goes_higher_than_a_single_one() {
+        let apex = |double: bool| {
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            f.pos = Vec3::new(0.0, 4.0, 0.0);
+            f.place_on_stage(dream_land());
+            crate::status::set_wait(&mut f);
+            // Entry frame plus Mario's three frames of jumpsquat.
+            for _ in 0..4 {
+                step(&mut f, 0, 80);
+            }
+            let mut peak = f.pos.y;
+            let mut jumped_again = false;
+            for _ in 0..200 {
+                // Release, then flick up again at the top of the first jump.
+                let up = double && !jumped_again && f.physics.vel_air.y < 0.0;
+                if up {
+                    step(&mut f, 0, 0);
+                    step(&mut f, 0, 80);
+                    jumped_again = true;
+                } else {
+                    step(&mut f, 0, 0);
+                }
+                peak = peak.max(f.pos.y);
+                if f.is_grounded() {
+                    break;
+                }
+            }
+            peak
+        };
+        let single = apex(false);
+        let double = apex(true);
+        assert!(double > single, "double {double} vs single {single}");
+    }
+
+    #[test]
+    fn walking_off_the_edge_falls_rather_than_staying_in_a_walk() {
+        use crate::status::Status;
+
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        // Dream Land's main platform ends at x = 2318.
+        f.pos = Vec3::new(2300.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_wait(&mut f);
+
+        for _ in 0..40 {
+            step(&mut f, 30, 0);
+            if !f.is_grounded() {
+                break;
+            }
+        }
+        assert!(!f.is_grounded(), "should have walked off the end");
+        assert!(f.pos.x > 2318.0);
+        assert_eq!(f.status.status, Status::Fall);
+    }
+
+    #[test]
+    fn landing_keeps_the_horizontal_momentum_a_jump_carried() {
+        // Entering the landing status transfers air velocity to ground
+        // velocity, and so does `land`. Doing both would zero it, and the
+        // symptom would be a fighter that lands from a moving jump and stops
+        // dead -- which looks like a physics bug and is an ordering one.
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(0.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        crate::status::set_wait(&mut f);
+
+        // Jump forward, holding the stick so the jump carries speed.
+        for _ in 0..4 {
+            step(&mut f, 60, 80);
+        }
+        assert!(!f.is_grounded());
+        assert!(f.physics.vel_air.x > 0.0, "the jump should carry forward");
+
+        let mut airborne = 0;
+        while !f.is_grounded() && airborne < 200 {
+            step(&mut f, 60, 0);
+            airborne += 1;
+        }
+        assert!(f.is_grounded(), "never landed");
+        assert!(
+            f.physics.vel_ground.x > 0.0,
+            "landed with {} ground velocity; momentum was lost",
+            f.physics.vel_ground.x
         );
     }
 }

@@ -135,6 +135,11 @@ fn physics_of(d: &FighterDesc) -> PhysicsAttributes {
         tvel_fast: d.tvel_fast,
         jumps_max: d.jumps_max,
         weight: d.weight,
+        kneebend_anim_length: d.kneebend_anim_length,
+        dash_to_run: d.dash_to_run,
+        walkslow_anim_length: d.walkslow_anim_length,
+        walkmiddle_anim_length: d.walkmiddle_anim_length,
+        walkfast_anim_length: d.walkfast_anim_length,
     }
 }
 
@@ -159,6 +164,8 @@ pub struct Play {
     pub placed: bool,
     /// Ticks since the fighter last touched the ground, for the overlay.
     pub airborne_ticks: u32,
+    /// Jump button last frame, so this frame's tap and release can be derived.
+    pub jump_was_held: bool,
     /// Whether the pack supplied this character's real constants. When false
     /// the fighter falls under [`PhysicsAttributes::MARIO`], and the overlay
     /// says so rather than letting a stale pack look like a physics bug.
@@ -198,17 +205,61 @@ impl Play {
             fighter,
             placed,
             airborne_ticks: 0,
+            jump_was_held: false,
             from_pack,
         }
     }
 
     /// Advances one tick against the stage.
-    pub fn tick(&mut self, pack: &Pack<'_>, stage: &StageDesc) {
+    ///
+    /// `input` is the mapped N64 pad; `jump` is the jump button's state this
+    /// frame, from which the tap and release edges are derived. The status
+    /// machine wants edges rather than levels because a short hop is defined
+    /// by the button coming back *up* inside the jumpsquat.
+    pub fn tick(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        input: ssb_engine::input::ControllerState,
+        jump_held: bool,
+    ) {
+        let tapped = jump_held && !self.jump_was_held;
+        let released = !jump_held && self.jump_was_held;
+        self.jump_was_held = jump_held;
+
+        self.fighter.set_input(input, tapped, released);
         self.fighter.tick(|| FloorSegments::new(pack, stage));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
+        }
+    }
+
+    /// The status the fighter is in, as a fixed-width label for the overlay.
+    pub fn status_name(&self) -> &'static str {
+        use ssb_game::status::Status::*;
+        match self.fighter.status.status {
+            Wait => "wait    ",
+            WalkSlow => "walk-slw",
+            WalkMiddle => "walk-mid",
+            WalkFast => "walk-fst",
+            Dash => "dash    ",
+            Run => "run     ",
+            RunBrake => "brake   ",
+            Turn => "turn    ",
+            KneeBend => "jumpsqt ",
+            JumpF => "jump-f  ",
+            JumpB => "jump-b  ",
+            JumpAerialF => "djump-f ",
+            JumpAerialB => "djump-b ",
+            Fall => "fall    ",
+            FallAerial => "fall-a  ",
+            Squat => "squat   ",
+            SquatWait => "squat-w ",
+            LandingLight => "land    ",
+            LandingHeavy => "land-hvy",
+            Pass => "pass    ",
         }
     }
 

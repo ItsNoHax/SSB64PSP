@@ -1487,3 +1487,111 @@ emulator — the failure mode `tools/run-ppsspp.sh` documents at length and the
 one that has cost this project the most time. The EBOOT builds for the PSP
 target and PPSSPP loads it; the on-device overlay showing `attrs pack` and
 Mario's real constants is unconfirmed until the next run.
+
+---
+
+## RE-033 — The status machine, and a tap that is a counter rather than an edge
+
+**Question.** RE-031's fighter could stand and fall and nothing else. Smash 64
+drives every action through a *status*: a fighter is always in exactly one, and
+it decides which physics run, which inputs are heard, and what can be entered
+next. What does that machine actually look like, and what does it take to walk,
+dash, jump and drop through a platform?
+
+**The interrupt chain is an ordered list.** `ftCommonGroundCheckInterrupt` is a
+macro of nineteen `||`-chained calls, each of which sets a status *as a side
+effect* and returns whether it did. Short-circuit evaluation is the priority
+system — there is no dispatch table and no explicit precedence. Jumpsquat is
+tested before dash, dash before squat, squat before turn, turn before walk, so
+holding up-and-forward on the frame you flick gives a jumpsquat and not a dash.
+Reordering that list silently changes what the game does on ambiguous inputs.
+
+**The most important thing in the whole input model is one counter.**
+`ftMainProcessInput` keeps `tap_stick_x`, and despite the name it is not an edge
+flag. It **resets to 1 on the frame the stick crosses ±20**, increments while
+the stick stays outside, and is pinned to 254 while inside. A dash is
+`|stick_x| >= 56 && tap_stick_x < 3`.
+
+The window is therefore measured from the **deadzone crossing at 20**, not from
+reaching the dash's own threshold at 56. Consequences that all fall out of that
+one fact, with no gesture recognition anywhere:
+
+* Flick from neutral to full: 20 and 56 are crossed on the same frame, the
+  counter reads 1, you dash.
+* Roll the stick out over five frames: 20 is crossed long before 56, the counter
+  is past 3 by then, you walk.
+* Tilt to 30 and *then* push to full within two frames: still a dash, because
+  the counter never saw the stick come back to neutral. This one surprised me —
+  it broke a test I had written expecting a walk, and it is correct.
+* Cross straight from +30 to −30: a new crossing, because the test is per-sign
+  and not on magnitude, so the counter restarts and a dash-back is available
+  immediately.
+
+**Two chains, not one.** A walking fighter uses `ftCommonWalkCheckInterrupt`,
+which differs from the standing chain in two ways that both matter:
+
+* It ends in **Wait**, not Walk. A walk never re-enters itself; changing walk
+  speed happens *after* the chain declines, by phase-matching the animation:
+  `new_frame = (frame / old_length) * new_length`. Ending the chain in Walk
+  instead — which is what I wrote first — makes the phase code unreachable and
+  resets the leg animation to frame zero on every frame the stick moves.
+* There is **no Turn** in it. Pushing gently behind you while walking satisfies
+  `ftCommonWaitCheckInputSuccess` (`stick * lr < 0`) and goes to Wait; Wait's
+  chain turns on the following frame. So a walking turnaround costs one frame
+  that a standing turnaround does not. A *hard* flick backwards is a dash input
+  and turns immediately either way, which is why dash-dancing feels different
+  from walking back and forth.
+
+**What the extracted attributes bought.** RE-032's numbers are what make any of
+this real rather than parameterised. Jumpsquat is `kneebend_anim_length` — Mario
+3 frames, Link 7, Metal Mario 8. Dash-to-run is `dash_to_run`, and it is a
+**one-frame window**: `dash_to_run <= anim_frame < dash_to_run + anim_speed`,
+so holding forward through exactly frame 14 runs and missing it does not. Walk
+animation lengths (90 / 60 / 40) are what the phase-matching divides by.
+
+The jump arc falls straight out of the same data with nothing tuned:
+`80 * 0.7 + 26 = 82` units of initial velocity against gravity 2.4 and terminal
+velocity 44 gives a peak of **1360 units over 74 frames** — Mario is 320 tall,
+so a full hop clears a little over four of him and lasts about 1.2 seconds.
+That is Smash 64's characteristically floaty jump, and it was not aimed at.
+
+**An ordering bug the machine introduced, and the test that names it.**
+Entering a grounded status transfers `vel_air.x` into `vel_ground.x`
+(`mpCommonSetFighterGround`). So does `Fighter::land`. Doing both — which is
+what happens now that landing sets a status *and* lands — runs the second
+transfer against an already-zeroed `vel_air` and deletes the fighter's
+horizontal momentum. The symptom is a fighter that lands from a running jump
+and stops dead, which reads as a physics problem and is an ordering one.
+`land` now guards on actually being airborne, mirroring `become_airborne`, and
+`landing_keeps_the_horizontal_momentum_a_jump_carried` fails without the guard.
+
+**What cannot work yet, and why it is `None` rather than a guess.** Most
+statuses end when their animation runs out, which the original tests as
+`gobj->anim_frame <= 0.0`. That reads like a countdown and is not: `anim_frame`
+counts *up* by `anim_speed`, and `ftAnimParseDObjFigatree` writes the leftover
+negative remainder into it when the animation script ends. So `<= 0.0` is a
+sentinel, while `anim_frame <= 5.0` a few lines away in the same file is a
+genuine "within the first five frames" test. Both readings are right and they
+coexist.
+
+The lengths themselves live in `AnimJoint` / `AObjEvent32` data that is not
+extracted. The motion scripts in `<Name>MainMotion` are *event* scripts — sound,
+dust, flags — and end well before the animation does, so they are not a
+substitute: `dMarioMainMotion_Turn` waits 6 frames, sets a flag and ends, while
+the Turn status runs as long as the animation. So `StatusTiming::anim_length` is
+`Option<f32>` and `None` means the status cannot time out. Dash, Turn, RunBrake,
+Landing and Squat-to-SquatWait are affected: they end only by being interrupted.
+A made-up duration would be invisible in a screenshot and wrong in every replay,
+so there isn't one.
+
+**Confidence: high** for the transition logic and the input model, which are
+transcribed from the decompilation with the addresses cited and tested against
+the behaviours they are supposed to produce. **Explicitly incomplete** on
+timing: five statuses cannot end on their own until animation data is
+extracted.
+
+**Not verified on device.** The session was locked for both attempts, so the
+harness never got a frame — it reported the cause correctly the second time
+("PPSSPP never finished graphics init -- a locked screen does this"). The EBOOT
+builds and the input is wired (stick moves, C-left jumps), but nobody has
+watched Mario walk on a PSP yet.
