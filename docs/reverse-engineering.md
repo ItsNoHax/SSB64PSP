@@ -1364,7 +1364,12 @@ frame 16682us  view 362x272
 * `frame 16682us` — 59.94 Hz, the expected PSP vblank cadence.
 * `cpu 13us` against a 16667us budget — **0.08%** consumed by simulation plus
   render submission.
-* `view 362x272` — `coord::pillarboxed_viewport()` confirmed on-device.
+* `view 362x272` — the value `coord::pillarboxed_viewport()` returns. **This
+  line overstated what it showed.** Printing the helper's return value confirms
+  only that the helper was called; it says nothing about the GE viewport, which
+  was in fact still the full 480x272 until RE-034 measured the resulting
+  distortion. "Confirmed on-device" should mean a rendered consequence was
+  measured, not that a number reached the overlay.
 
 **Caveat.** The scene is four triangles and one fighter's worth of physics, so
 13us says nothing about how a real match will perform. Its value is as a
@@ -1595,3 +1600,78 @@ harness never got a frame — it reported the cause correctly the second time
 ("PPSSPP never finished graphics init -- a locked screen does this"). The EBOOT
 builds and the input is wired (stick moves, C-left jumps), but nobody has
 watched Mario walk on a PSP yet.
+
+---
+
+## RE-034 — The pillarbox that was never applied, found by measuring a fighter
+
+**Question.** RE-033 shipped without a device check because the session was
+locked. With it unlocked, does the status machine actually run on hardware, and
+do the extracted constants reach it?
+
+**Yes.** Dream Land, at the stage's own first spawn:
+
+```
+stage 0/41  file 255  @0x14
+fighter land       x 0  y 0  line 3  mat 0  air 0
+attrs pack         grav 24/10  tvel 44  body 150w 320h
+tris 175  layers 4  coll-segs 16
+cpu 686us / budget 16667us            60.0 FPS
+```
+
+`attrs pack` says the constants came from the pack rather than the built-in
+fallback, and `grav 24/10  tvel 44  body 150w 320h` are Mario's real extracted
+values (RE-032) arriving intact on the far side of the pack format. `fighter
+land` is the status machine: the fighter fell the few units from its spawn and
+is in `LandingLight`. `x 0 y 0 line 3` matches the host simulation exactly.
+
+**Then measuring the marker found a rendering bug that had been there all
+along.** The fighter is drawn as its collision diamond, whose proportions are
+known: 300 units wide, 320 tall, waist at 190. Those are *ratios*, so they can
+be checked from a screenshot without knowing the camera at all:
+
+| | measured | expected |
+|---|---|---|
+| width / height | **1.227** | 0.938 |
+| waist / height | 0.571 | 0.594 |
+
+The waist is right, so the diamond is being built correctly. The width is 31%
+too large — and 1.227 / 0.938 = **1.31**, which is 480/362.
+
+`coord::pillarboxed_viewport()` returns a 362x272 region, and `main.rs` fed its
+aspect ratio to `sceGumPerspective`. But `Gpu::init` set `sceGuViewport` and
+`sceGuScissor` to the full 480x272. So the projection was built for a 4:3
+viewport and then stretched across a 16:9 one — producing precisely the
+distortion the pillarbox exists to prevent, on every frame this project has
+ever rendered. Setting the GE viewport and scissor to the same region fixes it:
+
+| | before | after | expected |
+|---|---|---|---|
+| width / height | 1.227 | **1.000** | 0.938 |
+
+The residual is 1.3 pixels on a 21-pixel-tall shape.
+
+**The documentation had claimed this was verified.** RE-005 listed
+`view 362x272` under "confirmed on-device". What that actually confirmed was
+that the helper had been *called* and its return value formatted into the
+overlay. Nothing had checked the GE viewport, and nothing had looked at a
+rendered consequence. Those notes are now corrected in place.
+
+The lesson generalises past this bug: **printing a value proves the value was
+computed, not that anything acted on it.** A number in a debug overlay is an
+input to the renderer, not evidence about its output. "Confirmed on-device"
+has to mean a rendered consequence was measured — which is why the fighter
+marker being a shape with *known proportions* was worth more here than any
+amount of overlay text. It could be checked against nothing but itself.
+
+**A second, smaller thing the same screenshot showed.** The grounded fighter
+and solid floors were both drawn `0xFF40_FF40`, so a fighter standing on a
+floor was the same colour as the line under its feet. It is now magenta — the
+one hue the collision palette had left (green floors, red ceilings, blue and
+amber walls), so the fighter cannot be confused with any surface it touches.
+
+**Confidence: high.** The aspect fix is confirmed by the same ratio measurement
+that found the bug, on a shape whose proportions come from extracted data. What
+is *not* claimed: the absolute on-screen size, which would need a fixed camera
+to measure and was not checked — the camera spins and is tilted, so world units
+do not map linearly to screen pixels in either axis.

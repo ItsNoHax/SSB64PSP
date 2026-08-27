@@ -585,7 +585,13 @@ pub unsafe fn draw_fighter(
     base: &ScePspFMatrix4,
     gpu: &mut crate::gu::Gpu,
 ) {
-    let color = if grounded { 0xFF40_FF40 } else { 0xFFFF_FFFF };
+    // Magenta grounded, white airborne. Not green: the overlay draws solid
+    // floors in exactly `0xFF40_FF40`, so a grounded fighter standing on one
+    // was the same colour as the line under its feet and disappeared into it.
+    // Magenta is also the one hue the collision palette does not already use
+    // -- green floors, red ceilings, blue and amber walls -- so the fighter
+    // cannot be confused with any surface it happens to be touching.
+    let color = if grounded { 0xFFFF_40FF } else { 0xFFFF_FFFF };
     let s = 1.0 / MODEL_SCALE;
     let (x, y, z) = (pos[0] * s, pos[1] * s, pos[2] * s);
 
