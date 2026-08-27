@@ -51,7 +51,10 @@ impl AlignedBuf {
     /// looks like a race condition.
     pub fn flush_cache(&self) {
         unsafe {
-            sys::sceKernelDcacheWritebackRange(self.ptr as *const core::ffi::c_void, self.len as u32)
+            sys::sceKernelDcacheWritebackRange(
+                self.ptr as *const core::ffi::c_void,
+                self.len as u32,
+            )
         }
     }
 }

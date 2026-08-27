@@ -63,7 +63,7 @@ USAGE:
     romtool check    <rom.z64>
     romtool scan     <rom.z64> [--exhaustive]
     romtool mesh     <rom.z64>
-    romtool scene    <rom.z64> [--file <id>] [--list] [--nodes]
+    romtool scene    <rom.z64> [--file <id>] [--list] [--nodes] [--why]
                                [--expect <ground-truth.tsv>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
@@ -327,6 +327,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let mut expect: Option<PathBuf> = None;
     let mut list = false;
     let mut nodes = false;
+    let mut why = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match *arg {
@@ -334,6 +335,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             "--expect" => expect = it.next().map(PathBuf::from),
             "--list" => list = true,
             "--nodes" => nodes = true,
+            "--why" => why = true,
             other => return Err(format!("unknown flag {other}").into()),
         }
     }
@@ -418,33 +420,70 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     // nothing in the data discriminates it, so "does it convert" is what
     // decides how much geometry a graph can actually place.
     let mut outcome: BTreeMap<String, usize> = BTreeMap::new();
+    let mut members: BTreeMap<&'static str, usize> = BTreeMap::new();
     for id in &ids {
         let Ok(file) = archive.load(*id) else {
             continue;
         };
+        let resolver = scene::DlResolver::new(&file);
         for g in scene::find_scene_graphs(&file) {
             for node_dl in g.display_lists() {
-                for dl in scene::resolve_node_lists(&file, node_dl) {
-                    let key = match file
-                        .data
-                        .get(dl as usize..)
-                        .ok_or("out of bounds".to_string())
-                        .and_then(|d| ssb_rom::dl::decode_list(d).map_err(|e| e.to_string()))
-                    {
-                        Err(e) => format!("decode failed: {e}"),
-                        Ok(cmds) => match ssb_rom::mesh::convert(&cmds, &file.data) {
-                            Err(e) => format!("convert failed: {e:?}"),
-                            Ok(m) if m.triangle_count() == 0 => "converted, no triangles".into(),
-                            Ok(_) => "converted with triangles".into(),
-                        },
-                    };
-                    *outcome.entry(key).or_default() += 1;
+                let member = resolver.resolve(node_dl);
+                *members
+                    .entry(match member {
+                        scene::NodeDl::Links(_) => "DObjDLLink[]",
+                        scene::NodeDl::Pair { .. } => "Gfx *dls[2] pre/post pair",
+                        scene::NodeDl::Direct(_) => "Gfx * (direct)",
+                    })
+                    .or_default() += 1;
+            }
+
+            // Convert the graph the way the packer does -- in draw order,
+            // sharing one vertex cache -- so this reports what actually
+            // happens rather than what a standalone conversion would.
+            let plan = plan_draw_order(&g, &resolver);
+            let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                .iter()
+                .map(|p| {
+                    file.data
+                        .get(p.dl as usize..)
+                        .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let items: Vec<ssb_rom::mesh::SequenceItem> = plan
+                .iter()
+                .zip(&decoded)
+                .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
+                    cmds,
+                    world: p.world,
+                })
+                .collect();
+
+            for (p, converted) in plan
+                .iter()
+                .zip(ssb_rom::mesh::convert_sequence(&items, &file.data))
+            {
+                let key: String = match converted {
+                    _ if p.dl == NO_LIST => "no list on this side of the matrix".into(),
+                    Err(e) => format!("convert failed: {e:?}"),
+                    Ok(m) if m.triangle_count() == 0 => "converted, no triangles".into(),
+                    Ok(_) => "converted with triangles".into(),
+                };
+                if why && !key.starts_with("converted with") {
+                    println!("  WHY file {id} node {} -> 0x{:X}: {key}", p.node, p.dl);
                 }
+                *outcome.entry(key).or_default() += 1;
             }
         }
     }
+    println!("\nUnion member each node's `dl` turned out to be:");
+    for (k, n) in &members {
+        println!("  {n:5}  {k}");
+    }
+
     let resolved: usize = outcome.values().sum();
-    println!("\nNode display lists ({resolved} after DObjDLLink resolution):");
+    println!("\nNode display lists ({resolved} after union resolution):");
     for (k, n) in &outcome {
         println!("  {n:5}  {k}");
     }
@@ -636,6 +675,111 @@ fn mesh(path: &Path) -> Res {
     Ok(())
 }
 
+/// One display list a scene graph draws, and the space it draws it in.
+struct PlannedList {
+    /// Index of the owning node within its graph.
+    node: usize,
+    /// File-relative offset of the display list.
+    dl: u32,
+    /// Modelview in effect while the list runs: the index of the node whose
+    /// matrix is current, or `None` for the object root.
+    ///
+    /// Usually the node's own. A `Gfx *dls[2]` pair's first list draws *before*
+    /// the node's matrix is pushed, so it runs in the parent's space instead.
+    space: Option<usize>,
+    world: ssb_rom::scene::Mat4,
+}
+
+impl PlannedList {
+    /// Whether this list can be placed on the node itself. A node holds one
+    /// mesh, so anything else has to become an extra leaf; see
+    /// `PackWriter::add_object`.
+    fn own_space(&self) -> bool {
+        self.space == Some(self.node)
+    }
+}
+
+/// A node with no display list still occupies a slot in the draw sequence, so
+/// that vertex-cache state lines up with the game's own walk.
+const NO_LIST: u32 = u32::MAX;
+
+/// Flattens a graph into the order `gcDrawDObjTree*` would draw it.
+///
+/// That order is simply the `DObjDesc` array order: `gcAddChildForDObj` appends
+/// each new node to the tail of its parent's sibling list, and the draw walk is
+/// node-then-child-then-siblings, so the pre-order flattening the array already
+/// is round-trips exactly. Nothing needs sorting.
+fn plan_draw_order(
+    graph: &ssb_rom::scene::SceneGraph,
+    resolver: &ssb_rom::scene::DlResolver,
+) -> Vec<PlannedList> {
+    use ssb_rom::scene::{Mat4, NodeDl};
+
+    let worlds = graph.world_transforms();
+    let mut out = Vec::with_capacity(graph.nodes.len());
+
+    for (i, node) in graph.nodes.iter().enumerate() {
+        let Some(node_dl) = node.desc.dl else {
+            continue;
+        };
+        let own = |dl| PlannedList {
+            node: i,
+            dl,
+            space: Some(i),
+            world: worlds[i],
+        };
+        match resolver.resolve(node_dl) {
+            NodeDl::Direct(dl) => out.push(own(dl)),
+            NodeDl::Links(links) => out.extend(links.iter().filter_map(|l| l.dl).map(own)),
+            NodeDl::Pair { pre, post } => {
+                if let Some(dl) = pre {
+                    out.push(PlannedList {
+                        node: i,
+                        dl,
+                        space: node.parent,
+                        world: node.parent.map_or(Mat4::IDENTITY, |p| worlds[p]),
+                    });
+                }
+                // The node's matrix is pushed between the two, so even when
+                // `post` is NULL the node still occupies a step in the walk.
+                out.push(own(post.unwrap_or(NO_LIST)));
+            }
+        }
+    }
+    out
+}
+
+/// Adds a converted mesh to the pack, uploading any textures it samples.
+fn pack_mesh(
+    writer: &mut ssb_rom::pack::PackWriter,
+    tex_index: &mut BTreeMap<(u32, u32), u32>,
+    file: &ssb_rom::archive::File,
+    id: u32,
+    offset: u32,
+    m: &ssb_rom::mesh::Mesh,
+    swizzle: bool,
+) -> u32 {
+    let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
+    for prim in &m.primitives {
+        per_prim.push(match prim.material.texture {
+            None => None,
+            Some(t) => {
+                let key = (id, t.data_offset);
+                if let Some(&i) = tex_index.get(&key) {
+                    Some(i)
+                } else {
+                    convert_texture(&file.data, &t, swizzle).map(|tex| {
+                        let i = writer.add_texture(&tex);
+                        tex_index.insert(key, i);
+                        i
+                    })
+                }
+            }
+        });
+    }
+    writer.add_mesh(m, id, offset, |i| per_prim[i])
+}
+
 /// Builds the runtime asset pack: converted geometry and textures in the
 /// layout the PSP consumes directly.
 fn pack(path: &Path, opts: &[&str]) -> Res {
@@ -669,7 +813,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut objects = 0usize;
     let mut placed_meshes = 0usize;
     let mut node_dls = 0usize;
-    let mut dropped_extra_lists = 0usize;
+    let mut extra_leaves = 0usize;
 
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
@@ -683,10 +827,6 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         let called: std::collections::BTreeSet<u32> =
             all.iter().flat_map(|d| d.referenced_lists()).collect();
 
-        // Display-list offset -> mesh index, so scene-graph nodes can find the
-        // geometry they place.
-        let mut mesh_at: BTreeMap<u32, u32> = BTreeMap::new();
-
         // A scene-graph node's `dl` is an *authoritative* list start: the game
         // itself passes that pointer to `gcAddDObjForGObj`. Blind discovery is
         // a heuristic by comparison, and its outermost-list reduction actively
@@ -694,93 +834,106 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // of a larger list the scan preferred. So convert the authoritative
         // offsets first and let discovery fill in only what they miss.
         let graphs = ssb_rom::scene::find_scene_graphs(&file);
-        // A node's `dl` may be a `Gfx*` or a `DObjDLLink[]`; resolve_node_lists
-        // sorts that out. One node can therefore place several lists.
-        let node_lists: BTreeMap<u32, Vec<u32>> = graphs
-            .iter()
-            .flat_map(|g| g.display_lists())
-            .map(|d| (d, ssb_rom::scene::resolve_node_lists(&file, d)))
-            .collect();
-        let authoritative: std::collections::BTreeSet<u32> =
-            node_lists.values().flatten().copied().collect();
+        // A node's `dl` may be a `Gfx*`, a `DObjDLLink[]` or a pre/post pair;
+        // the resolver sorts that out.
+        let resolver = ssb_rom::scene::DlResolver::new(&file);
 
-        // Decode authoritative offsets *directly*, not through
-        // `find_display_lists_at`: that re-applies the discovery heuristics,
-        // and a heuristic can only lose information once the game itself has
-        // told us where the list starts. Routing them through it placed 742 of
-        // 1661 node lists; decoding them straight places 1417.
-        let from_nodes: Vec<ssb_rom::scan::FoundDl> = authoritative
+        // Every list a graph draws, in the order the game draws it, so the
+        // vertex cache can be threaded through them; see convert_sequence.
+        let plans: Vec<Vec<PlannedList>> = graphs
             .iter()
-            .filter_map(|&off| {
-                let commands = ssb_rom::dl::decode_list(file.data.get(off as usize..)?).ok()?;
-                Some(ssb_rom::scan::FoundDl {
-                    offset: off,
-                    commands,
+            .map(|g| plan_draw_order(g, &resolver))
+            .collect();
+        let authoritative: std::collections::BTreeSet<u32> = plans
+            .iter()
+            .flatten()
+            .map(|p| p.dl)
+            .filter(|&d| d != NO_LIST)
+            .collect();
+
+        let mut node_mesh: Vec<Vec<Option<u32>>> =
+            graphs.iter().map(|g| vec![None; g.nodes.len()]).collect();
+        // Geometry a node cannot hold itself: extra link entries, and the
+        // pre-matrix half of a pair, which draws in the parent's space.
+        let mut node_extra: Vec<Vec<(Option<usize>, u32)>> =
+            graphs.iter().map(|_| Vec::new()).collect();
+
+        for (gi, plan) in plans.iter().enumerate() {
+            // Decode authoritative offsets *directly*, not through
+            // `find_display_lists_at`: that re-applies the discovery
+            // heuristics, and a heuristic can only lose information once the
+            // game itself has told us where the list starts. Routing them
+            // through it placed 742 of 1661 node lists; decoding them straight
+            // places 1417.
+            let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                .iter()
+                .map(|p| {
+                    file.data
+                        .get(p.dl as usize..)
+                        .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                        .unwrap_or_default()
                 })
-            })
-            .collect();
+                .collect();
+            let items: Vec<mesh::SequenceItem> = plan
+                .iter()
+                .zip(&decoded)
+                .map(|(p, cmds)| mesh::SequenceItem {
+                    cmds,
+                    world: p.world,
+                })
+                .collect();
 
-        let discovered = all
+            for (p, converted) in plan.iter().zip(mesh::convert_sequence(&items, &file.data)) {
+                let Ok(m) = converted else { continue };
+                if m.triangle_count() == 0 {
+                    continue;
+                }
+                let index = pack_mesh(&mut writer, &mut tex_index, &file, id, p.dl, &m, swizzle);
+                meshes += 1;
+                triangles += m.triangle_count();
+
+                // A node holds one mesh index, but a link array or a pre/post
+                // pair can name several lists. The one drawn under the node's
+                // own matrix goes on the node; the rest become extra leaves in
+                // whichever space they actually run in.
+                let slot = &mut node_mesh[gi][p.node];
+                if p.own_space() && slot.is_none() {
+                    *slot = Some(index);
+                } else {
+                    node_extra[gi].push((p.space, index));
+                    extra_leaves += 1;
+                }
+            }
+        }
+
+        // Discovery fills in only what the graphs never named.
+        for dl in all
             .iter()
-            .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset));
-
-        for dl in from_nodes.iter().chain(discovered) {
+            .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset))
+        {
             let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
                 continue;
             };
             if m.triangle_count() == 0 {
                 continue;
             }
-
-            // Resolve each primitive's texture, adding new ones to the pack.
-            let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
-            for prim in &m.primitives {
-                per_prim.push(match prim.material.texture {
-                    None => None,
-                    Some(t) => {
-                        let key = (id, t.data_offset);
-                        if let Some(&i) = tex_index.get(&key) {
-                            Some(i)
-                        } else {
-                            convert_texture(&file.data, &t, swizzle).map(|tex| {
-                                let i = writer.add_texture(&tex);
-                                tex_index.insert(key, i);
-                                i
-                            })
-                        }
-                    }
-                });
-            }
-
-            let index = writer.add_mesh(&m, id, dl.offset, |i| per_prim[i]);
-            mesh_at.insert(dl.offset, index);
+            pack_mesh(
+                &mut writer,
+                &mut tex_index,
+                &file,
+                id,
+                dl.offset,
+                &m,
+                swizzle,
+            );
             meshes += 1;
             triangles += m.triangle_count();
         }
 
-        // A node holds one mesh index, but a DObjDLLink array can name several
-        // lists. 564 of the 589 link arrays in the archive hold exactly one
-        // entry, so taking the first costs little -- but count what that drops
-        // rather than assuming it is nothing.
-        let first_mesh = |node_dl: u32| -> Option<u32> {
-            node_lists
-                .get(&node_dl)?
-                .iter()
-                .find_map(|d| mesh_at.get(d).copied())
-        };
-
-        for graph in &graphs {
-            for node_dl in graph.display_lists() {
-                node_dls += 1;
-                let placed = node_lists.get(&node_dl).map_or(0, |ls| {
-                    ls.iter().filter(|d| mesh_at.contains_key(d)).count()
-                });
-                if placed > 0 {
-                    placed_meshes += 1;
-                    dropped_extra_lists += placed - 1;
-                }
-            }
-            writer.add_object(graph, id, first_mesh);
+        for (gi, graph) in graphs.iter().enumerate() {
+            node_dls += graph.display_lists().count();
+            placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();
+            writer.add_object(graph, id, |n| node_mesh[gi][n], &node_extra[gi]);
             objects += 1;
         }
     }
@@ -798,13 +951,23 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     println!("asset pack -> {}", out_path.display());
     println!("  meshes      {meshes}");
     println!("  triangles   {triangles}");
+    // One GE draw call per primitive, so this is the number the state-sorting
+    // in `merge_by_material` exists to hold down.
+    println!(
+        "  draws       {} ({:.1} triangles each)",
+        pack.prim_count(),
+        triangles as f64 / pack.prim_count().max(1) as f64
+    );
     println!("  textures    {}", pack.texture_count());
     println!(
         "  objects     {objects} ({} nodes, {placed_meshes}/{node_dls} node lists placed)",
         pack.node_count()
     );
-    if dropped_extra_lists > 0 {
-        println!("  dropped     {dropped_extra_lists} extra lists on multi-list nodes");
+    if extra_leaves > 0 {
+        println!(
+            "  extra       {extra_leaves} leaf nodes for lists a node could not hold \
+             (extra link entries, and pre-matrix pair halves drawn in the parent's space)"
+        );
     }
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");

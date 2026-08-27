@@ -759,6 +759,107 @@ told you where a list starts, a heuristic can only lose information.
 (`Gfx**`, `DObjMultiList`, `DObjDistDL`) are not handled and account for part
 of the remaining 264.
 
+**Update — the `Gfx**` member is a pre/post-matrix pair, and it is what
+fighters use.** See RE-026; the remaining 264 are now 0 conversion failures.
+
+---
+
+## RE-026 — Fighters share a vertex cache across joints
+
+**Question.** After RE-025, 244 node display lists still failed to convert.
+152 of them failed with `EmptyCacheSlot(N)` for small `N` — a *valid* display
+list drawing triangles from cache slots nothing in that list had filled. They
+clustered almost entirely in the fighter models (Yoshi, Samus, Donkey, Kirby,
+Pikachu, Master Hand).
+
+**Two separate causes, both in `ftDisplayMainDrawDefault`.**
+
+**(1) The `Gfx**` member is a two-slot pre/post-matrix pair.**
+
+```c
+case 1:
+    dls = dobj->dls;
+    if (dls != NULL && dls[0] != NULL) gSPDisplayList(..., dls[0]);
+    sp58 = gcPrepDObjMatrix(gSYTaskmanDLHeads, dobj);   // push this node
+    if (dls != NULL && dls[1] != NULL) gSPDisplayList(..., dls[1]);
+```
+
+`dls[0]` draws in the **parent's** space, `dls[1]` in the node's own. The decomp
+labels the arrays exactly that way (`338_YoshiModel.c`: *"DObj.dls pre/post-
+matrix DL pairs @ 0x3308 (19 pairs, 152 bytes)"*). Reading such a pair as a
+`Gfx*` decodes the two pointer words as commands and walks off into whatever
+follows.
+
+The shape is only two words, so the relocation test carries all the weight:
+`dls[1]` must be a relocated pointer, `dls[0]` NULL or one too. `G_VTX`'s
+command word is `0x01xxxxxx` — non-zero and never a relocation target — so a
+display list cannot pass. `{ NULL, NULL }` pairs exist (a joint that draws
+nothing) and carry no evidence of their own; they are accepted only when a
+neighbouring pair vouches, which is sound because pairs only occur in arrays.
+
+Cross-checked against every array the decomp annotates:
+
+| file | decomp | recovered |
+|---|---|---|
+| 304 `NYoshiModel` | 18 pairs | 18 |
+| 307 `NPikachuModel` | 14 pairs | 14 |
+| 338 `YoshiModel` | 19 + 18 pairs | 37 |
+| 344 `BossModel` | 23 pairs | 23 |
+
+**(2) The RSP vertex cache survives across display lists — and that is how
+Smash skins its joints.**
+
+`gcDrawDObjTree*` walks the node tree emitting each node's list into one command
+stream, so the 32-entry cache carries over. A joint's list routinely draws
+triangles whose *other* vertices a previous joint loaded. Converting a list in
+isolation therefore cannot work, no matter how correctly it was located.
+
+Worse — and this is the interesting part — `G_VTX` transforms vertices by the
+modelview **as it stands at load time**. A triangle referencing slots loaded
+under two different joints spans two joint spaces. That is the N64's version of
+skinning, done with no per-vertex weights at all.
+
+**Resolution.** Convert a graph's lists as a *sequence* in draw order, threading
+one cache through them. Each cached vertex records which node loaded it; a
+triangle that borrows one carries it across by `inv(world_here) * world_there`.
+Draw order needs no sorting: `gcAddChildForDObj` appends to the tail of the
+sibling list and the draw walk is node-then-child-then-siblings, so the
+pre-order flattening the `DObjDesc` array already is round-trips exactly.
+
+RDP *material* state is threaded too, since the hardware keeps it: 394 textures
+resolve against 378 with a per-list reset.
+
+Inheritance has one hard limit, and it bites exactly here. `gcDrawMObjForDObj`
+injects a material display list at segment `0x0E`, the runtime graphics heap,
+and **that is where a fighter's texture binding comes from**. It is not in the
+archive (RE-021). Letting the previous node's binding survive such a call
+smeared another joint's texels across Samus's torso and inflated the texture
+count by 117; a segmented call now invalidates the binding instead, which is
+the honest answer — untextured, pending `MObjSub` extraction.
+
+**Result.** Node lists that convert with triangles: **1417 → 1613**. Conversion
+failures across all 2132 files: **244 → 0**. The 23 lists that still place
+nothing are 16 that decode to pure state and 7 pair halves that are genuinely
+NULL.
+
+**Limits.** The rebase is exact for the rest pose only. Under animation a
+stitched seam would tear, because the two halves of such a triangle move with
+different joints — reproducing that needs the runtime to keep the cache, which
+is a decision for when animation lands. And `gcDrawMObjForDObj` injects a
+material list between nodes when a `DObj` has an `MObj`; those live in the
+runtime, not the archive, and are still unextracted (RE-021).
+
+**Confidence: certain** for the pair member (byte-exact against four annotated
+files) and for the shared cache (the failures are gone and the geometry lands
+where the decomp's `translate` values say it should).
+
+![Samus assembled from her joint hierarchy](images/m4-fighter-joints.png)
+
+Samus, 33 joints, 326 triangles, 25 draws, 649 µs, 60 FPS. She is mostly white
+because a fighter's textures come from the runtime `MObj`, not the archive —
+see the `gSPSegment(0xE)` note above. The arm cannon is textured because that
+binding is in the display list itself.
+
 ---
 
 ## RE-024 — The shipped light colours really are neutral

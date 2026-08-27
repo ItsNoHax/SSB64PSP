@@ -132,9 +132,9 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
     // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,
     // so scale = 32768 / (32 * dim) = 1024 / dim.
     const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0; // 1024
-    // Both axes normalise against the dimensions actually handed to
-    // sceGuTexImage -- the padded ones. Using the logical height here stretches
-    // V on any texture whose height is not already a power of two.
+                                                       // Both axes normalise against the dimensions actually handed to
+                                                       // sceGuTexImage -- the padded ones. Using the logical height here stretches
+                                                       // V on any texture whose height is not already a power of two.
     let padded_h = (t.height as u32).next_power_of_two().max(1) as f32;
     sys::sceGuTexScale(UV_SCALE / t.stride as f32, UV_SCALE / padded_h);
 
@@ -258,10 +258,30 @@ pub unsafe fn draw_object(
         // `world` is already the node's full ancestor-composed transform, so
         // there is nothing to push or pop -- load base * world and draw.
         let local = ScePspFMatrix4 {
-            x: ScePspFVector4 { x: node.world[0], y: node.world[1], z: node.world[2], w: node.world[3] },
-            y: ScePspFVector4 { x: node.world[4], y: node.world[5], z: node.world[6], w: node.world[7] },
-            z: ScePspFVector4 { x: node.world[8], y: node.world[9], z: node.world[10], w: node.world[11] },
-            w: ScePspFVector4 { x: node.world[12], y: node.world[13], z: node.world[14], w: node.world[15] },
+            x: ScePspFVector4 {
+                x: node.world[0],
+                y: node.world[1],
+                z: node.world[2],
+                w: node.world[3],
+            },
+            y: ScePspFVector4 {
+                x: node.world[4],
+                y: node.world[5],
+                z: node.world[6],
+                w: node.world[7],
+            },
+            z: ScePspFVector4 {
+                x: node.world[8],
+                y: node.world[9],
+                z: node.world[10],
+                w: node.world[11],
+            },
+            w: ScePspFVector4 {
+                x: node.world[12],
+                y: node.world[13],
+                z: node.world[14],
+                w: node.world[15],
+            },
         };
         sys::sceGumMatrixMode(sys::MatrixMode::Model);
         sys::sceGumLoadMatrix(base);
@@ -276,9 +296,14 @@ pub unsafe fn draw_object(
 ///
 /// Node transforms place geometry that is itself in `i16` units divided by
 /// [`VERTEX_16BIT_DIVISOR`], so this works in that same normalised space and
-/// the caller scales once. Only the translation is applied — a rotated bound
-/// would need the full eight corners, and the extra tightness does not change
-/// how the camera frames anything.
+/// the caller scales once.
+///
+/// All eight corners of each node's box are transformed, not just its
+/// translation. Translation-only was the earlier version, on the reasoning that
+/// the extra tightness would not change how the camera frames anything — which
+/// was wrong the moment fighters started converting. Samus's joints are rotated
+/// far enough that her head sat outside the box and got clipped off the top of
+/// the frame.
 pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], [f32; 3])> {
     let mut min = [f32::MAX; 3];
     let mut max = [f32::MIN; 3];
@@ -298,15 +323,22 @@ pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], 
             continue;
         };
         any = true;
-        for axis in 0..3 {
-            let t = node.world[12 + axis];
-            let a = lo[axis] / VERTEX_16BIT_DIVISOR + t;
-            let b = hi[axis] / VERTEX_16BIT_DIVISOR + t;
-            if a < min[axis] {
-                min[axis] = a;
-            }
-            if b > max[axis] {
-                max[axis] = b;
+
+        let m = &node.world;
+        for corner in 0..8 {
+            let p = [
+                if corner & 1 == 0 { lo[0] } else { hi[0] } / VERTEX_16BIT_DIVISOR,
+                if corner & 2 == 0 { lo[1] } else { hi[1] } / VERTEX_16BIT_DIVISOR,
+                if corner & 4 == 0 { lo[2] } else { hi[2] } / VERTEX_16BIT_DIVISOR,
+            ];
+            for axis in 0..3 {
+                let v = m[axis] * p[0] + m[4 + axis] * p[1] + m[8 + axis] * p[2] + m[12 + axis];
+                if v < min[axis] {
+                    min[axis] = v;
+                }
+                if v > max[axis] {
+                    max[axis] = v;
+                }
             }
         }
     }
