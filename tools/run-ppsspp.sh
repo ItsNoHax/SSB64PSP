@@ -31,7 +31,13 @@
 #     NOTE: `--appendconfig` settings ARE written back to the user's
 #     ppsspp.ini on exit. An earlier version of this script claimed otherwise
 #     and silently left `SoftwareRenderer = True` in the user's config. The
-#     script now snapshots ppsspp.ini before the run and restores it after.
+#     script now snapshots ppsspp.ini before the run and restores it after --
+#     *and* resets `SoftwareRenderer` explicitly, because a snapshot is only
+#     as clean as the file it was taken from. A run killed with SIGKILL leaves
+#     the key set, the next run snapshots that, and the restore then puts it
+#     back. It survived that way for days, forcing the software rasteriser for
+#     every game on the machine. Snapshot-and-restore is not sufficient for a
+#     setting this script is itself responsible for.
 #
 #  5. **Window identification by difference.** Picking "the first window
 #     matching ppsspp" grabs the wrong one if the developer already has PPSSPP
@@ -214,6 +220,17 @@ cleanup() {
   if [ -n "${INI_BACKUP:-}" ] && [ -f "$INI_BACKUP" ]; then
     cp -f "$INI_BACKUP" "$PPSSPP_INI" 2>/dev/null || true
     rm -f "$INI_BACKUP"
+    # Belt and braces. Restoring a snapshot only helps if the snapshot was
+    # clean, and it is not always: a run killed with SIGKILL (or one from
+    # before this trap existed) leaves SoftwareRenderer=True behind, and every
+    # later run then snapshots that and faithfully restores it. It stayed set
+    # for days that way, silently forcing the software rasteriser for every
+    # game the user played. So the key this script actually sets is also reset
+    # explicitly, which is idempotent and does not depend on the snapshot.
+    if [ -f "$PPSSPP_INI" ] && grep -q '^SoftwareRenderer = True' "$PPSSPP_INI"; then
+      sed -i 's/^SoftwareRenderer = True/SoftwareRenderer = False/' "$PPSSPP_INI"
+      echo "==> reset SoftwareRenderer=False (leftover from an earlier run)" >&2
+    fi
   fi
   exit $status
 }
