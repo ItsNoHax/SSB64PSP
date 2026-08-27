@@ -31,6 +31,7 @@ fn main() -> ExitCode {
         ["check", rom_path] => check(rom_path.as_ref()),
         ["scan", rom_path, rest @ ..] => scan(rom_path.as_ref(), rest),
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
+        ["scene", rom_path, rest @ ..] => scene(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
@@ -61,6 +62,7 @@ USAGE:
     romtool check    <rom.z64>
     romtool scan     <rom.z64> [--exhaustive]
     romtool mesh     <rom.z64>
+    romtool scene    <rom.z64> [--file <id>] [--expect <ground-truth.json>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
@@ -308,6 +310,130 @@ fn geometry_mode_name(bit: u32) -> &'static str {
 /// The headline number is the vertex dedup ratio: the RSP re-uploads shared
 /// vertices constantly because its cache holds only 32, and undoing that is
 /// pure win on PSP -- less memory and less GE vertex fetch.
+/// Recovers `DObjDesc` scene graphs, optionally checking them against the
+/// arrays the decomp has typed by hand.
+///
+/// The `--expect` file is TSV of `file<TAB>offset<TAB>entries<TAB>name`,
+/// generated from `refs/ssb-decomp-re/src/relocData/*.c`. It is ground truth in
+/// the strongest available sense: those declarations are byte-compared against
+/// the original ROM on every decomp build, so an offset in that list is a place
+/// a `DObjDesc` array provably starts.
+fn scene(path: &Path, args: &[&str]) -> Res {
+    use ssb_rom::scene;
+
+    let mut only_file: Option<u32> = None;
+    let mut expect: Option<PathBuf> = None;
+    let mut list = false;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match *arg {
+            "--file" => only_file = it.next().map(|v| v.parse()).transpose()?,
+            "--expect" => expect = it.next().map(PathBuf::from),
+            "--list" => list = true,
+            other => return Err(format!("unknown flag {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    let ids: Vec<u32> = match only_file {
+        Some(id) => vec![id],
+        None => (0..archive.len() as u32).collect(),
+    };
+
+    // file -> offset -> node count (terminator excluded)
+    let mut found: BTreeMap<u32, BTreeMap<u32, usize>> = BTreeMap::new();
+    let mut total_nodes = 0usize;
+    let mut with_dl = 0usize;
+    let mut depth_hist: BTreeMap<u32, usize> = BTreeMap::new();
+
+    for id in &ids {
+        let Ok(file) = archive.load(*id) else { continue };
+        let graphs = scene::find_scene_graphs(&file);
+        if graphs.is_empty() {
+            continue;
+        }
+        let per_file = found.entry(*id).or_default();
+        for g in &graphs {
+            per_file.insert(g.offset, g.nodes.len());
+            total_nodes += g.nodes.len();
+            with_dl += g.nodes.iter().filter(|n| n.desc.dl.is_some()).count();
+            for n in &g.nodes {
+                *depth_hist.entry(n.desc.depth()).or_default() += 1;
+            }
+        }
+    }
+
+    let graph_count: usize = found.values().map(BTreeMap::len).sum();
+    println!("Scene graphs: {graph_count} across {} files", found.len());
+    println!("Nodes:        {total_nodes} ({with_dl} carrying a display list)");
+    print!("Depths:      ");
+    for (d, n) in &depth_hist {
+        print!(" {d}:{n}");
+    }
+    println!();
+
+    if only_file.is_some() || list {
+        for (id, graphs) in &found {
+            for (off, n) in graphs {
+                println!("  file {id} @ 0x{off:X}: {n} nodes");
+            }
+        }
+    }
+
+    let Some(expect_path) = expect else {
+        return Ok(());
+    };
+
+    let text = fs::read_to_string(&expect_path)?;
+    let (mut matched, mut wrong_len, mut missing) = (0usize, 0usize, 0usize);
+    let mut expected_total = 0usize;
+
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let cols: Vec<&str> = line.split('\t').collect();
+        let (file, offset, entries) = (
+            cols[0].parse::<u32>()?,
+            cols[1].parse::<u32>()?,
+            cols[2].parse::<usize>()?,
+        );
+        let name = cols.get(3).copied().unwrap_or("");
+        expected_total += 1;
+
+        // The decomp counts the terminator as an entry; we do not.
+        let want_nodes = entries - 1;
+        match found.get(&file).and_then(|g| g.get(&offset)) {
+            Some(&got) if got == want_nodes => matched += 1,
+            Some(&got) => {
+                wrong_len += 1;
+                println!("  LEN  file {file} @ 0x{offset:X} {name}: got {got}, want {want_nodes}");
+            }
+            None => {
+                missing += 1;
+                println!("  MISS file {file} @ 0x{offset:X} {name}: {want_nodes} nodes");
+            }
+        }
+    }
+
+    // Everything we found that the decomp has not typed. These are not errors:
+    // only 96 of the 2132 files have had their DObjDesc arrays annotated, so
+    // most extras are real arrays nobody has labelled yet. The number is worth
+    // watching for sudden growth, which would mean the filters loosened.
+    let extra = graph_count - matched - wrong_len;
+
+    println!();
+    println!("Against {expected_total} annotated arrays in {}:", expect_path.display());
+    println!("  exact match:   {matched}");
+    println!("  wrong length:  {wrong_len}");
+    println!("  not found:     {missing}");
+    println!("  unannotated:   {extra}");
+
+    if missing > 0 || wrong_len > 0 {
+        return Err(format!("{} annotated arrays did not round-trip", missing + wrong_len).into());
+    }
+    Ok(())
+}
+
 fn mesh(path: &Path) -> Res {
     use ssb_rom::mesh;
 
