@@ -1200,9 +1200,24 @@ never learns the game logic. The six-line adapter between them is duplicated
 per consumer, which is cheaper than a shared type dragging one crate into the
 other. `romtool collide <pack>` is that adapter plus the check above.
 
+**Seen, not just counted.** The viewer draws a stage's render layers with its
+collision polylines over them, through the same transform, and Dream Land's
+lines land on its platforms: two short floor lines exactly on the top surfaces
+of the left and right side platforms, one long line along the top of the main
+platform, slightly inset from the rendered slab — which is right, because
+collision is `±2318` and the drawn geometry is a little wider. 16 segments
+drawn, and Dream Land's seven polylines are `2+2+2+1+1+4+4 = 16`. 658 µs at 60
+FPS (`docs/images/m4-stage-collision.png`).
+
+Peach's Castle cross-checks it on ground that is not flat: its lines follow the
+sloped castle top, matching the fractional landing height (`y 303.5`) the spawn
+drop reported for that stage. A consistent offset would survive every numeric
+check above and would be obvious here; there is none.
+
 **Confidence: certain** for the flags, which Dream Land confirms against
-gameplay. **High** for the solver: it is a faithful port and the spawn margins
-agree across 40 stages, but no fighter has run on it yet.
+gameplay, and for the geometry, which now agrees visually on two stages.
+**High** for the solver: it is a faithful port and the spawn margins agree
+across 40 stages, but no fighter has stood on it yet.
 
 ---
 
