@@ -18,6 +18,7 @@ pub mod pack;
 pub mod psp_texture;
 pub mod rom;
 pub mod scan;
+pub mod scene;
 pub mod texture;
 pub mod vpk0;
 

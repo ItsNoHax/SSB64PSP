@@ -606,6 +606,11 @@ per-object render state is known, rather than inferring it. That also supplies
 the light colours (`MObj::light1color`/`light2color`) this currently replaces
 with a single neutral key light.
 
+**Update.** The scene-graph half of that is done — see RE-023, which recovers
+all 363 `DObjDesc` arrays. The light-colour half turned out not to matter:
+RE-024 measured them and they are white. The 80% threshold remains a judgement
+call; per-object render state still has to come from `MObjSub`.
+
 ---
 
 ## RE-022 — Mesh UVs run far outside 0..1 and need REPEAT
@@ -631,6 +636,98 @@ known 0..1 UVs and float vertices. That isolates the upload path (format,
 CLUT, swizzle, buffer width) from the mesh data, and turned "textures are
 broken" into "textures are fine, the UVs are not" in one build. Kept as a
 toggle in the viewer.
+
+---
+
+## RE-023 — `DObjDesc` arrays are a depth-tagged flattened tree
+
+**Question.** A display list says *what* to draw, never *where*. Every mesh so
+far rendered at the origin. Where does placement live?
+
+**Answer.** In `DObjDesc` arrays, which `gcSetupCommonDObjs`
+(`src/sys/objanim.c`) walks at load time:
+
+```c
+DObj *array_dobjs[DOBJ_ARRAY_MAX];          // 18
+while (dobjdesc->id != ARRAY_COUNT(array_dobjs))
+{
+    id = dobjdesc->id & 0xFFF;
+    if (id != 0) dobj = array_dobjs[id] = gcAddChildForDObj(array_dobjs[id - 1], dobjdesc->dl);
+    else         dobj = array_dobjs[0]  = gcAddDObjForGObj(gobj, dobjdesc->dl);
+    ...
+}
+```
+
+So `id & 0xFFF` is the node's **depth**, and its parent is whichever node most
+recently occupied `depth - 1`. The array is a pre-order flattening of a tree,
+44 bytes per entry. Depth 18 terminates — the terminator is not a magic number
+so much as an out-of-range depth, which is also why nothing can nest deeper
+than 18.
+
+The high nibble selects matrix composition (`0x8000` recalc-rot-rpy-sca,
+`0x4000` kind46, `0x2000` kind48, `0x1000` kind50), and any high bit also
+pushes a leading translate-only matrix.
+
+**Finding them.** Nothing indexes these arrays. Five constraints recover them:
+
+1. Terminator is `id == 18` followed by 40 zero bytes.
+2. The first entry is always depth 0.
+3. Depth never jumps by more than one — `array_dobjs[depth - 1]` must already
+   be populated or the runtime would pass `NULL` as a parent.
+4. Non-zero float components fall in a narrow band. Measured over the corpus:
+   translate peaks at 2.34e4, rotate at 31.7 rad, scale at 123, and the
+   smallest non-zero magnitude anywhere is 1e-6.
+5. **`dl` is either NULL or the target of an intern relocation.** This is the
+   decisive one: the archive loader already knows exactly which four-byte slots
+   are pointers, so a plausible-looking offset that was never relocated is not
+   a `DObjDesc`.
+
+**Validation.** The decomp has typed 363 of these by hand, byte-compared
+against the original ROM on every build. Scanning all 2132 archive files:
+
+```
+scanner: 363 arrays across 134 files
+decomp:  363 arrays across 134 files
+per-file counts: identical
+the 180 arrays carrying an @offset annotation: 180 exact, 0 missing
+```
+
+Zero false positives, zero misses. Reproduce with
+`tools/dobjdesc-ground-truth.py` piped into `romtool scene --expect`.
+
+**Confidence: certain.**
+
+**Method note.** The single mismatch on first run (file 296, Mario's joint
+tree: 25 nodes found, 33 expected) was **my ground-truth extractor being
+wrong**, not the scanner — that array carries `#if defined(REGION_JP)/#else`
+blocks and I counted both branches. Worth stating plainly because the instinct
+was to go fix the scanner. When a check disagrees with a reference, the
+reference is a suspect too.
+
+---
+
+## RE-024 — The shipped light colours really are neutral
+
+**Question.** RE-021 substituted a single neutral key light for
+`MObjSub::light1color`/`light2color`, and flagged that as a known compromise.
+How wrong is it?
+
+**Evidence.** Every `MObjSub` the decomp has typed, across the whole
+`src/relocData` corpus:
+
+```
+0xFF, 0xFF, 0xFF, 0x00    35
+0x80, 0x80, 0x80, 0x00     1
+```
+
+**Conclusion.** 35 of 36 are pure white and the last is neutral grey. The
+substitution is not a meaningful approximation — the colours carry no hue, so
+the shading difference is at most a brightness scale on one material.
+
+**Confidence: medium.** Only 36 `MObjSub` instances have been typed so far, so
+this is a sample rather than the full corpus. It is enough to demote the light
+colours from "known limitation" to "not worth chasing", but not enough to claim
+no material anywhere tints its lights.
 
 ---
 
