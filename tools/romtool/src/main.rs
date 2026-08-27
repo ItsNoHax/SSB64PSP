@@ -14,7 +14,7 @@
 //! romtool scene    <rom>          recover DObjDesc scene graphs
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -33,6 +33,7 @@ fn main() -> ExitCode {
         ["scan", rom_path, rest @ ..] => scan(rom_path.as_ref(), rest),
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["scene", rom_path, rest @ ..] => scene(rom_path.as_ref(), rest),
+        ["mobj", rom_path, rest @ ..] => mobj(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
@@ -65,6 +66,7 @@ USAGE:
     romtool mesh     <rom.z64>
     romtool scene    <rom.z64> [--file <id>] [--list] [--nodes] [--why]
                                [--expect <ground-truth.tsv>]
+    romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
@@ -421,12 +423,14 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     // decides how much geometry a graph can actually place.
     let mut outcome: BTreeMap<String, usize> = BTreeMap::new();
     let mut members: BTreeMap<&'static str, usize> = BTreeMap::new();
+    // Materials change what converts, so resolve them the way the packer does.
+    let loaded = load_all(&archive);
     for id in &ids {
-        let Ok(file) = archive.load(*id) else {
+        let Some(file) = loaded.files.get(*id as usize).and_then(Option::as_ref) else {
             continue;
         };
-        let resolver = scene::DlResolver::new(&file);
-        for g in scene::find_scene_graphs(&file) {
+        let resolver = scene::DlResolver::new(file);
+        for g in loaded.graphs.get(id).into_iter().flatten() {
             for node_dl in g.display_lists() {
                 let member = resolver.resolve(node_dl);
                 *members
@@ -441,7 +445,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             // Convert the graph the way the packer does -- in draw order,
             // sharing one vertex cache -- so this reports what actually
             // happens rather than what a standalone conversion would.
-            let plan = plan_draw_order(&g, &resolver);
+            let plan = plan_draw_order(g, &resolver);
             let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
                 .iter()
                 .map(|p| {
@@ -451,12 +455,14 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                         .unwrap_or_default()
                 })
                 .collect();
+            let materials = loaded.materials(file, g);
             let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
                 .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
                     cmds,
                     world: p.world,
+                    mobjs: &materials[p.node],
                 })
                 .collect();
 
@@ -815,13 +821,17 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut node_dls = 0usize;
     let mut extra_leaves = 0usize;
 
+    let loaded = load_all(&archive);
+
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Ok(file) = archive.load(id) else { continue };
+        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
 
-        let all = ssb_rom::scan::find_root_display_lists(&file);
+        let all = ssb_rom::scan::find_root_display_lists(file);
         // convert() inlines G_DL callees, so packing a list that another list
         // calls would duplicate its geometry.
         let called: std::collections::BTreeSet<u32> =
@@ -833,10 +843,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         // discards these -- a hierarchy's per-joint lists sit inside the span
         // of a larger list the scan preferred. So convert the authoritative
         // offsets first and let discovery fill in only what they miss.
-        let graphs = ssb_rom::scene::find_scene_graphs(&file);
+        let graphs: &[ssb_rom::scene::SceneGraph] =
+            loaded.graphs.get(&id).map_or(&[], Vec::as_slice);
         // A node's `dl` may be a `Gfx*`, a `DObjDLLink[]` or a pre/post pair;
         // the resolver sorts that out.
-        let resolver = ssb_rom::scene::DlResolver::new(&file);
+        let resolver = ssb_rom::scene::DlResolver::new(file);
 
         // Every list a graph draws, in the order the game draws it, so the
         // vertex cache can be threaded through them; see convert_sequence.
@@ -874,12 +885,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         .unwrap_or_default()
                 })
                 .collect();
+            // A node's palette lives in its `MObj` chain, not its display
+            // list; see `ssb_rom::mobj`.
+            let materials = loaded.materials(file, &graphs[gi]);
             let items: Vec<mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
                 .map(|(p, cmds)| mesh::SequenceItem {
                     cmds,
                     world: p.world,
+                    mobjs: &materials[p.node],
                 })
                 .collect();
 
@@ -888,7 +903,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 if m.triangle_count() == 0 {
                     continue;
                 }
-                let index = pack_mesh(&mut writer, &mut tex_index, &file, id, p.dl, &m, swizzle);
+                let index = pack_mesh(&mut writer, &mut tex_index, file, id, p.dl, &m, swizzle);
                 meshes += 1;
                 triangles += m.triangle_count();
 
@@ -920,7 +935,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             pack_mesh(
                 &mut writer,
                 &mut tex_index,
-                &file,
+                file,
                 id,
                 dl.offset,
                 &m,
@@ -1052,6 +1067,271 @@ fn convert_texture(
     }
 }
 
+/// The whole archive, read once.
+///
+/// Material tables have to be resolved before any model can be converted,
+/// because the `FTCommonPart` record that names a model's table lives in the
+/// fighter's `*Main` file, not the `*Model` file it describes. Decompressing
+/// everything up front costs about 17 MB of RAM and saves a second pass.
+struct Loaded {
+    files: Vec<Option<ssb_rom::archive::File>>,
+    graphs: BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
+    tables: ssb_rom::mobj::PartTables,
+}
+
+fn load_all(archive: &Archive) -> Loaded {
+    use ssb_rom::{mobj, scene};
+
+    let files: Vec<Option<ssb_rom::archive::File>> = (0..archive.len() as u32)
+        .map(|id| archive.load(id).ok())
+        .collect();
+    let graphs: BTreeMap<u32, Vec<scene::SceneGraph>> = files
+        .iter()
+        .flatten()
+        .map(|f| (f.id, scene::find_scene_graphs(f)))
+        .collect();
+    // A record only counts if a graph really starts where it points *and* the
+    // table it names parses for that graph's node count; see `PartTables::scan`.
+    let tables = mobj::PartTables::scan(files.iter().flatten(), |model, graph, table| {
+        let Some(nodes) = graphs
+            .get(&model)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map(|g| g.nodes.len())
+        else {
+            return false;
+        };
+        files[model as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some())
+    });
+    Loaded {
+        files,
+        graphs,
+        tables,
+    }
+}
+
+impl Loaded {
+    /// The materials for each node of a graph, or empty vectors when no record
+    /// names its table.
+    fn materials(
+        &self,
+        file: &ssb_rom::archive::File,
+        graph: &ssb_rom::scene::SceneGraph,
+    ) -> Vec<ssb_rom::mobj::NodeMaterials> {
+        self.tables
+            .table_for(file.id, graph.offset)
+            .and_then(|at| ssb_rom::mobj::read_table(file, at, graph.nodes.len()))
+            .map(|t| t.nodes)
+            .unwrap_or_else(|| vec![Vec::new(); graph.nodes.len()])
+    }
+}
+
+/// Every mesh a file yields, converted the way [`pack`] converts it.
+///
+/// Graph-driven conversion first, then blind discovery for whatever the graphs
+/// did not claim — the same two-tier arrangement and, importantly, the same
+/// material state, so a diagnostic built on this sees what ships.
+fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::mesh::Mesh> {
+    use ssb_rom::mesh;
+
+    let resolver = ssb_rom::scene::DlResolver::new(file);
+    let graphs: &[ssb_rom::scene::SceneGraph] =
+        loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
+    let mut out = Vec::new();
+    let mut claimed = BTreeSet::new();
+
+    for graph in graphs {
+        let plan = plan_draw_order(graph, &resolver);
+        let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+            .iter()
+            .map(|p| {
+                claimed.insert(p.dl);
+                file.data
+                    .get(p.dl as usize..)
+                    .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let materials = loaded.materials(file, graph);
+        let items: Vec<mesh::SequenceItem> = plan
+            .iter()
+            .zip(&decoded)
+            .map(|(p, cmds)| mesh::SequenceItem {
+                cmds,
+                world: p.world,
+                mobjs: &materials[p.node],
+            })
+            .collect();
+        out.extend(
+            mesh::convert_sequence(&items, &file.data)
+                .into_iter()
+                .flatten(),
+        );
+    }
+
+    for dl in ssb_rom::scan::find_root_display_lists(file) {
+        if !claimed.contains(&dl.offset) {
+            out.extend(mesh::convert(&dl.commands, &file.data));
+        }
+    }
+    out
+}
+
+/// Reports the `MObj` material tables and cross-checks them.
+///
+/// Two independent checks, because the pairing is the part worth doubting:
+///
+/// * Every node's chain length must equal what its display lists ask for, from
+///   the segment-`0x0E` entries they call. Nothing in the table says this, so a
+///   table paired with the wrong graph would show up here immediately.
+/// * With `--expect`, every `MObjSub` offset we resolve must be one the decomp
+///   typed by hand (`tools/mobjsub-ground-truth.py`), whose build byte-compares
+///   against the ROM.
+fn mobj(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::{mobj, scene};
+
+    let mut only_file: Option<u32> = None;
+    let mut expect: Option<PathBuf> = None;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            "--expect" => expect = it.next().map(PathBuf::from),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    let Loaded {
+        files,
+        graphs,
+        tables,
+    } = load_all(&archive);
+
+    let known: Option<BTreeMap<u32, BTreeSet<u32>>> = expect
+        .as_deref()
+        .map(fs::read_to_string)
+        .transpose()?
+        .map(|text| {
+            let mut map: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let mut cols = line.split('\t');
+                if let (Some(f), Some(at)) = (cols.next(), cols.next()) {
+                    if let (Ok(f), Ok(at)) = (f.parse(), at.parse()) {
+                        map.entry(f).or_default().insert(at);
+                    }
+                }
+            }
+            map
+        });
+
+    let (mut paired, mut unpaired, mut unreadable) = (0usize, 0usize, 0usize);
+    let (mut agree, mut disagree, mut unfollowable) = (0usize, 0usize, 0usize);
+    let (mut materials, mut palettes) = (0usize, 0usize);
+    let (mut in_decomp, mut not_in_decomp) = (0usize, 0usize);
+
+    for file in files.iter().flatten() {
+        if only_file.is_some_and(|f| f != file.id) {
+            continue;
+        }
+        let resolver = scene::DlResolver::new(file);
+        for g in graphs.get(&file.id).into_iter().flatten() {
+            let Some(offset) = tables.table_for(file.id, g.offset) else {
+                if g.nodes.iter().any(|n| {
+                    n.desc
+                        .dl
+                        .is_some_and(|at| mobj_demand(file, &resolver, at) > 0)
+                }) {
+                    unpaired += 1;
+                }
+                continue;
+            };
+            // `PartTables::scan` already required this to parse.
+            let Some(table) = mobj::read_table(file, offset, g.nodes.len()) else {
+                unreadable += 1;
+                continue;
+            };
+            paired += 1;
+            for (i, node) in g.nodes.iter().enumerate() {
+                let want = node
+                    .desc
+                    .dl
+                    .map_or(0, |at| mobj_demand(file, &resolver, at));
+                let have = table.nodes[i].len();
+                match () {
+                    _ if want == have => {
+                        if want > 0 {
+                            agree += 1
+                        }
+                    }
+                    // A chain that lives in another archive file reads back
+                    // empty; that is a known gap, not a mismatch.
+                    _ if have == 0 => unfollowable += 1,
+                    _ => {
+                        disagree += 1;
+                        println!(
+                            "  DIFF file {} graph 0x{:X} node {i}: lists call {want} MObj(s), chain has {have}",
+                            file.id, g.offset
+                        );
+                    }
+                }
+                for m in &table.nodes[i] {
+                    materials += 1;
+                    palettes += usize::from(m.palette.is_some());
+                    if let Some(known) = &known {
+                        match known.get(&file.id) {
+                            Some(set) if set.contains(&m.at) => in_decomp += 1,
+                            Some(_) => {
+                                not_in_decomp += 1;
+                                println!(
+                                    "  GT   file {} MObjSub 0x{:X} is not one the decomp typed",
+                                    file.id, m.at
+                                );
+                            }
+                            None => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "FTCommonPart records naming a graph and its table: {}",
+        tables.len()
+    );
+    println!("graphs paired with a table: {paired} (unreadable {unreadable}, wanting one but unnamed {unpaired})");
+    println!("nodes where chain length == display-list demand: {agree}, mismatched: {disagree}");
+    println!("  chains in another archive file, not followed: {unfollowable}");
+    println!("materials: {materials} ({palettes} carrying a palette)");
+    if known.is_some() {
+        println!("MObjSubs the decomp also typed: {in_decomp}, not: {not_in_decomp}");
+    }
+    Ok(())
+}
+
+/// How many `MObj`s the lists hanging off a node's `dl` slot call for.
+fn mobj_demand(
+    file: &ssb_rom::archive::File,
+    resolver: &ssb_rom::scene::DlResolver,
+    at: u32,
+) -> usize {
+    resolver
+        .lists(at)
+        .iter()
+        .map(|&l| {
+            file.data
+                .get(l as usize..)
+                .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                .map_or(0, |cmds| ssb_rom::mobj::demand(&cmds, &file.data))
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// Writes decoded textures out as PPM so they can be eyeballed.
 ///
 /// The point is to separate two very different failures: a texture that
@@ -1059,7 +1339,7 @@ fn convert_texture(
 /// bug is in swizzling, format or upload; one that is already noise here means
 /// the bug is upstream, in the offsets or palettes the display list gave us.
 fn texdump(path: &Path, opts: &[&str]) -> Res {
-    use ssb_rom::{mesh, texture};
+    use ssb_rom::texture;
 
     let mut only_file: Option<u32> = None;
     let mut count = 12usize;
@@ -1078,6 +1358,7 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
     fs::create_dir_all(&out_dir)?;
+    let loaded = load_all(&archive);
 
     let mut written = 0usize;
     let mut seen: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
@@ -1089,15 +1370,18 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
         if only_file.is_some_and(|f| f != id) {
             continue;
         }
-        let Ok(file) = archive.load(id) else { continue };
+        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
 
-        for dl in ssb_rom::scan::find_root_display_lists(&file) {
+        // Convert the way the packer does, not with `convert`. A fighter's
+        // palette comes from its `MObj` chain, so a standalone conversion dumps
+        // its textures unpalettised -- which would make this tool report a
+        // problem the pack does not have, and hide one it does.
+        for m in file_meshes(&loaded, file) {
             if written >= count {
                 break;
             }
-            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
-                continue;
-            };
             for prim in &m.primitives {
                 if written >= count {
                     break;
@@ -1226,14 +1510,12 @@ fn dump(path: &Path, id: &str) -> Res {
 /// textures the game really uses, not every image-shaped blob in the archive.
 fn textures(path: &Path) -> Res {
     use ssb_rom::psp_texture as psp;
-    use ssb_rom::{mesh, texture};
+    use ssb_rom::texture;
 
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
 
-    let files: Vec<_> = (0..archive.len() as u32)
-        .filter_map(|id| archive.load(id).ok())
-        .collect();
+    let loaded = load_all(&archive);
 
     // Deduplicate: the same texture is bound by many primitives.
     let mut seen: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
@@ -1246,11 +1528,11 @@ fn textures(path: &Path) -> Res {
     let mut largest: Vec<(usize, u32, u32, String)> = Vec::new();
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
 
-    for file in &files {
-        for dl in ssb_rom::scan::find_root_display_lists(file) {
-            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
-                continue;
-            };
+    // Same conversion the packer runs, so these counts describe the pack. On
+    // the standalone path a fighter's textures come out palette-less, and this
+    // reported 142 failures that the shipped pack does not have.
+    for file in loaded.files.iter().flatten() {
+        for m in file_meshes(&loaded, file) {
             for prim in &m.primitives {
                 let Some(t) = prim.material.texture else {
                     continue;
