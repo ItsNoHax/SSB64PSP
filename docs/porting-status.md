@@ -31,7 +31,7 @@ Last updated: 2026-08-28.
 | Asset extraction CLI | ✅ COMPLETE | `romtool extract` produces 16.29 MiB + manifest |
 | F3DEX2 DL parser | ✅ COMPLETE | All opcodes Smash emits, verified against real lists; `G_VTX` encoding regression-tested (RE-017) |
 | N64 texture decode | 🟢 85% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; 482 real ROM textures decode and ship in the pack |
-| Texture → PSP conversion | 🟢 85% | 586 bound, 482 packed, 76.9% VRAM saved. Round-trip tested through swizzle+CLUT; verified on device (RE-022). At 995 KiB the full set no longer fits texture VRAM in one go — a match only needs one stage and a few fighters, but streaming is now an M8 question |
+| Texture → PSP conversion | 🟡 70% | 586 bound, 482 packed, 76.9% VRAM saved. **Stage layers draw untextured on device**: their textures live in a separate archive file reached by extern relocation, and those slots read as zero, so the converter cannot resolve them (RE-037). Dream Land's geometry file holds 57 such pointers, all into one texture file, and packs 1 texture. Round-trip tested through swizzle+CLUT; verified on device (RE-022). At 995 KiB the full set no longer fits texture VRAM in one go — a match only needs one stage and a few fighters, but streaming is now an M8 question |
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 85% | 47,696 tris, vertex dedup and material merging; 0 failures archive-wide. Cross-joint vertex sharing resolved for the rest pose (RE-026); no animated skinning yet |
 | Model conversion | 🟢 60% | Meshes extracted, DObj hierarchy applied and baked, MObj materials resolved where named (RE-027). Animation not applied |
@@ -131,4 +131,6 @@ Reproduce with `tools/run-ppsspp.sh`.
 6. **The extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest rather than patching them, because the target address
    depends on runtime layout. The runtime loader that applies them does not
-   exist yet.
+   exist yet — and this is not only a runtime gap: it is why every stage
+   renders untextured (RE-037), because a stage's display lists reach their
+   texels through exactly these pointers.

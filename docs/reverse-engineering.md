@@ -1991,3 +1991,57 @@ number-for-number match against the decompilation's own transcription on the
 one file examined in detail, no desynchronisation across ~4,000 scripts, and
 joint counts that agree with an independently recovered mask for all 189
 animations under a rule with no exceptions. **Not yet validated on device**: nothing renders these poses yet.
+
+---
+
+## RE-037 — Why the stages draw white: the textures are in another file
+
+**Question.** Fighter models texture correctly on device. Dream Land does not —
+its geometry lands in the right place, its collision lines sit exactly on its
+platforms, and every surface renders white. Since fighters and stages go
+through the same converter, the same pack format and the same draw path, the
+difference had to be in the data rather than the code.
+
+**Evidence.** `romtool textures --file 104` — Dream Land's geometry file —
+reports **1 of 2 textures packed**. Two is not a plausible texture count for a
+stage with a tree, three platforms and a background. Link's model file binds 22.
+
+`romtool dump 104` says what the missing ones are:
+
+```
+intern relocs  114
+extern relocs  57
+depends on:
+  file 103   (57 pointer(s))
+```
+
+**Fifty-seven cross-file pointers, every one into file 103.** The archive
+records extern relocations rather than applying them — the target address
+depends on runtime layout — so those slots read as zero. `mesh::convert` sees a
+`G_SETTIMG` address of 0, cannot resolve it, and the primitive comes out
+untextured. The renderer then correctly disables texturing for it.
+
+**The reported failure count understates it.** `romtool textures` deduplicates
+on `(file id, data_offset)`, and every unresolved cross-file texture has
+`data_offset == 0`. All of a file's missing textures therefore collapse into
+one entry. The headline "54 null (extern reloc, texture in another file)" is
+54 *files*, not 54 textures.
+
+**Why this is a data-plumbing gap and not a decoder bug.** Nothing about the
+texture format is in question: the same decoder packs 482 textures, including
+every fighter's, and RE-022 validated the swizzle, CLUT upload and UV scale on
+device. What is missing is the hop from a display list in one archive file to
+texel data in another. `TextureRef` can only name an offset, not a file, so
+there is nowhere to put the answer even once it is known.
+
+**The fix, scoped.** `G_SETTIMG`'s operand slot needs to be looked up in the
+file's `extern_relocs` when it reads zero, which means the display-list decoder
+has to carry each command's byte offset, `TextureRef` has to carry a file id
+alongside its offset, and the converter has to be handed the whole archive
+rather than one file's bytes. The palette path needs the same, since a TLUT
+load reads whatever image address is current.
+
+**Confidence: high** for the diagnosis — the pointer count, their single
+target file, and the packed-texture count all agree, and the affected files are
+exactly the ones whose stages render white. Untested for the fix, which is not
+written.
