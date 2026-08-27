@@ -88,11 +88,20 @@ impl<const N: usize> FixedStr<N> {
 
 impl<const N: usize> core::fmt::Write for FixedStr<N> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        // Leave room for the trailing NUL.
-        let space = N - 1 - self.len;
-        let take = s.len().min(space);
-        self.buf[self.len..self.len + take].copy_from_slice(&s.as_bytes()[..take]);
-        self.len += take;
+        // Interior NUL bytes are dropped, not copied. This builds a C string,
+        // so a single embedded NUL silently truncates everything after it --
+        // which is exactly what happened when a NUL-terminated path constant
+        // was formatted into the overlay and swallowed nine of eleven lines.
+        for &b in s.as_bytes() {
+            if b == 0 {
+                continue;
+            }
+            if self.len >= N - 1 {
+                break; // leave room for the terminator
+            }
+            self.buf[self.len] = b;
+            self.len += 1;
+        }
         Ok(())
     }
 }
@@ -234,8 +243,11 @@ impl Gpu {
         }
     }
 
-    /// Translates and rotates the model matrix.
-    pub fn model_transform(&mut self, pos: [f32; 3], rot_radians: [f32; 3]) {
+    /// Translates, rotates and uniformly scales the model matrix.
+    ///
+    /// Calls post-multiply, so the effective transform is `T * R * S`:
+    /// vertices are scaled first, then rotated, then translated.
+    pub fn model_transform(&mut self, pos: [f32; 3], rot_radians: [f32; 3], scale: f32) {
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::Model);
             sys::sceGumLoadIdentity();
@@ -248,6 +260,11 @@ impl Gpu {
                 x: rot_radians[0],
                 y: rot_radians[1],
                 z: rot_radians[2],
+            });
+            sys::sceGumScale(&sys::ScePspFVector3 {
+                x: scale,
+                y: scale,
+                z: scale,
             });
         }
     }

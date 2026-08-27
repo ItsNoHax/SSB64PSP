@@ -7,8 +7,9 @@ hardware, using the [Super Smash Bros. decompilation][decomp] as the reference
 for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
 > **Status: early.** The asset pipeline is complete and verified against a real
-> ROM, and the PSP executable **boots in PPSSPP at a locked 60 FPS**. There is
-> no Smash content on screen yet — see [Current status](#current-status).
+> ROM, and **geometry extracted from the ROM now renders on the PSP at a locked
+> 60 FPS**. Textures, lighting and the match loop are not implemented yet — see
+> [Current status](#current-status).
 
 ![M1 platform baseline running in PPSSPP at 60 FPS](docs/images/m1-ppsspp-60fps.png)
 
@@ -126,21 +127,35 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * F3DEX2 display list decoding, N64 texture decoding (unit-tested)
 * Fixed 60 Hz simulation clock, N64→PSP coordinate conversion
 * 15 fighter physics functions ported from `ftphysics.c`
-* 86 host tests passing
+* 130 host tests passing
 
-* **Boots in PPSSPP** (1.20.4, OpenGL). Module loads, GE display lists submit,
-  geometry renders with correct vertex-colour interpolation, animation
-  advances, and the ported physics runs on-device — all at a locked **60 FPS**.
+* **Boots in PPSSPP** (1.20.4). Module loads, GE display lists submit, the
+  fixed 60 Hz clock holds, and the ported physics runs on-device.
+* **Real ROM geometry renders on device.** The converted asset pack (1.7 MB,
+  1768 meshes, 25,562 triangles, 340 textures) loads and draws through the GE
+  at a locked **60 FPS**, 168 µs CPU for a 396-triangle mesh.
+
+![ROM geometry rendering on the PSP](docs/images/m3-rom-geometry.png)
+
+*Geometry extracted from the ROM, converted at build time, drawn by the PSP's
+GE. The saturated colouring is expected — this material sets `G_LIGHTING`, so
+those vertex bytes are packed normals being drawn as colours; lighting is not
+implemented yet.*
 
 **Known limitations:**
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
-* The on-screen debug overlay computes but does not display under PPSSPP
+* The debug overlay only displays under PPSSPP's software rasteriser
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
+* **Textures are packed but not yet validated on screen**, and lit materials
+  still draw their packed normals as vertex colours — lighting is not
+  implemented.
+* Mesh discovery may still include false positives; some packed "meshes" have
+  implausible bounds.
 
-**Not started:** texture/model conversion to PSP formats, scene graph, the
-match loop, audio, menus, save data, VFPU work.
+**Not started:** scene graph, animation, the match loop, audio, menus, save
+data, VFPU work.
 
 ## Verifying the asset pipeline
 

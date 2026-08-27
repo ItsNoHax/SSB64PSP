@@ -95,6 +95,11 @@ const SEARCH_PATHS: &[&str] = &[
     "ms0:/ssb64.pak\0",
 ];
 
+/// Human-readable form of a search path, without the C terminator.
+fn display_path(p: &'static str) -> &'static str {
+    p.trim_end_matches('\0')
+}
+
 /// Loads the asset pack, returning the buffer and which path worked.
 pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
     for path in SEARCH_PATHS {
@@ -125,7 +130,7 @@ pub fn load_pack() -> Result<(AlignedBuf, &'static str), LoadError> {
 
         // The GE will read this memory; make sure it is actually in RAM.
         buf.flush_cache();
-        return Ok((buf, path));
+        return Ok((buf, display_path(path)));
     }
     Err(LoadError::NotFound)
 }

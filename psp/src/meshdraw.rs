@@ -22,6 +22,18 @@ use psp::sys::{self, ClutPixelFormat, GuPrimitive, GuState, TexturePixelFormat, 
 
 use ssb_rom::pack::{flags, MeshDesc, Pack, PrimDesc, TextureDesc};
 
+/// What the GE divides 16-bit vertex components by.
+///
+/// **Integer vertex formats on the PSP are normalised, not raw.** A
+/// `GU_VERTEX_16BIT` coordinate is interpreted as `value / 32768`, so N64
+/// coordinates in the hundreds collapse to a few hundredths of a unit and the
+/// model becomes an invisible speck at the origin. The model matrix must scale
+/// back up by this factor -- see [`MODEL_SCALE`].
+pub const VERTEX_16BIT_DIVISOR: f32 = 32768.0;
+
+/// Uniform model scale that undoes [`VERTEX_16BIT_DIVISOR`].
+pub const MODEL_SCALE: f32 = VERTEX_16BIT_DIVISOR;
+
 /// Vertex format of [`ssb_rom::pack::PackedVertex`].
 ///
 /// Must describe the struct's field order exactly: texture coords, colour,
@@ -103,11 +115,14 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
         sys::TextureColorComponent::Rgba,
     );
     sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
-    // N64 UVs are S10.5: 32 units per texel. Scaling by 1/(32*dim) converts
-    // them to the 0..1 range the GE samples in, without touching the vertices.
+    // Texture coordinates need the same normalisation undone, then the N64's
+    // S10.5 fixed point (32 units per texel) converted to 0..1 across the
+    // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,
+    // so scale = 32768 / (32 * dim) = 1024 / dim.
+    const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0; // 1024
     sys::sceGuTexScale(
-        1.0 / (32.0 * t.stride as f32),
-        1.0 / (32.0 * (t.height as f32).max(1.0)),
+        UV_SCALE / t.stride as f32,
+        UV_SCALE / (t.height as f32).max(1.0),
     );
     sys::sceGuTexOffset(0.0, 0.0);
 }
