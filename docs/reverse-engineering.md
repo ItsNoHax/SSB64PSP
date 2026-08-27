@@ -515,6 +515,52 @@ Reading the failure histogram before theorising would have found this faster.
 
 ---
 
+## RE-020 — PSP integer vertex formats are normalised, not raw
+
+**Question.** Geometry converted correctly, the draw was issued (`draws 1`),
+culling was off, the bounding box was sane and the camera was inside the far
+plane — yet nothing appeared on screen.
+
+**Evidence.** On-screen instrumentation, added rather than guessed at:
+
+```
+mesh 0/1768  file 22  @0x4D0
+tris 2  verts 4  prims 1
+draws 1  state changes 2
+bb 0 -253 -253 .. 253 1024 1024
+cam 2939 r 1277
+```
+
+Everything was consistent with geometry that should be visible.
+
+**Cause.** `GU_VERTEX_16BIT` does not pass integer coordinates through — the GE
+interprets them as **normalised** fixed point, dividing by 32768. N64
+coordinates in the hundreds therefore became hundredths of a unit, collapsing
+the model to an invisible speck at the origin.
+
+The same applies to `GU_TEXTURE_16BIT`.
+
+**Implementation.** A uniform model-matrix scale of 32768 undoes it
+(`meshdraw::MODEL_SCALE`). Precision is unaffected: the coordinates are
+integers well inside the `i16` range, so they are exactly representable.
+
+Texture coordinates need the normalisation undone *and* the N64's S10.5 fixed
+point (32 units per texel) converted, giving
+`sceGuTexScale(1024 / width, 1024 / height)` — `32768 / 32 = 1024`.
+
+**Result.** Real ROM geometry renders. See
+`docs/images/m3-rom-geometry.png`: 396 triangles, 2 draws, 60 FPS, 168us CPU.
+
+**Confidence: certain.** Directly observed before and after.
+
+**Note on the claim this invalidates:** the 16-bit vertex format was described
+as "free, because the N64 data is already `i16`". It is still a bandwidth win
+(16 bytes versus 24), but it is *not* free — it requires a compensating model
+scale, and any code that mixes 16-bit meshes with float meshes must apply the
+right scale to each.
+
+---
+
 ## RE-016 — Measured frame budget at M1
 
 **Question.** How much CPU headroom does the M1 baseline actually have?

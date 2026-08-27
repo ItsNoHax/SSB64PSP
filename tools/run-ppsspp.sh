@@ -78,14 +78,13 @@ cp "$EBOOT" "$OUT/"
 
 PPSSPP_INI="$HOME/.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
 
-# Two different mechanisms, because each only works for one setting:
-#   --graphics=opengl   picks the *backend*. Vulkan fails to initialise in some
-#                       environments (including this one) and PPSSPP then
-#                       refuses to retry it, so the working backend is forced.
-#   --appendconfig      picks the *rasteriser*. `--graphics=software` was
-#                       observed not to take effect, but the config value does.
-# Pinning GraphicsBackend through the config was tried and backfired: PPSSPP
-# stores it as "0 (OPENGL)" and a bare "0" did not round-trip.
+# Only the rasteriser is overridden, through --appendconfig, because
+# `--graphics=software` was observed not to take effect.
+#
+# Do NOT also pin GraphicsBackend here or by editing ppsspp.ini. Both were
+# tried and both left PPSSPP unable to open a window at all: it stores the
+# value as "0 (OPENGL)" and a rewritten value does not round-trip, after which
+# it marks every backend failed. Leave the user's backend choice alone.
 if [ "$BACKEND" = software ]; then
   printf '[Graphics]\nSoftwareRenderer = True\n' > "$OUT/backend.ini"
 else
@@ -142,15 +141,6 @@ fi
 # each run makes the harness self-healing.
 rm -f "$(dirname "$PPSSPP_INI")/FailedGraphicsBackends.txt" 2>/dev/null || true
 
-# Force the backend in the real config, restored on exit by cleanup().
-#
-# Neither --graphics= nor --appendconfig could set this: the command-line flag
-# is applied before the config is read, and PPSSPP stores the value as
-# "0 (OPENGL)" so a bare "0" from an appended config does not round-trip.
-# Editing the file it actually parses is the only reliable route.
-if [ -n "$INI_BACKUP" ]; then
-  sed -i 's/^GraphicsBackend = .*/GraphicsBackend = 0 (OPENGL)/' "$PPSSPP_INI"
-fi
 
 # Sleeps must be interruptible. Bash defers trap handlers until the current
 # foreground command finishes, so a plain `sleep 60` swallows Ctrl-C for a full
@@ -174,7 +164,6 @@ BEFORE=$(ppsspp_windows)
 echo "==> launching PPSSPP (backend=$BACKEND)"
 flatpak run --env=SDL_VIDEODRIVER=x11 --env=DISPLAY="$DISPLAY" --filesystem=home \
   org.ppsspp.PPSSPP \
-  --graphics=opengl \
   --appendconfig="$OUT/backend.ini" \
   --windowed --xres 960 --yres 544 \
   "$OUT/EBOOT.PBP" > "$OUT/ppsspp.log" 2>&1 &

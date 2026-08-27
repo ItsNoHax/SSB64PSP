@@ -85,7 +85,25 @@ unsafe fn run() -> ! {
     let mesh_count = pack.as_ref().map_or(0, |p| p.mesh_count());
 
     // Which mesh is on screen, and how far back the camera sits.
-    let mut mesh_index: u32 = 0;
+    // Start on the mesh with the most triangles, so the first frame shows
+    // something substantial rather than a two-triangle sliver.
+    let mut mesh_index: u32 = pack
+        .as_ref()
+        .map(|p| {
+            let mut best = (0u32, 0u32); // (index, triangles)
+            for i in 0..p.mesh_count() {
+                let Some(m) = p.mesh(i) else { continue };
+                let tris: u32 = (0..m.prim_count)
+                    .filter_map(|k| p.prim(m.first_prim + k))
+                    .map(|pr| pr.index_count / 3)
+                    .sum();
+                if tris > best.1 {
+                    best = (i, tris);
+                }
+            }
+            best.0
+        })
+        .unwrap_or(0);
     let mut cam_distance = 200.0f32;
     let mut draw_state = meshdraw::DrawState::default();
 
@@ -96,6 +114,7 @@ unsafe fn run() -> ! {
 
     let mut spin = 0.0f32;
     let mut last_frame_us = 0u32;
+    let mut dbg_cam = 1000.0f32;
 
     loop {
         let frame = Stopwatch::start();
@@ -141,18 +160,24 @@ unsafe fn run() -> ! {
 
         // ---- render: display cadence -------------------------------------
         gpu.begin_frame(Some(Color::rgba(0x20, 0x28, 0x38, 0xFF)));
-        gpu.set_perspective(60.0, aspect, 1.0, 10000.0);
+        // Far plane follows the camera: meshes range from a few units across to
+        // tens of thousands, and a fixed far plane clips the large ones entirely.
+        gpu.set_perspective(60.0, aspect, 1.0, (dbg_cam * 4.0).max(10_000.0));
         gpu.reset_modelview();
         draw_state.begin_frame();
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
+        let mut dbg_bb = [0i32; 6];
+
+        let mut dbg_radius = 0.0f32;
         match &pack {
             Some(p) => {
                 if let Some(desc) = p.mesh(mesh_index) {
                     // Frame the mesh: Smash's models range from a few dozen
                     // units across to several hundred, so a fixed camera
                     // distance would show either nothing or one huge polygon.
-                    let (centre, radius) = match meshdraw::bounds(p, &desc) {
+                    let bb = meshdraw::bounds(p, &desc);
+                    let (centre, radius) = match bb {
                         Some((min, max)) => {
                             let c = [
                                 (min[0] + max[0]) * 0.5,
@@ -166,9 +191,19 @@ unsafe fn run() -> ! {
                         None => ([0.0; 3], 100.0),
                     };
 
+                    if let Some((mn, mx)) = bb {
+                        dbg_bb = [
+                            mn[0] as i32, mn[1] as i32, mn[2] as i32,
+                            mx[0] as i32, mx[1] as i32, mx[2] as i32,
+                        ];
+                    }
+                    dbg_radius = radius;
+                    dbg_cam = centre[2] + radius * cam_distance / 100.0;
+
                     gpu.model_transform(
                         [-centre[0], -centre[1], -centre[2] - radius * cam_distance / 100.0],
                         [0.0, spin, 0.0],
+                        meshdraw::MODEL_SCALE,
                     );
                     meshdraw::draw_mesh(p, &desc, &mut draw_state);
                     shown = (draw_state.triangles, desc.vertex_count, desc.prim_count);
@@ -177,7 +212,7 @@ unsafe fn run() -> ! {
             None => {
                 // No pack: fall back to the built-in tetrahedron so the
                 // platform baseline is still visible and testable.
-                gpu.model_transform([0.0, 0.0, -8.0], [spin * 0.4, spin, 0.0]);
+                gpu.model_transform([0.0, 0.0, -8.0], [spin * 0.4, spin, 0.0], 1.0);
                 gpu.draw_triangles(&TRIANGLE.0);
             }
         }
@@ -200,6 +235,9 @@ unsafe fn run() -> ! {
                  cpu {}us / budget {}us\n\
                  frame {}us  tick {}\n\
                  \n\
+                 bb {} {} {} .. {} {} {}\n\
+                 cam {} r {}\n\
+                 \n\
                  dpad: browse   A/Z: zoom   nub: spin",
                 pack_path,
                 mesh_index,
@@ -219,6 +257,9 @@ unsafe fn run() -> ! {
                 FRAME_BUDGET_US,
                 last_frame_us,
                 sim.tick,
+                dbg_bb[0], dbg_bb[1], dbg_bb[2], dbg_bb[3], dbg_bb[4], dbg_bb[5],
+                dbg_cam as i32,
+                dbg_radius as i32,
             ),
         );
 
