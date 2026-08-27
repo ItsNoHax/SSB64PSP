@@ -937,7 +937,8 @@ Archive-wide textures **394 → 455**. Every fighter's two main model graphs are
 covered.
 
 **Limits.** 83 graphs want a material and no record names their table — mostly
-stages and effect files, which use a different setup path. Stage tables also
+stages and effect files, which use a different setup path. RE-028 covers the
+stages. Stage tables also
 reach chains in a *different* archive file through extern relocations; those
 slots parse but read back empty. Only costume 0 and animation frame 0 are
 taken, since `palette_id` and `texture_id` are runtime counters.
@@ -949,6 +950,94 @@ and every offset against the decomp — agree completely.
 ![Samus with her Varia suit palettes](images/m4-fighter-materials.png)
 
 The same frame as RE-026, same 326 triangles and 25 draws. 707 µs, 60 FPS.
+
+---
+
+## RE-028 — A stage is one struct, and its material table is one word further along
+
+**Question.** RE-027 paired 44 graphs with a material table and left 83
+unpaired, most of them stages. Fighters name their table through
+`FTCommonPart`; what do stages use? And more basically — a stage's geometry is
+spread over `StagePupupuFile2`, `File3`, a wallpaper file and a `GR*Map` file,
+with nothing so far saying which files make up *Dream Land*. What ties them
+together?
+
+**Evidence.** The same struct answers both:
+
+```c
+struct MPGroundDesc {
+    DObjDesc *dobjdesc;
+    AObjEvent32 **anim_joints;
+    MObjSub ***p_mobjsubs;
+    AObjEvent32 ***p_matanim_joints;
+};
+
+struct MPGroundData {
+    MPGroundDesc gr_desc[4];        // four render layers
+    MPGeometryData *map_geometry;   // collision lines
+    ...                             // bounds, fog, light angle, BGM, items
+};
+```
+
+`MPGroundDesc` pairs a graph with its material table exactly as
+`FTCommonPart` does — except `anim_joints` sits between them, so the table is
+at `dobjdesc + 8` rather than `+ 4`. **One word.** That is the entire reason
+every stage layer went unmatched while every fighter matched, and it is a good
+argument for reading the struct rather than pattern-matching adjacency.
+
+`sizeof(MPGroundData)` is **0xA8**, confirmed rather than assumed: three
+`GR*Map` files place the header at `0x14`, and the decomp names the next
+symbol in each at `0xBC`.
+
+**Finding them.** A header is four 16-byte descriptors followed by
+`map_geometry`. Every word in those 64 bytes is a pointer, so a non-zero
+unrelocated word anywhere rules a candidate out; at least one `dobjdesc` must
+land on a `DObjDesc` array we already recovered; and the camera and map bounds
+at `0x6C`/`0x74` must enclose a positive area, since a stage the camera cannot
+move in does not exist.
+
+**Result.** **41 stage headers.** Dream Land's, checked field by field against
+the decomp:
+
+```
+file 255 @ 0x14  bgm 0x0
+  camera  top   4000 bottom  -2000 right   3900 left  -3900
+  map     top   8300 bottom  -3500 right   9000 left  -9000
+  layer 0  graph file 104 @ 0x1008 (21 nodes)  no materials
+  layer 1  graph file 104 @ 0x1CE0 (2 nodes)   no materials
+  layer 2  graph file 104 @ 0x2450 (4 nodes)   materials file 104 @ 0x1F50
+  layer 3  graph file 104 @ 0x2BF8 (4 nodes)   no materials
+  collision  file 104 @ 0x1F34  (not decoded)
+  map nodes  file 152 @ 0x10F0
+```
+
+Every one matches `dGRPupupuMap_header`. `bgm 0x0` is `nSYAudioBGMPupupu`,
+which is 0; Planet Zebes reads 1 and Yoshi's Island 8, both correct, so the
+field is genuinely at `0x7C` and not accidentally right once.
+
+Material pairings **44 → 56**, nodes whose chain length matches display-list
+demand **310 → 342** with still **0** mismatches. Archive-wide textures
+**455 → 485**.
+
+**A gap in the ground truth, not in the extractor.** Four resolved `MObjSub`
+offsets are at places `tools/mobjsub-ground-truth.py` cannot locate a decomp
+symbol. They are real: e.g. file 117's `0x1E18` is
+`dStageMetalFile2_Layer1MObj_MObjSub_real`, hand-named with neither an `@`
+comment nor an offset in its name, and the other two members of its chain
+(`0x1ED0`, `0x1F48`) both verify. The generator's message now says
+"no decomp symbol is placed here" rather than implying a contradiction.
+
+**Limits.** `map_geometry` — the collision lines a match actually needs — is
+located but not decoded. Layers whose material table lives in another archive
+file are skipped, as in RE-027. 71 graphs still want a table and have no record
+naming one.
+
+**Confidence: certain.** Every Dream Land field matches the decomp, three BGM
+ids check out, and the demand check stays at zero mismatches over 32 more
+nodes. The discovery filter lands on files **255–295 with no gaps and no
+extras** — precisely the archive's `GR*Map` range, which is the full stage
+list including the bonus and 1P maps. One header per map file, none missed,
+nothing else mistaken for one.
 
 ---
 

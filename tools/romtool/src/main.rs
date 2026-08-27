@@ -34,6 +34,7 @@ fn main() -> ExitCode {
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["scene", rom_path, rest @ ..] => scene(rom_path.as_ref(), rest),
         ["mobj", rom_path, rest @ ..] => mobj(rom_path.as_ref(), rest),
+        ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
@@ -67,6 +68,7 @@ USAGE:
     romtool scene    <rom.z64> [--file <id>] [--list] [--nodes] [--why]
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
+    romtool stages   <rom.z64> [--file <id>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
@@ -1077,6 +1079,7 @@ struct Loaded {
     files: Vec<Option<ssb_rom::archive::File>>,
     graphs: BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
     tables: ssb_rom::mobj::PartTables,
+    stages: Vec<ssb_rom::stage::GroundData>,
 }
 
 fn load_all(archive: &Archive) -> Loaded {
@@ -1104,10 +1107,47 @@ fn load_all(archive: &Archive) -> Loaded {
             .as_ref()
             .is_some_and(|f| mobj::read_table(f, table, nodes).is_some())
     });
+    // Stage layers name their table through `MPGroundDesc`, which puts it two
+    // words after the graph rather than one. Same idea, different struct.
+    let is_graph = |file: u32, offset: u32| {
+        graphs
+            .get(&file)
+            .is_some_and(|gs| gs.iter().any(|g| g.offset == offset))
+    };
+    let stages: Vec<ssb_rom::stage::GroundData> = files
+        .iter()
+        .flatten()
+        .flat_map(|f| ssb_rom::stage::find_ground_data(f, is_graph))
+        .collect();
+
+    let mut tables = tables;
+    for layer in stages.iter().flat_map(|s| &s.layers) {
+        let Some((table_file, table)) = layer.mobjsub_table else {
+            continue;
+        };
+        let (graph_file, graph) = layer.graph;
+        // A layer whose table lives in another file cannot be followed; the
+        // chain reader works within one file.
+        if table_file != graph_file {
+            continue;
+        }
+        let nodes = graphs
+            .get(&graph_file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[graph_file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(graph_file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,
         tables,
+        stages,
     }
 }
 
@@ -1178,6 +1218,77 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     out
 }
 
+/// Lists the `MPGroundData` headers — one per stage.
+///
+/// A stage's geometry, collision, bounds and music are spread over several
+/// archive files and this struct is what ties them together, so this is the
+/// entry point for anything that wants to load a stage rather than a lone
+/// object. See `ssb_rom::stage`.
+fn stages(path: &Path, opts: &[&str]) -> Res {
+    let mut only_file: Option<u32> = None;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let loaded = load_all(&archive);
+
+    let mut layers = 0usize;
+    let mut with_table = 0usize;
+    for s in &loaded.stages {
+        if only_file.is_some_and(|f| f != s.file) {
+            continue;
+        }
+        println!("file {} @ 0x{:X}  bgm 0x{:X}", s.file, s.offset, s.bgm_id);
+        println!(
+            "  camera  top {:6} bottom {:6} right {:6} left {:6}",
+            s.camera_bounds.top,
+            s.camera_bounds.bottom,
+            s.camera_bounds.right,
+            s.camera_bounds.left
+        );
+        println!(
+            "  map     top {:6} bottom {:6} right {:6} left {:6}",
+            s.map_bounds.top, s.map_bounds.bottom, s.map_bounds.right, s.map_bounds.left
+        );
+        for l in &s.layers {
+            layers += 1;
+            let nodes = loaded
+                .graphs
+                .get(&l.graph.0)
+                .and_then(|gs| gs.iter().find(|g| g.offset == l.graph.1))
+                .map_or(0, |g| g.nodes.len());
+            let table = match l.mobjsub_table {
+                Some((f, at)) => {
+                    with_table += 1;
+                    format!("materials file {f} @ 0x{at:X}")
+                }
+                None => "no materials".into(),
+            };
+            println!(
+                "  layer {}  graph file {} @ 0x{:X} ({nodes} nodes)  {table}",
+                l.index, l.graph.0, l.graph.1
+            );
+        }
+        if let Some((f, at)) = s.map_geometry {
+            println!("  collision  file {f} @ 0x{at:X}  (not decoded)");
+        }
+        if let Some((f, at)) = s.map_nodes {
+            println!("  map nodes  file {f} @ 0x{at:X}");
+        }
+    }
+    println!(
+        "\n{} stage headers, {layers} render layers ({with_table} with a material table)",
+        loaded.stages.len()
+    );
+    Ok(())
+}
+
 /// Reports the `MObj` material tables and cross-checks them.
 ///
 /// Two independent checks, because the pairing is the part worth doubting:
@@ -1209,6 +1320,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
         files,
         graphs,
         tables,
+        stages,
     } = load_all(&archive);
 
     let known: Option<BTreeMap<u32, BTreeSet<u32>>> = expect
@@ -1287,7 +1399,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                             Some(_) => {
                                 not_in_decomp += 1;
                                 println!(
-                                    "  GT   file {} MObjSub 0x{:X} is not one the decomp typed",
+                                    "  GT   file {} MObjSub 0x{:X}: no decomp symbol is placed here",
                                     file.id, m.at
                                 );
                             }
@@ -1300,7 +1412,8 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     }
 
     println!(
-        "FTCommonPart records naming a graph and its table: {}",
+        "stage headers (MPGroundData): {}\npairings from FTCommonPart and MPGroundDesc: {}",
+        stages.len(),
         tables.len()
     );
     println!("graphs paired with a table: {paired} (unreadable {unreadable}, wanting one but unnamed {unpaired})");
@@ -1308,7 +1421,12 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     println!("  chains in another archive file, not followed: {unfollowable}");
     println!("materials: {materials} ({palettes} carrying a palette)");
     if known.is_some() {
-        println!("MObjSubs the decomp also typed: {in_decomp}, not: {not_in_decomp}");
+        // The generator can only place a struct the decomp gives an offset
+        // for, by comment or by symbol name; a few are hand-named with
+        // neither. A miss here means "unlocatable", not "contradicted".
+        println!(
+            "MObjSubs at an offset the decomp places: {in_decomp}, elsewhere: {not_in_decomp}"
+        );
     }
     Ok(())
 }

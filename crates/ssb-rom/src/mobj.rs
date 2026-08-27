@@ -349,6 +349,13 @@ impl PartTables {
         PartTables { by_graph }
     }
 
+    /// Records a pairing found some other way — stage layers name theirs
+    /// through `MPGroundDesc` rather than `FTCommonPart`; see
+    /// [`crate::stage`].
+    pub fn insert(&mut self, file: u32, graph_offset: u32, table_offset: u32) {
+        self.by_graph.insert((file, graph_offset), table_offset);
+    }
+
     pub fn table_for(&self, file: u32, graph_offset: u32) -> Option<u32> {
         self.by_graph.get(&(file, graph_offset)).copied()
     }
