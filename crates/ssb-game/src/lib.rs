@@ -11,5 +11,6 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+pub mod collision;
 pub mod fighter;
 pub mod physics;
