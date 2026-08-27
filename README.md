@@ -6,17 +6,19 @@ This is *not* an emulator. It is a reimplementation of the game for PSP
 hardware, using the [Super Smash Bros. decompilation][decomp] as the reference
 for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
-> **Status: early.** The asset pipeline is complete and verified against a real
-> ROM, and **geometry extracted from the ROM now renders on the PSP at a locked
-> 60 FPS**. Textures, lighting and the match loop are not implemented yet — see
-> [Current status](#current-status).
+> **Status: engine prototype.** The asset pipeline is complete and verified
+> against a real ROM, real fighters and stages render on the PSP at a locked
+> 60 FPS, and **a fighter walks, dashes, jumps and lands on a real extracted
+> stage** under the original's own physics constants and status machine.
+> Attacks, damage, opponents and the match loop are not implemented, and
+> nothing has run on real hardware — see [Current status](#current-status).
 
-![M1 platform baseline running in PPSSPP at 60 FPS](docs/images/m1-ppsspp-60fps.png)
+![A textured fighter model rendering in PPSSPP at 60 FPS](docs/images/m4-fighter-materials.png)
 
-*M1 baseline: a vertex-coloured tetrahedron driven by the ported `ftphysics`
-gravity and air-drift code, at 60 FPS. Not Smash yet — this is the platform
-proving that rendering, input, the fixed 60 Hz clock and the physics port all
-work on-device.*
+*A fighter's model: geometry, textures and palettes extracted from the ROM,
+placed by the recovered `DObjDesc` scene graph and drawn through the PSP's GE
+at a locked 60 FPS. This is the rest pose — animation decodes on the host but
+does not yet reach the device.*
 
 With the on-screen diagnostics enabled (`tools/run-ppsspp.sh`):
 
@@ -103,7 +105,7 @@ backend never mentions fighters.
 
 | Crate | Purpose | `no_std` | Target |
 |---|---|---|---|
-| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats | yes (+alloc) | host + PSP |
+| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats, the runtime pack | yes (+alloc) | host + PSP |
 | `crates/ssb-engine` | Layer B traits, math, coordinate conversion | yes | host + PSP |
 | `crates/ssb-game` | Layer A game logic | yes | host + PSP |
 | `tools/romtool` | Build-time extraction CLI | no | host |
@@ -119,43 +121,50 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 **Working and verified:**
 
-* ROM validation (SHA-1/MD5, byte-order and size rejection)
-* **VPK0 decompression** — all 499 compressed archive files
-* **relocData archive** — 2132/2132 files, 61,343 intern + 3,092 extern
-  relocations, cross-verified against independent ROM geometry
-* Asset extraction CLI producing 16.29 MiB + a manifest
-* F3DEX2 display list decoding, N64 texture decoding (unit-tested)
-* Fixed 60 Hz simulation clock, N64→PSP coordinate conversion
-* 15 fighter physics functions ported from `ftphysics.c`
-* 130 host tests passing
-
-* **Boots in PPSSPP** (1.20.4). Module loads, GE display lists submit, the
-  fixed 60 Hz clock holds, and the ported physics runs on-device.
-* **Real ROM geometry renders on device.** The converted asset pack (1.7 MB,
-  1768 meshes, 25,562 triangles, 340 textures) loads and draws through the GE
-  at a locked **60 FPS**, 168 µs CPU for a 396-triangle mesh.
-
-![ROM geometry rendering on the PSP](docs/images/m3-rom-geometry.png)
-
-*Geometry extracted from the ROM, converted at build time, drawn by the PSP's
-GE. The saturated colouring is expected — this material sets `G_LIGHTING`, so
-those vertex bytes are packed normals being drawn as colours; lighting is not
-implemented yet.*
+* ROM validation, VPK0 decompression (all 499 compressed files) and the
+  relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
+* Asset extraction and conversion into a 3.0 MB runtime pack: 2722 meshes
+  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 482
+  textures, 41 stages' collision geometry and all 27 fighters' constants
+* **Textured, shaded models placed by the scene graph render on device at
+  60 FPS**, fighters in their own recovered palettes
+* **All 41 stages' collision geometry** decoded, packed and queried; the ported
+  `mpprocess` floor solver holds a simulated fighter still at 158/158 spawn
+  points with zero drift
+* **A fighter moves on device**: walk, dash, run, turn, squat, jump,
+  double-jump, drop-through and landing, with the original's interrupt ordering
+  and its tap-counter input model, on every character's real extracted
+  constants and animation lengths
+* **Animation scripts decode on the host** to per-joint transforms, validated
+  against the decompilation across all 189 movement animations
+* 296 host tests passing
 
 **Known limitations:**
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
+* **Fighters do not animate.** The figatree decoder produces correct per-joint
+  transforms on the host, but nothing is packed, nothing reaches the PSP, and
+  the renderer still submits baked rest-pose matrices.
+* **Stage layers draw untextured.** Dream Land's geometry is in the right
+  place and its collision lines land exactly on its platforms, but the layers
+  render white — fighter models texture correctly, stage layers do not. This
+  is an open rendering defect, not an unimplemented feature.
+* No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
+* No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
-* **Textures are packed but not yet validated on screen**, and lit materials
-  still draw their packed normals as vertex colours — lighting is not
-  implemented.
-* Mesh discovery may still include false positives; some packed "meshes" have
-  implausible bounds.
+* Materials use a majority-vote lighting heuristic, and some `MObj` fields that
+  affect appearance are still ignored.
+* At 995 KiB the full texture set no longer fits texture VRAM in one go. A
+  match needs only one stage and a few fighters, but streaming is an open
+  question.
 
-**Not started:** scene graph, animation, the match loop, audio, menus, save
-data, VFPU work.
+**Not started:** audio, menus, save data, items, CPU AI, VFPU work.
+
+**Current milestone:** the animation pipeline — packing figatree scripts and
+driving joint transforms at runtime, so a fighter's movement is animated rather
+than a sliding rest pose.
 
 ## Verifying the asset pipeline
 
