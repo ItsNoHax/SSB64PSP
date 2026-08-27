@@ -49,7 +49,7 @@ fn main() -> ExitCode {
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
-        ["textures", rom_path] => textures(rom_path.as_ref()),
+        ["textures", rom_path, rest @ ..] => textures(rom_path.as_ref(), rest),
         _ => {
             usage();
             return ExitCode::from(2);
@@ -87,7 +87,7 @@ USAGE:
     romtool figatree <rom.z64> [--fighter <name>] [--slot <name>] [--frames <n>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
-    romtool textures <rom.z64>
+    romtool textures <rom.z64> [--file <id>]
     romtool texdump  <rom.z64> [--file <id>] [--count <n>]
 
 The ROM is read only. Output defaults to assets/generated/, which is
@@ -2427,9 +2427,18 @@ fn dump(path: &Path, id: &str) -> Res {
 /// Textures are found via `mesh::convert`, which resolves each primitive's
 /// `TextureRef` from the RDP state in force at draw time -- so this covers the
 /// textures the game really uses, not every image-shaped blob in the archive.
-fn textures(path: &Path) -> Res {
+fn textures(path: &Path, opts: &[&str]) -> Res {
     use ssb_rom::psp_texture as psp;
     use ssb_rom::texture;
+
+    let mut only_file: Option<u32> = None;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
 
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
@@ -2446,6 +2455,10 @@ fn textures(path: &Path) -> Res {
     let mut swizzled = 0usize;
     let mut largest: Vec<(usize, u32, u32, String)> = Vec::new();
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
+    // Per-file tallies. A failure rate spread thinly across the archive is a
+    // different problem from one file losing every texture it binds, and only
+    // the second explains a stage that draws white.
+    let mut per_file: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
 
     // Same conversion the packer runs, so these counts describe the pack. On
     // the standalone path a fighter's textures come out palette-less, and this
@@ -2466,6 +2479,7 @@ fn textures(path: &Path) -> Res {
 
                 // Diagnose *why* a texture cannot be read, rather than lumping
                 // every failure together.
+                per_file.entry(file.id).or_default().0 += 1;
                 let segment = (t.data_offset >> 24) as u8;
                 if segment != 0 {
                     *why.entry(format!("segmented addr (seg 0x{segment:02X})"))
@@ -2536,6 +2550,7 @@ fn textures(path: &Path) -> Res {
                 match tex {
                     Some(tex) => {
                         packed_ok += 1;
+                        per_file.entry(file.id).or_default().1 += 1;
                         if tex.swizzled {
                             swizzled += 1;
                         }
@@ -2597,6 +2612,27 @@ fn textures(path: &Path) -> Res {
             )
         }
     );
+
+    let mut worst: Vec<(u32, usize, usize)> = per_file
+        .iter()
+        .filter(|(_, (bound, packed))| packed < bound)
+        .map(|(&id, &(bound, packed))| (id, bound, packed))
+        .collect();
+    worst.sort_by_key(|(_, bound, packed)| std::cmp::Reverse(bound - packed));
+    println!(
+        "\nfiles losing textures ({} of {} files that bind any):",
+        worst.len(),
+        per_file.len()
+    );
+    for (id, bound, packed) in worst.iter().take(12) {
+        println!("  file {id:<5} {packed:>3}/{bound:<3} packed");
+    }
+    if let Some(id) = only_file {
+        match per_file.get(&id) {
+            Some((bound, packed)) => println!("\nfile {id}: {packed}/{bound} textures packed"),
+            None => println!("\nfile {id}: binds no textures at all"),
+        }
+    }
 
     largest.sort_by_key(|(s, ..)| std::cmp::Reverse(*s));
     println!("\nlargest textures:");
