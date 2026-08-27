@@ -11,6 +11,7 @@
 
 extern crate alloc;
 
+pub mod anim;
 pub mod archive;
 pub mod collision;
 pub mod dl;

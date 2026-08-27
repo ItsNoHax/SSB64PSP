@@ -69,6 +69,9 @@ pub const DASH_BUFFER_TICS_MAX: u8 = 3;
 pub const DASH_STICK_MIN: i32 = 56;
 /// Frames into a dash before its deceleration begins.
 pub const DASH_DECELERATE_BEGIN: f32 = 7.0;
+/// What a dash keeps of its ground speed when its animation ends
+/// (`ftCommonDashProcUpdate`).
+pub const DASH_END_VEL_MUL: f32 = 0.75;
 /// Deflection needed to hold a run.
 pub const RUN_STICK_MIN: i32 = 50;
 /// Frames within which an upward stick crossing counts as a jump input.
@@ -191,13 +194,62 @@ impl Status {
 /// away in the same file is a genuine "within the first five frames" test.
 /// Both readings are correct and they coexist.
 ///
-/// Known lengths, all from `FTAttributes` rather than from animation data:
+/// Lengths come from two different places, and which one matters per status:
 ///
-/// * [`Status::KneeBend`] — `kneebend_anim_length` (Mario 3, Link 7, Metal
-///   Mario 8). This is why jumping works fully and dashing does not.
-/// * [`Status::Dash`] → [`Status::Run`] — `dash_to_run` (Mario 14).
-/// * The three walks — `walk*_anim_length`, used only to keep the animation
-///   phase continuous when switching between walk speeds, not to end them.
+/// * From `FTAttributes`: [`Status::KneeBend`] (`kneebend_anim_length`, Mario
+///   3, Link 7, Metal Mario 8), [`Status::Dash`] → [`Status::Run`]
+///   (`dash_to_run`, Mario 14), and the three walks (`walk*_anim_length`, used
+///   only to keep the animation phase continuous across a speed change).
+/// * From the animation files themselves — see [`AnimLengths`] — for the
+///   statuses that end when their figatree script runs out.
+///
+/// `anim_length` is still `None` for the statuses that genuinely loop: Wait,
+/// the walks, Run, Fall and SquatWait have no end, and leave by interruption.
+/// How long the statuses that end on their own animation last.
+///
+/// These are not in `FTAttributes`. They are the total frame count of the
+/// character's figatree script for that status, which `ssb-rom`'s `anim`
+/// module reads out of the animation file and the pack carries per fighter.
+///
+/// A zero means the animation loops, which for a playable character never
+/// happens; treating zero as "no length" therefore degrades to the old
+/// interrupt-only behaviour rather than ending the status instantly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimLengths {
+    pub dash: f32,
+    pub turn: f32,
+    pub run_brake: f32,
+    pub squat: f32,
+    pub squat_rv: f32,
+    pub landing: f32,
+    pub pass: f32,
+}
+
+impl AnimLengths {
+    /// Mario's, as `romtool anims` reads them. The default, so a fighter built
+    /// without a pack still ends its statuses instead of standing in them.
+    pub const MARIO: AnimLengths = AnimLengths {
+        dash: 23.0,
+        turn: 12.0,
+        run_brake: 23.0,
+        squat: 8.0,
+        squat_rv: 12.0,
+        landing: 7.0,
+        pass: 25.0,
+    };
+
+    /// A length, or `None` when it is zero (a looping animation).
+    fn len(frames: f32) -> Option<f32> {
+        (frames > 0.0).then_some(frames)
+    }
+}
+
+impl Default for AnimLengths {
+    fn default() -> Self {
+        AnimLengths::MARIO
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct StatusTiming {
     /// Frames of animation, if known.
@@ -225,6 +277,15 @@ impl StatusTiming {
     pub fn at_speed(len: f32, speed: f32) -> Self {
         StatusTiming {
             anim_length: Some(len),
+            anim_speed: speed,
+        }
+    }
+
+    /// Timing for a status whose length came from the animation files, where
+    /// zero means the animation loops and the status can only be interrupted.
+    pub fn animation(frames: f32, speed: f32) -> Self {
+        StatusTiming {
+            anim_length: AnimLengths::len(frames),
             anim_speed: speed,
         }
     }
@@ -433,7 +494,8 @@ pub fn set_walk(f: &mut Fighter, anim_frame_begin: f32) {
 /// it — the initial burst is `dash_speed` on frame one, and `dash_decel` eats
 /// it from frame 7 (`FTCOMMON_DASH_DECELERATE_BEGIN`).
 pub fn set_dash(f: &mut Fighter) {
-    set_status(f, Status::Dash, 0.0, StatusTiming::unknown());
+    let len = f.anim.dash;
+    set_status(f, Status::Dash, 0.0, StatusTiming::animation(len, 1.0));
     f.physics.vel_ground.x = f.attributes.dash_speed;
     f.stick.tap_x = STICKBUFFER_MAX;
 }
@@ -446,7 +508,8 @@ pub fn set_run(f: &mut Fighter) {
 
 /// `ftCommonRunBrakeSetStatus` @ 0x8013F05C.
 pub fn set_run_brake(f: &mut Fighter) {
-    set_status(f, Status::RunBrake, 0.0, StatusTiming::unknown());
+    let len = f.anim.run_brake;
+    set_status(f, Status::RunBrake, 0.0, StatusTiming::animation(len, 1.0));
 }
 
 /// `ftCommonTurnSetStatus` @ 0x8013E908.
@@ -456,13 +519,15 @@ pub fn set_run_brake(f: &mut Fighter) {
 /// which is partway through the animation. That delay is why a turnaround has
 /// a visible pivot rather than snapping.
 pub fn set_turn(f: &mut Fighter) {
-    set_status(f, Status::Turn, 0.0, StatusTiming::unknown());
+    let len = f.anim.turn;
+    set_status(f, Status::Turn, 0.0, StatusTiming::animation(len, 1.0));
     f.status.turn_toward = f.facing.flipped();
 }
 
 /// `ftCommonSquatSetStatusNoPass` @ 0x80143024.
 pub fn set_squat(f: &mut Fighter) {
-    set_status(f, Status::Squat, 0.0, StatusTiming::unknown());
+    let len = f.anim.squat;
+    set_status(f, Status::Squat, 0.0, StatusTiming::animation(len, 1.0));
 }
 
 /// `ftCommonKneeBendSetStatusParam` @ 0x8013F3A0.
@@ -580,15 +645,8 @@ pub fn set_landing(f: &mut Fighter) {
     } else {
         (Status::LandingLight, 1.0)
     };
-    set_status(
-        f,
-        status,
-        0.0,
-        StatusTiming {
-            anim_length: None,
-            anim_speed: speed,
-        },
-    );
+    let len = f.anim.landing;
+    set_status(f, status, 0.0, StatusTiming::animation(len, speed));
 }
 
 /// `ftCommonPassSetStatusParam` @ 0x80141DA0.
@@ -598,7 +656,8 @@ pub fn set_landing(f: &mut Fighter) {
 /// next collision test does not immediately put it back.
 pub fn set_pass(f: &mut Fighter) {
     f.ignore_line = f.floor.map(|s| s.line);
-    set_status(f, Status::Pass, 0.0, StatusTiming::unknown());
+    let len = f.anim.pass;
+    set_status(f, Status::Pass, 0.0, StatusTiming::animation(len, 1.0));
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
     f.physics.vel_air.y = 0.0;
     f.stick.tap_y = STICKBUFFER_MAX;
@@ -806,8 +865,30 @@ pub fn update(f: &mut Fighter) {
                 ground_interrupt(f);
             }
         }
+        // `ftAnimEndSetWait`: the whole update function is the animation-end
+        // test. Landing is here too, and its heavy variant runs the same
+        // animation at half speed, so it takes twice as many frames to reach
+        // the same length — the real cost of a fastfall.
+        Status::RunBrake => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a
+        // plain fall once its animation is done.
+        Status::Pass => {
+            if f.status.animation_ended() {
+                set_fall(f);
+            } else {
+                check_jump_aerial(f);
+            }
+        }
         s if s.is_actionable_on_ground() => {
-            if s.is_walk() {
+            if matches!(s, Status::LandingLight | Status::LandingHeavy)
+                && f.status.animation_ended()
+            {
+                set_wait(f);
+            } else if s.is_walk() {
                 update_walk(f);
             } else {
                 ground_interrupt(f);
@@ -850,6 +931,14 @@ fn update_kneebend(f: &mut Fighter) {
 /// about the dash's own ending needs its animation length, which is not
 /// extracted, so a dash currently persists until interrupted.
 fn update_dash(f: &mut Fighter) {
+    // `ftCommonDashProcUpdate` runs before the interrupt chain, and a dash
+    // that reaches the end of its animation does not just stop: it keeps
+    // three quarters of its speed into the Wait, so the fighter coasts.
+    if f.status.animation_ended() {
+        f.physics.vel_ground.x *= DASH_END_VEL_MUL;
+        set_wait(f);
+        return;
+    }
     let to_run = f.attributes.dash_to_run;
     let speed = f.status.timing.anim_speed;
     if f.status.anim_frame >= to_run
@@ -876,6 +965,12 @@ fn update_turn(f: &mut Fighter) {
     if f.status.anim_frame >= 1.0 && f.facing != f.status.turn_toward {
         f.facing = f.status.turn_toward;
         f.physics.vel_ground.x = -f.physics.vel_ground.x;
+    }
+    // `ftCommonTurnProcUpdate` flips first and tests the animation second, so
+    // a turn always completes its pivot even on the frame it ends.
+    if f.status.animation_ended() {
+        set_wait(f);
+        return;
     }
     ground_interrupt(f);
 }
@@ -1437,14 +1532,98 @@ mod tests {
     }
 
     #[test]
-    fn a_status_with_no_extracted_animation_length_never_times_out() {
-        // The honest consequence of not having animation data: a dash held
-        // forever stays a dash rather than silently ending at a made-up frame.
+    fn a_dash_that_is_not_converted_to_a_run_ends_on_its_own() {
+        // Mario's dash animation is 23 frames. Without a forward hold there is
+        // no run to convert into, so the dash has to end by itself.
         let mut f = mario();
-        hold(&mut f, 80, 0);
+        set_dash(&mut f);
+        assert_eq!(f.status.timing.anim_length, Some(23.0));
+        let entry_speed = f.physics.vel_ground.x;
+
+        // Neutral stick, so neither the run conversion nor a re-dash fires.
+        for _ in 0..23 {
+            hold(&mut f, 0, 0);
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+        // It coasts out rather than stopping dead, but friction has been
+        // eating it since frame 7, so only check the ratio at the transition.
+        assert!(f.physics.vel_ground.x > 0.0);
+        assert!(f.physics.vel_ground.x < entry_speed);
+    }
+
+    #[test]
+    fn a_dash_ending_keeps_three_quarters_of_its_speed() {
+        let mut f = mario();
+        set_dash(&mut f);
+        f.status.anim_frame = f.anim.dash;
+        f.physics.vel_ground.x = 40.0;
+        hold(&mut f, 0, 0);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+        assert_eq!(f.physics.vel_ground.x, 40.0 * DASH_END_VEL_MUL);
+    }
+
+    #[test]
+    fn a_turn_ends_after_twelve_frames() {
+        // Every character in the game turns in 12 frames — the one length the
+        // whole roster shares.
+        let mut f = mario();
+        set_turn(&mut f);
+        assert_eq!(f.status.timing.anim_length, Some(12.0));
+        for _ in 0..11 {
+            hold(&mut f, 0, 0);
+            update(&mut f);
+            assert_eq!(f.status.status, Status::Turn);
+        }
+        hold(&mut f, 0, 0);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn a_heavy_landing_lasts_twice_as_long_as_a_light_one() {
+        // Same 7-frame animation; the heavy variant plays it at half speed,
+        // so a fastfall costs 14 frames of lag instead of 7.
+        let light = {
+            let mut f = mario();
+            f.situation = Situation::Air;
+            set_landing(&mut f);
+            let mut n = 0;
+            while f.status.status != Status::Wait && n < 100 {
+                hold(&mut f, 0, 0);
+                update(&mut f);
+                n += 1;
+            }
+            n
+        };
+        let heavy = {
+            let mut f = mario();
+            f.situation = Situation::Air;
+            f.physics.is_fastfall = true;
+            f.physics.vel_air.y = -f.attributes.tvel_fast;
+            set_landing(&mut f);
+            assert_eq!(f.status.status, Status::LandingHeavy);
+            let mut n = 0;
+            while f.status.status != Status::Wait && n < 100 {
+                hold(&mut f, 0, 0);
+                update(&mut f);
+                n += 1;
+            }
+            n
+        };
+        assert_eq!(light, 7);
+        assert_eq!(heavy, 2 * light);
+    }
+
+    #[test]
+    fn a_looping_animation_length_leaves_the_status_interrupt_only() {
+        // Master Hand's ground animations loop, and the pack stores that as a
+        // zero. A zero must not read as "ends immediately".
+        let mut f = mario();
+        f.anim.dash = 0.0;
         set_dash(&mut f);
         assert_eq!(f.status.timing.anim_length, None);
-        assert!(!f.status.animation_ended());
         f.status.anim_frame = 10_000.0;
         assert!(!f.status.animation_ended());
     }

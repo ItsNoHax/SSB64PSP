@@ -1718,3 +1718,121 @@ shape.
 scale is verified against Dream Land's own collision geometry in both axes, and
 the residual error is shown to be measurement bias by watching it shrink with
 zoom rather than by arguing that it ought to be.
+
+---
+
+## RE-035 — Animation lengths, and the eighteen scripts that agree on each one
+
+**Question.** Five ground statuses — Dash, Turn, RunBrake, Squat and Landing —
+had no duration. `FTAttributes` does not contain one, so `StatusTiming::
+anim_length` was `None` for all of them and they could only end by being
+interrupted. A dash held forever stayed a dash.
+
+**Where the length actually lives.** The status update functions say it
+outright:
+
+```c
+void ftCommonDashProcUpdate(GObj *fighter_gobj) {
+    if (fighter_gobj->anim_frame <= 0.0F) {
+        fp->physics.vel_ground.x *= 0.75F;
+        ftCommonWaitSetStatus(fighter_gobj);
+    }
+}
+```
+
+`anim_frame <= 0.0` is the sentinel `ftAnimParseDObjFigatree` writes when the
+animation script runs out. So the duration is a property of the *animation*,
+and the five statuses that lacked one are exactly the five whose `proc_update`
+is an animation-end test — `ftAnimEndSetWait` for RunBrake, SquatRv and both
+landings, `ftAnimEndSetFall` for Pass.
+
+**Three pairing records, not a fingerprint.** Getting from a status to its
+animation file is a chain where every hop is a record that names both sides:
+
+```
+dFTCommonActionStatusDescs[status - 6].mflags.motion_id
+  -> dFT<Name>MotionDescs[motion_id].anim_file_id
+    -> relocData file <id>_FT<Name>Anim<X>.c
+```
+
+The first two tables are in the game code's data segment, which this project
+does not read, so the resolved `(fighter, status) -> file id` pairing is
+transcribed — the same arrangement as `FIGHTER_FILES`. `tools/gen-anim-table.py`
+produces it, so the transcription is reproducible rather than hand-typed.
+
+**The check that caught the one real bug.** A first pass matched motion table
+entries with `\{\s*&ll(\w+?)FileID`, which silently skips the
+`{ 0x00000000, 0x80000000, 0x00000000 }` placeholders. Kirby has two of them —
+he has no aerial-jump animation — so every motion id after 17 shifted by two
+and his Pass resolved to `FTKirbyAnimTeeter`. The generator now checks the
+resolved animation's *name* against the slot: the name comes from the
+decompilation's file names while the index comes from the `FTCommonMotion`
+enum, so a table parsed one entry out of step resolves to an animation whose
+name no longer fits its status. That check reports the fault directly instead
+of leaving it to be noticed as a wrong number.
+
+Two other mismatches it flagged turned out to be real and were kept:
+Jigglypuff's landing animation is called `JumpSquat` (it serves both KneeBend
+and Landing, as everyone else's `LandingAirX` does), and Master Hand's entire
+common status table points at one looping idle because it never walks.
+
+**Why the decoded number can be trusted.** A figatree file opens with a pointer
+table, one script per model joint. The table's length is not stored: the first
+non-null pointer is the offset of the first script, which is exactly where the
+table ends. Each script is a stream of 16-bit `{ opcode:5, flags:10, toggle:1 }`
+commands, and the animation's length is the sum of the payloads of the ones
+that advance the clock (opcodes 1, 2, 4, 7, 9 and 14 — the `Block` variants;
+the non-`Block` ones set a track's interpolation length without consuming
+time).
+
+Every joint carries its own independently encoded script, and the exporter gave
+them all the same total. So the decoder walks *all* of them and requires
+unanimity — eighteen scripts agreeing on one number. That is a real test rather
+than a formality, because the walk is self-checking: a wrong word count for any
+command desynchronises the stream, and the walk then runs off the end of the
+script instead of finding its terminator.
+
+Across the decompilation's 1775 animation files the model agreed on 1736. The
+37 exceptions are all entry and cutscene animations — `Appear`, `Arwing`,
+`BlueFalcon`, the Master Hand set — which use the 32-bit `AnimJoint` encoding
+and are not figatrees at all. Not one gameplay animation was among them.
+
+The looping animations fall exactly where a status should never time out: Wait,
+the three walks, Run, Fall, FallAerial and SquatWait all contain a `Loop`
+command and never terminate. Those are precisely the statuses that leave by
+being interrupted.
+
+**Two independent readings.** `romtool anims --verify` compares the lengths
+decoded from compressed archive bytes against the ones the generator computed
+from the decompilation's hand-written C macros. **189 lengths across 27
+fighters, all agreeing.**
+
+```
+fighter         Dash      Turn  RunBrake     Squat   SquatRv   Landing      Pass
+Mario             23        12        23         8        12         7        25
+Donkey            31        12        30         6         8         8        25
+Captain           29        12        30         8        10        11        30
+Link              31        12        25         4         4         8        24
+Boss           loops     loops     loops     loops     loops     loops     loops
+```
+
+Free consistency checks nobody aimed at: **Turn is 12 frames for every
+character in the game** — the one length the whole roster shares. Donkey Kong
+and Link have the longest dashes and Captain Falcon the worst landing lag at
+11 frames against everyone else's 7-8, which is what he is known for. Luigi
+shares Mario's Turn, Squat, SquatRv, Landing and Pass *files* (507, 515, 517,
+518, 519) while having his own Dash and RunBrake — a Mario clone with a few
+unique animations, which is exactly what he is.
+
+**Landing is where playback speed matters.** `ftCommonLandingSetStatus` passes
+`anim_speed` 1.0 for a light landing and **0.5** for a heavy one, so the same
+7-frame animation takes 14 frames after a fastfall. Storing a length without
+the speed would have made both landings identical. `FTCOMMON_LANDING_INTERRUPT_
+BEGIN` is 4.0, which is why Mario's landing lag is commonly quoted as 4 frames
+while the animation is 7 — the last three are interruptible.
+
+**Confidence: high.** Two independent readings of the same bytes agree on all
+189 values, every file's joints agree internally, and the loop/finite split
+matches the status machine's own structure without being told to. Confirmed
+on-device: the overlay reads `anim dash 23f  land 7f` for Mario, out of the
+pack, at 60.0 FPS.

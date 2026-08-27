@@ -16,6 +16,7 @@
 //! romtool collide  <pack>         run the collision query on every stage
 //! romtool simulate <pack>         drop a real fighter on every stage's spawns
 //! romtool fighters <rom>          extract every character's FTAttributes
+//! romtool anims    <rom>          read every fighter's animation lengths
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
+        ["anims", rom_path, rest @ ..] => anims(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
@@ -80,6 +82,7 @@ USAGE:
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
+    romtool anims    <rom.z64> [--verify]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -996,16 +999,24 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     // Fighters: 27 small reads, in `FTKind` order so the table can be indexed
     // by kind. A character whose attributes will not decode is skipped rather
     // than packed as zeros, which would look like a fighter with no gravity.
+    //
+    // The animation lengths come from a second set of files entirely, so the
+    // two decodes are zipped here; a fighter is packed only if both worked,
+    // for the same reason.
     let mut fighters = 0usize;
     let mut fighters_failed: Vec<&str> = Vec::new();
-    for f in ssb_rom::fighter::decode_all(&archive) {
-        match f {
-            Ok(f) if f.attributes.looks_plausible() => {
-                writer.add_fighter(&f);
+    let anims = ssb_rom::anim::decode_all(&archive);
+    for (f, a) in ssb_rom::fighter::decode_all(&archive)
+        .into_iter()
+        .zip(anims)
+    {
+        match (f, a) {
+            (Ok(f), Ok(a)) if f.attributes.looks_plausible() => {
+                writer.add_fighter(&f, &a);
                 fighters += 1;
             }
-            Ok(f) => fighters_failed.push(f.file.name),
-            Err(_) => fighters_failed.push("?"),
+            (Ok(f), _) => fighters_failed.push(f.file.name),
+            (Err(_), _) => fighters_failed.push("?"),
         }
     }
 
@@ -2676,4 +2687,92 @@ fn extract(path: &Path, opts: &[&str]) -> Res {
         return Err(format!("{} file(s) failed to extract", failures.len()).into());
     }
     Ok(())
+}
+
+/// Reads every fighter's animation lengths out of the ROM.
+///
+/// The decode is self-checking: each animation file holds one script per model
+/// joint, and `decode_length` requires all of them to agree. `--verify` adds
+/// the second, independent reading — the lengths `tools/gen-anim-table.py`
+/// computed from the decompilation's hand-written C sources.
+fn anims(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::anim;
+
+    let mut verify = false;
+    for o in opts {
+        match *o {
+            "--verify" | "-v" => verify = true,
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    print!("{:<10}", "fighter");
+    for name in anim::SLOT_NAMES {
+        print!(" {name:>9}");
+    }
+    println!();
+
+    let mut looping = Vec::new();
+    let mut decoded = Vec::new();
+    for entry in anim::FIGHTER_ANIMS {
+        let lengths = anim::decode_fighter(entry, &archive)?;
+        print!("{:<10}", entry.name);
+        for (slot, &frames) in lengths.frames.iter().enumerate() {
+            if frames == 0 {
+                looping.push((entry.name, anim::SLOT_NAMES[slot]));
+                print!(" {:>9}", "loops");
+            } else {
+                print!(" {frames:>9}");
+            }
+        }
+        println!();
+        decoded.push(lengths);
+    }
+
+    println!();
+    println!("{} fighters decoded, all joints agreed", decoded.len());
+    // Master Hand's whole common status table points at one looping idle; it
+    // never walks or dashes. Anyone else looping means a wrong file id.
+    let unexpected: Vec<_> = looping
+        .iter()
+        .filter(|(name, _)| *name != "Boss")
+        .map(|(name, slot)| format!("{name}.{slot}"))
+        .collect();
+    if !unexpected.is_empty() {
+        return Err(format!("looping animation for {}", unexpected.join(", ")).into());
+    }
+
+    if !verify {
+        println!("(pass --verify to cross-check against the decompilation)");
+        return Ok(());
+    }
+
+    let mut mismatches = Vec::new();
+    let mut fields = 0usize;
+    for (lengths, want) in decoded.iter().zip(anim::EXPECTED_FRAMES.iter()) {
+        for (slot, (&got, &w)) in lengths.frames.iter().zip(want.iter()).enumerate() {
+            fields += 1;
+            if got != w {
+                mismatches.push(format!(
+                    "{}.{}: rom {got} vs decomp {w}",
+                    lengths.name,
+                    anim::SLOT_NAMES[slot]
+                ));
+            }
+        }
+    }
+
+    println!("verified    {fields} lengths against the decompilation");
+    if mismatches.is_empty() {
+        println!("            all agree");
+        Ok(())
+    } else {
+        for m in mismatches.iter().take(20) {
+            println!("  !! {m}");
+        }
+        Err(format!("{} length(s) disagree", mismatches.len()).into())
+    }
 }

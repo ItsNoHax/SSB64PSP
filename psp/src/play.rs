@@ -21,6 +21,7 @@ use ssb_game::collision::Segment;
 use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
+use ssb_game::status::AnimLengths;
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, Pack, StageDesc};
 
 /// Walks a stage's floor polylines as the `(line_id, segment)` pairs the
@@ -143,6 +144,22 @@ fn physics_of(d: &FighterDesc) -> PhysicsAttributes {
     }
 }
 
+/// The animation lengths out of a packed [`FighterDesc`].
+///
+/// These come from the figatree files rather than `FTAttributes`, which is why
+/// they are a separate struct rather than more fields on [`physics_of`]'s.
+fn anim_of(d: &FighterDesc) -> AnimLengths {
+    AnimLengths {
+        dash: d.dash_anim_length,
+        turn: d.turn_anim_length,
+        run_brake: d.runbrake_anim_length,
+        squat: d.squat_anim_length,
+        squat_rv: d.squatrv_anim_length,
+        landing: d.landing_anim_length,
+        pass: d.pass_anim_length,
+    }
+}
+
 /// The collision diamond out of a packed [`FighterDesc`].
 fn body_of(d: &FighterDesc) -> BodyColl {
     BodyColl {
@@ -190,6 +207,7 @@ impl Play {
         if let Some(d) = desc {
             fighter.attributes = physics_of(&d);
             fighter.coll = body_of(&d);
+            fighter.anim = anim_of(&d);
         }
 
         let mut placed = false;

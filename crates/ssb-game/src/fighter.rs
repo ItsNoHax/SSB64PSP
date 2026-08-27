@@ -194,6 +194,10 @@ pub struct Fighter {
     pub floor: Option<Standing>,
     /// A drop-through platform being fallen past — `ignore_line_id`.
     pub ignore_line: Option<u16>,
+    /// How long the statuses that end on their own animation last. Read from
+    /// the animation files rather than `FTAttributes`, so it travels beside
+    /// `attributes` rather than inside it.
+    pub anim: crate::status::AnimLengths,
     /// Which status the fighter is in, and its working state.
     pub status: crate::status::StatusState,
     /// The derived stick state the status machine reads — tap counters and
@@ -221,6 +225,7 @@ impl Fighter {
             coll: BodyColl::default(),
             floor: None,
             ignore_line: None,
+            anim: crate::status::AnimLengths::default(),
             status: crate::status::StatusState::default(),
             stick: crate::status::StickState::new(),
         }
