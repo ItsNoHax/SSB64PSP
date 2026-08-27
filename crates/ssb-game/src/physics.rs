@@ -50,6 +50,21 @@ pub struct PhysicsAttributes {
     pub jumps_max: i32,
     /// Knockback multiplier. Higher means *less* launch distance.
     pub weight: f32,
+
+    // Timings the status machine needs. These are animation lengths in the
+    // sense of "how many frames the status runs for", and they live in
+    // `FTAttributes` rather than in animation data — which is why jumpsquat
+    // and dash-to-run work while dash, turn and landing cannot yet end on
+    // their own (see `crate::status::StatusTiming`).
+    /// Jumpsquat length in frames. Mario 3, Link 7, Metal Mario 8.
+    pub kneebend_anim_length: f32,
+    /// Frames of dash before it may become a run. Mario 14.
+    pub dash_to_run: f32,
+    /// Walk animation lengths, used to keep the legs in phase when switching
+    /// between walk speeds. Mario 90 / 60 / 40.
+    pub walkslow_anim_length: f32,
+    pub walkmiddle_anim_length: f32,
+    pub walkfast_anim_length: f32,
 }
 
 impl PhysicsAttributes {
@@ -84,6 +99,11 @@ impl PhysicsAttributes {
         tvel_fast: 70.0,
         jumps_max: 2,
         weight: 1.0,
+        kneebend_anim_length: 3.0,
+        dash_to_run: 14.0,
+        walkslow_anim_length: 90.0,
+        walkmiddle_anim_length: 60.0,
+        walkfast_anim_length: 40.0,
     };
 }
 

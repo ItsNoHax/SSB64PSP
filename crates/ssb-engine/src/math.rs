@@ -328,15 +328,17 @@ impl Mul for Mat4 {
 // possible and fall back to small implementations otherwise, so the same
 // source builds for host tests and for the device.
 
+/// Square root, routed through `std` on the host and a small Newton-Raphson
+/// on the device. Public so game code needs no `libm` dependency of its own.
 #[cfg(feature = "std")]
 #[inline]
-fn sqrt(v: f32) -> f32 {
+pub fn sqrt(v: f32) -> f32 {
     v.sqrt()
 }
 
 #[cfg(not(feature = "std"))]
 #[inline]
-fn sqrt(v: f32) -> f32 {
+pub fn sqrt(v: f32) -> f32 {
     // Newton-Raphson from a bit-twiddled seed. Accurate to well under a ULP
     // after four iterations for the magnitudes this code sees.
     if v <= 0.0 {

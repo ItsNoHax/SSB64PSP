@@ -301,8 +301,12 @@ unsafe fn run() -> ! {
                 if sim_fighter {
                     if let (Some(p), Some(pl)) = (&pack, player.as_mut()) {
                         if let Some(s) = p.stage(stage_index) {
-                            pl.fighter.input = state;
-                            pl.tick(p, &s);
+                            // C-left jumps. The original uses any C-button, but
+                            // three of the four are taken by the viewer's own
+                            // controls and remapping them would make the stage
+                            // browser worse to use than the fighter is to play.
+                            let jump = state.buttons.contains(N64Buttons::C_LEFT);
+                            pl.tick(p, &s, state, jump);
                         }
                     }
                 }
@@ -383,8 +387,16 @@ unsafe fn run() -> ! {
             if state.buttons.contains(N64Buttons::A) {
                 cam_distance *= 0.97;
             }
-            // The stick spins the model so geometry can be inspected.
-            spin += 0.02 + state.stick_x as f32 * 0.0005;
+            // The stick spins the model so geometry can be inspected -- except
+            // while a fighter is being driven, where it is the fighter's input
+            // and a camera that swung with it would be unreadable.
+            let stick_drives_fighter = stage_view && sim_fighter && player.is_some();
+            spin += 0.02
+                + if stick_drives_fighter {
+                    0.0
+                } else {
+                    state.stick_x as f32 * 0.0005
+                };
             if spin > 2.0 * PI {
                 spin -= 2.0 * PI;
             }
@@ -616,10 +628,11 @@ unsafe fn run() -> ! {
             Some(pl) if sim_fighter => (
                 if !pl.placed {
                     "no-spawn"
-                } else if pl.fighter.is_grounded() {
-                    "ground  "
                 } else {
-                    "air     "
+                    // The status, not just ground/air: which of the two a
+                    // fighter is in follows from the status rather than the
+                    // other way round, and "walk-fst" says more than "ground".
+                    pl.status_name()
                 },
                 pl.fighter.pos.x as i32,
                 pl.fighter.pos.y as i32,
@@ -668,7 +681,8 @@ unsafe fn run() -> ! {
                  cam {} r {}\n\
                  \n\
                  dpad: browse  start: stage  B: collision\n\
-                 C-up: fighter  C-right: respawn\n\
+                 stick: move  C-left: jump  C-right: respawn\n\
+                 C-up: fighter sim on/off\n\
                  R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
                 pack_status,
                 mode,
