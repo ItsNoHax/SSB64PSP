@@ -45,6 +45,7 @@ fn main() -> ExitCode {
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
         ["anims", rom_path, rest @ ..] => anims(rom_path.as_ref(), rest),
+        ["figatree", rom_path, rest @ ..] => figatree(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
@@ -83,6 +84,7 @@ USAGE:
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
     romtool anims    <rom.z64> [--verify]
+    romtool figatree <rom.z64> [--fighter <name>] [--slot <name>] [--frames <n>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -2775,4 +2777,245 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
         }
         Err(format!("{} length(s) disagree", mismatches.len()).into())
     }
+}
+
+/// Plays a fighter's animation and reports what it does to the skeleton.
+///
+/// The two structural claims this checks are the ones the whole animation
+/// pipeline rests on. First, that a figatree's joint pointer table lines up
+/// one-for-one with the `DObjDesc` array of the fighter's model — which is
+/// what `gcAddAnimJointAll` says, walking both in lockstep:
+///
+/// ```c
+/// while (dobj != NULL) {
+///     if (*anim_joints != NULL) gcAddDObjAnimJoint(dobj, *anim_joints, frame);
+///     anim_joints++;
+///     dobj = gcGetTreeDObjNext(dobj);
+/// }
+/// ```
+///
+/// Second, that the value scales in `ftAnimGetTargetValue` are right: an
+/// animated joint's translation has to land near its rest translation, because
+/// a skeleton is not rebuilt from scratch every frame. A wrong divisor there
+/// would show up as joints thrown hundreds of units apart.
+fn figatree(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::{anim, figatree as fg, fighter};
+
+    let mut want_fighter: Option<String> = None;
+    let mut want_slot: Option<String> = None;
+    let mut frames = 0usize;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--fighter" => want_fighter = it.next().map(|s| s.to_string()),
+            "--slot" => want_slot = it.next().map(|s| s.to_string()),
+            "--frames" => frames = it.next().ok_or("--frames needs a count")?.parse()?,
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let loaded = load_all(&archive);
+
+    // Which graph is a fighter's skeleton comes from the `FTCommonPart`
+    // records in its own `*Main` file, not from picking the biggest graph in
+    // the archive: Samus has two 33-node graphs and a fits-the-shape search
+    // chooses between them at close to chance (RE-027).
+    //
+    // `setup_parts` then says which of that graph's descriptors actually
+    // become joints, which is what a figatree's pointer table is sized to.
+    let mut skeletons: BTreeMap<&str, Skeleton> = BTreeMap::new();
+    for (i, entry) in fighter::FIGHTER_FILES.iter().enumerate() {
+        let name = anim::FIGHTER_ANIMS[i].name;
+        let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+            continue;
+        };
+        let mask = fighter::setup_parts(main, *entry).unwrap_or(u64::MAX);
+        // The high-detail entry of `FTCommonPartContainer` — the skeleton the
+        // game builds a fighter from at full detail.
+        let Some(part) = fighter::common_parts(main, *entry)[0] else {
+            continue;
+        };
+        let Some(nodes) = loaded
+            .graphs
+            .get(&part.model_file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == part.graph))
+            .map(|g| g.nodes.len())
+        else {
+            continue;
+        };
+        skeletons.insert(
+            name,
+            Skeleton {
+                file: part.model_file,
+                offset: part.graph,
+                nodes,
+                mask,
+            },
+        );
+    }
+
+    println!(
+        "{:<10} {:>6} {:>6} {:>7}  {:<9} {:>5} {:>6} {:>7}",
+        "fighter", "model", "descs", "joints", "slot", "file", "table", "scripts"
+    );
+
+    let mut checked = 0usize;
+    let mut mismatched = Vec::new();
+    let mut worst_drift = 0.0f32;
+    for entry in anim::FIGHTER_ANIMS {
+        if want_fighter.as_deref().is_some_and(|w| w != entry.name) {
+            continue;
+        }
+        let skeleton = skeletons.get(entry.name);
+        // Descriptor index of each joint, in the order the setup walk creates
+        // them. That order is the descriptor array's, so the nth animation
+        // script belongs to the nth *set* mask bit.
+        let joint_descs: Vec<usize> = skeleton
+            .map(|s| (0..s.nodes).filter(|&i| s.mask >> i & 1 != 0).collect())
+            .unwrap_or_default();
+
+        for (slot, &id) in entry.files.iter().enumerate() {
+            let slot_name = anim::SLOT_NAMES[slot];
+            if want_slot.as_deref().is_some_and(|w| w != slot_name) {
+                continue;
+            }
+            let file = archive.load(id as u32)?;
+            let table = joint_table(&file.data).ok_or("no joint table")?;
+            let scripts = table.iter().filter(|p| **p != 0).count();
+            println!(
+                "{:<10} {:>6} {:>6} {:>7}  {:<9} {:>5} {:>6} {:>7}",
+                entry.name,
+                skeleton.map_or(0, |s| s.file),
+                skeleton.map_or(0, |s| s.nodes),
+                joint_descs.len(),
+                slot_name,
+                id,
+                table.len(),
+                scripts
+            );
+            checked += 1;
+            // The attach walk is bounded by the fighter's DObj tree, so a
+            // table may be longer than the fighter has joints and the surplus
+            // simply goes unread — which is how the polygon-model variants
+            // share the full character's animations. It may never be shorter:
+            // that would leave a joint reading a pointer past the array.
+            if !joint_descs.is_empty() && table.len() < joint_descs.len() {
+                mismatched.push(format!(
+                    "{}.{}: {} scripts in the animation, {} joints in the fighter",
+                    entry.name,
+                    slot_name,
+                    table.len(),
+                    joint_descs.len()
+                ));
+            }
+
+            if frames == 0 {
+                continue;
+            }
+            // Play it, and show each joint against the rest pose it starts from.
+            let rest = skeleton.and_then(|s| {
+                loaded
+                    .graphs
+                    .get(&s.file)
+                    .and_then(|gs| gs.iter().find(|g| g.offset == s.offset))
+            });
+            for (joint, &start) in table.iter().enumerate() {
+                if start == 0 {
+                    continue;
+                }
+                let mut anim = fg::JointAnim::start(start as usize, 0.0);
+                let desc = joint_descs
+                    .get(joint)
+                    .and_then(|&d| rest.and_then(|g| g.nodes.get(d)));
+                let mut pose = match desc {
+                    Some(n) => fg::JointPose {
+                        rotate: n.desc.rotate,
+                        translate: n.desc.translate,
+                        scale: n.desc.scale,
+                    },
+                    None => fg::JointPose::default(),
+                };
+                let rest_t = pose.translate;
+                let mut drift: f32 = 0.0;
+                for frame in 0..frames {
+                    if let Err(e) = anim.tick(&file.data, 1.0, &mut pose) {
+                        println!("  joint {joint:>2} script {start:#06x}: frame {frame}: {e}");
+                        mismatched.push(format!("{}.{slot_name} joint {joint}: {e}", entry.name));
+                        break;
+                    }
+                    let d = (0..3)
+                        .map(|i| (pose.translate[i] - rest_t[i]).abs())
+                        .fold(0.0f32, f32::max);
+                    drift = drift.max(d);
+                }
+                worst_drift = worst_drift.max(drift);
+                println!(
+                    "  joint {joint:>2} -> desc {:>2}  rest t {:>8.2} {:>8.2} {:>8.2}   \
+                     played t {:>8.2} {:>8.2} {:>8.2}   r {:>6.2} {:>6.2} {:>6.2}   drift {drift:>7.2}",
+                    joint_descs.get(joint).copied().unwrap_or(usize::MAX) as i64,
+                    rest_t[0],
+                    rest_t[1],
+                    rest_t[2],
+                    pose.translate[0],
+                    pose.translate[1],
+                    pose.translate[2],
+                    pose.rotate[0],
+                    pose.rotate[1],
+                    pose.rotate[2],
+                );
+            }
+        }
+    }
+
+    println!();
+    if frames > 0 {
+        println!("worst translation drift from the rest pose: {worst_drift:.2} units");
+    }
+    println!("{checked} animation(s) checked against their skeletons");
+    if mismatched.is_empty() {
+        println!("            every joint table matches its fighter's joint count");
+        Ok(())
+    } else {
+        for m in mismatched.iter().take(20) {
+            println!("  !! {m}");
+        }
+        Err(format!("{} joint table(s) disagree", mismatched.len()).into())
+    }
+}
+
+/// A fighter's skeleton: the graph its `FTCommonPart` names, and the mask that
+/// says which of that graph's descriptors become joints.
+#[derive(Debug, Clone, Copy)]
+struct Skeleton {
+    file: u32,
+    offset: u32,
+    /// Descriptors in the graph.
+    nodes: usize,
+    /// `setup_parts`, bit *n* for descriptor *n*.
+    mask: u64,
+}
+
+/// Reads a figatree's joint pointer table.
+///
+/// The table's length is not stored: the first non-null pointer is the offset
+/// of the first script, which is exactly where the table ends.
+fn joint_table(data: &[u8]) -> Option<Vec<u32>> {
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))
+    };
+    let mut first = 0;
+    let mut at = 0;
+    while let Some(p) = word(at) {
+        if p != 0 {
+            first = p;
+            break;
+        }
+        at += 4;
+    }
+    if first == 0 || first % 4 != 0 || first as usize > data.len() {
+        return None;
+    }
+    (0..first as usize / 4).map(|i| word(i * 4)).collect()
 }

@@ -2302,6 +2302,8 @@ mod tests {
                 file: 203,
                 offset: 0x0428,
             },
+            setup_parts: 0x00FF_FFFF,
+            animlock: 0,
             attributes: FighterAttributes {
                 size: 1.12,
                 walkslow_anim_length: 90.0,

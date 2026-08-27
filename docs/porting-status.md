@@ -4,7 +4,7 @@ Per Rule 11. Percentages are of *intended scope for that subsystem*, not of the
 original's line count. A subsystem is only `COMPLETE` when it has been
 functionally validated, not merely compiled (Rule 12).
 
-Last updated: 2026-08-27.
+Last updated: 2026-08-28.
 
 ## Milestones
 
@@ -14,7 +14,7 @@ Last updated: 2026-08-27.
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 485 textures packed into a 2.9 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🟡 50% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants and animation lengths out of the pack (RE-034, RE-035). No attacks, no damage, no opponent, no match loop |
+| **M4 — Gameplay vertical slice** | 🟡 55% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants and animation lengths out of the pack (RE-034, RE-035). No attacks, no damage, no opponent, no match loop. Animation now decodes to per-joint transforms on the host (RE-036), but nothing draws them yet |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
 | **M7 — Menus / save** | 🔴 0% | |
@@ -50,7 +50,7 @@ Last updated: 2026-08-27.
 | Physics | 🟢 60% | 16 functions ported with original addresses cited, and *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick. Running on all 27 characters' **real** constants, extracted from the ROM and verified field-by-field against the decompilation; the invented defaults they replaced were 26x off and had hidden a stick-scaling bug in air drift (RE-032) |
 | Fighter state | 🟢 60% | The movement status machine: Wait, three walks, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy and Pass, with the original's interrupt-chain ordering and its tap-counter input model (RE-033). Plus roster, facing, hitlag/hitstun, spawn placement and every character's constants. All of them now **end on their own**: the five that had no duration in `FTAttributes` take it from their figatree animation instead, read out of the ROM and verified against the decompilation for all 27 fighters (RE-035). No attacks, specials, grabs, shields or damage states |
 | Collision | 🟢 60% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query, vertical floor projection, per-line surface height and the `mpprocess` floor path (substepping, landing snap, ledge corner, follow-the-surface) all ported. Surface flags confirmed against how Dream Land plays; `dMPCollisionMaterialFrictions` recovered. **158/158 spawns hold a simulated fighter still for 60 ticks at zero drift**, and the swept and projected solvers agree on every one (RE-030, RE-031). No ceiling or wall queries; moving groups are tested at rest |
-| Animation | 🔴 0% | |
+| Animation | 🟡 30% | **Figatree scripts decode to per-joint transforms on the host.** The `AObjEvent16` command stream, `ftAnimGetTargetValue`'s per-track scales and the `AObj` cubic/linear/step interpolation are ported; `romtool figatree` plays all 189 movement animations for 40 frames with zero desynchronisation, and each one's script count matches its fighter's joint count under a rule with no exceptions (RE-036). Joints are mapped through `setup_parts` and `commonparts_container`, both read as archive relocations rather than matched by shape. **Nothing is packed or drawn yet** — no runtime joint transforms, no `TransN`, no `translate_scales` |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
 | Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view renders Dream Land's four layers with its collision polylines landing exactly on the platforms, 658 us at 60 FPS (`docs/images/m4-stage-collision.png`); Peach's Castle cross-checks it on sloped ground. A fighter now stands on them (RE-031). No stage *loader* — the viewer browses stages, a match does not select one |
 | Items | 🔴 0% | |
@@ -65,7 +65,7 @@ Last updated: 2026-08-27.
 
 ## Test coverage
 
-282 host tests passing across `ssb-rom` (139), `ssb-engine` (36) and
+296 host tests passing across `ssb-rom` (153), `ssb-engine` (36) and
 `ssb-game` (107).
 
 ## M1 verification (PPSSPP)
@@ -121,7 +121,14 @@ Reproduce with `tools/run-ppsspp.sh`.
    the hurtbox descriptors, sound ids and joint indices further into the struct
    are still untouched, so nothing above physics and collision can read them.
 
-5. **The extern relocation slots are zeroed, not resolved.** `romtool` records
+5. **Animation decodes but does not render.** RE-036 gets a figatree to a
+   per-joint `(rotate, translate, scale)` on the host, validated against the
+   decompilation. None of it is packed into the asset pack, none of it reaches
+   the PSP, and no joint transform is submitted to the GE. The next concrete
+   task is packing the scripts and the joint mapping, then rebuilding node
+   matrices per tick instead of using the baked rest-pose ones.
+
+6. **The extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest rather than patching them, because the target address
    depends on runtime layout. The runtime loader that applies them does not
    exist yet.

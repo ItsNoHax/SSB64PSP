@@ -1836,3 +1836,158 @@ while the animation is 7 — the last three are interruptible.
 matches the status machine's own structure without being told to. Confirmed
 on-device: the overlay reads `anim dash 23f  land 7f` for Mario, out of the
 pack, at 60.0 FPS.
+
+---
+
+## RE-036 — The figatree's tracks, and the mask that says which joints exist
+
+**Question.** RE-035 walked figatree scripts far enough to total their
+durations. That is the smallest useful thing the format holds. Reading the rest
+— the per-joint transform tracks — needs three things it did not answer: what a
+command's value words *mean*, how those values are interpolated between keys,
+and which joint of which model each script belongs to.
+
+**The tracks.** A command's `flags` field is a bitmask over ten tracks,
+`RotX RotY RotZ TraI TraX TraY TraZ ScaX ScaY ScaZ`, and its trailing value
+words are read one or two per *set bit, in bit order* — not indexed by track.
+`ftAnimGetTargetValue` scales the raw `s16` by track group, and values and
+rates do not share a table:
+
+| group | value | rate |
+|---|---|---|
+| rotation | 1/512 | 1/512 |
+| translation | 1/4 | 1/32 |
+| scale | 1/4096 | 1/8192 |
+| `TraI` | 1/16384 − 3e-12 | 1/16384 − 3e-12 |
+
+Rotations come out in radians. Translations come out in the same large world
+units as everything else (RE-032): Mario's dash sets his root joint's Y to
+`755/4 = 188.75` against a rest height of 150.
+
+**The interpolation.** Each track carries an `AObj` — base and target value,
+base and target rate, a running length, and the reciprocal of its duration —
+and a command *rewrites* the tracks it names, pushing the old target down to
+the base. The pose is then read back by evaluating a cubic Hermite (or a line,
+or a step) at the track's current length.
+
+That indirection is the point of the format. `anim_wait`, the clock, and each
+track's duration are separate numbers, so one command can hold the clock up for
+11 frames while a track set earlier is still interpolating over 26. A decoder
+that treated each command as a keyframe covering the time until the next
+command would be wrong for most of Mario's dash.
+
+**Which joint a script belongs to.** `lbCommonAddFighterPartsFigatree` walks
+the fighter's `DObj` tree and the pointer table together:
+
+```c
+lbCommonAddFighterPartsFigatree(fp->joints[nFTPartsJointTopN]->child, fp->figatree, frame_begin);
+```
+
+so script *n* belongs to the *n*-th `DObj` in pre-order from `TopN`'s child.
+The obvious reading — that this is the *n*-th entry of the model's `DObjDesc`
+array — is wrong, and the counts say so: Mario's model has 25 descriptors and
+his animations have 24 scripts. Every fighter was off, most by one.
+
+The missing hop is `setup_parts`, a pointer in `FTAttributes` to two `u32`s
+that `lbCommonSetupFighterPartsDObjs` walks alongside the descriptor array:
+
+```c
+for (i = 0; ((flags0 != 0) || (flags1 != 0)) && (dobjdesc->id != DOBJ_ARRAY_MAX); i++) {
+    current_flags = (i < NBITS(u32)) ? flags0 : flags1;
+    if (current_flags & (1 << 31)) { ... gcAddChildForDObj(...) ... }
+    dobjdesc++;
+    if (i < NBITS(u32)) flags0 <<= 1; else flags1 <<= 1;
+}
+```
+
+A cleared bit means the descriptor never becomes a joint. So a fighter's joint
+count is the mask's population count, and animation script *n* belongs to the
+*n*-th **set** bit. The bits are read most significant first, which is the
+opposite of how a bitmask usually reads; taking the words as plain little-endian
+masks reverses every joint in the fighter.
+
+**Offsets, counted rather than searched.** `setup_parts` is at `FTAttributes +
+0x29C` and `animlock` at `+0x2A0`, counted back from `unused_0x2CC` — the one
+field the decompilation names after its own offset. Counting *forward* from the
+same anchor puts `commonparts_container` at `+0x2D4`, and the arithmetic
+lands exactly on the next self-naming field, `filler_0x30C`. Two independent
+anchors, one on each side.
+
+`commonparts_container` matters as much as the mask. It names the fighter's
+skeleton outright:
+
+```c
+struct FTCommonPartContainer { FTCommonPart commonparts[2]; };   // high, low detail
+struct FTCommonPart { DObjDesc *dobjdesc; MObjSub ***p_mobjsubs; ... };
+```
+
+Reaching it is an intern relocation to the container and then an extern
+relocation into the model file — two archive records, no shape-matching.
+Picking the biggest graph a fighter's `*Main` file points at instead gets Mario
+wrong: he and Luigi share a 26-node graph that is not either one's body.
+
+**The check.** `romtool figatree` resolves every fighter's skeleton this way
+and compares its joint count against all seven of that fighter's movement
+animations, then plays each script for 40 frames.
+
+* **170 of 189 animations have exactly as many scripts as their fighter has
+  joints.** The other 19 have exactly one spare, and the rule below accounts
+  for every one of them.
+* **No script desynchronised** — roughly 4,000 scripts played to their
+  terminator without a command's word count going wrong.
+* Mario's dash resolves to 18 scripts across 24 slots, and the six null slots
+  fall at indices 3, 9, 14, 17, 19 and 22 — *exactly* where the
+  decompilation's own transcription of that table puts its `NULL`s.
+* Mario's joint 1 translates 31.0 units in Z at its peak. The decompilation's
+  source for that script reads `ftAnimSetVal0RateBlockT(FT_ANIM_TRAX |
+  FT_ANIM_TRAZ, 4), -16, 124` — and `124/4 = 31.0`. The scale factor, the
+  bit-order of the value words and the track assignment are all confirmed by
+  one number.
+
+**The spare script is `TransN`, with no exceptions.** The 19 are Kirby,
+Jigglypuff and their polygon variants in Squat, SquatRv and Pass (three each),
+and Master Hand in all seven. Those, and *only* those, are the motions whose
+`FTMotionDesc` carries `FTANIM_FLAG_TRANSN_JOINT` — Mario's equivalents carry
+`FTANIM_FLAG_NONE`, and Master Hand's entire table is `TRANSN`. The flag puts
+`TransN`, a runtime joint rather than a model one, in the chain as `TopN`'s
+child, so it takes script 0 and pushes the model's joints down by one. The law
+is therefore exact rather than an inequality:
+
+```
+scripts == popcount(setup_parts) + (motion uses TransN ? 1 : 0)
+```
+
+None of the seven movement animations of any fighter in the current vertical
+slice uses the flag, so the current mapping needs no special case; a fighter
+that does will need one, and `romtool figatree` will say which.
+
+Worth recording because it nearly went the other way: the polygon-model
+variants looked at first like they shared the full character's animations while
+having fewer joints — NSamus appeared to have 16 joints against Samus's 23
+scripts. That was the *graph* being chosen by size rather than by record.
+Read through `commonparts_container`, NSamus has 23 joints and matches exactly.
+A plausible-looking explanation had been waiting for the wrong data.
+
+**Two things deliberately left alone.** `TraI` decodes but is not applied: it
+needs the spline control points that only opcode 12 supplies, and no fighter
+figatree in the ROM contains an opcode 12. And `FTAttributes.translate_scales`
+(`+0x324`) makes `ftParamUpdateAnimKeys` scale a joint's animated translation
+per-joint; the fighters that have it are not yet identified.
+
+**Also confirmed, incidentally.** Jigglypuff's SquatRv really is
+`FTKirbyAnimCrouchEnd` — she has no `CrouchEnd` file of her own, and
+`dFTPurinMotionDescs` names Kirby's outright, alongside Kirby's walk-end,
+crouch-idle and entire damage set. RE-035's animation table was right about a
+pairing that looks like a transcription slip.
+
+**Implementation.** `crates/ssb-rom/src/figatree.rs` (the decoder and the
+`AObj` state machine), `crates/ssb-rom/src/fighter.rs` (`setup_parts`,
+`animlock`, `common_parts`). `anim.rs`'s length walk now runs on the same
+decoder, so RE-035's 189 verified lengths are a test of *this* code's word
+counts rather than of a second copy of them.
+
+**Confidence: high** for the format, the scales and the joint mapping — a
+number-for-number match against the decompilation's own transcription on the
+one file examined in detail, no desynchronisation across ~4,000 scripts, and
+joint counts that agree with an independently recovered mask for all 189
+animations under a rule with no exceptions. **Not yet validated on device**: nothing renders these poses yet.
