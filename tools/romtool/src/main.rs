@@ -11,6 +11,7 @@
 //! romtool extract  <rom> [--out]  extract every archive file + a manifest
 //! romtool dump     <rom> <id>     dump one archive file
 //! romtool textures <rom>          extract + pack every bound texture
+//! romtool scene    <rom>          recover DObjDesc scene graphs
 //! ```
 
 use std::collections::BTreeMap;
@@ -62,7 +63,8 @@ USAGE:
     romtool check    <rom.z64>
     romtool scan     <rom.z64> [--exhaustive]
     romtool mesh     <rom.z64>
-    romtool scene    <rom.z64> [--file <id>] [--expect <ground-truth.json>]
+    romtool scene    <rom.z64> [--file <id>] [--list] [--nodes]
+                               [--expect <ground-truth.tsv>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
@@ -324,12 +326,14 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
     let mut expect: Option<PathBuf> = None;
     let mut list = false;
+    let mut nodes = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match *arg {
             "--file" => only_file = it.next().map(|v| v.parse()).transpose()?,
             "--expect" => expect = it.next().map(PathBuf::from),
             "--list" => list = true,
+            "--nodes" => nodes = true,
             other => return Err(format!("unknown flag {other}").into()),
         }
     }
@@ -349,7 +353,9 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let mut depth_hist: BTreeMap<u32, usize> = BTreeMap::new();
 
     for id in &ids {
-        let Ok(file) = archive.load(*id) else { continue };
+        let Ok(file) = archive.load(*id) else {
+            continue;
+        };
         let graphs = scene::find_scene_graphs(&file);
         if graphs.is_empty() {
             continue;
@@ -380,6 +386,67 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 println!("  file {id} @ 0x{off:X}: {n} nodes");
             }
         }
+    }
+
+    // Per-node world positions, for checking composed transforms against the
+    // translate values in the decomp's DObjDesc arrays by hand.
+    if nodes {
+        for id in &ids {
+            let Ok(file) = archive.load(*id) else {
+                continue;
+            };
+            for g in scene::find_scene_graphs(&file) {
+                println!("\nfile {id} @ 0x{:X} ({} nodes)", g.offset, g.nodes.len());
+                for (i, (node, w)) in g.nodes.iter().zip(g.world_transforms()).enumerate() {
+                    let t = w.translation();
+                    println!(
+                        "  {i:3}  depth {}  parent {:>4}  world ({:>10.1} {:>9.1} {:>9.1})  dl {}",
+                        node.desc.depth(),
+                        node.parent.map_or("-".into(), |p| p.to_string()),
+                        t[0],
+                        t[1],
+                        t[2],
+                        node.desc.dl.map_or("-".into(), |d| format!("0x{d:X}")),
+                    );
+                }
+            }
+        }
+    }
+
+    // Report what each node's `dl` actually resolves to. A DObj's display-list
+    // field is a union -- Gfx*, Gfx**, DObjDLLink*, an animation joint -- and
+    // nothing in the data discriminates it, so "does it convert" is what
+    // decides how much geometry a graph can actually place.
+    let mut outcome: BTreeMap<String, usize> = BTreeMap::new();
+    for id in &ids {
+        let Ok(file) = archive.load(*id) else {
+            continue;
+        };
+        for g in scene::find_scene_graphs(&file) {
+            for node_dl in g.display_lists() {
+                for dl in scene::resolve_node_lists(&file, node_dl) {
+                    let key = match file
+                        .data
+                        .get(dl as usize..)
+                        .ok_or("out of bounds".to_string())
+                        .and_then(|d| ssb_rom::dl::decode_list(d).map_err(|e| e.to_string()))
+                    {
+                        Err(e) => format!("decode failed: {e}"),
+                        Ok(cmds) => match ssb_rom::mesh::convert(&cmds, &file.data) {
+                            Err(e) => format!("convert failed: {e:?}"),
+                            Ok(m) if m.triangle_count() == 0 => "converted, no triangles".into(),
+                            Ok(_) => "converted with triangles".into(),
+                        },
+                    };
+                    *outcome.entry(key).or_default() += 1;
+                }
+            }
+        }
+    }
+    let resolved: usize = outcome.values().sum();
+    println!("\nNode display lists ({resolved} after DObjDLLink resolution):");
+    for (k, n) in &outcome {
+        println!("  {n:5}  {k}");
     }
 
     let Some(expect_path) = expect else {
@@ -422,14 +489,21 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let extra = graph_count - matched - wrong_len;
 
     println!();
-    println!("Against {expected_total} annotated arrays in {}:", expect_path.display());
+    println!(
+        "Against {expected_total} annotated arrays in {}:",
+        expect_path.display()
+    );
     println!("  exact match:   {matched}");
     println!("  wrong length:  {wrong_len}");
     println!("  not found:     {missing}");
     println!("  unannotated:   {extra}");
 
     if missing > 0 || wrong_len > 0 {
-        return Err(format!("{} annotated arrays did not round-trip", missing + wrong_len).into());
+        return Err(format!(
+            "{} annotated arrays did not round-trip",
+            missing + wrong_len
+        )
+        .into());
     }
     Ok(())
 }
@@ -592,6 +666,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut tex_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
     let mut meshes = 0usize;
     let mut triangles = 0usize;
+    let mut objects = 0usize;
+    let mut placed_meshes = 0usize;
+    let mut node_dls = 0usize;
+    let mut dropped_extra_lists = 0usize;
 
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
@@ -605,7 +683,48 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         let called: std::collections::BTreeSet<u32> =
             all.iter().flat_map(|d| d.referenced_lists()).collect();
 
-        for dl in all.iter().filter(|d| !called.contains(&d.offset)) {
+        // Display-list offset -> mesh index, so scene-graph nodes can find the
+        // geometry they place.
+        let mut mesh_at: BTreeMap<u32, u32> = BTreeMap::new();
+
+        // A scene-graph node's `dl` is an *authoritative* list start: the game
+        // itself passes that pointer to `gcAddDObjForGObj`. Blind discovery is
+        // a heuristic by comparison, and its outermost-list reduction actively
+        // discards these -- a hierarchy's per-joint lists sit inside the span
+        // of a larger list the scan preferred. So convert the authoritative
+        // offsets first and let discovery fill in only what they miss.
+        let graphs = ssb_rom::scene::find_scene_graphs(&file);
+        // A node's `dl` may be a `Gfx*` or a `DObjDLLink[]`; resolve_node_lists
+        // sorts that out. One node can therefore place several lists.
+        let node_lists: BTreeMap<u32, Vec<u32>> = graphs
+            .iter()
+            .flat_map(|g| g.display_lists())
+            .map(|d| (d, ssb_rom::scene::resolve_node_lists(&file, d)))
+            .collect();
+        let authoritative: std::collections::BTreeSet<u32> =
+            node_lists.values().flatten().copied().collect();
+
+        // Decode authoritative offsets *directly*, not through
+        // `find_display_lists_at`: that re-applies the discovery heuristics,
+        // and a heuristic can only lose information once the game itself has
+        // told us where the list starts. Routing them through it placed 742 of
+        // 1661 node lists; decoding them straight places 1417.
+        let from_nodes: Vec<ssb_rom::scan::FoundDl> = authoritative
+            .iter()
+            .filter_map(|&off| {
+                let commands = ssb_rom::dl::decode_list(file.data.get(off as usize..)?).ok()?;
+                Some(ssb_rom::scan::FoundDl {
+                    offset: off,
+                    commands,
+                })
+            })
+            .collect();
+
+        let discovered = all
+            .iter()
+            .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset));
+
+        for dl in from_nodes.iter().chain(discovered) {
             let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
                 continue;
             };
@@ -633,9 +752,36 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 });
             }
 
-            writer.add_mesh(&m, id, dl.offset, |i| per_prim[i]);
+            let index = writer.add_mesh(&m, id, dl.offset, |i| per_prim[i]);
+            mesh_at.insert(dl.offset, index);
             meshes += 1;
             triangles += m.triangle_count();
+        }
+
+        // A node holds one mesh index, but a DObjDLLink array can name several
+        // lists. 564 of the 589 link arrays in the archive hold exactly one
+        // entry, so taking the first costs little -- but count what that drops
+        // rather than assuming it is nothing.
+        let first_mesh = |node_dl: u32| -> Option<u32> {
+            node_lists
+                .get(&node_dl)?
+                .iter()
+                .find_map(|d| mesh_at.get(d).copied())
+        };
+
+        for graph in &graphs {
+            for node_dl in graph.display_lists() {
+                node_dls += 1;
+                let placed = node_lists.get(&node_dl).map_or(0, |ls| {
+                    ls.iter().filter(|d| mesh_at.contains_key(d)).count()
+                });
+                if placed > 0 {
+                    placed_meshes += 1;
+                    dropped_extra_lists += placed - 1;
+                }
+            }
+            writer.add_object(graph, id, first_mesh);
+            objects += 1;
         }
     }
 
@@ -653,8 +799,51 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     println!("  meshes      {meshes}");
     println!("  triangles   {triangles}");
     println!("  textures    {}", pack.texture_count());
+    println!(
+        "  objects     {objects} ({} nodes, {placed_meshes}/{node_dls} node lists placed)",
+        pack.node_count()
+    );
+    if dropped_extra_lists > 0 {
+        println!("  dropped     {dropped_extra_lists} extra lists on multi-list nodes");
+    }
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
+
+    // Rank objects by the geometry they actually place. This is the number the
+    // on-device viewer opens on, and it is the honest measure of how much of
+    // the scene graph is doing useful work.
+    let mut ranked: Vec<(u32, u32, u32)> = Vec::new();
+    for i in 0..pack.object_count() {
+        let Some(o) = pack.object(i) else { continue };
+        let mut tris = 0u32;
+        for k in 0..o.node_count {
+            let Some(n) = pack.node(o.first_node + k) else {
+                continue;
+            };
+            let Some(m) = (n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
+                .then(|| pack.mesh(n.mesh))
+                .flatten()
+            else {
+                continue;
+            };
+            for j in 0..m.prim_count {
+                if let Some(pr) = pack.prim(m.first_prim + j) {
+                    tris += pr.index_count / 3;
+                }
+            }
+        }
+        ranked.push((i, tris, o.source_file));
+    }
+    ranked.sort_by_key(|&(_, t, _)| core::cmp::Reverse(t));
+    let placed_tris: u32 = ranked.iter().map(|&(_, t, _)| t).sum();
+    println!(
+        "  in objects  {placed_tris} triangles ({:.0}% of the pack)",
+        placed_tris as f64 / triangles.max(1) as f64 * 100.0
+    );
+    println!("  top objects:");
+    for (i, t, f) in ranked.iter().take(5) {
+        println!("    object {i:<4} file {f:<5} {t} triangles");
+    }
     Ok(())
 }
 

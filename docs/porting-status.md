@@ -13,7 +13,7 @@ Last updated: 2026-08-27.
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; meshes (1768 lists, 0 failures) and textures (336/469) packed into a 1.7 MB runtime pack that round-trips |
-| **M3 — Rendering** | 🟢 75% | **Textured, shaded models render on device at 60 FPS** (`docs/images/m3-textured-model.png`). No scene graph or animation yet |
+| **M3 — Rendering** | 🟢 85% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`). No animation yet |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
@@ -37,7 +37,7 @@ Last updated: 2026-08-27.
 | Model conversion | 🟡 30% | Meshes extracted; DObj hierarchy/animation not applied |
 | Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 1768 meshes round-trip |
 | PSP asset loading | ✅ COMPLETE | 1.7 MB pack loads aligned, cache-flushed, verified on device |
-| PSP mesh drawing | 🟢 80% | Indexed GE draws, CLUT textures, wrap, baked shading. 318-tri model at 60 FPS, 317us CPU |
+| PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. 268-tri assembled scene at 60 FPS, 495us CPU |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
 | VFPU optimization | 🔴 0% | Deliberately not started |
@@ -51,7 +51,7 @@ Last updated: 2026-08-27.
 | Fighter state | 🟡 25% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff |
 | Collision | 🔴 0% | |
 | Animation | 🔴 0% | |
-| Scene graph (GObj) | 🔴 0% | Architecture understood, not implemented |
+| Scene graph (DObj) | 🟢 70% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. `GObj` layer and animation still absent |
 | Stages | 🔴 0% | |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |
