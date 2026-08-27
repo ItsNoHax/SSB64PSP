@@ -42,7 +42,22 @@
 #     path resolves inside the sandbox and is never found, and leaving the
 #     video driver to autodetect can fail to produce a window at all.
 #
-# Requires: flatpak org.ppsspp.PPSSPP, wmctrl, ImageMagick (`import`).
+#  7. **More than one way to take the picture.** ImageMagick 7.1.2 ships an
+#     `import` built without X11 support: every capture fails with "missing an
+#     image filename", including `-window root`. The script had one capture
+#     path and reported that as "screenshot failed or timed out", which reads
+#     like the emulator broke. Try each available tool in turn and say which
+#     one worked.
+#
+#  8. **A locked screen looks exactly like a broken build.** With the session
+#     locked, nothing composites: PPSSPP hangs at "Initializing Vulkan...",
+#     the window exists but cannot be grabbed, and any capture returns the lock
+#     screen. Report the window title on failure -- it names the real cause
+#     immediately, where a generic failure message sent me looking at my own
+#     rendering code.
+#
+# Requires: flatpak org.ppsspp.PPSSPP, wmctrl, and one of ImageMagick
+# (`import`), `spectacle`, `grim`, `scrot` or `maim`.
 
 set -euo pipefail
 
@@ -61,9 +76,62 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for tool in flatpak wmctrl import; do
+for tool in flatpak wmctrl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
+
+# At least one capture tool has to exist. `import` is preferred because it can
+# grab a single window; the rest capture the whole screen, which still shows
+# the emulator but includes whatever else is on the desktop.
+CAPTURE_TOOLS=()
+for tool in import spectacle grim scrot maim; do
+  command -v "$tool" >/dev/null && CAPTURE_TOOLS+=("$tool")
+done
+if [ ${#CAPTURE_TOOLS[@]} -eq 0 ]; then
+  echo "no screenshot tool found (tried: import spectacle grim scrot maim)" >&2
+  exit 1
+fi
+
+# A capture of a single flat colour is not a screenshot of anything.
+#
+# This matters more than it sounds: with the session locked, `spectacle`
+# succeeds, writes a 600 KB PNG, and exits 0 -- and the PNG is pure white. The
+# script would then announce a screenshot and the image would be taken as
+# evidence about the build. Uniform output is treated as failure so it cannot
+# be. `magick identify` does no X11 work, so it still functions on the same
+# install whose `import` does not.
+is_blank() {
+  local f="$1" sd
+  command -v magick >/dev/null || return 1
+  sd=$(magick identify -format "%[fx:standard_deviation]" "$f" 2>/dev/null || echo 1)
+  awk -v s="$sd" 'BEGIN { exit !(s < 0.002) }'
+}
+
+# Try each tool in turn. A tool that is installed is not necessarily working:
+# ImageMagick 7.1.2 ships an `import` compiled without X11 and it fails on
+# every window, root included. Success is judged by the file, not by the exit
+# status, because some of these exit 0 having written nothing.
+capture() {
+  local win="$1" out="$2" tool
+  rm -f "$out"
+  for tool in "${CAPTURE_TOOLS[@]}"; do
+    case "$tool" in
+      # `import` blocks forever if the target window vanishes mid-capture, and
+      # a hung import kept this script -- and therefore PPSSPP -- alive
+      # indefinitely. Every branch is bounded for that reason.
+      import)    timeout 20 import -window "$win" "$out" >/dev/null 2>&1 || true ;;
+      spectacle) timeout 25 spectacle -b -n -f -o "$out" >/dev/null 2>&1 || true ;;
+      grim)      timeout 20 grim "$out" >/dev/null 2>&1 || true ;;
+      scrot)     timeout 20 scrot -o "$out" >/dev/null 2>&1 || true ;;
+      maim)      timeout 20 maim "$out" >/dev/null 2>&1 || true ;;
+    esac
+    if [ -s "$out" ] && ! is_blank "$out"; then
+      echo "$tool"
+      return 0
+    fi
+  done
+  return 1
+}
 
 if [ "$BUILD" = 1 ]; then
   echo "==> building EBOOT"
@@ -207,12 +275,29 @@ echo "==> window $WIN; running ${SECONDS_TO_RUN}s"
 
 interruptible_sleep "$SECONDS_TO_RUN"
 
-# `import` blocks forever if the target window vanishes mid-capture, and a hung
-# import kept this script (and therefore PPSSPP) alive indefinitely. Cap it.
-if ! timeout 20 import -window "$WIN" "$OUT/screenshot.png"; then
-  echo "warning: screenshot failed or timed out" >&2
+if TOOL=$(capture "$WIN" "$OUT/screenshot.png"); then
+  echo "==> screenshot: $OUT/screenshot.png (via $TOOL)"
+else
+  # Name the likely cause instead of leaving it to be guessed. The window's
+  # title is the single most useful clue: PPSSPP stuck on "Initializing
+  # Vulkan..." means the session is locked or the GPU driver is wedged, and
+  # nothing about the build under test is wrong.
+  TITLE=$(wmctrl -l 2>/dev/null | grep -i "^$WIN" | cut -d' ' -f5- || true)
+  echo "warning: no usable screenshot (tried: ${CAPTURE_TOOLS[*]})" >&2
+  echo "         window $WIN title: ${TITLE:-<none>}" >&2
+  if [ -s "$OUT/screenshot.png" ]; then
+    echo "         a capture succeeded but the image is one flat colour:" >&2
+    echo "         the screen is locked or blanked, so nothing composites." >&2
+    echo "         Unlock the session and re-run." >&2
+  fi
+  case "$TITLE" in
+    *Initializ*)
+      echo "         PPSSPP never finished graphics init -- a locked screen" >&2
+      echo "         does this, and so does a wedged GPU driver." >&2
+      ;;
+  esac
+  echo "         see $OUT/ppsspp.log" >&2
 fi
 
-echo "==> screenshot: $OUT/screenshot.png"
 echo "==> log:        $OUT/ppsspp.log"
 # The EXIT trap terminates PPSSPP and verifies it is gone.
