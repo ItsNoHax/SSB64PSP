@@ -2041,7 +2041,29 @@ alongside its offset, and the converter has to be handed the whole archive
 rather than one file's bytes. The palette path needs the same, since a TLUT
 load reads whatever image address is current.
 
-**Confidence: high** for the diagnosis — the pointer count, their single
-target file, and the packed-texture count all agree, and the affected files are
-exactly the ones whose stages render white. Untested for the fix, which is not
-written.
+**Implementation.** `Cmd::SetTimg` now carries the file-relative offset of its
+own address word, filled in by `dl::decode_list_at`. `mesh::Source` pairs a
+file's bytes with its extern relocations, and the walk looks a zero address up
+by that slot; `TextureRef` grew a `data_file` and a `palette_file` so the
+answer has somewhere to live. The two halves are resolved independently,
+because they need not be in the same file — a fighter's palette is in its own
+file while a stage's texels are in a shared one.
+
+**Result.** Dream Land's geometry file goes from **1 of 2 textures packed to
+16 of 19**, and archive-wide from 482 to 545. The pack gains 68 textures for
+100 KiB. Confirmed on device: the stage that rendered as a white silhouette
+now renders as Dream Land, tree and platforms textured, at 60.0 FPS and 796 us
+CPU (`docs/images/m4-stage-textured.png`).
+
+**What the same count also says.** Bound references rose from 586 to 664, and
+the 54 "null" entries did not move. Those are genuinely unresolved: an address
+of zero with no relocation naming the slot. They are a separate question from
+this one and are still open, along with 13 segmented addresses and 36
+references whose resolved offset lands past the end of the file they name.
+
+**Confidence: high.** The diagnosis, the fix and the on-device result agree,
+and three host tests pin the behaviour that has no ROM in CI: that a slot with
+a relocation resolves to the named file, that one without still refuses to
+sample offset zero, and that a relocation for a *neighbouring* slot does not
+satisfy this one — which would have given every stage some other stage's
+textures.
