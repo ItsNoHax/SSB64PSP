@@ -1102,16 +1102,107 @@ Final Destination cross-checks it from the other direction: **one** floor
 line, `(-2508, 0) .. (2508, 0)`, all four spawns on it. Exactly one flat
 platform and nothing else, which is the whole stage.
 
-**Limits.** Extracted and verified, **not yet packed** — nothing on device can
-read this. `MPVertexInfo` is deliberately skipped: the collision code indexes
+**Limits.** `MPVertexInfo` is deliberately skipped: the collision code indexes
 it by line id for early rejection, but it is absent from `MPGeometryData`
 because the runtime derives it on load. Yakumono transforms are runtime state,
 so lines belonging to a moving group are in that group's space, not world
 space.
 
+**Update.** Packed and queried as of RE-030; the "not yet packed" limit this
+entry originally recorded is closed.
+
 **Confidence: certain.** Two stages reconstruct feature for feature from
 independent knowledge of what they look like, all 41 decode, and the array
 lengths are derived rather than assumed.
+
+---
+
+## RE-030 — Surface flags say how a stage plays, and spawns prove the query
+
+**Question.** RE-029 decoded the collision lines but stopped there. Two things
+were still unknown: what a collision vertex's `flags` word means, and whether
+the whole chain — extractor, pack, reader, query — actually agrees, which no
+unit fixture can tell you.
+
+**The flags.** `mpdef.h` names the bits: the upper byte is surface state and
+the lower byte an `MPMaterial` that selects friction. Two bits decide how a
+floor behaves:
+
+```c
+#define MAP_VERTEX_COLL_PASS  (1 << 14)   // may be dropped through
+#define MAP_VERTEX_COLL_CLIFF (1 << 15)   // its ends can be hung from
+```
+
+Reading them back on Dream Land is what makes this certain, because the answer
+is checkable against how the stage plays:
+
+```
+line 0 Floor  pass    (570,1542) (0,1542) (-570,1542)
+line 1 Floor  pass    (1892,907) (1421,907) (951,907)
+line 2 Floor  pass    (-951,904) (-1396,904) (-1841,904)
+line 3 Floor  cliff   (-2318,0) (2318,0)
+line 4 Ceiling        (1972,-1072) (-1972,-1072)
+line 5 RightWall      (2318,0) ... (1972,-1072)
+```
+
+All three floating platforms are `pass` — in Dream Land you drop through them
+by holding down. The main platform is `cliff` and *not* `pass` — you cannot
+drop through it, and you can grab its ledges. The ceiling and walls are
+neither. Four independent facts about the stage, four matches. No structural
+check could have produced that.
+
+**The query.** `mpCollisionCheckFloorLineCollisionSame` does not test a point
+against a surface; it tests the **swept segment** from where a fighter was to
+where it wants to be. That is what stops a fast faller from crossing a platform
+in one frame. It dispatches on whether the segment is level, because the
+tilted solver divides by the segment's horizontal extent:
+
+* `mpCollisionCheckFCSurfaceFlat` — level segments, and only while falling.
+* `mpCollisionCheckFloorSurfaceTilt` — sloped segments, a line/line crossing
+  with the endpoints snapped when a fighter lands within `0.001` of a joint,
+  so a landing between two segments falls on one of them rather than through.
+
+`0.001` is not a tuning knob; it is written literally throughout
+`mpcollision.c`, and it is what lets a fighter standing exactly on a surface
+still register as touching it.
+
+**Validation the structure does not contain.** The game places a spawn point
+just above the surface it starts on. So drop every stage's player spawns
+straight down through the packed data and see where they stop:
+
+```
+stage  0  file 255  7 floor segments in 1 group(s)
+  P1  spawn (     0,     6)  lands on line 3 at y    0.0,   6 below cliff
+  P2  spawn ( -1397,   906)  lands on line 2 at y  904.0,   2 below pass
+  P3  spawn (     1,  1545)  lands on line 0 at y 1542.0,   3 below pass
+  P4  spawn (  1421,   909)  lands on line 1 at y  907.0,   2 below pass
+
+40/41 stages catch every spawn (158 landed, 4 did not)
+```
+
+**158 of 162** spawns land, and almost all of them come to rest **2–6 units**
+below where they started. That margin is the real result: nothing about the
+pack format or the solver forces it, and a wrong offset anywhere in the chain
+would scatter it. Sloped stages land on fractional heights (`y 303.5`), which
+means the tilted solver is exercised on real data too.
+
+**The four misses are the known limit, not a bug.** All four are on one stage,
+file 284 — the bonus stage built entirely from moving platforms. Its floors sit
+in yakumono groups 1–11, every one of them an identical rectangle at the
+origin, which is what a platform stored in its *own* space looks like. The
+runtime offsets those by the group's `DObj` before testing; we have no group
+transforms, so they are tested where they rest. One stage failing, and it being
+exactly the stage made of moving platforms, is the failure isolating itself.
+
+**Layering.** The query lives in `ssb-game` (Layer A) and takes an iterator of
+segments, so it allocates nothing and never learns the pack format; `ssb-rom`
+never learns the game logic. The six-line adapter between them is duplicated
+per consumer, which is cheaper than a shared type dragging one crate into the
+other. `romtool collide <pack>` is that adapter plus the check above.
+
+**Confidence: certain** for the flags, which Dream Land confirms against
+gameplay. **High** for the solver: it is a faithful port and the spawn margins
+agree across 40 stages, but no fighter has run on it yet.
 
 ---
 

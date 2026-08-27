@@ -12,6 +12,8 @@
 //! romtool dump     <rom> <id>     dump one archive file
 //! romtool textures <rom>          extract + pack every bound texture
 //! romtool scene    <rom>          recover DObjDesc scene graphs
+//! romtool stages   <rom>          recover MPGroundData headers and collision
+//! romtool collide  <pack>         run the collision query on every stage
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +38,7 @@ fn main() -> ExitCode {
         ["mobj", rom_path, rest @ ..] => mobj(rom_path.as_ref(), rest),
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
+        ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
@@ -70,6 +73,7 @@ USAGE:
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
     romtool stages   <rom.z64> [--file <id>] [--lines]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
+    romtool collide  <pack.pak> [--stage <n>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -822,6 +826,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut placed_meshes = 0usize;
     let mut node_dls = 0usize;
     let mut extra_leaves = 0usize;
+    // A stage names its render layers by the `DObjDesc` address they start at,
+    // and `add_object` is given that same address -- so the layer lookup is an
+    // exact match, never a search.
+    let mut object_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
 
     let loaded = load_all(&archive);
 
@@ -950,9 +958,33 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         for (gi, graph) in graphs.iter().enumerate() {
             node_dls += graph.display_lists().count();
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();
-            writer.add_object(graph, id, |n| node_mesh[gi][n], &node_extra[gi]);
+            let object = writer.add_object(graph, id, |n| node_mesh[gi][n], &node_extra[gi]);
+            object_index.insert((id, graph.offset), object);
             objects += 1;
         }
+    }
+
+    // Stages last: a layer can only be resolved once every object exists.
+    let mut stage_layers = 0usize;
+    let mut resolved_layers = 0usize;
+    let mut with_collision = 0usize;
+    for ground in &loaded.stages {
+        let map = ground.map_geometry.and_then(|(f, at)| {
+            let file = loaded.files.get(f as usize)?.as_ref()?;
+            ssb_rom::collision::read(file, at)
+        });
+        if map.is_some() {
+            with_collision += 1;
+        }
+        stage_layers += ground.layers.len();
+        resolved_layers += ground
+            .layers
+            .iter()
+            .filter(|l| object_index.contains_key(&l.graph))
+            .count();
+        writer.add_stage(ground, map.as_ref(), |file, offset| {
+            object_index.get(&(file, offset)).copied()
+        });
     }
 
     let bytes = writer.finish();
@@ -986,6 +1018,17 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
              (extra link entries, and pre-matrix pair halves drawn in the parent's space)"
         );
     }
+    println!(
+        "  stages      {} ({with_collision} with collision, \
+         {resolved_layers}/{stage_layers} render layers resolved)",
+        pack.stage_count()
+    );
+    println!(
+        "  collision   {} lines, {} vertices, {} map points",
+        pack.line_count(),
+        pack.coll_vertex_count(),
+        pack.point_count()
+    );
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
 
@@ -1218,6 +1261,177 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     out
 }
 
+/// Every floor segment of a stage, in the form the collision query wants.
+///
+/// The adapter lives here rather than in either crate because Layer A
+/// (`ssb-game`) must not know the pack format and `ssb-rom` must not know the
+/// game logic. The PSP build will need its own copy of these six lines; that
+/// is the price of the layering, and it is cheaper than a shared type that
+/// drags one crate into the other.
+fn floor_segments(
+    pack: &ssb_rom::pack::Pack,
+    stage: &ssb_rom::pack::StageDesc,
+) -> Vec<(u16, ssb_game::collision::Segment)> {
+    use ssb_rom::pack::line_kind;
+
+    let mut out = Vec::new();
+    for line in pack.stage_lines(stage) {
+        if line.kind != line_kind::FLOOR {
+            continue;
+        }
+        let points: Vec<_> = pack.line_vertices(&line).collect();
+        for pair in points.windows(2) {
+            out.push((
+                line.id,
+                ssb_game::collision::Segment {
+                    x1: pair[0].x,
+                    y1: pair[0].y,
+                    x2: pair[1].x,
+                    y2: pair[1].y,
+                    // The original reports the flags of the segment's first
+                    // vertex through `stand_coll_flags`.
+                    flags: pair[0].flags,
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Runs the collision query against every stage in a built pack.
+///
+/// This is the end-to-end check: ROM -> extractor -> pack -> reader -> query.
+/// Each stage's player spawns are dropped straight down and should land, since
+/// the game places a spawn just above the surface it starts on. The margin is
+/// the tell: across the archive almost every spawn comes to rest 3 or 4 units
+/// below where it started, which no accident of geometry would produce.
+///
+/// A miss is not automatically a bug. Lines owned by a moving group are stored
+/// in that group's own space and the runtime offsets them by the group's
+/// `DObj` before testing; we have no group transforms yet, so those lines are
+/// tested where they rest. That is why this reports rather than fails.
+fn collide(path: &Path, opts: &[&str]) -> Res {
+    use ssb_engine::math::Vec2;
+    use ssb_game::collision::{check_floor, flags};
+
+    let mut only: Option<u32> = None;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--stage" => only = Some(parse_id(it.next().ok_or("--stage needs an index")?)?),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+
+    let mut landed = 0usize;
+    let mut missed = 0usize;
+    let mut stages_clean = 0usize;
+    let mut stages_seen = 0usize;
+
+    for i in 0..pack.stage_count() {
+        if only.is_some_and(|s| s != i) {
+            continue;
+        }
+        let Some(stage) = pack.stage(i) else { continue };
+        let segments = floor_segments(&pack, &stage);
+        stages_seen += 1;
+
+        // How many distinct groups own floor lines. A stage whose floors are
+        // spread over many groups is the one where "tested at rest" can bite.
+        let groups: BTreeSet<u16> = pack
+            .stage_lines(&stage)
+            .filter(|l| l.kind == ssb_rom::pack::line_kind::FLOOR)
+            .map(|l| l.yakumono)
+            .collect();
+
+        println!(
+            "stage {i:2}  file {}  {} floor segments in {} group(s)",
+            stage.source_file,
+            segments.len(),
+            groups.len()
+        );
+
+        let mut clean = true;
+        for player in 0..4u16 {
+            let Some(spawn) = pack.spawn(&stage, player) else {
+                continue;
+            };
+            // Straight down to the blast zone: if nothing is under the spawn,
+            // the fighter would fall out of the stage on frame one.
+            let from = Vec2::new(spawn.x as f32, spawn.y as f32);
+            let to = Vec2::new(spawn.x as f32, stage.bounds.bottom as f32);
+            match check_floor(segments.iter().copied(), from, to) {
+                Some(hit) => {
+                    landed += 1;
+                    let mut what = String::new();
+                    if hit.flags & flags::CLIFF != 0 {
+                        what.push_str(" cliff");
+                    }
+                    if hit.flags & flags::PASS != 0 {
+                        what.push_str(" pass");
+                    }
+                    println!(
+                        "  P{}  spawn ({:6},{:6})  lands on line {:3} at y {:7.1}, \
+                         {:4.0} below{what}",
+                        player + 1,
+                        spawn.x,
+                        spawn.y,
+                        hit.line,
+                        hit.point.y,
+                        from.y - hit.point.y
+                    );
+                }
+                None => {
+                    missed += 1;
+                    clean = false;
+                    println!(
+                        "  P{}  spawn ({:6},{:6})  no floor beneath it in world space",
+                        player + 1,
+                        spawn.x,
+                        spawn.y
+                    );
+                }
+            }
+        }
+        stages_clean += usize::from(clean);
+    }
+
+    println!(
+        "\n{stages_clean}/{stages_seen} stages catch every spawn \
+         ({landed} landed, {missed} did not)"
+    );
+    if missed > 0 {
+        println!(
+            "a spawn with nothing under it means its platform is in a moving group's \
+             own space; group transforms are not extracted yet"
+        );
+    }
+    Ok(())
+}
+
+/// Names the surface bits of a collision vertex's flags.
+///
+/// From `mpdef.h`: the upper byte carries `MAP_VERTEX_COLL_PASS` (1 << 14,
+/// drop-through) and `MAP_VERTEX_COLL_CLIFF` (1 << 15, ledge-grabbable); the
+/// lower byte is the `MPMaterial` that sets friction.
+fn surface_flags(flags: u16) -> String {
+    let mut s = String::new();
+    if flags & (1 << 15) != 0 {
+        s.push_str("cliff ");
+    }
+    if flags & (1 << 14) != 0 {
+        s.push_str("pass ");
+    }
+    let material = flags & 0xFF;
+    if material != 0 {
+        s.push_str(&format!("mat{material}"));
+    }
+    s.trim_end().into()
+}
+
 /// Lists the `MPGroundData` headers — one per stage.
 ///
 /// A stage's geometry, collision, bounds and music are spread over several
@@ -1302,10 +1516,11 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                                 .map(|p| format!("({},{})", p.pos[0], p.pos[1]))
                                 .collect();
                             println!(
-                                "    line {:3} {:?} yak {}  {}",
+                                "    line {:3} {:?} yak {} {:11}  {}",
                                 l.id,
                                 l.kind,
                                 l.yakumono,
+                                surface_flags(l.points[0].flags),
                                 pts.join(" ")
                             );
                         }

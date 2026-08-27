@@ -9,3 +9,8 @@ description = "Validates a user-supplied SSB64 ROM and extracts assets for the P
 
 [dependencies]
 ssb-rom = { workspace = true, features = ["std"] }
+# So the collision query can be exercised against the real stages rather than
+# only against fixtures -- the same "converter as validator" arrangement that
+# checked the display-list decoder (RE-017).
+ssb-game = { workspace = true, features = ["std"] }
+ssb-engine = { workspace = true, features = ["std"] }

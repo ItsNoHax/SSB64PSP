@@ -35,8 +35,8 @@ Last updated: 2026-08-27.
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 85% | 47,696 tris, vertex dedup and material merging; 0 failures archive-wide. Cross-joint vertex sharing resolved for the rest pose (RE-026); no animated skinning yet |
 | Model conversion | 🟢 60% | Meshes extracted, DObj hierarchy applied and baked, MObj materials resolved where named (RE-027). Animation not applied |
-| Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 2722 meshes and 3137 scene-graph nodes round-trip |
-| PSP asset loading | ✅ COMPLETE | 2.9 MB pack loads aligned, cache-flushed, verified on device |
+| Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 2722 meshes and 3137 scene-graph nodes round-trip. Version 3 adds the four stage tables |
+| PSP asset loading | ✅ COMPLETE | 3.0 MB pack loads aligned, cache-flushed, verified on device |
 | PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. Yoshi's 28-joint hierarchy at 60 FPS, 589us CPU |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
@@ -49,10 +49,10 @@ Last updated: 2026-08-27.
 | PSP audio backend | 🔴 0% | |
 | Physics | 🟢 40% | 15 functions ported with original addresses cited; ground/air/gravity/friction/drift verified |
 | Fighter state | 🟡 25% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff |
-| Collision | 🟡 15% | Stage collision geometry extracted and verified for all 41 stages (RE-029). No runtime collision queries yet |
+| Collision | 🟢 45% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query ported from `mpCollisionCheckFloorLineCollisionSame`, level and sloped surfaces both; surface flags (drop-through, ledge) confirmed against how Dream Land plays. **158/162 player spawns land on a floor**, almost all 2–6 units below where they start (RE-030). No ceiling or wall queries; moving groups are tested at rest |
 | Animation | 🔴 0% | |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
-| Stages | 🟡 35% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision geometry decoded for all 41 (RE-029): floor/ceiling/wall polylines, surface flags and player spawns. Not yet packed; no stage loader |
+| Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. No stage loader on device yet |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |
 | Menus | 🔴 0% | |
@@ -65,8 +65,8 @@ Last updated: 2026-08-27.
 
 ## Test coverage
 
-177 host tests passing across `ssb-rom` (116), `ssb-engine` (36) and
-`ssb-game` (25).
+196 host tests passing across `ssb-rom` (123), `ssb-engine` (36) and
+`ssb-game` (37).
 
 ## M1 verification (PPSSPP)
 

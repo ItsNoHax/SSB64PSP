@@ -26,9 +26,17 @@
 //! TextureDesc[texture_count]
 //! ObjectDesc[object_count]
 //! NodeDesc[node_count]
+//! StageDesc[stage_count]
+//! LineDesc[line_count]
+//! CollisionVertex[coll_vertex_count]
+//! MapPoint[point_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data
 //! ```
+//!
+//! The four stage tables are descriptors, not blobs: the CPU walks them, the
+//! GE never sees them, so they sit with the other tables rather than in the
+//! DMA region.
 //!
 //! Descriptors carry offsets into the blob region, so the whole file can be
 //! relocated freely: nothing stores an absolute address.
@@ -41,7 +49,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// Bumped whenever the layout changes incompatibly.
 ///
 /// 2 added the object and node tables.
-pub const VERSION: u32 = 2;
+/// 3 added the stage tables: collision lines, their vertices, and map points.
+pub const VERSION: u32 = 3;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -67,7 +76,12 @@ pub struct Header {
     pub blob_len: u32,
     pub object_count: u32,
     pub node_count: u32,
-    pub _pad: [u32; 7],
+    pub stage_count: u32,
+    /// Collision polylines, summed over every stage.
+    pub line_count: u32,
+    pub coll_vertex_count: u32,
+    pub point_count: u32,
+    pub _pad: [u32; 3],
 }
 
 impl Header {
@@ -224,6 +238,119 @@ impl NodeDesc {
     pub const NO_PARENT: u32 = u32::MAX;
 }
 
+/// A rectangular extent in game units, as `MPGroundData` stores it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Extent {
+    pub top: i16,
+    pub bottom: i16,
+    pub right: i16,
+    pub left: i16,
+}
+
+impl Extent {
+    pub const SIZE: usize = 8;
+}
+
+/// A stage: its render layers, its collision, and the extents a match needs.
+///
+/// Everything here comes from one `MPGroundData` (RE-028) and the
+/// `MPGeometryData` it points at (RE-029). The four `layers` are indices into
+/// the object table — resolved at build time from the layer's `DObjDesc`
+/// address, so the runtime never searches for them.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageDesc {
+    /// First entry in the line table, and how many follow.
+    pub first_line: u32,
+    pub line_count: u32,
+    /// First entry in the map-point table (spawns, item drops).
+    pub first_point: u32,
+    pub point_count: u32,
+    /// Object index per render-layer slot, or [`StageDesc::NO_LAYER`].
+    pub layers: [u32; 4],
+    /// How far the camera may travel.
+    pub camera: Extent,
+    /// The blast zone: outside it a fighter is KO'd.
+    pub bounds: Extent,
+    pub bgm_id: u32,
+    /// Archive file holding the `MPGroundData`, for debugging.
+    pub source_file: u32,
+    pub source_offset: u32,
+    pub _pad: u32,
+}
+
+impl StageDesc {
+    /// `16 + 16 + 8 + 8 + 16`.
+    pub const SIZE: usize = 64;
+    pub const NO_LAYER: u32 = u32::MAX;
+}
+
+/// Which side of a surface a collision line acts on, matching `MPLineKind`.
+pub mod line_kind {
+    pub const FLOOR: u16 = 0;
+    pub const CEILING: u16 = 1;
+    pub const RIGHT_WALL: u16 = 2;
+    pub const LEFT_WALL: u16 = 3;
+}
+
+/// One collision polyline: a run of [`CollisionVertex`] joined end to end.
+///
+/// Not a single segment — `MPVertexLinks::vertex2` is a point *count*, so a
+/// line is `vertex_count - 1` segments (RE-029).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineDesc {
+    /// First entry in the collision-vertex table.
+    pub first_vertex: u32,
+    pub vertex_count: u16,
+    /// One of [`line_kind`].
+    pub kind: u16,
+    /// The movable group that owns this line. Group 0 never moves, so its
+    /// points are already in world space; the rest are in the group's space.
+    pub yakumono: u16,
+    /// The line's id in the original flat array, which is what the game's
+    /// `stand_line_id` refers to.
+    pub id: u16,
+}
+
+impl LineDesc {
+    pub const SIZE: usize = 12;
+}
+
+/// A point on a collision polyline.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CollisionVertex {
+    pub x: i16,
+    pub y: i16,
+    /// Upper byte surface flags (drop-through, cliff), lower byte the material
+    /// that sets friction.
+    pub flags: u16,
+    pub _pad: u16,
+}
+
+impl CollisionVertex {
+    /// 8, not 6: the N64 struct is 6 bytes, but a power of two turns indexing
+    /// into a shift and keeps every entry within one cache line.
+    pub const SIZE: usize = 8;
+}
+
+/// A point of interest on a stage: `MPMapObjKind` 0..=3 are the four players'
+/// start positions, 4 is where items drop.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MapPoint {
+    pub kind: u16,
+    pub x: i16,
+    pub y: i16,
+    pub _pad: u16,
+}
+
+impl MapPoint {
+    pub const SIZE: usize = 8;
+}
+
 /// Divisor the GE applies to `GU_VERTEX_16BIT` positions.
 ///
 /// Vertex positions arrive as `i16` and the hardware normalises them by 32768
@@ -311,6 +438,10 @@ pub struct PackWriter {
     textures: Vec<TextureDesc>,
     objects: Vec<ObjectDesc>,
     nodes: Vec<NodeDesc>,
+    stages: Vec<StageDesc>,
+    lines: Vec<LineDesc>,
+    coll_vertices: Vec<CollisionVertex>,
+    points: Vec<MapPoint>,
     blob: Vec<u8>,
 }
 
@@ -533,13 +664,100 @@ impl PackWriter {
         (self.objects.len() - 1) as u32
     }
 
+    /// Adds a stage: its four render layers, its collision lines and its map
+    /// points, returning its index.
+    ///
+    /// `object_for(file, offset)` maps a layer's `DObjDesc` address to the
+    /// object index [`Self::add_object`] gave it. That is an exact lookup, not
+    /// a search — `ObjectDesc` records the very address `MPGroundDesc` names —
+    /// so a layer either resolves or is honestly reported as absent.
+    ///
+    /// `map` is optional because the header and the collision come from
+    /// different structs in different files; a stage with unreadable geometry
+    /// still contributes its bounds and its layers.
+    pub fn add_stage(
+        &mut self,
+        ground: &crate::stage::GroundData,
+        map: Option<&crate::collision::CollisionMap>,
+        object_for: impl Fn(u32, u32) -> Option<u32>,
+    ) -> u32 {
+        let first_line = self.lines.len() as u32;
+        let first_point = self.points.len() as u32;
+
+        if let Some(map) = map {
+            for line in &map.lines {
+                let first_vertex = self.coll_vertices.len() as u32;
+                self.coll_vertices
+                    .extend(line.points.iter().map(|p| CollisionVertex {
+                        x: p.pos[0],
+                        y: p.pos[1],
+                        flags: p.flags,
+                        _pad: 0,
+                    }));
+                self.lines.push(LineDesc {
+                    first_vertex,
+                    vertex_count: line.points.len() as u16,
+                    kind: match line.kind {
+                        crate::collision::LineKind::Floor => line_kind::FLOOR,
+                        crate::collision::LineKind::Ceiling => line_kind::CEILING,
+                        crate::collision::LineKind::RightWall => line_kind::RIGHT_WALL,
+                        crate::collision::LineKind::LeftWall => line_kind::LEFT_WALL,
+                    },
+                    yakumono: line.yakumono,
+                    id: line.id,
+                });
+            }
+            self.points.extend(map.map_objects.iter().map(|o| MapPoint {
+                kind: o.kind,
+                x: o.pos[0],
+                y: o.pos[1],
+                _pad: 0,
+            }));
+        }
+
+        let mut layers = [StageDesc::NO_LAYER; 4];
+        for layer in &ground.layers {
+            let Some(slot) = layers.get_mut(layer.index as usize) else {
+                continue;
+            };
+            if let Some(object) = object_for(layer.graph.0, layer.graph.1) {
+                *slot = object;
+            }
+        }
+
+        let extent = |b: crate::stage::Bounds| Extent {
+            top: b.top,
+            bottom: b.bottom,
+            right: b.right,
+            left: b.left,
+        };
+        self.stages.push(StageDesc {
+            first_line,
+            line_count: self.lines.len() as u32 - first_line,
+            first_point,
+            point_count: self.points.len() as u32 - first_point,
+            layers,
+            camera: extent(ground.camera_bounds),
+            bounds: extent(ground.map_bounds),
+            bgm_id: ground.bgm_id,
+            source_file: ground.file,
+            source_offset: ground.offset,
+            _pad: 0,
+        });
+        (self.stages.len() - 1) as u32
+    }
+
     /// Serialises the pack.
     pub fn finish(self) -> Vec<u8> {
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
             + self.textures.len() * TextureDesc::SIZE
             + self.objects.len() * ObjectDesc::SIZE
-            + self.nodes.len() * NodeDesc::SIZE;
+            + self.nodes.len() * NodeDesc::SIZE
+            + self.stages.len() * StageDesc::SIZE
+            + self.lines.len() * LineDesc::SIZE
+            + self.coll_vertices.len() * CollisionVertex::SIZE
+            + self.points.len() * MapPoint::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
@@ -554,6 +772,10 @@ impl PackWriter {
         out.extend_from_slice(&(self.blob.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.objects.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.nodes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.stages.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.lines.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.coll_vertices.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.points.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -603,6 +825,40 @@ impl PackWriter {
                 out.extend_from_slice(&f.to_le_bytes());
             }
         }
+        for s in &self.stages {
+            for v in [s.first_line, s.line_count, s.first_point, s.point_count] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            for v in s.layers {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            for e in [s.camera, s.bounds] {
+                for v in [e.top, e.bottom, e.right, e.left] {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            for v in [s.bgm_id, s.source_file, s.source_offset, s._pad] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for l in &self.lines {
+            out.extend_from_slice(&l.first_vertex.to_le_bytes());
+            for v in [l.vertex_count, l.kind, l.yakumono, l.id] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for v in &self.coll_vertices {
+            out.extend_from_slice(&v.x.to_le_bytes());
+            out.extend_from_slice(&v.y.to_le_bytes());
+            out.extend_from_slice(&v.flags.to_le_bytes());
+            out.extend_from_slice(&v._pad.to_le_bytes());
+        }
+        for p in &self.points {
+            out.extend_from_slice(&p.kind.to_le_bytes());
+            out.extend_from_slice(&p.x.to_le_bytes());
+            out.extend_from_slice(&p.y.to_le_bytes());
+            out.extend_from_slice(&p._pad.to_le_bytes());
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -614,6 +870,9 @@ impl PackWriter {
     }
     pub fn texture_count(&self) -> usize {
         self.textures.len()
+    }
+    pub fn stage_count(&self) -> usize {
+        self.stages.len()
     }
     pub fn blob_len(&self) -> usize {
         self.blob.len()
@@ -645,6 +904,10 @@ pub struct Pack<'a> {
     texture_count: u32,
     object_count: u32,
     node_count: u32,
+    stage_count: u32,
+    line_count: u32,
+    coll_vertex_count: u32,
+    point_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -654,6 +917,17 @@ fn u32_at(d: &[u8], at: usize) -> u32 {
 }
 fn u16_at(d: &[u8], at: usize) -> u16 {
     u16::from_le_bytes([d[at], d[at + 1]])
+}
+fn i16_at(d: &[u8], at: usize) -> i16 {
+    u16_at(d, at) as i16
+}
+fn extent_at(d: &[u8], at: usize) -> Extent {
+    Extent {
+        top: i16_at(d, at),
+        bottom: i16_at(d, at + 2),
+        right: i16_at(d, at + 4),
+        left: i16_at(d, at + 6),
+    }
 }
 fn f32_at(d: &[u8], at: usize) -> f32 {
     f32::from_bits(u32_at(d, at))
@@ -681,13 +955,21 @@ impl<'a> Pack<'a> {
         let blob_len = u32_at(data, 24) as usize;
         let object_count = u32_at(data, 28);
         let node_count = u32_at(data, 32);
+        let stage_count = u32_at(data, 36);
+        let line_count = u32_at(data, 40);
+        let coll_vertex_count = u32_at(data, 44);
+        let point_count = u32_at(data, 48);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
             + prim_count as usize * PrimDesc::SIZE
             + texture_count as usize * TextureDesc::SIZE
             + object_count as usize * ObjectDesc::SIZE
-            + node_count as usize * NodeDesc::SIZE;
+            + node_count as usize * NodeDesc::SIZE
+            + stage_count as usize * StageDesc::SIZE
+            + line_count as usize * LineDesc::SIZE
+            + coll_vertex_count as usize * CollisionVertex::SIZE
+            + point_count as usize * MapPoint::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -700,6 +982,10 @@ impl<'a> Pack<'a> {
             texture_count,
             object_count,
             node_count,
+            stage_count,
+            line_count,
+            coll_vertex_count,
+            point_count,
             blob_offset,
             blob_len,
         })
@@ -716,6 +1002,19 @@ impl<'a> Pack<'a> {
     }
     pub fn node_count(&self) -> u32 {
         self.node_count
+    }
+    pub fn stage_count(&self) -> u32 {
+        self.stage_count
+    }
+    /// Collision polylines across every stage.
+    pub fn line_count(&self) -> u32 {
+        self.line_count
+    }
+    pub fn coll_vertex_count(&self) -> u32 {
+        self.coll_vertex_count
+    }
+    pub fn point_count(&self) -> u32 {
+        self.point_count
     }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
@@ -737,6 +1036,18 @@ impl<'a> Pack<'a> {
     }
     fn node_table(&self) -> usize {
         self.object_table() + self.object_count as usize * ObjectDesc::SIZE
+    }
+    fn stage_table(&self) -> usize {
+        self.node_table() + self.node_count as usize * NodeDesc::SIZE
+    }
+    fn line_table(&self) -> usize {
+        self.stage_table() + self.stage_count as usize * StageDesc::SIZE
+    }
+    fn coll_vertex_table(&self) -> usize {
+        self.line_table() + self.line_count as usize * LineDesc::SIZE
+    }
+    fn point_table(&self) -> usize {
+        self.coll_vertex_table() + self.coll_vertex_count as usize * CollisionVertex::SIZE
     }
 
     pub fn object(&self, i: u32) -> Option<ObjectDesc> {
@@ -814,6 +1125,93 @@ impl<'a> Pack<'a> {
             palette_offset: u32_at(self.data, at + 16),
             palette_len: u32_at(self.data, at + 20),
         })
+    }
+
+    pub fn stage(&self, i: u32) -> Option<StageDesc> {
+        if i >= self.stage_count {
+            return None;
+        }
+        let at = self.stage_table() + i as usize * StageDesc::SIZE;
+        let mut layers = [StageDesc::NO_LAYER; 4];
+        for (k, l) in layers.iter_mut().enumerate() {
+            *l = u32_at(self.data, at + 16 + k * 4);
+        }
+        Some(StageDesc {
+            first_line: u32_at(self.data, at),
+            line_count: u32_at(self.data, at + 4),
+            first_point: u32_at(self.data, at + 8),
+            point_count: u32_at(self.data, at + 12),
+            layers,
+            camera: extent_at(self.data, at + 32),
+            bounds: extent_at(self.data, at + 40),
+            bgm_id: u32_at(self.data, at + 48),
+            source_file: u32_at(self.data, at + 52),
+            source_offset: u32_at(self.data, at + 56),
+            _pad: 0,
+        })
+    }
+
+    pub fn line(&self, i: u32) -> Option<LineDesc> {
+        if i >= self.line_count {
+            return None;
+        }
+        let at = self.line_table() + i as usize * LineDesc::SIZE;
+        Some(LineDesc {
+            first_vertex: u32_at(self.data, at),
+            vertex_count: u16_at(self.data, at + 4),
+            kind: u16_at(self.data, at + 6),
+            yakumono: u16_at(self.data, at + 8),
+            id: u16_at(self.data, at + 10),
+        })
+    }
+
+    pub fn coll_vertex(&self, i: u32) -> Option<CollisionVertex> {
+        if i >= self.coll_vertex_count {
+            return None;
+        }
+        let at = self.coll_vertex_table() + i as usize * CollisionVertex::SIZE;
+        Some(CollisionVertex {
+            x: i16_at(self.data, at),
+            y: i16_at(self.data, at + 2),
+            flags: u16_at(self.data, at + 4),
+            _pad: 0,
+        })
+    }
+
+    pub fn map_point(&self, i: u32) -> Option<MapPoint> {
+        if i >= self.point_count {
+            return None;
+        }
+        let at = self.point_table() + i as usize * MapPoint::SIZE;
+        Some(MapPoint {
+            kind: u16_at(self.data, at),
+            x: i16_at(self.data, at + 2),
+            y: i16_at(self.data, at + 4),
+            _pad: 0,
+        })
+    }
+
+    /// A stage's collision lines, in table order.
+    pub fn stage_lines(&self, s: &StageDesc) -> impl Iterator<Item = LineDesc> + '_ {
+        let range = s.first_line..s.first_line + s.line_count;
+        range.filter_map(move |i| self.line(i))
+    }
+
+    /// The points of one collision polyline.
+    pub fn line_vertices(&self, l: &LineDesc) -> impl Iterator<Item = CollisionVertex> + '_ {
+        let range = l.first_vertex..l.first_vertex + l.vertex_count as u32;
+        range.filter_map(move |i| self.coll_vertex(i))
+    }
+
+    /// A stage's map points, in table order.
+    pub fn stage_points(&self, s: &StageDesc) -> impl Iterator<Item = MapPoint> + '_ {
+        let range = s.first_point..s.first_point + s.point_count;
+        range.filter_map(move |i| self.map_point(i))
+    }
+
+    /// Where player `n` starts. `MPMapObjKind` 0..=3 are the four spawns.
+    pub fn spawn(&self, s: &StageDesc, player: u16) -> Option<MapPoint> {
+        self.stage_points(s).find(|p| p.kind == player)
     }
 
     /// A slice of the blob region. Bounds-checked once, here, so the render
@@ -1009,21 +1407,29 @@ mod tests {
             w.add_texture(&tex(n));
         }
         w.add_mesh(&sample_mesh(), 1, 2, |_| Some(3));
+        w.add_object(&chain_graph(3), 11, |_| None, &[]);
+        let (ground, map) = sample_stage();
+        w.add_stage(&ground, Some(&map), |_, _| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
 
-        // The blob must start exactly after all five tables.
+        // Every table is populated, so a wrong `SIZE` anywhere moves the blob.
         let expected_tables = Header::SIZE
             + pack.mesh_count as usize * MeshDesc::SIZE
             + pack.prim_count as usize * PrimDesc::SIZE
             + pack.texture_count as usize * TextureDesc::SIZE
             + pack.object_count as usize * ObjectDesc::SIZE
-            + pack.node_count as usize * NodeDesc::SIZE;
-        assert!(
-            pack.blob_offset >= expected_tables,
-            "blob overlaps the descriptor tables: {} < {}",
+            + pack.node_count as usize * NodeDesc::SIZE
+            + pack.stage_count as usize * StageDesc::SIZE
+            + pack.line_count as usize * LineDesc::SIZE
+            + pack.coll_vertex_count as usize * CollisionVertex::SIZE
+            + pack.point_count as usize * MapPoint::SIZE;
+        // Exactly, not merely "at least": a `SIZE` that overstates its
+        // descriptor still satisfies `>=` while every reader offset is wrong.
+        assert_eq!(
             pack.blob_offset,
-            expected_tables
+            align_up(expected_tables),
+            "a descriptor SIZE disagrees with what the writer emitted"
         );
 
         // Every texture must read back with the width it was written with --
@@ -1306,5 +1712,228 @@ mod tests {
         }
         offsets.dedup();
         assert_eq!(offsets.len(), 5, "each mesh gets distinct storage");
+    }
+
+    // -----------------------------------------------------------------------
+    // Stages
+    // -----------------------------------------------------------------------
+
+    /// Dream Land in miniature: a wide main platform, one floating platform,
+    /// and two player spawns. Layer 0 and layer 2 are occupied, 1 and 3 are
+    /// not — real stages leave slots empty, and a packer that just appended
+    /// layers in order would silently shift them.
+    fn sample_stage() -> (crate::stage::GroundData, crate::collision::CollisionMap) {
+        use crate::collision::{CollisionLine, CollisionMap, CollisionVertex as V, LineKind};
+        use crate::stage::{Bounds, GroundData, GroundLayer};
+
+        let ground = GroundData {
+            file: 104,
+            offset: 0x14,
+            layers: alloc::vec![
+                GroundLayer {
+                    index: 0,
+                    graph: (33, 0x2000),
+                    mobjsub_table: None,
+                },
+                GroundLayer {
+                    index: 2,
+                    graph: (44, 0x2000),
+                    mobjsub_table: None,
+                },
+            ],
+            map_geometry: Some((104, 0x400)),
+            map_nodes: None,
+            camera_bounds: Bounds {
+                top: 1600,
+                bottom: -600,
+                right: 2400,
+                left: -2400,
+            },
+            map_bounds: Bounds {
+                top: 2500,
+                bottom: -1500,
+                right: 3500,
+                left: -3500,
+            },
+            bgm_id: 0x11,
+        };
+
+        let v = |x, y, flags| V { pos: [x, y], flags };
+        let map = CollisionMap {
+            lines: alloc::vec![
+                CollisionLine {
+                    yakumono: 0,
+                    kind: LineKind::Floor,
+                    id: 3,
+                    points: alloc::vec![v(-2318, 0, 0x8000), v(2318, 0, 0)],
+                },
+                CollisionLine {
+                    yakumono: 0,
+                    kind: LineKind::Floor,
+                    id: 1,
+                    points: alloc::vec![v(951, 907, 1), v(1421, 907, 1), v(1892, 907, 1)],
+                },
+                CollisionLine {
+                    yakumono: 1,
+                    kind: LineKind::RightWall,
+                    id: 5,
+                    points: alloc::vec![v(2318, 0, 0), v(2290, -331, 0)],
+                },
+            ],
+            map_objects: alloc::vec![
+                crate::collision::MapObject {
+                    kind: 0,
+                    pos: [0, 6],
+                },
+                crate::collision::MapObject {
+                    kind: 1,
+                    pos: [-1397, 906],
+                },
+            ],
+        };
+        (ground, map)
+    }
+
+    #[test]
+    fn a_stage_round_trips_with_its_collision() {
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        w.add_stage(&ground, Some(&map), |_, _| None);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.stage_count(), 1);
+        let s = pack.stage(0).unwrap();
+        assert_eq!((s.source_file, s.source_offset), (104, 0x14));
+        assert_eq!(s.bgm_id, 0x11);
+        assert_eq!(s.camera.top, 1600);
+        assert_eq!(s.camera.left, -2400);
+        assert_eq!(s.bounds.bottom, -1500);
+
+        let lines: alloc::vec::Vec<LineDesc> = pack.stage_lines(&s).collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].kind, line_kind::FLOOR);
+        assert_eq!(lines[0].id, 3);
+        assert_eq!(lines[2].kind, line_kind::RIGHT_WALL);
+        assert_eq!(lines[2].yakumono, 1);
+
+        // The main platform: two points, symmetric about the origin, with the
+        // first carrying its surface flags.
+        let pts: alloc::vec::Vec<CollisionVertex> = pack.line_vertices(&lines[0]).collect();
+        assert_eq!(pts.len(), 2);
+        assert_eq!((pts[0].x, pts[0].y), (-2318, 0));
+        assert_eq!((pts[1].x, pts[1].y), (2318, 0));
+        assert_eq!(pts[0].flags, 0x8000);
+
+        // A three-point polyline stays three points, not collapsed to a
+        // segment: `vertex_count` is a point count (RE-029).
+        assert_eq!(lines[1].vertex_count, 3);
+        let pts: alloc::vec::Vec<CollisionVertex> = pack.line_vertices(&lines[1]).collect();
+        assert_eq!(pts.len(), 3);
+        assert_eq!(pts[1].x, 1421);
+    }
+
+    #[test]
+    fn empty_layer_slots_stay_empty() {
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        // Both named graphs resolve, but they belong in slots 0 and 2.
+        w.add_stage(&ground, Some(&map), |file, offset| match (file, offset) {
+            (33, 0x2000) => Some(7),
+            (44, 0x2000) => Some(9),
+            _ => None,
+        });
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let s = pack.stage(0).unwrap();
+        assert_eq!(s.layers, [7, StageDesc::NO_LAYER, 9, StageDesc::NO_LAYER]);
+    }
+
+    #[test]
+    fn a_layer_whose_object_was_never_packed_is_reported_as_absent() {
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        w.add_stage(&ground, Some(&map), |file, _| (file == 33).then_some(7));
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.stage(0).unwrap().layers[2], StageDesc::NO_LAYER);
+    }
+
+    #[test]
+    fn spawns_are_found_by_player_number() {
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        w.add_stage(&ground, Some(&map), |_, _| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let s = pack.stage(0).unwrap();
+
+        let p1 = pack.spawn(&s, 0).expect("player 1 start");
+        assert_eq!((p1.x, p1.y), (0, 6));
+        let p2 = pack.spawn(&s, 1).expect("player 2 start");
+        assert_eq!((p2.x, p2.y), (-1397, 906));
+        assert!(pack.spawn(&s, 3).is_none(), "this fixture has only two");
+    }
+
+    #[test]
+    fn a_second_stage_does_not_read_the_first_ones_bytes() {
+        // The trap `TextureDesc::SIZE` fell into: a wrong descriptor size still
+        // reads entry 0 correctly and mangles every entry after it.
+        let (ground, map) = sample_stage();
+        let mut other = ground.clone();
+        other.file = 200;
+        other.bgm_id = 0x22;
+        other.camera_bounds.top = 999;
+
+        let mut w = PackWriter::new();
+        w.add_stage(&ground, Some(&map), |_, _| None);
+        w.add_stage(&other, None, |_, _| None);
+
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.stage_count(), 2);
+
+        let b = pack.stage(1).unwrap();
+        assert_eq!((b.source_file, b.bgm_id, b.camera.top), (200, 0x22, 999));
+        // A stage whose geometry could not be read still carries its bounds.
+        assert_eq!(b.line_count, 0);
+        assert_eq!(b.point_count, 0);
+        // And it must not borrow the first stage's lines.
+        assert_eq!(b.first_line, 3);
+        assert_eq!(pack.stage_lines(&b).count(), 0);
+    }
+
+    #[test]
+    fn stage_tables_do_not_disturb_the_geometry_tables() {
+        // Stages sit after the node table, so a wrong size here would silently
+        // move the blob and corrupt vertices rather than fail to load.
+        let (ground, map) = sample_stage();
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
+        w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        w.add_stage(&ground, Some(&map), |_, _| None);
+
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let m = pack.mesh(0).unwrap();
+        assert_eq!(m.source_file, 42);
+        assert_eq!(pack.vertices(&m).unwrap().len(), 3 * VERTEX_SIZE);
+        assert_eq!(pack.node(2).unwrap().mesh, 2);
+        assert_eq!(pack.stage(0).unwrap().bgm_id, 0x11);
+        assert_eq!(pack.coll_vertex_count(), 7);
+        assert_eq!(pack.point_count(), 2);
+    }
+
+    #[test]
+    fn a_pack_with_no_stages_still_loads() {
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.stage_count(), 0);
+        assert!(pack.stage(0).is_none());
+        assert!(pack.line(0).is_none());
+        assert!(pack.coll_vertex(0).is_none());
+        assert!(pack.map_point(0).is_none());
     }
 }
