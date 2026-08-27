@@ -1670,8 +1670,51 @@ floor was the same colour as the line under its feet. It is now magenta — the
 one hue the collision palette had left (green floors, red ceilings, blue and
 amber walls), so the fighter cannot be confused with any surface it touches.
 
-**Confidence: high.** The aspect fix is confirmed by the same ratio measurement
-that found the bug, on a shape whose proportions come from extracted data. What
-is *not* claimed: the absolute on-screen size, which would need a fixed camera
-to measure and was not checked — the camera spins and is tilted, so world units
-do not map linearly to screen pixels in either axis.
+**Verifying the absolute size, not just the proportions.** The first pass
+stopped at ratios and said the absolute size was unverifiable because "the
+camera spins and is tilted". That was wrong, and worth recording: the stage view
+passes `[0.0, 0.0, 0.0]` to `model_transform` and is face-on always — `spin`
+only applies to the object and mesh views. So every point at world z = 0 shares
+one depth, screen position is exactly linear in world x and y, and ratios of
+extents need no camera model at all.
+
+That makes the stage's own collision the ruler. Dream Land's line 3 runs
+`(-2318, 0)` to `(2318, 0)`, exactly 4636 units, and its side platforms sit at
+y = 904 and y = 907:
+
+| | measured | from | px/unit |
+|---|---|---|---|
+| horizontal | 297 px | line 3, 4636 units wide | 0.064064 |
+| vertical | 58 px | y = 0 to y = 904 | 0.064159 |
+
+**The two agree to 0.15%.** Before the viewport fix they were 0.0848 against
+0.0641 — 32% apart. That is the fix confirmed against stage geometry rather
+than against the fighter it was found with.
+
+Against that ruler the diamond measures 328 units tall (expected 320, +0.5 px)
+and its waist 187 (expected 190, −0.2 px). Width read 328 against 300, which is
++1.8 px — more than the others, and worth chasing rather than waving through.
+
+**Chasing it needed a bigger fighter.** At 21 px tall one pixel is 15 game
+units, so 300 and 320 are 1.3 px apart and simply not resolvable. Zooming in
+(`docs/images/m4-fighter-diamond.png`, 98 px tall, 1 px = 3.3 units):
+
+| | 21 px tall | 98 px tall | expected |
+|---|---|---|---|
+| width / height | 1.000 (+6.7%) | 0.918 (−2.0%) | 0.938 |
+| absolute error | +1.3 px | −1.9 px | — |
+
+The *relative* error falls from 6.7% to 2.0% as the shape grows 4.7x while the
+*absolute* error stays around 1.5 px. That is the signature of a fixed
+measurement bias — antialiasing spreading a stroke outward at the vertices,
+which the platform lines confirm by reading 1 px under their known lengths —
+and not of a scale error, which would hold its percentage at every zoom.
+
+Taking the height as its known 320 units, the drawn diamond is 294 wide and its
+waist at 193, against 300 and 190. Correct to within two pixels of a 98-pixel
+shape.
+
+**Confidence: high**, now for the absolute size as well as the proportions. The
+scale is verified against Dream Land's own collision geometry in both axes, and
+the residual error is shown to be measurement bias by watching it shrink with
+zoom rather than by arguing that it ought to be.
