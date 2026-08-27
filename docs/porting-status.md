@@ -49,10 +49,10 @@ Last updated: 2026-08-27.
 | PSP audio backend | 🔴 0% | |
 | Physics | 🟢 40% | 15 functions ported with original addresses cited; ground/air/gravity/friction/drift verified |
 | Fighter state | 🟡 25% | Roster, facing, situation, hitlag/hitstun timers, land/takeoff |
-| Collision | 🔴 0% | |
+| Collision | 🟡 15% | Stage collision geometry extracted and verified for all 41 stages (RE-029). No runtime collision queries yet |
 | Animation | 🔴 0% | |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
-| Stages | 🟡 25% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id and the collision-geometry pointer. Collision lines not decoded; no stage loader yet |
+| Stages | 🟡 35% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision geometry decoded for all 41 (RE-029): floor/ceiling/wall polylines, surface flags and player spawns. Not yet packed; no stage loader |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |
 | Menus | 🔴 0% | |
@@ -65,7 +65,7 @@ Last updated: 2026-08-27.
 
 ## Test coverage
 
-171 host tests passing across `ssb-rom` (110), `ssb-engine` (36) and
+177 host tests passing across `ssb-rom` (116), `ssb-engine` (36) and
 `ssb-game` (25).
 
 ## M1 verification (PPSSPP)

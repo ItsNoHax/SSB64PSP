@@ -1041,6 +1041,80 @@ nothing else mistaken for one.
 
 ---
 
+## RE-029 — Stage collision is 2D polylines, and `vertex2` is a count
+
+**Question.** RE-028 located every stage's `MPGeometryData` but did not read
+it. Collision is the last thing M4's vertical slice is missing. What shape is
+it in?
+
+**Evidence.** Not triangles — 2D polylines, reached through two indirections:
+
+```c
+line_info[yakumono].line_data[kind] = { group_id, line_count };
+// line ids group_id .. group_id + line_count, kind in {floor, ceil, rwall, lwall}
+vertex_links[line_id] = { vertex1, vertex2 };
+pos = vertex_data[ vertex_id[vertex1 + k] ].pos;
+```
+
+**The trap.** `MPVertexLinks { u16 vertex1, vertex2; }` reads like a segment
+between two vertices. It is not. `mpCollisionCheckFloor` walks
+
+```c
+for (v = links[id].vertex1; v < links[id].vertex1 + links[id].vertex2 - 1; v++)
+```
+
+joining consecutive points — so `vertex2` is a **count** and a line is a
+polyline. The field name says otherwise and the struct gives no hint.
+
+Dream Land settles it. Line 3 is `{9, 2}`. Under "count" that is
+`vertex_id[9..11]` → `(-2318, 0) .. (2318, 0)`: a platform symmetric about the
+origin. Under "second vertex index" it would be `vertex_id[9]` to
+`vertex_id[2]`, which is not.
+
+**Lengths without adjacency.** No array stores its own length, and guessing
+from the next symbol's offset would not survive a file the decomp has not
+typed. It is not needed: the line count is the largest `group_id + line_count`
+over every kind, the `vertex_id` length the largest `vertex1 + vertex2` over
+every line, and the vertex count one past the largest index those name. Each
+level bounds the next, out of the data itself.
+
+**Result.** All **41** stages decode, 0 failures. Dream Land:
+
+```
+7 lines (floor 4, ceiling 1, walls 2), 42 map objects
+  line 0 Floor      (570,1542) (0,1542) (-570,1542)
+  line 1 Floor      (1892,907) (1421,907) (951,907)
+  line 2 Floor      (-951,904) (-1396,904) (-1841,904)
+  line 3 Floor      (-2318,0) (2318,0)
+  line 4 Ceiling    (1972,-1072) (-1972,-1072)
+  line 5 RightWall  (2318,0) (2307,-124) (2290,-331) (2075,-834) (1972,-1072)
+  line 6 LeftWall   (-1972,-1072) ... (-2318,0)
+  object kind 0 at (0,6)       kind 1 at (-1397,906)
+  object kind 2 at (1,1545)    kind 3 at (1421,909)
+```
+
+Three floating platforms — two low and one high and centred — over a main
+platform, with the rounded underside walls sloping from `±2318, 0` down to
+`±1972, -1072`. That is Dream Land. `MPMapObjKind` 0–3 are the player starts,
+and they land one per platform, which is how Dream Land opens a match.
+
+Final Destination cross-checks it from the other direction: **one** floor
+line, `(-2508, 0) .. (2508, 0)`, all four spawns on it. Exactly one flat
+platform and nothing else, which is the whole stage.
+
+**Limits.** Extracted and verified, **not yet packed** — nothing on device can
+read this. `MPVertexInfo` is deliberately skipped: the collision code indexes
+it by line id for early rejection, but it is absent from `MPGeometryData`
+because the runtime derives it on load. Yakumono transforms are runtime state,
+so lines belonging to a moving group are in that group's space, not world
+space.
+
+**Confidence: certain.** Two stages reconstruct feature for feature from
+independent knowledge of what they look like, all 41 decode, and the array
+lengths are derived rather than assumed.
+
+---
+
 ## RE-024 — The shipped light colours really are neutral
 
 **Question.** RE-021 substituted a single neutral key light for
