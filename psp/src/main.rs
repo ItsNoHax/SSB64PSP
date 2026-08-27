@@ -147,7 +147,10 @@ unsafe fn run() -> ! {
             }
         })
         .unwrap_or(0);
-    let mut cam_distance = 200.0f32;
+    /// Zoom at which a stage exactly fits the view. Below it the camera is
+    /// closer than the stage is wide, so there is a fighter to follow.
+    const CAM_FIT: f32 = 200.0;
+    let mut cam_distance = CAM_FIT;
     let mut draw_state = meshdraw::DrawState::default();
     // Texture inspection mode (C_UP toggles). Proven working, so the mesh
     // view is the default; kept because it cleanly separates an upload bug
@@ -452,6 +455,26 @@ unsafe fn run() -> ! {
                     let dist = radius * FIT * cam_distance / 200.0;
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
+
+                    // Once zoomed in past the whole-stage framing, follow the
+                    // fighter. The stage's bounding centre is the right thing
+                    // to look at while inspecting a stage, but it sits up in
+                    // the scenery -- on Dream Land it is inside the tree -- so
+                    // zooming in on it walks the fighter off the bottom of the
+                    // screen. At the default zoom the stage still wins, because
+                    // that framing is what makes the collision overlay legible.
+                    let centre = match (sim_fighter && cam_distance < CAM_FIT, &player) {
+                        (true, Some(pl)) => [
+                            pl.fighter.pos.x,
+                            // Look at the middle of the body rather than the
+                            // feet, so a fighter standing on a floor is not
+                            // pinned to the centre of the screen with the
+                            // stage below it out of view.
+                            pl.fighter.pos.y + pl.fighter.coll.center,
+                            centre[2],
+                        ],
+                        _ => centre,
+                    };
 
                     // A stage is a place, not an object: spinning it would
                     // make the collision overlay impossible to read against
