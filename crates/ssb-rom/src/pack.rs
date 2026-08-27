@@ -52,7 +52,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 2 added the object and node tables.
 /// 3 added the stage tables: collision lines, their vertices, and map points.
 /// 4 added the fighter table.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -422,21 +422,38 @@ pub struct FighterDesc {
     pub coll_width: f32,
     pub cliffcatch_width: f32,
     pub cliffcatch_height: f32,
+    /// How long the statuses that end when their animation runs out last, in
+    /// frames at playback speed 1.0. Unlike everything above these do not come
+    /// from `FTAttributes` at all — they are the lengths of the figatree
+    /// scripts themselves, read by [`crate::anim`].
+    pub dash_anim_length: f32,
+    pub turn_anim_length: f32,
+    pub runbrake_anim_length: f32,
+    pub squat_anim_length: f32,
+    pub squatrv_anim_length: f32,
+    pub landing_anim_length: f32,
+    pub pass_anim_length: f32,
 }
 
+/// Float fields carried per fighter: 43 from `FTAttributes` plus the seven
+/// figatree animation lengths.
+const SCALARS: usize = 50;
+
 impl FighterDesc {
-    /// 48 words: 5 integers then the 43 floats [`fighter_scalars`] lists.
-    /// The 45 scalars of the original `FTAttributes` head, with `jumps_max`
-    /// and `is_metallic` moved up into the integer group so no consumer has to
-    /// bit-cast. No padding is needed — it lands on 16 bytes as it is.
-    pub const SIZE: usize = 192;
+    /// 56 words: 5 integers, then the 50 floats [`fighter_scalars`] lists,
+    /// then one word of padding to keep the stride 16-byte aligned.
+    ///
+    /// The floats are the 43 scalars of the original `FTAttributes` head
+    /// (`jumps_max` and `is_metallic` moved up into the integer group so no
+    /// consumer has to bit-cast) followed by the seven figatree lengths.
+    pub const SIZE: usize = 224;
 }
 
 /// The float fields of a [`FighterDesc`], in the order they are stored.
 ///
 /// Writer and reader both go through this, so a field added in one place
 /// cannot silently disagree with the other.
-fn fighter_scalars(d: &FighterDesc) -> [f32; 43] {
+fn fighter_scalars(d: &FighterDesc) -> [f32; SCALARS] {
     [
         d.size,
         d.walkslow_anim_length,
@@ -481,6 +498,13 @@ fn fighter_scalars(d: &FighterDesc) -> [f32; 43] {
         d.coll_width,
         d.cliffcatch_width,
         d.cliffcatch_height,
+        d.dash_anim_length,
+        d.turn_anim_length,
+        d.runbrake_anim_length,
+        d.squat_anim_length,
+        d.squatrv_anim_length,
+        d.landing_anim_length,
+        d.pass_anim_length,
     ]
 }
 
@@ -491,7 +515,7 @@ fn fighter_from_parts(
     source_offset: u32,
     jumps_max: i32,
     is_metallic: u32,
-    s: [f32; 43],
+    s: [f32; SCALARS],
 ) -> FighterDesc {
     FighterDesc {
         kind,
@@ -542,6 +566,13 @@ fn fighter_from_parts(
         coll_width: s[40],
         cliffcatch_width: s[41],
         cliffcatch_height: s[42],
+        dash_anim_length: s[43],
+        turn_anim_length: s[44],
+        runbrake_anim_length: s[45],
+        squat_anim_length: s[46],
+        squatrv_anim_length: s[47],
+        landing_anim_length: s[48],
+        pass_anim_length: s[49],
     }
 }
 
@@ -944,8 +975,18 @@ impl PackWriter {
 
     /// Serialises the pack.
     /// Adds one character's constants. Call in `FTKind` order.
-    pub fn add_fighter(&mut self, f: &crate::fighter::Fighter) {
+    ///
+    /// `anims` comes from a different place than `f` — the figatree files
+    /// rather than `FTAttributes` — so it is passed separately rather than
+    /// folded into the fighter, which knows nothing about animation.
+    pub fn add_fighter(
+        &mut self,
+        f: &crate::fighter::Fighter,
+        anims: &crate::anim::FighterLengths,
+    ) {
+        use crate::anim;
         let a = &f.attributes;
+        let frames = |slot: usize| anims.frames[slot] as f32;
         self.fighters.push(FighterDesc {
             kind: f.file.kind as u32,
             source_file: f.file.file,
@@ -995,6 +1036,13 @@ impl PackWriter {
             coll_width: a.map_coll.width,
             cliffcatch_width: a.cliffcatch_coll.0,
             cliffcatch_height: a.cliffcatch_coll.1,
+            dash_anim_length: frames(anim::SLOT_DASH),
+            turn_anim_length: frames(anim::SLOT_TURN),
+            runbrake_anim_length: frames(anim::SLOT_RUN_BRAKE),
+            squat_anim_length: frames(anim::SLOT_SQUAT),
+            squatrv_anim_length: frames(anim::SLOT_SQUAT_RV),
+            landing_anim_length: frames(anim::SLOT_LANDING),
+            pass_anim_length: frames(anim::SLOT_PASS),
         });
     }
 
@@ -1124,6 +1172,7 @@ impl PackWriter {
             for v in fighter_scalars(d) {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            out.extend_from_slice(&0u32.to_le_bytes());
         }
 
         out.resize(blob_offset, 0);
@@ -1333,7 +1382,7 @@ impl<'a> Pack<'a> {
             return None;
         }
         let at = self.fighter_table() + i as usize * FighterDesc::SIZE;
-        let mut s = [0.0f32; 43];
+        let mut s = [0.0f32; SCALARS];
         for (k, v) in s.iter_mut().enumerate() {
             *v = f32_at(self.data, at + 20 + k * 4);
         }
@@ -2236,6 +2285,14 @@ mod tests {
         assert!(pack.fighter(0).is_none());
     }
 
+    /// Mario's real animation lengths, as `romtool anims` reads them.
+    fn sample_anims() -> crate::anim::FighterLengths {
+        crate::anim::FighterLengths {
+            name: "Mario",
+            frames: [23, 12, 23, 8, 12, 7, 25],
+        }
+    }
+
     fn sample_fighter(kind: u8) -> crate::fighter::Fighter {
         use crate::fighter::{FighterAttributes, FighterFile, ObjectColl};
         crate::fighter::Fighter {
@@ -2299,7 +2356,7 @@ mod tests {
     #[test]
     fn a_fighter_round_trips_through_the_pack() {
         let mut w = PackWriter::new();
-        w.add_fighter(&sample_fighter(0));
+        w.add_fighter(&sample_fighter(0), &sample_anims());
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
 
@@ -2316,6 +2373,11 @@ mod tests {
         assert_eq!(f.coll_top, 320.0);
         assert_eq!(f.coll_width, 150.0);
         assert_eq!(f.cliffcatch_height, 360.0);
+        // The animation lengths land after the attribute scalars, so a stride
+        // or ordering slip shows up here first.
+        assert_eq!(f.dash_anim_length, 23.0);
+        assert_eq!(f.turn_anim_length, 12.0);
+        assert_eq!(f.pass_anim_length, 25.0);
     }
 
     #[test]
@@ -2325,7 +2387,7 @@ mod tests {
         // rather than failing.
         let mut w = PackWriter::new();
         for k in 0..3 {
-            w.add_fighter(&sample_fighter(k));
+            w.add_fighter(&sample_fighter(k), &sample_anims());
         }
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
@@ -2333,6 +2395,7 @@ mod tests {
         for k in 0..3 {
             assert_eq!(pack.fighter(k).unwrap().kind, k);
             assert_eq!(pack.fighter(k).unwrap().gravity, 2.4);
+            assert_eq!(pack.fighter(k).unwrap().pass_anim_length, 25.0);
         }
         assert!(pack.fighter(3).is_none());
     }
@@ -2343,7 +2406,7 @@ mod tests {
         let mut w = PackWriter::new();
         w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
         w.add_stage(&ground, Some(&map), |_, _| None);
-        w.add_fighter(&sample_fighter(0));
+        w.add_fighter(&sample_fighter(0), &sample_anims());
 
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();

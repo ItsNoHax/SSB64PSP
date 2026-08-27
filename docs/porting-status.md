@@ -14,7 +14,7 @@ Last updated: 2026-08-27.
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 485 textures packed into a 2.9 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🟡 45% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants out of the pack (RE-034). No attacks, no damage, no opponent, no match loop |
+| **M4 — Gameplay vertical slice** | 🟡 50% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants and animation lengths out of the pack (RE-034, RE-035). No attacks, no damage, no opponent, no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
 | **M7 — Menus / save** | 🔴 0% | |
@@ -48,7 +48,7 @@ Last updated: 2026-08-27.
 | PSP input backend | 🟢 70% | `sceCtrl` analog read wired to the shared mapping |
 | PSP audio backend | 🔴 0% | |
 | Physics | 🟢 60% | 16 functions ported with original addresses cited, and *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick. Running on all 27 characters' **real** constants, extracted from the ROM and verified field-by-field against the decompilation; the invented defaults they replaced were 26x off and had hidden a stick-scaling bug in air drift (RE-032) |
-| Fighter state | 🟢 55% | The movement status machine: Wait, three walks, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy and Pass, with the original's interrupt-chain ordering and its tap-counter input model (RE-033). Plus roster, facing, hitlag/hitstun, spawn placement and every character's constants. Five statuses cannot time out until animation data is extracted; no attacks, specials, grabs, shields or damage states |
+| Fighter state | 🟢 60% | The movement status machine: Wait, three walks, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy and Pass, with the original's interrupt-chain ordering and its tap-counter input model (RE-033). Plus roster, facing, hitlag/hitstun, spawn placement and every character's constants. All of them now **end on their own**: the five that had no duration in `FTAttributes` take it from their figatree animation instead, read out of the ROM and verified against the decompilation for all 27 fighters (RE-035). No attacks, specials, grabs, shields or damage states |
 | Collision | 🟢 60% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query, vertical floor projection, per-line surface height and the `mpprocess` floor path (substepping, landing snap, ledge corner, follow-the-surface) all ported. Surface flags confirmed against how Dream Land plays; `dMPCollisionMaterialFrictions` recovered. **158/158 spawns hold a simulated fighter still for 60 ticks at zero drift**, and the swept and projected solvers agree on every one (RE-030, RE-031). No ceiling or wall queries; moving groups are tested at rest |
 | Animation | 🔴 0% | |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
@@ -65,8 +65,8 @@ Last updated: 2026-08-27.
 
 ## Test coverage
 
-270 host tests passing across `ssb-rom` (131), `ssb-engine` (36) and
-`ssb-game` (103).
+282 host tests passing across `ssb-rom` (139), `ssb-engine` (36) and
+`ssb-game` (107).
 
 ## M1 verification (PPSSPP)
 

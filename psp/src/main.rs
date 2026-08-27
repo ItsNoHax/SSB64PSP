@@ -670,15 +670,17 @@ unsafe fn run() -> ! {
         // shows up as "attrs built-in" rather than as mysteriously wrong
         // physics. Gravity is shown in tenths because the debug text has no
         // float formatting; Mario's 2.4 reads as 24.
-        let (ft_src, ft_grav, ft_tvel, ft_bw, ft_bh) = match &player {
+        let (ft_src, ft_grav, ft_tvel, ft_bw, ft_bh, ft_dash, ft_land) = match &player {
             Some(pl) if sim_fighter => (
                 if pl.from_pack { "pack    " } else { "built-in" },
                 (pl.fighter.attributes.gravity * 10.0) as i32,
                 pl.fighter.attributes.tvel_base as i32,
                 pl.fighter.coll.width as i32,
                 pl.fighter.coll.top as i32,
+                pl.fighter.anim.dash as i32,
+                pl.fighter.anim.landing as i32,
             ),
-            _ => ("-       ", 0, 0, 0, 0),
+            _ => ("-       ", 0, 0, 0, 0, 0, 0),
         };
 
         const WHITE: u32 = 0xFFFF_FFFF;
@@ -693,6 +695,7 @@ unsafe fn run() -> ! {
                  {} {}/{}  file {}  @0x{:X}\n\
                  fighter {}  x {} y {}  line {}  mat {}  air {}\n\
                  attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
+                 anim dash {}f  land {}f\n\
                  tris {}  {} {}  {} {}\n\
                  draws {}  state changes {}\n\
                  \n\
@@ -724,6 +727,8 @@ unsafe fn run() -> ! {
                 ft_tvel,
                 ft_bw,
                 ft_bh,
+                ft_dash,
+                ft_land,
                 shown.0,
                 if stage_view {
                     "layers"
