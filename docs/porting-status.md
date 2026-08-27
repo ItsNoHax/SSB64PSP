@@ -12,7 +12,7 @@ Last updated: 2026-08-27.
 |---|---|---|
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
-| **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; meshes (1768 lists, 0 failures) and textures (336/469) packed into a 1.7 MB runtime pack that round-trips |
+| **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 394 textures packed into a 2.7 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 88% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included (`docs/images/m4-fighter-joints.png`). No animation yet |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
@@ -35,8 +35,8 @@ Last updated: 2026-08-27.
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 80% | 25,562 tris, 2.09x vertex reuse, material merging; 0 failures. No skinning yet |
 | Model conversion | 🟡 30% | Meshes extracted; DObj hierarchy/animation not applied |
-| Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 1768 meshes round-trip |
-| PSP asset loading | ✅ COMPLETE | 1.7 MB pack loads aligned, cache-flushed, verified on device |
+| Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 2722 meshes and 3137 scene-graph nodes round-trip |
+| PSP asset loading | ✅ COMPLETE | 2.7 MB pack loads aligned, cache-flushed, verified on device |
 | PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. Yoshi's 28-joint hierarchy at 60 FPS, 589us CPU |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
