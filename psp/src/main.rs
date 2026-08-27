@@ -13,8 +13,13 @@
 #![no_std]
 #![no_main]
 
+// The asset pack is loaded into a heap buffer; `psp` provides the allocator.
+extern crate alloc;
+
+mod assets;
 mod gu;
 mod input;
+mod meshdraw;
 mod timing;
 
 use core::f32::consts::PI;
@@ -26,8 +31,8 @@ use ssb_engine::input::{Input, N64Buttons};
 use ssb_engine::renderer::Color;
 use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 
-use ssb_game::fighter::{Fighter, FighterKind};
-use ssb_game::physics;
+
+use ssb_rom::pack::Pack;
 
 use gu::{Gpu, GuVertex};
 use input::PspInput;
@@ -69,14 +74,24 @@ unsafe fn run() -> ! {
     let mut pad = PspInput::init();
     let clock = PspClock;
 
+    // Load the converted asset pack. Held for the whole program: the GE reads
+    // vertex and texture data out of it by DMA every frame.
+    let loaded = assets::load_pack();
+    let (pack_buf, pack_path) = match &loaded {
+        Ok((b, p)) => (Some(b), *p),
+        Err(e) => (None, e.as_str()),
+    };
+    let pack = pack_buf.and_then(|b| Pack::open(b.as_slice()).ok());
+    let mesh_count = pack.as_ref().map_or(0, |p| p.mesh_count());
+
+    // Which mesh is on screen, and how far back the camera sits.
+    let mut mesh_index: u32 = 0;
+    let mut cam_distance = 200.0f32;
+    let mut draw_state = meshdraw::DrawState::default();
+
     let mut sim = FixedClock::new(clock.now_us());
 
-    // A fighter driven by the real physics module, so gravity, drift and the
-    // depth clamp are all exercised on hardware.
-    let mut fighter = Fighter::new(FighterKind::Mario, 0, 3);
-    fighter.pos = ssb_engine::math::Vec3::new(0.0, 0.0, 0.0);
-
-    let (vx, _, vw, vh) = coord::pillarboxed_viewport();
+    let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
     let aspect = vw as f32 / vh as f32;
 
     let mut spin = 0.0f32;
@@ -92,21 +107,31 @@ unsafe fn run() -> ! {
             pad.poll();
             let state = pad.state(0);
 
-            physics::apply_air_drift(&mut fighter.physics, &fighter.attributes, state.stick_x);
-            physics::apply_gravity_default(&mut fighter.physics, &fighter.attributes);
-
-            // Cross re-launches the test object so gravity is visibly re-run.
+            // D-pad steps through the pack; held Z zooms out, A zooms in.
+            let prev = pad.previous(0).buttons;
+            let pressed = ssb_engine::input::newly_pressed(prev, state.buttons);
+            if mesh_count > 0 {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    mesh_index = (mesh_index + 1) % mesh_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    mesh_index = (mesh_index + mesh_count - 1) % mesh_count;
+                }
+                if pressed.contains(N64Buttons::D_UP) {
+                    mesh_index = (mesh_index + 50) % mesh_count;
+                }
+                if pressed.contains(N64Buttons::D_DOWN) {
+                    mesh_index = (mesh_index + mesh_count - 50) % mesh_count;
+                }
+            }
+            if state.buttons.contains(N64Buttons::Z) {
+                cam_distance *= 1.03;
+            }
             if state.buttons.contains(N64Buttons::A) {
-                fighter.physics.vel_air.y = 3.0;
+                cam_distance *= 0.97;
             }
-            // A crude floor, so it does not fall forever.
-            fighter.integrate();
-            if fighter.pos.y < -3.0 {
-                fighter.land(-3.0);
-                fighter.become_airborne();
-            }
-
-            spin += 0.02;
+            // The stick spins the model so geometry can be inspected.
+            spin += 0.02 + state.stick_x as f32 * 0.0005;
             if spin > 2.0 * PI {
                 spin -= 2.0 * PI;
             }
@@ -116,61 +141,84 @@ unsafe fn run() -> ! {
 
         // ---- render: display cadence -------------------------------------
         gpu.begin_frame(Some(Color::rgba(0x20, 0x28, 0x38, 0xFF)));
-        gpu.set_perspective(60.0, aspect, 0.5, 1000.0);
+        gpu.set_perspective(60.0, aspect, 1.0, 10000.0);
         gpu.reset_modelview();
-        gpu.model_transform(
-            [fighter.pos.x, fighter.pos.y, -8.0],
-            [spin * 0.4, spin, 0.0],
-        );
-        gpu.draw_triangles(&TRIANGLE.0);
+        draw_state.begin_frame();
+
+        let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
+        match &pack {
+            Some(p) => {
+                if let Some(desc) = p.mesh(mesh_index) {
+                    // Frame the mesh: Smash's models range from a few dozen
+                    // units across to several hundred, so a fixed camera
+                    // distance would show either nothing or one huge polygon.
+                    let (centre, radius) = match meshdraw::bounds(p, &desc) {
+                        Some((min, max)) => {
+                            let c = [
+                                (min[0] + max[0]) * 0.5,
+                                (min[1] + max[1]) * 0.5,
+                                (min[2] + max[2]) * 0.5,
+                            ];
+                            let e = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+                            let r = e[0].max(e[1]).max(e[2]).max(1.0);
+                            (c, r)
+                        }
+                        None => ([0.0; 3], 100.0),
+                    };
+
+                    gpu.model_transform(
+                        [-centre[0], -centre[1], -centre[2] - radius * cam_distance / 100.0],
+                        [0.0, spin, 0.0],
+                    );
+                    meshdraw::draw_mesh(p, &desc, &mut draw_state);
+                    shown = (draw_state.triangles, desc.vertex_count, desc.prim_count);
+                }
+            }
+            None => {
+                // No pack: fall back to the built-in tetrahedron so the
+                // platform baseline is still visible and testable.
+                gpu.model_transform([0.0, 0.0, -8.0], [spin * 0.4, spin, 0.0]);
+                gpu.draw_triangles(&TRIANGLE.0);
+            }
+        }
 
         let cpu_us = cpu.elapsed_us();
 
-        // ---- on-screen diagnostics ---------------------------------------
-        // One call, newline-separated: see Gpu::debug_text for why multiple
-        // calls per frame would render garbage.
-        //
-        // Frame time is carried over from the *previous* iteration on purpose —
-        // measuring it after end_frame would include the vblank wait and always
-        // report ~16.7 ms, which tells us nothing about headroom.
-        //
-        // Positions and velocities are printed as integers scaled by 100:
-        // no_std float formatting is slow, and this runs every frame.
         const WHITE: u32 = 0xFFFF_FFFF;
-        let s = &pad.state(0);
         gpu.debug_text(
             8,
             8,
             WHITE,
             format_args!(
-                "SSB64-PSP  M1 baseline\n\
+                "SSB64-PSP  M3 mesh viewer\n\
+                 pack: {}\n\
                  \n\
-                 frame {}  tick {}\n\
-                 ticks/frame {}  dropped {}\n\
+                 mesh {}/{}  file {}  @0x{:X}\n\
+                 tris {}  verts {}  prims {}\n\
+                 draws {}  state changes {}\n\
+                 \n\
                  cpu {}us / budget {}us\n\
-                 frame {}us  view {}x{}\n\
+                 frame {}us  tick {}\n\
                  \n\
-                 pos  x{} y{} z{}   (x100)\n\
-                 vel  x{} y{}       (x100)\n\
-                 stick {}  buttons {:04X}\n\
-                 \n\
-                 nub: drift    X: jump",
-                gpu.frame_count(),
-                sim.tick,
-                ticks,
-                sim.dropped,
+                 dpad: browse   A/Z: zoom   nub: spin",
+                pack_path,
+                mesh_index,
+                mesh_count,
+                pack.as_ref()
+                    .and_then(|p| p.mesh(mesh_index))
+                    .map_or(0, |m| m.source_file),
+                pack.as_ref()
+                    .and_then(|p| p.mesh(mesh_index))
+                    .map_or(0, |m| m.source_offset),
+                shown.0,
+                shown.1,
+                shown.2,
+                draw_state.draws,
+                draw_state.state_changes,
                 cpu_us,
                 FRAME_BUDGET_US,
                 last_frame_us,
-                vw,
-                vh,
-                (fighter.pos.x * 100.0) as i32,
-                (fighter.pos.y * 100.0) as i32,
-                (fighter.pos.z * 100.0) as i32,
-                (fighter.physics.vel_air.x * 100.0) as i32,
-                (fighter.physics.vel_air.y * 100.0) as i32,
-                s.stick_x,
-                s.buttons.0,
+                sim.tick,
             ),
         );
 

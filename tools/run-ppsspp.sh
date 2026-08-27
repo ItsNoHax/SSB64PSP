@@ -26,8 +26,12 @@
 #     debug overlay exactly that way, so under OpenGL the diagnostics are
 #     computed but invisible (docs/reverse-engineering.md RE-014). Forced
 #     through `--appendconfig`, not `--graphics=software` -- the command-line
-#     flag was observed not to take effect. The config is merged for this run
-#     only and does NOT modify the user's ppsspp.ini.
+#     flag was observed not to take effect.
+#
+#     NOTE: `--appendconfig` settings ARE written back to the user's
+#     ppsspp.ini on exit. An earlier version of this script claimed otherwise
+#     and silently left `SoftwareRenderer = True` in the user's config. The
+#     script now snapshots ppsspp.ini before the run and restores it after.
 #
 #  5. **Window identification by difference.** Picking "the first window
 #     matching ppsspp" grabs the wrong one if the developer already has PPSSPP
@@ -72,7 +76,16 @@ EBOOT="$REPO/psp/target/mipsel-sony-psp/release/EBOOT.PBP"
 mkdir -p "$OUT"
 cp "$EBOOT" "$OUT/"
 
-# Merged into PPSSPP's config for this run only.
+PPSSPP_INI="$HOME/.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
+
+# Two different mechanisms, because each only works for one setting:
+#   --graphics=opengl   picks the *backend*. Vulkan fails to initialise in some
+#                       environments (including this one) and PPSSPP then
+#                       refuses to retry it, so the working backend is forced.
+#   --appendconfig      picks the *rasteriser*. `--graphics=software` was
+#                       observed not to take effect, but the config value does.
+# Pinning GraphicsBackend through the config was tried and backfired: PPSSPP
+# stores it as "0 (OPENGL)" and a bare "0" did not round-trip.
 if [ "$BACKEND" = software ]; then
   printf '[Graphics]\nSoftwareRenderer = True\n' > "$OUT/backend.ini"
 else
@@ -105,9 +118,39 @@ cleanup() {
   if pgrep -f PPSSPPSDL >/dev/null 2>&1; then
     echo "warning: PPSSPP survived cleanup - kill it manually" >&2
   fi
+  # Put the user's config back: PPSSPP persists whatever --appendconfig set.
+  if [ -n "${INI_BACKUP:-}" ] && [ -f "$INI_BACKUP" ]; then
+    cp -f "$INI_BACKUP" "$PPSSPP_INI" 2>/dev/null || true
+    rm -f "$INI_BACKUP"
+  fi
   exit $status
 }
 trap cleanup EXIT INT TERM
+
+# Snapshot the user's config so the run can be made non-destructive.
+INI_BACKUP=""
+if [ -f "$PPSSPP_INI" ]; then
+  INI_BACKUP="$(mktemp)"
+  cp -f "$PPSSPP_INI" "$INI_BACKUP"
+fi
+
+# PPSSPP records a backend in FailedGraphicsBackends.txt if it dies before
+# finishing graphics init -- which is exactly what the SIGKILL in cleanup()
+# looks like. Once the file reads "VULKAN,OPENGL,ALL" it refuses to start any
+# backend at all and every later run fails with "Did not switch failed
+# backend", long after whatever caused the original crash is gone. Clearing it
+# each run makes the harness self-healing.
+rm -f "$(dirname "$PPSSPP_INI")/FailedGraphicsBackends.txt" 2>/dev/null || true
+
+# Force the backend in the real config, restored on exit by cleanup().
+#
+# Neither --graphics= nor --appendconfig could set this: the command-line flag
+# is applied before the config is read, and PPSSPP stores the value as
+# "0 (OPENGL)" so a bare "0" from an appended config does not round-trip.
+# Editing the file it actually parses is the only reliable route.
+if [ -n "$INI_BACKUP" ]; then
+  sed -i 's/^GraphicsBackend = .*/GraphicsBackend = 0 (OPENGL)/' "$PPSSPP_INI"
+fi
 
 # Sleeps must be interruptible. Bash defers trap handlers until the current
 # foreground command finishes, so a plain `sleep 60` swallows Ctrl-C for a full
@@ -131,6 +174,7 @@ BEFORE=$(ppsspp_windows)
 echo "==> launching PPSSPP (backend=$BACKEND)"
 flatpak run --env=SDL_VIDEODRIVER=x11 --env=DISPLAY="$DISPLAY" --filesystem=home \
   org.ppsspp.PPSSPP \
+  --graphics=opengl \
   --appendconfig="$OUT/backend.ini" \
   --windowed --xres 960 --yres 544 \
   "$OUT/EBOOT.PBP" > "$OUT/ppsspp.log" 2>&1 &
