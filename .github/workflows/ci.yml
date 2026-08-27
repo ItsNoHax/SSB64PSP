@@ -9,6 +9,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # Pinned deliberately. `-D warnings` against a floating `stable` means every
+  # new clippy lint breaks CI on an unrelated push, with no code change --
+  # which is exactly what happened when 1.98 added `chunks_exact_to_as_chunks`
+  # and failed four existing call sites. Bump this on purpose, not by surprise.
+  RUST_STABLE: "1.98.0"
 
 jobs:
   # Host-side crates and tools. No ROM required -- every test either uses
@@ -20,8 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_STABLE }}
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -59,8 +65,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_STABLE }}
           targets: thumbv7em-none-eabi
 
       - uses: Swatinem/rust-cache@v2
@@ -133,3 +140,21 @@ jobs:
             echo "::error::ROM files are committed:"; echo "$found"; exit 1
           fi
           echo "OK: no ROM files tracked"
+
+  # Early warning for lints introduced by newer toolchains. Deliberately
+  # non-blocking: its job is to tell us to bump RUST_STABLE, not to fail a push
+  # because an upstream release added a lint.
+  future_lints:
+    name: Lints on latest stable (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy (warnings do not fail the build)
+        env:
+          RUSTFLAGS: ""
+        run: cargo clippy --workspace --all-targets

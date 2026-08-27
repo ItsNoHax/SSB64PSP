@@ -63,7 +63,7 @@ pub struct TableEntry {
 }
 
 impl TableEntry {
-    fn parse(raw: &[u8]) -> Self {
+    fn parse(raw: &[u8; TABLE_ENTRY_SIZE]) -> Self {
         let w0 = u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]);
         TableEntry {
             compressed: (w0 >> 31) != 0,
@@ -143,7 +143,9 @@ impl<'a> Archive<'a> {
 
         let raw = rom::slice(rom_data, table_lo, (count + 1) * TABLE_ENTRY_SIZE)?;
         let entries = raw
-            .chunks_exact(TABLE_ENTRY_SIZE)
+            .as_chunks::<TABLE_ENTRY_SIZE>()
+            .0
+            .iter()
             .map(TableEntry::parse)
             .collect();
 

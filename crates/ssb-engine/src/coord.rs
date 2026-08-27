@@ -52,8 +52,8 @@ impl N64Matrix {
     /// Parses the 64 big-endian bytes of an `Mtx`.
     pub fn from_bytes(raw: &[u8; Self::SIZE]) -> N64Matrix {
         let mut out = [0u16; 32];
-        for (i, c) in raw.chunks_exact(2).enumerate() {
-            out[i] = u16::from_be_bytes([c[0], c[1]]);
+        for (i, c) in raw.as_chunks::<2>().0.iter().enumerate() {
+            out[i] = u16::from_be_bytes(*c);
         }
         N64Matrix { raw: out }
     }
