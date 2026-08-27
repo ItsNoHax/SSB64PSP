@@ -1219,6 +1219,103 @@ gameplay, and for the geometry, which now agrees visually on two stages.
 **High** for the solver: it is a faithful port and the spawn margins agree
 across 40 stages, but no fighter has stood on it yet.
 
+*Update (RE-031): one has. 158 of 158 spawns now hold a simulated fighter still
+for a second, and two stages confirm it on device.*
+
+---
+
+## RE-031 — A fighter stands on a stage, and two solvers agree it is the right one
+
+**Question.** RE-030 left the collision query proven against single-shot
+queries but never driven by anything. Does the ported physics, stepped a tick
+at a time through the ported collision process, actually leave a fighter
+standing on a stage — and stay there?
+
+**What was missing.** The query answers "did this movement cross a floor". A
+tick needs three more things from `mp/mpprocess.c`, and each is a behaviour
+rather than a formula:
+
+* **`mpProcessSetCollideFloor` — a grounded fighter's height is re-read every
+  tick**, not carried over from the last one. There is no slope code in Smash
+  64; walking up a hill *is* this function sampling the surface under the new
+  x. When a fighter's x leaves its line, that same absence is how it falls off
+  a ledge.
+* **`mpProcessSetLandingFloor` — landing past the end of a line moves the
+  fighter to the line's corner** rather than leaving it hanging at whatever
+  height it arrived with. This is what puts a fighter *on* a ledge.
+* **`mpProcessUpdateMain` — a tick's movement is subdivided** into 250-unit
+  pieces before any of it is tested. The original's own comment gives the
+  reason: 250 is a tenth of maximum knockback velocity, 2500 units per frame.
+
+And one query the swept test cannot answer, `mpCollisionCheckProjectFloor`: a
+straight downward probe for what a body is *above*. That is how a spawn point
+becomes a standing position, and it shares no arithmetic with the swept
+line/line solver.
+
+The floor material turned out to be a real table rather than a guess —
+`dMPCollisionMaterialFrictions` @ 0x8012C4E0, sixteen multipliers on the
+character's own traction. `nMPMaterial3` is 1.0 against the common material's
+4.0, and the decomp's comment on that enum reads "presumably ice due to low
+traction". The number agrees: nothing else in the table is close.
+
+**Validation: two solvers that must agree.** Place a fighter at each of the
+158 landable spawns twice. Once with the vertical probe, once by dropping it
+under real gravity and letting the swept query catch it. They have no code in
+common beyond reading the same segments.
+
+```
+spawns      162
+settle      158 have a floor beneath them
+agree       158/158 land where the vertical probe says they should
+at rest     158/158 do not move over 60 ticks (worst drift 0)
+substep     158/158 caught when dropped at maximum knockback velocity
+```
+
+**Worst drift is exactly 0**, not "small". A sign error in the landing snap or
+in the grounded update shows up as drift, and drift compounds — 158 fighters
+holding still for 60 ticks each is not something a nearly-right implementation
+produces. Sloped stages are in that set: Peach's Castle's P3 settles on
+`y 303.5`, the fractional height RE-030 measured, now reached by simulation
+rather than a single query.
+
+**An honest negative.** Subdividing the movement changed the outcome for **0**
+of the 158. That is expected and it is reported rather than glossed: the swept
+test is exact along a straight line, so while only floors exist there is
+nothing for substepping to catch. It will earn its keep when a wall can deflect
+a fighter mid-tick, and porting it now is cheaper than discovering later that
+knockback tunnels.
+
+**On device.** Dream Land, at the stage's own first spawn:
+
+```
+stage 0/41  file 255  @0x14
+fighter ground   x 0  y 0  line 3  mat 0  air 0
+tris 175  layers 4  coll-segs 16
+cpu 666us / budget 16667us          60.0 FPS
+```
+
+The host simulation says `spawn (0, 6) lands line 3 at y 0.00 after 12 ticks`.
+The device says line 3, y 0. Peach's Castle repeats it on ground that is not
+flat: `x -2556  y 557  line 3`, against the host's `spawn (-2556, 572) lands
+line 3 at y 557.00 after 18 ticks`. Same line, same height, on a slope.
+
+The whole tick costs **8 µs** — 666 against 658 for the same view without it —
+because the collision adapter is an iterator that reads segments straight out
+of the mapped pack. There is no per-frame setup to pay for and nothing is
+allocated (`docs/images/m4-fighter-on-stage.png`).
+
+**What the marker is, and is not.** It is a stem standing on the contact point
+with a crossbar at the origin, green when grounded and white when airborne —
+not a character model. The pack holds no record naming which object is Mario,
+and picking one that looked right would be a fingerprint rather than a fact
+(the rule RE-027 was built on). What is being shown is the simulation, not the
+character.
+
+**Confidence: high.** The two solvers agreeing across 158 real spawns, at zero
+drift, is strong evidence the floor path is right. It is not evidence about
+walls, ceilings, ledge-grabs or moving platforms, none of which are ported —
+and a fighter here has no state machine, so it cannot walk, jump or be hit.
+
 ---
 
 ## RE-024 — The shipped light colours really are neutral

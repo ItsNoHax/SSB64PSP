@@ -7,6 +7,8 @@
 use ssb_engine::input::ControllerState;
 use ssb_engine::math::Vec3;
 
+use crate::collision::{self, Segment};
+use crate::ground::{self, BodyColl, Standing};
 use crate::physics::{PhysicsAttributes, PhysicsState};
 
 /// Fighter identity, matching `FTKind` ordinals exactly.
@@ -186,6 +188,12 @@ pub struct Fighter {
     pub hitstun: u16,
     pub input: ControllerState,
     pub prev_input: ControllerState,
+    /// Collision offsets — `MPObjectColl`.
+    pub coll: BodyColl,
+    /// The floor being stood on, or `None` while airborne.
+    pub floor: Option<Standing>,
+    /// A drop-through platform being fallen past — `ignore_line_id`.
+    pub ignore_line: Option<u16>,
 }
 
 impl Fighter {
@@ -204,6 +212,9 @@ impl Fighter {
             hitstun: 0,
             input: ControllerState::default(),
             prev_input: ControllerState::default(),
+            coll: BodyColl::default(),
+            floor: None,
+            ignore_line: None,
         }
     }
 
@@ -256,6 +267,128 @@ impl Fighter {
         self.physics.vel_air = Vec3::ZERO;
         self.physics.is_fastfall = false;
         self.physics.jumps_used = 0;
+    }
+
+    /// Places the fighter on the stage beneath it, as a match start does.
+    ///
+    /// A spawn point sits a little above its surface (RE-030), so a fighter
+    /// put there is airborne by a few units. Returns whether there was
+    /// anything below to stand on.
+    pub fn place_on_stage<I>(&mut self, floors: I) -> bool
+    where
+        I: IntoIterator<Item = (u16, Segment)>,
+    {
+        match ground::settle(&self.coll, self.pos, floors) {
+            Some((pos, floor, _)) => {
+                self.pos = pos;
+                self.floor = Some(floor);
+                self.situation = Situation::Ground;
+                self.physics = PhysicsState::default();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Advances one tick against a stage.
+    ///
+    /// The order is the original's: timers, then the frame's physics, then the
+    /// move is handed to [`ground`] to be tested against the stage. Velocity is
+    /// never applied to position directly here — [`ground::move_air`] owns that,
+    /// because it is the only thing that can subdivide the movement.
+    ///
+    /// `floors` is called more than once per tick and must yield every floor
+    /// segment worth testing. Passing a closure rather than an iterator is what
+    /// keeps this allocation-free on the PSP.
+    pub fn tick<I, F>(&mut self, floors: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = (u16, Segment)>,
+    {
+        self.tick_timers();
+        if self.is_in_hitlag() {
+            return;
+        }
+
+        match self.situation {
+            Situation::Ground => self.tick_ground(floors),
+            Situation::Air => self.tick_air(floors),
+        }
+    }
+
+    fn tick_ground<I, F>(&mut self, floors: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = (u16, Segment)>,
+    {
+        let Some(standing) = self.floor else {
+            // Grounded with no floor recorded is not a state the original can
+            // reach; treat it as airborne rather than guessing a surface.
+            self.become_airborne();
+            return;
+        };
+
+        // The surface's material scales traction, which is the only thing a
+        // floor's material does — `ftPhysicsApplyGroundVelFriction`.
+        let friction = collision::material_friction(standing.flags);
+        crate::physics::apply_ground_friction_with_material(
+            &mut self.physics,
+            &self.attributes,
+            friction,
+        );
+
+        let want = Vec3::new(
+            self.pos.x + self.physics.vel_ground.x + self.physics.vel_knockback.x,
+            self.pos.y,
+            self.pos.z,
+        );
+        let moved = ground::move_ground(&self.coll, want, standing.line, floors);
+        self.pos = moved.pos;
+
+        match moved.floor {
+            Some(f) => self.floor = Some(f),
+            // Walked off the end of the line.
+            None => {
+                self.floor = None;
+                self.become_airborne();
+            }
+        }
+    }
+
+    fn tick_air<I, F>(&mut self, floors: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = (u16, Segment)>,
+    {
+        if self.physics.is_fastfall {
+            crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
+        } else {
+            crate::physics::apply_gravity_default(&mut self.physics, &self.attributes);
+        }
+        crate::physics::apply_air_drift(&mut self.physics, &self.attributes, self.input.stick_x);
+
+        let v = crate::physics::total_velocity(&self.physics, false);
+        let want = Vec3::new(
+            self.pos.x + v.x,
+            self.pos.y + v.y,
+            self.pos.z + crate::physics::clamp_z_velocity(self.pos.z, v.z),
+        );
+
+        let moved = ground::move_air(&self.coll, self.pos, want, self.ignore_line, floors);
+        self.pos.x = moved.pos.x;
+        self.pos.z = moved.pos.z;
+
+        match moved.floor {
+            Some(f) => {
+                self.floor = Some(f);
+                self.ignore_line = None;
+                self.land(moved.pos.y);
+            }
+            None => {
+                self.pos.y = moved.pos.y;
+                self.floor = None;
+            }
+        }
     }
 }
 
@@ -377,5 +510,138 @@ mod tests {
             f.integrate();
         }
         assert_eq!(f.pos.z, crate::physics::Z_LIMIT);
+    }
+
+    /// Dream Land's main platform, as it really is in the pack: level at
+    /// y 0 from x -2318 to 2318, ledge-grabbable and solid.
+    fn dream_land() -> [(u16, Segment); 1] {
+        [(
+            0,
+            Segment {
+                x1: -2318,
+                y1: 0,
+                x2: 2318,
+                y2: 0,
+                flags: collision::flags::CLIFF,
+            },
+        )]
+    }
+
+    #[test]
+    fn a_spawn_is_placed_on_the_stage_below_it() {
+        // Spawns sit a few units above their surface (RE-030).
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(-1000.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        assert_eq!(f.pos.y, 0.0);
+        assert!(f.is_grounded());
+        assert!(f.floor.expect("a floor").grabbable());
+    }
+
+    #[test]
+    fn a_spawn_over_nothing_is_reported_rather_than_guessed() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(9000.0, 4.0, 0.0);
+        assert!(!f.place_on_stage(dream_land()));
+        assert!(!f.is_grounded());
+    }
+
+    #[test]
+    fn a_fighter_dropped_onto_a_stage_lands_and_stays_put() {
+        // The property the whole vertical slice rests on. Falling for a second
+        // and then standing for a second must end exactly on the surface, with
+        // no drift and no re-landing.
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(0.0, 100.0, 0.0);
+
+        let mut landed_on = None;
+        for tick in 0..120 {
+            f.tick(dream_land);
+            if f.is_grounded() && landed_on.is_none() {
+                landed_on = Some(tick);
+            }
+        }
+        assert!(landed_on.is_some(), "never reached the stage");
+        assert_eq!(f.pos.y, 0.0, "settled exactly on the surface");
+        assert_eq!(f.physics.vel_air, Vec3::ZERO);
+        assert!(f.is_grounded(), "did not bounce back off");
+    }
+
+    #[test]
+    fn a_grounded_fighter_does_not_fall_through_its_own_floor() {
+        // Gravity must not be applied while grounded: this is the failure that
+        // would look like a fighter slowly sinking into the stage.
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(500.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        for _ in 0..600 {
+            f.tick(dream_land);
+        }
+        assert_eq!(f.pos, Vec3::new(500.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn sliding_off_the_edge_leaves_the_ground() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(2300.0, 4.0, 0.0);
+        assert!(f.place_on_stage(dream_land()));
+        // A push toward the ledge, faster than friction can stop.
+        f.physics.vel_ground.x = 30.0;
+        for _ in 0..30 {
+            f.tick(dream_land);
+        }
+        assert!(!f.is_grounded(), "walked off Dream Land's right ledge");
+        assert!(f.floor.is_none());
+        assert!(f.pos.y < 0.0, "and started falling");
+    }
+
+    #[test]
+    fn hitlag_freezes_a_fighter_in_mid_air() {
+        // A fighter frozen by a hit must not fall during the freeze; that is
+        // what gives a hit its weight.
+        //
+        // `ftMain` decrements the counter and *then* gates physics on it
+        // reaching zero, so the tick that ends hitlag already moves: ten
+        // frames of hitlag freeze nine.
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.pos = Vec3::new(0.0, 500.0, 0.0);
+        f.hitlag = 10;
+        let held = f.pos;
+        for _ in 0..9 {
+            f.tick(dream_land);
+        }
+        assert_eq!(f.pos, held);
+        f.tick(dream_land);
+        assert!(f.pos.y < held.y, "and resumes falling on the tick it ends");
+    }
+
+    #[test]
+    fn ice_lets_a_fighter_slide_further_than_common_ground() {
+        // The only thing a floor's material does is scale traction.
+        let slide = |material: u16| {
+            let seg = [(
+                0,
+                Segment {
+                    x1: -2318,
+                    y1: 0,
+                    x2: 2318,
+                    y2: 0,
+                    flags: material,
+                },
+            )];
+            let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+            f.pos = Vec3::new(0.0, 4.0, 0.0);
+            f.place_on_stage(seg);
+            f.physics.vel_ground.x = 10.0;
+            for _ in 0..60 {
+                f.tick(|| seg);
+            }
+            f.pos.x
+        };
+        // Material 3 has a quarter of the common material's friction.
+        assert!(
+            slide(3) > slide(0),
+            "material 3 is the slippery one in dMPCollisionMaterialFrictions"
+        );
     }
 }

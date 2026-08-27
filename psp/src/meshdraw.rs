@@ -557,6 +557,57 @@ pub unsafe fn draw_collision(
     segments
 }
 
+/// Draws a marker where the simulated fighter is.
+///
+/// Not a character model: the pack has no record naming which object is
+/// Mario, and guessing one would be a fingerprint rather than a fact. What is
+/// being shown here is the *simulation* — where the ported physics and the
+/// ported collision put a body on real stage data — so the marker is drawn as
+/// the thing the collision code actually tests: a vertical stem standing on
+/// the contact point, with a crossbar at the origin.
+///
+/// White while airborne, green once it has a floor, so landing is visible as a
+/// colour change on the exact frame it happens.
+///
+/// Positions are divided by [`MODEL_SCALE`], the same as the collision overlay,
+/// so all three of geometry, collision and fighter share one transform.
+///
+/// # Safety
+///
+/// The GE must be mid-frame; the vertex buffer is DMAed and must not be reused
+/// until the list is submitted.
+pub unsafe fn draw_fighter(
+    pos: [f32; 3],
+    grounded: bool,
+    base: &ScePspFMatrix4,
+    gpu: &mut crate::gu::Gpu,
+) {
+    // Roughly a fighter's height in game units, so the marker reads at the
+    // same scale as the stage rather than as a dot or a tower.
+    const HEIGHT: f32 = 260.0;
+    const ARM: f32 = 90.0;
+
+    let color = if grounded { 0xFF40_FF40 } else { 0xFFFF_FFFF };
+    let s = 1.0 / MODEL_SCALE;
+    let (x, y, z) = (pos[0] * s, pos[1] * s, pos[2] * s);
+
+    sys::sceGumMatrixMode(sys::MatrixMode::Model);
+    sys::sceGumLoadMatrix(base);
+
+    let v = |dx: f32, dy: f32| crate::gu::GuVertex::new(x + dx, y + dy, z, 0.0, 0.0, color);
+    let buf = &mut *core::ptr::addr_of_mut!(LINE_BUF);
+
+    // The stem: feet at the contact point, head above it.
+    buf.0[0] = v(0.0, 0.0);
+    buf.0[1] = v(0.0, HEIGHT * s);
+    gpu.draw_line_strip(&buf.0[..2]);
+
+    // The crossbar, at the height the floor query runs.
+    buf.0[0] = v(-ARM * s, 0.0);
+    buf.0[1] = v(ARM * s, 0.0);
+    gpu.draw_line_strip(&buf.0[..2]);
+}
+
 /// A stage's extent in normalised units, from its collision and its layers.
 ///
 /// Both sources matter: collision alone misses a stage's scenery, and geometry
