@@ -215,6 +215,18 @@ unsafe fn run() -> ! {
         })
         .unwrap_or(0);
 
+    // Stage view: a whole stage -- its render layers assembled, with its
+    // collision polylines drawn over them. This is the default when the pack
+    // has stages, because it is the only view that shows a *place* rather than
+    // an asset, and because the overlay is the check that geometry and
+    // collision agree about where that place is. `romtool collide` proves the
+    // spawns land; nothing but looking at it proves they land in the right
+    // spot on screen.
+    let stage_count = pack.as_ref().map_or(0, |p| p.stage_count());
+    let mut stage_view = stage_count > 0;
+    let mut stage_index: u32 = 0;
+    let mut show_collision = true;
+
     let mut sim = FixedClock::new(clock.now_us());
 
     let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
@@ -237,10 +249,26 @@ unsafe fn run() -> ! {
             // D-pad steps through the pack; held Z zooms out, A zooms in.
             let prev = pad.previous(0).buttons;
             let pressed = ssb_engine::input::newly_pressed(prev, state.buttons);
+            if pressed.contains(N64Buttons::START) && stage_count > 0 {
+                stage_view = !stage_view;
+            }
             if pressed.contains(N64Buttons::C_DOWN) && object_count > 0 {
                 object_view = !object_view;
             }
-            if object_view && object_count > 0 {
+            if stage_view && stage_count > 0 {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    stage_index = (stage_index + 1) % stage_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    stage_index = (stage_index + stage_count - 1) % stage_count;
+                }
+                // Toggling the overlay is what separates "the collision is
+                // wrong" from "the geometry is wrong": with it off you see
+                // only the stage, with it on you see only whether they line up.
+                if pressed.contains(N64Buttons::B) {
+                    show_collision = !show_collision;
+                }
+            } else if object_view && object_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     object_index = (object_index + 1) % object_count;
                 }
@@ -344,6 +372,54 @@ unsafe fn run() -> ! {
                 // Flat orthographic-ish view of one texture.
                 gpu.model_transform([0.0, 0.0, -2.2], [0.0, 0.0, 0.0], 1.0);
                 meshdraw::draw_texture_quad(p, tex_index, &mut TEX_QUAD.0);
+            }
+            Some(p) if stage_view => {
+                if let Some(stage) = p.stage(stage_index) {
+                    // Frame the stage from its collision *and* its geometry:
+                    // collision alone misses the scenery, geometry alone can
+                    // be swamped by a skybox.
+                    let (centre, radius) = match meshdraw::stage_bounds(p, &stage) {
+                        Some((min, max)) => {
+                            let c = [
+                                (min[0] + max[0]) * 0.5,
+                                (min[1] + max[1]) * 0.5,
+                                (min[2] + max[2]) * 0.5,
+                            ];
+                            let e = ssb_engine::math::Vec3 {
+                                x: max[0] - min[0],
+                                y: max[1] - min[1],
+                                z: max[2] - min[2],
+                            };
+                            let s = meshdraw::MODEL_SCALE;
+                            (
+                                [c[0] * s, c[1] * s, c[2] * s],
+                                (e.length() * 0.5 * s).max(1.0),
+                            )
+                        }
+                        None => ([0.0; 3], 1000.0),
+                    };
+                    const FIT: f32 = 1.733;
+                    let dist = radius * FIT * cam_distance / 200.0;
+                    dbg_radius = radius;
+                    dbg_cam = centre[2] + dist;
+
+                    // A stage is a place, not an object: spinning it would
+                    // make the collision overlay impossible to read against
+                    // the geometry. Face-on, always.
+                    gpu.model_transform(
+                        [-centre[0], -centre[1], -centre[2] - dist],
+                        [0.0, 0.0, 0.0],
+                        meshdraw::MODEL_SCALE,
+                    );
+                    let base = gpu.model_matrix();
+                    let (tris, layers) = meshdraw::draw_stage(p, &stage, &base, &mut draw_state);
+                    let segments = if show_collision {
+                        meshdraw::draw_collision(p, &stage, &base, &mut gpu)
+                    } else {
+                        0
+                    };
+                    shown = (tris, layers, segments);
+                }
             }
             Some(p) if object_view => {
                 if let Some(obj) = p.object(object_index) {
@@ -460,6 +536,28 @@ unsafe fn run() -> ! {
 
         let cpu_us = cpu.elapsed_us();
 
+        // Which browser is driving, so the readout describes what is on screen
+        // rather than whichever index happens to be highest.
+        let (mode, index, count) = if stage_view {
+            ("stage", stage_index, stage_count)
+        } else if object_view {
+            ("obj  ", object_index, object_count)
+        } else {
+            ("mesh ", mesh_index, mesh_count)
+        };
+        let (src_file, src_offset) = pack
+            .as_ref()
+            .and_then(|p| {
+                if stage_view {
+                    p.stage(stage_index).map(|s| (s.source_file, s.source_offset))
+                } else if object_view {
+                    p.object(object_index).map(|o| (o.source_file, o.source_offset))
+                } else {
+                    p.mesh(mesh_index).map(|m| (m.source_file, m.source_offset))
+                }
+            })
+            .unwrap_or((0, 0));
+
         const WHITE: u32 = 0xFFFF_FFFF;
         gpu.debug_text(
             8,
@@ -480,37 +578,30 @@ unsafe fn run() -> ! {
                  TEXVIEW {}  tex {}/{}\n\
                  cam {} r {}\n\
                  \n\
-                 dpad: browse  R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
+                 dpad: browse  start: stage  B: collision\n\
+                 R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
                 pack_status,
-                if object_view { "obj " } else { "mesh" },
-                if object_view {
-                    object_index
-                } else {
-                    mesh_index
-                },
-                if object_view {
-                    object_count
-                } else {
-                    mesh_count
-                },
-                pack.as_ref()
-                    .and_then(|p| if object_view {
-                        p.object(object_index).map(|o| o.source_file)
-                    } else {
-                        p.mesh(mesh_index).map(|m| m.source_file)
-                    })
-                    .unwrap_or(0),
-                pack.as_ref()
-                    .and_then(|p| if object_view {
-                        p.object(object_index).map(|o| o.source_offset)
-                    } else {
-                        p.mesh(mesh_index).map(|m| m.source_offset)
-                    })
-                    .unwrap_or(0),
+                mode,
+                index,
+                count,
+                src_file,
+                src_offset,
                 shown.0,
-                if object_view { "nodes" } else { "verts" },
+                if stage_view {
+                    "layers"
+                } else if object_view {
+                    "nodes"
+                } else {
+                    "verts"
+                },
                 shown.1,
-                if object_view { "placed" } else { "prims" },
+                if stage_view {
+                    "coll-segs"
+                } else if object_view {
+                    "placed"
+                } else {
+                    "prims"
+                },
                 shown.2,
                 draw_state.draws,
                 draw_state.state_changes,

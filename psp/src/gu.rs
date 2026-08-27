@@ -336,4 +336,29 @@ impl Gpu {
             verts.as_ptr() as *const c_void,
         );
     }
+
+    /// Draws one open polyline, joining each vertex to the next.
+    ///
+    /// Used for the collision overlay, where the data really is a polyline —
+    /// drawing it as anything else would misrepresent what the game stores.
+    /// Depth testing is left on so a line behind stage geometry is occluded by
+    /// it, which is what makes the overlay readable as "in the scene" rather
+    /// than painted on top.
+    ///
+    /// # Safety
+    ///
+    /// `verts` must be 16-byte aligned and live until the frame is submitted.
+    pub unsafe fn draw_line_strip(&mut self, verts: &[GuVertex]) {
+        if verts.len() < 2 {
+            return;
+        }
+        sys::sceGuDisable(GuState::Texture2D);
+        sys::sceGumDrawArray(
+            GuPrimitive::LineStrip,
+            GuVertex::FORMAT,
+            verts.len() as i32,
+            core::ptr::null(),
+            verts.as_ptr() as *const c_void,
+        );
+    }
 }

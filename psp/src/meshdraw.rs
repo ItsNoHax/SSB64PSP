@@ -438,3 +438,162 @@ pub fn bounds(pack: &Pack<'_>, mesh: &MeshDesc) -> Option<([f32; 3], [f32; 3])> 
     }
     Some((min, max))
 }
+
+// ---------------------------------------------------------------------------
+// Stages
+// ---------------------------------------------------------------------------
+
+/// Scratch for one collision polyline. Sized to the longest line in the
+/// archive with headroom; `Align16` because the GE DMAs it.
+static mut LINE_BUF: psp::Align16<[crate::gu::GuVertex; 256]> =
+    psp::Align16([crate::gu::GuVertex::new(0.0, 0.0, 0.0, 0.0, 0.0, 0); 256]);
+
+/// Colours for the four `MPLineKind`s, so the overlay is readable at a glance.
+///
+/// Packed ABGR, matching `Color::to_abgr`. Floors are green, ceilings red,
+/// walls blue and yellow — the point is that a wall and a floor never look
+/// alike, because "is this line the kind the extractor said it was" is what
+/// the overlay is there to answer.
+fn line_color(kind: u16, passable: bool) -> u32 {
+    use ssb_rom::pack::line_kind;
+    match kind {
+        // A drop-through floor is drawn dimmer than a solid one: on Dream Land
+        // that is immediately visible as three faint platforms over one bright
+        // one, which is exactly how the stage behaves.
+        line_kind::FLOOR if passable => 0xFF60_C060,
+        line_kind::FLOOR => 0xFF40_FF40,
+        line_kind::CEILING => 0xFF40_40FF,
+        line_kind::RIGHT_WALL => 0xFFFF_A040,
+        _ => 0xFF40_D0FF,
+    }
+}
+
+/// Draws a stage's render layers: up to four assembled objects.
+///
+/// Returns the triangles submitted and how many layer slots were filled. An
+/// empty slot is normal — most stages use two or three.
+///
+/// # Safety
+///
+/// Same as [`draw_object`].
+pub unsafe fn draw_stage(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+) -> (u32, u32) {
+    let mut tris = 0;
+    let mut drawn = 0;
+    for slot in stage.layers {
+        if slot == ssb_rom::pack::StageDesc::NO_LAYER {
+            continue;
+        }
+        let Some(object) = pack.object(slot) else {
+            continue;
+        };
+        tris += draw_object(pack, &object, base, st);
+        drawn += 1;
+    }
+    (tris, drawn)
+}
+
+/// Draws a stage's collision polylines over its geometry.
+///
+/// This is the visual form of the check `romtool collide` does numerically: if
+/// the green lines trace the platforms you can see, then the collision data,
+/// the pack and the renderer agree about where the stage is. Numbers cannot
+/// catch a systematic offset that happens to be consistent; this can.
+///
+/// Positions are divided by [`MODEL_SCALE`] so they land in the same space as
+/// the mesh path's `i16` vertices under the same `base` matrix — one transform
+/// for both, rather than a second one that could drift.
+///
+/// Returns the number of line segments drawn.
+///
+/// # Safety
+///
+/// The pack buffer must stay valid until the frame is submitted.
+pub unsafe fn draw_collision(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    base: &ScePspFMatrix4,
+    gpu: &mut crate::gu::Gpu,
+) -> u32 {
+    const PASS_BIT: u16 = 1 << 14;
+
+    sys::sceGumMatrixMode(sys::MatrixMode::Model);
+    sys::sceGumLoadMatrix(base);
+
+    let mut segments = 0;
+    for line in pack.stage_lines(stage) {
+        let buf = &mut *core::ptr::addr_of_mut!(LINE_BUF);
+        let mut n = 0usize;
+        let mut passable = false;
+        for v in pack.line_vertices(&line) {
+            if n >= buf.0.len() {
+                break;
+            }
+            passable |= v.flags & PASS_BIT != 0;
+            buf.0[n] = crate::gu::GuVertex::new(
+                v.x as f32 / MODEL_SCALE,
+                v.y as f32 / MODEL_SCALE,
+                0.0,
+                0.0,
+                0.0,
+                0,
+            );
+            n += 1;
+        }
+        if n < 2 {
+            continue;
+        }
+        let color = line_color(line.kind, passable);
+        for v in &mut buf.0[..n] {
+            v.color = color;
+        }
+        gpu.draw_line_strip(&buf.0[..n]);
+        segments += n as u32 - 1;
+    }
+    segments
+}
+
+/// A stage's extent in normalised units, from its collision and its layers.
+///
+/// Both sources matter: collision alone misses a stage's scenery, and geometry
+/// alone can be dominated by a skybox that swamps the playable area.
+pub fn stage_bounds(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+) -> Option<([f32; 3], [f32; 3])> {
+    let mut min = [f32::MAX; 3];
+    let mut max = [f32::MIN; 3];
+    let mut any = false;
+
+    for line in pack.stage_lines(stage) {
+        for v in pack.line_vertices(&line) {
+            let p = [v.x as f32 / MODEL_SCALE, v.y as f32 / MODEL_SCALE, 0.0];
+            for axis in 0..3 {
+                min[axis] = min[axis].min(p[axis]);
+                max[axis] = max[axis].max(p[axis]);
+            }
+            any = true;
+        }
+    }
+    for slot in stage.layers {
+        if slot == ssb_rom::pack::StageDesc::NO_LAYER {
+            continue;
+        }
+        let Some(object) = pack.object(slot) else {
+            continue;
+        };
+        let Some((lo, hi)) = object_bounds(pack, &object) else {
+            continue;
+        };
+        for axis in 0..3 {
+            min[axis] = min[axis].min(lo[axis]);
+            max[axis] = max[axis].max(hi[axis]);
+        }
+        any = true;
+    }
+    any.then_some((min, max))
+}
