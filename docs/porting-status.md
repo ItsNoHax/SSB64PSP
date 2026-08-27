@@ -14,7 +14,7 @@ Last updated: 2026-08-27.
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2722 meshes (47,696 triangles, 0 conversion failures) and 485 textures packed into a 2.9 MB runtime pack that round-trips |
 | **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
+| **M4 — Gameplay vertical slice** | 🟡 20% | Physics core ported; stages render on device with collision, and the swept floor query runs against real stage data. No match loop, no fighter standing on a stage yet |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
 | **M7 — Menus / save** | 🔴 0% | |
@@ -52,7 +52,7 @@ Last updated: 2026-08-27.
 | Collision | 🟢 45% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query ported from `mpCollisionCheckFloorLineCollisionSame`, level and sloped surfaces both; surface flags (drop-through, ledge) confirmed against how Dream Land plays. **158/162 player spawns land on a floor**, almost all 2–6 units below where they start (RE-030). No ceiling or wall queries; moving groups are tested at rest |
 | Animation | 🔴 0% | |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
-| Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view (layers + collision overlay) compiles but is **not yet seen running** — the workstation's session was locked and no screenshot could be taken |
+| Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view renders Dream Land's four layers with its collision polylines landing exactly on the platforms, 658 us at 60 FPS (`docs/images/m4-stage-collision.png`); Peach's Castle cross-checks it on sloped ground. No stage *loader* — the viewer browses stages, a match does not select one |
 | Items | 🔴 0% | |
 | CPU AI | 🔴 0% | |
 | Menus | 🔴 0% | |

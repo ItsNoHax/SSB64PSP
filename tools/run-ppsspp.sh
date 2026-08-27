@@ -42,22 +42,26 @@
 #     path resolves inside the sandbox and is never found, and leaving the
 #     video driver to autodetect can fail to produce a window at all.
 #
-#  7. **More than one way to take the picture.** ImageMagick 7.1.2 ships an
-#     `import` built without X11 support: every capture fails with "missing an
-#     image filename", including `-window root`. The script had one capture
-#     path and reported that as "screenshot failed or timed out", which reads
-#     like the emulator broke. Try each available tool in turn and say which
-#     one worked.
+#  7. **A locked screen looks exactly like a broken build.** This is the one
+#     that cost the most. With the session locked nothing composites: PPSSPP
+#     hangs forever at "Initializing Vulkan...", `import` fails on every window
+#     -- root included -- with the misleading ``missing an image filename``,
+#     and `spectacle` *succeeds*, exits 0, and writes a pure-white PNG. The old
+#     message, "screenshot failed or timed out", read like the emulator broke
+#     and sent me looking at my own rendering code. So: report the window title
+#     on failure, because "Initializing Vulkan..." names the real cause at a
+#     glance.
 #
-#  8. **A locked screen looks exactly like a broken build.** With the session
-#     locked, nothing composites: PPSSPP hangs at "Initializing Vulkan...",
-#     the window exists but cannot be grabbed, and any capture returns the lock
-#     screen. Report the window title on failure -- it names the real cause
-#     immediately, where a generic failure message sent me looking at my own
-#     rendering code.
+#     `import` is not broken and ImageMagick is not missing X11 -- I believed
+#     both for an hour. Unlock the screen and it works first try.
+#
+#  8. **More than one way to take the picture, and a check that it is a
+#     picture.** Tools are tried in turn so a single broken one is not fatal,
+#     and a capture whose standard deviation is ~0 is treated as no capture:
+#     otherwise the blank PNG above gets read as evidence about the build.
 #
 # Requires: flatpak org.ppsspp.PPSSPP, wmctrl, and one of ImageMagick
-# (`import`), `spectacle`, `grim`, `scrot` or `maim`.
+# (`import`), `spectacle`, `grim`, `scrot` or `maim`. An unlocked session.
 
 set -euo pipefail
 
@@ -98,8 +102,7 @@ fi
 # succeeds, writes a 600 KB PNG, and exits 0 -- and the PNG is pure white. The
 # script would then announce a screenshot and the image would be taken as
 # evidence about the build. Uniform output is treated as failure so it cannot
-# be. `magick identify` does no X11 work, so it still functions on the same
-# install whose `import` does not.
+# be.
 is_blank() {
   local f="$1" sd
   command -v magick >/dev/null || return 1
@@ -107,10 +110,10 @@ is_blank() {
   awk -v s="$sd" 'BEGIN { exit !(s < 0.002) }'
 }
 
-# Try each tool in turn. A tool that is installed is not necessarily working:
-# ImageMagick 7.1.2 ships an `import` compiled without X11 and it fails on
-# every window, root included. Success is judged by the file, not by the exit
-# status, because some of these exit 0 having written nothing.
+# Try each tool in turn, so one that cannot capture right now is not fatal.
+# Success is judged by the file, not by the exit status, because some of these
+# exit 0 having written nothing -- and `spectacle` exits 0 having written a
+# blank image when the screen is locked.
 capture() {
   local win="$1" out="$2" tool
   rm -f "$out"
