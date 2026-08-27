@@ -472,6 +472,49 @@ them as file offsets previously rejected valid display lists outright.
 
 ---
 
+## RE-019 — `G_SETTIMG` format describes the load, not the render
+
+**Question.** Why did 294 texture conversions fail with the impossible
+combination `(Ci, Bits16)`? CI is only ever 4- or 8-bit.
+
+**Evidence.** From the real display list in file 105 at `0xCDA0`:
+
+```
+F5 SETTILE  w0=F5400400 w1=00098250   tile 0: fmt=CI, siz=4b   <- render format
+F5 SETTILE  w0=F5500000 w1=07018050   tile 7: fmt=CI, siz=16b  <- TLUT staging
+F5 SETTILE  w0=F5000100 w1=05000000   tile 5:                  <- TLUT staging
+FD SETTIMG  w0=FD100000 w1=0000C030   fmt=RGBA, siz=16b        <- the *load*
+```
+
+Two independent mistakes were feeding each other:
+
+1. **Every `G_SETTILE` was being applied**, not just tile 0. Tiles 5 and 7 stage
+   TLUT loads and carry descriptors that make no sense as render formats.
+2. **`G_SETTIMG`'s own format/size were being trusted.** They describe how the
+   RDP *reads* the image during `G_LOADBLOCK`, not how it samples it. A CI4
+   texture is routinely loaded as RGBA16 because that is the efficient DMA
+   width.
+
+**Conclusion.** The address comes from `G_SETTIMG`; the render format comes
+from `G_SETTILE` on **tile 0** (`G_TX_RENDERTILE`). They are separate pieces of
+state and must be tracked separately.
+
+**Result.** Texture conversion went from **41 of 469** to **336 of 469**, and
+the format distribution flipped to match the measured inventory — `PsmT4`
+became dominant (274 textures) instead of everything falling back to
+`Psm8888`.
+
+**Confidence: certain.** Verified against a decomp-named display list, with
+regression tests covering both halves (`tile 0 wins over SETTIMG`, and
+`non_render_tiles_are_ignored`).
+
+**Lesson, and it is the same one as RE-017:** the failure counts were pointing
+at the bug the whole time. 294 identical `UnsupportedCombination(Ci, Bits16)`
+errors is not noise, it is a decoder reporting one specific wrong assumption.
+Reading the failure histogram before theorising would have found this faster.
+
+---
+
 ## RE-016 — Measured frame budget at M1
 
 **Question.** How much CPU headroom does the M1 baseline actually have?
