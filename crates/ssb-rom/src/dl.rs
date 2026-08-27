@@ -129,6 +129,14 @@ pub enum Cmd {
         size: u8,
         width: u16,
         addr: SegAddr,
+        /// File-relative byte offset of the address word itself.
+        ///
+        /// Needed because the address may be *absent*: the archive leaves a
+        /// pointer into another file zeroed and records it as an extern
+        /// relocation instead, which is keyed by this offset. Without it there
+        /// is no way to tell "no texture" from "the texture is over there"
+        /// (RE-037). Zero when the list was decoded without a base offset.
+        slot: u32,
     },
     SetTile {
         format: u8,
@@ -281,6 +289,7 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
             size: ((w0 >> 19) & 0x03) as u8,
             width: ((w0 & 0xFFF) + 1) as u16,
             addr: SegAddr(w1),
+            slot: 0,
         },
 
         G_SETTILE => Cmd::SetTile {
@@ -361,10 +370,18 @@ fn tri(a: u32, b: u32, c: u32) -> [u8; 3] {
 ///
 /// This does *not* follow `Call`/`Branch` — resolving a segmented address
 /// needs a segment table the caller owns. `romtool` drives the traversal.
-pub fn decode_list(data: &[u8]) -> Result<Vec<Cmd>> {
+///
+/// `base` is where `data` starts within its file, and is only used to fill in
+/// [`Cmd::SetTimg::slot`]. Pass the real offset whenever the caller has it:
+/// a texture that lives in another file can only be found through that slot.
+pub fn decode_list_at(data: &[u8], base: u32) -> Result<Vec<Cmd>> {
     let mut out = Vec::new();
-    for raw in data.as_chunks::<CMD_SIZE>().0 {
-        let cmd = decode(raw)?;
+    for (i, raw) in data.as_chunks::<CMD_SIZE>().0.iter().enumerate() {
+        let mut cmd = decode(raw)?;
+        if let Cmd::SetTimg { slot, .. } = &mut cmd {
+            // The address is `w1`, the second word of the command.
+            *slot = base + (i * CMD_SIZE) as u32 + 4;
+        }
         let end = cmd == Cmd::End;
         out.push(cmd);
         if end {
@@ -372,6 +389,14 @@ pub fn decode_list(data: &[u8]) -> Result<Vec<Cmd>> {
         }
     }
     Ok(out)
+}
+
+/// [`decode_list_at`] for a caller that does not know where the list sits.
+///
+/// Any texture the list reaches through a cross-file pointer is unresolvable
+/// this way; use `decode_list_at` where the offset is known.
+pub fn decode_list(data: &[u8]) -> Result<Vec<Cmd>> {
+    decode_list_at(data, 0)
 }
 
 /// An N64 vertex as stored in ROM (`Vtx_t`), 16 bytes.
@@ -527,5 +552,39 @@ mod tests {
         assert_eq!(v.pos, [10, -10, 20]);
         assert_eq!(v.uv, [32, 64]);
         assert_eq!(v.rgba, [0x11, 0x22, 0x33, 0x44]);
+    }
+
+    #[test]
+    fn decode_list_at_records_where_each_texture_address_word_sits() {
+        // Two SETTIMGs in one list. The slot is the *second* word of the
+        // command, which is where the archive keys its relocation -- pointing
+        // at the command instead would miss by four bytes and resolve nothing.
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0xE1, 0, 0, 0, 0, 0, 0, 0]); // G_RDPLOADSYNC
+        data.extend_from_slice(&[G_SETTIMG, 0x10, 0, 0, 0, 0, 0, 0]);
+        data.extend_from_slice(&[G_SETTIMG, 0x10, 0, 0, 0, 0, 0, 0]);
+        data.extend_from_slice(&[G_ENDDL, 0, 0, 0, 0, 0, 0, 0]);
+
+        let slots: Vec<u32> = decode_list_at(&data, 0x1000)
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                Cmd::SetTimg { slot, .. } => Some(*slot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(slots, [0x100C, 0x1014]);
+
+        // Without a base the slots are still consistent, just file-relative
+        // to nothing -- which is why the offset should always be passed.
+        let bare: Vec<u32> = decode_list(&data)
+            .unwrap()
+            .iter()
+            .filter_map(|c| match c {
+                Cmd::SetTimg { slot, .. } => Some(*slot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(bare, [0x0C, 0x14]);
     }
 }

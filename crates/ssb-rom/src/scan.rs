@@ -213,7 +213,7 @@ pub fn find_root_display_lists(file: &File) -> Vec<FoundDl> {
             continue;
         }
         // The semantic test: a real list fills its own vertex cache.
-        let draws = crate::mesh::convert(&cmds, &file.data)
+        let draws = crate::mesh::convert(&cmds, crate::mesh::Source::of(file))
             .map(|m| m.triangle_count() > 0)
             .unwrap_or(false);
         if draws {

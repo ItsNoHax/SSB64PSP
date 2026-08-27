@@ -128,6 +128,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   textures, 41 stages' collision geometry and all 27 fighters' constants
 * **Textured, shaded models placed by the scene graph render on device at
   60 FPS**, fighters in their own recovered palettes
+* **Stages render textured on device** — their texels live in a separate
+  archive file, reached through the relocations the converter now follows
 * **All 41 stages' collision geometry** decoded, packed and queried; the ported
   `mpprocess` floor solver holds a simulated fighter still at 158/158 spawn
   points with zero drift
@@ -137,7 +139,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   constants and animation lengths
 * **Animation scripts decode on the host** to per-joint transforms, validated
   against the decompilation across all 189 movement animations
-* 296 host tests passing
+* 300 host tests passing
 
 **Known limitations:**
 
@@ -146,17 +148,16 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * **Fighters do not animate.** The figatree decoder produces correct per-joint
   transforms on the host, but nothing is packed, nothing reaches the PSP, and
   the renderer still submits baked rest-pose matrices.
-* **Stage layers draw untextured.** Dream Land's geometry is in the right
-  place and its collision lines land exactly on its platforms, but the layers
-  render white — fighter models texture correctly, stage layers do not. This
-  is an open rendering defect, not an unimplemented feature.
 * No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
 * No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
-* At 995 KiB the full texture set no longer fits texture VRAM in one go. A
+* 119 of 664 bound textures still fail to convert: 54 pointers nothing
+  resolves, 36 landing past the end of the file they name, 13 segmented
+  addresses and 16 missing a palette.
+* At 1.1 MiB the full texture set no longer fits texture VRAM in one go. A
   match needs only one stage and a few fighters, but streaming is an open
   question.
 

@@ -46,14 +46,24 @@ pub struct MeshVertex {
 }
 
 /// Which texture a primitive samples, identified by where it lives.
+///
+/// "Where" is a *file* and an offset, not an offset alone. A stage's display
+/// lists live in one archive file and its texels in another; the pointer
+/// between them is an extern relocation the archive records rather than
+/// applies, so it reads as zero in the list (RE-037). `data_file` is `None`
+/// for the ordinary case where the texels are in the same file as the list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TextureRef {
-    /// Byte offset of the texel data within the source file.
+    /// Archive file holding the texel data, when it is not the list's own.
+    pub data_file: Option<u16>,
+    /// Byte offset of the texel data within that file.
     pub data_offset: u32,
     pub format: Format,
     pub size: BitSize,
     pub width: u16,
     pub height: u16,
+    /// Archive file holding the palette, when it is not the list's own.
+    pub palette_file: Option<u16>,
     /// Byte offset of the palette, for `Ci` formats.
     pub palette_offset: Option<u32>,
     pub palette_entries: u16,
@@ -139,6 +149,45 @@ struct CacheEntry {
     space: u16,
 }
 
+/// The file a display list is read out of, and where its pointers lead.
+///
+/// Carrying the relocations rather than just the bytes is what lets a texture
+/// in another archive file be found at all: the pointer word itself is zero,
+/// and the only record of what it meant is keyed by the slot's offset.
+#[derive(Clone, Copy)]
+pub struct Source<'a> {
+    pub data: &'a [u8],
+    /// The file's extern relocation slots, as the archive recorded them.
+    pub externs: &'a [crate::archive::ExternReloc],
+}
+
+impl<'a> Source<'a> {
+    /// A file whose cross-file pointers are not available.
+    ///
+    /// Fine for a list that has none — most do — and for tests. A list that
+    /// does have them will convert with those textures missing rather than
+    /// wrong, which is what the pre-RE-037 behaviour was everywhere.
+    pub fn bare(data: &'a [u8]) -> Self {
+        Source { data, externs: &[] }
+    }
+
+    /// A loaded archive file, relocations included.
+    pub fn of(file: &'a crate::archive::File) -> Self {
+        Source {
+            data: &file.data,
+            externs: &file.extern_relocs,
+        }
+    }
+
+    /// What the pointer word at `slot` targets, if it left this file.
+    fn extern_at(&self, slot: u32) -> Option<(u16, u32)> {
+        self.externs
+            .iter()
+            .find(|r| r.at == slot)
+            .map(|r| (r.target_file, r.target_offset))
+    }
+}
+
 /// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
@@ -157,10 +206,13 @@ struct State {
     /// set the format produced impossible pairs like `(Ci, Bits16)` and failed
     /// 294 texture conversions.
     timg_addr: Option<u32>,
+    /// File the current texture image lives in, when not this one.
+    timg_file: Option<u16>,
     /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
     tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
     palette_offset: Option<u32>,
+    palette_file: Option<u16>,
     palette_entries: u16,
     texture_enabled: bool,
     /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
@@ -176,9 +228,11 @@ impl State {
             inv_current: crate::scene::Mat4::IDENTITY,
             material: MeshMaterial::default(),
             timg_addr: None,
+            timg_file: None,
             tile0_fmt: None,
             tile_dims: None,
             palette_offset: None,
+            palette_file: None,
             palette_entries: 0,
             texture_enabled: false,
             mobjs: Vec::new(),
@@ -221,14 +275,17 @@ impl State {
     fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial) {
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette);
+            self.timg_file = None;
             if m.loads_tlut {
                 self.palette_offset = Some(palette);
+                self.palette_file = None;
                 self.palette_entries = m.palette_entries;
                 self.timg_addr = None;
             }
         }
         if let Some(sprite) = m.sprite {
             self.timg_addr = Some(sprite);
+            self.timg_file = None;
         }
         if let Some(c) = m.prim_color {
             self.material.prim_color = c;
@@ -244,7 +301,9 @@ impl State {
     /// Drops the texture binding a call we cannot follow would have replaced.
     fn forget_texture(&mut self) {
         self.timg_addr = None;
+        self.timg_file = None;
         self.palette_offset = None;
+        self.palette_file = None;
         self.texture_enabled = false;
     }
 
@@ -257,11 +316,13 @@ impl State {
         let (fmt, siz) = self.tile0_fmt?;
         let (w, h) = self.tile_dims?;
         Some(TextureRef {
+            data_file: self.timg_file,
             data_offset: offset,
             format: Format::from_raw(fmt)?,
             size: BitSize::from_raw(siz)?,
             width: w,
             height: h,
+            palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
         })
@@ -319,12 +380,12 @@ const MAX_DL_DEPTH: u32 = 18;
 /// correctness: Smash uses continuation lists that draw triangles from a cache
 /// their *caller* filled, so converting such a list standalone fails with
 /// [`MeshError::EmptyCacheSlot`].
-pub fn convert(cmds: &[Cmd], file: &[u8]) -> Result<Mesh, MeshError> {
+pub fn convert(cmds: &[Cmd], src: Source<'_>) -> Result<Mesh, MeshError> {
     let mut state = State::new();
     let mut builder = Builder::default();
     let mut out: Vec<Primitive> = Vec::new();
 
-    walk(cmds, file, &mut state, &mut builder, &mut out, 0)?;
+    walk(cmds, src, &mut state, &mut builder, &mut out, 0)?;
     builder.flush(&mut out);
 
     Ok(Mesh {
@@ -375,7 +436,7 @@ pub struct SequenceItem<'a> {
 ///
 /// Returns one result per item, in the order given; a failing item does not
 /// stop the rest, since its state contribution has still been applied.
-pub fn convert_sequence(items: &[SequenceItem], file: &[u8]) -> Vec<Result<Mesh, MeshError>> {
+pub fn convert_sequence(items: &[SequenceItem], src: Source<'_>) -> Vec<Result<Mesh, MeshError>> {
     let mut state = State::new();
     state.spaces = items.iter().map(|i| i.world).collect();
 
@@ -403,7 +464,7 @@ pub fn convert_sequence(items: &[SequenceItem], file: &[u8]) -> Vec<Result<Mesh,
             ..Builder::default()
         };
         let mut prims: Vec<Primitive> = Vec::new();
-        let result = walk(item.cmds, file, &mut state, &mut builder, &mut prims, 0);
+        let result = walk(item.cmds, src, &mut state, &mut builder, &mut prims, 0);
         builder.flush(&mut prims);
 
         out.push(result.map(|()| Mesh {
@@ -416,7 +477,7 @@ pub fn convert_sequence(items: &[SequenceItem], file: &[u8]) -> Vec<Result<Mesh,
 
 fn walk(
     cmds: &[Cmd],
-    file: &[u8],
+    src: Source<'_>,
     state: &mut State,
     builder: &mut Builder,
     out: &mut Vec<Primitive>,
@@ -435,7 +496,8 @@ fn walk(
                 let base = addr.0 as usize;
                 for i in 0..count as usize {
                     let at = base + i * Vtx::SIZE;
-                    let raw = file
+                    let raw = src
+                        .data
                         .get(at..at + Vtx::SIZE)
                         .ok_or(MeshError::VertexDataOutOfBounds { offset: at as u32 })?;
                     let v = Vtx::parse(raw)
@@ -483,9 +545,11 @@ fn walk(
                 }
                 if depth < MAX_DL_DEPTH && addr.segment() == 0 {
                     let at = addr.0 as usize;
-                    if at < file.len() {
-                        if let Ok(sub) = crate::dl::decode_list(&file[at..]) {
-                            walk(&sub, file, state, builder, out, depth + 1)?;
+                    if at < src.data.len() {
+                        // The sub-list's own offset, so any `G_SETTIMG` inside
+                        // it can still find a cross-file texture.
+                        if let Ok(sub) = crate::dl::decode_list_at(&src.data[at..], at as u32) {
+                            walk(&sub, src, state, builder, out, depth + 1)?;
                         }
                     }
                 }
@@ -498,7 +562,20 @@ fn walk(
             // ---- material state ------------------------------------------
             // Address only; the render format comes from tile 0. See
             // `State::timg_addr` for why.
-            Cmd::SetTimg { addr, .. } => state.timg_addr = Some(addr.0),
+            // Address only; the render format comes from tile 0. A zero
+            // address is not "no texture": the archive zeroes a pointer that
+            // leaves the file and records it as an extern relocation instead,
+            // which is how every stage reaches its texels (RE-037).
+            Cmd::SetTimg { addr, slot, .. } => match (addr.0, src.extern_at(slot)) {
+                (0, Some((target_file, offset))) => {
+                    state.timg_addr = Some(offset);
+                    state.timg_file = Some(target_file);
+                }
+                _ => {
+                    state.timg_addr = Some(addr.0);
+                    state.timg_file = None;
+                }
+            },
 
             Cmd::SetTile {
                 format, size, tile, ..
@@ -530,11 +607,13 @@ fn walk(
 
             Cmd::LoadTlut { count, .. } => {
                 // A TLUT load reads from whatever image address is current, so
-                // that address *is* the palette. The real texture follows with
-                // its own SETTIMG.
+                // that address *is* the palette — including which file it is
+                // in. The real texture follows with its own SETTIMG.
                 state.palette_offset = state.timg_addr;
+                state.palette_file = state.timg_file;
                 state.palette_entries = count;
                 state.timg_addr = None;
+                state.timg_file = None;
             }
 
             Cmd::Texture { on, .. } => state.texture_enabled = on,
@@ -653,7 +732,7 @@ mod tests {
     fn converts_a_single_triangle() {
         let file = vertex_data(3);
         let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
 
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.vertex_count(), 3);
@@ -688,7 +767,7 @@ mod tests {
         ];
 
         assert_eq!(
-            convert(&b, &file).unwrap_err(),
+            convert(&b, Source::bare(&file)).unwrap_err(),
             MeshError::EmptyCacheSlot(0)
         );
 
@@ -705,7 +784,7 @@ mod tests {
                 mobjs: &[],
             },
         ];
-        let out = convert_sequence(&items, &file);
+        let out = convert_sequence(&items, Source::bare(&file));
 
         assert_eq!(out[0].as_ref().unwrap().triangle_count(), 0);
         let mesh = out[1].as_ref().unwrap();
@@ -757,6 +836,7 @@ mod tests {
                 size: 2,
                 width: 1,
                 addr: SegAddr(0x400),
+                slot: 0,
             },
             vtx(3),
             Cmd::Tri1([0, 1, 2]),
@@ -786,7 +866,10 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
         }];
-        let mesh = convert_sequence(&items, &file).pop().unwrap().unwrap();
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
         let texture = mesh.primitives[0].material.texture.expect("bound texture");
         assert_eq!(texture.palette_offset, Some(0x200));
         assert_eq!(texture.data_offset, 0x400);
@@ -806,7 +889,10 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
         }];
-        let mesh = convert_sequence(&items, &file).pop().unwrap().unwrap();
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
         assert_eq!(mesh.triangle_count(), 1);
         let texture = mesh.primitives[0].material.texture.expect("bound texture");
         assert_eq!(texture.palette_offset, None);
@@ -816,7 +902,7 @@ mod tests {
     fn tri2_emits_two_triangles() {
         let file = vertex_data(6);
         let cmds = [vtx(6), Cmd::Tri2([0, 1, 2], [3, 4, 5]), Cmd::End];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert_eq!(mesh.triangle_count(), 2);
         assert_eq!(mesh.vertex_count(), 6);
     }
@@ -826,7 +912,7 @@ mod tests {
         // Two triangles sharing an edge: 4 unique vertices, not 6.
         let file = vertex_data(4);
         let cmds = [vtx(4), Cmd::Tri2([0, 1, 2], [0, 2, 3]), Cmd::End];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert_eq!(mesh.triangle_count(), 2);
         assert_eq!(mesh.vertex_count(), 4, "shared vertices must collapse");
         assert_eq!(mesh.primitives[0].indices, [0, 1, 2, 0, 2, 3]);
@@ -844,7 +930,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert_eq!(mesh.triangle_count(), 2);
         assert_eq!(mesh.vertex_count(), 3, "re-upload must not duplicate");
     }
@@ -876,7 +962,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         // Three runs, two distinct materials -> two draws, not three.
         assert_eq!(mesh.primitives.len(), 2, "same material must merge");
         assert_eq!(mesh.triangle_count(), 3);
@@ -901,7 +987,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         let m = mesh.primitives[0].material;
         assert!(m.cull_back);
         assert!(m.lit);
@@ -921,7 +1007,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(!mesh.primitives[0].material.cull_back);
     }
 
@@ -939,6 +1025,7 @@ mod tests {
                 size: 2,
                 width: 32,
                 addr: SegAddr(0x100),
+                slot: 0,
             },
             // Tile 0 is authoritative for the render format.
             Cmd::SetTile {
@@ -972,7 +1059,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         let tex = mesh.primitives[0].material.texture.expect("texture bound");
         assert_eq!((tex.width, tex.height), (32, 16));
         assert_eq!(tex.format, Format::Ci, "tile 0 wins over SETTIMG");
@@ -1005,6 +1092,7 @@ mod tests {
                 size: 2,
                 width: 32,
                 addr: SegAddr(0x100),
+                slot: 0,
             },
             settile(0, 2, 0), // render tile: CI4
             settile(7, 2, 2), // TLUT staging tile: the impossible (Ci, 16b)
@@ -1026,7 +1114,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         let tex = mesh.primitives[0].material.texture.expect("texture bound");
         assert_eq!(tex.format, Format::Ci);
         assert_eq!(tex.size, BitSize::Bits4, "staging tiles must not leak in");
@@ -1042,6 +1130,7 @@ mod tests {
                 size: 2,
                 width: 8,
                 addr: SegAddr(0x100),
+                slot: 0,
             },
             Cmd::SetTileSize {
                 tile: 0,
@@ -1053,7 +1142,7 @@ mod tests {
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
-        let mesh = convert(&cmds, &file).unwrap();
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(mesh.primitives[0].material.texture.is_none());
     }
 
@@ -1062,7 +1151,7 @@ mod tests {
         let file = vertex_data(3);
         let cmds = [Cmd::Tri1([0, 1, 2]), Cmd::End];
         assert!(matches!(
-            convert(&cmds, &file),
+            convert(&cmds, Source::bare(&file)),
             Err(MeshError::EmptyCacheSlot(0))
         ));
     }
@@ -1072,15 +1161,142 @@ mod tests {
         let file = vertex_data(1);
         let cmds = [vtx(4), Cmd::Tri1([0, 1, 2]), Cmd::End];
         assert!(matches!(
-            convert(&cmds, &file),
+            convert(&cmds, Source::bare(&file)),
             Err(MeshError::VertexDataOutOfBounds { .. })
         ));
     }
 
     #[test]
     fn empty_list_produces_empty_mesh() {
-        let mesh = convert(&[Cmd::End], &[]).unwrap();
+        let mesh = convert(&[Cmd::End], Source::bare(&[])).unwrap();
         assert_eq!(mesh.triangle_count(), 0);
         assert!(mesh.primitives.is_empty());
+    }
+
+    /// A list whose `G_SETTIMG` and TLUT pointers both left the file.
+    ///
+    /// The archive zeroes such a slot and records an extern relocation for it,
+    /// so the list on its own says "address 0" for both halves.
+    fn cross_file_ci4_list(timg_slot: u32, tlut_slot: u32) -> [Cmd; 9] {
+        [
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            // Palette first: a TLUT load reads whatever image is current.
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0),
+                slot: tlut_slot,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0),
+                slot: timg_slot,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(0),
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ]
+    }
+
+    #[test]
+    fn a_texture_pointer_that_left_the_file_resolves_through_the_relocation() {
+        use crate::archive::ExternReloc;
+        // Both halves point into file 103, at different offsets -- the shape
+        // every stage has: geometry in one file, texels and palette in another
+        // (RE-037).
+        let file = vertex_data(3);
+        let cmds = cross_file_ci4_list(0x40, 0x20);
+        let externs = [
+            ExternReloc {
+                at: 0x20,
+                target_file: 103,
+                target_offset: 0x900,
+            },
+            ExternReloc {
+                at: 0x40,
+                target_file: 103,
+                target_offset: 0x1200,
+            },
+        ];
+        let src = Source {
+            data: &file,
+            externs: &externs,
+        };
+        let mesh = convert(&cmds, src).unwrap();
+        let t = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(t.data_file, Some(103));
+        assert_eq!(t.data_offset, 0x1200);
+        assert_eq!(t.palette_file, Some(103));
+        assert_eq!(t.palette_offset, Some(0x900));
+    }
+
+    #[test]
+    fn without_the_relocations_the_same_list_binds_nothing_resolvable() {
+        // The pre-RE-037 behaviour, kept as the honest fallback: an address of
+        // zero with no record of what it meant is not a texture at offset
+        // zero. It must not silently sample the head of the file.
+        let file = vertex_data(3);
+        let cmds = cross_file_ci4_list(0x40, 0x20);
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let t = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(t.data_file, None);
+        assert_eq!(t.data_offset, 0);
+    }
+
+    #[test]
+    fn a_relocation_for_a_different_slot_does_not_resolve_this_one() {
+        // The lookup is keyed by the address word's own offset. Taking any
+        // extern relocation in the file would give a stage every other
+        // stage's textures.
+        use crate::archive::ExternReloc;
+        let file = vertex_data(3);
+        let cmds = cross_file_ci4_list(0x40, 0x20);
+        let externs = [ExternReloc {
+            at: 0x48,
+            target_file: 103,
+            target_offset: 0x1200,
+        }];
+        let src = Source {
+            data: &file,
+            externs: &externs,
+        };
+        let mesh = convert(&cmds, src).unwrap();
+        let t = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(t.data_file, None);
     }
 }

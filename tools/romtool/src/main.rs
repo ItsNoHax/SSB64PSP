@@ -468,7 +468,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 .map(|p| {
                     file.data
                         .get(p.dl as usize..)
-                        .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                        .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
                         .unwrap_or_default()
                 })
                 .collect();
@@ -483,10 +483,10 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
 
-            for (p, converted) in plan
-                .iter()
-                .zip(ssb_rom::mesh::convert_sequence(&items, &file.data))
-            {
+            for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
+                &items,
+                ssb_rom::mesh::Source::of(file),
+            )) {
                 let key: String = match converted {
                     _ if p.dl == NO_LIST => "no list on this side of the matrix".into(),
                     Err(e) => format!("convert failed: {e:?}"),
@@ -611,7 +611,7 @@ fn mesh(path: &Path) -> Res {
             all.iter().flat_map(|d| d.referenced_lists()).collect();
 
         for dl in all.iter().filter(|d| !called.contains(&d.offset)) {
-            match mesh::convert(&dl.commands, &file.data) {
+            match mesh::convert(&dl.commands, mesh::Source::of(file)) {
                 Ok(m) => {
                     for prim in &m.primitives {
                         let mut idx: Vec<u16> = prim.indices.clone();
@@ -772,11 +772,40 @@ fn plan_draw_order(
     out
 }
 
+/// Where a primitive's texels may be found.
+///
+/// Two files rather than one, because a texture need not live in the file that
+/// draws it: every stage reaches its texels through a pointer into a separate
+/// file (RE-037).
+#[derive(Clone, Copy)]
+struct Texels<'a> {
+    /// The file the display list came from.
+    home: &'a ssb_rom::archive::File,
+    /// The whole archive, for a reference that names another file.
+    all: &'a [Option<ssb_rom::archive::File>],
+}
+
+impl<'a> Texels<'a> {
+    /// The bytes of the file a reference's half names, or of `home`.
+    fn bytes(&self, which: Option<u16>) -> Option<&'a [u8]> {
+        match which {
+            None => Some(&self.home.data[..]),
+            Some(id) => self.all.get(id as usize)?.as_ref().map(|f| &f.data[..]),
+        }
+    }
+}
+
 /// Adds a converted mesh to the pack, uploading any textures it samples.
+///
+/// `files` is the whole archive because a texture need not live in the file
+/// that draws it: every stage reaches its texels through a pointer into a
+/// separate file (RE-037). The cache key is therefore the file the *texels*
+/// are in, not the one the display list came from — otherwise the four stages
+/// sharing a texture file would each upload their own copy of it.
 fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
     tex_index: &mut BTreeMap<(u32, u32), u32>,
-    file: &ssb_rom::archive::File,
+    src: Texels<'_>,
     id: u32,
     offset: u32,
     m: &ssb_rom::mesh::Mesh,
@@ -787,11 +816,11 @@ fn pack_mesh(
         per_prim.push(match prim.material.texture {
             None => None,
             Some(t) => {
-                let key = (id, t.data_offset);
+                let key = (t.data_file.map_or(id, u32::from), t.data_offset);
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
-                    convert_texture(&file.data, &t, swizzle).map(|tex| {
+                    convert_texture(src, &t, swizzle).map(|tex| {
                         let i = writer.add_texture(&tex);
                         tex_index.insert(key, i);
                         i
@@ -902,7 +931,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .map(|p| {
                     file.data
                         .get(p.dl as usize..)
-                        .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                        .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
                         .unwrap_or_default()
                 })
                 .collect();
@@ -919,12 +948,26 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 })
                 .collect();
 
-            for (p, converted) in plan.iter().zip(mesh::convert_sequence(&items, &file.data)) {
+            for (p, converted) in plan
+                .iter()
+                .zip(mesh::convert_sequence(&items, mesh::Source::of(file)))
+            {
                 let Ok(m) = converted else { continue };
                 if m.triangle_count() == 0 {
                     continue;
                 }
-                let index = pack_mesh(&mut writer, &mut tex_index, file, id, p.dl, &m, swizzle);
+                let index = pack_mesh(
+                    &mut writer,
+                    &mut tex_index,
+                    Texels {
+                        home: file,
+                        all: &loaded.files,
+                    },
+                    id,
+                    p.dl,
+                    &m,
+                    swizzle,
+                );
                 meshes += 1;
                 triangles += m.triangle_count();
 
@@ -947,7 +990,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .iter()
             .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset))
         {
-            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
+            let Ok(m) = mesh::convert(&dl.commands, mesh::Source::of(file)) else {
                 continue;
             };
             if m.triangle_count() == 0 {
@@ -956,7 +999,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             pack_mesh(
                 &mut writer,
                 &mut tex_index,
-                file,
+                Texels {
+                    home: file,
+                    all: &loaded.files,
+                },
                 id,
                 dl.offset,
                 &m,
@@ -1116,25 +1162,32 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 }
 
 /// Decodes and packs one texture referenced by a primitive.
+///
+/// The texels and the palette are looked up independently, because they need
+/// not be in the same file: a fighter's palette comes from its own file while
+/// a stage's texels come from a shared one.
 fn convert_texture(
-    file: &[u8],
+    src: Texels<'_>,
     t: &ssb_rom::mesh::TextureRef,
     swizzle: bool,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     use ssb_rom::psp_texture as psp;
     use ssb_rom::texture;
 
-    if (t.data_offset >> 24) != 0 || t.data_offset == 0 {
-        return None; // segmented or extern; not resolvable within this file
+    let file = src.bytes(t.data_file)?;
+
+    if (t.data_offset >> 24) != 0 || (t.data_offset == 0 && t.data_file.is_none()) {
+        return None; // segmented, or a pointer nothing resolved
     }
     let psm = psp::choose_psm(t.format, t.size);
     let need = texture::data_len(t.width as u32, t.height as u32, t.size);
-    let src = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
+    let texels = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
 
     let tlut: Vec<u16> = match t.palette_offset {
         Some(off) => {
             let n = t.palette_entries.max(1) as usize;
-            file.get(off as usize..off as usize + n * 2)
+            src.bytes(t.palette_file)
+                .and_then(|f| f.get(off as usize..off as usize + n * 2))
                 .map(texture::parse_tlut)
                 .unwrap_or_default()
         }
@@ -1142,10 +1195,18 @@ fn convert_texture(
     };
 
     if psm.is_paletted() && !tlut.is_empty() {
-        psp::pack_paletted(src, t.width as u32, t.height as u32, t.size, &tlut, swizzle).ok()
+        psp::pack_paletted(
+            texels,
+            t.width as u32,
+            t.height as u32,
+            t.size,
+            &tlut,
+            swizzle,
+        )
+        .ok()
     } else {
         texture::decode(
-            src,
+            texels,
             t.width as u32,
             t.height as u32,
             t.format,
@@ -1277,7 +1338,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 claimed.insert(p.dl);
                 file.data
                     .get(p.dl as usize..)
-                    .and_then(|d| ssb_rom::dl::decode_list(d).ok())
+                    .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
                     .unwrap_or_default()
             })
             .collect();
@@ -1292,7 +1353,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
             })
             .collect();
         out.extend(
-            mesh::convert_sequence(&items, &file.data)
+            mesh::convert_sequence(&items, mesh::Source::of(file))
                 .into_iter()
                 .flatten(),
         );
@@ -1300,7 +1361,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
 
     for dl in ssb_rom::scan::find_root_display_lists(file) {
         if !claimed.contains(&dl.offset) {
-            out.extend(mesh::convert(&dl.commands, &file.data));
+            out.extend(mesh::convert(&dl.commands, mesh::Source::of(file)));
         }
     }
     out
@@ -2469,9 +2530,26 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 let Some(t) = prim.material.texture else {
                     continue;
                 };
-                if !seen.insert((file.id, t.data_offset)) {
+                // Key on where the *texels* are. Keying on the drawing file
+                // made every unresolved cross-file texture collapse into one
+                // entry, since they all had offset zero, and hid the scale of
+                // RE-037 completely.
+                let home = t.data_file.map_or(file.id, u32::from);
+                if !seen.insert((home, t.data_offset)) {
                     continue;
                 }
+                let texels = match t.data_file {
+                    None => &file.data[..],
+                    Some(id) => match loaded.files.get(id as usize).and_then(Option::as_ref) {
+                        Some(f) => &f.data[..],
+                        None => {
+                            *why.entry("cross-file, target file did not load".into())
+                                .or_default() += 1;
+                            decode_failed += 1;
+                            continue;
+                        }
+                    },
+                };
 
                 let psm = psp::choose_psm(t.format, t.size);
                 let need = texture::data_len(t.width as u32, t.height as u32, t.size);
@@ -2487,13 +2565,13 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     decode_failed += 1;
                     continue;
                 }
-                if t.data_offset == 0 {
-                    *why.entry("null (extern reloc, texture in another file)".into())
+                if t.data_offset == 0 && t.data_file.is_none() {
+                    *why.entry("null pointer, nothing resolved it".into())
                         .or_default() += 1;
                     decode_failed += 1;
                     continue;
                 }
-                let Some(src) = file.data.get(at..at + need) else {
+                let Some(src) = texels.get(at..at + need) else {
                     *why.entry("offset past end of file".into()).or_default() += 1;
                     decode_failed += 1;
                     continue;
@@ -2507,8 +2585,15 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 let tlut: Vec<u16> = match t.palette_offset {
                     Some(off) => {
                         let entries = t.palette_entries.max(1) as usize;
-                        file.data
-                            .get(off as usize..off as usize + entries * 2)
+                        let pal = match t.palette_file {
+                            None => Some(&file.data[..]),
+                            Some(id) => loaded
+                                .files
+                                .get(id as usize)
+                                .and_then(Option::as_ref)
+                                .map(|f| &f.data[..]),
+                        };
+                        pal.and_then(|p| p.get(off as usize..off as usize + entries * 2))
                             .map(texture::parse_tlut)
                             .unwrap_or_default()
                     }
