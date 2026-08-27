@@ -163,6 +163,8 @@ struct State {
     palette_offset: Option<u32>,
     palette_entries: u16,
     texture_enabled: bool,
+    /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
+    mobjs: Vec<crate::mobj::MObjMaterial>,
 }
 
 impl State {
@@ -179,6 +181,7 @@ impl State {
             palette_offset: None,
             palette_entries: 0,
             texture_enabled: false,
+            mobjs: Vec::new(),
         }
     }
 
@@ -206,6 +209,43 @@ impl State {
             }),
             ..e.vertex
         }
+    }
+
+    /// Replays the commands one `MObj` contributes.
+    ///
+    /// The order matters and is `gcDrawMObjForDObj`'s: the palette is set as
+    /// the texture image first, then loaded as a TLUT if this `MObj` does that
+    /// itself, then the sprite overwrites the image address. A node whose
+    /// `MObj` only supplies a palette leaves the `G_LOADTLUT` to its own
+    /// display list, which is the common fighter case.
+    fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial) {
+        if let Some(palette) = m.palette {
+            self.timg_addr = Some(palette);
+            if m.loads_tlut {
+                self.palette_offset = Some(palette);
+                self.palette_entries = m.palette_entries;
+                self.timg_addr = None;
+            }
+        }
+        if let Some(sprite) = m.sprite {
+            self.timg_addr = Some(sprite);
+        }
+        if let Some(c) = m.prim_color {
+            self.material.prim_color = c;
+        }
+        if let Some(c) = m.env_color {
+            self.material.env_color = c;
+        }
+        if let Some(c) = m.blend_color {
+            self.material.blend_color = c;
+        }
+    }
+
+    /// Drops the texture binding a call we cannot follow would have replaced.
+    fn forget_texture(&mut self) {
+        self.timg_addr = None;
+        self.palette_offset = None;
+        self.texture_enabled = false;
     }
 
     /// Assembles the current texture binding, if one is fully specified.
@@ -298,6 +338,10 @@ pub struct SequenceItem<'a> {
     pub cmds: &'a [Cmd],
     /// The node's world matrix — the modelview in effect while this list runs.
     pub world: crate::scene::Mat4,
+    /// The node's `MObj` chain, indexed the way its segment-`0x0E` calls index
+    /// it. Empty when we could not recover one, which is not the same as the
+    /// node having none: see [`crate::mobj::PartTables`].
+    pub mobjs: &'a [crate::mobj::MObjMaterial],
 }
 
 /// Converts display lists that share one RSP vertex cache, in draw order.
@@ -321,12 +365,13 @@ pub struct SequenceItem<'a> {
 /// the previous one bound. Resetting per list instead resolves 378 textures
 /// against 394, so inheritance is a real but modest win.
 ///
-/// It is also where this gets dangerous. `gcDrawMObjForDObj` injects a material
+/// It is also where this gets delicate. `gcDrawMObjForDObj` injects a material
 /// display list at segment `0x0E` — the runtime graphics heap — and that is
-/// where a fighter's texture binding actually comes from. Those lists are not
-/// in the archive (RE-021), so a segmented call invalidates the texture binding
-/// rather than letting the previous node's survive. Inheriting past one bound
-/// another joint's texels over Samus's torso, and cost 117 spurious textures.
+/// where a fighter's palette comes from. When `mobjs` supplies it we replay
+/// exactly the commands that function would have emitted. When it does not,
+/// the call still invalidates the texture binding rather than letting the
+/// previous node's survive: inheriting past one bound another joint's texels
+/// over Samus's torso, and cost 117 spurious textures.
 ///
 /// Returns one result per item, in the order given; a failing item does not
 /// stop the rest, since its state contribution has still been applied.
@@ -337,6 +382,7 @@ pub fn convert_sequence(items: &[SequenceItem], file: &[u8]) -> Vec<Result<Mesh,
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
         state.space = i as u16;
+        state.mobjs = item.mobjs.to_vec();
         // A singular node matrix (zero scale) means nothing borrowed from
         // elsewhere can be expressed here; identity keeps it in its own space
         // rather than producing infinities.
@@ -421,18 +467,19 @@ fn walk(
                 // heap) are resolved by the RSP at draw time and simply do not
                 // exist in the file; skip them rather than treating them as
                 // offsets.
-                if addr.segment() != 0 {
-                    // Segment 0x0E is the runtime graphics heap, and what lands
-                    // there is the display list `gcDrawMObjForDObj` builds from
-                    // the node's `MObj` -- which is where a fighter's texture
-                    // binding actually comes from. We cannot follow it, but we
-                    // do know it *replaces* the binding, so carrying the
-                    // previous list's texture across is worse than admitting we
-                    // do not know. Samus rendered with another joint's texels
-                    // smeared over her torso until this was added.
-                    state.timg_addr = None;
-                    state.palette_offset = None;
-                    state.texture_enabled = false;
+                if addr.segment() == crate::mobj::GRAPHICS_HEAP_SEGMENT {
+                    // The heap holds one 8-byte entry point per `MObj`, so the
+                    // offset names which of the node's materials to apply.
+                    let index = (addr.offset() / 8) as usize;
+                    match state.mobjs.get(index) {
+                        Some(m) => state.apply_mobj(&m.clone()),
+                        // A material we know is there and cannot supply. Its
+                        // whole purpose is to replace the binding, so keeping
+                        // the previous list's is worse than dropping it.
+                        None => state.forget_texture(),
+                    }
+                } else if addr.segment() != 0 {
+                    state.forget_texture();
                 }
                 if depth < MAX_DL_DEPTH && addr.segment() == 0 {
                     let at = addr.0 as usize;
@@ -650,10 +697,12 @@ mod tests {
             SequenceItem {
                 cmds: &a,
                 world: Mat4::IDENTITY,
+                mobjs: &[],
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::from_trs([100.0, 0.0, 0.0], [0.0; 3], [1.0; 3]),
+                mobjs: &[],
             },
         ];
         let out = convert_sequence(&items, &file);
@@ -667,6 +716,100 @@ mod tests {
         // must be untouched.
         let xs: Vec<i16> = mesh.vertices.iter().map(|v| v.pos[0]).collect();
         assert_eq!(xs, [-100, -90, 20]);
+    }
+
+    /// A CI4 joint list the way a fighter writes one: the palette's `G_SETTIMG`
+    /// is missing because `gcDrawMObjForDObj` was going to emit it.
+    fn ci4_list_calling_the_heap(entry: u32) -> [Cmd; 8] {
+        [
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::Call(SegAddr(0x0E00_0000 + entry)),
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ]
+    }
+
+    #[test]
+    fn a_heap_call_supplies_the_palette_the_list_then_loads() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = ci4_list_calling_the_heap(8);
+        // Entry 8 is index 1: the second `MObj` in the node's chain.
+        let mobjs = [
+            MObjMaterial {
+                palette: Some(0x100),
+                ..MObjMaterial::default()
+            },
+            MObjMaterial {
+                palette: Some(0x200),
+                ..MObjMaterial::default()
+            },
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+        }];
+        let mesh = convert_sequence(&items, &file).pop().unwrap().unwrap();
+        let texture = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(texture.palette_offset, Some(0x200));
+        assert_eq!(texture.data_offset, 0x400);
+        assert_eq!(texture.format, Format::Ci);
+    }
+
+    #[test]
+    fn without_a_material_the_heap_call_leaves_the_texture_unbound() {
+        use crate::scene::Mat4;
+        // The same list with no chain recovered. The `G_LOADTLUT` has no image
+        // address to read, so there is no palette and hence no texture -- which
+        // is the honest outcome, not a texture with someone else's palette.
+        let file = vertex_data(3);
+        let cmds = ci4_list_calling_the_heap(0);
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+        }];
+        let mesh = convert_sequence(&items, &file).pop().unwrap().unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+        let texture = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(texture.palette_offset, None);
     }
 
     #[test]

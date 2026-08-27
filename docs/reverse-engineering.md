@@ -606,10 +606,13 @@ per-object render state is known, rather than inferring it. That also supplies
 the light colours (`MObj::light1color`/`light2color`) this currently replaces
 with a single neutral key light.
 
-**Update.** The scene-graph half of that is done — see RE-023, which recovers
-all 363 `DObjDesc` arrays. The light-colour half turned out not to matter:
-RE-024 measured them and they are white. The 80% threshold remains a judgement
-call; per-object render state still has to come from `MObjSub`.
+**Update.** All three parts are now settled. The scene-graph half is RE-023,
+which recovers all 363 `DObjDesc` arrays. The light-colour half turned out not
+to matter: RE-024 measured them and they are white. And RE-027 extracts
+`MObjSub` itself, so per-object render state — palette, prim/env/blend colour —
+is read rather than inferred wherever a table is named. The 80% lit-primitive
+threshold remains a judgement call, and still applies to the geometry the
+`MObj` path does not cover.
 
 ---
 
@@ -845,9 +848,8 @@ NULL.
 **Limits.** The rebase is exact for the rest pose only. Under animation a
 stitched seam would tear, because the two halves of such a triangle move with
 different joints — reproducing that needs the runtime to keep the cache, which
-is a decision for when animation lands. And `gcDrawMObjForDObj` injects a
-material list between nodes when a `DObj` has an `MObj`; those live in the
-runtime, not the archive, and are still unextracted (RE-021).
+is a decision for when animation lands. `gcDrawMObjForDObj`'s material list is
+resolved in RE-027.
 
 **Confidence: certain** for the pair member (byte-exact against four annotated
 files) and for the shared cache (the failures are gone and the geometry lands
@@ -855,10 +857,98 @@ where the decomp's `translate` values say it should).
 
 ![Samus assembled from her joint hierarchy](images/m4-fighter-joints.png)
 
-Samus, 33 joints, 326 triangles, 25 draws, 649 µs, 60 FPS. She is mostly white
-because a fighter's textures come from the runtime `MObj`, not the archive —
-see the `gSPSegment(0xE)` note above. The arm cannon is textured because that
-binding is in the display list itself.
+Samus, 33 joints, 326 triangles, 25 draws, 649 µs, 60 FPS — white, because at
+this point the segment-`0x0E` material was still unrecoverable. RE-027 fixes
+that. The arm cannon is textured even here, because that binding is in the
+display list itself.
+
+---
+
+## RE-027 — A fighter's palette lives in a table another file names
+
+**Question.** RE-026 left fighters white. Their display lists set up a CI4
+render tile, call segment `0x0E`, then run `G_LOADTLUT` — with no `G_SETTIMG`
+in between to say *what* to load. The palette address is missing from the file
+that draws with it. Where is it?
+
+**Evidence.** `gcDrawMObjForDObj` builds the missing commands at run time from
+the node's `MObj` chain. For Samus's joints the chain contributes exactly one
+thing, because `MObjSub::flags` is `0x0004` = `MOBJ_FLAG_PALETTE` alone:
+
+```c
+gDPSetTextureImage(branch_dl++, G_IM_FMT_RGBA, G_IM_SIZ_16b, 1,
+                   mobj->sub.palettes[(s32) mobj->palette_id]);
+```
+
+The `flags & (MOBJ_FLAG_SPLIT | MOBJ_FLAG_ALPHA)` block that would load the
+TLUT is skipped, so the display list's own `G_LOADTLUT` does it — which is
+precisely the gap in the file. `gcAddMObjForDObj` zeroes `palette_id`, so index
+0 is the neutral costume.
+
+Three facts make the rest recoverable:
+
+1. **`MObjSub` is in the archive.** 789 of them are typed in the decomp,
+   including every fighter `*Model` file.
+2. **The table is parallel to the `DObjDesc` array.**
+   `gcSetupCustomDObjsWithMObj(gobj, dobjdesc, p_mobjsubs, ...)` advances both
+   in lockstep, so slot `i` holds node `i`'s NULL-terminated `MObjSub *` chain.
+3. **The display list names the index.** `gcDrawMObjForDObj` writes one 8-byte
+   `gSPBranchList` per `MObj` at the head of the heap, so a call to
+   `0x0E000000 + 8i` selects `MObj` *i*. Samus's node 2 calls `0x10`, `0x08`,
+   `0x00` — three materials, switching mid-list.
+
+**The part I got wrong first.** Point 3 looks like a fingerprint strong enough
+to *find* the table: decode the lists, get a required chain length per node,
+search for a table matching that vector. It is not. Samus has two 33-node
+graphs with identical demands and two equally well-formed tables, and across
+the archive a fits-the-graph search agreed with the truth **26 times out of
+50** — a coin flip. Shipping it would have put the wrong costume on half the
+models it "recovered".
+
+The pairing is stated outright in the data instead:
+
+```c
+struct FTCommonPart {
+    DObjDesc *dobjdesc;
+    MObjSub ***p_mobjsubs;
+    AObjEvent32 ***p_costume_matanim_joints;
+    u8 flags;
+};
+```
+
+These live in the fighter's `*Main` file and point into its `*Model` file, so
+both pointers are **extern relocations** the archive loader records exactly.
+Samus's is `dSamusMain_commonparts_container` at file 217, naming graph
+`0x3520` with table `0x0000` and graph `0x69D0` with table `0x4000`.
+
+Two adjacent pointers into one file is a common shape, though: `FTAttributes`
+stores `dobj_lookup` immediately before `shield_anim_joints`, both pointing
+into the same `*ShieldPose` file, and **51** of those matched the record shape.
+Requiring the named table to actually parse for that graph's node count removes
+all 51 and nothing else.
+
+**Result.** 44 graphs paired. Then the check that matters, since it uses data
+the table does not contain: for **310 of 310** nodes, the recovered chain
+length equals what the display lists' segment-`0x0E` calls ask for — no
+mismatches. And all **459** resolved `MObjSub` offsets are ones the decomp
+typed by hand (`tools/mobjsub-ground-truth.py`), 0 unaccounted.
+
+Archive-wide textures **394 → 455**. Every fighter's two main model graphs are
+covered.
+
+**Limits.** 83 graphs want a material and no record names their table — mostly
+stages and effect files, which use a different setup path. Stage tables also
+reach chains in a *different* archive file through extern relocations; those
+slots parse but read back empty. Only costume 0 and animation frame 0 are
+taken, since `palette_id` and `texture_id` are runtime counters.
+
+**Confidence: certain.** The pairing is read from a struct that names both
+sides, and two independent checks — chain length against display-list demand,
+and every offset against the decomp — agree completely.
+
+![Samus with her Varia suit palettes](images/m4-fighter-materials.png)
+
+The same frame as RE-026, same 326 triangles and 25 draws. 707 µs, 60 FPS.
 
 ---
 
