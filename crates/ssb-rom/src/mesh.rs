@@ -129,8 +129,16 @@ pub enum MeshError {
 struct State {
     cache: [Option<MeshVertex>; VTX_CACHE_SIZE as usize],
     material: MeshMaterial,
-    /// Pending texture image set by `G_SETTIMG`, completed by `G_SETTILE`.
-    timg: Option<(u32, u8, u8)>,
+    /// Address of the current texture image, from `G_SETTIMG`.
+    ///
+    /// Deliberately separate from the format below. `G_SETTIMG`'s own format
+    /// and size describe the *load*, not the render: for a CI4 texture loaded
+    /// via `G_LOADBLOCK` the SETTIMG typically reads RGBA16. Letting SETTIMG
+    /// set the format produced impossible pairs like `(Ci, Bits16)` and failed
+    /// 294 texture conversions.
+    timg_addr: Option<u32>,
+    /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
+    tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
     palette_offset: Option<u32>,
     palette_entries: u16,
@@ -142,7 +150,8 @@ impl State {
         State {
             cache: [None; VTX_CACHE_SIZE as usize],
             material: MeshMaterial::default(),
-            timg: None,
+            timg_addr: None,
+            tile0_fmt: None,
             tile_dims: None,
             palette_offset: None,
             palette_entries: 0,
@@ -155,7 +164,8 @@ impl State {
         if !self.texture_enabled {
             return None;
         }
-        let (offset, fmt, siz) = self.timg?;
+        let offset = self.timg_addr?;
+        let (fmt, siz) = self.tile0_fmt?;
         let (w, h) = self.tile_dims?;
         Some(TextureRef {
             data_offset: offset,
@@ -299,22 +309,31 @@ fn walk(
             }
 
             // ---- material state ------------------------------------------
-            Cmd::SetTimg {
-                format, size, addr, ..
-            } => state.timg = Some((addr.0, format, size)),
+            // Address only; the render format comes from tile 0. See
+            // `State::timg_addr` for why.
+            Cmd::SetTimg { addr, .. } => state.timg_addr = Some(addr.0),
 
-            Cmd::SetTile { format, size, .. } => {
-                // A SETTILE for the texture itself refines the pending image's
-                // format; the TLUT-loading tile is distinguished by arriving
-                // after a LoadTlut, which we handle there.
-                if let Some((off, _, _)) = state.timg {
-                    state.timg = Some((off, format, size));
+            Cmd::SetTile {
+                format, size, tile, ..
+            } => {
+                // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
+                // sampled. A display list configures several tiles — tiles 5
+                // and 7 stage TLUT loads — and taking whichever came last
+                // picked up the palette tile's descriptor instead, yielding
+                // impossible combinations like CI at 16 bits and failing 312
+                // texture conversions.
+                if tile == RENDER_TILE {
+                    state.tile0_fmt = Some((format, size));
                 }
             }
 
             Cmd::SetTileSize {
-                uls, ult, lrs, lrt, ..
-            } => {
+                tile,
+                uls,
+                ult,
+                lrs,
+                lrt,
+            } if tile == RENDER_TILE => {
                 // Bounds are 10.2 fixed point and inclusive, so the pixel count
                 // is ((lr - ul) >> 2) + 1.
                 let w = ((lrs.saturating_sub(uls)) >> 2) + 1;
@@ -323,12 +342,12 @@ fn walk(
             }
 
             Cmd::LoadTlut { count, .. } => {
-                // The palette is whatever texture image is currently set.
-                state.palette_offset = state.timg.map(|(off, _, _)| off);
+                // A TLUT load reads from whatever image address is current, so
+                // that address *is* the palette. The real texture follows with
+                // its own SETTIMG.
+                state.palette_offset = state.timg_addr;
                 state.palette_entries = count;
-                // The TLUT load consumes the pending image; the real texture
-                // follows with its own SETTIMG.
-                state.timg = None;
+                state.timg_addr = None;
             }
 
             Cmd::Texture { on, .. } => state.texture_enabled = on,
@@ -402,6 +421,10 @@ fn merge_by_material(prims: Vec<Primitive>) -> Vec<Primitive> {
         .map(|(material, indices)| Primitive { material, indices })
         .collect()
 }
+
+/// The tile the RDP samples when drawing (`G_TX_RENDERTILE`). Other tiles are
+/// scratch used to stage TLUT and texture loads.
+const RENDER_TILE: u8 = 0;
 
 // Geometry mode bits (F3DEX2, from `gbi.h`).
 const G_ZBUFFER: u32 = 0x0000_0001;
@@ -569,11 +592,29 @@ mod tests {
         // 0..=(31<<2) inclusive in 10.2 -> 32 pixels.
         let cmds = [
             vtx(3),
+            // SETTIMG carries the address. Its format/size describe the *load*
+            // and are deliberately wrong here (RGBA16, as real lists have for a
+            // CI4 texture) to prove they are ignored.
             Cmd::SetTimg {
-                format: 2,
-                size: 0,
+                format: 0,
+                size: 2,
                 width: 32,
                 addr: SegAddr(0x100),
+            },
+            // Tile 0 is authoritative for the render format.
+            Cmd::SetTile {
+                format: 2,
+                size: 0,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
             },
             Cmd::SetTileSize {
                 tile: 0,
@@ -595,8 +636,61 @@ mod tests {
         let mesh = convert(&cmds, &file).unwrap();
         let tex = mesh.primitives[0].material.texture.expect("texture bound");
         assert_eq!((tex.width, tex.height), (32, 16));
-        assert_eq!(tex.format, Format::Ci);
+        assert_eq!(tex.format, Format::Ci, "tile 0 wins over SETTIMG");
         assert_eq!(tex.size, BitSize::Bits4);
+    }
+
+    /// Non-render tiles configure TLUT staging and must not affect the
+    /// texture binding.
+    #[test]
+    fn non_render_tiles_are_ignored() {
+        let file = vertex_data(3);
+        let settile = |tile: u8, format: u8, size: u8| Cmd::SetTile {
+            format,
+            size,
+            line: 0,
+            tmem: 0,
+            tile,
+            palette: 0,
+            cm_s: 0,
+            cm_t: 0,
+            mask_s: 0,
+            mask_t: 0,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let cmds = [
+            vtx(3),
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+            },
+            settile(0, 2, 0), // render tile: CI4
+            settile(7, 2, 2), // TLUT staging tile: the impossible (Ci, 16b)
+            settile(5, 0, 0), // another staging tile
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, &file).unwrap();
+        let tex = mesh.primitives[0].material.texture.expect("texture bound");
+        assert_eq!(tex.format, Format::Ci);
+        assert_eq!(tex.size, BitSize::Bits4, "staging tiles must not leak in");
     }
 
     #[test]

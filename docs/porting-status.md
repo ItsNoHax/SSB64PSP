@@ -12,7 +12,7 @@ Last updated: 2026-08-27.
 |---|---|---|
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
-| **M2 — Resource pipeline** | 🟢 75% | Archive + VPK0 verified; DL discovery and mesh conversion done (1768 lists, 0 failures); texture packing pending |
+| **M2 — Resource pipeline** | 🟢 90% | Archive + VPK0 verified; meshes (1768 lists, 0 failures) and textures (336/469) converted |
 | **M3 — Rendering** | 🟡 30% | 25,562 triangles converted to indexed meshes; PSP upload path not written |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
@@ -31,7 +31,7 @@ Last updated: 2026-08-27.
 | Asset extraction CLI | ✅ COMPLETE | `romtool extract` produces 16.29 MiB + manifest |
 | F3DEX2 DL parser | ✅ COMPLETE | All opcodes Smash emits, verified against real lists; `G_VTX` encoding regression-tested (RE-017) |
 | N64 texture decode | 🟢 70% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; not yet run on real ROM textures |
-| Texture → PSP conversion | 🔴 0% | Formats inventoried (CI4 dominant); swizzling and PSM packing not started |
+| Texture → PSP conversion | 🟢 70% | 336/469 packed, 75.4% VRAM saved, 77% swizzled. 133 need cross-file/TLUT tracking (RE-019) |
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 80% | 25,562 tris, 2.09x vertex reuse, material merging; 0 failures. No skinning yet |
 | Model conversion | 🟡 30% | Meshes extracted; DObj hierarchy/animation not applied |

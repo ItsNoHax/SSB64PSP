@@ -138,6 +138,71 @@ Three compounding wins, all paid for at build time:
 All the game's geometry fits in **580 KiB**, comfortable against 32 MiB of main
 RAM.
 
+## Texture conversion results
+
+`romtool textures` extracts every texture the display lists actually bind and
+packs it for the GE:
+
+```
+unique textures bound  469
+packed                 336
+swizzled               260 (77%)
+
+by PSP format:
+  Psm8888     54 textures      355.6 KiB
+  PsmT4      274 textures      427.9 KiB
+  PsmT8        8 textures       18.3 KiB
+
+VRAM budget
+  packed (chosen formats)      801.8 KiB
+  naive, all RGBA8888         3259.1 KiB
+  saving                        75.4%
+```
+
+**75.4% saved** by keeping paletted textures paletted. `PsmT4` carries 274 of
+336 textures in 428 KiB; expanding those to RGBA8888 would cost eight times as
+much and blow the VRAM budget outright.
+
+Two rules drive the packing:
+
+* **Keep CI4/CI8 paletted.** The PSP has native CLUT support, so the dominant
+  N64 format converts at 4 bits per texel with a 16-entry CLUT.
+* **Keep I4/I8 paletted too**, against a greyscale CLUT. They are intensity
+  ramps, so a palette is exact rather than lossy, and avoids an 8x expansion.
+
+IA and RGBA32 have no PSP equivalent and expand to `Psm8888`.
+
+### Swizzling
+
+77% of textures are swizzled. The GE reads through a cache organised in
+16-byte by 8-row blocks; storing texels linearly makes each cache line span one
+row, so vertical locality is lost. Swizzling reorders texels so each block is
+contiguous. Textures whose rows are under 16 bytes cannot be swizzled and are
+left linear rather than padded, which would waste more than it saves.
+
+### The 801 KiB figure needs streaming
+
+Only ~700 KiB of VRAM remains after the two framebuffers and the depth buffer
+(`docs/memory.md`), so the full texture set does **not** fit at once — it is
+1.1x over. This is not a problem in practice: a match needs one stage and up to
+four fighters, not every texture in the game. But it does mean texture
+residency must be **per-scene**, and that is now a known requirement rather
+than a surprise discovered at M8.
+
+### Remaining unconverted (133 of 469)
+
+| Reason | Count |
+|---|---:|
+| paletted but no TLUT recorded | 67 |
+| null address (extern reloc — texture lives in another file) | 54 |
+| `MissingPalette` at decode | 50 |
+| offset past end of file | 20 |
+| segmented address (segment 0x01) | 9 |
+
+The palette-related cases need TLUT tracking across display list boundaries;
+the extern-reloc ones need cross-file resolution. Neither blocks getting
+geometry on screen.
+
 ## Display list translation
 
 F3DEX2's model maps cleanly onto an indexed draw:

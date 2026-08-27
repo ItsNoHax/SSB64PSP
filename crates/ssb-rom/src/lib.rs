@@ -14,6 +14,7 @@ extern crate alloc;
 pub mod archive;
 pub mod dl;
 pub mod mesh;
+pub mod psp_texture;
 pub mod rom;
 pub mod scan;
 pub mod texture;

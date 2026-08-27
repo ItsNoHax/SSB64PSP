@@ -10,7 +10,7 @@
 //! romtool info     <rom>          summarise the relocData archive
 //! romtool extract  <rom> [--out]  extract every archive file + a manifest
 //! romtool dump     <rom> <id>     dump one archive file
-//! romtool textures <rom> <id>     list textures referenced by a file's DLs
+//! romtool textures <rom>          extract + pack every bound texture
 //! ```
 
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use ssb_rom::archive::Archive;
-use ssb_rom::{dl, rom};
+use ssb_rom::rom;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -33,7 +33,7 @@ fn main() -> ExitCode {
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
-        ["textures", rom_path, id] => textures(rom_path.as_ref(), id),
+        ["textures", rom_path] => textures(rom_path.as_ref()),
         _ => {
             usage();
             return ExitCode::from(2);
@@ -61,7 +61,7 @@ USAGE:
     romtool mesh     <rom.z64>
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
-    romtool textures <rom.z64> <file-id>
+    romtool textures <rom.z64>
 
 The ROM is read only. Output defaults to assets/generated/, which is
 gitignored -- no extracted asset is ever committed."
@@ -439,41 +439,191 @@ fn dump(path: &Path, id: &str) -> Res {
 /// This is the reconnaissance step for the rendering pipeline: before writing
 /// a converter we need to know which `(format, size)` combinations Smash
 /// actually uses, rather than supporting all of them speculatively.
-fn textures(path: &Path, id: &str) -> Res {
+/// Extracts and packs every texture the game's display lists actually bind,
+/// then reports the VRAM budget.
+///
+/// Textures are found via `mesh::convert`, which resolves each primitive's
+/// `TextureRef` from the RDP state in force at draw time -- so this covers the
+/// textures the game really uses, not every image-shaped blob in the archive.
+fn textures(path: &Path) -> Res {
+    use ssb_rom::psp_texture as psp;
+    use ssb_rom::{mesh, texture};
+
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
-    let file = archive.load(parse_id(id)?)?;
 
-    // Scan the whole file for display list command streams. We do not know
-    // where the DLs are without following the scene graph, so instead we look
-    // for `G_SETTIMG` followed by a plausible tile setup -- enough to inventory
-    // formats.
-    let mut formats: BTreeMap<(u8, u8), usize> = BTreeMap::new();
-    let mut opcodes: BTreeMap<u8, usize> = BTreeMap::new();
+    let files: Vec<_> = (0..archive.len() as u32)
+        .filter_map(|id| archive.load(id).ok())
+        .collect();
 
-    for off in (0..file.data.len().saturating_sub(dl::CMD_SIZE)).step_by(dl::CMD_SIZE) {
-        let Ok(cmd) = dl::decode(&file.data[off..]) else {
-            continue;
-        };
-        *opcodes.entry(file.data[off]).or_default() += 1;
-        if let dl::Cmd::SetTile { format, size, .. } = cmd {
-            *formats.entry((format, size)).or_default() += 1;
+    // Deduplicate: the same texture is bound by many primitives.
+    let mut seen: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+    let mut by_format: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // count, bytes
+    let mut packed_ok = 0usize;
+    let mut decode_failed = 0usize;
+    let mut total_psp = 0usize;
+    let mut total_naive = 0usize;
+    let mut swizzled = 0usize;
+    let mut largest: Vec<(usize, u32, u32, String)> = Vec::new();
+    let mut why: BTreeMap<String, usize> = BTreeMap::new();
+
+    for file in &files {
+        for dl in ssb_rom::scan::find_root_display_lists(file) {
+            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
+                continue;
+            };
+            for prim in &m.primitives {
+                let Some(t) = prim.material.texture else {
+                    continue;
+                };
+                if !seen.insert((file.id, t.data_offset)) {
+                    continue;
+                }
+
+                let psm = psp::choose_psm(t.format, t.size);
+                let need = texture::data_len(t.width as u32, t.height as u32, t.size);
+                let at = t.data_offset as usize;
+
+                // Diagnose *why* a texture cannot be read, rather than lumping
+                // every failure together.
+                let segment = (t.data_offset >> 24) as u8;
+                if segment != 0 {
+                    *why.entry(format!("segmented addr (seg 0x{segment:02X})"))
+                        .or_default() += 1;
+                    decode_failed += 1;
+                    continue;
+                }
+                if t.data_offset == 0 {
+                    *why.entry("null (extern reloc, texture in another file)".into())
+                        .or_default() += 1;
+                    decode_failed += 1;
+                    continue;
+                }
+                let Some(src) = file.data.get(at..at + need) else {
+                    *why.entry("offset past end of file".into()).or_default() += 1;
+                    decode_failed += 1;
+                    continue;
+                };
+                if psm.is_paletted() && t.palette_offset.is_none() {
+                    *why.entry("paletted but no TLUT recorded".into())
+                        .or_default() += 1;
+                }
+
+                // Palette, if this is a CLUT format.
+                let tlut: Vec<u16> = match t.palette_offset {
+                    Some(off) => {
+                        let entries = t.palette_entries.max(1) as usize;
+                        file.data
+                            .get(off as usize..off as usize + entries * 2)
+                            .map(texture::parse_tlut)
+                            .unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                };
+
+                let tex = if psm.is_paletted() && !tlut.is_empty() {
+                    match psp::pack_paletted(
+                        src,
+                        t.width as u32,
+                        t.height as u32,
+                        t.size,
+                        &tlut,
+                        true,
+                    ) {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            *why.entry(format!("pack_paletted: {e:?}")).or_default() += 1;
+                            None
+                        }
+                    }
+                } else {
+                    match texture::decode(
+                        src,
+                        t.width as u32,
+                        t.height as u32,
+                        t.format,
+                        t.size,
+                        (!tlut.is_empty()).then_some(tlut.as_slice()),
+                    ) {
+                        Ok(img) => Some(psp::pack_rgba(&img, psp::Psm::Psm8888, true)),
+                        Err(e) => {
+                            *why.entry(format!("decode: {e:?}")).or_default() += 1;
+                            None
+                        }
+                    }
+                };
+
+                match tex {
+                    Some(tex) => {
+                        packed_ok += 1;
+                        if tex.swizzled {
+                            swizzled += 1;
+                        }
+                        let size = tex.vram_size();
+                        total_psp += size;
+                        // What it would cost expanded to 32-bit RGBA.
+                        total_naive += (t.width as usize) * (t.height as usize) * 4;
+
+                        let name = format!("{:?}", tex.format);
+                        let e = by_format.entry(name.clone()).or_default();
+                        e.0 += 1;
+                        e.1 += size;
+                        largest.push((size, t.width as u32, t.height as u32, name));
+                    }
+                    None => decode_failed += 1,
+                }
+            }
         }
     }
 
-    println!("texture formats referenced (format, size) -> count");
-    for ((f, s), n) in &formats {
-        let fname = ssb_rom::texture::Format::from_raw(*f)
-            .map(|f| format!("{f:?}"))
-            .unwrap_or_else(|| format!("raw{f}"));
-        let bits = ssb_rom::texture::BitSize::from_raw(*s)
-            .map(|b| b.bits())
-            .unwrap_or(0);
-        println!("  {fname:<5} {bits:>2}bpp  {n}");
+    let kib = |b: usize| b as f64 / 1024.0;
+
+    println!("texture conversion");
+    println!("  unique textures bound  {}", seen.len());
+    println!("  packed                 {packed_ok}");
+    println!("  failed                 {decode_failed}");
+    for (reason, n) in &why {
+        println!("    {reason:<48} {n:>4}");
     }
-    if formats.is_empty() {
-        println!("  (none -- this file may not contain display lists)");
+    println!(
+        "  swizzled               {swizzled} ({:.0}%)",
+        swizzled as f64 / packed_ok.max(1) as f64 * 100.0
+    );
+
+    println!("\nby PSP format:");
+    for (fmt, (n, bytes)) in &by_format {
+        println!("  {fmt:<8} {n:>5} textures  {:>9.1} KiB", kib(*bytes));
     }
+
+    println!("\nVRAM budget");
+    println!("  packed (chosen formats)  {:>9.1} KiB", kib(total_psp));
+    println!("  naive, all RGBA8888      {:>9.1} KiB", kib(total_naive));
+    if total_naive > 0 {
+        println!(
+            "  saving                   {:>9.1}%",
+            100.0 - (total_psp as f64 / total_naive as f64 * 100.0)
+        );
+    }
+    // Framebuffers + depth leave roughly this much of the PSP's 2 MiB VRAM.
+    const VRAM_FOR_TEXTURES: usize = 700 * 1024;
+    println!(
+        "  fits in ~700 KiB texture VRAM? {}",
+        if total_psp <= VRAM_FOR_TEXTURES {
+            "yes, all at once".into()
+        } else {
+            format!(
+                "no - needs streaming ({:.1}x over)",
+                total_psp as f64 / VRAM_FOR_TEXTURES as f64
+            )
+        }
+    );
+
+    largest.sort_by_key(|(s, ..)| std::cmp::Reverse(*s));
+    println!("\nlargest textures:");
+    for (size, w, h, fmt) in largest.iter().take(8) {
+        println!("  {w:>3}x{h:<3} {fmt:<8} {:>8.1} KiB", kib(*size));
+    }
+
     Ok(())
 }
 
