@@ -31,6 +31,7 @@ fn main() -> ExitCode {
         ["check", rom_path] => check(rom_path.as_ref()),
         ["scan", rom_path, rest @ ..] => scan(rom_path.as_ref(), rest),
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
+        ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
         ["textures", rom_path] => textures(rom_path.as_ref()),
@@ -59,6 +60,7 @@ USAGE:
     romtool check    <rom.z64>
     romtool scan     <rom.z64> [--exhaustive]
     romtool mesh     <rom.z64>
+    romtool pack     <rom.z64> [--out <file>] [--file <id>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
@@ -385,6 +387,138 @@ fn mesh(path: &Path) -> Res {
     );
 
     Ok(())
+}
+
+/// Builds the runtime asset pack: converted geometry and textures in the
+/// layout the PSP consumes directly.
+fn pack(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::{mesh, pack as fmt};
+
+    let mut out_path = PathBuf::from("assets/generated/ssb64.pak");
+    let mut only_file: Option<u32> = None;
+
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--out" => out_path = it.next().ok_or("--out needs a path")?.into(),
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+
+    let mut writer = fmt::PackWriter::new();
+    // The same texture is bound by many primitives; upload each once.
+    let mut tex_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    let mut meshes = 0usize;
+    let mut triangles = 0usize;
+
+    for id in 0..archive.len() as u32 {
+        if only_file.is_some_and(|f| f != id) {
+            continue;
+        }
+        let Ok(file) = archive.load(id) else { continue };
+
+        let all = ssb_rom::scan::find_root_display_lists(&file);
+        // convert() inlines G_DL callees, so packing a list that another list
+        // calls would duplicate its geometry.
+        let called: std::collections::BTreeSet<u32> =
+            all.iter().flat_map(|d| d.referenced_lists()).collect();
+
+        for dl in all.iter().filter(|d| !called.contains(&d.offset)) {
+            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
+                continue;
+            };
+            if m.triangle_count() == 0 {
+                continue;
+            }
+
+            // Resolve each primitive's texture, adding new ones to the pack.
+            let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
+            for prim in &m.primitives {
+                per_prim.push(match prim.material.texture {
+                    None => None,
+                    Some(t) => {
+                        let key = (id, t.data_offset);
+                        if let Some(&i) = tex_index.get(&key) {
+                            Some(i)
+                        } else {
+                            convert_texture(&file.data, &t).map(|tex| {
+                                let i = writer.add_texture(&tex);
+                                tex_index.insert(key, i);
+                                i
+                            })
+                        }
+                    }
+                });
+            }
+
+            writer.add_mesh(&m, id, dl.offset, |i| per_prim[i]);
+            meshes += 1;
+            triangles += m.triangle_count();
+        }
+    }
+
+    let bytes = writer.finish();
+    if let Some(dir) = out_path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(&out_path, &bytes)?;
+
+    // Verify what we just wrote actually loads, rather than trusting it.
+    let pack = ssb_rom::pack::Pack::open(&bytes)
+        .map_err(|e| format!("wrote a pack that will not load: {e:?}"))?;
+
+    println!("asset pack -> {}", out_path.display());
+    println!("  meshes      {meshes}");
+    println!("  triangles   {triangles}");
+    println!("  textures    {}", pack.texture_count());
+    println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
+    println!("  verified    loads back cleanly");
+    Ok(())
+}
+
+/// Decodes and packs one texture referenced by a primitive.
+fn convert_texture(
+    file: &[u8],
+    t: &ssb_rom::mesh::TextureRef,
+) -> Option<ssb_rom::psp_texture::PspTexture> {
+    use ssb_rom::psp_texture as psp;
+    use ssb_rom::texture;
+
+    if (t.data_offset >> 24) != 0 || t.data_offset == 0 {
+        return None; // segmented or extern; not resolvable within this file
+    }
+    let psm = psp::choose_psm(t.format, t.size);
+    let need = texture::data_len(t.width as u32, t.height as u32, t.size);
+    let src = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
+
+    let tlut: Vec<u16> = match t.palette_offset {
+        Some(off) => {
+            let n = t.palette_entries.max(1) as usize;
+            file.get(off as usize..off as usize + n * 2)
+                .map(texture::parse_tlut)
+                .unwrap_or_default()
+        }
+        None => Vec::new(),
+    };
+
+    if psm.is_paletted() && !tlut.is_empty() {
+        psp::pack_paletted(src, t.width as u32, t.height as u32, t.size, &tlut, true).ok()
+    } else {
+        texture::decode(
+            src,
+            t.width as u32,
+            t.height as u32,
+            t.format,
+            t.size,
+            (!tlut.is_empty()).then_some(tlut.as_slice()),
+        )
+        .ok()
+        .map(|img| psp::pack_rgba(&img, psp::Psm::Psm8888, true))
+    }
 }
 
 fn parse_id(s: &str) -> Result<u32, Box<dyn std::error::Error>> {

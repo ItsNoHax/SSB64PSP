@@ -12,6 +12,7 @@ description = "Layer C: the PSP backend and executable for the SSB64 port."
 [dependencies]
 psp = "0.3.13"
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
+ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 
 [profile.release]

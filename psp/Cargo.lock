@@ -80,6 +80,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "ssb-engine"
 version = "0.1.0"
 
@@ -91,12 +97,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssb-rom"
+version = "0.1.0"
+dependencies = [
+ "sha1_smol",
+]
+
+[[package]]
 name = "ssb64-psp"
 version = "0.1.0"
 dependencies = [
  "psp",
  "ssb-engine",
  "ssb-game",
+ "ssb-rom",
 ]
 
 [[package]]
