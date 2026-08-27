@@ -52,30 +52,47 @@ pub struct PhysicsAttributes {
     pub weight: f32,
 }
 
+impl PhysicsAttributes {
+    /// Mario's, transcribed from `dMarioMain_attr` in the decompilation and
+    /// confirmed against the bytes `romtool fighters --verify` reads out of
+    /// file 203 at `0x428`.
+    ///
+    /// These replaced a hand-picked "neutral baseline" that turned out to be
+    /// wrong by more than an order of magnitude in every term — `0.09` gravity
+    /// against `2.4`, `1.7` terminal velocity against `44.0`. Smash 64 works
+    /// in the same large units as its collision geometry, where Mario is 320
+    /// tall and a stage spans several thousand, so small-looking constants are
+    /// not conservative, they are simply a different game. A fighter under the
+    /// old numbers still fell and still landed; it just took three hundred
+    /// frames to drop what should take twenty.
+    pub const MARIO: PhysicsAttributes = PhysicsAttributes {
+        traction: 1.5,
+        dash_speed: 54.0,
+        dash_decel: 2.8,
+        run_speed: 44.0,
+        walk_speed_mul: 0.3,
+        jump_vel_x: 0.35,
+        jump_height_mul: 0.7,
+        jump_height_base: 26.0,
+        jumpaerial_vel_x: 0.35,
+        jumpaerial_height: 0.9,
+        air_accel: 0.025,
+        air_speed_max_x: 30.0,
+        air_friction: 0.2,
+        gravity: 2.4,
+        tvel_base: 44.0,
+        tvel_fast: 70.0,
+        jumps_max: 2,
+        weight: 1.0,
+    };
+}
+
 impl Default for PhysicsAttributes {
+    /// Mario's. He is the roster's reference character and the one every
+    /// on-device test uses, so defaulting to real numbers beats defaulting to
+    /// invented ones that quietly rescale every result.
     fn default() -> Self {
-        // Not a real character's values — a neutral baseline for tests.
-        // Real values come from the extracted `FTAttributes` files.
-        PhysicsAttributes {
-            traction: 0.06,
-            dash_speed: 1.6,
-            dash_decel: 0.1,
-            run_speed: 1.5,
-            walk_speed_mul: 1.0,
-            jump_vel_x: 0.8,
-            jump_height_mul: 1.0,
-            jump_height_base: 3.0,
-            jumpaerial_vel_x: 0.8,
-            jumpaerial_height: 3.0,
-            air_accel: 0.05,
-            air_speed_max_x: 0.8,
-            air_friction: 0.01,
-            gravity: 0.09,
-            tvel_base: 1.7,
-            tvel_fast: 2.5,
-            jumps_max: 2,
-            weight: 100.0,
-        }
+        PhysicsAttributes::MARIO
     }
 }
 
@@ -234,18 +251,58 @@ pub fn apply_air_friction(p: &mut PhysicsState, attr: &PhysicsAttributes) {
     }
 }
 
-/// Air drift: accelerate horizontally toward stick input, capped at
-/// `air_speed_max_x`.
+/// Minimum stick deflection that counts as drifting at all —
+/// `FTPHYSICS_AIRDRIFT_CLAMP_RANGE_MIN`.
+pub const AIRDRIFT_STICK_MIN: i32 = 8;
+
+/// `ftPhysicsClampAirVelXStickRange` @ 0x800D8FE0.
 ///
-/// `stick_x` is the raw N64 stick reading (`-80..=80`).
+/// Drift is scaled by **how far** the stick is pushed, not just which way:
+/// `vel_air.x += stick_x * vel`. At full deflection that is 80 times the
+/// per-unit figure, which is why `air_accel` looks so small (Mario's is
+/// `0.025`, giving `2.0` per frame at full tilt).
+pub fn clamp_air_vel_x_stick_range(
+    p: &mut PhysicsState,
+    stick_x: i8,
+    stick_min: i32,
+    vel: f32,
+    clamp: f32,
+) {
+    if (stick_x as i32).abs() >= stick_min {
+        p.vel_air.x += stick_x as f32 * vel;
+        clamp_air_vel_x(p, clamp);
+    }
+}
+
+/// `ftPhysicsApplyAirVelDrift` @ 0x800D90F4, minus the gravity it calls first.
+///
+/// Three things here are easy to get wrong, and the first port got two of them:
+///
+/// * Drift scales with stick magnitude — see
+///   [`clamp_air_vel_x_stick_range`]. Using only the sign makes drift 80x too
+///   weak, which looks like "drifting is a bit sluggish" rather than a bug.
+/// * Friction is applied **every** frame, including while the stick is held.
+///   So the real steady-state drift speed is not the clamp but the clamp minus
+///   one frame of friction, and releasing the stick does not change which
+///   function runs — only whether acceleration is added first.
+/// * Below `|stick_x| < 8` no acceleration is added at all, so the deadzone is
+///   a band and not just zero.
+///
+/// `check_clamp_air_vel_x_dec` runs first and, when a fighter is over their
+/// cap from a launch, takes the frame entirely: no drift and no friction until
+/// the excess has bled off.
 pub fn apply_air_drift(p: &mut PhysicsState, attr: &PhysicsAttributes, stick_x: i8) {
-    if stick_x == 0 {
-        apply_air_friction(p, attr);
+    if check_clamp_air_vel_x_dec(p, attr.air_speed_max_x) {
         return;
     }
-    let dir = if stick_x > 0 { 1.0 } else { -1.0 };
-    p.vel_air.x += attr.air_accel * dir;
-    clamp_air_vel_x(p, attr.air_speed_max_x);
+    clamp_air_vel_x_stick_range(
+        p,
+        stick_x,
+        AIRDRIFT_STICK_MIN,
+        attr.air_accel,
+        attr.air_speed_max_x,
+    );
+    apply_air_friction(p, attr);
 }
 
 /// `ftPhysicsApplyGroundVelTransferAir` @ 0x800D8B78.
@@ -344,17 +401,20 @@ mod tests {
 
     #[test]
     fn ice_slides_further_than_normal_ground() {
+        // At Mario's run speed: the common material takes 1.5/frame off and
+        // stops him in 30 frames, ice takes a fifth of that and does not.
         let attr = PhysicsAttributes::default();
         let mut normal = state();
         let mut ice = state();
-        normal.vel_ground.x = 1.0;
-        ice.vel_ground.x = 1.0;
+        normal.vel_ground.x = attr.run_speed;
+        ice.vel_ground.x = attr.run_speed;
 
         for _ in 0..5 {
             apply_ground_friction_with_material(&mut normal, &attr, 1.0);
             apply_ground_friction_with_material(&mut ice, &attr, 0.2);
         }
         assert!(ice.vel_ground.x > normal.vel_ground.x);
+        assert!(normal.vel_ground.x > 0.0, "5 frames should not stop him");
     }
 
     #[test]
@@ -373,13 +433,47 @@ mod tests {
         for _ in 0..100 {
             apply_air_drift(&mut p, &attr, 80);
         }
-        assert_eq!(p.vel_air.x, attr.air_speed_max_x);
+        // Not the clamp itself: drift adds, the clamp pins to
+        // `air_speed_max_x`, and then friction takes its cut in the same
+        // frame. The steady state is one frame of friction below the cap.
+        assert_eq!(p.vel_air.x, attr.air_speed_max_x - attr.air_friction);
 
-        // Reversing drift pulls back the other way and caps symmetrically.
+        // Reversing drift pulls back the other way and settles symmetrically.
         for _ in 0..100 {
             apply_air_drift(&mut p, &attr, -80);
         }
-        assert_eq!(p.vel_air.x, -attr.air_speed_max_x);
+        assert_eq!(p.vel_air.x, -(attr.air_speed_max_x - attr.air_friction));
+    }
+
+    #[test]
+    fn full_stick_drift_scales_with_how_far_it_is_pushed() {
+        // Half deflection accelerates at half the rate. Using only the stick's
+        // sign would make these two identical, which is the bug the real
+        // attributes exposed: at `air_accel = 0.025` a sign-only drift takes
+        // 1200 frames to reach a cap the game reaches in 17.
+        let attr = PhysicsAttributes::default();
+        let mut full = state();
+        let mut half = state();
+        apply_air_drift(&mut full, &attr, 80);
+        apply_air_drift(&mut half, &attr, 40);
+        assert_eq!(full.vel_air.x, 80.0 * attr.air_accel - attr.air_friction);
+        assert_eq!(half.vel_air.x, 40.0 * attr.air_accel - attr.air_friction);
+        assert!(full.vel_air.x > half.vel_air.x);
+    }
+
+    #[test]
+    fn a_stick_inside_the_deadzone_only_gets_friction() {
+        // 7 is below `AIRDRIFT_STICK_MIN`, so no acceleration is added at all
+        // — but friction still runs, exactly as it does at neutral.
+        let attr = PhysicsAttributes::default();
+        let mut p = state();
+        let mut neutral = state();
+        p.vel_air.x = 5.0;
+        neutral.vel_air.x = 5.0;
+        apply_air_drift(&mut p, &attr, 7);
+        apply_air_drift(&mut neutral, &attr, 0);
+        assert_eq!(p.vel_air.x, 5.0 - attr.air_friction);
+        assert_eq!(p.vel_air.x, neutral.vel_air.x);
     }
 
     #[test]

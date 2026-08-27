@@ -462,6 +462,7 @@ unsafe fn run() -> ! {
                         if let Some(pl) = &player {
                             meshdraw::draw_fighter(
                                 pl.fighter.pos.to_array(),
+                                &pl.fighter.coll,
                                 pl.fighter.is_grounded(),
                                 &base,
                                 &mut gpu,
@@ -629,6 +630,21 @@ unsafe fn run() -> ! {
             _ => ("off     ", 0, 0, -1, 0, 0),
         };
 
+        // The constants the fighter is actually running under, so a stale pack
+        // shows up as "attrs built-in" rather than as mysteriously wrong
+        // physics. Gravity is shown in tenths because the debug text has no
+        // float formatting; Mario's 2.4 reads as 24.
+        let (ft_src, ft_grav, ft_tvel, ft_bw, ft_bh) = match &player {
+            Some(pl) if sim_fighter => (
+                if pl.from_pack { "pack    " } else { "built-in" },
+                (pl.fighter.attributes.gravity * 10.0) as i32,
+                pl.fighter.attributes.tvel_base as i32,
+                pl.fighter.coll.width as i32,
+                pl.fighter.coll.top as i32,
+            ),
+            _ => ("-       ", 0, 0, 0, 0),
+        };
+
         const WHITE: u32 = 0xFFFF_FFFF;
         gpu.debug_text(
             8,
@@ -640,6 +656,7 @@ unsafe fn run() -> ! {
                  \n\
                  {} {}/{}  file {}  @0x{:X}\n\
                  fighter {}  x {} y {}  line {}  mat {}  air {}\n\
+                 attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
                  tris {}  {} {}  {} {}\n\
                  draws {}  state changes {}\n\
                  \n\
@@ -665,6 +682,11 @@ unsafe fn run() -> ! {
                 ft_line,
                 ft_mat,
                 ft_air,
+                ft_src,
+                ft_grav,
+                ft_tvel,
+                ft_bw,
+                ft_bh,
                 shown.0,
                 if stage_view {
                     "layers"
