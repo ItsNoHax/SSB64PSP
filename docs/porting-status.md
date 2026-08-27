@@ -13,7 +13,7 @@ Last updated: 2026-08-27.
 | **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
 | **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
 | **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; meshes (1768 lists, 0 failures) and textures (336/469) packed into a 1.7 MB runtime pack that round-trips |
-| **M3 — Rendering** | 🟡 65% | **ROM geometry renders on device at 60 FPS** (`docs/images/m3-rom-geometry.png`). Textures/lighting not yet validated |
+| **M3 — Rendering** | 🟢 75% | **Textured, shaded models render on device at 60 FPS** (`docs/images/m3-textured-model.png`). No scene graph or animation yet |
 | **M4 — Gameplay vertical slice** | 🔴 5% | Physics core ported; no match loop |
 | **M5 — Audio** | 🔴 0% | Traits only |
 | **M6 — Full gameplay** | 🔴 0% | |
@@ -31,13 +31,13 @@ Last updated: 2026-08-27.
 | Asset extraction CLI | ✅ COMPLETE | `romtool extract` produces 16.29 MiB + manifest |
 | F3DEX2 DL parser | ✅ COMPLETE | All opcodes Smash emits, verified against real lists; `G_VTX` encoding regression-tested (RE-017) |
 | N64 texture decode | 🟢 70% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; not yet run on real ROM textures |
-| Texture → PSP conversion | 🟢 70% | 336/469 packed, 75.4% VRAM saved, 77% swizzled. 133 need cross-file/TLUT tracking (RE-019) |
+| Texture → PSP conversion | 🟢 85% | 340 packed, 75.4% VRAM saved. Round-trip tested through swizzle+CLUT; verified on device (RE-022) |
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
 | Mesh conversion | 🟢 80% | 25,562 tris, 2.09x vertex reuse, material merging; 0 failures. No skinning yet |
 | Model conversion | 🟡 30% | Meshes extracted; DObj hierarchy/animation not applied |
 | Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 1768 meshes round-trip |
 | PSP asset loading | ✅ COMPLETE | 1.7 MB pack loads aligned, cache-flushed, verified on device |
-| PSP mesh drawing | 🟢 65% | Indexed GE draws verified on device: 396 tris, 2 draws, 60 FPS, 168us CPU. Lit materials still draw normals as colours |
+| PSP mesh drawing | 🟢 80% | Indexed GE draws, CLUT textures, wrap, baked shading. 318-tri model at 60 FPS, 317us CPU |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
 | VFPU optimization | 🔴 0% | Deliberately not started |

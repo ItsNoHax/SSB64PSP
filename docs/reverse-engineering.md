@@ -561,6 +561,79 @@ right scale to each.
 
 ---
 
+## RE-021 — Lighting state is inherited, not carried by the display list
+
+**Question.** After textures worked, meshes still rendered as saturated
+red/green/cyan polygons. Why were so many primitives drawing packed normals as
+vertex colours?
+
+**Evidence.** N64 normals are `i8` components of a unit vector, so
+`x² + y² + z²` sits near `127² = 16129`; arbitrary colours have no reason to.
+Measured over the whole archive:
+
+```
+vertices in lit prims    555     100.0% look like unit normals
+vertices in unlit prims  36356    69.4% look like unit normals
+```
+
+**Conclusion.** Two things at once:
+
+1. The `G_LIGHTING` check has **no false positives** — every vertex in a list
+   that set the mode really does carry a normal.
+2. It has an enormous false-negative rate, because `G_LIGHTING` is set
+   **per-object by `objdisplay.c` before the list runs**. A list relying on
+   inherited state carries no geometry-mode command of its own, so per-list
+   conversion cannot see it. Only 555 of ~37,000 vertices are covered.
+
+This is a structural limit of converting display lists in isolation, not a
+parsing bug.
+
+**Implementation.** `pack::looks_like_unit_normal` plus an 80% per-primitive
+majority vote, in `PackWriter::add_mesh`. The geometry mode is still trusted
+when it fires; the data is only consulted when it does not. Deciding
+per-primitive rather than per-vertex avoids splitting one surface into shaded
+and unshaded halves.
+
+**Result.** Coherent, correctly shaded models
+(`docs/images/m3-textured-model.png`).
+
+**Confidence: high** for the discriminator (100% precision on the known-lit
+set, and genuine vertex colours like opaque white fall far outside the band).
+**Medium** on the 80% threshold, which is a judgement call.
+
+**Proper fix, later:** extract the `DObj`/`MObj` scene-graph setup so the real
+per-object render state is known, rather than inferring it. That also supplies
+the light colours (`MObj::light1color`/`light2color`) this currently replaces
+with a single neutral key light.
+
+---
+
+## RE-022 — Mesh UVs run far outside 0..1 and need REPEAT
+
+**Question.** Textures uploaded correctly (proved with a known-UV quad) yet
+meshes rendered as fine coloured speckle.
+
+**Evidence.** Measured UV range on one mesh: `u -55..119 texels`,
+`v -2.7..65.7 texels`, against 64x32 and 64x48 textures. So coordinates
+legitimately span several tiles and go negative.
+
+**Cause.** Without `sceGuTexWrap(Repeat, Repeat)` those samples land outside
+the texture and produce noise.
+
+**Also fixed alongside:** V was being normalised against the texture's
+*logical* height while `sceGuTexImage` had been handed the *padded*
+power-of-two height, stretching V on any non-power-of-two texture.
+
+**Confidence: certain.** The speckle disappeared immediately.
+
+**Method note.** This was found by rendering a single texture on a quad with
+known 0..1 UVs and float vertices. That isolates the upload path (format,
+CLUT, swizzle, buffer width) from the mesh data, and turned "textures are
+broken" into "textures are fine, the UVs are not" in one build. Kept as a
+toggle in the viewer.
+
+---
+
 ## RE-016 — Measured frame budget at M1
 
 **Question.** How much CPU headroom does the M1 baseline actually have?

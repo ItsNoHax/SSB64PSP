@@ -40,6 +40,10 @@ use timing::{PspClock, Stopwatch};
 
 psp::module!("ssb64_psp", 1, 0);
 
+/// Scratch for the texture-inspection quad. Align16 because the GE DMAs it.
+static mut TEX_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> =
+    Align16([meshdraw::TexQuadVertex { u: 0.0, v: 0.0, color: 0, x: 0.0, y: 0.0, z: 0.0 }; 6]);
+
 /// A unit tetrahedron, vertex-coloured. Stands in for a fighter until real
 /// geometry conversion lands.
 ///
@@ -87,25 +91,47 @@ unsafe fn run() -> ! {
     // Which mesh is on screen, and how far back the camera sits.
     // Start on the mesh with the most triangles, so the first frame shows
     // something substantial rather than a two-triangle sliver.
+    // Start on the best *textured* mesh, so the first frame exercises the
+    // texture path -- the part of the pipeline with the least evidence behind
+    // it. Falls back to the densest mesh if nothing is textured.
     let mut mesh_index: u32 = pack
         .as_ref()
         .map(|p| {
-            let mut best = (0u32, 0u32); // (index, triangles)
+            let mut best_textured = (0u32, 0u32);
+            let mut best_any = (0u32, 0u32);
             for i in 0..p.mesh_count() {
                 let Some(m) = p.mesh(i) else { continue };
-                let tris: u32 = (0..m.prim_count)
-                    .filter_map(|k| p.prim(m.first_prim + k))
-                    .map(|pr| pr.index_count / 3)
-                    .sum();
-                if tris > best.1 {
-                    best = (i, tris);
+                let mut tris = 0u32;
+                let mut textured = false;
+                for k in 0..m.prim_count {
+                    let Some(pr) = p.prim(m.first_prim + k) else {
+                        continue;
+                    };
+                    tris += pr.index_count / 3;
+                    textured |= pr.texture != ssb_rom::pack::PrimDesc::NO_TEXTURE;
+                }
+                if tris > best_any.1 {
+                    best_any = (i, tris);
+                }
+                if textured && tris > best_textured.1 {
+                    best_textured = (i, tris);
                 }
             }
-            best.0
+            if best_textured.1 > 0 {
+                best_textured.0
+            } else {
+                best_any.0
+            }
         })
         .unwrap_or(0);
     let mut cam_distance = 200.0f32;
     let mut draw_state = meshdraw::DrawState::default();
+    // Texture inspection mode (C_UP toggles). Proven working, so the mesh
+    // view is the default; kept because it cleanly separates an upload bug
+    // from a mesh-data bug.
+    let mut tex_view = false;
+    let mut tex_index: u32 = 0;
+    let tex_count = pack.as_ref().map_or(0, |p| p.texture_count());
 
     let mut sim = FixedClock::new(clock.now_us());
 
@@ -143,6 +169,17 @@ unsafe fn run() -> ! {
                     mesh_index = (mesh_index + mesh_count - 50) % mesh_count;
                 }
             }
+            if pressed.contains(N64Buttons::C_UP) {
+                tex_view = !tex_view;
+            }
+            if tex_view {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    tex_index = (tex_index + 1) % tex_count.max(1);
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    tex_index = (tex_index + tex_count.max(1) - 1) % tex_count.max(1);
+                }
+            }
             if state.buttons.contains(N64Buttons::Z) {
                 cam_distance *= 1.03;
             }
@@ -168,9 +205,15 @@ unsafe fn run() -> ! {
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
         let mut dbg_bb = [0i32; 6];
+        let mut dbg_tex = 0u32;
 
         let mut dbg_radius = 0.0f32;
         match &pack {
+            Some(p) if tex_view => {
+                // Flat orthographic-ish view of one texture.
+                gpu.model_transform([0.0, 0.0, -2.2], [0.0, 0.0, 0.0], 1.0);
+                meshdraw::draw_texture_quad(p, tex_index, &mut TEX_QUAD.0);
+            }
             Some(p) => {
                 if let Some(desc) = p.mesh(mesh_index) {
                     // Frame the mesh: Smash's models range from a few dozen
@@ -205,6 +248,10 @@ unsafe fn run() -> ! {
                         [0.0, spin, 0.0],
                         meshdraw::MODEL_SCALE,
                     );
+                    dbg_tex = (0..desc.prim_count)
+                        .filter_map(|k| p.prim(desc.first_prim + k))
+                        .filter(|pr| pr.texture != ssb_rom::pack::PrimDesc::NO_TEXTURE)
+                        .count() as u32;
                     meshdraw::draw_mesh(p, &desc, &mut draw_state);
                     shown = (draw_state.triangles, desc.vertex_count, desc.prim_count);
                 }
@@ -235,7 +282,8 @@ unsafe fn run() -> ! {
                  cpu {}us / budget {}us\n\
                  frame {}us  tick {}\n\
                  \n\
-                 bb {} {} {} .. {} {} {}\n\
+                 tex {}  bb {} {} {} .. {} {} {}\n\
+                 TEXVIEW {}  tex {}/{}\n\
                  cam {} r {}\n\
                  \n\
                  dpad: browse   A/Z: zoom   nub: spin",
@@ -257,7 +305,11 @@ unsafe fn run() -> ! {
                 FRAME_BUDGET_US,
                 last_frame_us,
                 sim.tick,
+                dbg_tex,
                 dbg_bb[0], dbg_bb[1], dbg_bb[2], dbg_bb[3], dbg_bb[4], dbg_bb[5],
+                tex_view,
+                tex_index,
+                tex_count,
                 dbg_cam as i32,
                 dbg_radius as i32,
             ),

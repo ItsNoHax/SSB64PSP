@@ -1,0 +1,15 @@
+# Pins the host toolchain so local builds match CI exactly.
+#
+# CI runs clippy with `-D warnings`. Against a floating `stable` that means any
+# upstream lint release breaks an unrelated push — which happened when 1.98
+# added `chunks_exact_to_as_chunks` and failed four existing call sites that
+# had passed locally on 1.97.
+#
+# Keep this in step with RUST_STABLE in .github/workflows/ci.yml and
+# `rust-version` in Cargo.toml.
+#
+# `psp/` has its own rust-toolchain.toml pinning a nightly; that one wins inside
+# that directory, which is what we want.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

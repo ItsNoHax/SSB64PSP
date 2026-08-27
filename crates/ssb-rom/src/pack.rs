@@ -161,8 +161,77 @@ pub struct TextureDesc {
 }
 
 impl TextureDesc {
-    pub const SIZE: usize = 20;
+    /// 24, not 20: `u16 * 3 + u8 * 2` is 8 bytes, plus four `u32` is 16.
+    ///
+    /// This was declared as 20 and the writer emitted 24, so every descriptor
+    /// after the first was read from the wrong offset and textures came out as
+    /// coloured noise on device. The size guard test below exists because the
+    /// original round-trip test only checked texture 0, where the offset is
+    /// correct no matter what the stride says.
+    pub const SIZE: usize = 24;
 }
+
+/// Direction the baked key light comes from, normalised.
+///
+/// Smash's real lighting comes from per-material `MObj` light colours, which
+/// are not extracted yet. Until then a single neutral key light gives shape
+/// definition instead of the psychedelic look you get from drawing packed
+/// normals as vertex colours.
+const LIGHT_DIR: [f32; 3] = [0.372, 0.743, 0.557]; // normalised (2, 4, 3)
+
+/// Floor brightness, so surfaces facing away are shaded rather than black.
+const AMBIENT: f32 = 0.35;
+
+/// Converts an N64 lit vertex's packed normal into a shaded colour.
+///
+/// When `G_LIGHTING` is set, the four bytes the RDP would read as colour are
+/// actually `signed char n[3]` plus an unsigned alpha (`Vtx_tn` in `gbi.h`).
+/// Drawing them as a colour directly is what produced the saturated red/blue
+/// noise in the first on-device render.
+///
+/// The dot product needs no square root: N64 normals are already unit length
+/// scaled to `i8`, and the light direction is normalised above.
+fn shade_normal(raw: [u8; 4]) -> [u8; 4] {
+    let n = [
+        raw[0] as i8 as f32 / 127.0,
+        raw[1] as i8 as f32 / 127.0,
+        raw[2] as i8 as f32 / 127.0,
+    ];
+    let ndotl = n[0] * LIGHT_DIR[0] + n[1] * LIGHT_DIR[1] + n[2] * LIGHT_DIR[2];
+    let diffuse = if ndotl > 0.0 { ndotl } else { 0.0 };
+    let i = AMBIENT + (1.0 - AMBIENT) * diffuse;
+    let v = (i * 255.0) as u8;
+    [v, v, v, raw[3]]
+}
+
+/// Whether a vertex's colour field actually holds a unit normal.
+///
+/// N64 normals are `i8` components of a unit vector, so `x² + y² + z²` lands
+/// near `127² = 16129`. Arbitrary colours have no reason to.
+///
+/// This exists because **the display list alone cannot tell us**. `G_LIGHTING`
+/// is set per-object by `objdisplay.c` before the list runs, so a list that
+/// relies on inherited state carries no geometry-mode command of its own.
+/// Measured over the whole archive: of the vertices whose list *did* set
+/// `G_LIGHTING`, 100% look like unit normals — the test has no false positives
+/// on known-lit data — while 69.4% of the supposedly unlit vertices look like
+/// normals too. Drawing those as colours is what produced the saturated
+/// red/green/cyan polygons in the first textured render.
+pub fn looks_like_unit_normal(c: [u8; 4]) -> bool {
+    let x = c[0] as i8 as i32;
+    let y = c[1] as i8 as i32;
+    let z = c[2] as i8 as i32;
+    let m = x * x + y * y + z * z;
+    // Generous band around 127²: N64 normals are quantised and not exactly unit.
+    (11_000..=21_000).contains(&m)
+}
+
+/// Fraction of a primitive's vertices that must look like normals before the
+/// whole primitive is treated as lit.
+///
+/// Decided per-primitive rather than per-vertex so a single surface is not
+/// split into shaded and unshaded halves by a few ambiguous vertices.
+const NORMAL_MAJORITY: f32 = 0.8;
 
 /// Rounds `v` up to the next multiple of [`ALIGN`].
 pub fn align_up(v: usize) -> usize {
@@ -228,13 +297,44 @@ impl PackWriter {
         source_offset: u32,
         texture_for: impl Fn(usize) -> Option<u32>,
     ) -> u32 {
+        // Which vertices belong to a lit primitive. The IR keeps the raw bytes
+        // (it is deliberately lossless); interpreting them is this lowering
+        // step's job, and it has to be per-vertex because a mesh can mix lit
+        // and unlit materials over one shared vertex buffer.
+        let mut lit = alloc::vec![false; mesh.vertices.len()];
+        for p in &mesh.primitives {
+            // Trust the geometry mode when it says lit; otherwise fall back to
+            // inspecting the data, because the mode is often inherited from
+            // outside the list. See `looks_like_unit_normal`.
+            let treat_as_lit = p.material.lit || {
+                let mut seen = 0usize;
+                let mut normals = 0usize;
+                for &i in &p.indices {
+                    if let Some(v) = mesh.vertices.get(i as usize) {
+                        seen += 1;
+                        normals += looks_like_unit_normal(v.rgba) as usize;
+                    }
+                }
+                seen > 0 && (normals as f32 / seen as f32) >= NORMAL_MAJORITY
+            };
+
+            if treat_as_lit {
+                for &i in &p.indices {
+                    if let Some(slot) = lit.get_mut(i as usize) {
+                        *slot = true;
+                    }
+                }
+            }
+        }
+
         // Vertices, converted to the GE layout.
         let mut verts = Vec::with_capacity(mesh.vertices.len() * VERTEX_SIZE);
-        for v in &mesh.vertices {
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            let rgba = if lit[i] { shade_normal(v.rgba) } else { v.rgba };
             let packed = PackedVertex {
                 u: v.uv[0],
                 v: v.uv[1],
-                color: crate::psp_texture::pack_abgr(v.rgba),
+                color: crate::psp_texture::pack_abgr(rgba),
                 x: v.pos[0],
                 y: v.pos[1],
                 z: v.pos[2],
@@ -608,8 +708,12 @@ mod tests {
 
     #[test]
     fn vertices_are_packed_at_the_declared_stride() {
+        // Unlit, so the colour bytes pass through untouched and this test
+        // isolates stride rather than also depending on the lighting bake.
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = false;
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let m = pack.mesh(0).unwrap();
@@ -676,6 +780,53 @@ mod tests {
         assert!((pack.blob_offset + t.data_offset as usize).is_multiple_of(ALIGN));
     }
 
+    /// Descriptor sizes must match exactly what the writer emits. A mismatch
+    /// silently misreads every entry after the first.
+    #[test]
+    fn descriptor_sizes_match_the_serialised_layout() {
+        let mut w = PackWriter::new();
+        let tex = |n: u8| PspTexture {
+            width: 16 + n as u32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![n; 128],
+            swizzled: false,
+            palette: alloc::vec![0u32; 16],
+        };
+        for n in 0..4 {
+            w.add_texture(&tex(n));
+        }
+        w.add_mesh(&sample_mesh(), 1, 2, |_| Some(3));
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        // The blob must start exactly after the three tables.
+        let expected_tables = Header::SIZE
+            + pack.mesh_count as usize * MeshDesc::SIZE
+            + pack.prim_count as usize * PrimDesc::SIZE
+            + pack.texture_count as usize * TextureDesc::SIZE;
+        assert!(
+            pack.blob_offset >= expected_tables,
+            "blob overlaps the descriptor tables: {} < {}",
+            pack.blob_offset,
+            expected_tables
+        );
+
+        // Every texture must read back with the width it was written with --
+        // checking only index 0 cannot detect a wrong stride.
+        for n in 0..4u32 {
+            let t = pack.texture(n).expect("texture present");
+            assert_eq!(t.width, 16 + n as u16, "texture {n} misread");
+            assert_eq!(t.palette_len, 16, "texture {n} palette misread");
+            assert_eq!(
+                pack.texture_data(&t).unwrap()[0],
+                n as u8,
+                "texture {n} points at the wrong bytes"
+            );
+        }
+    }
+
     #[test]
     fn texture_round_trips_with_palette() {
         let mut w = PackWriter::new();
@@ -702,6 +853,109 @@ mod tests {
         let pal = pack.palette_data(&t).unwrap();
         assert_eq!(pal.len(), 64);
         assert_eq!(u32_at(pal, 0), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn lit_vertices_are_shaded_from_their_normal() {
+        // A normal pointing straight at the light must be brightest; one facing
+        // away must fall back to ambient, not go black.
+        let toward = [
+            (LIGHT_DIR[0] * 127.0) as i8 as u8,
+            (LIGHT_DIR[1] * 127.0) as i8 as u8,
+            (LIGHT_DIR[2] * 127.0) as i8 as u8,
+            0xAB,
+        ];
+        let away = [
+            (-LIGHT_DIR[0] * 127.0) as i8 as u8,
+            (-LIGHT_DIR[1] * 127.0) as i8 as u8,
+            (-LIGHT_DIR[2] * 127.0) as i8 as u8,
+            0xAB,
+        ];
+
+        let bright = shade_normal(toward);
+        let dark = shade_normal(away);
+
+        assert!(bright[0] > 240, "facing the light should be near-white");
+        assert_eq!(dark[0], (AMBIENT * 255.0) as u8, "away = ambient floor");
+        assert!(dark[0] > 0, "must not be pure black");
+        // Grey, and alpha preserved.
+        assert_eq!(bright[0], bright[1]);
+        assert_eq!(bright[1], bright[2]);
+        assert_eq!(bright[3], 0xAB);
+        assert_eq!(dark[3], 0xAB);
+    }
+
+    #[test]
+    fn only_lit_primitives_get_their_vertices_shaded() {
+        let mut m = sample_mesh();
+        // Vertex 1 is white; unlit, it must survive untouched.
+        m.primitives[0].material.lit = false;
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+        assert_eq!(u32_at(v, VERTEX_SIZE + 4), 0xFFFF_FFFF, "unlit unchanged");
+
+        // The same mesh marked lit must have that vertex replaced by a shade.
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = true;
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+        assert_ne!(u32_at(v, VERTEX_SIZE + 4), 0xFFFF_FFFF, "lit was shaded");
+    }
+
+    #[test]
+    fn unit_normals_are_distinguished_from_colours() {
+        // A unit normal along an axis.
+        assert!(looks_like_unit_normal([127, 0, 0, 255]));
+        // A diagonal unit normal: 73² * 3 ≈ 15987.
+        assert!(looks_like_unit_normal([73, 73, 73, 255]));
+        // Opaque white is a colour, not a normal: (-1)² * 3 = 3.
+        assert!(!looks_like_unit_normal([255, 255, 255, 255]));
+        // Black likewise.
+        assert!(!looks_like_unit_normal([0, 0, 0, 255]));
+    }
+
+    #[test]
+    fn primitives_carrying_normals_are_shaded_even_without_the_geometry_mode() {
+        // The display list never said G_LIGHTING, but the data is normals --
+        // the common case, since the mode is usually inherited.
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = false;
+        for v in &mut m.vertices {
+            v.rgba = [127, 0, 0, 255];
+        }
+
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+
+        // Shaded to grey rather than drawn as saturated red.
+        let c = u32_at(v, 4);
+        let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
+        assert_eq!(r, g, "shaded output must be grey");
+        assert_eq!(g, b);
+    }
+
+    #[test]
+    fn genuine_vertex_colours_are_left_alone() {
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = false;
+        for v in &mut m.vertices {
+            v.rgba = [255, 255, 255, 255]; // clearly a colour
+        }
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+        assert_eq!(u32_at(v, 4), 0xFFFF_FFFF, "colours must survive untouched");
     }
 
     #[test]

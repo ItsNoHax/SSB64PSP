@@ -32,6 +32,7 @@ fn main() -> ExitCode {
         ["scan", rom_path, rest @ ..] => scan(rom_path.as_ref(), rest),
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
+        ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
         ["textures", rom_path] => textures(rom_path.as_ref()),
@@ -60,10 +61,11 @@ USAGE:
     romtool check    <rom.z64>
     romtool scan     <rom.z64> [--exhaustive]
     romtool mesh     <rom.z64>
-    romtool pack     <rom.z64> [--out <file>] [--file <id>]
+    romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64>
+    romtool texdump  <rom.z64> [--file <id>] [--count <n>]
 
 The ROM is read only. Output defaults to assets/generated/, which is
 gitignored -- no extracted asset is ever committed."
@@ -322,6 +324,21 @@ fn mesh(path: &Path) -> Res {
     let mut triangles = 0usize;
     let mut draws_after = 0usize; // after merging
     let mut textured = 0usize;
+    // Does a vertex's colour field actually hold a unit normal? N64 normals are
+    // i8 components of a unit vector, so x^2+y^2+z^2 lands near 127^2 = 16129.
+    // Colours have no reason to. This distinguishes "the geometry mode said
+    // lit" from "the data is normals", which is the question that matters.
+    let mut lit_verts = 0usize;
+    let mut unlit_verts = 0usize;
+    let mut lit_normal_like = 0usize;
+    let mut unlit_normal_like = 0usize;
+    let normal_like = |c: [u8; 4]| {
+        let x = c[0] as i8 as i32;
+        let y = c[1] as i8 as i32;
+        let z = c[2] as i8 as i32;
+        let m = x * x + y * y + z * z;
+        (11000..=21000).contains(&m)
+    };
 
     for file in &files {
         let all = ssb_rom::scan::find_root_display_lists(file);
@@ -334,6 +351,24 @@ fn mesh(path: &Path) -> Res {
         for dl in all.iter().filter(|d| !called.contains(&d.offset)) {
             match mesh::convert(&dl.commands, &file.data) {
                 Ok(m) => {
+                    for prim in &m.primitives {
+                        let mut idx: Vec<u16> = prim.indices.clone();
+                        idx.sort_unstable();
+                        idx.dedup();
+                        for i in idx {
+                            let Some(v) = m.vertices.get(i as usize) else {
+                                continue;
+                            };
+                            let nl = normal_like(v.rgba);
+                            if prim.material.lit {
+                                lit_verts += 1;
+                                lit_normal_like += nl as usize;
+                            } else {
+                                unlit_verts += 1;
+                                unlit_normal_like += nl as usize;
+                            }
+                        }
+                    }
                     converted += 1;
                     uniq_vertices += m.vertex_count();
                     triangles += m.triangle_count();
@@ -350,7 +385,19 @@ fn mesh(path: &Path) -> Res {
         }
     }
 
-    println!("mesh conversion");
+    println!("normal-vs-colour analysis");
+    println!("  vertices in lit prims    {lit_verts}");
+    println!("  vertices in unlit prims  {unlit_verts}");
+    println!(
+        "  unlit that look like unit normals: {unlit_normal_like} ({:.1}%)",
+        unlit_normal_like as f64 / unlit_verts.max(1) as f64 * 100.0
+    );
+    println!(
+        "  lit   that look like unit normals: {lit_normal_like} ({:.1}%)",
+        lit_normal_like as f64 / lit_verts.max(1) as f64 * 100.0
+    );
+
+    println!("\nmesh conversion");
     println!("  display lists converted  {converted}");
     println!(
         "  failed                   {}",
@@ -396,12 +443,17 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 
     let mut out_path = PathBuf::from("assets/generated/ssb64.pak");
     let mut only_file: Option<u32> = None;
+    let mut swizzle = true;
 
     let mut it = opts.iter();
     while let Some(o) = it.next() {
         match *o {
             "--out" => out_path = it.next().ok_or("--out needs a path")?.into(),
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            // For bisecting on-device texture bugs: swizzling is a pure
+            // reordering, so if output changes with it off, the swizzler or the
+            // GE's swizzle flag is at fault rather than the decode.
+            "--no-swizzle" => swizzle = false,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -445,7 +497,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         if let Some(&i) = tex_index.get(&key) {
                             Some(i)
                         } else {
-                            convert_texture(&file.data, &t).map(|tex| {
+                            convert_texture(&file.data, &t, swizzle).map(|tex| {
                                 let i = writer.add_texture(&tex);
                                 tex_index.insert(key, i);
                                 i
@@ -484,6 +536,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 fn convert_texture(
     file: &[u8],
     t: &ssb_rom::mesh::TextureRef,
+    swizzle: bool,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     use ssb_rom::psp_texture as psp;
     use ssb_rom::texture;
@@ -506,7 +559,7 @@ fn convert_texture(
     };
 
     if psm.is_paletted() && !tlut.is_empty() {
-        psp::pack_paletted(src, t.width as u32, t.height as u32, t.size, &tlut, true).ok()
+        psp::pack_paletted(src, t.width as u32, t.height as u32, t.size, &tlut, swizzle).ok()
     } else {
         texture::decode(
             src,
@@ -517,8 +570,122 @@ fn convert_texture(
             (!tlut.is_empty()).then_some(tlut.as_slice()),
         )
         .ok()
-        .map(|img| psp::pack_rgba(&img, psp::Psm::Psm8888, true))
+        .map(|img| psp::pack_rgba(&img, psp::Psm::Psm8888, swizzle))
     }
+}
+
+/// Writes decoded textures out as PPM so they can be eyeballed.
+///
+/// The point is to separate two very different failures: a texture that
+/// converts correctly on the host but renders as noise on device means the
+/// bug is in swizzling, format or upload; one that is already noise here means
+/// the bug is upstream, in the offsets or palettes the display list gave us.
+fn texdump(path: &Path, opts: &[&str]) -> Res {
+    use ssb_rom::{mesh, texture};
+
+    let mut only_file: Option<u32> = None;
+    let mut count = 12usize;
+    let mut out_dir = PathBuf::from("assets/generated/texdump");
+
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            "--count" => count = it.next().ok_or("--count needs a number")?.parse()?,
+            "--out" => out_dir = it.next().ok_or("--out needs a dir")?.into(),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    fs::create_dir_all(&out_dir)?;
+
+    let mut written = 0usize;
+    let mut seen: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+
+    for id in 0..archive.len() as u32 {
+        if written >= count {
+            break;
+        }
+        if only_file.is_some_and(|f| f != id) {
+            continue;
+        }
+        let Ok(file) = archive.load(id) else { continue };
+
+        for dl in ssb_rom::scan::find_root_display_lists(&file) {
+            if written >= count {
+                break;
+            }
+            let Ok(m) = mesh::convert(&dl.commands, &file.data) else {
+                continue;
+            };
+            for prim in &m.primitives {
+                if written >= count {
+                    break;
+                }
+                let Some(t) = prim.material.texture else {
+                    continue;
+                };
+                if !seen.insert((id, t.data_offset)) {
+                    continue;
+                }
+                if (t.data_offset >> 24) != 0 || t.data_offset == 0 {
+                    continue;
+                }
+
+                let need = texture::data_len(t.width as u32, t.height as u32, t.size);
+                let Some(src) = file
+                    .data
+                    .get(t.data_offset as usize..t.data_offset as usize + need)
+                else {
+                    continue;
+                };
+                let tlut: Vec<u16> = match t.palette_offset {
+                    Some(off) => {
+                        let n = t.palette_entries.max(1) as usize;
+                        file.data
+                            .get(off as usize..off as usize + n * 2)
+                            .map(texture::parse_tlut)
+                            .unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                };
+
+                let Ok(img) = texture::decode(
+                    src,
+                    t.width as u32,
+                    t.height as u32,
+                    t.format,
+                    t.size,
+                    (!tlut.is_empty()).then_some(tlut.as_slice()),
+                ) else {
+                    continue;
+                };
+
+                // PPM: trivially writable without a PNG dependency, and
+                // ImageMagick can convert it for viewing.
+                let mut ppm = format!("P6\n{} {}\n255\n", img.width, img.height).into_bytes();
+                for px in img.pixels.as_chunks::<4>().0 {
+                    ppm.extend_from_slice(&px[..3]);
+                }
+                let name = format!(
+                    "f{id}_o{:X}_{:?}{}_{}x{}.ppm",
+                    t.data_offset,
+                    t.format,
+                    t.size.bits(),
+                    t.width,
+                    t.height
+                );
+                fs::write(out_dir.join(&name), &ppm)?;
+                println!("  {name}  palette {} entries", tlut.len());
+                written += 1;
+            }
+        }
+    }
+
+    println!("wrote {written} textures to {}", out_dir.display());
+    Ok(())
 }
 
 fn parse_id(s: &str) -> Result<u32, Box<dyn std::error::Error>> {
