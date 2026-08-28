@@ -31,8 +31,10 @@
 //! CollisionVertex[coll_vertex_count]
 //! MapPoint[point_count]
 //! FighterDesc[fighter_count]
+//! AnimDesc[anim_count]
+//! AnimJoint[anim_joint_count]
 //! ---- 16-byte aligned blob region ----
-//! vertex data | index data | texel data | palette data
+//! vertex data | index data | texel data | palette data | animation scripts
 //! ```
 //!
 //! The four stage tables are descriptors, not blobs: the CPU walks them, the
@@ -52,7 +54,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 2 added the object and node tables.
 /// 3 added the stage tables: collision lines, their vertices, and map points.
 /// 4 added the fighter table.
-pub const VERSION: u32 = 5;
+/// 5 added the figatree animation lengths to the fighter table.
+/// 6 added the animation tables, and each node's local rest transform.
+pub const VERSION: u32 = 6;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -85,7 +89,10 @@ pub struct Header {
     pub point_count: u32,
     /// Characters in the fighter table. 27 when built from a full ROM.
     pub fighter_count: u32,
-    pub _pad: [u32; 2],
+    /// Animations: one per `(fighter, movement status)` pair.
+    pub anim_count: u32,
+    /// Joint entries, summed over every animation.
+    pub anim_joint_count: u32,
 }
 
 impl Header {
@@ -232,14 +239,83 @@ pub struct NodeDesc {
     ///
     /// The translation column is pre-divided by [`MODEL_SCALE`] so it lives in
     /// the same normalised space as the `i16` vertex positions the GE reads.
+    ///
+    /// This is the **rest pose**, baked. An animated object recomposes its own
+    /// from [`NodeDesc::rest`] each tick; a static one uses this as it stands,
+    /// which is every stage and every object in the viewer.
     pub world: [f32; 16],
+    /// The node's own local transform, before its parent's is applied:
+    /// translate, rotate (radians, ZYX), scale.
+    ///
+    /// `world` is derivable from these and the parent chain, and is stored
+    /// anyway because the static path reads it every frame and should not pay
+    /// to rebuild it. What it is *not* derivable from is `world` alone —
+    /// decomposing a matrix back into a rotation and a scale is lossy, and an
+    /// animation needs to overwrite individual tracks of exactly these numbers
+    /// while leaving the others at rest (RE-036).
+    pub rest_translate: [f32; 3],
+    pub rest_rotate: [f32; 3],
+    pub rest_scale: [f32; 3],
 }
 
 impl NodeDesc {
-    /// `4 + 4 + 64`.
-    pub const SIZE: usize = 72;
+    /// `4 + 4 + 64 + 36`, padded to a 16-byte stride.
+    pub const SIZE: usize = 112;
     pub const NO_MESH: u32 = u32::MAX;
     pub const NO_PARENT: u32 = u32::MAX;
+}
+
+/// One fighter's animation for one movement status.
+///
+/// Everything the runtime needs to play it is either here or in the joint
+/// entries this points at — deliberately, so driving an animation does not
+/// require first resolving which object a fighter is, which mask says which of
+/// its descriptors became joints, or which archive file any of it came from.
+/// That resolution is build-time work (RE-036) and it is already done.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AnimDesc {
+    /// `FTKind` ordinal.
+    pub fighter: u32,
+    /// Which movement status, matching `crate::anim`'s `SLOT_*`.
+    pub slot: u32,
+    /// Archive file the scripts came from. Stored so a wrong pose can be
+    /// traced back to the bytes it was read from, as meshes store theirs.
+    pub source_file: u32,
+    /// Length in frames at playback speed 1.0, or 0 when the animation loops.
+    pub frames: u32,
+    /// First entry in the joint table, and how many.
+    pub first_joint: u32,
+    pub joint_count: u32,
+    /// Byte offset into the blob of the animation file's bytes. Script offsets
+    /// in the joint entries are relative to this.
+    pub script_offset: u32,
+    pub script_len: u32,
+}
+
+impl AnimDesc {
+    pub const SIZE: usize = 32;
+}
+
+/// One joint of one animation: its script, and the node it drives.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AnimJoint {
+    /// Byte offset of this joint's script within the animation's bytes, or
+    /// [`AnimJoint::NO_SCRIPT`]. Roughly a fifth of joints are not animated by
+    /// any given animation and keep their rest pose.
+    pub script: u32,
+    /// Absolute node index this joint drives, or [`AnimJoint::NO_NODE`].
+    ///
+    /// Absolute rather than object-relative for the same reason `NodeDesc`'s
+    /// parent is: it can be followed without first knowing the object.
+    pub node: u32,
+}
+
+impl AnimJoint {
+    pub const SIZE: usize = 8;
+    pub const NO_SCRIPT: u32 = u32::MAX;
+    pub const NO_NODE: u32 = u32::MAX;
 }
 
 /// A rectangular extent in game units, as `MPGroundData` stores it.
@@ -663,6 +739,12 @@ pub struct PackWriter {
     textures: Vec<TextureDesc>,
     objects: Vec<ObjectDesc>,
     nodes: Vec<NodeDesc>,
+    anims: Vec<AnimDesc>,
+    anim_joints: Vec<AnimJoint>,
+    /// Animation files already in the blob, by archive file id. Kirby and
+    /// Jigglypuff share three of theirs outright, and every polygon variant
+    /// shares all seven with the character it copies.
+    anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
     stages: Vec<StageDesc>,
     lines: Vec<LineDesc>,
     coll_vertices: Vec<CollisionVertex>,
@@ -863,10 +945,15 @@ impl PackWriter {
                     None => NodeDesc::NO_PARENT,
                 },
                 world: normalised(&worlds[i]),
+                rest_translate: node.desc.translate,
+                rest_rotate: node.desc.rotate,
+                rest_scale: node.desc.scale,
             });
             debug_assert_eq!(self.nodes.len() - 1, first_node as usize + i);
         }
 
+        // An extra leaf carries a mesh that could not sit on the node whose
+        // space it runs in, so it *is* that space: identity of its own.
         for &(space, mesh) in extra {
             self.nodes.push(NodeDesc {
                 mesh,
@@ -878,6 +965,9 @@ impl PackWriter {
                     Some(p) => normalised(&worlds[p]),
                     None => normalised(&crate::scene::Mat4::IDENTITY),
                 },
+                rest_translate: [0.0; 3],
+                rest_rotate: [0.0; 3],
+                rest_scale: [1.0; 3],
             });
         }
 
@@ -888,6 +978,52 @@ impl PackWriter {
             source_offset: graph.offset,
         });
         (self.objects.len() - 1) as u32
+    }
+
+    /// Adds one fighter's animation for one movement status.
+    ///
+    /// `joints` gives, per animation joint in table order, the byte offset of
+    /// its script within `script` (or `None`) and the node it drives (or
+    /// `None`). Working out that pairing is the build-time job described in
+    /// RE-036; by the time it reaches here it is a list.
+    ///
+    /// The script bytes are deduplicated by `source_file`, so a shared
+    /// animation is stored once however many fighters point at it.
+    pub fn add_anim(
+        &mut self,
+        fighter: u32,
+        slot: u32,
+        source_file: u32,
+        frames: u32,
+        script: &[u8],
+        joints: &[(Option<u32>, Option<u32>)],
+    ) -> u32 {
+        let (script_offset, script_len) = match self.anim_files.get(&source_file) {
+            Some(&at) => at,
+            None => {
+                let at = (self.push_blob(script), script.len() as u32);
+                self.anim_files.insert(source_file, at);
+                at
+            }
+        };
+        let first_joint = self.anim_joints.len() as u32;
+        for &(script_at, node) in joints {
+            self.anim_joints.push(AnimJoint {
+                script: script_at.unwrap_or(AnimJoint::NO_SCRIPT),
+                node: node.unwrap_or(AnimJoint::NO_NODE),
+            });
+        }
+        self.anims.push(AnimDesc {
+            fighter,
+            slot,
+            source_file,
+            frames,
+            first_joint,
+            joint_count: joints.len() as u32,
+            script_offset,
+            script_len,
+        });
+        (self.anims.len() - 1) as u32
     }
 
     /// Adds a stage: its four render layers, its collision lines and its map
@@ -1050,6 +1186,11 @@ impl PackWriter {
         self.fighters.len()
     }
 
+    /// An object already added, so a later step can name its nodes.
+    pub fn object(&self, i: u32) -> Option<ObjectDesc> {
+        self.objects.get(i as usize).copied()
+    }
+
     pub fn finish(self) -> Vec<u8> {
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -1060,7 +1201,9 @@ impl PackWriter {
             + self.lines.len() * LineDesc::SIZE
             + self.coll_vertices.len() * CollisionVertex::SIZE
             + self.points.len() * MapPoint::SIZE
-            + self.fighters.len() * FighterDesc::SIZE;
+            + self.fighters.len() * FighterDesc::SIZE
+            + self.anims.len() * AnimDesc::SIZE
+            + self.anim_joints.len() * AnimJoint::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
@@ -1080,6 +1223,8 @@ impl PackWriter {
         out.extend_from_slice(&(self.coll_vertices.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.points.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.fighters.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.anims.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.anim_joints.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -1128,6 +1273,16 @@ impl PackWriter {
             for f in n.world {
                 out.extend_from_slice(&f.to_le_bytes());
             }
+            for f in n
+                .rest_translate
+                .iter()
+                .chain(&n.rest_rotate)
+                .chain(&n.rest_scale)
+            {
+                out.extend_from_slice(&f.to_le_bytes());
+            }
+            // Pad to NodeDesc::SIZE so the stride stays 16-byte aligned.
+            out.extend_from_slice(&[0u8; NodeDesc::SIZE - 108]);
         }
         for s in &self.stages {
             for v in [s.first_line, s.line_count, s.first_point, s.point_count] {
@@ -1173,6 +1328,25 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&0u32.to_le_bytes());
+        }
+
+        for a in &self.anims {
+            for v in [
+                a.fighter,
+                a.slot,
+                a.source_file,
+                a.frames,
+                a.first_joint,
+                a.joint_count,
+                a.script_offset,
+                a.script_len,
+            ] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for j in &self.anim_joints {
+            out.extend_from_slice(&j.script.to_le_bytes());
+            out.extend_from_slice(&j.node.to_le_bytes());
         }
 
         out.resize(blob_offset, 0);
@@ -1224,6 +1398,8 @@ pub struct Pack<'a> {
     coll_vertex_count: u32,
     point_count: u32,
     fighter_count: u32,
+    anim_count: u32,
+    anim_joint_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -1276,6 +1452,8 @@ impl<'a> Pack<'a> {
         let coll_vertex_count = u32_at(data, 44);
         let point_count = u32_at(data, 48);
         let fighter_count = u32_at(data, 52);
+        let anim_count = u32_at(data, 56);
+        let anim_joint_count = u32_at(data, 60);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -1287,7 +1465,9 @@ impl<'a> Pack<'a> {
             + line_count as usize * LineDesc::SIZE
             + coll_vertex_count as usize * CollisionVertex::SIZE
             + point_count as usize * MapPoint::SIZE
-            + fighter_count as usize * FighterDesc::SIZE;
+            + fighter_count as usize * FighterDesc::SIZE
+            + anim_count as usize * AnimDesc::SIZE
+            + anim_joint_count as usize * AnimJoint::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -1305,6 +1485,8 @@ impl<'a> Pack<'a> {
             coll_vertex_count,
             point_count,
             fighter_count,
+            anim_count,
+            anim_joint_count,
             blob_offset,
             blob_len,
         })
@@ -1339,6 +1521,13 @@ impl<'a> Pack<'a> {
     pub fn fighter_count(&self) -> u32 {
         self.fighter_count
     }
+    /// Animations in the pack: 189 from a full ROM, seven per fighter.
+    pub fn anim_count(&self) -> u32 {
+        self.anim_count
+    }
+    pub fn anim_joint_count(&self) -> u32 {
+        self.anim_joint_count
+    }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
     pub fn prim_count(&self) -> u32 {
@@ -1362,6 +1551,12 @@ impl<'a> Pack<'a> {
     }
     fn stage_table(&self) -> usize {
         self.node_table() + self.node_count as usize * NodeDesc::SIZE
+    }
+    fn anim_table(&self) -> usize {
+        self.fighter_table() + self.fighter_count as usize * FighterDesc::SIZE
+    }
+    fn anim_joint_table(&self) -> usize {
+        self.anim_table() + self.anim_count as usize * AnimDesc::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -1396,6 +1591,59 @@ impl<'a> Pack<'a> {
         ))
     }
 
+    /// One animation, by index into the animation table.
+    pub fn anim(&self, i: u32) -> Option<AnimDesc> {
+        if i >= self.anim_count {
+            return None;
+        }
+        let at = self.anim_table() + i as usize * AnimDesc::SIZE;
+        Some(AnimDesc {
+            fighter: u32_at(self.data, at),
+            slot: u32_at(self.data, at + 4),
+            source_file: u32_at(self.data, at + 8),
+            frames: u32_at(self.data, at + 12),
+            first_joint: u32_at(self.data, at + 16),
+            joint_count: u32_at(self.data, at + 20),
+            script_offset: u32_at(self.data, at + 24),
+            script_len: u32_at(self.data, at + 28),
+        })
+    }
+
+    /// The animation a fighter plays for a movement status, if the pack has it.
+    ///
+    /// The table is dense and ordered `(fighter, slot)`, so this is arithmetic
+    /// rather than a search — but the entry's own `fighter` and `slot` are
+    /// checked, so a pack built some other way cannot quietly return the wrong
+    /// animation.
+    pub fn fighter_anim(&self, fighter: u32, slot: u32) -> Option<AnimDesc> {
+        let slots = crate::anim::SLOT_COUNT as u32;
+        if slot >= slots {
+            return None;
+        }
+        let a = self.anim(fighter * slots + slot)?;
+        (a.fighter == fighter && a.slot == slot).then_some(a)
+    }
+
+    /// One joint entry, by absolute index.
+    pub fn anim_joint(&self, i: u32) -> Option<AnimJoint> {
+        if i >= self.anim_joint_count {
+            return None;
+        }
+        let at = self.anim_joint_table() + i as usize * AnimJoint::SIZE;
+        Some(AnimJoint {
+            script: u32_at(self.data, at),
+            node: u32_at(self.data, at + 4),
+        })
+    }
+
+    /// The bytes of an animation's scripts, as `figatree` wants them.
+    ///
+    /// [`AnimJoint::script`] offsets index into this slice, so the caller can
+    /// hand the two straight to [`crate::figatree::JointAnim::start`].
+    pub fn anim_script(&self, a: &AnimDesc) -> Option<&'a [u8]> {
+        self.blob(a.script_offset, a.script_len as usize)
+    }
+
     pub fn object(&self, i: u32) -> Option<ObjectDesc> {
         if i >= self.object_count {
             return None;
@@ -1418,10 +1666,20 @@ impl<'a> Pack<'a> {
         for (k, w) in world.iter_mut().enumerate() {
             *w = f32_at(self.data, at + 8 + k * 4);
         }
+        let vec3 = |base: usize| {
+            [
+                f32_at(self.data, base),
+                f32_at(self.data, base + 4),
+                f32_at(self.data, base + 8),
+            ]
+        };
         Some(NodeDesc {
             mesh: u32_at(self.data, at),
             parent: u32_at(self.data, at + 4),
             world,
+            rest_translate: vec3(at + 72),
+            rest_rotate: vec3(at + 84),
+            rest_scale: vec3(at + 96),
         })
     }
 
@@ -2417,5 +2675,113 @@ mod tests {
         assert_eq!(pack.stage(0).unwrap().bgm_id, 0x11);
         assert_eq!(pack.point_count(), 2);
         assert_eq!(pack.fighter(0).unwrap().coll_top, 320.0);
+    }
+
+    #[test]
+    fn an_animation_round_trips_with_its_joints_and_its_script() {
+        let mut w = PackWriter::new();
+        // Three joints: two animated, one not. The unanimated one is the
+        // common case -- roughly a fifth of joints are left at rest by any
+        // given animation -- and it must come back as NO_SCRIPT rather than
+        // as a script at offset zero.
+        let script = alloc::vec![0xABu8; 96];
+        let i = w.add_anim(
+            0,
+            crate::anim::SLOT_DASH as u32,
+            504,
+            23,
+            &script,
+            &[(Some(0x40), Some(7)), (None, Some(8)), (Some(0x60), None)],
+        );
+        assert_eq!(i, 0);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.anim_count(), 1);
+        assert_eq!(pack.anim_joint_count(), 3);
+
+        let a = pack.fighter_anim(0, crate::anim::SLOT_DASH as u32).unwrap();
+        assert_eq!(a.source_file, 504);
+        assert_eq!(a.frames, 23);
+        assert_eq!(a.joint_count, 3);
+        assert_eq!(pack.anim_script(&a), Some(&script[..]));
+
+        let j: alloc::vec::Vec<AnimJoint> = (0..a.joint_count)
+            .map(|k| pack.anim_joint(a.first_joint + k).unwrap())
+            .collect();
+        assert_eq!(
+            j[0],
+            AnimJoint {
+                script: 0x40,
+                node: 7
+            }
+        );
+        assert_eq!(
+            j[1],
+            AnimJoint {
+                script: AnimJoint::NO_SCRIPT,
+                node: 8
+            }
+        );
+        assert_eq!(
+            j[2],
+            AnimJoint {
+                script: 0x60,
+                node: AnimJoint::NO_NODE
+            }
+        );
+    }
+
+    #[test]
+    fn a_shared_animation_file_is_stored_once() {
+        // Kirby and Jigglypuff share three animation files outright, and every
+        // polygon variant shares all seven with the character it copies. Nine
+        // copies of the same 2 KB would be most of a megabyte across the
+        // roster.
+        let mut w = PackWriter::new();
+        let script = alloc::vec![0x5Au8; 1024];
+        w.add_anim(8, 4, 1280, 10, &script, &[]);
+        w.add_anim(10, 4, 1280, 10, &script, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let a = pack.anim(0).unwrap();
+        let b = pack.anim(1).unwrap();
+        assert_eq!(a.script_offset, b.script_offset, "same file, same bytes");
+        assert_eq!(pack.anim_script(&a), pack.anim_script(&b));
+        // Both must still be findable under their own fighter.
+        assert_eq!(pack.anim(0).unwrap().fighter, 8);
+        assert_eq!(pack.anim(1).unwrap().fighter, 10);
+    }
+
+    #[test]
+    fn a_node_carries_the_local_transform_an_animation_starts_from() {
+        // The rest pose has to survive the pack: an animation overwrites only
+        // the tracks it names and leaves the rest of the joint where the model
+        // put it (RE-036). A world matrix alone cannot supply that -- pulling
+        // a rotation and a scale back out of one is lossy.
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let desc = DObjDesc {
+            id: 0,
+            dl: None,
+            translate: [1.5, -2.5, 3.0],
+            rotate: [0.25, 0.5, -0.75],
+            scale: [1.0, 2.0, 0.5],
+        };
+        let graph = SceneGraph {
+            offset: 0x100,
+            nodes: alloc::vec![DObjNode { desc, parent: None }],
+        };
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 296, |_| None, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let n = pack.node(0).unwrap();
+        assert_eq!(n.rest_translate, [1.5, -2.5, 3.0]);
+        assert_eq!(n.rest_rotate, [0.25, 0.5, -0.75]);
+        assert_eq!(n.rest_scale, [1.0, 2.0, 0.5]);
+        // And the baked world matrix is still there for the static path.
+        assert_eq!(n.world[12], 1.5 / MODEL_SCALE);
     }
 }

@@ -85,6 +85,7 @@ USAGE:
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
     romtool anims    <rom.z64> [--verify]
     romtool figatree <rom.z64> [--fighter <name>] [--slot <name>] [--frames <n>]
+                               [--pack <pack.pak>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
     romtool dump     <rom.z64> <file-id>
     romtool textures <rom.z64> [--file <id>]
@@ -772,6 +773,21 @@ fn plan_draw_order(
     out
 }
 
+/// Joint entries in a built pack that name both a script and a node.
+///
+/// The gap between this and the total is the two ways a joint can be inert: an
+/// animation that does not move it, and the spare `TransN` entry a table
+/// carries when its motion uses one (RE-036).
+fn pack_anim_joints_bound(pack: &ssb_rom::pack::Pack<'_>) -> usize {
+    (0..pack.anim_joint_count())
+        .filter_map(|i| pack.anim_joint(i))
+        .filter(|j| {
+            j.script != ssb_rom::pack::AnimJoint::NO_SCRIPT
+                && j.node != ssb_rom::pack::AnimJoint::NO_NODE
+        })
+        .count()
+}
+
 /// Where a primitive's texels may be found.
 ///
 /// Two files rather than one, because a texture need not live in the file that
@@ -1068,6 +1084,78 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
     }
 
+    // Animations. Each one needs three things resolved that only exist at
+    // build time: which object is the fighter's skeleton, which of that
+    // object's nodes are joints, and where each joint's script starts. See
+    // RE-036 -- the mask and the container record are both read here so the
+    // runtime never has to.
+    let mut packed_anims = 0usize;
+    let mut anim_joints_packed = 0usize;
+    let mut anims_failed: Vec<String> = Vec::new();
+    for (kind, entry) in ssb_rom::anim::FIGHTER_ANIMS.iter().enumerate() {
+        let file_entry = ssb_rom::fighter::FIGHTER_FILES[kind];
+        let nodes = loaded.files[file_entry.file as usize]
+            .as_ref()
+            .and_then(|main| {
+                let part = ssb_rom::fighter::common_parts(main, file_entry)[0]?;
+                let mask = ssb_rom::fighter::setup_parts(main, file_entry)?;
+                let first = object_index.get(&(part.model_file, part.graph))?;
+                let object = writer.object(*first)?;
+                // The nth animation script drives the nth *set* mask bit.
+                Some(
+                    (0..object.node_count)
+                        .filter(|i| mask >> i & 1 != 0)
+                        .map(|i| object.first_node + i)
+                        .collect::<Vec<u32>>(),
+                )
+            });
+        let Some(nodes) = nodes else {
+            anims_failed.push(format!("{}: no skeleton", entry.name));
+            continue;
+        };
+
+        for (slot, &id) in entry.files.iter().enumerate() {
+            let Ok(file) = archive.load(id as u32) else {
+                anims_failed.push(format!(
+                    "{}.{}",
+                    entry.name,
+                    ssb_rom::anim::SLOT_NAMES[slot]
+                ));
+                continue;
+            };
+            let Some(table) = joint_table(&file.data) else {
+                anims_failed.push(format!(
+                    "{}.{}",
+                    entry.name,
+                    ssb_rom::anim::SLOT_NAMES[slot]
+                ));
+                continue;
+            };
+            let frames = ssb_rom::anim::decode_length(id as u32, &file)
+                .ok()
+                .and_then(|l| l.frames())
+                .unwrap_or(0);
+            // A table longer than the fighter has joints is the TransN case
+            // and the surplus goes unread, exactly as the original's attach
+            // walk drops it (RE-036).
+            let joints: Vec<(Option<u32>, Option<u32>)> = table
+                .iter()
+                .enumerate()
+                .map(|(j, &at)| ((at != 0).then_some(at), nodes.get(j).copied()))
+                .collect();
+            anim_joints_packed += joints.len();
+            writer.add_anim(
+                kind as u32,
+                slot as u32,
+                id as u32,
+                frames as u32,
+                &file.data,
+                &joints,
+            );
+            packed_anims += 1;
+        }
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -1119,6 +1207,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             "              did not decode: {}",
             fighters_failed.join(", ")
         );
+    }
+    println!(
+        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node)",
+        pack_anim_joints_bound(&pack)
+    );
+    if !anims_failed.is_empty() {
+        println!("              did not pack: {}", anims_failed.join(", "));
     }
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
@@ -2845,7 +2940,7 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
         print!("{:<10}", entry.name);
         for (slot, &frames) in lengths.frames.iter().enumerate() {
             if frames == 0 {
-                looping.push((entry.name, anim::SLOT_NAMES[slot]));
+                looping.push((entry.name, ssb_rom::anim::SLOT_NAMES[slot]));
                 print!(" {:>9}", "loops");
             } else {
                 print!(" {frames:>9}");
@@ -2925,12 +3020,14 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
     let mut want_fighter: Option<String> = None;
     let mut want_slot: Option<String> = None;
     let mut frames = 0usize;
+    let mut pack_path: Option<PathBuf> = None;
     let mut it = opts.iter();
     while let Some(o) = it.next() {
         match *o {
             "--fighter" => want_fighter = it.next().map(|s| s.to_string()),
             "--slot" => want_slot = it.next().map(|s| s.to_string()),
             "--frames" => frames = it.next().ok_or("--frames needs a count")?.parse()?,
+            "--pack" => pack_path = Some(PathBuf::from(it.next().ok_or("--pack needs a path")?)),
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -3090,6 +3187,23 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
         }
     }
 
+    // Replaying from the pack is the end-to-end check: the same scripts, the
+    // same joint-to-node pairing and the same rest poses, but reached through
+    // the build-time tables rather than recomputed from the ROM. Any step of
+    // that resolution going wrong shows up as a pose that differs.
+    if let Some(path) = &pack_path {
+        let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+        let (compared, worst) = replay_from_pack(&pack, &archive)?;
+        println!();
+        println!("replayed {compared} joint(s) from {}", path.display());
+        if worst == 0.0 {
+            println!("            every pose matches the ROM exactly");
+        } else {
+            return Err(format!("pack and ROM poses differ by up to {worst}").into());
+        }
+    }
+
     println!();
     if frames > 0 {
         println!("worst translation drift from the rest pose: {worst_drift:.2} units");
@@ -3116,6 +3230,84 @@ struct Skeleton {
     nodes: usize,
     /// `setup_parts`, bit *n* for descriptor *n*.
     mask: u64,
+}
+
+/// Plays every packed animation from the pack and from the ROM, and requires
+/// the two to agree.
+///
+/// The ROM side reaches a joint's script by re-deriving everything: the
+/// `FTCommonPart` record, the `setup_parts` mask, the pointer table. The pack
+/// side just reads the tables the build wrote. Agreement on every frame of
+/// every joint means that resolution survived being written down.
+///
+/// Returns `(joints compared, worst absolute difference)`.
+fn replay_from_pack(
+    pack: &ssb_rom::pack::Pack<'_>,
+    archive: &Archive<'_>,
+) -> Result<(usize, f32), Box<dyn std::error::Error>> {
+    use ssb_rom::figatree as fg;
+    use ssb_rom::pack::AnimJoint;
+
+    let mut compared = 0usize;
+    let mut worst = 0.0f32;
+    for i in 0..pack.anim_count() {
+        let Some(a) = pack.anim(i) else { continue };
+        let Some(script) = pack.anim_script(&a) else {
+            return Err(format!("animation {i} has no script bytes in the blob").into());
+        };
+        // The same bytes, fetched the long way round.
+        let rom = archive.load(a.source_file)?;
+        if rom.data != script {
+            return Err(format!(
+                "animation {i}: packed script differs from archive file {}",
+                a.source_file
+            )
+            .into());
+        }
+        // Long enough for every movement animation; looping ones never end.
+        let steps = 64;
+        for j in 0..a.joint_count {
+            let Some(joint) = pack.anim_joint(a.first_joint + j) else {
+                continue;
+            };
+            if joint.script == AnimJoint::NO_SCRIPT || joint.node == AnimJoint::NO_NODE {
+                continue;
+            }
+            let Some(node) = pack.node(joint.node) else {
+                return Err(format!("animation {i} joint {j} names node {}", joint.node).into());
+            };
+            let rest = fg::JointPose {
+                rotate: node.rest_rotate,
+                translate: node.rest_translate,
+                scale: node.rest_scale,
+            };
+            let mut from_pack = (fg::JointAnim::start(joint.script as usize, 0.0), rest);
+            let mut from_rom = (fg::JointAnim::start(joint.script as usize, 0.0), rest);
+            for _ in 0..steps {
+                from_pack.0.tick(script, 1.0, &mut from_pack.1)?;
+                from_rom.0.tick(&rom.data, 1.0, &mut from_rom.1)?;
+                let d = from_pack
+                    .1
+                    .rotate
+                    .iter()
+                    .chain(&from_pack.1.translate)
+                    .chain(&from_pack.1.scale)
+                    .zip(
+                        from_rom
+                            .1
+                            .rotate
+                            .iter()
+                            .chain(&from_rom.1.translate)
+                            .chain(&from_rom.1.scale),
+                    )
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f32, f32::max);
+                worst = worst.max(d);
+            }
+            compared += 1;
+        }
+    }
+    Ok((compared, worst))
 }
 
 /// Reads a figatree's joint pointer table.
