@@ -2091,3 +2091,57 @@ a relocation resolves to the named file, that one without still refuses to
 sample offset zero, and that a relocation for a *neighbouring* slot does not
 satisfy this one — which would have given every stage some other stage's
 textures.
+
+---
+
+## RE-038 — The skeleton animates on device, and the pose is wrong
+
+**What works.** Pack version 6's animation tables drive a `Skeleton` on the
+PSP: every joint's `JointAnim` ticks at the simulation rate, the object's node
+matrices are recomposed from the resulting locals, and the geometry draws under
+them at 60 FPS, 888 us CPU. The overlay reads `play on 0/189 fighter 0 slot 0
+joints 24 f 5` — Mario's dash, all 24 joints live, frame 5.
+
+**What is wrong.** The pose is not Mario dashing. Body parts sit far from where
+they belong (`docs/images/m4-animation-wrong.png`).
+
+**What has been ruled out.** Three things that would each explain it, and do
+not:
+
+1. *The composition.* `Skeleton::compose` run with no animation reproduces the
+   pack's baked world matrices element for element, which is a host test. So
+   the parent chain, the `T * Rz * Ry * Rx * S` order and the `MODEL_SCALE`
+   division are all consistent with the build-time path.
+2. *The joint-to-node pairing.* The viewer resolves Mario's dash to object 275,
+   file 296 at `0x2200` — his high-detail skeleton — with 24 joints against 25
+   nodes, which is what RE-036 predicts. Joints the animation does not drive
+   hold exactly their node's rest local: joint 3 reads `t (51.06, 53.75, 0)`,
+   and node 3's rest world minus its parent's is `(51.1, 53.7, 0)`.
+3. *Cross-joint vertex sharing.* RE-026 warned that borrowed vertices are exact
+   only for the rest pose, and a tearing seam was the first suspect. Mario has
+   none: his 14 display lists each load their own vertices and draw 320
+   triangles between them, one list per node. Every mesh is rigid under its own
+   joint.
+
+**What the numbers point at.** Mario's rest pose is essentially planar — every
+node sits within 5 units of `z = 0`. Twelve frames into the dash the composed
+matrices put a foot at `z = -133.8` and a hand at `z = +83.9`. Smash 64
+animations move in X and Y with small Z excursions; 130 units of depth on a
+320-tall fighter is not a pose, it is an axis. The individual joint values are
+not obviously wrong — joint 2 reads `r (0.86, 0.49, 0.15)` at frame 12 against
+`(0.45, 0.50, 0.21)` at frame 23 — so the suspicion is the *rotation* half of
+the transform rather than the interpolation feeding it: the track-to-axis
+mapping, or the order `from_trs` applies them in, being right for the small
+rest-pose rotations that the composition test covers and wrong for large ones.
+
+**Not yet investigated.** Whether `ftAnimGetTargetValue`'s `1/512` is radians at
+all, rather than a fixed-point turn; whether `nGCAnimTrackRotX..Z` map onto
+`from_trs`'s `r[0..2]` in that order; and whether the `0x8000` transform kind
+(`RecalcRotRpyRSca`, which `DObjDesc::transform_kind` already distinguishes and
+the packer currently ignores) changes how a node composes its rotation. That
+last one is the strongest lead: the packer bakes every node with `from_trs`
+regardless of its kind, which is invisible at rest if the kinds agree there.
+
+**Confidence: high** that the pipeline runs and that the three ruled-out causes
+are ruled out. **The pose is not validated and should not be described as
+working.** The viewer ships with playback off by default.

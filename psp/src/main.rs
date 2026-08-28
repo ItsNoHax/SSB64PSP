@@ -76,6 +76,29 @@ static TRIANGLE: Align16<[GuVertex; 12]> = Align16([
     GuVertex::new(1.0, -1.0, 1.0, 0.0, 0.0, 0xFFFF_0000),
 ]);
 
+/// Starts animation `index` and returns the object its joints drive.
+///
+/// The pairing is stored, not searched for: a joint names an absolute node, and
+/// a node belongs to exactly one object. Finding that object is the one hop the
+/// pack does not store, and it is a scan over 363 objects done once per
+/// selection rather than per frame.
+fn start_anim(
+    pack: &ssb_rom::pack::Pack<'_>,
+    index: u32,
+    skeleton: &mut ssb_rom::skeleton::Skeleton,
+) -> Option<u32> {
+    let anim = pack.anim(index)?;
+    skeleton.start(pack, &anim, 0.0, 1.0);
+    let node = (0..anim.joint_count)
+        .filter_map(|i| pack.anim_joint(anim.first_joint + i))
+        .map(|j| j.node)
+        .find(|&n| n != ssb_rom::pack::AnimJoint::NO_NODE)?;
+    (0..pack.object_count()).find(|&i| {
+        pack.object(i)
+            .is_some_and(|o| node >= o.first_node && node < o.first_node + o.node_count)
+    })
+}
+
 fn psp_main() {
     psp::enable_home_button();
     unsafe { run() }
@@ -243,6 +266,19 @@ unsafe fn run() -> ! {
         _ => None,
     };
 
+    // The animation viewer. Pack version 6 stores, per animation, each joint's
+    // script and the node it drives (RE-036), so playing one is: start a
+    // skeleton, tick it, recompose the object's matrices. Browsing it here is
+    // the only way to see whether a pose is right -- a host test can say the
+    // numbers match the ROM, which they do, and still not say the fighter
+    // looks like it is running.
+    let anim_count = pack.as_ref().map_or(0, |p| p.anim_count());
+    let mut anim_index: u32 = 0;
+    let mut anim_playing = false;
+    let mut skeleton = ssb_rom::skeleton::Skeleton::new();
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let mut posed_len = 0usize;
+
     let mut sim = FixedClock::new(clock.now_us());
 
     let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
@@ -270,6 +306,33 @@ unsafe fn run() -> ! {
             }
             if pressed.contains(N64Buttons::C_DOWN) && object_count > 0 {
                 object_view = !object_view;
+            }
+            // B in the object view starts and stops animation playback.
+            if pressed.contains(N64Buttons::B) && object_view && anim_count > 0 {
+                anim_playing = !anim_playing;
+                if anim_playing {
+                    if let Some(p) = &pack {
+                        object_index =
+                            start_anim(p, anim_index, &mut skeleton).unwrap_or(object_index);
+                    }
+                } else {
+                    posed_len = 0;
+                }
+            }
+
+            // One tick of every joint, at the simulation rate rather than the
+            // frame rate -- animation timing is gameplay timing (RE-035).
+            if anim_playing && object_view {
+                if let Some(p) = &pack {
+                    if skeleton.ended() {
+                        start_anim(p, anim_index, &mut skeleton);
+                    }
+                    if let Some(a) = p.anim(anim_index) {
+                        if let Some(script) = p.anim_script(&a) {
+                            let _ = skeleton.tick(script);
+                        }
+                    }
+                }
             }
             if stage_view && stage_count > 0 {
                 let was = stage_index;
@@ -311,6 +374,32 @@ unsafe fn run() -> ! {
                             let jump = state.buttons.contains(N64Buttons::C_LEFT);
                             pl.tick(p, &s, state, jump);
                         }
+                    }
+                }
+            } else if object_view && object_count > 0 && anim_playing {
+                // While an animation is playing the d-pad browses animations
+                // rather than objects: the object is whichever one the
+                // animation drives, so stepping it independently would only
+                // ever break the pairing.
+                let was = anim_index;
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    anim_index = (anim_index + 1) % anim_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    anim_index = (anim_index + anim_count - 1) % anim_count;
+                }
+                // Whole fighters rather than one slot at a time.
+                let slots = anim_count / 27.max(1);
+                if pressed.contains(N64Buttons::D_UP) {
+                    anim_index = (anim_index + slots.max(1)) % anim_count;
+                }
+                if pressed.contains(N64Buttons::D_DOWN) {
+                    anim_index = (anim_index + anim_count - slots.max(1)) % anim_count;
+                }
+                if was != anim_index || skeleton.ended() {
+                    if let Some(p) = &pack {
+                        object_index =
+                            start_anim(p, anim_index, &mut skeleton).unwrap_or(object_index);
                     }
                 }
             } else if object_view && object_count > 0 {
@@ -554,7 +643,18 @@ unsafe fn run() -> ! {
                         meshdraw::MODEL_SCALE,
                     );
                     let base = gpu.model_matrix();
-                    let tris = meshdraw::draw_object(p, &obj, &base, &mut draw_state);
+                    posed_len = if anim_playing {
+                        skeleton.compose(p, &obj, &mut posed)
+                    } else {
+                        0
+                    };
+                    let tris = meshdraw::draw_object_posed(
+                        p,
+                        &obj,
+                        &base,
+                        &posed[..posed_len],
+                        &mut draw_state,
+                    );
                     let placed = (0..obj.node_count)
                         .filter_map(|k| p.node(obj.first_node + k))
                         .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)
@@ -683,6 +783,14 @@ unsafe fn run() -> ! {
             _ => ("-       ", 0, 0, 0, 0, 0, 0),
         };
 
+        // Which animation the skeleton is on, for the overlay. Read from the
+        // pack rather than tracked separately so a wrong index shows up as a
+        // wrong name instead of agreeing with itself.
+        let (anim_fighter, anim_slot) = match pack.as_ref().and_then(|p| p.anim(anim_index)) {
+            Some(a) => (a.fighter, a.slot),
+            None => (0, 0),
+        };
+
         const WHITE: u32 = 0xFFFF_FFFF;
         gpu.debug_text(
             8,
@@ -696,6 +804,7 @@ unsafe fn run() -> ! {
                  fighter {}  x {} y {}  line {}  mat {}  air {}\n\
                  attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
                  anim dash {}f  land {}f\n\
+                 play {} {}/{}  fighter {} slot {}  joints {}  f {}\n\
                  tris {}  {} {}  {} {}\n\
                  draws {}  state changes {}\n\
                  \n\
@@ -709,7 +818,8 @@ unsafe fn run() -> ! {
                  dpad: browse  start: stage  B: collision\n\
                  stick: move  C-left: jump  C-right: respawn\n\
                  C-up: fighter sim on/off\n\
-                 R/C-up: file  C-dn: obj/mesh  A/Z: zoom",
+                 R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
+                 in obj view -- B: animate  dpad: anim/fighter",
                 pack_status,
                 mode,
                 index,
@@ -729,6 +839,13 @@ unsafe fn run() -> ! {
                 ft_bh,
                 ft_dash,
                 ft_land,
+                if anim_playing { "on " } else { "off" },
+                anim_index,
+                anim_count,
+                anim_fighter,
+                anim_slot,
+                skeleton.joint_count(),
+                skeleton.frame() as i32,
                 shown.0,
                 if stage_view {
                     "layers"

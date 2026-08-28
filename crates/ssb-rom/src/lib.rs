@@ -24,6 +24,7 @@ pub mod psp_texture;
 pub mod rom;
 pub mod scan;
 pub mod scene;
+pub mod skeleton;
 pub mod stage;
 pub mod texture;
 pub mod vpk0;
