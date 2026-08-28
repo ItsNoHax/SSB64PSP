@@ -39,6 +39,8 @@ PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # from the FTCommonMotion enum, so a motion table parsed even one entry out of
 # step resolves to an animation whose name no longer fits its status.
 SLOTS = [
+    # Statuses that end when their animation runs out. These are the ones the
+    # status machine needs a *length* for (RE-035).
     ("Dash",     15, ["Dash"]),
     ("Turn",     18, ["Turn"]),
     ("RunBrake", 17, ["RunBrake"]),
@@ -48,7 +50,39 @@ SLOTS = [
     # KneeBend and Landing, exactly as everyone else's LandingAirX does.
     ("Landing",  31, ["LandingAirX", "Landing", "JumpSquat"]),
     ("Pass",     33, ["ShieldDrop", "Pass"]),
+    # The rest of the movement statuses. These end by being interrupted rather
+    # than by running out, so nothing needed their length -- but a fighter that
+    # only animates while dashing or crouching is a fighter that spends most of
+    # its time in a rest pose, so they are here for the poses.
+    # Several fighters' idle file is symbol-named after a different use of the
+    # same animation -- Fox's reads `EggLay`. That is a naming quirk, not a
+    # table read out of step: a shift would misname every *later* slot too, and
+    # every fighter's seven length-bearing slots verify against the ROM.
+    ("Wait",       10, ["Wait", "EggLay", "Idle"]),
+    ("WalkSlow",   11, ["Walk1", "WalkSlow"]),
+    ("WalkMiddle", 12, ["Walk2", "WalkMiddle"]),
+    ("WalkFast",   13, ["Walk3", "WalkFast"]),
+    ("Run",        16, ["Run"]),
+    # Jumpsquat and landing are the same knees-bent pose, and most of the
+    # roster shares one file between them -- the mirror of the Jigglypuff case
+    # noted against `Landing` below.
+    ("KneeBend",   20, ["JumpSquat", "KneeBend", "LandingAirX"]),
+    ("JumpF",      22, ["JumpF", "Jump"]),
+    ("JumpB",      23, ["JumpB", "Jump"]),
+    # Yoshi has one aerial-jump animation and uses it both ways; Kirby has
+    # none at all, and his motion slots are the null placeholders RE-035 found.
+    ("JumpAerialF", 24, ["JumpAerialF", "JumpAerialB", "JumpAerial", "Jump"]),
+    ("JumpAerialB", 25, ["JumpAerialB", "JumpAerialF", "JumpAerial", "Jump"]),
+    ("Fall",       26, ["Fall"]),
+    ("FallAerial", 27, ["FallAerial", "Fall"]),
+    ("SquatWait",  29, ["CrouchIdle", "SquatWait"]),
 ]
+
+# The slots whose animation ends on its own, and whose length the status
+# machine therefore reads (RE-035). Everything after them loops until it is
+# interrupted -- Wait, the walks, Run, Fall -- so a missing length there is the
+# correct answer rather than a fault.
+TIMED_SLOTS = {"Dash", "Turn", "RunBrake", "Squat", "SquatRv", "Landing", "Pass"}
 
 # Master Hand never walks, dashes or crouches. Its whole common status table
 # points at one looping idle, so it has no lengths to extract and gets zeros.
@@ -274,7 +308,11 @@ def resolve(refs):
         for slot, status, allowed in SLOTS:
             sym = table[smot[status]]
             if sym is None:
-                problems.append(f"{fighter} {slot}: motion {smot[status]} is null")
+                # A null motion is a move the fighter does not have. Kirby and
+                # Jigglypuff have no aerial jump, and RE-035 found those exact
+                # placeholders. Record the absence rather than failing: the
+                # slot gets no file and the runtime keeps the rest pose.
+                entry.append((slot, 0, None, 0))
                 continue
             # `FT<Name>Anim<X>` -> `<X>`
             anim = re.sub(r"^FT\w*?Anim", "", sym)
@@ -325,7 +363,7 @@ def main():
         if fighter in NO_GROUND_STATUSES:
             continue
         for slot, fid, sym, frames in entry:
-            if frames is None:
+            if frames is None and slot in TIMED_SLOTS:
                 problems.append(f"{sym} (file {fid}, {slot}) loops; it has no length")
     if problems:
         sys.exit("\n".join(problems))

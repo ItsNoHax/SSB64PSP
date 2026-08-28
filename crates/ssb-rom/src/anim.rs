@@ -48,9 +48,14 @@ use crate::archive::{Archive, File};
 use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 7;
+pub const SLOT_COUNT: usize = 20;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
+///
+/// The first seven are the statuses that end when their animation runs out,
+/// and are the only ones with a length (RE-035). The rest loop until they are
+/// interrupted; they are carried for their *poses*, because a fighter that
+/// animates only while dashing spends most of a match in a rest pose.
 pub const SLOT_DASH: usize = 0;
 pub const SLOT_TURN: usize = 1;
 pub const SLOT_RUN_BRAKE: usize = 2;
@@ -58,6 +63,22 @@ pub const SLOT_SQUAT: usize = 3;
 pub const SLOT_SQUAT_RV: usize = 4;
 pub const SLOT_LANDING: usize = 5;
 pub const SLOT_PASS: usize = 6;
+pub const SLOT_WAIT: usize = 7;
+pub const SLOT_WALK_SLOW: usize = 8;
+pub const SLOT_WALK_MIDDLE: usize = 9;
+pub const SLOT_WALK_FAST: usize = 10;
+pub const SLOT_RUN: usize = 11;
+pub const SLOT_KNEE_BEND: usize = 12;
+pub const SLOT_JUMP_F: usize = 13;
+pub const SLOT_JUMP_B: usize = 14;
+pub const SLOT_JUMP_AERIAL_F: usize = 15;
+pub const SLOT_JUMP_AERIAL_B: usize = 16;
+pub const SLOT_FALL: usize = 17;
+pub const SLOT_FALL_AERIAL: usize = 18;
+pub const SLOT_SQUAT_WAIT: usize = 19;
+
+/// Slots whose animation ends on its own, so a length means something.
+pub const TIMED_SLOTS: usize = 7;
 
 /// A fighter's animation file for each slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -260,6 +281,12 @@ pub fn decode_fighter(
 ) -> Result<FighterLengths, AnimError> {
     let mut frames = [0u16; SLOT_COUNT];
     for (slot, &id) in entry.files.iter().enumerate() {
+        // Zero means the fighter has no animation for that status -- Kirby and
+        // Jigglypuff have no aerial jump, and the motion table says so with a
+        // null placeholder (RE-035).
+        if id == 0 {
+            continue;
+        }
         let file = archive.load(id as u32).map_err(|_| AnimError::TooShort {
             file: id as u32,
             len: 0,
@@ -381,7 +408,9 @@ mod tests {
             .zip(crate::fighter::FIGHTER_FILES.iter())
         {
             assert_eq!(anims.name, files.name, "fighter order must match");
-            assert!(anims.files.iter().all(|&f| f != 0));
+            // Every fighter has every *timed* slot; the looping ones may be
+            // absent where the character lacks the move.
+            assert!(anims.files[..TIMED_SLOTS].iter().all(|&f| f != 0));
         }
     }
 }

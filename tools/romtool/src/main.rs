@@ -1116,6 +1116,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         };
 
         for (slot, &id) in entry.files.iter().enumerate() {
+            if id == 0 {
+                continue; // a move the fighter does not have
+            }
             let Ok(file) = archive.load(id as u32) else {
                 anims_failed.push(format!(
                     "{}.{}",
@@ -2992,8 +2995,13 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
         print!("{:<10}", entry.name);
         for (slot, &frames) in lengths.frames.iter().enumerate() {
             if frames == 0 {
-                looping.push((entry.name, ssb_rom::anim::SLOT_NAMES[slot]));
-                print!(" {:>9}", "loops");
+                // Only the first seven slots are supposed to end; the rest
+                // loop until interrupted, and some are absent outright where
+                // the character lacks the move (RE-035, RE-041).
+                if slot < anim::TIMED_SLOTS {
+                    looping.push((entry.name, ssb_rom::anim::SLOT_NAMES[slot]));
+                }
+                print!(" {:>9}", if entry.files[slot] == 0 { "-" } else { "loops" });
             } else {
                 print!(" {frames:>9}");
             }
@@ -3024,6 +3032,11 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
     let mut fields = 0usize;
     for (lengths, want) in decoded.iter().zip(anim::EXPECTED_FRAMES.iter()) {
         for (slot, (&got, &w)) in lengths.frames.iter().zip(want.iter()).enumerate() {
+            // The looping slots have no length by design (RE-035); only the
+            // seven that end on their own are worth comparing.
+            if slot >= anim::TIMED_SLOTS {
+                continue;
+            }
             fields += 1;
             if got != w {
                 mismatches.push(format!(
@@ -3151,8 +3164,12 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
             if want_slot.as_deref().is_some_and(|w| w != slot_name) {
                 continue;
             }
+            if id == 0 {
+                continue; // a move this fighter does not have
+            }
             let file = archive.load(id as u32)?;
-            let table = joint_table(&file.data).ok_or("no joint table")?;
+            let table = joint_table(&file.data)
+                .ok_or_else(|| format!("{}.{slot_name}: no joint table", entry.name))?;
             let scripts = table.iter().filter(|p| **p != 0).count();
             println!(
                 "{:<10} {:>6} {:>6} {:>7}  {:<9} {:>5} {:>6} {:>7}",

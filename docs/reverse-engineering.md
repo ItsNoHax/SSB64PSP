@@ -2351,3 +2351,57 @@ the character is known to be. **Open:** only costume 0 is packed, so the
 alternate palettes are unreachable until a match can choose one; the material
 tracks other than the three colours (texture ids, UV scroll, palette id) are
 decoded far enough to step over and no further.
+
+---
+
+## RE-041 — The other thirteen movement animations
+
+**Question.** RE-035 recovered seven animations per fighter: the statuses that
+*end when their animation runs out*, because those were the ones the status
+machine needed a length for. The status machine has nineteen states. A fighter
+that animates only while dashing or crouching spends a match in a rest pose.
+
+**The same three-record chain, thirteen more times.** Nothing new was needed —
+`dFTCommonActionStatusDescs[status - 6].mflags.motion_id` into
+`dFT<Name>MotionDescs[motion_id]` into a relocData file, exactly as before. The
+work was in the *checks*, which is where the interest is.
+
+**Two systematic name mismatches, and why neither is a fault.**
+`tools/gen-anim-table.py` verifies the resolved animation's *name* against the
+slot, so a motion table parsed one entry out of step reports itself. Two slots
+tripped it for almost the whole roster:
+
+* **Wait resolved to `EggLay`** for everyone but Mario. `nFTCommonMotionWait` is
+  4, and Mario's motion 4 is `FTMarioAnimWait` — the index is right by
+  construction. Fox's motion 4 is a file symbol-named `FTFoxAnimEggLay`. That
+  is a naming quirk, not a shift: a shift would misname every *later* slot too,
+  and every fighter's seven length-bearing slots still verify against the ROM
+  byte for byte. Pikachu's is `Idle`.
+* **KneeBend resolved to `LandingAirX`** for the whole roster. Jumpsquat and
+  landing are the same knees-bent pose and most of the cast shares one file
+  between them — the mirror of the Jigglypuff case RE-035 recorded from the
+  other direction, where her *landing* is named `JumpSquat`.
+
+Both are now allowed by name, with that reasoning written where the check is.
+
+**Absence is data.** Kirby and Jigglypuff have no aerial jump, and their motion
+slots 18 and 19 are the `{ 0, 0x80000000, 0 }` placeholders RE-035 found while
+chasing a different bug. A null motion is now recorded as "no animation" — file
+id 0, the runtime keeps the rest pose — rather than failing the build. Yoshi
+has one aerial-jump animation and uses it for both directions.
+
+**Lengths only mean something for seven of the twenty.** Wait, the three walks,
+Run, Fall, FallAerial and SquatWait all contain a `Loop` command and never
+terminate, which is exactly right: they are the statuses that leave by being
+interrupted. The verification against the decompilation still covers the seven
+timed slots, and still agrees on all **189**.
+
+**Result.** 532 animations in the pack against 189 — some fighters lack a
+couple — for 342 KiB more. Everything the animation pipeline is checked by
+scales with it: **9622 joints replayed from the pack all match the ROM exactly,
+and none of 565,646 bone lengths changes by more than 0.064 units.** Mario's
+idle plays on device (`docs/images/m4-animation.png`).
+
+**Confidence: high.** The mapping is the same one RE-035 validated, the name
+check is stricter than it was rather than looser — two exceptions argued rather
+than waived — and the pack-versus-ROM replay covers every new animation.

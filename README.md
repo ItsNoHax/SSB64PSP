@@ -131,8 +131,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
 * Asset extraction and conversion into a 3.3 MB runtime pack: 2722 meshes
   (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 553
-  textures, 41 stages' collision geometry, all 27 fighters' constants and all
-  189 of their movement animations
+  textures, 41 stages' collision geometry, all 27 fighters' constants and 532
+  movement animations — every status the fighter machine can be in
 * **Textured, shaded models placed by the scene graph render on device at
   60 FPS**, fighters in their own recovered palettes
 * **Fighters render in their own colours** — flat-shaded parts take the
