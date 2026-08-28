@@ -2353,6 +2353,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
         });
 
     let (mut paired, mut unpaired, mut unreadable) = (0usize, 0usize, 0usize);
+    let mut unpaired_graphs: Vec<(u32, u32, usize)> = Vec::new();
     let (mut agree, mut disagree, mut unfollowable) = (0usize, 0usize, 0usize);
     let (mut materials, mut palettes) = (0usize, 0usize);
     let (mut in_decomp, mut not_in_decomp) = (0usize, 0usize);
@@ -2370,6 +2371,12 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                         .is_some_and(|at| mobj_demand(file, &resolver, at) > 0)
                 }) {
                     unpaired += 1;
+                    // Naming these matters: an unpaired graph draws its nodes
+                    // with whatever texture the display list left set, which is
+                    // the `G_SETTIMG(0)` the `MObj` was meant to overwrite. The
+                    // original pairs them in code, so this list is the ceiling
+                    // on what the archive alone can recover (RE-046).
+                    unpaired_graphs.push((file.id, g.offset, g.nodes.len()));
                 }
                 continue;
             };
@@ -2432,6 +2439,15 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     println!("nodes where chain length == display-list demand: {agree}, mismatched: {disagree}");
     println!("  chains in another archive file, not followed: {unfollowable}");
     println!("materials: {materials} ({palettes} carrying a palette)");
+    if !unpaired_graphs.is_empty() {
+        println!("\ngraphs that call the graphics heap but no record names:");
+        for (file, offset, nodes) in unpaired_graphs.iter().take(12) {
+            println!("  file {file:<5} graph 0x{offset:<6X} {nodes} node(s)");
+        }
+        if unpaired_graphs.len() > 12 {
+            println!("  ... and {} more", unpaired_graphs.len() - 12);
+        }
+    }
     if known.is_some() {
         // The generator can only place a struct the decomp gives an offset
         // for, by comment or by symbol name; a few are hand-named with
@@ -2657,7 +2673,8 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
     let loaded = load_all(&archive);
 
     // Deduplicate: the same texture is bound by many primitives.
-    let mut seen: std::collections::BTreeSet<(u32, u32)> = std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<(u32, u32, u16, u16)> =
+        std::collections::BTreeSet::new();
     let mut by_format: BTreeMap<String, (usize, usize)> = BTreeMap::new(); // count, bytes
     let mut packed_ok = 0usize;
     let mut decode_failed = 0usize;
@@ -2670,11 +2687,19 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
     // different problem from one file losing every texture it binds, and only
     // the second explains a stage that draws white.
     let mut per_file: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
+    // A `G_SETTIMG(0)` that nothing overwrote. Attributing these to a file is
+    // what turns "54 failures" into a list of graphs whose material table was
+    // never named -- the difference between a decoder bug and a missing
+    // pairing (RE-046).
+    let mut nulls_by_file: BTreeMap<u32, Vec<(u16, u16)>> = BTreeMap::new();
 
     // Same conversion the packer runs, so these counts describe the pack. On
     // the standalone path a fighter's textures come out palette-less, and this
     // reported 142 failures that the shipped pack does not have.
     for file in loaded.files.iter().flatten() {
+        if only_file.is_some_and(|f| f != file.id) {
+            continue;
+        }
         for m in file_meshes(&loaded, file) {
             for prim in &m.primitives {
                 let Some(t) = prim.material.texture else {
@@ -2685,8 +2710,26 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 // entry, since they all had offset zero, and hid the scale of
                 // RE-037 completely.
                 let home = t.data_file.map_or(file.id, u32::from);
-                if !seen.insert((home, t.data_offset)) {
+                // An unresolved texture has offset zero, so every one in a file
+                // hashes to the same key. Keying those on the *size* as well
+                // keeps them apart -- otherwise a file with thirty unresolved
+                // bindings reports one, and the archive-wide total counts files
+                // rather than textures (RE-046).
+                let key = (home, t.data_offset, t.width, t.height);
+                if !seen.insert(key) {
                     continue;
+                }
+                if only_file.is_some() {
+                    println!(
+                        "  bind {}x{} {:?}/{:?} <- file {:?} +0x{:X} tlut {:?}",
+                        t.width,
+                        t.height,
+                        t.format,
+                        t.size,
+                        t.data_file,
+                        t.data_offset,
+                        t.palette_offset
+                    );
                 }
                 let texels = match t.data_file {
                     None => &file.data[..],
@@ -2718,6 +2761,10 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 if t.data_offset == 0 && t.data_file.is_none() {
                     *why.entry("null pointer, nothing resolved it".into())
                         .or_default() += 1;
+                    nulls_by_file
+                        .entry(file.id)
+                        .or_default()
+                        .push((t.width, t.height));
                     decode_failed += 1;
                     continue;
                 }
@@ -2866,6 +2913,19 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
         match per_file.get(&id) {
             Some((bound, packed)) => println!("\nfile {id}: {packed}/{bound} textures packed"),
             None => println!("\nfile {id}: binds no textures at all"),
+        }
+    }
+
+    if !nulls_by_file.is_empty() {
+        let total: usize = nulls_by_file.values().map(Vec::len).sum();
+        println!(
+            "\nunresolved G_SETTIMG(0), by file ({total} across {} files):",
+            nulls_by_file.len()
+        );
+        let mut ranked: Vec<_> = nulls_by_file.iter().collect();
+        ranked.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+        for (id, v) in ranked.iter().take(12) {
+            println!("  file {id:<5} {:>2} texture(s)", v.len());
         }
     }
 

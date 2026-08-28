@@ -515,18 +515,18 @@ impl State {
     /// display list, which is the common fighter case.
     fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial) {
         if let Some(palette) = m.palette {
-            self.timg_addr = Some(palette);
-            self.timg_file = None;
+            self.timg_addr = Some(palette.offset);
+            self.timg_file = palette.file;
             if m.loads_tlut {
-                self.palette_offset = Some(palette);
-                self.palette_file = None;
+                self.palette_offset = Some(palette.offset);
+                self.palette_file = palette.file;
                 self.palette_entries = m.palette_entries;
                 self.timg_addr = None;
             }
         }
         if let Some(sprite) = m.sprite {
-            self.timg_addr = Some(sprite);
-            self.timg_file = None;
+            self.timg_addr = Some(sprite.offset);
+            self.timg_file = sprite.file;
         }
         if let Some(c) = m.prim_color {
             self.material.prim_color = Some(c);
@@ -1164,11 +1164,17 @@ mod tests {
         // Entry 8 is index 1: the second `MObj` in the node's chain.
         let mobjs = [
             MObjMaterial {
-                palette: Some(0x100),
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x100,
+                }),
                 ..MObjMaterial::default()
             },
             MObjMaterial {
-                palette: Some(0x200),
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x200,
+                }),
                 ..MObjMaterial::default()
             },
         ];

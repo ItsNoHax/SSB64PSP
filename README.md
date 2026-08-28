@@ -129,8 +129,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 * ROM validation, VPK0 decompression (all 499 compressed files) and the
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-* Asset extraction and conversion into a 3.3 MB runtime pack: 2722 meshes
-  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 553
+* Asset extraction and conversion into a 3.0 MB runtime pack: 2722 meshes
+  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 615
   textures, 41 stages' collision geometry, all 27 fighters' constants and 532
   movement animations — every status the fighter machine can be in
 * **Textured, shaded models placed by the scene graph render on device at
@@ -139,7 +139,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   combiner's `PRIM * SHADE`, with the per-costume colour recovered from the
   material-animation script that holds one costume per frame
 * **Stages render textured on device** — their texels live in a separate
-  archive file, reached through the relocations the converter now follows
+  archive file, reached through the relocations the converter follows both in
+  the display list (RE-037) and in a material's own sprite table (RE-046)
 * **All 41 stages' collision geometry** decoded, packed and queried; the ported
   `mpprocess` floor solver holds a simulated fighter still at 158/158 spawn
   points with zero drift
@@ -171,9 +172,11 @@ materials, not a wrong pose — see the limitations below.*
   affect appearance are still ignored.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
-* 83 of 695 bound textures still fail to convert, and a few surfaces draw
-  white as a result — notably Dream Land's ground, whose display lists ask
-  their material for a texture that nothing resolves (RE-045).
+* 117 of 732 bound texture references still fail to convert. 75 of those are a
+  `G_SETTIMG(0)` that nothing overwrites, spread across 54 files: they belong
+  to 71 scene graphs whose material table the original names in *code* rather
+  than in any data structure, so the pairing is not recoverable from the ROM
+  (RE-046). Whispy Woods' face is the visible example.
 
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.

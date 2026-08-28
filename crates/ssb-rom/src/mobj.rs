@@ -60,6 +60,20 @@ const MOBJ_FLAG_PRIMCOLOR: u16 = 1 << 9;
 const MOBJ_FLAG_ENVCOLOR: u16 = 1 << 10;
 const MOBJ_FLAG_BLENDCOLOR: u16 = 1 << 11;
 
+/// Where one entry of an `MObjSub` pointer table leads.
+///
+/// A stage keeps its texels in a *different* archive file, so the entry's word
+/// is zero and the archive's extern relocation is the only record of what it
+/// meant. This is the same indirection `G_SETTIMG` needs (RE-037); the sprite
+/// and palette tables need it for the same reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ptr {
+    /// The archive file targeted, or `None` when the target is this same file.
+    pub file: Option<u16>,
+    /// Byte offset within that file.
+    pub offset: u32,
+}
+
 /// The commands one `MObj` contributes, in the order `gcDrawMObjForDObj`
 /// emits them.
 ///
@@ -75,7 +89,7 @@ pub struct MObjMaterial {
     pub at: u32,
     /// `palettes[0]`, set as the texture image so a following `G_LOADTLUT`
     /// picks it up.
-    pub palette: Option<u32>,
+    pub palette: Option<Ptr>,
     /// True when the `MObj` runs the TLUT load itself instead of leaving it to
     /// the display list.
     pub loads_tlut: bool,
@@ -83,7 +97,7 @@ pub struct MObjMaterial {
     /// `loads_tlut`.
     pub palette_entries: u16,
     /// `sprites[0]`, set as the texture image after any palette work.
-    pub sprite: Option<u32>,
+    pub sprite: Option<Ptr>,
     pub prim_color: Option<[u8; 4]>,
     pub env_color: Option<[u8; 4]>,
     pub blend_color: Option<[u8; 4]>,
@@ -197,16 +211,39 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
     // `MOBJ_FLAG_NONE` is not "no material": the drawing code substitutes a
     // default that enables texturing but no palette, so it contributes nothing
     // we can recover here.
-    let indirect = |field: u32| -> Option<u32> {
+    let leaves_file = |slot: u32| -> Option<Ptr> {
+        file.extern_relocs
+            .iter()
+            .find(|r| r.at == slot)
+            .map(|r| Ptr {
+                file: Some(r.target_file),
+                offset: r.target_offset,
+            })
+    };
+    let indirect = |field: u32| -> Option<Ptr> {
         let array = read_u32(data, at + field)?;
-        // The array itself, and its first element, both have to be real
-        // pointers. `sprites` is NULL on every fighter joint — the texture
-        // lives in the display list — so this returns `None` far more often
-        // than it succeeds, and that is correct.
-        (array != 0 && is_ptr(at + field) && is_ptr(array))
-            .then(|| read_u32(data, array))
-            .flatten()
-            .filter(|&target| target != 0)
+        // The array itself has to be a real pointer. `sprites` is NULL on every
+        // fighter joint — the texture lives in the display list — so this
+        // returns `None` far more often than it succeeds, and that is correct.
+        if array == 0 || !is_ptr(at + field) {
+            return None;
+        }
+        // Entry 0 is what a freshly added `MObj` indexes, since
+        // `gcAddMObjForDObj` zeroes the counters. It is either a pointer inside
+        // this file, or — for a stage, whose texels sit in a separate archive
+        // file — a zeroed word with an extern relocation standing in for it.
+        // Requiring an *intern* relocation here is what made Dream Land's
+        // ground draw white: its sprite table is six entries, every one of them
+        // extern into file 103, so a rule that only knew intern slots read the
+        // table as empty (RE-046).
+        match read_u32(data, array)? {
+            0 => leaves_file(array),
+            target if is_ptr(array) => Some(Ptr {
+                file: None,
+                offset: target,
+            }),
+            _ => None,
+        }
     };
 
     let palette = (flags & MOBJ_FLAG_PALETTE != 0)
@@ -449,9 +486,71 @@ mod tests {
         assert_eq!(table.offset, TABLE);
         assert_eq!(table.nodes[0], Vec::new());
         assert_eq!(table.nodes[1].len(), 2);
-        assert_eq!(table.nodes[1][0].palette, Some(PALETTE));
+        assert_eq!(
+            table.nodes[1][0].palette,
+            Some(Ptr {
+                file: None,
+                offset: PALETTE
+            })
+        );
         assert_eq!(table.nodes[1][0].at, SUB_A);
         assert_eq!(table.nodes[4].len(), 1);
+    }
+
+    /// A stage's texels live in a different archive file, so the archive blanks
+    /// the sprite table's entries and records extern relocations for them. The
+    /// entry is a zero *and* is not an intern pointer, so both halves of the
+    /// old rule rejected it and Dream Land's ground drew white (RE-046).
+    #[test]
+    fn a_sprite_table_entry_can_point_into_another_file() {
+        const SPRITES: u32 = 0x150;
+        const TEXELS: u32 = 0x1BE0;
+        const HOME: u16 = 103;
+
+        let mut file = fixture();
+        // `sprites` is read for `ALPHA | SPLIT | FRAC`; Dream Land's is 0x6B.
+        let flags = (MOBJ_FLAG_ALPHA | MOBJ_FLAG_SPLIT).to_be_bytes();
+        file.data[(SUB_A + F_FLAGS) as usize..][..2].copy_from_slice(&flags);
+        file.data[(SUB_A + F_SPRITES) as usize..][..4].copy_from_slice(&SPRITES.to_be_bytes());
+        file.intern_relocs.push(InternReloc {
+            at: SUB_A + F_SPRITES,
+            target: SPRITES,
+        });
+        // Entry 0 stays zero in the payload; the relocation is the only record.
+        file.extern_relocs.push(ExternReloc {
+            at: SPRITES,
+            target_file: HOME,
+            target_offset: TEXELS,
+        });
+
+        let table = read_table(&file, TABLE, 5).expect("table");
+        assert_eq!(
+            table.nodes[1][0].sprite,
+            Some(Ptr {
+                file: Some(HOME),
+                offset: TEXELS
+            }),
+            "a blanked entry with an extern relocation is a cross-file texture"
+        );
+    }
+
+    /// The converse: a zero with *no* relocation behind it names nothing, and
+    /// must stay `None` rather than becoming offset 0 of some file.
+    #[test]
+    fn a_sprite_table_entry_that_is_merely_zero_names_nothing() {
+        const SPRITES: u32 = 0x150;
+
+        let mut file = fixture();
+        let flags = (MOBJ_FLAG_ALPHA | MOBJ_FLAG_SPLIT).to_be_bytes();
+        file.data[(SUB_A + F_FLAGS) as usize..][..2].copy_from_slice(&flags);
+        file.data[(SUB_A + F_SPRITES) as usize..][..4].copy_from_slice(&SPRITES.to_be_bytes());
+        file.intern_relocs.push(InternReloc {
+            at: SUB_A + F_SPRITES,
+            target: SPRITES,
+        });
+
+        let table = read_table(&file, TABLE, 5).expect("table");
+        assert_eq!(table.nodes[1][0].sprite, None);
     }
 
     #[test]
