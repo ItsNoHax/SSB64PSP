@@ -374,6 +374,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let mut total_nodes = 0usize;
     let mut with_dl = 0usize;
     let mut depth_hist: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
 
     for id in &ids {
         let Ok(file) = archive.load(*id) else {
@@ -390,6 +391,9 @@ fn scene(path: &Path, args: &[&str]) -> Res {
             with_dl += g.nodes.iter().filter(|n| n.desc.dl.is_some()).count();
             for n in &g.nodes {
                 *depth_hist.entry(n.desc.depth()).or_default() += 1;
+                *kinds
+                    .entry(format!("{:?}", n.desc.transform_kind()))
+                    .or_default() += 1;
             }
         }
     }
@@ -505,6 +509,15 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     println!("\nUnion member each node's `dl` turned out to be:");
     for (k, n) in &members {
         println!("  {n:5}  {k}");
+    }
+
+    // `id & 0xF000` picks a matrix kind, and kinds 45-50 rebuild the MVP from
+    // the camera basis instead of the node's own rotation — they are
+    // billboards. Nothing applies them yet, so these nodes bake to a plain TRS
+    // and face wherever their geometry happens to (RE-048).
+    println!("\nNode transform kinds (`DObjDesc.id & 0xF000`):");
+    for (kind, n) in &kinds {
+        println!("  {n:5}  {kind}");
     }
 
     let resolved: usize = outcome.values().sum();
@@ -2282,8 +2295,16 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                 }
                 None => "no materials".into(),
             };
+            let anim = match (l.anim_joints, l.matanim_joints) {
+                (None, None) => String::new(),
+                (a, m) => format!(
+                    "  [joints {} matanim {}]",
+                    a.map_or("-".into(), |(f, at)| format!("{f}@0x{at:X}")),
+                    m.map_or("-".into(), |(f, at)| format!("{f}@0x{at:X}")),
+                ),
+            };
             println!(
-                "  layer {}  graph file {} @ 0x{:X} ({nodes} nodes)  {table}",
+                "  layer {}  graph file {} @ 0x{:X} ({nodes} nodes)  {table}{anim}",
                 l.index, l.graph.0, l.graph.1
             );
         }
@@ -2702,7 +2723,16 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 let Some(t) = prim.material.texture else {
                     continue;
                 };
-                if !seen.insert((id, t.data_offset)) {
+                // A stage's texels live in a different archive file, so the
+                // bytes have to come from wherever the relocation led — dumping
+                // them out of the drawing file gives noise that looks exactly
+                // like a broken decoder (RE-037, RE-047).
+                let texels = Texels {
+                    home: file,
+                    all: &loaded.files,
+                };
+                let home = t.data_file.map_or(id, u32::from);
+                if !seen.insert((home, t.data_offset)) {
                     continue;
                 }
                 if (t.data_offset >> 24) != 0 || t.data_offset == 0 {
@@ -2710,17 +2740,18 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 }
 
                 let need = texture::data_len(t.width as u32, t.height as u32, t.size);
-                let Some(src) = file
-                    .data
-                    .get(t.data_offset as usize..t.data_offset as usize + need)
+                let Some(src) = texels
+                    .bytes(t.data_file)
+                    .and_then(|d| d.get(t.data_offset as usize..t.data_offset as usize + need))
                 else {
                     continue;
                 };
                 let tlut: Vec<u16> = match t.palette_offset {
                     Some(off) => {
                         let n = t.palette_entries.max(1) as usize;
-                        file.data
-                            .get(off as usize..off as usize + n * 2)
+                        texels
+                            .bytes(t.palette_file)
+                            .and_then(|d| d.get(off as usize..off as usize + n * 2))
                             .map(texture::parse_tlut)
                             .unwrap_or_default()
                     }
@@ -2744,8 +2775,10 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 for px in img.pixels.as_chunks::<4>().0 {
                     ppm.extend_from_slice(&px[..3]);
                 }
+                // Named by the file the *texels* are in, not the one drawing
+                // them, so two stages sharing a texture do not look like two.
                 let name = format!(
-                    "f{id}_o{:X}_{:?}{}_{}x{}.ppm",
+                    "f{home}_o{:X}_{:?}{}_{}x{}.ppm",
                     t.data_offset,
                     t.format,
                     t.size.bits(),
