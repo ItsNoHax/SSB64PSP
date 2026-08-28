@@ -143,16 +143,15 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * **All 41 stages' collision geometry** decoded, packed and queried; the ported
   `mpprocess` floor solver holds a simulated fighter still at 158/158 spawn
   points with zero drift
-* **A fighter moves on device**: walk, dash, run, turn, squat, jump,
-  double-jump, drop-through and landing, with the original's interrupt ordering
-  and its tap-counter input model, on every character's real extracted
-  constants and animation lengths
+* **A fighter moves and animates on device**: walk, dash, run, turn, squat,
+  jump, double-jump, drop-through and landing, each with the original's
+  animation for that status, on every character's real extracted constants
 * **Fighters animate on device.** Packed figatree scripts drive a joint clock
   each, node matrices recompose every tick at 60 FPS, and the result is checked
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 315 host tests passing
+* 317 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -164,9 +163,6 @@ materials, not a wrong pose — see the limitations below.*
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
-* **Animation is not driven by gameplay yet.** It plays correctly in the
-  viewer, but the status machine does not start one when a fighter changes
-  state, so a fighter on a stage is still a sliding rest pose.
 * No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
 * No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
@@ -184,9 +180,10 @@ materials, not a wrong pose — see the limitations below.*
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
 
-**Current milestone:** the combat vertical slice. The animation pipeline works
-and is validated; the next step is having the status machine drive it, so a
-fighter walking on a stage is animated rather than sliding.
+**Current milestone:** the combat vertical slice — one grounded attack driven
+end to end, from input through hitbox to knockback. Everything under it is in
+place: a fighter with its real model, colours, physics, collision and
+animations, standing on a real stage.
 
 ## Verifying the claims
 

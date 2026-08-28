@@ -21,6 +21,7 @@ use ssb_game::collision::Segment;
 use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
+use ssb_game::status::Status;
 use ssb_game::status::AnimLengths;
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, Pack, StageDesc};
 
@@ -111,6 +112,23 @@ impl Iterator for FloorSegments<'_, '_> {
     }
 }
 
+/// The object a character's animations drive.
+///
+/// The pack stores an absolute node per animation joint, and a node belongs to
+/// exactly one object, so this is the one hop the tables do not hold — a scan
+/// over the object list, done once when a fighter is created.
+fn fighter_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
+    let anim = pack.fighter_anim(kind, 0)?;
+    let node = (0..anim.joint_count)
+        .filter_map(|i| pack.anim_joint(anim.first_joint + i))
+        .map(|j| j.node)
+        .find(|&n| n != ssb_rom::pack::AnimJoint::NO_NODE)?;
+    (0..pack.object_count()).find(|&i| {
+        pack.object(i)
+            .is_some_and(|o| node >= o.first_node && node < o.first_node + o.node_count)
+    })
+}
+
 /// The physics constants out of a packed [`FighterDesc`].
 ///
 /// Duplicated from `romtool`'s copy for the same reason [`FloorSegments`] is:
@@ -187,6 +205,16 @@ pub struct Play {
     /// the fighter falls under [`PhysicsAttributes::MARIO`], and the overlay
     /// says so rather than letting a stale pack look like a physics bug.
     pub from_pack: bool,
+    /// The fighter's animation, and the status it was started for.
+    ///
+    /// Kept here rather than in `ssb-game` because starting one needs the
+    /// pack, which Layer A must not know about — the same split the physics
+    /// constants use.
+    pub skeleton: ssb_rom::skeleton::Skeleton,
+    /// Object whose nodes the skeleton drives, or `u32::MAX` when the pack has
+    /// no model for this character.
+    pub object: u32,
+    started: Option<Status>,
 }
 
 impl Play {
@@ -225,6 +253,12 @@ impl Play {
             airborne_ticks: 0,
             jump_was_held: false,
             from_pack,
+            skeleton: ssb_rom::skeleton::Skeleton::new(),
+            // Which object a character's animations drive is stored per joint,
+            // so any one of them names it; a scan over the objects finds which
+            // one owns that node. Done once, here, rather than per tick.
+            object: fighter_object(pack, kind as u32).unwrap_or(u32::MAX),
+            started: None,
         }
     }
 
@@ -251,6 +285,37 @@ impl Play {
             self.airborne_ticks = 0;
         } else {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
+        }
+        self.tick_animation(pack);
+    }
+
+    /// Starts the animation the current status calls for, then advances it.
+    ///
+    /// Restarted on a status *change* rather than every tick: an animation
+    /// carries its own clock, and re-seeding it each frame would freeze every
+    /// fighter on frame zero. A looping one is left to loop; a finite one that
+    /// has run out holds its last pose, which is what the original does when a
+    /// status outlives its animation.
+    fn tick_animation(&mut self, pack: &Pack<'_>) {
+        if self.object == u32::MAX {
+            return;
+        }
+        let status = self.fighter.status.status;
+        let slot = status.anim_slot() as u32;
+        if self.started != Some(status) {
+            self.started = Some(status);
+            if let Some(anim) = pack.fighter_anim(self.fighter.kind as u32, slot) {
+                self.skeleton
+                    .start(pack, &anim, 0.0, status.anim_speed());
+            }
+        }
+        // The slot is read back rather than remembered, so a status whose
+        // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
+        // the pose it had.
+        if let Some(anim) = pack.fighter_anim(self.fighter.kind as u32, slot) {
+            if let Some(script) = pack.anim_script(&anim) {
+                let _ = self.skeleton.tick(script);
+            }
         }
     }
 

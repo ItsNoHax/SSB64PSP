@@ -99,6 +99,17 @@ fn start_anim(
     })
 }
 
+/// Which way to turn a model so it faces the way the fighter does.
+///
+/// Fighter models are authored facing `+Z` — shoulders spanning X — while a
+/// match runs along X, so every one of them is a quarter turn off (RE-038).
+fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
+    match facing {
+        ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
+        ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
+    }
+}
+
 fn psp_main() {
     psp::enable_home_button();
     unsafe { run() }
@@ -576,13 +587,11 @@ unsafe fn run() -> ! {
                     // A stage is a place, not an object: spinning it would
                     // make the collision overlay impossible to read against
                     // the geometry. Face-on, always.
-                    gpu.model_transform(
-                        [-centre[0], -centre[1], -centre[2] - dist],
-                        [0.0, 0.0, 0.0],
-                        meshdraw::MODEL_SCALE,
-                    );
+                    let cam = [-centre[0], -centre[1], -centre[2] - dist];
+                    gpu.model_transform(cam, [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
                     let base = gpu.model_matrix();
-                    let (tris, layers) = meshdraw::draw_stage(p, &stage, &base, &mut draw_state);
+                    let (mut tris, layers) =
+                        meshdraw::draw_stage(p, &stage, &base, &mut draw_state);
                     let segments = if show_collision {
                         meshdraw::draw_collision(p, &stage, &base, &mut gpu)
                     } else {
@@ -592,6 +601,36 @@ unsafe fn run() -> ! {
                     // it is standing in front of.
                     if sim_fighter {
                         if let Some(pl) = &player {
+                            // The model, posed by whatever animation the
+                            // fighter's status is playing, placed at its
+                            // simulated position. The collision diamond is
+                            // still drawn over it, because the point of this
+                            // view is whether the two agree.
+                            if let Some(obj) = p.object(pl.object) {
+                                let n = pl.skeleton.compose(p, &obj, &mut posed);
+                                let sc = meshdraw::MODEL_SCALE;
+                                gpu.model_transform(
+                                    [
+                                        cam[0] + pl.fighter.pos.x,
+                                        cam[1] + pl.fighter.pos.y,
+                                        cam[2],
+                                    ],
+                                    // The models face +Z; a fighter faces
+                                    // along X, so it is turned a quarter turn
+                                    // one way or the other (RE-038).
+                                    [0.0, facing_turn(pl.fighter.facing), 0.0],
+                                    sc,
+                                );
+                                let m = gpu.model_matrix();
+                                tris += meshdraw::draw_object_posed(
+                                    p,
+                                    &obj,
+                                    &m,
+                                    &posed[..n],
+                                    &mut draw_state,
+                                );
+                                gpu.model_transform(cam, [0.0, 0.0, 0.0], sc);
+                            }
                             meshdraw::draw_fighter(
                                 pl.fighter.pos.to_array(),
                                 &pl.fighter.coll,
