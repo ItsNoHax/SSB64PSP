@@ -438,6 +438,9 @@ struct State {
     /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
     tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
+    /// `G_SETTILE`'s `masks`/`maskt` on tile 0: the texture wraps every
+    /// `1 << mask` texels, and zero means it does not wrap at all.
+    tile0_mask: Option<(u8, u8)>,
     palette_offset: Option<u32>,
     palette_file: Option<u16>,
     palette_entries: u16,
@@ -466,6 +469,7 @@ impl State {
             timg_file: None,
             tile0_fmt: None,
             tile_dims: None,
+            tile0_mask: None,
             palette_offset: None,
             palette_file: None,
             palette_entries: 0,
@@ -583,6 +587,20 @@ impl State {
         let offset = self.timg_addr?;
         let (fmt, siz) = self.tile0_fmt?;
         let (w, h) = self.tile_dims?;
+        // `G_SETTILESIZE` gives the rectangle being *drawn*, which for a
+        // wrapping texture is larger than the texture: Dream Land renders a
+        // 64x32 tile across a 256x128 span. `masks`/`maskt` are what say how
+        // big the texture really is -- it repeats every `1 << mask` texels --
+        // and taking the drawn rect instead asks for 16 KiB of texels out of a
+        // 12 KiB file (RE-044). A mask of zero means no wrapping, so the drawn
+        // rect is the texture.
+        let (w, h) = match self.tile0_mask {
+            Some((ms, mt)) => (
+                if ms > 0 { w.min(1 << ms) } else { w },
+                if mt > 0 { h.min(1 << mt) } else { h },
+            ),
+            None => (w, h),
+        };
         Some(TextureRef {
             data_file: self.timg_file,
             data_offset: offset,
@@ -860,7 +878,12 @@ fn walk(
             },
 
             Cmd::SetTile {
-                format, size, tile, ..
+                format,
+                size,
+                tile,
+                mask_s,
+                mask_t,
+                ..
             } => {
                 // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
                 // sampled. A display list configures several tiles — tiles 5
@@ -870,6 +893,7 @@ fn walk(
                 // texture conversions.
                 if tile == RENDER_TILE {
                     state.tile0_fmt = Some((format, size));
+                    state.tile0_mask = Some((mask_s, mask_t));
                 }
             }
 

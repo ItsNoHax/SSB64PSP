@@ -151,7 +151,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 317 host tests passing
+* 323 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -171,16 +171,9 @@ materials, not a wrong pose — see the limitations below.*
   affect appearance are still ignored.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
-* **A few surfaces still render white** — four of Dream Land's ~100 primitives
-  — because their textures are among the 119 of 664 that do not convert. Not a
-  colour problem: both combiner cycles are evaluated, and the parts that come
-  out white are the ones the hardware would also draw white (RE-043).
-* 119 of 664 bound textures still fail to convert: 54 pointers nothing
-  resolves, 36 landing past the end of the file they name, 13 segmented
-  addresses and 16 missing a palette.
-* At 1.1 MiB the full texture set no longer fits texture VRAM in one go. A
-  match needs only one stage and a few fighters, but streaming is an open
-  question.
+* 83 of 664 bound textures still fail to convert — mostly palette tracking
+  across display-list boundaries — so a few surfaces draw untextured.
+
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
 
