@@ -879,7 +879,7 @@ impl PackWriter {
             self.prims.push(PrimDesc {
                 texture: texture_for(i).unwrap_or(PrimDesc::NO_TEXTURE),
                 flags: f,
-                prim_color: crate::psp_texture::pack_abgr(m.prim_color),
+                prim_color: m.prim_color.map_or(0, crate::psp_texture::pack_abgr),
                 env_color: crate::psp_texture::pack_abgr(m.env_color),
                 index_offset,
                 index_count: p.indices.len() as u32,
@@ -1879,7 +1879,7 @@ mod tests {
                 material: MeshMaterial {
                     cull_back: true,
                     lit: true,
-                    prim_color: [1, 2, 3, 4],
+                    prim_color: Some([1, 2, 3, 4]),
                     ..Default::default()
                 },
                 indices: alloc::vec![0, 1, 2],

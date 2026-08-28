@@ -2175,3 +2175,93 @@ the feet behave, and Turn's opening frame renders as a standing Mario
 on the rest bounds, so a pose that moves drifts out of shot, and most of
 Mario's materials do not convert yet (RE-037's remaining 119) — which is why
 the model is grey.
+
+---
+
+## RE-039 — Mario is grey because his colour is not in his model
+
+**Question.** Mario's model rendered almost entirely white. His torso and cap
+showed texture, everything else was a grey blob. He is supposed to be red and
+blue.
+
+**His vertices carry shade, not colour.** Every vertex in his model is a pure
+grey — `0xfcfcfc`, `0xd4d4d4`, `0x999999`. Those are not colours the exporter
+got wrong; they are the N64's *shade* term, and the colour is supposed to come
+from the combiner's other input:
+
+```
+G_SETCOMBINE 0x0032_7e05 0xff17_fdff   ->  (PRIM - 0) * SHADE + 0
+```
+
+The pack stored `prim_color` per primitive from the beginning and the renderer
+never read it, so every flat-shaded part of every fighter drew as bare shade.
+Multiplying the two at conversion time costs nothing at runtime and needs no
+second colour source in the vertex format — and the existing vertex dedup
+splits a vertex shared by two primitives of different colours by itself,
+because the folded colour is part of its key.
+
+**Not every part uses it, and that matters.** Mario's model sets three
+combiners:
+
+| nodes | cycle 0 | what it is |
+|---|---|---|
+| 2, 8 | `TEXEL0 * SHADE` | torso and head, textured |
+| 4, 5, 10, 11, 15, 16, 20, 21 | `PRIM * SHADE` | upper arms and thighs |
+| 6, 12, 18, 23 | `SHADE` alone | gloves and shoes |
+
+Folding the primitive colour in unconditionally turned his white gloves green,
+because the last colour set was still in force even though the combiner ignores
+it. So the conversion now decodes `G_SETCOMBINE` and only folds when
+`PRIMITIVE` appears in cycle 0's colour equation — in any of A, B, C or D,
+which are four different widths at four different shifts.
+
+**Why the colours that remain are still wrong.** With that in place Mario has a
+red cap, a blue-and-red torso, white gloves and grey shoes — and green upper
+arms and orange thighs. Those two come from `MObjSub::primcolor`, and the raw
+bytes really do say so:
+
+```
+MObjSub @0x190 (Mario's upper arm)
+  +30: 02 00 ...            flags 0x0200, MOBJ_FLAG_PRIMCOLOR set
+  +50: 00 ce 00 ff          primcolor = (0, 206, 0, 255)
+```
+
+Luigi's equivalent is `(0, 181, 0)`. Both green, differing only in one channel,
+which is the tell: **the baked value is a placeholder.** The real colour is
+per-costume and arrives from a pointer this project has never read — the third
+one in `FTCommonPart`, alongside the two RE-027 recovered:
+
+```c
+struct FTCommonPart {
+    DObjDesc *dobjdesc;                       // RE-027
+    MObjSub ***p_mobjsubs;                    // RE-027
+    AObjEvent32 ***p_costume_matanim_joints;  // this
+    u8 flags;
+};
+```
+
+`lbCommonAddMObjForFighterPartsDObj` attaches it, evaluates it, and throws the
+`AObj`s away again — so it is a one-shot overwrite of the `MObjSub`'s baked
+colour, not an animation that runs:
+
+```c
+gcAddMObjMatAnimJoint(mobj, costume_matanim_joint, anim_frame);
+gcParseMObjMatAnimJoint(mobj);
+gcPlayMObjMatAnim(mobj);
+gcRemoveAObjFromMObj(mobj);
+```
+
+And `anim_frame` there is `fp->costume`. **One script per joint holds every
+costume, one per frame** — evaluate it at frame 0 for Mario's default red,
+frame 1 for his green alternate, and so on. Mario's is at file 296 offset 9856;
+Luigi's at 323:10384; Kirby's at 328:6432. Every fighter has one.
+
+Reading it needs the **32-bit** `AObjEvent32` encoding rather than the 16-bit
+figatree one RE-036 ported — `{ opcode:7, flags:10, payload:15 }`, a different
+opcode set, and the material track range (`nGCAnimTrackPrimColor` = 37 onward)
+instead of the ten joint tracks.
+
+**Confidence: high** for the diagnosis and for both fixes, which are unit-tested
+against Mario's own three combiner words. The remaining colours are a known
+gap with a named source, not a mystery. Screenshot:
+`docs/images/m4-fighter-colours.png`.
