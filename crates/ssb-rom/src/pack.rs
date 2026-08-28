@@ -56,7 +56,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 4 added the fighter table.
 /// 5 added the figatree animation lengths to the fighter table.
 /// 6 added the animation tables, and each node's local rest transform.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -189,17 +189,22 @@ pub struct TextureDesc {
     pub palette_offset: u32,
     /// CLUT entries; zero for non-paletted formats.
     pub palette_len: u32,
+    /// Mip levels stored back to back in `data_offset`, level 0 first. Always
+    /// at least 1; a pack written before mipmaps existed reads back 0, which
+    /// the reader normalises to 1 (RE-053).
+    pub levels: u32,
 }
 
 impl TextureDesc {
-    /// 24, not 20: `u16 * 3 + u8 * 2` is 8 bytes, plus four `u32` is 16.
+    /// 32: `u16 * 3 + u8 * 2` is 8 bytes, plus five `u32` is 20, padded to a
+    /// 16-byte multiple.
     ///
     /// This was declared as 20 and the writer emitted 24, so every descriptor
     /// after the first was read from the wrong offset and textures came out as
     /// coloured noise on device. The size guard test below exists because the
     /// original round-trip test only checked texture 0, where the offset is
     /// correct no matter what the stride says.
-    pub const SIZE: usize = 24;
+    pub const SIZE: usize = 32;
 }
 
 /// An assembled object: a run of nodes forming one `DObjDesc` hierarchy.
@@ -801,6 +806,7 @@ impl PackWriter {
             data_len: tex.data.len() as u32,
             palette_offset,
             palette_len: tex.palette.len() as u32,
+            levels: tex.levels.max(1),
         });
         (self.textures.len() - 1) as u32
     }
@@ -1297,6 +1303,9 @@ impl PackWriter {
             out.extend_from_slice(&t.data_len.to_le_bytes());
             out.extend_from_slice(&t.palette_offset.to_le_bytes());
             out.extend_from_slice(&t.palette_len.to_le_bytes());
+            out.extend_from_slice(&t.levels.to_le_bytes());
+            // Pad to TextureDesc::SIZE so the stride stays 16-byte aligned.
+            out.extend_from_slice(&[0u8; TextureDesc::SIZE - 28]);
         }
         for o in &self.objects {
             for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
@@ -1777,6 +1786,7 @@ impl<'a> Pack<'a> {
             data_len: u32_at(self.data, at + 12),
             palette_offset: u32_at(self.data, at + 16),
             palette_len: u32_at(self.data, at + 20),
+            levels: u32_at(self.data, at + 24).max(1),
         })
     }
 
@@ -2017,6 +2027,7 @@ mod tests {
             data: alloc::vec![0xABu8; 128],
             swizzled: true,
             palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
         };
         w.add_texture(&tex);
         w.add_mesh(&sample_mesh(), 0, 0, |_| Some(0));
@@ -2055,6 +2066,7 @@ mod tests {
             data: alloc::vec![n; 128],
             swizzled: false,
             palette: alloc::vec![0u32; 16],
+            levels: 1,
         };
         for n in 0..4 {
             w.add_texture(&tex(n));
@@ -2184,6 +2196,7 @@ mod tests {
             data: alloc::vec![0xABu8; 128],
             swizzled: true,
             palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
         };
         w.add_texture(&tex);
         let bytes = w.finish();
