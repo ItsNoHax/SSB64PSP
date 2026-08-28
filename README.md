@@ -147,12 +147,16 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * **A fighter moves and animates on device**: walk, dash, run, turn, squat,
   jump, double-jump, drop-through and landing, each with the original's
   animation for that status, on every character's real extracted constants
+* **Camera-facing sprites face the camera.** `DObjDesc.id & 0xF000` selects a
+  matrix kind, and kinds 45–48 build the transform from the projection basis
+  rather than the node's own rotation. All 81 such nodes are flagged through
+  the pack and billboarded at draw time (RE-049)
 * **Fighters animate on device.** Packed figatree scripts drive a joint clock
   each, node matrices recompose every tick at 60 FPS, and the result is checked
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 329 host tests passing
+* 330 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -170,13 +174,13 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
-* **Stages are static and billboards do not face the camera.** 40 of 100 stage
-  layers carry a joint animation and 12 carry a material animation, none of
-  which is played, so Whispy never sways and Dream Land's flowers never move in
-  the wind. Separately, 81 nodes ask for a camera-relative matrix
-  (`DObjDesc.id & 0xF000`) that nothing applies — which is why six sprites sit
-  flat in Dream Land's canopy (RE-048). The materials themselves are right:
-  every stage's animation frame 0 matches the colours already rendered.
+* **Stages are static.** 40 of 100 stage layers carry a joint animation and 12
+  carry a material animation, and neither is played, so Whispy never sways and
+  Dream Land's flowers never move in the wind. The materials are not wrong,
+  only still: every stage's animation frame 0 matches the colours already
+  rendered (RE-048).
+* 28 nodes ask for the `0x8000` transform kind (a recomputed rotation) that is
+  still drawn plainly.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
 * 30 of 647 bound texture references still fail to convert. 26 are the screen

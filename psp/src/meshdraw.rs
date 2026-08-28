@@ -19,7 +19,7 @@
 use core::ffi::c_void;
 
 use psp::sys::{
-    self, ClutPixelFormat, GuPrimitive, GuState, ScePspFMatrix4, ScePspFVector4,
+    self, ClutPixelFormat, GuPrimitive, GuState, ScePspFMatrix4, ScePspFVector3, ScePspFVector4,
     TexturePixelFormat, VertexType,
 };
 
@@ -246,6 +246,50 @@ pub unsafe fn draw_object(
     draw_object_posed(pack, object, base, &[], st)
 }
 
+/// Places a screen-aligned sprite, and returns its composed position and scale.
+///
+/// `gcPrepDObjMatrix`'s kinds 45-48 never multiply the node's rotation into the
+/// MVP: they write it straight from the projection basis with every cross term
+/// zeroed, so object X and Y land on screen X and Y and `rotate.x` only spins
+/// the sprite within that plane (RE-048).
+///
+/// This build keeps the view matrix at identity and puts the whole camera into
+/// `base`, so "aligned with the eye" is "unrotated in world space". The sprite
+/// therefore wants the *composed* position and scale with an identity
+/// orientation — which is `base * local` with its rotation discarded.
+///
+/// Scale comes from the length of the composed basis vectors rather than from
+/// `rest_scale`, because a node inherits its ancestors' scale and only the
+/// composed matrix knows the product.
+fn billboard_place(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ([f32; 3], f32, f32) {
+    let b = [
+        [base.x.x, base.x.y, base.x.z],
+        [base.y.x, base.y.y, base.y.z],
+        [base.z.x, base.z.y, base.z.z],
+    ];
+    let l = [
+        [local.x.x, local.x.y, local.x.z],
+        [local.y.x, local.y.y, local.y.z],
+        [local.z.x, local.z.y, local.z.z],
+    ];
+    // Column `c` of `base * local`; its length is that axis' composed scale.
+    let col = |c: usize| {
+        [
+            b[0][c] * l[0][0] + b[1][c] * l[0][1] + b[2][c] * l[0][2],
+            b[0][c] * l[1][0] + b[1][c] * l[1][1] + b[2][c] * l[1][2],
+            b[0][c] * l[2][0] + b[1][c] * l[2][1] + b[2][c] * l[2][2],
+        ]
+    };
+    let len = |v: [f32; 3]| ssb_engine::math::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    let t = [local.w.x, local.w.y, local.w.z];
+    let pos = [
+        b[0][0] * t[0] + b[1][0] * t[1] + b[2][0] * t[2] + base.w.x,
+        b[0][1] * t[0] + b[1][1] * t[1] + b[2][1] * t[2] + base.w.y,
+        b[0][2] * t[0] + b[1][2] * t[1] + b[2][2] * t[2] + base.w.z,
+    ];
+    (pos, len(col(0)), len(col(1)))
+}
+
 /// Draws an object under per-node matrices supplied by the caller.
 ///
 /// `posed[i]` replaces node `first_node + i`'s baked matrix. A short slice
@@ -312,8 +356,18 @@ pub unsafe fn draw_object_posed(
             },
         };
         sys::sceGumMatrixMode(sys::MatrixMode::Model);
-        sys::sceGumLoadMatrix(base);
-        sys::sceGumMultMatrix(&local);
+        if node.flags & NodeDesc::FLAG_BILLBOARD != 0 {
+            let (pos, sx, sy) = billboard_place(base, &local);
+            sys::sceGumLoadIdentity();
+            sys::sceGumTranslate(&ScePspFVector3 { x: pos[0], y: pos[1], z: pos[2] });
+            // `rotate.x` is the in-plane spin; with the eye axes aligned to
+            // world axes that is a rotation about Z.
+            sys::sceGumRotateZ(node.rest_rotate[0]);
+            sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: 1.0 });
+        } else {
+            sys::sceGumLoadMatrix(base);
+            sys::sceGumMultMatrix(&local);
+        }
 
         tris += draw_mesh(pack, &mesh, st);
     }
