@@ -483,12 +483,20 @@ unsafe fn run() -> ! {
             // while a fighter is being driven, where it is the fighter's input
             // and a camera that swung with it would be unreadable.
             let stick_drives_fighter = stage_view && sim_fighter && player.is_some();
-            spin += 0.02
-                + if stick_drives_fighter {
-                    0.0
-                } else {
-                    state.stick_x as f32 * 0.0005
-                };
+            // The slow drift exists so a *static* model can be seen from all
+            // sides without touching anything. While an animation is playing it
+            // makes the thing being judged unjudgeable: two captures seconds
+            // apart differ by most of a turn, and the difference reads as the
+            // pose having changed. That cost real time (RE-038), so playback
+            // holds the angle still and leaves the stick in charge.
+            if !anim_playing {
+                spin += 0.02;
+            }
+            spin += if stick_drives_fighter {
+                0.0
+            } else {
+                state.stick_x as f32 * 0.0005
+            };
             if spin > 2.0 * PI {
                 spin -= 2.0 * PI;
             }
