@@ -2494,7 +2494,31 @@ of screen. Layer 2 is the one the stage record names a material table for, so
 the colours are most likely in its `MObj` chain and being dropped for the same
 reason Mario's are: a combiner whose second cycle is not modelled.
 
-**Confidence: high** for the measurements, which are reproducible with
-`romtool textures --file 104` and the draw dump. **The cause is one hypothesis
-short of proven**, and the fix is a real piece of work — decoding both combiner
-cycles properly rather than asking a single question of cycle 0.
+**The hypothesis was wrong, and implementing it is what showed that.** The
+converter now evaluates *both* combiner cycles rather than asking one question
+of cycle 0. Each input resolves to
+`k + s*SHADE + t*TEXEL + st*SHADE*TEXEL` per channel, cycle 1 takes cycle 0's
+result as its `COMBINED` input, and a result that is not a plain scale on the
+shade is declined rather than approximated. Mario's three combiner words are in
+the tests, along with the two-cycle case, the additive case that must be
+refused, and the rule that an unset constant reads as white rather than black —
+a combiner reading a colour nothing set is reading whatever the RDP had, and
+white is the only choice that cannot darken geometry that should be lit.
+
+**The render is unchanged.** So cycle 1 was never the answer: either these lists
+run in one-cycle mode, or their `COMBINED * ENV` multiplies by an environment
+colour nothing ever sets. Either way the combiner really does say `SHADE`, and
+those surfaces are white because that is what the hardware would draw.
+
+That leaves the actual cause where RE-037 left it. Dream Land's geometry file
+binds 19 textures and packs 16, and its four untextured primitives are three
+short — they are meant to be textured and the conversion is still failing on
+them. Archive-wide 119 of 664 references fail: 54 null pointers nothing
+resolves, 36 whose resolved offset lands past the end of the file they name, 28
+paletted without a recorded TLUT, 13 segmented. Mario's gloves, by contrast,
+are *correct* — they are white in the game too.
+
+**Confidence: high.** The measurements are reproducible with
+`romtool textures --file 104` and the draw dump, and the combiner is now
+implemented rather than hypothesised — which is what turned "one hypothesis
+short of proven" into a ruled-out cause and a named remaining one.

@@ -171,10 +171,10 @@ materials, not a wrong pose — see the limitations below.*
   affect appearance are still ignored.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
-* **Some surfaces still render white.** Mario's gloves, shoes and face, and
-  four of Dream Land's ~100 primitives, use a two-cycle colour combiner whose
-  second cycle the converter does not model. Measured and localised in
-  RE-043; not yet fixed.
+* **A few surfaces still render white** — four of Dream Land's ~100 primitives
+  — because their textures are among the 119 of 664 that do not convert. Not a
+  colour problem: both combiner cycles are evaluated, and the parts that come
+  out white are the ones the hardware would also draw white (RE-043).
 * 119 of 664 bound textures still fail to convert: 54 pointers nothing
   resolves, 36 landing past the end of the file they name, 13 segmented
   addresses and 16 missing a palette.
