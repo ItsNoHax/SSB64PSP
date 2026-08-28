@@ -3258,15 +3258,33 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     continue;
                 }
                 if only_file.is_some() {
+                    // UVs are S10.5 fixed point: 32 units per texel. How many
+                    // times a texture repeats across a surface is the span in
+                    // texels divided by its size, and an over-tiled surface is
+                    // the difference between foliage and green noise.
+                    let (mut u0, mut u1, mut v0, mut v1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+                    for i in &prim.indices {
+                        if let Some(v) = m.vertices.get(*i as usize) {
+                            u0 = u0.min(v.uv[0] as i32);
+                            u1 = u1.max(v.uv[0] as i32);
+                            v0 = v0.min(v.uv[1] as i32);
+                            v1 = v1.max(v.uv[1] as i32);
+                        }
+                    }
+                    let (su, sv) = ((u1 - u0) as f32 / 32.0, (v1 - v0) as f32 / 32.0);
                     println!(
-                        "  bind {}x{} {:?}/{:?} <- file {:?} +0x{:X} tlut {:?}",
+                        "  bind {}x{} {:?}/{:?} <- file {:?} +0x{:X} tlut {:?}  uv span {:.1}x{:.1} texels = {:.2}x{:.2} repeats",
                         t.width,
                         t.height,
                         t.format,
                         t.size,
                         t.data_file,
                         t.data_offset,
-                        t.palette_offset
+                        t.palette_offset,
+                        su,
+                        sv,
+                        su / t.width.max(1) as f32,
+                        sv / t.height.max(1) as f32,
                     );
                 }
                 let texels = match t.data_file {
