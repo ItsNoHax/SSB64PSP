@@ -564,8 +564,29 @@ pub unsafe fn draw_stage(
     base: &ScePspFMatrix4,
     st: &mut DrawState,
 ) -> (u32, u32) {
+    draw_stage_animated(pack, stage, base, None, st)
+}
+
+/// Draws a stage, optionally posed by its scenery animation.
+///
+/// `anim` recomposes each layer's node matrices before drawing it. A node the
+/// animation does not drive keeps its packed rest matrix, so passing `None` is
+/// exactly [`draw_stage`] — the still and moving paths are one piece of code,
+/// which is what stops a bug in one hiding in the other (RE-051).
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_stage_animated(
+    pack: &Pack<'_>,
+    stage: &ssb_rom::pack::StageDesc,
+    base: &ScePspFMatrix4,
+    anim: Option<&ssb_rom::skeleton::StageAnimator>,
+    st: &mut DrawState,
+) -> (u32, u32) {
     let mut tris = 0;
     let mut drawn = 0;
+    let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     for slot in stage.layers {
         if slot == ssb_rom::pack::StageDesc::NO_LAYER {
             continue;
@@ -573,7 +594,13 @@ pub unsafe fn draw_stage(
         let Some(object) = pack.object(slot) else {
             continue;
         };
-        tris += draw_object(pack, &object, base, st);
+        tris += match anim {
+            Some(a) => {
+                let n = a.compose(pack, &object, &mut posed);
+                draw_object_posed(pack, &object, base, &posed[..n], st)
+            }
+            None => draw_object(pack, &object, base, st),
+        };
         drawn += 1;
     }
     (tris, drawn)

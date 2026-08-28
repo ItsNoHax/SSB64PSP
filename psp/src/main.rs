@@ -263,6 +263,10 @@ unsafe fn run() -> ! {
     let stage_count = pack.as_ref().map_or(0, |p| p.stage_count());
     let mut stage_view = stage_count > 0;
     let mut stage_index: u32 = 0;
+    // Stage scenery animation (RE-051). Restarted whenever the stage changes,
+    // and ticked once per frame beside the fighter's own skeleton.
+    let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
+    let mut stage_anim_loaded: Option<u32> = None;
     let mut show_collision = true;
 
     // The gameplay slice: one fighter, placed at the stage's first spawn and
@@ -590,8 +594,24 @@ unsafe fn run() -> ! {
                     let cam = [-centre[0], -centre[1], -centre[2] - dist];
                     gpu.model_transform(cam, [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
                     let base = gpu.model_matrix();
+                    // (Re)load when the stage changes, then tick and draw.
+                    if stage_anim_loaded != Some(stage_index) {
+                        stage_anim_loaded = Some(stage_index);
+                        match p.stage_anim(stage_index) {
+                            Some(a) => stage_anim.start(p, &a),
+                            None => stage_anim = ssb_rom::skeleton::StageAnimator::new(),
+                        }
+                    }
+                    let animated = p.stage_anim(stage_index).and_then(|a| {
+                        let script = p.anim_script(&a)?;
+                        // A script that desynchronises stops the scenery rather
+                        // than posing it from a garbage stream.
+                        stage_anim.tick(script).ok()?;
+                        Some(())
+                    });
+                    let scenery = animated.map(|()| &stage_anim);
                     let (mut tris, layers) =
-                        meshdraw::draw_stage(p, &stage, &base, &mut draw_state);
+                        meshdraw::draw_stage_animated(p, &stage, &base, scenery, &mut draw_state);
                     let segments = if show_collision {
                         meshdraw::draw_collision(p, &stage, &base, &mut gpu)
                     } else {
