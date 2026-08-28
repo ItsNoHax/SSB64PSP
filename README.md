@@ -171,8 +171,9 @@ materials, not a wrong pose — see the limitations below.*
   affect appearance are still ignored.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
-* 83 of 664 bound textures still fail to convert — mostly palette tracking
-  across display-list boundaries — so a few surfaces draw untextured.
+* 83 of 695 bound textures still fail to convert, and a few surfaces draw
+  white as a result — notably Dream Land's ground, whose display lists ask
+  their material for a texture that nothing resolves (RE-045).
 
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.

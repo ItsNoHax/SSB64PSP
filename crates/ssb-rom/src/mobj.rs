@@ -212,7 +212,15 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
     let palette = (flags & MOBJ_FLAG_PALETTE != 0)
         .then(|| indirect(F_PALETTES))
         .flatten();
-    let sprite = (flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT) != 0)
+    // `gcDrawMObjForDObj` emits the texture image twice under different
+    // guards: `FRAC | SPLIT` stages the *next* frame's texels for a block
+    // load, and `FRAC | ALPHA` sets the one actually sampled. Reading only the
+    // first missed every material that just names a texture — Dream Land's
+    // ground among them, which drew white because its `G_SETTIMG` is a zero
+    // the `MObj` was supposed to fill in (RE-045). Both indices are zero in a
+    // static read, so accepting any of the three flags reads the same address
+    // as either guard would.
+    let sprite = (flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT | MOBJ_FLAG_ALPHA) != 0)
         .then(|| indirect(F_SPRITES))
         .flatten();
     let flagged = |bit: u16, field: u32| (flags & bit != 0).then(|| read_rgba(data, at + field))?;
