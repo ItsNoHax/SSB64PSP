@@ -83,6 +83,32 @@ impl DrawState {
     }
 }
 
+/// The GE accepts eight mip levels.
+const MAX_GE_MIP_LEVELS: usize = 8;
+
+fn mip_level(level: usize) -> sys::MipmapLevel {
+    match level {
+        0 => sys::MipmapLevel::None,
+        1 => sys::MipmapLevel::Level1,
+        2 => sys::MipmapLevel::Level2,
+        3 => sys::MipmapLevel::Level3,
+        4 => sys::MipmapLevel::Level4,
+        5 => sys::MipmapLevel::Level5,
+        6 => sys::MipmapLevel::Level6,
+        _ => sys::MipmapLevel::Level7,
+    }
+}
+
+/// Bits per texel, matching `ssb_rom::psp_texture::Psm::bits`.
+fn psm_bits(psm: TexturePixelFormat) -> usize {
+    match psm {
+        TexturePixelFormat::PsmT4 => 4,
+        TexturePixelFormat::PsmT8 => 8,
+        TexturePixelFormat::Psm8888 => 32,
+        _ => 16,
+    }
+}
+
 /// Binds a texture from the pack.
 ///
 /// # Safety
@@ -113,20 +139,48 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
     }
 
-    sys::sceGuTexMode(psm, 0, 0, t.swizzled as i32);
-    sys::sceGuTexImage(
-        sys::MipmapLevel::None,
-        t.stride as i32,
-        // The GE wants power-of-two dimensions; the packer padded height too.
-        (t.height as u32).next_power_of_two() as i32,
-        t.stride as i32,
-        data.as_ptr() as *const c_void,
-    );
+    // Mip levels sit back to back after level 0, each half the size of the one
+    // before. Uploading them is what stops a dithered N64 gradient aliasing
+    // into moire when a surface samples it at around one texel per pixel — see
+    // RE-053 and Dream Land's tree.
+    let top = (t.levels as usize).clamp(1, MAX_GE_MIP_LEVELS) - 1;
+    sys::sceGuTexMode(psm, top as i32, 0, t.swizzled as i32);
+    let mut offset = 0usize;
+    let mut w = t.stride as u32;
+    let mut h = (t.height as u32).next_power_of_two();
+    for level in 0..=top {
+        let stride_bytes = (w as usize * psm_bits(psm)).div_ceil(8);
+        let size = stride_bytes * h as usize;
+        let Some(slice) = data.get(offset..offset + size) else {
+            break;
+        };
+        sys::sceGuTexImage(
+            mip_level(level),
+            w as i32,
+            h as i32,
+            w as i32,
+            slice.as_ptr() as *const c_void,
+        );
+        offset += size;
+        w = (w / 2).max(1);
+        h = (h / 2).max(1);
+    }
     sys::sceGuTexFunc(
         sys::TextureEffect::Modulate,
         sys::TextureColorComponent::Rgba,
     );
-    sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
+    if top > 0 {
+        // Trilinear: the level below is what carries the averaged-out dither,
+        // and blending between levels stops the switch-over being visible as a
+        // band across the surface.
+        sys::sceGuTexLevelMode(sys::TextureLevelMode::Auto, 0.0);
+        sys::sceGuTexFilter(
+            sys::TextureFilter::LinearMipmapLinear,
+            sys::TextureFilter::Linear,
+        );
+    } else {
+        sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
+    }
     // Texture coordinates need the same normalisation undone, then the N64's
     // S10.5 fixed point (32 units per texel) converted to 0..1 across the
     // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,

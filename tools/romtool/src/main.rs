@@ -1334,6 +1334,14 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         .filter_map(|i| pack.node(i))
         .filter(|n| n.flags & fmt::NodeDesc::FLAG_BILLBOARD != 0)
         .count();
+    let mipped = (0..pack.texture_count())
+        .filter_map(|i| pack.texture(i))
+        .filter(|t| t.levels > 1)
+        .count();
+    println!(
+        "  mipmaps     {mipped} of {} texture(s) carry extra levels",
+        pack.texture_count()
+    );
     println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
@@ -1410,30 +1418,36 @@ fn convert_texture(
         None => Vec::new(),
     };
 
-    if psm.is_paletted() && !tlut.is_empty() {
-        psp::pack_paletted(
+    // Mipmapped, because the N64's textures are frequently dithered and a
+    // dithered gradient sampled near one texel per pixel aliases into moire
+    // instead of reading as shading (RE-053). Every level is generated from the
+    // decoded image; for a paletted texture level 0 comes back bit-identical,
+    // since each texel's nearest palette entry is the one it was decoded from.
+    let mipped = |palette: Vec<u32>| {
+        let img = texture::decode(
             texels,
             t.width as u32,
             t.height as u32,
+            t.format,
             t.size,
-            &tlut,
-            swizzle,
+            (!tlut.is_empty()).then_some(tlut.as_slice()),
         )
-        .ok()
+        .ok()?;
+        Some(psp::pack_mipped(&img, psm, &palette, swizzle))
+    };
+
+    if psm.is_paletted() && !tlut.is_empty() {
+        let palette: Vec<u32> = tlut
+            .iter()
+            .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
+            .collect();
+        mipped(palette)
     } else if psm.is_paletted() && t.format == ssb_rom::texture::Format::I {
         // An intensity texture carries no palette because on the N64 it needs
         // none. Generating the ramp keeps it at 4 or 8 bits instead of letting
         // it fall through to the 8888 path `choose_psm` picked `PsmT4` to
         // avoid (RE-047).
-        psp::pack_indexed(
-            texels,
-            t.width as u32,
-            t.height as u32,
-            t.size,
-            &psp::intensity_palette(t.size),
-            swizzle,
-        )
-        .ok()
+        mipped(psp::intensity_palette(t.size))
     } else {
         texture::decode(
             texels,
@@ -1444,7 +1458,7 @@ fn convert_texture(
             (!tlut.is_empty()).then_some(tlut.as_slice()),
         )
         .ok()
-        .map(|img| psp::pack_rgba(&img, psp::Psm::Psm8888, swizzle))
+        .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
     }
 }
 
@@ -3304,6 +3318,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 };
 
                 let psm = psp::choose_psm(t.format, t.size);
+                let _ = &psm;
                 let need = texture::data_len(t.width as u32, t.height as u32, t.size);
                 let at = t.data_offset as usize;
 
@@ -3372,37 +3387,22 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     None => Vec::new(),
                 };
 
-                let tex = if psm.is_paletted() && !tlut.is_empty() {
-                    match psp::pack_paletted(
-                        src,
-                        t.width as u32,
-                        t.height as u32,
-                        t.size,
-                        &tlut,
-                        true,
-                    ) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            *why.entry(format!("pack_paletted: {e:?}")).or_default() += 1;
-                            *fails_by_file
-                                .entry((format!("pack_paletted: {e:?}"), file.id))
-                                .or_default() += 1;
-                            None
-                        }
-                    }
-                } else if psm.is_paletted() && t.format == texture::Format::I {
-                    // Generated ramp; see `convert_texture`.
-                    psp::pack_indexed(
-                        src,
-                        t.width as u32,
-                        t.height as u32,
-                        t.size,
-                        &psp::intensity_palette(t.size),
-                        true,
-                    )
-                    .ok()
-                } else {
-                    match texture::decode(
+                // The packer's own conversion, so these counts describe the
+                // pack rather than a parallel implementation of it. Keeping a
+                // second copy here is how the report came to quote a VRAM
+                // figure with no mip levels in it while the pack shipped them
+                // (RE-053). The classification above still explains *why*
+                // something fails; this decides whether it does.
+                let tex = convert_texture(
+                    Texels {
+                        home: file,
+                        all: &loaded.files,
+                    },
+                    &t,
+                    true,
+                );
+                if tex.is_none() {
+                    let reason = match texture::decode(
                         src,
                         t.width as u32,
                         t.height as u32,
@@ -3410,16 +3410,12 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         t.size,
                         (!tlut.is_empty()).then_some(tlut.as_slice()),
                     ) {
-                        Ok(img) => Some(psp::pack_rgba(&img, psp::Psm::Psm8888, true)),
-                        Err(e) => {
-                            *why.entry(format!("decode: {e:?}")).or_default() += 1;
-                            *fails_by_file
-                                .entry((format!("decode: {e:?}"), file.id))
-                                .or_default() += 1;
-                            None
-                        }
-                    }
-                };
+                        Err(e) => format!("decode: {e:?}"),
+                        Ok(_) => "conversion declined".into(),
+                    };
+                    *why.entry(reason.clone()).or_default() += 1;
+                    *fails_by_file.entry((reason, file.id)).or_default() += 1;
+                }
 
                 match tex {
                     Some(tex) => {

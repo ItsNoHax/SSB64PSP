@@ -3183,3 +3183,74 @@ exactly. What is still *not* checked is faithfulness to the original console:
 both paths run this crate's own player, so a shared misreading of the format
 would agree with itself. RE-050's opcode semantics come from the decompilation
 rather than from this check.
+
+## RE-053 — Mipmaps, and a tree that is still not right
+
+**Question.** Dream Land's tree canopy does not look like the N64's. Why, and
+can it be fixed?
+
+**The textures are dithered.** Dumping them shows what the canopy is made of: a
+64×64 CI4 *dithered gradient*, sixteen colours arranged to fake a smooth green
+ramp, and a second 64×64 whose highlight is a dithered diagonal wash. The
+dither **is** the shading. The N64 resolves it with its own filtering into a
+320×240 composite signal; a sharp display at one texel per pixel does not.
+
+The `textures` report now prints how far a texture is stretched across the
+surface using it — UVs are S10.5, 32 units per texel, so the span in texels
+over the texture's size is the repeat count. Dream Land's canopy runs at
+3.70 × 1.36 repeats of a 64×64, about 1.25 texels per pixel: mild minification,
+which is the range where a dithered pattern aliases.
+
+Box-filtering the texture to 32×32 by hand turns it straight back into a smooth
+gradient, so mipmapping is the indicated fix rather than a guess.
+
+**Implemented.** `psp_texture::pack_mipped` generates the chain from the
+decoded image and re-encodes each level. For a paletted texture that keeps it
+at 4 bits per texel: each level's texel takes the *nearest palette entry* to
+the local average, and on a gradient ramp the nearest entry to an average of
+two dithered neighbours is the shade between them. Level 0 is regenerated the
+same way and comes back bit-identical, which a test pins.
+
+The chain stops where swizzling would be lost. The GE's swizzle flag is per
+texture, not per level, so requiring every level to be swizzlable cost *all*
+of them their swizzling — 58% down to 0%. Since the levels that resolve dither
+are the first one or two, the chain now ends rather than the swizzling.
+
+| | before | after |
+|---|---|---|
+| textures with extra levels | 0 | **151 of 617** |
+| texture VRAM | 577.7 KiB | **717.3 KiB** |
+| swizzled | 356 (58%) | 356 (58%) |
+| pack | 3674 KiB | 3794 KiB |
+
+VRAM now exceeds the 700 KiB "all at once" figure, which was accepted
+deliberately rather than discovered.
+
+**A second report that had drifted.** The `textures` command kept its own copy
+of the conversion, so it reported a VRAM figure with no mip levels in it while
+the pack shipped them — the same two-implementations problem as RE-047. It now
+calls the packer's `convert_texture` and only classifies the failures itself.
+
+**The tree still does not look right, and this entry does not fix it.** The
+mip levels are generated, packed, uploaded and demonstrably change the frame,
+but the canopy's diagonal pattern survives. Two observations argue the
+diagnosis above is incomplete:
+
+* Under PPSSPP's software rasteriser the canopy is essentially unchanged.
+* Under OpenGL, which renders at a higher internal resolution, the pattern gets
+  **crisper**, not softer. Minification moiré would do the opposite.
+
+A pattern that sharpens with resolution is being *magnified*, not minified — so
+at least that surface is sampling below one texel per pixel and mipmaps cannot
+help it. What it needs is either the filtering to soften the dither at
+magnification, or the dither resolved at conversion time.
+
+The mipmaps are worth keeping regardless: they are correct, cheap, and fix
+minification everywhere else. But **the reported symptom is not resolved**, and
+the measurement is further muddied by the two PPSSPP backends disagreeing
+(RE-014 again). Deciding it on real hardware, or by rendering one surface in
+isolation at a known scale, is the next step.
+
+**Confidence: high** that the chain is generated and uploaded correctly — the
+level-0 round trip and the swizzle cut-off are unit-tested, and 151 textures
+carry levels. **Low** that this addresses what was actually asked.

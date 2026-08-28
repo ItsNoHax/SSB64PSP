@@ -160,7 +160,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 335 host tests passing
+* 338 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -178,6 +178,13 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
+* **Dream Land's tree canopy still does not match the N64.** Its textures are
+  dithered CI4 gradients; mipmaps are generated and uploaded (151 of 617
+  textures) but the pattern survives, and it *sharpens* at higher internal
+  resolution, which points at magnification rather than the minification
+  mipmaps address (RE-053).
+* Texture VRAM is 717 KiB, over the ~700 KiB that would let every texture be
+  resident at once. Mip levels were added knowing this.
 * Stage **material** animations (12 layers) are read but not played. Their
   frame 0 matches the colours already rendered, so nothing draws wrong; the
   scenery simply does not change colour (RE-048).

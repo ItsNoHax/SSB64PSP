@@ -81,7 +81,7 @@ impl Rgba8 {
         }
     }
 
-    fn put(&mut self, i: usize, rgba: [u8; 4]) {
+    pub fn put(&mut self, i: usize, rgba: [u8; 4]) {
         self.pixels[i * 4..i * 4 + 4].copy_from_slice(&rgba);
     }
 }
