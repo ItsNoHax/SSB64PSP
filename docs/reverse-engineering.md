@@ -2123,25 +2123,80 @@ not:
    triangles between them, one list per node. Every mesh is rigid under its own
    joint.
 
-**What the numbers point at.** Mario's rest pose is essentially planar — every
-node sits within 5 units of `z = 0`. Twelve frames into the dash the composed
-matrices put a foot at `z = -133.8` and a hand at `z = +83.9`. Smash 64
-animations move in X and Y with small Z excursions; 130 units of depth on a
-320-tall fighter is not a pose, it is an axis. The individual joint values are
-not obviously wrong — joint 2 reads `r (0.86, 0.49, 0.15)` at frame 12 against
-`(0.45, 0.50, 0.21)` at frame 23 — so the suspicion is the *rotation* half of
-the transform rather than the interpolation feeding it: the track-to-axis
-mapping, or the order `from_trs` applies them in, being right for the small
-rest-pose rotations that the composition test covers and wrong for large ones.
+**A methodological error, corrected.** The first three screenshots were read as
+"the model is exploded". They were taken at three different, arbitrary
+rotations: the viewer does `spin += 0.02` every tick unconditionally, so an
+8-second capture shows the object a turn and a half round from where a
+4-second one does. Any comparison between them was worthless. Freezing the spin
+is what made the rest of this measurable.
 
-**Not yet investigated.** Whether `ftAnimGetTargetValue`'s `1/512` is radians at
-all, rather than a fixed-point turn; whether `nGCAnimTrackRotX..Z` map onto
-`from_trs`'s `r[0..2]` in that order; and whether the `0x8000` transform kind
-(`RecalcRotRpyRSca`, which `DObjDesc::transform_kind` already distinguishes and
-the packer currently ignores) changes how a node composes its rotation. That
-last one is the strongest lead: the packer bakes every node with `from_trs`
-regardless of its kind, which is invisible at rest if the kinds agree there.
+**Where the error actually is, measured.** Composing Mario's dash frame by
+frame and taking the extent of the mesh-bearing nodes:
 
-**Confidence: high** that the pipeline runs and that the three ruled-out causes
-are ruled out. **The pose is not validated and should not be described as
-working.** The viewer ships with playback off by default.
+```
+rest      x  -87.6..87.6   y    8.2..235.6   z   -4.5..0.1
+frame  0  x  -97.8..88.5   y   34.2..230.5   z  -76.1..69.6
+frame 12  x  -89.1..97.3   y   89.5..244.8   z -133.8..83.9
+frame 23  x  -95.7..53.9   y   17.1..220.4   z  -38.7..87.6
+```
+
+**X stays right. Y is plausible. Z goes from a 5-unit spread to a 220-unit
+one.** The error is on one axis, and it is there from frame 0 rather than
+accumulating.
+
+Z is not automatically wrong, though, and this is the part that took longest to
+get right: **Mario's model is authored facing +Z**, not +X. His shoulders span
+X (nodes at `x = ±70`), and the one descriptor `setup_parts` excludes sits at
+`z = +120`, in front of him. So a leg swinging in Z is a leg swinging
+*forward*, which is what a dash does. A stride of 80 units on a 320-tall
+fighter is a stride, not a fault. What is not plausible is both ankle nodes
+sitting 89 units off the ground at frame 12 of a grounded dash, and the head
+detaching from the neck.
+
+**Ruled out since, each by measurement rather than by reading.**
+
+* *The rotation order.* `syMatrixRotRpyRF` was compared with `Mat4::from_trs`
+  term for term — all nine elements agree once the row-major/column-major
+  transpose is accounted for, and so does `syMatrixRowscaleF` against the
+  per-column scale. The alternative order the original also ships,
+  `syMatrixRotPyrRF`, was implemented and rendered: it is visibly worse. RPY is
+  right.
+* *The track-to-axis mapping.* `FT_ANIM_ROTX/Y/Z` are bits 0/1/2, and
+  `gcPlayDObjAnimJoint` writes them to `rotate.x/y/z` in that order. Both match.
+* *The joint-to-node mapping, again, at the bit level.* Mario's `setup_parts`
+  words are `0xffffff00 0x00000000`; read most-significant-bit-first that is
+  descriptors 0..23, which is what the runtime uses. Samus's `0xfff803ff`
+  round-trips through the same reading to a 23-bit mask with a nine-descriptor
+  gap in the middle, matching her joint count.
+* *Sibling order.* `gcAddChildForDObj` walks to the end of the sibling list and
+  **appends**, so a tree walk visits nodes in descriptor-array order. Had it
+  prepended, every branch point would have been swapped — which would have
+  looked exactly like this.
+* *Translation and scale.* At frame 12 only three of Mario's 24 joints have a
+  translation that differs from rest at all, and every scale is exactly 1.0.
+  The animation moves rotations and the root, which is what a skeleton
+  animation should do.
+
+**What is left.** The individual joint rotations are not obviously wrong —
+joint 2 reads `(0.92, 0.52, 0.15)` at frame 12, a 52-degree torso pitch — but
+they are *large*, and they compound up a chain where a 72-unit neck bone
+amplifies a torso angle into a displaced head. Two candidates remain, in order:
+
+1. **Cubic extrapolation.** `gcGetAObjValue` does not clamp `length` to the
+   track's duration. A track keyed with duration `D` whose clock then advances
+   past `D` extrapolates a cubic, which grows without bound. If a track is
+   being re-keyed less often here than in the original — one missed command, or
+   a `length` reset in the wrong place — every rotation would come out too big
+   in exactly this way, worst in the middle of the animation and recovering at
+   the end. The measured extent does peak at frame 13 and come back by 23.
+2. **The transform kind.** Fighters are set up with `tk1 = 0x4B`, a value that
+   appears in no `case` of the matrix switch in `objdisplay.c`, which only goes
+   to 63. Either the decompilation's argument is wrong at that call site or the
+   kind means something not yet found; until it is known, the packer baking
+   every node with `from_trs` regardless of its `DObjDesc` nibble is an
+   assumption rather than a finding.
+
+**Confidence: high** that the pipeline runs, that the error is confined to one
+axis, and that everything listed above is genuinely eliminated. **The pose is
+not validated and must not be described as working.** The viewer ships with
+playback off by default.
