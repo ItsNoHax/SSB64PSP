@@ -304,6 +304,11 @@ pub struct AnimDesc {
 }
 
 impl AnimDesc {
+    /// `fighter` value marking a *stage* animation rather than a fighter's.
+    /// Stage entries sit after the dense fighter block, and `slot` is the
+    /// stage index (RE-051).
+    pub const STAGE: u32 = u32::MAX;
+
     pub const SIZE: usize = 32;
 }
 
@@ -1057,6 +1062,17 @@ impl PackWriter {
     /// `map` is optional because the header and the collision come from
     /// different structs in different files; a stage with unreadable geometry
     /// still contributes its bounds and its layers.
+    /// Where an object's nodes begin in the node table, for a caller that has
+    /// only the object index. Stage animation needs it to turn a graph-local
+    /// node number into the absolute one a joint entry stores.
+    pub fn object_first_node(&self, object: u32) -> Option<u32> {
+        self.objects.get(object as usize).map(|o| o.first_node)
+    }
+
+    pub fn object_node_count(&self, object: u32) -> Option<u32> {
+        self.objects.get(object as usize).map(|o| o.node_count)
+    }
+
     pub fn add_stage(
         &mut self,
         ground: &crate::stage::GroundData,
@@ -1643,6 +1659,17 @@ impl<'a> Pack<'a> {
         }
         let a = self.anim(fighter * slots + slot)?;
         (a.fighter == fighter && a.slot == slot).then_some(a)
+    }
+
+    /// A stage's joint animation, if it has one.
+    ///
+    /// Scanned rather than indexed: fighter animations occupy a dense block
+    /// keyed by `fighter * SLOT_COUNT + slot`, and stage entries are appended
+    /// after it, so there is no arithmetic that finds them.
+    pub fn stage_anim(&self, stage: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::STAGE && a.slot == stage)
     }
 
     /// One joint entry, by absolute index.
@@ -2783,6 +2810,37 @@ mod tests {
         // Both must still be findable under their own fighter.
         assert_eq!(pack.anim(0).unwrap().fighter, 8);
         assert_eq!(pack.anim(1).unwrap().fighter, 10);
+    }
+
+    /// `fighter_anim` finds a row by arithmetic, so the fighter entries must
+    /// be a dense block starting at index 0. Stage animations share the table
+    /// and are appended after it; writing one first shifts every fighter
+    /// animation by a row and the fighter silently gets someone else's
+    /// skeleton — which showed up only as a triangle count (RE-051).
+    #[test]
+    fn a_stage_animation_does_not_displace_the_fighter_block() {
+        let mut w = PackWriter::new();
+        let slots = crate::anim::SLOT_COUNT as u32;
+        for slot in 0..slots {
+            w.add_anim(0, slot, 300, 10, &[0u8; 8], &[(Some(0), Some(0))]);
+        }
+        w.add_anim(AnimDesc::STAGE, 7, 104, 0, &[0u8; 8], &[(Some(0), Some(0))]);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        for slot in 0..slots {
+            let a = pack
+                .fighter_anim(0, slot)
+                .unwrap_or_else(|| panic!("fighter 0 slot {slot} must resolve"));
+            assert_eq!(a.fighter, 0);
+            assert_eq!(a.slot, slot);
+        }
+        let s = pack
+            .stage_anim(7)
+            .expect("the stage entry is still findable");
+        assert_eq!(s.fighter, AnimDesc::STAGE);
+        assert_eq!(s.source_file, 104);
+        assert_eq!(pack.stage_anim(8), None);
     }
 
     #[test]

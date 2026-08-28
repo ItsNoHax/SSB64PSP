@@ -129,7 +129,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 * ROM validation, VPK0 decompression (all 499 compressed files) and the
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-* Asset extraction and conversion into a 2.8 MB runtime pack: 2450 meshes
+* Asset extraction and conversion into a 3.6 MB runtime pack: 2450 meshes
   (42,417 triangles, zero conversion failures), 3137 scene-graph nodes, 617
   textures, 41 stages' collision geometry, all 27 fighters' constants and 532
   movement animations — every status the fighter machine can be in
@@ -147,6 +147,10 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * **A fighter moves and animates on device**: walk, dash, run, turn, squat,
   jump, double-jump, drop-through and landing, each with the original's
   animation for that status, on every character's real extracted constants
+* **Stage scenery animates on device** — 35 stages, 215 nodes, ticked and
+  composed each frame at 60 FPS from the 32-bit event stream stages use, which
+  is a different encoding to the fighters' figatree but the same `AObj`
+  machine (RE-050, RE-051)
 * **Camera-facing sprites face the camera.** `DObjDesc.id & 0xF000` selects a
   matrix kind, and kinds 45–48 build the transform from the projection basis
   rather than the node's own rotation. All 81 such nodes are flagged through
@@ -156,7 +160,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 334 host tests passing
+* 335 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -174,12 +178,11 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
-* **Stages are still static on device.** The 32-bit joint scripts stage scenery
-  uses are now decoded and played on the host — all 206 across all 41 stages,
-  every one still looping after 600 frames (RE-050) — but they are not in the
-  pack and the PSP side does not tick them, so Whispy does not yet sway. The
-  12 material animations are read but not played; their frame 0 matches the
-  colours already rendered, so nothing draws wrong (RE-048).
+* Stage **material** animations (12 layers) are read but not played. Their
+  frame 0 matches the colours already rendered, so nothing draws wrong; the
+  scenery simply does not change colour (RE-048).
+* Nothing checks a posed *stage* node against the original frame by frame, the
+  way fighter animations are checked against the ROM.
 * 28 nodes ask for the `0x8000` transform kind (a recomputed rotation) that is
   still drawn plainly.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a

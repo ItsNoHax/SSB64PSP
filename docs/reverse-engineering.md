@@ -3062,3 +3062,69 @@ checked by 206 scripts looping indefinitely. **Nothing is animated on device
 yet**: the pack has no table for these scripts and the PSP side does not tick
 them. That is the next increment, and it is mechanical — the hard part, being
 sure the stream is read correctly, is done.
+
+## RE-051 — Stage scenery animates on device
+
+**Question.** RE-050 decoded and validated the 32-bit joint stream on the host.
+Get it onto the PSP.
+
+**No new pack tables.** A stage animation needs exactly what a fighter's needs:
+a file of script bytes, and per joint a `(script offset, node index)` pair.
+That is `AnimDesc` and `AnimJoint` unchanged, so stage entries go in the same
+tables with `fighter = AnimDesc::STAGE` (`u32::MAX`) and `slot` as the stage
+index. `Pack::stage_anim` scans for them, because unlike a fighter's they are
+not at a computable row.
+
+Copying each animation file whole costs **790 KiB** — the pack goes 2881 to
+3674 KiB. That is the same thing the fighter path already does, and it is what
+keeps the scripts' absolute `Jump` and `SetAnim` targets valid without
+rewriting them. Copying only each file's reachable span and rebasing those
+targets would be much smaller and is the obvious later optimisation; it is not
+done here because it trades a verified-correct copy for a rewrite that could be
+subtly wrong.
+
+**One ordering bug, found by a triangle count.** `Pack::fighter_anim` finds a
+row by arithmetic:
+
+```rust
+let a = self.anim(fighter * slots + slot)?;
+```
+
+which only holds while the fighter entries are a dense block starting at index
+0. Stages are packed *before* fighters, so writing the stage animations where
+they were produced put 35 rows in front of that block, and every fighter
+animation resolved one stage too far. The pack still verified, every host check
+still passed, and the on-device overlay read `fighter 4294967295 slot 1` with
+`joints 0` — the fighter had quietly been handed a stage's skeleton and drew
+nothing. The only number that moved was the stage view's triangle count, 495 to
+175.
+
+Stage entries are now emitted after the fighter loop, and a test builds a full
+fighter block plus one stage row and asserts every fighter slot still resolves
+to itself. The same collision bit the `figatree` verifier, which walked every
+`AnimDesc` and tried to decode a 32-bit script as a 16-bit one; it now skips
+`STAGE` rows.
+
+**Dream Land is not the example.** Through RE-048 and RE-050 this document said
+"Whispy never sways". Dream Land's layers carry **no `anim_joints` at all** —
+only a material animation on layer 2. Its scenery is moved by the wind state
+machine in `grpupupu.c`, which is game code, not data. The stages that do carry
+joint animation start at file 256.
+
+**Verified with a control.** Two captures twelve seconds apart, differenced:
+with the animation on, the overlay's counters change and there is a speckled
+cluster exactly over the tree canopy. With it off, and the same two timestamps,
+the canopy is **pixel-identical** and only the counters and the fighter remain.
+The motion is subtle — a sway, not a lurch — so the difference image is the
+evidence rather than the screenshots.
+
+**Result.** 35 stages, 215 animated nodes, ticked and composed each frame at a
+locked 60 FPS. A node the animation does not drive keeps its packed rest
+matrix, and `draw_stage` is `draw_stage_animated(.., None, ..)`, so the still
+and moving paths are one piece of code.
+
+**Confidence: high** that the scripts play and move the right nodes.
+**Medium** on faithfulness: nothing compares a posed stage node against the
+original frame by frame, the way `figatree` does for fighters against the ROM.
+The material animations (12 layers) are still not played, and their frame 0
+already matches what renders, so nothing is visibly wrong from that.

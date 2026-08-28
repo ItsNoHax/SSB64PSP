@@ -1058,6 +1058,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut stage_layers = 0usize;
     let mut resolved_layers = 0usize;
     let mut with_collision = 0usize;
+    let (mut stage_anims, mut stage_anim_joints) = (0usize, 0usize);
+    /// A stage's animation, held back until the fighter block is complete:
+    /// stage index, source file, and one (script offset, node) per joint.
+    type StageAnim = (u32, u32, Vec<(Option<u32>, Option<u32>)>);
+    let mut deferred_stage_anims: Vec<StageAnim> = Vec::new();
     for ground in &loaded.stages {
         let map = ground.map_geometry.and_then(|(f, at)| {
             let file = loaded.files.get(f as usize)?.as_ref()?;
@@ -1072,9 +1077,54 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .iter()
             .filter(|l| object_index.contains_key(&l.graph))
             .count();
-        writer.add_stage(ground, map.as_ref(), |file, offset| {
+        let stage_index = writer.add_stage(ground, map.as_ref(), |file, offset| {
             object_index.get(&(file, offset)).copied()
         });
+
+        // Stage scenery animates through the 32-bit event stream (RE-050).
+        // Each layer names one script per graph node, so the joint entries are
+        // (script offset in the file, absolute node index in the pack) — the
+        // same shape a fighter's are, which is why this reuses the animation
+        // tables rather than adding a parallel set.
+        let mut joints: Vec<(Option<u32>, Option<u32>)> = Vec::new();
+        let mut anim_file = None;
+        for layer in &ground.layers {
+            let Some((af, at)) = layer.anim_joints else {
+                continue;
+            };
+            // The scripts and the graph have to be in one file: a joint entry
+            // holds an offset, and the blob it indexes is that one file's.
+            if af != layer.graph.0 || anim_file.is_some_and(|f| f != af) {
+                continue;
+            }
+            let Some(file) = loaded.files.get(af as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            let Some(&object) = object_index.get(&layer.graph) else {
+                continue;
+            };
+            let Some(first_node) = writer.object_first_node(object) else {
+                continue;
+            };
+            let nodes = writer.object_node_count(object).unwrap_or(0) as usize;
+            for (i, script) in ssb_rom::objanim::joint_scripts(&file.data, at, nodes)
+                .into_iter()
+                .enumerate()
+            {
+                let Some(script) = script else { continue };
+                joints.push((Some(script), Some(first_node + i as u32)));
+            }
+            anim_file = Some(af);
+        }
+        // Deferred, not written here. `Pack::fighter_anim` finds a fighter's
+        // animation by arithmetic — `anim(fighter * SLOT_COUNT + slot)` — which
+        // only holds while the fighter entries are a dense block starting at
+        // index 0. Stages are packed before fighters, so writing these now puts
+        // 35 stage entries in front of that block and every fighter animation
+        // resolves to the wrong row (RE-051).
+        if let (Some(af), false) = (anim_file, joints.is_empty()) {
+            deferred_stage_anims.push((stage_index, af, joints));
+        }
     }
 
     // Fighters: 27 small reads, in `FTKind` order so the table can be indexed
@@ -1192,6 +1242,24 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         }
     }
 
+    // Now that the fighter block is complete and dense, the stage entries can
+    // go after it without disturbing `fighter_anim`'s indexing.
+    for (stage_index, af, joints) in deferred_stage_anims {
+        let Some(file) = loaded.files.get(af as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::STAGE,
+            stage_index,
+            af,
+            0,
+            &file.data,
+            &joints,
+        );
+        stage_anims += 1;
+        stage_anim_joints += joints.len();
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -1258,6 +1326,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         .filter(|n| n.flags & fmt::NodeDesc::FLAG_BILLBOARD != 0)
         .count();
     println!("  billboards  {billboards} node(s) drawn facing the camera");
+    println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
 
@@ -2272,6 +2341,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let (mut anim_ok, mut anim_frames) = (0usize, 0u64);
     let (mut anim_wild, mut anim_denormal) = (0u64, 0u64);
     let mut anim_running = 0usize;
+    let mut anim_src_files: BTreeSet<u32> = BTreeSet::new();
     /// Long enough that a looping script proves it loops, and that one which
     /// runs off the end hits its `End` well inside the budget.
     const ANIM_REPLAY_FRAMES: u32 = 600;
@@ -2309,6 +2379,9 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                 }
                 None => "no materials".into(),
             };
+            if let Some((af, _)) = l.anim_joints {
+                anim_src_files.insert(af);
+            }
             if let Some((af, at)) = l.anim_joints {
                 if af == l.graph.0 {
                     if let Some(f) = loaded.files.get(af as usize).and_then(Option::as_ref) {
@@ -2443,6 +2516,16 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
         "stage joint animations replayed: {anim_ok} script(s), {anim_frames} frame(s), 0 failures"
     );
     println!("  still running after {ANIM_REPLAY_FRAMES} frames: {anim_running}/{anim_ok}");
+    let anim_bytes: usize = anim_src_files
+        .iter()
+        .filter_map(|f| loaded.files.get(*f as usize).and_then(Option::as_ref))
+        .map(|f| f.data.len())
+        .sum();
+    println!(
+        "  scripts live in {} file(s), {:.0} KiB if copied whole",
+        anim_src_files.len(),
+        anim_bytes as f64 / 1024.0
+    );
     println!(
         "  pose values: {anim_denormal} denormal, {anim_wild} non-finite or absurd, largest {anim_max:.1}"
     );
@@ -3743,6 +3826,12 @@ fn replay_from_pack(
     let mut worst = 0.0f32;
     for i in 0..pack.anim_count() {
         let Some(a) = pack.anim(i) else { continue };
+        // Stage scenery shares this table but runs the 32-bit event stream, not
+        // figatree's 16-bit one (RE-050, RE-051). Decoding one as the other
+        // walks off the end of the file.
+        if a.fighter == ssb_rom::pack::AnimDesc::STAGE {
+            continue;
+        }
         let Some(script) = pack.anim_script(&a) else {
             return Err(format!("animation {i} has no script bytes in the blob").into());
         };
@@ -3836,6 +3925,12 @@ fn check_bone_lengths(
 
     for i in 0..pack.anim_count() {
         let Some(a) = pack.anim(i) else { continue };
+        // Stage scenery shares this table but runs the 32-bit event stream, not
+        // figatree's 16-bit one (RE-050, RE-051). Decoding one as the other
+        // walks off the end of the file.
+        if a.fighter == ssb_rom::pack::AnimDesc::STAGE {
+            continue;
+        }
         let Some(script) = pack.anim_script(&a) else {
             continue;
         };

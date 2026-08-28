@@ -224,6 +224,129 @@ impl Skeleton {
     }
 }
 
+/// The most animated nodes a stage layer set is allowed. The busiest in the
+/// archive uses far fewer; the cap bounds the fixed array rather than the data.
+pub const MAX_STAGE_JOINTS: usize = 64;
+
+/// A stage's scenery animation, playing the 32-bit event stream (RE-050).
+///
+/// The fighter [`Skeleton`] above and this are deliberately the same shape —
+/// per-joint clocks, poses seeded from the rest transform, one `compose` that
+/// walks the parent chain — because they *are* the same machine with different
+/// instruction encodings. Only the tick differs.
+pub struct StageAnimator {
+    nodes: [u32; MAX_STAGE_JOINTS],
+    joints: [crate::objanim::StageJoint; MAX_STAGE_JOINTS],
+    poses: [JointPose; MAX_STAGE_JOINTS],
+    count: usize,
+}
+
+impl Default for StageAnimator {
+    fn default() -> Self {
+        StageAnimator::new()
+    }
+}
+
+impl StageAnimator {
+    pub fn new() -> Self {
+        StageAnimator {
+            nodes: [0; MAX_STAGE_JOINTS],
+            joints: [crate::objanim::StageJoint::start(0, 0.0); MAX_STAGE_JOINTS],
+            poses: [JointPose {
+                rotate: [0.0; 3],
+                translate: [0.0; 3],
+                scale: [1.0; 3],
+            }; MAX_STAGE_JOINTS],
+            count: 0,
+        }
+    }
+
+    pub fn joint_count(&self) -> usize {
+        self.count
+    }
+
+    /// Loads every joint entry of a stage animation, seeding each pose from the
+    /// node's rest transform so a track the script never names keeps it.
+    pub fn start(&mut self, pack: &Pack<'_>, anim: &AnimDesc) {
+        self.count = 0;
+        for i in 0..anim.joint_count {
+            if self.count == MAX_STAGE_JOINTS {
+                break;
+            }
+            let Some(j) = pack.anim_joint(anim.first_joint + i) else {
+                continue;
+            };
+            if j.script == AnimJoint::NO_SCRIPT || j.node == AnimJoint::NO_NODE {
+                continue;
+            }
+            let Some(node) = pack.node(j.node) else {
+                continue;
+            };
+            self.nodes[self.count] = j.node;
+            self.joints[self.count] = crate::objanim::StageJoint::start(j.script, 0.0);
+            self.poses[self.count] = JointPose {
+                rotate: node.rest_rotate,
+                translate: node.rest_translate,
+                scale: node.rest_scale,
+            };
+            self.count += 1;
+        }
+    }
+
+    /// Advances every joint one tick. `script` is the animation file's bytes,
+    /// which the joint offsets index into.
+    pub fn tick(&mut self, script: &[u8]) -> Result<(), crate::objanim::AnimError> {
+        for i in 0..self.count {
+            self.joints[i].tick(script, 1.0, &mut self.poses[i])?;
+        }
+        Ok(())
+    }
+
+    /// Composes world matrices for an object, exactly as [`Skeleton::compose`]
+    /// does — a node this animator does not drive keeps its packed rest matrix.
+    pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
+        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        for i in 0..count {
+            let index = object.first_node + i as u32;
+            let Some(node) = pack.node(index) else {
+                out[i] = Mat4::IDENTITY;
+                continue;
+            };
+            let local = match self.pose_for(index) {
+                Some(pose) => {
+                    let t = [
+                        pose.translate[0] / MODEL_SCALE,
+                        pose.translate[1] / MODEL_SCALE,
+                        pose.translate[2] / MODEL_SCALE,
+                    ];
+                    Mat4::from_trs(t, pose.rotate, pose.scale)
+                }
+                // Not animated: the packed world matrix is already this node's
+                // full ancestor-composed transform, so it is used as it stands
+                // and must not be re-multiplied by a parent below.
+                None => {
+                    out[i] = Mat4(node.world);
+                    continue;
+                }
+            };
+            out[i] = match node.parent {
+                NodeDesc::NO_PARENT => local,
+                p if p >= object.first_node && (p - object.first_node) < i as u32 => {
+                    out[(p - object.first_node) as usize].mul(&local)
+                }
+                _ => local,
+            };
+        }
+        count
+    }
+
+    fn pose_for(&self, node: u32) -> Option<&JointPose> {
+        (0..self.count)
+            .find(|&i| self.nodes[i] == node)
+            .map(|i| &self.poses[i])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
