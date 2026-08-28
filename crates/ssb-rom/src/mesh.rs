@@ -88,8 +88,11 @@ pub struct MeshMaterial {
     /// colour comes entirely from here. A primitive that never set one must
     /// keep its shade unmodulated (RE-039).
     pub prim_color: Option<[u8; 4]>,
-    pub env_color: [u8; 4],
-    pub blend_color: [u8; 4],
+    /// `G_SETENVCOLOR`. `None` for the same reason as `prim_color`: a combiner
+    /// that reads one nothing set is reading whatever the RDP had, and black
+    /// is not a safe stand-in for that.
+    pub env_color: Option<[u8; 4]>,
+    pub blend_color: Option<[u8; 4]>,
 }
 
 /// A run of triangles sharing one material, indexing [`Mesh::vertices`].
@@ -194,29 +197,225 @@ impl<'a> Source<'a> {
     }
 }
 
-/// Whether cycle 0's RGB output reads the primitive colour.
+/// A colour as far as a static converter can follow it.
 ///
-/// `G_SETCOMBINE` picks four sources per cycle — `(A - B) * C + D` — and the
-/// codes for A/B/C/D differ in width and meaning. Only three of them matter
-/// here: whether `PRIMITIVE` appears at all in cycle 0's colour equation.
+/// The RDP combiner computes `(A - B) * C + D` per cycle, with the previous
+/// cycle's result available to the next. Two of its four inputs vary per
+/// vertex or per texel and the rest are constants, so any result this converter
+/// can use has the shape
 ///
-/// It has to be asked, because the same model answers differently per part.
-/// Mario's upper arms and thighs combine `PRIM * SHADE`; his gloves and shoes
-/// take `SHADE` alone and would come out wearing whatever primitive colour was
-/// last set — which is exactly how folding the colour in unconditionally
-/// turned his white gloves green (RE-039).
-fn combiner_uses_prim(hi: u32, lo: u32) -> bool {
-    // A: 4 bits, PRIMITIVE = 3. B: 4 bits, PRIMITIVE = 3.
-    // C: 5 bits, PRIMITIVE = 3. D: 3 bits, PRIMITIVE = 3.
-    const PRIM: u32 = 3;
-    let a0 = (hi >> 20) & 0xF;
-    let c0 = (hi >> 15) & 0x1F;
-    let b0 = (lo >> 28) & 0xF;
-    let d0 = (lo >> 15) & 0x7;
-    a0 == PRIM || b0 == PRIM || c0 == PRIM || d0 == PRIM
+/// ```text
+/// k + s*SHADE + t*TEXEL + st*SHADE*TEXEL
+/// ```
+///
+/// per channel. `SHADE` is the vertex colour and `TEXEL` is what the GE's
+/// texture unit supplies, so a result of `s*SHADE` folds into the vertex and a
+/// result of `st*SHADE*TEXEL` is exactly `GU_TFX_MODULATE`. Anything else —
+/// an additive term, a texture in an unmodulated position — is left alone
+/// rather than approximated.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Combined {
+    k: [f32; 3],
+    s: [f32; 3],
+    t: [f32; 3],
+    st: [f32; 3],
 }
 
-/// Tracks RDP/RSP state while walking a display list.
+impl Combined {
+    const ZERO: Combined = Combined {
+        k: [0.0; 3],
+        s: [0.0; 3],
+        t: [0.0; 3],
+        st: [0.0; 3],
+    };
+
+    fn constant(c: [f32; 3]) -> Combined {
+        Combined {
+            k: c,
+            ..Combined::ZERO
+        }
+    }
+
+    /// Whether every varying term is zero, so this is a plain colour.
+    fn is_constant(&self) -> bool {
+        self.s == [0.0; 3] && self.t == [0.0; 3] && self.st == [0.0; 3]
+    }
+
+    fn zip(&self, o: &Combined, f: impl Fn(f32, f32) -> f32) -> Combined {
+        let g = |a: [f32; 3], b: [f32; 3]| [f(a[0], b[0]), f(a[1], b[1]), f(a[2], b[2])];
+        Combined {
+            k: g(self.k, o.k),
+            s: g(self.s, o.s),
+            t: g(self.t, o.t),
+            st: g(self.st, o.st),
+        }
+    }
+
+    fn sub(&self, o: &Combined) -> Combined {
+        self.zip(o, |a, b| a - b)
+    }
+
+    fn add(&self, o: &Combined) -> Combined {
+        self.zip(o, |a, b| a + b)
+    }
+
+    /// `self * o`, when one side is constant.
+    ///
+    /// Two varying terms multiplied — `SHADE * TEXEL` aside, which the shapes
+    /// below cover — is not representable, and returning `None` is how a
+    /// combiner this model cannot follow declines to be guessed at.
+    fn mul(&self, o: &Combined) -> Option<Combined> {
+        let (c, v) = if o.is_constant() {
+            (o.k, self)
+        } else if self.is_constant() {
+            (self.k, o)
+        } else {
+            // The one mixed product worth keeping: shade times texel.
+            let shade_by_texel = |a: &Combined, b: &Combined| {
+                (a.s != [0.0; 3]
+                    && b.t != [0.0; 3]
+                    && a.k == [0.0; 3]
+                    && a.t == [0.0; 3]
+                    && a.st == [0.0; 3]
+                    && b.k == [0.0; 3]
+                    && b.s == [0.0; 3]
+                    && b.st == [0.0; 3])
+                    .then(|| Combined {
+                        st: [a.s[0] * b.t[0], a.s[1] * b.t[1], a.s[2] * b.t[2]],
+                        ..Combined::ZERO
+                    })
+            };
+            return shade_by_texel(self, o).or_else(|| shade_by_texel(o, self));
+        };
+        let g = |a: [f32; 3]| [a[0] * c[0], a[1] * c[1], a[2] * c[2]];
+        Some(Combined {
+            k: g(v.k),
+            s: g(v.s),
+            t: g(v.t),
+            st: g(v.st),
+        })
+    }
+}
+
+fn to_f(c: [u8; 4]) -> [f32; 3] {
+    [
+        c[0] as f32 / 255.0,
+        c[1] as f32 / 255.0,
+        c[2] as f32 / 255.0,
+    ]
+}
+
+/// Resolves one combiner input.
+///
+/// The four multiplexers have different widths *and* different meanings for
+/// the same code, which is why they are decoded separately rather than through
+/// one table. `None` is a source this model cannot follow.
+fn source(code: u32, slot: u8, prim: [f32; 3], env: [f32; 3]) -> Option<Combined> {
+    const SHADE: Combined = Combined {
+        s: [1.0; 3],
+        ..Combined::ZERO
+    };
+    const TEXEL: Combined = Combined {
+        t: [1.0; 3],
+        ..Combined::ZERO
+    };
+    Some(match (code, slot) {
+        (0, _) => return None, // COMBINED: substituted by the caller
+        (1 | 2, _) => TEXEL,
+        (3, _) => Combined::constant(prim),
+        (4, _) => SHADE,
+        (5, _) => Combined::constant(env),
+        // A and D read 1 here; B reads CENTER and C reads SCALE, neither of
+        // which this model follows.
+        (6, b'a') | (6, b'd') => Combined::constant([1.0; 3]),
+        // A's 7 is NOISE; D's 7 is zero; B's is K4 and C's is an alpha.
+        (7, b'd') => Combined::ZERO,
+        // Everything past each multiplexer's named range reads zero.
+        (8..=15, b'a') | (8..=15, b'b') | (16..=31, b'c') => Combined::ZERO,
+        _ => return None,
+    })
+}
+
+/// Runs one combiner cycle, given the previous cycle's result.
+fn cycle(
+    srcs: [u32; 4],
+    prev: Option<&Combined>,
+    prim: [f32; 3],
+    env: [f32; 3],
+) -> Option<Combined> {
+    let mut v = [Combined::ZERO; 4];
+    for (i, (&code, slot)) in srcs.iter().zip(b"abcd").enumerate() {
+        v[i] = match source(code, *slot, prim, env) {
+            Some(x) => x,
+            // Only `COMBINED` returns None for a code the model knows.
+            None if code == 0 => *prev?,
+            None => return None,
+        };
+    }
+    v[0].sub(&v[1]).mul(&v[2]).map(|m| m.add(&v[3]))
+}
+
+/// What a primitive's colour reduces to: a constant to fold into the vertex
+/// shade, or nothing when the combiner is one this model does not follow.
+///
+/// Both cycles are evaluated. Reading only the first is what left Mario's
+/// gloves and Dream Land's platforms white — their first cycle is a bare
+/// `SHADE` and everything that gives it a colour is in the second (RE-043).
+fn combiner_shade_scale(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: Option<[u8; 4]>,
+    env: Option<[u8; 4]>,
+) -> Option<[f32; 3]> {
+    // An unset constant is the multiplicative identity rather than black: a
+    // combiner that reads one the display list never set is reading whatever
+    // the RDP had, and white is the only choice that cannot darken geometry
+    // that should be lit.
+    let p = prim.map_or([1.0; 3], to_f);
+    let e = env.map_or([1.0; 3], to_f);
+
+    let c0 = cycle(
+        [
+            (hi >> 20) & 0xF,
+            (lo >> 28) & 0xF,
+            (hi >> 15) & 0x1F,
+            (lo >> 15) & 0x7,
+        ],
+        None,
+        p,
+        e,
+    )?;
+    let out = if two_cycle {
+        cycle(
+            [
+                (hi >> 5) & 0xF,
+                (lo >> 24) & 0xF,
+                hi & 0x1F,
+                (lo >> 6) & 0x7,
+            ],
+            Some(&c0),
+            p,
+            e,
+        )?
+    } else {
+        c0
+    };
+
+    // Usable only as a scale on the shade. A constant term would need a second
+    // colour source the vertex format does not have.
+    if out.k != [0.0; 3] || out.t != [0.0; 3] {
+        return None;
+    }
+    match (out.s == [0.0; 3], out.st == [0.0; 3]) {
+        // `SHADE * TEXEL` is what the GE's modulate already does.
+        (true, false) => Some(out.st),
+        (false, true) => Some(out.s),
+        _ => None,
+    }
+}
+
+/// Tracks RDP/RSP state while walking a display list./// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
     /// The space `G_VTX` loads into and triangles are emitted in.
@@ -243,11 +442,14 @@ struct State {
     palette_file: Option<u16>,
     palette_entries: u16,
     texture_enabled: bool,
-    /// Whether the combiner in force reads the primitive colour.
-    ///
-    /// Starts false: a list that draws before setting a combiner is a list we
-    /// cannot say uses `PRIM`, and leaving the shade alone is the safe answer.
-    combiner_prim: bool,
+    /// The `G_SETCOMBINE` words in force, if one has been set. A list that
+    /// draws before setting one is a list whose colour cannot be resolved, and
+    /// leaving the shade alone is the safe answer.
+    combiner: Option<(u32, u32)>,
+    /// Whether `G_SETOTHERMODE_H` put the RDP in two-cycle mode. Cycle 1 is
+    /// only run when it did — applying it in one-cycle mode would invent a
+    /// multiply the hardware never performs.
+    two_cycle: bool,
     /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
     mobjs: Vec<crate::mobj::MObjMaterial>,
 }
@@ -268,7 +470,8 @@ impl State {
             palette_file: None,
             palette_entries: 0,
             texture_enabled: false,
-            combiner_prim: false,
+            combiner: None,
+            two_cycle: false,
             mobjs: Vec::new(),
         }
     }
@@ -324,11 +527,11 @@ impl State {
         if let Some(c) = m.prim_color {
             self.material.prim_color = Some(c);
         }
-        if let Some(c) = m.env_color {
-            self.material.env_color = c;
+        if m.env_color.is_some() {
+            self.material.env_color = m.env_color;
         }
-        if let Some(c) = m.blend_color {
-            self.material.blend_color = c;
+        if m.blend_color.is_some() {
+            self.material.blend_color = m.blend_color;
         }
     }
 
@@ -339,6 +542,37 @@ impl State {
         self.palette_offset = None;
         self.palette_file = None;
         self.texture_enabled = false;
+    }
+
+    /// The material a primitive emitted right now would carry.
+    ///
+    /// `prim_color` is not the raw `G_SETPRIMCOLOR` but what the *combiner*
+    /// makes of the whole state — the constant the shade is multiplied by. A
+    /// combiner this model cannot follow leaves it `None`, and the shade is
+    /// used unmodified, which is what the renderer did before any of this.
+    fn material_now(&self) -> MeshMaterial {
+        let scale = self.combiner.and_then(|(hi, lo)| {
+            combiner_shade_scale(
+                hi,
+                lo,
+                self.two_cycle,
+                self.material.prim_color,
+                self.material.env_color,
+            )
+        });
+        MeshMaterial {
+            texture: self.current_texture(),
+            // Identity is not worth storing: it means "use the shade as it is".
+            prim_color: scale.filter(|s| *s != [1.0; 3]).map(|s| {
+                [
+                    (s[0] * 255.0).clamp(0.0, 255.0) as u8,
+                    (s[1] * 255.0).clamp(0.0, 255.0) as u8,
+                    (s[2] * 255.0).clamp(0.0, 255.0) as u8,
+                    255,
+                ]
+            }),
+            ..self.material
+        }
     }
 
     /// Assembles the current texture binding, if one is fully specified.
@@ -508,14 +742,7 @@ pub fn convert_sequence(items: &[SequenceItem], src: Source<'_>) -> Vec<Result<M
         // starting at the default made every triangle a list emitted *before*
         // its first state command land in a spurious untextured primitive.
         let mut builder = Builder {
-            material: MeshMaterial {
-                texture: state.current_texture(),
-                prim_color: state
-                    .combiner_prim
-                    .then_some(state.material.prim_color)
-                    .flatten(),
-                ..state.material
-            },
+            material: state.material_now(),
             ..Builder::default()
         };
         let mut prims: Vec<Primitive> = Vec::new();
@@ -682,11 +909,17 @@ fn walk(
                 state.material.z_buffer = apply(state.material.z_buffer, G_ZBUFFER);
             }
 
-            Cmd::SetCombine { hi, lo } => state.combiner_prim = combiner_uses_prim(hi, lo),
+            Cmd::SetCombine { hi, lo } => state.combiner = Some((hi, lo)),
+
+            // The cycle type is two bits at shift 20 of the high other-mode
+            // word: 0 one-cycle, 1 two-cycle, then copy and fill.
+            Cmd::SetOtherModeH { shift, len, data } if shift == 20 && len == 2 => {
+                state.two_cycle = (data >> 20) & 0x3 == 1;
+            }
 
             Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = Some(rgba),
-            Cmd::SetEnvColor(c) => state.material.env_color = c,
-            Cmd::SetBlendColor(c) => state.material.blend_color = c,
+            Cmd::SetEnvColor(c) => state.material.env_color = Some(c),
+            Cmd::SetBlendColor(c) => state.material.blend_color = Some(c),
 
             Cmd::End => break,
             _ => continue,
@@ -694,14 +927,7 @@ fn walk(
 
         // Splitting on every material change keeps each primitive homogeneous;
         // they are merged again at the end.
-        let material = MeshMaterial {
-            texture: state.current_texture(),
-            prim_color: state
-                .combiner_prim
-                .then_some(state.material.prim_color)
-                .flatten(),
-            ..state.material
-        };
+        let material = state.material_now();
         if material != builder.material {
             builder.flush(out);
             builder.material = material;
@@ -1005,7 +1231,7 @@ mod tests {
             vtx(3),
             // A combiner that reads PRIMITIVE, so the colour is part of the
             // material rather than ignored.
-            Cmd::SetCombine { hi: 3 << 20, lo: 0 },
+            prim_times_shade(),
             Cmd::SetPrimColor {
                 m: 0,
                 l: 0,
@@ -1398,7 +1624,7 @@ mod tests {
         let file = vertex_data(3);
         let cmds = [
             vtx(3),
-            Cmd::SetCombine { hi: 3 << 20, lo: 0 },
+            prim_times_shade(),
             Cmd::SetPrimColor {
                 m: 0,
                 l: 0,
@@ -1415,21 +1641,123 @@ mod tests {
         assert_eq!(got[3], 255, "alpha comes from the primitive colour");
     }
 
+    /// A `G_SETCOMBINE` computing `PRIM * SHADE`, the one Mario's arms use.
+    fn prim_times_shade() -> Cmd {
+        let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        Cmd::SetCombine { hi, lo }
+    }
+
+    /// `(A - B) * C + D` packed the way `gDPSetCombineLERP` does.
+    #[allow(clippy::too_many_arguments)] // eight multiplexer codes is the format
+    const fn combine(
+        a: u32,
+        b: u32,
+        c: u32,
+        d: u32,
+        a1: u32,
+        b1: u32,
+        c1: u32,
+        d1: u32,
+    ) -> (u32, u32) {
+        (
+            (a << 20) | (c << 15) | (a1 << 5) | c1,
+            (b << 28) | (b1 << 24) | (d << 15) | (d1 << 6),
+        )
+    }
+
+    const COMBINED: u32 = 0;
+    const TEXEL0: u32 = 1;
+    const PRIM: u32 = 3;
+    const SHADE: u32 = 4;
+    const ENV: u32 = 5;
+    const ZERO_A: u32 = 8;
+    const ZERO_C: u32 = 16;
+    const ZERO_D: u32 = 7;
+
     #[test]
-    fn every_combiner_slot_that_can_name_prim_is_recognised() {
-        // A, B, C and D are different widths at different shifts; reading any
-        // of them wrong would silently drop a colour or invent one.
-        assert!(combiner_uses_prim(3 << 20, 0), "A");
-        assert!(combiner_uses_prim(3 << 15, 0), "C");
-        assert!(combiner_uses_prim(0, 3 << 28), "B");
-        assert!(combiner_uses_prim(0, 3 << 15), "D");
-        assert!(!combiner_uses_prim(0, 0), "nothing names it");
-        // Mario's own three, from file 296: textured, PRIM * SHADE, SHADE.
-        assert!(
-            !combiner_uses_prim(0x0012_7e05, 0xff17_f3ff),
-            "TEXEL0 * SHADE"
+    fn prim_times_shade_reduces_to_the_primitive_colour() {
+        // Mario's upper arms and thighs.
+        let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        let got = combiner_shade_scale(hi, lo, false, Some([255, 0, 0, 255]), None);
+        assert_eq!(got, Some([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn shade_alone_reduces_to_the_identity() {
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, SHADE, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_shade_scale(hi, lo, false, None, None),
+            Some([1.0; 3])
         );
-        assert!(combiner_uses_prim(0x0032_7e05, 0xff17_fdff), "PRIM * SHADE");
-        assert!(!combiner_uses_prim(0x00ff_fe05, 0xff16_7dff), "SHADE alone");
+    }
+
+    #[test]
+    fn the_second_cycle_is_run_only_in_two_cycle_mode() {
+        // Cycle 0 is a bare SHADE and cycle 1 multiplies it by ENV. Reading
+        // only the first is what left Mario's gloves and Dream Land's
+        // platforms white (RE-043); running the second in one-cycle mode would
+        // invent a multiply the hardware never performs.
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, SHADE, COMBINED, ZERO_A, ENV, ZERO_D);
+        let env = Some([128, 64, 0, 255]);
+        assert_eq!(
+            combiner_shade_scale(hi, lo, false, None, env),
+            Some([1.0; 3])
+        );
+        let two = combiner_shade_scale(hi, lo, true, None, env).unwrap();
+        assert!((two[0] - 128.0 / 255.0).abs() < 1e-6);
+        assert!((two[1] - 64.0 / 255.0).abs() < 1e-6);
+        assert_eq!(two[2], 0.0);
+    }
+
+    #[test]
+    fn an_unset_constant_is_white_rather_than_black() {
+        // A combiner reading a colour the list never set is reading whatever
+        // the RDP had. White cannot darken geometry that should be lit; black
+        // would turn every such surface into a silhouette.
+        let (hi, lo) = combine(ENV, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_shade_scale(hi, lo, false, None, None),
+            Some([1.0; 3])
+        );
+    }
+
+    #[test]
+    fn texel_times_shade_is_left_to_the_texture_unit() {
+        // `GU_TFX_MODULATE` already multiplies the two, so the scale is the
+        // identity rather than something to fold.
+        let (hi, lo) = combine(TEXEL0, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_shade_scale(hi, lo, false, None, None),
+            Some([1.0; 3])
+        );
+    }
+
+    #[test]
+    fn a_combiner_with_an_additive_constant_is_declined() {
+        // `PRIM * SHADE + ENV` cannot be expressed as a scale on the shade,
+        // and approximating it would tint geometry the hardware does not.
+        let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ENV, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_shade_scale(
+                hi,
+                lo,
+                false,
+                Some([255, 0, 0, 255]),
+                Some([0, 0, 255, 255])
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn marios_three_combiners_reduce_the_way_his_model_needs() {
+        // The words his display lists actually set, from file 296.
+        let textured = combiner_shade_scale(0x0012_7e05, 0xff17_f3ff, true, None, None);
+        let arms =
+            combiner_shade_scale(0x0032_7e05, 0xff17_fdff, true, Some([255, 0, 0, 255]), None);
+        let gloves = combiner_shade_scale(0x00ff_fe05, 0xff16_7dff, true, None, None);
+        assert_eq!(textured, Some([1.0; 3]), "TEXEL0 * SHADE, then * ENV");
+        assert_eq!(arms, Some([1.0, 0.0, 0.0]), "PRIM * SHADE, then * ENV");
+        assert_eq!(gloves, Some([1.0; 3]), "SHADE, then * ENV");
     }
 }

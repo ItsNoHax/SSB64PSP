@@ -880,7 +880,7 @@ impl PackWriter {
                 texture: texture_for(i).unwrap_or(PrimDesc::NO_TEXTURE),
                 flags: f,
                 prim_color: m.prim_color.map_or(0, crate::psp_texture::pack_abgr),
-                env_color: crate::psp_texture::pack_abgr(m.env_color),
+                env_color: m.env_color.map_or(0, crate::psp_texture::pack_abgr),
                 index_offset,
                 index_count: p.indices.len() as u32,
             });
