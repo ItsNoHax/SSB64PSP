@@ -46,7 +46,9 @@ const LAYERS: u32 = 4;
 
 // Field offsets within `MPGroundDesc`.
 const D_DOBJDESC: u32 = 0x00;
+const D_ANIM_JOINTS: u32 = 0x04;
 const D_MOBJSUBS: u32 = 0x08;
+const D_MATANIM_JOINTS: u32 = 0x0C;
 
 // Field offsets within `MPGroundData`.
 const G_MAP_GEOMETRY: u32 = 0x40;
@@ -68,6 +70,14 @@ pub struct GroundLayer {
     pub graph: Target,
     /// Its `MObjSub **table[]`, if the layer has one.
     pub mobjsub_table: Option<Target>,
+    /// `AObjEvent32 **anim_joints` — one joint-animation script per node, which
+    /// is how Whispy sways and the flowers move. Not yet played.
+    pub anim_joints: Option<Target>,
+    /// `AObjEvent32 ***p_matanim_joints` — one material-animation script per
+    /// `MObj`. As for a fighter's costume list (RE-040), frame 0 of this is the
+    /// material's *initial* state, and the values baked into `MObjSub` need not
+    /// be it.
+    pub matanim_joints: Option<Target>,
 }
 
 /// A camera or map extent, in game units.
@@ -209,6 +219,8 @@ pub fn read_ground_data(
             index,
             graph,
             mobjsub_table: target(file, desc + D_MOBJSUBS),
+            anim_joints: target(file, desc + D_ANIM_JOINTS),
+            matanim_joints: target(file, desc + D_MATANIM_JOINTS),
         });
     }
     if layers.is_empty() {
@@ -257,6 +269,7 @@ mod tests {
         put(base + D_DOBJDESC, 0x1008);
         put(base + DESC_SIZE + D_DOBJDESC, 0x2450);
         put(base + DESC_SIZE + D_MOBJSUBS, 0x1F50);
+        put(base + DESC_SIZE + D_MATANIM_JOINTS, 0x2530);
         put(base + G_MAP_GEOMETRY, 0x1F34);
         put(base + G_MAP_NODES, 0x10F0);
 
@@ -294,6 +307,11 @@ mod tests {
         // The table sits at `dobjdesc + 8`, past `anim_joints`. Reading it at
         // +4 the way an `FTCommonPart` is read would find nothing here.
         assert_eq!(h.layers[1].mobjsub_table, Some((104, 0x1F50)));
+        // The two animation pointers sit at +4 and +0xC, either side of the
+        // material table. Nothing plays them yet, but reading them is what says
+        // *which* layers move — 40 of 100 carry joint animation (RE-048).
+        assert_eq!(h.layers[1].anim_joints, None);
+        assert_eq!(h.layers[1].matanim_joints, Some((104, 0x2530)));
         assert_eq!(h.map_geometry, Some((104, 0x1F34)));
         assert_eq!(h.camera_bounds.top, 4000);
         assert_eq!(h.map_bounds.left, -9000);

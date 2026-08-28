@@ -2850,3 +2850,84 @@ converter does not model that — but it is four textures.
 without it, the 36-for-36 correspondence in file 118 is exact, and the packed
 count went *up* while the failure count went down. The device render is
 unchanged, which is the point: nothing that was drawing has stopped.
+
+## RE-048 — The odd shapes in Dream Land's canopy are billboards
+
+**Question.** Dream Land renders with correct ground, bark and foliage, but six
+flat pink, purple and gold triangles sit in the tree canopy looking wrong. Are
+they textures that should be animated?
+
+**Not animated colours.** `MPGroundDesc` has four fields and this crate read
+two:
+
+```c
+struct MPGroundDesc {
+    DObjDesc *dobjdesc;            // +0x0  read
+    AObjEvent32 **anim_joints;     // +0x4  ignored
+    MObjSub ***p_mobjsubs;         // +0x8  read
+    AObjEvent32 ***p_matanim_joints; // +0xC ignored
+};
+```
+
+Reading both: **40 of 100 stage layers carry joint animation and 12 carry
+material animation**, and neither is played. For fighters, RE-040 found that
+the values baked into `MObjSub` are *not* the initial ones — the costume script
+overwrites them at setup — so the obvious suspicion was the same bug for
+stages. Decoding every stage's `p_matanim_joints` at frame 0 and diffing it
+against the baked colours gives **no differences at all**, across all 12
+layers. The stage draws the right first frame. It simply does not move.
+
+**They are billboards.** The decomp names those six display lists
+`dStagePupupuFile2_Layer0Anim_DL_*`, and their `DObjDesc` entries share an `id`
+of `16385` = `0x4001` where the rest of the graph uses `0`, `1`, `2` or
+`0x2001`. `gcSetupCommonDObjs` reads the high nibble as a matrix kind:
+
+```c
+if (dobjdesc->id & 0x4000) { ... nGCMatrixKind46 : nGCMatrixKind45; }
+else if (dobjdesc->id & 0x2000) { ... nGCMatrixKind48 : nGCMatrixKind47; }
+```
+
+and kind 45 builds the MVP straight out of the *projection* matrix, zeroing
+every cross term:
+
+```c
+sGCMatrixMvpF[0][2] = sGCMatrixMvpF[1][2] = 0.0F;
+sGCMatrixMvpF[2][0] = sGCMatrixMvpF[2][1] = 0.0F;
+sGCMatrixMvpF[0][0] =  gGCMatrixPerspF[0][0] * scaX * cosf(rot.x);
+sGCMatrixMvpF[1][0] = -gGCMatrixPerspF[0][0] * scaX * sinf(rot.x);
+sGCMatrixMvpF[0][1] =  gGCMatrixPerspF[1][1] * scaY * sinf(rot.x);
+sGCMatrixMvpF[1][1] =  gGCMatrixPerspF[1][1] * scaY * cosf(rot.x);
+```
+
+Object X and Y map directly onto screen X and Y, spun in-plane by `rotate.x`;
+Z contributes depth only. That is a screen-aligned billboard, and it is why
+they read as flat triangles at arbitrary angles: they are drawn with the node's
+static matrix instead.
+
+`scene::DObjDesc::transform_kind()` already parses this and is unit-tested —
+and is **called nowhere outside its own tests**. Across the archive:
+
+| kind | nodes |
+|---|---|
+| `TraRotSca` (plain) | 3008 |
+| `Kind48` (`0x2000`) | 47 |
+| `Kind46` (`0x4000`) | 34 |
+| `RecalcRotRpyRSca` (`0x8000`) | 28 |
+
+109 nodes want a transform this renderer does not apply, 81 of them
+camera-relative. Note also that the decomp picks kind 45 *or* 46 by a
+`rot_mode` this crate does not model — it always reports the `46` branch.
+
+**A fourth cross-file bug, found on the way.** `romtool texdump` read texels
+and TLUT from the drawing file rather than following `TextureRef::data_file`,
+so every stage texture dumped as noise — which looks exactly like a broken
+decoder and would have sent the next investigation in the wrong direction.
+Dream Land's textures are correct; the dumper was not. That is the same
+indirection as RE-037, RE-046 and RE-047, in a fourth caller.
+
+**Confidence: high** for the diagnosis: the `id` values are in the ROM, the
+matrix kind they select is the decompilation's own, and kind 45's body is
+unambiguous about what it computes. **Nothing is fixed here.** Billboards need
+a per-frame camera-relative matrix on the PSP side, which is a rendering
+feature rather than a converter change, and the joint animations need the
+`AObj` player pointed at stage nodes.
