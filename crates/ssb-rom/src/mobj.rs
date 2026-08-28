@@ -321,6 +321,56 @@ pub fn read_table(file: &File, offset: u32, node_count: usize) -> Option<MObjTab
     Some(MObjTable { offset, nodes })
 }
 
+/// Every offset in `file` that reads as this graph's material table.
+///
+/// For the 71 graphs no record names (RE-046), the pairing was a link-time
+/// constant in the game's code and is not in the archive. What *is* in the
+/// archive is an independent statement of the answer: each node's display list
+/// calls segment `0x0E` a definite number of times, so `demand[i]` says exactly
+/// how long chain `i` has to be — including the nodes where it has to be
+/// absent. A table that satisfies the whole vector is not a table that merely
+/// parses.
+///
+/// This returns *all* candidates rather than a best one on purpose. A search
+/// with two answers has not identified anything, and the caller has to be able
+/// to see that rather than be handed the first.
+///
+/// `demand` is the display lists' own count, one entry per graph node.
+pub fn search_tables(file: &File, demand: &[usize]) -> Vec<u32> {
+    if demand.iter().all(|&d| d == 0) {
+        // Nothing to discriminate on: every run of NULLs would match.
+        return Vec::new();
+    }
+    let slots = pointer_slots(file);
+    // A node with a chain needs an intern pointer in its slot, so the table
+    // base is some slot minus that node's index. That bounds the search to a
+    // few thousand offsets instead of every aligned word in the file.
+    let mut candidates: Vec<u32> = slots
+        .iter()
+        .flat_map(|&slot| {
+            demand
+                .iter()
+                .enumerate()
+                .filter(|&(_, &d)| d > 0)
+                .filter_map(move |(i, _)| slot.checked_sub(4 * i as u32))
+        })
+        .collect();
+    candidates.sort_unstable();
+    candidates.dedup();
+
+    candidates
+        .into_iter()
+        .filter(|&at| {
+            read_table(file, at, demand.len()).is_some_and(|t| {
+                t.nodes
+                    .iter()
+                    .zip(demand)
+                    .all(|(chain, &want)| chain.len() == want)
+            })
+        })
+        .collect()
+}
+
 /// Sorted slot offsets the archive loader relocated, for membership tests.
 fn pointer_slots(file: &File) -> Vec<u32> {
     let mut slots: Vec<u32> = file.intern_relocs.iter().map(|r| r.at).collect();

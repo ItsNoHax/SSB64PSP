@@ -2741,3 +2741,112 @@ archive's own relocation record, not inferred, and the recovered address is
 the one the relocation names. The result is visible: the stage's underside
 draws its texture. **The remaining 75 are not fixed**, and the reason is that
 the pairing they need was a compile-time constant in the game's code.
+
+## RE-047 — A discovered display list was decoded at the wrong base
+
+**Question.** RE-046 left 75 unresolved `G_SETTIMG(0)` references across 54
+files, and concluded they were unrecoverable: they belonged to 71 scene graphs
+the original pairs to a material table in *code*, so the pairing is not in the
+archive. Could any of them be recovered anyway?
+
+**The table search says no, and says it clearly.** Each node's display lists
+state how many `MObj`s they call, so `demand[i]` is an independent constraint
+on any candidate table — a table that satisfies the whole vector, including the
+nodes where the chain must be *absent*, is not one that merely parses.
+`mobj::search_tables` applies that, and `romtool mobj --search
+--expect-tables` scores it against the tables the decomp declares as
+`MObjSub **name[]`:
+
+```
+material-table search over 71 unnamed graph(s):
+  exactly one candidate   16
+  several candidates      55
+  of the unique ones, against the decomp's declarations:
+    confirmed             2
+    contradicted          4
+```
+
+Sixteen of seventy-one narrow to one answer, and of the six the key can score,
+**four are wrong**. That is the fingerprint-that-fits-by-coincidence outcome,
+measured rather than assumed, and it settles the question: the search is not
+usable. The code and its scoring are kept so the next attempt starts from the
+measurement instead of repeating it.
+
+**But the premise was wrong again.** Converting only via scene graphs, and not
+via discovery, drops the unresolved count from 75 to **zero**. None of them
+were in graph-drawn geometry at all. They were in display lists found by
+*scanning*, and the scan decoded them at the wrong base:
+
+```rust
+let Ok(cmds) = dl::decode_list(&file.data[off..]) else { continue };
+```
+
+`decode_list` is `decode_list_at(data, 0)`. The base is what a `G_SETTIMG`'s
+relocation slot is computed from, and a relocation is keyed by a *file* offset.
+So every list discovered by scanning looked its relocations up at
+`offset-within-the-list` instead of `offset-within-the-file`, found nothing,
+and reported a perfectly ordinary cross-file texture as an unresolved null.
+File 118 has exactly 36 `G_SETTIMG(0)` and exactly 36 extern relocations into
+file 110; they are the same 36.
+
+This is RE-037's mechanism failing in one of its two callers. The scene-graph
+path already used `decode_list_at` with the node's own offset, which is why the
+bug was invisible there and why the two paths disagreed.
+
+**Three smaller things fell out of the same investigation.**
+
+*A discovered list that calls the graphics heap cannot be converted.* Its
+texture, palette and colour come from an `MObj` chain that belongs to a scene
+graph node, and a list found by scanning bytes has no node. The converter
+correctly drops the binding rather than guessing, which leaves geometry whose
+palette never loads — and the packer shipped it. Skipping those costs **zero**
+packed textures and no geometry any object draws (object triangles stay at
+28,957), and removes 12 knowingly-broken bindings.
+
+*Intensity textures were not getting the CLUT `choose_psm` picks for them.*
+`choose_psm` maps I4/I8 to `PsmT4`/`PsmT8` with the comment "a CLUT keeps them
+at 4/8 bits instead of expanding 8× to 8888" — but the conversion only took the
+paletted path when a TLUT had been read *from the ROM*, and an intensity
+texture has none, because on the N64 it needs none. All thirteen fell through
+to `Psm8888`. They now generate their ramp, matching `texture::decode`'s own
+`(v << 4) | v` expansion. The palette has to be RGBA8888 rather than the
+RGBA5551 a ROM TLUT is: intensity drives alpha too, and 5551 has one alpha bit.
+
+*Twenty-six failures are not ROM textures at all.* Every one of the segment
+`0x01` references is in an `LBTransition*` file, and `lbtransition.c` says what
+segment 1 is there:
+
+```c
+gSPSegment(gSYTaskmanDLHeads[0]++, 0x1, sLBTransitionPhotoHeap);
+...
+heap_pixels = sLBTransitionPhotoHeap = syTaskmanMalloc(300 * 220 * sizeof(u16), 0x10);
+```
+
+A runtime buffer holding a captured screenshot. The wipe effects texture their
+geometry with the previous frame. No extraction can ever resolve these; they
+need render-to-texture.
+
+**Result.**
+
+| | RE-046 | now |
+|---|---|---|
+| references bound | 732 | 647 |
+| packed | 615 | **617** |
+| failed | 117 | **30** |
+| unresolved `G_SETTIMG(0)` | 75 | **0** |
+| texture VRAM | 634.6 KiB | **577.7 KiB** |
+| pack size | 3091.7 KiB | **2881.2 KiB** |
+
+"Bound" falls because references that used to read as null, and were counted
+per file, now resolve to the shared textures they always named.
+
+The 30 remaining failures are 26 transition screenshots and 4 CI textures whose
+`MObj` supplies only a primitive colour, so the `G_LOADTLUT` beside them reads
+whatever texture image the previous list left set. That last group is a real
+open question — the RDP's image register persists across lists and this
+converter does not model that — but it is four textures.
+
+**Confidence: high.** The decode-base fix is checked by a unit test that fails
+without it, the 36-for-36 correspondence in file 118 is exact, and the packed
+count went *up* while the failure count went down. The device render is
+unchanged, which is the point: nothing that was drawing has stopped.

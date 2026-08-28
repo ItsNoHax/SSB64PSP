@@ -263,6 +263,44 @@ pub fn pack_paletted(
     tlut: &[u16],
     swizzle_it: bool,
 ) -> Result<PspTexture, TextureError> {
+    let palette: Vec<u32> = tlut
+        .iter()
+        .map(|&e| pack_abgr(crate::texture::rgba5551(e)))
+        .collect();
+    pack_indexed(indices, width, height, size, &palette, swizzle_it)
+}
+
+/// The CLUT an I4 or I8 texture amounts to.
+///
+/// `choose_psm` maps intensity formats to `PsmT4`/`PsmT8` so they stay 4 or 8
+/// bits per texel rather than expanding eightfold to `Psm8888`. Nothing in the
+/// ROM supplies a palette for them, though, because on the N64 they need none:
+/// the texel *is* the intensity, driving all four channels including alpha.
+/// So the palette is generated, matching `texture::decode`'s expansion exactly
+/// — `(v << 4) | v` for the 4-bit ramp.
+///
+/// Alpha is why this cannot go through `pack_paletted`: an RGBA5551 entry has
+/// one alpha bit, and an intensity texture's alpha is its full range.
+pub fn intensity_palette(size: BitSize) -> Vec<u32> {
+    match size {
+        BitSize::Bits4 => (0u8..16).map(|i| ramp((i << 4) | i)).collect(),
+        _ => (0u8..=255).map(ramp).collect(),
+    }
+}
+
+fn ramp(v: u8) -> u32 {
+    pack_abgr([v, v, v, v])
+}
+
+/// Packs already-indexed texels against a ready RGBA8888 palette.
+pub fn pack_indexed(
+    indices: &[u8],
+    width: u32,
+    height: u32,
+    size: BitSize,
+    palette: &[u32],
+    swizzle_it: bool,
+) -> Result<PspTexture, TextureError> {
     let format = match size {
         BitSize::Bits4 => Psm::PsmT4,
         BitSize::Bits8 => Psm::PsmT8,
@@ -292,10 +330,7 @@ pub fn pack_paletted(
 
     // The N64 stores the high nibble first within a byte, which is also what
     // the PSP expects for PsmT4, so 4-bit data copies through unchanged.
-    let palette: Vec<u32> = tlut
-        .iter()
-        .map(|&e| pack_abgr(crate::texture::rgba5551(e)))
-        .collect();
+    let palette = palette.to_vec();
 
     let swizzled = swizzle_it && can_swizzle(stride_bytes, padded_h as usize);
     if swizzled {
@@ -311,6 +346,49 @@ pub fn pack_paletted(
         swizzled,
         palette,
     })
+}
+
+#[cfg(test)]
+mod intensity_tests {
+    use super::*;
+
+    /// I4 has no ROM palette because on the N64 it needs none; the generated
+    /// ramp is what keeps it at 4 bits instead of expanding to 8888 (RE-047).
+    #[test]
+    fn the_i4_ramp_matches_the_decoder() {
+        let pal = intensity_palette(BitSize::Bits4);
+        assert_eq!(pal.len(), 16);
+        // `texture::decode` expands a nibble as `(v << 4) | v`, and intensity
+        // drives alpha too, so index 15 is opaque white and 0 is transparent.
+        assert_eq!(pal[0], pack_abgr([0x00, 0x00, 0x00, 0x00]));
+        assert_eq!(pal[15], pack_abgr([0xFF, 0xFF, 0xFF, 0xFF]));
+        assert_eq!(pal[5], pack_abgr([0x55, 0x55, 0x55, 0x55]));
+    }
+
+    #[test]
+    fn the_i8_ramp_is_the_identity() {
+        let pal = intensity_palette(BitSize::Bits8);
+        assert_eq!(pal.len(), 256);
+        assert_eq!(pal[200], pack_abgr([200, 200, 200, 200]));
+    }
+
+    /// The point of the ramp: an I4 texture stays 4 bits per texel.
+    #[test]
+    fn an_intensity_texture_packs_at_four_bits() {
+        let texels = alloc::vec![0x0Fu8; 32 * 32 / 2];
+        let tex = pack_indexed(
+            &texels,
+            32,
+            32,
+            BitSize::Bits4,
+            &intensity_palette(BitSize::Bits4),
+            false,
+        )
+        .expect("packs");
+        assert_eq!(tex.format, Psm::PsmT4);
+        // 32x32 at 4bpp is 512 bytes, against 4096 as RGBA8888.
+        assert_eq!(tex.data_size(), 512);
+    }
 }
 
 #[cfg(test)]
