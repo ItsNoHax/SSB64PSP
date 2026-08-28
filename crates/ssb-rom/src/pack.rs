@@ -2547,7 +2547,12 @@ mod tests {
     fn sample_anims() -> crate::anim::FighterLengths {
         crate::anim::FighterLengths {
             name: "Mario",
-            frames: [23, 12, 23, 8, 12, 7, 25],
+            frames: {
+                // Mario's seven timed lengths; the looping slots have none.
+                let mut f = [0u16; crate::anim::SLOT_COUNT];
+                f[..7].copy_from_slice(&[23, 12, 23, 8, 12, 7, 25]);
+                f
+            },
         }
     }
 
