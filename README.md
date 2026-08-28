@@ -144,20 +144,26 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   double-jump, drop-through and landing, with the original's interrupt ordering
   and its tap-counter input model, on every character's real extracted
   constants and animation lengths
-* **Animation scripts decode to per-joint transforms** and ship in the pack,
-  each joint paired with the node it drives. Replaying 3444 of them from the
-  pack reproduces the ROM's poses exactly
+* **Fighters animate on device.** Packed figatree scripts drive a joint clock
+  each, node matrices recompose every tick at 60 FPS, and the result is checked
+  four ways: poses match the ROM across 3444 joints, no bone changes length in
+  204,547 measurements over all 189 animations, feet stay planted through the
+  grounded poses, and Turn's opening frame renders as a standing Mario
 * 307 host tests passing
+
+![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
+
+*The opening frame of Mario's Turn, played from the pack on device: 24 joint
+clocks ticking, node matrices recomposed each tick. The grey is missing
+materials, not a wrong pose — see the limitations below.*
 
 **Known limitations:**
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
-* **Animation runs on device but the pose is wrong.** Joint clocks tick,
-  node matrices recompose and the geometry draws at 60 FPS, and the result is
-  not the animation. The composition is proven against the pack's own baked
-  matrices and the joint pairing against the model, so the fault is elsewhere;
-  playback is off by default until it is found. See RE-038.
+* **Animation is not driven by gameplay yet.** It plays correctly in the
+  viewer, but the status machine does not start one when a fighter changes
+  state, so a fighter on a stage is still a sliding rest pose.
 * No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
 * No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
@@ -173,8 +179,9 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
 
-**Current milestone:** the animation pipeline. Every stage of it now runs on
-device; what remains is making the pose it produces correct.
+**Current milestone:** the combat vertical slice. The animation pipeline works
+and is validated; the next step is having the status machine drive it, so a
+fighter walking on a stage is animated rather than sliding.
 
 ## Verifying the claims
 
@@ -211,8 +218,8 @@ cargo run --release -p romtool -- fighters "rom/…z64" --verify
 # Every movement animation's length, decoded two ways
 cargo run --release -p romtool -- anims "rom/…z64" --verify
 
-# Every animation played against the skeleton it belongs to, and replayed
-# from the built pack to check the tables carry the same answer
+# Every animation played against the skeleton it belongs to, replayed from
+# the built pack, and checked for a bone that changes length
 cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
     --pack assets/generated/ssb64.pak
 

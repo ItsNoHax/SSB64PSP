@@ -1092,6 +1092,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut packed_anims = 0usize;
     let mut anim_joints_packed = 0usize;
     let mut anims_failed: Vec<String> = Vec::new();
+    let mut transn_anims = 0usize;
     for (kind, entry) in ssb_rom::anim::FIGHTER_ANIMS.iter().enumerate() {
         let file_entry = ssb_rom::fighter::FIGHTER_FILES[kind];
         let nodes = loaded.files[file_entry.file as usize]
@@ -1135,14 +1136,29 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .ok()
                 .and_then(|l| l.frames())
                 .unwrap_or(0);
-            // A table longer than the fighter has joints is the TransN case
-            // and the surplus goes unread, exactly as the original's attach
-            // walk drops it (RE-036).
+            // One script more than the fighter has joints means the motion
+            // uses TransN: a runtime joint, not a model one, spliced in as
+            // TopN's child. The attach walk reaches it first, so it takes
+            // script 0 and pushes every model joint down by one (RE-036).
+            // Getting this wrong puts each joint's rotation on its neighbour,
+            // which still yields a rigid skeleton and so is invisible to every
+            // check but looking at it.
+            let transn = table.len() == nodes.len() + 1;
             let joints: Vec<(Option<u32>, Option<u32>)> = table
                 .iter()
                 .enumerate()
-                .map(|(j, &at)| ((at != 0).then_some(at), nodes.get(j).copied()))
+                .map(|(j, &at)| {
+                    let node = if transn {
+                        j.checked_sub(1).and_then(|k| nodes.get(k).copied())
+                    } else {
+                        nodes.get(j).copied()
+                    };
+                    ((at != 0).then_some(at), node)
+                })
                 .collect();
+            if transn {
+                transn_anims += 1;
+            }
             anim_joints_packed += joints.len();
             writer.add_anim(
                 kind as u32,
@@ -1209,7 +1225,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
     println!(
-        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node)",
+        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node, {transn_anims} using TransN)",
         pack_anim_joints_bound(&pack)
     );
     if !anims_failed.is_empty() {
@@ -3202,6 +3218,16 @@ fn figatree(path: &Path, opts: &[&str]) -> Res {
         } else {
             return Err(format!("pack and ROM poses differ by up to {worst}").into());
         }
+
+        let (bones, stretch, culprit) = check_bone_lengths(&pack)?;
+        println!("posed    {bones} bone length(s) across every animation");
+        // A rigid skeleton in f32 through a chain of matrix products; a unit or
+        // two of rounding over a 300-unit fighter is arithmetic, not motion.
+        if stretch < 1.0 {
+            println!("            none stretched (worst {stretch:.3} units)");
+        } else {
+            return Err(format!("a bone changed length by {stretch:.1} units -- {culprit}").into());
+        }
     }
 
     println!();
@@ -3308,6 +3334,148 @@ fn replay_from_pack(
         }
     }
     Ok((compared, worst))
+}
+
+/// Every animation, every frame: no bone changes length unless the animation
+/// moved it on purpose.
+///
+/// A skeleton poses by rotating joints, so the distance from a node to its
+/// parent is fixed — *unless* that node's own translation tracks are animated,
+/// which a few are. Master Hand is the clear case: it is a hand, its fingers
+/// are placed by translation rather than rotation, and its root's rest
+/// descriptor is overridden outright (RE-036). So the check skips a bone whose
+/// child's translation has left its rest value, and holds every other one to
+/// rigidity.
+///
+/// This is the invariant "the model exploded" would break, and it is checkable
+/// without knowing what any pose is supposed to look like — which matters,
+/// because judging a pose by eye on an untextured model at an arbitrary view
+/// angle is how a working pipeline got mistaken for a broken one (RE-038).
+///
+/// Returns `(bones checked, worst length change in game units)`.
+fn check_bone_lengths(
+    pack: &ssb_rom::pack::Pack<'_>,
+) -> Result<(usize, f32, String), Box<dyn std::error::Error>> {
+    use ssb_rom::pack::{AnimJoint, NodeDesc};
+    use ssb_rom::scene::Mat4;
+    use ssb_rom::skeleton::{Skeleton, MAX_NODES};
+
+    let scale = ssb_rom::pack::MODEL_SCALE;
+    // A DObjDesc hierarchy is depth-capped well below this; the bound is only
+    // here so a malformed parent chain cannot spin.
+    const MAX_DEPTH: usize = 32;
+    let mut checked = 0usize;
+    let mut worst = 0.0f32;
+    let mut culprit = String::new();
+    let mut bad: BTreeSet<String> = BTreeSet::new();
+
+    for i in 0..pack.anim_count() {
+        let Some(a) = pack.anim(i) else { continue };
+        let Some(script) = pack.anim_script(&a) else {
+            continue;
+        };
+        let Some(node0) = (0..a.joint_count)
+            .filter_map(|j| pack.anim_joint(a.first_joint + j))
+            .map(|j| j.node)
+            .find(|&n| n != AnimJoint::NO_NODE)
+        else {
+            continue;
+        };
+        let Some(object) = (0..pack.object_count())
+            .filter_map(|o| pack.object(o))
+            .find(|o| node0 >= o.first_node && node0 < o.first_node + o.node_count)
+        else {
+            continue;
+        };
+
+        let bone = |m: &[Mat4], k: usize| -> Option<f32> {
+            let n = pack.node(object.first_node + k as u32)?;
+            if n.parent == NodeDesc::NO_PARENT {
+                return None;
+            }
+            let p = (n.parent - object.first_node) as usize;
+            let (a, b) = (m[k].translation(), m.get(p)?.translation());
+            Some(
+                (((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt())
+                    * scale,
+            )
+        };
+
+        let mut rest = [Mat4::IDENTITY; MAX_NODES];
+        Skeleton::new().compose(pack, &object, &mut rest);
+
+        let mut sk = Skeleton::new();
+        sk.start(pack, &a, 0.0, 1.0);
+        // Long enough to cover the longest movement animation and then some.
+        for _ in 0..48 {
+            sk.tick(script)?;
+            let mut m = [Mat4::IDENTITY; MAX_NODES];
+            sk.compose(pack, &object, &mut m);
+            for k in 0..object.node_count as usize {
+                // Only rotation preserves a bone. Two things legitimately do
+                // not: animating this node's own translation, and animating
+                // the *scale* of anything above it -- a parent's scale
+                // multiplies its children's offsets, which is how Kirby and
+                // Jigglypuff squash. Walk up and skip the bone if either
+                // applies.
+                let mut at = object.first_node + k as u32;
+                let mut deformed = false;
+                for _ in 0..MAX_DEPTH {
+                    let Some(n) = pack.node(at) else { break };
+                    if let Some(p) = joint_pose(&sk, at) {
+                        if at == object.first_node + k as u32
+                            && (0..3).any(|c| (p.translate[c] - n.rest_translate[c]).abs() > 0.01)
+                        {
+                            deformed = true;
+                        }
+                        if (0..3).any(|c| (p.scale[c] - n.rest_scale[c]).abs() > 0.001) {
+                            deformed = true;
+                        }
+                    }
+                    if n.parent == NodeDesc::NO_PARENT {
+                        break;
+                    }
+                    at = n.parent;
+                }
+                if deformed {
+                    continue;
+                }
+                let (Some(r), Some(p)) = (bone(&rest, k), bone(&m, k)) else {
+                    continue;
+                };
+                checked += 1;
+                let d = (p - r).abs();
+                if d > 1.0 {
+                    bad.insert(format!("fighter {} slot {}", a.fighter, a.slot));
+                }
+                if d > worst {
+                    worst = d;
+                    culprit = format!(
+                        "fighter {} slot {} node {k}: {r:.1} -> {p:.1}",
+                        a.fighter, a.slot
+                    );
+                }
+            }
+        }
+    }
+    if !bad.is_empty() {
+        culprit = format!(
+            "{} animation(s): {}",
+            bad.len(),
+            bad.iter().cloned().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok((checked, worst, culprit))
+}
+
+/// The translation a skeleton currently holds for a node, if it drives one.
+fn joint_pose(
+    sk: &ssb_rom::skeleton::Skeleton,
+    node: u32,
+) -> Option<&ssb_rom::figatree::JointPose> {
+    (0..sk.joint_count())
+        .find(|&j| sk.joint_node(j) == Some(node))
+        .and_then(|j| sk.pose(j))
 }
 
 /// Reads a figatree's joint pointer table.

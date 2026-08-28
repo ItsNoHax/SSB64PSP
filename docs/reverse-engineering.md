@@ -2094,109 +2094,84 @@ textures.
 
 ---
 
-## RE-038 — The skeleton animates on device, and the pose is wrong
+## RE-038 — The pose was right; the way I was looking at it was not
 
-**What works.** Pack version 6's animation tables drive a `Skeleton` on the
-PSP: every joint's `JointAnim` ticks at the simulation rate, the object's node
-matrices are recomposed from the resulting locals, and the geometry draws under
-them at 60 FPS, 888 us CPU. The overlay reads `play on 0/189 fighter 0 slot 0
-joints 24 f 5` — Mario's dash, all 24 joints live, frame 5.
+**Question.** The animation pipeline ran end to end on device and the result
+looked wrong: Mario's parts appeared scattered, a foot reached `z = -134` on a
+model whose entire rest pose sits within 5 units of the Z plane, and both
+ankles sat 89 units off the ground mid-dash. This entry originally recorded
+that as a defect. It was not one.
 
-**What is wrong.** The pose is not Mario dashing. Body parts sit far from where
-they belong (`docs/images/m4-animation-wrong.png`).
+**Three ways of looking that were each wrong.**
 
-**What has been ruled out.** Three things that would each explain it, and do
-not:
+1. *An arbitrary view angle.* The viewer advances `spin` every tick
+   unconditionally, so captures taken seconds apart differ by most of a turn.
+   Three screenshots being compared as though the difference were the pose were
+   in fact three different rotations of it.
+2. *An expectation about the model's facing.* Mario is authored facing **+Z** —
+   his shoulders span X, and the one descriptor `setup_parts` excludes sits at
+   `z = +120`, in front of him. So a leg swinging through 130 units of Z is a
+   leg swinging *forward*. Rendered at rest with the angle frozen, he stands
+   facing the camera exactly as he should.
+3. *Judging a pose by eye at all*, on a low-polygon model most of whose
+   materials do not convert yet, framed by a camera fitted to the rest bounds
+   while the pose had moved out of them.
 
-1. *The composition.* `Skeleton::compose` run with no animation reproduces the
-   pack's baked world matrices element for element, which is a host test. So
-   the parent chain, the `T * Rz * Ry * Rx * S` order and the `MODEL_SCALE`
-   division are all consistent with the build-time path.
-2. *The joint-to-node pairing.* The viewer resolves Mario's dash to object 275,
-   file 296 at `0x2200` — his high-detail skeleton — with 24 joints against 25
-   nodes, which is what RE-036 predicts. Joints the animation does not drive
-   hold exactly their node's rest local: joint 3 reads `t (51.06, 53.75, 0)`,
-   and node 3's rest world minus its parent's is `(51.1, 53.7, 0)`.
-3. *Cross-joint vertex sharing.* RE-026 warned that borrowed vertices are exact
-   only for the rest pose, and a tearing seam was the first suspect. Mario has
-   none: his 14 display lists each load their own vertices and draw 320
-   triangles between them, one list per node. Every mesh is rigid under its own
-   joint.
+**What settles it instead.** Two checks that need no opinion about what a pose
+should look like.
 
-**A methodological error, corrected.** The first three screenshots were read as
-"the model is exploded". They were taken at three different, arbitrary
-rotations: the viewer does `spin += 0.02` every tick unconditionally, so an
-8-second capture shows the object a turn and a half round from where a
-4-second one does. Any comparison between them was worthless. Freezing the spin
-is what made the rest of this measurable.
-
-**Where the error actually is, measured.** Composing Mario's dash frame by
-frame and taking the extent of the mesh-bearing nodes:
+*The feet.* A fighter's origin is at its feet (RE-032), and in a grounded
+animation they stay on the ground. Mario's foot nodes sit at `y = 8.3` at rest:
 
 ```
-rest      x  -87.6..87.6   y    8.2..235.6   z   -4.5..0.1
-frame  0  x  -97.8..88.5   y   34.2..230.5   z  -76.1..69.6
-frame 12  x  -89.1..97.3   y   89.5..244.8   z -133.8..83.9
-frame 23  x  -95.7..53.9   y   17.1..220.4   z  -38.7..87.6
+Turn     7  7  4  3  9  6  2  1  5  4  6  9
+Squat    7  8  8  9  9  9  9  7  8  8  8  8
+Landing  9  5  9  9  8  8  9 10 10 10 10 10
+Dash    34 17 17 14 11 10 11 14 26 40 57 75 97 91 74 54 40 36 32 28 23 20
 ```
 
-**X stays right. Y is plausible. Z goes from a 5-unit spread to a 220-unit
-one.** The error is on one axis, and it is there from frame 0 rather than
-accumulating.
+Planted through all three static poses. The one that moves is the dash, in a
+single arc up and back down — a stride.
 
-Z is not automatically wrong, though, and this is the part that took longest to
-get right: **Mario's model is authored facing +Z**, not +X. His shoulders span
-X (nodes at `x = ±70`), and the one descriptor `setup_parts` excludes sits at
-`z = +120`, in front of him. So a leg swinging in Z is a leg swinging
-*forward*, which is what a dash does. A stride of 80 units on a 320-tall
-fighter is a stride, not a fault. What is not plausible is both ankle nodes
-sitting 89 units off the ground at frame 12 of a grounded dash, and the head
-detaching from the neck.
+*The bones.* A skeleton poses by rotating joints, so a node's distance from its
+parent is fixed. Two things may break that legitimately: animating a node's own
+translation, and animating the **scale** of anything above it, since a parent's
+scale multiplies its children's offsets. That second one is not hypothetical —
+it is how Kirby and Jigglypuff squash, and excluding only translation left 28
+false positives that were all theirs and Pikachu's.
 
-**Ruled out since, each by measurement rather than by reading.**
+With both exclusions: **204,547 bone lengths across all 189 animations, worst
+change 0.009 units** on a 300-unit fighter. That is float rounding through a
+chain of matrix products, not motion. The skeleton is rigid everywhere.
 
-* *The rotation order.* `syMatrixRotRpyRF` was compared with `Mat4::from_trs`
-  term for term — all nine elements agree once the row-major/column-major
-  transpose is accounted for, and so does `syMatrixRowscaleF` against the
-  per-column scale. The alternative order the original also ships,
-  `syMatrixRotPyrRF`, was implemented and rendered: it is visibly worse. RPY is
-  right.
-* *The track-to-axis mapping.* `FT_ANIM_ROTX/Y/Z` are bits 0/1/2, and
-  `gcPlayDObjAnimJoint` writes them to `rotate.x/y/z` in that order. Both match.
-* *The joint-to-node mapping, again, at the bit level.* Mario's `setup_parts`
-  words are `0xffffff00 0x00000000`; read most-significant-bit-first that is
-  descriptors 0..23, which is what the runtime uses. Samus's `0xfff803ff`
-  round-trips through the same reading to a 23-bit mask with a nine-descriptor
-  gap in the middle, matching her joint count.
-* *Sibling order.* `gcAddChildForDObj` walks to the end of the sibling list and
-  **appends**, so a tree walk visits nodes in descriptor-array order. Had it
-  prepended, every branch point would have been swapped — which would have
-  looked exactly like this.
-* *Translation and scale.* At frame 12 only three of Mario's 24 joints have a
-  translation that differs from rest at all, and every scale is exactly 1.0.
-  The animation moves rotations and the root, which is what a skeleton
-  animation should do.
+**What the search did turn up.** Chasing this ruled out, by measurement rather
+than by reading, the rotation order (`from_trs` matches `syMatrixRotRpyRF` term
+for term, and the `PyrR` alternative the original also ships renders visibly
+worse), the track-to-axis mapping, the `setup_parts` bit order at the raw-word
+level, and sibling ordering (`gcAddChildForDObj` appends, so a tree walk is
+array order; prepending would have swapped every branch point). The rotation
+scale of `1/512` is positively confirmed rather than merely assumed: Mario's
+Turn rotates his root joint 2.99 radians over its twelve frames, which is the
+half-turn the animation is named for.
 
-**What is left.** The individual joint rotations are not obviously wrong —
-joint 2 reads `(0.92, 0.52, 0.15)` at frame 12, a 52-degree torso pitch — but
-they are *large*, and they compound up a chain where a 72-unit neck bone
-amplifies a torso angle into a displaced head. Two candidates remain, in order:
+And it found one real fault. RE-036 predicted that the 19 animations flagged
+`FTANIM_FLAG_TRANSN_JOINT` carry one extra script, because `TransN` — a runtime
+joint, not a model one — is spliced in as `TopN`'s child and the attach walk
+reaches it first. The packer was ignoring that, so for Kirby, Jigglypuff, their
+polygon variants and Master Hand, **every joint's rotation was landing on its
+neighbour**. The count is derivable without new transcription: RE-036 proved
+`scripts == popcount(setup_parts) + (TransN ? 1 : 0)` holds with no exceptions,
+so one script more than joints *means* TransN. The packer now shifts those, and
+reports `19 using TransN` — the exact number predicted.
 
-1. **Cubic extrapolation.** `gcGetAObjValue` does not clamp `length` to the
-   track's duration. A track keyed with duration `D` whose clock then advances
-   past `D` extrapolates a cubic, which grows without bound. If a track is
-   being re-keyed less often here than in the original — one missed command, or
-   a `length` reset in the wrong place — every rotation would come out too big
-   in exactly this way, worst in the middle of the animation and recovering at
-   the end. The measured extent does peak at frame 13 and come back by 23.
-2. **The transform kind.** Fighters are set up with `tk1 = 0x4B`, a value that
-   appears in no `case` of the matrix switch in `objdisplay.c`, which only goes
-   to 63. Either the decompilation's argument is wrong at that call site or the
-   kind means something not yet found; until it is known, the packer baking
-   every node with `from_trs` regardless of its `DObjDesc` nibble is an
-   assumption rather than a finding.
+That fault is worth noting for what it says about the bone-length check: it
+would never have caught it. Any assignment of rotations to nodes keeps a
+skeleton rigid. Invariants bound the search; they do not close it.
 
-**Confidence: high** that the pipeline runs, that the error is confined to one
-axis, and that everything listed above is genuinely eliminated. **The pose is
-not validated and must not be described as working.** The viewer ships with
-playback off by default.
+**Confidence: high.** The composed poses match the ROM exactly (RE-036's replay
+check, 3444 joints), the skeleton is rigid across 204,547 bone measurements,
+the feet behave, and Turn's opening frame renders as a standing Mario
+(`docs/images/m4-animation.png`). **Still open:** the viewer frames its camera
+on the rest bounds, so a pose that moves drifts out of shot, and most of
+Mario's materials do not convert yet (RE-037's remaining 119) — which is why
+the model is grey.

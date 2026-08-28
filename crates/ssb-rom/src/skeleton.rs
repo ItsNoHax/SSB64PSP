@@ -163,6 +163,13 @@ impl Skeleton {
         (joint < self.joint_count).then(|| &self.poses[joint])
     }
 
+    /// The node a joint drives.
+    pub fn joint_node(&self, joint: usize) -> Option<u32> {
+        (joint < self.joint_count)
+            .then(|| self.nodes[joint])
+            .filter(|&n| n != AnimJoint::NO_NODE)
+    }
+
     /// Rebuilds `out[0..object.node_count]` from the current poses.
     ///
     /// Nodes an animation does not drive keep their rest transform, so this is
