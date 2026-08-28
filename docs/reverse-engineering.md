@@ -2450,3 +2450,51 @@ stage and fighter together, 1319 us CPU against a 16667 us budget
 **Untested:** every status *transition* has an animation but only walking,
 dashing, jumping and landing have been watched happen; and the heavy-landing
 half-speed path has not been distinguished from the light one by eye.
+
+---
+
+## RE-043 — What is still white, measured
+
+Two things still render white or grey. Neither is a mystery, but neither is
+fixed, and this records what they are so the next attempt starts from
+measurements rather than from a screenshot.
+
+**Mario's gloves, shoes and face.** They are not missing a colour; their
+combiner does not read one. `G_SETCOMBINE 0xfcfffe05 0xff167dff` on nodes 6,
+12, 18 and 23 is `SHADE` in cycle 0 and `COMBINED * ENV` in cycle 1, so the
+final colour is `SHADE * ENV` with no primitive colour anywhere in it. RE-039's
+gate is therefore doing the right thing by leaving them alone — the question is
+what `ENV` is. The `MObjSub` field says `(0, 0, 0, 255)`, which would render
+them black rather than white, and **the costume lists set no environment
+colour at all**: of Mario's materials, every one returns `env: None` from
+`matanim::colors_at`. So either the env colour arrives from somewhere not yet
+read, or `SHADE * ENV` is not the right reading of that combiner word.
+
+Worth noting because it points at the second possibility: the costume list
+*does* set a primitive colour for node 18 — `(0, 0, 247)`, the blue of his
+overalls — on a material whose combiner, as decoded, ignores primitive colour
+entirely. Data that exists to be unused is usually a sign the decode is wrong,
+not the data. **The two-cycle combiner is only half-decoded: cycle 1 is read for
+this note but not modelled anywhere in the converter.**
+
+**Dream Land's white.** Not a stage-wide problem. Of the four layers' ~100
+primitives, exactly four have no texture:
+
+```
+layer 0  node  1    2 tris   untextured, all 4 vertices grey
+layer 2  node  1    5 tris   untextured, all 7 vertices grey
+layer 2  node  2    6 tris   untextured, all 8 vertices grey
+layer 2  node  3    6 tris   untextured, all 8 vertices grey
+```
+
+Everything else in the stage is textured and draws correctly. Those four have
+grey vertices, no texture and no primitive colour, so they come out white — and
+two triangles is a large quad, which is why a handful of primitives covers a lot
+of screen. Layer 2 is the one the stage record names a material table for, so
+the colours are most likely in its `MObj` chain and being dropped for the same
+reason Mario's are: a combiner whose second cycle is not modelled.
+
+**Confidence: high** for the measurements, which are reproducible with
+`romtool textures --file 104` and the draw dump. **The cause is one hypothesis
+short of proven**, and the fix is a real piece of work — decoding both combiner
+cycles properly rather than asking a single question of cycle 0.
