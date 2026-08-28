@@ -1986,6 +1986,30 @@ pairing that looks like a transcription slip.
 decoder, so RE-035's 189 verified lengths are a test of *this* code's word
 counts rather than of a second copy of them.
 
+**Carried into the pack.** All of the above is build-time work, and none of it
+should have to happen again on a PSP. Pack version 6 stores the answer: an
+`AnimDesc` per `(fighter, slot)` and an `AnimJoint` per joint holding the
+script's byte offset and the **absolute pack node** it drives. The runtime is
+handed a script and a node; it never sees `setup_parts`, `FTCommonPart` or an
+archive file id. `NodeDesc` gained the node's local rest transform for the same
+reason — an animation overwrites only the tracks it names, and the tracks it
+does not name have to start somewhere. A baked world matrix cannot supply that:
+decomposing one back into a rotation and a scale is lossy.
+
+Animation files are deduplicated by archive file id, which matters because
+sharing is common — Jigglypuff borrows three of Kirby's outright and every
+polygon variant shares all seven with the character it copies. 189 animations
+and 4709 joint entries cost 342 KiB.
+
+**The check that the tables are right.** `romtool figatree --pack` plays every
+animation twice: once from the pack's tables, once by re-deriving the whole
+chain from the ROM. **3444 joints, 64 frames each, every pose identical.** That
+is what makes the stored pairing trustworthy rather than merely plausible — and
+it caught a real fault immediately, the new tables having been written *after*
+the blob-alignment padding, so the reader found zeros where the animation table
+should have been. "Loads back cleanly" did not notice, because the sizes were
+self-consistent; replaying the data did.
+
 **Confidence: high** for the format, the scales and the joint mapping — a
 number-for-number match against the decompilation's own transcription on the
 one file examined in detail, no desynchronisation across ~4,000 scripts, and

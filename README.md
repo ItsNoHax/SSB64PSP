@@ -129,9 +129,10 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 * ROM validation, VPK0 decompression (all 499 compressed files) and the
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-* Asset extraction and conversion into a 3.0 MB runtime pack: 2722 meshes
+* Asset extraction and conversion into a 3.3 MB runtime pack: 2722 meshes
   (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 553
-  textures, 41 stages' collision geometry and all 27 fighters' constants
+  textures, 41 stages' collision geometry, all 27 fighters' constants and all
+  189 of their movement animations
 * **Textured, shaded models placed by the scene graph render on device at
   60 FPS**, fighters in their own recovered palettes
 * **Stages render textured on device** — their texels live in a separate
@@ -143,17 +144,18 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   double-jump, drop-through and landing, with the original's interrupt ordering
   and its tap-counter input model, on every character's real extracted
   constants and animation lengths
-* **Animation scripts decode on the host** to per-joint transforms, validated
-  against the decompilation across all 189 movement animations
-* 300 host tests passing
+* **Animation scripts decode to per-joint transforms** and ship in the pack,
+  each joint paired with the node it drives. Replaying 3444 of them from the
+  pack reproduces the ROM's poses exactly
+* 303 host tests passing
 
 **Known limitations:**
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
-* **Fighters do not animate.** The figatree decoder produces correct per-joint
-  transforms on the host, but nothing is packed, nothing reaches the PSP, and
-  the renderer still submits baked rest-pose matrices.
+* **Fighters do not animate.** The scripts and the joint mapping reach the
+  device in the pack, but nothing on the PSP side ticks them: the renderer
+  still submits the baked rest-pose matrices.
 * No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
 * No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
@@ -169,9 +171,10 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
 
-**Current milestone:** the animation pipeline — packing figatree scripts and
-driving joint transforms at runtime, so a fighter's movement is animated rather
-than a sliding rest pose.
+**Current milestone:** the animation pipeline. The scripts are packed; what
+remains is recomposing node matrices from animated joint transforms each tick
+and submitting those to the GE, so a fighter's movement is animated rather than
+a sliding rest pose.
 
 ## Verifying the claims
 
@@ -208,8 +211,10 @@ cargo run --release -p romtool -- fighters "rom/…z64" --verify
 # Every movement animation's length, decoded two ways
 cargo run --release -p romtool -- anims "rom/…z64" --verify
 
-# Every animation played against the skeleton it belongs to
-cargo run --release -p romtool -- figatree "rom/…z64" --frames 40
+# Every animation played against the skeleton it belongs to, and replayed
+# from the built pack to check the tables carry the same answer
+cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
+    --pack assets/generated/ssb64.pak
 
 # Which textures convert, and why the rest do not
 cargo run --release -p romtool -- textures "rom/…z64"
