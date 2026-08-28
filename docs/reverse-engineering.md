@@ -2992,3 +2992,73 @@ Dream Land's canopy sprites are pink, purple and gold upright triangles.
 appearance: the decomp picks kind 45 *or* 46 by a `rot_mode` this crate does
 not model, and the 28 `0x8000` (`RecalcRotRpyRSca`) nodes are still drawn
 plainly. Neither has been tested against hardware.
+
+## RE-050 — Stage joints run on the 32-bit event stream
+
+**Question.** RE-048 found that 40 of 100 stage layers carry a joint animation
+that nothing plays. Play them.
+
+**A different encoding, the same machine.** A fighter's joints are driven by
+the 16-bit figatree stream (RE-036). A stage's come from `MPGroundDesc`'s
+`anim_joints`, one `AObjEvent32 *` per node, handed out by `gcAddAnimJointAll`
+and run by `gcParseDObjAnimJoint` — which feeds *the same `AObj` tracks*
+`gcPlayDObjAnimJoint` reads. So `figatree`'s state machine is reused verbatim
+and only the instruction decoding is new.
+
+One thing about the values is not shared. The 16-bit stream stores an `s16`
+that `ftAnimGetTargetValue` scales — 1/512 for rotations, 1/4 for translations.
+A 32-bit event stores **a real `f32`**, already in radians or model units.
+Applying figatree's scale factors here would be wrong by three orders of
+magnitude, and a unit test pins that a `SetVal` of π/2 comes back as π/2.
+
+**`AObjAnimAdvance` is a post-increment**, which settles a reading that three
+opcodes depend on:
+
+```c
+#define AObjAnimAdvance(script) ((script)++)
+```
+
+So `flags = AObjAnimAdvance(event32)->command.flags` reads the flags out of the
+command word *itself* and leaves the cursor past it. That confirms the layout
+[`matanim`](../crates/ssb-rom/src/matanim.rs) already used, and fixes the three
+opcodes the ROM actually needed:
+
+| opcode | | words | effect |
+|---|---|---|---|
+| 12 | — | 0 | `length += payload` on each named track; no key |
+| 13 | `SetInterp` | **1** | hands `TraI` a pointer to spline control points |
+| 14 | `SetAnim` | 1 | continues at a new script, like `Jump` |
+
+Before them, 89 of 206 scripts hit an unmodelled opcode.
+
+**The check that mattered was not the one that looked convincing.** Replaying
+every script gives 206 of 206 running, 123,600 frames, no unmodelled opcode,
+and — across about 1.1 million pose components — zero non-finite values and
+zero denormals. Denormals are the signature of a desynchronised stream, since a
+command word reinterpreted as a float is around 1e-35, so that reads like a
+strong result.
+
+It is not sufficient. Deliberately dropping `SetInterp`'s pointer word — a real
+one-word desync — still gives **206 scripts, 0 failures, 0 denormals**. What
+moves is the frame total, 123,600 to 85,863, because a slipped stream runs into
+an `End` early.
+
+That is the discriminating check, and it is only meaningful because of what
+these animations *are*: ambient scenery, which loops forever. `206 × 600` is
+exactly 123,600 — every script is still running when the budget expires. Under
+the one-word slip it is **143 of 206**. So the reported number is now "still
+running after 600 frames", not "replayed without failing".
+
+The word count itself comes from the decompilation (`AObjAnimAdvance` twice
+around the pointer read), not from the replay. The replay confirms it; it could
+not have found it.
+
+**Result.** All 206 stage joint scripts decode and play, on every stage.
+Largest pose magnitude is 26,721 model units, which is large but in range for
+background scenery on a stage whose map bounds are ±9,000.
+
+**Confidence: high** for the decoding, which is the decompilation's own and is
+checked by 206 scripts looping indefinitely. **Nothing is animated on device
+yet**: the pack has no table for these scripts and the PSP side does not tick
+them. That is the next increment, and it is mechanical — the hard part, being
+sure the stream is read correctly, is done.

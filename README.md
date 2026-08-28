@@ -156,7 +156,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 330 host tests passing
+* 334 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -174,11 +174,12 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
-* **Stages are static.** 40 of 100 stage layers carry a joint animation and 12
-  carry a material animation, and neither is played, so Whispy never sways and
-  Dream Land's flowers never move in the wind. The materials are not wrong,
-  only still: every stage's animation frame 0 matches the colours already
-  rendered (RE-048).
+* **Stages are still static on device.** The 32-bit joint scripts stage scenery
+  uses are now decoded and played on the host — all 206 across all 41 stages,
+  every one still looping after 600 frames (RE-050) — but they are not in the
+  pack and the PSP side does not tick them, so Whispy does not yet sway. The
+  12 material animations are read but not played; their frame 0 matches the
+  colours already rendered, so nothing draws wrong (RE-048).
 * 28 nodes ask for the `0x8000` transform kind (a recomputed rotation) that is
   still drawn plainly.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
@@ -241,6 +242,9 @@ cargo run --release -p romtool -- anims "rom/…z64" --verify
 # the built pack, and checked for a bone that changes length
 cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
     --pack assets/generated/ssb64.pak
+
+# Every stage's joint animation, replayed against its scene graph
+cargo run --release -p romtool -- stages "rom/…z64"
 
 # Which textures convert, and why the rest do not
 cargo run --release -p romtool -- textures "rom/…z64"
