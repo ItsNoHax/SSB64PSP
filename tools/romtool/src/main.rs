@@ -1251,6 +1251,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     if !anims_failed.is_empty() {
         println!("              did not pack: {}", anims_failed.join(", "));
     }
+    // Read back from the *written* pack, not the writer's own vectors: the
+    // flag has to survive serialisation to be worth anything on device.
+    let billboards = (0..pack.node_count())
+        .filter_map(|i| pack.node(i))
+        .filter(|n| n.flags & fmt::NodeDesc::FLAG_BILLBOARD != 0)
+        .count();
+    println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
 

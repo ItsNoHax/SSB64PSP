@@ -2931,3 +2931,64 @@ unambiguous about what it computes. **Nothing is fixed here.** Billboards need
 a per-frame camera-relative matrix on the PSP side, which is a rendering
 feature rather than a converter change, and the joint animations need the
 `AObj` player pointed at stage nodes.
+
+> **Correction (RE-049).** This entry said billboarding was "why six sprites
+> sit flat in Dream Land's canopy". That does not follow. The stage view sets
+> the camera rotation to exactly zero — *"A stage is a place, not an object:
+> spinning it would make the collision overlay impossible to read. Face-on,
+> always."* — and with an unrotated camera a screen-aligned billboard and a
+> static XY quad are the *same matrix*. Implementing billboards changed that
+> screenshot by zero pixels, as it had to. The shapes look how they look
+> because that is their geometry; billboarding only matters once the camera
+> turns.
+
+## RE-049 — Billboards, and a screenshot that could not have shown them
+
+**Question.** RE-048 identified 81 nodes asking for a camera-relative matrix
+kind that nothing applied. Implement it.
+
+**The flag.** `NodeDesc` had exactly four bytes of tail padding, which is now a
+`flags` word carrying `FLAG_BILLBOARD` for `DObjDesc.id & 0x6000` — kinds 45-48.
+A pack written before it existed reads those bytes back as zero, which is "no
+billboards", i.e. the old behaviour, so the field is backward-compatible on its
+own; the version went to 7 regardless because the pack is rebuilt every run and
+a silent format change is worth more than the convenience. 81 nodes carry the
+flag, matching RE-048's count exactly, and a test asserts a `0x4001` node
+reaches the reader flagged — it fails if the writer stops mapping `Kind46`.
+
+**The matrix.** The original writes the MVP straight from the projection basis.
+This build cannot copy that literally, because it never builds an MVP: it keeps
+the view matrix at identity and puts the whole camera into the model matrix it
+passes down. In that arrangement "aligned with the eye" is simply "unrotated in
+world space", so the sprite wants the *composed* position and scale of
+`base * local` with the orientation discarded, plus `rotate.x` as a spin about
+Z. Scale is recovered as the length of each composed basis column rather than
+read from `rest_scale`, because a node inherits its ancestors' scale and only
+the composed matrix knows the product.
+
+**Verifying it needed a rotated camera.** The first device run after
+implementing this changed **zero pixels**, which looked like a failure and was
+not. Two checks separated those cases:
+
+1. *Are these even the right nodes?* Skipping every flagged node made the six
+   canopy triangles — and only them — disappear. So the flag reaches the draw
+   path and identifies exactly the shapes in question.
+2. *Is the transform doing anything?* The stage view fixes the camera rotation
+   at zero, and with no rotation a screen-aligned billboard **is** the static
+   matrix. Forcing the stage camera to `[0, 0.7, 0]` and rendering with the
+   flag honoured and ignored gives two clearly different images: ignored, the
+   sprites are skewed and squashed into slivers by the camera angle; honoured,
+   all six are upright, symmetric and identical in shape wherever they sit.
+
+That second run is the evidence. The face-on screenshot being byte-identical is
+a *prediction* the implementation had to satisfy, not a null result — a diff
+there would have meant the billboard path was wrong.
+
+**Result.** 81 nodes across the archive now face the camera. Nothing else in
+the frame moved, object triangles are unchanged, and the pack still verifies.
+Dream Land's canopy sprites are pink, purple and gold upright triangles.
+
+**Confidence: high** for the mechanism and its scope, **medium** for the exact
+appearance: the decomp picks kind 45 *or* 46 by a `rot_mode` this crate does
+not model, and the 28 `0x8000` (`RecalcRotRpyRSca`) nodes are still drawn
+plainly. Neither has been tested against hardware.

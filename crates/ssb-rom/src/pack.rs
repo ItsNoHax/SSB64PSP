@@ -56,7 +56,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 4 added the fighter table.
 /// 5 added the figatree animation lengths to the fighter table.
 /// 6 added the animation tables, and each node's local rest transform.
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -256,6 +256,12 @@ pub struct NodeDesc {
     pub rest_translate: [f32; 3],
     pub rest_rotate: [f32; 3],
     pub rest_scale: [f32; 3],
+    /// `DObjDesc.id & 0xF000`, the matrix kind the original asks for.
+    ///
+    /// Only [`NodeDesc::FLAG_BILLBOARD`] is acted on. It lives in what used to
+    /// be this struct's tail padding, so a pack written before it existed reads
+    /// back as zero — no billboards, which is exactly the old behaviour.
+    pub flags: u32,
 }
 
 impl NodeDesc {
@@ -263,6 +269,10 @@ impl NodeDesc {
     pub const SIZE: usize = 112;
     pub const NO_MESH: u32 = u32::MAX;
     pub const NO_PARENT: u32 = u32::MAX;
+    /// The node is a screen-aligned sprite: `gcPrepDObjMatrix` kinds 45-48
+    /// build its matrix from the projection basis rather than its own rotation,
+    /// so it always faces the camera (RE-048).
+    pub const FLAG_BILLBOARD: u32 = 1 << 0;
 }
 
 /// One fighter's animation for one movement status.
@@ -948,6 +958,15 @@ impl PackWriter {
                 rest_translate: node.desc.translate,
                 rest_rotate: node.desc.rotate,
                 rest_scale: node.desc.scale,
+                // Kinds 45-48 are the camera-relative ones; `0x8000` asks for a
+                // recomputed rotation this renderer does not model yet, so it
+                // is deliberately not flagged.
+                flags: match node.desc.transform_kind() {
+                    crate::scene::TransformKind::Kind46 | crate::scene::TransformKind::Kind48 => {
+                        NodeDesc::FLAG_BILLBOARD
+                    }
+                    _ => 0,
+                },
             });
             debug_assert_eq!(self.nodes.len() - 1, first_node as usize + i);
         }
@@ -968,6 +987,7 @@ impl PackWriter {
                 rest_translate: [0.0; 3],
                 rest_rotate: [0.0; 3],
                 rest_scale: [1.0; 3],
+                flags: 0,
             });
         }
 
@@ -1281,8 +1301,9 @@ impl PackWriter {
             {
                 out.extend_from_slice(&f.to_le_bytes());
             }
+            out.extend_from_slice(&n.flags.to_le_bytes());
             // Pad to NodeDesc::SIZE so the stride stays 16-byte aligned.
-            out.extend_from_slice(&[0u8; NodeDesc::SIZE - 108]);
+            out.extend_from_slice(&[0u8; NodeDesc::SIZE - 112]);
         }
         for s in &self.stages {
             for v in [s.first_line, s.line_count, s.first_point, s.point_count] {
@@ -1680,6 +1701,7 @@ impl<'a> Pack<'a> {
             rest_translate: vec3(at + 72),
             rest_rotate: vec3(at + 84),
             rest_scale: vec3(at + 96),
+            flags: u32_at(self.data, at + 108),
         })
     }
 
@@ -2761,6 +2783,46 @@ mod tests {
         // Both must still be findable under their own fighter.
         assert_eq!(pack.anim(0).unwrap().fighter, 8);
         assert_eq!(pack.anim(1).unwrap().fighter, 10);
+    }
+
+    #[test]
+    fn a_billboard_node_is_flagged_through_the_pack() {
+        // `DObjDesc.id & 0xF000` selects a camera-relative matrix kind, and it
+        // has to survive serialisation or the device never sees it. Dream
+        // Land's canopy sprites use 0x4001: depth 1, kind 0x4000 (RE-048).
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let sprite = DObjDesc {
+            id: 0x4001,
+            dl: None,
+            translate: [0.0; 3],
+            rotate: [0.0; 3],
+            scale: [1.0; 3],
+        };
+        let plain = DObjDesc { id: 1, ..sprite };
+        let graph = SceneGraph {
+            offset: 0x100,
+            nodes: alloc::vec![
+                DObjNode {
+                    desc: plain,
+                    parent: None
+                },
+                DObjNode {
+                    desc: sprite,
+                    parent: Some(0)
+                },
+            ],
+        };
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 104, |_| None, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.node(0).unwrap().flags & NodeDesc::FLAG_BILLBOARD, 0);
+        assert_eq!(
+            pack.node(1).unwrap().flags & NodeDesc::FLAG_BILLBOARD,
+            NodeDesc::FLAG_BILLBOARD,
+            "a 0x4000 node must reach the device flagged"
+        );
     }
 
     #[test]
