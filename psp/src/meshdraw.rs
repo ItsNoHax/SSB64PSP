@@ -243,6 +243,26 @@ pub unsafe fn draw_object(
     base: &ScePspFMatrix4,
     st: &mut DrawState,
 ) -> u32 {
+    draw_object_posed(pack, object, base, &[], st)
+}
+
+/// Draws an object under per-node matrices supplied by the caller.
+///
+/// `posed[i]` replaces node `first_node + i`'s baked matrix. A short slice
+/// falls back to the baked one per node, so passing `&[]` is exactly
+/// [`draw_object`] — the animated and static paths are the same code, which is
+/// what keeps a bug in one from being invisible in the other.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_object_posed(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    st: &mut DrawState,
+) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
         let Some(node) = pack.node(object.first_node + i) else {
@@ -253,6 +273,14 @@ pub unsafe fn draw_object(
         }
         let Some(mesh) = pack.mesh(node.mesh) else {
             continue;
+        };
+
+        let node = match posed.get(i as usize) {
+            Some(m) => NodeDesc {
+                world: m.0,
+                ..node
+            },
+            None => node,
         };
 
         // `world` is already the node's full ancestor-composed transform, so

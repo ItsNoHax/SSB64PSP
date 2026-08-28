@@ -147,15 +147,17 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * **Animation scripts decode to per-joint transforms** and ship in the pack,
   each joint paired with the node it drives. Replaying 3444 of them from the
   pack reproduces the ROM's poses exactly
-* 303 host tests passing
+* 307 host tests passing
 
 **Known limitations:**
 
 * **Never run on real PSP hardware.** PPSSPP is not proof of hardware
   behaviour; this is the biggest open risk.
-* **Fighters do not animate.** The scripts and the joint mapping reach the
-  device in the pack, but nothing on the PSP side ticks them: the renderer
-  still submits the baked rest-pose matrices.
+* **Animation runs on device but the pose is wrong.** Joint clocks tick,
+  node matrices recompose and the geometry draws at 60 FPS, and the result is
+  not the animation. The composition is proven against the pack's own baked
+  matrices and the joint pairing against the model, so the fault is elsewhere;
+  playback is off by default until it is found. See RE-038.
 * No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
 * No stage *loader* — the viewer browses stages; a match does not select one.
 * The debug overlay only displays under PPSSPP's software rasteriser
@@ -171,10 +173,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
 
-**Current milestone:** the animation pipeline. The scripts are packed; what
-remains is recomposing node matrices from animated joint transforms each tick
-and submitting those to the GE, so a fighter's movement is animated rather than
-a sliding rest pose.
+**Current milestone:** the animation pipeline. Every stage of it now runs on
+device; what remains is making the pose it produces correct.
 
 ## Verifying the claims
 

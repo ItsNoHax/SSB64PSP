@@ -50,7 +50,7 @@ Last updated: 2026-08-28.
 | Physics | 🟢 60% | 16 functions ported with original addresses cited, and *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick. Running on all 27 characters' **real** constants, extracted from the ROM and verified field-by-field against the decompilation; the invented defaults they replaced were 26x off and had hidden a stick-scaling bug in air drift (RE-032) |
 | Fighter state | 🟢 60% | The movement status machine: Wait, three walks, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy and Pass, with the original's interrupt-chain ordering and its tap-counter input model (RE-033). Plus roster, facing, hitlag/hitstun, spawn placement and every character's constants. All of them now **end on their own**: the five that had no duration in `FTAttributes` take it from their figatree animation instead, read out of the ROM and verified against the decompilation for all 27 fighters (RE-035). No attacks, specials, grabs, shields or damage states |
 | Collision | 🟢 60% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query, vertical floor projection, per-line surface height and the `mpprocess` floor path (substepping, landing snap, ledge corner, follow-the-surface) all ported. Surface flags confirmed against how Dream Land plays; `dMPCollisionMaterialFrictions` recovered. **158/158 spawns hold a simulated fighter still for 60 ticks at zero drift**, and the swept and projected solvers agree on every one (RE-030, RE-031). No ceiling or wall queries; moving groups are tested at rest |
-| Animation | 🟡 45% | **Figatree scripts decode to per-joint transforms, and are packed.** The `AObjEvent16` command stream, `ftAnimGetTargetValue`'s per-track scales and the `AObj` cubic/linear/step interpolation are ported; `romtool figatree` plays all 189 movement animations for 40 frames with zero desynchronisation, and each one's script count matches its fighter's joint count under a rule with no exceptions (RE-036). Joints are mapped through `setup_parts` and `commonparts_container`, both read as archive relocations rather than matched by shape. Pack version 6 carries all 189 animations, 4709 joint entries and each node's local rest transform, and `romtool figatree --pack` replays 3444 joints from it against the ROM with **every pose identical**. **Nothing is drawn yet** — the renderer still submits baked rest-pose matrices, and there is no `TransN` or `translate_scales` handling |
+| Animation | 🟡 55% | **Figatree scripts decode to per-joint transforms, and are packed.** The `AObjEvent16` command stream, `ftAnimGetTargetValue`'s per-track scales and the `AObj` cubic/linear/step interpolation are ported; `romtool figatree` plays all 189 movement animations for 40 frames with zero desynchronisation, and each one's script count matches its fighter's joint count under a rule with no exceptions (RE-036). Joints are mapped through `setup_parts` and `commonparts_container`, both read as archive relocations rather than matched by shape. Pack version 6 carries all 189 animations, 4709 joint entries and each node's local rest transform, and `romtool figatree --pack` replays 3444 joints from it against the ROM with **every pose identical**. A `Skeleton` ticks every joint on device and the object's node matrices are recomposed from the result at 60 FPS, browsable in the viewer — but **the resulting pose is wrong** and is not validated (RE-038). Composition, joint pairing and cross-joint vertex sharing are ruled out; the rotation half of the transform is the open suspect. No `TransN` or `translate_scales` handling |
 | Scene graph (DObj) | 🟢 85% | All 363 `DObjDesc` arrays recovered and validated against the decomp (RE-023); world transforms baked into the pack. Three union members of `DObj`'s display-list field resolved, and node lists converted in draw order through one shared vertex cache — zero conversion failures archive-wide (RE-025, RE-026). `MObj` material chains recovered for 56 graphs via the `FTCommonPart` and `MPGroundDesc` records that name them, giving fighters and stage layers their palettes (RE-027, RE-028). `GObj` layer and animation still absent |
 | Stages | 🟢 55% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. On-device stage view renders Dream Land's four layers with its collision polylines landing exactly on the platforms, 658 us at 60 FPS (`docs/images/m4-stage-collision.png`); Peach's Castle cross-checks it on sloped ground. A fighter now stands on them (RE-031). No stage *loader* — the viewer browses stages, a match does not select one |
 | Items | 🔴 0% | |
@@ -65,7 +65,7 @@ Last updated: 2026-08-28.
 
 ## Test coverage
 
-303 host tests passing across `ssb-rom` (160), `ssb-engine` (36) and
+307 host tests passing across `ssb-rom` (164), `ssb-engine` (36) and
 `ssb-game` (107).
 
 ## M1 verification (PPSSPP)
@@ -121,13 +121,15 @@ Reproduce with `tools/run-ppsspp.sh`.
    the hurtbox descriptors, sound ids and joint indices further into the struct
    are still untouched, so nothing above physics and collision can read them.
 
-5. **Animation is packed but does not render.** RE-036 gets a figatree to a
-   per-joint `(rotate, translate, scale)`, and pack version 6 carries the
-   scripts, the joint-to-node mapping and the rest poses to the device. The
-   PSP-side half does not exist: nothing ticks a `JointAnim`, and the renderer
-   still submits the baked rest-pose matrices. The next concrete task is
-   recomposing node matrices from animated locals each tick and submitting
-   those instead.
+5. **Animation renders, but the pose is wrong.** The whole path runs on
+   device — packed scripts, per-joint clocks, recomposed node matrices, 60 FPS
+   — and produces a pose that is not the animation (RE-038). The composition
+   is proven against the baked matrices, the joint pairing against the model,
+   and Mario has no cross-joint vertex sharing to tear, so the next concrete
+   task is the rotation half of the transform: whether the track-to-axis
+   mapping and `from_trs`'s order survive large rotations, and whether
+   `DObjDesc`'s `0x8000` transform kind — which the packer currently ignores —
+   changes how a node composes.
 
 6. **The extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest rather than patching them, because the target address
