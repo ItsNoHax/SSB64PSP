@@ -129,8 +129,8 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 
 * ROM validation, VPK0 decompression (all 499 compressed files) and the
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-* Asset extraction and conversion into a 3.0 MB runtime pack: 2722 meshes
-  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 615
+* Asset extraction and conversion into a 2.8 MB runtime pack: 2450 meshes
+  (42,417 triangles, zero conversion failures), 3137 scene-graph nodes, 617
   textures, 41 stages' collision geometry, all 27 fighters' constants and 532
   movement animations — every status the fighter machine can be in
 * **Textured, shaded models placed by the scene graph render on device at
@@ -152,7 +152,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 323 host tests passing
+* 329 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -172,11 +172,16 @@ materials, not a wrong pose — see the limitations below.*
   affect appearance are still ignored.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
   match would let you pick are not in the pack.
-* 117 of 732 bound texture references still fail to convert. 75 of those are a
-  `G_SETTIMG(0)` that nothing overwrites, spread across 54 files: they belong
-  to 71 scene graphs whose material table the original names in *code* rather
-  than in any data structure, so the pairing is not recoverable from the ROM
-  (RE-046). Whispy Woods' face is the visible example.
+* 30 of 647 bound texture references still fail to convert. 26 are the screen
+  wipes, whose "texture" is a runtime screenshot rather than ROM data and can
+  only come from render-to-texture; the other 4 are CI textures whose material
+  supplies no palette, leaving the `G_LOADTLUT` beside them reading whatever
+  the previous list left set (RE-047).
+* 71 scene graphs have no material table, because the original names theirs in
+  *code* rather than in any data structure. A search constrained by the display
+  lists' own `MObj` demand was tried and **measured against the decompilation:
+  it gets 4 of 6 scoreable answers wrong**, so it is not used (RE-046, RE-047).
+  Whispy Woods' face is the visible cost.
 
 
 **Not started:** audio, menus, save data, items, CPU AI, VFPU work.
@@ -228,6 +233,13 @@ cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
 
 # Which textures convert, and why the rest do not
 cargo run --release -p romtool -- textures "rom/…z64"
+
+# Search for the material tables no record names -- and score the search
+# against the decompilation's own declarations, which is how it was
+# established that the search is not trustworthy (RE-047)
+tools/mobjtable-ground-truth.py > /tmp/tables.tsv
+cargo run --release -p romtool -- mobj "rom/…z64" --search \
+    --expect-tables /tmp/tables.tsv
 ```
 
 A wrong offset table does not produce a near miss; it produces garbage. So

@@ -206,7 +206,13 @@ pub fn find_root_display_lists(file: &File) -> Vec<FoundDl> {
     for off in (0..file.data.len().saturating_sub(dl::CMD_SIZE - 1)).step_by(dl::CMD_SIZE) {
         // Cheap structural filter first; conversion is far more expensive and
         // the overwhelming majority of offsets are not display lists.
-        let Ok(cmds) = dl::decode_list(&file.data[off..]) else {
+        //
+        // Decoding *at* `off` rather than at zero is what lets a `G_SETTIMG`
+        // in a discovered list find its relocation: the slot a relocation is
+        // keyed by is a file offset, so a list decoded as if it began at zero
+        // looks up the wrong one and reads every cross-file texture as null
+        // (RE-047).
+        let Ok(cmds) = dl::decode_list_at(&file.data[off..], off as u32) else {
             continue;
         };
         if !is_plausible(&cmds, file.data.len()) {
@@ -266,7 +272,8 @@ fn scan_candidates(file: &File, candidates: &BTreeSet<u32>) -> Vec<FoundDl> {
         if start >= file.data.len() || !start.is_multiple_of(dl::CMD_SIZE) {
             continue;
         }
-        let Ok(cmds) = dl::decode_list(&file.data[start..]) else {
+        // Absolute, for the same reason as `find_root_display_lists`.
+        let Ok(cmds) = dl::decode_list_at(&file.data[start..], off) else {
             continue;
         };
         if is_plausible(&cmds, file.data.len()) {
@@ -482,6 +489,41 @@ mod tests {
         assert_eq!(dls.len(), 1);
         assert_eq!(dls[0].offset, 16);
         assert_eq!(dls[0].triangle_count(), 1);
+    }
+
+    /// A discovered list's `G_SETTIMG` slot has to be a *file* offset, because
+    /// that is what a relocation is keyed by. Decoding the list as if it began
+    /// at zero looks the relocation up at the wrong address, finds nothing, and
+    /// reports a cross-file texture as an unresolved null — which is what made
+    /// the texture report claim 71 failures the scene-graph path did not have
+    /// (RE-047).
+    #[test]
+    fn a_discovered_lists_settimg_slot_is_a_file_offset() {
+        const AT: u32 = 0x80;
+        let vtx = cmd(0x0100_0000 | (4 << 12) | 8, 0x40);
+        // A zeroed texture address: the archive blanks a cross-file pointer.
+        let timg = cmd(0xFD10_0000, 0);
+        let tri = cmd(0x0500_0204, 0);
+        let end = cmd(0xDF00_0000, 0);
+        let mut f = file_with(AT, &[vtx, timg, tri, end], 512);
+        f.intern_relocs = alloc::vec![InternReloc { at: 0, target: AT }];
+
+        let dls = find_display_lists(&f);
+        let found = dls.iter().find(|d| d.offset == AT).expect("list at AT");
+        let slot = found
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                dl::Cmd::SetTimg { slot, .. } => Some(*slot),
+                _ => None,
+            })
+            .expect("a G_SETTIMG");
+        // Second command, second word: AT + 8 + 4.
+        assert_eq!(
+            slot,
+            AT + 12,
+            "the slot must be where the pointer lives in the file"
+        );
     }
 
     #[test]

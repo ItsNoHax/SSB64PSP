@@ -78,6 +78,7 @@ USAGE:
     romtool scene    <rom.z64> [--file <id>] [--list] [--nodes] [--why]
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
+                               [--search] [--expect-tables <tables.tsv>]
     romtool stages   <rom.z64> [--file <id>] [--lines]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
@@ -1006,6 +1007,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             .iter()
             .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset))
         {
+            if unconvertible_without_materials(&dl.commands, file) {
+                continue;
+            }
             let Ok(m) = mesh::convert(&dl.commands, mesh::Source::of(file)) else {
                 continue;
             };
@@ -1318,6 +1322,20 @@ fn convert_texture(
             swizzle,
         )
         .ok()
+    } else if psm.is_paletted() && t.format == ssb_rom::texture::Format::I {
+        // An intensity texture carries no palette because on the N64 it needs
+        // none. Generating the ramp keeps it at 4 or 8 bits instead of letting
+        // it fall through to the 8888 path `choose_psm` picked `PsmT4` to
+        // avoid (RE-047).
+        psp::pack_indexed(
+            texels,
+            t.width as u32,
+            t.height as u32,
+            t.size,
+            &psp::intensity_palette(t.size),
+            swizzle,
+        )
+        .ok()
     } else {
         texture::decode(
             texels,
@@ -1509,12 +1527,38 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
         );
     }
 
-    for dl in ssb_rom::scan::find_root_display_lists(file) {
-        if !claimed.contains(&dl.offset) {
-            out.extend(mesh::convert(&dl.commands, mesh::Source::of(file)));
+    // Exactly the packer's discovery rule, and it has to stay exactly it: this
+    // function's whole claim is that its counts describe the pack. `convert`
+    // inlines callees, so a list another list calls is not a root -- converting
+    // it standalone runs it without the state its caller sets up, which is how
+    // the report came to claim 75 unresolved textures the pack does not have.
+    let all = ssb_rom::scan::find_root_display_lists(file);
+    let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
+    for dl in all
+        .iter()
+        .filter(|d| !called.contains(&d.offset) && !claimed.contains(&d.offset))
+    {
+        if unconvertible_without_materials(&dl.commands, file) {
+            continue;
         }
+        out.extend(mesh::convert(&dl.commands, mesh::Source::of(file)));
     }
     out
+}
+
+/// Whether a discovered list needs material state this converter cannot supply.
+///
+/// A list that calls segment `0x0E` gets its texture, palette or colour from
+/// the node's `MObj` chain. Discovery finds lists by scanning bytes, so it has
+/// no node and no chain, and the converter correctly drops the binding rather
+/// than guessing — leaving geometry whose palette never loads. Packing that
+/// means shipping a surface we know draws wrong. Lists a scene graph names are
+/// unaffected: they come with their chain (RE-047).
+fn unconvertible_without_materials(
+    cmds: &[ssb_rom::dl::Cmd],
+    file: &ssb_rom::archive::File,
+) -> bool {
+    ssb_rom::mobj::demand(cmds, &file.data) > 0
 }
 
 /// Every floor segment of a stage, in the form the collision query wants.
@@ -2316,11 +2360,15 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
 
     let mut only_file: Option<u32> = None;
     let mut expect: Option<PathBuf> = None;
+    let mut expect_tables: Option<PathBuf> = None;
+    let mut search = false;
     let mut it = opts.iter();
     while let Some(o) = it.next() {
         match *o {
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
             "--expect" => expect = it.next().map(PathBuf::from),
+            "--expect-tables" => expect_tables = it.next().map(PathBuf::from),
+            "--search" => search = true,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -2412,6 +2460,18 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                 for m in &table.nodes[i] {
                     materials += 1;
                     palettes += usize::from(m.palette.is_some());
+                    // A material with no palette is not necessarily wrong —
+                    // plenty supply only a primitive colour — but a CI texture
+                    // whose TLUT never loads traces back to one, so the chain
+                    // it sits in is worth seeing beside it.
+                    if only_file.is_some() && m.palette.is_none() {
+                        println!(
+                            "  NOPAL file {} node {i} MObjSub 0x{:X} (chain {}, demand {want})",
+                            file.id,
+                            m.at,
+                            table.nodes[i].len(),
+                        );
+                    }
                     if let Some(known) = &known {
                         match known.get(&file.id) {
                             Some(set) if set.contains(&m.at) => in_decomp += 1,
@@ -2439,7 +2499,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     println!("nodes where chain length == display-list demand: {agree}, mismatched: {disagree}");
     println!("  chains in another archive file, not followed: {unfollowable}");
     println!("materials: {materials} ({palettes} carrying a palette)");
-    if !unpaired_graphs.is_empty() {
+    if !unpaired_graphs.is_empty() && !search {
         println!("\ngraphs that call the graphics heap but no record names:");
         for (file, offset, nodes) in unpaired_graphs.iter().take(12) {
             println!("  file {file:<5} graph 0x{offset:<6X} {nodes} node(s)");
@@ -2448,6 +2508,9 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
             println!("  ... and {} more", unpaired_graphs.len() - 12);
         }
     }
+    if search {
+        search_unpaired_tables(&files, &graphs, &unpaired_graphs, expect_tables.as_deref())?;
+    }
     if known.is_some() {
         // The generator can only place a struct the decomp gives an offset
         // for, by comment or by symbol name; a few are hand-named with
@@ -2455,6 +2518,110 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
         println!(
             "MObjSubs at an offset the decomp places: {in_decomp}, elsewhere: {not_in_decomp}"
         );
+    }
+    Ok(())
+}
+
+/// Searches for the material table of every graph no record names, and scores
+/// the result against the decomp's own declarations.
+///
+/// The point is the score, not the search. A search that returns one candidate
+/// for a graph has identified it; a search that returns three has identified
+/// nothing, and the difference has to be measured before any of it is trusted
+/// (RE-046). `--expect-tables` supplies the answer key, generated by
+/// `tools/mobjtable-ground-truth.py` from the decomp's `MObjSub **name[]`
+/// declarations.
+fn search_unpaired_tables(
+    files: &[Option<ssb_rom::archive::File>],
+    graphs: &BTreeMap<u32, Vec<ssb_rom::scene::SceneGraph>>,
+    unpaired: &[(u32, u32, usize)],
+    expect_tables: Option<&Path>,
+) -> Res {
+    let key: Option<BTreeMap<u32, BTreeSet<u32>>> = expect_tables
+        .map(fs::read_to_string)
+        .transpose()?
+        .map(|text| {
+            let mut map: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
+            for line in text.lines().filter(|l| !l.trim().is_empty()) {
+                let mut cols = line.split('\t');
+                if let (Some(f), Some(at)) = (cols.next(), cols.next()) {
+                    if let (Ok(f), Ok(at)) = (f.parse(), at.parse()) {
+                        map.entry(f).or_default().insert(at);
+                    }
+                }
+            }
+            map
+        });
+
+    let (mut unique, mut ambiguous, mut none) = (0usize, 0usize, 0usize);
+    let (mut confirmed, mut contradicted, mut unkeyed) = (0usize, 0usize, 0usize);
+    let mut found: Vec<(u32, u32, u32)> = Vec::new();
+
+    for &(file_id, graph_offset, _) in unpaired {
+        let Some(file) = files.get(file_id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+        let Some(graph) = graphs
+            .get(&file_id)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph_offset))
+        else {
+            continue;
+        };
+        let resolver = ssb_rom::scene::DlResolver::new(file);
+        let demand: Vec<usize> = graph
+            .nodes
+            .iter()
+            .map(|n| n.desc.dl.map_or(0, |at| mobj_demand(file, &resolver, at)))
+            .collect();
+
+        let hits = ssb_rom::mobj::search_tables(file, &demand);
+        match hits.len() {
+            0 => none += 1,
+            1 => {
+                unique += 1;
+                let at = hits[0];
+                found.push((file_id, graph_offset, at));
+                match key.as_ref().and_then(|k| k.get(&file_id)) {
+                    Some(set) if set.contains(&at) => confirmed += 1,
+                    Some(set) => {
+                        contradicted += 1;
+                        let near = set
+                            .iter()
+                            .map(|&k| format!("0x{k:X}"))
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        println!(
+                            "  WRONG file {file_id} graph 0x{graph_offset:X}: search says \
+                             0x{at:X}, decomp declares [{near}]"
+                        );
+                    }
+                    None => unkeyed += 1,
+                }
+            }
+            n => {
+                ambiguous += 1;
+                let all = hits
+                    .iter()
+                    .map(|&h| format!("0x{h:X}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("  AMBIG file {file_id} graph 0x{graph_offset:X}: {n} candidates [{all}]");
+            }
+        }
+    }
+
+    println!(
+        "\nmaterial-table search over {} unnamed graph(s):",
+        unpaired.len()
+    );
+    println!("  exactly one candidate   {unique}");
+    println!("  several candidates      {ambiguous}");
+    println!("  none                    {none}");
+    if key.is_some() {
+        println!("  of the unique ones, against the decomp's declarations:");
+        println!("    confirmed             {confirmed}");
+        println!("    contradicted          {contradicted}");
+        println!("    file has no key entry {unkeyed}");
     }
     Ok(())
 }
@@ -2692,6 +2859,10 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
     // never named -- the difference between a decoder bug and a missing
     // pairing (RE-046).
     let mut nulls_by_file: BTreeMap<u32, Vec<(u16, u16)>> = BTreeMap::new();
+    // Every failure reason, per file. Which files a class is concentrated in
+    // is what says whether it is one decoder gap or a scatter of unrelated
+    // ones -- the null pointers turned out to be 54 files with one apiece.
+    let mut fails_by_file: BTreeMap<(String, u32), usize> = BTreeMap::new();
 
     // Same conversion the packer runs, so these counts describe the pack. On
     // the standalone path a fighter's textures come out palette-less, and this
@@ -2738,6 +2909,9 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         None => {
                             *why.entry("cross-file, target file did not load".into())
                                 .or_default() += 1;
+                            *fails_by_file
+                                .entry(("cross-file, target file did not load".into(), file.id))
+                                .or_default() += 1;
                             decode_failed += 1;
                             continue;
                         }
@@ -2755,11 +2929,17 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 if segment != 0 {
                     *why.entry(format!("segmented addr (seg 0x{segment:02X})"))
                         .or_default() += 1;
+                    *fails_by_file
+                        .entry((format!("segmented addr (seg 0x{segment:02X})"), file.id))
+                        .or_default() += 1;
                     decode_failed += 1;
                     continue;
                 }
                 if t.data_offset == 0 && t.data_file.is_none() {
                     *why.entry("null pointer, nothing resolved it".into())
+                        .or_default() += 1;
+                    *fails_by_file
+                        .entry(("null pointer, nothing resolved it".into(), file.id))
                         .or_default() += 1;
                     nulls_by_file
                         .entry(file.id)
@@ -2770,11 +2950,21 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 }
                 let Some(src) = texels.get(at..at + need) else {
                     *why.entry("offset past end of file".into()).or_default() += 1;
+                    *fails_by_file
+                        .entry(("offset past end of file".into(), file.id))
+                        .or_default() += 1;
                     decode_failed += 1;
                     continue;
                 };
-                if psm.is_paletted() && t.palette_offset.is_none() {
-                    *why.entry("paletted but no TLUT recorded".into())
+                // Only a *CI* texture needs a TLUT out of the ROM. Intensity
+                // formats also map to a PSP CLUT format, but they generate
+                // their ramp, so counting them here listed 29 warnings against
+                // textures that convert perfectly.
+                if t.format == texture::Format::Ci && t.palette_offset.is_none() {
+                    *why.entry("CI texture, no TLUT recorded".into())
+                        .or_default() += 1;
+                    *fails_by_file
+                        .entry(("CI texture, no TLUT recorded".into(), file.id))
                         .or_default() += 1;
                 }
 
@@ -2809,9 +2999,23 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         Ok(v) => Some(v),
                         Err(e) => {
                             *why.entry(format!("pack_paletted: {e:?}")).or_default() += 1;
+                            *fails_by_file
+                                .entry((format!("pack_paletted: {e:?}"), file.id))
+                                .or_default() += 1;
                             None
                         }
                     }
+                } else if psm.is_paletted() && t.format == texture::Format::I {
+                    // Generated ramp; see `convert_texture`.
+                    psp::pack_indexed(
+                        src,
+                        t.width as u32,
+                        t.height as u32,
+                        t.size,
+                        &psp::intensity_palette(t.size),
+                        true,
+                    )
+                    .ok()
                 } else {
                     match texture::decode(
                         src,
@@ -2824,6 +3028,9 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         Ok(img) => Some(psp::pack_rgba(&img, psp::Psm::Psm8888, true)),
                         Err(e) => {
                             *why.entry(format!("decode: {e:?}")).or_default() += 1;
+                            *fails_by_file
+                                .entry((format!("decode: {e:?}"), file.id))
+                                .or_default() += 1;
                             None
                         }
                     }
@@ -2859,8 +3066,14 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
     println!("  unique textures bound  {}", seen.len());
     println!("  packed                 {packed_ok}");
     println!("  failed                 {decode_failed}");
-    for (reason, n) in &why {
+    // A note is not a failure. Splitting them is what stops the reasons summing
+    // to more than the failure count and inviting the reader to add them up.
+    let is_note = |r: &str| r == "CI texture, no TLUT recorded";
+    for (reason, n) in why.iter().filter(|(r, _)| !is_note(r)) {
         println!("    {reason:<48} {n:>4}");
+    }
+    for (reason, n) in why.iter().filter(|(r, _)| is_note(r)) {
+        println!("  note: {reason:<45} {n:>4}");
     }
     println!(
         "  swizzled               {swizzled} ({:.0}%)",
@@ -2914,6 +3127,28 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
             Some((bound, packed)) => println!("\nfile {id}: {packed}/{bound} textures packed"),
             None => println!("\nfile {id}: binds no textures at all"),
         }
+    }
+
+    println!("\nwhere each failure class lives:");
+    for reason in why.keys() {
+        let mut per: Vec<(u32, usize)> = fails_by_file
+            .iter()
+            .filter(|((r, _), _)| r == reason)
+            .map(|((_, f), &n)| (*f, n))
+            .collect();
+        per.sort_by_key(|&(f, n)| (std::cmp::Reverse(n), f));
+        let total: usize = per.iter().map(|&(_, n)| n).sum();
+        let head: Vec<String> = per
+            .iter()
+            .take(6)
+            .map(|(f, n)| format!("{f}:{n}"))
+            .collect();
+        println!(
+            "  {reason:<42} {total:>3} in {:>2} file(s)  {}{}",
+            per.len(),
+            head.join(" "),
+            if per.len() > 6 { " ..." } else { "" }
+        );
     }
 
     if !nulls_by_file.is_empty() {
