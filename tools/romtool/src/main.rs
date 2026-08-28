@@ -1419,13 +1419,49 @@ impl Loaded {
         file: &ssb_rom::archive::File,
         graph: &ssb_rom::scene::SceneGraph,
     ) -> Vec<ssb_rom::mobj::NodeMaterials> {
-        self.tables
+        let mut nodes = self
+            .tables
             .table_for(file.id, graph.offset)
             .and_then(|at| ssb_rom::mobj::read_table(file, at, graph.nodes.len()))
             .map(|t| t.nodes)
-            .unwrap_or_else(|| vec![Vec::new(); graph.nodes.len()])
+            .unwrap_or_else(|| vec![Vec::new(); graph.nodes.len()]);
+
+        // The colours baked into `MObjSub` are the last costume's. The record
+        // names a per-costume list alongside, and the game overwrites them
+        // from it at setup; costume 0 is the default one (RE-040).
+        if let Some(at) = self.tables.costumes_for(file.id, graph.offset) {
+            let colors = ssb_rom::matanim::costume_colors(
+                file,
+                at,
+                graph.nodes.len(),
+                |n| nodes.get(n).map_or(0, Vec::len),
+                DEFAULT_COSTUME,
+            );
+            for (chain, per_node) in nodes.iter_mut().zip(colors) {
+                for (m, c) in chain.iter_mut().zip(per_node) {
+                    let Some(c) = c else { continue };
+                    if c.prim.is_some() {
+                        m.prim_color = c.prim;
+                    }
+                    if c.env.is_some() {
+                        m.env_color = c.env;
+                    }
+                    if c.blend.is_some() {
+                        m.blend_color = c.blend;
+                    }
+                }
+            }
+        }
+        nodes
     }
 }
+
+/// Which costume the pack is built for.
+///
+/// A fighter's colours are per-costume and the game picks at match start; the
+/// converter has to pick one. Zero is the default the character select opens
+/// on — Mario in red, Luigi in green.
+const DEFAULT_COSTUME: f32 = 0.0;
 
 /// Every mesh a file yields, converted the way [`pack`] converts it.
 ///

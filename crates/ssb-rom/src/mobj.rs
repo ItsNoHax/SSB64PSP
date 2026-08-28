@@ -311,6 +311,10 @@ fn pointer_slots(file: &File) -> Vec<u32> {
 pub struct PartTables {
     /// `(model file id, DObjDesc array offset) -> table offset`.
     by_graph: BTreeMap<(u32, u32), u32>,
+    /// The same key, mapped to `p_costume_matanim_joints` — the third pointer
+    /// of the record, which supplies the per-costume colours that overwrite
+    /// the ones baked into `MObjSub` (RE-040).
+    costumes: BTreeMap<(u32, u32), u32>,
 }
 
 impl PartTables {
@@ -329,6 +333,7 @@ impl PartTables {
         accept: impl Fn(u32, u32, u32) -> bool,
     ) -> Self {
         let mut by_graph = BTreeMap::new();
+        let mut costumes = BTreeMap::new();
         for file in files {
             let targets: BTreeMap<u32, (u16, u32)> = file
                 .extern_relocs
@@ -343,10 +348,17 @@ impl PartTables {
                 };
                 if same == model && accept(model as u32, graph, table) {
                     by_graph.insert((model as u32, graph), table);
+                    // `p_costume_matanim_joints` sits one slot further on, in
+                    // the same file again.
+                    if let Some(&(also, list)) = targets.get(&(at + 8)) {
+                        if also == model {
+                            costumes.insert((model as u32, graph), list);
+                        }
+                    }
                 }
             }
         }
-        PartTables { by_graph }
+        PartTables { by_graph, costumes }
     }
 
     /// Records a pairing found some other way — stage layers name theirs
@@ -354,6 +366,11 @@ impl PartTables {
     /// [`crate::stage`].
     pub fn insert(&mut self, file: u32, graph_offset: u32, table_offset: u32) {
         self.by_graph.insert((file, graph_offset), table_offset);
+    }
+
+    /// Where a graph's per-costume colour lists live, if the record named any.
+    pub fn costumes_for(&self, file: u32, graph_offset: u32) -> Option<u32> {
+        self.costumes.get(&(file, graph_offset)).copied()
     }
 
     pub fn table_for(&self, file: u32, graph_offset: u32) -> Option<u32> {

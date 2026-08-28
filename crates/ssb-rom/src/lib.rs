@@ -17,6 +17,7 @@ pub mod collision;
 pub mod dl;
 pub mod figatree;
 pub mod fighter;
+pub mod matanim;
 pub mod mesh;
 pub mod mobj;
 pub mod pack;
