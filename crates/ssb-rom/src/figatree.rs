@@ -207,7 +207,7 @@ pub fn loop_target(data: &[u8], cmd: &Command) -> Result<usize, Desynchronised> 
 
 /// How a track's value is read back between keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum Kind {
+pub(crate) enum Kind {
     #[default]
     None,
     Step,
@@ -217,17 +217,17 @@ enum Kind {
 
 /// One track's interpolation state (`AObj`).
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct Aobj {
-    kind: Kind,
+pub(crate) struct Aobj {
+    pub(crate) kind: Kind,
     /// Frames since the key that set this track.
-    length: f32,
+    pub(crate) length: f32,
     /// Reciprocal of the track's duration — except under `Step`, where the
     /// original reuses the field for the *un*inverted switch-over frame.
-    length_invert: f32,
-    value_base: f32,
-    value_target: f32,
-    rate_base: f32,
-    rate_target: f32,
+    pub(crate) length_invert: f32,
+    pub(crate) value_base: f32,
+    pub(crate) value_target: f32,
+    pub(crate) rate_base: f32,
+    pub(crate) rate_target: f32,
 }
 
 impl Default for Aobj {
@@ -247,7 +247,7 @@ impl Default for Aobj {
 
 impl Aobj {
     /// The track's value at its current length.
-    fn value(&self) -> f32 {
+    pub(crate) fn value(&self) -> f32 {
         match self.kind {
             Kind::None => 0.0,
             Kind::Linear => self.value_base + self.length * self.rate_base,

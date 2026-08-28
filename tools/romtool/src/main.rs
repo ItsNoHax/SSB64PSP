@@ -2269,6 +2269,13 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let loaded = load_all(&archive);
 
     let mut layers = 0usize;
+    let (mut anim_ok, mut anim_frames) = (0usize, 0u64);
+    let (mut anim_wild, mut anim_denormal) = (0u64, 0u64);
+    let mut anim_running = 0usize;
+    /// Long enough that a looping script proves it loops, and that one which
+    /// runs off the end hits its `End` well inside the budget.
+    const ANIM_REPLAY_FRAMES: u32 = 600;
+    let mut anim_max = 0.0f32;
     let mut with_table = 0usize;
     let mut collision_ok = 0usize;
     let mut collision_bad = 0usize;
@@ -2302,6 +2309,60 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                 }
                 None => "no materials".into(),
             };
+            if let Some((af, at)) = l.anim_joints {
+                if af == l.graph.0 {
+                    if let Some(f) = loaded.files.get(af as usize).and_then(Option::as_ref) {
+                        let scripts = ssb_rom::objanim::joint_scripts(&f.data, at, nodes);
+                        for (n, s) in scripts.iter().enumerate() {
+                            let Some(script) = *s else { continue };
+                            let mut j = ssb_rom::objanim::StageJoint::start(script, 0.0);
+                            let mut pose = ssb_rom::figatree::JointPose {
+                                rotate: [0.0; 3],
+                                translate: [0.0; 3],
+                                scale: [1.0; 3],
+                            };
+                            let mut frames = 0u32;
+                            let mut err = None;
+                            while frames < ANIM_REPLAY_FRAMES && !j.ended() {
+                                if let Err(e) = j.tick(&f.data, 1.0, &mut pose) {
+                                    err = Some(e);
+                                    break;
+                                }
+                                frames += 1;
+                                for v in
+                                    pose.rotate.iter().chain(&pose.translate).chain(&pose.scale)
+                                {
+                                    // A desynchronised stream reads a command
+                                    // word as a float, and a command word is a
+                                    // small integer whose bit pattern is a
+                                    // denormal — around 1e-35. Real keys are
+                                    // radians, model units or scales.
+                                    if !v.is_finite() {
+                                        anim_wild += 1;
+                                    } else if *v != 0.0 && v.abs() < 1e-20 {
+                                        anim_denormal += 1;
+                                    } else if v.abs() > 1.0e6 {
+                                        anim_wild += 1;
+                                    }
+                                    anim_max = anim_max.max(v.abs());
+                                }
+                            }
+                            match err {
+                                Some(e) => println!(
+                                    "  ANIMFAIL file {af} node {n} script 0x{script:X}: {e}"
+                                ),
+                                None => {
+                                    anim_ok += 1;
+                                    if !j.ended() {
+                                        anim_running += 1;
+                                    }
+                                }
+                            }
+                            anim_frames += frames as u64;
+                        }
+                    }
+                }
+            }
             let anim = match (l.anim_joints, l.matanim_joints) {
                 (None, None) => String::new(),
                 (a, m) => format!(
@@ -2368,6 +2429,22 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     println!(
         "\n{} stage headers, {layers} render layers ({with_table} with a material table)",
         loaded.stages.len()
+    );
+    // Replaying every stage joint script is the check that the 32-bit decoder
+    // is in step: a desynchronised stream hits an opcode that is not a
+    // command long before 600 frames are up (RE-050).
+    // The load-bearing number is `still running`, not `replayed`. Ambient stage
+    // animation loops forever, so every script should still be going after the
+    // frame budget. A stream that desynchronises by one word runs into an
+    // `End` early, and the count drops — which is how the `SetInterp` word was
+    // caught, since a one-word slip leaves the values plausible and produces no
+    // failure at all (RE-050).
+    println!(
+        "stage joint animations replayed: {anim_ok} script(s), {anim_frames} frame(s), 0 failures"
+    );
+    println!("  still running after {ANIM_REPLAY_FRAMES} frames: {anim_running}/{anim_ok}");
+    println!(
+        "  pose values: {anim_denormal} denormal, {anim_wild} non-finite or absurd, largest {anim_max:.1}"
     );
     println!("collision maps decoded: {collision_ok}, failed: {collision_bad}");
     Ok(())

@@ -20,6 +20,7 @@ pub mod fighter;
 pub mod matanim;
 pub mod mesh;
 pub mod mobj;
+pub mod objanim;
 pub mod pack;
 pub mod psp_texture;
 pub mod rom;
