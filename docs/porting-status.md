@@ -33,8 +33,8 @@ Last updated: 2026-08-28.
 | N64 texture decode | 🟢 85% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; 482 real ROM textures decode and ship in the pack |
 | Texture → PSP conversion | 🟢 85% | 664 bound, 545 packed, 76.9% VRAM saved. **Cross-file texture pointers now resolve** through the archive's extern relocations, which is what stages reach their texels by: Dream Land went from 1 texture to 16 and renders textured on device (RE-037, `docs/images/m4-stage-textured.png`). 119 references still fail — 54 null pointers nothing names, 36 landing past the end of the file they name, 13 segmented, 16 missing a palette. Round-trip tested through swizzle+CLUT; verified on device (RE-022). At 1.1 MiB the full set no longer fits texture VRAM in one go — a match only needs one stage and a few fighters, but streaming is now an M8 question |
 | DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
-| Mesh conversion | 🟢 85% | 47,696 tris, vertex dedup and material merging; 0 failures archive-wide. Cross-joint vertex sharing resolved for the rest pose (RE-026); no animated skinning yet |
-| Model conversion | 🟢 60% | Meshes extracted, DObj hierarchy applied and baked, MObj materials resolved where named (RE-027). Animation not applied |
+| Mesh conversion | 🟢 88% | 47,696 tris, vertex dedup and material merging; 0 failures archive-wide. **Primitive colours are folded into the vertex shade** the way the N64 combiner does (`PRIM * SHADE`), gated on `G_SETCOMBINE` actually naming `PRIMITIVE` — without that gate Mario's white gloves came out green (RE-039). Cross-joint vertex sharing resolved for the rest pose (RE-026); no animated skinning yet |
+| Model conversion | 🟢 65% | Meshes extracted, DObj hierarchy applied and baked, MObj materials resolved where named (RE-027), primitive colours applied where the combiner reads them (RE-039). **Fighters' per-costume colours are still missing**: they live in `FTCommonPart::p_costume_matanim_joints`, a 32-bit `AObjEvent32` script per joint holding one costume per frame, which nothing reads yet — so Mario's arms wear the placeholder green baked into `MObjSub` |
 | Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested, 2722 meshes and 3137 scene-graph nodes round-trip. Version 6 adds the animation tables and each node's local rest transform, on top of the stage tables (3) and the fighter table (4) |
 | PSP asset loading | ✅ COMPLETE | 3.0 MB pack loads aligned, cache-flushed, verified on device |
 | PSP mesh drawing | 🟢 85% | Indexed GE draws, CLUT textures, wrap, baked shading, per-node baked matrices. Yoshi's 28-joint hierarchy at 60 FPS, 589us CPU |
@@ -65,7 +65,7 @@ Last updated: 2026-08-28.
 
 ## Test coverage
 
-307 host tests passing across `ssb-rom` (164), `ssb-engine` (36) and
+310 host tests passing across `ssb-rom` (167), `ssb-engine` (36) and
 `ssb-game` (107).
 
 ## M1 verification (PPSSPP)

@@ -149,7 +149,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 307 host tests passing
+* 310 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -170,6 +170,10 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
+* **Fighters wear placeholder colours on their flat-shaded parts.** Mario's
+  cap, torso, gloves and shoes are right; his arms and thighs are green and
+  orange because the per-costume colours live in a `FTCommonPart` pointer
+  nothing reads yet. See RE-039.
 * 119 of 664 bound textures still fail to convert: 54 pointers nothing
   resolves, 36 landing past the end of the file they name, 13 segmented
   addresses and 16 missing a palette.

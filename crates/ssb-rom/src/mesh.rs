@@ -81,7 +81,13 @@ pub struct MeshMaterial {
     pub lit: bool,
     pub smooth: bool,
     pub z_buffer: bool,
-    pub prim_color: [u8; 4],
+    /// `G_SETPRIMCOLOR`, when the list or an `MObj` set one.
+    ///
+    /// `None` is not the same as black: most of Mario's model is flat-shaded,
+    /// its vertices carry a **greyscale shade** rather than a colour, and the
+    /// colour comes entirely from here. A primitive that never set one must
+    /// keep its shade unmodulated (RE-039).
+    pub prim_color: Option<[u8; 4]>,
     pub env_color: [u8; 4],
     pub blend_color: [u8; 4],
 }
@@ -188,6 +194,28 @@ impl<'a> Source<'a> {
     }
 }
 
+/// Whether cycle 0's RGB output reads the primitive colour.
+///
+/// `G_SETCOMBINE` picks four sources per cycle — `(A - B) * C + D` — and the
+/// codes for A/B/C/D differ in width and meaning. Only three of them matter
+/// here: whether `PRIMITIVE` appears at all in cycle 0's colour equation.
+///
+/// It has to be asked, because the same model answers differently per part.
+/// Mario's upper arms and thighs combine `PRIM * SHADE`; his gloves and shoes
+/// take `SHADE` alone and would come out wearing whatever primitive colour was
+/// last set — which is exactly how folding the colour in unconditionally
+/// turned his white gloves green (RE-039).
+fn combiner_uses_prim(hi: u32, lo: u32) -> bool {
+    // A: 4 bits, PRIMITIVE = 3. B: 4 bits, PRIMITIVE = 3.
+    // C: 5 bits, PRIMITIVE = 3. D: 3 bits, PRIMITIVE = 3.
+    const PRIM: u32 = 3;
+    let a0 = (hi >> 20) & 0xF;
+    let c0 = (hi >> 15) & 0x1F;
+    let b0 = (lo >> 28) & 0xF;
+    let d0 = (lo >> 15) & 0x7;
+    a0 == PRIM || b0 == PRIM || c0 == PRIM || d0 == PRIM
+}
+
 /// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
@@ -215,6 +243,11 @@ struct State {
     palette_file: Option<u16>,
     palette_entries: u16,
     texture_enabled: bool,
+    /// Whether the combiner in force reads the primitive colour.
+    ///
+    /// Starts false: a list that draws before setting a combiner is a list we
+    /// cannot say uses `PRIM`, and leaving the shade alone is the safe answer.
+    combiner_prim: bool,
     /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
     mobjs: Vec<crate::mobj::MObjMaterial>,
 }
@@ -235,6 +268,7 @@ impl State {
             palette_file: None,
             palette_entries: 0,
             texture_enabled: false,
+            combiner_prim: false,
             mobjs: Vec::new(),
         }
     }
@@ -288,7 +322,7 @@ impl State {
             self.timg_file = None;
         }
         if let Some(c) = m.prim_color {
-            self.material.prim_color = c;
+            self.material.prim_color = Some(c);
         }
         if let Some(c) = m.env_color {
             self.material.env_color = c;
@@ -342,7 +376,24 @@ struct Builder {
 }
 
 impl Builder {
-    fn push_vertex(&mut self, v: MeshVertex) -> Result<u16, MeshError> {
+    /// Adds a vertex, folding the primitive colour into its shade first.
+    ///
+    /// The N64 combiner multiplies `PRIM * SHADE`, and for a flat-shaded model
+    /// the vertex bytes are the shade: Mario's are pure greys. Doing that
+    /// multiply here rather than at draw time costs nothing at runtime and
+    /// needs no second colour source in the vertex format — and the dedup
+    /// below turns a vertex shared by two primitives of different colours into
+    /// two entries by itself, because the folded colour is part of the key.
+    fn push_vertex(&mut self, mut v: MeshVertex) -> Result<u16, MeshError> {
+        if let Some(c) = self.material.prim_color {
+            for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
+                *shade = ((*shade as u16 * prim as u16) / 255) as u8;
+            }
+            // Shade alpha is not a coverage value here — Mario's vertices are
+            // all zero — so the primitive's alpha is the one that means
+            // something. Multiplying would make him invisible.
+            v.rgba[3] = c[3];
+        }
         if let Some(&i) = self.seen.get(&v) {
             return Ok(i);
         }
@@ -459,6 +510,10 @@ pub fn convert_sequence(items: &[SequenceItem], src: Source<'_>) -> Vec<Result<M
         let mut builder = Builder {
             material: MeshMaterial {
                 texture: state.current_texture(),
+                prim_color: state
+                    .combiner_prim
+                    .then_some(state.material.prim_color)
+                    .flatten(),
                 ..state.material
             },
             ..Builder::default()
@@ -627,7 +682,9 @@ fn walk(
                 state.material.z_buffer = apply(state.material.z_buffer, G_ZBUFFER);
             }
 
-            Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = rgba,
+            Cmd::SetCombine { hi, lo } => state.combiner_prim = combiner_uses_prim(hi, lo),
+
+            Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = Some(rgba),
             Cmd::SetEnvColor(c) => state.material.env_color = c,
             Cmd::SetBlendColor(c) => state.material.blend_color = c,
 
@@ -639,6 +696,10 @@ fn walk(
         // they are merged again at the end.
         let material = MeshMaterial {
             texture: state.current_texture(),
+            prim_color: state
+                .combiner_prim
+                .then_some(state.material.prim_color)
+                .flatten(),
             ..state.material
         };
         if material != builder.material {
@@ -942,6 +1003,9 @@ mod tests {
         let blue = [0, 0, 255, 255];
         let cmds = [
             vtx(3),
+            // A combiner that reads PRIMITIVE, so the colour is part of the
+            // material rather than ignored.
+            Cmd::SetCombine { hi: 3 << 20, lo: 0 },
             Cmd::SetPrimColor {
                 m: 0,
                 l: 0,
@@ -970,7 +1034,7 @@ mod tests {
         let red_prim = mesh
             .primitives
             .iter()
-            .find(|p| p.material.prim_color == red)
+            .find(|p| p.material.prim_color == Some(red))
             .expect("red primitive");
         assert_eq!(red_prim.triangle_count(), 2, "both red runs merged");
     }
@@ -1298,5 +1362,74 @@ mod tests {
         let mesh = convert(&cmds, src).unwrap();
         let t = mesh.primitives[0].material.texture.expect("bound texture");
         assert_eq!(t.data_file, None);
+    }
+
+    #[test]
+    fn a_primitive_colour_the_combiner_ignores_does_not_reach_the_material() {
+        // Mario's gloves and shoes take SHADE alone. Folding in whatever
+        // primitive colour was last set turns them green, which is exactly
+        // what happened (RE-039).
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            // (A - B) * C + D with every source something other than PRIM.
+            Cmd::SetCombine {
+                hi: 0x00FF_FE05,
+                lo: 0xFF16_7DFF,
+            },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [0, 206, 0, 255],
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.primitives[0].material.prim_color, None);
+        // And the shade is left exactly as the vertex carried it.
+        assert_eq!(mesh.vertices[0].rgba, [0xFF; 4], "vertex_data writes white");
+    }
+
+    #[test]
+    fn a_primitive_colour_the_combiner_reads_is_folded_into_the_shade() {
+        // `PRIM * SHADE` is the combiner Mario's arms and thighs use, and the
+        // vertices carry a grey shade rather than a colour.
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            Cmd::SetCombine { hi: 3 << 20, lo: 0 },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [255, 0, 0, 255],
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let got = mesh.vertices[0].rgba;
+        assert_eq!(got[0], 0xFF, "red passes through unchanged");
+        assert_eq!(got[1], 0, "green is multiplied out");
+        assert_eq!(got[2], 0, "and so is blue");
+        assert_eq!(got[3], 255, "alpha comes from the primitive colour");
+    }
+
+    #[test]
+    fn every_combiner_slot_that_can_name_prim_is_recognised() {
+        // A, B, C and D are different widths at different shifts; reading any
+        // of them wrong would silently drop a colour or invent one.
+        assert!(combiner_uses_prim(3 << 20, 0), "A");
+        assert!(combiner_uses_prim(3 << 15, 0), "C");
+        assert!(combiner_uses_prim(0, 3 << 28), "B");
+        assert!(combiner_uses_prim(0, 3 << 15), "D");
+        assert!(!combiner_uses_prim(0, 0), "nothing names it");
+        // Mario's own three, from file 296: textured, PRIM * SHADE, SHADE.
+        assert!(
+            !combiner_uses_prim(0x0012_7e05, 0xff17_f3ff),
+            "TEXEL0 * SHADE"
+        );
+        assert!(combiner_uses_prim(0x0032_7e05, 0xff17_fdff), "PRIM * SHADE");
+        assert!(!combiner_uses_prim(0x00ff_fe05, 0xff16_7dff), "SHADE alone");
     }
 }
