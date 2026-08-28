@@ -2624,9 +2624,7 @@ reads the same address either guard would.
 because these were not failing conversions; they were materials whose texture
 was not being read at all.
 
-**It did not fix Dream Land's ground.** Those two nodes' `MObj`s have none of
-the three flags set, so they genuinely supply no sprite, and the `G_SETTIMG(0)`
-before them has no relocation to resolve. They are in the 54 "null pointer,
+**It did not fix Dream Land's ground.** They are in the 54 "null pointer,
 nothing resolves it" class, and that class is now the whole of the remaining
 visible problem rather than one of several candidates.
 
@@ -2635,3 +2633,111 @@ adds 31 textures without moving the failure count. **The white ground is not
 fixed**, and its cause is now narrowed to a single question: what a
 `G_SETTIMG` of zero, with no relocation and no `MObj` sprite, is supposed to
 resolve to.
+
+> **Correction (RE-046).** This entry originally explained the surviving white
+> by asserting that those two `MObj`s "have none of the three flags set, so
+> they genuinely supply no sprite". That is false. Their `MObjSub.flags` is
+> `0x006B`, which includes both `ALPHA` and `SPLIT`. The claim came from
+> reading the *converter's* output — `sprite: None` — and reporting it as a
+> fact about the ROM, when it was a fact about the bug. The real cause was one
+> level further down and is in RE-046. The framing "narrowed to a single
+> question" was therefore confidently wrong about which question.
+
+## RE-046 — A material's sprite table can leave the file too
+
+**Question.** After RE-045, Dream Land's ground still drew white, and the
+texture report still said 54 references were "null pointer, nothing resolves
+it". What is a `G_SETTIMG(0)` with no relocation and no `MObj` sprite supposed
+to resolve to?
+
+**The premise was wrong.** The `MObj`s do have sprites. Read straight out of
+the file, Dream Land's two ground materials are:
+
+```
+node 2 mobjsub @0x1F78: flags=0x006B sprites=0x00001F60 palettes=0x00000000
+node 3 mobjsub @0x1FF0: flags=0x006B sprites=0x00001F6C palettes=0x00000000
+```
+
+`0x6B` includes `ALPHA` and `SPLIT`, so RE-045's gate passes and the sprite
+table is read. Every entry in it reads back zero:
+
+```
+sprites[0..3] = 0x0, 0x0, 0x0
+```
+
+**They are zero because they leave the file.** The archive blanks a pointer
+that targets another file and records an extern relocation instead. File 104's
+relocation list has one for every entry of both tables:
+
+```
+EXT 0x001F60 -> file 103 +0x1BE0     node 2 sprites[0]
+EXT 0x001F64 -> file 103 +0x1E10
+EXT 0x001F68 -> file 103 +0x2040
+EXT 0x001F6C -> file 103 +0x1BE0     node 3 sprites[0]
+```
+
+This is exactly RE-037 — a stage's texels living in a separate archive file —
+one level deeper than RE-037 looked. RE-037 taught `G_SETTIMG` to follow an
+extern relocation. The `MObjSub` sprite and palette tables need the same thing
+and did not have it.
+
+**Two rules had to change.** `read_material`'s `indirect()` required the table
+entry to be an *intern* relocation:
+
+```rust
+(array != 0 && is_ptr(at + field) && is_ptr(array))
+```
+
+`pointer_slots()` builds `is_ptr` from `intern_relocs` only, so a cross-file
+entry fails that test; and even if it passed, the word behind it is zero. The
+entry is now resolved as either an intern pointer or an extern one, and
+`MObjMaterial::sprite`/`palette` carry an optional file id the way
+`TextureRef` already did.
+
+**Result.** Dream Land's ground resolves to file 103 `+0x1BE0`, a 32×32 CI4
+with a TLUT, and **renders as the stage's basket-weave underside on device**.
+The stage goes from 17 to 19 of its 20 references packed.
+
+**The count was also wrong.** The report deduplicated textures on
+`(home file, data offset)`. Every unresolved reference has offset zero, so all
+of them in a file collapsed to one entry — "54 null pointers" was counting
+*files*, not textures. Keying on the dimensions as well, the honest totals are:
+
+| | before | after |
+|---|---|---|
+| unique references bound | 695 | **732** |
+| packed | 612 | **615** |
+| failed | 83 | **117** |
+| unresolved `G_SETTIMG(0)` | 54 | **75**, across 54 files |
+
+The rise in "failed" is a reporting fix, not a regression: those references
+were always failing and were being hidden by the collapse. Segmented addresses
+went 13 → 26 the same way.
+
+**What the remaining 75 need is not in the ROM.** They belong to 71 scene
+graphs that no data structure names. A fighter's table is named by
+`FTCommonPart` and a stage layer's by `MPGroundDesc` (RE-030), both of which
+this crate reads. These graphs are paired in *code*:
+
+```c
+gGRCommonStruct.pupupu.map_gobj[1] = grPupupuMakeMapGObj(
+    &llGRPupupuMapWhispyMouthTransformKindsDObjDesc,
+    &llGRPupupuMapWhispyMouthTransformKindsMObjSub, ...);
+```
+
+The graph offset and the table offset are two link-time constants passed as
+arguments. There is no record in the data that relates them, so recovering
+them from the ROM alone would mean searching each file for a table that
+happens to parse for that graph — the kind of fingerprint that fits by
+coincidence often enough to be worthless. Note too that `map_gobj[2]` and
+`[3]` pass `o_mobjsub = 0x0`: some of these graphs correctly have no material
+table at all, so even a perfect search has no unique right answer to find.
+
+Dream Land's four remaining unresolved references are Whispy Woods' eyes and
+mouth. The trunk, the ground, the platforms and the foliage all draw.
+
+**Confidence: high.** The sprite table's extern relocations are read from the
+archive's own relocation record, not inferred, and the recovered address is
+the one the relocation names. The result is visible: the stage's underside
+draws its texture. **The remaining 75 are not fixed**, and the reason is that
+the pairing they need was a compile-time constant in the game's code.
