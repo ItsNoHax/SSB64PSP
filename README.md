@@ -135,6 +135,9 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   189 of their movement animations
 * **Textured, shaded models placed by the scene graph render on device at
   60 FPS**, fighters in their own recovered palettes
+* **Fighters render in their own colours** — flat-shaded parts take the
+  combiner's `PRIM * SHADE`, with the per-costume colour recovered from the
+  material-animation script that holds one costume per frame
 * **Stages render textured on device** — their texels live in a separate
   archive file, reached through the relocations the converter now follows
 * **All 41 stages' collision geometry** decoded, packed and queried; the ported
@@ -149,7 +152,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
   four ways: poses match the ROM across 3444 joints, no bone changes length in
   204,547 measurements over all 189 animations, feet stay planted through the
   grounded poses, and Turn's opening frame renders as a standing Mario
-* 310 host tests passing
+* 315 host tests passing
 
 ![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
 
@@ -170,10 +173,8 @@ materials, not a wrong pose — see the limitations below.*
   (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
 * Materials use a majority-vote lighting heuristic, and some `MObj` fields that
   affect appearance are still ignored.
-* **Fighters wear placeholder colours on their flat-shaded parts.** Mario's
-  cap, torso, gloves and shoes are right; his arms and thighs are green and
-  orange because the per-costume colours live in a `FTCommonPart` pointer
-  nothing reads yet. See RE-039.
+* Only **costume 0** is packed for each fighter, so the alternate palettes a
+  match would let you pick are not in the pack.
 * 119 of 664 bound textures still fail to convert: 54 pointers nothing
   resolves, 36 landing past the end of the file they name, 13 segmented
   addresses and 16 missing a palette.

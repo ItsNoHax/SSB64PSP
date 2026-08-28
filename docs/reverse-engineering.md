@@ -2265,3 +2265,89 @@ instead of the ten joint tracks.
 against Mario's own three combiner words. The remaining colours are a known
 gap with a named source, not a mystery. Screenshot:
 `docs/images/m4-fighter-colours.png`.
+
+---
+
+## RE-040 — A fighter's colours are a script, one costume per frame
+
+**Question.** RE-039 got Mario's flat-shaded parts coloured but wearing the
+wrong ones: green upper arms, orange thighs. The values came from
+`MObjSub::primcolor` and the raw bytes really did say green, so the question
+was where the game gets red from.
+
+**The record's third pointer.** `FTCommonPart` has three, and RE-027 recovered
+the first two:
+
+```c
+struct FTCommonPart {
+    DObjDesc *dobjdesc;                       // RE-027
+    MObjSub ***p_mobjsubs;                    // RE-027
+    AObjEvent32 ***p_costume_matanim_joints;  // this
+    u8 flags;
+};
+```
+
+`lbCommonAddMObjForFighterPartsDObj` attaches the third, evaluates it, and
+throws the `AObj`s away again — so it is a one-shot overwrite of the baked
+colour rather than an animation that runs:
+
+```c
+gcAddMObjMatAnimJoint(mobj, costume_matanim_joint, anim_frame);
+gcParseMObjMatAnimJoint(mobj);
+gcPlayMObjMatAnim(mobj);
+gcRemoveAObjFromMObj(mobj);
+```
+
+**And `anim_frame` is `fp->costume`.** That is the whole idea: one script per
+material holds *every* costume, one per frame. Mario's upper arm, at file 296
+offset `0x2744`:
+
+```
+24008000  ff0000ff    SetExtValAfterBlock(PrimColor, 0)   costume 0 — red
+24008001  ffe700ff    SetExtValAfterBlock(PrimColor, 1)   costume 1 — yellow
+24008001  f7e78cff    SetExtValAfterBlock(PrimColor, 1)   costume 2
+24008001  5242ffff    SetExtValAfterBlock(PrimColor, 1)   costume 3 — blue
+26008001  00ce00ff    SetExtValAfter(PrimColor, 1)        costume 4 — green
+04000061              Wait(97)
+00000000              End
+```
+
+The green that was reaching his sleeves is the **last** entry. `MObjSub`'s
+baked colour is simply whatever the exporter left there, and it is the final
+costume — which is why Luigi's baked value `(0, 181, 0)` looked nearly right
+while Mario's looked absurd. Both are alternates; Luigi's alternate happens to
+be green too.
+
+**The encoding is not the figatree one.** `AObjEvent32` is a single `u32` per
+command:
+
+```text
+bits  31..25   24..15   14..0
+      opcode   flags    payload
+```
+
+Both the track mask and the duration are in the command word — there is no
+`toggle` word — and each set track is followed by one `u32` of value. For a
+colour track those four bytes *are* the colour: `gcPlayMObjMatAnim` reads
+`*(SYColorPack*)&aobj->value_target` rather than converting a float. Opcode 18
+is `SetExtValAfterBlock`, 19 `SetExtValAfter`, and `nGCAnimKindStep` selects
+`value_target` once `length_invert <= length`, which at frame *n* is the *n*th
+entry.
+
+**Implementation.** `crates/ssb-rom/src/matanim.rs`. Opcodes the decoder does
+not model are an error rather than a skip: guessing a word count
+desynchronises the stream, and a colour read from a desynchronised stream still
+looks like a colour. The costume list is chosen at pack time —
+`DEFAULT_COSTUME = 0`, the one the character select opens on.
+
+**Result.** Mario renders in red and blue: red cap and sleeves, blue overalls,
+white gloves, textured torso (`docs/images/m4-fighter-colours.png`). Nothing
+about the animation checks moved — poses still match the ROM across 3444
+joints and no bone stretches.
+
+**Confidence: high.** The decode is pinned by a unit test holding Mario's arm
+script verbatim and asserting all five costumes, and the result is the colour
+the character is known to be. **Open:** only costume 0 is packed, so the
+alternate palettes are unreachable until a match can choose one; the material
+tracks other than the three colours (texture ids, UV scroll, palette id) are
+decoded far enough to step over and no further.
