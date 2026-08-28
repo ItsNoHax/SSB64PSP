@@ -293,6 +293,14 @@ impl StageAnimator {
         }
     }
 
+    /// The node a joint drives, and the pose it has reached. Exposed so a
+    /// verifier can compare a packed replay against one run straight off the
+    /// archive, which is the check that the packing path — script offsets, node
+    /// indices, the copied blob — is right (RE-052).
+    pub fn joint(&self, i: usize) -> Option<(u32, &JointPose)> {
+        (i < self.count).then(|| (self.nodes[i], &self.poses[i]))
+    }
+
     /// Advances every joint one tick. `script` is the animation file's bytes,
     /// which the joint offsets index into.
     pub fn tick(&mut self, script: &[u8]) -> Result<(), crate::objanim::AnimError> {

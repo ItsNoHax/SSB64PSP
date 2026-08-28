@@ -181,8 +181,9 @@ materials, not a wrong pose — see the limitations below.*
 * Stage **material** animations (12 layers) are read but not played. Their
   frame 0 matches the colours already rendered, so nothing draws wrong; the
   scenery simply does not change colour (RE-048).
-* Nothing checks a posed *stage* node against the original frame by frame, the
-  way fighter animations are checked against the ROM.
+* Stage animation is checked against the *archive* but not against the console:
+  both sides of that comparison run this crate's own player, so a shared
+  misreading of the format would agree with itself (RE-052).
 * 28 nodes ask for the `0x8000` transform kind (a recomputed rotation) that is
   still drawn plainly.
 * Only **costume 0** is packed for each fighter, so the alternate palettes a
@@ -246,8 +247,10 @@ cargo run --release -p romtool -- anims "rom/…z64" --verify
 cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
     --pack assets/generated/ssb64.pak
 
-# Every stage's joint animation, replayed against its scene graph
-cargo run --release -p romtool -- stages "rom/…z64"
+# Every stage's joint animation, replayed against its scene graph -- and,
+# with --pack, every packed pose compared against the archive it came from
+cargo run --release -p romtool -- stages "rom/…z64" \
+    --pack assets/generated/ssb64.pak
 
 # Which textures convert, and why the rest do not
 cargo run --release -p romtool -- textures "rom/…z64"
