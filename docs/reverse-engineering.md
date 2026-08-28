@@ -3128,3 +3128,58 @@ and moving paths are one piece of code.
 original frame by frame, the way `figatree` does for fighters against the ROM.
 The material animations (12 layers) are still not played, and their frame 0
 already matches what renders, so nothing is visibly wrong from that.
+
+## RE-052 — Checking the packed stage animation against the archive
+
+**Question.** RE-051 got stage scenery moving on device, but nothing compared a
+*packed* stage pose against the original the way `figatree` does for fighters.
+That gap is where RE-051's one real bug had lived. Close it.
+
+**The check.** `romtool stages --pack` replays every packed stage animation
+twice: once through `StageAnimator` reading the pack's tables and blob, and
+once by rebuilding the same joints straight off the archive file. Both run 240
+frames and every one of the ten track values is compared per joint per frame.
+It also asserts the packed blob is the archive file byte for byte, because an
+altered byte would leave every offset agreeing while the data under them moved.
+
+This is not testing the decoder — RE-050 already replayed that against the ROM.
+It tests everything the *packing* adds between archive and device: script
+offsets, node indices, the copied blob, and which table row a stage lands in.
+
+**It found a second bug immediately.** Stage 5 (file 107) failed with a script
+offset of 202,375,168 — not an offset at all. The `anim_joints` table was being
+read with the *object's* node count:
+
+```rust
+let nodes = writer.object_node_count(object).unwrap_or(0) as usize;
+```
+
+An object is not just its graph. The packer appends "extra leaf nodes for lists
+a node could not hold" — 20 of them archive-wide — so `object.node_count`
+exceeds the graph's, and reading the table that far walks off its end into
+whatever follows. Nine of the 215 "animated nodes" were bytes past the end of a
+table, read as pointers.
+
+The count is now the graph's own, and the packed total drops 215 → **206**,
+which is exactly the number of scripts the host-side replay finds. Two
+independent paths agreeing on 206 is worth more than either number alone.
+
+**Result.**
+
+```
+stage animations replayed from assets/generated/ssb64.pak: 35 stage(s), 206 joint(s)
+  444960 pose value(s) compared against the archive
+            every packed pose matches the archive exactly
+```
+
+Note also that the on-device stage view's triangle count returned to 495 from
+175 once RE-051's ordering bug was fixed — the fighter had been drawing with a
+stage's skeleton. That number is now the cheapest regression signal for this
+whole area, which is worth knowing given how much passed while it was wrong.
+
+**Confidence: high.** The two replays are independent in the way that matters —
+one reads the pack, the other the archive — and 444,960 compared values agree
+exactly. What is still *not* checked is faithfulness to the original console:
+both paths run this crate's own player, so a shared misreading of the format
+would agree with itself. RE-050's opcode semantics come from the decompilation
+rather than from this check.

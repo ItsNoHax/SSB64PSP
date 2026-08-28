@@ -79,7 +79,7 @@ USAGE:
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
                                [--search] [--expect-tables <tables.tsv>]
-    romtool stages   <rom.z64> [--file <id>] [--lines]
+    romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
@@ -1106,7 +1106,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             let Some(first_node) = writer.object_first_node(object) else {
                 continue;
             };
-            let nodes = writer.object_node_count(object).unwrap_or(0) as usize;
+            // The *graph's* node count, not the object's. An object also holds
+            // the extra leaf nodes the packer adds for lists a node could not
+            // carry, and reading the `anim_joints` table that far walks past
+            // its end into whatever follows — which yields script offsets that
+            // are not offsets (RE-052).
+            let nodes = loaded
+                .graphs
+                .get(&layer.graph.0)
+                .and_then(|gs| gs.iter().find(|g| g.offset == layer.graph.1))
+                .map_or(0, |g| g.nodes.len());
             for (i, script) in ssb_rom::objanim::joint_scripts(&file.data, at, nodes)
                 .into_iter()
                 .enumerate()
@@ -1648,6 +1657,158 @@ fn unconvertible_without_materials(
     file: &ssb_rom::archive::File,
 ) -> bool {
     ssb_rom::mobj::demand(cmds, &file.data) > 0
+}
+
+/// Replays every packed stage animation twice — once out of the pack, once
+/// straight off the archive — and requires the two to agree frame for frame.
+///
+/// This is the check the fighter animations have had since RE-036 and stage
+/// ones did not. It is not testing the decoder, which RE-050 already replayed
+/// against the ROM; it is testing everything the *packing* added between the
+/// archive and the device: the script offsets, the node indices, the copied
+/// blob and the table row a stage's animation ends up in. That is exactly where
+/// the one real bug lived — 35 rows written ahead of the fighter block, which
+/// every existing check passed straight over (RE-051).
+fn verify_stage_anims_against_pack(loaded: &Loaded, pack_path: &Path) -> Res {
+    use ssb_rom::objanim::StageJoint;
+    use ssb_rom::skeleton::StageAnimator;
+
+    const FRAMES: u32 = 240;
+
+    let bytes = fs::read(pack_path).map_err(|e| format!("{}: {e}", pack_path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+
+    let (mut stages, mut joints, mut compared, mut mismatched) = (0usize, 0usize, 0u64, 0u64);
+    let mut worst = 0.0f32;
+
+    for stage_index in 0..pack.stage_count() {
+        let Some(a) = pack.stage_anim(stage_index) else {
+            continue;
+        };
+        let Some(packed_script) = pack.anim_script(&a) else {
+            return Err(format!("stage {stage_index}: packed script bytes missing").into());
+        };
+        let Some(file) = loaded
+            .files
+            .get(a.source_file as usize)
+            .and_then(Option::as_ref)
+        else {
+            return Err(
+                format!("stage {stage_index}: source file {} absent", a.source_file).into(),
+            );
+        };
+        // The blob is meant to be the archive file verbatim; a differing byte
+        // would make every offset below agree while the data underneath moved.
+        if packed_script != file.data.as_slice() {
+            return Err(format!(
+                "stage {stage_index}: packed bytes differ from archive file {}",
+                a.source_file
+            )
+            .into());
+        }
+        stages += 1;
+
+        let mut from_pack = StageAnimator::new();
+        from_pack.start(&pack, &a);
+
+        // The same joints, rebuilt from the archive rather than read out of the
+        // pack, so a wrong offset in the table shows up as a diverging pose.
+        // Built by filtering the table the same way `StageAnimator::start`
+        // does, because it skips unusable rows — indexing `first_joint + i`
+        // against `joint(i)` would silently pair different joints.
+        let mut direct: Vec<(u32, StageJoint, ssb_rom::figatree::JointPose)> = Vec::new();
+        for i in 0..a.joint_count {
+            if direct.len() == ssb_rom::skeleton::MAX_STAGE_JOINTS {
+                break;
+            }
+            let Some(entry) = pack.anim_joint(a.first_joint + i) else {
+                continue;
+            };
+            if entry.script == ssb_rom::pack::AnimJoint::NO_SCRIPT
+                || entry.node == ssb_rom::pack::AnimJoint::NO_NODE
+            {
+                continue;
+            }
+            let node = entry.node;
+            let Some(rest) = pack.node(node) else {
+                continue;
+            };
+            direct.push((
+                node,
+                StageJoint::start(entry.script, 0.0),
+                ssb_rom::figatree::JointPose {
+                    rotate: rest.rest_rotate,
+                    translate: rest.rest_translate,
+                    scale: rest.rest_scale,
+                },
+            ));
+            joints += 1;
+        }
+        if direct.len() != from_pack.joint_count() {
+            return Err(format!(
+                "stage {stage_index}: rebuilt {} joints, animator loaded {}",
+                direct.len(),
+                from_pack.joint_count()
+            )
+            .into());
+        }
+
+        for _ in 0..FRAMES {
+            if let Err(e) = from_pack.tick(packed_script) {
+                return Err(format!(
+                    "stage {stage_index} (file {}): pack replay failed: {e}",
+                    a.source_file
+                )
+                .into());
+            }
+            for (node, j, pose) in direct.iter_mut() {
+                if let Err(e) = j.tick(&file.data, 1.0, pose) {
+                    return Err(format!(
+                        "stage {stage_index} (file {}) node {node}: archive replay failed: {e}",
+                        a.source_file
+                    )
+                    .into());
+                }
+            }
+            for (i, (node, _, want)) in direct.iter().enumerate() {
+                let (got_node, got) = from_pack.joint(i).expect("in range");
+                if got_node != *node {
+                    return Err(format!(
+                        "stage {stage_index} joint {i}: pack says node {got_node}, archive {node}"
+                    )
+                    .into());
+                }
+                for (g, w) in got
+                    .rotate
+                    .iter()
+                    .chain(&got.translate)
+                    .chain(&got.scale)
+                    .zip(want.rotate.iter().chain(&want.translate).chain(&want.scale))
+                {
+                    compared += 1;
+                    let d = (g - w).abs();
+                    if d > worst {
+                        worst = d;
+                    }
+                    if d > 0.0 {
+                        mismatched += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    println!(
+        "\nstage animations replayed from {}: {stages} stage(s), {joints} joint(s)",
+        pack_path.display()
+    );
+    println!("  {compared} pose value(s) compared against the archive");
+    if mismatched == 0 {
+        println!("            every packed pose matches the archive exactly");
+    } else {
+        return Err(format!("{mismatched} pose value(s) differ, worst {worst}").into());
+    }
+    Ok(())
 }
 
 /// Every floor segment of a stage, in the form the collision query wants.
@@ -2324,11 +2485,13 @@ fn surface_flags(flags: u16) -> String {
 fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
     let mut verbose = false;
+    let mut pack_path: Option<PathBuf> = None;
     let mut it = opts.iter();
     while let Some(o) = it.next() {
         match *o {
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
             "--lines" => verbose = true,
+            "--pack" => pack_path = it.next().map(PathBuf::from),
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -2530,6 +2693,10 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
         "  pose values: {anim_denormal} denormal, {anim_wild} non-finite or absurd, largest {anim_max:.1}"
     );
     println!("collision maps decoded: {collision_ok}, failed: {collision_bad}");
+
+    if let Some(pack_path) = pack_path {
+        verify_stage_anims_against_pack(&loaded, &pack_path)?;
+    }
     Ok(())
 }
 
