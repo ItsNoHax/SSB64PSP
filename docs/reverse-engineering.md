@@ -2522,3 +2522,60 @@ are *correct* — they are white in the game too.
 `romtool textures --file 104` and the draw dump, and the combiner is now
 implemented rather than hypothesised — which is what turned "one hypothesis
 short of proven" into a ruled-out cause and a named remaining one.
+
+---
+
+## RE-044 — A tile's size is not the texture's size
+
+**Question.** RE-043 narrowed the last white surfaces to texture conversion:
+Dream Land bound 19 textures and packed 16, and 119 of the archive's 664
+references failed. The largest single class was 36 whose data ran past the end
+of the file holding it — which looked like a resolution bug, since an offset
+that lands outside its own file is not a plausible thing for the game to ship.
+
+**It was not the offset.** Printing the failures with their dimensions:
+
+```
+file 103 @0x000e20  256x128  Ci/Bits4  need 16384  end 20000  len 12224  <<<
+file 103 @0x001880  192x96   Ci/Bits4  need  9216  end 15488  len 12224  <<<
+```
+
+A 256x128 CI4 texture needs 16 KiB out of a 12 KiB file. The offsets are fine;
+the **dimensions** are wrong, and by enough that the texture is larger than
+everything around it.
+
+**`G_SETTILESIZE` is the rectangle being drawn.** The converter was taking it
+as the texture's extent. For a texture that *wraps*, the drawn rectangle is
+larger — often much larger — than the texture: Dream Land renders a 64x32 tile
+across a 256x128 span of ground. What says how big the texture actually is are
+`masks` and `maskt` in `G_SETTILE`, because the RDP repeats it every
+`1 << mask` texels. A mask of zero means it does not wrap, and then the drawn
+rectangle *is* the texture.
+
+Taking `min(drawn, 1 << mask)` per axis is the whole fix.
+
+**Result.** Every one of the 36 goes away — not most of them, all of them,
+which is what a correct reading of a field looks like against a guess that
+happens to help. Archive-wide **545 packed of 664 rises to 581**; Dream Land
+goes from 16 of 19 to 18, and its ground draws textured instead of white.
+
+**And the VRAM problem was the same bug.** Textures had been converted at their
+*drawn* size all along, inflating every wrapping one by the area it covered:
+
+```
+before   packed 1077.9 KiB   1.5x over the ~700 KiB budget — needs streaming
+after    packed  607.4 KiB   fits, all at once
+```
+
+The pack shrank from 3711 KiB to 3062 KiB and draw calls fell from 4302 to
+3739, because textures that are the same size now merge where before they
+differed. The per-scene texture residency RE-022 recorded as a requirement is
+not one; it was an artefact of measuring the wrong number.
+
+**Confidence: high.** The rule is the RDP's own, the failure class it addresses
+goes to zero rather than down, and the on-device result is the surface drawing
+its texture (`docs/images/m4-fighter-status.png`).
+
+**Still failing: 83.** 54 null pointers nothing resolves, 28 paletted without a
+recorded TLUT, 16 `MissingPalette` at decode, 13 segmented addresses — the
+palette-tracking cases are now the largest group.
