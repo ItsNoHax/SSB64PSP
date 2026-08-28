@@ -114,8 +114,8 @@ triangles                25562
 triangle corners         76686
 unique vertices          36693
 vertex reuse             2.09x
-draw calls after merge   2505
-textured draws           1361
+draw calls after merge   2483
+textured draws           1280
 
 geometry memory
   triangle soup, float     1797.3 KiB
@@ -138,29 +138,36 @@ Three compounding wins, all paid for at build time:
 All the game's geometry fits in **580 KiB**, comfortable against 32 MiB of main
 RAM.
 
+These are *root-list* figures and are deliberately smaller than the pack's
+(2722 meshes, 47,696 triangles). This command converts each root display list
+on its own; the packer walks each scene graph in draw order through one shared
+vertex cache, which reaches the continuation lists a standalone conversion
+cannot enter (RE-025, RE-026). Neither number is wrong — they measure different
+traversals, and the gap between them is the scene-graph work.
+
 ## Texture conversion results
 
 `romtool textures` extracts every texture the display lists actually bind and
 packs it for the GE:
 
 ```
-unique textures bound  469
-packed                 336
-swizzled               260 (77%)
+unique textures bound  664
+packed                 545
+swizzled               401 (74%)
 
 by PSP format:
-  Psm8888     54 textures      355.6 KiB
-  PsmT4      274 textures      427.9 KiB
-  PsmT8        8 textures       18.3 KiB
+  Psm8888     65 textures      404.6 KiB
+  PsmT4      468 textures      644.9 KiB
+  PsmT8       12 textures       28.3 KiB
 
 VRAM budget
-  packed (chosen formats)      801.8 KiB
-  naive, all RGBA8888         3259.1 KiB
-  saving                        75.4%
+  packed (chosen formats)     1077.9 KiB
+  naive, all RGBA8888         4711.1 KiB
+  saving                        77.1%
 ```
 
-**75.4% saved** by keeping paletted textures paletted. `PsmT4` carries 274 of
-336 textures in 428 KiB; expanding those to RGBA8888 would cost eight times as
+**77.1% saved** by keeping paletted textures paletted. `PsmT4` carries 468 of
+545 textures in 645 KiB; expanding those to RGBA8888 would cost eight times as
 much and blow the VRAM budget outright.
 
 Two rules drive the packing:
@@ -174,34 +181,50 @@ IA and RGBA32 have no PSP equivalent and expand to `Psm8888`.
 
 ### Swizzling
 
-77% of textures are swizzled. The GE reads through a cache organised in
+74% of textures are swizzled. The GE reads through a cache organised in
 16-byte by 8-row blocks; storing texels linearly makes each cache line span one
 row, so vertical locality is lost. Swizzling reorders texels so each block is
 contiguous. Textures whose rows are under 16 bytes cannot be swizzled and are
 left linear rather than padded, which would waste more than it saves.
 
-### The 801 KiB figure needs streaming
+### A texture is named by a file *and* an offset
+
+A display list does not always draw from its own file. A stage's geometry is in
+one archive file and its texels in another, reached by a pointer the archive
+records as an extern relocation rather than applying — so the address word in
+the list reads as zero.
+
+For a long time that was indistinguishable from "this primitive has no
+texture", and every stage in the game rendered as a white silhouette. It is
+resolved by keying on the address word's own offset, which is what the
+relocation is filed under (RE-037): `Cmd::SetTimg` carries that offset,
+`mesh::Source` carries the relocations, and `TextureRef` names a file for its
+texels and its palette independently — a fighter's palette is in its own file
+while a stage's texels are not.
+
+### The 1078 KiB figure needs streaming
 
 Only ~700 KiB of VRAM remains after the two framebuffers and the depth buffer
 (`docs/memory.md`), so the full texture set does **not** fit at once — it is
-1.1x over. This is not a problem in practice: a match needs one stage and up to
+1.5x over. This is not a problem in practice: a match needs one stage and up to
 four fighters, not every texture in the game. But it does mean texture
 residency must be **per-scene**, and that is now a known requirement rather
 than a surprise discovered at M8.
 
-### Remaining unconverted (133 of 469)
+### Remaining unconverted (119 of 664)
 
 | Reason | Count |
 |---|---:|
-| paletted but no TLUT recorded | 67 |
-| null address (extern reloc — texture lives in another file) | 54 |
-| `MissingPalette` at decode | 50 |
-| offset past end of file | 20 |
-| segmented address (segment 0x01) | 9 |
+| null address, no relocation names the slot | 54 |
+| resolved offset lands past the end of the file it names | 36 |
+| paletted but no TLUT recorded | 28 |
+| `MissingPalette` at decode | 16 |
+| segmented address (segment 0x01) | 13 |
 
-The palette-related cases need TLUT tracking across display list boundaries;
-the extern-reloc ones need cross-file resolution. Neither blocks getting
-geometry on screen.
+The palette-related cases need TLUT tracking across display list boundaries.
+The 54 null addresses are a different problem from the cross-file ones above:
+nothing in the archive says what they were meant to point at, so they are
+genuinely unresolved rather than merely unresolved *yet*.
 
 ## Display list translation
 
@@ -242,15 +265,15 @@ CI4/CI8 are the important row: Smash uses them heavily (confirmed by the
 PSP supports paletted textures natively. Those convert almost 1:1 and stay
 small in VRAM.
 
-`ssb-rom::texture` currently decodes everything to RGBA8888 as a neutral
-intermediate. The packer that goes RGBA8888 → PSM (including **swizzling**,
-which the PSP needs for texture-cache efficiency) is not written yet.
+`ssb-rom::texture` decodes to RGBA8888 as a neutral intermediate, and
+`ssb-rom::psp_texture` packs from there to the PSM chosen above — including
+the swizzle. Both are unit-tested and confirmed on device (RE-022).
 
 ### Not yet handled
 
-* Swizzling (`sceGuTexMode`'s swizzle flag) — required for performance.
 * Mipmaps — the N64 uses `G_TX_MIPMAP` in places; unclear whether Smash does.
-* `G_TX_CLAMP`/`MIRROR`/`WRAP` → `sceGuTexWrap`.
+* Wrap modes beyond `Repeat`: `G_TX_CLAMP` and `G_TX_MIRROR` are decoded from
+  `G_SETTILE` but not yet mapped onto `sceGuTexWrap`.
 
 ## Coordinate handling
 
@@ -281,12 +304,20 @@ classic source of "everything renders in the wrong order" bugs.
 
 Per plan §32:
 
-* **Renderer 0** — triangle testbed. 🟡 *builds; not yet observed running*
-* **Renderer 1** — SSB stage geometry. Not started.
-* **Renderer 2** — complete materials/textures. Not started.
-* **Renderer 3** — transparency, fog, particles, shadows, UI. Not started.
+* **Renderer 0** — triangle testbed. ✅ Done; runs at a locked 60 FPS.
+* **Renderer 1** — SSB stage geometry. ✅ Done. Stages render from the pack
+  with their collision polylines overlaid (`docs/images/m4-stage-collision.png`).
+* **Renderer 2** — complete materials/textures. 🟢 Mostly. Textures, CLUTs,
+  per-node baked matrices and recovered `MObj` palettes all draw on device,
+  stages included (`docs/images/m4-stage-textured.png`). Outstanding: the
+  majority-vote lighting heuristic, the `MObj` fields listed in RE-010, and the
+  119 textures that still fail to convert.
+* **Renderer 3** — transparency, fog, particles, shadows, UI. Not started. The
+  debug overlay is still `sceGuDebugFlush` rather than GE geometry, which is
+  why it needs the software rasteriser (RE-014).
 * **Renderer 4** — batching, state sorting, caching. **Not before the game is
-  visibly running.**
+  visibly running.** Primitives are already merged by material at build time,
+  which is the build-time half of the same idea.
 
 ## Vertex layout
 

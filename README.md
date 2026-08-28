@@ -13,22 +13,16 @@ for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 > Attacks, damage, opponents and the match loop are not implemented, and
 > nothing has run on real hardware — see [Current status](#current-status).
 
-![A textured fighter model rendering in PPSSPP at 60 FPS](docs/images/m4-fighter-materials.png)
+![Dream Land rendering in PPSSPP at 60 FPS](docs/images/m4-stage-textured.png)
 
-*A fighter's model: geometry, textures and palettes extracted from the ROM,
-placed by the recovered `DObjDesc` scene graph and drawn through the PSP's GE
-at a locked 60 FPS. This is the rest pose — animation decodes on the host but
-does not yet reach the device.*
-
-With the on-screen diagnostics enabled (`tools/run-ppsspp.sh`):
-
-![On-screen diagnostics showing 60 Hz lockstep and frame timing](docs/images/m1-ppsspp-diagnostics.png)
+*Dream Land: geometry, textures and palettes extracted from the ROM, placed by
+the recovered scene graph and drawn through the PSP's GE, with a fighter
+standing on the stage's real collision geometry. The overlay is the debug
+build's; the numbers in it are read live.*
 
 ```
-frame 701  tick 701          exact 60 Hz lockstep, no drift over 700 frames
-ticks/frame 1  dropped 0     no catch-up, no dropped ticks
-cpu 13us / budget 16667us    0.08% of the frame budget
-frame 16682us  view 362x272  59.94 Hz; pillarboxed 4:3 viewport confirmed
+cpu 796us / budget 16667us    4.8% of the frame budget
+frame 16683us  tick 700       59.94 Hz, one tick per frame, no drift
 ```
 
 ## Legal
@@ -66,8 +60,9 @@ cargo run -p romtool -- verify "rom/Super Smash Bros. (USA).z64"
 # 3. Inspect the asset archive
 cargo run -p romtool -- info "rom/Super Smash Bros. (USA).z64"
 
-# 4. Extract assets (writes to assets/generated/, gitignored)
-cargo run --release -p romtool -- extract "rom/Super Smash Bros. (USA).z64"
+# 4. Build the runtime asset pack -- this is what the PSP build loads
+cargo run --release -p romtool -- pack "rom/Super Smash Bros. (USA).z64"
+# -> assets/generated/ssb64.pak
 
 # 5. Run the host test suite
 cargo test
@@ -79,6 +74,11 @@ cd psp && cargo psp --release
 # 7. Build and run it under PPSSPP, with a screenshot
 tools/run-ppsspp.sh
 ```
+
+Step 4 is not optional: `run-ppsspp.sh` stages `ssb64.pak` alongside the EBOOT
+and the build has nothing to draw without it. To pull out the raw archive
+payloads instead — byte-exact files, not converted assets — use
+`romtool extract`.
 
 > `tools/run-ppsspp.sh` forces PPSSPP's **software rasteriser**. That is not a
 > preference — PPSSPP's hardware backends do not reflect CPU writes to emulated
@@ -103,12 +103,18 @@ backend never mentions fighters.
        sceGu, sceCtrl, sceAudio, VFPU, timing
 ```
 
+That is the target shape; Layer A holds what has been ported so far, which is
+physics, collision and the movement status machine. `ssb-rom` sits beside all
+three rather than in the stack: it reads ROM formats at build time and the
+runtime pack on device, so it is linked by both the host tools and the PSP
+binary.
+
 | Crate | Purpose | `no_std` | Target |
 |---|---|---|---|
-| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats, the runtime pack | yes (+alloc) | host + PSP |
+| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats, animation scripts, the runtime pack | yes (+alloc) | host + PSP |
 | `crates/ssb-engine` | Layer B traits, math, coordinate conversion | yes | host + PSP |
 | `crates/ssb-game` | Layer A game logic | yes | host + PSP |
-| `tools/romtool` | Build-time extraction CLI | no | host |
+| `tools/romtool` | Build-time extraction and conversion CLI, and the verifier for everything recovered from the ROM | no | host |
 | `psp/` | Layer C backend + executable | yes | `mipsel-sony-psp` |
 
 `psp/` is deliberately **outside** the root cargo workspace: it needs a pinned
@@ -124,7 +130,7 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 * ROM validation, VPK0 decompression (all 499 compressed files) and the
   relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
 * Asset extraction and conversion into a 3.0 MB runtime pack: 2722 meshes
-  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 482
+  (47,696 triangles, zero conversion failures), 3137 scene-graph nodes, 553
   textures, 41 stages' collision geometry and all 27 fighters' constants
 * **Textured, shaded models placed by the scene graph render on device at
   60 FPS**, fighters in their own recovered palettes
@@ -167,10 +173,11 @@ See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
 driving joint transforms at runtime, so a fighter's movement is animated rather
 than a sliding rest pose.
 
-## Verifying the asset pipeline
+## Verifying the claims
 
-The interesting claim is that VPK0 decompression is byte-correct. It is
-checked without needing a reference decoder:
+Everything above is checkable against your own ROM. Start with the load-bearing
+one: that VPK0 decompression is byte-correct, checked without needing a
+reference decoder.
 
 ```bash
 cargo run --release -p romtool -- check "rom/Super Smash Bros. (USA).z64"
@@ -189,6 +196,28 @@ Each file's extern-pointer count is derivable two independent ways: by walking
 a linked chain threaded through the *decompressed payload* (which a single
 wrong byte would derail), and by measuring a *ROM offset gap* that does not
 involve decompression at all. They agree for every file.
+
+The same idea — two independent readings that have to agree — checks the
+recovered game data. Each of these compares what `ssb-rom` decodes out of the
+compressed archive against what the decompilation says in its own sources:
+
+```bash
+# Every fighter's physics constants, field by field
+cargo run --release -p romtool -- fighters "rom/…z64" --verify
+
+# Every movement animation's length, decoded two ways
+cargo run --release -p romtool -- anims "rom/…z64" --verify
+
+# Every animation played against the skeleton it belongs to
+cargo run --release -p romtool -- figatree "rom/…z64" --frames 40
+
+# Which textures convert, and why the rest do not
+cargo run --release -p romtool -- textures "rom/…z64"
+```
+
+A wrong offset table does not produce a near miss; it produces garbage. So
+189 animation lengths agreeing across 27 fighters, or 1215 constant fields
+agreeing one for one, is the evidence — not the fact that the code runs.
 
 ## Documentation
 
