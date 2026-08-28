@@ -2579,3 +2579,59 @@ its texture (`docs/images/m4-fighter-status.png`).
 **Still failing: 83.** 54 null pointers nothing resolves, 28 paletted without a
 recorded TLUT, 16 `MissingPalette` at decode, 13 segmented addresses — the
 palette-tracking cases are now the largest group.
+
+---
+
+## RE-045 — An `MObj`'s texture is emitted twice under different flags
+
+**Question.** RE-044 fixed 36 of the 119 failing texture references. Dream
+Land's ground was not among them: layer 2's nodes 2 and 3 still drew pure
+white.
+
+**They ask the material for their texture.** Their display lists are almost
+nothing:
+
+```
+node 2  Combine  SetTile0  SETTIMG(0x0)  Texture(true)  Call(0x0E000000)
+node 3           SetTile0  SETTIMG(0x0)  Texture(true)  Call(0x0E000000)
+```
+
+A `G_SETTIMG` of zero and a call into the graphics heap — so the texture is
+whatever the `MObj` puts there, exactly the arrangement RE-027 recovered for
+fighters' palettes. And the `MObj` read back as contributing nothing at all:
+no sprite, no palette, no colour.
+
+**`gcDrawMObjForDObj` emits the texture image twice.** Under two different
+guards, for two different purposes:
+
+```c
+if (flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT))   // stages the *next* texels
+    gDPSetTextureImage(.., mobj->sub.sprites[mobj->texture_id_next]);
+...
+if (flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA))   // the one actually sampled
+    gDPSetTextureImage(.., mobj->sub.sprites[mobj->texture_id_curr]);
+```
+
+`mobj.rs` was reading the first guard — the block-load one — and so missed
+every material that simply names a texture without animating between two.
+`MOBJ_FLAG_ALPHA` is bit 0 and common, which is why the miss was large.
+
+Both indices are zero in a static read, so accepting any of the three flags
+reads the same address either guard would.
+
+**Result.** Bound references rise from 664 to **695** and packed from 581 to
+**612** — 31 textures that were never being looked for. Failures stay at 83,
+because these were not failing conversions; they were materials whose texture
+was not being read at all.
+
+**It did not fix Dream Land's ground.** Those two nodes' `MObj`s have none of
+the three flags set, so they genuinely supply no sprite, and the `G_SETTIMG(0)`
+before them has no relocation to resolve. They are in the 54 "null pointer,
+nothing resolves it" class, and that class is now the whole of the remaining
+visible problem rather than one of several candidates.
+
+**Confidence: high** for the flag reading, which is the decompilation's own and
+adds 31 textures without moving the failure count. **The white ground is not
+fixed**, and its cause is now narrowed to a single question: what a
+`G_SETTIMG` of zero, with no relocation and no `MObj` sprite, is supposed to
+resolve to.
