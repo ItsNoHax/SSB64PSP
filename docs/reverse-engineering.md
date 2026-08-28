@@ -2405,3 +2405,48 @@ idle plays on device (`docs/images/m4-animation.png`).
 **Confidence: high.** The mapping is the same one RE-035 validated, the name
 check is stricter than it was rather than looser — two exceptions argued rather
 than waived — and the pack-versus-ROM replay covers every new animation.
+
+---
+
+## RE-042 — The status machine drives the animation
+
+**Question.** RE-041 put every movement status's animation in the pack and
+RE-036 to RE-038 made them play. Nothing connected the two: the viewer could
+browse animations and the simulation could move a fighter, but a fighter on a
+stage was a sliding rest pose.
+
+**Where the join goes.** `ssb-game` must not know the pack format, and starting
+an animation needs it, so the split follows the one the physics constants
+already use: the *mapping* is game logic and lives in `Status::anim_slot`, and
+the *skeleton* lives in `psp::play::Play` next to the fighter it belongs to.
+`ssb_rom::anim`'s slot numbering is repeated in Layer A rather than imported,
+and a test pins the two together — a reordered generator would otherwise have a
+fighter walking with a crouch animation.
+
+**Restarted on change, not on tick.** An animation carries its own clock, so
+re-seeding it every frame freezes every fighter on frame zero. `Play` remembers
+the status the skeleton was started for and only calls `Skeleton::start` when it
+differs. A looping animation is left to loop; a finite one that has run out
+holds its last pose, which is what the original does when a status outlives its
+animation.
+
+**The speed comes from the status.** `ftCommonLandingSetStatus` passes 1.0 for
+a light landing and 0.5 for a heavy one — the same seven-frame file taking
+fourteen frames after a fastfall (RE-035). `Status::anim_speed` is that, and it
+is read at start time rather than baked into the pack, because it is a property
+of how the status was entered rather than of the animation.
+
+**A quarter turn.** Fighter models are authored facing `+Z`, shoulders spanning
+X (RE-038), while a match runs along X. So the model is turned ±90 degrees by
+the fighter's facing — the first place that fact has had to be acted on rather
+than merely understood.
+
+**Result.** Mario stands on Dream Land in his own colours, animated by whatever
+status the ported machine has him in, at 60 FPS: 495 triangles and 52 draws for
+stage and fighter together, 1319 us CPU against a 16667 us budget
+(`docs/images/m4-fighter-status.png`).
+
+**Confidence: high** for the wiring, which is small and directly observable.
+**Untested:** every status *transition* has an animation but only walking,
+dashing, jumping and landing have been watched happen; and the heavy-landing
+half-speed path has not been distinguished from the light one by eye.

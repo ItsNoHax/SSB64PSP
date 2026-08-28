@@ -413,4 +413,42 @@ mod tests {
             assert!(anims.files[..TIMED_SLOTS].iter().all(|&f| f != 0));
         }
     }
+
+    #[test]
+    fn the_slot_names_are_in_slot_order_and_the_timed_ones_come_first() {
+        // `ssb_game::status::Status::anim_slot` repeats this numbering, because
+        // Layer A must not depend on the pack format. If the generator ever
+        // reorders `SLOTS`, this is what says so before a fighter starts
+        // walking with a crouch animation.
+        assert_eq!(SLOT_NAMES.len(), SLOT_COUNT);
+        assert_eq!(
+            &SLOT_NAMES[..TIMED_SLOTS],
+            &["Dash", "Turn", "RunBrake", "Squat", "SquatRv", "Landing", "Pass"]
+        );
+        assert_eq!(SLOT_NAMES[SLOT_WAIT], "Wait");
+        assert_eq!(SLOT_NAMES[SLOT_WALK_SLOW], "WalkSlow");
+        assert_eq!(SLOT_NAMES[SLOT_RUN], "Run");
+        assert_eq!(SLOT_NAMES[SLOT_KNEE_BEND], "KneeBend");
+        assert_eq!(SLOT_NAMES[SLOT_JUMP_F], "JumpF");
+        assert_eq!(SLOT_NAMES[SLOT_FALL], "Fall");
+        assert_eq!(SLOT_NAMES[SLOT_SQUAT_WAIT], "SquatWait");
+    }
+
+    #[test]
+    fn only_the_moves_a_character_lacks_are_absent() {
+        // Kirby and Jigglypuff have no aerial jump; nobody is missing a timed
+        // slot, which is what `decode_fighter` would trip over.
+        for a in FIGHTER_ANIMS {
+            for (slot, &file) in a.files.iter().enumerate() {
+                if slot < TIMED_SLOTS {
+                    assert_ne!(file, 0, "{} has no {}", a.name, SLOT_NAMES[slot]);
+                }
+            }
+        }
+        let missing: usize = FIGHTER_ANIMS
+            .iter()
+            .map(|a| a.files.iter().filter(|&&f| f == 0).count())
+            .sum();
+        assert_eq!(missing, 8, "four characters, two aerial jumps each");
+    }
 }

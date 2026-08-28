@@ -139,6 +139,56 @@ pub enum Status {
 }
 
 impl Status {
+    /// Which packed animation this status plays, as a slot index.
+    ///
+    /// The numbering is `ssb_rom::anim`'s, and it is repeated here rather than
+    /// imported because Layer A must not depend on the pack format — the same
+    /// arrangement `play::PhysicsAttributes` uses for the constants. The
+    /// [`Status::ANIM_SLOTS`] test pins the two together.
+    ///
+    /// `LandingHeavy` shares `LandingLight`'s animation: they are one file
+    /// played at different speeds, which is what [`Status::anim_speed`] is for
+    /// (RE-035).
+    pub fn anim_slot(self) -> usize {
+        match self {
+            Status::Dash => 0,
+            Status::Turn => 1,
+            Status::RunBrake => 2,
+            Status::Squat => 3,
+            // SquatRv — rising out of a crouch — is the animation the original
+            // plays when the crouch ends; the status machine reaches it
+            // through SquatWait rather than having a state of its own.
+            Status::LandingLight | Status::LandingHeavy => 5,
+            Status::Pass => 6,
+            Status::Wait => 7,
+            Status::WalkSlow => 8,
+            Status::WalkMiddle => 9,
+            Status::WalkFast => 10,
+            Status::Run => 11,
+            Status::KneeBend => 12,
+            Status::JumpF => 13,
+            Status::JumpB => 14,
+            Status::JumpAerialF => 15,
+            Status::JumpAerialB => 16,
+            Status::Fall => 17,
+            Status::FallAerial => 18,
+            Status::SquatWait => 19,
+        }
+    }
+
+    /// Playback rate for this status's animation.
+    ///
+    /// `ftCommonLandingSetStatus` passes 1.0 for a light landing and **0.5**
+    /// for a heavy one, so the same seven-frame file takes fourteen frames
+    /// after a fastfall. Storing a length without the speed would make both
+    /// landings identical (RE-035).
+    pub fn anim_speed(self) -> f32 {
+        match self {
+            Status::LandingHeavy => 0.5,
+            _ => 1.0,
+        }
+    }
+
     /// Whether this status is a grounded one — the `ga` field, which the
     /// original sets through `mpCommonSetFighterGround` / `...Air`.
     pub fn is_grounded(self) -> bool {
