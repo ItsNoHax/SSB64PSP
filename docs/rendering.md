@@ -153,27 +153,27 @@ textures "rom/Super Smash Bros. (USA).z64"`):
 
 ```
 unique textures bound  647
-packed                 617
-failed                  30
-  decode: MissingPalette          4
+packed                 618
+failed                  29
+  decode: MissingPalette          3
   segmented addr (seg 0x01)      26
-note: CI texture, no TLUT recorded  4  (packs successfully; informational)
+note: CI texture, no TLUT recorded  3  (packs successfully; informational)
 swizzled               356 (58%)
 
 by PSP format:
   Psm8888     62 textures      323.3 KiB
-  PsmT4      538 textures      340.9 KiB
+  PsmT4      539 textures      341.0 KiB
   PsmT8       17 textures       53.1 KiB
 
 VRAM budget
-  packed (chosen formats)      717.3 KiB
-  naive, all RGBA8888         2338.8 KiB
+  packed (chosen formats)      717.5 KiB
+  naive, all RGBA8888         2339.3 KiB
   saving                        69.3%
   fits in ~700 KiB texture VRAM? no — needs streaming (1.0x over)
 ```
 
-**69.3% saved** by keeping paletted textures paletted. `PsmT4` carries 538 of
-617 packed textures in 341 KiB; expanding those to RGBA8888 would cost eight
+**69.3% saved** by keeping paletted textures paletted. `PsmT4` carries 539 of
+618 packed textures in 341 KiB; expanding those to RGBA8888 would cost eight
 times as much and blow the VRAM budget outright.
 
 Two rules drive the packing:
@@ -218,14 +218,14 @@ residency must be **per-scene**, and that is a known requirement to be
 addressed before rendering completeness (`PLAN.md` R0.3/R1), not a surprise
 discovered late.
 
-### Remaining unconverted (30 of 647, per current `romtool textures`)
+### Remaining unconverted (29 of 647, per current `romtool textures`)
 
 | Reason | Count |
 |---|---:|
 | segmented address (segment 0x01) | 26 |
-| `MissingPalette` at decode | 4 |
+| `MissingPalette` at decode | 3 |
 
-Separately, 4 more textures pack successfully but are flagged "CI texture, no
+Separately, 3 more textures pack successfully but are flagged "CI texture, no
 TLUT recorded" — informational, not a failure.
 
 The 26 segment-0x01 entries are not missing texture data at all: RE-055
@@ -239,10 +239,15 @@ belongs to framebuffer effects (`PLAN.md` R0.13), not this converter. The
 three files (`MVCommon`, `ITCommonObject`, `LinkSpecial2`) whose scene graphs
 get no — or only partial — `MObj` material-table pairing, which causes a
 real, present palette load elsewhere in the same file to get dropped when an
-unrelated, unresolvable material call intervenes; that belongs to `PLAN.md`
-R0.7 (missing material tables), not this converter. Earlier passes over this
-data also reported null-address and out-of-file failure classes; neither
-appears in the current `romtool textures` output, so treat
+unrelated, unresolvable material call intervenes. Two of `LinkSpecial2`'s
+three affected graphs are now fixed (RE-059, its entrance-effect graphs are
+paired through a third record shape, `EFDesc`, that lives outside the
+archive and has to be hand-entered); `MVCommon`, `ITCommonObject` and
+`LinkSpecial2`'s third graph (a `WPAttributes`-named Spin Attack model) are
+still open. All of it belongs to `PLAN.md` R0.7 (missing material tables),
+not this converter. Earlier passes over this data also reported
+null-address and out-of-file failure classes; neither appears in the
+current `romtool textures` output, so treat
 them as resolved until a re-run shows otherwise.
 
 ## Display list translation
