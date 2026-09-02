@@ -18,19 +18,34 @@
 
 `IN_PROGRESS`
 
-Continuing R0.7 from the concrete leads RE-057 produced while closing R0.3:
-files 52 (`MVCommon`), 86 (`ITCommonObject`, partial) and 353
-(`LinkSpecial2`) get zero or partial `MObj` materials from `PartTables` for
-their scene graphs. File 353 is the priority: it is one of Link's own model
-files, so his real material table almost certainly exists somewhere in the
-archive (likely `324_LinkModel.c`, per decomp file naming), unlike 52/86
-which are shared UI/common containers that may never have had one at all.
-Next step: locate Link's actual `FTCommonPart`-shaped record (the
-`dobj_lookup`/`p_mobjsubs`/`p_costume_matanim_joints` triple `PartTables::scan`
-looks for, `crates/ssb-rom/src/mobj.rs:426-457`) and check which file's
-`DObjDesc` graph offset it names — confirm whether it names 353's graph but
-gets rejected by `scan`'s `same == model` same-file requirement
-(`mobj.rs:441-444`), or whether no record exists for 353 at all.
+Continuing R0.7 from the concrete leads RE-057 produced while closing R0.3.
+RE-057's own guess (353's table lives in a sibling file, missed by
+`PartTables::scan`'s same-file requirement) turned out to be wrong: reading
+`353_LinkSpecial2.c` directly showed it already declares its own `DObjDesc`
+graphs *and* its own `MObjSub` tables in the same file — retracted, see
+RE-058.
+
+RE-058 found something more useful instead: `WPAttributes`
+(`refs/ssb-decomp-re/src/wp/wptypes.h:36-45`) is a **second** struct shape
+with the same pointer adjacency `PartTables::scan` already looks for,
+structurally, used for weapon/projectile sub-objects — and
+`crates/ssb-rom/src/mobj.rs` currently only documents/handles
+`FTCommonPart` (fighters) and `MPGroundDesc` (stages). This plausibly
+explains part of the wider "71 unresolved graphs" figure R0.7 already
+tracks, independent of file 353. But the one confirmed `WPAttributes`
+instance checked (Link's boomerang, `226_LinkSpecial1.c`) has
+`p_mobjsubs = NULL` by design — so a missing record is not automatically the
+answer for every graph with zero `mobjs`.
+
+Next step, two threads: (1) check whether `PartTables::scan`'s already-generic
+matching logic structurally catches `WPAttributes` instances elsewhere in the
+archive without any code change (it doesn't care what struct holds the
+pointers, only their shape) — if it already does, the 56-vs-71 count may
+just be stale and re-running `romtool mobj`/`romtool scene` is the fix; (2)
+find whichever `WPAttributes` instance (if any) names 353's `EntryWave`/
+`EntryBeam`/`SpinAttack` sub-graphs and read its `p_mobjsubs` field — if it's
+`NULL` there too, file 353's `MissingPalette` cases are not a pairing gap at
+all and need to be traced back into `mesh.rs`'s own state handling instead.
 
 ## Last Completed Task
 
@@ -174,24 +189,36 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Required Work
 
+* [x] Determine whether file 353 (`LinkSpecial2`)'s graph is rejected by `PartTables::scan`'s same-file requirement despite a real same-file record existing — no: 353 already declares its own graph and its own `MObjSub` table in the same file, so the same-file requirement isn't the blocker (RE-058, retracts RE-057's guess)
+* [x] Identify a second pairing-record shape `PartTables` might be missing — found: `WPAttributes` (`refs/ssb-decomp-re/src/wp/wptypes.h:36-45`), used for weapon/projectile sub-objects, same pointer adjacency as `FTCommonPart` but never documented/verified against `PartTables::scan` (RE-058)
+* [ ] Check whether `PartTables::scan`'s existing generic matching already structurally catches `WPAttributes` instances archive-wide (no code change needed to test this — just re-run `romtool mobj`/`romtool scene` and inspect which graphs resolve)
+* [ ] Find whichever `WPAttributes` instance (if any) names file 353's `EntryWave`/`EntryBeam`/`SpinAttack` sub-graphs specifically, and read its `p_mobjsubs` field — the one instance checked so far (Link's boomerang) has it `NULL` by design, so this is not guaranteed to resolve 353's `MissingPalette` cases
 * [ ] Re-run the material-table search (`romtool mobj`/`romtool scene`) to reconcile the stale 56-vs-71 resolved/unresolved graph counts before trusting either
-* [ ] Locate Link's real `FTCommonPart` record (likely named from `324_LinkModel.c`) and determine which file's `DObjDesc` graph offset it names
-* [ ] Determine whether file 353 (`LinkSpecial2`)'s graph is rejected by `PartTables::scan`'s same-file requirement (`crates/ssb-rom/src/mobj.rs:441-444`) despite a real record existing, or genuinely has no record at all
-* [ ] If it's a same-file-requirement rejection with a confirmed cross-file record: decide whether to loosen `PartTables::scan`, and re-measure its effect the way the original heuristic was measured (`mesh.rs` doc comment: 378 vs 394 textures) before adopting it
-* [ ] Do the same for files 52 (`MVCommon`) and 86 (`ITCommonObject`) — confirm whether they ever had a pairing record to find, or are legitimately table-less (non-fighter/non-stage UI containers)
+* [ ] Do the same tracing for files 52 (`MVCommon`) and 86 (`ITCommonObject`) — confirm whether they ever had a pairing record (`FTCommonPart`-, `MPGroundDesc`- or `WPAttributes`-shaped) to find, or are legitimately table-less (non-fighter/non-stage UI containers)
 
 ### Completion Evidence
 
 Record:
 
 * which files were traced, and what `PartTables::scan` actually found or rejected for each
-* the fix implemented (loosened matching rule, newly discovered record, or accepted deviation) with its measured effect on resolved-graph and packed-texture counts
+* the fix implemented (new struct shape wired into `PartTables::scan`, newly discovered record, or accepted deviation) with its measured effect on resolved-graph and packed-texture counts
 * before/after `romtool mobj`/`romtool scene`/`romtool textures` output
 * regression test added
 
 ---
 
 # 7. Last Verification
+
+## 2026-09-02 — R0.7 started: WPAttributes found, 353 sibling-file guess retracted
+
+* Read `refs/ssb-decomp-re/src/relocData/353_LinkSpecial2.c` directly — found `dLinkSpecial2_EntryWaveDObjDesc`/`dLinkSpecial2_EntryBeamDObjDesc` (graphs) and `dLinkSpecial2_EntryWaveMObjSub`/`dLinkSpecial2_EntryBeamMObjSub` (tables) both defined in the same file, refuting RE-057's "table lives in a sibling file" guess
+* Read `refs/ssb-decomp-re/src/relocData/225_LinkMain.c`'s `FTCommonPartContainer` — confirmed it pairs Link's *main* model (`dLinkModel_JointTree`, both halves in file 324) and has nothing to do with 353's sub-models
+* Read `refs/ssb-decomp-re/src/wp/wptypes.h:36-45` — found `WPAttributes`, a second struct with the same `DObjDesc*`/`MObjSub***` adjacency `PartTables::scan` looks for, used for weapon/projectile objects, never documented in `crates/ssb-rom/src/mobj.rs`
+* Read `refs/ssb-decomp-re/src/relocData/226_LinkSpecial1.c`'s `dLinkSpecial1_Boomerang_WeaponAttributes` — a real `WPAttributes` instance with `p_mobjsubs = NULL` by design (its `data`/`anim_joints` point into file 325, not 353) — shows a null table can be intentional, tempering how much weight to put on "found the missing struct shape" as a guaranteed fix for 353
+* Result: RE-058 recorded in `docs/reverse-engineering.md`, retracting RE-057's specific 353 guess while keeping its zero/partial-`mobjs` mechanism finding intact; `PLAN.md` R0.7, `TODO.md` Phase E updated
+* Affected subsystem: documentation/investigation only, no code changed
+* PPSSPP: not run this pass
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-02 — R0.3 closed: segment-0x01 and MissingPalette investigations
 

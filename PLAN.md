@@ -433,16 +433,25 @@ RE-057 (`docs/reverse-engineering.md`) found three concrete, reproducible
 test cases while investigating R0.3's `MissingPalette` failures: files 52
 (`MVCommon`), 86 (`ITCommonObject`) and 353 (`LinkSpecial2`) get zero or
 partial `MObj` materials from `PartTables::scan` for their scene graphs,
-confirmed by direct instrumented trace. File 353 is the most useful of the
-three — it is one of Link's own model files, so unlike 52/86 (shared
-UI/common asset containers that may never have had a pairing record) Link's
-material table almost certainly exists somewhere in the archive (likely
-`324_LinkModel.c`, per `refs/ssb-decomp-re/src/relocData/` naming); the
-question is why `PartTables::scan` doesn't attribute it to 353's graph.
-`PartTables::scan`'s `same == model` check (`mobj.rs:441-444`) requires the
-`p_mobjsubs` pointer to target the *same file* as the `DObjDesc` graph —
-plausible that Link's special-move sub-model files fail this because the
-real table lives in a sibling file, but this was not traced.
+confirmed by direct instrumented trace. RE-057's guess that 353's table lives
+in a sibling file (missed by `PartTables::scan`'s same-file requirement) is
+**retracted by RE-058**: 353 already declares its own graph and its own
+`MObjSub` table in the same file, so that specific mechanism doesn't apply.
+
+RE-058 found something more structurally significant instead: `WPAttributes`
+(`refs/ssb-decomp-re/src/wp/wptypes.h:36-45`) is a **second** struct shape
+with the same `DObjDesc*`/`MObjSub***` adjacency `PartTables::scan` looks
+for, used for weapon/projectile sub-objects, and currently undocumented and
+unverified against this scanner — `crates/ssb-rom/src/mobj.rs` only mentions
+`FTCommonPart` (fighters) and `MPGroundDesc` (stages). This plausibly
+explains part of the wider 56-vs-71 gap (any fighter with a projectile-style
+special move has `WPAttributes`-described sub-models), independently of
+whether it explains file 353 specifically — the one confirmed `WPAttributes`
+instance checked (Link's boomerang, `226_LinkSpecial1.c`) has
+`p_mobjsubs = NULL` by design, so a missing pairing is not automatically the
+right explanation for every `MissingPalette` case; some may be legitimately
+palette-less on real hardware, pointing back toward `mesh.rs`'s state
+handling instead (RE-056's original direction).
 
 ### Objective
 
