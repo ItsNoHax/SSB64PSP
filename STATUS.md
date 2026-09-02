@@ -91,7 +91,37 @@ Spin Attack's `WPAttributes` instance.
 
 ## Blockers
 
-None currently recorded.
+**PPSSPP shows a black screen — reproduces via `tools/run-ppsspp.sh`, not
+specific to any one launch method.** Investigated after the user reported it
+following a manual copy of the EBOOT+pack into their PPSSPP install; the
+same result reproduces through the project's own test harness, so it is not
+something the copy step caused. Findings, none yet conclusive:
+
+* The staged `ssb64.pak` is valid — opens cleanly host-side (`Pack::open`),
+  reports 2450 meshes / 363 objects / 41 stages / 567 anims / 617 textures.
+  Not a data/version problem.
+* The emulated CPU is genuinely executing the program's own code — traced
+  PC values in PPSSPP's log land inside the loaded ELF's address range
+  (`08804000`-`08942700`) and cycle continuously at 60 Hz, not stuck in a
+  kernel wait.
+* Nothing reaches the display. Pixel-sampling a capture shows pure
+  `(0,0,0)` everywhere except PPSSPP's own FPS counter overlay — not even
+  the frame's clear colour (`Color::rgba(0x20,0x28,0x38,0xFF)`, set
+  unconditionally every frame in `psp/src/main.rs`'s render section) or the
+  on-screen debug overlay (`gpu.debug_text(...)`, `main.rs:862`, also
+  unconditional every frame, printing pack/fighter/camera stats).
+* Confirmed `SoftwareRenderer = True` was genuinely active for the test
+  (present in the live `ppsspp.ini`), so this is not simply RE-014's
+  hardware-backend-hides-`sceGuDebugFlush` issue recurring.
+* `psp/src` has not been touched by this session's changes (only
+  `crates/ssb-rom/src/pack.rs` changed, for the unrelated R0.8 billboard
+  fix) — whatever this is, it predates this session and is not a regression
+  from today's work.
+
+Not yet root-caused: something between GE display-list submission and the
+buffer swap/present path is not reaching the screen. Needs real device-side
+instrumentation or bisecting against an older PPSSPP/`psp`-crate version to
+pin down. Deferred to a dedicated session per the user's request.
 
 ---
 
@@ -224,6 +254,21 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — PPSSPP black-screen investigation (unresolved, see §1 Blockers)
+
+* Copied the current build (`a31b081`) into the user's real PPSSPP install (`~/.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/GAME/SSB64PSP/`) at the user's request; user reported a black screen
+* Reproduced the same result through `tools/run-ppsspp.sh` itself (both `--seconds 8` and `--seconds 20`), ruling out the manual copy as the cause
+* Manually launched PPSSPP outside the harness to inspect its window/log directly: window title correct ("Super Smash Bros. 64", not stuck at "Initializing Vulkan..."), traced PC values in the emulator log landing inside the loaded ELF's own address range and cycling at 60 Hz — the CPU is genuinely running the program, not stuck
+* Pixel-sampled captures with Python/Pillow: pure `(0,0,0)` everywhere except PPSSPP's own FPS counter overlay text — not the frame's clear colour, not the unconditional per-frame debug text overlay (`gpu.debug_text`, `main.rs:862`)
+* Confirmed host-side that the exact staged `ssb64.pak` opens cleanly via `Pack::open` (2450 meshes, 363 objects, 41 stages, 567 anims, 617 textures) — not a data/version problem
+* Confirmed `SoftwareRenderer = True` was genuinely active in the live `ppsspp.ini` during the manual test, so this is not RE-014's known hardware-backend/`sceGuDebugFlush` visibility gap recurring
+* Not root-caused. `psp/src` was not touched this session (only `crates/ssb-rom/src/pack.rs`), so this is not a regression from the R0.8 fix — it predates this session
+* Restored the user's `ppsspp.ini` (`SoftwareRenderer` back to its prior value) and killed all PPSSPP processes before finishing
+* Result: recorded as a blocker in §1 above; deferred to a dedicated session per the user's request, no code changed
+* Affected subsystem: `psp/` runtime and/or PPSSPP interaction — unknown which yet
+* PPSSPP: tested extensively this pass, unresolved
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.8: `0x8000`/`RecalcRotRpyRSca` fixed as a spin-free billboard (RE-062)
 
