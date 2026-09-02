@@ -3533,3 +3533,71 @@ observed directly via instrumented trace, not inferred. **Medium** on the
 file naming and `PartTables::scan`'s known same-file constraint, but not
 confirmed by actually locating Link's table record and checking which file
 it names.
+
+## RE-058 — `WPAttributes` is a second, unscanned pairing shape; the 353 sibling-file guess is retracted
+
+**Question.** RE-057 guessed that file 353 (`LinkSpecial2`)'s material table
+lives in a sibling file and is missed by `PartTables::scan`'s same-file
+requirement. Reading the decompilation's own layout for 353 tests that guess
+directly.
+
+**353 already has its graph and table in the same file.** `353_LinkSpecial2.c`
+declares its own `DObjDesc` arrays (`dLinkSpecial2_EntryWaveDObjDesc` at file
+offset `0x3F8`, `dLinkSpecial2_EntryBeamDObjDesc` at `0x7B8`, plus a
+`SpinAttackDObjDesc`) *and* its own `MObjSub **` tables in the same file
+(`dLinkSpecial2_EntryWaveMObjSub` at `0x130`, pointing at
+`dLinkSpecial2_gap_0x01B0`, an `MObjSub *` list). The same-file requirement
+RE-057 blamed does not apply here — both halves of the pairing this graph
+would need are already in 353. RE-057's specific guess about 353 is
+**retracted**.
+
+**What's actually missing: `PartTables` doesn't know about `WPAttributes`.**
+`refs/ssb-decomp-re/src/wp/wptypes.h:36-45` defines a second struct with
+exactly the shape `PartTables::scan` looks for — `void *data` (a `DObjDesc*`
+when `WEAPON_FLAG_DOBJDESC` is set), `MObjSub ***p_mobjsubs`,
+`AObjEvent32 **anim_joints`, `AObjEvent32 ***p_matanim_joints` — used for
+weapon/projectile hitbox objects (a fighter's thrown items, projectiles, and
+some special-move sub-models), completely separately from `FTCommonPart`
+(fighter joints) and `MPGroundDesc` (stage layers), the only two shapes
+`crates/ssb-rom/src/mobj.rs`'s comments and code currently mention. This is
+a real, previously undocumented gap in what `PartTables` looks for, not a
+bug in the same-file check — `PartTables::scan`'s core matching logic is
+generic (it doesn't care what struct holds the adjacent pointers), so a
+`WPAttributes` instance's `data`/`p_mobjsubs` fields are structurally the
+same shape it already searches for; whether it's actually finding and
+accepting them was not tested this pass.
+
+**But the one confirmed `WPAttributes` instance argues against a fix here.**
+`226_LinkSpecial1.c` defines `dLinkSpecial1_Boomerang_WeaponAttributes`, a
+real `WPAttributes` instance, but it names `p_mobjsubs = NULL` outright
+(explicit in the initializer) — its `data`/`anim_joints` point into file 325
+(`LinkSpecial3`), not 353, and it has no material table by design. This is
+one weapon (the boomerang), not the ones in 353 (`EntryWave`/`EntryBeam`/
+`SpinAttack`), so it doesn't directly explain 353's failure — but it shows
+`p_mobjsubs = NULL` is a legitimate, intentional value for a `WPAttributes`
+instance, not automatically a discoverable-record gap. It is equally
+possible that whatever `WPAttributes` (if any) names 353's `EntryWave`/
+`EntryBeam`/`SpinAttack` graphs also has `p_mobjsubs = NULL` on real
+hardware, in which case the game itself does not apply an `MObj` palette to
+these draws and RE-057's classification of this as a "pairing gap" would be
+wrong — the right explanation might instead be back in `mesh.rs`'s own
+state handling (RE-056's original direction), not material-table discovery
+at all. This pass did not locate the specific `WPAttributes` instance (if
+one exists) for 353's own sub-models to settle it either way.
+
+**Revised next step for R0.7.** Two independent threads, not one:
+
+1. Whether `PartTables::scan` already structurally matches `WPAttributes`-shaped
+   records elsewhere in the archive (fighters with projectiles: Samus,
+   Fox/Falco-style specials do not exist in this roster, but Mario's
+   fireball, Yoshi's egg, Pikachu's thunder-jolt, etc. are candidates) is an
+   open, likely-valuable question independent of file 353.
+2. File 353 specifically needs its actual `WPAttributes` instance (if any)
+   located and its `p_mobjsubs` field read, before assuming a discoverable
+   record exists at all.
+
+**Confidence: high** that `WPAttributes` is a real, decomp-confirmed second
+pairing shape `PartTables` does not currently search for — this is a direct
+struct/instance read, not inference. **Low** that this explains file 353's
+specific `MissingPalette` failures — the one instance checked argues against
+it, and no `WPAttributes` instance naming 353's own sub-graphs was found.
