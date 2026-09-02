@@ -18,36 +18,40 @@
 
 `IN_PROGRESS`
 
-617/647 textures convert. 30 remain: 26 segment-0x01 cross-file references,
-4 `MissingPalette`. Next step: confirm/refute the RE-054 lead that some or
-all of the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY`
-full-screen background draws (not decoded by `crates/ssb-rom/src/dl.rs` at
-all today) rather than ordinary cross-file `DObjDLLink`/`DObjMultiList`
-texture references. Check which hypothesis the actual failing display lists
-support before writing a fix for either.
+617/647 textures convert. 30 remain: 26 are the LB (loading-break) transition
+system's runtime framebuffer photocopy, bound to RSP segment 0x1 and never
+present in any ROM file — confirmed against the decompilation and accepted as
+out of scope for this task (RE-055; real work belongs to R0.13). RE-054's
+S2DEX-BG lead is refuted (`romtool scan --exhaustive` finds zero `G_BG_1CYC`/
+`G_BG_COPY` anywhere in the ROM). The only remaining R0.3 gap is 4
+`MissingPalette` cases; RE-056 has an unconfirmed lead (a valid palette load
+exists for at least one occurrence of the failing texture, but `romtool`'s
+dedup key may be evaluating a different, palette-less occurrence). Next step:
+confirm which occurrence `mesh::convert_sequence` visits first for each of
+the 4 cases and whether `State::forget_texture()` is what clears the palette
+in between.
 
 ## Last Completed Task
 
-`R0.2 — N64 Rendering Command Inventory` — closed the one open acceptance
-item (BattleShip cross-reference, `AGENTS.md` §10) by cloning
-`refs/BattleShip` + its `libultraship` submodule and reading its F3DEX2/S2DEX
-interpreter. Recorded as RE-054 in `docs/reverse-engineering.md`. Produced
-three new leads, now tracked in `TODO.md`: a candidate mechanism for R0.13
-(S2DEX BG commands), corroboration that R0.5's Dream Land canopy issue isn't
-LOD-related (BattleShip has no LOD support either), and clarification that
-R0.8's `0x8000`/`RecalcRotRpyRSca` transform is CPU-computed matrix math to
-port from `objdisplay.c`, not novel RDP/RSP behavior. See `PLAN.md` R0.2.
+R0.3 is not yet complete, but its segment-0x01 question (the concrete next
+step recorded after R0.2) is now resolved: RE-055 identifies all 26
+segment-0x01 texture failures as the LB transition system's runtime
+framebuffer photocopy (`sLBTransitionPhotoHeap`, RSP segment 0x1, decomp
+`refs/ssb-decomp-re/src/lb/lbtransition.c`), refuting RE-054's S2DEX-BG lead
+(`romtool scan --exhaustive`: zero `G_BG_1CYC`/`G_BG_COPY` in the whole ROM).
+RE-056 records an unconfirmed lead on the remaining 4 `MissingPalette`
+cases. See `PLAN.md` R0.3 and R0.13.
 
-`R0.1 — Rendering State Reconciliation` and `R0.9 — Stage Animation` are also
-`COMPLETE` — see `PLAN.md` for each.
+`R0.2 — N64 Rendering Command Inventory`, `R0.1 — Rendering State
+Reconciliation` and `R0.9 — Stage Animation` are `COMPLETE` — see `PLAN.md`
+for each.
 
 ## Next Eligible Task
 
-`R0.3` (in progress) — see above. `R0.8` is also newly eligible (its
-dependencies R0.1/R0.2 are both now complete) and has a fresher lead than
-before (RE-054); either is a reasonable next task once R0.3's immediate
-question is answered. `R0.13`/`R0.15` remain genuinely untouched but are
-blocked on `R0.6`, which is only `IN_PROGRESS`.
+`R0.3` (in progress) — finish the 4 `MissingPalette` cases per RE-056's lead.
+`R0.8` is also eligible (dependencies R0.1/R0.2 complete, has a lead from
+RE-054) and `R0.13` now has a concrete, decomp-grounded target (RE-055) but
+remains blocked on `R0.6`, which is only `IN_PROGRESS`.
 
 ## Blockers
 
@@ -158,23 +162,33 @@ Resolve every texture conversion failure that represents a missing required text
 
 ### Required Work
 
-* [ ] Check whether the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY` background draws (RE-054 lead) — pull one failing display list by file/offset from `romtool textures` and inspect its raw opcode bytes at the failing `G_SETTIMG`'s containing list, rather than assuming either hypothesis
-* [ ] If confirmed: decode `G_BG_1CYC`/`G_BG_COPY` in `crates/ssb-rom/src/dl.rs` (opcodes 0x09/0x0a under F3DEX2 numbering — verify against our own ROM, BattleShip's numbering may not be load-bearing here) and figure out what the PSP-side draw should be
-* [ ] If refuted: continue tracing the `DObjDLLink`/`DObjMultiList` cross-file path per the original Phase B plan
-* [ ] Resolve or accept-with-evidence the 4 `MissingPalette` cases
+* [x] Check whether the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY` background draws (RE-054 lead) — refuted; they are `sLBTransitionPhotoHeap` (RE-055), an RSP-segment-bound runtime framebuffer copy with no ROM presence
+* [x] Accept the 26 segment-0x01 entries as out of scope for R0.3, with evidence (RE-055) — no texture-conversion fix applies; real work is R0.13
+* [ ] Resolve or accept-with-evidence the 4 `MissingPalette` cases — RE-056 has a lead (dedup key may be evaluating a palette-less occurrence of a texture that has a valid occurrence elsewhere in the same file), not yet confirmed or fixed
 
 ### Completion Evidence
 
 Record:
 
-* which hypothesis the raw display-list bytes support, and how that was checked
-* the fix implemented (or the accepted-deviation writeup if no fix is warranted)
-* before/after `romtool textures` output
-* regression test added
+* which hypothesis the raw display-list bytes support, and how that was checked — done, see RE-055/RE-056
+* the fix implemented (or the accepted-deviation writeup if no fix is warranted) — accepted-deviation writeup done for the 26 segment-0x01 entries (PLAN.md R0.3 "Remaining gap"); the 4 `MissingPalette` cases still need either a fix or their own accepted-deviation writeup
+* before/after `romtool textures` output — no change yet; investigation only, no code touched
+* regression test added — none yet; nothing has been fixed in code
 
 ---
 
 # 7. Last Verification
+
+## 2026-09-02 — R0.3 segment-0x01 investigation
+
+* `cargo run --release -p romtool -- scan "rom/Super Smash Bros. (USA).z64" --exhaustive` — 0 occurrences of opcode 0x09/0x0A anywhere in the ROM's display lists; refutes RE-054's S2DEX BG lead
+* `cargo run --release -p romtool -- dump "rom/Super Smash Bros. (USA).z64" 39` (and 40/41/45/50/51) — dumped raw file bytes, located the failing `G_SETTIMG` (file 39 offset 0x0E10: `fd10012b 01000000`), confirmed identical bytes recur across files 40/41/45/50/51
+* Cross-checked address `0x01000000` (segment 1) against `refs/ssb-decomp-re/src/lb/lbtransition.c` — `gSPSegment(..., 0x1, sLBTransitionPhotoHeap)`, a per-frame `300x220` 16-bit framebuffer photocopy for the loading-break transition system; texture dims from `romtool textures --file 39` (`300x5`, `300x6` `Rgba/Bits16`) match
+* Investigated the 4 `MissingPalette` cases (files 52, 86, 353): found a valid `G_LOADTLUT`-preceded occurrence of one failing texture (file 52, offset 0x1960, one of 6 occurrences) but did not confirm this explains the failure — recorded as RE-056, a lead not a fix
+* Result: RE-055 and RE-056 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.3/R0.13, `TODO.md` Phase B, `docs/rendering.md`, `docs/porting-status.md` updated to match
+* Affected subsystem: documentation/investigation only, no code changed
+* PPSSPP: not run this pass
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-02 — R0.2 BattleShip cross-reference
 
