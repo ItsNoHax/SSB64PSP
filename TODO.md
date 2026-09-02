@@ -117,11 +117,12 @@ already moved since these were first written (see below).
 - [ ] **MissingPalette (4)** — Palette pointer resolved but palette data not found in target file. Still 4 as of the last run.
 - [x] **Null addresses** — was 54, no longer appears as a failure class in `romtool textures` output. Re-verify and close this line in `docs/rendering.md` "Remaining unconverted" once confirmed.
 - Downgraded from failure to informational: **TLUT state across lists** — was 28 "CI texture, no TLUT recorded" failures, now only 4, and those 4 are reported as a *note* on textures that still pack successfully, not as conversion failures. Confirm whether the remaining 4 need action or are benign.
+- [ ] **New lead (RE-054, feeds R0.13 too):** BattleShip decodes S2DEX `G_BG_1CYC`/`G_BG_COPY` (full-screen background-image draws) mixed directly into SSB64's F3DEX2 display lists. `crates/ssb-rom/src/dl.rs` has no opcode constants for these at all — they are plausibly what screen wipes actually are, and a plausible source of some of the 26 segment-0x01 failures. Not yet confirmed against our own ROM data; that's the next step before implementing anything for R0.13.
 
 ### Phase C — Texture Semantics (R0.5) (HIGH)
 - [ ] **Wrap/Clamp/Mirror** — `psp/src/meshdraw.rs` currently hardcodes `sceGuTexWrap(Repeat, Repeat)` for every draw. `G_TX_CLAMP`/`G_TX_MIRROR` are decoded from `G_SETTILE` (RE-010, `objdisplay.c:1197-1198`) but not threaded through to the draw call.
 - [ ] **UV Scroll** — Implement `scrollu`/`scrollv` from MObjSub (`objdisplay.c:1386-1397`).
-- [ ] **Mipmap/LOD** — Mip chains are now generated at build time (`psp_texture::pack_mipped`, 151 textures) but did **not** fix the Dream Land canopy discrepancy (RE-053) — the pattern sharpens at higher resolution, which points at magnification, not minification/LOD selection. Still open.
+- [ ] **Mipmap/LOD** — Mip chains are now generated at build time (`psp_texture::pack_mipped`, 151 textures) but did **not** fix the Dream Land canopy discrepancy (RE-053) — the pattern sharpens at higher resolution, which points at magnification, not minification/LOD selection. Still open. RE-054's BattleShip cross-reference found the reference PC port has no LOD support at all (always samples level 0) — corroborates that mipmapping isn't the fix here.
 - [ ] **Filtering** — Verify bilinear vs point per texture.
 
 ### Phase D — Materials (R0.6 / R0.7) (HIGH)
@@ -132,7 +133,7 @@ already moved since these were first written (see below).
 
 ### Phase E — Scene Graphs (R0.7 / R0.8) (HIGH)
 - [ ] **Graphs without material tables** — was reported as 71; `docs/porting-status.md` now reports 56 graphs resolved via `FTCommonPart`/`MPGroundDesc`. Re-run the material-table search (`romtool mobj`/`romtool scene`) to get the current unresolved count before treating either number as current.
-- [ ] **0x8000 transform (28 nodes)** — `RecalcRotRpyRSca` nodes are still drawn plainly per `docs/porting-status.md`. Billboard kinds 45-48 (33-40 with a leading translate) are implemented and verified (RE-049); the plain 33-40 kinds are not.
+- [ ] **0x8000 transform (28 nodes)** — `RecalcRotRpyRSca` nodes are still drawn plainly per `docs/porting-status.md`. Billboard kinds 45-48 (33-40 with a leading translate) are implemented and verified (RE-049); the plain 33-40 kinds are not. RE-054 confirmed via BattleShip + `objdisplay.c` that these draw types work by computing a full matrix in C and patching it into the RSP's MVP via `gSPMvpRecalc` + `gMoveWd(G_MW_MATRIX,...)` — this is ordinary CPU matrix math to port per D-001, not a special RDP/RSP behavior. The literal name `RecalcRotRpyRSca` did not turn up in `objdisplay.c`; finding the actual matrix-building function for these draw-type branches is the next step.
 - [ ] **Draw order** — Implement layered rendering with per-layer state (currently global material sort).
 
 ### Phase F — Animation (R0.9 / R0.10 / R0.11) (MEDIUM)

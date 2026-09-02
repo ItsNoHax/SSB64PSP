@@ -228,7 +228,7 @@ current task following this one.
 
 ## R0.2 — N64 Rendering Command Inventory
 
-Status: `VERIFYING`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -246,13 +246,20 @@ Enumerate every N64 rendering command and relevant state transition actually exe
 * [x] current PSP implementation mapped — `docs/rendering.md` "Display list translation" table
 * [x] unsupported commands identified — texture wrap/mirror, mipmap/LOD selection, material animation playback (`docs/rendering.md` "Not yet handled", `TODO.md`)
 * [x] relevant RSP/RDP behavior identified — depth inversion (D-007), aspect ratio (D-008), coordinate handling (D-004) in `DECISIONS.md`
-* [ ] BattleShip cross-reference performed — **not done**. `refs/BattleShip` is not even cloned in this checkout (only `n64psp`, `rust-psp`, `sf64-psp`, `ssb-decomp-re` are present), and `docs/reverse-engineering.md` has zero references to it despite `AGENTS.md` §10 prescribing it as an active reference for exactly this kind of GBI/RDP question.
+* [x] BattleShip cross-reference performed — cloned `refs/BattleShip` + its `libultraship` submodule, read its F3DEX2/S2DEX interpreter (`src/fast/interpreter.cpp`), cross-checked opcode coverage, and recorded findings as RE-054 in `docs/reverse-engineering.md`: opcode coverage agrees with `docs/rendering.md`; found a new lead for R0.13 (S2DEX `G_BG_1CYC`/`G_BG_COPY` mixed into F3DEX2 lists, not decoded by our `dl.rs` at all); corroborated RE-053 (BattleShip has no LOD support either); clarified R0.8's transform question (the custom-MVP draw types patch the RSP's matrix via `G_MW_MATRIX`, but the actual transform is CPU-computed matrix math in `objdisplay.c` — ordinary decomp-porting work per D-001, not novel RDP/RSP behavior); confirmed the wrap-mode gap (R0.5) is real by comparison.
 
 ### Verification
 
 * decompilation inspection
 * ROM/display-list inspection
-* BattleShip comparison — outstanding, see acceptance above
+* BattleShip comparison — done, see RE-054
+
+### Evidence
+
+RE-054 in `docs/reverse-engineering.md`. New leads recorded in `TODO.md`
+Phase B/C/E for R0.13, R0.5 and R0.8 to pick up when their dependencies are
+met — this task did not implement fixes for any of them, only recorded
+evidence per its own acceptance criteria.
 
 ---
 

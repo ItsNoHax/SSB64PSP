@@ -3254,3 +3254,84 @@ isolation at a known scale, is the next step.
 **Confidence: high** that the chain is generated and uploaded correctly — the
 level-0 round trip and the swizzle cut-off are unit-tested, and 151 textures
 carry levels. **Low** that this addresses what was actually asked.
+
+## RE-054 — BattleShip cross-reference (PLAN.md R0.2)
+
+**Question.** `AGENTS.md` §10 says BattleShip should be actively consulted for
+GBI/RDP/RSP questions, but it was never actually cloned into this checkout and
+nothing in this log references it. What does it say about our open rendering
+questions, and where does it agree or disagree with what we've already
+recovered from the ROM and decomp directly?
+
+**Setup.** Cloned `JRickey/BattleShip` and its `libultraship` submodule
+(`ssb64` branch) into `refs/`. The relevant code is
+`refs/BattleShip/libultraship/src/fast/interpreter.cpp` (~7,500 lines) — a
+software RSP/RDP interpreter that translates F3DEX2 (plus some S2DEX)
+display lists to a modern GPU API. This is architecturally the opposite of
+our approach (D-001: no RSP emulation, build-time conversion), so most of it
+is not directly portable, but it is a working, decomp-accurate reference for
+what each command *means*.
+
+**Opcode coverage agrees.** Every opcode in `docs/rendering.md`'s "measured
+usage" table has a handler in BattleShip's `f3dex2Handlers` table. No
+disagreement found in what the opcodes we already track actually do.
+
+**New lead for R0.13 (framebuffer rendering).** BattleShip explicitly handles
+`G_BG_1CYC` (0x09) and `G_BG_COPY` (0x0a) — S2DEX background-image commands —
+mixed directly into SSB64's F3DEX2 display lists, with a comment noting SSB64
+"mixes S2DEX BG commands into F3DEX2 display lists without a G_LOAD_UCODE
+switch." Our `crates/ssb-rom/src/dl.rs` decoder has **no opcode constants for
+these at all** — `grep` for `BG_1CYC`/`BG_COPY`/`S2DEX` in that file returns
+nothing. These opcodes draw a full-screen background image
+(`F3DuObjBg`/`Gfxs2dexBg1cyc`/`Gfxs2dexBgCopy`) and are a plausible mechanism
+for screen wipes, which R0.13 has not started and which currently show up as
+unresolved segment-0x01 texture references under R0.3. Not confirmed against
+our own ROM data yet — that is the next step before implementing anything.
+
+**Corroborates RE-053 (Dream Land canopy).** BattleShip's texture-tile sampler
+has a comment reading "No LOD support: force both slots to the base mip
+level" (`interpreter.cpp:3152`) — the reference PC port does not implement
+N64 LOD/mipmap selection at all, it always samples level 0. This supports
+RE-053's conclusion that mipmapping is not the fix for the canopy: even a
+port with zero LOD support has to get the canopy right some other way
+(dithering/magnification handling, not minification). Does not by itself
+explain what BattleShip *does* do differently that makes it look right (or
+whether it does) — that would need running BattleShip against the same ROM
+and comparing, which was out of scope for this pass.
+
+**Confirms the shape of R0.8's open transform question, doesn't resolve it.**
+`interpreter.cpp`'s `G_MW_MATRIX` handler (~line 3794) has a detailed comment
+and implementation for patching individual halves of the RSP's live MVP
+matrix in place, following a `gSPMvpRecalc`. Cross-checked against
+`refs/ssb-decomp-re/src/sys/objdisplay.c` (already present in `refs/`, no
+need to clone anything further): the pattern at objdisplay.c:753-782 and
+:806-818 is real — SSB64 computes a custom 4×4 matrix on the CPU (into
+`sGCMatrixProjectL` or `mtx_hub.gbi`, depending on the draw-type branch) and
+then emits `gSPMvpRecalc` + eight `gMoveWd(G_MW_MATRIX, ...)` calls to patch
+it into the RSP's current MVP, rather than uploading a whole new matrix via
+`G_MTX`. Since we don't emulate the RSP (D-001), the RSP-side patching
+mechanics don't matter to us — what matters is that **the actual transform is
+CPU-computed matrix math in `objdisplay.c`**, not a novel RDP/RSP behavior.
+That means R0.8's "0x8000 transform" / `RecalcRotRpyRSca` kinds are exactly
+the kind of thing D-001 says to port directly from the decompilation, the
+same as every other transform. This pass did not locate the specific
+matrix-building function for those draw-type branches (the name
+`RecalcRotRpyRSca` used in `docs/porting-status.md` did not turn up literally
+in `objdisplay.c` — it may be named differently, or be in a different file);
+finding it is R0.8's actual next step, not this entry's.
+
+**Confirms the wrap-mode gap is real, not hypothetical.** BattleShip decodes
+`cms`/`cmt` (clamp/mirror bits) per axis independently and applies them
+per-draw (`interpreter.cpp:3242-3251`). `psp/src/meshdraw.rs` currently
+hardcodes `sceGuTexWrap(Repeat, Repeat)` for every draw regardless of what
+`G_SETTILE` specified — already tracked as an open R0.5 item; this just
+confirms the reference implementation treats it as a real per-texture setting
+worth threading through, not a corner case.
+
+**Confidence: high** that the opcode-level findings above (BG commands,
+LOD-forced-to-base, MVP patch mechanism, per-axis wrap) are accurately
+transcribed from BattleShip's source — these are direct code reads, not
+inference. **Low/unconfirmed** that any of them is *the* fix for R0.13, R0.5
+or R0.8 — none of this pass tested a hypothesis against our own ROM or
+device output. It only established there is a plausible, reference-backed
+lead where one was previously missing.

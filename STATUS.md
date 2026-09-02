@@ -12,42 +12,42 @@
 
 ## Current Task
 
-`R0.2 — N64 Rendering Command Inventory`
+`R0.3 — Texture Conversion Completeness`
 
 ## Task Status
 
-`VERIFYING`
+`IN_PROGRESS`
 
-Every acceptance item except one is satisfied with evidence already recorded
-in `docs/rendering.md`. The outstanding item is the BattleShip cross-reference
-required by `AGENTS.md` §10: `refs/BattleShip` is not cloned in this
-checkout, and `docs/reverse-engineering.md` has zero references to it. Next
-step: clone it per README "Local reference setup" and cross-reference its
-GBI/RDP handling against the opcode inventory in `docs/rendering.md`
-"Measured usage," then close R0.2.
+617/647 textures convert. 30 remain: 26 segment-0x01 cross-file references,
+4 `MissingPalette`. Next step: confirm/refute the RE-054 lead that some or
+all of the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY`
+full-screen background draws (not decoded by `crates/ssb-rom/src/dl.rs` at
+all today) rather than ordinary cross-file `DObjDLLink`/`DObjMultiList`
+texture references. Check which hypothesis the actual failing display lists
+support before writing a fix for either.
 
 ## Last Completed Task
 
-`R0.1 — Rendering State Reconciliation` (documentation audit: reconciled
-`AGENTS.md`/`PLAN.md`/`STATUS.md`/`README.md`/`DECISIONS.md`/`TODO.md` and
-`docs/porting-status.md`/`docs/rendering.md` against actual code, removed a
-stale duplicate `ARCHITECTURE.md`, corrected a README claim that physical PSP
-validation was complete, refreshed test/texture-conversion counts). See
-`PLAN.md` R0.1 for full evidence.
+`R0.2 — N64 Rendering Command Inventory` — closed the one open acceptance
+item (BattleShip cross-reference, `AGENTS.md` §10) by cloning
+`refs/BattleShip` + its `libultraship` submodule and reading its F3DEX2/S2DEX
+interpreter. Recorded as RE-054 in `docs/reverse-engineering.md`. Produced
+three new leads, now tracked in `TODO.md`: a candidate mechanism for R0.13
+(S2DEX BG commands), corroboration that R0.5's Dream Land canopy issue isn't
+LOD-related (BattleShip has no LOD support either), and clarification that
+R0.8's `0x8000`/`RecalcRotRpyRSca` transform is CPU-computed matrix math to
+port from `objdisplay.c`, not novel RDP/RSP behavior. See `PLAN.md` R0.2.
 
-`R0.9 — Stage Animation` is also `COMPLETE`, validated three independent ways
-(RE-050/051/052) — see `PLAN.md` R0.9. It was already substantially done
-before this documentation pass; this pass only recorded that fact.
+`R0.1 — Rendering State Reconciliation` and `R0.9 — Stage Animation` are also
+`COMPLETE` — see `PLAN.md` for each.
 
 ## Next Eligible Task
 
-`R0.2` (in progress, `VERIFYING`) — see above. After it closes, the next
-eligible `TODO` tasks in dependency order are `R0.3` (texture conversion
-completeness — 26 segment-0x01 cross-file failures, 4 missing palettes) and
-`R0.13`/`R0.15` (framebuffer rendering, render-state isolation), which have
-no implementation started yet. `R0.4` through `R0.12` and `R0.14` are
-`IN_PROGRESS`/`VERIFYING` with real but partial progress — see `PLAN.md` for
-each task's current evidence.
+`R0.3` (in progress) — see above. `R0.8` is also newly eligible (its
+dependencies R0.1/R0.2 are both now complete) and has a fresher lead than
+before (RE-054); either is a reasonable next task once R0.3's immediate
+question is answered. `R0.13`/`R0.15` remain genuinely untouched but are
+blocked on `R0.6`, which is only `IN_PROGRESS`.
 
 ## Blockers
 
@@ -148,30 +148,42 @@ The exact ordered task list is in `PLAN.md`.
 
 # 6. Current Task State
 
-## R0.2 — N64 Rendering Command Inventory
+## R0.3 — Texture Conversion Completeness
 
-Status: `VERIFYING`
+Status: `IN_PROGRESS`
 
 ### Objective
 
-Enumerate every N64 rendering command and relevant state transition actually exercised by SSB64.
+Resolve every texture conversion failure that represents a missing required texture path.
 
 ### Required Work
 
-* [x] GBI commands identified, usage/frequency recorded, display-list usage mapped, current PSP implementation mapped, unsupported commands identified, relevant RSP/RDP behavior identified — all done, see `docs/rendering.md` "Measured usage"
-* [ ] BattleShip cross-reference — clone `refs/BattleShip` (README "Local reference setup") and cross-reference its GBI/RDP handling against `docs/rendering.md`'s opcode inventory; record findings in `docs/reverse-engineering.md` as a new `RE-XXX` entry
+* [ ] Check whether the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY` background draws (RE-054 lead) — pull one failing display list by file/offset from `romtool textures` and inspect its raw opcode bytes at the failing `G_SETTIMG`'s containing list, rather than assuming either hypothesis
+* [ ] If confirmed: decode `G_BG_1CYC`/`G_BG_COPY` in `crates/ssb-rom/src/dl.rs` (opcodes 0x09/0x0a under F3DEX2 numbering — verify against our own ROM, BattleShip's numbering may not be load-bearing here) and figure out what the PSP-side draw should be
+* [ ] If refuted: continue tracing the `DObjDLLink`/`DObjMultiList` cross-file path per the original Phase B plan
+* [ ] Resolve or accept-with-evidence the 4 `MissingPalette` cases
 
 ### Completion Evidence
 
-Record once the BattleShip cross-reference is done:
+Record:
 
-* which BattleShip source files were consulted
-* what agreed / disagreed with the decompilation or ROM evidence
-* any documentation updates that result
+* which hypothesis the raw display-list bytes support, and how that was checked
+* the fix implemented (or the accepted-deviation writeup if no fix is warranted)
+* before/after `romtool textures` output
+* regression test added
 
 ---
 
 # 7. Last Verification
+
+## 2026-09-02 — R0.2 BattleShip cross-reference
+
+* Cloned `refs/BattleShip` + `libultraship` submodule (`ssb64` branch); read `src/fast/interpreter.cpp`
+* Cross-checked against `refs/ssb-decomp-re/src/sys/objdisplay.c` (already present, no clone needed)
+* Result: RE-054 recorded in `docs/reverse-engineering.md`; three new leads filed in `TODO.md` (R0.13 S2DEX BG, R0.5 LOD corroboration, R0.8 transform clarification)
+* Affected subsystem: documentation/investigation only, no code changed
+* PPSSPP: not run this pass
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-02 — Documentation audit (R0.1)
 
