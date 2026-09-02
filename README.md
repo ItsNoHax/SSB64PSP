@@ -4,7 +4,7 @@ A native Rust port of **Super Smash Bros. (N64)** to the **Sony PSP**.
 
 This is **not an emulator**. It is a reimplementation of the game for PSP hardware, using the [Super Smash Bros. decompilation][decomp] as the primary reference for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
-> **Status: rendering-focused engine prototype.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate on physical PSP hardware at the target 60 FPS. The current development priority is completing rendering fidelity and coverage before combat implementation.
+> **Status: rendering-focused engine prototype.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate at a locked 60 FPS under PPSSPP, which is the project's primary validated environment today. The project has been smoke-tested on physical PSP hardware earlier in development, but the formal physical-PSP rendering validation milestone (`PLAN.md` R2) has not yet been completed — see [`STATUS.md`](STATUS.md) §8. The current development priority is completing rendering fidelity and coverage before combat implementation.
 
 ![Dream Land rendering on PSP](docs/images/m4-stage-textured.png)
 
@@ -69,7 +69,16 @@ See [`PLAN.md`](PLAN.md) for the authoritative development roadmap and [`STATUS.
 * Fighter animation on hardware
 * Stage collision queries
 * Fighter movement and landing on extracted stage collision
-* Physical PSP execution and rendering
+
+### Physical PSP hardware
+
+The project has been booted and smoke-tested on physical PSP hardware earlier
+in development. That testing predates the current rendering work above and
+was not captured with the evidence (hardware model, build, asset-pack
+version, observed behavior) the project now requires — see `AGENTS.md` §16.
+Treat physical-hardware behavior as **unverified for the current renderer**
+until PLAN.md's R2 milestone is completed and recorded in `STATUS.md`. PPSSPP
+is the environment all claims above were validated against.
 
 ### Current rendering work
 
@@ -377,6 +386,7 @@ After that, the project will progress toward complete combat, match systems, men
 | [`docs/memory.md`](docs/memory.md)                           | Memory layout and allocation                              |
 | [`docs/porting-status.md`](docs/porting-status.md)           | Per-subsystem implementation status                       |
 | [`DECISIONS.md`](DECISIONS.md)                               | Permanent architectural decisions                         |
+| [`TODO.md`](TODO.md)                                         | Discovered future work not yet folded into `PLAN.md`      |
 
 ---
 

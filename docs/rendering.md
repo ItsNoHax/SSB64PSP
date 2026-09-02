@@ -148,27 +148,33 @@ traversals, and the gap between them is the scene-graph work.
 ## Texture conversion results
 
 `romtool textures` extracts every texture the display lists actually bind and
-packs it for the GE:
+packs it for the GE. Current output (`cargo run --release -p romtool --
+textures "rom/Super Smash Bros. (USA).z64"`):
 
 ```
-unique textures bound  664
-packed                 545
-swizzled               401 (74%)
+unique textures bound  647
+packed                 617
+failed                  30
+  decode: MissingPalette          4
+  segmented addr (seg 0x01)      26
+note: CI texture, no TLUT recorded  4  (packs successfully; informational)
+swizzled               356 (58%)
 
 by PSP format:
-  Psm8888     65 textures      404.6 KiB
-  PsmT4      468 textures      644.9 KiB
-  PsmT8       12 textures       28.3 KiB
+  Psm8888     62 textures      323.3 KiB
+  PsmT4      538 textures      340.9 KiB
+  PsmT8       17 textures       53.1 KiB
 
 VRAM budget
-  packed (chosen formats)     1077.9 KiB
-  naive, all RGBA8888         4711.1 KiB
-  saving                        77.1%
+  packed (chosen formats)      717.3 KiB
+  naive, all RGBA8888         2338.8 KiB
+  saving                        69.3%
+  fits in ~700 KiB texture VRAM? no — needs streaming (1.0x over)
 ```
 
-**77.1% saved** by keeping paletted textures paletted. `PsmT4` carries 468 of
-545 textures in 645 KiB; expanding those to RGBA8888 would cost eight times as
-much and blow the VRAM budget outright.
+**69.3% saved** by keeping paletted textures paletted. `PsmT4` carries 538 of
+617 packed textures in 341 KiB; expanding those to RGBA8888 would cost eight
+times as much and blow the VRAM budget outright.
 
 Two rules drive the packing:
 
@@ -181,7 +187,7 @@ IA and RGBA32 have no PSP equivalent and expand to `Psm8888`.
 
 ### Swizzling
 
-74% of textures are swizzled. The GE reads through a cache organised in
+58% of packed textures are swizzled. The GE reads through a cache organised in
 16-byte by 8-row blocks; storing texels linearly makes each cache line span one
 row, so vertical locality is lost. Swizzling reorders texels so each block is
 contiguous. Textures whose rows are under 16 bytes cannot be swizzled and are
@@ -202,29 +208,33 @@ relocation is filed under (RE-037): `Cmd::SetTimg` carries that offset,
 texels and its palette independently — a fighter's palette is in its own file
 while a stage's texels are not.
 
-### The 1078 KiB figure needs streaming
+### The 717 KiB figure needs streaming
 
 Only ~700 KiB of VRAM remains after the two framebuffers and the depth buffer
 (`docs/memory.md`), so the full texture set does **not** fit at once — it is
-1.5x over. This is not a problem in practice: a match needs one stage and up to
+1.0x over. This is not a problem in practice: a match needs one stage and up to
 four fighters, not every texture in the game. But it does mean texture
-residency must be **per-scene**, and that is now a known requirement rather
-than a surprise discovered at M8.
+residency must be **per-scene**, and that is a known requirement to be
+addressed before rendering completeness (`PLAN.md` R0.3/R1), not a surprise
+discovered late.
 
-### Remaining unconverted (119 of 664)
+### Remaining unconverted (30 of 647, per current `romtool textures`)
 
 | Reason | Count |
 |---|---:|
-| null address, no relocation names the slot | 54 |
-| resolved offset lands past the end of the file it names | 36 |
-| paletted but no TLUT recorded | 28 |
-| `MissingPalette` at decode | 16 |
-| segmented address (segment 0x01) | 13 |
+| segmented address (segment 0x01) | 26 |
+| `MissingPalette` at decode | 4 |
 
-The palette-related cases need TLUT tracking across display list boundaries.
-The 54 null addresses are a different problem from the cross-file ones above:
-nothing in the archive says what they were meant to point at, so they are
-genuinely unresolved rather than merely unresolved *yet*.
+Separately, 4 more textures pack successfully but are flagged "CI texture, no
+TLUT recorded" — informational, not a failure.
+
+The 26 segment-0x01 failures are cross-file texture references reached
+through `DObjDLLink`/`DObjMultiList` display-list arrays that this converter
+does not yet trace (`TODO.md` Phase B). The `MissingPalette` cases are a
+palette pointer that resolves but names data absent from the target file.
+Earlier passes over this data also reported null-address and out-of-file
+failure classes; neither appears in the current `romtool textures` output,
+so treat them as resolved until a re-run shows otherwise.
 
 ## Display list translation
 
@@ -271,9 +281,15 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
 
 ### Not yet handled
 
-* Mipmaps — the N64 uses `G_TX_MIPMAP` in places; unclear whether Smash does.
+* Mipmap chains are generated at build time for 151 textures
+  (`psp_texture::pack_mipped`), but generating them did **not** resolve the
+  Dream Land canopy discrepancy (RE-053) — the wrong pattern survives and
+  sharpens at higher resolution, which points at texture *magnification*
+  behaviour rather than minification/LOD selection. This is `PLAN.md` R0.5's
+  open acceptance criterion, not a solved problem.
 * Wrap modes beyond `Repeat`: `G_TX_CLAMP` and `G_TX_MIRROR` are decoded from
-  `G_SETTILE` but not yet mapped onto `sceGuTexWrap`.
+  `G_SETTILE` but `psp/src/meshdraw.rs` still hardcodes
+  `sceGuTexWrap(Repeat, Repeat)` for every draw.
 
 ## Coordinate handling
 
@@ -311,7 +327,7 @@ Per plan §32:
   per-node baked matrices and recovered `MObj` palettes all draw on device,
   stages included (`docs/images/m4-stage-textured.png`). Outstanding: the
   majority-vote lighting heuristic, the `MObj` fields listed in RE-010, and the
-  119 textures that still fail to convert.
+  30 textures that still fail to convert.
 * **Renderer 3** — transparency, fog, particles, shadows, UI. Not started. The
   debug overlay is still `sceGuDebugFlush` rather than GE geometry, which is
   why it needs the software rasteriser (RE-014).

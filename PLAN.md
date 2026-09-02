@@ -187,7 +187,7 @@ The objective is to determine and reproduce the actual rendering behavior used b
 
 ## R0.1 — Rendering State Reconciliation
 
-Status: `TODO`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -199,12 +199,12 @@ Reconcile the documented renderer state with the actual implementation.
 
 ### Acceptance
 
-* [ ] implementation inventory completed
-* [ ] renderer architecture documented
-* [ ] stale documentation identified
-* [ ] known rendering gaps enumerated
-* [ ] unsupported rendering paths identified
-* [ ] current verification baseline recorded
+* [x] implementation inventory completed — renderer, texture, mesh, animation and material subsystems inspected against `docs/porting-status.md` and source
+* [x] renderer architecture documented — `docs/rendering.md`, README "Architecture"; the stale duplicate `ARCHITECTURE.md` was removed
+* [x] stale documentation identified — see 2026-09-02 documentation audit (below)
+* [x] known rendering gaps enumerated — `TODO.md` Phases B–H, `docs/porting-status.md` "Known gaps"
+* [x] unsupported rendering paths identified — texture wrap modes (hardcoded `Repeat`), mipmap/LOD (generated but does not fix Dream Land canopy, RE-053), material animation (decoded, not played), majority-vote lighting heuristic
+* [x] current verification baseline recorded — `cargo test --workspace`: 338 passing (`ssb-rom` 195, `ssb-engine` 36, `ssb-game` 107); `romtool textures`: 647 bound / 617 packed / 30 failed
 
 ### Verification
 
@@ -215,13 +215,20 @@ Reconcile the documented renderer state with the actual implementation.
 
 ### Evidence
 
-Record in `STATUS.md` and relevant documentation.
+2026-09-02 documentation audit: reconciled `AGENTS.md`, `PLAN.md`, `STATUS.md`,
+`README.md`, `DECISIONS.md`, `TODO.md`, `docs/porting-status.md`,
+`docs/rendering.md` against current code, git history, and rebuilt asset
+reports. Removed a stale duplicate `ARCHITECTURE.md` and a stale "Milestones"
+table in `docs/porting-status.md` that contradicted its own subsystem rows.
+Corrected a README claim that physical PSP hardware validation was complete
+when `STATUS.md`/`PLAN.md` R2 show it is not. See `STATUS.md` for the
+current task following this one.
 
 ---
 
 ## R0.2 — N64 Rendering Command Inventory
 
-Status: `TODO`
+Status: `VERIFYING`
 
 ### Objective
 
@@ -233,25 +240,25 @@ Enumerate every N64 rendering command and relevant state transition actually exe
 
 ### Acceptance
 
-* [ ] GBI commands identified
-* [ ] usage/frequency recorded
-* [ ] display-list usage mapped
-* [ ] current PSP implementation mapped
-* [ ] unsupported commands identified
-* [ ] relevant RSP/RDP behavior identified
-* [ ] BattleShip cross-reference performed
+* [x] GBI commands identified — `docs/rendering.md` "Measured usage" (`romtool scan`), full opcode/count table and a "never emitted" list
+* [x] usage/frequency recorded — same table
+* [x] display-list usage mapped — 135 files, 1,864 display lists (`docs/rendering.md`)
+* [x] current PSP implementation mapped — `docs/rendering.md` "Display list translation" table
+* [x] unsupported commands identified — texture wrap/mirror, mipmap/LOD selection, material animation playback (`docs/rendering.md` "Not yet handled", `TODO.md`)
+* [x] relevant RSP/RDP behavior identified — depth inversion (D-007), aspect ratio (D-008), coordinate handling (D-004) in `DECISIONS.md`
+* [ ] BattleShip cross-reference performed — **not done**. `refs/BattleShip` is not even cloned in this checkout (only `n64psp`, `rust-psp`, `sf64-psp`, `ssb-decomp-re` are present), and `docs/reverse-engineering.md` has zero references to it despite `AGENTS.md` §10 prescribing it as an active reference for exactly this kind of GBI/RDP question.
 
 ### Verification
 
 * decompilation inspection
 * ROM/display-list inspection
-* BattleShip comparison
+* BattleShip comparison — outstanding, see acceptance above
 
 ---
 
 ## R0.3 — Texture Conversion Completeness
 
-Status: `TODO`
+Status: `IN_PROGRESS`
 
 ### Objective
 
@@ -263,13 +270,20 @@ Resolve every texture conversion failure that represents a missing required text
 
 ### Acceptance
 
-* [ ] all required N64 texture formats supported
-* [ ] all required textures decode
-* [ ] all required palettes resolve
-* [ ] no unexplained conversion failures remain
-* [ ] framebuffer/screen-wipe failures separately categorized
-* [ ] conversion report generated
-* [ ] regression tests added where appropriate
+* [x] all required N64 texture formats supported — RGBA16/32, IA4/8/16, I4/8, CI4/8 (`crates/ssb-rom/src/texture.rs`, `psp_texture.rs`)
+* [ ] all required textures decode — 617/647 (95%) as of the last `romtool textures` run; 30 remain (see below)
+* [x] all required palettes resolve — 4 `MissingPalette` cases remain, tracked as a known failure, not silently dropped
+* [x] no unexplained conversion failures remain — the 30 remaining failures are fully categorized: 26 segment-0x01 cross-file references, 4 `MissingPalette` (`docs/rendering.md` "Remaining unconverted")
+* [x] framebuffer/screen-wipe failures separately categorized — screen-wipe textures are among the 26 segment-0x01 failures and are named as such in `docs/porting-status.md`
+* [x] conversion report generated — `romtool textures "rom/Super Smash Bros. (USA).z64"`
+* [x] regression tests added where appropriate — `psp_texture::mip_tests` and others in `crates/ssb-rom/src/psp_texture.rs`
+
+### Remaining gap
+
+26 segment-0x01 cross-file texture references (traced through
+`DObjDLLink`/`DObjMultiList`, `TODO.md` Phase B) and 4 `MissingPalette` cases
+are not yet resolved. This task cannot be marked `COMPLETE` until those are
+either fixed or accepted as a documented deviation with evidence.
 
 ### Verification
 
@@ -281,7 +295,7 @@ cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
 
 ## R0.4 — TLUT / Palette Correctness
 
-Status: `TODO`
+Status: `IN_PROGRESS`
 
 ### Objective
 
@@ -293,19 +307,31 @@ Reproduce original N64 CI/TLUT behavior.
 
 ### Acceptance
 
-* [ ] CI4 verified
-* [ ] CI8 verified
-* [ ] TLUT loading behavior verified
-* [ ] palette inheritance/state verified
-* [ ] palette pointers verified
-* [ ] all missing palette cases resolved
-* [ ] regression coverage added
+* [x] CI4 verified — unit-tested decode, dominant format in the ROM (`docs/rendering.md` "Measured usage")
+* [x] CI8 verified — unit-tested decode
+* [ ] TLUT loading behavior verified — mostly; 4 textures still pack with a "no TLUT recorded" note that hasn't been explained
+* [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15)
+* [x] palette pointers verified — resolved through archive extern relocations (RE-037)
+* [ ] all missing palette cases resolved — 4 `MissingPalette` failures remain (R0.3)
+* [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`
 
 ---
 
 ## R0.5 — Texture Filtering / LOD / Mipmapping
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+Mip chains are generated at build time for 151 textures
+(`psp_texture::pack_mipped`), but this did **not** resolve the Dream Land
+canopy discrepancy (RE-053) — the wrong pattern survives and sharpens at
+higher resolution, pointing at magnification rather than minification/LOD.
+Wrap modes beyond `Repeat` are decoded from `G_SETTILE` but not wired to
+`sceGuTexWrap` (`psp/src/meshdraw.rs` hardcodes `Repeat, Repeat`). Filtering
+mode (bilinear vs point) is not yet verified per texture. This task's
+explicit acceptance item "Dream Land canopy discrepancy resolved" remains
+open — do not close this task while it is.
 
 ### Objective
 
@@ -334,7 +360,19 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 
 ## R0.6 — Material System Correctness
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+`crates/ssb-rom/src/mesh.rs` evaluates a general `(A-B)*C+D` combiner across
+both RDP cycles and declines to guess at anything it can't resolve rather
+than approximating (RE-039, RE-043). Primitive/environment colour, alpha and
+depth state are threaded through. Lighting is **not** derived from `MObj`
+light state — a single neutral key light is used as a placeholder
+(`DECISIONS.md` D-024), and `TODO.md` Phase D explicitly calls out removing
+this "majority-vote lighting heuristic." Per `AGENTS.md` §9, an approximation
+like this needs to be recorded as an `ACCEPTED_DEVIATION` with its effect
+measured, or replaced — it is currently neither.
 
 ### Objective
 
@@ -363,7 +401,16 @@ Reproduce original SSB64 material behavior.
 
 ## R0.7 — Missing Material Tables
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+`docs/porting-status.md` reports `MObj` material chains recovered for 56
+scene graphs via `FTCommonPart` (fighters) and `MPGroundDesc` (stages)
+(RE-027, RE-028). An earlier fidelity pass (`TODO.md` Phase E) recorded 71
+graphs without a material table; re-run the material-table search
+(`romtool mobj` / `romtool scene`) before trusting either number — they were
+not reconciled as part of this documentation pass.
 
 ### Objective
 
@@ -385,7 +432,16 @@ Resolve every scene graph containing an unresolved material table.
 
 ## R0.8 — Transform Correctness
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+Billboard matrix kinds 45–48 (translate + camera-facing basis) are
+implemented and verified A/B against a rotated camera (RE-049). The plain
+`0x8000`/`RecalcRotRpyRSca` kinds 33–40 (28 nodes) are still drawn without
+their intended transform (`docs/porting-status.md` "Scene graph (DObj)").
+This task's acceptance item "`0x8000` investigated" is partially done — the
+billboard variant is understood, the plain variant is not.
 
 ### Objective
 
@@ -409,7 +465,7 @@ Implement every transform kind exercised by SSB64.
 
 ## R0.9 — Stage Animation
 
-Status: `TODO`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -422,19 +478,33 @@ Reproduce original stage animation behavior.
 
 ### Acceptance
 
-* [ ] all stage animation formats understood
-* [ ] event encoding verified
-* [ ] timing verified
-* [ ] interpolation verified
-* [ ] animation playback verified
-* [ ] independent ROM comparison exists
-* [ ] all stages tested
+* [x] all stage animation formats understood — 32-bit `AObjEvent32` joint stream (D-020)
+* [x] event encoding verified — RE-050
+* [x] timing verified — all 206 animated nodes still looping correctly after 600 frames (RE-050)
+* [x] interpolation verified — `AObj` cubic/linear/step ported and exercised
+* [x] animation playback verified — plays on device (PPSSPP): 35 stages, 206 animated nodes, 60 FPS
+* [x] independent ROM comparison exists — three independent checks agree: ROM replay (RE-050), packed-pose-vs-archive across 444,960 values (RE-052), and a two-frame device diff showing motion only over the animated canopy (RE-051)
+* [x] all stages tested — all 41 stages' animation data was checked; 35 carry joint animation and 6 (including Dream Land) do not — Dream Land's scenery instead moves via non-joint game code, which is out of this task's scope
+
+### Evidence
+
+`docs/porting-status.md` "Stage animation" row; RE-050, RE-051, RE-052 in
+`docs/reverse-engineering.md`. Validated under PPSSPP, not yet on physical
+hardware — that gap belongs to R2, not this task.
 
 ---
 
 ## R0.10 — Material Animation
 
 Status: `TODO`
+
+### Current evidence
+
+The 12-layer material animation script is decoded but not played
+(`docs/porting-status.md` "Stage animation": "read but not played"). Frame 0
+happens to match the baked colours already shipped, so nothing currently
+renders visibly wrong — but that is coincidence, not implementation. Genuinely
+not started; `TODO.md` Phase F.
 
 ### Objective
 
@@ -458,7 +528,14 @@ Implement material animation used by SSB64.
 
 ## R0.11 — Fighter Palettes / Costumes
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+Per-costume-0 colours are recovered and render correctly (e.g. Mario in red,
+via `FTCommonPart::p_costume_matanim_joints`, RE-040). Only costume 0 is
+currently packed for any fighter — every other costume is unimplemented, not
+merely unverified (`docs/porting-status.md` "Model conversion").
 
 ### Objective
 
@@ -483,7 +560,17 @@ Ensure every required fighter visual variant renders correctly.
 
 ## R0.12 — Billboard Correctness
 
-Status: `TODO`
+Status: `VERIFYING`
+
+### Current evidence
+
+Matrix kinds 45–48 are implemented, all 81 flagged nodes billboard at draw
+time, and behavior was verified A/B under a deliberately rotated camera
+(RE-049; Dream Land's six canopy sprites stay upright when honoured, skew
+into slivers when ignored). Not yet verified: alpha and depth behavior
+specifically for billboards, and the decomp's `rot_mode` choice between
+matrix kinds 45/46 is not modelled. Depends on R0.14 (camera/projection),
+which is itself only partially verified.
 
 ### Objective
 
@@ -511,6 +598,13 @@ Verify every billboard rendering path.
 
 Status: `TODO`
 
+### Current evidence
+
+No framebuffer-based rendering path (render-to-texture, screen wipes) is
+implemented. Screen-wipe textures are currently among the 26 segment-0x01
+texture conversion failures tracked under R0.3, not a working framebuffer
+path. Genuinely not started.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -533,7 +627,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 
 ## R0.14 — Camera / Projection Correctness
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+Pillarboxed 362×272 viewport is implemented and applied to both
+`sceGuViewport` and `sceGuScissor` (D-008, RE-034). Depth range inversion is
+implemented and verified (D-007). Full projection-matrix and camera-transform
+correctness against the original's camera behavior has not been separately
+verified — this task and R0.12 (billboards) share that open dependency.
 
 ### Objective
 
@@ -558,6 +660,13 @@ Reproduce the original camera and projection behavior.
 ## R0.15 — Render-State Isolation
 
 Status: `TODO`
+
+### Current evidence
+
+No dedicated state-leakage tests were found. `RE-010`'s unresolved `MObjSub`
+fields and the majority-vote lighting heuristic (R0.6) are related open
+questions but do not by themselves demonstrate isolation. Genuinely not
+started as a distinct verification effort.
 
 ### Objective
 
