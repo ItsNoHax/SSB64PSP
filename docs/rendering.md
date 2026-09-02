@@ -152,29 +152,36 @@ packs it for the GE. Current output (`cargo run --release -p romtool --
 textures "rom/Super Smash Bros. (USA).z64"`):
 
 ```
-unique textures bound  647
-packed                 618
-failed                  29
-  decode: MissingPalette          3
+unique textures bound  665
+packed                 638
+failed                  27
+  decode: MissingPalette          1
   segmented addr (seg 0x01)      26
-note: CI texture, no TLUT recorded  3  (packs successfully; informational)
-swizzled               356 (58%)
+note: CI texture, no TLUT recorded  1  (packs successfully; informational)
+swizzled               366 (57%)
 
 by PSP format:
-  Psm8888     62 textures      323.3 KiB
-  PsmT4      539 textures      341.0 KiB
-  PsmT8       17 textures       53.1 KiB
+  Psm8888     65 textures      337.8 KiB
+  PsmT4      551 textures      343.6 KiB
+  PsmT8       22 textures       81.8 KiB
 
 VRAM budget
-  packed (chosen formats)      717.5 KiB
-  naive, all RGBA8888         2339.3 KiB
-  saving                        69.3%
-  fits in ~700 KiB texture VRAM? no — needs streaming (1.0x over)
+  packed (chosen formats)      763.2 KiB
+  naive, all RGBA8888         2432.8 KiB
+  saving                        68.6%
+  fits in ~700 KiB texture VRAM? no — needs streaming (1.1x over)
 ```
 
-**69.3% saved** by keeping paletted textures paletted. `PsmT4` carries 539 of
-618 packed textures in 341 KiB; expanding those to RGBA8888 would cost eight
+**68.6% saved** by keeping paletted textures paletted. `PsmT4` carries 551 of
+638 packed textures in 344 KiB; expanding those to RGBA8888 would cost eight
 times as much and blow the VRAM budget outright.
+
+`unique textures bound` rose from 647 to 665 and `packed` from 617 to 638
+this session (R0.7, RE-059/RE-060): resolving two files' `MObj` material
+tables didn't just fix palettes on textures that were already bound —
+several primitives had no texture binding at all before (their `SetTimg`
+was wiped by an unresolved `forget_texture()` call), and now correctly
+resolve one.
 
 Two rules drive the packing:
 
@@ -187,7 +194,7 @@ IA and RGBA32 have no PSP equivalent and expand to `Psm8888`.
 
 ### Swizzling
 
-58% of packed textures are swizzled. The GE reads through a cache organised in
+57% of packed textures are swizzled. The GE reads through a cache organised in
 16-byte by 8-row blocks; storing texels linearly makes each cache line span one
 row, so vertical locality is lost. Swizzling reorders texels so each block is
 contiguous. Textures whose rows are under 16 bytes cannot be swizzled and are
@@ -208,24 +215,24 @@ relocation is filed under (RE-037): `Cmd::SetTimg` carries that offset,
 texels and its palette independently — a fighter's palette is in its own file
 while a stage's texels are not.
 
-### The 717 KiB figure needs streaming
+### The 763 KiB figure needs streaming
 
 Only ~700 KiB of VRAM remains after the two framebuffers and the depth buffer
 (`docs/memory.md`), so the full texture set does **not** fit at once — it is
-1.0x over. This is not a problem in practice: a match needs one stage and up to
+1.1x over. This is not a problem in practice: a match needs one stage and up to
 four fighters, not every texture in the game. But it does mean texture
 residency must be **per-scene**, and that is a known requirement to be
 addressed before rendering completeness (`PLAN.md` R0.3/R1), not a surprise
 discovered late.
 
-### Remaining unconverted (29 of 647, per current `romtool textures`)
+### Remaining unconverted (27 of 665, per current `romtool textures`)
 
 | Reason | Count |
 |---|---:|
 | segmented address (segment 0x01) | 26 |
-| `MissingPalette` at decode | 3 |
+| `MissingPalette` at decode | 1 |
 
-Separately, 3 more textures pack successfully but are flagged "CI texture, no
+Separately, 1 more texture packs successfully but is flagged "CI texture, no
 TLUT recorded" — informational, not a failure.
 
 The 26 segment-0x01 entries are not missing texture data at all: RE-055
@@ -235,20 +242,22 @@ transition system binds to RSP segment 1 once per frame
 (`refs/ssb-decomp-re/src/lb/lbtransition.c`). That data never exists in any
 ROM file, so no texture converter can produce it; a real implementation
 belongs to framebuffer effects (`PLAN.md` R0.13), not this converter. The
-`MissingPalette` cases are not a decode bug either: RE-057 traced them to
-three files (`MVCommon`, `ITCommonObject`, `LinkSpecial2`) whose scene graphs
-get no — or only partial — `MObj` material-table pairing, which causes a
-real, present palette load elsewhere in the same file to get dropped when an
-unrelated, unresolvable material call intervenes. Two of `LinkSpecial2`'s
-three affected graphs are now fixed (RE-059, its entrance-effect graphs are
-paired through a third record shape, `EFDesc`, that lives outside the
-archive and has to be hand-entered); `MVCommon`, `ITCommonObject` and
-`LinkSpecial2`'s third graph (a `WPAttributes`-named Spin Attack model) are
-still open. All of it belongs to `PLAN.md` R0.7 (missing material tables),
-not this converter. Earlier passes over this data also reported
-null-address and out-of-file failure classes; neither appears in the
-current `romtool textures` output, so treat
-them as resolved until a re-run shows otherwise.
+`MissingPalette` case is not a decode bug either: RE-057 originally traced 4
+such failures to three files (`MVCommon`, `ITCommonObject`, `LinkSpecial2`)
+whose scene graphs get no — or only partial — `MObj` material-table
+pairing, which causes a real, present palette load elsewhere in the same
+file to get dropped when an unrelated, unresolvable material call
+intervenes. `LinkSpecial2` (RE-059, a third record shape, `EFDesc`, living
+outside the archive and hand-entered) and `MVCommon` (RE-060, a fourth
+mechanism — no struct at all, just a code call sequence, also hand-entered)
+are now fully fixed. Only `ITCommonObject`'s one remaining graph (a fifth
+mechanism — a byte-offset delta from a runtime pointer, not yet traced) and
+`LinkSpecial2`'s already-fixed file's third graph (a `WPAttributes`-named
+Spin Attack model, RE-058, untyped in the decompilation) are still open.
+All of it belongs to `PLAN.md` R0.7 (missing material tables), not this
+converter. Earlier passes over this data also reported null-address and
+out-of-file failure classes; neither appears in the current `romtool
+textures` output, so treat them as resolved until a re-run shows otherwise.
 
 ## Display list translation
 

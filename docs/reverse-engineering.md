@@ -3674,3 +3674,73 @@ own tracing.
 inserted offsets, and the fix are all independently confirmed by both the
 decompilation source and a real `romtool` run against the ROM, not
 inference.
+
+## RE-060 — File 52 (`MVCommon`) fully resolved: a fourth pairing mechanism, code sequence not data (PLAN.md R0.7)
+
+**Question.** RE-059 fixed file 353 but left files 52 and 86 completely
+untraced. What are they, and is there anything to find?
+
+**File 52 is the opening movie's room scene, not a UI container.**
+`refs/ssb-decomp-re/src/relocData/52_MVCommon.c`'s graphs are named
+`RoomBackground`, `RoomDesk`, `RoomBooks`, `RoomLamp`, `RoomLogo`,
+`RoomCloseUpEffectAir`/`Ground`, `RoomDeskGround` — the pre-rendered-looking
+opening cinematic where the camera pans across a room before cutting to the
+logo. "MV" is the movie/cutscene module (`refs/ssb-decomp-re/CLAUDE.md`'s
+module table), not menu/UI as guessed earlier.
+
+**A fourth pairing mechanism: two separate calls, no struct at all.**
+`refs/ssb-decomp-re/src/mv/mvopening/mvopeningroom.c` sets each room piece
+up with two consecutive, independent calls on the same `GObj`:
+
+```c
+gobj = gcMakeGObjSPAfter(...);
+gcSetupCommonDObjs(gobj, lbRelocGetFileData(DObjDesc*, ..., &llMVCommonRoomBackgroundDObjDesc), NULL);
+gcAddMObjAll(gobj, lbRelocGetFileData(MObjSub***, ..., &llMVCommonRoomBackgroundMObjSub));
+```
+
+Unlike `FTCommonPart`/`MPGroundDesc`/`EFDesc` — all one struct with two
+adjacent pointer fields sitting in memory — this pairing exists **only in
+the order two unrelated function calls appear in the compiled code**. There
+is no struct instance anywhere for a scanner to read, adjacent or otherwise;
+the only source of truth is the C call sequence itself. Every
+`gcSetupCommonDObjs` call in the file was checked against whether a
+`gcAddMObjAll` on the same `gobj` follows it: `RoomBackground`, `RoomLogo`,
+`RoomCloseUpEffectAir`, `RoomCloseUpEffectGround` and `RoomDeskGround` all
+do (matching the file's 5 previously-unpaired graph offsets exactly);
+`RoomDesk`, `RoomBooks`, `RoomLamp`, `RoomTissues` and others do not — those
+are legitimately materialless, not a discovery gap.
+
+**Fix.** Five more `PartTables::insert()` calls in `load_all`, offsets read
+directly from `52_MVCommon.c`'s own comments and cross-checked against
+`mvopeningroom.c`'s call sites: `(0x7E98, 0x42F8)` RoomBackground,
+`(0x1C4A8, 0x1BC60)` RoomLogo, `(0x1DF28, 0x1DCA0)` RoomCloseUpEffectAir,
+`(0x1F270, 0x1F0F8)` RoomCloseUpEffectGround, `(0x22440, 0x20480)`
+RoomDeskGround.
+
+**Verified.** `romtool mobj --file 52`: all 5 graphs paired, 0 chain/demand
+mismatches, "wanting one but unnamed" 5→0 — file 52 is **fully resolved**.
+`romtool textures --file 52`: 58/58 packed, 0 failures (was several). This
+also resolved 2 of the archive's 3 remaining `MissingPalette` cases (the
+"CI texture, no TLUT recorded" ones were file 52's, not 86's or the
+already-fixed 353's). Archive-wide `romtool textures`: 618→638 packed,
+665 unique bound (up from 647 — several primitives that previously drew
+with no texture binding at all now correctly resolve one), `MissingPalette`
+3→1. `romtool mobj` archive-wide: pairings 58→63, unpaired 69→64.
+`cargo test --workspace`: 338 passing, unaffected.
+
+**What's still open.** File 86 (`ITCommonObject`)'s one remaining unpaired
+graph (`0x7BE8`, an "NBumper" item's `DObjDesc`,
+`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c`) uses a **fifth**
+mechanism again: `itGetPData(ip, &llITCommonDataNBumperDataStart,
+&llITCommonDataNBumperWaitMObjSub)` computes the MObjSub pointer as a
+compile-time *byte-offset delta* from a runtime-resolved base pointer,
+rather than either a struct field or a call-sequence pairing. Not
+confirmed which specific MObjSub table this particular graph
+(`..._gap_0x76CC_sub_0x42C_post`) needs, or whether it's the same
+"NBumperWait" state `itnbumper.c` names — left unfixed rather than
+guessing. 64 other unpaired graphs archive-wide (`romtool mobj`, no
+`--file`) remain completely untraced.
+
+**Confidence: high** on the mechanism and all 5 fixes — every offset was
+read from named, typed decomp symbols and independently confirmed by a real
+`romtool` run showing 0 mismatches and 0 texture failures for the file.

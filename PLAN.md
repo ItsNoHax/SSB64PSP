@@ -329,7 +329,7 @@ Reproduce original N64 CI/TLUT behavior.
 * [x] TLUT loading behavior verified — the 4 "no TLUT recorded" notes are explained: `MObj` material-table pairing gaps in 3 specific files, not a TLUT-loading bug (RE-057)
 * [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15); RE-057 found a related but distinct issue (palette *loss* on an unresolved segment-0x0E call, not leakage between lists)
 * [x] palette pointers verified — resolved through archive extern relocations (RE-037)
-* [ ] all missing palette cases resolved — 3 `MissingPalette` failures remain (was 4; file 353 fixed via RE-059), root-caused to `PartTables` pairing gaps in 2 remaining files (52, 86; RE-057); tracked under R0.7, not this task
+* [ ] all missing palette cases resolved — 1 `MissingPalette` failure remains (was 4; files 353 and 52 fixed via RE-059/RE-060), root-caused to a `PartTables` pairing gap in file 86's one remaining graph (RE-057, RE-060); tracked under R0.7, not this task
 * [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`
 
 ---
@@ -422,44 +422,58 @@ Status: `IN_PROGRESS`
 
 ### Current evidence
 
-Freshly re-measured this session (`romtool mobj`, whole archive, after
-RE-059's fix): **58 graphs paired, 69 unpaired.** Before RE-059's fix this
-was 56/71 — the count moved by exactly the 2 graphs RE-059 fixed, confirming
-both numbers were accurate and just needed a re-run, not a reconciliation.
+Freshly re-measured this session (`romtool mobj`, whole archive, after both
+fixes below): **63 graphs paired, 64 unpaired.** Started the session at
+56/71.
 
-RE-057 (`docs/reverse-engineering.md`) found three concrete, reproducible
-test cases while investigating R0.3's `MissingPalette` failures: files 52
-(`MVCommon`), 86 (`ITCommonObject`) and 353 (`LinkSpecial2`) get zero or
-partial `MObj` materials from `PartTables::scan` for their scene graphs,
-confirmed by direct instrumented trace. RE-057's guess that 353's table lives
-in a sibling file (missed by `PartTables::scan`'s same-file requirement) is
-**retracted by RE-058**: 353 already declares its own graph and its own
-`MObjSub` table in the same file, so that specific mechanism doesn't apply.
+RE-057 found three concrete test cases while investigating R0.3's
+`MissingPalette` failures: files 52 (`MVCommon`), 86 (`ITCommonObject`) and
+353 (`LinkSpecial2`) get zero or partial `MObj` materials from
+`PartTables::scan` for their scene graphs. RE-057's guess that 353's table
+lives in a sibling file is **retracted by RE-058**: 353 already declares its
+own graph and its own `MObjSub` table in the same file.
 
-RE-058 found something more structurally significant instead: `WPAttributes`
-(`refs/ssb-decomp-re/src/wp/wptypes.h:36-45`) is a **second** struct shape
-with the same `DObjDesc*`/`MObjSub***` adjacency `PartTables::scan` looks
-for, used for weapon/projectile sub-objects. The one confirmed `WPAttributes`
-instance checked (Link's boomerang, `226_LinkSpecial1.c`) has
-`p_mobjsubs = NULL` by design, so a missing pairing is not automatically the
-right explanation for every `MissingPalette` case; some may be legitimately
-palette-less on real hardware.
+Four distinct pairing mechanisms are now known, only one of which
+`PartTables::scan` can discover on its own:
 
-RE-059 found a **third** shape, `EFDesc` (fighter entrance effects,
-`refs/ssb-decomp-re/src/ef/eftypes.h:11-24`), confirmed and fixed two of
-file 353's three unpaired graphs: unlike `FTCommonPart`/`MPGroundDesc`,
-`EFDesc` instances live in the game's static executable, not in any
-relocData archive file, so `PartTables::scan` can structurally never find
-them — no amount of scanning fixes this, only reading the decompilation and
-hand-entering the pairing via `PartTables::insert()` does. Implemented in
-`tools/romtool/src/main.rs`'s `load_all` for `(353, 0x3F8, 0x130)`
-("EntryWave") and `(353, 0x7B8, 0x4F0)` ("EntryBeam"), both gated on
-`read_table` actually parsing. Verified: `romtool mobj --file 353` pairings
-56→58 with 0 chain/demand mismatches; `romtool textures --file 353` 1→0
-failures; archive-wide `romtool textures` 617→618 packed, `MissingPalette`
-4→3. File 353's third graph (`SpinAttackDObjDesc @ 0x11C0`, named by a
-`WPAttributes` whose instance is not yet typed in the decompilation) and
-files 52/86 remain unresolved.
+1. `FTCommonPart` (fighters) and `MPGroundDesc` (stages) — one struct, two
+   adjacent pointer fields, living in the archive. `PartTables::scan` finds
+   these structurally.
+2. `WPAttributes` (RE-058, weapon/projectile sub-objects,
+   `refs/ssb-decomp-re/src/wp/wptypes.h:36-45`) — same adjacency, also in the
+   archive in principle, but the one confirmed instance checked (Link's
+   boomerang) has `p_mobjsubs = NULL` by design, and file 353's own instance
+   (Spin Attack) is not yet typed in the decompilation, so nothing has
+   actually been fixed via this shape yet.
+3. `EFDesc` (RE-059, fighter entrance effects,
+   `refs/ssb-decomp-re/src/ef/eftypes.h:11-24`) — same adjacency, but the
+   instances live in the game's **static executable**, not any archive file,
+   so no scan can ever find them. Fixed 2 graphs in file 353 (`EntryWave`,
+   `EntryBeam`) via hand-entered `PartTables::insert()` calls in
+   `tools/romtool/src/main.rs`'s `load_all`.
+4. Plain call-sequence pairing (RE-060, the opening movie's room scene,
+   `refs/ssb-decomp-re/src/mv/mvopening/mvopeningroom.c`) — **no struct at
+   all**; `gcSetupCommonDObjs(gobj, dobjdesc)` and a separate
+   `gcAddMObjAll(gobj, mobjsub)` call are the only link, encoded purely in
+   the executable's call order. Fixed all 5 of file 52's unpaired graphs,
+   fully resolving that file, via 5 more hand-entered `PartTables::insert()`
+   calls.
+
+Verified: `romtool mobj --file 353` and `--file 52` both show 0 chain/demand
+mismatches on every newly-paired graph. `romtool textures`: file 353 1→0
+failures, file 52 several→0 failures (58/58 packed). Archive-wide
+`romtool textures`: 617→638 packed (665 unique bound, up from 647 — several
+primitives that previously drew with no texture at all now correctly
+resolve one), `MissingPalette` 4→1. `cargo test --workspace`: 338 passing,
+unaffected throughout (both fixes live in `romtool`, not the library crate).
+
+Still open: file 86's one remaining graph (an "NBumper" item) uses a
+**fifth** mechanism — a compile-time byte-offset delta from a runtime base
+pointer (`itGetPData`,
+`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c:367`) — not yet confirmed
+which table it needs. File 353's third graph (Spin Attack) still needs its
+`WPAttributes` instance typed before it can be inserted. 64 other unpaired
+graphs archive-wide are completely untraced.
 
 ### Objective
 
@@ -471,11 +485,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — `FTCommonPart`, `MPGroundDesc` and `EFDesc` shapes found and (for `EFDesc`) two instances hand-paired; `WPAttributes` found but not yet traced to a specific fix; files 52/86 not yet traced at all
-* [ ] original material data identified — done for the two `EFDesc` pairings (RE-059); not done elsewhere
+* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph and 64 other archive-wide unpaired graphs are not
+* [ ] original material data identified — done for 7 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52); not done for the other 64 unpaired graphs
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — file 353's two fixed graphs verified via `romtool mobj`/`romtool textures` (RE-059); nothing else verified yet
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj --file 353`'s 0-mismatch check is that regression detector for this fix.
+* [ ] affected scenes verified — file 353's two and file 52's five fixed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060); nothing else verified yet
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj --file 353`/`--file 52`'s 0-mismatch checks are that regression detector for these fixes.
 
 ---
 
