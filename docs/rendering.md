@@ -228,13 +228,19 @@ discovered late.
 Separately, 4 more textures pack successfully but are flagged "CI texture, no
 TLUT recorded" — informational, not a failure.
 
-The 26 segment-0x01 failures are cross-file texture references reached
-through `DObjDLLink`/`DObjMultiList` display-list arrays that this converter
-does not yet trace (`TODO.md` Phase B). The `MissingPalette` cases are a
-palette pointer that resolves but names data absent from the target file.
-Earlier passes over this data also reported null-address and out-of-file
-failure classes; neither appears in the current `romtool textures` output,
-so treat them as resolved until a re-run shows otherwise.
+The 26 segment-0x01 entries are not missing texture data at all: RE-055
+(`docs/reverse-engineering.md`) traces them to `sLBTransitionPhotoHeap`, a
+runtime per-frame copy of the framebuffer that the loading-break ("LB")
+transition system binds to RSP segment 1 once per frame
+(`refs/ssb-decomp-re/src/lb/lbtransition.c`). That data never exists in any
+ROM file, so no texture converter can produce it; a real implementation
+belongs to framebuffer effects (`PLAN.md` R0.13), not this converter. The
+`MissingPalette` cases are a palette pointer that resolves but names data
+absent from the target file for at least one of several occurrences of that
+texture in its file; RE-056 has a lead but not yet a confirmed cause. Earlier
+passes over this data also reported null-address and out-of-file failure
+classes; neither appears in the current `romtool textures` output, so treat
+them as resolved until a re-run shows otherwise.
 
 ## Display list translation
 

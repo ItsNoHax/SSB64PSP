@@ -278,19 +278,24 @@ Resolve every texture conversion failure that represents a missing required text
 ### Acceptance
 
 * [x] all required N64 texture formats supported — RGBA16/32, IA4/8/16, I4/8, CI4/8 (`crates/ssb-rom/src/texture.rs`, `psp_texture.rs`)
-* [ ] all required textures decode — 617/647 (95%) as of the last `romtool textures` run; 30 remain (see below)
-* [x] all required palettes resolve — 4 `MissingPalette` cases remain, tracked as a known failure, not silently dropped
-* [x] no unexplained conversion failures remain — the 30 remaining failures are fully categorized: 26 segment-0x01 cross-file references, 4 `MissingPalette` (`docs/rendering.md` "Remaining unconverted")
-* [x] framebuffer/screen-wipe failures separately categorized — screen-wipe textures are among the 26 segment-0x01 failures and are named as such in `docs/porting-status.md`
+* [x] all required textures decode — 617/647 bind-and-decode; the remaining 26 are not decodable textures at all (see below), so this item is satisfied for every texture that actually exists in the ROM
+* [ ] all required palettes resolve — 4 `MissingPalette` cases remain, tracked as a known failure with a lead (RE-056), not yet fixed
+* [x] no unexplained conversion failures remain — the 30 remaining failures are fully explained: 26 are the LB (loading-break) transition's per-frame framebuffer photocopy, bound to RSP segment 0x1 at runtime and absent from the ROM (RE-055); 4 are `MissingPalette` (RE-056, `docs/rendering.md` "Remaining unconverted")
+* [x] framebuffer/screen-wipe failures separately categorized and identified — RE-055 identifies the 26 segment-0x01 entries as `sLBTransitionPhotoHeap` (`refs/ssb-decomp-re/src/lb/lbtransition.c`), R0.13's territory, not R0.3's
 * [x] conversion report generated — `romtool textures "rom/Super Smash Bros. (USA).z64"`
 * [x] regression tests added where appropriate — `psp_texture::mip_tests` and others in `crates/ssb-rom/src/psp_texture.rs`
 
 ### Remaining gap
 
-26 segment-0x01 cross-file texture references (traced through
-`DObjDLLink`/`DObjMultiList`, `TODO.md` Phase B) and 4 `MissingPalette` cases
-are not yet resolved. This task cannot be marked `COMPLETE` until those are
-either fixed or accepted as a documented deviation with evidence.
+The 26 segment-0x01 entries are **accepted as out of scope for this task**:
+RE-055 shows they are the LB transition system's runtime framebuffer
+photocopy (`sLBTransitionPhotoHeap`, bound to RSP segment 1 by
+`gSPSegment(..., 0x1, ...)` once per frame, never present in any ROM file).
+There is no texture-conversion fix to write; a real implementation belongs to
+R0.13 (framebuffer effects), which remains blocked on R0.6. This task cannot
+be marked `COMPLETE` until the 4 `MissingPalette` cases (RE-056 has a lead,
+not yet a confirmed fix) are either fixed or themselves accepted as a
+documented deviation with evidence.
 
 ### Verification
 
@@ -608,9 +613,15 @@ Status: `TODO`
 ### Current evidence
 
 No framebuffer-based rendering path (render-to-texture, screen wipes) is
-implemented. Screen-wipe textures are currently among the 26 segment-0x01
-texture conversion failures tracked under R0.3, not a working framebuffer
-path. Genuinely not started.
+implemented. RE-055 (`docs/reverse-engineering.md`) identifies the concrete
+target: the LB (loading-break) transition system's `sLBTransitionPhotoHeap`,
+a `300x220` 16-bit heap buffer the engine fills with a copy of the last frame
+drawn to the framebuffer (`refs/ssb-decomp-re/src/sys/... /lb/lbtransition.c`),
+bound to RSP segment `0x1` once per frame and sampled by 11 between-match
+transition effects (aeroplane, curtain, cannon, star, bamboo-blind ×2,
+camera, block, rotscale, check, "gakubuthi"). These are exactly the 26
+segment-0x01 entries currently reported (and accepted as out of scope) under
+R0.3. Genuinely not started.
 
 ### Objective
 

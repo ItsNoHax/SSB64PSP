@@ -3335,3 +3335,136 @@ inference. **Low/unconfirmed** that any of them is *the* fix for R0.13, R0.5
 or R0.8 — none of this pass tested a hypothesis against our own ROM or
 device output. It only established there is a plausible, reference-backed
 lead where one was previously missing.
+
+## RE-055 — The 26 segment-0x01 texture failures are the loading-transition photo, not S2DEX BG (PLAN.md R0.3)
+
+**Question.** RE-054 raised a lead that the 26 segment-0x01 texture-conversion
+failures under R0.3 might be S2DEX `G_BG_1CYC`/`G_BG_COPY` background draws
+that our `dl.rs` misreads as ordinary `G_SETTIMG`. STATUS.md's R0.3 next step
+was to check this against the actual failing display lists before writing a
+fix for either hypothesis.
+
+**Test 1: does the opcode even appear in this ROM?** `romtool scan --exhaustive`
+walks every discoverable display list in the archive and tallies opcode
+frequency. `0x09`/`0x0A` (`G_BG_1CYC`/`G_BG_COPY`) appear **zero times** in
+the full opcode table (checked against both the default reloc-target scan and
+`--exhaustive`, which also finds lists not reachable from typed relocations).
+Whatever produces the segment-0x01 addresses, it is not an S2DEX BG command
+anywhere in this ROM's display lists.
+
+**Test 2: what does the raw display list actually say?** Dumped file 39 (one
+of the 13 files with segment-0x01 failures) via `romtool dump` and walked its
+bytes directly. The failing `G_SETTIMG` sits at file offset `0x0E10`:
+
+```
+0x0E00: fc127e24 fffff3f9   G_SETCOMBINE
+0x0E08: d7000002 ffffffff   G_TEXTURE (on)
+0x0E10: fd10012b 01000000   G_SETTIMG  addr=0x01000000 (segment 1, offset 0)
+0x0E18: f5109600 07020090   G_SETTILE
+0x0E20: f5109600 000a0290   G_SETTILE
+0x0E28: de000000 00000e38   G_DL -> 0x0E38 (LOADTILE/SETTILESIZE)
+```
+
+This is not misaligned or garbled — it is a completely ordinary, well-formed
+F3DEX2 texture-bind idiom (`SETCOMBINE` → `TEXTURE` → `SETTIMG` → `SETTILE`×2
+→ `DL` doing the tile load). The same exact instruction word
+(`fd10012b 01000000`) recurs verbatim in files 40, 41, 45, 50 and 51 at their
+own offsets, confirming this is one shared reference repeated across many
+files, not a per-file coincidence.
+
+**Test 3: what does segment 1 mean in the decompilation?** Ground truth:
+`refs/ssb-decomp-re/src/lb/lbtransition.c`:
+
+```c
+// 0x800D6488 - Heap for "photocopy" of last frame drawn to framebuffer
+void *sLBTransitionPhotoHeap;
+...
+void lbTransitionProcDisplay(GObj *gobj) {
+    gDPPipeSync(gSYTaskmanDLHeads[0]++);
+    gSPSegment(gSYTaskmanDLHeads[0]++, 0x1, sLBTransitionPhotoHeap);
+    gcDrawDObjTreeForGObj(gobj);
+    ...
+}
+...
+heap_pixels = sLBTransitionPhotoHeap = syTaskmanMalloc(300 * 220 * sizeof(u16), 0x10);
+```
+
+Segment `0x1` is bound at runtime, once per frame, to `sLBTransitionPhotoHeap`
+— a `300 * 220` 16-bit heap buffer the engine fills with a copy of the last
+frame rendered to the framebuffer, for the between-match "LB" (loading break)
+transition wipes (`dLBTransitionDescs`: aeroplane, curtain, cannon/"kannon",
+star, sudare/bamboo-blind ×2, camera, block, rotscale, check, "gakubuthi" —
+11 transition variants, close to the 13 files affected). The width (300) and
+pixel size (16-bit) match exactly: `romtool textures --file 39` reports the
+two failing binds as `300x5 Rgba/Bits16` and `300x6 Rgba/Bits16` — thin
+horizontal strips of exactly that 300-wide photocopy buffer, consistent with
+a wipe effect that reveals the captured frame a few scanlines at a time. This
+is `gSPSegment`/segment-0x0E's own pattern (already handled in
+`crates/ssb-rom/src/mesh.rs` for the `MObj` graphics heap) applied to a
+different runtime buffer: an address that is bound by the RSP at draw time
+and never exists at a fixed offset in any ROM file.
+
+**Conclusion.** The 26 segment-0x01 failures are not a texture-conversion bug
+and not an S2DEX decoding gap. They are references to a per-frame
+framebuffer photocopy that our build-time, no-RSP-emulation pipeline (D-001)
+cannot resolve from ROM data, because the data does not exist in the ROM —
+it is generated at runtime from whatever was last drawn. This is R0.13
+("framebuffer effects") territory, not R0.3: there is no fix to write under
+texture conversion, only a decision (deferred to R0.13, which is still
+blocked on R0.6) about whether to ever implement the LB transition system at
+all. RE-054's S2DEX-BG lead is refuted by Test 1 and superseded by this
+entry.
+
+**Confidence: high.** The decomp citation names the exact segment number, the
+exact heap variable, its exact size, and the exact call site; the byte-level
+read is a direct, unambiguous decode of a well-formed instruction sequence;
+and the dimensions independently corroborate the theory without having been
+sought out in advance. Not yet checked: whether all 26 failures (vs. just the
+6 files sampled) share this exact address, though the per-file failure counts
+(each affected file loses exactly 2 textures) are consistent with it.
+
+## RE-056 — A lead on the 4 MissingPalette cases (PLAN.md R0.3), not a fix
+
+**Question.** With RE-055 closing the segment-0x01 question, R0.3's only
+remaining gap is 4 `MissingPalette` failures (files 52 ×2, 86, 353), each a
+CI4 texture that packs with a "CI texture, no TLUT recorded" note.
+
+**What the bytes show.** File 52's failing texture (offset `0x1960`) is
+bound by six separate `G_SETTIMG` instructions across the file, not one. At
+least one of them (offset `0x6530`) is immediately preceded, a few
+instructions earlier in the same list, by a `G_LOADTLUT` whose source image
+was set via a `G_SETTIMG` at `0x6500` (addr `0x1c0`) — the ordinary
+`SETTIMG(palette)` → `LOADTLUT` → `SETTIMG(texture)` → `SETTILE` idiom that
+converts correctly everywhere else in this ROM. That occurrence, read in
+isolation, has a palette.
+
+**Why it still fails.** `romtool textures` dedups texture bindings by
+`(home file, data offset, width, height)` (`tools/romtool/src/main.rs`,
+`seen` set) and only evaluates the *first* occurrence it walks to for a given
+key; the other five bindings of the same texture are never separately
+checked. If the walk order reaches a *different* occurrence first — one
+whose call path never executes a `G_LOADTLUT` before this `SETTIMG` (for
+example because `crates/ssb-rom/src/mesh.rs`'s `forget_texture()` ran between
+the palette load and this bind, which clears `palette_offset` along with
+everything else, or because this occurrence is reached via a joint/continuation
+list that starts after the palette load) — it reports no palette, even though
+a palette does exist for this exact texture somewhere else in the file.
+
+**Not confirmed.** This pass did not trace which of the six occurrences
+`file_meshes`/`mesh::convert_sequence` actually visits first, nor whether the
+"losing" occurrence's own state genuinely has no reachable `G_LOADTLUT` (a
+real per-occurrence gap) versus an artifact of the dedup key discarding a
+valid binding in favor of a bad one (a `romtool` reporting bug, not a
+conversion bug — the packer itself runs `convert_texture` per-primitive and
+may already handle the good occurrence correctly for actual gameplay). This
+overlaps with R0.4's open "palette inheritance/state...leakage" item and
+R0.15. Either way, this is not S2DEX/segment-related and unrelated to
+RE-055.
+
+**Confidence: medium.** The byte-level read of one occurrence is a direct
+decode, not inference. The explanation for *why the failure still happens
+despite a valid occurrence existing* is a plausible mechanism grounded in
+`mesh.rs`'s actual state-reset logic and `romtool`'s actual dedup key, but it
+was not stepped through with a debugger or instrumented print to confirm
+which occurrence is "first," so treat it as the next concrete step, not a
+finding.
