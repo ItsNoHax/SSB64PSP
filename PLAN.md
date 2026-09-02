@@ -1,200 +1,866 @@
-# Super Smash Bros. 64 → PSP — Rust Native Port Plan
+# SSB64PSP Development Plan
 
-## Objective
-Create a native Rust port of the original Nintendo 64 Super Smash Bros. to the Sony PSP.
+## Mission
 
-- **Not an emulator** — a reimplementation for PSP hardware
-- Written primarily in Rust
-- Target: PSP-1000/2000/3000
-- Build using `rust-psp` / `cargo-psp`
-- Use the SSB64 decompilation as primary reference for game logic
-- Extract assets at build time from user-supplied ROM
-- Never commit Nintendo IP
-- Preserve original gameplay behavior
-- Replace N64 subsystems with PSP-native implementations
-- Exploit VFPU and GPU where useful
-- Eventually run on real PSP hardware
+Create a native Rust implementation of Super Smash Bros. 64 for Sony PSP hardware.
 
-**Primary references:**
-1. [ssb-decomp-re](https://github.com/VetriTheRetri/ssb-decomp-re) — 100% complete
-2. [sf64-psp](https://github.com/TheMrIron2/sf64-psp)
-3. [n64psp](https://github.com/TheMrIron2/n64psp)
-4. [rust-psp](https://github.com/overdrivenpotato/rust-psp)
+The original SSB64 decompilation and the user's legally obtained ROM are the primary behavioral references.
 
----
+The project prioritizes:
 
-## Architecture
-
-### Three-Layer Separation
-```
-Layer A — Game            crates/ssb-game
-    fighters, physics, collision, animation, stages, items, AI, menus, match state
-                  │
-Layer B — Engine          crates/ssb-engine
-    traits: Renderer, AudioBackend, Input, Clock; math, coordinate conversion, fixed timestep
-                  │
-Layer C — PSP backend     psp/
-    sceGu, sceCtrl, sceAudio, VFPU, timing
+```text
+Original behavior
+        ↓
+Rendering correctness
+        ↓
+Rendering completeness
+        ↓
+Physical PSP validation
+        ↓
+Rendering performance
+        ↓
+Combat
+        ↓
+Full game systems
 ```
 
-`crates/ssb-rom` sits beside all three: reads ROM at build time, runtime pack on device.
+**Rendering is a hard gate.**
 
-### Crate Structure
-| Crate | Purpose | `no_std` | Target |
-|-------|---------|----------|--------|
-| `crates/ssb-rom` | ROM validation, VPK0, relocData, N64 formats, animation, runtime pack | yes (+alloc) | host + PSP |
-| `crates/ssb-engine` | Layer B traits, math, coordinate conversion | yes | host + PSP |
-| `crates/ssb-game` | Layer A game logic | yes | host + PSP |
-| `tools/romtool` | Build-time extraction/verification CLI | no | host |
-| `psp/` | Layer C backend + executable | yes | `mipsel-sony-psp` |
+Combat does not begin until the rendering gate has been explicitly passed.
 
 ---
 
-## Milestones
+# 1. How to Use This Plan
 
-### M0 — Research ✅ COMPLETE
-- Architecture document (`docs/ssb-architecture.md`)
-- Dependency map
-- N64 subsystem map
-- Asset format inventory
-- Rendering command inventory
-- Audio inventory
+`PLAN.md` defines:
 
-### M1 — Rust PSP Bootstrap ✅ COMPLETE
-- Cargo project builds
-- EBOOT.PBP generates
-- Controller input works
-- GU initialization
-- Triangle renderer
-- Locked 60 FPS in PPSSPP
+* the ordered roadmap;
+* task dependencies;
+* acceptance criteria;
+* verification requirements;
+* milestone gates.
 
-### M2 — Resource Pipeline ✅ COMPLETE
-- ROM validation (SHA-1/MD5)
-- VPK0 decompression (499/499 files cross-verified)
-- relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-- Texture conversion (617/647 packed, 77% VRAM saved)
-- Basic model conversion (2450 meshes, 42,417 triangles, 0 failures)
-- Runtime asset pack (3.6 MB, zero-copy, 16-byte aligned)
+`STATUS.md` defines:
 
-### M3 — Rendering 🟢 90%
-- SSB stage geometry renders
-- Textures + CLUTs work
-- Camera + depth
-- Transparency (cutout/translucent)
-- Lighting/materials (majority-vote heuristic)
-- **Outstanding:** Dream Land canopy incorrect, wrap/clamp/mirror, MObj unknown fields, 119 failed textures, material animation, per-layer render state
+* what the agent is currently doing;
+* what it completed last;
+* what it verified;
+* what is blocked;
+* what should be resumed.
 
-### M4 — Gameplay Vertical Slice 🟡 65%
-- Fighter stands on stage at 60 FPS
-- Physics driven tick-by-tick through collision
-- 158/158 spawns settle with zero drift
-- Movement status machine: Wait, Walk×3, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing, Pass
-- All 27 fighters' real constants extracted and verified
-- Animation: 532 movement animations packed, skeleton ticks on device
-- Stage collision: all 41 stages, swept floor query, `mpprocess` ported
-- **Missing:** attacks, hitboxes, damage, knockback, opponent, stocks, match loop, stage loader
+Do not put mutable session state in this file.
 
-### M5 — Audio 🔴 0%
-- AudioBackend trait only
-- Build-time VADPCM decode + sequence conversion
-- Software mixer on dedicated thread
-- SFX → music → correct timing → Media Engine
+When the user says:
 
-### M6 — Full Gameplay 🔴 0%
-- All 12 original characters
-- All original stages
-- CPU AI
-- Items
-- Game modes
+> Continue with the plan.
 
-### M7 — Menus / Save 🔴 0%
-- Title, character select, mode select, pause, results, credits
-- PSP-native save system (unlocks, records, settings)
+the agent reads `STATUS.md` first to determine whether an existing task should be resumed.
 
-### M8 — Optimization 🔴 0%
-- 60 FPS target
-- VFPU acceleration
-- GPU batching/state sorting
-- VRAM/memory optimization
-- Audio optimization
-
-### M9 — Hardware Validation 🔴 0%
-- PSP-1000 test
-- PSP-2000/3000 test
-- PPSSPP test
-- Long-duration stability test
+If there is no active task, select the first eligible `TODO` task in this plan.
 
 ---
 
-## Subsystem Targets (for M3-M4)
+# 2. Task Statuses
 
-| Subsystem | Target | Validation |
-|-----------|--------|------------|
-| Renderer | Textured, shaded models at 60 FPS | On-device screenshots match decomp expectations |
-| Physics | All 27 fighters' constants field-verified | 158/158 spawns zero drift |
-| Collision | All 41 stages, swept query, floor solver | Spawn drop test passes |
-| Animation | Figatree + stage AObj at 60 FPS | Pose match ROM, no bone stretch, feet planted |
-| Input | N64→PSP mapping, deadzone, C-buttons | Unit tests + device feel |
-| Asset Pack | Zero-copy load, <1s init | PPSSPP boot + pack verification |
+Every implementation task uses exactly one:
 
----
+* `TODO`
+* `IN_PROGRESS`
+* `BLOCKED`
+* `VERIFYING`
+* `COMPLETE`
+* `ACCEPTED_DEVIATION`
 
-## Architectural Decisions (Binding)
+Definitions:
 
-1. **No RDP emulation** — Parse display lists at build time, emit PSP meshes
-2. **Preconversion over runtime** — Static ROM geometry → build-time conversion
-3. **Layer separation** — Game logic never mentions PSP; PSP never mentions fighters
-4. **Fixed 60 Hz simulation** — Decoupled from rendering (59.94 Hz display)
-5. **Coordinate systems match** — No handedness flip; N64 row-major/row-vector cancels with PSP column-major/column-vector
-6. **Explicit allocators** — GameArena, AssetArena, FrameArena, ObjectPool<T>; no heap in hot paths
-6. **Extern relocations resolved at load** — Pack records them; runtime loader patches
-7. **VFPU after profiling** — Scalar first, then accelerate hot paths
+### TODO
 
----
+The task has not been started.
 
-## Definition of Done (Project Complete)
+### IN_PROGRESS
 
-- User supplies supported SSB64 .z64
-- Build validates ROM
-- Assets extract + convert automatically
-- No Nintendo assets committed
-- Rust PSP application builds
-- EBOOT.PBP boots
-- Title screen works
-- Character select works
-- All 12 original characters work
-- All original stages work
-- Original gameplay mechanics work
-- CPU players work
-- Items work
-- Audio + music work
-- Save data works
-- Pause/results/menus work
-- Stable 60 FPS target
-- Real PSP hardware tested
-- Debug/profiling tools exist
-- Build is reproducible
-- No copyrighted ROM/assets distributed
+The task is actively being implemented.
+
+### BLOCKED
+
+The task cannot proceed. The blocker and evidence must be recorded in `STATUS.md`.
+
+### VERIFYING
+
+Implementation exists but acceptance criteria have not yet been fully demonstrated.
+
+### COMPLETE
+
+All acceptance criteria are satisfied and evidence has been recorded.
+
+### ACCEPTED_DEVIATION
+
+Exact N64 reproduction is impossible on PSP, and the difference has been demonstrated, documented and justified.
 
 ---
 
-## Immediate Next Work (Combat Vertical Slice)
+# 3. Task Requirements
 
-1. **Grounded attack end-to-end** — Input → hitbox → hurtbox → damage → knockback
-2. **Hitbox/hurtbox system** — From `FTAttributes` hurtbox descriptors (RE-032)
-3. **Damage/knockback physics** — Port from `ftphysics.c` attack logic
-4. **Opponent + match loop** — Second fighter, stock system, blast zones, KO
-5. **Stage loader** — Match selects stage, not viewer browse
+Every implementation task must have:
+
+* Objective
+* Dependencies
+* Acceptance criteria
+* Verification
+* Evidence
+* Relevant files
+* Known limitations
+
+Never mark a task `COMPLETE` without evidence.
 
 ---
 
-## References
-- `docs/ssb-architecture.md` — Original game architecture
-- `docs/reverse-engineering.md` — Open questions (RE-XXX)
-- `docs/rendering.md` — N64→PSP rendering translation
-- `docs/memory.md` — Memory layout
-- `docs/porting-status.md` — Per-subsystem progress (source of truth)
-- `STATUS.md` — Current working state
-- `TODO.md` — Discovered future work
-- `DECISIONS.md` — Permanent technical decisions
-- `ARCHITECTURE.md` — Current code architecture
+# 4. Reference Hierarchy
+
+When determining original SSB64 behavior:
+
+1. Original SSB64 decompilation
+2. Original ROM/data
+3. BattleShip
+4. sf64-psp
+5. n64psp
+6. Existing SSB64PSP implementation
+7. Engineering assumptions
+
+BattleShip:
+
+`https://github.com/JRickey/BattleShip`
+
+BattleShip is a technical reference, not an authority.
+
+Disagreements must be investigated.
+
+Do not copy Nintendo assets or copyrighted game data from reference projects.
+
+---
+
+# 5. Completed Foundation
+
+## M0 — Research
+
+Status: `COMPLETE`
+
+Original architecture, decompilation and reverse-engineering references established.
+
+---
+
+## M1 — PSP Bootstrap
+
+Status: `COMPLETE`
+
+PSP target builds and the engine executes under the development environment.
+
+---
+
+## M2 — Resource Pipeline
+
+Status: `COMPLETE`
+
+ROM validation, VPK0/relocData processing, extraction and runtime asset-pack infrastructure are operational.
+
+---
+
+## M3 — Core Game / Scene Infrastructure
+
+Status: `COMPLETE`
+
+Core scene, fighter, animation, collision and rendering infrastructure exists.
+
+Remaining renderer work is governed by the rendering milestones below.
+
+---
+
+# 6. R0 — Rendering Correctness
+
+Status: `IN_PROGRESS`
+
+This is the current development gate.
+
+The objective is to determine and reproduce the actual rendering behavior used by SSB64 rather than merely producing visually plausible output.
+
+---
+
+## R0.1 — Rendering State Reconciliation
+
+Status: `TODO`
+
+### Objective
+
+Reconcile the documented renderer state with the actual implementation.
+
+### Dependencies
+
+* M3
+
+### Acceptance
+
+* [ ] implementation inventory completed
+* [ ] renderer architecture documented
+* [ ] stale documentation identified
+* [ ] known rendering gaps enumerated
+* [ ] unsupported rendering paths identified
+* [ ] current verification baseline recorded
+
+### Verification
+
+* inspect renderer implementation
+* inspect generated asset reports
+* run relevant tests
+* run PPSSPP baseline
+
+### Evidence
+
+Record in `STATUS.md` and relevant documentation.
+
+---
+
+## R0.2 — N64 Rendering Command Inventory
+
+Status: `TODO`
+
+### Objective
+
+Enumerate every N64 rendering command and relevant state transition actually exercised by SSB64.
+
+### Dependencies
+
+* R0.1
+
+### Acceptance
+
+* [ ] GBI commands identified
+* [ ] usage/frequency recorded
+* [ ] display-list usage mapped
+* [ ] current PSP implementation mapped
+* [ ] unsupported commands identified
+* [ ] relevant RSP/RDP behavior identified
+* [ ] BattleShip cross-reference performed
+
+### Verification
+
+* decompilation inspection
+* ROM/display-list inspection
+* BattleShip comparison
+
+---
+
+## R0.3 — Texture Conversion Completeness
+
+Status: `TODO`
+
+### Objective
+
+Resolve every texture conversion failure that represents a missing required texture path.
+
+### Dependencies
+
+* R0.2
+
+### Acceptance
+
+* [ ] all required N64 texture formats supported
+* [ ] all required textures decode
+* [ ] all required palettes resolve
+* [ ] no unexplained conversion failures remain
+* [ ] framebuffer/screen-wipe failures separately categorized
+* [ ] conversion report generated
+* [ ] regression tests added where appropriate
+
+### Verification
+
+```bash
+cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
+```
+
+---
+
+## R0.4 — TLUT / Palette Correctness
+
+Status: `TODO`
+
+### Objective
+
+Reproduce original N64 CI/TLUT behavior.
+
+### Dependencies
+
+* R0.3
+
+### Acceptance
+
+* [ ] CI4 verified
+* [ ] CI8 verified
+* [ ] TLUT loading behavior verified
+* [ ] palette inheritance/state verified
+* [ ] palette pointers verified
+* [ ] all missing palette cases resolved
+* [ ] regression coverage added
+
+---
+
+## R0.5 — Texture Filtering / LOD / Mipmapping
+
+Status: `TODO`
+
+### Objective
+
+Determine and reproduce the actual texture sampling behavior used by SSB64.
+
+### Dependencies
+
+* R0.2
+* R0.3
+* R0.4
+
+### Acceptance
+
+* [ ] filtering modes identified from original data
+* [ ] magnification behavior identified
+* [ ] minification behavior identified
+* [ ] LOD behavior identified
+* [ ] mipmapping behavior identified
+* [ ] texture tile parameters verified
+* [ ] texture coordinate behavior verified
+* [ ] wrap/clamp/mirror behavior verified
+* [ ] Dream Land canopy discrepancy resolved
+* [ ] no unsupported mipmapping assumptions remain
+
+---
+
+## R0.6 — Material System Correctness
+
+Status: `TODO`
+
+### Objective
+
+Reproduce original SSB64 material behavior.
+
+### Dependencies
+
+* R0.2
+* R0.4
+
+### Acceptance
+
+* [ ] material tables resolved
+* [ ] combiner behavior verified
+* [ ] primitive color verified
+* [ ] environment color verified
+* [ ] lighting verified
+* [ ] alpha behavior verified
+* [ ] blending verified
+* [ ] fog verified
+* [ ] depth state verified
+* [ ] culling verified
+* [ ] unsupported material behavior identified
+
+---
+
+## R0.7 — Missing Material Tables
+
+Status: `TODO`
+
+### Objective
+
+Resolve every scene graph containing an unresolved material table.
+
+### Dependencies
+
+* R0.6
+
+### Acceptance
+
+* [ ] all material-table references traced
+* [ ] original material data identified
+* [ ] heuristic mapping removed where original data exists
+* [ ] affected scenes verified
+* [ ] regression coverage added
+
+---
+
+## R0.8 — Transform Correctness
+
+Status: `TODO`
+
+### Objective
+
+Implement every transform kind exercised by SSB64.
+
+### Dependencies
+
+* R0.1
+* R0.2
+
+### Acceptance
+
+* [ ] transform kinds enumerated
+* [ ] `0x8000` investigated
+* [ ] original matrix behavior identified
+* [ ] PSP implementation verified
+* [ ] affected scene nodes tested
+* [ ] billboard-related transforms cross-checked
+
+---
+
+## R0.9 — Stage Animation
+
+Status: `TODO`
+
+### Objective
+
+Reproduce original stage animation behavior.
+
+### Dependencies
+
+* R0.6
+* R0.8
+
+### Acceptance
+
+* [ ] all stage animation formats understood
+* [ ] event encoding verified
+* [ ] timing verified
+* [ ] interpolation verified
+* [ ] animation playback verified
+* [ ] independent ROM comparison exists
+* [ ] all stages tested
+
+---
+
+## R0.10 — Material Animation
+
+Status: `TODO`
+
+### Objective
+
+Implement material animation used by SSB64.
+
+### Dependencies
+
+* R0.6
+* R0.9
+
+### Acceptance
+
+* [ ] animation data decoded
+* [ ] runtime clock implemented
+* [ ] material state updated correctly
+* [ ] representative animated materials verified
+* [ ] stage material animation verified
+* [ ] fighter material animation verified where applicable
+
+---
+
+## R0.11 — Fighter Palettes / Costumes
+
+Status: `TODO`
+
+### Objective
+
+Ensure every required fighter visual variant renders correctly.
+
+### Dependencies
+
+* R0.4
+* R0.6
+* R0.10
+
+### Acceptance
+
+* [ ] all fighter palettes identified
+* [ ] all required costumes identified
+* [ ] runtime representation complete
+* [ ] palette data verified against ROM
+* [ ] representative regression renders added
+* [ ] all required fighters verified
+
+---
+
+## R0.12 — Billboard Correctness
+
+Status: `TODO`
+
+### Objective
+
+Verify every billboard rendering path.
+
+### Dependencies
+
+* R0.8
+* R0.14
+
+### Acceptance
+
+* [ ] billboard types enumerated
+* [ ] camera-facing transforms verified
+* [ ] scale verified
+* [ ] orientation verified
+* [ ] texture orientation verified
+* [ ] alpha behavior verified
+* [ ] depth behavior verified
+* [ ] all flagged billboard nodes verified
+
+---
+
+## R0.13 — Framebuffer Rendering
+
+Status: `TODO`
+
+### Objective
+
+Implement every framebuffer-based rendering path required by SSB64.
+
+### Dependencies
+
+* R0.2
+* R0.6
+
+### Acceptance
+
+* [ ] framebuffer usage identified
+* [ ] framebuffer texture paths implemented
+* [ ] screen wipes implemented
+* [ ] render-to-texture paths implemented where required
+* [ ] framebuffer synchronization verified
+* [ ] visual verification completed
+
+---
+
+## R0.14 — Camera / Projection Correctness
+
+Status: `TODO`
+
+### Objective
+
+Reproduce the original camera and projection behavior.
+
+### Dependencies
+
+* R0.8
+
+### Acceptance
+
+* [ ] projection matrix verified
+* [ ] viewport verified
+* [ ] aspect ratio verified
+* [ ] depth mapping verified
+* [ ] camera transforms verified
+* [ ] N64/PSP resolution differences explicitly handled
+* [ ] representative scenes compared
+
+---
+
+## R0.15 — Render-State Isolation
+
+Status: `TODO`
+
+### Objective
+
+Ensure render state cannot incorrectly leak between display-list/material/node draws.
+
+### Dependencies
+
+* R0.2
+* R0.6
+
+### Acceptance
+
+* [ ] texture state tracked
+* [ ] TLUT state tracked
+* [ ] combiner state tracked
+* [ ] primitive color tracked
+* [ ] environment color tracked
+* [ ] blend state tracked
+* [ ] depth state tracked
+* [ ] culling tracked
+* [ ] geometry state tracked
+* [ ] texture addressing tracked
+* [ ] state leakage tests added
+
+---
+
+# 7. R1 — Rendering Completeness
+
+Status: `BLOCKED_BY_R0`
+
+R1 cannot begin until R0 is complete.
+
+### Objective
+
+Demonstrate that every discovered SSB64 rendering path required for the game is implemented.
+
+### Acceptance
+
+* [ ] all stages render
+* [ ] all fighters render
+* [ ] all required costumes render
+* [ ] all required animations render
+* [ ] all required effects render
+* [ ] all required framebuffer paths render
+* [ ] no unexplained rendering commands remain
+* [ ] no unexplained missing assets remain
+* [ ] no unexplained material failures remain
+* [ ] rendering regression suite passes
+* [ ] golden/reference renders are established
+
+---
+
+# 8. R2 — Physical PSP Rendering Validation
+
+Status: `BLOCKED_BY_R1`
+
+### Objective
+
+Verify the renderer on actual PSP hardware.
+
+PPSSPP is not sufficient.
+
+### Acceptance
+
+* [ ] EBOOT boots on physical PSP
+* [ ] runtime asset pack loads
+* [ ] representative fighters render
+* [ ] representative stages render
+* [ ] fighter animation works
+* [ ] stage animation works
+* [ ] materials render correctly
+* [ ] textures render correctly
+* [ ] framebuffer effects work
+* [ ] VRAM usage verified
+* [ ] no hardware-only rendering failures remain
+* [ ] hardware model recorded
+* [ ] build/environment recorded
+
+---
+
+# 9. R3 — Rendering Performance
+
+Status: `BLOCKED_BY_R2`
+
+### Objective
+
+Optimize rendering without sacrificing fidelity.
+
+### Acceptance
+
+* [ ] frame time measured
+* [ ] CPU bottlenecks identified
+* [ ] GPU/GE bottlenecks identified
+* [ ] texture upload costs measured
+* [ ] VRAM usage measured
+* [ ] memory bandwidth considered
+* [ ] 60 FPS target evaluated on physical hardware
+* [ ] optimizations revalidated against rendering tests
+* [ ] no fidelity regressions introduced
+
+Do not perform speculative optimization before measurement.
+
+---
+
+# 10. G0 — Combat Unlocked
+
+Status: `BLOCKED_BY_R3`
+
+Combat becomes eligible only after R0, R1, R2 and R3 are complete.
+
+### First Combat Vertical Slice
+
+* [ ] input
+* [ ] one grounded attack
+* [ ] attack animation
+* [ ] hitbox
+* [ ] hurtbox
+* [ ] collision interaction
+* [ ] damage
+* [ ] knockback
+* [ ] hitstun
+* [ ] KO
+* [ ] minimal opponent
+* [ ] minimal stock handling
+* [ ] match loop
+
+The exact combat implementation should then follow the original decompilation rather than invented mechanics.
+
+---
+
+# 11. Post-Combat Roadmap
+
+After G0:
+
+## G1 — Full Combat
+
+* all attacks
+* specials
+* grabs
+* throws
+* shields
+* dodges
+* aerial systems
+* damage states
+* knockback states
+* recovery
+* items
+* hazards
+* CPU behavior
+
+## G2 — Complete Match Systems
+
+* stage selection
+* character selection
+* stocks
+* timers
+* win conditions
+* match transitions
+* camera behavior
+* multiplayer/input handling
+
+## G3 — Menus and Persistence
+
+* title screen
+* menus
+* character selection
+* stage selection
+* options
+* save data
+* progression/unlock systems
+
+## G4 — Audio
+
+* music
+* sound effects
+* voice
+* audio mixing
+* positional behavior
+* memory management
+
+## G5 — Final Optimization
+
+* CPU profiling
+* GE profiling
+* memory profiling
+* VRAM optimization
+* loading optimization
+* asset streaming
+* frame pacing
+
+---
+
+# 12. Rendering Definition of Done
+
+Rendering may only be declared complete when:
+
+1. Every discovered rendering subsystem has an explicit status.
+2. Every unsupported behavior has been investigated.
+3. Every remaining deviation is documented.
+4. All known texture failures are resolved or accepted with evidence.
+5. All known material failures are resolved or accepted with evidence.
+6. All required transform kinds are resolved.
+7. Texture filtering is understood.
+8. LOD behavior is understood.
+9. Mipmapping behavior is understood.
+10. Stage animation works.
+11. Material animation works where required.
+12. Fighter palettes/costumes work.
+13. Billboard behavior is verified.
+14. Framebuffer effects work.
+15. Camera/projection behavior is verified.
+16. Render-state leakage is eliminated.
+17. All required fighters render.
+18. All required stages render.
+19. All required effects render.
+20. Golden/reference rendering tests pass.
+21. PPSSPP verification passes.
+22. Physical PSP verification passes.
+23. VRAM usage is safe.
+24. Performance has been measured.
+25. Documentation agrees with implementation.
+
+Only then may R0/R1/R2/R3 be completed and combat unlocked.
+
+---
+
+# 13. Autonomous Execution Rule
+
+When continuing autonomously:
+
+```text
+READ STATUS.md
+      ↓
+RESUME IN_PROGRESS TASK
+      ↓
+IF NONE:
+SELECT FIRST ELIGIBLE TODO FROM PLAN
+      ↓
+CHECK DEPENDENCIES
+      ↓
+INVESTIGATE ORIGINAL BEHAVIOR
+      ↓
+IMPLEMENT
+      ↓
+TEST
+      ↓
+VERIFY AGAINST DECOMP / ROM
+      ↓
+CHECK BATTLESHIP
+      ↓
+UPDATE DOCUMENTATION
+      ↓
+UPDATE STATUS.md
+      ↓
+RECORD EVIDENCE
+      ↓
+COMMIT
+      ↓
+SELECT NEXT TASK
+```
+
+Never advance merely because code compiles.
+
+Never advance by weakening acceptance criteria.
+
+Never bypass the rendering gate.
+
+---
+
+# 14. End Goal
+
+The intended progression is:
+
+```text
+Research
+    ↓
+PSP bootstrap
+    ↓
+Resource pipeline
+    ↓
+Core game/scene infrastructure
+    ↓
+Rendering correctness
+    ↓
+Rendering completeness
+    ↓
+Physical PSP validation
+    ↓
+Rendering performance
+    ↓
+COMBAT UNLOCKED
+    ↓
+Full combat
+    ↓
+Complete match systems
+    ↓
+Menus / save
+    ↓
+Audio
+    ↓
+Final optimization
+    ↓
+Complete SSB64 implementation
+```
+
+**Gameplay does not advance around a broken renderer.**
