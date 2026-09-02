@@ -3601,3 +3601,76 @@ pairing shape `PartTables` does not currently search for — this is a direct
 struct/instance read, not inference. **Low** that this explains file 353's
 specific `MissingPalette` failures — the one instance checked argues against
 it, and no `WPAttributes` instance naming 353's own sub-graphs was found.
+
+## RE-059 — Two of file 353's three graphs paired via `EFDesc`, fixed (PLAN.md R0.7)
+
+**Question.** RE-058 identified `WPAttributes` as a second pairing shape but
+couldn't confirm it explains file 353's `MissingPalette` failures. Is there a
+third mechanism, and does reading it all the way through actually fix
+anything?
+
+**A third struct: `EFDesc`.** File 353's three unpaired graphs
+(`romtool mobj --file 353`: offsets `0x3F8`, `0x7B8`, `0x11C0`) are Link's
+per-move entrance effects — the flash/warp-in a character does at match
+start, plus his Spin Attack. Their code path
+(`refs/ssb-decomp-re/src/ft/ftcommon/ftcommonentry.c:214-215` →
+`efManagerLinkEntryWaveMakeEffect`/`efManagerLinkEntryBeamMakeEffect` →
+`refs/ssb-decomp-re/src/ef/efmanager.c:1162-1219`) uses `EFDesc`
+(`refs/ssb-decomp-re/src/ef/eftypes.h:11-24`), a struct with fields
+`o_dobjsetup` immediately followed by `o_mobjsub` — the same adjacency
+`PartTables::scan` already looks for, just under a third name, alongside
+`FTCommonPart` (fighters) and `MPGroundDesc` (stages).
+
+**Confirmed, non-null, and fully typed.**
+`dEFManagerLinkEntryWaveEffectDesc`/`dEFManagerLinkEntryBeamEffectDesc` in
+`efmanager.c` name `&llLinkSpecial2EntryWaveDObjDesc`/
+`&llLinkSpecial2EntryWaveMObjSub` (and the `EntryBeam` equivalents) —
+concrete, non-null, fully-typed C symbols, not raw bytes. Cross-checked
+against `353_LinkSpecial2.c`'s own offset comments:
+`EntryWaveDObjDesc @ 0x3F8`, `EntryWaveMObjSub @ 0x130`,
+`EntryBeamDObjDesc @ 0x7B8`, `EntryBeamMObjSub @ 0x4F0`.
+
+**Why `PartTables::scan` structurally cannot find these.** Unlike
+`FTCommonPart`/`MPGroundDesc`, the `EFDesc` instances themselves live in the
+game's static executable data (their ROM addresses are commented as fixed
+`0x8012E4E4`-style addresses in `efmanager.c`, not relocData file offsets),
+not in any relocData archive file. `PartTables::scan` only ever looks at
+`file.extern_relocs` — the archive's own inter-file relocation records — so
+a pointer the *executable* holds into an archive file leaves no reloc record
+anywhere in the archive for the scanner to see. No amount of scanning the
+archive more thoroughly can find this; it can only be read from the
+decompilation and entered by hand, exactly the escape hatch
+`PartTables::insert()` already exists for (used previously for stage
+layers, whose `MPGroundDesc` records live in the archive but at a different
+field offset than `FTCommonPart`).
+
+**Fix.** `tools/romtool/src/main.rs`'s `load_all` now hand-inserts
+`(353, 0x3F8, 0x130)` and `(353, 0x7B8, 0x4F0)`, gated the same way the
+stage-layer inserts already are — only if `read_table` actually parses at
+that offset for that graph's node count, so a wrong offset fails silently
+closed rather than shipping garbage.
+
+**Verified.** `romtool mobj --file 353`: pairings 56→58, both new graphs'
+chain length matches their display-list demand exactly (0 mismatches).
+`romtool textures --file 353`: 0 failures (was 1). Archive-wide
+`romtool textures`: 618/647 packed (was 617), `MissingPalette` 4→3. `cargo
+test --workspace`: 338 passing, unaffected (this fix lives in `romtool`, not
+the library crate).
+
+**What's still open.** File 353's third graph (`SpinAttackDObjDesc @
+0x11C0`) is named by a `WPAttributes`
+(`refs/ssb-decomp-re/src/wp/wplink/wplinkspinattack.c`:
+`dWPLinkSpinAttackWeaponDesc` → `&llLinkMainSpinAttackWeaponAttributes` in
+file 225), but unlike the boomerang's `WPAttributes` (RE-058), this instance
+is **not yet typed** in the decompilation — it's still raw bytes at some
+offset in `225_LinkMain.c`, so `p_mobjsubs` cannot be read from source.
+Deliberately not inserted; inserting an unverified table offset would risk
+shipping a wrong pairing rather than none. Files 52 (`MVCommon`) and 86
+(`ITCommonObject`) remain completely untouched by this entry — nothing here
+suggests they're `EFDesc`- or `WPAttributes`-shaped; they still need their
+own tracing.
+
+**Confidence: high**, on all counts — the `EFDesc` struct read, the two
+inserted offsets, and the fix are all independently confirmed by both the
+decompilation source and a real `romtool` run against the ROM, not
+inference.

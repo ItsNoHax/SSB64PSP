@@ -1536,6 +1536,41 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // A fighter's per-move entrance effects (the flash/warp-in a special
+    // character does when a match starts) are named by an `EFDesc` record —
+    // a *third* shape, distinct from `FTCommonPart` and `MPGroundDesc`, with
+    // the same adjacent `DObjDesc*`/`MObjSub***` fields (`o_dobjsetup` then
+    // `o_mobjsub`, `refs/ssb-decomp-re/src/ef/eftypes.h:11-24`). Unlike those
+    // two, the `EFDesc` instances themselves live in the game's static
+    // executable data, not in any relocData archive file, so there is no
+    // `file.extern_relocs` entry for `PartTables::scan` to ever find — no
+    // scan of the archive can discover this pairing, only reading the
+    // decompilation can (RE-059). Hand-entered from
+    // `refs/ssb-decomp-re/src/ef/efmanager.c`'s
+    // `dEFManagerLinkEntryWaveEffectDesc`/`dEFManagerLinkEntryBeamEffectDesc`,
+    // cross-checked against `refs/ssb-decomp-re/src/relocData/353_LinkSpecial2.c`'s
+    // own offset comments. Link's third file-353 graph (`SpinAttackDObjDesc`
+    // @ 0x11C0) is named by a `WPAttributes` instead
+    // (`refs/ssb-decomp-re/src/wp/wplink/wplinkspinattack.c`), but that
+    // struct instance is not yet typed in the decompilation, so its
+    // `p_mobjsubs` field cannot be read from source; deliberately not
+    // inserted here until it can be confirmed non-null.
+    for &(file, graph, table) in &[
+        (353u32, 0x3F8u32, 0x130u32), // LinkSpecial2 EntryWave
+        (353u32, 0x7B8u32, 0x4F0u32), // LinkSpecial2 EntryBeam
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,

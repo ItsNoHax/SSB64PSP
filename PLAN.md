@@ -329,7 +329,7 @@ Reproduce original N64 CI/TLUT behavior.
 * [x] TLUT loading behavior verified — the 4 "no TLUT recorded" notes are explained: `MObj` material-table pairing gaps in 3 specific files, not a TLUT-loading bug (RE-057)
 * [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15); RE-057 found a related but distinct issue (palette *loss* on an unresolved segment-0x0E call, not leakage between lists)
 * [x] palette pointers verified — resolved through archive extern relocations (RE-037)
-* [ ] all missing palette cases resolved — 4 `MissingPalette` failures remain, root-caused to `PartTables` pairing gaps in 3 files (RE-057); tracked under R0.7, not this task
+* [ ] all missing palette cases resolved — 3 `MissingPalette` failures remain (was 4; file 353 fixed via RE-059), root-caused to `PartTables` pairing gaps in 2 remaining files (52, 86; RE-057); tracked under R0.7, not this task
 * [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`
 
 ---
@@ -422,12 +422,10 @@ Status: `IN_PROGRESS`
 
 ### Current evidence
 
-`docs/porting-status.md` reports `MObj` material chains recovered for 56
-scene graphs via `FTCommonPart` (fighters) and `MPGroundDesc` (stages)
-(RE-027, RE-028). An earlier fidelity pass (`TODO.md` Phase E) recorded 71
-graphs without a material table; re-run the material-table search
-(`romtool mobj` / `romtool scene`) before trusting either number — they were
-not reconciled as part of this documentation pass.
+Freshly re-measured this session (`romtool mobj`, whole archive, after
+RE-059's fix): **58 graphs paired, 69 unpaired.** Before RE-059's fix this
+was 56/71 — the count moved by exactly the 2 graphs RE-059 fixed, confirming
+both numbers were accurate and just needed a re-run, not a reconciliation.
 
 RE-057 (`docs/reverse-engineering.md`) found three concrete, reproducible
 test cases while investigating R0.3's `MissingPalette` failures: files 52
@@ -441,17 +439,27 @@ in a sibling file (missed by `PartTables::scan`'s same-file requirement) is
 RE-058 found something more structurally significant instead: `WPAttributes`
 (`refs/ssb-decomp-re/src/wp/wptypes.h:36-45`) is a **second** struct shape
 with the same `DObjDesc*`/`MObjSub***` adjacency `PartTables::scan` looks
-for, used for weapon/projectile sub-objects, and currently undocumented and
-unverified against this scanner — `crates/ssb-rom/src/mobj.rs` only mentions
-`FTCommonPart` (fighters) and `MPGroundDesc` (stages). This plausibly
-explains part of the wider 56-vs-71 gap (any fighter with a projectile-style
-special move has `WPAttributes`-described sub-models), independently of
-whether it explains file 353 specifically — the one confirmed `WPAttributes`
+for, used for weapon/projectile sub-objects. The one confirmed `WPAttributes`
 instance checked (Link's boomerang, `226_LinkSpecial1.c`) has
 `p_mobjsubs = NULL` by design, so a missing pairing is not automatically the
 right explanation for every `MissingPalette` case; some may be legitimately
-palette-less on real hardware, pointing back toward `mesh.rs`'s state
-handling instead (RE-056's original direction).
+palette-less on real hardware.
+
+RE-059 found a **third** shape, `EFDesc` (fighter entrance effects,
+`refs/ssb-decomp-re/src/ef/eftypes.h:11-24`), confirmed and fixed two of
+file 353's three unpaired graphs: unlike `FTCommonPart`/`MPGroundDesc`,
+`EFDesc` instances live in the game's static executable, not in any
+relocData archive file, so `PartTables::scan` can structurally never find
+them — no amount of scanning fixes this, only reading the decompilation and
+hand-entering the pairing via `PartTables::insert()` does. Implemented in
+`tools/romtool/src/main.rs`'s `load_all` for `(353, 0x3F8, 0x130)`
+("EntryWave") and `(353, 0x7B8, 0x4F0)` ("EntryBeam"), both gated on
+`read_table` actually parsing. Verified: `romtool mobj --file 353` pairings
+56→58 with 0 chain/demand mismatches; `romtool textures --file 353` 1→0
+failures; archive-wide `romtool textures` 617→618 packed, `MissingPalette`
+4→3. File 353's third graph (`SpinAttackDObjDesc @ 0x11C0`, named by a
+`WPAttributes` whose instance is not yet typed in the decompilation) and
+files 52/86 remain unresolved.
 
 ### Objective
 
@@ -463,11 +471,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced
-* [ ] original material data identified
-* [ ] heuristic mapping removed where original data exists
-* [ ] affected scenes verified
-* [ ] regression coverage added
+* [ ] all material-table references traced — `FTCommonPart`, `MPGroundDesc` and `EFDesc` shapes found and (for `EFDesc`) two instances hand-paired; `WPAttributes` found but not yet traced to a specific fix; files 52/86 not yet traced at all
+* [ ] original material data identified — done for the two `EFDesc` pairings (RE-059); not done elsewhere
+* [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
+* [ ] affected scenes verified — file 353's two fixed graphs verified via `romtool mobj`/`romtool textures` (RE-059); nothing else verified yet
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj --file 353`'s 0-mismatch check is that regression detector for this fix.
 
 ---
 
