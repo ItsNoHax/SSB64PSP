@@ -12,45 +12,50 @@
 
 ## Current Task
 
-`R0.7 — Missing Material Tables`
+`R0.8 — Transform Correctness`
 
 ## Task Status
 
 `IN_PROGRESS`
 
-Continuing R0.7. Two hand-paired fixes landed this session:
+R0.7's remaining scope was measured and accepted as a long tail this
+session (see Last Completed Task), and work moved to R0.8's own open lead
+from RE-054.
 
-* RE-058/RE-059: `EFDesc` (fighter entrance effects) is a third pairing
-  shape, living in the game's static executable rather than any archive
-  file — structurally invisible to any scan. Fixed 2 of file 353's 3
-  unpaired graphs.
-* RE-060: a fourth mechanism — no struct at all, just two separate
-  `gcSetupCommonDObjs`/`gcAddMObjAll` calls on the same `GObj` in the
-  opening movie's room-scene code
-  (`refs/ssb-decomp-re/src/mv/mvopening/mvopeningroom.c`). Fixed all 5 of
-  file 52's unpaired graphs — file 52 is now **fully resolved**.
+RE-062: read `gcPrepDObjMatrix`'s actual switch case for
+`0x8000`/`RecalcRotRpyRSca` (case 44, `refs/ssb-decomp-re/src/sys/objdisplay.c:822`)
+— it never touches `dobj->rotate`, computing the same
+diagonal-from-`gGCMatrixPerspF` MVP as the already-implemented billboard
+kinds 45/46 with the `sin`/`cos` spin term simply dropped. A whole-archive
+check (temporary example, not committed) found 0 of the ROM's 28
+`RecalcRotRpyRSca` nodes have non-zero `rotate`, confirming the field is
+genuinely dead for this kind — reusing the existing billboard render path
+is exact, not an approximation. Fixed: `crates/ssb-rom/src/pack.rs`'s
+`add_object` now flags `TransformKind::RecalcRotRpyRSca` the same as
+`Kind46`/`Kind48`. No `psp/` changes needed.
 
-Both implemented as hand-entered `PartTables::insert()` calls in
-`tools/romtool/src/main.rs`'s `load_all`. Combined effect: `romtool mobj`
-archive-wide 56/71 → 63/64 paired/unpaired; `romtool textures` archive-wide
-617→638 packed, `MissingPalette` 4→1.
-
-Still open: file 86's one remaining graph uses a **fifth** mechanism (a
-compile-time byte-offset delta from a runtime pointer,
-`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c:367`), not yet traced to a
-specific table. File 353's third graph (Spin Attack) is named by a
-`WPAttributes` not yet typed in the decompilation. 62 other unpaired graphs
-archive-wide are completely untraced. Next step: either trace file 86's
-`itGetPData` delta to a confirmed table offset, or move to a different task
-— R0.7's remaining ~62 graphs are a large, open-ended tail with diminishing
-per-graph value (most are probably one-off cosmetic/cutscene models like
-the ones just fixed, not gameplay-blocking).
+Still open: R0.8's other acceptance items (exhaustive kind enumeration,
+kinds 33-40's `func_800108xx` family, kind 50) are untouched.
 
 ## Last Completed Task
 
-R0.7 fixed 7 of the archive's previously-71 unpaired graphs this session:
-file 353's `EntryWave`/`EntryBeam` (RE-058/RE-059, `EFDesc`) and all 5 of
-file 52's room-scene graphs (RE-060, plain call-sequence pairing, no
+R0.8 fixed the `0x8000`/`RecalcRotRpyRSca` billboard gap this session
+(RE-062, above) — 28 nodes, archive-wide.
+
+R0.7 was left `IN_PROGRESS` but its remaining scope was formally measured
+rather than chased further: RE-061 traced file 86's last graph's `itGetPData`
+byte-offset-delta mechanism and found `romtool mobj --file 86 --search`
+returns **27 candidate table offsets**, not one — the same kind of
+near-chance fingerprint match the project already measured and rejected
+once (Samus's two identical 33-node graphs). No named record exists to
+resolve it, so it was deliberately left unfixed rather than guessed. That
+graph, file 353's Spin Attack graph (still needs its `WPAttributes`
+instance typed upstream), and the other 62 unpaired graphs archive-wide are
+now an accepted long tail, not an active work item.
+
+Earlier this session, R0.7 fixed 7 of the archive's previously-71 unpaired
+graphs: file 353's `EntryWave`/`EntryBeam` (RE-058/RE-059, `EFDesc`) and all
+5 of file 52's room-scene graphs (RE-060, plain call-sequence pairing, no
 struct). `R0.3 — Texture Conversion Completeness` closed earlier this
 session; both of its failure classes were root-caused and reattributed to
 the tasks that actually own a fix:
@@ -63,11 +68,12 @@ the tasks that actually own a fix:
   confirmed as a `PartTables` material-pairing gap in 3 specific files, not
   a texture/TLUT decode bug → R0.7's scope (RE-056's dedup-key theory was a
   real secondary factor but not the root cause; RE-057 corrects it) → 2 of
-  the 3 files now fixed (RE-059, RE-060)
+  the 3 files now fixed (RE-059, RE-060); the third (file 86) is the
+  RE-061 measured-and-accepted case above
 
 RE-054's S2DEX-BG lead (from a prior session) is refuted:
 `romtool scan --exhaustive` finds zero `G_BG_1CYC`/`G_BG_COPY` anywhere in
-the ROM. See `PLAN.md` R0.3, R0.7 and R0.13.
+the ROM. See `PLAN.md` R0.3, R0.7, R0.8 and R0.13.
 
 `R0.2 — N64 Rendering Command Inventory`, `R0.1 — Rendering State
 Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
@@ -75,14 +81,13 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.7` (in progress, see above) — file 86's last graph, or accept R0.7's
-remaining scope as a long tail and move on. `R0.4`'s two remaining open
-items are adjacent — one (`all missing palette cases resolved`) is the same
-RE-057 finding pointing back to R0.7, the other (palette inheritance/state)
-is genuinely distinct and tracked toward R0.15. `R0.8` is also eligible
-(dependencies R0.1/R0.2 complete, has a lead from RE-054: find the real
-matrix-building function for `0x8000`/`RecalcRotRpyRSca` nodes in
-`objdisplay.c`) as an alternative to continuing R0.7's long tail.
+`R0.8` (in progress, see above) — enumerate the remaining transform kinds
+(33-40's `func_800108xx` family, kind 50) and implement/verify them. `R0.4`'s
+palette-inheritance/state item is also eligible and genuinely distinct,
+tracked toward R0.15. `R0.7` remains technically `IN_PROGRESS` but its
+remaining scope is an accepted long tail (see above) — only worth revisiting
+if the upstream decompilation types `llITCommonDataNBumperWaitMObjSub` or
+Spin Attack's `WPAttributes` instance.
 
 ## Blockers
 
@@ -183,36 +188,69 @@ The exact ordered task list is in `PLAN.md`.
 
 # 6. Current Task State
 
-## R0.7 — Missing Material Tables
+## R0.8 — Transform Correctness
 
 Status: `IN_PROGRESS`
 
 ### Objective
 
-Resolve every scene graph containing an unresolved material table.
+Implement every transform kind exercised by SSB64.
 
 ### Required Work
 
-* [x] Determine whether file 353 (`LinkSpecial2`)'s graph is rejected by `PartTables::scan`'s same-file requirement despite a real same-file record existing — no: 353 already declares its own graph and its own `MObjSub` table in the same file, so the same-file requirement isn't the blocker (RE-058, retracts RE-057's guess)
-* [x] Identify further pairing-record shapes `PartTables` might be missing — found three: `WPAttributes` (weapon/projectile, RE-058), `EFDesc` (fighter entrance effects, RE-059), and plain call-sequence pairing with no struct at all (opening movie, RE-060)
-* [x] Fix what `EFDesc` explains — confirmed 2 non-null instances (file 353's `EntryWave`/`EntryBeam`), hand-inserted via `PartTables::insert()` in `tools/romtool/src/main.rs`'s `load_all` (RE-059); verified 0 chain/demand mismatches and `romtool textures --file 353` 1→0 failures
-* [x] Trace file 52 (`MVCommon`) — it's the opening movie's room scene, not a UI container; all 5 unpaired graphs paired via a fourth mechanism (`gcSetupCommonDObjs`+`gcAddMObjAll` call sequence, RE-060), hand-inserted; verified 0 chain/demand mismatches and `romtool textures --file 52` 58/58 packed, 0 failures — **file 52 fully resolved**
-* [ ] Find file 353's own `WPAttributes` instance (names `SpinAttackDObjDesc @ 0x11C0`) and read its `p_mobjsubs` field — not yet typed in the decompilation (still raw bytes in `225_LinkMain.c`), so this needs either waiting on upstream decomp progress or reading the raw ROM bytes directly at the `WPAttributes` struct's known field layout (`data`, `p_mobjsubs`, `anim_joints`, `p_matanim_joints`) to confirm non-null before inserting a pairing
-* [ ] Trace file 86 (`ITCommonObject`)'s one remaining graph — uses a fifth mechanism, `itGetPData`'s byte-offset delta from a runtime pointer (`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c:367`); not yet confirmed which table it needs
-* [x] Check whether `PartTables::scan`'s existing generic matching already structurally catches other unscanned-shape instances archive-wide beyond the ones already found — re-ran `romtool mobj` (whole archive) after both fixes: 63 paired / 64 unpaired, exactly 71-7, confirming no other archive-scannable instance was silently sitting there; all figures were already accurate, just stale
+* [x] Investigate `0x8000`/`RecalcRotRpyRSca` — read `gcPrepDObjMatrix` case 44 (`objdisplay.c:822`): never touches `dobj->rotate`, computes the same diagonal-from-`gGCMatrixPerspF` MVP as billboard kinds 45/46 with the spin term dropped (RE-062)
+* [x] Confirm dropping `rotate` is safe, not just convenient — whole-archive check: 0 of 28 `RecalcRotRpyRSca` nodes have non-zero `rotate` (RE-062)
+* [x] Fix — `crates/ssb-rom/src/pack.rs`'s `add_object` now flags `TransformKind::RecalcRotRpyRSca` as `NodeDesc::FLAG_BILLBOARD`, same as `Kind46`/`Kind48`; no `psp/` changes needed since the render path is already generic over the flag
+* [ ] Enumerate the remaining transform kinds — kinds 33-40 (`func_800108xx` family, `objdisplay.c` cases 33-40) and kind 50 are not yet investigated
+* [ ] Verify on device beyond a generic smoke test — this session's PPSSPP run confirmed no crash/regression (60 FPS, clean log) but did not isolate a specific `0x8000` object on screen
 
 ### Completion Evidence
 
 Record:
 
-* which files were traced, and what `PartTables::scan` actually found or rejected for each
-* the fix implemented (new struct shape wired in via `PartTables::insert()`, newly discovered record, or accepted deviation) with its measured effect on resolved-graph and packed-texture counts — done for file 353's `EntryWave`/`EntryBeam` (RE-059) and all 5 of file 52's graphs (RE-060): 56→63 pairings, 617→638 packed textures, `MissingPalette` 4→1
-* before/after `romtool mobj`/`romtool scene`/`romtool textures` output — captured for files 353 and 52 (RE-059, RE-060); not yet for file 86 or the remaining `SpinAttack` graph
-* regression test added — none in `cargo test` (the fix lives in `romtool`, a CLI tool, not the library crate; the project's regression pattern for ROM-dependent fixes is a `romtool` command's own output, matching R0.9's stage-animation replay-and-compare check). `romtool mobj --file 353`/`--file 52`'s chain/demand-mismatch counts are that regression detector here.
+* which transform kinds were traced and what the decomp's actual matrix math does for each — done for `0x8000`/`RecalcRotRpyRSca` (RE-062); kinds 33-40 and 50 not yet
+* the fix implemented, with its measured effect — `pack.rs` flag change; `cargo test --workspace` 339 passing (new test `a_recalc_node_is_flagged_as_a_spin_free_billboard`)
+* before/after device verification — `cargo psp --release` builds clean; `tools/run-ppsspp.sh --seconds 8` runs at 60 FPS with a clean log; no isolated visual confirmation of a specific `0x8000` node yet
+* regression test added — yes, `crates/ssb-rom/src/pack.rs::a_recalc_node_is_flagged_as_a_spin_free_billboard`
+
+### R0.7 — Missing Material Tables (parked, accepted long tail)
+
+Status: `IN_PROGRESS`, not actively worked this pass — see Last Completed
+Task and RE-061. The two remaining concrete cases (file 86's last graph,
+file 353's Spin Attack graph) and the other 62 unpaired graphs archive-wide
+are accepted as a long tail; further progress needs upstream decomp typing,
+not more `romtool` investigation.
 
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.8: `0x8000`/`RecalcRotRpyRSca` fixed as a spin-free billboard (RE-062)
+
+* Read `refs/ssb-decomp-re/src/sys/objdisplay.c`'s `gcPrepDObjMatrix` (the switch on `xobj->kind` that builds every DObj's MVP) — case 44 is `nGCMatrixKindRecalcRotRpyRSca` (`0x8000`); it computes `sGCMatrixMvpF` as a scaled diagonal from `gGCMatrixPerspF` and never reads `dobj->rotate` at all, then patches it into the RSP matrix via `gSPMvpRecalc`/`gMoveWd(G_MW_MATRIX,...)` — the same shape as the already-implemented billboard cases 45/46, just without the `sin`/`cos` spin term
+* Wrote a temporary example (`crates/ssb-rom/examples/tmp_recalc_rotate.rs`, deleted before commit) walking every scene graph in the ROM: **0 of 28** `TransformKind::RecalcRotRpyRSca` nodes have non-zero `rotate` — confirms the field really is unused for this kind, not coincidentally zero
+* Cross-checked the node counts: `Kind46` 34 + `Kind48` 47 + `RecalcRotRpyRSca` 28 = 109, matching `docs/porting-status.md`'s prior "81 billboard nodes flagged, 28 not" split exactly
+* Implemented: `crates/ssb-rom/src/pack.rs`'s `add_object` now maps `TransformKind::RecalcRotRpyRSca` to `NodeDesc::FLAG_BILLBOARD` in the same match arm as `Kind46`/`Kind48`; no changes to `psp/src/meshdraw.rs` — its billboard path is already generic over the flag
+* Added `crates/ssb-rom/src/pack.rs::a_recalc_node_is_flagged_as_a_spin_free_billboard`, asserting a `0x8001`-id node reaches the pack flagged
+* `cargo test --workspace` — 339 passing (was 338)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `cargo psp --release` (from `psp/`) — builds clean, `EBOOT.PBP` produced
+* `tools/run-ppsspp.sh --seconds 8` — launched, ran the full 8s at 60 FPS, log clean (no errors/crashes); captured screenshot was black (idle boot-time frame at this point in the run, consistent with other short captures — not itself evidence either way). Did not isolate a specific `0x8000` object on screen this pass
+* Result: RE-062 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.8, `TODO.md` Phase E, `docs/porting-status.md` "Billboard nodes" updated to match
+* Affected subsystem: `crates/ssb-rom/src/pack.rs` (`add_object`) — code change, plus documentation
+* PPSSPP: smoke-tested this pass (build + 8s run, no crash), not visually isolated
+* Physical PSP: not tested this pass — see §8 below
+
+## 2026-09-03 — R0.7: file 86's last graph measured and left open, not fixed (RE-061)
+
+* Ran `romtool mobj --file 86` — confirmed the one remaining unpaired graph is at `0x7BE8`, the "N-Bumper" item's attached-pose `DObjDesc` (`refs/ssb-decomp-re/src/relocData/86_ITCommonObject.c:1812`)
+* Traced its pairing mechanism to `itNBumperAttachedInitVars` (`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c:367`): `itGetPData(ip, &llITCommonDataNBumperDataStart, &llITCommonDataNBumperWaitMObjSub)` — a compile-time byte-offset delta from a runtime pointer. Confirmed neither `llITCommonDataNBumperDataStart` nor `llITCommonDataNBumperWaitMObjSub` is declared anywhere else in the decompilation (both are still-unmatched linker symbols) — no named record exists to read
+* Ran `romtool mobj --file 86 --search` (the project's own demand-vector search diagnostic) — returns **27 candidate table offsets** for this one graph, not one; confirmed this is the same near-chance fingerprint-match situation the project already measured and rejected once (Samus's two identical 33-node graphs, documented in `mobj.rs`'s own doc comment)
+* Decision: left unfixed. No code change. Recorded as a measured negative result rather than continuing to search
+* Result: RE-061 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.7, `TODO.md` Phase E updated to mark file 86's graph, file 353's Spin Attack graph, and the archive's other 62 unpaired graphs as an accepted long tail
+* Affected subsystem: documentation/investigation only, no code changed
+* PPSSPP: not run this pass
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.7: file 52 fully resolved via a fourth pairing mechanism (RE-060)
 

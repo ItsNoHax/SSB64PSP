@@ -3744,3 +3744,131 @@ guessing. 64 other unpaired graphs archive-wide (`romtool mobj`, no
 **Confidence: high** on the mechanism and all 5 fixes — every offset was
 read from named, typed decomp symbols and independently confirmed by a real
 `romtool` run showing 0 mismatches and 0 texture failures for the file.
+
+---
+
+## RE-061 — File 86's last graph: measured, not guessed, and left open (PLAN.md R0.7)
+
+**Question.** RE-060 traced file 86's one remaining unpaired graph
+(`0x7BE8`) to `itGetPData`'s byte-offset-delta mechanism. Does that actually
+resolve to a specific table, or is this another case like Samus's two
+identical 33-node graphs — a fingerprint that merely fits?
+
+**The graph.** `0x7BE8` is
+`dITCommonObject_NBumper_Item_data_remainder_gap_0x76CC_sub_0x42C_post` in
+`refs/ssb-decomp-re/src/relocData/86_ITCommonObject.c:1812` — the "attached"
+pose of the N-Bumper item, set up by
+`itNBumperAttachedInitVars` (`refs/ssb-decomp-re/src/it/itcommon/itnbumper.c:367`):
+
+```c
+mobjsub = itGetPData(ip, &llITCommonDataNBumperDataStart, &llITCommonDataNBumperWaitMObjSub);
+gcAddMObjForDObj(dobj, mobjsub);
+```
+
+Neither `llITCommonDataNBumperDataStart` nor
+`llITCommonDataNBumperWaitMObjSub` is declared anywhere else in the
+decompilation — both are still-unmatched linker symbols, not typed data.
+There is no named record to read the way `EFDesc`/call-sequence pairing gave
+one; any pairing here would be inferred from the file's byte layout alone.
+
+**Measured, not assumed.** `romtool mobj --file 86 --search` (the same
+demand-vector search the project's own docs warn is close to chance without
+a named record — RE-046) returns **27 candidate offsets** for this single
+graph, not one. The file's own layout does contain a plausible-looking
+single-entry `MObjSub **` table immediately upstream of the graph's display
+list (`dITCommonObject_data_0x7A2C` at `0x7A2C`, chaining to a real
+one-element `MObjSub` at `0x7A38`) — but "plausible-looking" is exactly what
+the Samus precedent (`mobj.rs`'s own doc comment: two 33-node graphs, two
+equally well-formed tables, picked the recorded one only about half the
+time) says not to trust. Picking `0x7A28`/`0x7A2C` out of 27 candidates
+because the layout "smells right" would be the same kind of guess, just
+with fewer competing candidates.
+
+**Left unfixed.** No code change. This is a genuine negative result: the
+mechanism is understood, the search space is measured, and it does not
+narrow to one answer without either the upstream decompilation typing
+`llITCommonDataNBumperWaitMObjSub` (giving a real address to check against),
+or accepting a heuristic this project has already measured and rejected
+once. `PLAN.md` R0.7 stays `IN_PROGRESS` with this graph, Link's Spin Attack
+graph (RE-058), and 62 other archive-wide unpaired graphs recorded as an
+accepted long tail rather than continuing to force individual fixes.
+
+**Confidence: high** that guessing here would repeat a known mistake;
+correspondingly low effort spent trying to force a fix. Superseding evidence
+would be either the decomp typing the symbol, or a second, independent
+structural signal (not just "the search returned this among 27").
+
+---
+
+## RE-062 — `0x8000`/`RecalcRotRpyRSca` is a spin-free billboard, same as kinds 46/48 (PLAN.md R0.8)
+
+**Question.** RE-054 found that the DObjDesc transform kind `0x8000`
+(`nGCMatrixKindRecalcRotRpyRSca`) patches the RSP matrix via `G_MW_MATRIX`
+rather than doing anything RDP/RSP-specific, and that the real transform is
+ordinary CPU matrix math in `objdisplay.c` — but didn't read that math.
+`pack.rs` currently leaves `0x8000` nodes unflagged (`FLAG_BILLBOARD` is
+only set for kinds 46/48), with a comment calling it "a recomputed rotation
+this renderer does not model yet." Is that still true?
+
+**The switch.** `gcPrepDObjMatrix` (`refs/ssb-decomp-re/src/sys/objdisplay.c:322`)
+has one giant `switch (xobj->kind)` covering every matrix kind. Case 44 is
+`nGCMatrixKindRecalcRotRpyRSca` (`0x8000`); cases 45/46/47/48 are the
+already-implemented billboard kinds:
+
+```c
+case 44:  // 0x8000, RecalcRotRpyRSca
+    f12 = dobj->scale.vec.f.y * gGCScaleX;
+    gGCScaleX *= dobj->scale.vec.f.x;
+    sGCMatrixMvpF[0][0] = gGCMatrixPerspF[0][0] * gGCScaleX;
+    sGCMatrixMvpF[1][1] = gGCMatrixPerspF[1][1] * f12;
+    sGCMatrixMvpF[2][2] = gGCMatrixPerspF[2][2] * gGCScaleX;
+    sGCMatrixMvpF[2][3] = gGCMatrixPerspF[2][3] * gGCScaleX;
+    /* every other component zeroed */
+    syMatrixF2L(&sGCMatrixMvpF, mtx_hub.gbi);
+    /* ... patched into the RSP matrix via gMoveWd/G_MW_MATRIX ... */
+```
+
+This never reads `dobj->rotate` at all — no `sin`/`cos`, no rotation term of
+any kind. Case 45 (rotate.x-driven spin) and case 46 (rotate.z-driven spin,
+our existing `Kind46`) both compute the identical diagonal-from-
+`gGCMatrixPerspF` base and then multiply in a `sin`/`cos` spin on top of it.
+Case 44 is that same family with the spin term dropped entirely — a
+**full** camera-facing billboard, not a partial one. `Kind48`/case 47-48 are
+the same shapes again, based on `sGCMatrixMod1F` instead of
+`gGCMatrixPerspF`.
+
+**Is dropping `rotate` actually safe?** A temporary example
+(`crates/ssb-rom/examples/tmp_recalc_rotate.rs`, written to check and then
+deleted, not committed) walked every scene graph in the ROM and printed any
+`TransformKind::RecalcRotRpyRSca` node whose `rotate` isn't `[0, 0, 0]`:
+**0 of 28** such nodes have non-zero rotate. Since case 44 never reads
+`rotate` in the original game either, this isn't a coincidence to work
+around — it's confirmation that the field is dead for this kind, so
+reusing `FLAG_BILLBOARD`'s existing `sceGumRotateZ(rest_rotate[0])` spin (a
+no-op at `0.0`) reproduces case 44 exactly, not approximately.
+
+**Fix.** `crates/ssb-rom/src/pack.rs`'s `add_object`: added
+`TransformKind::RecalcRotRpyRSca` to the same match arm as `Kind46`/`Kind48`,
+all mapping to `NodeDesc::FLAG_BILLBOARD`. No changes needed in
+`psp/src/meshdraw.rs` — `draw_object_posed`'s billboard path already handles
+whatever carries the flag.
+
+**Verified.** New test
+`a_recalc_node_is_flagged_as_a_spin_free_billboard` (`pack.rs`) confirms a
+`0x8001`-id node reaches the pack flagged. `cargo test --workspace`: 339
+passing (was 338). `cargo clippy --release -p romtool -p ssb-rom`: clean.
+`cargo psp --release` (`psp/`): builds clean. `tools/run-ppsspp.sh --seconds
+8`: launches, runs at 60 FPS for the full duration, PPSSPP log shows no
+errors/crashes; the captured screenshot is black (idle scene at this point
+in boot, consistent with prior short-duration captures — not evidence of a
+regression by itself). Did not isolate a specific `0x8000` object on
+screen this pass.
+
+**What's still open.** `PLAN.md` R0.8's other acceptance items (transform
+kinds enumerated exhaustively, kinds 33-40's `func_800108xx` family, kind
+50) are untouched by this fix.
+
+**Confidence: high** on the mechanism and the zero-rotate fact (28/28
+measured, not sampled); the decomp switch statement is unambiguous C, not
+an inference. Medium on real-hardware visual confirmation, which this pass
+didn't reach — PPSSPP alone doesn't satisfy R2 either way (`STATUS.md` §8).
