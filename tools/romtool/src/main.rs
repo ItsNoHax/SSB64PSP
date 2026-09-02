@@ -1555,9 +1555,26 @@ fn load_all(archive: &Archive) -> Loaded {
     // struct instance is not yet typed in the decompilation, so its
     // `p_mobjsubs` field cannot be read from source; deliberately not
     // inserted here until it can be confirmed non-null.
+    //
+    // The opening movie's room scene (`refs/ssb-decomp-re/src/mv/mvopening/mvopeningroom.c`)
+    // pairs its five graphs a *fourth* way: `gcSetupCommonDObjs(gobj, dobjdesc)`
+    // followed by a separate `gcAddMObjAll(gobj, mobjsub)` call on the same
+    // `GObj`, both against symbols read straight out of `52_MVCommon.c`. There
+    // is no struct in memory linking them at all — the pairing exists only in
+    // the sequence of two calls in the executable's code, not as data — so
+    // this is a fourth reason `PartTables::scan` can never discover a pairing
+    // and has to be told by hand (RE-060). Every `gcSetupCommonDObjs` call in
+    // that file was checked against a following `gcAddMObjAll` on the same
+    // `gobj`; these five have one; `RoomDesk`/`RoomTissues`/etc. do not and
+    // are correctly left unpaired.
     for &(file, graph, table) in &[
         (353u32, 0x3F8u32, 0x130u32), // LinkSpecial2 EntryWave
         (353u32, 0x7B8u32, 0x4F0u32), // LinkSpecial2 EntryBeam
+        (52u32, 0x7E98u32, 0x42F8u32),  // MVCommon RoomBackground
+        (52u32, 0x1C4A8u32, 0x1BC60u32), // MVCommon RoomLogo
+        (52u32, 0x1DF28u32, 0x1DCA0u32), // MVCommon RoomCloseUpEffectAir
+        (52u32, 0x1F270u32, 0x1F0F8u32), // MVCommon RoomCloseUpEffectGround
+        (52u32, 0x22440u32, 0x20480u32), // MVCommon RoomDeskGround
     ] {
         let nodes = graphs
             .get(&file)
