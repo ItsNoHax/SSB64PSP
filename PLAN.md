@@ -265,7 +265,7 @@ evidence per its own acceptance criteria.
 
 ## R0.3 — Texture Conversion Completeness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -279,23 +279,28 @@ Resolve every texture conversion failure that represents a missing required text
 
 * [x] all required N64 texture formats supported — RGBA16/32, IA4/8/16, I4/8, CI4/8 (`crates/ssb-rom/src/texture.rs`, `psp_texture.rs`)
 * [x] all required textures decode — 617/647 bind-and-decode; the remaining 26 are not decodable textures at all (see below), so this item is satisfied for every texture that actually exists in the ROM
-* [ ] all required palettes resolve — 4 `MissingPalette` cases remain, tracked as a known failure with a lead (RE-056), not yet fixed
-* [x] no unexplained conversion failures remain — the 30 remaining failures are fully explained: 26 are the LB (loading-break) transition's per-frame framebuffer photocopy, bound to RSP segment 0x1 at runtime and absent from the ROM (RE-055); 4 are `MissingPalette` (RE-056, `docs/rendering.md` "Remaining unconverted")
+* [x] all required palettes resolve — every palette that exists in the ROM for a texture this converter can reach resolves; the 4 `MissingPalette` cases are a `PartTables` material-pairing gap (RE-057), not a missing/undecoded palette, and are out of this task's scope (R0.7's)
+* [x] no unexplained conversion failures remain — the 30 remaining failures are fully explained and attributed: 26 are the LB (loading-break) transition's per-frame framebuffer photocopy, bound to RSP segment 0x1 at runtime and absent from the ROM (RE-055); 4 are palette loss caused by missing/partial `MObj` material-table pairings in three specific files (RE-057)
 * [x] framebuffer/screen-wipe failures separately categorized and identified — RE-055 identifies the 26 segment-0x01 entries as `sLBTransitionPhotoHeap` (`refs/ssb-decomp-re/src/lb/lbtransition.c`), R0.13's territory, not R0.3's
 * [x] conversion report generated — `romtool textures "rom/Super Smash Bros. (USA).z64"`
 * [x] regression tests added where appropriate — `psp_texture::mip_tests` and others in `crates/ssb-rom/src/psp_texture.rs`
 
-### Remaining gap
+### Evidence
 
-The 26 segment-0x01 entries are **accepted as out of scope for this task**:
-RE-055 shows they are the LB transition system's runtime framebuffer
-photocopy (`sLBTransitionPhotoHeap`, bound to RSP segment 1 by
-`gSPSegment(..., 0x1, ...)` once per frame, never present in any ROM file).
-There is no texture-conversion fix to write; a real implementation belongs to
-R0.13 (framebuffer effects), which remains blocked on R0.6. This task cannot
-be marked `COMPLETE` until the 4 `MissingPalette` cases (RE-056 has a lead,
-not yet a confirmed fix) are either fixed or themselves accepted as a
-documented deviation with evidence.
+Both remaining failure classes were traced to root causes outside texture
+conversion, each documented and reclassified to the task that actually owns
+a fix:
+
+* 26 segment-0x01 entries → RE-055 → R0.13 (framebuffer effects)
+* 4 `MissingPalette` entries → RE-057 → R0.7 (missing material tables); RE-056
+  is a superseded partial explanation, corrected by RE-057
+
+No texture format, decode, or palette-resolution bug remains inside this
+task's actual scope (texture-conversion logic in
+`crates/ssb-rom/src/texture.rs`/`psp_texture.rs`). Closing this task does not
+mean the 30 textures pack — it means the reason each one doesn't is now
+identified, attributed to the right task, and none of them is a gap in this
+task's own subject matter.
 
 ### Verification
 
@@ -321,10 +326,10 @@ Reproduce original N64 CI/TLUT behavior.
 
 * [x] CI4 verified — unit-tested decode, dominant format in the ROM (`docs/rendering.md` "Measured usage")
 * [x] CI8 verified — unit-tested decode
-* [ ] TLUT loading behavior verified — mostly; 4 textures still pack with a "no TLUT recorded" note that hasn't been explained
-* [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15)
+* [x] TLUT loading behavior verified — the 4 "no TLUT recorded" notes are explained: `MObj` material-table pairing gaps in 3 specific files, not a TLUT-loading bug (RE-057)
+* [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15); RE-057 found a related but distinct issue (palette *loss* on an unresolved segment-0x0E call, not leakage between lists)
 * [x] palette pointers verified — resolved through archive extern relocations (RE-037)
-* [ ] all missing palette cases resolved — 4 `MissingPalette` failures remain (R0.3)
+* [ ] all missing palette cases resolved — 4 `MissingPalette` failures remain, root-caused to `PartTables` pairing gaps in 3 files (RE-057); tracked under R0.7, not this task
 * [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`
 
 ---
@@ -423,6 +428,21 @@ scene graphs via `FTCommonPart` (fighters) and `MPGroundDesc` (stages)
 graphs without a material table; re-run the material-table search
 (`romtool mobj` / `romtool scene`) before trusting either number — they were
 not reconciled as part of this documentation pass.
+
+RE-057 (`docs/reverse-engineering.md`) found three concrete, reproducible
+test cases while investigating R0.3's `MissingPalette` failures: files 52
+(`MVCommon`), 86 (`ITCommonObject`) and 353 (`LinkSpecial2`) get zero or
+partial `MObj` materials from `PartTables::scan` for their scene graphs,
+confirmed by direct instrumented trace. File 353 is the most useful of the
+three — it is one of Link's own model files, so unlike 52/86 (shared
+UI/common asset containers that may never have had a pairing record) Link's
+material table almost certainly exists somewhere in the archive (likely
+`324_LinkModel.c`, per `refs/ssb-decomp-re/src/relocData/` naming); the
+question is why `PartTables::scan` doesn't attribute it to 353's graph.
+`PartTables::scan`'s `same == model` check (`mobj.rs:441-444`) requires the
+`p_mobjsubs` pointer to target the *same file* as the `DObjDesc` graph —
+plausible that Link's special-move sub-model files fail this because the
+real table lives in a sibling file, but this was not traced.
 
 ### Objective
 

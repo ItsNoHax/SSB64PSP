@@ -12,46 +12,58 @@
 
 ## Current Task
 
-`R0.3 — Texture Conversion Completeness`
+`R0.7 — Missing Material Tables`
 
 ## Task Status
 
 `IN_PROGRESS`
 
-617/647 textures convert. 30 remain: 26 are the LB (loading-break) transition
-system's runtime framebuffer photocopy, bound to RSP segment 0x1 and never
-present in any ROM file — confirmed against the decompilation and accepted as
-out of scope for this task (RE-055; real work belongs to R0.13). RE-054's
-S2DEX-BG lead is refuted (`romtool scan --exhaustive` finds zero `G_BG_1CYC`/
-`G_BG_COPY` anywhere in the ROM). The only remaining R0.3 gap is 4
-`MissingPalette` cases; RE-056 has an unconfirmed lead (a valid palette load
-exists for at least one occurrence of the failing texture, but `romtool`'s
-dedup key may be evaluating a different, palette-less occurrence). Next step:
-confirm which occurrence `mesh::convert_sequence` visits first for each of
-the 4 cases and whether `State::forget_texture()` is what clears the palette
-in between.
+Continuing R0.7 from the concrete leads RE-057 produced while closing R0.3:
+files 52 (`MVCommon`), 86 (`ITCommonObject`, partial) and 353
+(`LinkSpecial2`) get zero or partial `MObj` materials from `PartTables` for
+their scene graphs. File 353 is the priority: it is one of Link's own model
+files, so his real material table almost certainly exists somewhere in the
+archive (likely `324_LinkModel.c`, per decomp file naming), unlike 52/86
+which are shared UI/common containers that may never have had one at all.
+Next step: locate Link's actual `FTCommonPart`-shaped record (the
+`dobj_lookup`/`p_mobjsubs`/`p_costume_matanim_joints` triple `PartTables::scan`
+looks for, `crates/ssb-rom/src/mobj.rs:426-457`) and check which file's
+`DObjDesc` graph offset it names — confirm whether it names 353's graph but
+gets rejected by `scan`'s `same == model` same-file requirement
+(`mobj.rs:441-444`), or whether no record exists for 353 at all.
 
 ## Last Completed Task
 
-R0.3 is not yet complete, but its segment-0x01 question (the concrete next
-step recorded after R0.2) is now resolved: RE-055 identifies all 26
-segment-0x01 texture failures as the LB transition system's runtime
-framebuffer photocopy (`sLBTransitionPhotoHeap`, RSP segment 0x1, decomp
-`refs/ssb-decomp-re/src/lb/lbtransition.c`), refuting RE-054's S2DEX-BG lead
-(`romtool scan --exhaustive`: zero `G_BG_1CYC`/`G_BG_COPY` in the whole ROM).
-RE-056 records an unconfirmed lead on the remaining 4 `MissingPalette`
-cases. See `PLAN.md` R0.3 and R0.13.
+`R0.3 — Texture Conversion Completeness` is now `COMPLETE`. Both of its
+remaining failure classes were root-caused and reattributed to the tasks
+that actually own a fix, the same pattern applied twice in one session:
+
+* 26 segment-0x01 entries → RE-055 → confirmed as `sLBTransitionPhotoHeap`,
+  a runtime framebuffer photocopy bound to RSP segment 1, never present in
+  any ROM file (`refs/ssb-decomp-re/src/lb/lbtransition.c`) → R0.13's scope
+* 4 `MissingPalette` entries → RE-057 (via a temporary instrumented trace of
+  `crates/ssb-rom/src/mesh.rs`, reverted, not committed) → confirmed as a
+  `PartTables` material-pairing gap in 3 specific files, not a texture/TLUT
+  decode bug → R0.7's scope (RE-056's dedup-key theory was a real secondary
+  factor but not the root cause; RE-057 corrects it)
+
+RE-054's S2DEX-BG lead (from the prior session) is refuted:
+`romtool scan --exhaustive` finds zero `G_BG_1CYC`/`G_BG_COPY` anywhere in
+the ROM. See `PLAN.md` R0.3, R0.7 and R0.13.
 
 `R0.2 — N64 Rendering Command Inventory`, `R0.1 — Rendering State
-Reconciliation` and `R0.9 — Stage Animation` are `COMPLETE` — see `PLAN.md`
-for each.
+Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
+`PLAN.md` for each.
 
 ## Next Eligible Task
 
-`R0.3` (in progress) — finish the 4 `MissingPalette` cases per RE-056's lead.
-`R0.8` is also eligible (dependencies R0.1/R0.2 complete, has a lead from
-RE-054) and `R0.13` now has a concrete, decomp-grounded target (RE-055) but
-remains blocked on `R0.6`, which is only `IN_PROGRESS`.
+`R0.7` (in progress, see above). `R0.4`'s two remaining open items are
+adjacent — one (`all missing palette cases resolved`) is the same RE-057
+finding pointing back to R0.7, the other (palette inheritance/state) is
+genuinely distinct and tracked toward R0.15. `R0.8` is also eligible
+(dependencies R0.1/R0.2 complete, has a lead from RE-054: find the real
+matrix-building function for `0x8000`/`RecalcRotRpyRSca` nodes in
+`objdisplay.c`) if R0.7's Link trace stalls.
 
 ## Blockers
 
@@ -152,39 +164,46 @@ The exact ordered task list is in `PLAN.md`.
 
 # 6. Current Task State
 
-## R0.3 — Texture Conversion Completeness
+## R0.7 — Missing Material Tables
 
 Status: `IN_PROGRESS`
 
 ### Objective
 
-Resolve every texture conversion failure that represents a missing required texture path.
+Resolve every scene graph containing an unresolved material table.
 
 ### Required Work
 
-* [x] Check whether the 26 segment-0x01 failures are S2DEX `G_BG_1CYC`/`G_BG_COPY` background draws (RE-054 lead) — refuted; they are `sLBTransitionPhotoHeap` (RE-055), an RSP-segment-bound runtime framebuffer copy with no ROM presence
-* [x] Accept the 26 segment-0x01 entries as out of scope for R0.3, with evidence (RE-055) — no texture-conversion fix applies; real work is R0.13
-* [ ] Resolve or accept-with-evidence the 4 `MissingPalette` cases — RE-056 has a lead (dedup key may be evaluating a palette-less occurrence of a texture that has a valid occurrence elsewhere in the same file), not yet confirmed or fixed
+* [ ] Re-run the material-table search (`romtool mobj`/`romtool scene`) to reconcile the stale 56-vs-71 resolved/unresolved graph counts before trusting either
+* [ ] Locate Link's real `FTCommonPart` record (likely named from `324_LinkModel.c`) and determine which file's `DObjDesc` graph offset it names
+* [ ] Determine whether file 353 (`LinkSpecial2`)'s graph is rejected by `PartTables::scan`'s same-file requirement (`crates/ssb-rom/src/mobj.rs:441-444`) despite a real record existing, or genuinely has no record at all
+* [ ] If it's a same-file-requirement rejection with a confirmed cross-file record: decide whether to loosen `PartTables::scan`, and re-measure its effect the way the original heuristic was measured (`mesh.rs` doc comment: 378 vs 394 textures) before adopting it
+* [ ] Do the same for files 52 (`MVCommon`) and 86 (`ITCommonObject`) — confirm whether they ever had a pairing record to find, or are legitimately table-less (non-fighter/non-stage UI containers)
 
 ### Completion Evidence
 
 Record:
 
-* which hypothesis the raw display-list bytes support, and how that was checked — done, see RE-055/RE-056
-* the fix implemented (or the accepted-deviation writeup if no fix is warranted) — accepted-deviation writeup done for the 26 segment-0x01 entries (PLAN.md R0.3 "Remaining gap"); the 4 `MissingPalette` cases still need either a fix or their own accepted-deviation writeup
-* before/after `romtool textures` output — no change yet; investigation only, no code touched
-* regression test added — none yet; nothing has been fixed in code
+* which files were traced, and what `PartTables::scan` actually found or rejected for each
+* the fix implemented (loosened matching rule, newly discovered record, or accepted deviation) with its measured effect on resolved-graph and packed-texture counts
+* before/after `romtool mobj`/`romtool scene`/`romtool textures` output
+* regression test added
 
 ---
 
 # 7. Last Verification
 
-## 2026-09-02 — R0.3 segment-0x01 investigation
+## 2026-09-02 — R0.3 closed: segment-0x01 and MissingPalette investigations
 
 * `cargo run --release -p romtool -- scan "rom/Super Smash Bros. (USA).z64" --exhaustive` — 0 occurrences of opcode 0x09/0x0A anywhere in the ROM's display lists; refutes RE-054's S2DEX BG lead
 * `cargo run --release -p romtool -- dump "rom/Super Smash Bros. (USA).z64" 39` (and 40/41/45/50/51) — dumped raw file bytes, located the failing `G_SETTIMG` (file 39 offset 0x0E10: `fd10012b 01000000`), confirmed identical bytes recur across files 40/41/45/50/51
 * Cross-checked address `0x01000000` (segment 1) against `refs/ssb-decomp-re/src/lb/lbtransition.c` — `gSPSegment(..., 0x1, sLBTransitionPhotoHeap)`, a per-frame `300x220` 16-bit framebuffer photocopy for the loading-break transition system; texture dims from `romtool textures --file 39` (`300x5`, `300x6` `Rgba/Bits16`) match
-* Investigated the 4 `MissingPalette` cases (files 52, 86, 353): found a valid `G_LOADTLUT`-preceded occurrence of one failing texture (file 52, offset 0x1960, one of 6 occurrences) but did not confirm this explains the failure — recorded as RE-056, a lead not a fix
+* Temporarily instrumented `crates/ssb-rom/src/mesh.rs` with `eprintln!`s (in `convert_sequence`, the segment-0x0E `Call` handler, `SetTimg`, `LoadTlut`), ran `romtool textures --file 52/86/353`, then reverted the instrumentation (`git checkout -- crates/ssb-rom/src/mesh.rs`) — confirmed files 52 and 353 get zero `MObj` materials for every graph node, file 86 gets them for most but not all nodes; every unresolved segment-0x0E call clears an otherwise-valid palette via `forget_texture()`
+* Identified file names via `refs/ssb-decomp-re/src/relocData/`: 52=`MVCommon`, 86=`ITCommonObject`, 353=`LinkSpecial2` (one of Link's own model files, unlike 52/86)
+* Result: RE-057 recorded in `docs/reverse-engineering.md`, correcting RE-056's dedup-key theory. `PLAN.md` R0.3 marked `COMPLETE`; R0.4, R0.7 updated; `TODO.md` Phase B/E, `docs/rendering.md`, `docs/porting-status.md` updated to match
+* Affected subsystem: documentation/investigation only — `crates/ssb-rom/src/mesh.rs` was temporarily modified for tracing and fully reverted before commit; `git diff` confirms no net code change
+* PPSSPP: not run this pass
+* Physical PSP: not tested this pass — see §8 below
 * Result: RE-055 and RE-056 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.3/R0.13, `TODO.md` Phase B, `docs/rendering.md`, `docs/porting-status.md` updated to match
 * Affected subsystem: documentation/investigation only, no code changed
 * PPSSPP: not run this pass
