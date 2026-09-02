@@ -1,251 +1,609 @@
 # SSB64PSP — Agent Operating Protocol
 
-## Project Overview
-Native Rust port of Super Smash Bros. (N64) to Sony PSP. Not an emulator — a reimplementation using the SSB64 decompilation as reference and `rust-psp` for the platform layer.
+## 1. Project
 
-**Current status:** Engine prototype. Asset pipeline complete and verified. Fighters and stages render at 60 FPS on PSP. Physics, collision, and movement status machine ported and working on device. Attacks, damage, opponents, match loop not implemented. Never run on real hardware.
+SSB64PSP is a native Rust reimplementation of Super Smash Bros. 64 for Sony PSP hardware.
+
+It is **not an emulator**.
+
+The original SSB64 decompilation and the user's legally obtained ROM are the primary sources for original game behavior.
+
+The project goal is faithful reproduction of SSB64 behavior on PSP, not merely a game inspired by SSB64.
 
 ---
 
-## Architecture (Three Layers)
+# 2. Authoritative Repository Files
 
+The agent MUST treat repository documentation as follows:
+
+| File                          | Authority                                                      |
+| ----------------------------- | -------------------------------------------------------------- |
+| `AGENTS.md`                   | How the agent operates                                         |
+| `PLAN.md`                     | Ordered development roadmap and acceptance criteria            |
+| `STATUS.md`                   | Current execution state and session continuity                 |
+| `docs/porting-status.md`      | Verified subsystem implementation status                       |
+| `docs/reverse-engineering.md` | Technical discoveries, investigations and unresolved questions |
+| `docs/rendering.md`           | Renderer architecture and rendering-specific behavior          |
+| `docs/ssb-architecture.md`    | Original game's architectural understanding                    |
+| `DECISIONS.md`                | Permanent architectural and implementation decisions           |
+| `TODO.md`                     | Future work not yet incorporated into the ordered plan         |
+
+If documentation disagrees with the code:
+
+1. Investigate the discrepancy.
+2. Determine which is correct using source evidence.
+3. Update the incorrect documentation.
+4. Never silently ignore the discrepancy.
+
+`STATUS.md` is the authority for **current execution state**.
+
+`PLAN.md` is the authority for **what should be done and in what order**.
+
+Do not create another state or planning system.
+
+---
+
+# 3. Autonomous Continuation
+
+When the user says:
+
+> Continue with the plan.
+
+the agent has permission to continue autonomously.
+
+The agent MUST:
+
+1. Read `AGENTS.md`.
+2. Read `PLAN.md`.
+3. Read `STATUS.md`.
+4. Read the relevant sections of `docs/porting-status.md`.
+5. Inspect `git status`.
+6. Inspect recent commits.
+7. Identify the current task from `STATUS.md`.
+8. If the current task is `IN_PROGRESS`, resume it.
+9. Otherwise select the first eligible `TODO` task from `PLAN.md`.
+10. Check task dependencies.
+11. Investigate the relevant original decompilation/ROM data before making behavioral assumptions.
+12. Implement the smallest appropriate change.
+13. Run targeted verification.
+14. Run broader verification when appropriate.
+15. Compare behavior against the original where possible.
+16. Update all affected documentation.
+17. Update `STATUS.md`.
+18. Record evidence.
+19. Commit focused completed work when appropriate.
+20. Continue to the next eligible task when doing so is safe.
+
+Do **not** ask the user:
+
+> What should I work on?
+
+if the repository already determines the next task.
+
+Only stop and ask the user when:
+
+* the plan is genuinely ambiguous;
+* required information or access is unavailable;
+* a destructive decision requires explicit approval;
+* the implementation requires information that cannot be determined from the repository, decompilation, ROM or references;
+* or the task is genuinely blocked.
+
+If the next task is known and implementable, implement it.
+
+---
+
+# 4. Task Selection
+
+Task order is defined by `PLAN.md`.
+
+Use this priority:
+
+1. Resume the current `IN_PROGRESS` task from `STATUS.md`.
+2. Resolve blockers preventing that task.
+3. Complete foundational tasks.
+4. Select the first eligible `TODO` task in `PLAN.md`.
+5. Prefer correctness and evidence over cosmetic improvements.
+6. Prefer tasks that unblock multiple later tasks.
+
+Never skip dependencies merely because a later task looks easier.
+
+Never mark a milestone complete while required tasks remain unresolved.
+
+---
+
+# 5. Rendering Is the Hard Gate
+
+Rendering is the project's highest-priority development gate.
+
+**Combat MUST NOT be implemented until the rendering gate in `PLAN.md` has explicitly been passed.**
+
+Do not implement:
+
+* attacks;
+* hitboxes;
+* hurtboxes;
+* damage;
+* knockback;
+* hitstun;
+* stocks;
+* KO logic;
+* CPU combat;
+* combat interactions;
+* match gameplay.
+
+Movement, physics, collision and animation may continue to be implemented when they are required to exercise or validate rendering.
+
+Do not use "rendering looks good enough" as a reason to begin combat.
+
+The rendering gate requires correctness, completeness, PPSSPP validation, physical PSP validation, performance measurement and synchronized documentation as defined in `PLAN.md`.
+
+---
+
+# 6. Original Behavior Source Hierarchy
+
+When determining how SSB64 originally behaves, use this order:
+
+1. Original SSB64 decompilation.
+2. Original ROM/data extracted from the user's ROM.
+3. BattleShip.
+4. `sf64-psp`.
+5. `n64psp`.
+6. Existing SSB64PSP implementation.
+7. Engineering assumptions.
+
+Primary references:
+
+* `VetriTheRetri/ssb-decomp-re`
+* `JRickey/BattleShip`
+* `TheMrIron2/sf64-psp`
+* `TheMrIron2/n64psp`
+
+BattleShip is a technical reference, not an authority.
+
+If BattleShip disagrees with the decompilation or ROM:
+
+1. Identify the discrepancy.
+2. Determine why it exists.
+3. Prefer the original game's evidence.
+4. Document the conclusion.
+
+Do not blindly copy another project's implementation.
+
+Do not copy Nintendo assets or copyrighted game data into this repository.
+
+---
+
+# 7. Evidence-Driven Development
+
+Every meaningful implementation must have evidence.
+
+Acceptable evidence includes:
+
+* decompilation source;
+* ROM data;
+* display-list inspection;
+* extracted asset reports;
+* unit tests;
+* integration tests;
+* generated reports;
+* screenshots;
+* frame captures;
+* PPSSPP behavior;
+* physical PSP behavior;
+* BattleShip comparison;
+* numerical comparisons against original data.
+
+Statements such as:
+
+> It looks correct.
+
+are not sufficient evidence for rendering correctness.
+
+For rendering work, prefer measurable comparisons whenever possible.
+
+---
+
+# 8. Rendering Investigation Protocol
+
+When investigating a rendering discrepancy:
+
+```text
+IDENTIFY SYMPTOM
+        ↓
+IDENTIFY AFFECTED ASSET / SCENE / DISPLAY LIST
+        ↓
+TRACE ORIGINAL DECOMPILATION
+        ↓
+INSPECT ROM DATA
+        ↓
+INSPECT DISPLAY LIST / GBI STATE
+        ↓
+CHECK BATTLESHIP
+        ↓
+FORM TESTABLE HYPOTHESIS
+        ↓
+IMPLEMENT SMALLEST CHANGE
+        ↓
+RUN TARGETED TEST
+        ↓
+COMPARE AGAINST ORIGINAL
+        ↓
+RUN BROADER REGRESSION TESTS
+        ↓
+DOCUMENT RESULT
+        ↓
+UPDATE STATUS
 ```
-Layer A — Game            crates/ssb-game
-    fighters, physics, collision, animation, stages, items, AI, menus, match state
-                  │
-Layer B — Engine          crates/ssb-engine
-    traits: Renderer, AudioBackend, Input, Clock; math, coordinate conversion, fixed timestep
-                  │
-Layer C — PSP backend     psp/
-    sceGu, sceCtrl, sceAudio, VFPU, timing
+
+Do not repeatedly tweak rendering parameters until screenshots look better.
+
+Determine what the N64 actually does first.
+
+---
+
+# 9. No Unsupported Heuristics
+
+Do not introduce a heuristic simply because it makes a screenshot look better.
+
+Examples include guessing:
+
+* material tables;
+* palettes;
+* texture formats;
+* texture filtering;
+* LOD behavior;
+* mipmapping;
+* transforms;
+* animation timing;
+* lighting;
+* combiner behavior;
+* alpha behavior;
+* depth behavior.
+
+If a heuristic is genuinely required because the PSP cannot directly reproduce an N64 behavior:
+
+1. Document the original behavior.
+2. Explain why direct reproduction is impossible.
+3. Explain the approximation.
+4. Measure its effect.
+5. Add regression coverage where practical.
+6. Record it as a documented deviation.
+
+Never disguise an approximation as an exact implementation.
+
+---
+
+# 10. BattleShip Usage
+
+BattleShip should be actively consulted for N64 rendering and runtime behavior.
+
+Use it particularly for:
+
+* F3DEX/F3DEX2;
+* GBI semantics;
+* RSP/RDP concepts;
+* texture handling;
+* TMEM;
+* display lists;
+* material/render state;
+* framebuffer behavior;
+* N64 rendering architecture.
+
+BattleShip must be treated as a reference implementation.
+
+Do not copy its PC renderer architecture into the PSP renderer without a concrete technical reason.
+
+The goal is correct SSB64 behavior on PSP, not architectural similarity to BattleShip.
+
+---
+
+# 11. Documentation Is Part of the Implementation
+
+A task is not complete if its documentation is knowingly stale.
+
+After every significant implementation, determine whether these need updating:
+
+* `PLAN.md`
+* `STATUS.md`
+* `docs/porting-status.md`
+* `docs/rendering.md`
+* `docs/reverse-engineering.md`
+* `docs/ssb-architecture.md`
+* `DECISIONS.md`
+* `README.md`
+
+Update documentation in the same work cycle as the implementation.
+
+Do not make claims in the README that are contradicted by the current implementation or validation state.
+
+---
+
+# 12. STATUS.md Rules
+
+`STATUS.md` is the persistent execution state.
+
+It MUST contain enough information for a completely fresh agent session to continue safely.
+
+At minimum it records:
+
+* current milestone;
+* current task;
+* task status;
+* last completed task;
+* next eligible task;
+* blockers;
+* changes made;
+* verification performed;
+* evidence;
+* documentation updated;
+* relevant commit;
+* important discoveries;
+* hardware validation state.
+
+When a task becomes `IN_PROGRESS`, update `STATUS.md`.
+
+When a task becomes `COMPLETE`, update `STATUS.md`.
+
+When a task becomes `BLOCKED`, record the exact reason and evidence.
+
+Never rely on conversation history for important execution state.
+
+---
+
+# 13. Task Completion Semantics
+
+Tasks use these statuses:
+
+* `TODO` — not started.
+* `IN_PROGRESS` — actively being implemented.
+* `BLOCKED` — cannot currently proceed.
+* `VERIFYING` — implementation exists but acceptance criteria are not yet satisfied.
+* `COMPLETE` — acceptance criteria satisfied and evidence recorded.
+* `ACCEPTED_DEVIATION` — exact reproduction is impossible on PSP, and the deviation has been demonstrated and justified.
+
+Never mark a task `COMPLETE` merely because:
+
+* it compiles;
+* tests pass;
+* PPSSPP boots;
+* a screenshot looks plausible;
+* the agent believes it is correct.
+
+Completion requires the task's acceptance criteria in `PLAN.md`.
+
+---
+
+# 14. Verification
+
+Use the smallest relevant verification first.
+
+Typical sequence:
+
+```text
+targeted test
+    ↓
+relevant crate tests
+    ↓
+workspace tests
+    ↓
+asset / ROM verification
+    ↓
+PPSSPP
+    ↓
+physical PSP when required
+    ↓
+broader CI-equivalent verification
 ```
 
-`crates/ssb-rom` sits beside all three: reads ROM formats at build time, runtime pack on device. Linked by both host tools and PSP binary.
+Do not run the entire test suite after every tiny change if a targeted test is sufficient.
 
-| Crate | Purpose | `no_std` | Target |
-|-------|---------|----------|--------|
-| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats, animation, runtime pack | yes (+alloc) | host + PSP |
-| `crates/ssb-engine` | Layer B traits, math, coordinate conversion | yes | host + PSP |
-| `crates/ssb-game` | Layer A game logic | yes | host + PSP |
-| `tools/romtool` | Build-time extraction/verification CLI | no | host |
-| `psp/` | Layer C backend + executable | yes | `mipsel-sony-psp` |
-
-`psp/` is **outside** the root cargo workspace (needs pinned nightly + `-Z build-std`). This lets `cargo test` at root run on stable.
+Before marking a milestone complete, perform the full verification required by the milestone.
 
 ---
 
-## Required Toolchain
+# 15. Asset Pack Discipline
 
-| Tool | Version/Notes |
-|------|---------------|
-| Rust stable | Pinned to `1.98.0` (see `.github/workflows/ci.yml:RUST_STABLE`) |
-| Rust nightly | Pinned to `nightly-2026-08-01` (see `psp/rust-toolchain.toml`) |
-| `cargo-psp` | `cargo install cargo-psp --locked` |
-| ROM | `Super Smash Bros. (USA).z64` — SHA-1 `e2929e10fccc0aa84e5776227e798abc07cedabf` |
+Whenever ROM extraction or asset-pipeline code changes, rebuild:
 
----
-
-## Common Commands
-
-### Setup & Verification
-```bash
-# 1. Place ROM (gitignored)
-mkdir -p rom && cp "/path/to/Super Smash Bros. (USA).z64" rom/
-
-# 2. Verify ROM is supported revision
-cargo run -p romtool -- verify "rom/Super Smash Bros. (USA).z64"
-
-# 3. Inspect archive
-cargo run -p romtool -- info "rom/Super Smash Bros. (USA).z64"
-
-# 4. Build runtime asset pack (REQUIRED — PSP build has nothing to draw without it)
-cargo run --release -p romtool -- pack "rom/Super Smash Bros. (USA).z64"
-# -> assets/generated/ssb64.pak
+```text
+assets/generated/ssb64.pak
 ```
 
-### Testing (Host)
-```bash
-# Run all host tests (317+ passing)
-cargo test --workspace --all-targets
+Never assume an existing generated pack reflects the current source code.
 
-# Run tests for a specific crate
-cargo test -p ssb-rom
-cargo test -p ssb-engine
-cargo test -p ssb-game
+Verify that PPSSPP/device execution is using the newly generated pack.
+
+Generated ROM-derived assets must remain excluded from Git as intended by the repository.
+
+Never commit copyrighted ROMs or extracted copyrighted game assets.
+
+---
+
+# 16. PPSSPP Is Not Physical PSP Hardware
+
+PPSSPP is a development and regression environment.
+
+PPSSPP is **not proof of physical PSP correctness**.
+
+A milestone requiring hardware validation must be tested on a physical PSP.
+
+Record:
+
+* PSP model;
+* firmware/environment where relevant;
+* build used;
+* asset pack version;
+* relevant runtime configuration;
+* observed behavior;
+* failures.
+
+Do not claim "works on PSP hardware" based solely on PPSSPP.
+
+---
+
+# 17. Git Discipline
+
+Prefer focused commits.
+
+Examples:
+
+```text
+render: implement transform 0x8000
+render: fix CI palette inheritance
+render: implement stage material animation
+test: add Dream Land texture regression
+docs: update rendering status
 ```
 
-### Building
-```bash
-# Build host tools (romtool)
-cargo build --release -p romtool
+Avoid giant mixed commits.
 
-# Build PSP executable (from psp/ directory)
-cd psp && cargo psp --release
-# -> psp/target/mipsel-sony-psp/release/EBOOT.PBP
+Before committing:
+
+```text
+git status
+git diff
+relevant tests
+documentation review
 ```
 
-### Running on PPSSPP
-```bash
-# Build + run + screenshot (forces software rasteriser for debug overlay)
-tools/run-ppsspp.sh
+Do not commit:
 
-# Options: --no-build, --backend software|opengl, --seconds N
-tools/run-ppsspp.sh --no-build --seconds 5
+* ROMs;
+* copyrighted extracted assets;
+* unrelated generated files;
+* temporary debugging artifacts.
+
+---
+
+# 18. Avoid Destructive Changes
+
+Do not:
+
+* delete working systems without evidence;
+* rewrite large subsystems unnecessarily;
+* replace verified code with speculative architecture;
+* remove tests because they fail;
+* weaken acceptance criteria to make progress appear faster;
+* silently discard existing implementation.
+
+If a rewrite is justified:
+
+1. document the problem;
+2. identify why incremental correction is insufficient;
+3. preserve useful tests;
+4. implement incrementally where practical;
+5. verify against the previous behavior.
+
+---
+
+# 19. One Primary Task
+
+Maintain exactly one primary implementation task at a time.
+
+Related investigation is allowed, but the agent must be able to identify the primary task from `STATUS.md`.
+
+Do not simultaneously claim to be implementing:
+
+```text
+texture system
++
+combat
++
+audio
++
+menus
++
+renderer rewrite
 ```
 
-### Verification Commands
-```bash
-# VPK0 decompression cross-verification
-cargo run --release -p romtool -- check "rom/Super Smash Bros. (USA).z64"
+as one task.
 
-# Fighter physics constants vs decompilation
-cargo run --release -p romtool -- fighters "rom/…z64" --verify
-
-# Animation lengths decoded two ways
-cargo run --release -p romtool -- anims "rom/…z64" --verify
-
-# Figatree animations replayed from pack
-cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 --pack assets/generated/ssb64.pak
-
-# Stage animations
-cargo run --release -p romtool -- stages "rom/…z64" --pack assets/generated/ssb64.pak
-
-# Texture conversion report
-cargo run --release -p romtool -- textures "rom/…z64"
-```
+Keep work traceable.
 
 ---
 
-## CI Pipeline (`.github/workflows/ci.yml`)
+# 20. Session / Compaction Safety
 
-**Order matters** — mirrors local verification:
-1. `cargo fmt --all -- --check`
-2. `cargo clippy --workspace --all-targets`
-3. `cargo test --workspace --all-targets`
-4. `cargo build --release -p romtool`
-5. `no_std` build for `thumbv7em-none-eabi` (catches `std` leakage via default features)
-6. PSP build (`cargo psp --release` in `psp/`)
-7. ROM commit guard
+Before ending a session or reaching context compaction:
 
-**Key CI details:**
-- `RUSTFLAGS: -D warnings` on host jobs
-- `RUST_STABLE=1.98.0` pinned deliberately — bump on purpose, not by surprise
-- PSP job uses `psp/rust-toolchain.toml` (nightly-2026-08-01), clears `RUSTFLAGS` (linker warnings)
-- `future_lints` job runs on latest stable (non-blocking) to warn of new lints
+1. Update `STATUS.md`.
+2. Record the current task.
+3. Record what changed.
+4. Record what was verified.
+5. Record what remains.
+6. Record blockers.
+7. Record important discoveries.
+8. Update affected documentation.
+9. Commit completed work when appropriate.
+10. Leave the repository in a state another agent can safely continue.
 
----
+A fresh agent must be able to execute:
 
-## Critical Conventions & Gotchas
+> Continue with the plan.
 
-### `no_std` Discipline
-- All three core crates (`ssb-rom`, `ssb-engine`, `ssb-game`) are `no_std` with `default = ["std"]` feature
-- **Workspace dependencies declare `default-features = false`** (root `Cargo.toml:31-33`)
-- A crate **cannot** turn off a workspace dependency's default features — if `std` leaks, PSP build fails with confusing "can't find crate for `std`"
-- Crates that want `std` opt in through their own `std` feature
-- CI `no_std` job builds all three for `thumbv7em-none-eabi` to catch this
-
-### Asset Pack Is Mandatory
-- `cargo psp` builds the executable but **does not** build the asset pack
-- `tools/run-ppsspp.sh` stages `assets/generated/ssb64.pak` alongside `EBOOT.PBP`
-- Without the pack, the viewer falls back to a built-in tetrahedron (looks like "no assets")
-
-### Debug Overlay Requires Software Rasteriser
-- `sceGuDebugFlush` paints VRAM with CPU
-- PPSSPP hardware backends don't reflect CPU VRAM writes → overlay invisible
-- `tools/run-ppsspp.sh` forces software rasteriser via `--appendconfig`
-- This is an emulator limitation, not a port bug (see `docs/reverse-engineering.md` RE-014)
-
-### PSP Toolchain Pinning
-- `rust-psp` reaches into unstable `core` internals (`core::panic::PanicPayload`)
-- Only builds on narrow band of nightlies
-- **Before bumping `psp/rust-toolchain.toml`**: build with new nightly and boot in PPSSPP — successful compile is not sufficient evidence
-- Known broken: nightly-2026-08-26+
-
-### ROM Handling
-- `rom/` directory is gitignored
-- `assets/generated/` is gitignored
-- CI rejects any committed ROM files (`.z64`, `.n64`, `.v64`, `.rom`)
-- You must supply your own legally obtained ROM dump
+and resume without reconstructing the previous conversation.
 
 ---
 
-## Testing Quirks
+# 21. Failure Recovery
 
-- Tests that touch the real ROM are gated behind `SSB64_ROM` env var (CI passes without ROM)
-- Host tests use synthetic data or assert on constants — no copyrighted material needed in CI
-- 317 host tests passing: `ssb-rom` (174), `ssb-engine` (36), `ssb-game` (107)
+If an implementation approach fails:
 
----
+1. Reproduce the failure.
+2. Identify the exact subsystem.
+3. Inspect the original decompilation.
+4. Inspect ROM data.
+5. Inspect display lists/assets where relevant.
+6. Inspect BattleShip/reference implementations.
+7. Document the investigation in `docs/reverse-engineering.md` when appropriate.
+8. Form a new hypothesis.
+9. Implement the smallest testable change.
+10. Verify again.
 
-## Key Documentation References
-
-| File | Purpose |
-|------|---------|
-| `docs/ssb-architecture.md` | Original game architecture from decompilation |
-| `docs/reverse-engineering.md` | Open questions with evidence/confidence (RE-XXX IDs) |
-| `docs/rendering.md` | N64 → PSP rendering translation |
-| `docs/memory.md` | Memory layout and allocator plan |
-| `docs/porting-status.md` | Per-subsystem progress (source of truth for status) |
-| `PLAN.md` | Milestone plan (Rules 11-12: % = intended scope, COMPLETE = validated) |
+Do not repeatedly retry an unsupported approach.
 
 ---
 
-## Common Failure Modes to Avoid
+# 22. Do Not Stop at Recommendations
 
-1. **Running `cargo test` from `psp/`** — runs on nightly, not stable; use root workspace
-2. **Forgetting to rebuild asset pack** after ROM/tool changes — stale pack silently used
-3. **Running `cargo psp` from repo root** — exits 0 without rebuilding; must run from `psp/`
-4. **Using OpenGL backend in PPSSPP** for debug overlay work — overlay invisible
-5. **Enabling `std` feature transitively** — breaks PSP build; check `no_std` CI job
-6. **Assuming PPSSPP = real hardware** — biggest open risk, never validated on device
-7. **Leaving `SoftwareRenderer = True` in PPSSPP config** — script now snapshots/restores but SIGKILL leaves it set
+A successful autonomous session should end with one of:
 
----
+### Progress
 
-## Current Milestone
-**Combat vertical slice** — one grounded attack driven end-to-end (input → hitbox → knockback). Everything underneath is in place: fighter with real model, colours, physics, collision, animations, standing on real stage.
+A planned task was implemented and verified.
 
----
+### Continued Progress
 
-## Agent Operating Rules
+A task remains `IN_PROGRESS`, but meaningful implementation and verification occurred and `STATUS.md` was updated.
 
-### Rule 1 — Decompilation First
-Always inspect the existing SSB decompilation before implementing functionality that already exists there. The decompilation is 100% complete — every question about original behavior has an answer in the source.
+### Blocked
 
-### Rule 2 — Reference Ports First
-Always inspect `sf64-psp` and `n64psp` before designing an N64→PSP subsystem.
+The task is genuinely blocked and the exact reason/evidence is recorded.
 
-### Rule 3 — No Invention
-Never invent N64 behavior when the decompilation can answer the question.
+It should NOT end with:
 
-### Rule 4 — Subsystem by Subsystem
-Do not perform giant speculative rewrites. Work subsystem-by-subsystem.
+> I investigated the issue and recommend doing X next.
 
-### Rule 5 — Functional Validation
-Every major subsystem must compile and have a test/debug path before moving on.
-
-### Rule 6 — Layer Separation
-Keep platform code separate from game logic. Game logic never mentions PSP; PSP backend never mentions fighters.
-
-### Rule 7 — Rust Abstractions
-Prefer Rust abstractions over C-style global state where practical.
-
-### Rule 8 — Unsafe Discipline
-Do not introduce `unsafe` without a concrete reason. When unsafe is required for PSP APIs/VFPU/GPU memory, isolate it behind small safe abstractions.
-
-### Rule 9 — Profile First
-Profile before optimizing. Especially VFPU code.
-
-### Rule 10 — Document Uncertainty
-When uncertain about original behavior, document the uncertainty rather than guessing. Create `docs/reverse-engineering.md` entries with: Question, Evidence, Hypothesis, Implementation, Confidence.
-
-### Rule 11 — Porting Status
-Maintain a porting-status document (`docs/porting-status.md`). Percentages are of *intended scope for that subsystem*, not of the original's line count. A subsystem is only `COMPLETE` when it has been functionally validated, not merely compiled.
-
-### Rule 12 — Milestone Validation
-Do not move to the next milestone merely because the code compiles. Each milestone requires functional validation.
+If X is the next planned task and can be implemented, implement X.
 
 ---
 
-## License
-MIT OR Apache-2.0 for code in this repository only. No rights to Nintendo's IP.
+# 23. Final Rule
+
+The repository itself must always contain enough information to determine:
+
+* what has been completed;
+* what is currently being worked on;
+* what remains;
+* what should happen next;
+* what evidence exists;
+* what is blocked;
+* how success is verified;
+* when rendering is complete;
+* when combat is unlocked.
+
+The user's default command is:
+
+> **Continue with the plan.**
+
+The agent's responsibility is to maintain the repository so that command remains sufficient.

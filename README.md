@@ -2,311 +2,430 @@
 
 A native Rust port of **Super Smash Bros. (N64)** to the **Sony PSP**.
 
-This is *not* an emulator. It is a reimplementation of the game for PSP
-hardware, using the [Super Smash Bros. decompilation][decomp] as the reference
-for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
+This is **not an emulator**. It is a reimplementation of the game for PSP hardware, using the [Super Smash Bros. decompilation][decomp] as the primary reference for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
-> **Status: engine prototype.** The asset pipeline is complete and verified
-> against a real ROM, real fighters and stages render on the PSP at a locked
-> 60 FPS, and **a fighter walks, dashes, jumps and lands on a real extracted
-> stage** under the original's own physics constants and status machine.
-> Attacks, damage, opponents and the match loop are not implemented, and
-> nothing has run on real hardware — see [Current status](#current-status).
+> **Status: rendering-focused engine prototype.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate on physical PSP hardware at the target 60 FPS. The current development priority is completing rendering fidelity and coverage before combat implementation.
 
-![Dream Land rendering in PPSSPP at 60 FPS](docs/images/m4-stage-textured.png)
+![Dream Land rendering on PSP](docs/images/m4-stage-textured.png)
 
-*Dream Land: geometry, textures and palettes extracted from the ROM, placed by
-the recovered scene graph and drawn through the PSP's GE, with a fighter
-standing on the stage's real collision geometry. The overlay is the debug
-build's; the numbers in it are read live.*
+*Dream Land with geometry, textures and palettes extracted from the ROM, placed through the recovered scene graph and rendered through the PSP's Graphics Engine.*
 
+---
+
+## Project Goals
+
+The project follows this order:
+
+```text
+Original SSB64 behavior
+        ↓
+Rendering correctness
+        ↓
+Rendering completeness
+        ↓
+Physical PSP validation
+        ↓
+Rendering performance
+        ↓
+Combat
+        ↓
+Full game systems
 ```
-cpu 796us / budget 16667us    4.8% of the frame budget
-frame 16683us  tick 700       59.94 Hz, one tick per frame, no drift
-```
+
+The renderer is a **hard gate** for gameplay development.
+
+The goal is not to produce a game that merely looks similar to SSB64. The implementation should reproduce the original game's behavior wherever the original decompilation and ROM provide sufficient evidence.
+
+---
+
+## Current Status
+
+See [`PLAN.md`](PLAN.md) for the authoritative development roadmap and [`STATUS.md`](STATUS.md) for the current execution state.
+
+### Working and verified
+
+* ROM validation
+* VPK0 decompression
+* `relocData` archive processing
+* Asset extraction and conversion
+* Runtime asset-pack generation
+* N64 display-list parsing
+* F3DEX2-related rendering infrastructure
+* N64 texture decoding
+* Scene graph conversion
+* Fighter model conversion
+* Fighter animation extraction and playback
+* Stage animation extraction and playback
+* Stage collision extraction
+* Fighter movement infrastructure
+* Fixed timestep
+* PSP runtime asset loading
+* PSP mesh rendering
+* Textured and shaded fighters
+* Textured and shaded stages
+* Fighter costume colours currently represented by the runtime pack
+* Camera-facing/billboard rendering
+* Stage scenery animation
+* Fighter animation on hardware
+* Stage collision queries
+* Fighter movement and landing on extracted stage collision
+* Physical PSP execution and rendering
+
+### Current rendering work
+
+The remaining work is focused on reproducing the original N64 renderer more completely and accurately, including:
+
+* N64 rendering command coverage
+* texture conversion completeness
+* CI4/CI8 and TLUT behavior
+* texture filtering
+* texture addressing
+* LOD and mipmapping behavior
+* material tables
+* material/combiner state
+* lighting behavior
+* unresolved `MObj` fields
+* transform kind `0x8000`
+* stage material animation
+* additional fighter palettes/costumes
+* framebuffer rendering
+* screen wipes
+* camera/projection correctness
+* render-state isolation
+* rendering regression coverage
+* PSP VRAM usage
+* rendering performance
+
+These are tracked individually in `PLAN.md`.
+
+### Not yet implemented
+
+Combat and higher-level game systems are intentionally blocked until rendering has passed its acceptance gate.
+
+Not yet implemented include:
+
+* attacks
+* hitboxes and hurtboxes
+* damage
+* knockback
+* hitstun
+* opponents
+* CPU combat AI
+* stocks and KO handling
+* complete match loop
+* complete stage-selection/loading flow
+* items
+* menus
+* save data
+* audio
+
+---
 
 ## Legal
 
 You must supply your own legally obtained ROM dump.
 
-This repository contains **no Nintendo code, data, ROM, texture, model or audio**,
-and never will. Assets are extracted from your own ROM on your own machine at
-build time, into `assets/generated/`, which is gitignored. `rom/` is gitignored.
+This repository contains **no Nintendo code, ROM, copyrighted game assets, textures, models or audio**.
+
+Assets are extracted from the user's own ROM on their own machine during the build process. Generated assets are stored under:
+
+```text
+assets/generated/
+```
+
+and are gitignored.
+
+The `rom/` directory is also gitignored.
+
+---
 
 ## Requirements
 
-* Rust stable (host tools and tests)
-* Rust nightly, pinned — see `psp/rust-toolchain.toml`
-* [`cargo-psp`][rustpsp]: `cargo install cargo-psp`
-* Your own `Super Smash Bros. (USA).z64`
+* Rust stable for host tools and tests
+* Rust nightly for the PSP target, pinned by the repository toolchain
+* [`cargo-psp`][rustpsp]
+* Your own `Super Smash Bros. (USA).z64` ROM
 
-Supported ROM:
+### Supported ROM
 
-| | |
-|---|---|
-| Game code | `NALE` (US) |
-| SHA-1 | `e2929e10fccc0aa84e5776227e798abc07cedabf` |
-| MD5 | `f7c52568a31aadf26e14dc2b6416b2ed` |
+|           |                                            |
+| --------- | ------------------------------------------ |
+| Game code | `NALE` (US)                                |
+| SHA-1     | `e2929e10fccc0aa84e5776227e798abc07cedabf` |
+| MD5       | `f7c52568a31aadf26e14dc2b6416b2ed`         |
 
-## Quick start
+---
+
+## Quick Start
+
+### 1. Add your ROM
 
 ```bash
-# 1. Put your ROM here (gitignored)
-mkdir -p rom && cp "/path/to/Super Smash Bros. (USA).z64" rom/
+mkdir -p rom
+cp "/path/to/Super Smash Bros. (USA).z64" rom/
+```
 
-# 2. Check it is the supported revision
+### 2. Verify the ROM
+
+```bash
 cargo run -p romtool -- verify "rom/Super Smash Bros. (USA).z64"
+```
 
-# 3. Inspect the asset archive
+### 3. Inspect the ROM archive
+
+```bash
 cargo run -p romtool -- info "rom/Super Smash Bros. (USA).z64"
+```
 
-# 4. Build the runtime asset pack -- this is what the PSP build loads
+### 4. Build the runtime asset pack
+
+```bash
 cargo run --release -p romtool -- pack "rom/Super Smash Bros. (USA).z64"
-# -> assets/generated/ssb64.pak
+```
 
-# 5. Run the host test suite
+This generates:
+
+```text
+assets/generated/ssb64.pak
+```
+
+The PSP executable loads this runtime asset pack.
+
+### 5. Run the host test suite
+
+```bash
 cargo test
+```
 
-# 6. Build the PSP executable
-cd psp && cargo psp --release
-# -> psp/target/mipsel-sony-psp/release/EBOOT.PBP
+### 6. Build the PSP executable
 
-# 7. Build and run it under PPSSPP, with a screenshot
+```bash
+cd psp
+cargo psp --release
+```
+
+The resulting executable is:
+
+```text
+psp/target/mipsel-sony-psp/release/EBOOT.PBP
+```
+
+### 7. Run under PPSSPP
+
+```bash
 tools/run-ppsspp.sh
 ```
 
-Step 4 is not optional: `run-ppsspp.sh` stages `ssb64.pak` alongside the EBOOT
-and the build has nothing to draw without it. To pull out the raw archive
-payloads instead — byte-exact files, not converted assets — use
-`romtool extract`.
+The script stages the generated asset pack next to the executable before launching.
 
-> `tools/run-ppsspp.sh` forces PPSSPP's **software rasteriser**. That is not a
-> preference — PPSSPP's hardware backends do not reflect CPU writes to emulated
-> VRAM, and that is exactly how `sceGuDebugFlush` paints the debug overlay. Run
-> under OpenGL and the diagnostics are computed but invisible. See RE-014.
+> `tools/run-ppsspp.sh` currently uses PPSSPP's software rasteriser because the debug overlay relies on CPU writes to emulated VRAM. This does not represent the physical PSP rendering path.
+
+---
 
 ## Architecture
 
-Three layers, strictly separated. Game logic never mentions the PSP; the PSP
-backend never mentions fighters.
+The project is divided into three primary layers.
 
+```text
+              Layer A — Game
+              crates/ssb-game
+       fighters, physics, collision,
+       animation, stages, items,
+       AI, menus, match state
+                    │
+                    ▼
+              Layer B — Engine
+              crates/ssb-engine
+       Renderer, AudioBackend,
+       Input, Clock, math,
+       coordinate conversion,
+       fixed timestep
+                    │
+                    ▼
+              Layer C — PSP
+                   psp/
+       sceGu, sceCtrl, sceAudio,
+       VFPU, timing, PSP runtime
 ```
-              Layer A — Game            crates/ssb-game
-       fighters, physics, collision, animation,
-       stages, items, AI, menus, match state
-                     │
-              Layer B — Engine          crates/ssb-engine
-       traits: Renderer, AudioBackend, Input, Clock
-       math, coordinate conversion, fixed timestep
-                     │
-              Layer C — PSP backend     psp/
-       sceGu, sceCtrl, sceAudio, VFPU, timing
-```
 
-That is the target shape; Layer A holds what has been ported so far, which is
-physics, collision and the movement status machine. `ssb-rom` sits beside all
-three rather than in the stack: it reads ROM formats at build time and the
-runtime pack on device, so it is linked by both the host tools and the PSP
-binary.
+Game logic should not directly depend on PSP APIs.
 
-| Crate | Purpose | `no_std` | Target |
-|---|---|---|---|
-| `crates/ssb-rom` | ROM validation, VPK0, relocData archive, N64 formats, animation scripts, the runtime pack | yes (+alloc) | host + PSP |
-| `crates/ssb-engine` | Layer B traits, math, coordinate conversion | yes | host + PSP |
-| `crates/ssb-game` | Layer A game logic | yes | host + PSP |
-| `tools/romtool` | Build-time extraction and conversion CLI, and the verifier for everything recovered from the ROM | no | host |
-| `psp/` | Layer C backend + executable | yes | `mipsel-sony-psp` |
+The PSP backend should not contain fighter-specific game logic.
 
-`psp/` is deliberately **outside** the root cargo workspace: it needs a pinned
-nightly and `-Z build-std`, and keeping it separate lets `cargo test` at the
-root run on stable.
+`crates/ssb-rom` sits beside these layers because it provides ROM parsing, extraction and runtime resource handling for both host tooling and the PSP executable.
 
-## Current status
+### Crates
 
-See [`docs/porting-status.md`](docs/porting-status.md) for the full table.
+| Crate               | Purpose                                                                        |     `no_std` | Target            |
+| ------------------- | ------------------------------------------------------------------------------ | -----------: | ----------------- |
+| `crates/ssb-rom`    | ROM validation, archive handling, N64 formats, animation data and runtime pack | Yes (+alloc) | Host + PSP        |
+| `crates/ssb-engine` | Engine traits, math and coordinate conversion                                  |          Yes | Host + PSP        |
+| `crates/ssb-game`   | Game logic, fighters, stages, physics and animation                            |          Yes | Host + PSP        |
+| `tools/romtool`     | ROM verification, extraction, conversion and asset-pack generation             |           No | Host              |
+| `psp/`              | PSP backend and executable                                                     |          Yes | `mipsel-sony-psp` |
 
-**Working and verified:**
+`psp/` is intentionally outside the root Cargo workspace because the PSP target uses a pinned nightly toolchain and `-Z build-std`.
 
-* ROM validation, VPK0 decompression (all 499 compressed files) and the
-  relocData archive (2132/2132 files, 61,343 intern + 3,092 extern relocations)
-* Asset extraction and conversion into a 3.6 MB runtime pack: 2450 meshes
-  (42,417 triangles, zero conversion failures), 3137 scene-graph nodes, 617
-  textures, 41 stages' collision geometry, all 27 fighters' constants and 532
-  movement animations — every status the fighter machine can be in
-* **Textured, shaded models placed by the scene graph render on device at
-  60 FPS**, fighters in their own recovered palettes
-* **Fighters render in their own colours** — flat-shaded parts take the
-  combiner's `PRIM * SHADE`, with the per-costume colour recovered from the
-  material-animation script that holds one costume per frame
-* **Stages render textured on device** — their texels live in a separate
-  archive file, reached through the relocations the converter follows both in
-  the display list (RE-037) and in a material's own sprite table (RE-046)
-* **All 41 stages' collision geometry** decoded, packed and queried; the ported
-  `mpprocess` floor solver holds a simulated fighter still at 158/158 spawn
-  points with zero drift
-* **A fighter moves and animates on device**: walk, dash, run, turn, squat,
-  jump, double-jump, drop-through and landing, each with the original's
-  animation for that status, on every character's real extracted constants
-* **Stage scenery animates on device** — 35 stages, 215 nodes, ticked and
-  composed each frame at 60 FPS from the 32-bit event stream stages use, which
-  is a different encoding to the fighters' figatree but the same `AObj`
-  machine (RE-050, RE-051)
-* **Camera-facing sprites face the camera.** `DObjDesc.id & 0xF000` selects a
-  matrix kind, and kinds 45–48 build the transform from the projection basis
-  rather than the node's own rotation. All 81 such nodes are flagged through
-  the pack and billboarded at draw time (RE-049)
-* **Fighters animate on device.** Packed figatree scripts drive a joint clock
-  each, node matrices recompose every tick at 60 FPS, and the result is checked
-  four ways: poses match the ROM across 3444 joints, no bone changes length in
-  204,547 measurements over all 189 animations, feet stay planted through the
-  grounded poses, and Turn's opening frame renders as a standing Mario
-* 338 host tests passing
+---
 
-![A fighter posed by a packed animation, on device](docs/images/m4-animation.png)
+## Verification
 
-*The opening frame of Mario's Turn, played from the pack on device: 24 joint
-clocks ticking, node matrices recomposed each tick. The grey is missing
-materials, not a wrong pose — see the limitations below.*
+The project emphasizes evidence from the original ROM and decompilation rather than visual guesswork.
 
-**Known limitations:**
-
-* **Never run on real PSP hardware.** PPSSPP is not proof of hardware
-  behaviour; this is the biggest open risk.
-* No attacks, hitboxes, damage, knockback, opponents, stocks or match loop.
-* No stage *loader* — the viewer browses stages; a match does not select one.
-* The debug overlay only displays under PPSSPP's software rasteriser
-  (`sceGuDebugFlush` paints VRAM with the CPU). See RE-014.
-* Materials use a majority-vote lighting heuristic, and some `MObj` fields that
-  affect appearance are still ignored.
-* **Dream Land's tree canopy still does not match the N64.** Its textures are
-  dithered CI4 gradients; mipmaps are generated and uploaded (151 of 617
-  textures) but the pattern survives, and it *sharpens* at higher internal
-  resolution, which points at magnification rather than the minification
-  mipmaps address (RE-053).
-* Texture VRAM is 717 KiB, over the ~700 KiB that would let every texture be
-  resident at once. Mip levels were added knowing this.
-* Stage **material** animations (12 layers) are read but not played. Their
-  frame 0 matches the colours already rendered, so nothing draws wrong; the
-  scenery simply does not change colour (RE-048).
-* Stage animation is checked against the *archive* but not against the console:
-  both sides of that comparison run this crate's own player, so a shared
-  misreading of the format would agree with itself (RE-052).
-* 28 nodes ask for the `0x8000` transform kind (a recomputed rotation) that is
-  still drawn plainly.
-* Only **costume 0** is packed for each fighter, so the alternate palettes a
-  match would let you pick are not in the pack.
-* 30 of 647 bound texture references still fail to convert. 26 are the screen
-  wipes, whose "texture" is a runtime screenshot rather than ROM data and can
-  only come from render-to-texture; the other 4 are CI textures whose material
-  supplies no palette, leaving the `G_LOADTLUT` beside them reading whatever
-  the previous list left set (RE-047).
-* 71 scene graphs have no material table, because the original names theirs in
-  *code* rather than in any data structure. A search constrained by the display
-  lists' own `MObj` demand was tried and **measured against the decompilation:
-  it gets 4 of 6 scoreable answers wrong**, so it is not used (RE-046, RE-047).
-  Whispy Woods' face is the visible cost.
-
-
-**Not started:** audio, menus, save data, items, CPU AI, VFPU work.
-
-**Current milestone:** the combat vertical slice — one grounded attack driven
-end to end, from input through hitbox to knockback. Everything under it is in
-place: a fighter with its real model, colours, physics, collision and
-animations, standing on a real stage.
-
-## Verifying the claims
-
-Everything above is checkable against your own ROM. Start with the load-bearing
-one: that VPK0 decompression is byte-correct, checked without needing a
-reference decoder.
+### ROM integrity
 
 ```bash
 cargo run --release -p romtool -- check "rom/Super Smash Bros. (USA).z64"
 ```
 
-```
-files                 2132
-load failures         0
-intern reloc slots    61343
-extern reloc slots    3092
-chain/ROM mismatches  0
-compressed files cross-verified against ROM geometry: 499
-```
-
-Each file's extern-pointer count is derivable two independent ways: by walking
-a linked chain threaded through the *decompressed payload* (which a single
-wrong byte would derail), and by measuring a *ROM offset gap* that does not
-involve decompression at all. They agree for every file.
-
-The same idea — two independent readings that have to agree — checks the
-recovered game data. Each of these compares what `ssb-rom` decodes out of the
-compressed archive against what the decompilation says in its own sources:
+### Fighter constants
 
 ```bash
-# Every fighter's physics constants, field by field
-cargo run --release -p romtool -- fighters "rom/…z64" --verify
-
-# Every movement animation's length, decoded two ways
-cargo run --release -p romtool -- anims "rom/…z64" --verify
-
-# Every animation played against the skeleton it belongs to, replayed from
-# the built pack, and checked for a bone that changes length
-cargo run --release -p romtool -- figatree "rom/…z64" --frames 40 \
-    --pack assets/generated/ssb64.pak
-
-# Every stage's joint animation, replayed against its scene graph -- and,
-# with --pack, every packed pose compared against the archive it came from
-cargo run --release -p romtool -- stages "rom/…z64" \
-    --pack assets/generated/ssb64.pak
-
-# Which textures convert, and why the rest do not
-cargo run --release -p romtool -- textures "rom/…z64"
-
-# Search for the material tables no record names -- and score the search
-# against the decompilation's own declarations, which is how it was
-# established that the search is not trustworthy (RE-047)
-tools/mobjtable-ground-truth.py > /tmp/tables.tsv
-cargo run --release -p romtool -- mobj "rom/…z64" --search \
-    --expect-tables /tmp/tables.tsv
+cargo run --release -p romtool -- fighters "rom/Super Smash Bros. (USA).z64" --verify
 ```
 
-A wrong offset table does not produce a near miss; it produces garbage. So
-189 animation lengths agreeing across 27 fighters, or 1215 constant fields
-agreeing one for one, is the evidence — not the fact that the code runs.
+### Fighter animations
+
+```bash
+cargo run --release -p romtool -- anims "rom/Super Smash Bros. (USA).z64" --verify
+```
+
+### Animation/skeleton validation
+
+```bash
+cargo run --release -p romtool -- figatree "rom/Super Smash Bros. (USA).z64" --frames 40 \
+    --pack assets/generated/ssb64.pak
+```
+
+### Stage animation validation
+
+```bash
+cargo run --release -p romtool -- stages "rom/Super Smash Bros. (USA).z64" \
+    --pack assets/generated/ssb64.pak
+```
+
+### Texture conversion report
+
+```bash
+cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
+```
+
+These checks are intended to establish correctness against the recovered N64 data, rather than simply proving that the code compiles.
+
+---
+
+## Development Roadmap
+
+The development roadmap is maintained in [`PLAN.md`](PLAN.md).
+
+The major phases are:
+
+### Foundation
+
+* research
+* PSP bootstrap
+* resource pipeline
+* core game/scene infrastructure
+
+### Rendering
+
+* rendering correctness
+* rendering completeness
+* physical PSP validation
+* rendering performance
+
+### Gameplay
+
+Combat is unlocked only after the rendering gate has passed.
+
+The first gameplay milestone will be a complete combat vertical slice:
+
+```text
+Input
+  ↓
+Attack
+  ↓
+Hitbox
+  ↓
+Collision
+  ↓
+Damage
+  ↓
+Knockback
+  ↓
+Hitstun
+  ↓
+KO
+  ↓
+Stock / Match loop
+```
+
+After that, the project will progress toward complete combat, match systems, menus, save data, audio and final optimization.
+
+---
 
 ## Documentation
 
-| Document | Contents |
-|---|---|
-| [`docs/ssb-architecture.md`](docs/ssb-architecture.md) | How the original game works, and where each subsystem lands |
-| [`docs/reverse-engineering.md`](docs/reverse-engineering.md) | Open questions with evidence and confidence levels |
-| [`docs/rendering.md`](docs/rendering.md) | N64 → PSP rendering translation |
-| [`docs/memory.md`](docs/memory.md) | Memory layout and allocator plan |
-| [`docs/porting-status.md`](docs/porting-status.md) | Per-subsystem progress |
+| Document                                                     | Contents                                                  |
+| ------------------------------------------------------------ | --------------------------------------------------------- |
+| [`AGENTS.md`](AGENTS.md)                                     | Agent operating rules and autonomous development protocol |
+| [`PLAN.md`](PLAN.md)                                         | Authoritative development roadmap                         |
+| [`STATUS.md`](STATUS.md)                                     | Current execution state and session continuity            |
+| [`docs/ssb-architecture.md`](docs/ssb-architecture.md)       | Recovered architecture of the original game               |
+| [`docs/reverse-engineering.md`](docs/reverse-engineering.md) | Reverse-engineering investigations and evidence           |
+| [`docs/rendering.md`](docs/rendering.md)                     | N64 → PSP rendering implementation                        |
+| [`docs/memory.md`](docs/memory.md)                           | Memory layout and allocation                              |
+| [`docs/porting-status.md`](docs/porting-status.md)           | Per-subsystem implementation status                       |
+| [`DECISIONS.md`](DECISIONS.md)                               | Permanent architectural decisions                         |
+
+---
 
 ## References
 
-Studied as architectural references, not copied:
+These projects are used as technical and architectural references, not as sources for Nintendo assets or blindly copied implementations.
 
-1. [ssb-decomp-re][decomp] — the SSB64 decompilation (**100% complete**)
-2. [sf64-psp](https://github.com/TheMrIron2/sf64-psp) — Star Fox 64 on PSP
-3. [n64psp](https://github.com/TheMrIron2/n64psp) — reusable N64→PSP runtime
-4. [rust-psp][rustpsp] — Rust support for the PSP
+1. [ssb-decomp-re][decomp] — SSB64 decompilation
+2. [BattleShip](https://github.com/JRickey/BattleShip) — PC/Mac/Linux/Android SSB64 port based on the decompilation
+3. [sf64-psp](https://github.com/TheMrIron2/sf64-psp) — Star Fox 64 PSP port
+4. [n64psp](https://github.com/TheMrIron2/n64psp) — reusable N64 → PSP runtime
+5. [rust-psp][rustpsp] — Rust support for PSP
 
-Clone them into `refs/` (gitignored) to follow along:
+### Local reference setup
+
+The reference repositories can be cloned into the gitignored `refs/` directory:
 
 ```bash
-mkdir -p refs && cd refs
+mkdir -p refs
+cd refs
+
 git clone https://github.com/VetriTheRetri/ssb-decomp-re
+git clone https://github.com/JRickey/BattleShip
 git clone https://github.com/TheMrIron2/sf64-psp
 git clone https://github.com/TheMrIron2/n64psp
 git clone https://github.com/overdrivenpotato/rust-psp
 ```
 
+---
+
+## Contributing / Agent Development
+
+This repository is designed to support autonomous AI-assisted development.
+
+The intended workflow is:
+
+> **Continue with the plan.**
+
+The agent reads `AGENTS.md`, `PLAN.md` and `STATUS.md`, resumes the current task, verifies its work, updates documentation and continues through the ordered roadmap.
+
+The repository should always contain enough state for a fresh agent session to continue without relying on previous conversation history.
+
+---
+
 ## License
 
-MIT OR Apache-2.0, for the code in this repository only. It confers no rights
-to Nintendo's intellectual property.
+MIT OR Apache-2.0, for the code in this repository only.
+
+This license does not grant rights to Nintendo's intellectual property.
 
 [decomp]: https://github.com/VetriTheRetri/ssb-decomp-re
 [rustpsp]: https://github.com/overdrivenpotato/rust-psp
