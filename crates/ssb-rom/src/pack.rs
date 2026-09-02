@@ -969,13 +969,19 @@ impl PackWriter {
                 rest_translate: node.desc.translate,
                 rest_rotate: node.desc.rotate,
                 rest_scale: node.desc.scale,
-                // Kinds 45-48 are the camera-relative ones; `0x8000` asks for a
-                // recomputed rotation this renderer does not model yet, so it
-                // is deliberately not flagged.
+                // Kinds 45-48 and `0x8000` are all camera-relative: none of
+                // them multiply the node's own rotation into the MVP
+                // (`gcPrepDObjMatrix` cases 44-48 in `objdisplay.c`; 44 is
+                // `0x8000`/`RecalcRotRpyRSca`, the only one of the five that
+                // skips the sin/cos spin term entirely). Every shipped
+                // `0x8000` node's `rotate` is `[0, 0, 0]` (checked across the
+                // whole archive, RE-061), so treating it as a spin-0
+                // `FLAG_BILLBOARD` node reuses the already-verified 46/48
+                // path (RE-048, RE-049) exactly.
                 flags: match node.desc.transform_kind() {
-                    crate::scene::TransformKind::Kind46 | crate::scene::TransformKind::Kind48 => {
-                        NodeDesc::FLAG_BILLBOARD
-                    }
+                    crate::scene::TransformKind::Kind46
+                    | crate::scene::TransformKind::Kind48
+                    | crate::scene::TransformKind::RecalcRotRpyRSca => NodeDesc::FLAG_BILLBOARD,
                     _ => 0,
                 },
             });
@@ -2893,6 +2899,41 @@ mod tests {
             pack.node(1).unwrap().flags & NodeDesc::FLAG_BILLBOARD,
             NodeDesc::FLAG_BILLBOARD,
             "a 0x4000 node must reach the device flagged"
+        );
+    }
+
+    #[test]
+    fn a_recalc_node_is_flagged_as_a_spin_free_billboard() {
+        // `gcPrepDObjMatrix` case 44 (`0x8000`/`RecalcRotRpyRSca`,
+        // `objdisplay.c`) never touches `dobj->rotate` at all -- it is the
+        // same camera-relative MVP replacement as kinds 46/48, just with the
+        // sin/cos spin term dropped. Every shipped `0x8000` node's `rotate`
+        // is `[0, 0, 0]` (RE-061), so reusing `FLAG_BILLBOARD`'s spin-from-
+        // `rest_rotate[0]` path is exact, not an approximation.
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let sprite = DObjDesc {
+            id: 0x8001,
+            dl: None,
+            translate: [0.0; 3],
+            rotate: [0.0; 3],
+            scale: [1.0; 3],
+        };
+        let graph = SceneGraph {
+            offset: 0x100,
+            nodes: alloc::vec![DObjNode {
+                desc: sprite,
+                parent: None
+            }],
+        };
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 104, |_| None, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(
+            pack.node(0).unwrap().flags & NodeDesc::FLAG_BILLBOARD,
+            NodeDesc::FLAG_BILLBOARD,
+            "a 0x8000 node must reach the device flagged"
         );
     }
 
