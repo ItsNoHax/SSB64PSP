@@ -3468,3 +3468,68 @@ despite a valid occurrence existing* is a plausible mechanism grounded in
 was not stepped through with a debugger or instrumented print to confirm
 which occurrence is "first," so treat it as the next concrete step, not a
 finding.
+
+## RE-057 — The 4 MissingPalette cases are a `PartTables` pairing gap, not a dedup artifact (PLAN.md R0.3 / R0.7)
+
+**Question.** RE-056 left open which of a failing texture's several
+occurrences `mesh::convert_sequence` visits first, and whether the loss is a
+`romtool` reporting artifact or a real per-occurrence gap. This entry
+answers it by instrumenting `crates/ssb-rom/src/mesh.rs` (temporary
+`eprintln!`s in `convert_sequence`, the segment-0x0E `Call` handler, and
+`SetTimg`/`LoadTlut` — reverted after use, not committed) and re-running
+`romtool textures --file 52`.
+
+**What actually happens.** Every single node (`item N, mobjs len 0`) in file
+52's scene graph gets **zero** materials from `PartTables` — not a partial
+mapping, all of them. Every segment-0x0E `Call` in the graph therefore hits
+the `None => forget_texture()` branch (`mesh.rs:838-842`), which clears
+`palette_offset` along with the texture image address
+(`State::forget_texture`, `mesh.rs:543-549`). The trace shows the same
+`0x1960` texture bind alternating between `palette_offset = Some(448)` and
+`palette_offset = None` across its many occurrences in the file, entirely
+depending on whether an interleaved 0x0E call (belonging to some *other*
+joint's material, which this file cannot resolve at all) landed between the
+nearest `G_LOADTLUT` and that occurrence's own `G_SETTIMG`. `romtool`'s dedup
+key (RE-056) does determine *which* occurrence gets reported, but it is not
+the root cause — the underlying condition (this file has no discovered
+material table) makes the *majority* of occurrences fail, not just the one
+`romtool` happens to check.
+
+**File 86 is a partial version of the same thing**: most of its graph's
+nodes do have `mobjs` (`len 1`/`len 2`), but at least one does not (`len 0`),
+and its single `MissingPalette` failure falls on that one. Same mechanism,
+smaller blast radius.
+
+**What these files are.** `refs/ssb-decomp-re/src/relocData/` names files by
+ID: `52_MVCommon.c`, `86_ITCommonObject.c`, `353_LinkSpecial2.c` (and,
+corroborating RE-055, `39_IFCommonObject.c` — the same "Common"/interface
+naming pattern as the LB-transition files). 52 and 86 are shared
+menu/item-common asset containers, not fighter models — they may never have
+had an `FTCommonPart`-style pairing record to find in the first place. File
+353 is more notable: it is one of Link's own model files
+(`224_LinkMain.c`/`225_LinkMainMotion.c`/`324_LinkModel.c` are his primary
+files; `226_LinkSpecial1.c`, `353_LinkSpecial2.c`, `325_LinkSpecial3.c`,
+`326_LinkBoomerangModel.c` look like per-special-move sub-models). If Link's
+material table is a single record living in `324_LinkModel.c` rather than
+duplicated into each special-move file, `PartTables::scan`'s requirement
+that the `p_mobjsubs` pointer target the *same file* as the `DObjDesc` graph
+(`mobj.rs:441-444`, `same == model`) would correctly fail to pair 353's own
+graph, even though a real table exists for Link elsewhere. Not confirmed —
+this is a plausible reading of the file layout, not a traced pairing.
+
+**Reclassification.** This is not a texture-format or palette-decode bug
+(R0.3's actual scope) and not what RE-056 guessed (a `romtool` dedup
+artifact). It is a gap in recovered `MObj`/material-table pairings — exactly
+what `PLAN.md` R0.7 ("Missing Material Tables") already tracks, whose
+"Current evidence" section already flags an unreconciled 56-vs-71 count of
+graphs without a table. These three files (especially 353, since it should
+have Link's normal fighter pairing available somewhere in the archive) are
+now concrete, reproducible test cases for that reconciliation.
+
+**Confidence: high** that the mechanism (zero/partial `mobjs`, forget on
+unresolved 0x0E, clearing an otherwise-valid palette) is correct — it was
+observed directly via instrumented trace, not inferred. **Medium** on the
+353-specific "table lives in a sibling file" explanation — plausible from
+file naming and `PartTables::scan`'s known same-file constraint, but not
+confirmed by actually locating Link's table record and checking which file
+it names.

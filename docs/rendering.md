@@ -235,11 +235,14 @@ transition system binds to RSP segment 1 once per frame
 (`refs/ssb-decomp-re/src/lb/lbtransition.c`). That data never exists in any
 ROM file, so no texture converter can produce it; a real implementation
 belongs to framebuffer effects (`PLAN.md` R0.13), not this converter. The
-`MissingPalette` cases are a palette pointer that resolves but names data
-absent from the target file for at least one of several occurrences of that
-texture in its file; RE-056 has a lead but not yet a confirmed cause. Earlier
-passes over this data also reported null-address and out-of-file failure
-classes; neither appears in the current `romtool textures` output, so treat
+`MissingPalette` cases are not a decode bug either: RE-057 traced them to
+three files (`MVCommon`, `ITCommonObject`, `LinkSpecial2`) whose scene graphs
+get no — or only partial — `MObj` material-table pairing, which causes a
+real, present palette load elsewhere in the same file to get dropped when an
+unrelated, unresolvable material call intervenes; that belongs to `PLAN.md`
+R0.7 (missing material tables), not this converter. Earlier passes over this
+data also reported null-address and out-of-file failure classes; neither
+appears in the current `romtool textures` output, so treat
 them as resolved until a re-run shows otherwise.
 
 ## Display list translation
