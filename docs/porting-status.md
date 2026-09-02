@@ -1,25 +1,19 @@
 # Porting Status
 
-Per Rule 11. Percentages are of *intended scope for that subsystem*, not of the
-original's line count. A subsystem is only `COMPLETE` when it has been
-functionally validated, not merely compiled (Rule 12).
+Per `AGENTS.md` §13. Percentages are of *intended scope for that subsystem*,
+not of the original's line count. A subsystem is only `COMPLETE` when it has
+been functionally validated, not merely compiled.
 
-Last updated: 2026-08-28.
+This file tracks **per-subsystem** implementation status only. Current
+milestone/task and overall execution state live in `STATUS.md`, and the
+ordered roadmap with acceptance criteria lives in `PLAN.md` — do not look for
+a milestone table here, and do not add one back; duplicating that state
+across files is how it goes stale (an earlier version of this table
+contradicted the subsystem rows directly below it: it claimed stage rendering
+had "no animation yet" while the animation and stage-animation rows in the
+same file already documented animation playing on device).
 
-## Milestones
-
-| Milestone | Status | Notes |
-|---|---|---|
-| **M0 — Research** | ✅ COMPLETE | `docs/ssb-architecture.md`, this file, `docs/reverse-engineering.md` |
-| **M1 — Rust PSP bootstrap** | ✅ COMPLETE | Boots in PPSSPP at a locked **60 FPS**; renders, animates, reads input. Screenshot: `docs/images/m1-ppsspp-60fps.png` |
-| **M2 — Resource pipeline** | ✅ COMPLETE | Archive + VPK0 verified; 2450 meshes (42,417 triangles, 0 conversion failures) and 617 textures packed into a 3.6 MB runtime pack that round-trips |
-| **M3 — Rendering** | 🟢 90% | **Textured, shaded models placed by the scene graph render on device at 60 FPS** (`docs/images/m4-scene-graph.png`), fighters included, in their own palettes (`docs/images/m4-fighter-materials.png`). No animation yet |
-| **M4 — Gameplay vertical slice** | 🟡 65% | **A fighter stands on a stage on device at 60 FPS** (`docs/images/m4-fighter-status.png`): ported physics driven a tick at a time through the ported collision process, on real stage data. 158/158 spawns settle with zero drift, under every character's real extracted constants (RE-031, RE-032). The fighter now **walks, dashes, runs, turns, squats, jumps, double-jumps, drops through platforms and lands** (RE-033), confirmed on device reading its real constants and animation lengths out of the pack (RE-034, RE-035). **The fighter is now the fighter**: its real model, in its own costume colours, animated by the status it is in, standing on the stage's collision (RE-036 to RE-041). No attacks, no damage, no opponent, no match loop |
-| **M5 — Audio** | 🔴 0% | Traits only |
-| **M6 — Full gameplay** | 🔴 0% | |
-| **M7 — Menus / save** | 🔴 0% | |
-| **M8 — Optimization** | 🔴 0% | Blocked on M3 per "do not optimize before profiling" |
-| **M9 — Hardware validation** | 🔴 0% | |
+Last updated: 2026-09-02.
 
 ## Subsystems
 
@@ -62,13 +56,16 @@ Last updated: 2026-08-28.
 | Debug/profiler | 🟡 20% | Frame timing sections defined; on-screen text overlay working |
 | CI | ✅ COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required |
 
-**Per-fighter progress: all 12 at 0%.** Correctly so — the vertical slice
-(M4) comes before any character work.
+**Per-fighter combat progress: all 12 at 0%.** Correctly so — combat (`PLAN.md`
+G0) is blocked behind the rendering gate (R0–R3) and has not started. This is
+independent of rendering: fighter *models*, *animation* and *movement physics*
+are implemented and tracked in the rows above; only combat-specific state
+(attacks, hitboxes, damage) is unstarted.
 
 ## Test coverage
 
-317 host tests passing across `ssb-rom` (174), `ssb-engine` (36) and
-`ssb-game` (107).
+338 host tests passing across `ssb-rom` (195), `ssb-engine` (36) and
+`ssb-game` (107). Reproduce with `cargo test --workspace`.
 
 ## M1 verification (PPSSPP)
 
@@ -102,8 +99,14 @@ Reproduce with `tools/run-ppsspp.sh`.
 
 ## Known gaps and honest caveats
 
-1. **Nothing has run on real PSP hardware.** Per §37 of the plan, PPSSPP is
-   not proof of hardware behaviour. This is now the single biggest unknown.
+1. **Physical PSP hardware validation is not complete.** PPSSPP is not proof
+   of hardware behaviour (`AGENTS.md` §16). The project has been smoke-tested
+   on physical PSP hardware earlier in development, but that testing was not
+   captured against the current renderer's acceptance criteria. `PLAN.md`'s
+   R2 milestone defines what "validated on hardware" requires here; see
+   `STATUS.md` §8 for the current state. Treat every "on device" claim
+   elsewhere in this file as PPSSPP unless a hardware model and build are
+   cited — that is what "device" means throughout this document.
 
 2. **The debug overlay only displays under PPSSPP's software rasteriser.**
    Resolved as an emulator limitation, not a port bug (RE-014):
@@ -123,12 +126,14 @@ Reproduce with `tools/run-ppsspp.sh`.
    the hurtbox descriptors, sound ids and joint indices further into the struct
    are still untouched, so nothing above physics and collision can read them.
 
-5. **The animation pipeline is complete and the combat one is empty.** A
+5. **The movement animation pipeline is far along; combat does not exist.** A
    fighter walks, dashes, jumps and lands on a stage with the right animation
-   for each, in its own colours. What M4 still lacks is everything downstream:
-   no attacks, hitboxes, hurtboxes, damage, knockback, hitstun, opponent,
-   stocks or match loop. That is the next milestone, and it starts with one
-   grounded attack driven end to end.
+   for each, in its own colours. There are no attacks, hitboxes, hurtboxes,
+   damage, knockback, hitstun, opponent, stocks or match loop, and per the
+   rendering gate (`AGENTS.md` §5, `PLAN.md` G0) none of that may be started
+   until R0–R3 are complete. The vertical slice described in `TODO.md`
+   ("Combat Vertical Slice") is recorded for when that gate opens, not as
+   current or next work.
 
 6. **The extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest rather than patching them, because the target address

@@ -16,7 +16,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** `crates/ssb-rom/src/dl.rs`, `crates/ssb-rom/src/mesh.rs`, `crates/ssb-rom/src/pack.rs`
 
-**Reference:** PLAN.md §8, `docs/rendering.md` "The central decision"
+**Reference:** `docs/rendering.md` "The central decision"
 
 ---
 
@@ -31,7 +31,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** `crates/ssb-rom/src/texture.rs`, `psp_texture.rs`, `mesh.rs`, `pack.rs`
 
-**Reference:** PLAN.md §9, `docs/rendering.md` "Geometry conversion results"
+**Reference:** `docs/rendering.md` "Geometry conversion results"
 
 ---
 
@@ -74,7 +74,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** `crates/ssb-engine/src/timing.rs`
 
-**Reference:** RE-006, PLAN.md §13
+**Reference:** RE-006, `docs/reverse-engineering.md`
 
 ---
 
@@ -289,7 +289,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** Single neutral key light in renderer (placeholder)
 
-**Reference:** RE-024, `docs/rendering-fidelity.md` §16
+**Reference:** RE-024, `TODO.md` Phase D (majority-vote lighting heuristic still not removed)
 
 ---
 
@@ -298,7 +298,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Not worth runtime cost. Confirmed by `romtool scan` opcode counts.
 
-**Reference:** `docs/rendering.md` "Measured usage", `docs/rendering-fidelity.md` §7
+**Reference:** `docs/rendering.md` "Measured usage"
 
 ---
 
@@ -309,7 +309,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** `rust-psp` needs nightly + `-Z build-std`. Reaches into unstable `core::panic::PanicPayload`. Keeps host CI fast and stable.
 
-**Reference:** AGENTS.md, `psp/rust-toolchain.toml`, PLAN.md §5
+**Reference:** `psp/rust-toolchain.toml`, `.github/workflows/ci.yml`
 
 ---
 
@@ -320,7 +320,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** Root `Cargo.toml:31-33`, each crate's `Cargo.toml`
 
-**Reference:** AGENTS.md "Critical Conventions", CI pipeline
+**Reference:** `.github/workflows/ci.yml` (builds all three for `thumbv7em-none-eabi`)
 
 ---
 
@@ -329,7 +329,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Clean separation. Without pack, viewer falls back to built-in tetrahedron.
 
-**Reference:** AGENTS.md "Asset Pack Is Mandatory", README Quick Start
+**Reference:** AGENTS.md §15 (Asset Pack Discipline), README Quick Start
 
 ---
 
@@ -340,7 +340,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** `tools/run-ppsspp.sh --appendconfig`
 
-**Reference:** RE-014, AGENTS.md "Debug Overlay Requires Software Rasteriser"
+**Reference:** RE-014, `tools/run-ppsspp.sh`
 
 ---
 
@@ -349,11 +349,11 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** `rust-psp` imports unstable `core` internals. Compile success is not sufficient evidence.
 
-**Reference:** RE-012, AGENTS.md "PSP Toolchain Pinning"
+**Reference:** RE-012, `psp/rust-toolchain.toml`
 
 ---
 
-## Architecture Comparison (From PLAN.md §31, docs/ssb-architecture.md §11)
+## Architecture Comparison (From `docs/ssb-architecture.md` §11)
 
 | Concern | SSB64 (N64) | sf64-psp | n64psp | This Port |
 |---------|-------------|----------|--------|-----------|
@@ -376,7 +376,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Rust safety guarantees matter. PSP FFI boundaries are the only justified `unsafe`.
 
-**Reference:** AGENTS.md Rule 8
+**Reference:** this decision record
 
 ---
 
@@ -387,7 +387,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Premature VFPU optimization is a trap. Profile data drives decisions.
 
-**Reference:** PLAN.md §16, AGENTS.md Rule 9
+**Reference:** PLAN.md R3 ("Do not perform speculative optimization before measurement")
 
 ---
 
@@ -398,7 +398,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Legal requirement. User supplies own ROM. Build generates assets locally.
 
-**Reference:** AGENTS.md "ROM Handling", README Legal
+**Reference:** AGENTS.md §15 (Asset Pack Discipline), README Legal
 
 ---
 
@@ -413,7 +413,7 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** A wrong offset doesn't produce near miss; it produces garbage. Agreement across independent paths is the evidence.
 
-**Reference:** RE-002, RE-030, RE-032, RE-035, RE-036, RE-052, README "Verifying the claims"
+**Reference:** RE-002, RE-030, RE-032, RE-035, RE-036, RE-052, README "Verification"
 
 ---
 
@@ -424,4 +424,4 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Reasoning:** Compiles ≠ works. Porting status tracks validated subsystems.
 
-**Reference:** AGENTS.md Rules 11-12, `docs/porting-status.md` header
+**Reference:** AGENTS.md §13 (Task Completion Semantics), `docs/porting-status.md` header

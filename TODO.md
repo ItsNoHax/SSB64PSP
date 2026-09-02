@@ -1,29 +1,35 @@
 # TODO — Discovered Future Work
 
-This file tracks work that is **discovered but currently inactive**. Items here are not yet scheduled for the current milestone (M4 Combat Vertical Slice). They are organized by source.
+This file tracks work that is **discovered but currently inactive**. It uses
+the milestone names from the current `PLAN.md` (R0–R3 rendering gate, G0–G5
+post-combat roadmap). It does not use the old M0–M9 numbering that an earlier
+version of this repository's planning docs used — that scheme was superseded
+by the 2026-09-02 restructure (see `PLAN.md`, `STATUS.md`).
+
+Most items below are rendering-fidelity gaps that feed directly into the R0.x
+tasks in `PLAN.md`; a smaller set is gameplay/audio/menu work blocked behind
+the rendering gate until G0 unlocks (`AGENTS.md` §5). Do not start G0+ work
+until R0–R3 are complete — see "Notes" at the end of this file.
 
 ---
 
-## From Milestones M5–M9 (PLAN.md)
+## Deferred Work Behind the Rendering Gate (PLAN.md G1–G5)
 
-### M5 — Audio
-- [ ] Build-time VADPCM decode for 439 samples (117 + 322 waveforms)
-- [ ] Sequence conversion for 47 music sequences (ALSeqFile compressed-MIDI)
-- [ ] Software mixer on dedicated thread (PSP audio block ≈ 23 ms > 16.67 ms frame)
-- [ ] SFX engine (FGM voice IDs from `gmFGMVoiceID`)
-- [ ] Music playback with correct sequencing/timing
-- [ ] Volume/mixing
-- [ ] Media Engine acceleration (after CPU implementation stable)
+Not scheduled. Blocked until R0, R1, R2 and R3 are all complete and G0 (first
+combat vertical slice) has landed.
 
-### M6 — Full Gameplay
+### G1 — Full Combat
 - [ ] All 12 original characters (Mario, Fox, Donkey Kong, Samus, Luigi, Link, Yoshi, Captain Falcon, Kirby, Pikachu, Jigglypuff, Ness)
 - [ ] Unlockable characters (4 + Fighting Polygon Team + Giant DK + Metal Mario + Master Hand)
-- [ ] All original stages (41 including bonus/1P)
 - [ ] CPU AI
 - [ ] Items (spawn, behavior, pickup, effects)
-- [ ] Game modes (VS, 1P, Training, etc.)
 
-### M7 — Menus / Save
+### G2 — Complete Match Systems
+- [ ] All original stages loadable in a match (41 including bonus/1P) — the viewer already browses stage data, a match does not yet select one
+- [ ] Game modes (VS, 1P, Training, etc.)
+- [ ] Stocks, timers, win conditions, match transitions
+
+### G3 — Menus and Persistence
 - [ ] Title screen
 - [ ] Character select
 - [ ] Mode select
@@ -33,19 +39,34 @@ This file tracks work that is **discovered but currently inactive**. Items here 
 - [ ] Credits
 - [ ] PSP-native save system (unlocks, records, settings, progression)
 
-### M8 — Optimization
+### G4 — Audio
+- [ ] Build-time VADPCM decode for 439 samples (117 + 322 waveforms)
+- [ ] Sequence conversion for 47 music sequences (ALSeqFile compressed-MIDI)
+- [ ] Software mixer on dedicated thread (PSP audio block ≈ 23 ms > 16.67 ms frame)
+- [ ] SFX engine (FGM voice IDs from `gmFGMVoiceID`)
+- [ ] Music playback with correct sequencing/timing
+- [ ] Volume/mixing
+- [ ] Media Engine acceleration (after CPU implementation stable)
+
+### G5 — Final Optimization
 - [ ] VFPU acceleration for hot math paths (matrix mul, transforms, collision, animation)
-- [ ] GPU batching + state sorting
-- [ ] Texture caching + VRAM management
+- [ ] GPU batching + state sorting beyond build-time material merge
 - [ ] Memory optimization (arenas, pools)
 - [ ] Audio optimization
 - [ ] Profile-guided optimization
 
-### M9 — Hardware Validation
+Rendering-specific performance work (frame time, GE/CPU bottlenecks, VRAM
+measurement) belongs to `PLAN.md` R3, not here — R3 is part of the rendering
+gate, not post-combat work.
+
+### R2 — Physical PSP Rendering Validation (not gameplay, but not R0 either)
+`PLAN.md` already defines R2's acceptance criteria. The concrete test matrix:
 - [ ] PSP-1000 test
 - [ ] PSP-2000/3000 test
-- [ ] PPSSPP regression test
 - [ ] Long-duration stability test
+
+PPSSPP regression testing is not part of R2 — it is the day-to-day
+verification loop used throughout R0/R1 (`AGENTS.md` §14, §16).
 
 ---
 
@@ -55,81 +76,91 @@ This file tracks work that is **discovered but currently inactive**. Items here 
 **Question:** Which C-button functions matter in Smash 64, and what should they map to on PSP?
 **Status:** Placeholder mapping (C-Up→Triangle, C-Down→Square). C-Left/C-Right unmapped.
 **Blocker:** Need to read `ftkey.c` and menu input paths in decompilation.
-**Target:** M4 (before combat slice)
+**Target:** G0 (before combat slice — input mapping is not part of the rendering gate)
 
 ### RE-009 — PSP nub deadzone
 **Question:** How large should deadzone be? Does N64 `-80..=80` map linearly?
 **Status:** Deadzone 20 nub units, linear rescale to ±80. Guess, not measured.
 **Blocker:** Needs measurement against real PSP nub and comparison to decomp thresholds.
-**Target:** M4
+**Target:** G0
 
 ### RE-010 — MObjSub unknown fields
 **Question:** Do `unk08`…`unk74` fields carry anything the renderer needs?
 **Status:** Not consumed. Converter reads only named fields.
-**Blocker:** Revisit if materials look wrong in M3. Decomp can answer by finding readers.
-**Target:** M3
+**Blocker:** Revisit if materials look wrong. Decomp can answer by finding readers.
+**Target:** R0.6 (Material System Correctness) / R0.7 (Missing Material Tables)
 
 ### RE-011 — Level of detail selection
 **Question:** How is `sGCDetailLevel` chosen? Should PSP force a tier?
 **Status:** Setter not traced. Likely tied to player count/options.
-**Blocker:** Worth resolving before M8 — forcing lower tier is cheap perf lever.
-**Target:** M8
+**Blocker:** Worth resolving before performance work — forcing lower tier is a cheap perf lever.
+**Target:** R3 (Rendering Performance) — do not force a tier before that milestone measures whether it is needed
 
 ### RE-053 — Dream Land canopy texture issue
 **Question:** Why does canopy still look wrong after mipmaps?
 **Status:** Mipmaps generated (151 textures) but pattern survives and sharpens at higher resolution → points at magnification not minification.
 **Blocker:** Needs investigation of CI4 dithered gradient handling, filtering, palette precision.
-**Target:** M3
+**Target:** R0.5 (Texture Filtering / LOD / Mipmapping) — this is that task's explicit acceptance criterion "Dream Land canopy discrepancy resolved," still open
 
 ---
 
-## From Rendering Fidelity Gaps (docs/rendering-fidelity.md)
+## Rendering Fidelity Gaps (feeds PLAN.md R0.3–R0.15)
 
-### Phase B — Texture Identity (HIGH)
-- [ ] **Cross-file texture references** — 26 failures from segment 0x01 addresses. Trace through `DObjDLLink` / `DObjMultiList` display list arrays pointing to other files.
-- [ ] **TLUT state across lists** — 28 "CI texture, no TLUT recorded". Track palette state when `G_LOADTLUT` appears without preceding `G_SETTIMG` for palette.
-- [ ] **MissingPalette (4)** — Palette pointer resolved but palette data not found in target file.
-- [ ] **Null addresses (54)** — `G_SETTIMG` with 0 address and no relocation. May be runtime-set.
+These phases were originally tracked in a `docs/rendering-fidelity.md` that no
+longer exists in the repository; the content is preserved here. Re-verify
+numbers before trusting them — `cargo run --release -p romtool -- textures
+"rom/Super Smash Bros. (USA).z64"` is the source of truth and its output has
+already moved since these were first written (see below).
 
-### Phase C — Texture Semantics (HIGH)
-- [ ] **Wrap/Clamp/Mirror** — Implement `sceGuTexWrap` from `tile0_mask` + mirror bits (RE-010, `objdisplay.c:1197-1198`).
+### Phase B — Texture Identity (R0.3) (HIGH)
+- [ ] **Cross-file texture references** — as of the last `romtool textures` run, still 26 failures from segment 0x01 addresses. Trace through `DObjDLLink` / `DObjMultiList` display list arrays pointing to other files.
+- [ ] **MissingPalette (4)** — Palette pointer resolved but palette data not found in target file. Still 4 as of the last run.
+- [x] **Null addresses** — was 54, no longer appears as a failure class in `romtool textures` output. Re-verify and close this line in `docs/rendering.md` "Remaining unconverted" once confirmed.
+- Downgraded from failure to informational: **TLUT state across lists** — was 28 "CI texture, no TLUT recorded" failures, now only 4, and those 4 are reported as a *note* on textures that still pack successfully, not as conversion failures. Confirm whether the remaining 4 need action or are benign.
+
+### Phase C — Texture Semantics (R0.5) (HIGH)
+- [ ] **Wrap/Clamp/Mirror** — `psp/src/meshdraw.rs` currently hardcodes `sceGuTexWrap(Repeat, Repeat)` for every draw. `G_TX_CLAMP`/`G_TX_MIRROR` are decoded from `G_SETTILE` (RE-010, `objdisplay.c:1197-1198`) but not threaded through to the draw call.
 - [ ] **UV Scroll** — Implement `scrollu`/`scrollv` from MObjSub (`objdisplay.c:1386-1397`).
-- [ ] **Mipmap/LOD** — Determine if Smash uses `G_TX_MIPMAP` (RE-053 suggests yes for Dream Land tree).
+- [ ] **Mipmap/LOD** — Mip chains are now generated at build time (`psp_texture::pack_mipped`, 151 textures) but did **not** fix the Dream Land canopy discrepancy (RE-053) — the pattern sharpens at higher resolution, which points at magnification, not minification/LOD selection. Still open.
 - [ ] **Filtering** — Verify bilinear vs point per texture.
 
-### Phase D — Materials (HIGH)
+### Phase D — Materials (R0.6 / R0.7) (HIGH)
 - [ ] **Remove majority-vote lighting heuristic** — Use `MObj` light colors + per-object `G_LIGHTING` (RE-021, RE-043).
 - [ ] **Implement `MOBJ_FLAG_LIGHT1/2`** — Upload light colors via `sceGuLight`.
 - [ ] **Implement `MOBJ_FLAG_FRAC`** — Fractional frame blend for animated textures.
-- [ ] **Full combiner coverage** — Handle `ENV * TEXEL`, `PRIM + TEXEL`, etc. (currently only `SHADE * TEXEL`, `PRIM * SHADE`, `SHADE`).
+- [ ] **Combiner coverage** — `crates/ssb-rom/src/mesh.rs` now evaluates a general `(A-B)*C+D` combiner over both cycles and declines to guess at anything it can't resolve, rather than hardcoding a fixed set of modes as this item originally described. Remaining work is enumerating which real display-list combiner modes are still declined and whether that's acceptable or a gap.
 
-### Phase E — Scene Graphs (HIGH)
-- [ ] **71 graphs without material tables** — Use `MPGroundDesc` for stages, `FTCommonPart` for fighters, search for remaining.
-- [ ] **0x8000 transform (28 nodes)** — Implement billboard matrix kinds 33-40 (RecalcRotRpyRSca).
-- [ ] **Billboard modes** — Verify all 4 variants (kinds 45-48 = 33-40 with leading translate).
+### Phase E — Scene Graphs (R0.7 / R0.8) (HIGH)
+- [ ] **Graphs without material tables** — was reported as 71; `docs/porting-status.md` now reports 56 graphs resolved via `FTCommonPart`/`MPGroundDesc`. Re-run the material-table search (`romtool mobj`/`romtool scene`) to get the current unresolved count before treating either number as current.
+- [ ] **0x8000 transform (28 nodes)** — `RecalcRotRpyRSca` nodes are still drawn plainly per `docs/porting-status.md`. Billboard kinds 45-48 (33-40 with a leading translate) are implemented and verified (RE-049); the plain 33-40 kinds are not.
 - [ ] **Draw order** — Implement layered rendering with per-layer state (currently global material sort).
 
-### Phase F — Animation (MEDIUM)
-- [ ] **Stage material animation** — Hook `matanim_joints` into `draw_stage_animated` (12 layers, `AObjEvent32`).
-- [ ] **Fighter costume palettes** — Read `p_costume_matanim_joints` and apply per-costume (currently only costume 0).
-- [ ] **Independent animation validation** — Derive expected frame state from decomp/ROM.
+### Phase F — Animation (R0.9 / R0.10 / R0.11) (MEDIUM)
+- [ ] **Stage material animation** — Hook `matanim_joints` into `draw_stage_animated` (12 layers, `AObjEvent32`). Decoded but not played; frame 0 happens to match baked colours so nothing currently renders wrong (RE-048).
+- [ ] **Fighter costume palettes** — Read `p_costume_matanim_joints` and apply per-costume (currently only costume 0 is packed).
+- [ ] **Independent animation validation** — Derive expected frame state from decomp/ROM. Stage animation already has this (three independent checks, RE-050/RE-051/RE-052); fighter costume/material animation does not yet.
 
-### Phase G — Assets (MEDIUM)
+### Phase G — Assets (R0.11) (MEDIUM)
 - [ ] **Complete costume palettes** — All fighter costumes, not just 0.
-- [ ] **Texture streaming** — Scene-aware residency (700 KiB VRAM budget).
+- [ ] **Texture streaming** — Scene-aware residency (700 KiB VRAM budget; current packed set measures ~717 KiB, already over).
 - [ ] **Scene dependency graph** — `scene → nodes → materials → textures → palettes`.
 
-### Phase H — Validation (HIGH)
+### Phase H — Validation (R0.1 / R1 / R2) (HIGH)
 - [ ] **Reference renderer** — Compare PSP state against decomp-derived expected state.
-- [ ] **Screenshot regression** — Per-stage/per-fighter image diffs.
+- [ ] **Screenshot regression** — Per-stage/per-fighter image diffs. Part of R1's "golden/reference renders" acceptance criterion.
 - [ ] **Strict rendering mode** — Fail on unresolved texture/missing palette/unknown transform.
-- [ ] **Real PSP validation** — Hardware test.
+- [ ] **Physical PSP validation** — R2. See `STATUS.md` §8 for current state; historical smoke-testing has occurred but the formal R2 acceptance criteria have not been demonstrated with evidence.
 
 ---
 
-## From Current Milestone (M4 — Combat Vertical Slice)
+## Combat Vertical Slice (PLAN.md G0 — blocked, not the current milestone)
 
-### Immediate Next Steps
+This is **not** currently active work. It is recorded here so the shape of
+the first combat slice is not lost, but none of it may be started until
+`PLAN.md` R0–R3 are complete and `STATUS.md` records G0 as eligible
+(`AGENTS.md` §5).
+
+### Immediate Next Steps (once G0 unlocks)
 - [ ] **Grounded attack end-to-end** — Input → hitbox → hurtbox → damage → knockback
 - [ ] **Hitbox/hurtbox system** — From `FTAttributes` hurtbox descriptors (RE-032, only 45 leading scalars decoded)
 - [ ] **Damage/knockback physics** — Port from `ftphysics.c` attack logic
@@ -168,8 +199,11 @@ This file tracks work that is **discovered but currently inactive**. Items here 
 
 ## Notes
 
-- Items are **not prioritized** — this is a holding area
-- Current focus: **M4 Combat Vertical Slice** (one grounded attack end-to-end)
-- Do not start M5+ work until M4 is functionally validated (Rule 12)
-- When an item becomes active, move it to the current milestone tracking in STATUS.md
-- Update this file when new work is discovered during implementation
+- Items are **not prioritized** — this is a holding area.
+- Current focus: **R0 — Rendering Correctness** (`PLAN.md`, `STATUS.md`). See
+  `STATUS.md` for the single current task.
+- Do not start G0 (combat) or later work until R0, R1, R2 and R3 are all
+  complete (`AGENTS.md` §5, §13).
+- When an R0.x item here becomes active work, it should be reflected as the
+  current task in `STATUS.md`, not tracked independently here.
+- Update this file when new work is discovered during implementation.

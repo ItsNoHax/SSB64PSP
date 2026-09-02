@@ -12,19 +12,42 @@
 
 ## Current Task
 
-`R0.1 — Rendering State Reconciliation`
+`R0.2 — N64 Rendering Command Inventory`
 
 ## Task Status
 
-`TODO`
+`VERIFYING`
+
+Every acceptance item except one is satisfied with evidence already recorded
+in `docs/rendering.md`. The outstanding item is the BattleShip cross-reference
+required by `AGENTS.md` §10: `refs/BattleShip` is not cloned in this
+checkout, and `docs/reverse-engineering.md` has zero references to it. Next
+step: clone it per README "Local reference setup" and cross-reference its
+GBI/RDP handling against the opcode inventory in `docs/rendering.md`
+"Measured usage," then close R0.2.
 
 ## Last Completed Task
 
-Foundation milestones M0–M3.
+`R0.1 — Rendering State Reconciliation` (documentation audit: reconciled
+`AGENTS.md`/`PLAN.md`/`STATUS.md`/`README.md`/`DECISIONS.md`/`TODO.md` and
+`docs/porting-status.md`/`docs/rendering.md` against actual code, removed a
+stale duplicate `ARCHITECTURE.md`, corrected a README claim that physical PSP
+validation was complete, refreshed test/texture-conversion counts). See
+`PLAN.md` R0.1 for full evidence.
+
+`R0.9 — Stage Animation` is also `COMPLETE`, validated three independent ways
+(RE-050/051/052) — see `PLAN.md` R0.9. It was already substantially done
+before this documentation pass; this pass only recorded that fact.
 
 ## Next Eligible Task
 
-`R0.1`
+`R0.2` (in progress, `VERIFYING`) — see above. After it closes, the next
+eligible `TODO` tasks in dependency order are `R0.3` (texture conversion
+completeness — 26 segment-0x01 cross-file failures, 4 missing palettes) and
+`R0.13`/`R0.15` (framebuffer rendering, render-state isolation), which have
+no implementation started yet. `R0.4` through `R0.12` and `R0.14` are
+`IN_PROGRESS`/`VERIFYING` with real but partial progress — see `PLAN.md` for
+each task's current evidence.
 
 ## Blockers
 
@@ -125,42 +148,38 @@ The exact ordered task list is in `PLAN.md`.
 
 # 6. Current Task State
 
-## R0.1 — Rendering State Reconciliation
+## R0.2 — N64 Rendering Command Inventory
 
-Status: `TODO`
+Status: `VERIFYING`
 
 ### Objective
 
-Establish the exact current renderer state before making further rendering changes.
+Enumerate every N64 rendering command and relevant state transition actually exercised by SSB64.
 
 ### Required Work
 
-* inspect current renderer implementation
-* compare implementation against `docs/rendering.md`
-* compare implementation against `docs/porting-status.md`
-* inspect generated asset reports
-* identify stale claims
-* identify known rendering gaps
-* establish a baseline PPSSPP render
-* document the current architecture
-* document unresolved rendering behavior
+* [x] GBI commands identified, usage/frequency recorded, display-list usage mapped, current PSP implementation mapped, unsupported commands identified, relevant RSP/RDP behavior identified — all done, see `docs/rendering.md` "Measured usage"
+* [ ] BattleShip cross-reference — clone `refs/BattleShip` (README "Local reference setup") and cross-reference its GBI/RDP handling against `docs/rendering.md`'s opcode inventory; record findings in `docs/reverse-engineering.md` as a new `RE-XXX` entry
 
 ### Completion Evidence
 
-Record:
+Record once the BattleShip cross-reference is done:
 
-* files inspected
-* tests run
-* asset reports
-* rendering baseline
-* discovered discrepancies
-* documentation changes
+* which BattleShip source files were consulted
+* what agreed / disagreed with the decompilation or ROM evidence
+* any documentation updates that result
 
 ---
 
 # 7. Last Verification
 
-Not yet recorded for the current R0 task.
+## 2026-09-02 — Documentation audit (R0.1)
+
+* `cargo test --workspace` — 338 passing (`ssb-rom` 195, `ssb-engine` 36, `ssb-game` 107), 0 failed
+* `cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"` — 647 bound / 617 packed / 30 failed (26 segment-0x01, 4 `MissingPalette`); matches what `docs/rendering.md` now documents
+* Affected subsystem: documentation only, no code changed
+* PPSSPP: not re-run this pass; prior baseline stands (see `docs/porting-status.md` "M1 verification")
+* Physical PSP: not tested this pass — see §8 below
 
 Future entries must include:
 
@@ -177,11 +196,18 @@ Future entries must include:
 
 ## Status
 
-`NOT YET PERFORMED`
+`R2 ACCEPTANCE NOT YET PERFORMED`
+
+The project has been booted and smoke-tested on physical PSP hardware earlier
+in development. That testing was not captured against `PLAN.md` R2's
+acceptance criteria (hardware model, build, asset-pack version, per-feature
+observed behavior, VRAM usage) and predates the rendering work tracked under
+R0, so it does not stand in for R2. Treat R2 as not started until a hardware
+session records the fields below.
 
 PPSSPP testing does not count as physical PSP validation.
 
-When hardware validation begins, record:
+When R2 hardware validation begins, record:
 
 * PSP model
 * firmware/environment
