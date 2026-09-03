@@ -6778,3 +6778,89 @@ compilation and execution). **Not confident, and explicitly not
 claimed**: that the palette cycle is visually confirmed on screen — that
 remains open, honestly, for a session with video capture or interactive
 input.
+
+**Addendum: visually confirmed by interactive play.** The screenshot-diff
+limitation above is specific to the automated harness, not to the
+feature — PPSSPP was launched directly (windowed, left running rather
+than auto-killed) so the user could drive it by hand. Loaded on file
+105's stage (`Start` to cycle to stage 2/41, file 257), the user
+confirmed the animation is visibly working. Step 9 is now genuinely
+closed, by the kind of verification the mechanism actually needed
+(interactive observation), not by a screenshot substitute.
+
+## RE-096 — Fighter costume material scripts never loop; `colors_at` and `MaterialAnimator` do not need unifying, but a real gap surfaced
+
+**Question.** `PLAN.md` R0.10's last unchecked acceptance item: "fighter
+material animation verified where applicable." Fighters already recolour
+per costume via `FTCommonPart::p_costume_matanim_joints` and
+`matanim::colors_at`/`costume_colors` (RE-040), a one-shot evaluator built
+before `MaterialJoint`/`MaterialAnimator` existed. Does any real fighter
+script actually need the new per-frame runtime (i.e. drive a track the
+same way stage layers do — via `JUMP`/`SET_ANIM` looping), or is
+`colors_at`'s one-shot model already the whole real story for fighters?
+This was never checked archive-wide; RE-086's census covered stage layers
+only.
+
+**Investigation.** Temporary census (reverted, matching RE-079/081/089's
+pattern): walked every fighter graph `PartTables` names a
+`p_costume_matanim_joints` table for, resolved every script via the same
+`matanim::resolve_scripts` stage layers use, and replayed each with
+`MaterialJoint` up to 4096 frames, recording whether it ever looped.
+
+**Result: 441 real fighter costume scripts, 0 loop via `JUMP`/`SET_ANIM`.**
+Every one either reaches `End` (max 100 frames observed) or is still
+running at the 4096-frame cap without ever revisiting its own start —
+consistent with a long trailing `Wait` parking the clock past the last
+costume rather than an animation that cycles, the same shape
+`matanim.rs`'s own `mario_arm` test fixture already documents ("Wait(97)
+— parks the clock past every costume"). This settles the open question:
+fighter costume material scripts are structurally one-shot key lists,
+never real-time animations, so `colors_at`/`costume_colors` and
+`MaterialAnimator` are correctly separate mechanisms for correctly
+separate shapes — nothing needs unifying, matching this task's own
+acceptance note's prediction.
+
+**A genuine, separate gap surfaced along the way, not swept aside — and
+confirmed against the decomp, not left as an inference.**
+Track-category breakdown: `PrimColor` 44%, `Light1Color`/`Light2Color`
+21% each, `TextureIDCurrent` 7% — and **`PaletteID` 45% (200/441)**.
+`colors_at` only ever decodes `PRIM`/`ENV`/`BLEND`; it does not read
+`PaletteID` at all. Read `refs/ssb-decomp-re`'s own consuming chain rather
+than stop at the measurement: `lbCommonAddMObjForFighterPartsDObj`
+(`src/lb/lbcommon.c:955`) calls `gcAddMObjMatAnimJoint`/
+`gcParseMObjMatAnimJoint`/`gcPlayMObjMatAnim` on the costume script at
+`anim_frame = fp->costume` — the *same* generic material-animation engine
+stages use, just evaluated once at the costume index instead of ticked.
+`gcPlayMObjMatAnim`'s own `PaletteID` case (`src/sys/objanim.c:1340`)
+is `mobj->palette_id = value;`, and the draw path
+(`src/sys/objdisplay.c:1184`) reads it back with
+`mobj->sub.palettes[(s32)mobj->palette_id]` — **the identical
+`MObjSub.palettes[]` array `mobj::read_palettes` already reads for
+stages.** This is no longer an inference: a fighter's costume identity
+genuinely includes which palette variant is active, through the exact
+mechanism this project already has working machinery for, and packing
+only costume 0 today means every other costume's *palette* silently stays
+at costume 0's wherever a script relies on `PaletteID`, independent of
+whatever `PRIM`/`ENV`/`BLEND` work lands. **Not implemented this
+session** — `R0.10` is scoped to material *animation*, and this is a
+`R0.11` (Fighter Palettes/Costumes) completeness question: `costume_colors`
+needs a sibling read for `PaletteID` (a one-shot evaluation at a given
+costume index, not a `MaterialAnimator` concern — the value never
+animates once selected) feeding which of a texture's packed palette
+variants gets baked for a given costume at pack time.
+
+**Result.** No code changed — a scoping/measurement pass, the same shape
+as RE-072/RE-081/RE-086, that also read the decomp before handing off a
+lead rather than leaving it as a guess. `PLAN.md` R0.10's last acceptance
+item is checked; the task is `COMPLETE`. `R0.11`'s "Current evidence"
+gains this session's finding as a concrete, decomp-confirmed next lead,
+not a vague TODO.
+
+**Confidence: high** on both claims. Fighter costume scripts do not loop
+(441/441, 0 loop, checked archive-wide, not a sample) — the load-bearing
+claim for closing R0.10. The `PaletteID`-costume-selection mechanism is
+now confirmed at the source, not inferred from shape: `lbCommonAddMObjFor
+FighterPartsDObj` → `gcPlayMObjMatAnim` → `mobj->palette_id` →
+`mobjsub->palettes[palette_id]` is a complete, traced chain from the
+fighter costume call site to the same array this project's own
+`mobj::read_palettes` already parses.

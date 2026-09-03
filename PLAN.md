@@ -906,7 +906,7 @@ hardware — that gap belongs to R2, not this task.
 
 ## R0.10 — Material Animation
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -1160,13 +1160,13 @@ Implement material animation used by SSB64.
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
 * [x] material state updated correctly — RE-089/RE-090/RE-092/RE-093/RE-094: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, `mobj::read_palettes` reads the real array using that bound, and `mesh.rs`'s existing state threading (RE-064, fixed by RE-093 for shared-image `G_LOADTLUT` groups and RE-094 for a stale inherited `Cmd::Texture` disable) correctly correlates the resolved animation to the texture it applies to — **all 33 of RE-089's known scripts** (321 palette variants, 24 textures) now flow all the way into the real pack, verified against RE-089's own per-file numbers; RE-095 added the device-side `MaterialAnimator` and wired it into every draw path (`sceGuClutLoad` per animated texture, per frame)
-* [ ] representative animated materials verified — RE-095 wired `MaterialAnimator` into every draw path and confirmed file 105's stage runs clean on the real device profile, but did not confirm by eye that the palette cycle is visible on screen (needs video capture or interactive play, not another screenshot diff)
-* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114); RE-092 confirmed they carry packed animation data; RE-095 wired and ran the `MaterialAnimator` runtime path against file 105 on the real device profile (clean, no panics) but has not yet confirmed the cycle is visually correct
-* [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
+* [x] representative animated materials verified — RE-095 wired `MaterialAnimator` into every draw path; the automated screenshot harness could not isolate two tick counts across independent launches, so PPSSPP was instead launched interactively (windowed, left running) and the user confirmed the palette-cycling animation is visibly working on file 105's stage (stage 2/41)
+* [x] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114); RE-092 confirmed they carry packed animation data; RE-095 wired the `MaterialAnimator` runtime path and confirmed by interactive play on the real device profile that the cycle renders correctly on file 105
+* [x] fighter material animation verified where applicable — RE-096 checked archive-wide: all 441 real fighter `p_costume_matanim_joints` scripts (`colors_at`/`costume_colors`'s domain) reach `End` or park at a long trailing `Wait`, and **zero** loop via `JUMP`/`SET_ANIM`. Fighter costume scripts are structurally one-shot key lists, never real-time animations — `colors_at` and `MaterialAnimator` are correctly separate mechanisms for correctly separate shapes; nothing needs unifying. (A separate, real gap surfaced along the way — 45% of these scripts carry a `PaletteID` track `colors_at` never reads — flagged under `R0.11`, not implemented here since it is a costume-completeness question, not a material-*animation* one.)
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094, RE-095 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094, RE-095, RE-096 in `docs/reverse-engineering.md`.
 
 ---
 
@@ -1180,6 +1180,28 @@ Per-costume-0 colours are recovered and render correctly (e.g. Mario in red,
 via `FTCommonPart::p_costume_matanim_joints`, RE-040). Only costume 0 is
 currently packed for any fighter — every other costume is unimplemented, not
 merely unverified (`docs/porting-status.md` "Model conversion").
+
+RE-096 (`R0.10` session) measured `p_costume_matanim_joints` archive-wide
+while closing out `R0.10`'s own last item, and found a concrete,
+decomp-confirmed lead for whenever this task starts: of 441 real fighter
+costume scripts, **45% (200) carry a `PaletteID` track that
+`colors_at`/`costume_colors` never reads** (it only decodes `PRIM`/`ENV`/
+`BLEND`). None of these scripts loop — every one is a genuine one-shot key
+list, the same shape `colors_at` already assumes — so this is a one-shot
+*read* to add, not a `MaterialAnimator` concern. Traced the full chain in
+`refs/ssb-decomp-re`, not left as an inference:
+`lbCommonAddMObjForFighterPartsDObj` (`src/lb/lbcommon.c:955`) plays the
+costume script at `anim_frame = fp->costume` through the same generic
+`gcPlayMObjMatAnim` engine stages use; its `PaletteID` case
+(`src/sys/objanim.c:1340`) sets `mobj->palette_id`; the draw path
+(`src/sys/objdisplay.c:1184`) reads it back as
+`mobj->sub.palettes[(s32)mobj->palette_id]` — the identical
+`MObjSub.palettes[]` array `mobj::read_palettes` already parses for
+stages. Packing only costume 0 today means every other costume's
+*palette* silently stays at costume 0's wherever a script relies on
+`PaletteID`, independent of whatever `PRIM`/`ENV`/`BLEND` per-costume work
+lands. `costume_colors` needs a sibling one-shot `PaletteID` read feeding
+which packed palette variant a given costume bakes.
 
 ### Objective
 

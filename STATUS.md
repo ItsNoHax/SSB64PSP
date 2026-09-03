@@ -12,11 +12,72 @@
 
 ## Current Task
 
-`R0.10 — Material Animation`
+`R0.11 — Fighter Palettes / Costumes`
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-095 (this session) shipped step 8: the
+RE-095's own open item closed first: the user watched RE-095's
+`MaterialAnimator` run interactively (PPSSPP launched windowed and left
+running rather than the auto-killing screenshot harness) and confirmed
+the `PaletteID` cycle is visibly working on file 105's stage (stage
+2/41). `docs/reverse-engineering.md` RE-095 gained a closing addendum;
+`PLAN.md` R0.10's "representative animated materials verified" and
+"stage material animation verified" items are both now checked on that
+basis.
+
+`R0.10` is now `COMPLETE`. RE-096 (this session) closed its last
+acceptance item — "fighter material animation verified where
+applicable" — by checking archive-wide whether any real fighter
+`p_costume_matanim_joints` script needs `MaterialAnimator`'s per-frame
+runtime rather than `colors_at`'s existing one-shot evaluation.
+
+**Result: 441 real fighter costume scripts, 0 loop via `JUMP`/`SET_ANIM`.**
+Temporary census (reverted, matching RE-079/081/089's pattern): every
+script either reaches `End` (max 100 frames) or parks at a long trailing
+`Wait` without ever revisiting its own start. Fighter costume scripts are
+structurally one-shot key lists, never real-time animations —
+`colors_at`/`costume_colors` and `MaterialAnimator` are correctly
+separate mechanisms for correctly separate shapes, confirming this task's
+own acceptance note's prediction that nothing needs unifying. `R0.10`'s
+own remaining checklist item is now checked; **the task is `COMPLETE`**.
+
+**A genuine, separate gap surfaced along the way, and was traced to the
+decomp source rather than left as an inference.** Track-category
+breakdown of those 441 scripts: `PrimColor` 44%, `Light1Color`/
+`Light2Color` 21% each, `TextureIDCurrent` 7% — and **`PaletteID` 45%
+(200/441)**. `colors_at` only ever decodes `PRIM`/`ENV`/`BLEND`; it never
+reads `PaletteID`. Read `refs/ssb-decomp-re`'s real consuming chain to
+check whether this matters: `lbCommonAddMObjForFighterPartsDObj`
+(`src/lb/lbcommon.c:955`) plays a costume script through the *same*
+generic `gcPlayMObjMatAnim` engine stages use, evaluated once at
+`anim_frame = fp->costume`; its `PaletteID` case (`src/sys/objanim.c:
+1340`) sets `mobj->palette_id`; the draw path (`src/sys/objdisplay.c:
+1184`) reads it back as `mobj->sub.palettes[(s32)mobj->palette_id]` —
+**the identical `MObjSub.palettes[]` array `mobj::read_palettes` already
+parses for stages.** This is confirmed, not inferred: a fighter's costume
+identity genuinely includes which palette variant is active, and packing
+only costume 0 today silently keeps every other costume's *palette* at
+costume 0's wherever a script relies on `PaletteID`, independent of
+whatever `PRIM`/`ENV`/`BLEND` per-costume work lands. Not implemented
+this session (`R0.10` is scoped to material *animation*) — handed off as
+`R0.11`'s new concrete lead: `costume_colors` needs a sibling one-shot
+`PaletteID` read feeding which packed palette variant a given costume
+bakes at pack time. No code changed this session on `R0.10`/`R0.11` — a
+measurement-and-decomp-read pass, the temporary census reverted before
+committing (`git diff --stat` on `tools/romtool/src/main.rs` is empty).
+
+## Current Milestone Progress
+
+Moving to `R0.11 — Fighter Palettes / Costumes`, the first task in
+dependency order whose blocking dependency (`R0.10`) just completed.
+`R0.11` also depends on `R0.4`/`R0.6` (both `IN_PROGRESS`, not blocking —
+matching this project's own established reading of "depends on" as
+"needs meaningful progress from," not "must be 100% complete first," the
+same way `R0.9` proceeded historically). Its own "Current evidence" now
+opens with a real, decomp-confirmed, actionable lead rather than a cold
+start.
+
+Immediately before this, RE-095 (previous session) shipped step 8: the
 device-side `MaterialAnimator`, the piece the whole RE-086–094 pipeline
 had been building toward.
 
@@ -1273,139 +1334,49 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R0.10` — the engine exists and is tested; the pipeline around it does
-not.** RE-086 scoped it, RE-087 shipped and verified `matanim::MaterialJoint`
-(step 1 below, done). The concrete next step is the pipeline that feeds
-it real data and consumes its output — sized like a small feature, not
-a lookup:
+**`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
+full history in `PLAN.md`'s own R0.10 section and this file's Task Status
+above — engine decoded and tested, pipeline wired end to end, all 33
+known real scripts survive packing, `MaterialAnimator` ships and is
+confirmed working on-device by interactive play, and the one remaining
+checklist item resolved to "the two mechanisms are correctly separate,
+nothing to unify"). `TraU`/`TraV`/`ScrU`/`ScrV` and `TextureIDCurrent`
+(the next-largest stage material-animation categories after `PaletteID`)
+remain real, measured, unimplemented follow-on work if a future session
+wants it, but nothing blocks on them and `PaletteID` alone was 71% of the
+real archive-wide need.
 
-1. ~~A tick-based decoder for the material/colour track windows~~ — done
-   (RE-087, `matanim::MaterialJoint`, 7 unit tests, verified against the
-   real `PaletteID`-cycling shape including its `SET_ANIM` loop).
-2. ~~Extend `mobj.rs` to read `MObjSub.palettes[1..]` on its own~~ —
-   **tried and retracted (RE-088)**. The struct has no length field, and
-   an `is_ptr`-validated walk from `palettes[0]` looked sound in unit
-   fixtures but, measured archive-wide against the real ROM, produced
-   nonsense for 45% of cases (a repeating arithmetic sequence from
-   unrelated neighbouring file data, not a palette table, traced
-   concretely in file 75). There is no way to bound this array's real
-   length from its own bytes. Do not re-attempt this exact approach
-   without a new source of length information — that source is step 3,
-   which this step now has to happen *inside*, not before.
-3. ~~Resolve `p_matanim_joints` into per-(node, MObj-chain-position)
-   script references~~ — done (RE-089, `matanim::resolve_scripts`,
-   generalised from the fighter-costume walk `costume_colors` already
-   did; wired permanently into `romtool stages`, 61 scripts resolved
-   archive-wide same-file, 0 failures).
-4. ~~Extend `mobj.rs` to read `MObjSub.palettes[1..]`, bounded by the
-   resolved script's own maximum `PaletteID` payload~~ — done (RE-090):
-   `mobj::read_palettes(file, sub_at, count)` reads exactly `count`
-   entries, `count` supplied externally (RE-089's bound) rather than
-   discovered. Verified archive-wide against the real ROM, not just unit
-   fixtures: 33/33 `PaletteID` scripts' computed bounds produced a fully
-   valid, all-distinct `palettes[]` read, 0 failures.
-5. ~~Pack every palette a texture's animation cycles through, plus the
-   resolved script reference, into the runtime format~~ — **the format
-   half is done (RE-091)**: `MatAnimDesc`/`MatAnimPalette` (mirroring
-   `AnimDesc`/`AnimJoint`'s shape, per the prior note's own prediction)
-   plus `TextureDesc::mat_anim`, `pack::VERSION` 11→12, round-trip
-   verified. **The population half is blocked, on a real measured gap,
-   not a design choice left open:**
-6. ~~Correlate an animated `MObjSub` to its texture via `mesh.rs`'s own
-   state, and finish wiring `romtool`'s build loop~~ — done (RE-092). The
-   texture was already resolvable through `mesh.rs`'s existing
-   `State::apply_mobj`/`current_texture` (a palette-only `MObj` sets
-   `timg_addr` to the palette's own address, and the display list's own
-   subsequent `G_LOADTLUT`+`G_SETTIMG` overwrite it with the real texture
-   image — no new texture-identification logic needed). Added
-   `MeshMaterial::mat_anim` threaded the same way `timg_addr`/`palette_offset`
-   already are, verified the clearing rule (a later unanimated palette
-   must not leak a stale marker) can actually fail before trusting it, and
-   wired `romtool`'s real `pack` build loop (`resolve_layer_mat_anims`,
-   `convert_mat_anim_palette`, `pack_mesh` deduplicating by script).
-   Archive-wide: **17 of RE-089's 33 known scripts survived the whole
-   pipeline** (181 palette variants, 23 textures), every surviving case's
-   entry count matching RE-089's own numbers exactly (file 117: both
-   scripts, 16 entries each; file 114: 6/13, 18 each; file 105: 8/18,
-   2–4 each). Pack "loads back cleanly", 4311.0 → 4470.3 KiB, Dream Land
-   pixel-identical (nothing consumes `mat_anim` on-device yet).
-7. ~~Investigate why only 17 of 33 known scripts survived~~ — done
-   (RE-093): a real bug, not an acceptable gap. Every resolved script's
-   chain index is genuinely called on a placed node (the first two
-   candidates from this note were ruled out directly); a raw ROM
-   display-list dump showed real stage data legitimately calls several
-   palette-only `MObj`s against *one* already-loaded texture image,
-   reissuing `G_LOADTLUT` per palette with no `G_SETTIMG` after the
-   first — and `mesh.rs`'s `Cmd::LoadTlut` handler nulled the image
-   binding on an unverified "the real texture follows with its own
-   SETTIMG" assumption this ROM data falsifies, dropping the texture
-   entirely (not just `mat_anim`) for every entry after the first in a
-   shared-image group. Fixed by having `State` remember the last real
-   `G_SETTIMG`/`sprite` binding and restoring it after `G_LOADTLUT`
-   instead of clearing — verified capable of failing first. Archive-wide:
-   **17 → 25 of 33 survive** (297 palette variants), every other pack
-   figure including texture count (639) unchanged. This was a genuine
-   rendering-correctness bug broader than material animation — any static
-   multi-palette-sharing-one-image primitive anywhere in the archive was
-   exposed — yet Dream Land still renders pixel-identical (it has none of
-   this shape, or none visible at the tested distance).
-7b. ~~Investigate why 8 of 33 known scripts still don't survive~~ — done
-   (RE-094). Traced `texture_enabled` node-by-node and found it flips
-   `false` exactly once, inside node 20's own self-contained untextured
-   decal (no `G_SETTIMG` of its own), and nothing re-enables it through
-   nodes 21-27 despite four of those seven issuing a complete, independent
-   texture chain and drawing real triangles. Measured a blanket bypass
-   first (reverted): fixes it (639→648 textures, 25→33 scripts) but isn't
-   *correct* (would also re-texture node 20's decal). Shipped the narrower
-   rule instead — `Cmd::SetTimg` now sets `texture_enabled = true`
-   unconditionally, since a display list has no reason to reissue a whole
-   texture chain for geometry meant to stay untextured — re-measured to
-   the identical result while leaving node 20 untouched. Also caught and
-   fixed an existing test that was passing for the wrong reason (missing
-   tile format, not the disabled flag its name claimed). New test
-   reproduces nodes 20→21's exact shape, verified capable of failing.
-   **Archive-wide: all 33 of RE-089's known scripts now survive** (321
-   palette variants), +9 static textures recovered, meshes/triangles
-   unchanged. `cargo test --workspace`: 245 passing. Dream Land
-   pixel-identical. This closes the RE-092/093 open question completely.
-8. ~~A `MaterialAnimator` (mirroring `StageAnimator`'s lifecycle) that
-   wraps `MaterialJoint::tick`, resolves the live `PaletteID` value, and
-   issues `sceGuClutLoad`~~ — done (RE-095). Starts once at pack load
-   (not per-object — a `MatAnimDesc` entry is a texture's property, no
-   per-object boundary to restart on), ticks every frame, wired into
-   `bind_texture` via a second `sceGuClutLoad` after the static one.
-   Threaded `Option<&MaterialAnimator>` through six draw functions and
-   all four real call sites in `main.rs`. Caught a real `no_std`
-   portability bug (`f32::round()` needs `std`/`libm`) by actually
-   running `cargo psp --release`, not just host tests. Two new tests
-   (a real-shaped script cycling correctly; the neighbouring-table clamp
-   proven to matter). `cargo test --workspace`: 247 passing. `cargo psp
-   --release` + `tools/run-ppsspp.sh`: clean, Dream Land pixel-identical.
-9. Verify on a stage that actually needs it — **not Dream Land**, whose
-   own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
-   not `PaletteID` cycling (RE-086). ~~Finding which of the other 40
-   stages has a representative palette-cycling layer~~ — done (RE-089):
-   file 105 (`StageZebesFile2`, 18 scripts needing 2–4 palette entries
-   each) and file 114 (`StageLastFile2`, 13 scripts needing exactly 18
-   entries each) are both concrete, non-Dream-Land candidates, one small
-   and one large. **Partially done (RE-095):** loaded file 105's stage
-   (temporary, reverted `stage_index` override) and confirmed it runs
-   clean on the real device profile, no panics, correct texture count.
-   **Not done:** confirming by eye that the palette actually cycles on
-   screen — the screenshot harness takes one shot per independent launch
-   (each restarting from tick 0), so two separate invocations cannot
-   isolate "more ticks, nothing else changed," and a stage-animated
-   platform's own motion confounded a naive crop comparison. Needs video
-   capture or interactive input, not another screenshot diff — the same
-   category of limitation this file already records for `R0.12`/`R0.14`.
+**`R0.11 — Fighter Palettes / Costumes` is next**, unblocked now that its
+`R0.10` dependency is done (its other two, `R0.4`/`R0.6`, are
+`IN_PROGRESS` but not hard blockers — the same reading of "depends on"
+this project has already used for `R0.9`). RE-096 (this session) handed
+it off with a concrete, decomp-confirmed starting point rather than a
+cold start:
 
-`TraU`/`TraV`/`ScrU`/`ScrV` (UV translate/scale/scroll, the next-largest
-category after `PaletteID`) and `TextureIDCurrent` (frame swapping, 22%)
-are real, measured, but smaller follow-on work — a texture matrix update
-per frame for the former, a bound-texture swap for the latter — neither
-blocks starting with palette cycling, and neither should be designed
-around alongside it in the same pass; `PaletteID` alone is 71% of the
-real need.
+1. **Read `costume_colors`'s real gap.** It decodes `PRIM`/`ENV`/`BLEND`
+   from a fighter's `p_costume_matanim_joints` scripts but never
+   `PaletteID`, even though 45% (200/441) of those real scripts carry
+   one. Traced to the decomp: `lbCommonAddMObjForFighterPartsDObj` plays
+   a costume script through the same `gcPlayMObjMatAnim` engine stages
+   use, its `PaletteID` case sets `mobj->palette_id`, and the draw path
+   reads `mobjsub->palettes[palette_id]` — the identical array
+   `mobj::read_palettes` already parses for stages. This is confirmed at
+   the source, not inferred.
+2. Design and add a one-shot `PaletteID` read alongside `colors_at`'s
+   existing `PRIM`/`ENV`/`BLEND` evaluation — a `MaterialAnimator`
+   concern this is not, since these scripts provably never loop
+   (RE-096: 441/441, 0 loops). The natural shape mirrors `colors_at`
+   itself: evaluate at `frame = costume`, read `TRACK_PALETTE_ID` the
+   same way, and resolve which packed palette variant that selects.
+3. Wire it into whichever pack-time step currently bakes only costume
+   0's palette, so every costume's own `PaletteID` selection (where a
+   script has one) picks its own variant rather than silently inheriting
+   costume 0's.
+4. This is one piece of a larger task — `R0.11`'s acceptance list ("all
+   fighter palettes identified", "all required costumes identified",
+   "runtime representation complete", etc.) is not yet scoped beyond
+   this lead; expect real investigation before implementation, the same
+   shape `R0.10` itself needed at RE-086.
 
 **Other, now-secondary threads, each already investigated as far as this
 session's methods reach:**
