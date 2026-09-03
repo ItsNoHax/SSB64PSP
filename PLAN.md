@@ -502,7 +502,7 @@ Resolve every scene graph containing an unresolved material table.
 
 ## R0.8 — Transform Correctness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -517,10 +517,30 @@ distinct transform. A whole-archive check found 0 of the ROM's 28
 genuinely dead for this kind. Fixed: `crates/ssb-rom/src/pack.rs`'s
 `add_object` now flags these nodes `FLAG_BILLBOARD` alongside `Kind46`/
 `Kind48`, reusing the already-verified billboard render path exactly (spin
-term is a no-op `0.0`). `cargo test --workspace`: 339 passing (new test
-`a_recalc_node_is_flagged_as_a_spin_free_billboard`). `cargo psp --release`
-builds; PPSSPP smoke-run (`tools/run-ppsspp.sh --seconds 8`) shows 60 FPS
-and a clean log, but did not isolate a specific `0x8000` object on screen.
+term is a no-op `0.0`).
+
+RE-063 closed the remaining acceptance items. `gcSetupCommonDObjs`
+(`objanim.c:2153`) is the only function that turns a ROM `DObjDesc` array
+into `XObj`s, and it only ever tests four high-nibble bits — `0x8000`
+(44), `0x4000` (46), `0x2000` (48), `0x1000` (50) — matching
+`TransformKind` exactly. Every other `gcPrepDObjMatrix` case, including
+kinds 33-40's `func_800108xx` family (per-object look-at billboards, each
+with a translate/no-translate pair) and kinds 41-43/45/47/49, is real
+matrix math reached only by direct `gcAddXObjForDObjFixed`/
+`gcAddXObjForDObjVar` calls from fighter/item/effect/stage-decoration game
+code — never from a `DObjDesc` array this crate parses, and not exercised
+by this project until those gameplay systems exist (rendering-gated per
+`AGENTS.md` §5). Kind 50 (case 50) is `Kind48`'s exact move-word layout
+sourced from `sGCMatrixMod2F` (camera-yaw-locked) instead of
+`sGCMatrixMod1F` (camera-pitch-locked) — a real, reachable, genuinely
+different basis, but an archive-wide scan found 0 of 3117 nodes use it.
+Flagged `FLAG_BILLBOARD` anyway for fidelity with the decomp's case
+structure, recorded as an unverifiable-by-data deviation rather than a
+measured fix. `cargo test --workspace`: 340 passing (new tests
+`a_recalc_node_is_flagged_as_a_spin_free_billboard`,
+`a_kind_50_node_is_flagged_as_a_billboard_like_kind_48`). `cargo psp
+--release` builds; PPSSPP run (`tools/run-ppsspp.sh --seconds 8`) shows
+Dream Land rendering correctly at 60 FPS with a clean log.
 
 ### Objective
 
@@ -533,14 +553,32 @@ Implement every transform kind exercised by SSB64.
 
 ### Acceptance
 
-* [ ] transform kinds enumerated
+* [x] transform kinds enumerated — RE-063: every `gcPrepDObjMatrix` case
+  traced to its origin; only 44/46/48/50 are reachable from `DObjDesc`
+  arrays (the data this project's importer parses), all four implemented
 * [x] `0x8000` investigated — RE-062: it's a spin-free variant of the
   already-implemented billboard kinds 45/46, not a distinct transform; fixed
   by flagging it `FLAG_BILLBOARD` the same way
-* [ ] original matrix behavior identified
-* [ ] PSP implementation verified
-* [ ] affected scene nodes tested
-* [ ] billboard-related transforms cross-checked
+* [x] original matrix behavior identified — RE-062 (kind 44), RE-063
+  (kinds 33-43/45/47/49/50 traced; 50 implemented, the rest confirmed
+  unreachable from ROM data)
+* [x] PSP implementation verified — `cargo test --workspace` (340 passing);
+  kinds 44/46/48 additionally verified visually via RE-049's rotated-camera
+  A/B; kind 50 has no shipped node to verify against (RE-063), so its test
+  coverage is structural only, recorded as such
+* [x] affected scene nodes tested — unit tests for all four reachable kinds
+  in `crates/ssb-rom/src/pack.rs`; RE-062/RE-063 archive-wide scans (28/34/
+  47/0 nodes respectively, 3117 nodes checked)
+* [x] billboard-related transforms cross-checked — RE-063 cross-references
+  `Mod1F`/`Mod2F`'s camera-basis construction against the per-object
+  look-at math in `func_80010748`/`func_80010918`/`func_80010AE8`/
+  `func_80010C2C` (kinds 33-40), confirming they are related but distinct
+  techniques, not duplicates
+
+### Evidence
+
+RE-049, RE-062, RE-063 in `docs/reverse-engineering.md`;
+`docs/porting-status.md` "Billboard nodes" row.
 
 ---
 

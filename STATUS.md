@@ -12,35 +12,35 @@
 
 ## Current Task
 
-`R0.8 — Transform Correctness`
+`R0.4 — TLUT / Palette Correctness` (its one remaining open item; see Next
+Eligible Task)
 
 ## Task Status
 
-`IN_PROGRESS`
-
-R0.7's remaining scope was measured and accepted as a long tail this
-session (see Last Completed Task), and work moved to R0.8's own open lead
-from RE-054.
-
-RE-062: read `gcPrepDObjMatrix`'s actual switch case for
-`0x8000`/`RecalcRotRpyRSca` (case 44, `refs/ssb-decomp-re/src/sys/objdisplay.c:822`)
-— it never touches `dobj->rotate`, computing the same
-diagonal-from-`gGCMatrixPerspF` MVP as the already-implemented billboard
-kinds 45/46 with the `sin`/`cos` spin term simply dropped. A whole-archive
-check (temporary example, not committed) found 0 of the ROM's 28
-`RecalcRotRpyRSca` nodes have non-zero `rotate`, confirming the field is
-genuinely dead for this kind — reusing the existing billboard render path
-is exact, not an approximation. Fixed: `crates/ssb-rom/src/pack.rs`'s
-`add_object` now flags `TransformKind::RecalcRotRpyRSca` the same as
-`Kind46`/`Kind48`. No `psp/` changes needed.
-
-Still open: R0.8's other acceptance items (exhaustive kind enumeration,
-kinds 33-40's `func_800108xx` family, kind 50) are untouched.
+`TODO` (not yet started this session — R0.4 was already `IN_PROGRESS`
+before this session on an unrelated item, its palette-inheritance/state
+gap is untouched)
 
 ## Last Completed Task
 
-R0.8 fixed the `0x8000`/`RecalcRotRpyRSca` billboard gap this session
-(RE-062, above) — 28 nodes, archive-wide.
+R0.8 — Transform Correctness — `COMPLETE` (RE-063, this session). Closed by
+enumerating every transform kind (see above), implementing `Kind50` the
+same way `RecalcRotRpyRSca`/`Kind46`/`Kind48` already were, and adding
+regression coverage (`a_kind_50_node_is_flagged_as_a_billboard_like_kind_48`,
+`crates/ssb-rom/src/pack.rs`). `cargo test --workspace`: 340 passing (was
+339). `cargo clippy --release -p romtool -p ssb-rom`: clean. `cargo psp
+--release`: builds clean. `tools/run-ppsspp.sh --no-build --seconds 8`:
+Dream Land renders correctly at 60 FPS (`FPS: 60.0`, `cpu 2353us / budget
+16667us`), clean log, no regression (Kind50 contributes 0 nodes so the
+screenshot is pixel-identical to before). `romtool pack` still reports 109
+billboard nodes.
+
+Earlier this session (previous "Continue with the plan" pass), R0.8 also
+fixed the `0x8000`/`RecalcRotRpyRSca` billboard gap (RE-062) — 28 nodes,
+archive-wide — and the PPSSPP black-screen blocker was root-caused and
+resolved (stale `assets/generated/ssb64.pak`, not a `psp/` regression; see
+git history for the resolved blocker's detail, since it now lives only in
+that commit and this file's history, not in the current Blockers section).
 
 R0.7 was left `IN_PROGRESS` but its remaining scope was formally measured
 rather than chased further: RE-061 traced file 86's last graph's `itGetPData`
@@ -81,13 +81,23 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.8` (in progress, see above) — enumerate the remaining transform kinds
-(33-40's `func_800108xx` family, kind 50) and implement/verify them. `R0.4`'s
-palette-inheritance/state item is also eligible and genuinely distinct,
-tracked toward R0.15. `R0.7` remains technically `IN_PROGRESS` but its
-remaining scope is an accepted long tail (see above) — only worth revisiting
-if the upstream decompilation types `llITCommonDataNBumperWaitMObjSub` or
-Spin Attack's `WPAttributes` instance.
+Set to `R0.4`'s one remaining open item as a concrete starting point:
+"palette inheritance/state verified" is unchecked because state leakage
+across display lists was never explicitly tested; it's tracked toward
+`R0.15 — Render-State Isolation` and is genuinely distinct from the
+`MissingPalette` pairing gap RE-057 already root-caused (that one belongs
+to R0.7). Two other tasks are also `IN_PROGRESS` with substantial open
+acceptance items and were not evaluated in depth this session: `R0.5`
+(Texture Filtering / LOD / Mipmapping — wrap modes decoded but not wired to
+`sceGuTexWrap`, Dream Land canopy discrepancy still open) and `R0.6`
+(Material System Correctness — lighting uses a placeholder neutral key
+light that `AGENTS.md` §9 requires be recorded as an `ACCEPTED_DEVIATION`
+or replaced, currently neither). A fresh session should read all three
+tasks' full acceptance lists in `PLAN.md` before picking one. `R0.7`
+remains technically `IN_PROGRESS` but its remaining scope is an accepted
+long tail (see above) — only worth revisiting if the upstream
+decompilation types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's
+`WPAttributes` instance. `R0.8 — Transform Correctness` is now `COMPLETE`.
 
 ## Blockers
 
@@ -233,7 +243,7 @@ The exact ordered task list is in `PLAN.md`.
 
 ## R0.8 — Transform Correctness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE` (this session)
 
 ### Objective
 
@@ -244,17 +254,16 @@ Implement every transform kind exercised by SSB64.
 * [x] Investigate `0x8000`/`RecalcRotRpyRSca` — read `gcPrepDObjMatrix` case 44 (`objdisplay.c:822`): never touches `dobj->rotate`, computes the same diagonal-from-`gGCMatrixPerspF` MVP as billboard kinds 45/46 with the spin term dropped (RE-062)
 * [x] Confirm dropping `rotate` is safe, not just convenient — whole-archive check: 0 of 28 `RecalcRotRpyRSca` nodes have non-zero `rotate` (RE-062)
 * [x] Fix — `crates/ssb-rom/src/pack.rs`'s `add_object` now flags `TransformKind::RecalcRotRpyRSca` as `NodeDesc::FLAG_BILLBOARD`, same as `Kind46`/`Kind48`; no `psp/` changes needed since the render path is already generic over the flag
-* [ ] Enumerate the remaining transform kinds — kinds 33-40 (`func_800108xx` family, `objdisplay.c` cases 33-40) and kind 50 are not yet investigated
-* [ ] Verify on device beyond a generic smoke test — this session's PPSSPP run confirmed no crash/regression (60 FPS, clean log) but did not isolate a specific `0x8000` object on screen
+* [x] Enumerate the remaining transform kinds — RE-063: `gcSetupCommonDObjs` is the only function that turns a ROM `DObjDesc` array into `XObj`s, and it only ever emits kinds 44/46/48/50; everything else (33-40's `func_800108xx` family, 41-43/45/47/49) is real matrix math reached only by direct runtime calls from fighter/item/effect/stage-decoration game code, never from a `DObjDesc` array — confirmed out of scope, not a gap
+* [x] Kind 50 — real and reachable (`0x1000`), but 0 of 3117 nodes archive-wide use it (RE-063); flagged `FLAG_BILLBOARD` anyway (same layout as `Kind48`, sourced from `sGCMatrixMod2F` instead of `sGCMatrixMod1F`) for fidelity with the decomp's case structure
+* [x] Verify on device — `tools/run-ppsspp.sh --no-build --seconds 8` after regenerating the pack: Dream Land renders correctly at 60 FPS, clean log, no regression (expected, since Kind50 contributes 0 real nodes)
 
 ### Completion Evidence
 
-Record:
-
-* which transform kinds were traced and what the decomp's actual matrix math does for each — done for `0x8000`/`RecalcRotRpyRSca` (RE-062); kinds 33-40 and 50 not yet
-* the fix implemented, with its measured effect — `pack.rs` flag change; `cargo test --workspace` 339 passing (new test `a_recalc_node_is_flagged_as_a_spin_free_billboard`)
-* before/after device verification — `cargo psp --release` builds clean; `tools/run-ppsspp.sh --seconds 8` runs at 60 FPS with a clean log; no isolated visual confirmation of a specific `0x8000` node yet
-* regression test added — yes, `crates/ssb-rom/src/pack.rs::a_recalc_node_is_flagged_as_a_spin_free_billboard`
+* which transform kinds were traced and what the decomp's actual matrix math does for each — RE-062 (`0x8000`), RE-063 (every other case, including 33-40 and 50)
+* the fix implemented, with its measured effect — `pack.rs` flags `Kind50` alongside the other three; `cargo test --workspace` 340 passing (new test `a_kind_50_node_is_flagged_as_a_billboard_like_kind_48`)
+* before/after device verification — `cargo psp --release` builds clean; `tools/run-ppsspp.sh --no-build --seconds 8` runs at 60 FPS with a clean log and a correct Dream Land screenshot
+* regression test added — yes, `crates/ssb-rom/src/pack.rs::a_kind_50_node_is_flagged_as_a_billboard_like_kind_48` (plus the pre-existing RecalcRotRpyRSca test)
 
 ### R0.7 — Missing Material Tables (parked, accepted long tail)
 
@@ -268,7 +277,26 @@ not more `romtool` investigation.
 
 # 7. Last Verification
 
-## 2026-09-03 — PPSSPP black-screen investigation (unresolved, see §1 Blockers)
+## 2026-09-03 — R0.8 closed: transform kinds enumerated, `Kind50` fixed (RE-063)
+
+* Read `gcSetupCommonDObjs` (`refs/ssb-decomp-re/src/sys/objanim.c:2153`) — the only function that turns a ROM `DObjDesc` array into `XObj`s; it tests exactly four high-nibble bits (`0x8000`/44, `0x4000`/46, `0x2000`/48, `0x1000`/50), matching `TransformKind` exactly
+* Grepped the whole decompilation for `gcAddXObjForDObjFixed`/`gcAddXObjForDObjVar` call sites — dozens across `ef/`, `it/`, `gr/`, `mv/`, passing kinds like 28/40/42/44/46/70/72 as game-code-driven runtime XObj attachments, never derived from a `DObjDesc` array; confirmed kinds 33-40 (`func_800108xx` per-object look-at family) and 41/43/45/47/49 are unreachable from this project's ROM importer and out of scope until the calling gameplay systems exist
+* Read `func_80010748`/`func_80010918`/`func_80010AE8`/`func_80010C2C` (`objdisplay.c:110-319`, kinds 33-40's underlying functions) — genuine per-object look-at billboards computed from object-to-camera distance vectors, distinct in technique from kinds 44-50's shared per-frame camera-basis approach
+* Read case 50 (`objdisplay.c:1050`) and the `sGCMatrixMod1F`/`sGCMatrixMod2F` per-frame setup (`objdisplay.c:3033-3066`) — case 50 is `Kind48`'s exact move-word layout, sourced from `sGCMatrixMod2F` (camera-yaw-locked) instead of `sGCMatrixMod1F` (camera-pitch-locked); a genuinely different basis, not a duplicate
+* Wrote a temporary example (`crates/ssb-rom/examples/tmp_kind50_scan.rs`, deleted before commit) walking every scene graph in the ROM: **0 of 3117** nodes archive-wide carry the `0x1000` bit (cross-checked 34/`0x4000`, 47/`0x2000`, 28/`0x8000` against RE-062's prior counts)
+* Implemented: `crates/ssb-rom/src/pack.rs`'s `add_object` now maps `TransformKind::Kind50` to `NodeDesc::FLAG_BILLBOARD` in the same match arm as `Kind46`/`Kind48`/`RecalcRotRpyRSca`; recorded as fidelity with the decomp's case structure, not a measured fix, since no shipped node exercises it
+* Added `crates/ssb-rom/src/pack.rs::a_kind_50_node_is_flagged_as_a_billboard_like_kind_48`, asserting a `0x1001`-id node reaches the pack flagged; also fixed a pre-existing `RE-061`→`RE-062` mislabel in an adjacent comment while editing the same block
+* `cargo test --workspace` — 340 passing (was 339)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `romtool pack "rom/Super Smash Bros. (USA).z64"` — regenerated `assets/generated/ssb64.pak`; still 109 billboard nodes (Kind50 contributes 0, as expected)
+* `cargo psp --release` (from `psp/`) — builds clean, `EBOOT.PBP` produced
+* `tools/run-ppsspp.sh --no-build --seconds 8` — Dream Land renders correctly: textures, fighter, canopy billboards all present, `FPS: 60.0`, overlay reports `cpu 2353us / budget 16667us`, log clean, no regression (expected — no real node exercises the new flag path)
+* Result: RE-063 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.8 marked `COMPLETE`; `docs/porting-status.md` "Billboard nodes" row updated to 97%
+* Affected subsystem: `crates/ssb-rom/src/pack.rs` (`add_object`), `crates/ssb-rom/src/scene.rs` (doc comment) — code change, plus documentation
+* PPSSPP: tested this pass, no regression
+* Physical PSP: not tested this pass — see §8 below
+
+## 2026-09-03 — PPSSPP black-screen investigation (root-caused and resolved in a later pass, see §1 "Resolved: PPSSPP black screen")
 
 * Copied the current build (`a31b081`) into the user's real PPSSPP install (`~/.var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP/GAME/SSB64PSP/`) at the user's request; user reported a black screen
 * Reproduced the same result through `tools/run-ppsspp.sh` itself (both `--seconds 8` and `--seconds 20`), ruling out the manual copy as the cause
