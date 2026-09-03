@@ -119,6 +119,17 @@ pub struct MeshMaterial {
     /// RE-069). Drives `sceGuEnable(Blend)` with the standard
     /// source-alpha/one-minus-source-alpha equation, matching `sf64-psp`.
     pub translucent: bool,
+    /// A combiner that blends from a base colour to a target colour driven
+    /// by the texture, with no shade involved at all -- `(base, target)`
+    /// (RE-073). Detected on several playable fighters' own models (Link,
+    /// Ness, Yoshi, Pikachu), currently declined by `combiner_shade_scale`
+    /// because it cannot be expressed as a single vertex-shade scale. Maps
+    /// exactly to the PSP GE's native `TextureEffect::Blend` (`Cf`=base,
+    /// `Cc`=target via `sceGuTexEnvColor`) -- not consumed on the device
+    /// side yet, since that also needs affected primitives' vertices baked
+    /// with a flat `base` colour instead of their usual shade-derived one,
+    /// which touches vertex-sharing assumptions this pass didn't verify.
+    pub texture_blend: Option<([u8; 4], [u8; 4])>,
 }
 
 impl MeshMaterial {
@@ -408,6 +419,47 @@ fn cycle(
     v[0].sub(&v[1]).mul(&v[2]).map(|m| m.add(&v[3]))
 }
 
+/// Runs both combiner cycles (the second only in two-cycle mode) and
+/// returns the final symbolic result, or `None` for a combiner this model
+/// cannot follow at all.
+///
+/// Shared by [`combiner_shade_scale`] and [`combiner_texture_blend`], which
+/// each recognise a different *shape* the same evaluated result can take.
+fn evaluate_combiner(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: [f32; 3],
+    env: [f32; 3],
+) -> Option<Combined> {
+    let c0 = cycle(
+        [
+            (hi >> 20) & 0xF,
+            (lo >> 28) & 0xF,
+            (hi >> 15) & 0x1F,
+            (lo >> 15) & 0x7,
+        ],
+        None,
+        prim,
+        env,
+    )?;
+    if two_cycle {
+        cycle(
+            [
+                (hi >> 5) & 0xF,
+                (lo >> 24) & 0xF,
+                hi & 0x1F,
+                (lo >> 6) & 0x7,
+            ],
+            Some(&c0),
+            prim,
+            env,
+        )
+    } else {
+        Some(c0)
+    }
+}
+
 /// What a primitive's colour reduces to: a constant to fold into the vertex
 /// shade, or nothing when the combiner is one this model does not follow.
 ///
@@ -427,33 +479,7 @@ fn combiner_shade_scale(
     // that should be lit.
     let p = prim.map_or([1.0; 3], to_f);
     let e = env.map_or([1.0; 3], to_f);
-
-    let c0 = cycle(
-        [
-            (hi >> 20) & 0xF,
-            (lo >> 28) & 0xF,
-            (hi >> 15) & 0x1F,
-            (lo >> 15) & 0x7,
-        ],
-        None,
-        p,
-        e,
-    )?;
-    let out = if two_cycle {
-        cycle(
-            [
-                (hi >> 5) & 0xF,
-                (lo >> 24) & 0xF,
-                hi & 0x1F,
-                (lo >> 6) & 0x7,
-            ],
-            Some(&c0),
-            p,
-            e,
-        )?
-    } else {
-        c0
-    };
+    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
 
     // Usable only as a scale on the shade. A constant term would need a second
     // colour source the vertex format does not have.
@@ -466,6 +492,58 @@ fn combiner_shade_scale(
         (false, true) => Some(out.s),
         _ => None,
     }
+}
+
+/// Recognises `(A-B)*TEXEL+B` -- an affine blend from a base colour `B` (at
+/// `TEXEL=0`) to a target colour `A` (at `TEXEL=1`), reading only constants
+/// (`PRIMITIVE`/`ENVIRONMENT`) and the texture, no shade at all (RE-073).
+///
+/// This is not the shape [`combiner_shade_scale`] folds into a vertex-shade
+/// scale -- it has a nonzero constant term (`k`) *and* a nonzero texel term
+/// (`t`) with no shade dependence, which `combiner_shade_scale` correctly
+/// declines. It is exactly the PSP GE's native `TextureEffect::Blend`
+/// texture function: `Cv = Cf*(1-Ct) + Cc*Ct` with `Cf` = base, `Cc` =
+/// `sceGuTexEnvColor`. Returns `(base, target)` in `u8` RGBA (alpha always
+/// 255; the real combiner's alpha cycle is not modelled here, matching how
+/// `combiner_shade_scale` only ever resolves RGB).
+///
+/// Unlike `combiner_shade_scale`, an unset `PRIMITIVE`/`ENVIRONMENT`
+/// declines rather than defaulting to white: white is a safe *scale*
+/// identity, but here it would be baked in as a real, wrong constant
+/// colour, and there is nothing safe to substitute instead.
+fn combiner_texture_blend(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: Option<[u8; 4]>,
+    env: Option<[u8; 4]>,
+) -> Option<([u8; 4], [u8; 4])> {
+    let p = to_f(prim?);
+    let e = to_f(env?);
+    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
+
+    if out.s != [0.0; 3] || out.st != [0.0; 3] {
+        return None;
+    }
+    if out.k == [0.0; 3] || out.t == [0.0; 3] {
+        // No constant term is `combiner_shade_scale`'s job; no texel term is
+        // a plain constant colour neither function needs to special-case.
+        return None;
+    }
+    // `round()` needs `std`; this crate is `no_std` on the PSP target, so
+    // this matches `material_now`'s own float-to-`u8` conversion (truncating
+    // rather than rounding) instead of introducing a different one here.
+    let from_f = |c: [f32; 3]| {
+        [
+            (c[0] * 255.0).clamp(0.0, 255.0) as u8,
+            (c[1] * 255.0).clamp(0.0, 255.0) as u8,
+            (c[2] * 255.0).clamp(0.0, 255.0) as u8,
+            255,
+        ]
+    };
+    let base = out.k;
+    let target = [out.k[0] + out.t[0], out.k[1] + out.t[1], out.k[2] + out.t[2]];
+    Some((from_f(base), from_f(target)))
 }
 
 /// Tracks RDP/RSP state while walking a display list./// Tracks RDP/RSP state while walking a display list.
@@ -623,7 +701,19 @@ impl State {
                 self.material.env_color,
             )
         });
+        // Gated on a texture the same way `alpha_test`/`translucent` are:
+        // the whole point of this shape is the texture driving the blend
+        // (RE-073), so without one there is nothing for `TEXEL` to mean.
         let texture = self.current_texture();
+        let texture_blend = texture.and(self.combiner).and_then(|(hi, lo)| {
+            combiner_texture_blend(
+                hi,
+                lo,
+                self.two_cycle,
+                self.material.prim_color,
+                self.material.env_color,
+            )
+        });
         MeshMaterial {
             texture,
             // Identity is not worth storing: it means "use the shade as it is".
@@ -653,6 +743,7 @@ impl State {
             // discard (7 of 362 `translucent` primitives had no texture).
             alpha_test: self.material.alpha_test && texture.is_some(),
             translucent: self.material.translucent && texture.is_some(),
+            texture_blend,
             ..self.material
         }
     }
@@ -2151,6 +2242,78 @@ mod tests {
         Cmd::SetCombine { hi, lo }
     }
 
+    #[test]
+    fn texture_blend_reaches_the_material_only_with_a_texture_bound() {
+        // Wiring `combiner_texture_blend` into `material_now` end to end
+        // (RE-073): Link, Ness, Yoshi and Pikachu's own models all set this
+        // shape, and always alongside a real texture -- but it is gated the
+        // same way `alpha_test`/`translucent` are (RE-069), since `TEXEL`
+        // means nothing without one bound.
+        let file = vertex_data(3);
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let lerp = Cmd::SetCombine { hi, lo };
+        let prim = Cmd::SetPrimColor {
+            m: 0,
+            l: 0,
+            rgba: [200, 100, 50, 255],
+        };
+        let env = Cmd::SetEnvColor([10, 20, 30, 255]);
+        let bind_texture = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 0,
+                size: 2,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+        ];
+
+        let mut cmds: Vec<Cmd> = Vec::new();
+        cmds.extend([vtx(3), lerp, prim, env]);
+        cmds.extend(bind_texture);
+        cmds.push(Cmd::Tri1([0, 1, 2]));
+        cmds.push(Cmd::End);
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.texture.is_some(), "the test itself must bind a texture");
+        assert_eq!(
+            m.texture_blend,
+            Some(([10, 20, 30, 255], [200, 100, 50, 255])),
+        );
+
+        let cmds = [vtx(3), lerp, prim, env, Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.texture.is_none(), "no texture bound this time");
+        assert_eq!(m.texture_blend, None, "TEXEL means nothing without one");
+    }
+
     /// `(A - B) * C + D` packed the way `gDPSetCombineLERP` does.
     #[allow(clippy::too_many_arguments)] // eight multiplexer codes is the format
     const fn combine(
@@ -2263,5 +2426,79 @@ mod tests {
         assert_eq!(textured, Some([1.0; 3]), "TEXEL0 * SHADE, then * ENV");
         assert_eq!(arms, Some([1.0, 0.0, 0.0]), "PRIM * SHADE, then * ENV");
         assert_eq!(gloves, Some([1.0; 3]), "SHADE, then * ENV");
+    }
+
+    #[test]
+    fn prim_env_lerp_is_declined_by_the_shade_scale_reading() {
+        // `(PRIM-ENV)*TEXEL+ENV` -- Link, Ness, Yoshi and Pikachu's own
+        // models all set this (RE-073). It has no SHADE term at all, which
+        // `combiner_shade_scale` cannot fold into anything: it is a genuine
+        // additive constant (ENV) plus a texel-scaled term, not a scale on
+        // the vertex shade.
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let prim = Some([255, 255, 255, 255]);
+        let env = Some([0, 0, 0, 255]);
+        assert_eq!(combiner_shade_scale(hi, lo, true, prim, env), None);
+    }
+
+    #[test]
+    fn prim_env_lerp_is_recognised_as_a_texture_blend() {
+        // Same shape as above, read the other way: a blend from ENV (at
+        // TEXEL=0) to PRIM (at TEXEL=1) -- exactly the PSP GE's native
+        // `TextureEffect::Blend` (RE-073).
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let prim = Some([200, 100, 50, 255]);
+        let env = Some([10, 20, 30, 255]);
+        assert_eq!(
+            combiner_texture_blend(hi, lo, true, prim, env),
+            Some(([10, 20, 30, 255], [200, 100, 50, 255])),
+        );
+    }
+
+    #[test]
+    fn links_own_model_sets_the_lerp_shape_for_real() {
+        // The exact word his display list sets at offset 0x11670 (RE-073),
+        // not a synthetic stand-in: both cycles are `(PRIM, ENV, TEXEL0,
+        // ENV)`.
+        let (hi, lo) = (0x0030_9661, 0x552e_ff7f);
+        let prim = Some([255, 255, 255, 255]);
+        let env = Some([128, 128, 128, 255]);
+        assert_eq!(
+            combiner_texture_blend(hi, lo, true, prim, env),
+            Some(([128, 128, 128, 255], [255, 255, 255, 255])),
+        );
+    }
+
+    #[test]
+    fn a_texture_blend_needs_both_constants_set() {
+        // Baking a wrong constant colour in would be a real, visible defect,
+        // unlike `combiner_shade_scale`'s safe white-identity default -- so
+        // an unset PRIM or ENV must decline rather than guess.
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let some = Some([10, 20, 30, 255]);
+        assert_eq!(combiner_texture_blend(hi, lo, true, None, some), None);
+        assert_eq!(combiner_texture_blend(hi, lo, true, some, None), None);
+    }
+
+    #[test]
+    fn combiner_shade_scale_and_texture_blend_do_not_both_accept_the_same_shape() {
+        // Every shape one of these two folds into something usable, the
+        // other must decline -- overlap would mean two different, disagreeing
+        // interpretations of the same bytes are both being trusted.
+        let prim = Some([255, 0, 0, 255]);
+        let env = Some([0, 0, 255, 255]);
+        let cases = [
+            combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV),
+            combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0),
+            combine(TEXEL0, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0),
+        ];
+        for (hi, lo) in cases {
+            let scale = combiner_shade_scale(hi, lo, true, prim, env);
+            let blend = combiner_texture_blend(hi, lo, true, prim, env);
+            assert!(
+                scale.is_none() || blend.is_none(),
+                "both accepted hi={hi:#x} lo={lo:#x}: scale={scale:?} blend={blend:?}"
+            );
+        }
     }
 }
