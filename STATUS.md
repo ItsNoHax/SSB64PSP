@@ -16,7 +16,51 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-080 (this session) fixing the one real
+`IN_PROGRESS` on `R0.6`. RE-081 (this session) is a brief, self-contained
+detour into `R0.5` (matching RE-070's own precedent), picked from this
+file's own "push further on the dither" option once R0.6's combiner-shape
+work (RE-079/RE-080, below) ran into `R0.7`'s blocker. Resolved RE-053's
+long-standing apparent self-contradiction (its UV-span math said the
+canopy was "minified", its visual symptom said "magnified") by measuring
+Dream Land's two canopy textures *separately* instead of as one case:
+`romtool textures --file 104` shows the "gradient" texture genuinely
+minified (`3.70×1.36` repeats, exactly RE-053's own number) and the
+"highlight" texture magnified on its V axis (`1.56×0.88`, below 1.0) —
+RE-053 was right on both counts, just about two different textures the
+fix was applied to as if they were one.
+
+Also tested this file's own previously-untried "larger blur radius or
+multiple passes" idea directly: a temporary (reverted, not committed)
+`romtool` subcommand measured mean adjacent-pixel channel difference on
+both canopy textures at 0/1/2/3 `box_blur_wrapped` passes — a second
+pass reduces noise a further ~35–40% beyond the already-shipped single
+pass (gradient 5.64→3.69, highlight 6.14→3.73). Tested it as a real,
+reversible on-device change before trusting the number: rebuilt the pack
+with a temporary double-blur edit (no `psp/` source changes needed, only
+data differs), took before/after screenshots of the same cropped canopy
+region, and found `magick compare` reports a real but small difference
+(`MAE` 0.26%, `RMSE` 1.5%) that is not visually distinguishable at the
+tested camera distance — the dither pattern looks the same in both
+crops. This is the same outcome RE-075 already found for a different
+change to these same textures. Per RE-071's standing rule (a measured
+improvement alone is not sufficient — the image has to actually look
+better), **not shipped**. Reverted the experimental subcommand and the
+double-blur edit completely; `git status`/`git diff` confirmed the tree
+matched `HEAD` before this investigation, and a fresh repack from the
+reverted state matched the previously committed pack.
+
+`PLAN.md` R0.5 gained two newly-checked acceptance items
+("magnification behavior identified", "minification behavior
+identified") from the disambiguation above, but "Dream Land canopy
+discrepancy resolved" stays open — if anything, more clearly blocked on
+real hardware than before, since a substantially larger blur change
+than RE-070's shipped one still did not surface on screen under PPSSPP.
+`git diff --stat` after this session's work is empty except for
+documentation (`PLAN.md`, `STATUS.md`, `docs/reverse-engineering.md`) —
+this was a measurement pass, not an implementation one, the same shape
+as RE-072/RE-076.
+
+Immediately before this detour, RE-080 (this session) fixed the one real
 gap RE-079 (below) identified but left open: `(ZERO-ZERO)*ZERO+PRIM`
 (1,589 primitives archive-wide), a flat constant colour with no shade or
 texel dependence, which neither `combiner_shade_scale` nor
@@ -512,62 +556,59 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-RE-070 made real but partial progress on the dithered-texture/coverage
-problem (~40% less local noise on the treated textures, not a full fix).
-Two concrete, well-scoped options remain, each with a real starting
-point already recorded rather than an open-ended search:
+Both lines of investigation this file previously pointed at are now
+exhausted for further *quick* progress — not abandoned, but each hit a
+real blocker this session, recorded rather than papered over:
 
-1. **Push further on the dither.** The blur/mirror ordering idea is now
-   tried and closed (RE-075: real byte-level difference, confirmed not
-   visible at the tested camera distance — a correctness cleanup, not
-   progress on the discrepancy). Two ideas from the same list remain
-   untried: a larger blur radius or multiple passes; and reconsidering
-   whether RE-053's separate magnification diagnosis (not attempted by
-   RE-070 or RE-075) is actually the larger remaining contributor — this
-   is now the more promising of the two, since the boundary-condition
-   angle turned out to be a dead end for visible improvement.
-2. **`translucent` blend is a closed line of inquiry for now, not an open
-   one** — RE-071 already re-tested it against the RE-070-blurred texture
-   (worse, not better) and ruled out unpremultiplied-alpha blurring as the
-   cause too. Do not re-run either experiment without new evidence; the
-   next lead needs to be different, e.g. comparing this converter's raw
-   decoded texture alpha against what the original combiner/`MObjSub`
-   alpha path would actually produce for this surface, per `TODO.md`
-   Phase D's updated entry.
-3. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
-   "primitive color verified", "environment color verified", "unsupported
-   material behavior identified". "Fog verified" (RE-072), "depth state
-   verified"/"culling verified" (RE-068), "alpha behavior verified"
-   (RE-069) and "combiner behavior verified" (RE-073/RE-074) are all
-   checked. RE-079 did the systematic archive-wide census "primitive
-   color"/"environment color verified" were waiting on and fixed two real
-   classification bugs (a black-`PRIM`-scale ambiguity and
-   `combiner_texture_blend`'s over-strict `PRIM`+`ENV` gate); RE-080 then
-   fixed the one uncaught shape RE-079 left open (`(ZERO-ZERO)*ZERO+PRIM`,
-   a flat constant colour, via a new `combiner_flat_color`/
-   `MeshMaterial::flat_color`, wired all the way to device with no
-   `psp/` changes needed). Every combiner shape this model can resolve at
-   all is now classified into one of three structurally disjoint cases.
-   Both items still stay open, but only for one remaining, well-scoped
-   reason: `(PRIM-ENV)*TEXEL0+ENV` still misses for 3,085/4,580
-   primitives because neither `prim_color` nor `env_color` was ever set
-   on this converter's own per-graph state by the time the primitive is
-   emitted — likely the same `R0.7` material-table pairing gap already
-   tracked there (unpaired `MObj` graphs mean some nodes never receive
-   the material data that would set these), not a new independent
-   problem, but not confirmed as such. This is no longer a combiner-shape
-   question — closing it needs `R0.7` progress, or confirming the
-   PRIM/ENV-persistence question RE-064 already partly answered for
-   *texture* state also applies here. Read `PLAN.md` R0.6's acceptance
-   list fresh rather than assuming — the pattern that has paid off
-   repeatedly this session (RE-065's lighting angle, RE-068's geometry
-   mode, RE-069's render mode, RE-072's fog, RE-073/RE-074's combiner
-   shape, RE-079/RE-080's presence-vs-value bug and shape census) is:
-   find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
-   *default* for whatever's being checked, or measure what a declined
-   case actually looks like archive-wide, before assuming `mesh.rs`'s
-   current fallback already matches reality or that a rare-but-nonzero
-   count means nothing.
+1. **The dither/coverage problem (`R0.5`/`R0.6`'s `translucent`) is
+   fully tried out for now.** RE-081 tested the last untried idea on
+   this file's list ("a larger blur radius or multiple passes") and
+   found a real, substantial texture-level improvement that still does
+   not surface on screen at the tested camera distance — the same
+   outcome RE-075 already found for a different change to these
+   textures. RE-053's own remaining suggestion — deciding this on real
+   hardware, or rendering the surface in isolation at a controlled scale
+   — is now the most credible next step, and physical PSP access is
+   `R2`'s territory, blocked behind `R1`. `translucent` itself remains
+   the separate closed line RE-071 already established (do not re-run
+   either of its eliminated experiments without new evidence).
+2. **`R0.6`'s remaining items are blocked on `R0.7`, not on more
+   combiner-shape work.** RE-079/RE-080 (this session) classified every
+   combiner shape this model can resolve at all into three structurally
+   disjoint cases (shade-scale, texture-blend, flat-colour) and fixed
+   every misclassification found. What remains — `(PRIM-ENV)*TEXEL0+ENV`
+   missing `prim_color`/`env_color` for 3,085/4,580 primitives — is a
+   genuine absence on this converter's own per-graph state, most likely
+   the same `R0.7` unpaired-`MObj`-graph gap already tracked there.
+   `R0.7` itself was already characterized as a long tail after RE-078:
+   further progress needs upstream decomp typing or a `--search` result
+   narrowing to exactly one candidate, not open-ended investigation.
+   Re-running `romtool mobj --search` archive-wide without new
+   decompilation coverage would just re-find the same ambiguous/untyped
+   set RE-078 already found and correctly left alone.
+
+**Two fresher candidates, not touched this session, with concrete open
+acceptance items that do not depend on either blocker:**
+
+3. **`R0.14` — Camera / Projection Correctness (`IN_PROGRESS`).**
+   Pillarboxed viewport and depth-range inversion are implemented and
+   verified (D-007/D-008), but "projection matrix verified", "camera
+   transforms verified" and "aspect ratio verified" are still unchecked
+   — nobody has cross-checked this project's projection math against
+   the decompilation's actual camera setup the way RE-065 did for
+   lighting or RE-068 did for geometry mode. `R0.12` (billboard
+   correctness, `VERIFYING`) explicitly depends on this and shares the
+   same open gap.
+4. **`R0.12` — Billboard Correctness (`VERIFYING`).** Matrix kinds
+   45–48 are implemented and A/B-verified under a rotated camera
+   (RE-049), but "alpha behavior verified", "depth behavior verified"
+   and the decomp's `rot_mode` choice between matrix kinds 45/46 are not
+   modelled or checked yet.
+
+Both are real, unstarted verification work with a clear "read the decomp,
+measure archive-wide, compare against what this project currently does"
+shape — the same method that has paid off repeatedly this session,
+applied to a part of the renderer this session did not touch.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a
