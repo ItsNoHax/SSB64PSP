@@ -1617,6 +1617,35 @@ fn load_all(archive: &Archive) -> Loaded {
     // that file was checked against a following `gcAddMObjAll` on the same
     // `gobj`; these five have one; `RoomDesk`/`RoomTissues`/etc. do not and
     // are correctly left unpaired.
+    //
+    // RE-077: the same category as file 86's still-blocked case (`PLAN.md`
+    // R0.7, RE-061) -- a pairing `PartTables::scan` cannot find
+    // structurally, only demand-matching `--search` can even suggest -- but
+    // where file 86's search stayed at 27 ambiguous candidates with nothing
+    // typed to confirm any of them, this one stayed at exactly one. A raw,
+    // unlinked
+    // `MObjSub**` array that exists in the decompilation, fully typed, but
+    // is never the direct target of a pointer field adjacent to its
+    // `DObjDesc` array the way `FTCommonPart`/`MPGroundDesc` are — nothing
+    // in the source or the archive's own relocations names the connection,
+    // only the two symbols' *addresses* being close enough for
+    // `ssb_rom::mobj::search_tables`'s demand-length matching (anchored to
+    // real intern-relocation pointer slots, not a blind byte scan) to find
+    // it. Kirby's `JointTree_0x19F08`
+    // graph (22 real nodes) was one of R0.7's untraced 64 (RE-076); the
+    // search found exactly one candidate, 0x18D60 — confirmed against
+    // `refs/ssb-decomp-re/src/relocData/328_KirbyModel.c:7254`'s
+    // `dKirbyModel_gap_0x31CC_sub_0x15894_post[24]`, a real, fully-typed
+    // `MObjSub **` array whose 24 slots span 0x18D58..0x18DB8: 0x18D60 is
+    // exactly slot 2, and slots [2..24) are exactly 22 entries -- the graph's
+    // own node count. Not a coincidence of overlapping ranges; the slot
+    // count, the node count and the per-slot NULL/non-NULL pattern all agree
+    // with the graph's own per-node demand. The other 4 graphs this session
+    // found unpaired in the same file (`--search`, all 10-way ambiguous, not
+    // inserted) have candidate sets overlapping this same array's later
+    // slots, suggesting they may be further sub-ranges of it -- worth
+    // revisiting with the same cross-check once each has a genuinely unique
+    // candidate, not guessed at here.
     for &(file, graph, table) in &[
         (353u32, 0x3F8u32, 0x130u32), // LinkSpecial2 EntryWave
         (353u32, 0x7B8u32, 0x4F0u32), // LinkSpecial2 EntryBeam
@@ -1625,6 +1654,7 @@ fn load_all(archive: &Archive) -> Loaded {
         (52u32, 0x1DF28u32, 0x1DCA0u32), // MVCommon RoomCloseUpEffectAir
         (52u32, 0x1F270u32, 0x1F0F8u32), // MVCommon RoomCloseUpEffectGround
         (52u32, 0x22440u32, 0x20480u32), // MVCommon RoomDeskGround
+        (328u32, 0x19F08u32, 0x18D60u32), // KirbyModel JointTree_0x19F08
     ] {
         let nodes = graphs
             .get(&file)

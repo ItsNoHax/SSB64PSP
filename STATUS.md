@@ -16,32 +16,65 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-076 (this session) a `TODO.md` Phase G
-detour: measured whether "texture streaming... required" was actually
-supported by the number it was being justified with. `docs/memory.md`
-compared the packed set's **1170.9 KiB archive-wide total** directly
-against the **700 KiB per-scene budget** — but those are different
-things, since no single scene needs every stage, fighter, menu and
-effect loaded at once. Walked the actual pack (not the ROM) and measured
-what one real scene needs: the largest stage (Dream Land, 137.0 KiB)
-plus the four largest of the 12 real playable fighters, texture indices
-deduped rather than summed blind, comes to **217.1 KiB** — well under
-half the budget. Flagged, not hidden, why this is likely an undercount:
-`PLAN.md` R0.7's 64 still-unpaired `MObj` graphs mean several fighters
-(Yoshi at 0.8 KiB across 5 textures, Mario, Kirby) measured implausibly
-low, almost certainly missing real texture references this project
-can't see yet rather than genuinely sparse models. Updated
-`docs/memory.md`/`TODO.md` to stop treating "streaming is required" as
-settled and instead point at what's actually known: the per-scene need
-is probably much smaller than the archive-wide total, `docs/memory.md`'s
-already-planned per-scene `AssetArena` (one load per scene transition,
-mirroring the original's own loading pattern) may already be enough
-without a separate runtime residency system, and the real number should
-be re-measured once R0.7's pairing gaps close rather than assumed either
-way. No code changed — this was a measurement correcting a comparison,
-not an implementation.
+`IN_PROGRESS` on `R0.6`, with RE-077 (this session) a `R0.7` detour that
+followed up directly on RE-076's own hedge instead of leaving it
+unchecked. RE-076 guessed that several fighters' low measured texture
+counts were "almost certainly" undercounts from R0.7's 64 unpaired
+`MObj` graphs. Checked it file by file: `romtool mobj --file <id>` for
+each of the 11 remaining real playable fighters found **nine with zero
+unpaired graphs** (Mario, Fox, Donkey Kong, Samus, Luigi, Jigglypuff,
+Captain Falcon, Yoshi, Pikachu) — their low counts are a real low-poly
+N64 model, not a gap. Only Kirby (5 unpaired) and Ness (1) had real
+gaps. Got the full, untruncated list of all 64 unpaired graphs (not the
+CLI's default 12-line summary) and found most are menu/character-select
+emblem models, stage files and fighters' special-move files, not core
+fighter bodies.
+
+Kirby's largest gap (`JointTree_0x19F08`, 22 nodes) had exactly one
+demand-length-matching `--search` candidate (0x18D60) — anchored to real
+relocation pointer slots, across a non-uniform demand sequence, not
+RE-061's failure mode of one repeated value. Cross-checked against the
+decompilation before trusting it: `328_KirbyModel.c:7254` types exactly
+that region as a real, fully-typed 24-slot `MObjSub **` array, and
+0x18D60 lands precisely on slot 2 with slots `[2..24)` matching the
+graph's 22 nodes exactly — not a coincidence. Fixed via
+`PartTables::insert()`; verified `romtool mobj --file 328` (paired 2→3,
+unnamed 5→4, 0 mismatches across 21 nodes) and a clean `cargo psp
+--release` + pixel-identical Dream Land regression screenshot. Re-
+measured Kirby's aggregate texture VRAM afterward: unchanged (the
+newly-resolved materials reuse textures his other objects already
+reference) — this is a rendering-correctness fix, not a VRAM one, so
+RE-076's larger point (archive-wide vs. per-scene VRAM shouldn't be
+compared directly) still stands, but its "several fighters are
+undercounted" hedge was wrong and is now corrected in
+`docs/memory.md`/`PLAN.md`/`TODO.md`. Ness's one candidate (5-way
+ambiguous, one candidate sitting in a decomp region flagged as
+previously mis-typed) and Kirby's other four (2-node, 10-way ambiguous,
+possibly further sub-ranges of the same confirmed array) were checked
+and left unfixed — suggestive, not conclusive.
 
 ## Last Completed Task
+
+`TODO.md` Phase G — RE-076 (earlier this session) measured whether
+"texture streaming... required" was actually supported by the number it
+was being justified with. `docs/memory.md` compared the packed set's
+**1170.9 KiB archive-wide total** directly against the **700 KiB
+per-scene budget** — but those are different things, since no single
+scene needs every stage, fighter, menu and effect loaded at once.
+Walked the actual pack (not the ROM) and measured what one real scene
+needs: the largest stage (Dream Land, 137.0 KiB) plus the four largest
+of the 12 real playable fighters, texture indices deduped rather than
+summed blind, comes to **217.1 KiB** — well under half the budget.
+Flagged, at the time, that this was likely an undercount from R0.7's
+unpaired `MObj` graphs — RE-077 (above) checked that specific claim and
+mostly refuted it. Updated `docs/memory.md`/`TODO.md` to stop treating
+"streaming is required" as settled and instead point at what's actually
+known: the per-scene need is probably much smaller than the archive-wide
+total, and `docs/memory.md`'s already-planned per-scene `AssetArena`
+(one load per scene transition, mirroring the original's own loading
+pattern) may already be enough without a separate runtime residency
+system. No code changed in this pass — it was a measurement correcting
+a comparison, not an implementation.
 
 `R0.5 — Texture Sampling Correctness` — RE-075 (earlier this session)
 was a brief, self-contained detour picked from the previous pass's own
@@ -399,25 +432,28 @@ paired with a visibly worse result (blown-out highlights) — look at the
 actual image *and* the numbers, neither alone is sufficient.
 
 `TODO.md` Phase G's "texture streaming" item is **no longer a clear-cut
-"required" candidate** — RE-076 (this session) found that the 1170.9 KiB
-figure it was justified by is an archive-wide total being compared
-against a per-scene budget, and a direct measurement of one real scene's
-actual need (largest stage + four largest fighters, deduped) came to
-217.1 KiB, well under budget, though likely an undercount pending R0.7's
-64 unpaired `MObj` graphs. The more load-bearing next step there is not
-implementing a streaming system but **closing more of R0.7's pairing
-gaps and re-measuring** — building runtime residency management against
-today's known-incomplete texture data risks solving the wrong-shaped
-problem. `R0.4`'s own remaining item ("all missing palette cases
-resolved") is already fully attributed to `R0.7`'s file-86 long tail, so
-R0.4 has no further independently-actionable work. `R0.7` remains
-technically `IN_PROGRESS` but its remaining scope is an accepted long
-tail for its *originally scoped* items — only worth revisiting for those
-specific cases if the upstream decompilation types
-`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
-instance — though RE-076 gives R0.7 a fresh, independent reason to matter
-(the VRAM question above) beyond its original material-table-tracing
-scope. `R0.8 — Transform Correctness` is `COMPLETE`.
+"required" candidate** — RE-076 found that the 1170.9 KiB figure it was
+justified by is an archive-wide total being compared against a per-scene
+budget, and a direct measurement of one real scene's actual need
+(largest stage + four largest fighters, deduped) came to 217.1 KiB, well
+under budget. RE-077 then checked, rather than left standing, RE-076's
+own worry that this was a large undercount: mostly it wasn't — 9 of the
+11 fighters measured have zero unpaired `MObj` graphs, so their low
+texture counts are real, not hidden. One real gap (Kirby's) was found
+and fixed, without changing the VRAM total. The 217.1 KiB estimate
+should now be trusted more, not less, than when RE-076 first produced
+it. `R0.4`'s own remaining item ("all missing palette cases resolved")
+is already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has
+no further independently-actionable work. `R0.7` remains technically
+`IN_PROGRESS`: its originally-scoped blocked cases (file 86, file 353's
+Spin Attack, Ness's one candidate) only move if the upstream
+decompilation types the missing structs or a search candidate narrows to
+one, but RE-077 showed that "narrows to one" does sometimes happen
+(Kirby's did) — the other 61 untraced graphs (mostly menu/emblem models,
+stage files, and special-move files per RE-077's breakdown) are worth a
+`--search` pass each if a future session wants to keep chipping at this
+long tail, not just wait on the decompilation. `R0.8 — Transform
+Correctness` is `COMPLETE`.
 
 ## Blockers
 
