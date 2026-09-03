@@ -161,24 +161,24 @@ note: CI texture, no TLUT recorded  1  (packs successfully; informational)
 swizzled               432 (68%)
 
 by PSP format:
-  Psm8888     65 textures      513.3 KiB
-  PsmT4      551 textures      458.3 KiB
+  Psm8888     67 textures      641.1 KiB
+  PsmT4      549 textures      442.5 KiB
   PsmT8       22 textures       87.4 KiB
 
 VRAM budget
-  packed (chosen formats)     1059.0 KiB
+  packed (chosen formats)     1170.9 KiB
   naive, all RGBA8888         2432.8 KiB
-  saving                        56.5%
-  fits in ~700 KiB texture VRAM? no — needs streaming (1.5x over)
+  saving                        51.9%
+  fits in ~700 KiB texture VRAM? no — needs streaming (1.7x over)
 ```
 
-**56.5% saved** by keeping paletted textures paletted, down from 68.6%
-before RE-067's mirror-texture fix (which raised the packed total from
-763.2 KiB) — pre-baking a mirrored copy for a texture spends real bytes on
-every mirrored axis regardless of format, and `Psm8888` is the most
-expensive per texel affected. `PsmT4` still carries 551 of 638 packed
-textures; expanding those to RGBA8888 would cost eight times as much and
-blow the VRAM budget far worse.
+**51.9% saved** by keeping paletted textures paletted, down from 68.6%
+before RE-067's mirror-texture fix (763.2 KiB) and 56.5% before RE-070's
+targeted dither-blur (1059.0 KiB) — both spend real bytes converting
+specific textures to `Psm8888` for correctness, on top of the format
+choice below. `PsmT4` still carries 549 of 638 packed textures; expanding
+those to RGBA8888 would cost eight times as much and blow the VRAM budget
+far worse.
 
 `unique textures bound` rose from 647 to 665 and `packed` from 617 to 638
 this session (R0.7, RE-059/RE-060): resolving two files' `MObj` material
@@ -314,8 +314,13 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
   and sharpened at higher resolution, which points at texture
   *magnification* behaviour rather than minification/LOD selection. RE-067
   found and fixed one real, contributing cause (a missing `G_TX_MIRROR`
-  reproduction, see below) but did not touch magnification/dithering, which
-  remains `PLAN.md` R0.5's open acceptance criterion.
+  reproduction, see below); RE-070 tested RE-053's own two suggested fixes
+  for the dither directly and found filtering alone insufficient (measured
+  on-device) but pre-blurring the two canopy textures and packing them
+  unquantized (`Psm8888`) measurably softens the dither (~40% less
+  adjacent-pixel noise on the treated textures) without fully resolving it
+  — `PLAN.md` R0.5's open acceptance criterion stays open, now with real
+  progress and numbers behind it rather than an untried lead.
 * `G_TX_MIRROR` is now reproduced exactly rather than approximated (RE-067):
   since the PSP GE has no native mirror wrap mode (`sceGuTexWrap` is
   `Repeat`/`Clamp` only), `romtool`'s texture conversion pre-bakes a

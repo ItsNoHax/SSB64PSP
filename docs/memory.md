@@ -67,11 +67,12 @@ roughly 700 KiB for textures. That is the real constraint, and it is why CI4/CI8
 paletted textures matter (see `docs/rendering.md`) — a 64x64 CI4 texture is
 2 KiB where RGBA8888 would be 16 KiB.
 
-The packed texture set currently measures **1059 KiB**, 1.5x the ~700 KiB
-budget (RE-067 added mirrored-texture pre-baking on top of RE-053's mip
-chains, both correctness fixes that cost real VRAM). Every texture cannot
-be resident at once; texture streaming (`TODO.md` Phase G, "scene-aware
-residency") is not yet implemented and is no longer optional headroom —
+The packed texture set currently measures **1170.9 KiB**, 1.7x the ~700 KiB
+budget (RE-053's mip chains, RE-067's mirrored-texture pre-baking, and
+RE-070's targeted dither-blur are all correctness fixes that cost real
+VRAM). Every texture cannot be resident at once; texture streaming
+(`TODO.md` Phase G, "scene-aware residency") is not yet implemented and is
+no longer optional headroom —
 it is required for the game to run within the PSP's real VRAM budget.
 
 ## Allocator plan

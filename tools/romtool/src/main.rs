@@ -1435,6 +1435,17 @@ fn convert_texture(
         Some(texture::mirror_extend(&img, t.mirror_s, t.mirror_t))
     };
 
+    if NEEDS_DITHER_BLUR
+        .iter()
+        .any(|&(f, o, _)| t.data_file == Some(f) && t.data_offset == o)
+    {
+        // RE-070: named, evidence-based exception, not a general "detect
+        // dithering" heuristic -- see `NEEDS_DITHER_BLUR`'s doc comment.
+        let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
+        let blurred = texture::box_blur_wrapped(&img);
+        return Some(psp::pack_mipped(&blurred, psp::Psm::Psm8888, &[], swizzle));
+    }
+
     let mipped = |palette: Vec<u32>| {
         let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
         Some(psp::pack_mipped(&img, psm, &palette, swizzle))
@@ -1457,6 +1468,24 @@ fn convert_texture(
             .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
     }
 }
+
+/// Textures whose dithered CI4 palette reads as a checkerboard on the PSP's
+/// sharp LCD instead of the smooth gradient the N64 fakes via a composite-
+/// video CRT's analog blur (RE-053, RE-070). Verified per-texture, not
+/// pattern-matched: bilinear filtering alone was measured (an on-device
+/// nearest-vs-linear A/B) not to compensate, and quantizing a blurred
+/// result back to the same small palette mostly undoes the blur, so each
+/// entry here is decoded, box-blurred (`texture::box_blur_wrapped`) and
+/// packed unquantized (`Psm8888`) instead of through the normal paletted
+/// path -- spending real, bounded VRAM (about +19 KiB each) only where a
+/// human confirmed on screen that it was needed. Do not add an entry
+/// without the same before/after screenshot comparison; a general
+/// "detect dithering automatically" heuristic risks blurring textures that
+/// are not supposed to be smooth (flat-colour icons, sharp sprite art).
+const NEEDS_DITHER_BLUR: &[(u16, u32, &str)] = &[
+    (103, 0xE20, "Dream Land canopy gradient"),
+    (103, 0x5F0, "Dream Land canopy highlight"),
+];
 
 /// The whole archive, read once.
 ///
