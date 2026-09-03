@@ -57,7 +57,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 5 added the figatree animation lengths to the fighter table.
 /// 6 added the animation tables, and each node's local rest transform.
 /// 9 added `ALPHA_TEST`/`TRANSLUCENT` to `PrimDesc::flags` (RE-069).
-pub const VERSION: u32 = 9;
+/// 10 added `TEXTURE_BLEND` and its base/target colours to `PrimDesc`
+///    (RE-073).
+pub const VERSION: u32 = 10;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -138,6 +140,11 @@ pub mod flags {
     /// RE-069: `G_SETRENDERMODE`'s blend equation genuinely reads back the
     /// framebuffer weighted by `1 - alpha` -- real translucency.
     pub const TRANSLUCENT: u32 = 1 << 6;
+    /// RE-073: a combiner blending from a base colour to a target colour
+    /// driven by the texture, with no shade involved -- `PrimDesc`'s
+    /// `texture_blend_base`/`texture_blend_target` carry the two colours.
+    /// Not yet consumed on the device side; see `MeshMaterial::texture_blend`.
+    pub const TEXTURE_BLEND: u32 = 1 << 7;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -152,10 +159,16 @@ pub struct PrimDesc {
     /// Byte offset into the blob of the first index.
     pub index_offset: u32,
     pub index_count: u32,
+    /// `flags::TEXTURE_BLEND`'s base colour (packed ABGR), zero otherwise
+    /// (RE-073).
+    pub texture_blend_base: u32,
+    /// `flags::TEXTURE_BLEND`'s target colour (packed ABGR), zero otherwise
+    /// (RE-073).
+    pub texture_blend_target: u32,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 24;
+    pub const SIZE: usize = 32;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -924,6 +937,15 @@ impl PackWriter {
             if m.translucent {
                 f |= flags::TRANSLUCENT;
             }
+            if m.texture_blend.is_some() {
+                f |= flags::TEXTURE_BLEND;
+            }
+            let (blend_base, blend_target) = m.texture_blend.map_or((0, 0), |(base, target)| {
+                (
+                    crate::psp_texture::pack_abgr(base),
+                    crate::psp_texture::pack_abgr(target),
+                )
+            });
 
             self.prims.push(PrimDesc {
                 texture: texture_for(i).unwrap_or(PrimDesc::NO_TEXTURE),
@@ -932,6 +954,8 @@ impl PackWriter {
                 env_color: m.env_color.map_or(0, crate::psp_texture::pack_abgr),
                 index_offset,
                 index_count: p.indices.len() as u32,
+                texture_blend_base: blend_base,
+                texture_blend_target: blend_target,
             });
         }
 
@@ -1332,6 +1356,8 @@ impl PackWriter {
                 p.env_color,
                 p.index_offset,
                 p.index_count,
+                p.texture_blend_base,
+                p.texture_blend_target,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -1811,6 +1837,8 @@ impl<'a> Pack<'a> {
             env_color: u32_at(self.data, at + 12),
             index_offset: u32_at(self.data, at + 16),
             index_count: u32_at(self.data, at + 20),
+            texture_blend_base: u32_at(self.data, at + 24),
+            texture_blend_target: u32_at(self.data, at + 28),
         })
     }
 

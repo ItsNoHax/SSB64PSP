@@ -293,6 +293,20 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         // those two experiments without new evidence -- see RE-071 for what
         // was tried. Deferred pending further investigation, not silently
         // dropped -- see `PLAN.md` R0.6.
+
+        // `TEXTURE_BLEND` is also deliberately not wired yet (RE-073).
+        // `crates/ssb-rom/src/mesh.rs` already recognises the shape --
+        // `(PRIM-ENV)*TEXEL+ENV`, a texture-driven blend from a base colour
+        // (ENV) to a target colour (PRIM) with no shade at all, on several
+        // core fighter models (Link, Ness, Yoshi, Pikachu) -- and it maps
+        // exactly to the GE's native `TextureEffect::Blend`
+        // (`Cv = Cf*(1-Ct) + Cc*Ct`) with `Cf` = base, `Cc` = target via
+        // `sceGuTexEnvColor`, at no VRAM cost. Not wired here because doing
+        // it correctly needs affected primitives' vertices baked with a flat
+        // `texture_blend_base` colour instead of their usual shade -- and
+        // whether any of their vertices are shared with a normally-shaded
+        // primitive (which a blanket override would then corrupt) has not
+        // been checked. Deferred, not dropped -- see `PLAN.md` R0.6.
     }
 
     if st.last_texture != Some(p.texture) {

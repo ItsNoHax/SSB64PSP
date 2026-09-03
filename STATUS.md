@@ -16,34 +16,69 @@
 
 ## Task Status
 
-`IN_PROGRESS`. RE-072 (this session) closed the "fog verified" item, and
-along the way caught its own near-miss: an archive-wide re-scan (using
-`scan::Candidates::Exhaustive`) initially found `G_SETFOGCOLOR` 7 times
-and `G_FOG` geometry-mode sets 4 times, seemingly contradicting
-`DECISIONS.md` D-025's existing "twice" figure. Before treating that as a
-correction, cross-checked against reliable, reloc-anchored discovery
-(`find_root_display_lists`, which only follows real pointers) — under
-that, only 2 `SetFogColor` occurrences survive and 0 `G_FOG` hits. The
-`Exhaustive`-mode extras were false positives; D-025's original number was
-right all along, and the near-correction would have been the actual
-mistake.
+`IN_PROGRESS`. RE-073 (this session) measured what `combiner_shade_scale`
+actually declines, rather than leaving "combiner behavior verified"
+unchecked with no further data. A reloc-anchored scan (not `Exhaustive`,
+per RE-072's lesson) over every `G_SETCOMBINE` found 79 of 1360 (5.8%)
+reading `ENVIRONMENT`, 72 of those (91%) matching one shape in some
+cycle: `(PRIM-ENV)*TEXEL+ENV`, a texture-driven blend from `ENV` to
+`PRIM` with no shade term at all — across 28 files, including three
+fighters' own base models (Link, Ness, Pikachu). Verified one occurrence
+directly against ROM bytes (Link's own model, offset `0x11670`,
+`hi=0x00309661 lo=0x552EFF7F`), not just the scan output.
 
-Went further than a occurrence count to confirm those two are
-functionally inert, not just rare: grepped the entire decompilation for
-`gSPFogPosition` (the call that gives the RSP a fog range to compute
-against) — zero results, anywhere, in any file. Read the one real stage
-that sets a fog colour (file 118, `118_StageYosterSmallFile2`, confirmed
-via `romtool stages` to be one of the 41 currently-loaded stages, not a
-discarded variant) and checked whether its own `G_SETRENDERMODE` calls
-ever reference `G_BL_CLR_FOG` — both use `G_BL_CLR_MEM` instead. The
-colour is set and never read by anything in the same list. `DECISIONS.md`
-D-025 stands, now backed by checking that the surrounding machinery
-(range setup, blend-equation reference) doesn't exist either, not just
-that the command is rare. `PLAN.md` R0.6's "fog verified" item is checked.
-No code changed — this investigation concluded "correctly not
-implemented," not "needs implementing."
+`combiner_shade_scale` correctly declines this shape: it has a nonzero
+constant term *and* a nonzero texel term with no shade dependence, which
+cannot be folded into a single scale on the vertex shade. Recognized
+separately as its own case: added `combiner_texture_blend`
+(`crates/ssb-rom/src/mesh.rs`), which returns `(base, target)` and is
+gated on a real texture being bound (same reasoning as RE-069's
+`alpha_test`/`translucent` gate — `TEXEL` means nothing without one).
+Factored the shared two-cycle evaluation logic both functions need out
+into `evaluate_combiner` (behaviour-preserving refactor, existing
+`combiner_shade_scale` tests unchanged).
+
+This maps exactly to the PSP GE's native `TextureEffect::Blend`
+(`Cv = Cf*(1-Ct) + Cc*Ct`, `Cf`=base, `Cc`=target via
+`sceGuTexEnvColor`) — unlike RE-067's mirror-texture fix, this costs
+**zero VRAM**. Shipped detection into the pack format
+(`crates/ssb-rom/src/pack.rs`'s `flags::TEXTURE_BLEND` plus two new
+`PrimDesc` fields, `PrimDesc::SIZE` 24→32 bytes, `VERSION` 9→10), but
+followed the same detect-now/consume-later precedent RE-069 set for
+`translucent`: `psp/src/meshdraw.rs` does not wire it to
+`sceGuTexFunc`/`sceGuTexEnvColor` yet, because doing so correctly needs
+affected primitives' vertices baked with a flat base colour instead of
+their usual shade, and whether any of those vertices are shared with a
+normally-shaded primitive (which a blanket override would then corrupt)
+has not been checked this pass. `PLAN.md` R0.6's "combiner behavior
+verified" stays unchecked for that reason, but is now backed by a real
+measurement and a shipped, tested detector rather than an open question.
 
 ## Last Completed Task
+
+R0.6 — Material System Correctness — RE-072 (earlier this session)
+closed the "fog verified" item, and along the way caught its own
+near-miss: an archive-wide re-scan (using `scan::Candidates::Exhaustive`)
+initially found `G_SETFOGCOLOR` 7 times and `G_FOG` geometry-mode sets 4
+times, seemingly contradicting `DECISIONS.md` D-025's existing "twice"
+figure. Before treating that as a correction, cross-checked against
+reliable, reloc-anchored discovery (`find_root_display_lists`, which only
+follows real pointers) — under that, only 2 `SetFogColor` occurrences
+survive and 0 `G_FOG` hits. The `Exhaustive`-mode extras were false
+positives; D-025's original number was right all along, and the
+near-correction would have been the actual mistake. Went further than an
+occurrence count to confirm those two are functionally inert, not just
+rare: grepped the entire decompilation for `gSPFogPosition` (the call
+that gives the RSP a fog range to compute against) — zero results,
+anywhere, in any file. Read the one real stage that sets a fog colour
+(file 118, `118_StageYosterSmallFile2`, confirmed via `romtool stages` to
+be one of the 41 currently-loaded stages) and checked whether its own
+`G_SETRENDERMODE` calls ever reference `G_BL_CLR_FOG` — both use
+`G_BL_CLR_MEM` instead. `DECISIONS.md` D-025 stands, now backed by
+checking that the surrounding machinery doesn't exist either, not just
+that the command is rare. `PLAN.md` R0.6's "fog verified" item is
+checked. No code changed in that pass — it concluded "correctly not
+implemented," not "needs implementing."
 
 R0.6 — Material System Correctness — RE-071 (earlier this session)
 followed up on a natural question RE-070 raised: now that Dream Land's
@@ -275,20 +310,23 @@ point already recorded rather than an open-ended search:
    alpha path would actually produce for this surface, per `TODO.md`
    Phase D's updated entry.
 3. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
-   "primitive color verified", "environment color verified", "combiner
-   behavior verified" (partially covered by RE-039/RE-043 already but not
-   marked), "unsupported material behavior identified". "Fog verified" is
-   now checked (RE-072) — it was correctly unimplemented already, D-025's
-   number just needed a stronger check than a plain opcode count, which
-   RE-072 gave it. Read `PLAN.md` R0.6's acceptance list fresh rather than
-   assuming — the pattern that has paid off repeatedly this session
-   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode,
-   RE-072's fog) is: find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset
-   list sets the *default* for whatever's being checked (or, per RE-072,
-   whether the supporting machinery for a rare opcode exists *anywhere* in
-   the decompilation) before assuming `mesh.rs`'s current "unset means
-   declined" fallback already matches it, or that a rare-but-nonzero count
-   means something is really being missed.
+   "primitive color verified", "environment color verified", "unsupported
+   material behavior identified". "Fog verified" is checked (RE-072); the
+   dominant declined combiner shape is now identified, measured and
+   detected (RE-073), but "combiner behavior verified" itself stays
+   unchecked until either (a) `combiner_texture_blend`'s detection is
+   wired up on the device side (needs a vertex-sharing check first — see
+   RE-073's confidence note) or (b) the remaining ~8% of ENV-reading
+   combiners (and whatever `combiner_shade_scale` declines that never
+   reads ENV at all) get the same treatment. Read `PLAN.md` R0.6's
+   acceptance list fresh rather than assuming — the pattern that has paid
+   off repeatedly this session (RE-065's lighting angle, RE-068's geometry
+   mode, RE-069's render mode, RE-072's fog, RE-073's combiner shape) is:
+   find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
+   *default* for whatever's being checked, or measure what a declined case
+   actually looks like archive-wide, before assuming `mesh.rs`'s current
+   fallback already matches reality or that a rare-but-nonzero count means
+   nothing.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a

@@ -82,6 +82,14 @@ more than just rare (RE-072): no `gSPFogPosition` call exists anywhere in
 the decompilation to give a fog range meaning, and the one real stage
 that sets a fog colour never references it from its own render mode.
 
+Of the 1360 `G_SETCOMBINE` commands, 79 (5.8%) read `ENVIRONMENT`, and
+91% of those match one shape the converter's `combiner_shade_scale`
+cannot fold into a vertex-shade scale: `(PRIM-ENV)*TEXEL+ENV`, a
+texture-driven blend with no shade dependence, on 28 files including
+three fighters' own base models (RE-073). Detection ships
+(`combiner_texture_blend`, packed via `pack.rs`'s `TEXTURE_BLEND` flag)
+but is not yet consumed by `psp/src/meshdraw.rs` — see `PLAN.md` R0.6.
+
 **Texture formats**, by `G_SETTILE` count:
 
 | Format | Count | PSP destination |

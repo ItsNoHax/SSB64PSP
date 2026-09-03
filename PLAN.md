@@ -527,6 +527,21 @@ on the device side (`pack.rs`'s detection ships; `meshdraw.rs` does not
 read the flag yet) rather than shipping an unverified visual change to
 this project's primary test scene.
 
+RE-073 measured what `combiner_shade_scale` actually declines: 79 of 1360
+`SetCombine` commands archive-wide (5.8%) read `ENVIRONMENT`, 72 of those
+(91%) matching one shape, `(PRIM-ENV)*TEXEL+ENV` — a texture-driven blend
+from `ENV` to `PRIM` with no shade dependence at all, across 28 files
+including three fighters' own base models (Link, Ness, Pikachu). Added
+`combiner_texture_blend` to detect it (gated on a real texture, same as
+`alpha_test`/`translucent`), which maps exactly to the PSP GE's native
+`TextureEffect::Blend` at zero VRAM cost. Shipped detection into
+`pack.rs` (`flags::TEXTURE_BLEND`, `VERSION` 9 → 10) but deliberately not
+wired to `sceGuTexFunc` on the device side yet: doing so needs affected
+primitives' vertices baked with a flat base colour, and whether any of
+those vertices are shared with a normally-shaded primitive (which a
+blanket override would then corrupt) has not been checked — same
+detect-now/consume-later shape as RE-069's `translucent`.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -539,9 +554,9 @@ Reproduce original SSB64 material behavior.
 ### Acceptance
 
 * [ ] material tables resolved
-* [ ] combiner behavior verified
-* [ ] primitive color verified
-* [ ] environment color verified
+* [ ] combiner behavior verified — RE-073: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models); detection shipped, device-side consumption deferred pending a vertex-sharing check; no systematic accounting of every other distinct `SetCombine` shape yet
+* [ ] primitive color verified — read by RE-073's shape and by others `combiner_shade_scale` already folds, but not exhaustively accounted for
+* [ ] environment color verified — same as primitive color
 * [ ] lighting verified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
@@ -552,7 +567,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073 in `docs/reverse-engineering.md`.
 
 ### Evidence
 

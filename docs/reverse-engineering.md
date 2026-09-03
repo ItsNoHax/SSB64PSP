@@ -4721,3 +4721,91 @@ and RDP-side blend-equation reference exist anywhere (they don't).
 run and compared, not just one trusted; `gSPFogPosition`'s absence is a
 whole-decompilation grep, not a sample; file 118's render mode was read
 directly from its own bytes, not inferred.
+
+## RE-073 — A texture-driven PRIM/ENV blend `combiner_shade_scale` declines
+
+**Question.** `PLAN.md` R0.6's "combiner behavior verified" item is still
+unchecked. `combiner_shade_scale` (`crates/ssb-rom/src/mesh.rs`) only
+recognises combiners reducible to a single scale on the vertex shade —
+what combiner shapes does it actually decline, and how much of the
+archive do they touch?
+
+**Measured what reads `ENVIRONMENT`.** A reloc-anchored scan
+(`find_root_display_lists`, not `Exhaustive`, per RE-072's lesson) over
+every archive file's `G_SETCOMBINE` commands found 79 of 1360 (5.8%)
+reading `ENVIRONMENT` in some multiplexer slot. Of those, 72 (91%) match
+one specific shape in at least one cycle: `A=PRIMITIVE, B=ENVIRONMENT,
+C=TEXEL0, D=ENVIRONMENT` — i.e. `(PRIM-ENV)*TEXEL+ENV`, an affine blend
+from `ENV` (at `TEXEL=0`) to `PRIM` (at `TEXEL=1`) with **no shade
+dependence at all**. It appears in 28 files, including three playable
+fighters' own base models — `324_LinkModel`, `335_NessModel`,
+`341_PikachuModel` — plus several characters' special-move files
+(`161_FoxSpecial3`, `336_NessSpecial3`, `342_PikachuSpecial3`,
+`349_SamusSpecial2`, `350_CaptainSpecial2`, `351_PurinSpecial2`,
+`352_NessSpecial2`, `353_LinkSpecial2`), several stage files (Sector,
+Yoster, Last), the shared effects/menu/opening-movie files (52, 83–86,
+136, 163, 167), and file 118 (RE-072's fog-carrying stage file). Verified
+one exact occurrence directly against ROM bytes rather than trusting the
+scan alone: Link's own model sets this at offset `0x11670` with
+`hi=0x00309661, lo=0x552EFF7F`, both cycles decoding to `(PRIM, ENV,
+TEXEL0, ENV)`.
+
+**Why `combiner_shade_scale` cannot fold this in.** Evaluating the
+combiner symbolically gives a constant term `k=ENV` *and* a texel-scaled
+term `t=(PRIM-ENV)`, with no shade term (`s`/`st` both zero).
+`combiner_shade_scale` only ever produces a usable result when the
+*only* nonzero term is `s` or `st` — a constant-plus-texel result needs a
+second colour source the vertex format doesn't carry, so it correctly
+declines (returns `None`) rather than guessing. Before this pass, that
+meant primitives with this shape rendered with their raw vertex shade and
+no colour at all, silently wrong on three characters' own models.
+
+**The PSP GE already has hardware for exactly this.** `sceGuTexFunc`'s
+`TextureEffect::Blend` computes `Cv = Cf*(1-Ct) + Cc*Ct`, with `Cf` a
+flat per-draw base colour and `Cc` set via `sceGuTexEnvColor` — the same
+shape as `(ENV)*(1-TEXEL) + PRIM*TEXEL`, i.e. `base=ENV`, `target=PRIM`,
+at zero VRAM cost (unlike RE-067's mirror-texture fix, which paid a real
+archive-wide budget increase because there was no equivalent native
+mode). Implementing it fully would need affected primitives' vertices
+baked with a flat `base` colour in place of their usual shade-derived
+one.
+
+**Shipped detection, deferred device-side consumption — same shape as
+RE-069.** Added `combiner_texture_blend` (`crates/ssb-rom/src/mesh.rs`),
+which recognises this shape and returns `(base, target)` in `u8` RGBA,
+gated on an actual texture being bound the same way `alpha_test` and
+`translucent` are (RE-069) since `TEXEL` means nothing without one.
+Unlike `combiner_shade_scale`'s white-default for an unset constant, an
+unset `PRIM`/`ENV` here declines outright: white is a safe *scale*
+identity, but a wrong constant colour baked into `base`/`target` would be
+a real, visible defect. `evaluate_combiner`, the two-cycle evaluation
+logic both functions need, was factored out of `combiner_shade_scale`
+into a shared helper (behaviour-preserving; covered by the existing
+`combiner_shade_scale` tests still passing unchanged).
+
+`crates/ssb-rom/src/pack.rs` gained `flags::TEXTURE_BLEND` and two new
+`PrimDesc` fields, `texture_blend_base`/`texture_blend_target` (packed
+ABGR, zero when unset) — `PrimDesc::SIZE` 24 → 32 bytes, `VERSION` 9 →
+10. `psp/src/meshdraw.rs` deliberately does not wire the new flag to
+`sceGuTexFunc`/`sceGuTexEnvColor` yet: doing so correctly requires
+verifying whether any vertex shared between a `TEXTURE_BLEND` primitive
+and a normally-shaded primitive would have its colour silently
+overridden, which this pass did not check. Recorded as a comment at the
+call site rather than left unstated, matching RE-069's `TRANSLUCENT`
+precedent.
+
+**Result.** `PLAN.md` R0.6's "combiner behavior verified" item stays
+unchecked (device-side consumption is still missing), but the shape is
+now identified, measured, detected, unit-tested against both synthetic
+and real ROM bytes, and recorded in the pack format rather than silently
+dropped. "primitive color verified" and "environment color verified" are
+still open: both colours are read by this shape and by others
+`combiner_shade_scale` already folds, but a systematic accounting of
+every distinct shape `SetCombine` uses archive-wide has not been done.
+
+**Confidence: high** for the shape identification and its measured
+extent (reloc-anchored scan, cross-checked against one real ROM word
+decoded from Link's own file, not just synthetic test vectors). **Low**
+for whether baking a flat vertex colour is safe to wire up without
+corrupting shared vertices — that is exactly why it is deferred rather
+than shipped.
