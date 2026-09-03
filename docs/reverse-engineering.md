@@ -5606,3 +5606,97 @@ passing unit test pinning the arithmetic RE-034's fix depends on. The
 retraction of RE-034's specific residual number is itself evidenced by a
 reproducible sensitivity analysis (three measurement attempts, three
 different numbers), not merely asserted.
+
+## RE-083 — Billboard census: depth is uniform, the `rot_mode` worry was already answered, and `translucent` hits billboards twice as hard
+
+**Question.** `PLAN.md` R0.12 (Billboard Correctness) lists two specific
+open worries in its own "Current evidence": billboard "alpha and depth
+behavior" is unverified, and "the decomp's `rot_mode` choice between
+matrix kinds 45/46 is not modelled." Are these real gaps?
+
+**The `rot_mode` worry is not a gap — it was already closed by RE-063,
+just never connected to R0.12.** `gcDecideDObj3TransformsKind`
+(`refs/ssb-decomp-re/src/sys/objanim.c:2224`) is a real function that
+chooses between matrix kinds 45/46 (and 47/48, 49/50) via a `rot_mode`
+computed from a *different* object's rotation-transform composition, but
+it is only ever called from `gcSetupCustomDObjs` — the **runtime, dynamic**
+transform-composition path RE-063 already traced and ruled out of scope
+(reachable only from fighter/item/effect game code that doesn't exist in
+this project yet). The ROM-driven path this project's importer actually
+parses, `gcSetupCommonDObjs` (`objanim.c:2153`), does not call
+`gcDecideDObj3TransformsKind` at all — it maps `id & 0x4000` to
+`nGCMatrixKind46` and `id & 0x2000` to `nGCMatrixKind48` *unconditionally*,
+confirmed by reading the function directly: no `rot_mode` branch exists in
+it. Kind 45 (and 47, 49) are therefore structurally unreachable from any
+`DObjDesc` array, exactly as RE-063's own transform-kind enumeration
+already concluded for a different reason. There was nothing left to model.
+
+**A billboard census, the same shape as RE-079's combiner census.** A
+temporary `romtool` subcommand (reverted, not committed) walked the built
+pack's node table, filtered `NodeDesc::FLAG_BILLBOARD`, and tallied every
+flag on their meshes' primitives:
+
+```
+billboard nodes: 109
+billboard primitives: 118
+  alpha_test       34 (28.8%)
+  translucent      35 (29.7%)
+  z_buffer        118 (100.0%)
+  cull_back        82 (69.5%)
+  lit               4 (3.4%)
+  textured         93 (78.8%)
+```
+
+(109, not the `81` `PLAN.md` R0.12 previously stated — that count predates
+RE-062's `RecalcRotRpyRSca` billboards; `STATUS.md`'s own history already
+had the correct 109 figure, just not propagated to `PLAN.md`.)
+
+**Depth is unambiguous: every billboard primitive is depth-tested.**
+`z_buffer` is `100.0%` — not "mostly", all of them. This matches RE-068's
+RDP-reset-default finding (`Z_BUFFER` on by default, present in a node's
+material unless something explicitly clears it) with zero exceptions
+among billboards specifically. There is no billboard-specific depth
+behavior left to discover: they participate in the depth buffer exactly
+like ordinary geometry, which is what the reset default plus this
+project's already-shipped `Z_BUFFER`→`DepthTest` wiring (RE-068) already
+produces. "Depth behavior verified" for billboards is answered by data
+already flowing through an already-verified mechanism.
+
+**Alpha is half-answered, and the unanswered half is the known
+`translucent` gap, hitting billboards harder than average.**
+`alpha_test` at `28.8%` is the same, already-shipped, already-verified
+mechanism (RE-069) — nothing billboard-specific needed. `translucent` at
+`29.7%` is a different story: RE-069 detected it archive-wide but
+deliberately did not wire it to `sceGuEnable(Blend)` after it produced a
+checkerboard on Dream Land's own canopy-highlight surface, and RE-071
+re-confirmed after RE-070's dither fix that the checkerboard is still
+unresolved by a different, worse failure. Billboards measure **29.7%
+translucent, roughly double RE-069's archive-wide 14.4%** — meaning the
+already-open `translucent` gap disproportionately affects exactly this
+category of geometry (leaf/decoration sprites are more likely to want
+real transparency than solid model geometry, which tracks). This is not
+a new problem to solve; it sharpens the priority of the existing one.
+
+**Result.** `PLAN.md` R0.12 gains two newly-checked acceptance items:
+"billboard types enumerated" (RE-063 already exhaustively traced every
+`gcPrepDObjMatrix` case reachable from ROM data) and "depth behavior
+verified" (this entry, unambiguous 100% measurement). "Camera-facing
+transforms verified" is also now checked, citing RE-049's existing
+rotated-camera A/B test, which this entry did not repeat but which
+already directly answers that item. "Alpha behavior verified" stays
+open, now with a precise, correct reason instead of a vague one:
+`alpha_test` needs nothing further, `translucent` needs RE-069/071's
+still-unsolved rendering bug, measured to matter twice as much for
+billboards as for geometry generally. "Scale verified", "orientation
+verified", "texture orientation verified" and "all flagged billboard
+nodes verified" stay open — this census measured render *state*, not
+per-node transform correctness beyond what RE-049 already spot-checked
+on Dream Land specifically. No code changed; the temporary subcommand
+was reverted before committing, matching RE-079/RE-081's precedent.
+
+**Confidence: high** for the `rot_mode` conclusion (direct reading of
+both decomp functions involved, not inference) and for the depth/alpha
+percentages (a real archive-wide walk of the built pack, not a sample).
+**Not attempted**: confirming any specific billboard node beyond Dream
+Land's own six canopy sprites (RE-049) actually looks correct on
+screen — this entry is a state census, not a visual verification pass.

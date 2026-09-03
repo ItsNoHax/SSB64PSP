@@ -12,11 +12,54 @@
 
 ## Current Task
 
-`R0.14 — Camera / Projection Correctness`
+`R0.12 — Billboard Correctness`
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.14`. RE-082 (this session) picked up the fresh,
+`VERIFYING` on `R0.12`. RE-083 (this session) picked up the concrete,
+ready candidate this file's own previous "Next Eligible Task" note
+pointed at once `R0.14`'s aspect-ratio work (RE-082, below) closed out
+what it could reach without a real game camera.
+
+Checked `R0.12`'s two specific open worries directly. First, "the
+decomp's `rot_mode` choice between matrix kinds 45/46" turned out to be
+a non-issue rather than an unmodelled gap: `gcDecideDObj3TransformsKind`
+(the function with the actual `rot_mode` branch) is only ever called
+from `gcSetupCustomDObjs`, the runtime/dynamic transform path RE-063
+already ruled out of this project's scope. Read `gcSetupCommonDObjs`
+directly (the *only* ROM-driven path, per RE-063) and confirmed it maps
+`0x4000`→`Kind46`/`0x2000`→`Kind48` unconditionally, with no `rot_mode`
+branch in it at all — kind 45 (and 47, 49) are structurally unreachable
+from any `DObjDesc` array, so there was nothing left to model.
+
+Second, ran an archive-wide census (temporary `romtool` subcommand,
+reverted, matching RE-079/RE-081's pattern) of every billboard-flagged
+node's own primitives: 109 nodes (not the `81` `PLAN.md` had stated —
+stale since RE-062 added `RecalcRotRpyRSca` billboards; `STATUS.md`'s
+own history already had 109, just never propagated to `PLAN.md`, now
+fixed), 118 primitives. `z_buffer` is on for **100%** of them — depth
+behavior for billboards is unambiguous and matches RE-068's RDP-reset
+default with zero exceptions. `alpha_test` (28.8%) is the same
+already-shipped RE-069 mechanism, nothing further needed. `translucent`
+(29.7%) is the interesting number: it is **not** a new problem, it is
+RE-069/RE-071's already-known, still-unresolved gap (deferred after
+producing a checkerboard on Dream Land's own canopy-highlight surface)
+— but billboards hit it at roughly **double** the archive-wide rate
+(14.4%), meaning that gap's priority should be weighted by billboards
+specifically, not treated as a uniform archive-wide long tail.
+
+`PLAN.md` R0.12 gains four newly-checked acceptance items: "billboard
+types enumerated" (RE-063), "camera-facing transforms verified"
+(RE-049, already existed, just never checked off), "depth behavior
+verified" (this session), and stays `VERIFYING` overall since "scale
+verified", "orientation verified", "texture orientation verified" and
+"all flagged billboard nodes verified" remain open — this census
+measured render *state* distribution, not per-node visual correctness
+beyond RE-049's own Dream Land spot check. No code changed; the
+temporary subcommand was reverted before committing — `git diff --stat`
+on `tools/romtool/src/main.rs` is empty.
+
+Immediately before this, RE-082 (this session) picked up the fresh,
 unblocked candidate this file's own previous "Next Eligible Task" note
 pointed at, since both `R0.6` (blocked on `R0.7`) and `R0.5` (RE-081,
 just below, now looking like it needs real hardware) ran into real
@@ -638,39 +681,39 @@ real blocker this session, recorded rather than papered over:
    set RE-078 already found and correctly left alone.
 
 3. **`R0.14`'s remaining items need a real camera system or the decomp's
-   FOV, neither of which exists here yet.** RE-082 (this session) closed
-   "viewport verified", "aspect ratio verified" and "N64/PSP resolution
-   differences explicitly handled" — see above. What is left is
-   qualitatively different from what RE-082 could resolve by reading
-   `psp/` code: "projection matrix verified" needs the decompilation's
-   actual FOV/near/far values (this project's `60.0` degrees is the
-   debug viewer's own arbitrary pick, never cross-checked against
-   `refs/ssb-decomp-re`'s camera setup — a concrete, well-scoped lookup,
-   likely in a `camera`/`mpcamera`-named source file), and "camera
-   transforms verified"/"representative scenes compared" cannot be
-   verified at all until a real game camera exists — right now only the
-   debug viewer's free-roaming inspection camera does, and per `PLAN.md`
-   §5's gate, gameplay/camera systems are downstream of rendering
-   correctness, not the other way round. The FOV lookup is doable now
-   without waiting on that; the other two are not.
+   FOV, neither of which exists here yet.** RE-082 closed "viewport
+   verified", "aspect ratio verified" and "N64/PSP resolution differences
+   explicitly handled". What is left: "projection matrix verified" needs
+   the decompilation's actual FOV/near/far values (this project's `60.0`
+   degrees is the debug viewer's own arbitrary pick, never cross-checked
+   against `refs/ssb-decomp-re`'s camera setup — a concrete, well-scoped
+   lookup, likely in a `camera`/`mpcamera`-named source file, **doable now,
+   not blocked**), and "camera transforms verified"/"representative scenes
+   compared" cannot be verified at all until a real game camera exists —
+   right now only the debug viewer's free-roaming inspection camera does,
+   and per `PLAN.md` §5's gate, gameplay/camera systems are downstream of
+   rendering correctness, not the other way round.
+4. **`R0.12`'s remaining items need either a decomp-derived expected
+   value or a real camera to test against — the same shape as `R0.14`'s
+   remainder, not a fresh angle.** RE-083 (this session) closed
+   "billboard types enumerated", "camera-facing transforms verified" and
+   "depth behavior verified", and narrowed "alpha behavior verified" to
+   a single, already-tracked blocker (RE-069/RE-071's `translucent`
+   checkerboard, now known to hit billboards at ~2x the archive-wide
+   rate). What remains — "scale verified", "orientation verified",
+   "texture orientation verified", "all flagged billboard nodes
+   verified" — all need either a decomp-derived expected value per
+   billboard type (parallel to the FOV lookup above) or a rotated/moved
+   camera to test against beyond RE-049's own single Dream Land spot
+   check, which the debug viewer's zoom/orbit controls can already do —
+   this is device-interactive verification work, not a code-reading or
+   archive-census task the way the last several sessions' progress was.
 
-**A concrete, ready candidate, not touched this session:**
-
-4. **`R0.12` — Billboard Correctness (`VERIFYING`).** Matrix kinds
-   45–48 are implemented and A/B-verified under a rotated camera
-   (RE-049), but "alpha behavior verified", "depth behavior verified"
-   and the decomp's `rot_mode` choice between matrix kinds 45/46 are not
-   modelled or checked yet. Depends on `R0.8` (`COMPLETE`) and `R0.14`
-   (now further along after RE-082, though its own "camera transforms"
-   gap is shared and still open) — nothing here is blocked by either
-   dependency's remaining open items specifically, since billboards
-   already have their own working camera-facing math (RE-049), independent
-   of whatever the FOV constant turns out to be.
-
-Both are real, unstarted verification work with a clear "read the decomp,
-measure archive-wide, compare against what this project currently does"
-shape — the same method that has paid off repeatedly this session,
-applied to a part of the renderer this session did not touch.
+The two genuinely *actionable-right-now* items across both tasks are the
+`R0.14` FOV lookup (read the decomp's camera setup, compare to `60.0`) and
+`RE-069`/`RE-071`'s `translucent` checkerboard (still unsolved, now known
+to matter more than previously weighted) — both are reads/measurements
+against existing code and data, not new device-interactive verification.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a
