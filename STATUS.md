@@ -16,19 +16,40 @@
 
 ## Task Status
 
-`IN_PROGRESS`. RE-074 (this session) closed the loop RE-073 left open.
-RE-073's low-confidence deferral was whether baking a `TEXTURE_BLEND`
-primitive's flat base colour into its vertices could corrupt a vertex
-shared with a normally-shaded primitive loading the same RSP
-vertex-cache slot. Reading `crates/ssb-rom/src/mesh.rs`'s existing
-`Builder::push_vertex` answered it without new experimentation: it
-already folds `prim_color`'s scale into a vertex's `rgba` *before*
-deduplicating (`Builder::seen: BTreeMap<MeshVertex, u16>`, keyed on the
-already-coloured vertex), and its own doc comment says the dedup turns a
-vertex shared by two differently-coloured primitives into two entries by
-itself. `texture_blend` baking a flat base colour the same way inherits
-that guarantee for free — the "risk" was a real gap in what had been
-*checked*, not a real gap in the architecture.
+`IN_PROGRESS` on `R0.6`, with RE-075 (this session) a brief, self-contained
+`R0.5` detour picked from the previous pass's own "push further on the
+dither" option. Found and fixed a real but small ordering bug in the
+canopy dither blur (`tools/romtool/src/main.rs`'s `convert_texture`): it
+blurred *after* mirroring, so `box_blur_wrapped`'s toroidal wraparound
+sampled the mirrored copy at the seam instead of the texture's own true
+periodic neighbour. Reordered to blur first, mirror second — same cost,
+more correct. Before trusting it changed anything, built two packs (one
+per order, isolated via `git stash`) and byte-diffed them directly:
+**6724 bytes differ** between the two canopy textures' packed data,
+confirming the change is real, not a no-op. Then screenshotted before
+and after anyway, because a byte diff is not a visual confirmation: the
+canopy crop was **pixel-identical** at the debug viewer's default camera
+distance — the difference is real but too small (seam-adjacent texels
+only) and too minified at this distance to be currently visible. Shipped
+as a correctness cleanup that costs nothing, explicitly **not** claimed
+as progress on RE-053's still-open dithering discrepancy, and `R0.6`
+resumes as the current task next.
+
+## Last Completed Task
+
+R0.6 — Material System Correctness — RE-074 (earlier this session)
+closed the loop RE-073 left open. RE-073's low-confidence deferral was
+whether baking a `TEXTURE_BLEND` primitive's flat base colour into its
+vertices could corrupt a vertex shared with a normally-shaded primitive
+loading the same RSP vertex-cache slot. Reading `crates/ssb-rom/src/
+mesh.rs`'s existing `Builder::push_vertex` answered it without new
+experimentation: it already folds `prim_color`'s scale into a vertex's
+`rgba` *before* deduplicating (`Builder::seen: BTreeMap<MeshVertex,
+u16>`, keyed on the already-coloured vertex), and its own doc comment
+says the dedup turns a vertex shared by two differently-coloured
+primitives into two entries by itself. `texture_blend` baking a flat base
+colour the same way inherits that guarantee for free — the "risk" was a
+real gap in what had been *checked*, not a real gap in the architecture.
 
 Shipped the bake (mirroring `prim_color`'s branch) and wired
 `psp/src/meshdraw.rs`'s `apply_material` to
@@ -54,8 +75,6 @@ packed-normal byte, no combiner colour); after, the correct grey-to-orange
 gradient. Also re-screenshotted Dream Land's stage view (unaffected by
 this shape) before and after — pixel-identical, no regression. `PLAN.md`
 R0.6's "combiner behavior verified" item is now checked.
-
-## Last Completed Task
 
 R0.6 — Material System Correctness — RE-073 (earlier this session)
 measured what `combiner_shade_scale` actually declines. A reloc-anchored
@@ -307,18 +326,18 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 RE-070 made real but partial progress on the dithered-texture/coverage
 problem (~40% less local noise on the treated textures, not a full fix).
-Three concrete, well-scoped options remain, each with a real starting
+Two concrete, well-scoped options remain, each with a real starting
 point already recorded rather than an open-ended search:
 
-1. **Push further on the dither**, now that pre-blur-and-pack-unquantized
-   is confirmed to be the right *kind* of fix, just not strong enough yet.
-   Ideas not yet tried: a larger blur radius or multiple passes; blurring
-   before the mirror-extend doubling instead of after (RE-067's
-   `mirror_extend` runs first currently, so the blur's wrap-around samples
-   already-mirrored, possibly-duplicated neighbours — check whether that
-   matters); or reconsidering whether RE-053's separate magnification
-   diagnosis (not attempted by RE-070) is actually the larger remaining
-   contributor.
+1. **Push further on the dither.** The blur/mirror ordering idea is now
+   tried and closed (RE-075: real byte-level difference, confirmed not
+   visible at the tested camera distance — a correctness cleanup, not
+   progress on the discrepancy). Two ideas from the same list remain
+   untried: a larger blur radius or multiple passes; and reconsidering
+   whether RE-053's separate magnification diagnosis (not attempted by
+   RE-070 or RE-075) is actually the larger remaining contributor — this
+   is now the more promising of the two, since the boundary-condition
+   angle turned out to be a dead end for visible improvement.
 2. **`translucent` blend is a closed line of inquiry for now, not an open
    one** — RE-071 already re-tested it against the RE-070-blurred texture
    (worse, not better) and ruled out unpremultiplied-alpha blurring as the
