@@ -16,7 +16,52 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-079 (this session) doing the
+`IN_PROGRESS` on `R0.6`, with RE-080 (this session) fixing the one real
+gap RE-079 (below) identified but left open: `(ZERO-ZERO)*ZERO+PRIM`
+(1,589 primitives archive-wide), a flat constant colour with no shade or
+texel dependence, which neither `combiner_shade_scale` nor
+`combiner_texture_blend` can express. Added `combiner_flat_color`,
+structurally disjoint from the other two (each requires a different,
+mutually exclusive combination of RE-079's presence flags), gated the
+same way RE-079 fixed `combiner_texture_blend` — only requires whichever
+of `PRIM`/`ENV` the shape actually reads, so a bare `ONE` (28
+occurrences) needs neither. Also covers `(ZERO-ZERO)*PRIM+ENV` (9
+occurrences, `ENV` alone via a different slot arrangement) for free,
+since it is the same underlying arithmetic case, not a new shape needing
+new logic.
+
+Wired further than `texture_blend` was left at its own equivalent stage
+(RE-073 detected and packed it, RE-074 wired consumption later): since
+`TEXEL` provably never enters this shape's formula, `material_now`
+immediately forces the primitive untextured (rather than let the GE's
+default `Modulate` silently sample and multiply in whatever texture
+happened to be bound) and `push_vertex` bakes the resolved colour into
+affected vertices, the same content-keyed-dedup-safe mechanism
+`prim_color`'s scale and `texture_blend`'s base colour already use.
+Packed as `pack.rs`'s `flags::FLAT_COLOR` and `PrimDesc::flat_color`
+(`PrimDesc::SIZE` 32→36 bytes, `VERSION` 10→11) — no `psp/` changes
+needed, since an untextured primitive with a baked vertex colour already
+renders correctly through the existing path.
+
+Repacking the whole archive measured a real, cross-checked side effect:
+bound textures **644 → 639**, mip-carrying textures **223 → 221**. Five
+textures were referenced only by primitives whose combiner never
+actually reads them — previously packed and uploaded for nothing, now
+correctly dropped. `cargo test --workspace`: 368 passing (was 364; four
+new tests: three unit tests for `combiner_flat_color`, one integration
+test through `convert` confirming a textured display list's flat-colour
+primitive comes out untextured with its vertex baked). `cargo clippy
+--release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: Dream Land renders at 60 FPS, debug overlay's
+texture counter reads `0/639` matching the repack, scene visually
+unchanged (Dream Land's own geometry doesn't use this shape). Both
+`PLAN.md` R0.6 "primitive color"/"environment color verified" items
+still stay open — not because of an uncaught shape any more, but because
+`(PRIM-ENV)*TEXEL0+ENV`'s remaining misses are a genuine absence of
+`prim_color`/`env_color` on this converter's own state (likely `R0.7`'s
+territory), which no further combiner-classification work can reach.
+
+RE-079 (also this session) did the
 "systematic accounting of every distinct `SetCombine` shape" RE-073 left
 as the open reason "primitive color verified"/"environment color
 verified" were unchecked. Temporarily instrumented `mesh.rs`'s
@@ -495,27 +540,34 @@ point already recorded rather than an open-ended search:
    verified"/"culling verified" (RE-068), "alpha behavior verified"
    (RE-069) and "combiner behavior verified" (RE-073/RE-074) are all
    checked. RE-079 did the systematic archive-wide census "primitive
-   color"/"environment color verified" were waiting on, and fixed the two
-   real classification bugs it found (a black-`PRIM`-scale ambiguity and
-   `combiner_texture_blend`'s over-strict `PRIM`+`ENV` gate) — but both
-   items stay open, now for two well-scoped, *different* reasons than
-   before: (a) `(ZERO-ZERO)*ZERO+PRIM` (1,589 primitives archive-wide) is
-   a real, uncaught third shape — a flat constant `PRIMITIVE` colour with
-   no shade or texture term at all — that needs a new `MeshMaterial`
-   field (a `flat_color: Option<[u8;4]>` alongside `prim_color`, or
-   similar), not another classification fix; (b) `(PRIM-ENV)*TEXEL0+ENV`
-   still misses for 3,085/4,580 primitives because neither colour was
-   ever set on this converter's own per-graph state — likely the same
-   `R0.7` material-table pairing gap already tracked there, not a new
-   independent problem, but not confirmed as such. Read `PLAN.md` R0.6's
-   acceptance list fresh rather than assuming — the pattern that has paid
-   off repeatedly this session (RE-065's lighting angle, RE-068's
-   geometry mode, RE-069's render mode, RE-072's fog, RE-073/RE-074's
-   combiner shape, RE-079's presence-vs-value bug) is: find where
-   `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the *default* for
-   whatever's being checked, or measure what a declined case actually
-   looks like archive-wide, before assuming `mesh.rs`'s current fallback
-   already matches reality or that a rare-but-nonzero count means nothing.
+   color"/"environment color verified" were waiting on and fixed two real
+   classification bugs (a black-`PRIM`-scale ambiguity and
+   `combiner_texture_blend`'s over-strict `PRIM`+`ENV` gate); RE-080 then
+   fixed the one uncaught shape RE-079 left open (`(ZERO-ZERO)*ZERO+PRIM`,
+   a flat constant colour, via a new `combiner_flat_color`/
+   `MeshMaterial::flat_color`, wired all the way to device with no
+   `psp/` changes needed). Every combiner shape this model can resolve at
+   all is now classified into one of three structurally disjoint cases.
+   Both items still stay open, but only for one remaining, well-scoped
+   reason: `(PRIM-ENV)*TEXEL0+ENV` still misses for 3,085/4,580
+   primitives because neither `prim_color` nor `env_color` was ever set
+   on this converter's own per-graph state by the time the primitive is
+   emitted — likely the same `R0.7` material-table pairing gap already
+   tracked there (unpaired `MObj` graphs mean some nodes never receive
+   the material data that would set these), not a new independent
+   problem, but not confirmed as such. This is no longer a combiner-shape
+   question — closing it needs `R0.7` progress, or confirming the
+   PRIM/ENV-persistence question RE-064 already partly answered for
+   *texture* state also applies here. Read `PLAN.md` R0.6's acceptance
+   list fresh rather than assuming — the pattern that has paid off
+   repeatedly this session (RE-065's lighting angle, RE-068's geometry
+   mode, RE-069's render mode, RE-072's fog, RE-073/RE-074's combiner
+   shape, RE-079/RE-080's presence-vs-value bug and shape census) is:
+   find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
+   *default* for whatever's being checked, or measure what a declined
+   case actually looks like archive-wide, before assuming `mesh.rs`'s
+   current fallback already matches reality or that a rare-but-nonzero
+   count means nothing.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a

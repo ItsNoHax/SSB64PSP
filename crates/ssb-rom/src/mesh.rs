@@ -130,6 +130,20 @@ pub struct MeshMaterial {
     /// with a flat `base` colour instead of their usual shade-derived one,
     /// which touches vertex-sharing assumptions this pass didn't verify.
     pub texture_blend: Option<([u8; 4], [u8; 4])>,
+    /// A combiner that reduces to a plain constant colour -- no shade, no
+    /// texel, driven only by `PRIMITIVE`/`ENVIRONMENT`/literal constants
+    /// (`(ZERO-ZERO)*ZERO+PRIM`, `ONE` alone, etc.) -- found archive-wide by
+    /// RE-079's combiner-shape census (1,589 primitives). Distinct from
+    /// `prim_color` (a *scale* on the shade) and `texture_blend` (a
+    /// texture-driven blend between two colours): this shape depends on
+    /// neither the shade nor the texture at all, so a primitive with this
+    /// set should be drawn flat-untextured. `texture` is forced to `None`
+    /// on such a primitive (`material_now`) since `TEXEL` genuinely never
+    /// enters the formula, regardless of what the RDP had bound. Packed
+    /// (`pack.rs`'s `flags::FLAT_COLOR`) and baked into affected vertices
+    /// the same way `prim_color`'s scale and `texture_blend`'s base colour
+    /// are (`push_vertex`); not yet separately verified on device.
+    pub flat_color: Option<[u8; 4]>,
 }
 
 impl MeshMaterial {
@@ -630,6 +644,44 @@ fn combiner_texture_blend(
     Some((from_f(base), from_f(target)))
 }
 
+/// Recognises a combiner that reduces to a plain constant colour: no shade,
+/// no texel, in either cycle -- `(ZERO-ZERO)*ZERO+PRIM`, a bare `ONE`, or any
+/// other combination of constants and literal zeros (RE-079). Mutually
+/// exclusive with [`combiner_shade_scale`] (which requires a shade term) and
+/// [`combiner_texture_blend`] (which requires a texel term): this is what is
+/// left over when neither applies but the result is still fully resolved.
+///
+/// Like `combiner_texture_blend`, only requires whichever of
+/// `PRIMITIVE`/`ENVIRONMENT` the shape actually reads (RE-079's
+/// `combiner_reads` gate) -- a bare `ONE` needs neither.
+fn combiner_flat_color(
+    hi: u32,
+    lo: u32,
+    two_cycle: bool,
+    prim: Option<[u8; 4]>,
+    env: Option<[u8; 4]>,
+) -> Option<[u8; 4]> {
+    if combiner_reads(hi, lo, two_cycle, 3) && prim.is_none() {
+        return None;
+    }
+    if combiner_reads(hi, lo, two_cycle, 5) && env.is_none() {
+        return None;
+    }
+    let p = prim.map_or([0.0; 3], to_f);
+    let e = env.map_or([0.0; 3], to_f);
+    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
+
+    if !out.k_used || out.s_used || out.t_used || out.st_used {
+        return None;
+    }
+    Some([
+        (out.k[0] * 255.0).clamp(0.0, 255.0) as u8,
+        (out.k[1] * 255.0).clamp(0.0, 255.0) as u8,
+        (out.k[2] * 255.0).clamp(0.0, 255.0) as u8,
+        255,
+    ])
+}
+
 /// Tracks RDP/RSP state while walking a display list./// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
@@ -798,8 +850,23 @@ impl State {
                 self.material.env_color,
             )
         });
+        let flat_color = self.combiner.and_then(|(hi, lo)| {
+            combiner_flat_color(
+                hi,
+                lo,
+                self.two_cycle,
+                self.material.prim_color,
+                self.material.env_color,
+            )
+        });
         MeshMaterial {
-            texture,
+            // `TEXEL` genuinely never enters this shape's formula (RE-079),
+            // so a bound texture would be sampled and modulated in for
+            // nothing the real hardware does -- force untextured rather than
+            // let the GE's default `Modulate` silently darken/tint the flat
+            // colour by whatever happens to be bound.
+            texture: if flat_color.is_some() { None } else { texture },
+            flat_color,
             // Identity is not worth storing: it means "use the shade as it is".
             prim_color: scale.filter(|s| *s != [1.0; 3]).map(|s| {
                 [
@@ -917,6 +984,13 @@ impl Builder {
             // cache slot: the baked colour is part of the dedup key, so the
             // two become distinct entries automatically.
             v.rgba = base;
+        } else if let Some(c) = self.material.flat_color {
+            // Same reasoning as `texture_blend` above: RE-079's flat-colour
+            // shape reads neither shade nor texel, so the vertex colour is
+            // simply the resolved constant, baked here so the dedup key
+            // keeps a shared cache-slot vertex distinct across primitives
+            // that need different flat colours.
+            v.rgba = c;
         }
         if let Some(&i) = self.seen.get(&v) {
             return Ok(i);
@@ -2474,6 +2548,75 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_flat_colour_combiner_forces_the_primitive_untextured_and_bakes_the_vertex(
+    ) {
+        // Wiring `combiner_flat_color` into `material_now`/`push_vertex` end
+        // to end (RE-079): even with a real texture bound, `TEXEL` never
+        // enters this shape's formula, so the primitive must come out
+        // untextured (not silently modulated by whatever happened to be
+        // bound) and its vertex must carry the flat colour, not the
+        // texture-mapping shade `vertex_data` seeds.
+        let file = vertex_data(3);
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, PRIM, 0, 0, 0, 0);
+        let cmds = [
+            vtx(3),
+            Cmd::SetCombine { hi, lo },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [10, 20, 30, 255],
+            },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 0,
+                size: 2,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(
+            mesh.primitives[0].material.texture, None,
+            "a texture was bound, but this combiner never reads TEXEL"
+        );
+        assert_eq!(
+            mesh.primitives[0].material.flat_color,
+            Some([10, 20, 30, 255])
+        );
+        assert_eq!(mesh.vertices[0].rgba, [10, 20, 30, 255]);
+    }
+
     /// `(A - B) * C + D` packed the way `gDPSetCombineLERP` does.
     #[allow(clippy::too_many_arguments)] // eight multiplexer codes is the format
     const fn combine(
@@ -2698,14 +2841,58 @@ mod tests {
             combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV),
             combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0),
             combine(TEXEL0, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0),
+            combine(ZERO_A, ZERO_A, ZERO_C, PRIM, 0, 0, 0, 0),
+            combine(ONE, ZERO_A, ZERO_C, ZERO_D, 0, 0, 0, 0),
         ];
         for (hi, lo) in cases {
             let scale = combiner_shade_scale(hi, lo, true, prim, env);
             let blend = combiner_texture_blend(hi, lo, true, prim, env);
+            let flat = combiner_flat_color(hi, lo, true, prim, env);
+            let accepted = [scale.is_some(), blend.is_some(), flat.is_some()]
+                .iter()
+                .filter(|x| **x)
+                .count();
             assert!(
-                scale.is_none() || blend.is_none(),
-                "both accepted hi={hi:#x} lo={lo:#x}: scale={scale:?} blend={blend:?}"
+                accepted <= 1,
+                "more than one accepted hi={hi:#x} lo={lo:#x}: scale={scale:?} blend={blend:?} flat={flat:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_bare_primitive_colour_is_recognised_as_flat() {
+        // `(ZERO-ZERO)*ZERO+PRIM`: no shade, no texel, just a constant.
+        // RE-079 found 1,589 of these archive-wide, none of which
+        // `combiner_shade_scale` (needs a shade term) or
+        // `combiner_texture_blend` (needs a texel term) can express.
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, PRIM, 0, 0, 0, 0);
+        let prim = Some([10, 20, 30, 255]);
+        assert_eq!(
+            combiner_flat_color(hi, lo, false, prim, None),
+            Some([10, 20, 30, 255])
+        );
+    }
+
+    #[test]
+    fn a_bare_one_needs_neither_constant_set() {
+        // `(ZERO-ZERO)*ZERO+ONE` -- 28 occurrences archive-wide (RE-079). A
+        // literal `ONE` reads no named colour at all, so it must resolve
+        // without either `prim_color` or `env_color` set -- the same
+        // reasoning as `a_texture_blend_that_never_reads_primitive_does_not_need_it_set`,
+        // applied to the flat-colour shape.
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, ONE, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_flat_color(hi, lo, false, None, None),
+            Some([255, 255, 255, 255])
+        );
+    }
+
+    #[test]
+    fn a_flat_colour_combiner_still_declines_an_unset_constant_it_reads() {
+        // Unlike `combiner_shade_scale`'s safe white-identity default, a
+        // flat colour has nothing safe to substitute for a `PRIMITIVE` the
+        // shape actually reads but the display list never set.
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, PRIM, 0, 0, 0, 0);
+        assert_eq!(combiner_flat_color(hi, lo, false, None, None), None);
     }
 }

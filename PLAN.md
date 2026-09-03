@@ -585,6 +585,24 @@ but did not fix, a third real shape (`(ZERO-ZERO)*ZERO+PRIM`, 1,589
 primitives, a flat constant colour with no shade/texture term at all)
 that needs a new `MeshMaterial` field rather than a classification fix.
 
+RE-080 fixed that third shape. Added `combiner_flat_color`, structurally
+disjoint from the other two functions (each requires a different,
+mutually exclusive combination of the `k`/`s`/`t`/`st` presence flags
+RE-079 introduced), covering `PRIM`-driven, `ENV`-driven and bare-`ONE`
+constant colours alike (1,589 + 28 + 9 occurrences respectively).
+Wired further than `texture_blend` was at the same stage: since `TEXEL`
+provably never enters this shape's formula, `material_now` immediately
+forces the primitive untextured and `push_vertex` bakes the resolved
+colour, rather than detecting now and deferring consumption. Packed as
+`pack.rs`'s `flags::FLAT_COLOR` (`PrimDesc::SIZE` 32→36, `VERSION`
+10→11). Repacking the archive measured a real, expected side effect:
+bound textures 644→639, mip-carrying textures 223→221 — five textures
+were referenced only by primitives whose combiner never reads them at
+all, now correctly dropped. `cargo test --workspace`: 368 passing (was
+364). `cargo psp --release` + `tools/run-ppsspp.sh`: Dream Land
+unchanged at 60 FPS, debug overlay's texture counter reads `0/639`
+matching the repack.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -598,8 +616,8 @@ Reproduce original SSB64 material behavior.
 
 * [ ] material tables resolved
 * [x] combiner behavior verified — RE-073/RE-074: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models), detected, packed, wired to the PSP GE's native `TextureEffect::Blend`, and visually confirmed correct against Link's own model (before/after screenshots). The general two-cycle evaluation model itself was already verified (RE-039/RE-043); the remaining ~8% of ENV-reading combiners and whatever `combiner_shade_scale` declines outside that are not exhaustively catalogued, but are not the dominant case and are tracked under "primitive color"/"environment color" below rather than blocking this item
-* [ ] primitive color verified — RE-079 did the systematic archive-wide shape census this item needed: fixed a real bug where a black `PRIM` scale was indistinguishable from "no scale term" (1,118 primitives recovered), and an over-strict gate that required `PRIM` set even when a shape never read it. One real, uncaught shape remains (`(ZERO-ZERO)*ZERO+PRIM`, a flat constant colour, 1,589 primitives) — needs a new `MeshMaterial` field, not a classification fix, so this item stays open
-* [ ] environment color verified — same census, same two fixes (both touch `ENV` symmetrically with `PRIM`); the `(PRIM-ENV)*TEXEL0+ENV` shape's remaining 3,085/4,580 misses are a genuine absence (neither colour set on this converter's own state, likely `R0.7`'s material-table pairing gaps), not a classification bug, so this item also stays open
+* [ ] primitive color verified — RE-079's census plus RE-080's `combiner_flat_color` now cover every shape this model resolves at all: shade-scale, texture-blend and flat-constant are structurally disjoint and together account for 97.5%+ of archive-wide combiner-bearing primitives. What remains open is not a classification gap: `(PRIM-ENV)*TEXEL0+ENV`'s 3,085/4,580 misses are a genuine absence of `prim_color` on this converter's own per-graph state (likely `R0.7`'s material-table pairing gaps), which no combiner-shape work can fix
+* [ ] environment color verified — same as primitive color; the remaining gap is the same genuine-absence case, symmetric in `ENV`
 * [ ] lighting verified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
@@ -610,7 +628,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080 in `docs/reverse-engineering.md`.
 
 ### Evidence
 
