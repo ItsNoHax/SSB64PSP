@@ -77,12 +77,19 @@ actually needs at once, and it should not be compared to the 700 KiB
 worst case a real match can put on screen — one stage plus four
 fighters, texture indices deduped rather than summed blind — came to
 **217.1 KiB** for the largest stage (Dream Land) plus the four largest
-of the 12 real playable fighters. That number is very likely an
-undercount (`PLAN.md` R0.7's 64 still-unpaired `MObj` graphs mean several
-fighters' measured texture counts are implausibly low — Yoshi at 0.8 KiB
-across 5 textures almost certainly has real texture references this
-project cannot see yet, not an actually near-empty model), so it should
-not be read as "streaming is unnecessary." What it does mean: the
+of the 12 real playable fighters. This was initially assumed to be an
+undercount from `PLAN.md` R0.7's still-unpaired `MObj` graphs, but that
+assumption was checked and mostly didn't hold (RE-077): 9 of the 11
+fighters this measurement covers have **zero** unpaired graphs of their
+own, so their low texture counts are the real shape of a low-poly N64
+model, not a hidden gap. Only Kirby had a real one, now fixed — and
+fixing it left his measured VRAM unchanged, since the newly-resolved
+materials reuse textures his other objects already reference. Treat
+217.1 KiB as a reasonable estimate, not a floor with a known-large gap
+underneath it. It should still not be read as "streaming is
+unnecessary" outright — the estimate covers 12 of 27 `FighterDesc`
+entries and one of 41 stages — but the specific "several fighters are
+badly undercounted" worry is resolved. What this does mean: the
 `AssetArena` plan below — one contiguous per-scene load, sized by the
 current scene's dependency closure, mirroring the original's own
 `lbRelocLoadFilesExtern` pattern — may already resolve most of this

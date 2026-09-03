@@ -609,9 +609,9 @@ Status: `IN_PROGRESS`
 
 ### Current evidence
 
-Freshly re-measured this session (`romtool mobj`, whole archive, after both
-fixes below): **63 graphs paired, 64 unpaired.** Started the session at
-56/71.
+Freshly re-measured this session (`romtool mobj`, whole archive, after
+RE-059/RE-060 and RE-077's fixes): **64 graphs paired, 63 unpaired.**
+Started the session at 56/71.
 
 RE-057 found three concrete test cases while investigating R0.3's
 `MissingPalette` failures: files 52 (`MVCommon`), 86 (`ITCommonObject`) and
@@ -664,10 +664,35 @@ this graph — the same kind of near-chance fingerprint match the project has
 already measured and rejected once (Samus's two identical 33-node graphs,
 `mobj.rs`'s own doc comment). Left unfixed on purpose. File 353's third
 graph (Spin Attack) still needs its `WPAttributes` instance typed before it
-can be inserted. These two plus the other 62 unpaired graphs archive-wide
-are now treated as an accepted long tail rather than a task-blocking gap;
-R0.7 stays `IN_PROGRESS` but further progress here depends on upstream
-decomp typing, not more `romtool` investigation.
+can be inserted.
+
+RE-076 hedged that several fighters' low measured texture counts were
+"almost certainly" undercounts from unpaired `MObj` graphs — RE-077
+checked that directly instead of leaving it a guess. `romtool mobj
+--file <id>` for each of the 11 remaining real playable fighters found
+**nine with zero unpaired graphs** (Mario, Fox, Donkey Kong, Samus,
+Luigi, Jigglypuff, Captain Falcon, Yoshi, Pikachu are already fully
+paired; their low texture counts are a real low-poly N64 model, not a
+gap). Only Kirby (5 unpaired) and Ness (1) have real gaps. Kirby's
+largest (`JointTree_0x19F08`, 22 nodes) had exactly one demand-matching
+`--search` candidate, cross-confirmed against a fully-typed decompiled
+symbol (`328_KirbyModel.c`'s `dKirbyModel_gap_0x31CC_sub_0x15894_post
+[24]`) rather than trusted on the heuristic alone, and fixed via
+`PartTables::insert()`. Ness's one candidate and Kirby's other four
+(2-node, 10-way ambiguous) were checked and left unfixed — suggestive
+but not conclusive evidence. This does not change RE-076's VRAM
+estimate (the newly-resolved materials reference textures Kirby's main
+body objects already use, so the aggregate is unchanged); it is a
+rendering-correctness fix, and a correction to RE-076's own hedge.
+
+Kirby's fix, the other 61 unpaired graphs archive-wide (mostly menu/
+character-select emblem models, stage files, and fighters' special-move
+files, not core fighter bodies — see RE-077's breakdown), and file 86's
+and 353's specific blocked cases are now treated as an accepted long
+tail rather than a task-blocking gap; R0.7 stays `IN_PROGRESS` but
+further progress here depends on upstream decomp typing or a
+demand-search candidate narrowing to one, not open-ended `romtool`
+investigation.
 
 ### Objective
 
@@ -679,11 +704,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 63 other archive-wide unpaired graphs are untraced
-* [ ] original material data identified — done for 7 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52); not done for the other 64 unpaired graphs, and file 86's/353's remaining two are blocked on upstream decomp typing, not more tracing
+* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); Kirby's `JointTree_0x19F08` traced and fixed via the same search-plus-decomp-cross-check approach, landing on exactly one candidate this time (RE-077); 61 other archive-wide unpaired graphs are untraced, mostly menu/character-select emblem models, stage files and fighters' special-move files rather than core fighter bodies (RE-077's breakdown) — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
+* [ ] original material data identified — done for 8 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 1 raw-array in Kirby's file); not done for the other 61 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — file 353's two and file 52's five fixed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060); nothing else verified yet
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj --file 353`/`--file 52`'s 0-mismatch checks are that regression detector for these fixes.
+* [ ] affected scenes verified — file 353's two, file 52's five, and Kirby's one fixed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077); nothing else verified yet
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj --file 353`/`--file 52`/`--file 328`'s 0-mismatch checks are that regression detector for these fixes.
 
 ---
 

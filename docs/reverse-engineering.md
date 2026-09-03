@@ -5016,3 +5016,116 @@ not a guess. The *conclusion* is deliberately hedged: the input data
 "VRAM for the fighters and stages as currently resolved," not "VRAM for
 the fighters and stages as they truly are" — the gap between those two
 is exactly R0.7's remaining 64 unpaired graphs, untraced.
+
+## RE-077 — Most fighters are already fully paired; Kirby's one gap found and fixed
+
+**Question.** RE-076 hedged that several fighters' implausibly low
+per-object texture counts (Yoshi 0.8 KiB/5 textures, Mario 3.2 KiB/3,
+Kirby 1.0 KiB/4) were "almost certainly" undercounts caused by R0.7's 64
+untraced unpaired `MObj` graphs. That was a plausible-sounding guess, not
+a checked one. Is it actually true?
+
+**Checked directly, file by file — mostly false.** Ran `romtool mobj
+--file <id>` for each of the 11 remaining real playable fighters (Link
+was already known-fixed). Nine of them — Mario (296), Fox (313), Donkey
+Kong (317), Samus (320), Luigi (323), Jigglypuff (330), Captain Falcon
+(332), Yoshi (338), Pikachu (341) — report **zero** unpaired graphs:
+every `MObj` chain their own display lists demand already resolves. Their
+low texture counts are not a pairing gap; they are the real shape of a
+low-poly N64 fighter that is mostly flat-shaded vertex colour with only a
+handful of actual textures (face, eyes, insignia), the same pattern
+already documented for Mario's own model (RE-039/040). RE-076's hedge was
+too broad — only two of the eleven, Kirby (5 unpaired graphs) and Ness
+(1), have a real gap.
+
+**Getting the full, untruncated list of all 64 (not the CLI's default
+12-line summary) showed the gap is mostly elsewhere anyway.** Grouping
+by archive file: character-select emblem models (file 35, 10 graphs) and
+menu/opening-movie/shared-effect files (22, 69, 75, 83–85, 136, 152, 157,
+167, 198 — another ~18) account for over a third of the total; stage
+files (108, 109, 111 x6, 112 x4, 114 x4 — 16 graphs) for another quarter;
+fighters' *special-move* files (342, 347 x2, 349–353 — 8 graphs,
+overlapping RE-073's combiner-shape list) for most of the rest. Only
+Kirby's base model (328) and Ness's (335) have gaps in a *core, always-
+visible* fighter file.
+
+**Kirby's gap: found via search, confirmed via decompiled source, fixed.**
+`romtool mobj --file 328 --search` found Kirby's largest unpaired graph
+(`JointTree_0x19F08`, 22 real nodes) has exactly one demand-length-
+matching candidate table, at 0x18D60 — a single candidate from a search
+anchored to real intern-relocation pointer slots (not a blind byte scan),
+across a demand sequence with six single-`MObjSub` nodes and one needing
+two, not a repeated identical value (the failure mode that made RE-061's
+27-candidate case worthless). Before trusting a heuristic match alone,
+cross-checked it against the decompilation directly:
+`refs/ssb-decomp-re/src/relocData/328_KirbyModel.c:7254` types exactly
+this region as `MObjSub **dKirbyModel_gap_0x31CC_sub_0x15894_post[24]`, a
+real, fully-typed 24-slot array spanning 0x18D58–0x18DB8. 0x18D60 is
+precisely slot 2, and slots `[2..24)` are exactly 22 entries — the
+graph's own node count, not a coincidence of overlapping address ranges.
+This is the same broad category `PLAN.md` R0.7 already put file 86's
+still-blocked case in (a pairing `PartTables::scan` cannot find
+structurally, only demand-matching `--search` can even suggest) — but
+where file 86's search stayed at 27 ambiguous candidates with nothing in
+the decompilation typed to confirm any of them (RE-061), Kirby's stayed
+at exactly one candidate, and that one candidate turned out to already be
+a real, fully-typed array in the decompilation — a raw, unlinked
+`MObjSub **` array that is never the target of a pointer field
+structurally adjacent to its own `DObjDesc` array, so nothing in the
+source or the archive's relocations names the connection for a
+structural scan to find. The difference between "blocked" and "fixed"
+here was not a new discovery mechanism, just enough demand-matching
+constraint (22 real nodes, not identical values) to land on one
+candidate instead of dozens, and a decompiled symbol to confirm it
+against once it did.
+
+Hand-entered via `PartTables::insert()`, matching the established
+pattern. Verified: `romtool mobj --file 328` — paired graphs 2→3,
+unnamed 5→4, chain/demand mismatches stayed at 0 across 21 checked
+nodes, and newly-resolved `MObjSub` addresses (0x18E70, 0x18F60,
+0x18EE8, 0x19050, ...) match the decompiled array's own targets exactly.
+`cargo test --workspace` (218 passing, unaffected — the fix lives in
+`romtool`, not the library crate, matching R0.7's own established
+regression-coverage precedent) and `cargo psp --release` both clean;
+Dream Land's stage view re-screenshotted and pixel-identical (unrelated
+to this fix, confirming no regression).
+
+**This does not change RE-076's VRAM measurement — the fix is about
+correctness, not size.** Re-measured Kirby's aggregate packed-object
+texture footprint after the fix: still 4 textures, 1.0 KiB, unchanged.
+The newly-resolved `MObjSub` materials reference textures already used
+by Kirby's main 27-node body objects, not new ones — deduplication
+correctly absorbs them. The value of this fix is that
+`JointTree_0x19F08`'s 22 nodes now draw with their real, resolved
+materials instead of "whatever the display list left set" (RE-046), a
+visual-correctness fix, not a VRAM one. RE-076's larger point — the
+archive-wide VRAM total shouldn't be compared directly to a per-scene
+budget — still stands; its specific "several fighters are probably
+undercounted" hedge was the part that needed correcting.
+
+**Checked, not fixed: Ness's one gap and Kirby's other four.** Ness's
+single unpaired graph had 5 ambiguous candidates, one of which (0x9870)
+sits inside a decomp region explicitly annotated as previously
+mis-typed (`refs/ssb-decomp-re/src/relocData/335_NessModel.c:2578`:
+"the earlier typing placed this at 0x9870 with a fake `MObjSub` shape")
+— suggestive that something is genuinely unresolved there, but not a
+clean single-candidate match the way Kirby's was, so left unfixed rather
+than guessed at. Kirby's other four unpaired graphs (all small, 2-node)
+returned the same 10-candidate ambiguous set from `--search`, several of
+which fall inside the *same* 24-slot array this entry just confirmed —
+plausibly further sub-ranges of it, but a 2-node demand sequence is too
+weak to disambiguate on its own. Worth revisiting if a way to narrow
+those candidates individually turns up; not guessed at here.
+
+**Result.** `PLAN.md` R0.7's paired count moves from 63/64 to 64/63.
+More importantly, RE-076's own hedge is now corrected rather than left
+standing unchecked: the low fighter texture counts it flagged are mostly
+*real*, not a pairing artifact, and `docs/memory.md`/`STATUS.md` should
+say so rather than repeat the broader, now-falsified caveat.
+
+**Confidence: high** for Kirby's fix (search hit cross-confirmed against
+a fully-typed decompiled symbol, not left as a bare heuristic match) and
+for the "9 of 11 other fighters have zero unpaired graphs" measurement
+(direct `romtool mobj --file` output, not inferred). **Low**, deliberately,
+for Ness's candidate and Kirby's remaining four — flagged as leads, not
+claimed as findings.
