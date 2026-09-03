@@ -1646,6 +1646,17 @@ fn load_all(archive: &Archive) -> Loaded {
     // slots, suggesting they may be further sub-ranges of it -- worth
     // revisiting with the same cross-check once each has a genuinely unique
     // candidate, not guessed at here.
+    //
+    // RE-078: the same search-plus-decomp-cross-check approach run over
+    // every remaining unpaired graph archive-wide, not just Kirby's file.
+    // `ssb_rom::mobj::search_tables` found 13 (of 63) with exactly one
+    // candidate; each of the following 6 was independently confirmed
+    // against a precisely-matching, fully-typed decompiled symbol (address
+    // and entry count both agreeing with the graph's own node count) before
+    // being inserted -- the other 7 unique hits either matched nothing typed
+    // in the decompilation (still just raw bytes there) or, on inspection,
+    // turned out to be a substring coincidence in a symbol name rather than
+    // a real address match, and are left unfixed rather than guessed at.
     for &(file, graph, table) in &[
         (353u32, 0x3F8u32, 0x130u32), // LinkSpecial2 EntryWave
         (353u32, 0x7B8u32, 0x4F0u32), // LinkSpecial2 EntryBeam
@@ -1655,6 +1666,12 @@ fn load_all(archive: &Archive) -> Loaded {
         (52u32, 0x1F270u32, 0x1F0F8u32), // MVCommon RoomCloseUpEffectGround
         (52u32, 0x22440u32, 0x20480u32), // MVCommon RoomDeskGround
         (328u32, 0x19F08u32, 0x18D60u32), // KirbyModel JointTree_0x19F08
+        (22u32, 0x568u32, 0x408u32), // MNPlayersSpotlight MObjSub_0x0408
+        (69u32, 0x6950u32, 0x6140u32), // MVOpeningStandoff LightningMObjSub_MObjSub
+        (75u32, 0x35F8u32, 0x2AA8u32), // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
+        (83u32, 0x7750u32, 0x73E0u32), // EFCommonEffects1 DamageSlash_MObjSub
+        (84u32, 0x2760u32, 0x22B8u32), // EFCommonEffects2 CatchSwirlMObjSub_head (- 8 bytes of PAD for the 2 zero-demand leading nodes)
+        (167u32, 0x28DA8u32, 0x287D8u32), // MNTitle SlashMObjSub_MObjSub
     ] {
         let nodes = graphs
             .get(&file)

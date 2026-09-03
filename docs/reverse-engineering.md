@@ -5129,3 +5129,104 @@ for the "9 of 11 other fighters have zero unpaired graphs" measurement
 (direct `romtool mobj --file` output, not inferred). **Low**, deliberately,
 for Ness's candidate and Kirby's remaining four — flagged as leads, not
 claimed as findings.
+
+## RE-078 — Six more graphs fixed archive-wide by the same search-plus-decomp method
+
+**Question.** RE-077 fixed one unpaired graph by finding a demand-length
+search hit that was unique (not the usual dozens of candidates) and
+cross-confirming it against a fully-typed decompiled symbol before
+trusting it. Kirby's file was checked because RE-076 had flagged it. Does
+the same method find anything else, run archive-wide rather than on one
+file the investigation happened to already be looking at?
+
+**Ran `--search` over all 63 remaining unpaired graphs.** 13 came back
+with exactly one candidate (the rest, 50, stayed ambiguous — 2 to 27
+candidates each, not narrowed further). Checked each of the 13 against
+its own file's decompilation, precisely: a `grep` for `@ 0x<offset>`
+anchored to the exact candidate address, not a substring match anywhere
+in a symbol's name. That distinction mattered in practice — an initial,
+looser pass "confirmed" two of file 85's candidates by matching `0x108`
+and `0x2CA8` inside symbol names like
+`dEFCommonEffects3_gap_0x2D20_sub_0x108`, which is a name encoding a
+sub-offset *within* a gap region starting at 0x2D20 (real address
+0x2E28), not the address 0x108 itself. Re-running with an anchored
+`@ 0x<offset>` pattern instead of a bare substring search correctly
+found nothing at the real 0x108/0x2CA8 and dropped both — a false
+positive caught by tightening the check, not shipped.
+
+**Six candidates survived the anchored check, each confirmed by address
+*and* entry count agreeing with the graph's own node count** (not just
+an address that happens to appear nearby):
+
+* File 22 (`MNPlayersSpotlight`) @ 0x408 — `MObjSub
+  **dMNPlayersSpotlight_MObjSub_0x0408[2]`, explicitly commented
+  "referenced by `&llMNPlayersSpotlightMObjSub` cast to `MObjSub***`" —
+  2 entries, graph has 2 nodes.
+* File 69 (`MVOpeningStandoff`) @ 0x6140 — a 13-slot pointer table
+  (`dMVOpeningStandoff_LightningMObjSub_MObjSub[13]`, itself annotated as
+  "originally mis-typed as MObjSub" and corrected in the decompilation) —
+  13 entries, graph has 13 nodes.
+* File 75 (`MVOpeningRunCrash`) @ 0x2AA8 — `MObjSub
+  **dMVOpeningRunCrash_MObjSub_0x2AA8_MObjSub[5]` — 5 entries, graph has
+  5 nodes.
+* File 83 (`EFCommonEffects1`) @ 0x73E0 — `MObjSub
+  **dEFCommonEffects1_DamageSlash_MObjSub[3]` — 3 entries, graph has 3
+  nodes.
+* File 84 (`EFCommonEffects2`) @ 0x22B8 — the trickiest of the six: the
+  decompilation's own real, named table (`MObjSub
+  **dEFCommonEffects2_CatchSwirlMObjSub_head[4]`) starts 8 bytes later,
+  at 0x22C0, not at the search's candidate address. Checked the graph's
+  own per-node demand before assuming the search was simply wrong: it is
+  `[0, 0, 1, 1, 1, 1]` — the first two nodes want no material at all. The
+  8 bytes at 0x22B8 are `PAD(8)` immediately before the named table,
+  which reads back as two NULL slots — exactly matching the two
+  zero-demand nodes ahead of the real 4-entry table. 0x22B8 is the
+  correct table base for *this graph specifically* (its own first two
+  "slots" happen to be padding, not data), which is exactly what the
+  search algorithm's own doc comment already says it does (anchors to a
+  pointer slot minus the node's own index) — confirmed by working
+  through the arithmetic rather than either trusting or discarding the
+  mismatch on sight.
+* File 167 (`MNTitle`) @ 0x28DA8 — the clearest of the six: the
+  decompilation's own comment for `MObjSub
+  **dMNTitle_SlashMObjSub_MObjSub[5]` literally says "top table, this
+  symbol — what `MObjSub***` consumer reads" — 5 entries, graph has 5
+  nodes.
+
+**Shipped via the same `PartTables::insert()` mechanism as RE-077,
+Kirby's fix and RE-059/RE-060's earlier hand-entered pairings.**
+Verified archive-wide: `romtool mobj` paired graphs 64→70, unnamed
+63→57, chain/demand mismatches held at 0 across 383 checked nodes (up
+from 364). `romtool textures`: unique bound 665→673, packed 638→646,
+failures held at 27 (the same known segment-0x01/`MissingPalette`
+classes, no new ones introduced). `cargo test --workspace` (218
+passing, unaffected — these fixes live in `romtool`, not the library
+crate) and `cargo psp --release` both clean; Dream Land's stage view
+re-screenshotted and pixel-identical.
+
+**The other 7 unique `--search` hits were checked and correctly left
+alone.** Two (file 85, above) were the substring false positive. The
+remaining five — three in file 114 (a stage file) and one each in files
+351 and 352 (Purin's and Ness's special-move files) — landed on
+addresses that are still raw, untyped bytes in the decompilation as of
+this session; there is nothing there yet to confirm or refute the
+search's guess against, so they stay unfixed rather than trusted on the
+heuristic alone.
+
+**Result.** `PLAN.md` R0.7's paired count moves from 64/63 to 70/57.
+More importantly, the method itself is now validated twice, not once
+(RE-077, then this entry) — search-plus-decomp-cross-check reliably
+finds real pairings when it lands on a single candidate, and reliably
+gets caught when it doesn't (Kirby's other four, Ness's one, and now
+these seven, all correctly declined). The remaining 57 unpaired graphs
+are the ones where the search itself never narrowed past several
+candidates, or narrowed to one with nothing yet in the decompilation to
+check it against — a materially different, harder remainder than the 63
+this session started with.
+
+**Confidence: high** for all six fixes (each independently confirmed by
+both address and entry count against a named, typed decompiled symbol,
+not left as a bare heuristic hit) and for the false-positive catch on
+file 85 (re-verified with an anchored, not substring, search pattern).
+**None claimed** for the seven left alone — correctly inconclusive, not
+quietly dropped.

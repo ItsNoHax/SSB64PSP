@@ -16,8 +16,40 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-077 (this session) a `R0.7` detour that
-followed up directly on RE-076's own hedge instead of leaving it
+`IN_PROGRESS` on `R0.6`, with RE-078 (this session) extending RE-077's
+method archive-wide instead of stopping after Kirby's one fix. Ran
+`ssb_rom::mobj::search_tables` over all 63 graphs R0.7 still had no
+table for; 13 came back with exactly one demand-matching candidate
+(the other 50 stayed ambiguous). Checked each of the 13 against its own
+file's decompilation with an address-anchored `@ 0x<offset>` match, not
+a substring search — that distinction caught a real mistake before it
+shipped: a looser first pass "confirmed" two of file 85's candidates by
+matching a sub-offset baked into an unrelated symbol's name
+(`..._sub_0x108`), not the actual byte address 0x108, and both were
+dropped once re-checked properly.
+
+Six survived the stricter check, each confirmed by *both* address and
+entry count matching a real, named, typed decompiled symbol: files 22
+(`MNPlayersSpotlight`), 69 (`MVOpeningStandoff`), 75
+(`MVOpeningRunCrash`), 83/84 (`EFCommonEffects1`/`2`), and 167
+(`MNTitle`). File 84's took extra care — the search's candidate address
+sat 8 bytes before the decompiled symbol's own start, which turned out
+to be `PAD(8)` exactly covering that graph's two genuinely zero-demand
+leading nodes, not a mismatch. Fixed via `PartTables::insert()`
+(matching RE-059/060/077's established pattern); verified archive-wide:
+`romtool mobj` paired 64→70, mismatches held at 0 across 383 nodes (up
+from 364); `romtool textures` packed 638→646, failures held at 27 (same
+known classes, none new). `cargo test --workspace` (218 passing,
+unaffected) and `cargo psp --release` both clean; Dream Land's stage
+view re-screenshotted and pixel-identical. The other 7 unique hits
+(file 85's two false positives, plus one each in a stage file and two
+special-move files landing on still-untyped bytes) were checked and
+correctly left unfixed.
+
+## Last Completed Task
+
+`R0.7` — RE-077 (earlier this session) followed up directly on RE-076's
+own hedge instead of leaving it
 unchecked. RE-076 guessed that several fighters' low measured texture
 counts were "almost certainly" undercounts from R0.7's 64 unpaired
 `MObj` graphs. Checked it file by file: `romtool mobj --file <id>` for
@@ -52,8 +84,6 @@ ambiguous, one candidate sitting in a decomp region flagged as
 previously mis-typed) and Kirby's other four (2-node, 10-way ambiguous,
 possibly further sub-ranges of the same confirmed array) were checked
 and left unfixed — suggestive, not conclusive.
-
-## Last Completed Task
 
 `TODO.md` Phase G — RE-076 (earlier this session) measured whether
 "texture streaming... required" was actually supported by the number it
@@ -445,15 +475,19 @@ should now be trusted more, not less, than when RE-076 first produced
 it. `R0.4`'s own remaining item ("all missing palette cases resolved")
 is already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has
 no further independently-actionable work. `R0.7` remains technically
-`IN_PROGRESS`: its originally-scoped blocked cases (file 86, file 353's
-Spin Attack, Ness's one candidate) only move if the upstream
-decompilation types the missing structs or a search candidate narrows to
-one, but RE-077 showed that "narrows to one" does sometimes happen
-(Kirby's did) — the other 61 untraced graphs (mostly menu/emblem models,
-stage files, and special-move files per RE-077's breakdown) are worth a
-`--search` pass each if a future session wants to keep chipping at this
-long tail, not just wait on the decompilation. `R0.8 — Transform
-Correctness` is `COMPLETE`.
+`IN_PROGRESS`, but the "worth a `--search` pass each" suggestion from
+this note's own prior draft is now done: RE-078 ran `--search` over
+every one of the (then) 63 remaining unpaired graphs archive-wide in one
+pass, not file by file, found 13 with exactly one candidate, and fixed
+the 6 that cross-checked cleanly against a typed decompiled symbol
+(Kirby's, RE-077, was the first of what turned out to be 7 findable this
+way; 57 remain, most of them landing on still-untyped bytes or genuinely
+ambiguous candidates with no further discriminating evidence available
+right now). Further progress on the remainder needs either upstream
+decomp typing (file 86, file 353's Spin Attack, and most of the other
+57) or a materially different lead — re-running `--search` again without
+new decompilation coverage would just re-find the same ambiguous/
+untyped set. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 
