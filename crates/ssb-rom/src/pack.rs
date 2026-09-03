@@ -56,7 +56,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 4 added the fighter table.
 /// 5 added the figatree animation lengths to the fighter table.
 /// 6 added the animation tables, and each node's local rest transform.
-pub const VERSION: u32 = 8;
+/// 9 added `ALPHA_TEST`/`TRANSLUCENT` to `PrimDesc::flags` (RE-069).
+pub const VERSION: u32 = 9;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -131,6 +132,12 @@ pub mod flags {
     pub const LIT: u32 = 1 << 2;
     pub const SMOOTH: u32 = 1 << 3;
     pub const Z_BUFFER: u32 = 1 << 4;
+    /// RE-069: `G_SETRENDERMODE`'s `CVG_X_ALPHA | ALPHA_CVG_SEL` -- a cutout
+    /// surface, approximated as a plain PSP alpha test.
+    pub const ALPHA_TEST: u32 = 1 << 5;
+    /// RE-069: `G_SETRENDERMODE`'s blend equation genuinely reads back the
+    /// framebuffer weighted by `1 - alpha` -- real translucency.
+    pub const TRANSLUCENT: u32 = 1 << 6;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -910,6 +917,12 @@ impl PackWriter {
             }
             if m.z_buffer {
                 f |= flags::Z_BUFFER;
+            }
+            if m.alpha_test {
+                f |= flags::ALPHA_TEST;
+            }
+            if m.translucent {
+                f |= flags::TRANSLUCENT;
             }
 
             self.prims.push(PrimDesc {

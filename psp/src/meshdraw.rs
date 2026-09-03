@@ -252,6 +252,38 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         } else {
             sys::sceGuDisable(GuState::DepthTest);
         }
+
+        // A cutout surface (foliage, grates): the RDP resolves
+        // `CVG_X_ALPHA | ALPHA_CVG_SEL` through multisampled edge coverage
+        // the GE has no equivalent for. `sf64-psp` -- a real, shipped
+        // N64-to-PSP port making this same translation at runtime --
+        // approximates it with a plain alpha test discarding
+        // fully-transparent texels (RE-069); matched here rather than
+        // invented.
+        if p.flags & flags::ALPHA_TEST != 0 {
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, 0, 0xFF);
+        } else {
+            sys::sceGuDisable(GuState::AlphaTest);
+        }
+
+        // `TRANSLUCENT` is deliberately not wired to `GuState::Blend` yet.
+        // `crates/ssb-rom/src/pack.rs` already records it correctly (RE-069:
+        // the render mode's blend equation genuinely reads the framebuffer
+        // weighted by `1 - alpha`, cross-checked against `refs/BattleShip`
+        // and matched to `sf64-psp`'s real `sceGuBlendFunc` call), but
+        // enabling it on Dream Land's own translucent highlight surface
+        // (file 104's list at 0x708/0x820/0xA78) produced a harsh
+        // checkerboard, not a soft highlight -- the RDP resolves this
+        // surface's dithered, binary-alpha CI4 texture through multisampled
+        // coverage the GE has no equivalent for, the same open problem
+        // RE-053 already found for the canopy's *opaque* dithering (a
+        // pattern that should look smooth reads as raw noise once sampled
+        // point-for-point instead of filtered). Enabling blend here doesn't
+        // fix a wrong render, it changes which of two unresolved dithering
+        // artifacts is visible, and there is no reference capture to say
+        // that's an improvement. Deferred pending that investigation, not
+        // silently dropped -- see `PLAN.md` R0.6.
     }
 
     if st.last_texture != Some(p.texture) {
