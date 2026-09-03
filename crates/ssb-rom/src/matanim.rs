@@ -41,6 +41,7 @@
 //! `gcPlayMObjMatAnim` reinterprets the slot rather than converting it.
 
 use crate::archive::File;
+use crate::figatree::{Aobj, Kind};
 
 /// Colour tracks, `nGCAnimTrackMaterialSubStart` onwards.
 pub const TRACK_PRIM: usize = 0;
@@ -297,6 +298,292 @@ pub fn costume_colors(
         .collect()
 }
 
+/// A persistent, per-tick material-track player (`gcPlayMObjMatAnim`'s real
+/// shape), as opposed to [`colors_at`]'s one-shot "evaluate at frame N"
+/// reader built for fighter costume selection.
+///
+/// [`colors_at`] only ever reads the five colour tracks (`nGCAnimTrackMaterialSubStart`
+/// onward) and declines `JUMP`, because a costume list never uses either —
+/// each costume is one more key in a script that is evaluated once, not
+/// played continuously. A *general* material animation (RE-086: 71% of the
+/// 172 real stage scripts archive-wide cycle `PaletteID`, not colour) is a
+/// different shape entirely: it runs forever, loops via `SET_ANIM`/`JUMP`,
+/// and drives the ten texture/UV/palette tracks
+/// (`nGCAnimTrackMaterialStart` onward) far more often than colour.
+///
+/// This reuses [`crate::figatree::Aobj`]/[`Kind`] — the same interpolation
+/// state [`crate::objanim::StageJoint`] already plays joint tracks with —
+/// over a *unified* 15-track window (`TRACK_COUNT`): the ten material tracks
+/// at indices `0..10`, then the five colour tracks at `10..15`. The two
+/// windows differ in one real way, not just index range: a material track's
+/// raw word *is* an `f32` (`nGCAnimTrackTraU`'s rate really is a small float
+/// like `-0.012`, confirmed against a real ROM script), while a colour
+/// track's raw word is four RGBA bytes reinterpreted, never arithmetic. This
+/// is safe to store in the same `f32` slots as long as a colour track only
+/// ever uses `Kind::Step` (never `Linear`/`Cubic`, which would perform real
+/// arithmetic on the bit-transmuted value and corrupt it) — [`colors_at`]'s
+/// own `read` closure already declines a colour track under any other kind,
+/// so this matches an existing, accepted limitation rather than introducing
+/// a new one.
+pub struct MaterialJoint {
+    tracks: [Aobj; TICK_TRACK_COUNT],
+    anim_wait: f32,
+    pc: usize,
+    ended: bool,
+    start: usize,
+}
+
+/// Ten material tracks (`nGCAnimTrackMaterialStart..`) plus five colour
+/// tracks (`nGCAnimTrackMaterialSubStart..`), unified into one index space.
+pub const TICK_TRACK_COUNT: usize = 15;
+
+pub const TRACK_TEXTURE_ID_CURRENT: usize = 0;
+pub const TRACK_TRA_U: usize = 1;
+pub const TRACK_TRA_V: usize = 2;
+pub const TRACK_SCA_U: usize = 3;
+pub const TRACK_SCA_V: usize = 4;
+pub const TRACK_TEXTURE_ID_NEXT: usize = 5;
+pub const TRACK_SCR_U: usize = 6;
+pub const TRACK_SCR_V: usize = 7;
+pub const TRACK_SET_LFRAC: usize = 8;
+pub const TRACK_PALETTE_ID: usize = 9;
+/// Colour-track window start; `TRACK_PRIM`/`TRACK_ENV`/`TRACK_BLEND` (this
+/// module's top) are relative to `0`, not this window, so a caller reading
+/// both windows through [`MaterialJoint`] adds this offset itself.
+pub const TICK_EXT_START: usize = 10;
+pub const TRACK_PRIM_COLOR: usize = TICK_EXT_START;
+pub const TRACK_ENV_COLOR: usize = TICK_EXT_START + 1;
+pub const TRACK_BLEND_COLOR: usize = TICK_EXT_START + 2;
+pub const TRACK_LIGHT1_COLOR: usize = TICK_EXT_START + 3;
+pub const TRACK_LIGHT2_COLOR: usize = TICK_EXT_START + 4;
+
+const OP_ADD_LENGTH: u32 = 12;
+const OP_SET_INTERP: u32 = 13;
+const OP_SET_ANIM: u32 = 14;
+const OP_SET_FLAGS: u32 = 15;
+
+/// How many value words a command reads per set track, for every opcode
+/// [`MaterialJoint`] models (a superset of [`values_per_track`]: also the
+/// zero-value control opcodes `colors_at` never needed to name because a
+/// costume list never uses them).
+fn tick_values_per_track(opcode: u32) -> Option<usize> {
+    Some(match opcode {
+        OP_SET_VAL_RATE_BLOCK | OP_SET_VAL_RATE => 2,
+        OP_SET_VAL_BLOCK
+        | OP_SET_VAL
+        | OP_SET_TARGET_RATE
+        | OP_SET_VAL0_RATE_BLOCK
+        | OP_SET_VAL0_RATE
+        | OP_SET_VAL_AFTER_BLOCK
+        | OP_SET_VAL_AFTER
+        | OP_EXT_VAL_AFTER_BLOCK
+        | OP_EXT_VAL_AFTER
+        | OP_EXT_VAL_BLOCK
+        | OP_EXT_VAL => 1,
+        OP_END | OP_JUMP | OP_WAIT | OP_ADD_LENGTH | OP_SET_INTERP | OP_SET_ANIM
+        | OP_SET_FLAGS => 0,
+        _ => return None,
+    })
+}
+
+impl MaterialJoint {
+    pub fn start(script: u32, frame: f32) -> Self {
+        MaterialJoint {
+            tracks: [Aobj::default(); TICK_TRACK_COUNT],
+            anim_wait: -frame,
+            pc: script as usize,
+            ended: false,
+            start: script as usize,
+        }
+    }
+
+    pub fn ended(&self) -> bool {
+        self.ended
+    }
+
+    /// Whether the script has looped back to where it began.
+    pub fn looped(&self) -> bool {
+        self.pc == self.start
+    }
+
+    /// The current value of one of the 15 unified tracks, or `None` if the
+    /// script has never set it. A colour track's value is only trustworthy
+    /// (see this type's own doc comment) when [`Self::track_is_stepped`]
+    /// also returns `true` for it.
+    pub fn track_value(&self, track: usize) -> Option<f32> {
+        let t = self.tracks.get(track)?;
+        (t.kind != Kind::None).then(|| t.value())
+    }
+
+    /// Whether a track was last set by a step (`_AFTER`/`EXT_..._AFTER`)
+    /// command, the only kind safe to reinterpret as raw colour bytes or a
+    /// discrete index (`PaletteID`, `TextureIDCurrent`) rather than a
+    /// genuinely interpolating quantity.
+    pub fn track_is_stepped(&self, track: usize) -> bool {
+        self.tracks.get(track).is_some_and(|t| t.kind == Kind::Step)
+    }
+
+    /// Advances one tick, parsing new commands only if the clock allows it.
+    pub fn tick(&mut self, data: &[u8], speed: f32) -> Result<(), MatAnimError> {
+        self.parse(data, speed)?;
+        if !self.ended {
+            for t in self.tracks.iter_mut() {
+                if t.kind != Kind::None {
+                    t.length += speed;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// `gcParseMObjMatAnim`: run commands until one blocks past now.
+    fn parse(&mut self, data: &[u8], speed: f32) -> Result<(), MatAnimError> {
+        if self.ended {
+            return Ok(());
+        }
+        self.anim_wait -= speed;
+        if self.anim_wait > 0.0 {
+            return Ok(());
+        }
+
+        for _ in 0..4096 {
+            let at = self.pc;
+            let word = u32_at(data, at).ok_or(MatAnimError::Truncated { at })?;
+            let opcode = word >> 25;
+            let flags = (word >> 15) & 0x3FF;
+            let payload = (word & 0x7FFF) as f32;
+            self.pc += 4;
+
+            match opcode {
+                OP_END => {
+                    for t in self.tracks.iter_mut() {
+                        if t.kind != Kind::None {
+                            t.length += speed + self.anim_wait;
+                        }
+                    }
+                    self.ended = true;
+                    return Ok(());
+                }
+                // `SetAnim` additionally rebases `anim_frame`, which nothing
+                // here reads (matches `objanim::StageJoint`'s own choice).
+                OP_JUMP | OP_SET_ANIM => {
+                    let target =
+                        u32_at(data, self.pc).ok_or(MatAnimError::Truncated { at })?;
+                    self.pc = target as usize;
+                    if self.pc == at {
+                        return Err(MatAnimError::TooLong);
+                    }
+                }
+                OP_SET_FLAGS => self.anim_wait += payload,
+                OP_ADD_LENGTH => {
+                    for i in 0..TICK_TRACK_COUNT.min(10) {
+                        if flags & (1 << i) != 0 {
+                            self.tracks[i].length += payload;
+                        }
+                    }
+                }
+                OP_SET_INTERP => self.pc += 4,
+                _ => {
+                    let per = tick_values_per_track(opcode)
+                        .ok_or(MatAnimError::UnknownOpcode { opcode, at })?;
+                    self.pc = self.apply(data, opcode, flags, payload, per)?;
+                    if blocks(opcode) {
+                        self.anim_wait += payload;
+                    }
+                }
+            }
+            if self.anim_wait > 0.0 {
+                return Ok(());
+            }
+        }
+        Err(MatAnimError::TooLong)
+    }
+
+    /// Sets the tracks a command names, returning the new program counter.
+    ///
+    /// A material-window opcode (`3..=11`) addresses tracks `0..10`; its
+    /// colour-window counterpart (`18..=21`) addresses the same shape of
+    /// command but tracks `10..15` — [`is_ext`] already draws that line.
+    fn apply(
+        &mut self,
+        data: &[u8],
+        opcode: u32,
+        flags: u32,
+        payload: f32,
+        per: usize,
+    ) -> Result<usize, MatAnimError> {
+        let mut pc = self.pc;
+        let (base, count) = if is_ext(opcode) {
+            (TICK_EXT_START, TRACK_COUNT)
+        } else {
+            (0, MAT_TRACK_COUNT)
+        };
+        let mut bits = flags;
+        for i in 0..count {
+            if bits == 0 {
+                break;
+            }
+            if bits & 1 != 0 {
+                let raw = u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?;
+                pc += 4;
+                let second = if per == 2 {
+                    let v = u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?;
+                    pc += 4;
+                    Some(f32::from_bits(v))
+                } else {
+                    None
+                };
+                let value = f32::from_bits(raw);
+
+                let t = &mut self.tracks[base + i];
+                t.value_base = t.value_target;
+                t.value_target = value;
+                t.length = -self.anim_wait;
+                if payload != 0.0 {
+                    t.length_invert = 1.0 / payload;
+                }
+
+                match opcode {
+                    OP_SET_VAL0_RATE_BLOCK | OP_SET_VAL0_RATE => {
+                        t.rate_base = t.rate_target;
+                        t.rate_target = 0.0;
+                        t.kind = Kind::Cubic;
+                    }
+                    OP_SET_VAL_RATE_BLOCK | OP_SET_VAL_RATE => {
+                        t.rate_base = t.rate_target;
+                        t.rate_target = second.unwrap_or(0.0);
+                        t.kind = Kind::Cubic;
+                    }
+                    OP_SET_TARGET_RATE => {
+                        t.rate_target = value;
+                        t.value_target = t.value_base;
+                        t.kind = Kind::Cubic;
+                    }
+                    OP_SET_VAL_AFTER_BLOCK
+                    | OP_SET_VAL_AFTER
+                    | OP_EXT_VAL_AFTER_BLOCK
+                    | OP_EXT_VAL_AFTER => {
+                        t.length_invert = payload;
+                        t.kind = Kind::Step;
+                    }
+                    _ => {
+                        // `SET_VAL(_BLOCK)`/`EXT_VAL(_BLOCK)`: linear ramp.
+                        t.rate_base = if payload != 0.0 {
+                            (t.value_target - t.value_base) / payload
+                        } else {
+                            0.0
+                        };
+                        t.rate_target = 0.0;
+                        t.kind = Kind::Linear;
+                    }
+                }
+            }
+            bits >>= 1;
+        }
+        Ok(pc)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +668,143 @@ mod tests {
         assert!(c.prim.is_some());
         assert_eq!(c.env, None);
         assert_eq!(c.blend, None);
+    }
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::*;
+
+    fn script(words: &[u32]) -> alloc::vec::Vec<u8> {
+        words.iter().flat_map(|w| w.to_be_bytes()).collect()
+    }
+
+    const fn cmd(opcode: u32, flags: u32, payload: u32) -> u32 {
+        (opcode << 25) | (flags << 15) | payload
+    }
+
+    #[test]
+    fn a_palette_step_switches_after_its_payload_frames() {
+        // RE-086/RE-087's real shape: PaletteID (track 9) steps to 0
+        // immediately (payload 0), then to 1 after 3 more frames.
+        let d = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 3),
+            1.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(j.track_value(TRACK_PALETTE_ID), Some(0.0), "steps immediately");
+        assert!(j.track_is_stepped(TRACK_PALETTE_ID));
+
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(
+            j.track_value(TRACK_PALETTE_ID),
+            Some(1.0),
+            "steps to the target once its payload has elapsed"
+        );
+    }
+
+    #[test]
+    fn raw_words_are_read_as_real_floats_not_integers() {
+        // A real ROM script's PaletteID values are 0x3F800000 etc -- IEEE-754
+        // bit patterns for small integers, not the integers' own bit
+        // patterns. Reading them any other way would read "1" as a huge,
+        // meaningless palette index.
+        let d = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0x3F80_0000,
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(j.track_value(TRACK_PALETTE_ID), Some(1.0));
+    }
+
+    #[test]
+    fn set_anim_makes_the_script_cycle_forever_instead_of_ending() {
+        // The real archive-wide pattern (RE-086/RE-087): a PaletteID cycle
+        // ending in `SET_ANIM` back to offset 0, not a plain `END`. Ticking
+        // well past the script's own length must keep producing the cycle,
+        // not stop or error, which is what `Self::ended` and a working
+        // `SET_ANIM` jump together are for.
+        let d = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
+            1.0f32.to_bits(),
+            cmd(OP_SET_ANIM, 0, 0),
+            0, // jump target: offset 0, this script's own start
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        let mut values = alloc::vec::Vec::new();
+        for _ in 0..12 {
+            j.tick(&d, 1.0).expect("ticks");
+            assert!(!j.ended(), "a loop is not the same as stopping");
+            values.push(j.track_value(TRACK_PALETTE_ID).unwrap());
+        }
+        // Both values must actually appear -- a script that got stuck
+        // reading garbage past its own end, or one that silently stayed on
+        // its first value forever, would each produce a degenerate sequence
+        // that still "ticks without erroring".
+        assert!(values.contains(&0.0), "{values:?}");
+        assert!(values.contains(&1.0), "{values:?}");
+    }
+
+    #[test]
+    fn an_unknown_opcode_is_an_error_not_a_skip() {
+        let d = script(&[cmd(23, 0, 0), 0]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        assert!(matches!(
+            j.tick(&d, 1.0),
+            Err(MatAnimError::UnknownOpcode { opcode: 23, .. })
+        ));
+    }
+
+    #[test]
+    fn a_colour_track_set_by_a_ramp_is_not_trusted_as_a_step() {
+        // `EXT_VAL` (a ramp, not a step) on a colour track would corrupt the
+        // bit-transmuted RGBA bytes with real arithmetic if read back as a
+        // colour -- `track_is_stepped` is what a caller must check first,
+        // mirroring `colors_at`'s own established limitation for this exact
+        // case rather than silently trusting a ramped colour.
+        let d = script(&[
+            cmd(OP_EXT_VAL, 1 << 0, 4), // PrimColor (ext track 0), ramp
+            0x00FF_00FFu32,
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert!(j.track_value(TRACK_PRIM_COLOR).is_some());
+        assert!(!j.track_is_stepped(TRACK_PRIM_COLOR));
+    }
+
+    #[test]
+    fn a_stepped_colour_track_round_trips_its_raw_bytes() {
+        // The colour window's own `_AFTER` opcode (18) is the one real
+        // stage/costume scripts actually use for colour -- confirms the same
+        // bit-transmutation trick that works for `PaletteID` also round-trips
+        // real RGBA bytes losslessly through `Kind::Step`.
+        let rgba: u32 = 0x11223344;
+        let d = script(&[
+            cmd(OP_EXT_VAL_AFTER_BLOCK, 1 << 0, 0),
+            rgba,
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert!(j.track_is_stepped(TRACK_PRIM_COLOR));
+        let got = j.track_value(TRACK_PRIM_COLOR).unwrap().to_bits();
+        assert_eq!(got, rgba);
+    }
+
+    #[test]
+    fn an_unset_track_reads_as_none() {
+        let d = script(&[cmd(OP_END, 0, 0)]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(j.track_value(TRACK_PALETTE_ID), None);
     }
 }

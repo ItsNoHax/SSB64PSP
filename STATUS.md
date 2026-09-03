@@ -16,8 +16,69 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10` (moved from `TODO`). With every code-reading/
-lookup item on `R0.12`/`R0.14` exhausted last session, this picked up the
+`IN_PROGRESS` on `R0.10`. RE-087 (this session) picked up exactly where
+RE-086 left off: found which stage to target (a `PaletteID`-cycling
+script, via a temporary `romtool` subcommand, reverted) and decoded it
+byte-for-byte instead of guessing at the runtime engine's shape from the
+track-category census alone.
+
+The real script is a genuine, continuous loop: `SET_VAL_AFTER_BLOCK`
+steps `PaletteID` through `0,1,2,3,2,1,0,...`, then `SET_ANIM` jumps
+back to the script's own start — not a one-shot key list the way
+`matanim.rs`'s existing `colors_at` (built for fighter costume
+selection) assumes. `colors_at` declines `JUMP` outright ("a costume
+list has no reason to jump"), which was correct for its own use case
+and is now confirmed *wrong* for the general one — a real script
+depends on that jump to loop forever.
+
+Added `matanim::MaterialJoint`: a persistent, tick-based player reusing
+`crate::figatree::Aobj`/`Kind` — the exact interpolation state
+`crate::objanim::StageJoint` already plays joint tracks with, including
+already-correct `JUMP`/`SET_ANIM` handling this project didn't need to
+reinvent — over a unified 15-track window (ten material tracks, then
+five colour tracks), so the same engine can play `PrimColor`/`EnvColor`/
+`BlendColor` later without a third parallel implementation.
+`colors_at`/`Colors`/`costume_colors` (fighter costume selection,
+`R0.11`'s own mechanism) are completely untouched — this is a new,
+adjacent engine for the general case, not a rewrite of the existing one.
+
+One real subtlety, found and handled rather than assumed away: a
+material track's raw word is a genuine `f32` (`PaletteID`'s `0x3F800000`
+really is `1.0`), but a colour track's raw word is RGBA bytes
+reinterpreted, never arithmetic. Storing both in the same `f32`-typed
+slots is only safe because a colour track this project's data actually
+uses is always `Kind::Step` (matching `colors_at`'s own pre-existing,
+accepted limitation) — `MaterialJoint::track_is_stepped` makes that
+condition explicit and checkable, verified by a unit test that a
+ramped (non-step) colour track is correctly flagged as untrustworthy
+rather than silently trusted.
+
+Verified with 7 new unit tests reproducing the exact real shape:
+immediate (`payload=0`) and delayed (`payload=3`) steps, raw
+`0x3F800000`-style float words (not integer reinterpretation), and a
+`SET_ANIM`-terminated loop ticked twelve times past the script's own
+length to confirm it keeps cycling rather than erroring, freezing, or
+reading garbage. `cargo test --workspace`: 375 passing (was 368, no
+regressions). `cargo clippy --release` (workspace): clean. `cargo psp
+--release` + `tools/run-ppsspp.sh`: builds and runs clean under the
+real `no_std` PSP target too (new code has to compile there even before
+anything calls it), no panics, Dream Land unchanged (nothing wired to
+rendering yet).
+
+`PLAN.md` R0.10 gains two newly-checked acceptance items: "animation
+data decoded" and "runtime clock implemented". What remains — "material
+state updated correctly" and both "verified" items — is real,
+substantial work: `mobj.rs` still reads `MObjSub.palettes[0]` only;
+nothing resolves `p_matanim_joints` into per-(node, `MObj`) script
+references at pack time; no pack table carries any of this; nothing on
+the device side ticks a `MaterialJoint` or reloads a CLUT. This session
+shipped the *engine*, tested in isolation — the *pipeline* around it
+(pack format, `MaterialAnimator` lifecycle, `sceGuClutLoad` wiring) is
+next, and is a genuinely different, larger piece of work than decoding
+was.
+
+Immediately before this, with every code-reading/lookup item on
+`R0.12`/`R0.14` exhausted, this picked up the
 first genuinely eligible `TODO` task in `PLAN.md`'s own dependency order
 (`R0.11` depends on `R0.10`; `R0.10` itself depends on `R0.6`, adequately
 progressed, and `R0.9`, `COMPLETE`) — per `PLAN.md` §13's autonomous rule:
@@ -775,14 +836,15 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R0.10` — implement `PaletteID` cycling first, not colour.** RE-086
-did the scoping; the concrete next step is real implementation work,
-sized like a small feature rather than a single lookup:
+**`R0.10` — the engine exists and is tested; the pipeline around it does
+not.** RE-086 scoped it, RE-087 shipped and verified `matanim::MaterialJoint`
+(step 1 below, done). The concrete next step is the pipeline that feeds
+it real data and consumes its output — sized like a small feature, not
+a lookup:
 
-1. A tick-based decoder mirroring `objanim.rs::StageJoint`'s persistent
-   per-tick model (not `matanim.rs::colors_at`'s one-shot costume-frame
-   read) for the `PaletteID` track specifically — the dominant case
-   (122/172 scripts).
+1. ~~A tick-based decoder for the material/colour track windows~~ — done
+   (RE-087, `matanim::MaterialJoint`, 7 unit tests, verified against the
+   real `PaletteID`-cycling shape including its `SET_ANIM` loop).
 2. Extend `mobj.rs` to read `MObjSub.palettes[1..]`, not just `[0]`
    (`F_PALETTES`, gated on `MOBJ_FLAG_PALETTE`) — the raw data for every
    palette a script cycles through already exists in the ROM and is
@@ -800,16 +862,16 @@ sized like a small feature rather than a single lookup:
    `pack::VERSION` bump, following that file's own bump-log convention.
 5. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
-   resolves the live `PaletteID` value each tick and issues
-   `sceGuClutLoad` with the corresponding palette before that
-   primitive's draw — no combiner or vertex-recolouring work needed,
-   since the PSP GE already separates indexed-texture image data from
-   its palette.
+   wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each
+   tick, and issues `sceGuClutLoad` with the corresponding palette
+   before that primitive's draw — no combiner or vertex-recolouring
+   work needed, since the PSP GE already separates indexed-texture image
+   data from its palette.
 6. Verify on a stage that actually needs it — **not Dream Land**, whose
    own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
    not `PaletteID` cycling (RE-086). Finding which of the other 40
    stages has a representative palette-cycling layer is itself a small,
-   concrete first step before writing any engine code.
+   concrete first step before writing this part.
 
 `TraU`/`TraV`/`ScrU`/`ScrV` (UV translate/scale/scroll, the next-largest
 category after `PaletteID`) and `TextureIDCurrent` (frame swapping, 22%)
