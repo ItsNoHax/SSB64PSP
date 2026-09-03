@@ -12,11 +12,58 @@
 
 ## Current Task
 
-`R0.14 — Camera / Projection Correctness`
+`R0.10 — Material Animation`
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.14`. RE-085 (this session) closed the last
+`IN_PROGRESS` on `R0.10` (moved from `TODO`). With every code-reading/
+lookup item on `R0.12`/`R0.14` exhausted last session, this picked up the
+first genuinely eligible `TODO` task in `PLAN.md`'s own dependency order
+(`R0.11` depends on `R0.10`; `R0.10` itself depends on `R0.6`, adequately
+progressed, and `R0.9`, `COMPLETE`) — per `PLAN.md` §13's autonomous rule:
+resume an `IN_PROGRESS` task if one is actionable, else select the first
+eligible `TODO`.
+
+Started designing the runtime engine assuming R0.10's own framing was
+right — that the interesting case is `PRIM`/`ENV`/`BLEND` **colour**
+animation, since that is what `matanim.rs`'s existing decoder (built for
+fighter costume selection) already reads. Before committing to that
+design, dumped one concrete script (Dream Land's own material-animated
+layer, file 104) and found it does not touch colour at all — it drives
+`nGCAnimTrackTraU` (texture U-translate) and `nGCAnimTrackSetLFrac`
+(mipmap LOD blend), a texture-sway effect. That result alone was enough
+to stop and measure archive-wide before designing anything further.
+
+RE-086 (this session) walked all 12 stage layers' `p_matanim_joints`
+tables down to 172 individual scripts (temporary `romtool` subcommand,
+reverted, matching RE-079/RE-081's pattern) and classified each by which
+track category it ever sets. A first pass produced impossible numbers
+(a track "set" more times than there were scripts) — a script that loops
+back via `JUMP` re-executes the same instruction every pass, and the
+walker needed to detect a revisited program counter and stop rather than
+keep counting until an arbitrary cap. Fixed, the real archive-wide
+picture is: **`PaletteID` cycling is 71% (122/172) of stage material
+animation**, `TextureIDCurrent` (frame swapping) is 22%, UV translate/
+scale/scroll is a meaningful minority, and **colour is under 2% (3/172)**
+— the opposite of this task's own original framing. `mobj.rs` already
+reads `MObjSub.palettes[0]` only; `palettes[1..]`, needed for the
+dominant case, are never read at all currently, confirmed as a real gap.
+
+This matters beyond trivia: implementing R0.10 as originally framed would
+have correctly handled 2% of the real need and left the dominant case
+(and the cheapest one to implement — the PSP GE's native indexed-texture
+format already separates image from CLUT via `sceGuClutLoad`, needing no
+new combiner or vertex-recolouring machinery) completely unaddressed,
+with nothing that would have caught the gap short of someone noticing a
+palette-cycling stage looked static. `PLAN.md` R0.10 moved `TODO` →
+`IN_PROGRESS` (real, substantive investigation happened and every
+acceptance item's scoping changed, even though no implementation code
+exists yet — the same shape `R0.5`/`R0.7` already use for
+investigation-heavy progress). No code changed this session on `R0.10` —
+the census subcommand was reverted before committing; `git diff --stat`
+on `tools/romtool/src/main.rs` is empty.
+
+Immediately before this, on `R0.14`, RE-085 closed the last
 actionable-right-now item this file's own previous note named:
 "depth mapping verified", the one `R0.14` acceptance item with no
 decomp-side constant to look up (the N64's Z-buffer is inherent RDP
@@ -728,9 +775,52 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-Both lines of investigation this file previously pointed at are now
-exhausted for further *quick* progress — not abandoned, but each hit a
-real blocker this session, recorded rather than papered over:
+**`R0.10` — implement `PaletteID` cycling first, not colour.** RE-086
+did the scoping; the concrete next step is real implementation work,
+sized like a small feature rather than a single lookup:
+
+1. A tick-based decoder mirroring `objanim.rs::StageJoint`'s persistent
+   per-tick model (not `matanim.rs::colors_at`'s one-shot costume-frame
+   read) for the `PaletteID` track specifically — the dominant case
+   (122/172 scripts).
+2. Extend `mobj.rs` to read `MObjSub.palettes[1..]`, not just `[0]`
+   (`F_PALETTES`, gated on `MOBJ_FLAG_PALETTE`) — the raw data for every
+   palette a script cycles through already exists in the ROM and is
+   currently discarded past the first entry.
+3. Resolve `p_matanim_joints` into per-(node, MObj-chain-position)
+   script references, parallel to how `mobjsub_table` already resolves
+   per-(node, MObj-chain-position) materials (RE-086's temporary census
+   already proved this indexing scheme works: `p_matanim_joints[node]`
+   is a pointer to a per-MObj-chain-position script array, walked in
+   lockstep with the same chain `mobjsub_table` walks).
+4. Pack every palette a texture's animation cycles through (not just the
+   first), plus the resolved per-primitive script reference, into the
+   runtime format — likely a new table pair mirroring `AnimDesc`/
+   `AnimJoint`'s shape (`pack.rs` lines 322-353 per prior research), a
+   `pack::VERSION` bump, following that file's own bump-log convention.
+5. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
+   lifecycle: start on layer change, tick per frame, apply in draw) that
+   resolves the live `PaletteID` value each tick and issues
+   `sceGuClutLoad` with the corresponding palette before that
+   primitive's draw — no combiner or vertex-recolouring work needed,
+   since the PSP GE already separates indexed-texture image data from
+   its palette.
+6. Verify on a stage that actually needs it — **not Dream Land**, whose
+   own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
+   not `PaletteID` cycling (RE-086). Finding which of the other 40
+   stages has a representative palette-cycling layer is itself a small,
+   concrete first step before writing any engine code.
+
+`TraU`/`TraV`/`ScrU`/`ScrV` (UV translate/scale/scroll, the next-largest
+category after `PaletteID`) and `TextureIDCurrent` (frame swapping, 22%)
+are real, measured, but smaller follow-on work — a texture matrix update
+per frame for the former, a bound-texture swap for the latter — neither
+blocks starting with palette cycling, and neither should be designed
+around alongside it in the same pass; `PaletteID` alone is 71% of the
+real need.
+
+**Other, now-secondary threads, each already investigated as far as this
+session's methods reach:**
 
 1. **The dither/coverage problem (`R0.5`/`R0.6`'s `translucent`) is
    fully tried out for now.** RE-081 tested the last untried idea on

@@ -906,7 +906,7 @@ hardware — that gap belongs to R2, not this task.
 
 ## R0.10 — Material Animation
 
-Status: `TODO`
+Status: `IN_PROGRESS`
 
 ### Current evidence
 
@@ -915,6 +915,25 @@ The 12-layer material animation script is decoded but not played
 happens to match the baked colours already shipped, so nothing currently
 renders visibly wrong — but that is coincidence, not implementation. Genuinely
 not started; `TODO.md` Phase F.
+
+RE-086 measured what those 12 layers' 172 material-animation scripts
+actually animate, archive-wide, before any implementation was designed —
+correcting this task's own original framing, which (matching
+`matanim.rs`'s existing costume-selection decoder) assumed the
+interesting case was `PRIM`/`ENV`/`BLEND` **colour** animation. It is
+not: **71% (122/172) animate `PaletteID`** — cycling which of a
+texture's several palettes is bound, the classic cheap N64 technique for
+water/lava/shimmer effects — **22% animate `TextureIDCurrent`** (frame
+swapping), a meaningful minority animate texture UV translate/scale/scroll
+(`TraU`/`TraV`/`ScrU`/`ScrV`, ~10-26 scripts each), and only **3 of 172
+(under 2%) touch colour at all**. `crates/ssb-rom/src/mobj.rs` already
+reads `MObjSub.palettes[0]` only — `palettes[1..]` exist in the ROM and
+are never read, confirmed as a real, now-measured gap rather than a
+hedge. Palette cycling is also the cheapest of the three mechanisms to
+implement: the PSP GE's native indexed-texture format already separates
+image from CLUT (`sceGuClutLoad`), so swapping a bound texture's active
+palette needs no new combiner or vertex-recolouring machinery. No code
+changed — a scoping/measurement pass, the same shape as RE-072/RE-081.
 
 ### Objective
 
@@ -927,12 +946,16 @@ Implement material animation used by SSB64.
 
 ### Acceptance
 
-* [ ] animation data decoded
-* [ ] runtime clock implemented
+* [ ] animation data decoded — the colour-track decoder (`matanim.rs::colors_at`) exists but is a one-shot "evaluate at frame N" costume-selection reader, not a persistent per-tick engine; RE-086 found colour is under 2% of what actually needs decoding, so a `PaletteID`/`TextureIDCurrent`/UV-track decoder (mirroring `objanim.rs::StageJoint`'s persistent tick model, not `colors_at`'s) is the real remaining work here
+* [ ] runtime clock implemented — needs the same three-phase lifecycle `StageAnimator` (R0.9) already established (start-on-layer-change, tick-per-frame, apply-in-draw), not yet built for material tracks
 * [ ] material state updated correctly
 * [ ] representative animated materials verified
-* [ ] stage material animation verified
-* [ ] fighter material animation verified where applicable
+* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); a representative verification pass needs a palette-cycling stage, not Dream Land
+* [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
+
+### Evidence
+
+RE-048, RE-086 in `docs/reverse-engineering.md`.
 
 ---
 

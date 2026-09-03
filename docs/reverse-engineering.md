@@ -5829,3 +5829,108 @@ a measurement with error bars. The on-device check is corroborating, not
 load-bearing on its own (a single regression scene cannot rule out every
 possible depth-order case, but it did not need to — the SDK-documentation
 match already settles the question).
+
+## RE-086 — Stage "material animation" is mostly palette cycling, not colour: R0.10 archive-wide census before implementing anything
+
+**Question.** `PLAN.md` R0.10 (Material Animation) is `TODO`, genuinely
+unstarted. Its own framing (and this task's initial approach before this
+entry) assumed the interesting case was `PRIM`/`ENV`/`BLEND` **colour**
+animation, matching `matanim.rs`'s existing `colors_at` (built for fighter
+*costume* selection, which does read exactly those three colour tracks).
+Before designing a runtime engine and packing new data around that
+assumption, this measured what the 12 stage layers RE-048 found actually
+animate.
+
+**A single example first: Dream Land's own layer does neither colour nor
+what "material animation" usually implies.** Dumped the raw `AObjEvent32`
+commands at its script (file 104, resolved through the layer's
+`p_matanim_joints` table at `0x2530` → node table `0x2700`/`0x2704` →
+scripts `0x2540`/`0x2620`) and found `SET_VAL_RATE` commands targeting
+track index 1 and track index 8 of the **joint/texture** track window
+(`AObjTrackKind` in `refs/ssb-decomp-re/src/sys/objdef.h:220-246`), not
+the colour window at all. Track 1 in that window is `nGCAnimTrackTraU`
+(texture U-translate) and track 8 is `nGCAnimTrackSetLFrac` (mipmap LOD
+blend fraction — the exact thing `TODO.md` Phase D's separate
+`MOBJ_FLAG_FRAC` item already names as unimplemented). Dream Land's own
+material animation is a slow back-and-forth **texture sway**, not a
+colour change.
+
+**Archive-wide, one track dominates completely, and it is neither of
+those either.** A temporary `romtool` subcommand (reverted, not
+committed, matching RE-079/RE-081's pattern) resolved all 12 stage
+layers' `p_matanim_joints` tables (same-file targets only) down to 172
+individual per-material scripts, and classified each by which track
+*categories* it ever sets — counting a track once per script regardless
+of how many times a loop revisits the instruction that sets it (an
+earlier pass that counted raw occurrences produced numbers like "122,681
+scripts set PaletteID", which is impossible with only 172 scripts total —
+a script that loops back via `JUMP` re-executes the same `SET_VAL`
+command every pass, and the walker has to detect a revisited program
+counter and stop, or it just keeps re-counting the same instruction until
+an arbitrary iteration cap). With that fixed:
+
+```
+scripts classified: 172
+  PaletteID          122 scripts  (71%)
+  TextureIDCurrent    38 scripts  (22%)
+  TraU                26 scripts
+  TraV                22 scripts
+  ScaV                12 scripts
+  ScrV                12 scripts
+  SetLFrac            12 scripts
+  TextureIDNext       10 scripts
+  ScrU                10 scripts
+  ScaU                 9 scripts
+  PrimColor            3 scripts  (2%)
+  Light1Color          2 scripts
+  Light2Color          2 scripts
+```
+
+**Palette-ID cycling is 71% of stage material animation archive-wide,
+colour is under 2%.** This is the classic N64 technique for cheap
+"animated" effects — water shimmer, lava flicker, colour-cycling —
+achieved by swapping which of a texture's several baked palettes is
+bound, not by redrawing texture data or blending a combiner constant.
+`crates/ssb-rom/src/mobj.rs` already reads `MObjSub.palettes[0]`
+(`F_PALETTES` field, gated on `MOBJ_FLAG_PALETTE`) but only ever the
+first entry — the comment at `MObjMaterial`'s definition already flags
+this explicitly ("index 0 is the neutral costume and the first frame of
+any material animation"), which this entry confirms is a real,
+now-measured gap rather than a hedge: `palettes[1..]` exist in the ROM
+data and are never read at all.
+
+**Why this matters for scoping, not just trivia.** Had R0.10 been
+implemented as originally framed — a colour-animation engine built
+around `matanim.rs`'s existing costume-list decoder — it would have
+correctly handled 2% of what stage material animation actually needs
+and left the dominant case (palette cycling) completely unaddressed,
+with no test or measurement that would have caught the gap until someone
+looked at a stage that actually needs it. The palette-cycling case is
+also, happily, the *cheapest* one to implement on the PSP: the GE's
+native indexed-texture format already separates the texture image from
+its CLUT (`sceGuClutLoad`), so switching a bound texture's active
+palette at runtime needs no new combiner or vertex-recolouring
+machinery — exactly the mechanism the N64 original relied on being cheap
+too. The UV-translate/scroll case (`TraU`/`TraV`/`ScrU`/`ScrV`, ~15-30
+scripts each) is the next largest category, and would need a different
+mechanism (a per-primitive UV offset, most naturally the GE's texture
+matrix, updated once per frame rather than touching vertex data).
+
+**Result.** No code changed — the census subcommand was reverted after
+producing these numbers, matching RE-079/RE-081/RE-082's established
+"temporary, not committed" pattern for this kind of investigation.
+`PLAN.md` R0.10 stays `TODO`, but its "Current evidence" and acceptance
+items now correctly scope the dominant case as palette-ID animation
+rather than colour, with the archive-wide breakdown recorded so a future
+implementation session does not have to re-derive it or guess.
+
+**Confidence: high** for the track-category breakdown (a real
+archive-wide walk of all 12 layers' scripts, cross-checked against a
+raw byte dump for one concrete example) and for the loop-recounting bug
+being the correct explanation for the first pass's impossible numbers
+(the fix — stopping at a revisited program counter — produced counts
+that sum sensibly against 172 total scripts, where the buggy version did
+not). **Not attempted**: cross-file `p_matanim_joints` tables (skipped
+for this census, so the true archive-wide script count is a lower bound,
+not exhaustive) and any device-side implementation of any of the three
+mechanisms this entry identifies.
