@@ -6116,3 +6116,99 @@ terminates). **Not yet known**: whether every stage's animated palette
 table is reachable this way once `p_matanim_joints` resolution exists, or
 whether some (like file 75's, whatever it actually turns out to be) sit
 in scene graphs `R0.7`'s pairing gaps already flagged as unresolved.
+
+---
+
+## RE-089 — `p_matanim_joints` resolved into per-(node, MObj) script references; the real `palettes[]` bound comes from the script, not the struct
+
+**Question.** RE-088 concluded the only sound source for a `palettes[]`
+table's real length is the material animation script that drives
+`palette_id` at runtime, and that resolving `p_matanim_joints` (`PLAN.md`
+R0.10's step 3) has to happen *before* reading `palettes[]`, not after.
+Does resolving it actually work, and does it produce a usable bound?
+
+**Generalised, not reinvented.** `matanim.rs`'s existing `costume_colors`
+(RE-040, fighter costume selection) already walks exactly this shape —
+outer array parallel to `DObjDesc`, each entry a per-`MObjSub`-chain-position
+script list — it just also evaluates each script's colour tracks in the
+same pass. Factored the walk out into `resolve_scripts(file, table, nodes,
+chain_len) -> Vec<Vec<Option<u32>>>`, a table of raw script addresses with
+no evaluation attached, and rebuilt `costume_colors` on top of it
+(behaviour-preserving: new unit tests cover both `resolve_scripts` directly
+and `costume_colors` reached through it, plus the crate's full existing
+suite, unaffected). This is genuinely one function for two callers, not
+two similar ones: a fighter's `p_costume_matanim_joints` and a stage
+layer's `p_matanim_joints` are the same struct shape in different places
+in the ROM (RE-086 already established this; RE-089 is what turns that
+observation into shared code the general stage case can also call).
+
+**Wired into `romtool stages`, not a throwaway census.** `stage.rs`'s
+`GroundLayer::matanim_joints` already resolved the raw `Target` (RE-048);
+`stages` now uses `resolve_scripts` against the same-file `mobjsub_table`
+chain lengths (same same-file restriction RE-086 already accepted for
+this census, and the existing `anim_joints` block already uses for joint
+animation) and replays every resolved script to completion with the
+already-shipped `MaterialJoint` tick engine — the first archive-wide
+exercise of that engine beyond RE-087's single hand-picked example.
+
+**Result, run against the real ROM: 61 scripts resolved, 0 failures.**
+Every one of them ran to its own `End` or its own `SET_ANIM` loop point
+without hitting an unmodelled opcode or running off the end of its file —
+meaningful corroboration that `MaterialJoint` (built and tested against
+one script by hand in RE-087) generalises correctly, not just to the one
+case it was written against. The category breakdown on this same-file
+subset (`PaletteID` 54%, `TraU`/`TraV`/`TextureIDCurrent` most of the
+rest) is not the same distribution RE-086 measured archive-wide
+(`PaletteID` 71%) because this is a smaller, same-file-only slice (61 of
+RE-086's 172; cross-file `p_matanim_joints` tables are still not
+attempted, matching RE-086's own stated scope) — a different denominator,
+not a disagreement.
+
+**The real payoff: an actual, decomp-cross-checked `palettes[]` bound.**
+For every resolved `PaletteID` script, ticking `MaterialJoint` to
+completion and taking the largest value the track ever reports (`round()
++ 1`, since real values are exact small integers per RE-087) gives the
+exact number of `palettes[]` entries that script will ever ask for — the
+bound RE-088 showed cannot come from the struct itself. Two files
+corroborate this against independent evidence:
+
+* **File 117 (`117_StageMetalFile2`) — RE-088's own decomp source
+  example.** Its two `PaletteID` scripts both resolve to exactly **16
+  entries**, matching `dStageMetalFile2_Layer1MObj_MObjSub_real_palettes[16]`
+  in the decompilation byte-for-byte. RE-088 cited this table only as
+  "the largest un-terminated example found by inspection"; this session's
+  script decode independently arrives at the same number from the
+  *runtime* side (what the script actually asks for) rather than the
+  *data* side (what the C source declares) — two unrelated methods
+  agreeing is real corroboration, not the same fact restated.
+* **File 105 (`105_StageZebesFile2`) — 18 scripts, needing 2–4 entries
+  each.** File 114 (`114_StageLastFile2`) — 13 scripts, needing exactly
+  18 entries each. Both are concrete, non-Dream-Land candidates for
+  `PLAN.md` R0.10 step 6's "find a representative palette-cycling stage"
+  — small (2–4 entries) and large (18) cases in the same archive, neither
+  previously identified.
+
+**Result.** `crates/ssb-rom/src/matanim.rs` gained `resolve_scripts`
+(public, tested) with `costume_colors` rebuilt on top of it.
+`tools/romtool/src/main.rs`'s `stages` command permanently gained a
+material-animation replay block (mirroring the existing joint-animation
+one), not a temporary reverted census — this is now a standing
+regression check the same way RE-050's joint-animation replay is.
+`cargo test --workspace`: 234 passing (was 232, two new `matanim` tests).
+`cargo clippy --release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: builds and runs clean, Dream Land pixel-identical
+at 60 FPS (nothing wired to rendering or the pack format yet — this is
+resolution and replay only). `PLAN.md` R0.10's step 3 is done; step 2
+(reading `palettes[1..]`, RE-088's retracted attempt) is now unblocked —
+a caller can read exactly `entries` palette pointers once it has resolved
+a `MObj`'s driving script this way, rather than guessing at a length from
+`palettes[]`'s own bytes.
+
+**Confidence: high** for the resolution mechanism (generalised from an
+already-shipped, already-working fighter costume mechanism, not new
+guesswork) and for the `MaterialJoint` engine's correctness on this
+61-script sample (0 failures, plus the file-117 cross-check against an
+independent, unrelated source). **Not yet done**: cross-file
+`p_matanim_joints` tables (same gap RE-086 left, still not attempted);
+actually reading `palettes[1..]` using this bound (`PLAN.md` R0.10 step
+2, next); packing any of this into the runtime format (step 4).

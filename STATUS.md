@@ -16,8 +16,57 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-088 (this session) attempted the concrete
-next step the previous session's own note pointed at — extending
+`IN_PROGRESS` on `R0.10`. RE-089 (this session) did what RE-088's own
+retraction said was the actual next step: resolve `p_matanim_joints` into
+per-(node, `MObj`-chain-position) script addresses *first*, since the
+`palettes[]` bound RE-088 needed can only come from there.
+
+Generalised rather than reinvented: `matanim.rs`'s existing
+`costume_colors` (fighter costume selection, RE-040) already walks this
+exact shape — outer array parallel to `DObjDesc`, each entry a per-chain
+script list — it just also evaluates each script's colour tracks in the
+same pass. Factored the walk itself into a new public
+`resolve_scripts(file, table, nodes, chain_len) -> Vec<Vec<Option<u32>>>`
+and rebuilt `costume_colors` on top of it, behaviour-preserving (two new
+unit tests, plus the crate's full existing suite unaffected). One
+function now serves both known instances of this shape — a fighter's
+`p_costume_matanim_joints` and a stage layer's `p_matanim_joints` — since
+RE-086 already established they are the same struct laid out in
+different files.
+
+Wired it permanently into `romtool stages` (not a temporary reverted
+census): resolves each stage layer's `p_matanim_joints` against its
+same-file `mobjsub_table` chain lengths, then replays every resolved
+script to completion with the already-shipped `MaterialJoint` engine —
+the first archive-wide exercise of that engine beyond RE-087's one
+hand-picked example. Run against the real ROM: **61 scripts resolved, 0
+failures.** The category breakdown on this same-file subset (`PaletteID`
+54%, the rest split across `TraU`/`TraV`/`TextureIDCurrent`) is smaller
+than but consistent with RE-086's full archive-wide number (172 scripts,
+`PaletteID` 71%) — cross-file `p_matanim_joints` tables are still not
+attempted, so this is a subset, not a disagreement.
+
+**This closes the loop RE-088 opened.** Ticking each resolved `PaletteID`
+script to completion and taking its largest value gives exactly the
+`palettes[]` entry count that script will ever need. Two concrete,
+cross-checked results: file 117 (`StageMetalFile2`) — the very file
+RE-088 cited from the decompilation as its largest known example — 
+independently resolves to **16 entries** from the *script's own runtime
+values*, matching the decomp's declared `..._palettes[16]` array exactly,
+via a completely different method than reading the C source. File 105
+(`StageZebesFile2`, 18 scripts needing 2–4 entries) and file 114
+(`StageLastFile2`, 13 scripts needing exactly 18 entries) are concrete,
+non-Dream-Land stages for the "representative palette-cycling stage"
+step this task's own prior note flagged as still needed.
+
+`cargo test --workspace`: 234 passing (was 232). `cargo clippy --release`
+(workspace): clean. `cargo psp --release` + `tools/run-ppsspp.sh`: builds
+and runs clean, Dream Land pixel-identical at 60 FPS (nothing wired to
+rendering or the pack format yet — this session is resolution and replay
+only, not consumption).
+
+Immediately before this, RE-088 (previous session) attempted the
+concrete next step the session before that had pointed at — extending
 `mobj.rs` to read `MObjSub.palettes[1..]`, not just `[0]` — and retracted
 it after archive-wide measurement showed it does not work.
 
@@ -905,37 +954,46 @@ a lookup:
    unrelated neighbouring file data, not a palette table, traced
    concretely in file 75). There is no way to bound this array's real
    length from its own bytes. Do not re-attempt this exact approach
-   without a new source of length information — that source is step 3
-   below, which this step now has to happen *inside*, not before.
-3. Resolve `p_matanim_joints` into per-(node, MObj-chain-position)
-   script references, parallel to how `mobjsub_table` already resolves
-   per-(node, MObj-chain-position) materials (RE-086's temporary census
-   already proved this indexing scheme works: `p_matanim_joints[node]`
-   is a pointer to a per-MObj-chain-position script array, walked in
-   lockstep with the same chain `mobjsub_table` walks). **Do this first**,
-   then read `palettes[]` bounded by the resolved script's own maximum
-   `PaletteID` payload (decode the script with `MaterialJoint`/its
-   underlying `Aobj` tracks, take the largest value any `SET_VAL`/
-   `SET_VAL_AFTER_BLOCK` on the `PaletteID` track ever sets, and read
-   exactly that many `palettes[]` entries) — the script supplies the
-   length the ROM's own struct layout cannot.
-4. Pack every palette a texture's animation cycles through (not just the
+   without a new source of length information — that source is step 3,
+   which this step now has to happen *inside*, not before.
+3. ~~Resolve `p_matanim_joints` into per-(node, MObj-chain-position)
+   script references~~ — done (RE-089, `matanim::resolve_scripts`,
+   generalised from the fighter-costume walk `costume_colors` already
+   did; wired permanently into `romtool stages`, 61 scripts resolved
+   archive-wide same-file, 0 failures).
+4. Now unblocked, and re-numbered from step 2 above: extend `mobj.rs` to
+   read `MObjSub.palettes[1..]`, bounded by the resolved script's own
+   maximum `PaletteID` payload — RE-089 already computed this bound for
+   every resolved `PaletteID` script (tick `MaterialJoint` to completion,
+   take the largest value the track ever reports, `round() + 1`) and
+   cross-checked it against an independent source: file 117
+   (`StageMetalFile2`) resolves to exactly 16 entries, matching its
+   decomp source's declared `..._palettes[16]` array byte-for-byte. The
+   remaining work is plumbing: for a `MObjSub` whose owning node/
+   chain-position has a resolved script, look up that script's
+   precomputed entry count (or compute it on the spot) and read exactly
+   that many `palettes[]` pointers — RE-088's retracted approach guessed
+   at this number from local bytes; this reads it as a parameter instead.
+5. Pack every palette a texture's animation cycles through (not just the
    first), plus the resolved per-primitive script reference, into the
    runtime format — likely a new table pair mirroring `AnimDesc`/
    `AnimJoint`'s shape (`pack.rs` lines 322-353 per prior research), a
    `pack::VERSION` bump, following that file's own bump-log convention.
-5. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
+6. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
    wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each
    tick, and issues `sceGuClutLoad` with the corresponding palette
    before that primitive's draw — no combiner or vertex-recolouring
    work needed, since the PSP GE already separates indexed-texture image
    data from its palette.
-6. Verify on a stage that actually needs it — **not Dream Land**, whose
+7. Verify on a stage that actually needs it — **not Dream Land**, whose
    own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
-   not `PaletteID` cycling (RE-086). Finding which of the other 40
-   stages has a representative palette-cycling layer is itself a small,
-   concrete first step before writing this part.
+   not `PaletteID` cycling (RE-086). ~~Finding which of the other 40
+   stages has a representative palette-cycling layer~~ — done (RE-089):
+   file 105 (`StageZebesFile2`, 18 scripts needing 2–4 palette entries
+   each) and file 114 (`StageLastFile2`, 13 scripts needing exactly 18
+   entries each) are both concrete, non-Dream-Land candidates, one small
+   and one large.
 
 `TraU`/`TraV`/`ScrU`/`ScrV` (UV translate/scale/scroll, the next-largest
 category after `PaletteID`) and `TextureIDCurrent` (frame swapping, 22%)

@@ -266,19 +266,32 @@ pub fn colors_at(data: &[u8], script: u32, frame: f32) -> Result<Colors, MatAnim
     })
 }
 
-/// `FTCommonPart::p_costume_matanim_joints`, resolved to one script per
-/// `(node, material)`.
+/// Resolves an `AObjEvent32 ***` table into one script address per
+/// `(node, MObj-chain-position)`, without evaluating anything.
 ///
-/// The outer array is parallel to the `DObjDesc` array; each entry points at a
-/// list of scripts parallel to that node's `MObjSub` chain, which is how
-/// `lbCommonAddMObjForFighterPartsDObj` walks the two together.
-pub fn costume_colors(
+/// Both known instances of this shape — a fighter's
+/// `FTCommonPart::p_costume_matanim_joints` and a stage layer's
+/// `MPGroundDesc::p_matanim_joints` — are laid out identically: the outer
+/// array is parallel to the `DObjDesc` array, and each present entry points
+/// at a further array parallel to that node's own `MObjSub` chain, walked in
+/// lockstep by the decompiled code that consumes it
+/// (`lbCommonAddMObjForFighterPartsDObj` for costumes,
+/// `gcAddMatAnimJointAll` for a stage layer). `chain_len(node)` is normally a
+/// closure over a chain length a caller already has from resolving the
+/// parallel `MObjSub ***` table (RE-086's temporary census confirmed this
+/// indexing scheme against real stage data before this became a permanent
+/// function).
+///
+/// Same-file only: `table` and every pointer it holds are read against
+/// `file`'s own bytes. A stage layer whose `p_matanim_joints` targets a
+/// different archive file cannot be resolved this way (RE-086 found this gap
+/// but did not attempt to close it; RE-089 confirms it is rare).
+pub fn resolve_scripts(
     file: &File,
     table: u32,
     nodes: usize,
     chain_len: impl Fn(usize) -> usize,
-    costume: f32,
-) -> alloc::vec::Vec<alloc::vec::Vec<Option<Colors>>> {
+) -> alloc::vec::Vec<alloc::vec::Vec<Option<u32>>> {
     (0..nodes)
         .map(|node| {
             let per_node = u32_at(&file.data, table as usize + node * 4).unwrap_or(0);
@@ -288,11 +301,31 @@ pub fn costume_colors(
                         return None;
                     }
                     let script = u32_at(&file.data, per_node as usize + m * 4)?;
-                    if script == 0 {
-                        return None;
-                    }
-                    colors_at(&file.data, script, costume).ok()
+                    (script != 0).then_some(script)
                 })
+                .collect()
+        })
+        .collect()
+}
+
+/// `FTCommonPart::p_costume_matanim_joints`, resolved to one script per
+/// `(node, material)` and evaluated at `costume`.
+///
+/// See [`resolve_scripts`] for the table shape; this layers [`colors_at`]'s
+/// one-shot evaluation on top of it.
+pub fn costume_colors(
+    file: &File,
+    table: u32,
+    nodes: usize,
+    chain_len: impl Fn(usize) -> usize,
+    costume: f32,
+) -> alloc::vec::Vec<alloc::vec::Vec<Option<Colors>>> {
+    resolve_scripts(file, table, nodes, chain_len)
+        .into_iter()
+        .map(|chain| {
+            chain
+                .into_iter()
+                .map(|script| script.and_then(|s| colors_at(&file.data, s, costume).ok()))
                 .collect()
         })
         .collect()
@@ -668,6 +701,58 @@ mod tests {
         assert!(c.prim.is_some());
         assert_eq!(c.env, None);
         assert_eq!(c.blend, None);
+    }
+
+    fn file_of(data: alloc::vec::Vec<u8>) -> crate::archive::File {
+        crate::archive::File {
+            id: 0,
+            data,
+            extern_relocs: alloc::vec::Vec::new(),
+            intern_relocs: alloc::vec::Vec::new(),
+        }
+    }
+
+    /// A two-node table: node 0 has no script list at all, node 1's list
+    /// supplies a script for chain position 0 but not position 1 — the exact
+    /// "some MObjs animate, some don't" shape a real table has.
+    fn resolve_fixture() -> crate::archive::File {
+        const TABLE: usize = 0x00;
+        const LIST_1: usize = 0x10;
+        const SCRIPT_A: u32 = 0x40;
+
+        let mut data = alloc::vec![0u8; 0x50];
+        // node 0 stays a NULL entry.
+        data[TABLE + 4..TABLE + 8].copy_from_slice(&(LIST_1 as u32).to_be_bytes());
+        data[LIST_1..LIST_1 + 4].copy_from_slice(&SCRIPT_A.to_be_bytes());
+        // LIST_1 + 4 (chain position 1) stays zero: no script for that MObj.
+        file_of(data)
+    }
+
+    #[test]
+    fn resolve_scripts_finds_one_entry_per_node_and_chain_position() {
+        let file = resolve_fixture();
+        let out = resolve_scripts(&file, 0x00, 2, |node| if node == 1 { 2 } else { 0 });
+        assert_eq!(out[0], alloc::vec::Vec::new(), "node 0 has no script list");
+        assert_eq!(out[1], alloc::vec![Some(0x40), None]);
+    }
+
+    #[test]
+    fn costume_colors_is_unaffected_by_being_layered_on_resolve_scripts() {
+        // Behaviour-preserving refactor check: costume_colors used to inline
+        // this walk itself. Same fixture as the original per-frame test,
+        // reached through the table-resolution path instead of a bare script
+        // address.
+        const TABLE: usize = 0x00;
+        const LIST_0: usize = 0x10;
+        const SCRIPT: u32 = 0x20;
+        let mut data = alloc::vec![0u8; 0x20];
+        data[TABLE..TABLE + 4].copy_from_slice(&(LIST_0 as u32).to_be_bytes());
+        data[LIST_0..LIST_0 + 4].copy_from_slice(&SCRIPT.to_be_bytes());
+        data.extend(mario_arm());
+        let file = file_of(data);
+
+        let out = costume_colors(&file, 0x00, 1, |_| 1, 4.0);
+        assert_eq!(out[0][0].unwrap().prim, Some([0x00, 0xce, 0x00, 0xff]));
     }
 }
 
