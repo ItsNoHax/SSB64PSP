@@ -6212,3 +6212,68 @@ independent, unrelated source). **Not yet done**: cross-file
 `p_matanim_joints` tables (same gap RE-086 left, still not attempted);
 actually reading `palettes[1..]` using this bound (`PLAN.md` R0.10 step
 2, next); packing any of this into the runtime format (step 4).
+
+---
+
+## RE-090 — `mobj::read_palettes` reads the real array using RE-089's bound: 33/33 correct, 0 failures, archive-wide
+
+**Question.** RE-089 computed, for every resolved `PaletteID` script, the
+exact number of `palettes[]` entries it will ever ask for, and cross-checked
+one case (file 117) against the decompilation. Does actually *reading*
+`palettes[]` with that computed bound work — not just look plausible — for
+every case, not one hand-picked one?
+
+**A bounded read, not another guess at the stopping point.** RE-088's
+retracted attempt failed because it had to *discover* the array's length
+from local bytes alone (`is_ptr`-validated walking, which over-read into
+unrelated file data). With RE-089's bound supplied externally, no discovery
+is needed: added `mobj::read_palettes(file, sub_at, count)`, which reads
+*exactly* `count` consecutive entries — each validated by the same
+relocation-backed check `read_material`'s existing entry-0 logic already
+uses (a real intern pointer, or a zero word backed by an extern relocation)
+— and returns `None` outright if any of the `count` entries fails, rather
+than silently returning fewer than asked for. Unit tests pin all three
+shapes: reading exactly `count` (not more, not fewer — a deliberately
+placed non-pointer word one slot past a `count`-of-1 request is never even
+looked at), a cross-file entry at a non-zero index (RE-046's rule, now
+checked at any position, not just index 0), and an honest `None` when the
+supplied count overshoots what the array actually contains.
+
+**Wired into the same `romtool stages` replay RE-089 built**, immediately
+after computing each `PaletteID` script's bound: calls `read_palettes` with
+that exact bound against the driving `MObjSub`'s own offset (now tracked
+through the node/chain-position indices `resolve_scripts`' table preserves),
+and counts successes, failures, and any array whose resolved entries are
+not pairwise distinct (a real cycling table should never repeat one palette
+across its own indices — a repeat would suggest the bound or the array
+itself is wrong even when the read technically "succeeds").
+
+**Result, run against the real ROM: 33/33 succeeded, 0 failures, 0 arrays
+with a duplicate entry.** Every `PaletteID` script RE-089 found — file 105's
+18 (2–4 entries each), file 114's 13 (18 entries each), file 117's 2 (16
+entries each, independently matching the decomp's own declared array size)
+— reads back a fully valid, all-distinct palette-pointer array using
+exactly the bound its own script computed. This is now genuine end-to-end
+validation of the full chain RE-088 broke and RE-089/RE-090 rebuilt: decode
+script → compute bound → read exactly that many real pointers → confirm
+they resolve and are not degenerate.
+
+**Result.** `crates/ssb-rom/src/mobj.rs` gained `read_palettes` (public,
+4 new unit tests). `tools/romtool/src/main.rs`'s `stages` command's
+material-animation block (RE-089) now also exercises this against every
+real `PaletteID` script it finds. `cargo test --workspace`: 238 passing
+(was 234). `cargo clippy --release` (workspace): clean. `cargo psp
+--release` + `tools/run-ppsspp.sh`: builds and runs clean, Dream Land
+pixel-identical at 60 FPS (still nothing wired to rendering or the pack
+format — this is read-path verification only). `PLAN.md` R0.10's step 2
+(reading `palettes[1..]`) is now done at the `ssb-rom`/`romtool` level;
+what remains is packing this into the runtime format (step 4) and the
+device-side `MaterialAnimator`/`sceGuClutLoad` wiring (steps 5–6).
+
+**Confidence: high** — this is not a plausibility check, it is a real
+read of real ROM bytes at a real computed offset, verified against 33
+independent cases spanning three different files and three different
+entry counts (2–4, 16, 18), with zero failures and zero degenerate
+results. **Not yet known**: whether cross-file `PaletteID` scripts (not
+attempted by RE-089's own scope limit) behave the same way — untested,
+since none were found to test against.

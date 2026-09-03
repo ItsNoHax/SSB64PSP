@@ -16,7 +16,56 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-089 (this session) did what RE-088's own
+`IN_PROGRESS` on `R0.10`. RE-090 (this session) shipped the read RE-088
+retracted, now that RE-089 (previous session) supplied a sound bound for
+it: `mobj::read_palettes(file, sub_at, count)` reads exactly `count`
+consecutive `palettes[]` entries, where `count` comes from outside the
+struct (RE-089's script-computed bound) rather than being discovered from
+local bytes the way RE-088's over-reading walk tried and failed to do.
+Each of the `count` entries is validated by the same relocation-backed
+check `read_material`'s existing entry-0 logic already uses; any failure
+within that count returns `None` for the whole read rather than a
+silently-shorter list, since a mismatch between the script's bound and
+the array's real extent is a real problem worth surfacing.
+
+Wired into the same `romtool stages` replay RE-089 built, immediately
+after computing each `PaletteID` script's bound: reads that script's
+actual `MObjSub.palettes[]` using the bound it just computed (now
+tracking the node/chain-position indices through `resolve_scripts`'
+table so the right `MObjSub` offset is available), and checks the result
+is not just present but non-degenerate (every entry pairwise distinct —
+a repeated palette across a cycling table's own indices would suggest
+the bound or the array is wrong even if the read technically succeeds).
+
+**Result, run against the real ROM: 33/33 succeeded, 0 failures, 0
+arrays with a duplicate entry.** Every `PaletteID` script RE-089 found —
+file 105's 18 (2–4 entries each), file 114's 13 (18 entries each), file
+117's 2 (16 entries each, independently matching the decomp's own
+declared array size) — now reads back a fully valid, all-distinct
+palette-pointer array using exactly its own script's computed bound.
+This is genuine end-to-end validation of the whole chain RE-088 broke
+and RE-089/RE-090 rebuilt: decode script → compute bound → read exactly
+that many real pointers → confirm they resolve and are not degenerate —
+not a plausibility check on one hand-picked example, but 33 independent
+cases across three files and three different entry counts.
+
+`cargo test --workspace`: 238 passing (was 234; 4 new `mobj` unit tests
+covering exact-count reads, not-reading-past-count, honest failure on an
+overshooting count, and a cross-file entry at a non-zero index). `cargo
+clippy --release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: builds and runs clean, Dream Land pixel-identical
+at 60 FPS (still nothing wired to rendering or the pack format — this
+session is read-path verification only, matching RE-089's own shape).
+
+`PLAN.md` R0.10's step 2 (reading `palettes[1..]`) is now done at the
+`ssb-rom`/`romtool` level. What remains is packing this into the runtime
+format (step 4: a new table pair, a `pack::VERSION` bump) and the
+device-side `MaterialAnimator`/`sceGuClutLoad` wiring (steps 5–6) — both
+genuinely larger units of work than this session's, which was entirely
+about proving the read path is correct before building anything on top
+of it.
+
+Immediately before this, RE-089 (previous session) did what RE-088's own
 retraction said was the actual next step: resolve `p_matanim_joints` into
 per-(node, `MObj`-chain-position) script addresses *first*, since the
 `palettes[]` bound RE-088 needed can only come from there.
@@ -961,24 +1010,27 @@ a lookup:
    generalised from the fighter-costume walk `costume_colors` already
    did; wired permanently into `romtool stages`, 61 scripts resolved
    archive-wide same-file, 0 failures).
-4. Now unblocked, and re-numbered from step 2 above: extend `mobj.rs` to
-   read `MObjSub.palettes[1..]`, bounded by the resolved script's own
-   maximum `PaletteID` payload — RE-089 already computed this bound for
-   every resolved `PaletteID` script (tick `MaterialJoint` to completion,
-   take the largest value the track ever reports, `round() + 1`) and
-   cross-checked it against an independent source: file 117
-   (`StageMetalFile2`) resolves to exactly 16 entries, matching its
-   decomp source's declared `..._palettes[16]` array byte-for-byte. The
-   remaining work is plumbing: for a `MObjSub` whose owning node/
-   chain-position has a resolved script, look up that script's
-   precomputed entry count (or compute it on the spot) and read exactly
-   that many `palettes[]` pointers — RE-088's retracted approach guessed
-   at this number from local bytes; this reads it as a parameter instead.
-5. Pack every palette a texture's animation cycles through (not just the
-   first), plus the resolved per-primitive script reference, into the
-   runtime format — likely a new table pair mirroring `AnimDesc`/
-   `AnimJoint`'s shape (`pack.rs` lines 322-353 per prior research), a
-   `pack::VERSION` bump, following that file's own bump-log convention.
+4. ~~Extend `mobj.rs` to read `MObjSub.palettes[1..]`, bounded by the
+   resolved script's own maximum `PaletteID` payload~~ — done (RE-090):
+   `mobj::read_palettes(file, sub_at, count)` reads exactly `count`
+   entries, `count` supplied externally (RE-089's bound) rather than
+   discovered. Verified archive-wide against the real ROM, not just unit
+   fixtures: 33/33 `PaletteID` scripts' computed bounds produced a fully
+   valid, all-distinct `palettes[]` read, 0 failures.
+5. **Now the actual next step.** Pack every palette a texture's animation
+   cycles through (not just the first — `mobj::read_palettes`'s output),
+   plus the resolved per-primitive script reference (`matanim::
+   resolve_scripts`'s output), into the runtime format — likely a new
+   table pair mirroring `AnimDesc`/`AnimJoint`'s shape (`pack.rs` lines
+   322-353 per prior research), a `pack::VERSION` bump, following that
+   file's own bump-log convention. Both inputs this step needs already
+   exist and are archive-wide verified (RE-089/RE-090); this step is
+   original `romtool`/`pack.rs` design work, not another lookup — sizing
+   it before starting is worthwhile, since `pack.rs`'s existing
+   `AnimDesc`/`AnimJoint` shape was designed for joint animation
+   (`objanim::StageJoint`), not material animation, and may not transfer
+   cleanly (e.g. a `MObj`'s resolved palette list has a *variable* count
+   per material, unlike a joint's fixed-shape pose).
 6. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
    wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each

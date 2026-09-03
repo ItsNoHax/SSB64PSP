@@ -321,6 +321,67 @@ pub fn read_table(file: &File, offset: u32, node_count: usize) -> Option<MObjTab
     Some(MObjTable { offset, nodes })
 }
 
+/// Reads exactly `count` consecutive entries of `MObjSub.palettes[]`,
+/// starting at index 0 — the entries [`read_material`]'s own `palette` field
+/// (index 0 only) never reaches.
+///
+/// Unlike every other field this module reads, `count` cannot be recovered
+/// from the `MObjSub` alone (RE-088): the struct carries no length, and the
+/// decomp's own real tables disagree on whether a NULL terminates one
+/// (`328_KirbyModel.c`'s does, at index 5; `117_StageMetalFile2.c`'s 16-entry
+/// table runs straight into the next struct with no terminator at all). An
+/// earlier attempt to bound the walk by "stop at the first slot that is not a
+/// real relocated pointer" looked sound in isolated unit fixtures but,
+/// measured against the real ROM, wandered into unrelated, densely
+/// pointer-laden neighbouring file data — `is_ptr` proves a slot held *some*
+/// pointer, not that it belongs to *this* array (RE-088).
+///
+/// The only sound source is external: the material animation script that
+/// drives this `MObj`'s `palette_id` at runtime names, via its own
+/// `SET_VAL`/`SET_VAL_AFTER_BLOCK` payloads, every index the game will ever
+/// ask `palettes[]` for (RE-089). A caller with no such script has no sound
+/// `count` to pass and should read [`MObjMaterial::palette`] (index 0) as
+/// before instead.
+///
+/// Returns `None` if the palette array itself does not resolve, or if any of
+/// the first `count` entries fails the same relocation-backed validity check
+/// [`read_material`]'s own entry-0 logic uses. A failure here means the
+/// caller's `count` does not actually match this array's real extent — a
+/// real mismatch worth surfacing, not something to paper over with a
+/// shorter result.
+pub fn read_palettes(file: &File, sub_at: u32, count: usize) -> Option<Vec<Ptr>> {
+    let slots = pointer_slots(file);
+    let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
+    let data = &file.data;
+
+    let array = read_u32(data, sub_at + F_PALETTES)?;
+    if array == 0 || !is_ptr(sub_at + F_PALETTES) {
+        return None;
+    }
+    let leaves_file = |slot: u32| -> Option<Ptr> {
+        file.extern_relocs
+            .iter()
+            .find(|r| r.at == slot)
+            .map(|r| Ptr {
+                file: Some(r.target_file),
+                offset: r.target_offset,
+            })
+    };
+    (0..count as u32)
+        .map(|i| {
+            let slot = array.checked_add(i * 4)?;
+            match read_u32(data, slot)? {
+                0 => leaves_file(slot),
+                target if is_ptr(slot) => Some(Ptr {
+                    file: None,
+                    offset: target,
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 /// Every offset in `file` that reads as this graph's material table.
 ///
 /// For the 71 graphs no record names (RE-046), the pairing was a link-time
@@ -545,6 +606,95 @@ mod tests {
         );
         assert_eq!(table.nodes[1][0].at, SUB_A);
         assert_eq!(table.nodes[4].len(), 1);
+    }
+
+    /// [`read_palettes`] with an externally-supplied, correct count reads
+    /// every entry a `PaletteID`-cycling script would ever index — the case
+    /// [`read_material`]'s own `palette` field (index 0 only) cannot reach.
+    #[test]
+    fn read_palettes_reads_exactly_the_requested_count() {
+        let mut file = fixture();
+        let mut put = |at: u32, v: u32| {
+            file.data[at as usize..at as usize + 4].copy_from_slice(&v.to_be_bytes());
+            file.intern_relocs.push(InternReloc { at, target: v });
+        };
+        put(PALSET + 4, 0x184);
+        put(PALSET + 8, 0x188);
+
+        let got = read_palettes(&file, SUB_A, 3).expect("resolves");
+        assert_eq!(
+            got,
+            vec![
+                Ptr {
+                    file: None,
+                    offset: PALETTE
+                },
+                Ptr {
+                    file: None,
+                    offset: 0x184
+                },
+                Ptr {
+                    file: None,
+                    offset: 0x188
+                },
+            ]
+        );
+    }
+
+    /// A count of 1 must not even look at what comes after entry 0 — the
+    /// bound is supposed to keep the read inside the array's real extent,
+    /// not just happen to land there.
+    #[test]
+    fn read_palettes_does_not_look_past_the_requested_count() {
+        let mut file = fixture();
+        // An un-relocated, nonzero word: would fail validation if the walk
+        // ever reached it, which a count of 1 must not do.
+        file.data[(PALSET + 4) as usize..(PALSET + 8) as usize]
+            .copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+
+        let got = read_palettes(&file, SUB_A, 1).expect("resolves");
+        assert_eq!(
+            got,
+            vec![Ptr {
+                file: None,
+                offset: PALETTE
+            }]
+        );
+    }
+
+    /// A `count` that overshoots the array's real extent is a real mismatch
+    /// between the driving script and the data — surfaced as `None`, not
+    /// silently truncated to whatever happened to validate.
+    #[test]
+    fn read_palettes_fails_honestly_when_the_count_overshoots_the_real_array() {
+        let mut file = fixture();
+        file.data[(PALSET + 4) as usize..(PALSET + 8) as usize]
+            .copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+        assert_eq!(read_palettes(&file, SUB_A, 2), None);
+    }
+
+    /// The general walk has to honour a cross-file entry (RE-046's rule) at
+    /// any index, not just index 0.
+    #[test]
+    fn read_palettes_honours_a_cross_file_entry_at_any_index() {
+        const HOME: u16 = 103;
+        const TLUT: u32 = 0x1BE0;
+
+        let mut file = fixture();
+        file.extern_relocs.push(ExternReloc {
+            at: PALSET + 4,
+            target_file: HOME,
+            target_offset: TLUT,
+        });
+
+        let got = read_palettes(&file, SUB_A, 2).expect("resolves");
+        assert_eq!(
+            got[1],
+            Ptr {
+                file: Some(HOME),
+                offset: TLUT
+            }
+        );
     }
 
     /// A stage's texels live in a different archive file, so the archive blanks
