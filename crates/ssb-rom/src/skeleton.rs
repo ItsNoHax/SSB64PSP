@@ -355,6 +355,98 @@ impl StageAnimator {
     }
 }
 
+/// Simultaneous `PaletteID`-cycling material animations one pack can define.
+/// RE-089 found 33 real scripts archive-wide; this leaves headroom the same
+/// way `MAX_JOINTS`/`MAX_STAGE_JOINTS` do, sized above the real content
+/// rather than at it.
+pub const MAX_MAT_ANIMS: usize = 64;
+
+/// Ticks every `MatAnimDesc` the pack defines (RE-089–094), once per frame.
+///
+/// Unlike [`Skeleton`]/[`StageAnimator`] above, a `MatAnimDesc` entry is a
+/// property of a *texture*, not a fighter or a stage layer — there is no
+/// per-object "start" boundary to restart on. [`Self::start`] runs once,
+/// when the pack loads, and [`Self::tick`] runs every frame after that for
+/// as long as the pack is loaded, independent of which stage or fighter is
+/// currently on screen (cheap either way: at most [`MAX_MAT_ANIMS`] scripts).
+pub struct MaterialAnimator {
+    joints: [crate::matanim::MaterialJoint; MAX_MAT_ANIMS],
+    count: usize,
+}
+
+impl Default for MaterialAnimator {
+    fn default() -> Self {
+        MaterialAnimator::new()
+    }
+}
+
+impl MaterialAnimator {
+    pub fn new() -> Self {
+        MaterialAnimator {
+            joints: [crate::matanim::MaterialJoint::start(0, 0.0); MAX_MAT_ANIMS],
+            count: 0,
+        }
+    }
+
+    /// Loads one [`crate::matanim::MaterialJoint`] per [`crate::pack::MatAnimDesc`]
+    /// the pack defines. A pack's own entry order is its `MatAnimDesc` table
+    /// order, so position `i` here is always the same `i` a [`TextureDesc::
+    /// mat_anim`](crate::pack::TextureDesc::mat_anim) index names — no
+    /// separate lookup table is needed.
+    pub fn start(&mut self, pack: &Pack<'_>) {
+        self.count = (pack.mat_anim_count() as usize).min(MAX_MAT_ANIMS);
+        for i in 0..self.count {
+            let script = pack.mat_anim(i as u32).map_or(0, |a| a.script);
+            self.joints[i] = crate::matanim::MaterialJoint::start(script, 0.0);
+        }
+    }
+
+    /// Advances every tracked animation one tick. Each entry ticks against
+    /// its own source file's bytes, since different `MatAnimDesc`s can come
+    /// from different archive files (RE-089's own same-file scope limit is
+    /// about *resolving* a script, not about where two different scripts
+    /// live relative to each other).
+    pub fn tick(&mut self, pack: &Pack<'_>) {
+        for i in 0..self.count {
+            let Some(a) = pack.mat_anim(i as u32) else { continue };
+            let Some(data) = pack.mat_anim_file(&a) else { continue };
+            let _ = self.joints[i].tick(data, 1.0);
+        }
+    }
+
+    /// The currently-resolved palette variant, as an absolute index into
+    /// [`Pack::mat_anim_palette`] ready to hand to [`Pack::mat_anim_palette_data`]
+    /// — or `None` if `mat_anim` names no tracked entry, its script never set
+    /// `PaletteID`, or the current value did not arrive by a step (the only
+    /// kind `PaletteID` can trust; see [`crate::matanim::MaterialJoint`]'s own
+    /// doc comment).
+    ///
+    /// Clamped into the entry's own `palette_count` rather than trusting the
+    /// script's raw value: a corrupted or out-of-range replay would otherwise
+    /// read into a neighbouring `MatAnimDesc`'s own variants in the shared
+    /// palette table instead of failing safely.
+    pub fn resolved_palette(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
+        let j = self.joints.get(mat_anim as usize)?;
+        if mat_anim as usize >= self.count {
+            return None;
+        }
+        if !j.track_is_stepped(crate::matanim::TRACK_PALETTE_ID) {
+            return None;
+        }
+        let v = j.track_value(crate::matanim::TRACK_PALETTE_ID)?;
+        let a = pack.mat_anim(mat_anim)?;
+        if a.palette_count == 0 {
+            return None;
+        }
+        // `core` has no `round()` without `std`/`libm` (see `scene.rs`'s own
+        // note on `sin`/`cos`); round-to-nearest for a non-negative value is
+        // just "add a half, truncate" (the same trick `mesh.rs`'s vertex
+        // rounding already uses).
+        let index = ((v.max(0.0) + 0.5) as u32).min(a.palette_count - 1);
+        Some(a.first_palette + index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,5 +600,139 @@ mod tests {
         Skeleton::new().compose(&pack, &object, &mut a);
         Skeleton::default().compose(&pack, &object, &mut b);
         assert_eq!(a, b);
+    }
+
+    fn mat_script(words: &[u32]) -> alloc::vec::Vec<u8> {
+        words.iter().flat_map(|w| w.to_be_bytes()).collect()
+    }
+
+    const fn mat_cmd(opcode: u32, flags: u32, payload: u32) -> u32 {
+        (opcode << 25) | (flags << 15) | payload
+    }
+
+    /// RE-086/RE-087's real archive shape: `PaletteID` steps through three
+    /// values, then loops forever via `SET_ANIM` rather than ending.
+    fn palette_cycle_script() -> alloc::vec::Vec<u8> {
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_SET_ANIM: u32 = 14;
+        const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
+            1.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
+            2.0f32.to_bits(),
+            mat_cmd(OP_SET_ANIM, 0, 0),
+            0, // jump target: this script's own start
+        ])
+    }
+
+    fn packed_mat_anim() -> (alloc::vec::Vec<u8>, u32) {
+        use crate::psp_texture::{Psm, PspTexture};
+
+        let mut w = PackWriter::new();
+        let tex = PspTexture {
+            width: 32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![0xCDu8; 128],
+            swizzled: true,
+            palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
+        };
+        let texture = w.add_texture(&tex);
+        let file_bytes = palette_cycle_script();
+        let palettes = alloc::vec![
+            alloc::vec![0x1111_1111u32; 16],
+            alloc::vec![0x2222_2222u32; 16],
+            alloc::vec![0x3333_3333u32; 16],
+        ];
+        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes);
+        w.set_texture_mat_anim(texture, mat_anim);
+        (w.finish(), mat_anim)
+    }
+
+    #[test]
+    fn material_animator_ticks_a_real_palette_cycle_to_its_resolved_variant() {
+        let (bytes, mat_anim) = packed_mat_anim();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+
+        let mut m = MaterialAnimator::new();
+        m.start(&pack);
+
+        // `MaterialJoint`'s own exact per-tick timing (when a `_AFTER_BLOCK`
+        // step's target actually becomes visible) is already pinned by
+        // `matanim::tick_tests`; this test is about `MaterialAnimator`
+        // wrapping and resolving it correctly, not re-deriving that timing.
+        // `SET_ANIM` loops back rather than ending, so ticking well past the
+        // script's own length must keep cycling through every real variant,
+        // never stall, and never resolve outside this entry's own three.
+        let mut seen = alloc::collections::BTreeSet::new();
+        for _ in 0..30 {
+            m.tick(&pack);
+            if let Some(v) = m.resolved_palette(&pack, mat_anim) {
+                assert!(
+                    (a.first_palette..a.first_palette + a.palette_count).contains(&v),
+                    "resolved variant must stay within this entry's own range"
+                );
+                seen.insert(v);
+            }
+        }
+        assert_eq!(
+            seen,
+            alloc::collections::BTreeSet::from([
+                a.first_palette,
+                a.first_palette + 1,
+                a.first_palette + 2
+            ]),
+            "a real script visits every one of its variants and loops, it does not freeze"
+        );
+    }
+
+    #[test]
+    fn material_animator_clamps_a_value_outside_its_own_variant_count() {
+        // Defence against reading into a neighbouring MatAnimDesc's own
+        // variants in the shared palette table: a script producing an
+        // out-of-range PaletteID must clamp into *this* entry's own count,
+        // not silently index past it.
+        let mut w = PackWriter::new();
+        use crate::psp_texture::{Psm, PspTexture};
+        let tex = PspTexture {
+            width: 32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![0xCDu8; 128],
+            swizzled: true,
+            palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
+        };
+        let texture = w.add_texture(&tex);
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_END: u32 = 0;
+        const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            9.0f32.to_bits(), // far past this entry's own 2 variants
+            mat_cmd(OP_END, 0, 0),
+        ]);
+        let palettes = alloc::vec![alloc::vec![0x1111_1111u32; 16], alloc::vec![0x2222_2222u32; 16]];
+        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes);
+        w.set_texture_mat_anim(texture, mat_anim);
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+
+        let mut m = MaterialAnimator::new();
+        m.start(&pack);
+        m.tick(&pack);
+        assert_eq!(
+            m.resolved_palette(&pack, mat_anim),
+            Some(a.first_palette + 1),
+            "clamped to the last real variant, not read past it"
+        );
     }
 }

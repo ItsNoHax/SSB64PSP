@@ -358,6 +358,7 @@ pub fn costume_colors(
 /// own `read` closure already declines a colour track under any other kind,
 /// so this matches an existing, accepted limitation rather than introducing
 /// a new one.
+#[derive(Clone, Copy)]
 pub struct MaterialJoint {
     tracks: [Aobj; TICK_TRACK_COUNT],
     anim_wait: f32,

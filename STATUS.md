@@ -16,7 +16,67 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-094 (this session) closed the lead RE-093
+`IN_PROGRESS` on `R0.10`. RE-095 (this session) shipped step 8: the
+device-side `MaterialAnimator`, the piece the whole RE-086–094 pipeline
+had been building toward.
+
+**Design mirrors `StageAnimator`, but the lifecycle differs on purpose.**
+A `MatAnimDesc` entry is a property of a *texture*, not a fighter or a
+stage layer, so there is no per-object "start" boundary — `start(pack)`
+runs once when the pack loads, `tick(pack)` runs every frame for the
+pack's whole lifetime, independent of which stage or fighter is shown
+(cheap regardless: 33 real scripts, `MAX_MAT_ANIMS = 64` headroom).
+Array position mirrors `TextureDesc::mat_anim`'s own index directly — no
+separate lookup table. `resolved_palette` clamps into each entry's own
+`palette_count` before adding `first_palette`, closing a real risk (an
+out-of-range replay reading a *different* `MatAnimDesc`'s own variants in
+the shared table) verified via a test proven capable of failing.
+
+**A `no_std` build error caught a real portability gap before it
+shipped.** `f32::round()` does not exist in `core` without `std`/`libm`
+— `scene.rs` already avoids `libm` for `sin`/`cos` for the same reason.
+Fixed with the same "add a half, truncate" trick `mesh.rs`'s own vertex
+rounding already uses. This was only caught because `cargo psp --release`
+was actually run before calling the work done — `cargo test`/`clippy
+--workspace` alone never would have, since the crate's `std` feature is
+enabled by default on the host.
+
+**Wired into every real draw path, not just one.** `bind_texture` issues
+a second `sceGuClutLoad` after the static one whenever `TextureDesc::
+mat_anim` names a live, resolvable entry — riding `apply_material`'s
+existing per-frame texture-cache reset for correct cadence, so a texture
+with no animation, or an animator with no value yet, keeps its baked
+palette rather than showing nothing. Threaded `Option<&MaterialAnimator>`
+through six functions (`draw_mesh`/`draw_object`/`draw_object_posed`/
+`draw_stage`/`draw_stage_animated`/`apply_material`), matching how
+`pack: &Pack<'_>` is already threaded explicitly rather than stashed in
+`DrawState`, and updated all four real call sites in `psp/src/main.rs`.
+
+**Verified.** Two new tests in `skeleton.rs`: one ticks a script
+reproducing RE-086/087's real archive shape (three `PaletteID` steps then
+`SET_ANIM` looping forever) through a full pack round-trip and confirms
+every real variant is visited and it keeps cycling rather than freezing;
+one proves the neighbouring-table-read clamp is a real regression risk,
+not defensive theatre. `cargo test --workspace`: 247 passing (was 245).
+`cargo clippy --release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: builds and runs clean, no panics, Dream Land
+pixel-identical at 60 FPS.
+
+**Loaded file 105's own stage (temporary, reverted `stage_index`
+override) and confirmed it runs clean on the real device profile** — 464
+triangles, one layer, 60 FPS, `tex 0/648` matching the current pack. **Did
+not conclusively confirm the palette visibly cycles by screenshot.** The
+harness takes one screenshot per independent launch and each launch
+restarts the simulation from tick 0, so two screenshots from two separate
+invocations cannot isolate "more ticks, nothing else changed" — a
+stage-animated floating platform's own motion (RE-050/051, unrelated)
+confounded a naive crop comparison. Left honestly open, matching this
+file's own already-recorded category of limitation for `R0.12`/`R0.14`'s
+remaining items: the mechanism is verified by construction, watching it
+happen needs video capture or interactive play, not another screenshot
+diff.
+
+Immediately before this, RE-094 (previous session) closed the lead RE-093
 (previous session) left open: node 27's `texture_enabled` was `false` for
 its whole span despite actively loading textures. Traced `texture_enabled`
 node-by-node across the same graph (temporary instrumentation, reverted)
@@ -1308,13 +1368,19 @@ a lookup:
    palette variants), +9 static textures recovered, meshes/triangles
    unchanged. `cargo test --workspace`: 245 passing. Dream Land
    pixel-identical. This closes the RE-092/093 open question completely.
-8. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
-   lifecycle: start on layer change, tick per frame, apply in draw) that
-   wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each
-   tick, and issues `sceGuClutLoad` with the corresponding palette
-   before that primitive's draw — no combiner or vertex-recolouring
-   work needed, since the PSP GE already separates indexed-texture image
-   data from its palette.
+8. ~~A `MaterialAnimator` (mirroring `StageAnimator`'s lifecycle) that
+   wraps `MaterialJoint::tick`, resolves the live `PaletteID` value, and
+   issues `sceGuClutLoad`~~ — done (RE-095). Starts once at pack load
+   (not per-object — a `MatAnimDesc` entry is a texture's property, no
+   per-object boundary to restart on), ticks every frame, wired into
+   `bind_texture` via a second `sceGuClutLoad` after the static one.
+   Threaded `Option<&MaterialAnimator>` through six draw functions and
+   all four real call sites in `main.rs`. Caught a real `no_std`
+   portability bug (`f32::round()` needs `std`/`libm`) by actually
+   running `cargo psp --release`, not just host tests. Two new tests
+   (a real-shaped script cycling correctly; the neighbouring-table clamp
+   proven to matter). `cargo test --workspace`: 247 passing. `cargo psp
+   --release` + `tools/run-ppsspp.sh`: clean, Dream Land pixel-identical.
 9. Verify on a stage that actually needs it — **not Dream Land**, whose
    own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
    not `PaletteID` cycling (RE-086). ~~Finding which of the other 40
@@ -1322,7 +1388,16 @@ a lookup:
    file 105 (`StageZebesFile2`, 18 scripts needing 2–4 palette entries
    each) and file 114 (`StageLastFile2`, 13 scripts needing exactly 18
    entries each) are both concrete, non-Dream-Land candidates, one small
-   and one large.
+   and one large. **Partially done (RE-095):** loaded file 105's stage
+   (temporary, reverted `stage_index` override) and confirmed it runs
+   clean on the real device profile, no panics, correct texture count.
+   **Not done:** confirming by eye that the palette actually cycles on
+   screen — the screenshot harness takes one shot per independent launch
+   (each restarting from tick 0), so two separate invocations cannot
+   isolate "more ticks, nothing else changed," and a stage-animated
+   platform's own motion confounded a naive crop comparison. Needs video
+   capture or interactive input, not another screenshot diff — the same
+   category of limitation this file already records for `R0.12`/`R0.14`.
 
 `TraU`/`TraV`/`ScrU`/`ScrV` (UV translate/scale/scroll, the next-largest
 category after `PaletteID`) and `TextureIDCurrent` (frame swapping, 22%)

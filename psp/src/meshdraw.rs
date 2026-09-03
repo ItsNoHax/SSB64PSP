@@ -120,10 +120,21 @@ fn psm_bits(psm: TexturePixelFormat) -> usize {
 
 /// Binds a texture from the pack.
 ///
+/// `mat_anim` overrides the baked CLUT with the current frame's resolved
+/// `PaletteID` variant when `t.mat_anim` names one (RE-089–095) — issued
+/// *after* the static load above so it always wins, but only when there is
+/// a live animator and it actually has a value (a texture whose animation
+/// has not started ticking yet, or a device build with no animator at all,
+/// keeps its baked palette rather than showing nothing).
+///
 /// # Safety
 ///
 /// The pack buffer must outlive the frame; the GE reads it asynchronously.
-unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
+unsafe fn bind_texture(
+    pack: &Pack<'_>,
+    t: &TextureDesc,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) {
     let Some(data) = pack.texture_data(t) else {
         return;
     };
@@ -146,6 +157,17 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
         // sceGuClutLoad counts blocks of 8 entries, rounded up.
         let blocks = (t.palette_len as i32 + 7) / 8;
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
+    }
+
+    if t.mat_anim != TextureDesc::NO_ANIM {
+        if let Some(animated) = mat_anim
+            .and_then(|m| m.resolved_palette(pack, t.mat_anim))
+            .and_then(|i| pack.mat_anim_palette(i))
+            .and_then(|p| pack.mat_anim_palette_data(&p))
+        {
+            let blocks = (animated.len() as i32 / 4 + 7) / 8;
+            sys::sceGuClutLoad(blocks, animated.as_ptr() as *const c_void);
+        }
     }
 
     // Mip levels sit back to back after level 0, each half the size of the one
@@ -225,7 +247,12 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
 }
 
 /// Applies a primitive's material state.
-unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
+unsafe fn apply_material(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) {
     if st.last_flags != Some(p.flags) {
         st.last_flags = Some(p.flags);
         st.state_changes += 1;
@@ -310,7 +337,7 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         st.last_texture = Some(p.texture);
         st.state_changes += 1;
         match pack.texture(p.texture) {
-            Some(t) => bind_texture(pack, &t),
+            Some(t) => bind_texture(pack, &t, mat_anim),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
@@ -358,7 +385,12 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
 ///
 /// `pack`'s backing buffer must remain valid and cache-flushed until the frame
 /// is submitted, because the GE reads it by DMA.
-pub unsafe fn draw_mesh(pack: &Pack<'_>, mesh: &MeshDesc, st: &mut DrawState) -> u32 {
+pub unsafe fn draw_mesh(
+    pack: &Pack<'_>,
+    mesh: &MeshDesc,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
     let Some(verts) = pack.vertices(mesh) else {
         return 0;
     };
@@ -375,7 +407,7 @@ pub unsafe fn draw_mesh(pack: &Pack<'_>, mesh: &MeshDesc, st: &mut DrawState) ->
             continue;
         }
 
-        apply_material(pack, &p, st);
+        apply_material(pack, &p, st, mat_anim);
 
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
@@ -411,8 +443,9 @@ pub unsafe fn draw_object(
     object: &ObjectDesc,
     base: &ScePspFMatrix4,
     st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> u32 {
-    draw_object_posed(pack, object, base, &[], st)
+    draw_object_posed(pack, object, base, &[], st, mat_anim)
 }
 
 /// Places a screen-aligned sprite, and returns its composed position and scale.
@@ -475,6 +508,7 @@ pub unsafe fn draw_object_posed(
     base: &ScePspFMatrix4,
     posed: &[ssb_rom::scene::Mat4],
     st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
@@ -538,7 +572,7 @@ pub unsafe fn draw_object_posed(
             sys::sceGumMultMatrix(&local);
         }
 
-        tris += draw_mesh(pack, &mesh, st);
+        tris += draw_mesh(pack, &mesh, st, mat_anim);
     }
     tris
 }
@@ -609,7 +643,7 @@ pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], 
 /// The pack buffer must outlive the frame.
 pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQuadVertex; 6]) {
     let Some(t) = pack.texture(index) else { return };
-    bind_texture(pack, &t);
+    bind_texture(pack, &t, None);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
     // always wants the plain, unblended sample.
     sys::sceGuTexFunc(
@@ -738,8 +772,9 @@ pub unsafe fn draw_stage(
     stage: &ssb_rom::pack::StageDesc,
     base: &ScePspFMatrix4,
     st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
-    draw_stage_animated(pack, stage, base, None, st)
+    draw_stage_animated(pack, stage, base, None, st, mat_anim)
 }
 
 /// Draws a stage, optionally posed by its scenery animation.
@@ -758,6 +793,7 @@ pub unsafe fn draw_stage_animated(
     base: &ScePspFMatrix4,
     anim: Option<&ssb_rom::skeleton::StageAnimator>,
     st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) -> (u32, u32) {
     let mut tris = 0;
     let mut drawn = 0;
@@ -772,9 +808,9 @@ pub unsafe fn draw_stage_animated(
         tris += match anim {
             Some(a) => {
                 let n = a.compose(pack, &object, &mut posed);
-                draw_object_posed(pack, &object, base, &posed[..n], st)
+                draw_object_posed(pack, &object, base, &posed[..n], st, mat_anim)
             }
-            None => draw_object(pack, &object, base, st),
+            None => draw_object(pack, &object, base, st, mat_anim),
         };
         drawn += 1;
     }
