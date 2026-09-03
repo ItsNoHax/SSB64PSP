@@ -486,6 +486,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                     cmds,
                     world: p.world,
                     mobjs: &materials[p.node],
+                    mat_anims: &[],
                 })
                 .collect();
 
@@ -832,9 +833,19 @@ impl<'a> Texels<'a> {
 /// separate file (RE-037). The cache key is therefore the file the *texels*
 /// are in, not the one the display list came from — otherwise the four stages
 /// sharing a texture file would each upload their own copy of it.
+///
+/// `mat_anim_data` is looked up whenever a primitive's material carries a
+/// [`ssb_rom::mesh::MatAnimRef`] (RE-091): converts every resolved palette
+/// variant the same way [`convert_texture`] converts the static one, and
+/// points the texture at the resulting [`ssb_rom::pack::MatAnimDesc`] --
+/// deduplicated via `mat_anim_index` the same way textures already are, so
+/// many primitives sharing one script do not upload its palettes twice.
+#[allow(clippy::too_many_arguments)]
 fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
     tex_index: &mut BTreeMap<(u32, u32), u32>,
+    mat_anim_index: &mut BTreeMap<(u32, u32), u32>,
+    mat_anim_data: &BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
     src: Texels<'_>,
     id: u32,
     offset: u32,
@@ -843,7 +854,7 @@ fn pack_mesh(
 ) -> u32 {
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     for prim in &m.primitives {
-        per_prim.push(match prim.material.texture {
+        let texture_index = match prim.material.texture {
             None => None,
             Some(t) => {
                 let key = (t.data_file.map_or(id, u32::from), t.data_offset);
@@ -857,9 +868,150 @@ fn pack_mesh(
                     })
                 }
             }
-        });
+        };
+        if let (Some(texture), Some(anim)) = (texture_index, prim.material.mat_anim) {
+            let key = (anim.source_file, anim.script);
+            let resolved = match mat_anim_index.get(&key) {
+                Some(&i) => Some(i),
+                None => mat_anim_data.get(&key).and_then(|(source_offset, entries, ptrs)| {
+                    let file_bytes = src.bytes(if anim.source_file == id {
+                        None
+                    } else {
+                        Some(anim.source_file as u16)
+                    })?;
+                    let palettes: Vec<Vec<u32>> = ptrs
+                        .iter()
+                        .filter_map(|p| convert_mat_anim_palette(src, *p, *entries))
+                        .collect();
+                    // A partial conversion is a real problem worth declining
+                    // outright, not shipping a script that cycles through
+                    // fewer palettes than it actually names.
+                    if palettes.len() != ptrs.len() {
+                        return None;
+                    }
+                    let i = writer.add_mat_anim(anim.source_file, file_bytes, anim.script, *source_offset, &palettes);
+                    mat_anim_index.insert(key, i);
+                    Some(i)
+                }),
+            };
+            if let Some(mat_anim) = resolved {
+                writer.set_texture_mat_anim(texture, mat_anim);
+            }
+        }
+        per_prim.push(texture_index);
     }
     writer.add_mesh(m, id, offset, |i| per_prim[i])
+}
+
+/// Converts one resolved palette variant to the GE's ABGR8888 CLUT format,
+/// the same conversion [`convert_texture`] already applies to the static
+/// (index-0) palette every texture bakes at pack time.
+fn convert_mat_anim_palette(
+    src: Texels<'_>,
+    p: ssb_rom::mobj::Ptr,
+    entries: u16,
+) -> Option<Vec<u32>> {
+    use ssb_rom::psp_texture as psp;
+    use ssb_rom::texture;
+
+    let n = entries.max(1) as usize;
+    let bytes = src
+        .bytes(p.file)?
+        .get(p.offset as usize..p.offset as usize + n * 2)?;
+    let tlut = texture::parse_tlut(bytes);
+    Some(
+        tlut.iter()
+            .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
+            .collect(),
+    )
+}
+
+/// For a stage layer's own scene graph, resolves which `(node,
+/// MObj-chain-position)` entries carry a real `PaletteID`-cycling material
+/// animation (RE-089/RE-090), and stashes each one's script identity plus
+/// resolved palettes into `mat_anim_data` for [`pack_mesh`] to consume.
+///
+/// Same-file only, matching RE-089's own scope limit: a layer whose
+/// `p_matanim_joints`/`p_mobjsubs` cross into another archive file is left
+/// alone rather than guessed at. Returns all-`None` for any graph that is
+/// not a stage layer at all, or has nothing this method can resolve --
+/// which is the overwhelming majority of graphs, so this is cheap to call
+/// unconditionally per graph rather than precomputing archive-wide.
+fn resolve_layer_mat_anims(
+    loaded: &Loaded,
+    file: &ssb_rom::archive::File,
+    graph_offset: u32,
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    mat_anim_data: &mut BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
+) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
+    let empty = || materials.iter().map(|c| vec![None; c.len()]).collect();
+
+    let Some(layer) = loaded
+        .stages
+        .iter()
+        .flat_map(|s| &s.layers)
+        .find(|l| l.graph == (file.id, graph_offset))
+    else {
+        return empty();
+    };
+    let (Some((mf, mat)), Some((tf, at))) = (layer.matanim_joints, layer.mobjsub_table) else {
+        return empty();
+    };
+    if mf != file.id || tf != file.id {
+        return empty();
+    }
+    let Some(chain_table) = ssb_rom::mobj::read_table(file, at, materials.len()) else {
+        return empty();
+    };
+
+    let scripts = ssb_rom::matanim::resolve_scripts(file, mat, materials.len(), |n| {
+        materials[n].len()
+    });
+    let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
+        scripts.iter().map(|c| vec![None; c.len()]).collect();
+
+    /// Long enough that a looping script proves it loops (RE-089's own
+    /// budget for the same replay).
+    const REPLAY_FRAMES: u32 = 600;
+    for (node, chain) in scripts.iter().enumerate() {
+        for (m, script) in chain.iter().enumerate() {
+            let Some(script) = *script else { continue };
+            let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
+            let mut max_palette = 0.0f32;
+            let mut frames = 0u32;
+            loop {
+                if j.tick(&file.data, 1.0).is_err() {
+                    break;
+                }
+                frames += 1;
+                if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
+                    max_palette = max_palette.max(v);
+                }
+                if j.ended() || j.looped() || frames >= REPLAY_FRAMES {
+                    break;
+                }
+            }
+            if !j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID) {
+                continue;
+            }
+            let entries = max_palette.round() as u32 + 1;
+            if entries <= 1 {
+                continue;
+            }
+            let Some(sub) = chain_table.nodes[node].get(m) else {
+                continue;
+            };
+            let Some(ptrs) = ssb_rom::mobj::read_palettes(file, sub.at, entries as usize) else {
+                continue;
+            };
+            refs[node][m] = Some(ssb_rom::mesh::MatAnimRef {
+                source_file: file.id,
+                script,
+            });
+            mat_anim_data.insert((file.id, script), (sub.at, sub.palette_entries, ptrs));
+        }
+    }
+    refs
 }
 
 /// Builds the runtime asset pack: converted geometry and textures in the
@@ -890,6 +1042,16 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut writer = fmt::PackWriter::new();
     // The same texture is bound by many primitives; upload each once.
     let mut tex_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    // The same material animation script drives many primitives; upload
+    // each once. Keyed the same way `resolve_layer_mat_anims` resolves a
+    // script's identity: (source archive file, script offset) (RE-091).
+    let mut mat_anim_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    // Every real, script-verified palette animation found so far, keyed by
+    // the same `(source_file, script)` identity `mesh::MatAnimRef` carries
+    // -- populated per stage layer as its graph is reached, consumed by
+    // `pack_mesh` the moment a primitive names one (RE-089/090/091).
+    let mut mat_anim_data: BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)> =
+        BTreeMap::new();
     let mut meshes = 0usize;
     let mut triangles = 0usize;
     let mut objects = 0usize;
@@ -968,6 +1130,19 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // A node's palette lives in its `MObj` chain, not its display
             // list; see `ssb_rom::mobj`.
             let materials = loaded.materials(file, &graphs[gi]);
+            // Empty for every graph except a stage layer with a resolvable
+            // (same-file) `p_matanim_joints` -- see the function's own doc
+            // comment for why this has to be resolved per graph, not once
+            // archive-wide, and RE-088/089/090's own reasoning for why the
+            // bound has to come from the script (`resolve_layer_mat_anims`
+            // also fills `mat_anim_data`, consumed later by `pack_mesh`).
+            let mat_anims = resolve_layer_mat_anims(
+                &loaded,
+                file,
+                graphs[gi].offset,
+                &materials,
+                &mut mat_anim_data,
+            );
             let items: Vec<mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
@@ -975,6 +1150,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     cmds,
                     world: p.world,
                     mobjs: &materials[p.node],
+                    mat_anims: &mat_anims[p.node],
                 })
                 .collect();
 
@@ -989,6 +1165,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 let index = pack_mesh(
                     &mut writer,
                     &mut tex_index,
+                    &mut mat_anim_index,
+                    &mat_anim_data,
                     Texels {
                         home: file,
                         all: &loaded.files,
@@ -1032,6 +1210,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             pack_mesh(
                 &mut writer,
                 &mut tex_index,
+                &mut mat_anim_index,
+                &mat_anim_data,
                 Texels {
                     home: file,
                     all: &loaded.files,
@@ -1344,6 +1524,15 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     );
     println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
+    let mat_animated_textures = (0..pack.texture_count())
+        .filter_map(|i| pack.texture(i))
+        .filter(|t| t.mat_anim != fmt::TextureDesc::NO_ANIM)
+        .count();
+    println!(
+        "  mat anims   {} script(s), {} palette variant(s), {mat_animated_textures} texture(s) animated (RE-089/090/091)",
+        pack.mat_anim_count(),
+        pack.mat_anim_palette_count()
+    );
     println!("  size        {:.1} KiB", bytes.len() as f64 / 1024.0);
     println!("  verified    loads back cleanly");
 
@@ -1779,6 +1968,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 cmds,
                 world: p.world,
                 mobjs: &materials[p.node],
+                mat_anims: &[],
             })
             .collect();
         out.extend(

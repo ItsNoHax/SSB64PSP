@@ -6366,3 +6366,105 @@ enough information at the point an `MObj` fires (RE-064's `Builder`) to
 identify the CI4/CI8 texture cleanly, or whether it needs new bookkeeping
 of its own — this was not investigated this session, since the format
 work above was already a full, independently-verifiable unit on its own.
+
+---
+
+## RE-092 — Animated palettes correlated to their texture through `mesh.rs`'s existing state, and packed for real: 17/33 scripts survive the whole pipeline
+
+**Question.** RE-091 found `mesh.rs`'s own cross-node state (RE-064) is
+the only place that knows which texture a palette-cycling `MObjSub`
+applies to, since the `MObjSub` itself never names one. Does threading
+that through actually work, and does it produce real, correct pack data
+end to end?
+
+**`mesh.rs` already had the answer; it just wasn't being kept.** Re-reading
+`State::apply_mobj` (the function `gcDrawMObjForDObj`'s own command order
+is modelled by) showed why RE-091's `sprite`-keyed approach could never
+have worked: for a palette-only `MObj` (`sprite: None`, confirmed
+archive-wide by RE-091), `apply_mobj` sets `self.timg_addr` to the
+*palette's own* address first, and it is the **display list's own**
+subsequent `G_LOADTLUT` + `G_SETTIMG` — ordinary commands `mesh.rs`
+already walks, nothing to do with `MObj` at all — that load the TLUT and
+then overwrite `timg_addr` with the *real* texture image address. By the
+time a primitive is emitted, `State::current_texture()` already resolves
+the correct texture through this existing mechanism; nothing new was
+needed to find it. The only genuinely missing piece was remembering *that
+a script drove this palette* across those same intervening commands.
+
+**Added one field, tied to the same lifetime as the palette it describes.**
+`MeshMaterial` gained `mat_anim: Option<MatAnimRef>` (`{ source_file,
+script }` — identity only, the same division `TextureRef` already draws
+between "where" and "the decoded bytes"). `SequenceItem`/`State` gained a
+parallel `mat_anims` slice, indexed by the same segment-`0x0E` heap index
+`mobjs` already is. `apply_mobj` sets `self.material.mat_anim` in the
+*same* `if let Some(palette) = m.palette` branch that sets `timg_addr` —
+not merely "when a script is present", but unconditionally whenever a
+palette-bearing `MObj` fires, so a *later*, unanimated palette-bearing
+`MObj` correctly clears a stale marker instead of leaking it onto a
+different texture. `forget_texture` clears it too, for the same reason it
+already clears `palette_offset`.
+
+**Verified the clearing rule can fail, the same way RE-064 verified
+inheritance could fail.** A new test (`a_later_unanimated_palette_clears_a
+_previous_mat_anim`) builds two `MObj` calls in one node — the first
+animated, the second not, each binding a different texture — and asserts
+the second primitive's `mat_anim` is `None`. Confirmed this actually
+exercises the fix, not just the shape of it: reverting `apply_mobj`'s
+assignment to the naive `if mat_anim.is_some() { ... }` (RE-091's original
+sketch) made the test fail with the stale reference still attached,
+before reverting back. A second test confirms the positive case (an
+animated palette is carried onto the primitive that uses it). `cargo test
+--workspace`: 243 passing (was 241), all 48 pre-existing `mesh` tests
+unaffected.
+
+**Wired `romtool`'s real build loop, not just the format.** Added
+`resolve_layer_mat_anims` (per stage-layer graph: same-file
+`p_matanim_joints`/`p_mobjsubs` only, matching RE-089's scope; ticks
+`MaterialJoint` and calls `mobj::read_palettes` exactly as RE-089/090
+already do, storing each script's resolved palettes keyed by `(source_file,
+script)`) and `convert_mat_anim_palette` (converts one resolved palette
+variant the same RGBA5551→ABGR8888 path `convert_texture` already applies
+to the static one). `pack_mesh` now checks every primitive's
+`mat_anim` after resolving its texture, deduplicating by script the same
+way textures are deduplicated by texel address, and calls
+`add_mat_anim`/`set_texture_mat_anim` for real.
+
+**Result, run against the real ROM: 17 scripts, 181 palette variants, 23
+textures animated** — a real subset of RE-089's 33 known scripts survived
+the *whole* pipeline (resolution → bound → read → mesh conversion →
+dedup → pack), not a guess. Cross-checked against RE-089's own per-file
+numbers: file 117 contributed **both** of its scripts, each still
+correctly showing **16 entries** (the decomp-matching case); file 114
+contributed 6 of its 13, all still correctly showing **18 entries**; file
+105 contributed 8 of its 18, with entry counts (2, 3, 4) matching RE-089's
+own recorded range. Every survived case's numbers agree exactly with
+RE-089's independently-produced figures — strong evidence the pipeline
+carries data through correctly, not merely that it runs without erroring.
+Pack size grew 4311.0 → 4470.3 KiB (+159.3 KiB, the packed palette
+blobs). `cargo run --release -p romtool -- pack`: "verified loads back
+cleanly". `cargo psp --release` + `tools/run-ppsspp.sh`: builds and runs
+clean, Dream Land pixel-identical at 60 FPS (Dream Land uses none of
+files 105/114/117, and nothing on the device side reads `mat_anim` yet —
+no visual change is expected or seen).
+
+**Result.** `crates/ssb-rom/src/mesh.rs` gained `MatAnimRef` and
+`MeshMaterial::mat_anim`, correctly threaded through existing state
+inheritance. `tools/romtool/src/main.rs`'s `pack` command now populates
+`MatAnimDesc`/`MatAnimPalette`/`TextureDesc::mat_anim` for real, gaining a
+`mat anims` summary line. `PLAN.md` R0.10's "material state updated
+correctly" acceptance item now has real, verified pack data behind it, not
+just a format. **Not yet done, and not attempted this session**: why 16 of
+33 known scripts did not survive (unplaced nodes, a display list this
+project's own discovery pass never authoritatively reaches, or something
+else — not investigated); a `MaterialAnimator` that actually ticks these
+at runtime and calls `sceGuClutLoad` (steps 6/8); verifying any of this
+visually on a stage that uses it (step 9, files 105/114/117 are the
+concrete candidates).
+
+**Confidence: high** that the correlation mechanism is correct (not
+merely "compiles" — the clearing rule is proven capable of failing and
+does not, and three independent files' worth of survived data agree
+exactly with RE-089's own separately-computed numbers). **Not confident**
+about, and did not investigate, why the surviving count is 17 of 33
+rather than all of them — a real, open, measured gap, not swept under a
+success message.
