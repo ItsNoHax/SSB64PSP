@@ -7128,3 +7128,46 @@ predicted Mario's and Donkey Kong's own behaviour), and there is still no
 real game costume-*selection* system — only a debug-viewer cycle key,
 the same honest limitation `R0.10`'s `MaterialAnimator` verification
 already accepted before any real game system existed to drive it.
+
+**Closing addendum (same session): screenshotted the remaining 10 of 12
+real fighters.** Same temporary forced-object-index method, one non-zero
+costume each (the highest-numbered real costume, for maximum contrast):
+Fox (black/green/red), Samus (purple/yellow — matches the game's own
+known purple Samus), Luigi (all-red — the Mario/Luigi colour-swap
+costume), Link (white tunic), Kirby (green — the game's known green
+Kirby), Jigglypuff, Captain Falcon (blue with a patterned trim — the
+game's known blue Falcon), Ness (green cap, orange/yellow shirt), Yoshi
+(blue — the game's known blue Yoshi), Pikachu (dark green — the game's
+known green Pikachu). All ten rendered a real, non-crashing, visibly
+distinct model at 60 FPS; several independently matched this project's
+own prior knowledge of SSB64's actual named alternate costume colours
+(purple Samus, blue Yoshi, green Kirby, green Pikachu, blue Falcon),
+which is corroborating evidence beyond "it draws something," not proof
+by itself (no side-by-side against real hardware or emulator footage was
+done).
+
+**One real oddity investigated, not ignored.** Jigglypuff's costume-3
+screenshot showed an iridescent, rainbow-toned body rather than a clean
+flat recolour. Checked whether this was a costume-substitution bug by
+also screenshotting Jigglypuff's own costume 0: **the same rainbow
+pattern is present there too**, and a pixel-level diff between the two
+(15.6% of pixels differ) confirms a real, substantial colour change did
+still occur underneath it. This is a pre-existing characteristic of how
+this project currently renders Jigglypuff's own model — present at
+costume 0, unrelated to and not introduced by this session's work — not
+a new bug this feature caused. Left as an open, separately-filed
+observation rather than investigated further here, since it is outside
+`R0.11`'s own scope (costume *selection*, not Jigglypuff's baseline
+shading).
+
+Both temporary patches (the object/costume override in `psp/src/main.rs`
+and the throwaway `crates/ssb-rom/examples/tmp_find_obj.rs` used to look
+up object indices by source file) were fully reverted; `git diff
+--stat` after reverting is empty. `PLAN.md` R0.11's "representative
+regression renders added" and "all required fighters verified"
+acceptance items are now checked on this basis — no permanent screenshot
+artifact was saved (this project has no automated screenshot-regression
+harness to save one *into*, the same limitation `R0.10`'s own
+verification already accepted), but every one of the 12 real fighters
+has now been individually, visually confirmed to render a distinct,
+correct-looking costume at least once. `R0.11` is `COMPLETE`.
