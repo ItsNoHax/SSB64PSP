@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-03 (RE-097)
+**Last updated:** 2026-09-04 (RE-098)
 
 ---
 
@@ -12,11 +12,93 @@
 
 ## Current Task
 
-`R0.11 — Fighter Palettes / Costumes`
+`R0.11 — Fighter Palettes / Costumes` (`VERIFYING`)
 
 ## Task Status
 
-RE-097 (this session) implemented and shipped the concrete lead RE-096
+RE-098 (this session) implemented and shipped multi-costume packing and
+device-side selection, closing four of `R0.11`'s five acceptance items.
+Confirmed by reading the real consuming code (not assumed) that a
+fighter's alternate costumes share identical geometry and vary only
+material (colour/palette) — a separate, gameplay-state-driven mechanism
+(`modelpart_id_curr`) is the only thing that ever swaps geometry, and it
+is never driven by `costume`. This settled the runtime-representation
+design in favour of a sparse per-(node, costume) mesh substitution
+layered on the existing shared mesh set, not per-costume geometry
+duplication.
+
+Measured the real per-node cost archive-wide first (matching RE-076/077's
+discipline): real per-fighter costume counts (hand-transcribed and cited
+from `dFTParamCostumeIDs`, `refs/ssb-decomp-re/src/ft/ftparam.c:56`) are
+Mario 5, Fox 4, Donkey Kong 5, Samus 5, Luigi 4, Link 4, Kirby 5,
+Jigglypuff 4, Captain Falcon 6, Ness 4, Yoshi 6, Pikachu 4. A temporary,
+reverted `romtool costcensus` census found 10-16 of each fighter's
+~25-33 nodes (a third to two-thirds, never all) actually differ from
+costume 0 — some palette-dominated (Donkey Kong: 9 colour vs 96 palette
+differences), some colour-dominated (Yoshi: 80 vs 30), one barely
+touched (Link: 2 of 32 nodes).
+
+Shipped `CostumeOverride` (`crates/ssb-rom/src/pack.rs`, `pack::VERSION`
+12 → 13): a sparse table keyed by global node index, `Pack::costume_mesh`
+binary-searching it and falling back to the node's own baked mesh for
+the common (no-override) case. `tools/romtool/src/main.rs`'s build loop
+converts each costume-bearing graph once per costume and registers a
+substitute mesh only where the *converted mesh content* differs from
+costume 0 — comparing raw per-node `MObj` fields instead would have
+missed differences caused by cross-node state inheritance (RE-064), so
+`Mesh`/`Primitive` gained `PartialEq` to make the real comparison
+possible. Found and fixed a real, costume-unrelated bug along the way:
+`pack_mesh`'s texture cache was keyed by image location alone, which
+would have let a costume's different palette on a shared image silently
+reuse costume 0's cached texture — fixed by keying on palette identity
+too (`TexKey`), a correctness improvement to the existing non-costume
+path, not only a costume-specific one.
+
+Wired device-side: `draw_object`/`draw_object_posed` gained a `costume`
+parameter (`0` for every pre-existing caller, reproducing prior behaviour
+exactly); the debug viewer gained a costume-cycle key (`L`, newly mapped
+from the PSP's previously-idle `SELECT` button in
+`crates/ssb-engine/src/input.rs`) and an overlay readout. Verified on the
+real device profile for two fighters, not just compiled: Mario
+(colour-dominated) visibly recolours between costumes 0 and 2; Donkey
+Kong (palette-dominated) correctly renders the game's well-known "Blue
+Kong" alternate colour at costume 3, confirming the palette-substitution
+path specifically (a fresh texture per differing palette), not only the
+vertex-colour path Mario exercised. Both verifications used a temporary,
+fully reverted forced-object-index patch (`git diff --stat` on
+`psp/src/main.rs` after reverting matches the permanent wiring only),
+matching RE-074's established precedent.
+
+`cargo test --workspace`: 398 passing (was 394; new coverage: two
+`pack.rs` `costume_mesh` tests including one verified incapable of
+passing without `finish()`'s sort, two `object_costume_count` tests
+including one verified incapable of passing without the node-range
+upper bound). `cargo clippy --release` (workspace): clean. Rebuilt the
+real pack: 1287 per-(node, costume) mesh substitutions, size 4492.4 →
+5264.1 KiB (+772 KiB, +17% — disclosed; smaller in both absolute and
+proportional terms than RE-067's already-shipped 1.5× mirror-texture
+cost, so not gated on further user sign-off). `cargo psp --release` +
+`tools/run-ppsspp.sh --seconds 8`: Dream Land pixel-normal at 60 FPS, no
+panics, no new warnings versus a stashed pre-session baseline build.
+
+**This moves `R0.11` from `IN_PROGRESS` to `VERIFYING`, not `COMPLETE`.**
+Four of five acceptance items now have real, on-device-verified evidence
+(palettes identified, costumes identified, runtime representation
+complete, palette data verified against ROM). Two remain genuinely open:
+"representative regression renders added" (the two screenshots taken
+this session were one-off verification, then reverted — no permanent
+regression-render artifact exists) and "all required fighters verified"
+(2 of 12 real fighters individually screenshotted; the other 10 are
+measured via the same census method, which correctly predicted both
+verified fighters' behaviour, but not visually spot-checked). There is
+also still no real game costume-*selection* system, only the debug-
+viewer cycle key — the same honest limitation `R0.10`'s
+`MaterialAnimator` accepted before any real game system existed to drive
+it.
+
+## Previous Task Status
+
+RE-097 (previous session) implemented and shipped the concrete lead RE-096
 handed off: `colors_at` (`crates/ssb-rom/src/matanim.rs`) now also reads
 `PaletteID` (joint track 9) alongside its existing `PRIM`/`ENV`/`BLEND`
 colour tracks, using the same step/base/target bookkeeping, resolved via
@@ -1395,45 +1477,40 @@ remain real, measured, unimplemented follow-on work if a future session
 wants it, but nothing blocks on them and `PaletteID` alone was 71% of the
 real archive-wide need.
 
-**`R0.11 — Fighter Palettes / Costumes` is still `IN_PROGRESS`**, but its
-concrete starting lead is now done. RE-097 (this session) read, added and
-wired the `PaletteID` gap RE-096 handed off:
-`colors_at`/`costume_colors` now resolve which packed palette variant a
-given costume selects (where a script names one), and
-`tools/romtool/src/main.rs`'s `Loaded::materials` bakes it into `m.palette`
-the same way it already bakes `prim_color`/`env_color`/`blend_color` —
-verified against the real ROM by a temporary, reverted census at both
-costume 0 (198 hits, all resolve to `id = 0`, matching the unchanged pack)
-and costume 1 (188/198 resolve to `id = 1`, 0 `read_palettes` failures).
-Full detail: `PLAN.md` R0.11 "Current evidence", RE-097 in
-`docs/reverse-engineering.md`.
+**`R0.11 — Fighter Palettes / Costumes` is now `VERIFYING`**, not
+`IN_PROGRESS` — RE-098 (this session) implemented and shipped multi-
+costume packing and device-side selection, closing four of the task's
+five acceptance items. Full detail: `PLAN.md` R0.11 "Current evidence",
+`docs/reverse-engineering.md` RE-098.
 
-**What is left is the larger part of the task, not more investigation of
-this lead.** The pack still only ever builds one costume at a time
-(`tools/romtool/src/main.rs`'s `DEFAULT_COSTUME = 0.0`, a single
-compile-time constant) — nothing yet packs more than one costume's
-geometry/materials, and nothing on the device side selects a costume at
-runtime. Concrete next steps, roughly in the shape `R0.10` itself took
-(design before implementing, not the other way round):
+**What is left is verification breadth, not more design or
+implementation.** The mechanism itself (`CostumeOverride`, the build-loop
+content comparison, `draw_object`'s `costume` parameter, the debug-viewer
+cycle key) is shipped and confirmed correct for two fighters — one
+colour-dominated (Mario), one palette-dominated (Donkey Kong, "Blue
+Kong"). Concrete next steps for whoever picks this back up:
 
-1. **Decide the runtime representation.** Does every costume get its own
-   full packed mesh set (simple, likely large — `R0.11`'s "runtime
-   representation complete" acceptance item), or can costumes that only
-   differ by baked colour/palette share geometry and vary only a small
-   per-costume table the device reads at select time (cheaper, more
-   design work, no existing precedent in this pack format to extend from)?
-   This is an open design question, not a known answer to look up.
-2. **Measure the real archive-wide need first**, the way RE-076/077 did
-   for texture streaming before implementing anything: how many costumes
-   does each fighter actually have (`FTCommonPart`'s own costume count,
-   not assumed to be a fixed number), and does `PRIM`/`ENV`/`BLEND`
-   costume variation (already read, RE-040) diverge from `PaletteID`
-   variation (RE-097) enough that some costumes are pure recolours and
-   others need different textures entirely?
-3. Once scoped, extend the pack format/build loop to carry more than
-   `DEFAULT_COSTUME`, and wire a device-side selection point (even a
-   debug-viewer cycle key, mirroring how `R0.10`'s work landed before any
-   real game-select-screen system existed).
+1. **Screenshot the other 10 of 12 real fighters' costume ranges**,
+   the same forced-object-index-then-revert method this session used for
+   Mario/Donkey Kong (object indices for any file id are one `Pack::open`
+   + a loop over `object_count()` filtering by `source_file` away — see
+   this session's own throwaway `crates/ssb-rom/examples/tmp_find_obj.rs`
+   pattern, deleted after use). This is legwork, not investigation: the
+   census already predicted both verified fighters' behaviour correctly,
+   so the main risk is a fighter whose costume script shape differs from
+   the two sampled so far, not a wrong mechanism.
+2. **Decide whether a permanent regression-render artifact is worth
+   adding** — today's evidence is two one-off screenshots taken and
+   reverted, plus unit-test coverage of the mechanism itself. This
+   project has no existing automated screenshot-regression harness (the
+   PPSSPP harness takes one screenshot per independent launch, `R0.10`'s
+   own RE-095 already ran into this limitation), so this may mean
+   accepting the same category of limitation already recorded for
+   `R0.12`/`R0.14`'s open items rather than building new infrastructure
+   for one task.
+3. Once both are addressed (or explicitly accepted as out of reach given
+   the harness's own limitations), `R0.11`'s remaining two acceptance
+   items can close and the task can move to `COMPLETE`.
 
 **Other, now-secondary threads, each already investigated as far as this
 session's methods reach:**

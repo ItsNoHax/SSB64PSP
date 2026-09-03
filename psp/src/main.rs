@@ -252,6 +252,14 @@ unsafe fn run() -> ! {
             best.0
         })
         .unwrap_or(0);
+    // RE-098: no real costume-selection game system exists yet, so the only
+    // way to see whether a fighter's alternate costumes actually render is
+    // the same debug-viewer-cycle precedent `RE-095`'s `MaterialAnimator`
+    // verification used. `L` steps through `0..costume_count(object_index)`;
+    // out-of-range values are impossible by construction (`% ...max(1)`), and
+    // a fresh object with fewer costumes than the previous one silently
+    // clamps rather than drawing with a stale, meaningless index.
+    let mut costume_index: u32 = 0;
 
     // Stage view: a whole stage -- its render layers assembled, with its
     // collision polylines drawn over them. This is the default when the pack
@@ -428,6 +436,7 @@ unsafe fn run() -> ! {
                     }
                 }
             } else if object_view && object_count > 0 {
+                let was_object = object_index;
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     object_index = (object_index + 1) % object_count;
                 }
@@ -465,13 +474,29 @@ unsafe fn run() -> ! {
                     }
                     i
                 };
-                // R-trigger and C-up: the only inputs the default mapping
-                // leaves free here (L-trigger is Z, which zooms).
                 if pressed.contains(N64Buttons::R) {
                     object_index = step_file(object_index, 1);
                 }
                 if pressed.contains(N64Buttons::C_UP) {
                     object_index = step_file(object_index, object_count - 1);
+                }
+                // RE-098: `L` (mapped from the PSP's otherwise-idle SELECT
+                // button) cycles which baked costume variant this object
+                // draws with -- the only way to see a fighter's alternate
+                // costumes render at all before any real costume-selection
+                // game system exists, mirroring the debug-viewer-cycle
+                // precedent `RE-095`'s `MaterialAnimator` verification used.
+                let costume_count = pack
+                    .as_ref()
+                    .and_then(|p| p.object(object_index).map(|o| p.object_costume_count(&o)))
+                    .unwrap_or(1);
+                if was_object != object_index {
+                    // A different object may have fewer costumes than the
+                    // one just left; a stale index would silently draw
+                    // whatever the last override in the table happens to be.
+                    costume_index = 0;
+                } else if pressed.contains(N64Buttons::L) {
+                    costume_index = (costume_index + 1) % costume_count.max(1);
                 }
             } else if mesh_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
@@ -685,6 +710,10 @@ unsafe fn run() -> ! {
                                     &posed[..n],
                                     &mut draw_state,
                                     Some(&material_anim),
+                                    // No costume-selection game system exists
+                                    // yet (R0.11); the simulated fighter here
+                                    // always draws costume 0.
+                                    0,
                                 );
                                 gpu.model_transform(cam, [0.0, 0.0, 0.0], sc);
                             }
@@ -759,6 +788,7 @@ unsafe fn run() -> ! {
                         &posed[..posed_len],
                         &mut draw_state,
                         Some(&material_anim),
+                        costume_index,
                     );
                     let placed = (0..obj.node_count)
                         .filter_map(|k| p.node(obj.first_node + k))
@@ -896,6 +926,14 @@ unsafe fn run() -> ! {
             None => (0, 0),
         };
 
+        // RE-098: only meaningful in object view (a stage or a loose mesh has
+        // no costume table), but always computed and shown so a wrong index
+        // surviving a mode switch would be visible rather than hidden.
+        let costume_count_shown = pack
+            .as_ref()
+            .and_then(|p| p.object(object_index).map(|o| p.object_costume_count(&o)))
+            .unwrap_or(1);
+
         const WHITE: u32 = 0xFFFF_FFFF;
         gpu.debug_text(
             8,
@@ -905,7 +943,7 @@ unsafe fn run() -> ! {
                 "SSB64-PSP  M4 scene viewer\n\
                  pack: {}\n\
                  \n\
-                 {} {}/{}  file {}  @0x{:X}\n\
+                 {} {}/{}  file {}  @0x{:X}  costume {}/{}\n\
                  fighter {}  x {} y {}  line {}  mat {}  air {}\n\
                  attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
                  anim dash {}f  land {}f\n\
@@ -924,13 +962,15 @@ unsafe fn run() -> ! {
                  stick: move  C-left: jump  C-right: respawn\n\
                  C-up: fighter sim on/off\n\
                  R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
-                 in obj view -- B: animate  dpad: anim/fighter",
+                 in obj view -- B: animate  dpad: anim/fighter  L: costume",
                 pack_status,
                 mode,
                 index,
                 count,
                 src_file,
                 src_offset,
+                costume_index,
+                costume_count_shown,
                 ft_state,
                 ft_x,
                 ft_y,
