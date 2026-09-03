@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-098)
+**Last updated:** 2026-09-04 (RE-099)
 
 ---
 
@@ -12,12 +12,55 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`TODO`, just selected — see "Next Eligible
-Task" below). `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` this
-session (RE-098 plus its closing addendum: all 12 real fighters
-individually verified).
+`R0.13 — Framebuffer Rendering` (`TODO`). RE-099 (this session) scoped it
+precisely — see "Task Status" below — but no implementation has landed
+yet; that is the next session's work. `R0.11 — Fighter Palettes /
+Costumes` closed `COMPLETE` earlier this session (RE-098 plus its closing
+addendum: all 12 real fighters individually verified).
 
 ## Task Status
+
+RE-099 (this session) scoped `R0.13` precisely instead of starting
+implementation cold. Read `refs/ssb-decomp-re/src/lb/lbtransition.c`
+directly (239 lines, the whole file) rather than continuing to reason
+from RE-055's own paraphrase, and found the mechanism is considerably
+simpler than "framebuffer rendering" suggested: `lbTransitionSetupTransition`
+runs **once**, when a transition begins, doing a plain CPU-side copy of
+the current framebuffer into a `300×220` `u16` heap — not a per-frame
+render-to-texture pass. Every frame after that, `lbTransitionProcDisplay`
+just binds the already-captured snapshot as RSP segment `0x1` and draws
+the transition's own ordinary `DObjDesc`/`AObjEvent32` scene graph, the
+same tree-walk this project already converts for every other object. The
+only genuinely new capability `R0.13` needs is a one-time PSP-side
+framebuffer snapshot into a texture, plus recognising segment `0x1` as
+that special identity instead of failing to resolve it (mirroring how
+`mobj::GRAPHICS_HEAP_SEGMENT`, `0x0E`, is already special-cased for a
+different runtime-only segment).
+
+Also corrected RE-055's own scope: measured directly against the ROM
+(`romtool textures --file <id>`, not the decomp's `dLBTransitionDescs`
+table) that **13 files carry this exact two-bind signature, not 11** —
+files 39 (`IFCommonObject`, a different module prefix, purpose not
+identified this session) and 47 (`LBTransitionPaperAirplane`, not in the
+11-entry transition table) also match it byte-for-byte. 13 files × 2
+binds = 26, exactly matching R0.3's original segment-`0x01` failure
+count — so RE-055's "26" was right, its "11 files" attribution was an
+undercount by 2, now fully resolved. A likely design simplification was
+identified but not verified: the N64 tiles the image into small strips
+purely because the RSP's TMEM is 4 KB; the PSP GE has no equivalent
+limit, so one full-size PSP texture capture may need no strip-by-strip
+capture logic at all, letting every transition's existing UV coordinates
+address into it unchanged.
+
+**Not implemented — this is a scoping pass**, the same shape as
+RE-076/081/096. `git diff --stat` after this session's `R0.13` work is
+documentation-only (`PLAN.md`, `STATUS.md`, `docs/reverse-engineering.md`).
+`PLAN.md` R0.13's "framebuffer usage identified" acceptance item is now
+checked; the other five (texture paths, screen wipes, render-to-texture,
+synchronization, visual verification) remain genuinely open — this
+session de-risked the design, it did not build anything.
+
+## Previous Task Status
 
 RE-098 (this session) implemented and shipped multi-costume packing and
 device-side selection, closing four of `R0.11`'s five acceptance items.
@@ -102,7 +145,7 @@ introduced. All temporary patches (the forced object/costume override,
 a throwaway example binary used to look up object indices by source
 file) were fully reverted. **`R0.11` is now `COMPLETE`.**
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-097 (previous session) implemented and shipped the concrete lead RE-096
 handed off: `colors_at` (`crates/ssb-rom/src/matanim.rs`) now also reads
@@ -1489,26 +1532,41 @@ packing and device-side selection, then individually screenshotted all
 12 real fighters at a non-zero costume, closing every acceptance item.
 Full detail: `PLAN.md` R0.11, `docs/reverse-engineering.md` RE-098.
 
-**`R0.13 — Framebuffer Rendering` is the next eligible task** — the
-first `TODO` task in `PLAN.md`'s own dependency order whose dependencies
-(`R0.2` `COMPLETE`, `R0.6` `IN_PROGRESS` with substantial progress) are
-adequately met, per this project's established "needs meaningful
-progress from, not 100% complete" reading of "depends on." It is
-genuinely not started — no framebuffer-based rendering path (render-to-
-texture, screen wipes) exists at all. RE-055 (`docs/
-reverse-engineering.md`, an earlier session) already identifies the
-concrete target: the LB (loading-break) transition system's
-`sLBTransitionPhotoHeap`, a 300×220 16-bit heap buffer the engine fills
-with a copy of the last frame drawn, bound to RSP segment `0x1` once per
-frame and sampled by 11 between-match transition effects (aeroplane,
-curtain, cannon, star, bamboo-blind ×2, camera, block, rotscale, check,
-"gakubuthi"). These are exactly the 26 segment-`0x01` entries `R0.3`
-already found and deliberately left unresolved as out of its own scope.
-Concrete first step for whoever picks this up: read
-`refs/ssb-decomp-re/src/lb/lbtransition.c` to understand exactly when
-the photocopy is taken and how each of the 11 effects samples it, before
-designing a PSP render-to-texture equivalent (`sceGuCopyImage`/framebuffer-
-as-texture) around it.
+**`R0.13 — Framebuffer Rendering` is the next eligible task and is now
+precisely scoped (RE-099, this session), but still `TODO` — nothing has
+been implemented.** It is considerably simpler than "framebuffer
+rendering" suggests: `sLBTransitionPhotoHeap` is filled by a **one-time**
+CPU-side copy of the framebuffer when a transition begins, not a
+per-frame render pass, and every frame after that just binds it as RSP
+segment `0x1` for an otherwise completely ordinary `DObjDesc`/
+`AObjEvent32` scene graph — the same conversion pipeline this project
+already has. Concrete next steps, in order:
+
+1. **Add a PSP-side one-time framebuffer-to-texture snapshot.** Needs
+   design (does the PSP GE's existing render target support a direct
+   copy-to-texture, or does this need an explicit `sceGuCopyImage`/
+   memcpy step?) and a place to trigger it — there is no real "match
+   transition" game event yet, so this likely needs a debug-viewer
+   trigger first, the same precedent `R0.10`/`R0.11` both used before a
+   real game system existed.
+2. **Recognise segment `0x1` in `mesh.rs`** the same way
+   `mobj::GRAPHICS_HEAP_SEGMENT` (`0x0E`) is already special-cased,
+   marking the resulting texture as "the live snapshot" instead of
+   failing to resolve it. This is additive to the existing texture
+   pipeline, not a rewrite.
+3. **Pack and convert files 39–51** (13 files, not the 11 RE-055 first
+   suggested — RE-099 corrected this by measuring `romtool textures
+   --file <id>` directly against the ROM) the same way every other
+   object is already converted, once step 2 makes their segment-`0x1`
+   bind resolvable.
+4. **Decide the strip-vs-full-image question RE-099 flagged but did not
+   verify**: the N64 tiles this image into small strips purely because
+   its RSP has a 4 KB TMEM limit; the PSP GE likely has no equivalent
+   constraint, so one full-size capture may need no strip logic. Confirm
+   before implementing strip-by-strip capture that isn't actually needed.
+
+Full detail: `PLAN.md` R0.13 "Current evidence", `docs/
+reverse-engineering.md` RE-099.
 
 **Other tasks with real open items, in case `R0.13` turns out blocked
 once investigated:**

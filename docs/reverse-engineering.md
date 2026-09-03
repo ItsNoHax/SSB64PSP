@@ -7171,3 +7171,90 @@ harness to save one *into*, the same limitation `R0.10`'s own
 verification already accepted), but every one of the 12 real fighters
 has now been individually, visually confirmed to render a distinct,
 correct-looking costume at least once. `R0.11` is `COMPLETE`.
+
+---
+
+## RE-099 — The LB transition photocopy is a one-time snapshot sampled as an ordinary texture, not a per-frame render pass; exactly 13 files use it, not 11
+
+**Question.** `R0.13 — Framebuffer Rendering` is the next eligible task
+and was, at the start of this session, essentially unscoped: RE-055 (an
+earlier session) identified *that* 26 segment-`0x01` texture binds exist
+across "11 between-match transition effects" and attributed them to
+`sLBTransitionPhotoHeap`, but never read the mechanism closely enough to
+say what a PSP implementation would actually need to do. Is this a
+per-frame render-to-texture pass (expensive, needs new GE plumbing every
+frame) or something cheaper — and is "11 files" actually the right
+count?
+
+**Read `refs/ssb-decomp-re/src/lb/lbtransition.c` directly (239 lines,
+the whole file) rather than continuing to reason from RE-055's
+paraphrase.** `lbTransitionSetupTransition` is **not** called once per
+frame — it runs exactly once, when a transition begins: it computes the
+largest of the 11 registered transition files' sizes for a shared heap,
+allocates `sLBTransitionPhotoHeap` (`300 * 220 * sizeof(u16)` = exactly
+132,000 bytes), and copies the *current* framebuffer into it with a
+plain nested loop reading `u32`s (two RGBA5551 pixels at a time) from
+`gSYSchedulerCurrentFramebuffer` at a fixed border offset. That is the
+entire "framebuffer capture" mechanism: a one-time memcpy-shaped
+snapshot, not a live render target. `lbTransitionProcDisplay` (called
+every frame *after* that one-time copy) does nothing more exotic than
+`gSPSegment(dl, 0x1, sLBTransitionPhotoHeap)` — binding the already-
+captured snapshot as segment `0x1` — followed by an ordinary
+`gcDrawDObjTreeForGObj`, the same tree-walk every other object in this
+project already converts. The transition's own geometry (a paper
+airplane, a curtain, spinning blocks, etc.) is a completely ordinary
+`DObjDesc`/`AObjEvent32`-driven scene graph that happens to sample this
+one special texture via `G_SETTIMG` pointing into segment `0x1` instead
+of a normal archive file.
+
+**This changes the shape of what R0.13 needs to build.** No per-frame
+render-to-texture pass, no new animation system — the geometry pipeline
+already exists. The only genuinely new capability is: (1) a PSP-side way
+to snapshot "the last rendered frame" into a texture-shaped buffer once,
+when a transition starts, and (2) recognizing segment `0x1` as a special
+texture identity (the live snapshot) instead of failing to resolve it,
+the same shape `mobj::GRAPHICS_HEAP_SEGMENT` (`0x0E`) already gets for a
+different runtime-only segment.
+
+**Measured the real scope directly against the ROM, not the decomp's own
+11-entry table.** `romtool textures --file <id>` for the archive files
+named by `dLBTransitionDescs` (a plain `grep -rl` for the transition
+names — "Aeroplane", "Gakubuthi", "Sudare", etc. — across
+`relocData/*.c` gives files 40–46 and 48–51) shows every one of them
+binds *exactly* two textures, both `Rgba/Bits16` (RGBA5551) at the
+identical segment-relative offset (segment `0x1`, offset `0`) — a
+`300×5` tile and a `300×6` tile, both reading the same underlying
+300×220 snapshot at different (and, cross-referenced against the tile
+sizes vs. their UV spans, clearly TMEM-strip-sized) vertical bands. File
+**47** (`LBTransitionPaperAirplane`) has the identical two-bind
+signature but is **not** one of `dLBTransitionDescs`'s 11 registered
+entries — a twelfth file sharing the mechanism, unused or reached some
+other way not yet traced. File **39** (`IFCommonObject`, a different
+module prefix — "interface", not "lb") *also* has the identical
+two-bind signature. `romtool textures` (whole-archive, not just these
+files) confirms the total is **26 segment-`0x1` binds across 13 files**
+(`39:2 40:2 41:2 42:2 43:2 44:2 45:2 46:2 47:2 48:2 49:2 50:2 51:2`) —
+RE-055's "26" figure was exactly right, but its "11 files" attribution
+undercounted by 2: one extra `lb`-prefixed file not in the transition
+table, and one entirely different `if`-prefixed file whose own purpose
+was not identified this session (a plausible guess — a KO/photo-finish
+freeze-frame snapshot, given the module split between "interface" and
+"loading-break" — is *not* confirmed by reading `if`'s own source, since
+grepping it for "photo" found nothing; left as a genuinely open
+question rather than asserted).
+
+**Not implemented — this is a scoping/investigation pass, matching the
+shape of RE-076/081/096 before it.** No code changed (`git diff --stat`
+after this session's `R0.13` work is documentation-only). What this
+gives the next implementation session: a precise mechanism (one-time
+CPU-side snapshot, ordinary texture sampling, no render-to-texture, no
+new animation system), an exact file list (39–51, 13 files, 26 binds,
+all identically shaped), and the concrete next design question --
+whether the PSP side needs a real strip-by-strip TMEM-shaped capture to
+match the N64's own tiling, or whether one full-size PSP texture capture
+(the PSP GE has no 4 KB TMEM limit forcing strips the way the RSP does)
+lets every transition's existing UV coordinates address into it
+unchanged. The latter looks strongly favoured by this session's own
+reading — the strip pattern is an N64 TMEM-capacity workaround, not
+something the transition's own geometry or UVs depend on structurally —
+but was not implemented or verified this session.
