@@ -1441,9 +1441,34 @@ fn convert_texture(
     {
         // RE-070: named, evidence-based exception, not a general "detect
         // dithering" heuristic -- see `NEEDS_DITHER_BLUR`'s doc comment.
-        let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
+        //
+        // RE-075: blur *before* mirroring, not after. Both canopy textures
+        // mirror on both axes (RE-067). `box_blur_wrapped` wraps its 3x3
+        // sample toroidally on whatever image it's handed, so blurring after
+        // mirroring (the old order) blends each edge row/column against its
+        // own mirrored reflection rather than the texture's real periodic
+        // neighbour -- a boundary-condition difference confirmed to change
+        // real packed bytes (6724 of ~131 KiB across the two textures, i.e.
+        // only the seam-adjacent texels, not the interior), but *not*
+        // confirmed to be visible on screen at the debug viewer's default
+        // camera distance (before/after screenshots of Dream Land's canopy
+        // were pixel-identical there). Kept anyway: it costs nothing extra
+        // and the periodic order is the one that actually matches
+        // `sceGuTexWrap(Repeat, Repeat)`'s real addressing, but this is a
+        // correctness cleanup, not a claimed fix for RE-053/RE-070's
+        // still-open dithering discrepancy.
+        let img = texture::decode(
+            texels,
+            t.width as u32,
+            t.height as u32,
+            t.format,
+            t.size,
+            (!tlut.is_empty()).then_some(tlut.as_slice()),
+        )
+        .ok()?;
         let blurred = texture::box_blur_wrapped(&img);
-        return Some(psp::pack_mipped(&blurred, psp::Psm::Psm8888, &[], swizzle));
+        let mirrored = texture::mirror_extend(&blurred, t.mirror_s, t.mirror_t);
+        return Some(psp::pack_mipped(&mirrored, psp::Psm::Psm8888, &[], swizzle));
     }
 
     let mipped = |palette: Vec<u32>| {

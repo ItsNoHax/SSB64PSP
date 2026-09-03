@@ -429,6 +429,17 @@ general dithering-detection heuristic, since a wrong guess would blur
 texture art meant to stay sharp. Costs +112 KiB VRAM (1059.0→1170.9 KiB),
 targeted to exactly the two named textures.
 
+RE-075 fixed a real but small boundary-condition bug in that same blur:
+it ran on the texture *after* mirroring, so `box_blur_wrapped`'s
+toroidal wraparound sampled the mirrored copy at the seam instead of the
+texture's own true periodic neighbour. Reordered to blur first, mirror
+second (same cost, more correct). Confirmed the change is real via a
+direct packed-byte diff (6724 bytes differ between the two orders) before
+trusting it changed anything visible — and confirmed by screenshot that
+it is *not* visible at the debug viewer's default camera distance
+(pixel-identical canopy crop). Shipped as a correctness cleanup, not a
+claimed improvement to the still-open discrepancy below.
+
 ### Objective
 
 Determine and reproduce the actual texture sampling behavior used by SSB64.
@@ -449,12 +460,12 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified
 * [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; RE-067: `Mirror` (29% of packed textures) is now exactly reproduced by pre-baking, not approximated
-* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth — both are real, evidenced progress, neither is "resolved"
+* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance — none of the three is "resolved"
 * [ ] no unsupported mipmapping assumptions remain
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075 in `docs/reverse-engineering.md`.
 
 ---
 

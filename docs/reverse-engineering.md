@@ -4889,3 +4889,62 @@ was caught by tracing the actual call graph, not guessed at; the fix was
 confirmed on a real affected primitive from Link's own model with a
 before/after screenshot pair, plus a same-technique regression check on
 the project's primary test scene.
+
+## RE-075 — Blur/mirror order fixed for correctness, not confirmed visible
+
+**Question.** `STATUS.md`'s own next-steps list for the still-open
+canopy dithering discrepancy (RE-053, RE-070) named a specific untried
+idea: `tools/romtool/src/main.rs`'s `convert_texture` mirrors the
+decoded canopy image (`texture::mirror_extend`) *before* blurring it
+(`texture::box_blur_wrapped`), and `box_blur_wrapped` wraps its 3x3
+sample toroidally on whatever image it receives — does blurring the
+already-mirrored, doubled image sample the wrong neighbourhood at the
+seam, and does reversing the order (blur the single-period image, then
+mirror the smoothed result) change anything?
+
+**Confirmed both textures are actually mirrored, so the order can
+matter.** A temporary probe print in `convert_texture` (added, checked,
+removed before committing) confirmed the ROM's own decoded `TextureRef`s
+for both `NEEDS_DITHER_BLUR` entries: offset `0xE20` has `mirror_s=true,
+mirror_t=true`, offset `0x5F0` has `mirror_s=true, mirror_t=false`, both
+`64x64`. Neither is a no-op case, so `mirror_extend`'s output genuinely
+differs depending on when it runs relative to the blur.
+
+**Swapped the order, then measured whether it changed the packed data at
+all before trusting it changed anything on screen.** Built two packs
+from the same ROM, one with each order (`git stash` isolating the code
+change, rebuilding `romtool` fresh each time), and byte-diffed them
+directly rather than assuming: **6724 bytes differ** between the two
+canopy textures' packed data (out of roughly 131 KiB combined,
+`Psm8888` at up to 128x128 after mirroring) — real, but small, and
+consistent with the change only affecting the seam-adjacent rows/columns
+a boundary-condition difference would touch, not the interior texels a
+periodic vs. reflective wrap wouldn't affect either way.
+
+**Screenshotted before and after anyway, because a byte diff is not a
+visual confirmation.** Rebuilding the pack (no PSP-side code changed,
+only the host-side `romtool` conversion) and re-screenshotting Dream
+Land's stage view at the debug viewer's default camera distance: the
+canopy crop region was **pixel-identical** between the two orders. The
+6724 bytes that do differ are evidently too small a fraction of the
+texture, and too far minified/mip-averaged at this camera distance, to
+survive to a visible difference in this specific test framing.
+
+**Result.** Shipped anyway, as a correctness cleanup rather than a
+claimed fix: blurring within the texture's real single period and then
+mirroring the already-smooth result is the boundary condition that
+actually matches `sceGuTexWrap(Repeat, Repeat)`'s real addressing
+(RE-044/RE-066/RE-067), it costs nothing extra, and a byte-level diff
+confirms it is not a no-op. It is explicitly **not** a fix for RE-053's
+still-open dithering discrepancy — that remains open, and this entry
+should not be read as closing it. `STATUS.md`'s "blur before mirror"
+idea is answered: yes, it's a real (if small) difference, no, it's not
+visible at the tested distance, so it does not by itself explain any
+part of what's still wrong with the canopy.
+
+**Confidence: high** that the change is a real, small, boundary-only
+byte-level difference (measured by direct pack diff, not inferred).
+**High** that it is not visible at the debug viewer's default camera
+distance (screenshotted, not assumed). **Not applicable** as evidence
+either way for RE-053's larger open discrepancy, which this pass did not
+move on.
