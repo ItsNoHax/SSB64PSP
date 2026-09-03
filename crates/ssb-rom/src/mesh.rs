@@ -104,6 +104,33 @@ pub struct MeshMaterial {
     pub blend_color: Option<[u8; 4]>,
 }
 
+impl MeshMaterial {
+    /// The geometry mode every object actually starts from, not an
+    /// all-off `Default`.
+    ///
+    /// `refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList` --
+    /// replayed once per frame by `syRdpResetSettings`
+    /// (`taskman.c:308`), before any object's own display list runs --
+    /// clears every geometry mode bit and then sets exactly
+    /// `G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH`. A node
+    /// whose own list never mentions geometry mode at all is not "mode
+    /// unknown", the way an absent combiner or texture bind is -- it is
+    /// drawing under this baseline, the same as it would starting from a
+    /// fresh frame on real hardware. `lit` is correctly excluded:
+    /// `G_LIGHTING` is cleared here, matching RE-021's finding that most
+    /// lit geometry sets it per-object outside any single node's list, so
+    /// the existing normal-packing heuristic (not this default) is what
+    /// recovers it.
+    fn rdp_default() -> Self {
+        MeshMaterial {
+            cull_back: true,
+            smooth: true,
+            z_buffer: true,
+            ..MeshMaterial::default()
+        }
+    }
+}
+
 /// A run of triangles sharing one material, indexing [`Mesh::vertices`].
 #[derive(Debug, Clone, Default)]
 pub struct Primitive {
@@ -478,7 +505,7 @@ impl State {
             space: 0,
             spaces: Vec::new(),
             inv_current: crate::scene::Mat4::IDENTITY,
-            material: MeshMaterial::default(),
+            material: MeshMaterial::rdp_default(),
             timg_addr: None,
             timg_file: None,
             tile0_fmt: None,
@@ -1448,6 +1475,24 @@ mod tests {
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(!mesh.primitives[0].material.cull_back);
+    }
+
+    #[test]
+    fn a_list_with_no_geometry_mode_command_draws_under_the_rdp_reset_default() {
+        // RE-068: `refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList`
+        // sets `G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH` once per
+        // frame, before any object's own list runs. A list that never touches
+        // geometry mode at all is not "mode unknown" -- it draws under that
+        // baseline, not an all-off `Default`.
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.cull_back, "G_CULL_BACK is on in the reset default");
+        assert!(m.smooth, "G_SHADING_SMOOTH is on in the reset default");
+        assert!(m.z_buffer, "G_ZBUFFER is on in the reset default");
+        assert!(!m.cull_front, "the reset default only sets G_CULL_BACK, not both");
+        assert!(!m.lit, "G_LIGHTING is cleared in the reset default (RE-021 recovers it separately)");
     }
 
     #[test]

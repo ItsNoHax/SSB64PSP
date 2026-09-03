@@ -469,6 +469,23 @@ Z, Hyrule, Final Destination, Metal Mario's stage) use their own angle, up
 to 111 degrees away, and remain an explicit, measured, accepted
 deviation per `AGENTS.md` §9 rather than an undocumented placeholder.
 
+RE-068 found and fixed a much larger structural gap: `refs/ssb-decomp-re/
+src/sys/rdp.c`'s `sSYRdpResetDisplayList`, replayed once per frame
+(`taskman.c:308`) before any object draws, sets `G_ZBUFFER | G_SHADE |
+G_CULL_BACK | G_SHADING_SMOOTH` as the *default* geometry mode — not
+all-off. `crates/ssb-rom/src/mesh.rs`'s `State::new()` seeded an all-off
+`MeshMaterial::default()` instead, so a node whose own list never mentions
+geometry mode (the common case — this state is normally set once per
+frame, not per node) converted as unculled, flat-shaded and
+non-depth-tested. Measured archive-wide before/after: `Z_BUFFER` went
+from 6/3426 packed primitives (0.17%) to 3384/3442 (98.3%); `CULL_BACK`
+measured 86.3%, `CULL_FRONT` 0.1%, `SMOOTH` 76.5% post-fix — the shape a
+real game's geometry should have. Fixed by seeding from a new
+`MeshMaterial::rdp_default()` instead, and wired `psp/src/meshdraw.rs`'s
+`apply_material` to actually toggle `GuState::DepthTest` per primitive
+from the (already-packed, previously-unread) `Z_BUFFER` flag. This
+affects every object this project converts, not one stage or file.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -488,9 +505,18 @@ Reproduce original SSB64 material behavior.
 * [ ] alpha behavior verified
 * [ ] blending verified
 * [ ] fog verified
-* [ ] depth state verified
-* [ ] culling verified
+* [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
+* [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
 * [ ] unsupported material behavior identified
+
+### Evidence
+
+RE-065, RE-068 in `docs/reverse-engineering.md`. RE-068 also leaves leads
+for the still-open items above: the same reset list fixes
+`G_AC_NONE` (alpha compare off by default), `G_RM_OPA_SURF`/`G_RM_OPA_SURF2`
+(opaque render mode by default, no blending), and `G_CC_SHADE`/`G_CC_SHADE`
+(shade-only combiner by default) as the real starting state, none of which
+this pass acted on.
 
 ---
 

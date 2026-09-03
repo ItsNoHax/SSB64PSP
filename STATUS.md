@@ -12,46 +12,70 @@
 
 ## Current Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping`
+`R0.6 — Material System Correctness`
 
 ## Task Status
 
-`IN_PROGRESS`. RE-067 (this session) traced `G_TX_MIRROR` (RE-066's one
-real, quantified gap) directly to Dream Land's still-open canopy
-discrepancy (RE-053): its exact display list (file 104, offset `0x798`)
-sets `cm_s=3 cm_t=3 mask_s=6 mask_t=6`. Confirmed the wrap boundary
-actually mattered *before* implementing anything — a reversible on-device
-`Repeat`-vs-`Clamp` experiment (2-line change, screenshotted, reverted)
-showed a dramatically different image, proving the repeat boundary drives
-real visible output here. Implemented the real fix: `crates/ssb-rom/src/
-texture.rs::mirror_extend` pre-bakes a mirrored copy of each affected
-texture at pack time (exact, not approximated, since `sceGuTexScale`
-already renormalises UVs against the packed texture's own dimensions).
-This is not scoped to Dream Land alone: 187 of 638 packed textures (29%)
-are affected archive-wide, and packed texture VRAM rose from 763.2 KiB to
-**1059.0 KiB (1.5x the ~700 KiB budget)**. Given the scale of that
-tradeoff, stopped and asked the user how to proceed (ship fully / scope to
-paletted formats only / document without shipping / revert) rather than
-deciding unilaterally — the user chose to ship it fully. Verified via a
-before/after pixel diff on Dream Land (substantial, real change in the
-canopy region) and a clean `tools/run-ppsspp.sh` run. `PLAN.md` R0.5's
-"Dream Land canopy discrepancy resolved" item stays unchecked — this
-fixed one real contributing cause, but RE-053's separate magnification/
-dithering diagnosis is untouched. Texture streaming (`TODO.md` Phase G)
-is no longer optional headroom given the new VRAM figure.
+`IN_PROGRESS`. RE-068 (this session) found and fixed a structural gap far
+bigger than the "depth state verified" item it started from: read
+`refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList`, replayed
+once per frame (`taskman.c:308`) before any object draws, and found it
+sets `G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH` **on** by
+default — not all-off. `crates/ssb-rom/src/mesh.rs`'s `State::new()`
+seeded an all-off `MeshMaterial::default()` instead, so any node whose own
+list never mentioned geometry mode (the common case, since this state
+is normally set once per frame, not per node — the same structural shape
+as RE-021's lighting finding, one level up) converted as unculled,
+flat-shaded and non-depth-tested. Measured archive-wide: `Z_BUFFER` went
+from 6/3426 packed primitives (0.17%) to 3384/3442 (98.3%) after seeding
+from a new `MeshMaterial::rdp_default()` instead; `CULL_BACK` measured
+86.3%, `SMOOTH` 76.5% post-fix — the shape a real game's geometry should
+have. Also wired `psp/src/meshdraw.rs`'s `apply_material` to actually
+toggle `GuState::DepthTest` per primitive from the `Z_BUFFER` flag (it was
+already packed, just never read on the device side). This affects every
+object this project converts, not one file. Verified via a new unit test,
+the full workspace suite, and a before/after pixel diff on Dream Land
+(small, localized change, ~0.4% of pixels — consistent with a scoped
+correctness fix, not a regression). `PLAN.md` R0.6's "depth state
+verified" and "culling verified" items are checked; the same reset list
+gives leads for the still-open "alpha behavior", "blending" and "fog"
+items (`G_AC_NONE`, `G_RM_OPA_SURF`, `G_CC_SHADE` defaults), not yet acted
+on.
 
 ## Last Completed Task
 
-R0.5 — Texture Filtering / LOD / Mipmapping — RE-066 (earlier this
-session) closed its "wrap/clamp/mirror behavior verified" and "texture
-tile parameters verified" items with a measurement, not a code fix at the
-time: read every tile-0 `G_SETTILE` archive-wide (754, not sampled) and
-found `psp/src/meshdraw.rs`'s hardcoded `sceGuTexWrap(Repeat, Repeat)` is
-already correct for clamp — every axis that requests clamp also has its
-own mask nonzero (0 counterexamples), and `refs/BattleShip`'s reference
-RDP interpreter strips `G_TX_CLAMP` under exactly that condition on real
-hardware, confirming `mesh.rs`'s existing mask-narrowed texture sizing
-(RE-044) already reproduces correct periodic addressing. Identified
+R0.5 — Texture Filtering / LOD / Mipmapping — RE-067 (earlier this
+session) traced `G_TX_MIRROR` (RE-066's one real, quantified gap) directly
+to Dream Land's still-open canopy discrepancy (RE-053): its exact display
+list (file 104, offset `0x798`) sets `cm_s=3 cm_t=3 mask_s=6 mask_t=6`.
+Confirmed the wrap boundary actually mattered *before* implementing
+anything — a reversible on-device `Repeat`-vs-`Clamp` experiment (2-line
+change, screenshotted, reverted) showed a dramatically different image.
+Implemented the real fix: `crates/ssb-rom/src/texture.rs::mirror_extend`
+pre-bakes a mirrored copy of each affected texture at pack time (exact,
+not approximated, since `sceGuTexScale` already renormalises UVs against
+the packed texture's own dimensions). Not scoped to Dream Land alone: 187
+of 638 packed textures (29%) affected archive-wide, packed texture VRAM
+rose from 763.2 KiB to **1059.0 KiB (1.5x the ~700 KiB budget)**. Given
+the scale of that tradeoff, stopped and asked the user how to proceed
+(ship fully / scope to paletted formats only / document without shipping
+/ revert) rather than deciding unilaterally — the user chose to ship it
+fully. `PLAN.md` R0.5's "Dream Land canopy discrepancy resolved" item
+stays unchecked — this fixed one real contributing cause, but RE-053's
+separate magnification/dithering diagnosis is untouched. Texture
+streaming (`TODO.md` Phase G) is no longer optional headroom given the
+new VRAM figure.
+
+RE-066 (earlier still) closed R0.5's "wrap/clamp/mirror behavior
+verified" and "texture tile parameters verified" items with a measurement,
+not a code fix at the time: read every tile-0 `G_SETTILE` archive-wide
+(754, not sampled) and found `psp/src/meshdraw.rs`'s hardcoded
+`sceGuTexWrap(Repeat, Repeat)` is already correct for clamp — every axis
+that requests clamp also has its own mask nonzero (0 counterexamples), and
+`refs/BattleShip`'s reference RDP interpreter strips `G_TX_CLAMP` under
+exactly that condition on real hardware, confirming `mesh.rs`'s existing
+mask-narrowed texture sizing (RE-044) already reproduces correct periodic
+addressing. Identified
 `G_TX_MIRROR` (208/754 tile-0 lists, 27.6%) as the one real, quantified
 gap — which RE-067 (above) then traced and fixed.
 
@@ -145,37 +169,34 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS` after
-this session's wrap/clamp/mirror work (RE-066 investigated, RE-067 fixed
-`Mirror` and traced it to Dream Land's canopy). Its real remaining open
-items are the harder ones RE-053 already scoped out: filtering modes
-(bilinear vs point, not yet verified per texture), magnification/
-minification/LOD behavior, and specifically the still-open "Dream Land
-canopy discrepancy resolved" item — RE-053 already root-caused *part* of
-the canopy issue as magnification, not minification/LOD (a pattern that
-sharpens at higher resolution can't be a mip problem), and BattleShip
-corroborates (RE-054: the reference port has no LOD support at all). RE-067
-fixed the OTHER contributing cause (the mirror wrap boundary) but a
-before/after diff shows the dithered pattern is still busy after that fix
-— a fresh session tackling the remainder should start from "what does
-softening a magnified, dithered CI4 gradient actually require" (filtering
-mode, or resolving the dither at conversion time), not more wrap-mode or
-mipmap work. Given RE-067 pushed packed texture VRAM to 1059 KiB (1.5x the
+`R0.6 — Material System Correctness` remains `IN_PROGRESS` after RE-068's
+geometry-mode-default fix (depth state and culling now checked). The same
+`sSYRdpResetDisplayList` reset list RE-068 read gives concrete, sourced
+leads for three of its remaining open items, not yet acted on: `G_AC_NONE`
+(alpha compare off by default — "alpha behavior verified"), `G_RM_OPA_SURF`/
+`G_RM_OPA_SURF2` (opaque render mode, no blending, by default — "blending
+verified"), and `G_CC_SHADE`/`G_CC_SHADE` (shade-only combiner by default
+— overlaps "combiner behavior verified"). The pattern that already paid
+off twice this session (RE-065's lighting angle, RE-068's geometry mode)
+is: find where the decompilation sets the *default* before checking
+whether `mesh.rs`'s current "unset means declined" fallback actually
+matches it, the way it happened to for the combiner already. "Material
+tables resolved", "primitive color verified" and "environment color
+verified" are less scoped — worth reading `PLAN.md` R0.6's acceptance list
+fresh rather than assuming. `R0.5 — Texture Filtering / LOD / Mipmapping`
+remains `IN_PROGRESS` too — RE-066/RE-067 closed its wrap/clamp/mirror
+items, but filtering modes, magnification/minification/LOD behavior, and
+the still-open "Dream Land canopy discrepancy resolved" item (RE-053's
+separate magnification/dithering diagnosis, unresolved) are real remaining
+work. Given RE-067 pushed packed texture VRAM to 1059 KiB (1.5x the
 ~700 KiB budget, `docs/memory.md`), `TODO.md` Phase G's "texture
-streaming" item is also now a strong candidate — it was optional headroom
-before this session, and is not anymore. `R0.6 — Material System
-Correctness` also remains `IN_PROGRESS` — its
-lighting *direction* is now measured (RE-065), but material tables,
-combiner behavior, primitive/environment colour, alpha, blending, fog,
-depth state and culling verification are all untouched, as is `TODO.md`
-Phase D's separate `RE-021` shading-detection majority vote (a different,
-structural problem: per-list conversion can't see per-object `G_LIGHTING`
-state). `R0.4`'s own remaining item ("all missing palette cases resolved")
-is already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
-further independently-actionable work. `R0.7` remains technically
-`IN_PROGRESS` but its remaining scope is an accepted long tail — only
-worth revisiting if the upstream decompilation types
-`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
+streaming" item is also a strong candidate — it was optional headroom
+before this session, and is not anymore. `R0.4`'s own remaining item ("all
+missing palette cases resolved") is already fully attributed to `R0.7`'s
+file-86 long tail, so R0.4 has no further independently-actionable work.
+`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
+accepted long tail — only worth revisiting if the upstream decompilation
+types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
 instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
@@ -355,6 +376,25 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.6: the archive-wide geometry-mode default was backwards (RE-068)
+
+* Wrote a temporary probe (`crates/ssb-rom/examples/tmp_zbuffer_scan.rs`, deleted before commit) reading the built pack's `PrimDesc::flags` archive-wide: `Z_BUFFER` set on only 6 of 3426 packed primitives (0.17%), most other flags similarly near-zero
+* Read `refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList` — clears every geometry mode bit then sets `G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH`; `syRdpResetSettings` plays it, called from `taskman.c:308` (the per-frame graphics task scheduler) — confirmed this is a once-per-frame default, not per-object or per-list
+* Recognized the same structural shape as RE-021's lighting finding, one level up: a per-list converter can't see state some other code set earlier (there, per-object; here, per-frame)
+* Added `MeshMaterial::rdp_default()` (`cull_back: true, smooth: true, z_buffer: true`) and made `crates/ssb-rom/src/mesh.rs`'s `State::new()` seed from it instead of an all-off `Default`
+* Wired `psp/src/meshdraw.rs`'s `apply_material` to toggle `GuState::DepthTest` per primitive from the `Z_BUFFER` flag (already packed by `pack.rs`, never read on the device side until now), mirroring the existing `CullFace` toggle
+* Re-ran the archive-wide scan after the fix: `Z_BUFFER` 6→3384 of 3442 (98.3%), `CULL_BACK` 86.3%, `CULL_FRONT` 0.1%, `SMOOTH` 76.5% — the shape a real game's geometry should have
+* Added `crates/ssb-rom/src/mesh.rs::a_list_with_no_geometry_mode_command_draws_under_the_rdp_reset_default`, pinning all four defaults (and that `cull_front`/`lit` stay off) from a display list with no geometry-mode command at all
+* `cargo test --workspace` — 347 passing (was 346); none of the 346 pre-existing tests broke, since every existing geometry-mode test already set an explicit command
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `romtool pack` — 4138.1 KiB (was 4137.6)
+* `cargo psp --release` — builds clean
+* `tools/run-ppsspp.sh --no-build --seconds 8` — Dream Land renders correctly at 60 FPS, clean log; before/after pixel diff shows a small, localized change (2199 of 522240 pixels, ~0.4%) around thin/double-sided decorations, not a wholesale change or missing geometry
+* Result: RE-068 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.6 ("depth state verified", "culling verified" checked, with leads recorded for alpha/blending/fog defaults from the same reset list), `TODO.md` Phase D, `docs/porting-status.md` updated to match
+* Affected subsystem: `crates/ssb-rom/src/mesh.rs` (`State::new()`/`MeshMaterial::rdp_default()`), `psp/src/meshdraw.rs` (`apply_material`) — code change, affects every object this project converts, not one file
+* PPSSPP: tested this pass, no crash/regression, small localized visual change as expected
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.5: `G_TX_MIRROR` traced to Dream Land's canopy and fixed (RE-067)
 
