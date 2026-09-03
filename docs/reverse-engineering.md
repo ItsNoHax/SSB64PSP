@@ -3960,3 +3960,64 @@ on which gameplay systems this project eventually implements and whether
 any of them turn out to use these paths on `DObjDesc`-sourced `DObj`s
 after all (unlikely per the call-site grep, but not exhaustively proven
 for every future system).
+
+## RE-064 — Cross-node palette/texture inheritance, pinned by a direct test
+
+**Question.** `PLAN.md` R0.4's "palette inheritance/state verified" item was
+unchecked: `mesh.rs`'s `convert_sequence` doc comment claims RDP material
+state (texture image, tile format, palette) threads across a node sequence
+the same way the vertex cache does, and that this was measured
+archive-wide (378 of 394 textures resolve with inheritance on vs off), but
+no unit test pinned the mechanism directly, and R0.15 (render-state
+isolation generally) hasn't started. Is the mechanism actually correct, or
+just "measured to help on average"?
+
+**Reading the code.** `State`'s `timg_addr`/`tile0_fmt`/`tile_dims`/
+`palette_offset`/`palette_file` fields are declared once in
+`convert_sequence` (`mesh.rs:743`) and mutated in place across the `for
+(i, item) in items.iter().enumerate()` loop — nothing resets them between
+items except an explicit state-changing command (`SetTimg`, `SetTile`,
+`LoadTlut`) or `forget_texture()` (called only when a segment-`0x0E` heap
+call has no `MObj` material to replay, per the existing
+`without_a_material_the_heap_call_leaves_the_texture_unbound` test). A node
+whose list sets no texture state at all therefore keeps whatever the
+previous node in the same sequence left behind — by construction, not by
+coincidence.
+
+**Is that the right behavior?** Yes, for two independent reasons. First,
+it matches the real RDP: it is genuinely stateful hardware, and
+`gcDrawDObjTree*` emits one object's whole joint hierarchy as a single
+command stream (confirmed by reading the decompilation's tree-walk, not
+inferred), so a joint that draws before setting its own texture *does*
+draw with its parent's on real hardware. Second, the risk of this being
+wrong in the other direction — state leaking *between unrelated objects*
+(e.g. one fighter's last-drawn texture bleeding into the next stage's
+first primitive) — cannot happen in this codebase's architecture:
+`tools/romtool/src/main.rs`'s pack-building loop calls `convert_sequence`
+fresh, with a brand new `State::new()`, once per scene graph
+(`for (gi, plan) in plans.iter().enumerate()`, `main.rs:952`). There is no
+code path that reuses a `State` across two different objects.
+
+**The test.** Added
+`a_texture_binding_persists_into_a_node_that_sets_no_new_state`
+(`mesh.rs`): joint A fully binds a CI4 texture and palette (`SetTimg` +
+`LoadTlut` + `SetTimg` + `SetTile` + `SetTileSize` + `Texture{on: true}`)
+and draws a triangle; joint B emits only a vertex load and a triangle, no
+material commands whatsoever. The test asserts joint B's resulting
+`TextureRef` equals joint A's exactly (`PartialEq`, not just "is bound to
+something"). Per `AGENTS.md`'s testing discipline, checked the test can
+actually fail before trusting it green: temporarily reset
+`timg_addr`/`palette_offset`/`texture_enabled` per sequence item (breaking
+inheritance) and reran — the test failed with the expected panic message —
+then reverted the injected bug and confirmed the suite passes clean again.
+
+**Result.** `crates/ssb-rom/src/mesh.rs` gains one new test, no production
+code changed (the mechanism was already correct; it was untested, not
+broken). `cargo test --workspace`: 341 passing (was 340).
+`PLAN.md` R0.4's "palette inheritance/state verified" item is checked.
+
+**Confidence: high.** The inheritance mechanism is now covered by a test
+that has been shown to fail on the bug it targets, not just shown to pass;
+the no-cross-object-leakage claim follows directly from reading the one
+call site that constructs a `State`, which is unambiguous — there is
+exactly one, and it is fresh every time.

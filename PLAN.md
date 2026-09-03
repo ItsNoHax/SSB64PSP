@@ -314,6 +314,27 @@ cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
 
 Status: `IN_PROGRESS`
 
+### Current evidence
+
+RE-064 closed the "palette inheritance/state" acceptance item. `mesh.rs`'s
+`convert_sequence` threads RDP material state (texture image, tile format,
+palette offset/file, combiner) across a node sequence the same way it
+threads the vertex cache — previously justified only by an archive-wide
+count (378/394 textures resolved with inheritance vs without) and never
+pinned by a direct unit test. Added
+`a_texture_binding_persists_into_a_node_that_sets_no_new_state`: joint A
+fully binds a CI4 texture+palette, joint B sets no texture state at all,
+and the test asserts joint B's resulting `TextureRef` is *exactly* joint
+A's, not merely "some" binding. Verified the test can fail: temporarily
+reset `timg_addr`/`palette_offset`/`texture_enabled` per sequence item and
+confirmed the test catches it, then reverted. Separately confirmed by
+reading `tools/romtool/src/main.rs`'s pack-building loop that
+`convert_sequence` is called fresh (with a new `State::new()`) once per
+scene graph, so state architecturally cannot leak *between* different
+objects/fighters/stages — only within one object's own node sequence,
+which is the real hardware's behavior too (`gcDrawDObjTree*` walks one
+object's tree into one command stream).
+
 ### Objective
 
 Reproduce original N64 CI/TLUT behavior.
@@ -327,10 +348,15 @@ Reproduce original N64 CI/TLUT behavior.
 * [x] CI4 verified — unit-tested decode, dominant format in the ROM (`docs/rendering.md` "Measured usage")
 * [x] CI8 verified — unit-tested decode
 * [x] TLUT loading behavior verified — the 4 "no TLUT recorded" notes are explained: `MObj` material-table pairing gaps in 3 specific files, not a TLUT-loading bug (RE-057)
-* [ ] palette inheritance/state verified — not explicitly tested for state leakage across display lists (see R0.15); RE-057 found a related but distinct issue (palette *loss* on an unresolved segment-0x0E call, not leakage between lists)
+* [x] palette inheritance/state verified — RE-064: direct unit test pins cross-node inheritance (confirmed capable of failing before being confirmed to pass); no cross-object leakage is possible by construction (fresh `State` per graph)
 * [x] palette pointers verified — resolved through archive extern relocations (RE-037)
 * [ ] all missing palette cases resolved — 1 `MissingPalette` failure remains (was 4; files 353 and 52 fixed via RE-059/RE-060), root-caused to a `PartTables` pairing gap in file 86's one remaining graph (RE-057, RE-060); tracked under R0.7, not this task
-* [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`
+* [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`; state-inheritance unit test in `crates/ssb-rom/src/mesh.rs` (RE-064)
+
+### Evidence
+
+RE-037, RE-057, RE-064 in `docs/reverse-engineering.md`. The one remaining
+open item is fully attributed to `R0.7`'s scope, not a gap in this task.
 
 ---
 
