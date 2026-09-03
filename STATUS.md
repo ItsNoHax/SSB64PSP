@@ -16,26 +16,51 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-075 (this session) a brief, self-contained
-`R0.5` detour picked from the previous pass's own "push further on the
-dither" option. Found and fixed a real but small ordering bug in the
-canopy dither blur (`tools/romtool/src/main.rs`'s `convert_texture`): it
-blurred *after* mirroring, so `box_blur_wrapped`'s toroidal wraparound
-sampled the mirrored copy at the seam instead of the texture's own true
-periodic neighbour. Reordered to blur first, mirror second — same cost,
-more correct. Before trusting it changed anything, built two packs (one
-per order, isolated via `git stash`) and byte-diffed them directly:
-**6724 bytes differ** between the two canopy textures' packed data,
-confirming the change is real, not a no-op. Then screenshotted before
-and after anyway, because a byte diff is not a visual confirmation: the
-canopy crop was **pixel-identical** at the debug viewer's default camera
-distance — the difference is real but too small (seam-adjacent texels
-only) and too minified at this distance to be currently visible. Shipped
-as a correctness cleanup that costs nothing, explicitly **not** claimed
-as progress on RE-053's still-open dithering discrepancy, and `R0.6`
-resumes as the current task next.
+`IN_PROGRESS` on `R0.6`, with RE-076 (this session) a `TODO.md` Phase G
+detour: measured whether "texture streaming... required" was actually
+supported by the number it was being justified with. `docs/memory.md`
+compared the packed set's **1170.9 KiB archive-wide total** directly
+against the **700 KiB per-scene budget** — but those are different
+things, since no single scene needs every stage, fighter, menu and
+effect loaded at once. Walked the actual pack (not the ROM) and measured
+what one real scene needs: the largest stage (Dream Land, 137.0 KiB)
+plus the four largest of the 12 real playable fighters, texture indices
+deduped rather than summed blind, comes to **217.1 KiB** — well under
+half the budget. Flagged, not hidden, why this is likely an undercount:
+`PLAN.md` R0.7's 64 still-unpaired `MObj` graphs mean several fighters
+(Yoshi at 0.8 KiB across 5 textures, Mario, Kirby) measured implausibly
+low, almost certainly missing real texture references this project
+can't see yet rather than genuinely sparse models. Updated
+`docs/memory.md`/`TODO.md` to stop treating "streaming is required" as
+settled and instead point at what's actually known: the per-scene need
+is probably much smaller than the archive-wide total, `docs/memory.md`'s
+already-planned per-scene `AssetArena` (one load per scene transition,
+mirroring the original's own loading pattern) may already be enough
+without a separate runtime residency system, and the real number should
+be re-measured once R0.7's pairing gaps close rather than assumed either
+way. No code changed — this was a measurement correcting a comparison,
+not an implementation.
 
 ## Last Completed Task
+
+`R0.5 — Texture Sampling Correctness` — RE-075 (earlier this session)
+was a brief, self-contained detour picked from the previous pass's own
+"push further on the dither" option. Found and fixed a real but small
+ordering bug in the canopy dither blur (`tools/romtool/src/main.rs`'s
+`convert_texture`): it blurred *after* mirroring, so
+`box_blur_wrapped`'s toroidal wraparound sampled the mirrored copy at the
+seam instead of the texture's own true periodic neighbour. Reordered to
+blur first, mirror second — same cost, more correct. Before trusting it
+changed anything, built two packs (one per order, isolated via `git
+stash`) and byte-diffed them directly: **6724 bytes differ** between the
+two canopy textures' packed data, confirming the change is real, not a
+no-op. Then screenshotted before and after anyway, because a byte diff
+is not a visual confirmation: the canopy crop was **pixel-identical** at
+the debug viewer's default camera distance — the difference is real but
+too small (seam-adjacent texels only) and too minified at this distance
+to be currently visible. Shipped as a correctness cleanup that costs
+nothing, explicitly **not** claimed as progress on RE-053's still-open
+dithering discrepancy.
 
 R0.6 — Material System Correctness — RE-074 (earlier this session)
 closed the loop RE-073 left open. RE-073's low-confidence deferral was
@@ -373,16 +398,26 @@ statistics either: RE-071 found a case where "less measured noise" was
 paired with a visibly worse result (blown-out highlights) — look at the
 actual image *and* the numbers, neither alone is sufficient.
 
-`TODO.md` Phase G's "texture streaming" item is also a strong, independent
-candidate — packed texture VRAM is at 1170.9 KiB (1.7x the ~700 KiB
-budget, `docs/memory.md`) after RE-067's mirror fix and RE-070's dither
-blur, no longer optional headroom. `R0.4`'s own remaining item ("all
-missing palette cases resolved") is already fully attributed to `R0.7`'s
-file-86 long tail, so R0.4 has no further independently-actionable work.
-`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
-accepted long tail — only worth revisiting if the upstream decompilation
-types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
-instance. `R0.8 — Transform Correctness` is `COMPLETE`.
+`TODO.md` Phase G's "texture streaming" item is **no longer a clear-cut
+"required" candidate** — RE-076 (this session) found that the 1170.9 KiB
+figure it was justified by is an archive-wide total being compared
+against a per-scene budget, and a direct measurement of one real scene's
+actual need (largest stage + four largest fighters, deduped) came to
+217.1 KiB, well under budget, though likely an undercount pending R0.7's
+64 unpaired `MObj` graphs. The more load-bearing next step there is not
+implementing a streaming system but **closing more of R0.7's pairing
+gaps and re-measuring** — building runtime residency management against
+today's known-incomplete texture data risks solving the wrong-shaped
+problem. `R0.4`'s own remaining item ("all missing palette cases
+resolved") is already fully attributed to `R0.7`'s file-86 long tail, so
+R0.4 has no further independently-actionable work. `R0.7` remains
+technically `IN_PROGRESS` but its remaining scope is an accepted long
+tail for its *originally scoped* items — only worth revisiting for those
+specific cases if the upstream decompilation types
+`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
+instance — though RE-076 gives R0.7 a fresh, independent reason to matter
+(the VRAM question above) beyond its original material-table-tracing
+scope. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 

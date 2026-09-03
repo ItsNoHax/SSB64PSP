@@ -4948,3 +4948,71 @@ byte-level difference (measured by direct pack diff, not inferred).
 distance (screenshotted, not assumed). **Not applicable** as evidence
 either way for RE-053's larger open discrepancy, which this pass did not
 move on.
+
+## RE-076 — The 1170.9 KiB VRAM figure is an archive-wide total, not what any one scene needs
+
+**Question.** `docs/memory.md` calls texture streaming "no longer
+optional... required for the game to run within the PSP's real VRAM
+budget," based on the packed set measuring 1170.9 KiB against a ~700 KiB
+per-scene budget. That comparison is between an *archive-wide* total (all
+637+ textures: every stage, every fighter, every menu and effect) and a
+*per-scene* budget. Does any real scene — one stage plus up to four
+fighters, the actual worst case a match can put on screen — come
+anywhere near 700 KiB on its own?
+
+**Measured it directly instead of assuming the whole archive must be
+resident.** Wrote a temporary example (`crates/ssb-rom/examples/
+tmp_re076_vram_scope.rs`, deleted after) that walks the *pack*, not the
+ROM: for each of the 12 real playable fighters' own base model files
+(`296_MarioModel` through `341_PikachuModel`, by archive file id) and
+each of the 41 stages' own render-layer objects (`StageDesc.layers`),
+collected the *unique* set of texture indices their packed primitives
+actually reference and summed `TextureDesc.data_len` (+ palette). Result:
+the largest stage (stage 0, Dream Land) owns 137.0 KiB across 18
+textures; the richest fighter (Link, 37.5 KiB / 29 textures) is a full
+order of magnitude below the smallest (Yoshi, 0.8 KiB / 5 textures).
+Dream Land plus the four largest distinct fighters, texture indices
+deduped rather than summed blind, comes to **217.1 KiB** — well under
+half the 700 KiB budget, and nowhere near the 1170.9 KiB figure being
+compared against it.
+
+**This measurement almost certainly understates the real number, and by
+how much is unknown.** `PLAN.md` R0.7 already tracks "63 graphs paired,
+64 unpaired" archive-wide, untraced. Link's own model was the specific
+target of this session's RE-057/058/059/060 pairing fixes and comes out
+as the richest fighter measured; Yoshi, Mario and Kirby's implausibly
+low counts (0.8–1.0 KiB) are far more consistent with unresolved `MObj`
+pairing gaps silently dropping most of their real texture references
+than with those three genuinely having almost no textures. The
+archive-wide 1170.9 KiB total is built from the same incomplete pairing
+data, so it may also be an undercount — but a per-scene closure will
+stay far smaller than the full archive regardless of how much bigger
+both numbers eventually get, since no single scene needs every stage,
+every fighter and every menu's assets at once.
+
+**Result.** Not a fix, and not a claim that streaming is unnecessary —
+a correction to the comparison `docs/memory.md` was making. The
+`700 KiB` budget is a *per-scene* constraint; `1170.9 KiB` is an
+*archive-wide* one, and they should not have been read as directly
+comparable. `docs/memory.md`'s own "Planned PSP layout" already commits
+to a per-scene `AssetArena` sized by the current scene's dependency
+closure, mirroring `lbRelocLoadFilesExtern`'s original pattern — the
+existing plan, if implemented as already written, may already resolve
+most of this pressure without a separate runtime-streaming system, since
+loading only the current stage-plus-fighters closure at each scene
+transition is a much smaller change than paging textures in and out
+*during* a match. Re-measuring after R0.7's remaining 64 graphs are
+paired (or a representative sample of them) would tighten this number
+considerably; until then, "streaming is required" should be read as
+"the true per-scene requirement is unmeasured, not necessarily large,
+and likely much smaller than the archive-wide total everyone has been
+comparing against."
+
+**Confidence: medium.** The measurement methodology is sound and
+reproducible (unique texture indices per object, summed from the actual
+pack, not estimated) and the stage/fighter split is real ROM structure,
+not a guess. The *conclusion* is deliberately hedged: the input data
+(current `MObj` pairing) is known-incomplete per R0.7, so this measures
+"VRAM for the fighters and stages as currently resolved," not "VRAM for
+the fighters and stages as they truly are" — the gap between those two
+is exactly R0.7's remaining 64 unpaired graphs, untraced.
