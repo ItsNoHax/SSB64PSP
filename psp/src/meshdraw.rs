@@ -279,11 +279,20 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         // coverage the GE has no equivalent for, the same open problem
         // RE-053 already found for the canopy's *opaque* dithering (a
         // pattern that should look smooth reads as raw noise once sampled
-        // point-for-point instead of filtered). Enabling blend here doesn't
-        // fix a wrong render, it changes which of two unresolved dithering
-        // artifacts is visible, and there is no reference capture to say
-        // that's an improvement. Deferred pending that investigation, not
-        // silently dropped -- see `PLAN.md` R0.6.
+        // point-for-point instead of filtered).
+        //
+        // RE-071: re-checked after RE-070 pre-blurred this exact texture for
+        // the opaque path, in case that also made blending safe. It did
+        // not -- re-enabling blend against the blurred texture produced a
+        // *different*, more disruptive failure (blown-out, oversaturated
+        // highlights that erased the flowers and most other detail), not an
+        // improvement. Also ruled out unpremultiplied-alpha blurring as the
+        // cause (a premultiplied variant produced an identical result).
+        // Neither dither coarseness nor alpha premultiplication is the
+        // culprit; the real cause is still unknown. Do not re-run either of
+        // those two experiments without new evidence -- see RE-071 for what
+        // was tried. Deferred pending further investigation, not silently
+        // dropped -- see `PLAN.md` R0.6.
     }
 
     if st.last_texture != Some(p.texture) {
