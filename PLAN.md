@@ -408,6 +408,27 @@ pattern" is *not* fully resolved — RE-053's separate magnification/
 dithering diagnosis is untouched by this fix, confirmed by a before/after
 pixel diff showing real change but not a fully smoothed texture.
 
+RE-070 tested RE-053's own two suggested fixes for the dithering directly.
+Filtering alone: measured (an on-device `Nearest`-vs-`Linear` A/B) to help
+a little but not enough — bilinear only interpolates a 2x2 neighbourhood,
+narrower than the dither's repeat. Resolving it at conversion time: box-
+blurring the two canopy textures and requantizing back to their 16-entry
+CI4 palette changed nothing (the blur mostly snaps back to the same two
+entries); packing the same blur unquantized (`Psm8888`) instead produced
+a real, objectively measured improvement (~40% less adjacent-pixel noise
+in the treated texture, ~19% over the whole visible canopy, diluted by
+untouched decorations) — but not a fully smooth result. A first look at
+this on-device genuinely looked like a full fix, which turned out to be a
+stale-build methodology error (a diagnostic filter-mode build left over
+from the earlier A/B, not the actual candidate); rebuilding from a
+deleted binary and measuring pixel statistics rather than trusting the
+screenshot by eye corrected it. Implemented as `crates/ssb-rom/src/
+texture.rs::box_blur_wrapped` applied through a short, named, explicit
+allowlist (`tools/romtool/src/main.rs`'s `NEEDS_DITHER_BLUR`) — not a
+general dithering-detection heuristic, since a wrong guess would blur
+texture art meant to stay sharp. Costs +112 KiB VRAM (1059.0→1170.9 KiB),
+targeted to exactly the two named textures.
+
 ### Objective
 
 Determine and reproduce the actual texture sampling behavior used by SSB64.
@@ -428,12 +449,12 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified
 * [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; RE-067: `Mirror` (29% of packed textures) is now exactly reproduced by pre-baking, not approximated
-* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed one real contributing cause (the mirror wrap boundary) with on-device evidence, but RE-053's magnification/dithering diagnosis is a separate, still-open component of the same symptom
+* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth — both are real, evidenced progress, neither is "resolved"
 * [ ] no unsupported mipmapping assumptions remain
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070 in `docs/reverse-engineering.md`.
 
 ---
 

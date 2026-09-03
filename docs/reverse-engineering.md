@@ -4519,3 +4519,96 @@ against a real port, not against every one of the 130 measured TEX_EDGE
 occurrences individually. **Low**, deliberately, on what a correct
 translucent implementation should do here — that is the open question
 this entry leaves for `PLAN.md` R0.6/R0.5, not a claim.
+
+## RE-070 — Pre-blurring the canopy's dither measurably helps, modestly
+
+**Question.** RE-053 left Dream Land's canopy dither unresolved and named
+two options: "either the filtering to soften the dither at magnification,
+or the dither resolved at conversion time." Which, if either, actually
+works?
+
+**Filtering alone: measured, not enough.** A reversible on-device A/B
+(`sceGuTexFilter(Nearest, Nearest)` vs the existing `Linear`/
+`LinearMipmapLinear`, screenshotted, reverted) showed filtering does have
+*some* effect — Nearest is visibly blockier — but neither setting turns
+the dither into a smooth gradient. Bilinear only interpolates a 2x2
+texel neighbourhood; a dither pattern that alternates faster than that
+still aliases regardless of which filter samples it.
+
+**Resolving it at conversion time: tested in two steps, one wrong, one
+right.** Box-blurred (3x3, wrapped) Dream Land's two canopy textures
+(file 103, offsets `0xE20` and `0x5F0`) and re-quantized the result back
+to their existing 16-entry CI4 palette: **no visible change**. Averaging
+two dithered entries usually lands near the same two palette entries, so
+snapping to "nearest" mostly undoes the blur. Packed the *same* blurred
+image unquantized (`Psm8888`, bypassing the palette) instead: this is
+where the improvement is real, confirmed by objective pixel measurement
+after a false start (see next section).
+
+**A methodology mistake, caught and corrected.** The first on-device
+comparison looked dramatic — a visibly smooth patch where the checkerboard
+had been — but the build under test still had the *diagnostic* `Nearest`
+filter setting baked in from the filtering experiment above (`--no-build`
+reused a stale `EBOOT.PBP`; reverting the source doesn't rebuild what's
+already on disk). Rebuilding clean (confirmed via `git diff` showing zero
+change to `meshdraw.rs`) and rerunning the same comparison showed a much
+smaller effect than first thought. Measured objectively rather than
+trusting the screenshot by eye this time (mean absolute difference between
+horizontally/vertically adjacent pixels, a proxy for dither noise, over
+the canopy region):
+
+```
+                          no blur   with blur (Psm8888, Linear filter)
+clean canopy patch         8.5           5.1-5.2   (~40% less local noise)
+whole visible canopy       9.4           7.6       (~19%, dilutes with
+                                                     untouched flowers/bg)
+```
+
+The dither is measurably, meaningfully softer — not a placebo — but it is
+not fully smooth. This is a genuine partial improvement, not the
+"resolved" outcome RE-053's acceptance criterion asks for.
+
+**Implemented.** `crates/ssb-rom/src/texture.rs::box_blur_wrapped` (3x3,
+wraps at the edges since these textures tile) is a named, evidence-based
+exception, not a general "detect and fix dithering" heuristic — deciding
+which textures need it requires the same on-device, before/after
+verification this pass did, and a wrong guess would blur texture art that
+is supposed to stay sharp (flat-colour icons, cutout sprites). Applied via
+`tools/romtool/src/main.rs`'s `NEEDS_DITHER_BLUR`, a short, explicit,
+commented allowlist of `(file, offset, description)` tuples — currently
+just the two Dream Land canopy textures — checked before the normal
+paletted-conversion path and packed as `Psm8888` instead.
+
+**Cost.** Real, bounded VRAM, not free: these two textures (one mirrored
+on both axes to 128x128, one on one axis to 128x64 — RE-067) went from
+CI4 to RGBA8888 with a full mip chain each. Packed texture VRAM rose from
+1059.0 KiB to 1170.9 KiB (+112 KiB, +10.6%), smaller and far more targeted
+than RE-067's archive-wide +296 KiB since it touches exactly two named
+textures rather than every mirrored one.
+
+**Result.** `PLAN.md` R0.5's "Dream Land canopy discrepancy resolved"
+item stays unchecked — this is progress with numbers behind it, not a
+fix. `PLAN.md` R0.6's "blending verified" is unaffected (this entry is
+about the opaque/alpha-test path; RE-069's deferred `translucent` question
+on the highlight texture is untouched by this).
+
+**Verified.** `cargo test --workspace`: 354 passing (was 351;
+`box_blur_wrapped` has 3 tests: flat-image no-op, checkerboard averages
+toward the true midpoint on a properly-sized tiling pattern, wrapping
+reaches across the border rather than darkening it). `cargo clippy
+--release -p romtool -p ssb-rom`: clean. `romtool pack`: 4250.0 KiB (was
+4138.2). `cargo psp --release`: builds clean, confirmed rebuilt from a
+deleted `EBOOT.PBP` rather than trusting a cached one this time.
+`tools/run-ppsspp.sh`: Dream Land renders at 60 FPS, clean log.
+
+**Confidence: high** on the measurement (objective pixel statistics on a
+freshly, verifiably rebuilt binary, not a screenshot judged by eye —
+which is exactly the mistake this entry made once already and corrected).
+**Medium** on whether further passes (a stronger blur, a different
+approximation, or resolving RE-069's blend question on the highlight
+texture) would close the remaining gap, or whether this dither is simply
+not fully fixable without hardware the PSP doesn't have. **High**
+confidence that eyeballing a single screenshot without controlling for
+what binary actually produced it is not sufficient evidence on this
+project going forward — rebuild from a deleted artifact, or diff the
+source, before trusting a "looks fixed" result.

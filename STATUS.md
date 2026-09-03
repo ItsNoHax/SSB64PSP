@@ -12,47 +12,67 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`
+`R0.5 — Texture Filtering / LOD / Mipmapping`
 
 ## Task Status
 
-`IN_PROGRESS`. RE-069 (this session) decoded `G_SETOTHERMODE_L`'s
-render-mode field for the first time (`mesh.rs` never read it at all) into
-`alpha_test`/`translucent`. A naive "`FORCE_BL` bit means blending" signal
-is wrong — the RDP reset's own opaque default sets it too — so the real
-signal (whether the blend equation reads the framebuffer weighted by
-`1 - alpha`) was cross-checked against `gbi.h`'s macros and
-`refs/BattleShip`'s interpreter. Measured archive-wide: 36.1% of
-non-default render modes are cutout (`TEX_EDGE`-family) surfaces, 14.4%
-genuinely translucent — both previously completely unimplemented on the
-PSP side.
+`IN_PROGRESS`. RE-070 (this session) directly tested RE-053's own two
+suggested fixes for Dream Land's canopy dither. Filtering alone: a
+reversible on-device `Nearest`-vs-`Linear` A/B measured it helps a little
+but not enough (bilinear only interpolates a 2x2 neighbourhood, narrower
+than the dither's repeat). Resolving it at conversion time: box-blurring
+the two canopy textures and requantizing back to their 16-entry CI4
+palette changed nothing visible (the blur mostly snaps back to the same
+two palette entries); packing the same blur unquantized (`Psm8888`)
+instead produced a real, measurable improvement.
 
-Shipped `alpha_test`: `psp/src/meshdraw.rs` now toggles `sceGuAlphaFunc`,
-matching `refs/sf64-psp` (a real, shipped N64-to-PSP port doing this exact
-translation at runtime) rather than inventing an approximation. Found and
-fixed a real bug before shipping: untextured lit primitives were being
-alpha-tested against a packed-normal byte, not real coverage, and
-discarded themselves outright (46/380 archive-wide) — this visibly deleted
-Dream Land's decorative flower triangles on device; confirmed the exact
-fix (gating both flags on a texture being bound in `material_now()`) by
-reproducing the bug, fixing it, and watching the flowers return with a
-targeted before/after diff.
+**A methodology mistake, caught before shipping wrong conclusions.** The
+first on-device look at the unquantized-blur result looked like a full
+fix — a visibly smooth patch where the checkerboard had been. That build
+turned out to have a stale `EBOOT.PBP` left over from the filtering A/B
+(`--no-build` reused a disk artifact; reverting the *source* doesn't
+rebuild what's already compiled). Deleted the binary, rebuilt from
+scratch, and re-measured — this time with objective pixel statistics
+(mean adjacent-pixel difference, a dither-noise proxy) instead of judging
+a screenshot by eye. Real result: ~40% less local noise on the treated
+texture, ~19% over the whole visible canopy (diluted by untouched
+decorations) — a genuine, evidenced, but *partial* improvement, not the
+dramatic fix the confounded build appeared to show.
 
-Found a second, harder bug in `translucent` specifically and did **not**
-ship it: enabling `GuState::Blend` from it turned Dream Land's
-canopy-highlight surface into a checkerboard, isolated to blend
-specifically (not alpha test) by toggling each independently. The render
-mode itself is genuinely translucent per the decomp (not a detection
-bug) — the likely cause is the same open dithered-texture/coverage
-problem RE-053 already found for the canopy's opaque path, now visible
-through the blend path too. `psp/src/meshdraw.rs` leaves `Blend`
-permanently disabled with a comment explaining why; `mesh.rs`/`pack.rs`'s
-detection ships anyway since it's correct and tested independent of the
-open rendering question. `PLAN.md` R0.6's "alpha behavior verified" item
-is checked; "blending verified" stays open, now with a concrete
-next-investigation pointer instead of no information at all.
+Implemented as `crates/ssb-rom/src/texture.rs::box_blur_wrapped` (3 unit
+tests), applied through `tools/romtool/src/main.rs`'s `NEEDS_DITHER_BLUR`
+— a short, explicit, named allowlist of exactly the two Dream Land canopy
+textures, not a general "detect dithering" heuristic (which would risk
+blurring texture art meant to stay sharp, like flat-colour icons or
+cutout sprites). Costs +112 KiB VRAM (1059.0→1170.9 KiB, 1.7x the
+~700 KiB budget), targeted and bounded, unlike RE-067's archive-wide cost.
+`PLAN.md` R0.5's "Dream Land canopy discrepancy resolved" item stays
+unchecked — real progress with numbers behind it, not a claim of
+completion.
 
 ## Last Completed Task
+
+R0.6 — Material System Correctness — RE-069 (earlier this session)
+decoded `G_SETOTHERMODE_L`'s render-mode field for the first time
+(`mesh.rs` never read it at all) into `alpha_test`/`translucent`. A naive
+"`FORCE_BL` bit means blending" signal is wrong — the RDP reset's own
+opaque default sets it too — so the real signal (whether the blend
+equation reads the framebuffer weighted by `1 - alpha`) was cross-checked
+against `gbi.h`'s macros and `refs/BattleShip`'s interpreter. Measured
+archive-wide: 36.1% of non-default render modes are cutout (`TEX_EDGE`-
+family) surfaces, 14.4% genuinely translucent — both previously completely
+unimplemented on the PSP side. Shipped `alpha_test` (matching
+`refs/sf64-psp`'s validated real-hardware approximation) after finding and
+fixing a bug where untextured lit primitives were alpha-tested against a
+packed-normal byte and discarded themselves outright, visibly deleting
+Dream Land's decorative flowers. Found a second, harder bug in
+`translucent` — enabling real blending on the canopy-highlight surface
+produced a checkerboard, the same open dithered-texture/coverage problem
+RE-053 already found — and deliberately did not ship it, leaving
+detection in place but `GuState::Blend` unwired on device pending that
+investigation (which RE-070, above, then partially advanced). `PLAN.md`
+R0.6's "alpha behavior verified" item is checked; "blending verified"
+stays open.
 
 R0.6 — Material System Correctness — RE-068 (earlier this session) found
 and fixed a structural gap far bigger than the "depth state verified"
@@ -199,44 +219,53 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-Two concrete, well-scoped options, both with a real starting point already
-recorded rather than an open-ended search:
+RE-070 made real but partial progress on the dithered-texture/coverage
+problem (~40% less local noise on the treated textures, not a full fix).
+Three concrete, well-scoped options remain, each with a real starting
+point already recorded rather than an open-ended search:
 
-1. **Resolve RE-053/RE-069's dithered-texture/coverage problem**, which now
-   blocks two things at once: R0.5's "Dream Land canopy discrepancy
-   resolved" and R0.6's "blending verified" (`translucent` is detected and
-   packed but not consumed on device pending this). The symptom is
-   consistent across both the opaque path (RE-053: a pattern that sharpens
-   at higher resolution, i.e. magnification, not minification) and the
-   blend path (RE-069: a checkerboard instead of a soft highlight) — both
-   are a dithered, binary-alpha (RGBA5551) CI4 texture that the RDP
-   resolves through multisampled coverage/filtering the PSP GE has no
-   equivalent for. Concrete next step: determine what filtering or
-   conversion-time dither resolution would actually fix this (RE-053
-   already ruled out mipmapping specifically), test on the exact surfaces
-   named in RE-053 (file 103 offset `0xE20`) and RE-069 (offset `0x5F0`),
-   then decide whether to enable `translucent` afterward.
-2. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
+1. **Push further on the dither**, now that pre-blur-and-pack-unquantized
+   is confirmed to be the right *kind* of fix, just not strong enough yet.
+   Ideas not yet tried: a larger blur radius or multiple passes; blurring
+   before the mirror-extend doubling instead of after (RE-067's
+   `mirror_extend` runs first currently, so the blur's wrap-around samples
+   already-mirrored, possibly-duplicated neighbours — check whether that
+   matters); or reconsidering whether RE-053's separate magnification
+   diagnosis (not attempted by RE-070) is actually the larger remaining
+   contributor.
+2. **Decide whether to enable RE-069's `translucent` on Dream Land's
+   highlight surface now** that its dithering has been directly measured
+   and partially improved — re-run RE-069's original checkerboard
+   observation against the RE-070-blurred texture (file 103 offset
+   `0x5F0`, already in `NEEDS_DITHER_BLUR`) to see whether blending looks
+   acceptable now, rather than leaving it deferred indefinitely.
+3. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
    "primitive color verified", "environment color verified", "combiner
    behavior verified" (partially covered by RE-039/RE-043 already but not
    marked), "fog verified" (D-025 already found fog is used twice
    game-wide, likely low-value), "unsupported material behavior
    identified". Read `PLAN.md` R0.6's acceptance list fresh rather than
-   assuming — the pattern that has paid off three times this session
+   assuming — the pattern that has paid off repeatedly this session
    (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode)
    is: find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
    *default* for whatever's being checked before assuming `mesh.rs`'s
    current "unset means declined" fallback already matches it.
 
+**Before trusting any on-device screenshot comparison**, delete
+`psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a
+real rebuild happened) — RE-070 itself was fooled once by `--no-build`
+reusing a stale binary from an earlier diagnostic, and only caught it by
+measuring pixel statistics instead of trusting the image by eye.
+
 `TODO.md` Phase G's "texture streaming" item is also a strong, independent
-candidate — packed texture VRAM is at 1059 KiB (1.5x the ~700 KiB budget,
-`docs/memory.md`) after RE-067's mirror fix, no longer optional headroom.
-`R0.4`'s own remaining item ("all missing palette cases resolved") is
-already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
-further independently-actionable work. `R0.7` remains technically
-`IN_PROGRESS` but its remaining scope is an accepted long tail — only
-worth revisiting if the upstream decompilation types
-`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
+candidate — packed texture VRAM is at 1170.9 KiB (1.7x the ~700 KiB
+budget, `docs/memory.md`) after RE-067's mirror fix and RE-070's dither
+blur, no longer optional headroom. `R0.4`'s own remaining item ("all
+missing palette cases resolved") is already fully attributed to `R0.7`'s
+file-86 long tail, so R0.4 has no further independently-actionable work.
+`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
+accepted long tail — only worth revisiting if the upstream decompilation
+types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
 instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
@@ -416,6 +445,23 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.5: canopy dither measurably softened, not fully fixed (RE-070)
+
+* Ran a reversible on-device A/B (`sceGuTexFilter(Nearest, Nearest)` vs the existing `Linear`/`LinearMipmapLinear`, screenshotted, reverted): filtering alone measurably helps a little (Nearest is visibly blockier) but does not turn the dither into a smooth gradient
+* Tested conversion-time dither resolution in two steps: box-blurred (3x3, wrapped) the two canopy textures (file 103, offsets `0xE20`/`0x5F0`) and requantized back to their 16-entry CI4 palette — no visible change (blur mostly snaps back to the same two entries); packed the same blurred image unquantized (`Psm8888`) instead — this is where the real effect is
+* First on-device look at the unquantized-blur result appeared to fully fix the canopy (a smooth patch replacing the checkerboard); caught this as a methodology error before trusting it — `--no-build` had reused a stale `EBOOT.PBP` left over from the filtering A/B diagnostic, not the actual candidate build. Deleted the binary, rebuilt from scratch (confirmed via `git diff` showing zero change to `meshdraw.rs`), and re-measured
+* Measured objectively this time (mean absolute difference between adjacent pixels, a dither-noise proxy) rather than judging a screenshot by eye: ~40% less local noise on a clean canopy patch (8.5→5.1), ~19% over the whole visible canopy region (9.4→7.6, diluted by untouched flowers/background) — real, but a partial improvement, not a full fix
+* Implemented `crates/ssb-rom/src/texture.rs::box_blur_wrapped` (3 unit tests: flat image is a no-op, a properly-sized tiling checkerboard averages to the true midpoint, wrapping reaches across the border) and `tools/romtool/src/main.rs`'s `NEEDS_DITHER_BLUR` — a short, explicit, named allowlist of exactly the two Dream Land canopy textures, deliberately not a general "detect dithering" heuristic
+* `cargo test --workspace` — 354 passing (was 351)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `romtool pack` — 4250.0 KiB (was 4138.2), packed texture VRAM 1170.9 KiB (was 1059.0, +112 KiB for the two named textures)
+* `cargo psp --release` — builds clean, rebuilt from a deleted `EBOOT.PBP` this time, not trusted from cache
+* `tools/run-ppsspp.sh` — Dream Land renders at 60 FPS, clean log
+* Result: RE-070 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.5 (still unchecked, now with measured evidence), `TODO.md` Phase C, `docs/rendering.md`, `docs/porting-status.md`, `docs/memory.md`, `DECISIONS.md` D-003 updated with the new VRAM figure
+* Affected subsystem: `crates/ssb-rom/src/texture.rs` (new function), `tools/romtool/src/main.rs` (`convert_texture`) — code change scoped to exactly two named textures
+* PPSSPP: tested this pass extensively, including catching and correcting a stale-build methodology mistake
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.6: alpha test shipped, translucency detected but deferred (RE-069)
 
