@@ -12,13 +12,31 @@
 
 ## Current Task
 
-`R0.4 — TLUT / Palette Correctness`
+`R0.6 — Material System Correctness` (its lighting item)
 
 ## Task Status
 
-`IN_PROGRESS`. This session closed the "palette inheritance/state
-verified" acceptance item (RE-064): added a direct unit test
-(`a_texture_binding_persists_into_a_node_that_sets_no_new_state`,
+`IN_PROGRESS`. RE-065 (this session) replaced `pack.rs`'s arbitrary
+`LIGHT_DIR` placeholder `(2, 4, 3)` with a real, ROM-measured value: read
+`MPGroundData.light_angle` (a per-stage field this session added to
+`stage::GroundData`, byte offset independently corroborated against the
+already-verified `camera_bound_top` offset) across all 41 stages and found
+33 of them (80%) share one `(20, 45)` degree angle — now used exactly.
+The other 8 stages (special-lighting locations: Brinstar, Sector Z, Metal
+Mario's stage, etc.) diverge up to 111 degrees and are recorded as an
+explicit, measured, `AGENTS.md` §9-compliant accepted deviation, not an
+unlabeled guess — full per-stage correctness needs runtime `sceGuLight`
+lighting, which this pack-time-baked-shading architecture cannot do
+without a larger redesign, out of scope for this pass. R0.6's "lighting
+verified" acceptance item stays unchecked (the deviation is now properly
+recorded, not eliminated), and its other open items (material tables,
+combiner/alpha/blend/fog/depth/culling verification) are untouched.
+
+## Last Completed Task
+
+R0.4 — TLUT / Palette Correctness — its "palette inheritance/state
+verified" acceptance item closed this session (RE-064): added a direct
+unit test (`a_texture_binding_persists_into_a_node_that_sets_no_new_state`,
 `crates/ssb-rom/src/mesh.rs`) pinning that RDP texture/palette state
 threads across a node sequence the way real hardware keeps it, previously
 only measured archive-wide. Confirmed the test can actually fail (broke
@@ -31,10 +49,8 @@ file 86) — already fully attributed to `R0.7`'s scope, not touched this
 pass; `R0.4` stays `IN_PROGRESS` rather than closing, since that item is
 still literally unmet even though it isn't this task's fault.
 
-## Last Completed Task
-
-R0.8 — Transform Correctness — `COMPLETE` (RE-063, previous session pass).
-Closed by enumerating every transform kind (`gcSetupCommonDObjs` only ever
+R0.8 — Transform Correctness — `COMPLETE` (RE-063, earlier pass). Closed
+by enumerating every transform kind (`gcSetupCommonDObjs` only ever
 emits kinds 44/46/48/50 from a ROM `DObjDesc` array; everything else is
 runtime-game-code-only and out of scope), implementing `Kind50` the
 same way `RecalcRotRpyRSca`/`Kind46`/`Kind48` already were, and adding
@@ -93,23 +109,25 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.4`'s own remaining item ("all missing palette cases resolved") is
-already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
-further independently-actionable work right now. Two other tasks are
-`IN_PROGRESS` with substantial open acceptance items and were not
-evaluated in depth this session: `R0.5` (Texture Filtering / LOD /
+`R0.6 — Material System Correctness` remains `IN_PROGRESS` after this
+session's lighting-direction fix (RE-065, see above) — its other open
+acceptance items are untouched: material tables resolved, combiner
+behavior, primitive/environment colour, alpha, blending, fog, depth state,
+culling, and "unsupported material behavior identified." `TODO.md` Phase D
+still separately calls out removing `RE-021`'s shading-detection majority
+vote (a different, structural problem: per-list conversion can't see
+per-object `G_LIGHTING` state) and implementing `MOBJ_FLAG_LIGHT1/2`
+(uploading real light colours, though RE-024 already found they're all
+white so this may be low-value). `R0.5` (Texture Filtering / LOD /
 Mipmapping — wrap modes decoded but not wired to `sceGuTexWrap`, Dream
-Land canopy discrepancy still open) and `R0.6` (Material System
-Correctness — lighting uses a placeholder neutral key light that
-`AGENTS.md` §9 requires be recorded as an `ACCEPTED_DEVIATION` or
-replaced, currently neither). A fresh session should read both tasks' full
-acceptance lists in `PLAN.md` and pick one — `R0.6`'s lighting item looks
-like the more concrete starting point (it names a specific, already-known
-non-compliant heuristic; `R0.5`'s items need fresh investigation first).
-`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
-accepted long tail (see above) — only worth revisiting if the upstream
-decompilation types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's
-`WPAttributes` instance. `R0.8 — Transform Correctness` is `COMPLETE`.
+Land canopy discrepancy still open) is also `IN_PROGRESS` and was not
+evaluated this session. `R0.4`'s own remaining item ("all missing palette
+cases resolved") is already fully attributed to `R0.7`'s file-86 long
+tail, so R0.4 has no further independently-actionable work. `R0.7` remains
+technically `IN_PROGRESS` but its remaining scope is an accepted long tail
+— only worth revisiting if the upstream decompilation types
+`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
+instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 
@@ -288,6 +306,23 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.6: baked key light direction measured from real stage data (RE-065)
+
+* Read `ftdisplaymain.c:1240` → `mpcollision.c:4008-9` → `mptypes.h:187` — the fighter draw path's key light direction ultimately comes from `MPGroundData.light_angle`, a per-stage `Vec3f` field, converted via `ftDisplayLightsDrawReflect`'s spherical-to-Cartesian math
+* Computed `light_angle`'s byte offset (`0x60`) from the struct's field order (`unused` at `0x5C` + 4), independently corroborated: `0x60 + sizeof(Vec3f) = 0x6C` lands exactly on `camera_bound_top`'s already-verified offset
+* Added `light_angle: [f32; 2]` to `crates/ssb-rom/src/stage.rs::GroundData`, read at the computed offset; added a fixture assertion (`reads_a_stage_header_and_its_layers`) pinning the read
+* Wrote a temporary example (`crates/ssb-rom/examples/tmp_light_angle_scan.rs`, deleted before commit) reading all 41 stages' real angle and comparing against the old placeholder direction: **33 of 41 (80%) share exactly `(20.0, 45.0)` degrees**, 9.9 degrees from the old `(2, 4, 3)` guess; the other 8 (Brinstar, Sector Z, Hyrule, Final Destination, Metal Mario's stage, a jungle stage, a "Zako" stage, a bonus stage) diverge up to 111 degrees
+* Implemented: `crates/ssb-rom/src/pack.rs`'s `LIGHT_DIR` now holds the real `(20, 45)`-degree direction (`[0.2419, 0.7071, 0.6645]`) instead of the arbitrary placeholder; documented the remaining 8-stage gap as an explicit accepted deviation (full fix needs runtime `sceGuLight` lighting, out of scope)
+* `cargo test --workspace` — 341 passing, unchanged count (no test pinned the old constant's exact value)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean (one `#[allow(clippy::approx_constant)]`, since `sin(45°)` legitimately coincides with `1/sqrt(2)`)
+* `romtool pack` — regenerated `assets/generated/ssb64.pak`
+* `cargo psp --release` — builds clean
+* `tools/run-ppsspp.sh --no-build --seconds 8` — Dream Land renders correctly at 60 FPS, clean log, subtly (and now more correctly) different shading
+* Result: RE-065 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.6, `DECISIONS.md` D-024, `docs/porting-status.md` "Mesh conversion", `TODO.md` Phase D updated
+* Affected subsystem: `crates/ssb-rom/src/stage.rs` (new field), `crates/ssb-rom/src/pack.rs` (`LIGHT_DIR`) — code change, plus documentation
+* PPSSPP: tested this pass, no regression
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.4: palette/texture state inheritance pinned by a test (RE-064)
 
