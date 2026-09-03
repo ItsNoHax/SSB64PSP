@@ -91,37 +91,50 @@ Spin Attack's `WPAttributes` instance.
 
 ## Blockers
 
-**PPSSPP shows a black screen — reproduces via `tools/run-ppsspp.sh`, not
-specific to any one launch method.** Investigated after the user reported it
-following a manual copy of the EBOOT+pack into their PPSSPP install; the
-same result reproduces through the project's own test harness, so it is not
-something the copy step caused. Findings, none yet conclusive:
+None currently open. The PPSSPP black screen below is resolved.
 
-* The staged `ssb64.pak` is valid — opens cleanly host-side (`Pack::open`),
-  reports 2450 meshes / 363 objects / 41 stages / 567 anims / 617 textures.
-  Not a data/version problem.
-* The emulated CPU is genuinely executing the program's own code — traced
-  PC values in PPSSPP's log land inside the loaded ELF's address range
-  (`08804000`-`08942700`) and cycle continuously at 60 Hz, not stuck in a
-  kernel wait.
-* Nothing reaches the display. Pixel-sampling a capture shows pure
-  `(0,0,0)` everywhere except PPSSPP's own FPS counter overlay — not even
-  the frame's clear colour (`Color::rgba(0x20,0x28,0x38,0xFF)`, set
-  unconditionally every frame in `psp/src/main.rs`'s render section) or the
-  on-screen debug overlay (`gpu.debug_text(...)`, `main.rs:862`, also
-  unconditional every frame, printing pack/fighter/camera stats).
-* Confirmed `SoftwareRenderer = True` was genuinely active for the test
-  (present in the live `ppsspp.ini`), so this is not simply RE-014's
-  hardware-backend-hides-`sceGuDebugFlush` issue recurring.
-* `psp/src` has not been touched by this session's changes (only
-  `crates/ssb-rom/src/pack.rs` changed, for the unrelated R0.8 billboard
-  fix) — whatever this is, it predates this session and is not a regression
-  from today's work.
+### Resolved: PPSSPP black screen
 
-Not yet root-caused: something between GE display-list submission and the
-buffer swap/present path is not reaching the screen. Needs real device-side
-instrumentation or bisecting against an older PPSSPP/`psp`-crate version to
-pin down. Deferred to a dedicated session per the user's request.
+**Root cause: a stale `assets/generated/ssb64.pak` on disk, not a source
+regression.** The prior session's blocker note assumed the staged pack was
+current because it opened cleanly host-side; that assumption was wrong and
+is retracted here. `assets/generated/` is gitignored and was never
+regenerated after some earlier (uncommitted/experimental) build — its
+header's `prims` count (3412) doesn't match what *any* commit in history
+actually produces (617-texture-era commits produce 3388; current `HEAD`
+produces 3398), so it was left over from a WIP state, not from a specific
+commit.
+
+Bisection method: rather than bisecting `psp/` source (the last commit to
+touch it before the report was `c252960`, seven docs/data-only commits
+before `HEAD`), each candidate commit was built in a worktree and run
+through `tools/run-ppsspp.sh` with its own **freshly regenerated** pack
+(`romtool pack`), screenshotted, and pixel-checked. `c252960` built against
+the *stale* staged pack reproduced the black screen exactly like `HEAD`
+did; the same commit built against a pack regenerated from its own
+`romtool` rendered Dream Land correctly. `HEAD` rebuilt against a freshly
+regenerated pack also renders correctly. So no commit in git history is
+responsible — every tested revision of `psp/`'s renderer works given data
+that actually matches it. The mismatched pack most likely made the game
+panic early in load/mesh-build (out of the visible render path), which
+explains why not even the unconditional clear colour or debug overlay
+reached the display — PPSSPP's own FPS counter overlay is emulator UI, not
+game output, so it stayed visible regardless.
+
+Fix: regenerated `assets/generated/ssb64.pak` via `romtool pack "rom/Super
+Smash Bros. (USA).z64"` against `HEAD`. Verified via the full
+`tools/run-ppsspp.sh` harness (build + run): Dream Land renders with
+textures, fighters and the debug overlay, PPSSPP reports `FPS: 60.0`, and
+the game's own overlay reports `cpu 2353us / budget 16667us` — comfortably
+under the 60 Hz frame budget, confirming the game itself (not just the
+emulator host) is running at a true 60 FPS.
+
+Takeaway: `assets/generated/ssb64.pak` is derived, gitignored, build-only
+data — it must be regenerated (`romtool pack`) after any `crates/ssb-rom`
+change before trusting a screenshot, the same way a stale `EBOOT.PBP` would
+be. `tools/run-ppsspp.sh`'s own "stale pack" staging message names the pack's
+timestamp but does not compare it against source mtimes the way it already
+does for the EBOOT; that gap is worth closing so this can't silently recur.
 
 ---
 
