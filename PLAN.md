@@ -974,13 +974,32 @@ Status: `VERIFYING`
 
 ### Current evidence
 
-Matrix kinds 45–48 are implemented, all 81 flagged nodes billboard at draw
-time, and behavior was verified A/B under a deliberately rotated camera
-(RE-049; Dream Land's six canopy sprites stay upright when honoured, skew
-into slivers when ignored). Not yet verified: alpha and depth behavior
-specifically for billboards, and the decomp's `rot_mode` choice between
-matrix kinds 45/46 is not modelled. Depends on R0.14 (camera/projection),
-which is itself only partially verified.
+Matrix kinds 44/46/48/50 are implemented, all 109 flagged nodes billboard
+at draw time (RE-062/RE-063 grew this from an earlier 81 once
+`RecalcRotRpyRSca` was added), and camera-facing behavior was verified A/B
+under a deliberately rotated camera (RE-049; Dream Land's six canopy
+sprites stay upright when honoured, skew into slivers when ignored).
+Depends on R0.14 (camera/projection), now further along after RE-082
+(viewport, aspect ratio and resolution-difference handling confirmed) —
+its remaining gaps (real FOV provenance, an actual game camera) do not
+block anything billboards need, since billboard camera-facing math
+(RE-049) does not depend on either.
+
+RE-083 closed the "decomp's `rot_mode` choice" worry as a non-issue: that
+logic (`gcDecideDObj3TransformsKind`) belongs to the runtime/dynamic
+transform path RE-063 already ruled out of scope, not to
+`gcSetupCommonDObjs` (the ROM-driven path this project actually parses),
+which was confirmed by direct reading to map `0x4000`/`0x2000` to kinds
+46/48 unconditionally, no `rot_mode` branch at all. Also ran an
+archive-wide census of billboard-flagged nodes' own primitives: depth
+testing is uniformly on (`z_buffer` 118/118, 100%), matching RE-068's RDP-
+reset-default finding with zero exceptions. `alpha_test` (28.8%) needs
+nothing further (RE-069, already shipped); `translucent` (29.7%, roughly
+double the archive-wide 14.4% RE-069 measured) is the same still-open
+gap RE-069/RE-071 already found and left unresolved after it produced a
+checkerboard on Dream Land's own canopy-highlight surface — billboards
+are measurably the geometry category most affected by that gap, not a
+separate new one.
 
 ### Objective
 
@@ -993,14 +1012,18 @@ Verify every billboard rendering path.
 
 ### Acceptance
 
-* [ ] billboard types enumerated
-* [ ] camera-facing transforms verified
+* [x] billboard types enumerated — RE-063 exhaustively traced every `gcPrepDObjMatrix` case reachable from a ROM `DObjDesc` array (kinds 44/46/48/50, all four implemented); RE-083 confirmed no fifth reachable kind hides behind the `rot_mode` branch, since that branch belongs to an unreachable runtime-only path
+* [x] camera-facing transforms verified — RE-049's rotated-camera A/B test (Dream Land's six canopy sprites upright vs skewed into slivers)
 * [ ] scale verified
 * [ ] orientation verified
 * [ ] texture orientation verified
-* [ ] alpha behavior verified
-* [ ] depth behavior verified
-* [ ] all flagged billboard nodes verified
+* [ ] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` is the blocker, measured to affect billboards (29.7%) at roughly double the archive-wide rate (14.4%), tracked under RE-069/RE-071's still-open finding, not a new problem
+* [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
+* [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check
+
+### Evidence
+
+RE-049, RE-062, RE-063, RE-083 in `docs/reverse-engineering.md`.
 
 ---
 
