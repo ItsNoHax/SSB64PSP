@@ -68,6 +68,14 @@ fn psm_of(v: u8) -> TexturePixelFormat {
 pub struct DrawState {
     last_texture: Option<u32>,
     last_flags: Option<u32>,
+    /// `Some(target)` while `TEXTURE_BLEND` is the active texture function,
+    /// `None` while it's the ordinary `Modulate` (RE-073). Tracked
+    /// independently of `last_flags`/`last_texture`: two primitives can share
+    /// identical `flags` (both `TEXTURE_BLEND`) but different target colours,
+    /// or identical flags but a texture change that would otherwise silently
+    /// reset the texture function back to `Modulate` — either alone would
+    /// under-count a real state change if this piggybacked on those fields.
+    last_texture_blend: Option<u32>,
     pub draws: u32,
     pub triangles: u32,
     pub state_changes: u32,
@@ -77,6 +85,7 @@ impl DrawState {
     pub fn begin_frame(&mut self) {
         self.last_texture = None;
         self.last_flags = None;
+        self.last_texture_blend = None;
         self.draws = 0;
         self.triangles = 0;
         self.state_changes = 0;
@@ -165,10 +174,12 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
         w = (w / 2).max(1);
         h = (h / 2).max(1);
     }
-    sys::sceGuTexFunc(
-        sys::TextureEffect::Modulate,
-        sys::TextureColorComponent::Rgba,
-    );
+    // The texture function is *not* set here (it used to be, always
+    // `Modulate`): `apply_material`'s per-primitive `TEXTURE_BLEND` handling
+    // (RE-073) needs to survive a texture change without being silently
+    // reset back to `Modulate` by this function running in between, so it is
+    // the sole place that sets it for the mesh-drawing path now. Callers
+    // outside that path (`draw_texture_quad`) set their own.
     if top > 0 {
         // Trilinear: the level below is what carries the averaged-out dither,
         // and blending between levels stops the switch-over being visible as a
@@ -293,20 +304,6 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         // those two experiments without new evidence -- see RE-071 for what
         // was tried. Deferred pending further investigation, not silently
         // dropped -- see `PLAN.md` R0.6.
-
-        // `TEXTURE_BLEND` is also deliberately not wired yet (RE-073).
-        // `crates/ssb-rom/src/mesh.rs` already recognises the shape --
-        // `(PRIM-ENV)*TEXEL+ENV`, a texture-driven blend from a base colour
-        // (ENV) to a target colour (PRIM) with no shade at all, on several
-        // core fighter models (Link, Ness, Yoshi, Pikachu) -- and it maps
-        // exactly to the GE's native `TextureEffect::Blend`
-        // (`Cv = Cf*(1-Ct) + Cc*Ct`) with `Cf` = base, `Cc` = target via
-        // `sceGuTexEnvColor`, at no VRAM cost. Not wired here because doing
-        // it correctly needs affected primitives' vertices baked with a flat
-        // `texture_blend_base` colour instead of their usual shade -- and
-        // whether any of their vertices are shared with a normally-shaded
-        // primitive (which a blanket override would then corrupt) has not
-        // been checked. Deferred, not dropped -- see `PLAN.md` R0.6.
     }
 
     if st.last_texture != Some(p.texture) {
@@ -315,6 +312,40 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         match pack.texture(p.texture) {
             Some(t) => bind_texture(pack, &t),
             None => sys::sceGuDisable(GuState::Texture2D),
+        }
+    }
+
+    // `TEXTURE_BLEND` (RE-073): `(PRIM-ENV)*TEXEL+ENV`, a texture-driven
+    // blend from a base colour (ENV, baked into the vertex by
+    // `crates/ssb-rom/src/mesh.rs`'s `push_vertex`) to a target colour
+    // (PRIM, carried here as `texture_blend_target`) with no shade
+    // dependence at all -- measured on 72 of 79 `SetCombine` commands
+    // archive-wide that read `ENVIRONMENT`, including Link, Ness and
+    // Pikachu's own base models. Maps exactly onto the GE's native
+    // `TextureEffect::Blend` (`Cv = Cf*(1-Ct) + Cc*Ct`) with `Cf` the vertex
+    // colour and `Cc` set via `sceGuTexEnvColor`, at no VRAM cost.
+    //
+    // Tracked independently of `last_flags`/`last_texture` above: two
+    // primitives can share identical `flags` (both `TEXTURE_BLEND`) with
+    // different target colours, and `bind_texture` no longer sets the
+    // texture function itself for exactly this reason -- either omission
+    // would silently leave a stale `Blend`/`Modulate` state or a stale
+    // `sceGuTexEnvColor` active on a primitive that needed a different one.
+    let blend_target = (p.flags & flags::TEXTURE_BLEND != 0).then_some(p.texture_blend_target);
+    if st.last_texture_blend != blend_target {
+        st.last_texture_blend = blend_target;
+        st.state_changes += 1;
+        match blend_target {
+            Some(target) => {
+                sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+                sys::sceGuTexEnvColor(target);
+            }
+            None => {
+                sys::sceGuTexFunc(
+                    sys::TextureEffect::Modulate,
+                    sys::TextureColorComponent::Rgba,
+                );
+            }
         }
     }
 }
@@ -579,6 +610,12 @@ pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], 
 pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQuadVertex; 6]) {
     let Some(t) = pack.texture(index) else { return };
     bind_texture(pack, &t);
+    // `bind_texture` no longer sets this itself (RE-073); this diagnostic
+    // always wants the plain, unblended sample.
+    sys::sceGuTexFunc(
+        sys::TextureEffect::Modulate,
+        sys::TextureColorComponent::Rgba,
+    );
 
     // Two triangles covering a square in front of the camera.
     let quad = [

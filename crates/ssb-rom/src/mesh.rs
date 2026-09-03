@@ -812,6 +812,8 @@ impl Builder {
     /// needs no second colour source in the vertex format — and the dedup
     /// below turns a vertex shared by two primitives of different colours into
     /// two entries by itself, because the folded colour is part of the key.
+    /// `texture_blend` (RE-073) uses the same mechanism to bake a flat base
+    /// colour in place of the shade instead of scaling it.
     fn push_vertex(&mut self, mut v: MeshVertex) -> Result<u16, MeshError> {
         if let Some(c) = self.material.prim_color {
             for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
@@ -821,6 +823,16 @@ impl Builder {
             // all zero — so the primitive's alpha is the one that means
             // something. Multiplying would make him invisible.
             v.rgba[3] = c[3];
+        } else if let Some((base, _target)) = self.material.texture_blend {
+            // RE-073's shape reads no shade at all, so the vertex colour this
+            // primitive needs is simply the flat base colour, the same way
+            // `prim_color`'s scale replaces the shade above -- and by the same
+            // mechanism, baking it here rather than at draw time means the
+            // dedup below cannot hand a `texture_blend` vertex's baked colour
+            // to a differently-shaded primitive that happens to load the same
+            // cache slot: the baked colour is part of the dedup key, so the
+            // two become distinct entries automatically.
+            v.rgba = base;
         }
         if let Some(&i) = self.seen.get(&v) {
             return Ok(i);
@@ -2312,6 +2324,70 @@ mod tests {
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
         assert!(m.texture.is_none(), "no texture bound this time");
         assert_eq!(m.texture_blend, None, "TEXEL means nothing without one");
+    }
+
+    #[test]
+    fn texture_blend_bakes_the_base_colour_into_the_vertex() {
+        // RE-073's shape reads no shade at all, so `push_vertex` must replace
+        // the shade with the flat base colour the same way `prim_color`'s
+        // scale replaces it -- not leave `vertex_data`'s white untouched,
+        // which would draw as if `ENV` were white regardless of its real
+        // value.
+        let file = vertex_data(3);
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let cmds = [
+            vtx(3),
+            Cmd::SetCombine { hi, lo },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [200, 100, 50, 255],
+            },
+            Cmd::SetEnvColor([10, 20, 30, 255]),
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 0,
+                size: 2,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(
+            mesh.vertices[0].rgba,
+            [10, 20, 30, 255],
+            "baked to ENV (the base), not left as vertex_data's white shade"
+        );
     }
 
     /// `(A - B) * C + D` packed the way `gDPSetCombineLERP` does.
