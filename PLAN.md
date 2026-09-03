@@ -370,11 +370,27 @@ Mip chains are generated at build time for 151 textures
 (`psp_texture::pack_mipped`), but this did **not** resolve the Dream Land
 canopy discrepancy (RE-053) — the wrong pattern survives and sharpens at
 higher resolution, pointing at magnification rather than minification/LOD.
-Wrap modes beyond `Repeat` are decoded from `G_SETTILE` but not wired to
-`sceGuTexWrap` (`psp/src/meshdraw.rs` hardcodes `Repeat, Repeat`). Filtering
-mode (bilinear vs point) is not yet verified per texture. This task's
-explicit acceptance item "Dream Land canopy discrepancy resolved" remains
-open — do not close this task while it is.
+Filtering mode (bilinear vs point) is not yet verified per texture. This
+task's explicit acceptance item "Dream Land canopy discrepancy resolved"
+remains open — do not close this task while it is.
+
+RE-066 investigated wrap/clamp/mirror instead of leaving it an open
+question. `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)`;
+measured archive-wide (754 tile-0 `G_SETTILE` commands, not sampled) that
+every axis requesting clamp or mirror also has that same axis's own mask
+nonzero — 0 counterexamples. Cross-checked against `refs/BattleShip`'s RDP
+interpreter, which strips `G_TX_CLAMP` under exactly this condition (real
+hardware only wraps/clamps meaningfully in combination with the mask, not
+from the two-bit field alone) — confirming `mesh.rs`'s existing
+mask-narrowed-width approach (RE-044) already reproduces the correct
+periodic addressing via `Repeat`, for every tile-0 texture in this ROM.
+This was not a bug. The one real, unaddressed, quantified gap is
+`G_TX_MIRROR` (208/754, 27.6%) — the PSP GE has no mirror wrap mode at
+all, so a mirrored axis renders with a visible seam at each period
+boundary instead of bouncing smoothly; recorded as an accepted deviation
+(exact fix would need pre-baking a flipped copy per mirrored texture,
+roughly doubling its VRAM, weighed against RE-053's already-over-budget
+VRAM figure) rather than measured per-texture and fixed this pass.
 
 ### Objective
 
@@ -393,11 +409,15 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [ ] minification behavior identified
 * [ ] LOD behavior identified
 * [ ] mipmapping behavior identified
-* [ ] texture tile parameters verified
+* [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified
-* [ ] wrap/clamp/mirror behavior verified
+* [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; `Mirror` (27.6% of tile-0 lists) is a real, quantified, accepted deviation (no PSP GE mirror mode)
 * [ ] Dream Land canopy discrepancy resolved
 * [ ] no unsupported mipmapping assumptions remain
+
+### Evidence
+
+RE-044, RE-053, RE-066 in `docs/reverse-engineering.md`.
 
 ---
 
