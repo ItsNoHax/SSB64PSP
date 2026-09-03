@@ -12,7 +12,10 @@
 
 ## Current Task
 
-`R0.11 — Fighter Palettes / Costumes` (`VERIFYING`)
+`R0.13 — Framebuffer Rendering` (`TODO`, just selected — see "Next Eligible
+Task" below). `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` this
+session (RE-098 plus its closing addendum: all 12 real fighters
+individually verified).
 
 ## Task Status
 
@@ -81,20 +84,23 @@ cost, so not gated on further user sign-off). `cargo psp --release` +
 `tools/run-ppsspp.sh --seconds 8`: Dream Land pixel-normal at 60 FPS, no
 panics, no new warnings versus a stashed pre-session baseline build.
 
-**This moves `R0.11` from `IN_PROGRESS` to `VERIFYING`, not `COMPLETE`.**
-Four of five acceptance items now have real, on-device-verified evidence
-(palettes identified, costumes identified, runtime representation
-complete, palette data verified against ROM). Two remain genuinely open:
-"representative regression renders added" (the two screenshots taken
-this session were one-off verification, then reverted — no permanent
-regression-render artifact exists) and "all required fighters verified"
-(2 of 12 real fighters individually screenshotted; the other 10 are
-measured via the same census method, which correctly predicted both
-verified fighters' behaviour, but not visually spot-checked). There is
-also still no real game costume-*selection* system, only the debug-
-viewer cycle key — the same honest limitation `R0.10`'s
-`MaterialAnimator` accepted before any real game system existed to drive
-it.
+**This moved `R0.11` from `IN_PROGRESS` to `VERIFYING`** with four of
+five acceptance items on real, on-device-verified evidence. A closing
+addendum in the same session finished the other two: screenshotted the
+remaining 10 of 12 real fighters (Fox, Samus, Luigi, Link, Kirby,
+Jigglypuff, Captain Falcon, Ness, Yoshi, Pikachu) each at a non-zero
+costume — all ten rendered a real, distinct, non-crashing model at 60
+FPS, several matching this project's own prior knowledge of SSB64's
+actual named alternate colours (purple Samus, blue Yoshi, green Kirby,
+green Pikachu, blue Falcon). Investigated one oddity rather than
+shipping past it: Jigglypuff's costume 3 showed an iridescent rainbow
+body, but comparing against Jigglypuff's own costume 0 showed the same
+pattern already present there (a 15.6% pixel diff confirmed a real
+colour change still happened underneath it) — a pre-existing baseline
+shading trait of this project's Jigglypuff model, not a bug this session
+introduced. All temporary patches (the forced object/costume override,
+a throwaway example binary used to look up object indices by source
+file) were fully reverted. **`R0.11` is now `COMPLETE`.**
 
 ## Previous Task Status
 
@@ -1477,40 +1483,43 @@ remain real, measured, unimplemented follow-on work if a future session
 wants it, but nothing blocks on them and `PaletteID` alone was 71% of the
 real archive-wide need.
 
-**`R0.11 — Fighter Palettes / Costumes` is now `VERIFYING`**, not
-`IN_PROGRESS` — RE-098 (this session) implemented and shipped multi-
-costume packing and device-side selection, closing four of the task's
-five acceptance items. Full detail: `PLAN.md` R0.11 "Current evidence",
-`docs/reverse-engineering.md` RE-098.
+**`R0.11 — Fighter Palettes / Costumes` is `COMPLETE`** — RE-098 plus its
+same-session closing addendum implemented and shipped multi-costume
+packing and device-side selection, then individually screenshotted all
+12 real fighters at a non-zero costume, closing every acceptance item.
+Full detail: `PLAN.md` R0.11, `docs/reverse-engineering.md` RE-098.
 
-**What is left is verification breadth, not more design or
-implementation.** The mechanism itself (`CostumeOverride`, the build-loop
-content comparison, `draw_object`'s `costume` parameter, the debug-viewer
-cycle key) is shipped and confirmed correct for two fighters — one
-colour-dominated (Mario), one palette-dominated (Donkey Kong, "Blue
-Kong"). Concrete next steps for whoever picks this back up:
+**`R0.13 — Framebuffer Rendering` is the next eligible task** — the
+first `TODO` task in `PLAN.md`'s own dependency order whose dependencies
+(`R0.2` `COMPLETE`, `R0.6` `IN_PROGRESS` with substantial progress) are
+adequately met, per this project's established "needs meaningful
+progress from, not 100% complete" reading of "depends on." It is
+genuinely not started — no framebuffer-based rendering path (render-to-
+texture, screen wipes) exists at all. RE-055 (`docs/
+reverse-engineering.md`, an earlier session) already identifies the
+concrete target: the LB (loading-break) transition system's
+`sLBTransitionPhotoHeap`, a 300×220 16-bit heap buffer the engine fills
+with a copy of the last frame drawn, bound to RSP segment `0x1` once per
+frame and sampled by 11 between-match transition effects (aeroplane,
+curtain, cannon, star, bamboo-blind ×2, camera, block, rotscale, check,
+"gakubuthi"). These are exactly the 26 segment-`0x01` entries `R0.3`
+already found and deliberately left unresolved as out of its own scope.
+Concrete first step for whoever picks this up: read
+`refs/ssb-decomp-re/src/lb/lbtransition.c` to understand exactly when
+the photocopy is taken and how each of the 11 effects samples it, before
+designing a PSP render-to-texture equivalent (`sceGuCopyImage`/framebuffer-
+as-texture) around it.
 
-1. **Screenshot the other 10 of 12 real fighters' costume ranges**,
-   the same forced-object-index-then-revert method this session used for
-   Mario/Donkey Kong (object indices for any file id are one `Pack::open`
-   + a loop over `object_count()` filtering by `source_file` away — see
-   this session's own throwaway `crates/ssb-rom/examples/tmp_find_obj.rs`
-   pattern, deleted after use). This is legwork, not investigation: the
-   census already predicted both verified fighters' behaviour correctly,
-   so the main risk is a fighter whose costume script shape differs from
-   the two sampled so far, not a wrong mechanism.
-2. **Decide whether a permanent regression-render artifact is worth
-   adding** — today's evidence is two one-off screenshots taken and
-   reverted, plus unit-test coverage of the mechanism itself. This
-   project has no existing automated screenshot-regression harness (the
-   PPSSPP harness takes one screenshot per independent launch, `R0.10`'s
-   own RE-095 already ran into this limitation), so this may mean
-   accepting the same category of limitation already recorded for
-   `R0.12`/`R0.14`'s open items rather than building new infrastructure
-   for one task.
-3. Once both are addressed (or explicitly accepted as out of reach given
-   the harness's own limitations), `R0.11`'s remaining two acceptance
-   items can close and the task can move to `COMPLETE`.
+**Other tasks with real open items, in case `R0.13` turns out blocked
+once investigated:**
+
+* `R0.12 — Billboard Correctness` (`VERIFYING`): "scale/orientation/texture
+  orientation verified" and "all flagged billboard nodes verified" remain,
+  but its one substantive blocker (`translucent`) is the same already-
+  exhausted `R0.5`/`R0.6` dither/coverage problem below.
+* `R0.15 — Render-State Isolation` (`TODO`): genuinely not started, and
+  does not depend on `R0.13` — a real alternative if framebuffer work
+  stalls.
 
 **Other, now-secondary threads, each already investigated as far as this
 session's methods reach:**

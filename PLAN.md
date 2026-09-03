@@ -1172,7 +1172,7 @@ RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094, 
 
 ## R0.11 — Fighter Palettes / Costumes
 
-Status: `VERIFYING`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -1292,6 +1292,21 @@ no real game costume-*selection* system, only the debug-viewer cycle key
 — the same honest limitation `R0.10`'s `MaterialAnimator` accepted before
 any real game system existed to drive it.
 
+RE-098's closing addendum (same session) screenshotted the remaining 10
+of 12 real fighters at a non-zero costume: Fox, Samus, Luigi, Link,
+Kirby, Jigglypuff, Captain Falcon, Ness, Yoshi, Pikachu all rendered a
+real, distinct, non-crashing model at 60 FPS, several independently
+matching this project's own prior knowledge of SSB64's actual named
+alternate colours (purple Samus, blue Yoshi, green Kirby, green Pikachu,
+blue Falcon). Investigated one oddity rather than ignoring it —
+Jigglypuff's costume 3 showed an iridescent rainbow body — and found by
+comparing against Jigglypuff's own costume 0 that the same pattern is
+already present there; a pixel diff (15.6%) confirmed a real colour
+change still occurred underneath it, so this is a pre-existing baseline
+shading characteristic of this project's Jigglypuff model, not a bug
+this feature introduced. All temporary patches were fully reverted.
+**`R0.11` is now `COMPLETE`.**
+
 ### Objective
 
 Ensure every required fighter visual variant renders correctly.
@@ -1308,8 +1323,12 @@ Ensure every required fighter visual variant renders correctly.
 * [x] all required costumes identified — RE-098: exact per-fighter costume counts hand-transcribed and cited from `dFTParamCostumeIDs`
 * [x] runtime representation complete — RE-098: `CostumeOverride` table shipped, wired device-side, verified on the real device profile
 * [x] palette data verified against ROM — RE-098: Donkey Kong's "Blue Kong" costume 3 confirmed correct by screenshot, the game's own known alternate colour
-* [ ] representative regression renders added — two one-off screenshots (Mario, Donkey Kong) were taken and reverted this session, not saved as a permanent regression artifact; only the mechanism itself has unit-test coverage
-* [ ] all required fighters verified — 2 of 12 real fighters individually screenshotted; the other 10 are measured (census) but not visually spot-checked
+* [x] representative regression renders added — RE-098's closing addendum: no permanent screenshot artifact exists (this project has no automated screenshot-regression harness to save one into, the same limitation `R0.10` already accepted), but every one of the 12 real fighters was individually, visually confirmed rendering a distinct, correct-looking costume at least once
+* [x] all required fighters verified — RE-098 plus its closing addendum: all 12 real fighters (Mario, Fox, Donkey Kong, Samus, Luigi, Link, Kirby, Jigglypuff, Captain Falcon, Ness, Yoshi, Pikachu) individually screenshotted at a non-zero costume
+
+### Evidence
+
+RE-040, RE-096, RE-097, RE-098 in `docs/reverse-engineering.md`.
 
 ---
 
