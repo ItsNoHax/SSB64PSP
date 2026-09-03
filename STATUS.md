@@ -12,35 +12,58 @@
 
 ## Current Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping`
+`R0.6 — Material System Correctness`
 
 ## Task Status
 
-`IN_PROGRESS`. RE-071 (this session) followed up on a natural question
-RE-070 raised: now that Dream Land's canopy-highlight texture is
-pre-blurred (RE-070), is RE-069's deferred `translucent` blend (deferred
-because it produced a checkerboard on that same texture) safe to enable?
-Re-tested directly, as a reversible experiment (re-enabled
-`GuState::Blend`, rebuilt clean from a deleted `EBOOT.PBP` per RE-070's
-own lesson about stale binaries): **no** — the result is different and
-*worse*, blown-out oversaturated highlights erasing the flowers and most
-other detail, not the earlier checkerboard. Objective pixel statistics
-alone said "~4% less noise," which would have been a misleading
-green-light if trusted without also looking at the actual image — a
-second methodology lesson layered on RE-070's first one.
+`IN_PROGRESS`. RE-072 (this session) closed the "fog verified" item, and
+along the way caught its own near-miss: an archive-wide re-scan (using
+`scan::Candidates::Exhaustive`) initially found `G_SETFOGCOLOR` 7 times
+and `G_FOG` geometry-mode sets 4 times, seemingly contradicting
+`DECISIONS.md` D-025's existing "twice" figure. Before treating that as a
+correction, cross-checked against reliable, reloc-anchored discovery
+(`find_root_display_lists`, which only follows real pointers) — under
+that, only 2 `SetFogColor` occurrences survive and 0 `G_FOG` hits. The
+`Exhaustive`-mode extras were false positives; D-025's original number was
+right all along, and the near-correction would have been the actual
+mistake.
 
-Tested one more specific hypothesis before stopping: unpremultiplied-alpha
-blurring (`box_blur_wrapped` averages RGB and alpha independently, a known
-way to leak "invisible" colours from transparent texels once alpha
-changes). Implemented a premultiplied variant as a temporary experiment —
-identical result, ruling this out too. Both experiments were reverted
-before commit (`git status` clean of them); only the negative-result
-record remains, in `docs/reverse-engineering.md` and a permanent, updated
-comment in `psp/src/meshdraw.rs` so a future session doesn't re-run either
-already-eliminated experiment. `PLAN.md` R0.6's "blending verified" item
-stays open, narrowed but not closed — the real cause is still unknown.
+Went further than a occurrence count to confirm those two are
+functionally inert, not just rare: grepped the entire decompilation for
+`gSPFogPosition` (the call that gives the RSP a fog range to compute
+against) — zero results, anywhere, in any file. Read the one real stage
+that sets a fog colour (file 118, `118_StageYosterSmallFile2`, confirmed
+via `romtool stages` to be one of the 41 currently-loaded stages, not a
+discarded variant) and checked whether its own `G_SETRENDERMODE` calls
+ever reference `G_BL_CLR_FOG` — both use `G_BL_CLR_MEM` instead. The
+colour is set and never read by anything in the same list. `DECISIONS.md`
+D-025 stands, now backed by checking that the surrounding machinery
+(range setup, blend-equation reference) doesn't exist either, not just
+that the command is rare. `PLAN.md` R0.6's "fog verified" item is checked.
+No code changed — this investigation concluded "correctly not
+implemented," not "needs implementing."
 
 ## Last Completed Task
+
+R0.6 — Material System Correctness — RE-071 (earlier this session)
+followed up on a natural question RE-070 raised: now that Dream Land's
+canopy-highlight texture is pre-blurred (RE-070), is RE-069's deferred
+`translucent` blend (deferred because it produced a checkerboard on that
+same texture) safe to enable? Re-tested directly, as a reversible
+experiment (re-enabled `GuState::Blend`, rebuilt clean from a deleted
+`EBOOT.PBP` per RE-070's own lesson about stale binaries): **no** — the
+result is different and *worse*, blown-out oversaturated highlights
+erasing the flowers and most other detail, not the earlier checkerboard.
+Objective pixel statistics alone said "~4% less noise," which would have
+been a misleading green-light if trusted without also looking at the
+actual image — a second methodology lesson layered on RE-070's first one.
+Also tested and ruled out unpremultiplied-alpha blurring as the cause (a
+premultiplied variant gave an identical result). Both experiments were
+reverted before commit; only the negative-result record remains, in
+`docs/reverse-engineering.md` and a permanent, updated comment in
+`psp/src/meshdraw.rs` so a future session doesn't re-run either
+already-eliminated experiment. `PLAN.md` R0.6's "blending verified" item
+stays open, narrowed but not closed.
 
 R0.5 — Texture Filtering / LOD / Mipmapping — RE-070 (earlier this
 session) directly tested RE-053's own two suggested fixes for Dream
@@ -254,14 +277,18 @@ point already recorded rather than an open-ended search:
 3. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
    "primitive color verified", "environment color verified", "combiner
    behavior verified" (partially covered by RE-039/RE-043 already but not
-   marked), "fog verified" (D-025 already found fog is used twice
-   game-wide, likely low-value), "unsupported material behavior
-   identified". Read `PLAN.md` R0.6's acceptance list fresh rather than
+   marked), "unsupported material behavior identified". "Fog verified" is
+   now checked (RE-072) — it was correctly unimplemented already, D-025's
+   number just needed a stronger check than a plain opcode count, which
+   RE-072 gave it. Read `PLAN.md` R0.6's acceptance list fresh rather than
    assuming — the pattern that has paid off repeatedly this session
-   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode)
-   is: find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
-   *default* for whatever's being checked before assuming `mesh.rs`'s
-   current "unset means declined" fallback already matches it.
+   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode,
+   RE-072's fog) is: find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset
+   list sets the *default* for whatever's being checked (or, per RE-072,
+   whether the supporting machinery for a rare opcode exists *anywhere* in
+   the decompilation) before assuming `mesh.rs`'s current "unset means
+   declined" fallback already matches it, or that a rare-but-nonzero count
+   means something is really being missed.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a
@@ -459,6 +486,20 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.6: fog verified as correctly unimplemented (RE-072)
+
+* Wrote a temporary probe (`crates/ssb-rom/examples/tmp_fog_scan.rs`, deleted before commit) using `scan::Candidates::Exhaustive`: found `G_SETFOGCOLOR` 7 times and `G_FOG` geometry-mode sets 4 times archive-wide, apparently contradicting `DECISIONS.md` D-025's existing "twice" figure
+* Cross-checked with reliable, reloc-anchored discovery (`find_root_display_lists`) before treating that as a correction: only 2 `SetFogColor` occurrences survive, 0 `G_FOG` hits — the `Exhaustive`-mode extras were false positives, a known risk of that scan mode; D-025's original number was right all along
+* Grepped the entire decompilation for `gSPFogPosition` (the call that gives the RSP a fog range to compute against) — zero results anywhere, confirming no game code ever configures fog range/scale
+* Identified the two surviving occurrences: file 63 (`63_MVOpeningRoomTransition`, the opening movie) and file 118 (`118_StageYosterSmallFile2`); confirmed via `romtool stages` that file 118 is one of the 41 currently-loaded, real stages, not a discarded variant
+* Checked file 118's own list (offset `0x3310`) for whether its two `G_SETRENDERMODE` calls ever reference `G_BL_CLR_FOG` — both use `G_BL_CLR_MEM` instead; the fog colour is set and never read by anything in the same list
+* Result: `DECISIONS.md` D-025 stands, now verified against the supporting machinery (fog range, blend-equation reference) rather than just an occurrence count; RE-072 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.6's "fog verified" item checked; `docs/rendering.md` cross-referenced
+* Affected subsystem: documentation/investigation only, no code changed — the correct conclusion was "already correctly unimplemented," not "needs implementing"
+* `cargo test --workspace` — 354 passing, unchanged
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* PPSSPP: not run this pass (no production code changed)
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.6: RE-070's dither fix does not make blend safe, two leads ruled out (RE-071)
 

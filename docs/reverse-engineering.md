@@ -4673,3 +4673,51 @@ are not the cause (both directly tested, both reverted cleanly, both
 produced no visible change or a worse one). **Low**, honestly, on what
 the actual cause is — this entry narrows the search, it does not find the
 answer.
+
+## RE-072 — Fog really is unused, but not for the reason first measured
+
+**Question.** `PLAN.md` R0.6's "fog verified" item was unchecked despite
+`DECISIONS.md` D-025 already claiming fog is "effectively unused"
+(`G_SETFOGCOLOR` appears twice game-wide). Is that number still right, and
+is "twice, so skip it" actually sound reasoning?
+
+**The first re-measurement contradicted D-025 — and was wrong to.** An
+archive-wide scan using `scan::Candidates::Exhaustive` found `G_SETFOGCOLOR`
+7 times and the `G_FOG` geometry mode bit set 4 times, not twice. Before
+treating that as a correction, cross-checked it against reliable,
+reloc-anchored discovery (`find_root_display_lists`, which only follows
+real pointers rather than guessing at byte offsets the way `Exhaustive`
+does) — under that discovery, only **2 `SetFogColor` occurrences survive,
+and 0 `G_FOG` geometry-mode hits**. The `Exhaustive` scan's extra 5/4 hits
+were false positives, exactly the kind of noise this project's own docs
+already warn `Exhaustive` mode produces. D-025's original "twice" figure
+was right all along; the correction here is to the measurement method
+that briefly contradicted it, not to the number itself.
+
+**Confirmed those two occurrences are functionally inert, not just rare.**
+Searched the entire decompilation for `gSPFogPosition` (the call that
+configures the RSP's Z-to-fog-factor range/scale) — zero results,
+anywhere. No code in this game ever sets a fog range. Read the two
+surviving occurrences directly: file 63 (`63_MVOpeningRoomTransition`,
+the opening movie) and file 118 (`118_StageYosterSmallFile2`, one of the
+41 real, currently-loaded stages — confirmed via `romtool stages`, not
+assumed). Checked file 118's own list (offset `0x3310`) for whether its
+`G_SETRENDERMODE` calls ever reference `G_BL_CLR_FOG` (the only way a set
+fog colour actually reaches the framebuffer) — both render-mode commands
+in that list use `G_BL_CLR_MEM`, not `G_BL_CLR_FOG`. The colour is set
+and never read by anything in the same list. Combined with the total
+absence of a configured fog range anywhere, this is dead data: present in
+the asset, wired to nothing that would make it visible even under a
+notional full RDP emulation, let alone this project's build-time
+conversion.
+
+**Result.** `DECISIONS.md` D-025 stands, strengthened rather than
+overturned: fog is unimplemented and that remains correct, now backed by
+checking not just occurrence count but whether the RSP-side range setup
+and RDP-side blend-equation reference exist anywhere (they don't).
+`PLAN.md` R0.6's "fog verified" item is checked.
+
+**Confidence: high.** Both scans (`Exhaustive` and reloc-anchored) were
+run and compared, not just one trusted; `gSPFogPosition`'s absence is a
+whole-decompilation grep, not a sample; file 118's render mode was read
+directly from its own bytes, not inferred.

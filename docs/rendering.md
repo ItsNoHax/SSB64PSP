@@ -77,7 +77,10 @@ failures.**
 
 `G_TRI2` outnumbers `G_TRI1` 18:1, so geometry is overwhelmingly paired
 triangles. `G_SETFOGCOLOR` appears twice in the entire game — **fog is
-effectively unused** and should not cost anything at runtime.
+effectively unused** and should not cost anything at runtime. Verified
+more than just rare (RE-072): no `gSPFogPosition` call exists anywhere in
+the decompilation to give a fog range meaning, and the one real stage
+that sets a fog colour never references it from its own render mode.
 
 **Texture formats**, by `G_SETTILE` count:
 
