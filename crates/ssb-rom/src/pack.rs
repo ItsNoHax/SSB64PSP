@@ -33,6 +33,8 @@
 //! FighterDesc[fighter_count]
 //! AnimDesc[anim_count]
 //! AnimJoint[anim_joint_count]
+//! MatAnimDesc[mat_anim_count]
+//! MatAnimPalette[mat_anim_palette_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -60,7 +62,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 10 added `TEXTURE_BLEND` and its base/target colours to `PrimDesc`
 ///    (RE-073).
 /// 11 added `FLAT_COLOR` and its colour to `PrimDesc` (RE-079).
-pub const VERSION: u32 = 11;
+/// 12 added the `MatAnimDesc`/`MatAnimPalette` tables and `TextureDesc::
+///    mat_anim` (RE-091), so a `PaletteID`-cycling material animation's
+///    resolved palette variants (RE-089/RE-090) travel with the pack. Filled
+///    `TextureDesc`'s existing 4 bytes of tail padding, so `TextureDesc::SIZE`
+///    itself is unchanged.
+pub const VERSION: u32 = 12;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -72,7 +79,11 @@ pub const ALIGN: usize = 16;
 /// largest component size, so 16 is what the hardware wants anyway.
 pub const VERTEX_SIZE: usize = 16;
 
-/// Header, 64 bytes so the descriptor tables start 16-byte aligned.
+/// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
+/// `mat_anim_palette_count` (`VERSION` 12) extend it to 72 — the original 64
+/// was a coincidence of having exactly 16 `u32` fields, not a hard alignment
+/// requirement (only the blob region, computed separately via `blob_offset`,
+/// needs 16-byte alignment for the GE's DMA).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
@@ -97,10 +108,15 @@ pub struct Header {
     pub anim_count: u32,
     /// Joint entries, summed over every animation.
     pub anim_joint_count: u32,
+    /// Animated palette tables, one per `PaletteID`-cycling material
+    /// animation script found (RE-089/RE-090).
+    pub mat_anim_count: u32,
+    /// Palette variants, summed over every `MatAnimDesc`.
+    pub mat_anim_palette_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 64;
+    pub const SIZE: usize = 72;
 }
 
 /// A vertex in the GE's expected layout.
@@ -223,11 +239,20 @@ pub struct TextureDesc {
     /// at least 1; a pack written before mipmaps existed reads back 0, which
     /// the reader normalises to 1 (RE-053).
     pub levels: u32,
+    /// Index into the `MatAnimDesc` table if this texture's palette is
+    /// cycled by a material animation script, or [`TextureDesc::NO_ANIM`]
+    /// (RE-089/RE-090/RE-091). `palette_offset`/`palette_len` above still
+    /// name this texture's palette *at pack time* (costume 0's, matching
+    /// every other baked colour) — a device-side player swaps the active
+    /// CLUT for one of `MatAnimDesc`'s resolved variants instead of reading
+    /// these two fields, but they stay meaningful as the frame-0 fallback.
+    pub mat_anim: u32,
 }
 
 impl TextureDesc {
-    /// 32: `u16 * 3 + u8 * 2` is 8 bytes, plus five `u32` is 20, padded to a
-    /// 16-byte multiple.
+    /// 32: `u16 * 3 + u8 * 2` is 8 bytes, plus six `u32` is 24, padded to a
+    /// 16-byte multiple. `mat_anim` (`VERSION` 12) fills what used to be 4
+    /// bytes of unused tail padding, so this stays 32 rather than growing.
     ///
     /// This was declared as 20 and the writer emitted 24, so every descriptor
     /// after the first was read from the wrong offset and textures came out as
@@ -235,6 +260,7 @@ impl TextureDesc {
     /// original round-trip test only checked texture 0, where the offset is
     /// correct no matter what the stride says.
     pub const SIZE: usize = 32;
+    pub const NO_ANIM: u32 = u32::MAX;
 }
 
 /// An assembled object: a run of nodes forming one `DObjDesc` hierarchy.
@@ -366,6 +392,58 @@ impl AnimJoint {
     pub const SIZE: usize = 8;
     pub const NO_SCRIPT: u32 = u32::MAX;
     pub const NO_NODE: u32 = u32::MAX;
+}
+
+/// A `PaletteID`-cycling material animation: the driving script, and where
+/// its resolved palette variants (RE-089/RE-090) sit in [`MatAnimPalette`].
+///
+/// One entry per animated *texture*, not per primitive or per `MObjSub`:
+/// `pack_mesh`'s existing texture cache already dedupes by texel location
+/// (`(data_file, data_offset)`), so every primitive drawing this texture
+/// already shares one [`TextureDesc`] — [`TextureDesc::mat_anim`] points
+/// here, and a device-side player ticks one [`crate::matanim::MaterialJoint`]
+/// per entry, not one per primitive.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MatAnimDesc {
+    /// Byte offset into the blob of the driving script's *whole source file*
+    /// bytes — deduplicated per archive file, the same convention
+    /// `AnimDesc::script_offset` uses for joint animation. `script` below is
+    /// an offset within this, not within the blob directly, matching how
+    /// [`crate::matanim::MaterialJoint::tick`] is already built to run
+    /// against a whole file's bytes rather than a pre-sliced script.
+    pub file_offset: u32,
+    pub file_len: u32,
+    /// Byte offset of the driving script itself, within the file bytes named
+    /// by `file_offset`/`file_len` above (RE-087/RE-089).
+    pub script: u32,
+    /// First entry in the [`MatAnimPalette`] table, and how many follow —
+    /// the exact count [`crate::mobj::read_palettes`]'s bound produced, not
+    /// a guess (RE-088 found no sound local bound exists; RE-089 supplies
+    /// one from this same script).
+    pub first_palette: u32,
+    pub palette_count: u32,
+    /// Archive file/offset of the driving `MObjSub`, for debugging.
+    pub source_file: u32,
+    pub source_offset: u32,
+}
+
+impl MatAnimDesc {
+    pub const SIZE: usize = 28;
+}
+
+/// One resolved palette variant of an animated texture — the same shape as
+/// [`TextureDesc::palette_offset`]/[`TextureDesc::palette_len`], stored
+/// separately since an animated texture has several instead of one.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MatAnimPalette {
+    pub palette_offset: u32,
+    pub palette_len: u32,
+}
+
+impl MatAnimPalette {
+    pub const SIZE: usize = 8;
 }
 
 /// A rectangular extent in game units, as `MPGroundData` stores it.
@@ -815,6 +893,11 @@ pub struct PackWriter {
     coll_vertices: Vec<CollisionVertex>,
     points: Vec<MapPoint>,
     fighters: Vec<FighterDesc>,
+    mat_anims: Vec<MatAnimDesc>,
+    mat_anim_palettes: Vec<MatAnimPalette>,
+    /// Source files already in the blob for [`Self::add_mat_anim`], the same
+    /// dedup shape as `anim_files`.
+    mat_anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
     blob: Vec<u8>,
 }
 
@@ -852,8 +935,65 @@ impl PackWriter {
             palette_offset,
             palette_len: tex.palette.len() as u32,
             levels: tex.levels.max(1),
+            mat_anim: TextureDesc::NO_ANIM,
         });
         (self.textures.len() - 1) as u32
+    }
+
+    /// Adds one animated palette table: the driving script plus every
+    /// palette variant it can cycle to (RE-089/RE-090). Returns the index a
+    /// [`PackWriter::set_texture_mat_anim`] call should give the texture
+    /// this animates.
+    ///
+    /// `source_file`/`file_bytes` are the *whole* source archive file, not
+    /// just the script — deduplicated per file the same way [`Self::add_anim`]
+    /// deduplicates joint-animation files, since [`crate::matanim::
+    /// MaterialJoint::tick`] is already built to run against a whole file's
+    /// bytes rather than a pre-sliced script, and a script's own end is not
+    /// knowable without decoding it.
+    pub fn add_mat_anim(
+        &mut self,
+        source_file: u32,
+        file_bytes: &[u8],
+        script: u32,
+        source_offset: u32,
+        palettes: &[Vec<u32>],
+    ) -> u32 {
+        let (file_offset, file_len) = match self.mat_anim_files.get(&source_file) {
+            Some(&at) => at,
+            None => {
+                let at = (self.push_blob(file_bytes), file_bytes.len() as u32);
+                self.mat_anim_files.insert(source_file, at);
+                at
+            }
+        };
+        let first_palette = self.mat_anim_palettes.len() as u32;
+        for p in palettes {
+            let bytes: Vec<u8> = p.iter().flat_map(|c| c.to_le_bytes()).collect();
+            let palette_offset = self.push_blob(&bytes);
+            self.mat_anim_palettes.push(MatAnimPalette {
+                palette_offset,
+                palette_len: p.len() as u32,
+            });
+        }
+        self.mat_anims.push(MatAnimDesc {
+            file_offset,
+            file_len,
+            script,
+            first_palette,
+            palette_count: palettes.len() as u32,
+            source_file,
+            source_offset,
+        });
+        (self.mat_anims.len() - 1) as u32
+    }
+
+    /// Points an already-added texture at an animated palette table added
+    /// via [`PackWriter::add_mat_anim`].
+    pub fn set_texture_mat_anim(&mut self, texture: u32, mat_anim: u32) {
+        if let Some(t) = self.textures.get_mut(texture as usize) {
+            t.mat_anim = mat_anim;
+        }
     }
 
     /// Adds a converted mesh. `texture_for` maps a primitive index to a texture
@@ -1326,7 +1466,9 @@ impl PackWriter {
             + self.points.len() * MapPoint::SIZE
             + self.fighters.len() * FighterDesc::SIZE
             + self.anims.len() * AnimDesc::SIZE
-            + self.anim_joints.len() * AnimJoint::SIZE;
+            + self.anim_joints.len() * AnimJoint::SIZE
+            + self.mat_anims.len() * MatAnimDesc::SIZE
+            + self.mat_anim_palettes.len() * MatAnimPalette::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
@@ -1348,6 +1490,8 @@ impl PackWriter {
         out.extend_from_slice(&(self.fighters.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.anims.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.anim_joints.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.mat_anims.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.mat_anim_palettes.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -1388,8 +1532,9 @@ impl PackWriter {
             out.extend_from_slice(&t.palette_offset.to_le_bytes());
             out.extend_from_slice(&t.palette_len.to_le_bytes());
             out.extend_from_slice(&t.levels.to_le_bytes());
-            // Pad to TextureDesc::SIZE so the stride stays 16-byte aligned.
-            out.extend_from_slice(&[0u8; TextureDesc::SIZE - 28]);
+            out.extend_from_slice(&t.mat_anim.to_le_bytes());
+            // No padding left: `mat_anim` (VERSION 12) filled what used to
+            // be TextureDesc::SIZE - 28 bytes of it exactly.
         }
         for o in &self.objects {
             for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
@@ -1478,6 +1623,23 @@ impl PackWriter {
             out.extend_from_slice(&j.script.to_le_bytes());
             out.extend_from_slice(&j.node.to_le_bytes());
         }
+        for a in &self.mat_anims {
+            for v in [
+                a.file_offset,
+                a.file_len,
+                a.script,
+                a.first_palette,
+                a.palette_count,
+                a.source_file,
+                a.source_offset,
+            ] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for p in &self.mat_anim_palettes {
+            out.extend_from_slice(&p.palette_offset.to_le_bytes());
+            out.extend_from_slice(&p.palette_len.to_le_bytes());
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -1492,6 +1654,9 @@ impl PackWriter {
     }
     pub fn stage_count(&self) -> usize {
         self.stages.len()
+    }
+    pub fn mat_anim_count(&self) -> usize {
+        self.mat_anims.len()
     }
     pub fn blob_len(&self) -> usize {
         self.blob.len()
@@ -1530,6 +1695,8 @@ pub struct Pack<'a> {
     fighter_count: u32,
     anim_count: u32,
     anim_joint_count: u32,
+    mat_anim_count: u32,
+    mat_anim_palette_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -1584,6 +1751,8 @@ impl<'a> Pack<'a> {
         let fighter_count = u32_at(data, 52);
         let anim_count = u32_at(data, 56);
         let anim_joint_count = u32_at(data, 60);
+        let mat_anim_count = u32_at(data, 64);
+        let mat_anim_palette_count = u32_at(data, 68);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -1597,7 +1766,9 @@ impl<'a> Pack<'a> {
             + point_count as usize * MapPoint::SIZE
             + fighter_count as usize * FighterDesc::SIZE
             + anim_count as usize * AnimDesc::SIZE
-            + anim_joint_count as usize * AnimJoint::SIZE;
+            + anim_joint_count as usize * AnimJoint::SIZE
+            + mat_anim_count as usize * MatAnimDesc::SIZE
+            + mat_anim_palette_count as usize * MatAnimPalette::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -1617,6 +1788,8 @@ impl<'a> Pack<'a> {
             fighter_count,
             anim_count,
             anim_joint_count,
+            mat_anim_count,
+            mat_anim_palette_count,
             blob_offset,
             blob_len,
         })
@@ -1658,6 +1831,14 @@ impl<'a> Pack<'a> {
     pub fn anim_joint_count(&self) -> u32 {
         self.anim_joint_count
     }
+    /// Animated palette tables: one per `PaletteID`-cycling material
+    /// animation script found (RE-089/RE-090/RE-091).
+    pub fn mat_anim_count(&self) -> u32 {
+        self.mat_anim_count
+    }
+    pub fn mat_anim_palette_count(&self) -> u32 {
+        self.mat_anim_palette_count
+    }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
     pub fn prim_count(&self) -> u32 {
@@ -1687,6 +1868,12 @@ impl<'a> Pack<'a> {
     }
     fn anim_joint_table(&self) -> usize {
         self.anim_table() + self.anim_count as usize * AnimDesc::SIZE
+    }
+    fn mat_anim_table(&self) -> usize {
+        self.anim_joint_table() + self.anim_joint_count as usize * AnimJoint::SIZE
+    }
+    fn mat_anim_palette_table(&self) -> usize {
+        self.mat_anim_table() + self.mat_anim_count as usize * MatAnimDesc::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -1785,6 +1972,49 @@ impl<'a> Pack<'a> {
         self.blob(a.script_offset, a.script_len as usize)
     }
 
+    /// One animated palette table, by index into [`Pack::mat_anim_count`].
+    pub fn mat_anim(&self, i: u32) -> Option<MatAnimDesc> {
+        if i >= self.mat_anim_count {
+            return None;
+        }
+        let at = self.mat_anim_table() + i as usize * MatAnimDesc::SIZE;
+        Some(MatAnimDesc {
+            file_offset: u32_at(self.data, at),
+            file_len: u32_at(self.data, at + 4),
+            script: u32_at(self.data, at + 8),
+            first_palette: u32_at(self.data, at + 12),
+            palette_count: u32_at(self.data, at + 16),
+            source_file: u32_at(self.data, at + 20),
+            source_offset: u32_at(self.data, at + 24),
+        })
+    }
+
+    /// The bytes of a `MatAnimDesc`'s *whole source file* — [`MatAnimDesc::
+    /// script`] is a byte offset into this slice, matching how
+    /// [`crate::matanim::MaterialJoint::tick`] wants to be called.
+    pub fn mat_anim_file(&self, a: &MatAnimDesc) -> Option<&'a [u8]> {
+        self.blob(a.file_offset, a.file_len as usize)
+    }
+
+    /// One resolved palette variant, by absolute index (see
+    /// [`MatAnimDesc::first_palette`]/[`MatAnimDesc::palette_count`]).
+    pub fn mat_anim_palette(&self, i: u32) -> Option<MatAnimPalette> {
+        if i >= self.mat_anim_palette_count {
+            return None;
+        }
+        let at = self.mat_anim_palette_table() + i as usize * MatAnimPalette::SIZE;
+        Some(MatAnimPalette {
+            palette_offset: u32_at(self.data, at),
+            palette_len: u32_at(self.data, at + 4),
+        })
+    }
+
+    /// A resolved palette variant's own CLUT bytes, ready for
+    /// `sceGuClutLoad`.
+    pub fn mat_anim_palette_data(&self, p: &MatAnimPalette) -> Option<&'a [u8]> {
+        self.blob(p.palette_offset, p.palette_len as usize * 4)
+    }
+
     pub fn object(&self, i: u32) -> Option<ObjectDesc> {
         if i >= self.object_count {
             return None;
@@ -1874,6 +2104,7 @@ impl<'a> Pack<'a> {
             palette_offset: u32_at(self.data, at + 16),
             palette_len: u32_at(self.data, at + 20),
             levels: u32_at(self.data, at + 24).max(1),
+            mat_anim: u32_at(self.data, at + 28),
         })
     }
 
@@ -2911,6 +3142,104 @@ mod tests {
         // Both must still be findable under their own fighter.
         assert_eq!(pack.anim(0).unwrap().fighter, 8);
         assert_eq!(pack.anim(1).unwrap().fighter, 10);
+    }
+
+    /// RE-089/RE-090/RE-091: a `PaletteID`-cycling material animation's
+    /// script and every resolved palette variant, round-tripped and pointed
+    /// at from the texture it animates.
+    #[test]
+    fn a_mat_anim_round_trips_with_its_script_and_palettes() {
+        let mut w = PackWriter::new();
+        let tex = PspTexture {
+            width: 32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![0xCDu8; 128],
+            swizzled: true,
+            palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
+        };
+        let texture = w.add_texture(&tex);
+
+        let file_bytes = alloc::vec![0x11u8; 200];
+        // File 117's real shape (RE-089/RE-090): a script cycling through
+        // several distinct palettes.
+        let palettes = alloc::vec![
+            alloc::vec![0x1111_1111u32; 16],
+            alloc::vec![0x2222_2222u32; 16],
+            alloc::vec![0x3333_3333u32; 16],
+        ];
+        let mat_anim = w.add_mat_anim(117, &file_bytes, 0x30, 0x2AA8, &palettes);
+        w.set_texture_mat_anim(texture, mat_anim);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.mat_anim_count(), 1);
+        assert_eq!(pack.mat_anim_palette_count(), 3);
+
+        let t = pack.texture(0).unwrap();
+        assert_eq!(t.mat_anim, mat_anim);
+
+        let a = pack.mat_anim(mat_anim).unwrap();
+        assert_eq!(a.script, 0x30);
+        assert_eq!(a.palette_count, 3);
+        assert_eq!(a.source_file, 117);
+        assert_eq!(a.source_offset, 0x2AA8);
+        assert_eq!(pack.mat_anim_file(&a), Some(&file_bytes[..]));
+
+        let got: alloc::vec::Vec<u32> = (0..a.palette_count)
+            .map(|k| {
+                let p = pack.mat_anim_palette(a.first_palette + k).unwrap();
+                let data = pack.mat_anim_palette_data(&p).unwrap();
+                u32_at(data, 0)
+            })
+            .collect();
+        assert_eq!(got, alloc::vec![0x1111_1111, 0x2222_2222, 0x3333_3333]);
+    }
+
+    /// A texture nothing animates must read back `NO_ANIM`, not index 0 --
+    /// the same "absent, not accidentally valid" shape `AnimJoint::NO_SCRIPT`
+    /// already guards against.
+    #[test]
+    fn a_texture_with_no_mat_anim_reads_back_no_anim() {
+        let mut w = PackWriter::new();
+        let tex = PspTexture {
+            width: 8,
+            height: 8,
+            stride: 8,
+            format: Psm::Psm8888,
+            data: alloc::vec![0u8; 256],
+            swizzled: false,
+            palette: alloc::vec::Vec::new(),
+            levels: 1,
+        };
+        w.add_texture(&tex);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.texture(0).unwrap().mat_anim, TextureDesc::NO_ANIM);
+    }
+
+    /// Mirrors `a_shared_animation_file_is_stored_once`: two animated
+    /// textures whose driving scripts live in the same archive file must not
+    /// duplicate that file's bytes in the blob.
+    #[test]
+    fn a_shared_mat_anim_file_is_stored_once() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0x22u8; 512];
+        let one = alloc::vec![alloc::vec![0xAAAA_AAAAu32; 16]];
+        w.add_mat_anim(114, &file_bytes, 0x100, 0x4F54, &one);
+        w.add_mat_anim(114, &file_bytes, 0x200, 0x5098, &one);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(0).unwrap();
+        let b = pack.mat_anim(1).unwrap();
+        assert_eq!(a.file_offset, b.file_offset, "same file, same bytes");
+        assert_eq!(pack.mat_anim_file(&a), pack.mat_anim_file(&b));
+        assert_eq!(a.script, 0x100);
+        assert_eq!(b.script, 0x200);
     }
 
     /// `fighter_anim` finds a row by arithmetic, so the fighter entries must

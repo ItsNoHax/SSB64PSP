@@ -16,10 +16,46 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-090 (this session) shipped the read RE-088
-retracted, now that RE-089 (previous session) supplied a sound bound for
-it: `mobj::read_palettes(file, sub_at, count)` reads exactly `count`
-consecutive `palettes[]` entries, where `count` comes from outside the
+`IN_PROGRESS` on `R0.10`. RE-091 (this session) shipped step 5's pack
+format — `MatAnimDesc`/`MatAnimPalette` (a new table pair mirroring
+`AnimDesc`/`AnimJoint`) plus `TextureDesc::mat_anim` (filling 4 bytes of
+existing padding, no size change), `pack::VERSION` 11 → 12,
+`PackWriter::add_mat_anim` deduplicating each driving script's whole
+source file the same way `add_anim` already does for joint animation.
+Round-trip verified with 3 new unit tests (238 → 241 passing) plus all 35
+pre-existing `pack` tests unaffected. `cargo run --release -p romtool --
+pack` against the real ROM builds cleanly at the new version and reports
+"verified loads back cleanly" — same 639 textures/41 stages/other counts
+as before, since nothing populates the new tables yet (a schema-only
+change so far). `cargo psp --release` + `tools/run-ppsspp.sh`: builds and
+runs clean, Dream Land pixel-identical at 60 FPS.
+
+**Wiring `romtool`'s real build loop to populate the new tables found a
+genuine blocker, checked before writing around it.** The natural design
+keys a texture's animated palette table by `(data_file, data_offset)` —
+the same dedup key `pack_mesh`'s existing texture cache already uses —
+via each animated `MObjSub`'s own `sprite` field, the exact same
+`MObjMaterial` RE-090 already reads `palettes[]` from. Checked this
+against the real ROM before committing to it (temporary instrumentation
+on `romtool stages`'s existing replay loop, reverted): **all 33 real
+`PaletteID`-cycling `MObjSub`s have `sprite: None`.** A palette-cycling
+material never names its own texture image — the texture it applies to
+is whichever CI4/CI8 image is already bound at that point in the node's
+draw sequence, tracked correctly today only by `mesh.rs`'s own cross-node
+material-state threading (RE-064), not by anything recoverable from the
+`MObjSub` alone. Populating `TextureDesc::mat_anim` for real needs that
+threading extended with an animation marker (architecturally similar to
+how RE-073/074 added and threaded `combiner_texture_blend` through
+`MeshMaterial`) — a `mesh.rs`-level change, not more `romtool`/`pack.rs`
+plumbing. `TextureDesc::mat_anim` deliberately stays `NO_ANIM` for every
+real texture rather than guess at a correlation; `git diff --stat` on
+`tools/romtool/src/main.rs` is empty — the instrumentation used to check
+this was fully reverted, matching RE-079/081/089's established pattern.
+
+Immediately before this, RE-090 (previous session) shipped the read
+RE-088 retracted, now that RE-089 (session before that) supplied a sound
+bound for it: `mobj::read_palettes(file, sub_at, count)` reads exactly
+`count` consecutive `palettes[]` entries, where `count` comes from outside the
 struct (RE-089's script-computed bound) rather than being discovered from
 local bytes the way RE-088's over-reading walk tried and failed to do.
 Each of the `count` entries is validated by the same relocation-backed
@@ -1017,28 +1053,52 @@ a lookup:
    discovered. Verified archive-wide against the real ROM, not just unit
    fixtures: 33/33 `PaletteID` scripts' computed bounds produced a fully
    valid, all-distinct `palettes[]` read, 0 failures.
-5. **Now the actual next step.** Pack every palette a texture's animation
-   cycles through (not just the first — `mobj::read_palettes`'s output),
-   plus the resolved per-primitive script reference (`matanim::
-   resolve_scripts`'s output), into the runtime format — likely a new
-   table pair mirroring `AnimDesc`/`AnimJoint`'s shape (`pack.rs` lines
-   322-353 per prior research), a `pack::VERSION` bump, following that
-   file's own bump-log convention. Both inputs this step needs already
-   exist and are archive-wide verified (RE-089/RE-090); this step is
-   original `romtool`/`pack.rs` design work, not another lookup — sizing
-   it before starting is worthwhile, since `pack.rs`'s existing
-   `AnimDesc`/`AnimJoint` shape was designed for joint animation
-   (`objanim::StageJoint`), not material animation, and may not transfer
-   cleanly (e.g. a `MObj`'s resolved palette list has a *variable* count
-   per material, unlike a joint's fixed-shape pose).
-6. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
+5. ~~Pack every palette a texture's animation cycles through, plus the
+   resolved script reference, into the runtime format~~ — **the format
+   half is done (RE-091)**: `MatAnimDesc`/`MatAnimPalette` (mirroring
+   `AnimDesc`/`AnimJoint`'s shape, per the prior note's own prediction)
+   plus `TextureDesc::mat_anim`, `pack::VERSION` 11→12, round-trip
+   verified. **The population half is blocked, on a real measured gap,
+   not a design choice left open:**
+6. **Now the actual next step, and it is `mesh.rs`-level, not `pack.rs`.**
+   RE-091 tried to populate `TextureDesc::mat_anim` by keying a texture's
+   animated-palette table off the driving `MObjSub`'s own `sprite` field
+   (the same one RE-090 already reads `palettes[]` from) — checked
+   archive-wide before committing to it, and found **all 33 real
+   `PaletteID`-cycling `MObjSub`s have `sprite: None`**. A palette-cycling
+   material never names its own texture image; the texture it applies to
+   is whichever CI4/CI8 image is already bound at that point in the
+   node's draw sequence, tracked correctly today only by `mesh.rs`'s own
+   cross-node material-state threading (RE-064's `Builder`/`State`).
+   Closing this needs a marker ("this material's palette is driven by
+   script S") threaded through `mesh.rs`'s existing state inheritance the
+   same way texture/palette state already is, surfaced on the built
+   `Prim`/`TextureRef` so `pack_mesh` can see it — architecturally similar
+   to how RE-073/074 added and threaded `combiner_texture_blend` through
+   `MeshMaterial`, but for animation state. This is real `mesh.rs` design
+   work (a new `MeshMaterial` field plus its inheritance rule), not a
+   `romtool`/`pack.rs` lookup — read RE-064's inheritance test
+   (`crates/ssb-rom/src/mesh.rs`) before starting, since a wrong
+   inheritance rule for this marker would silently mis-attribute an
+   animation to the wrong primitive the same way a wrong texture/palette
+   inheritance rule once did.
+7. Once `mesh.rs` surfaces that marker, finish wiring `romtool`'s real
+   build loop: convert each resolved palette variant (reusing
+   `convert_texture`'s existing TLUT→ABGR8888 conversion, just per
+   variant instead of once) and call `add_mat_anim`/
+   `set_texture_mat_anim` for real, then verify archive-wide that the
+   pack's `mat_anim_count` matches RE-089's 33 (or however many `mesh.rs`
+   can now attribute) and that the pack still "loads back cleanly" and
+   Dream Land is still pixel-identical (nothing consumes `mat_anim` yet,
+   so no visual change is expected at this step).
+8. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
    wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each
    tick, and issues `sceGuClutLoad` with the corresponding palette
    before that primitive's draw — no combiner or vertex-recolouring
    work needed, since the PSP GE already separates indexed-texture image
    data from its palette.
-7. Verify on a stage that actually needs it — **not Dream Land**, whose
+9. Verify on a stage that actually needs it — **not Dream Land**, whose
    own material-animated layer is a `TraU`/`SetLFrac` texture-sway case,
    not `PaletteID` cycling (RE-086). ~~Finding which of the other 40
    stages has a representative palette-cycling layer~~ — done (RE-089):

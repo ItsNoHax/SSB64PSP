@@ -1006,6 +1006,27 @@ entry counts (2–4, 16, 18). `cargo test --workspace`: 238 passing (was
 remains is packing this into the runtime format (step 4) and the
 device-side wiring (steps 5–6).
 
+RE-091 shipped the format half of step 4: `MatAnimDesc`/`MatAnimPalette`
+(a new table pair, mirroring `AnimDesc`/`AnimJoint`'s shape) and
+`TextureDesc::mat_anim` (filling 4 bytes of existing padding, no size
+change), `pack::VERSION` 11 → 12, `PackWriter::add_mat_anim` deduplicating
+each driving script's whole source file the same way `add_anim` already
+does. Round-trip verified with 3 new unit tests; `cargo run --release -p
+romtool -- pack` against the real ROM builds cleanly and "loads back
+cleanly" at the new version. But wiring `romtool`'s real build loop to
+populate it found a genuine blocker, checked archive-wide before writing
+around it: all 33 real `PaletteID`-cycling `MObjSub`s have `sprite: None`
+— they never name their own texture image, so there is no `(file,
+offset)` pair on the animated `MObjSub` to key a texture correlation by.
+The texture a cycling palette actually applies to is whichever CI4/CI8
+image is already bound at that point in the node's draw sequence, tracked
+correctly today only by `mesh.rs`'s own cross-node state threading
+(RE-064) — populating `TextureDesc::mat_anim` for real needs that
+threading extended with an animation marker, a `mesh.rs`-level change,
+not more `romtool`/`pack.rs` plumbing. Deliberately left
+`TextureDesc::mat_anim` at `NO_ANIM` for every real texture rather than
+guess at a correlation.
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -1019,14 +1040,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [ ] material state updated correctly — RE-089/RE-090: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, and `mobj::read_palettes` reads the real array using that bound (33/33 correct archive-wide); still open: no pack table carries any of this yet, and nothing on the device side calls `MaterialJoint` or reloads a CLUT — this item is about the runtime pack/device pipeline, which is `PLAN.md`'s own steps 4–6, not the `ssb-rom`-level read path this and the prior two entries closed
+* [ ] material state updated correctly — RE-089/RE-090: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, and `mobj::read_palettes` reads the real array using that bound (33/33 correct archive-wide); RE-091 shipped the pack format (`MatAnimDesc`/`MatAnimPalette`/`TextureDesc::mat_anim`, round-trip verified) but found populating it for real is blocked on a `mesh.rs`-level change — every real animated `MObjSub` has `sprite: None`, so correlating it to a texture needs `mesh.rs`'s own cross-node state threading (RE-064), not `romtool`/`pack.rs` plumbing; nothing on the device side calls `MaterialJoint` or reloads a CLUT yet either
 * [ ] representative animated materials verified
 * [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114) but did not verify either on-screen
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088, RE-089, RE-090 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091 in `docs/reverse-engineering.md`.
 
 ---
 
