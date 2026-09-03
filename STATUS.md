@@ -12,12 +12,62 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`
+`R0.14 — Camera / Projection Correctness`
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`. RE-081 (this session) is a brief, self-contained
-detour into `R0.5` (matching RE-070's own precedent), picked from this
+`IN_PROGRESS` on `R0.14`. RE-082 (this session) picked up the fresh,
+unblocked candidate this file's own previous "Next Eligible Task" note
+pointed at, since both `R0.6` (blocked on `R0.7`) and `R0.5` (RE-081,
+just below, now looking like it needs real hardware) ran into real
+blockers this session.
+
+Re-audited RE-034's own long-standing loose end: after fixing the real
+viewport/projection mismatch it found, RE-034 reported a residual
+6.6% width/height error on the fighter's collision-diamond marker
+(`1.000` measured against `0.938` expected) and never explained it.
+Three independent re-measurement attempts this session — the same
+default-zoom screenshot with threshold-sensitivity analysis, and a
+temporary (reverted) `cam_distance` override in `psp/src/main.rs` for a
+bigger on-screen marker at two different zoom levels — produced three
+different ratios (`0.82`, `0.90`–`0.95`, `1.14`–`1.16`), straddling both
+`1.0` and the expected `0.9375` depending on method. This showed the
+marker (20–80 pixels depending on zoom) is too small for the
+single-digit-percent precision RE-034's own number implied, before
+concluding anything about a bug either way.
+
+Resolved it by reading the code instead of continuing to fight the
+screenshot: `psp/src/gu.rs`'s `Gpu::init` (which sets `sceGuViewport`/
+`sceGuScissor`) and `psp/src/main.rs` (which sets the projection's
+`aspect` parameter) both call the *same* `coord::pillarboxed_viewport()`
+and use its output directly — the exact two values RE-034's original bug
+had disagreeing cannot diverge again by construction. Checked the `psp`
+crate's `sceGumPerspective` binding itself (`sys/gum.rs`, VFPU assembly):
+it computes `m.x.x = cot(fovy/2)/aspect`, `m.y.y = cot(fovy/2)` — the
+standard textbook symmetric-frustum formula, no quirk. Combined with
+`coord.rs`'s own existing passing unit test pinning `pillarboxed_viewport`'s
+arithmetic, there is no remaining code path that could produce a real
+aspect-ratio defect. Concluded RE-034's residual was pixel-counting noise
+on a too-small shape, not a surviving bug — a correction to that entry's
+*confidence*, not to its *fix* (which stands, unchanged).
+
+`PLAN.md` R0.14 gains three newly-checked acceptance items: "viewport
+verified", "aspect ratio verified", and "N64/PSP resolution differences
+explicitly handled". Left deliberately open: "projection matrix
+verified" (this audited the aspect term specifically, not the `60.0`
+degree FOV constant's own provenance, which is the debug viewer's own
+arbitrary choice), "camera transforms verified" (no real game camera
+system exists yet to check against the original's), "depth mapping
+verified" (D-007's evidence is thinner than RE-034/RE-082's and was not
+re-audited this session), and "representative scenes compared" (no
+side-by-side N64-vs-PSP reference imagery exists). No code changed — the
+temporary `cam_distance` edit and all screenshots were reverted/discarded
+before finishing; `git diff` after this session's `R0.14` work is
+documentation-only, the same shape as RE-072/RE-076/RE-081.
+
+Immediately before this, RE-081 (this session) was a brief,
+self-contained detour into `R0.5` (matching RE-070's own precedent),
+picked from this
 file's own "push further on the dither" option once R0.6's combiner-shape
 work (RE-079/RE-080, below) ran into `R0.7`'s blocker. Resolved RE-053's
 long-standing apparent self-contradiction (its UV-span math said the
@@ -587,23 +637,35 @@ real blocker this session, recorded rather than papered over:
    decompilation coverage would just re-find the same ambiguous/untyped
    set RE-078 already found and correctly left alone.
 
-**Two fresher candidates, not touched this session, with concrete open
-acceptance items that do not depend on either blocker:**
+3. **`R0.14`'s remaining items need a real camera system or the decomp's
+   FOV, neither of which exists here yet.** RE-082 (this session) closed
+   "viewport verified", "aspect ratio verified" and "N64/PSP resolution
+   differences explicitly handled" — see above. What is left is
+   qualitatively different from what RE-082 could resolve by reading
+   `psp/` code: "projection matrix verified" needs the decompilation's
+   actual FOV/near/far values (this project's `60.0` degrees is the
+   debug viewer's own arbitrary pick, never cross-checked against
+   `refs/ssb-decomp-re`'s camera setup — a concrete, well-scoped lookup,
+   likely in a `camera`/`mpcamera`-named source file), and "camera
+   transforms verified"/"representative scenes compared" cannot be
+   verified at all until a real game camera exists — right now only the
+   debug viewer's free-roaming inspection camera does, and per `PLAN.md`
+   §5's gate, gameplay/camera systems are downstream of rendering
+   correctness, not the other way round. The FOV lookup is doable now
+   without waiting on that; the other two are not.
 
-3. **`R0.14` — Camera / Projection Correctness (`IN_PROGRESS`).**
-   Pillarboxed viewport and depth-range inversion are implemented and
-   verified (D-007/D-008), but "projection matrix verified", "camera
-   transforms verified" and "aspect ratio verified" are still unchecked
-   — nobody has cross-checked this project's projection math against
-   the decompilation's actual camera setup the way RE-065 did for
-   lighting or RE-068 did for geometry mode. `R0.12` (billboard
-   correctness, `VERIFYING`) explicitly depends on this and shares the
-   same open gap.
+**A concrete, ready candidate, not touched this session:**
+
 4. **`R0.12` — Billboard Correctness (`VERIFYING`).** Matrix kinds
    45–48 are implemented and A/B-verified under a rotated camera
    (RE-049), but "alpha behavior verified", "depth behavior verified"
    and the decomp's `rot_mode` choice between matrix kinds 45/46 are not
-   modelled or checked yet.
+   modelled or checked yet. Depends on `R0.8` (`COMPLETE`) and `R0.14`
+   (now further along after RE-082, though its own "camera transforms"
+   gap is shared and still open) — nothing here is blocked by either
+   dependency's remaining open items specifically, since billboards
+   already have their own working camera-facing math (RE-049), independent
+   of whatever the FOV constant turns out to be.
 
 Both are real, unstarted verification work with a clear "read the decomp,
 measure archive-wide, compare against what this project currently does"
