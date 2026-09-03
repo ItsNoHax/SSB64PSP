@@ -5359,3 +5359,88 @@ eyes/pupils, based on where else this shape appears — not confirmed to
 be any specific game element) was screenshotted before/after the way
 RE-074 did for its own combiner fix; only the unaffected Dream Land
 regression scene was.
+
+## RE-080 — A third combiner shape, flat constant colour, detected and packed
+
+**Question.** RE-079 identified but did not fix `(ZERO-ZERO)*ZERO+PRIM`
+(1,589 primitives archive-wide): a combiner that reduces to a plain
+constant colour with no shade or texel dependence at all, which neither
+`combiner_shade_scale` (needs an `s`/`st` term) nor `combiner_texture_blend`
+(needs a `t` term) can express. This picks that up.
+
+**The shape, generalised.** Not only `PRIM`-driven: the same
+archive-wide census also found `(ZERO-ZERO)*ZERO+ONE` (28 occurrences, a
+literal white constant reading no named colour at all) and
+`(ZERO-ZERO)*PRIM+ENV` (9 occurrences, `ENV` alone via a different slot
+arrangement). All three, and any other combination of constants and
+literal zeros, are the same underlying case in the `k`/`s`/`t`/`st` model
+`evaluate_combiner` already computes: `k_used` true, `s_used`/`t_used`/
+`st_used` all false. No new evaluator logic was needed — this is a
+different *classification* of the existing arithmetic, exactly the same
+relationship `combiner_shade_scale` and `combiner_texture_blend` already
+have to each other.
+
+**Added `combiner_flat_color`.** Mirrors `combiner_texture_blend`'s
+RE-079 gating fix from the start (only requires whichever of
+`PRIMITIVE`/`ENVIRONMENT` the shape actually reads, via `combiner_reads`,
+so a bare `ONE` needs neither set). Mutual exclusivity with the other two
+functions is structural, not coincidental: `combiner_shade_scale` requires
+`s_used || st_used`, `combiner_texture_blend` requires `t_used`, and
+`combiner_flat_color` requires *none* of `s_used`/`t_used`/`st_used` --
+the three conditions partition every combiner this model resolves at all
+into disjoint cases. Extended the existing
+`combiner_shade_scale_and_texture_blend_do_not_both_accept_the_same_shape`
+test to check all three pairwise instead of just two.
+
+**Wired further than RE-073 did for `texture_blend` at the same stage.**
+Added `MeshMaterial::flat_color: Option<[u8; 4]>`, computed in
+`material_now` alongside the other two. Unlike `texture_blend` (which
+RE-073 detected and packed but left device-side consumption for RE-074),
+this shape's implication for `texture` is unconditional and safe to act
+on immediately: `TEXEL` never enters the formula, so a bound texture
+would be sampled and multiplied in by the GE's default `Modulate`
+function for nothing real hardware does. `material_now` now forces
+`texture: None` whenever `flat_color` is `Some`, and `push_vertex` bakes
+the resolved colour into affected vertices the same way `prim_color`'s
+scale and `texture_blend`'s base colour already are (same content-keyed
+dedup safety argument RE-074 already established for that mechanism --
+not re-verified separately here since it is the identical code path).
+
+**Packed, not yet separately hardware-verified beyond the regression
+scene.** `pack.rs` gained `flags::FLAT_COLOR` and `PrimDesc::flat_color`
+(`PrimDesc::SIZE` 32 → 36 bytes, `VERSION` 10 → 11). Since the texture
+override already happens at conversion time (not deferred to the device),
+`psp/src/meshdraw.rs` needs no changes at all: an untextured primitive
+with a baked flat vertex colour already renders correctly through the
+existing untextured draw path, the same way any other untextured lit or
+unlit geometry does.
+
+**Measured, real, cross-checked side effect.** Repacking the whole
+archive after this change: bound textures **644 → 639**, mip-carrying
+textures **223 → 221**. Five textures were referenced *only* by
+primitives whose combiner never actually reads `TEXEL` at all --
+previously packed and uploaded for nothing, now correctly dropped since
+nothing draws with them any more. This is not a regression: it is the
+direct, predictable consequence of no longer binding a texture whose
+sampled value the real hardware's own combiner formula was already
+discarding.
+
+**Result.** `cargo test --workspace`: 368 passing (was 364; four new
+tests, no regressions) — three unit tests for `combiner_flat_color`
+itself (a bare `PRIM`, a bare `ONE` needing no colour set, and an unset
+`PRIM` the shape reads correctly declining) plus one integration test
+through `convert` confirming a textured display list's flat-colour
+primitive comes out untextured with its vertex baked. `cargo clippy
+--release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: Dream Land renders at 60 FPS; the debug overlay's
+own texture counter reads `0/639`, matching the repack, and the visible
+scene is unchanged (Dream Land's own geometry does not use this shape).
+
+**Confidence: high** for the classification and its mutual exclusivity
+with the other two functions (structural, provable from the three
+conditions' disjointness, not just tested on sampled shapes) and for the
+texture-count side effect (independently cross-checked against the
+repack's own reported numbers, not assumed). **Not independently
+confirmed on-device** beyond the unaffected regression scene: no specific
+flat-coloured primitive elsewhere in the archive was screenshotted
+before/after the way RE-074 did for its own combiner shape.

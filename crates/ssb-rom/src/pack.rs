@@ -59,7 +59,8 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 9 added `ALPHA_TEST`/`TRANSLUCENT` to `PrimDesc::flags` (RE-069).
 /// 10 added `TEXTURE_BLEND` and its base/target colours to `PrimDesc`
 ///    (RE-073).
-pub const VERSION: u32 = 10;
+/// 11 added `FLAT_COLOR` and its colour to `PrimDesc` (RE-079).
+pub const VERSION: u32 = 11;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -145,6 +146,13 @@ pub mod flags {
     /// `texture_blend_base`/`texture_blend_target` carry the two colours.
     /// Not yet consumed on the device side; see `MeshMaterial::texture_blend`.
     pub const TEXTURE_BLEND: u32 = 1 << 7;
+    /// RE-079: a combiner that reduces to a plain constant colour -- no
+    /// shade, no texel. `PrimDesc::flat_color` carries it; already baked
+    /// into the primitive's vertices (`push_vertex`) and `texture` is
+    /// already forced to `PrimDesc::NO_TEXTURE`, so this flag exists for
+    /// inspection, matching `TEXTURE_BLEND`'s precedent, not because the
+    /// device needs it to render correctly.
+    pub const FLAT_COLOR: u32 = 1 << 8;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -165,10 +173,12 @@ pub struct PrimDesc {
     /// `flags::TEXTURE_BLEND`'s target colour (packed ABGR), zero otherwise
     /// (RE-073).
     pub texture_blend_target: u32,
+    /// `flags::FLAT_COLOR`'s colour (packed ABGR), zero otherwise (RE-079).
+    pub flat_color: u32,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 32;
+    pub const SIZE: usize = 36;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -940,6 +950,9 @@ impl PackWriter {
             if m.texture_blend.is_some() {
                 f |= flags::TEXTURE_BLEND;
             }
+            if m.flat_color.is_some() {
+                f |= flags::FLAT_COLOR;
+            }
             let (blend_base, blend_target) = m.texture_blend.map_or((0, 0), |(base, target)| {
                 (
                     crate::psp_texture::pack_abgr(base),
@@ -956,6 +969,7 @@ impl PackWriter {
                 index_count: p.indices.len() as u32,
                 texture_blend_base: blend_base,
                 texture_blend_target: blend_target,
+                flat_color: m.flat_color.map_or(0, crate::psp_texture::pack_abgr),
             });
         }
 
@@ -1358,6 +1372,7 @@ impl PackWriter {
                 p.index_count,
                 p.texture_blend_base,
                 p.texture_blend_target,
+                p.flat_color,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -1839,6 +1854,7 @@ impl<'a> Pack<'a> {
             index_count: u32_at(self.data, at + 20),
             texture_blend_base: u32_at(self.data, at + 24),
             texture_blend_target: u32_at(self.data, at + 28),
+            flat_color: u32_at(self.data, at + 32),
         })
     }
 
