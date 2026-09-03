@@ -16,8 +16,60 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-087 (this session) picked up exactly where
-RE-086 left off: found which stage to target (a `PaletteID`-cycling
+`IN_PROGRESS` on `R0.10`. RE-088 (this session) attempted the concrete
+next step the previous session's own note pointed at — extending
+`mobj.rs` to read `MObjSub.palettes[1..]`, not just `[0]` — and retracted
+it after archive-wide measurement showed it does not work.
+
+Implemented a walk from `palettes[0]`'s array base, accepting each
+further entry only if it passed the same relocation-backed validity
+check `indirect`'s already-shipped entry-0 logic uses (real intern
+pointer, or a zero word with an extern relocation behind it), stopping
+at the first slot that failed, capped at 32 entries as a sanity bound.
+New unit tests against synthetic fixtures passed cleanly and made the
+approach look sound — the fixtures are sparse, single-purpose byte
+arrays with nothing else nearby that could accidentally look like a
+pointer, which is exactly the condition that does not hold in a real
+ROM file.
+
+Before trusting it, measured archive-wide via a temporary `romtool`
+census (reverted, not committed, matching RE-079/081's pattern): of 243
+palette-carrying materials, **110 (45%) hit the artificial 32-entry cap
+outright**. Traced one concretely (file 75 `MVOpeningRunCrash`, `MObjSub`
+at `0x2C60`) by dumping every word the walk read: the "entries" were a
+perfect arithmetic sequence (`1280, 1240, 1200, ... 280`, stride `-40`,
+26 steps) that wraps and repeats identically at index 26 — not a real
+palette-pointer table, but the walk wandering into unrelated, densely
+pointer-laden neighbouring file data (Vtx arrays, DL fragments,
+sub-object pointers) once it ran past the table's true end. Root cause:
+`is_ptr` proves a slot was *some* relocated pointer in the original
+compiled file, not that it belongs to *this* array — and real files are
+dense enough with pointers that a fixed stride past a table's end
+reliably keeps finding something that validates.
+
+Reverted the change completely (`git checkout` on `crates/ssb-rom/src/
+mobj.rs` and `tools/romtool/src/main.rs`) rather than ship a
+measurably-wrong heuristic. Checked whether any purely-local alternative
+exists: the decomp's own two real `palettes[]` examples already disagree
+on shape (`328_KirbyModel.c`'s is NULL-terminated at index 5;
+`117_StageMetalFile2.c`'s 16-entry table has no terminator and runs
+straight into the next struct), and a NULL mid-table is not reliably a
+sentinel either — some real tables legitimately have a "no palette here"
+entry that is not the end. There is no length recoverable from this
+array's own bytes. Recorded as RE-088 in `docs/reverse-engineering.md`,
+with `PLAN.md` R0.10 updated to reflect the correction — `mobj.rs` itself
+is byte-for-byte unchanged from the previous commit.
+
+**This changes the shape of the remaining pipeline.** `STATUS.md`'s own
+prior note framed "extend `mobj.rs`" and "resolve `p_matanim_joints`" as
+sequential steps 2 and 3. They are not separable that way: the palette
+table's true length is only knowable once the driving material animation
+script is decoded and its max `PaletteID` payload is known, so reading
+`palettes[]` has to happen *at* the point a node's script reference is
+resolved, using the script's own bound, not beforehand in isolation.
+
+Immediately before this, RE-087 (previous session) picked up exactly
+where RE-086 left off: found which stage to target (a `PaletteID`-cycling
 script, via a temporary `romtool` subcommand, reverted) and decoded it
 byte-for-byte instead of guessing at the runtime engine's shape from the
 track-category census alone.
@@ -845,16 +897,28 @@ a lookup:
 1. ~~A tick-based decoder for the material/colour track windows~~ — done
    (RE-087, `matanim::MaterialJoint`, 7 unit tests, verified against the
    real `PaletteID`-cycling shape including its `SET_ANIM` loop).
-2. Extend `mobj.rs` to read `MObjSub.palettes[1..]`, not just `[0]`
-   (`F_PALETTES`, gated on `MOBJ_FLAG_PALETTE`) — the raw data for every
-   palette a script cycles through already exists in the ROM and is
-   currently discarded past the first entry.
+2. ~~Extend `mobj.rs` to read `MObjSub.palettes[1..]` on its own~~ —
+   **tried and retracted (RE-088)**. The struct has no length field, and
+   an `is_ptr`-validated walk from `palettes[0]` looked sound in unit
+   fixtures but, measured archive-wide against the real ROM, produced
+   nonsense for 45% of cases (a repeating arithmetic sequence from
+   unrelated neighbouring file data, not a palette table, traced
+   concretely in file 75). There is no way to bound this array's real
+   length from its own bytes. Do not re-attempt this exact approach
+   without a new source of length information — that source is step 3
+   below, which this step now has to happen *inside*, not before.
 3. Resolve `p_matanim_joints` into per-(node, MObj-chain-position)
    script references, parallel to how `mobjsub_table` already resolves
    per-(node, MObj-chain-position) materials (RE-086's temporary census
    already proved this indexing scheme works: `p_matanim_joints[node]`
    is a pointer to a per-MObj-chain-position script array, walked in
-   lockstep with the same chain `mobjsub_table` walks).
+   lockstep with the same chain `mobjsub_table` walks). **Do this first**,
+   then read `palettes[]` bounded by the resolved script's own maximum
+   `PaletteID` payload (decode the script with `MaterialJoint`/its
+   underlying `Aobj` tracks, take the largest value any `SET_VAL`/
+   `SET_VAL_AFTER_BLOCK` on the `PaletteID` track ever sets, and read
+   exactly that many `palettes[]` entries) — the script supplies the
+   length the ROM's own struct layout cannot.
 4. Pack every palette a texture's animation cycles through (not just the
    first), plus the resolved per-primitive script reference, into the
    runtime format — likely a new table pair mirroring `AnimDesc`/
