@@ -6864,3 +6864,86 @@ FighterPartsDObj` → `gcPlayMObjMatAnim` → `mobj->palette_id` →
 `mobjsub->palettes[palette_id]` is a complete, traced chain from the
 fighter costume call site to the same array this project's own
 `mobj::read_palettes` already parses.
+
+---
+
+## RE-097 — `colors_at` now reads `PaletteID`; costume palettes wired at pack time, verified end to end against the real ROM
+
+**Question.** RE-096's handoff: `colors_at` decodes `PRIM`/`ENV`/`BLEND`
+but never `PaletteID`, even though 45% (200/441) of real fighter costume
+scripts carry one and the draw path genuinely reads
+`mobjsub->palettes[(s32)mobj->palette_id]`. Does adding that read and
+wiring it into `pack`'s existing costume-colour step actually change
+anything real, or was RE-096's "silently stays at costume 0's" framing
+itself wrong?
+
+**Implementation.** `colors_at` (`crates/ssb-rom/src/matanim.rs`) already
+walks every joint-track command to keep the byte stream synchronised, it
+just discarded the values for tracks other than the five colour ones.
+Added a second `Track` accumulator (`palette`) fed by the exact same
+step/base/target/`length_invert` bookkeeping the colour tracks already
+use, populated only when a non-`EXT_*` command's flags name
+[`TRACK_PALETTE_ID`] (joint track 9) — one `else if` inside the existing
+bit-loop, no new opcode handling. Read back through the same
+"age-by-one-tick-then-compare-`length_invert`-to-`length`" rule
+`read()` already applies to colour, except the resolved word is
+`f32::from_bits` (RE-087: a joint track's raw word is a genuine float,
+not colour bytes) cast to `i32` — the identical cast
+`objdisplay.c`'s `(s32)mobj->palette_id` performs. `Colors` gained a
+`palette_id: Option<i32>` field; `costume_colors` needed no changes at
+all, since it already just layers `colors_at` over `resolve_scripts`.
+
+Wired into `tools/romtool/src/main.rs`'s `Loaded::materials`, the same
+loop that already bakes `prim_color`/`env_color`/`blend_color` from
+`costume_colors`: when a chain position's resolved `Colors` carries a
+`palette_id`, calls the already-shipped `mobj::read_palettes(file, m.at,
+id + 1)` (RE-090's bound-supplied reader, previously only ever called
+from the stage material-animation path) and overwrites `m.palette` with
+entry `id` — the same array, the same reader, a different caller.
+
+**Verified capable of doing something, not just compiling.** Four new
+`matanim` unit tests reproduce the real archive shape by hand-tracing the
+shared-clock semantics `mario_arm`'s existing colour test already
+exercises (a costume list is one command per costume, `Wait(97)` parking
+the clock after the last one): stepping `PaletteID` one costume per
+frame, reading a real `0x3F800000`-style IEEE-754 word rather than a
+small-integer reinterpretation, and colour/`PaletteID` tracks coexisting
+in one script without clobbering each other. `cargo test --workspace`:
+394 passing (was 390).
+
+**Result, run against the real ROM.** Rebuilding the pack at the default
+costume (0) is byte-for-byte unchanged (648 textures, 4492.4 KiB, every
+other figure identical to the pre-change baseline) — not a null result
+left unexamined: a temporary, reverted census (`eprintln!` in the same
+loop, matching RE-079/081/089's pattern) confirmed the new code path
+genuinely fires 198 times archive-wide and every one of those 198
+resolves `palette_id = 0` at costume 0, meaning the pack is unchanged
+because costume 0's `PaletteID` really is 0 everywhere, not because the
+read silently failed. Re-running the same census with `DEFAULT_COSTUME`
+temporarily set to `1.0` confirmed the mechanism is real and not
+hardcoded: 188/198 resolve to `id = 1` (10 stay `0`, plausibly costumes
+that share a palette), and `read_palettes` succeeded for all 198 with
+zero failures and zero short reads. `cargo clippy --release
+(workspace)`: clean. `cargo psp --release` + `tools/run-ppsspp.sh
+--seconds 8`: builds clean, runs 8 seconds with no panics, `FPS: 60.0`,
+screenshot has 31k+ distinct colours (not a blank/locked screen).
+
+**What this does and does not close.** `R0.11`'s own concrete lead
+(`costume_colors` needs a sibling `PaletteID` read feeding which packed
+palette variant a costume bakes) is implemented and verified end to end:
+decode script → resolve at a given costume → read the real
+`palettes[]` entry → bake it into the mesh material. It does **not**
+close `R0.11` — the task's five acceptance items ("all fighter palettes
+identified", "all required costumes identified", "runtime representation
+complete", "palette data verified against ROM", "representative
+regression renders added", "all required fighters verified") are about
+packing/verifying *every* costume, not just proving costume 0 is
+unaffected by this change. The pack still only ever builds one costume
+(`DEFAULT_COSTUME = 0.0`) at a time; multi-costume packing/selection is
+still unimplemented, unchanged by this session.
+
+**Confidence: high.** The archive-wide before/after comparison (not a
+single hand-picked example) shows the mechanism does nothing at costume 0
+and something real and non-degenerate at costume 1, which is exactly what
+correct behaviour should look like given RE-096's own finding that
+`PaletteID` scripts are direct costume-index maps for the common case.
