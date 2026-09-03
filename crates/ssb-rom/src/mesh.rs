@@ -1268,18 +1268,31 @@ fn walk(
             // address is not "no texture": the archive zeroes a pointer that
             // leaves the file and records it as an extern relocation instead,
             // which is how every stage reaches its texels (RE-037).
-            Cmd::SetTimg { addr, slot, .. } => match (addr.0, src.extern_at(slot)) {
-                (0, Some((target_file, offset))) => {
-                    state.timg_addr = Some(offset);
-                    state.timg_file = Some(target_file);
-                    state.real_timg = Some((offset, Some(target_file)));
+            Cmd::SetTimg { addr, slot, .. } => {
+                // A display list only reconfigures the RDP's texture-image
+                // register to sample it -- so a fresh `G_SETTIMG` implies
+                // texturing is active regardless of a stale inherited `off`
+                // (RE-093/094). Real stage data does this: an explicit
+                // `Texture{on: false}` for one node's own untextured
+                // decal can precede several later, unrelated nodes that
+                // reissue their own complete `G_SETTIMG`/`G_SETTILE`/
+                // `G_LOADBLOCK` chain and draw textured, with no
+                // `Texture{on: true}` of their own to undo the earlier
+                // `off` -- `Cmd::Texture` alone cannot be the sole signal.
+                state.texture_enabled = true;
+                match (addr.0, src.extern_at(slot)) {
+                    (0, Some((target_file, offset))) => {
+                        state.timg_addr = Some(offset);
+                        state.timg_file = Some(target_file);
+                        state.real_timg = Some((offset, Some(target_file)));
+                    }
+                    _ => {
+                        state.timg_addr = Some(addr.0);
+                        state.timg_file = None;
+                        state.real_timg = Some((addr.0, None));
+                    }
                 }
-                _ => {
-                    state.timg_addr = Some(addr.0);
-                    state.timg_file = None;
-                    state.real_timg = Some((addr.0, None));
-                }
-            },
+            }
 
             Cmd::SetTile {
                 format,
@@ -2501,11 +2514,31 @@ mod tests {
         assert_eq!(tex.size, BitSize::Bits4, "staging tiles must not leak in");
     }
 
+    /// A `G_SETTIMG` implies texturing is meant to be active (RE-093/094:
+    /// real stage data reissues the whole texture chain with no `Texture{on:
+    /// true}` of its own), so the disabled case has to be tested with an
+    /// *explicit* `Texture{on: false}` after full state is present, not by
+    /// omitting `Texture{on: true}` and relying on some other field being
+    /// incidentally absent too.
     #[test]
     fn texture_disabled_means_no_binding() {
         let file = vertex_data(3);
         let cmds = [
             vtx(3),
+            Cmd::SetTile {
+                format: 2,
+                size: 0,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
             Cmd::SetTimg {
                 format: 0,
                 size: 2,
@@ -2520,11 +2553,118 @@ mod tests {
                 lrs: 7 << 2,
                 lrt: 7 << 2,
             },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: false,
+                scale_s: 0,
+                scale_t: 0,
+            },
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(mesh.primitives[0].material.texture.is_none());
+    }
+
+    /// RE-093/094: real stage data (file 105's `StageZebesFile2`, nodes 21-27)
+    /// calls one node with an explicit `Texture{on: false}` and no
+    /// `G_SETTIMG` of its own (drawing a plain vertex-coloured triangle),
+    /// immediately followed by several unrelated nodes that each reissue a
+    /// complete `G_SETTIMG`/`G_SETTILE`/`G_LOADBLOCK` chain and draw
+    /// genuinely textured geometry -- with no `Texture{on: true}` of their
+    /// own to undo the earlier `off`. `Cmd::Texture` alone cannot be the
+    /// sole signal for whether a later, unrelated node's own fresh texture
+    /// setup is meant to be sampled.
+    #[test]
+    fn a_later_nodes_own_settimg_overrides_an_inherited_texture_off() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let ci4_tile = || Cmd::SetTile {
+            format: Format::Ci as u8,
+            size: BitSize::Bits4 as u8,
+            line: 2,
+            tmem: 0,
+            tile: 0,
+            palette: 0,
+            cm_s: 2,
+            cm_t: 2,
+            mask_s: 5,
+            mask_t: 5,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        // Node A: an untextured decal, matching the real shape exactly --
+        // no `G_SETTIMG` of its own, just an explicit disable.
+        let node_a = [
+            Cmd::SetCombine { hi: 0x00FF_FFFF, lo: 0xFFFF_FDFC },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: false,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        // Node B: an unrelated node with its own complete texture chain and
+        // no `Texture{on: true}` at all.
+        let node_b = [
+            ci4_tile(),
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x300),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::SetTimg {
+                format: 2,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &node_a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+            SequenceItem {
+                cmds: &node_b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+        ];
+        let meshes: Vec<_> = convert_sequence(&items, Source::bare(&file))
+            .into_iter()
+            .map(Result::unwrap)
+            .collect();
+        assert!(
+            meshes[0].primitives[0].material.texture.is_none(),
+            "node A's own explicit disable must still hold"
+        );
+        let tex = meshes[1].primitives[0]
+            .material
+            .texture
+            .expect("node B's own fresh G_SETTIMG must resolve, not inherit node A's off");
+        assert_eq!(tex.data_offset, 0x400);
     }
 
     #[test]

@@ -6582,3 +6582,85 @@ signature of a correlation fix rather than a new-texture side effect, and
 a clean on-device run. **Not confident**, and explicitly unresolved: why
 8 scripts still don't survive (the `texture_enabled` inheritance question
 above is the concrete lead, not yet checked).
+
+## RE-094 — `Cmd::Texture`'s inherited `off` was suppressing a later node's own complete texture setup
+
+**Question.** RE-093 left the remaining 8-of-33 gap pointed at one concrete
+lead: file 105 node 27's `texture_enabled` was `false` for its entire span
+despite the node actively loading TLUTs and, for 3 of 7 entries, issuing
+real `G_SETTIMG`/`G_LOADBLOCK` pairs. Is that a real bug in `mesh.rs`'s
+cross-node state threading, or a correct reflection of the real ROM?
+
+**Investigation.** Traced `texture_enabled` node-by-node (temporary
+instrumentation, reverted) across file 105's whole graph in draw order.
+It flips to `false` exactly once, mid-way through **node 20's own list**:
+`SetCombine → Texture{on: false} → one untextured triangle` — a
+deliberate, self-contained decal with no `G_SETTIMG` of its own at all.
+From node 21 through node 27 (seven nodes), **nothing reissues
+`Texture{on: true}`**, yet four of those seven nodes (21, 22, 24, 26) each
+issue a complete, independent `G_SETTIMG`+`G_SETTILE`+`G_LOADTLUT`+
+`G_LOADBLOCK` chain and draw real triangles — behavior that only makes
+sense with texturing genuinely active. `mesh.rs`'s `Cmd::Texture` handling
+had no mechanism to recover from this: once `off`, only an explicit
+`Texture{on: true}` could clear it, and the real ROM data shows that
+assumption is false for whole spans of real display lists.
+
+Measured the blast radius archive-wide before designing a fix (temporary
+`RE093_IGNORE_ENABLE` bypass on `current_texture()`'s gate, reverted):
+ignoring `texture_enabled` outright takes the pack from 639→648 textures
+and 25/33→33/33 surviving `mat_anim` scripts, with meshes/triangles
+unchanged — confirming the scope (9 static textures, 8 scripts) and that
+nothing else regresses numerically. But a blanket ignore is not
+*correct*: it would also force node 20's own deliberately-untextured
+decal textured again using whatever stale binding preceded it, since that
+node has no `G_SETTIMG` of its own to distinguish it.
+
+**Fix.** A narrower, evidence-backed rule: `Cmd::SetTimg` now sets
+`state.texture_enabled = true` unconditionally. A display list only
+reconfigures the RDP's texture-image register to sample it — there is no
+reason to reissue `G_SETTIMG`/`G_SETTILE`/`G_LOADBLOCK` for geometry drawn
+untextured — so a fresh `G_SETTIMG` is itself as strong a signal as an
+explicit `Texture{on: true}`. Re-measured with this narrower rule instead
+of the blanket bypass: **identical result** (639→648 textures, 25→33
+scripts), because none of the real gap cases relied on `Texture{off}`
+persisting across a node with no `G_SETTIMG` of its own — node 20, the one
+case that does fit that shape, is untouched by the fix (it never calls
+`SetTimg` at all). `Cmd::Texture{on: false}` remains fully authoritative
+whenever it *is* the last relevant command before a triangle draws — the
+fix only overrides a *stale, inherited* `off` that a later node's own
+fresh texture setup clearly means to leave behind.
+
+**Verified the existing "disabled" test wasn't accidentally validating
+something else.** `texture_disabled_means_no_binding` previously proved
+its point by omitting `Cmd::SetTile` and `Cmd::Texture` entirely, so
+`current_texture()`'s `None` result was actually caused by a missing tile
+format, not by the disabled flag the test's name claims to cover — this
+fix would have left that test passing for the wrong reason. Rewrote it
+with a complete texture setup followed by an *explicit*
+`Texture{on: false}`, so it now actually exercises the disabled path.
+Added `a_later_nodes_own_settimg_overrides_an_inherited_texture_off`,
+reproducing file 105 nodes 20→21's exact shape (an untextured decal with
+no `SetTimg`, followed by an unrelated node with a complete texture chain
+and no `Texture{on: true}`), asserting the first primitive stays
+untextured and the second resolves. Verified it fails without the fix
+(reverted the `SetTimg` change, confirmed the panic, restored). `cargo
+test --workspace`: 245 passing (was 244).
+
+**Result, run against the real ROM: 25 → 33 of 33 known scripts now
+survive** (297 → 321 palette variants) — every one of RE-089's originally
+found scripts. Texture count 639 → 648 (+9, all static, non-animated
+textures that were being silently dropped the same way). `draws` in the
+`romtool pack` summary rose 3447 → 3494 (more primitives now correctly
+split into their own textured group instead of merging into an untextured
+one). Meshes and triangles unchanged. `cargo clippy --release`
+(workspace): clean. `cargo psp --release` + `tools/run-ppsspp.sh`: builds
+and runs clean, no panics, Dream Land pixel-identical at 60 FPS.
+
+**Confidence: high.** Grounded in the same raw-ROM-dump discipline as
+RE-093 (not a synthetic guess), a test proven capable of failing, and an
+archive-wide measurement that let a *narrower* rule be chosen over a
+blanket one precisely because the narrower rule reproduced the full
+positive result with a clear mechanism for why the risky case (node 20)
+is unaffected. `PLAN.md` R0.10's known-script survival rate is now 33/33
+— the open question from RE-092/093 is fully closed, not partially
+explained.
