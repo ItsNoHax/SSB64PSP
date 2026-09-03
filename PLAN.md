@@ -486,6 +486,26 @@ real game's geometry should have. Fixed by seeding from a new
 from the (already-packed, previously-unread) `Z_BUFFER` flag. This
 affects every object this project converts, not one stage or file.
 
+RE-069 decoded `G_SETOTHERMODE_L`'s render-mode field (`mesh.rs` had never
+read it at all) into `alpha_test`/`translucent`, cross-checked against
+`gbi.h`'s own `GBL_c1`/`GBL_c2` macros and `refs/BattleShip`'s interpreter
+(a naive `FORCE_BL`-means-blend signal is wrong — the opaque default sets
+it too). Measured archive-wide: 36.1% of non-default render modes are
+cutout (`TEX_EDGE`-family) surfaces, 14.4% genuinely translucent. Shipped
+`alpha_test` (`psp/src/meshdraw.rs` now toggles `sceGuAlphaFunc`, matching
+`refs/sf64-psp`'s validated real-hardware approximation) after finding and
+fixing a bug where untextured lit primitives were being alpha-tested
+against a packed-normal byte, not a real coverage value, and discarding
+themselves outright (46/380 archive-wide; visibly deleted Dream Land's
+decorative flowers before the fix). Found a *second*, harder bug in
+`translucent` specifically — enabling real blending on Dream Land's
+canopy-highlight surface produced a checkerboard, not a soft blend, almost
+certainly the same open dithered-texture/coverage problem RE-053 already
+found for the canopy's opaque path — and left it deliberately unconsumed
+on the device side (`pack.rs`'s detection ships; `meshdraw.rs` does not
+read the flag yet) rather than shipping an unverified visual change to
+this project's primary test scene.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -502,12 +522,16 @@ Reproduce original SSB64 material behavior.
 * [ ] primitive color verified
 * [ ] environment color verified
 * [ ] lighting verified
-* [ ] alpha behavior verified
-* [ ] blending verified
+* [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
+* [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard, likely the same open dithered-texture/coverage problem as RE-053 — needs that investigated first, see RE-069's "second bug" section
 * [ ] fog verified
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
 * [ ] unsupported material behavior identified
+
+### Evidence
+
+RE-065, RE-068, RE-069 in `docs/reverse-engineering.md`.
 
 ### Evidence
 

@@ -16,33 +16,63 @@
 
 ## Task Status
 
-`IN_PROGRESS`. RE-068 (this session) found and fixed a structural gap far
-bigger than the "depth state verified" item it started from: read
-`refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList`, replayed
-once per frame (`taskman.c:308`) before any object draws, and found it
-sets `G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH` **on** by
-default — not all-off. `crates/ssb-rom/src/mesh.rs`'s `State::new()`
-seeded an all-off `MeshMaterial::default()` instead, so any node whose own
-list never mentioned geometry mode (the common case, since this state
-is normally set once per frame, not per node — the same structural shape
-as RE-021's lighting finding, one level up) converted as unculled,
-flat-shaded and non-depth-tested. Measured archive-wide: `Z_BUFFER` went
-from 6/3426 packed primitives (0.17%) to 3384/3442 (98.3%) after seeding
-from a new `MeshMaterial::rdp_default()` instead; `CULL_BACK` measured
-86.3%, `SMOOTH` 76.5% post-fix — the shape a real game's geometry should
-have. Also wired `psp/src/meshdraw.rs`'s `apply_material` to actually
-toggle `GuState::DepthTest` per primitive from the `Z_BUFFER` flag (it was
-already packed, just never read on the device side). This affects every
-object this project converts, not one file. Verified via a new unit test,
-the full workspace suite, and a before/after pixel diff on Dream Land
-(small, localized change, ~0.4% of pixels — consistent with a scoped
-correctness fix, not a regression). `PLAN.md` R0.6's "depth state
-verified" and "culling verified" items are checked; the same reset list
-gives leads for the still-open "alpha behavior", "blending" and "fog"
-items (`G_AC_NONE`, `G_RM_OPA_SURF`, `G_CC_SHADE` defaults), not yet acted
-on.
+`IN_PROGRESS`. RE-069 (this session) decoded `G_SETOTHERMODE_L`'s
+render-mode field for the first time (`mesh.rs` never read it at all) into
+`alpha_test`/`translucent`. A naive "`FORCE_BL` bit means blending" signal
+is wrong — the RDP reset's own opaque default sets it too — so the real
+signal (whether the blend equation reads the framebuffer weighted by
+`1 - alpha`) was cross-checked against `gbi.h`'s macros and
+`refs/BattleShip`'s interpreter. Measured archive-wide: 36.1% of
+non-default render modes are cutout (`TEX_EDGE`-family) surfaces, 14.4%
+genuinely translucent — both previously completely unimplemented on the
+PSP side.
+
+Shipped `alpha_test`: `psp/src/meshdraw.rs` now toggles `sceGuAlphaFunc`,
+matching `refs/sf64-psp` (a real, shipped N64-to-PSP port doing this exact
+translation at runtime) rather than inventing an approximation. Found and
+fixed a real bug before shipping: untextured lit primitives were being
+alpha-tested against a packed-normal byte, not real coverage, and
+discarded themselves outright (46/380 archive-wide) — this visibly deleted
+Dream Land's decorative flower triangles on device; confirmed the exact
+fix (gating both flags on a texture being bound in `material_now()`) by
+reproducing the bug, fixing it, and watching the flowers return with a
+targeted before/after diff.
+
+Found a second, harder bug in `translucent` specifically and did **not**
+ship it: enabling `GuState::Blend` from it turned Dream Land's
+canopy-highlight surface into a checkerboard, isolated to blend
+specifically (not alpha test) by toggling each independently. The render
+mode itself is genuinely translucent per the decomp (not a detection
+bug) — the likely cause is the same open dithered-texture/coverage
+problem RE-053 already found for the canopy's opaque path, now visible
+through the blend path too. `psp/src/meshdraw.rs` leaves `Blend`
+permanently disabled with a comment explaining why; `mesh.rs`/`pack.rs`'s
+detection ships anyway since it's correct and tested independent of the
+open rendering question. `PLAN.md` R0.6's "alpha behavior verified" item
+is checked; "blending verified" stays open, now with a concrete
+next-investigation pointer instead of no information at all.
 
 ## Last Completed Task
+
+R0.6 — Material System Correctness — RE-068 (earlier this session) found
+and fixed a structural gap far bigger than the "depth state verified"
+item it started from: read `refs/ssb-decomp-re/src/sys/rdp.c`'s
+`sSYRdpResetDisplayList`, replayed once per frame (`taskman.c:308`) before
+any object draws, and found it sets `G_ZBUFFER | G_SHADE | G_CULL_BACK |
+G_SHADING_SMOOTH` **on** by default — not all-off. `crates/ssb-rom/src/
+mesh.rs`'s `State::new()` seeded an all-off `MeshMaterial::default()`
+instead, so any node whose own list never mentioned geometry mode (the
+common case, since this state is normally set once per frame, not per
+node — the same structural shape as RE-021's lighting finding, one level
+up) converted as unculled, flat-shaded and non-depth-tested. Measured
+archive-wide: `Z_BUFFER` went from 6/3426 packed primitives (0.17%) to
+3384/3442 (98.3%) after seeding from a new `MeshMaterial::rdp_default()`
+instead; `CULL_BACK` measured 86.3%, `SMOOTH` 76.5% post-fix — the shape a
+real game's geometry should have. Also wired `psp/src/meshdraw.rs`'s
+`apply_material` to actually toggle `GuState::DepthTest` per primitive
+from the `Z_BUFFER` flag (it was already packed, just never read on the
+device side). `PLAN.md` R0.6's "depth state verified" and "culling
+verified" items are checked.
 
 R0.5 — Texture Filtering / LOD / Mipmapping — RE-067 (earlier this
 session) traced `G_TX_MIRROR` (RE-066's one real, quantified gap) directly
@@ -169,34 +199,44 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.6 — Material System Correctness` remains `IN_PROGRESS` after RE-068's
-geometry-mode-default fix (depth state and culling now checked). The same
-`sSYRdpResetDisplayList` reset list RE-068 read gives concrete, sourced
-leads for three of its remaining open items, not yet acted on: `G_AC_NONE`
-(alpha compare off by default — "alpha behavior verified"), `G_RM_OPA_SURF`/
-`G_RM_OPA_SURF2` (opaque render mode, no blending, by default — "blending
-verified"), and `G_CC_SHADE`/`G_CC_SHADE` (shade-only combiner by default
-— overlaps "combiner behavior verified"). The pattern that already paid
-off twice this session (RE-065's lighting angle, RE-068's geometry mode)
-is: find where the decompilation sets the *default* before checking
-whether `mesh.rs`'s current "unset means declined" fallback actually
-matches it, the way it happened to for the combiner already. "Material
-tables resolved", "primitive color verified" and "environment color
-verified" are less scoped — worth reading `PLAN.md` R0.6's acceptance list
-fresh rather than assuming. `R0.5 — Texture Filtering / LOD / Mipmapping`
-remains `IN_PROGRESS` too — RE-066/RE-067 closed its wrap/clamp/mirror
-items, but filtering modes, magnification/minification/LOD behavior, and
-the still-open "Dream Land canopy discrepancy resolved" item (RE-053's
-separate magnification/dithering diagnosis, unresolved) are real remaining
-work. Given RE-067 pushed packed texture VRAM to 1059 KiB (1.5x the
-~700 KiB budget, `docs/memory.md`), `TODO.md` Phase G's "texture
-streaming" item is also a strong candidate — it was optional headroom
-before this session, and is not anymore. `R0.4`'s own remaining item ("all
-missing palette cases resolved") is already fully attributed to `R0.7`'s
-file-86 long tail, so R0.4 has no further independently-actionable work.
-`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
-accepted long tail — only worth revisiting if the upstream decompilation
-types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
+Two concrete, well-scoped options, both with a real starting point already
+recorded rather than an open-ended search:
+
+1. **Resolve RE-053/RE-069's dithered-texture/coverage problem**, which now
+   blocks two things at once: R0.5's "Dream Land canopy discrepancy
+   resolved" and R0.6's "blending verified" (`translucent` is detected and
+   packed but not consumed on device pending this). The symptom is
+   consistent across both the opaque path (RE-053: a pattern that sharpens
+   at higher resolution, i.e. magnification, not minification) and the
+   blend path (RE-069: a checkerboard instead of a soft highlight) — both
+   are a dithered, binary-alpha (RGBA5551) CI4 texture that the RDP
+   resolves through multisampled coverage/filtering the PSP GE has no
+   equivalent for. Concrete next step: determine what filtering or
+   conversion-time dither resolution would actually fix this (RE-053
+   already ruled out mipmapping specifically), test on the exact surfaces
+   named in RE-053 (file 103 offset `0xE20`) and RE-069 (offset `0x5F0`),
+   then decide whether to enable `translucent` afterward.
+2. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
+   "primitive color verified", "environment color verified", "combiner
+   behavior verified" (partially covered by RE-039/RE-043 already but not
+   marked), "fog verified" (D-025 already found fog is used twice
+   game-wide, likely low-value), "unsupported material behavior
+   identified". Read `PLAN.md` R0.6's acceptance list fresh rather than
+   assuming — the pattern that has paid off three times this session
+   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode)
+   is: find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
+   *default* for whatever's being checked before assuming `mesh.rs`'s
+   current "unset means declined" fallback already matches it.
+
+`TODO.md` Phase G's "texture streaming" item is also a strong, independent
+candidate — packed texture VRAM is at 1059 KiB (1.5x the ~700 KiB budget,
+`docs/memory.md`) after RE-067's mirror fix, no longer optional headroom.
+`R0.4`'s own remaining item ("all missing palette cases resolved") is
+already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
+further independently-actionable work. `R0.7` remains technically
+`IN_PROGRESS` but its remaining scope is an accepted long tail — only
+worth revisiting if the upstream decompilation types
+`llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
 instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
@@ -376,6 +416,26 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.6: alpha test shipped, translucency detected but deferred (RE-069)
+
+* Wrote a temporary probe (`crates/ssb-rom/examples/tmp_rendermode_scan.rs`, deleted before commit) decoding `G_SETOTHERMODE_L`'s alpha-compare and render-mode fields archive-wide: alpha compare nearly even (278 `G_AC_NONE` vs 269 `G_AC_THRESHOLD`); 12 distinct render-mode values across 360 non-default `G_SETRENDERMODE` commands
+* Initially checked `FORCE_BL` as the "needs blending" signal — wrong: `G_RM_OPA_SURF` (the RDP reset's own opaque default) sets it too, with an equation that evaluates to no real blending; found the correct signal (blend equation reads the framebuffer weighted by `1 - alpha`) by reading `gbi.h`'s `GBL_c1`/`GBL_c2` macros directly and cross-checking against `refs/BattleShip`'s interpreter, which tests the identical bit positions
+* Measured with the corrected signal: 130/360 (36.1%) cutout (`TEX_EDGE`-family) surfaces, 52/360 (14.4%) genuinely translucent
+* Consulted `refs/sf64-psp` (a real, shipped N64-to-PSP port doing this same RDP-to-GE translation at runtime) for the actual approximation to use: `sceGuAlphaFunc(GU_GREATER, 0, 0xFF)` for cutouts, standard `sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA)` for translucency
+* Implemented `crates/ssb-rom/src/mesh.rs`'s `alpha_test`/`translucent` decode (`render_mode_is_translucent` mirrors the GBI macros' bit layout directly), `pack.rs`'s `flags::ALPHA_TEST`/`TRANSLUCENT` (pack version 8→9), and `psp/src/meshdraw.rs`'s `sceGuAlphaFunc`/`sceGuBlendFunc` wiring
+* Found a real bug via on-device testing before shipping: 46/380 `alpha_test` and 7/362 `translucent` primitives had no texture bound, so they were testing/blending against a packed-normal byte (lit vertices' alpha is not a coverage value — `push_vertex`'s own doc comment) instead of real coverage; this visibly deleted Dream Land's decorative flower triangles. Reproduced the bug, fixed it (`material_now()` now gates both flags on `texture.is_some()`), and confirmed the flowers return with a targeted before/after diff
+* Found a second bug specifically in `translucent`, isolated by toggling `AlphaTest`/`Blend` independently: enabling real blending on Dream Land's canopy-highlight surface (file 104 lists at `0x708`/`0x820`/`0xA78`, texture at file 103 `+0x5F0`) produced a checkerboard, not a soft highlight — the render mode itself is genuinely translucent per the decomp (confirmed bit-for-bit against `GBL_c1(CLR_IN, A_IN, CLR_MEM, G_BL_1MA)`), so this is not a detection bug but the same open dithered-CI4/coverage problem RE-053 already found for the canopy's opaque path
+* Decision: shipped `alpha_test` (clean on device, matches a validated reference); left `translucent` detected and packed but **not** wired to `GuState::Blend` in `meshdraw.rs`, with a comment explaining why, rather than shipping an unverified visual change to the project's primary test scene
+* `cargo test --workspace` — 351 passing (was 347)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `romtool pack` — 4138.2 KiB (was 4138.1), pack version 9
+* `cargo psp --release` — builds clean
+* `tools/run-ppsspp.sh` — Dream Land renders at 60 FPS, clean log, pixel-identical to the pre-alpha-test baseline in the canopy region
+* Result: RE-069 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.6 ("alpha behavior verified" checked, "blending verified" stays open with a concrete pointer), `TODO.md` Phase D, `docs/porting-status.md` updated to match
+* Affected subsystem: `crates/ssb-rom/src/mesh.rs`, `crates/ssb-rom/src/pack.rs`, `psp/src/meshdraw.rs` — code change, affects every object with a non-default render mode, not one file
+* PPSSPP: tested this pass extensively (including deliberate bug reproduction), no regression in the shipped feature
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.6: the archive-wide geometry-mode default was backwards (RE-068)
 

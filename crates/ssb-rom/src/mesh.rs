@@ -102,6 +102,23 @@ pub struct MeshMaterial {
     /// is not a safe stand-in for that.
     pub env_color: Option<[u8; 4]>,
     pub blend_color: Option<[u8; 4]>,
+    /// `G_SETRENDERMODE`'s `CVG_X_ALPHA | ALPHA_CVG_SEL` -- a cutout
+    /// surface (foliage, grates) whose coverage is driven by texture alpha
+    /// (RE-069). The RDP resolves this through multisampled edge coverage,
+    /// which the PSP GE has no equivalent for; `sf64-psp` (a real, shipped
+    /// N64-to-PSP port doing this same translation at runtime) approximates
+    /// it with a plain alpha test discarding fully-transparent texels
+    /// (`sceGuAlphaFunc(Greater, 0, 0xFF)`), which is what this flag drives
+    /// on the PSP side.
+    pub alpha_test: bool,
+    /// `G_SETRENDERMODE`'s cycle-1/cycle-2 blend equation actually reads
+    /// back the framebuffer weighted by `1 - alpha` (`G_BL_CLR_MEM`,
+    /// `G_BL_1MA`) -- real translucency, not just "the blender unit is
+    /// engaged" (`FORCE_BL` alone is set even by the fully-opaque
+    /// `G_RM_OPA_SURF` default, so it cannot be the signal by itself;
+    /// RE-069). Drives `sceGuEnable(Blend)` with the standard
+    /// source-alpha/one-minus-source-alpha equation, matching `sf64-psp`.
+    pub translucent: bool,
 }
 
 impl MeshMaterial {
@@ -606,8 +623,9 @@ impl State {
                 self.material.env_color,
             )
         });
+        let texture = self.current_texture();
         MeshMaterial {
-            texture: self.current_texture(),
+            texture,
             // Identity is not worth storing: it means "use the shade as it is".
             prim_color: scale.filter(|s| *s != [1.0; 3]).map(|s| {
                 [
@@ -617,6 +635,24 @@ impl State {
                     255,
                 ]
             }),
+            // A cutout render mode is a statement about the *texture's*
+            // alpha channel (`G_CC_*` combiners for `TEX_EDGE` read TEXEL0's
+            // alpha, not shade alpha) -- meaningless, and actively wrong,
+            // without one. Untextured lit geometry's vertex alpha byte is
+            // not a coverage value at all (it is a packed normal component;
+            // see `push_vertex`'s doc comment), so alpha-testing against it
+            // discarded whole primitives outright until this gate was added
+            // (RE-069 measured 46 of 380 `alpha_test` primitives had no
+            // texture at all). `translucent` gets the same gate for the same
+            // reason: this converter does not compute the combiner's actual
+            // alpha output (`combiner_shade_scale` only resolves RGB), so
+            // the only alpha channel available with any real fidelity is a
+            // decoded texture's own -- blending untextured, possibly-lit
+            // geometry against a meaningless vertex alpha risks the same
+            // silent-disappearance failure, just via `SrcAlpha` instead of a
+            // discard (7 of 362 `translucent` primitives had no texture).
+            alpha_test: self.material.alpha_test && texture.is_some(),
+            translucent: self.material.translucent && texture.is_some(),
             ..self.material
         }
     }
@@ -993,6 +1029,12 @@ fn walk(
                 state.two_cycle = (data >> 20) & 0x3 == 1;
             }
 
+            // `G_MDSFT_RENDERMODE` is 29 bits starting at bit 3.
+            Cmd::SetOtherModeL { shift: 3, len: 29, data } => {
+                state.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
+                state.material.translucent = render_mode_is_translucent(data);
+            }
+
             Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = Some(rgba),
             Cmd::SetEnvColor(c) => state.material.env_color = Some(c),
             Cmd::SetBlendColor(c) => state.material.blend_color = Some(c),
@@ -1061,6 +1103,32 @@ const G_CULL_FRONT: u32 = 0x0000_0200;
 const G_CULL_BACK: u32 = 0x0000_0400;
 const G_LIGHTING: u32 = 0x0002_0000;
 const G_SHADING_SMOOTH: u32 = 0x0020_0000;
+
+// Render mode bits (`G_SETOTHERMODE_L` at `G_MDSFT_RENDERMODE`, from
+// `gbi.h`), RE-069. `data` there is already the raw `w1` word -- the GBI's
+// `GBL_c1`/`GBL_c2` macros left-shift into these absolute bit positions
+// before `gsSPSetOtherMode` stores them verbatim, so no further shifting is
+// needed to read them back.
+const CVG_X_ALPHA: u32 = 0x0000_1000;
+const ALPHA_CVG_SEL: u32 = 0x0000_2000;
+/// A cutout surface: coverage is driven by the texture's own alpha
+/// (`RM_..._TEX_EDGE` family). The RDP resolves this through multisampled
+/// edge coverage the PSP has no equivalent for; approximated as a plain
+/// alpha test (RE-069, following `sf64-psp`'s validated approach).
+const RENDER_MODE_TEX_EDGE: u32 = CVG_X_ALPHA | ALPHA_CVG_SEL;
+
+/// True when a `G_SETRENDERMODE` value's blend equation reads back the
+/// framebuffer weighted by `1 - alpha` (`G_BL_CLR_MEM`, `G_BL_1MA`) in
+/// either cycle -- genuine translucency, not merely `FORCE_BL` (set even by
+/// the fully-opaque `G_RM_OPA_SURF` default) or a specific `ZMODE`. Checked
+/// against both cycles rather than only the active one, matching
+/// `refs/BattleShip`'s validated interpreter (`interpreter.cpp:3071-3074`).
+fn render_mode_is_translucent(data: u32) -> bool {
+    let field = |shift: u32| (data >> shift) & 0x3;
+    const CLR_MEM: u32 = 1;
+    const A_1MA: u32 = 0;
+    (field(22) == CLR_MEM && field(18) == A_1MA) || (field(20) == CLR_MEM && field(16) == A_1MA)
+}
 
 #[cfg(test)]
 mod tests {
@@ -1493,6 +1561,175 @@ mod tests {
         assert!(m.z_buffer, "G_ZBUFFER is on in the reset default");
         assert!(!m.cull_front, "the reset default only sets G_CULL_BACK, not both");
         assert!(!m.lit, "G_LIGHTING is cleared in the reset default (RE-021 recovers it separately)");
+    }
+
+    /// Builds a `G_SETRENDERMODE`'s raw `data` word the way `GBL_c1`/
+    /// `GBL_c2` do: `flags` are the non-equation bits (`FORCE_BL`,
+    /// `CVG_X_ALPHA`, `ZMODE_*`, ...), `c1`/`c2` are each cycle's
+    /// `(color_src_a, factor_a, color_src_b, factor_b)`, matching
+    /// `refs/ssb-decomp-re/include/PR/gbi.h`'s macros exactly rather than a
+    /// magic hex constant.
+    fn render_mode(flags: u32, c1: (u32, u32, u32, u32), c2: (u32, u32, u32, u32)) -> u32 {
+        let gbl = |shifts: [u32; 4], (a, b, c, d): (u32, u32, u32, u32)| {
+            (a << shifts[0]) | (b << shifts[1]) | (c << shifts[2]) | (d << shifts[3])
+        };
+        flags | gbl([30, 26, 22, 18], c1) | gbl([28, 24, 20, 16], c2)
+    }
+
+    fn set_render_mode(data: u32) -> Cmd {
+        Cmd::SetOtherModeL {
+            shift: 3,
+            len: 29,
+            data,
+        }
+    }
+
+    /// Binds a minimal CI4 texture, the way `tile_size_converts_10_2_...`
+    /// does. `alpha_test`/`translucent` are gated on a texture actually
+    /// being bound (RE-069), so any test exercising them needs one.
+    fn bind_a_texture() -> [Cmd; 4] {
+        [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 2,
+                size: 0,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 15 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn opaque_render_mode_is_neither_alpha_tested_nor_translucent() {
+        // RE-069: `G_RM_OPA_SURF`/`G_RM_OPA_SURF2` -- the RDP reset's actual
+        // default (`sSYRdpResetDisplayList`) -- sets `FORCE_BL`, but its
+        // equation is `(color_src_a=CLR_IN, factor_a=G_BL_0, color_src_b=CLR_IN,
+        // factor_b=G_BL_1)`: 0% old plus 100% new, i.e. no real blending.
+        // `FORCE_BL` alone cannot be the "is this translucent" signal.
+        const FORCE_BL: u32 = 0x4000;
+        const CLR_IN: u32 = 0;
+        const G_BL_0: u32 = 3;
+        const G_BL_1: u32 = 2;
+        let data = render_mode(
+            FORCE_BL,
+            (CLR_IN, G_BL_0, CLR_IN, G_BL_1),
+            (CLR_IN, G_BL_0, CLR_IN, G_BL_1),
+        );
+        let file = vertex_data(3);
+        let cmds = [vtx(3), set_render_mode(data), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(!m.translucent, "FORCE_BL alone must not imply real blending");
+        assert!(!m.alpha_test);
+    }
+
+    #[test]
+    fn xlu_render_mode_is_translucent() {
+        // G_RM_XLU_SURF's equation reads the framebuffer (CLR_MEM) weighted
+        // by 1-alpha (G_BL_1MA) -- the real "over" blend.
+        const FORCE_BL: u32 = 0x4000;
+        const CLR_IN: u32 = 0;
+        const A_IN: u32 = 0;
+        const CLR_MEM: u32 = 1;
+        const G_BL_1MA: u32 = 0;
+        let data = render_mode(
+            FORCE_BL,
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+        );
+        let file = vertex_data(3);
+        let mut cmds = alloc::vec![vtx(3)];
+        cmds.extend(bind_a_texture());
+        cmds.extend([set_render_mode(data), Cmd::Tri1([0, 1, 2]), Cmd::End]);
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.translucent);
+        assert!(!m.alpha_test);
+    }
+
+    #[test]
+    fn tex_edge_render_mode_is_alpha_tested_not_translucent() {
+        // G_RM_AA_ZB_TEX_EDGE sets both CVG_X_ALPHA and ALPHA_CVG_SEL, with
+        // an otherwise-opaque equation -- a cutout surface, not a blended one.
+        const CVG_X_ALPHA: u32 = 0x1000;
+        const ALPHA_CVG_SEL: u32 = 0x2000;
+        const FORCE_BL: u32 = 0x4000;
+        const CLR_IN: u32 = 0;
+        const G_BL_0: u32 = 3;
+        const G_BL_1: u32 = 2;
+        let data = render_mode(
+            CVG_X_ALPHA | ALPHA_CVG_SEL | FORCE_BL,
+            (CLR_IN, G_BL_0, CLR_IN, G_BL_1),
+            (CLR_IN, G_BL_0, CLR_IN, G_BL_1),
+        );
+        let file = vertex_data(3);
+        let mut cmds = alloc::vec![vtx(3)];
+        cmds.extend(bind_a_texture());
+        cmds.extend([set_render_mode(data), Cmd::Tri1([0, 1, 2]), Cmd::End]);
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.alpha_test);
+        assert!(!m.translucent);
+    }
+
+    #[test]
+    fn alpha_test_and_translucent_are_gated_on_having_a_real_texture() {
+        // RE-069: untextured lit geometry's vertex alpha byte is a packed
+        // normal component, not a coverage value (see `push_vertex`'s doc
+        // comment) -- alpha-testing or blending against it discarded whole
+        // primitives outright (46 of 380 `alpha_test`, 7 of 362
+        // `translucent` primitives archive-wide had no texture at all).
+        // Both render modes must fall back to off without a texture bound.
+        const CVG_X_ALPHA: u32 = 0x1000;
+        const ALPHA_CVG_SEL: u32 = 0x2000;
+        const CLR_IN: u32 = 0;
+        const A_IN: u32 = 0;
+        const CLR_MEM: u32 = 1;
+        const G_BL_1MA: u32 = 0;
+        let edge = render_mode(
+            CVG_X_ALPHA | ALPHA_CVG_SEL,
+            (CLR_IN, 3, CLR_IN, 2),
+            (CLR_IN, 3, CLR_IN, 2),
+        );
+        let xlu = render_mode(
+            0,
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+        );
+        let file = vertex_data(3);
+
+        let cmds = [vtx(3), set_render_mode(edge), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(!m.alpha_test, "no texture bound: cutout mode must not discard everything");
+
+        let cmds = [vtx(3), set_render_mode(xlu), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(!m.translucent, "no texture bound: must not blend against a meaningless alpha");
     }
 
     #[test]

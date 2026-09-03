@@ -4400,3 +4400,122 @@ recorded here as leads for whoever picks those up next, not yet acted on).
 unambiguous C, not inferred; the before/after archive-wide percentages
 match what a shipped 3D fighting game's geometry should look like, which
 the pre-fix numbers conspicuously did not.
+
+## RE-069 — Alpha test and blending: one shipped, one found broken and deferred
+
+**Question.** `PLAN.md` R0.6's "alpha behavior verified" and "blending
+verified" items were untouched — `psp/src/meshdraw.rs` has no alpha test
+or blend code at all, and `mesh.rs` never reads `G_SETOTHERMODE_L`'s
+render-mode field. Is that a real gap, and how big?
+
+**Measured, not assumed.** A temporary example
+(`crates/ssb-rom/examples/tmp_rendermode_scan.rs`, written to check and
+then deleted, not committed) decoded every display list archive-wide and
+read `G_SETOTHERMODE_L`'s alpha-compare (`shift=0,len=2`) and render-mode
+(`shift=3,len=29`) sub-fields. Alpha compare: 278 `G_AC_NONE` vs 269
+`G_AC_THRESHOLD` — nearly even, not a rare case. Render mode: 12 distinct
+values across 360 non-default `G_SETRENDERMODE` commands.
+
+**The naive signal is wrong; the decomp's own macros give the right one.**
+Initially checked `FORCE_BL` (0x4000) as "needs blending" — wrong:
+`RM_OPA_SURF` (`gbi.h`), the RDP reset's own opaque default
+(`sSYRdpResetDisplayList`), sets `FORCE_BL` too, with an equation
+(`GBL_c1(CLR_IN, G_BL_0, CLR_IN, G_BL_1)`) that evaluates to 100% new
+color, 0% old — no real blending despite the bit being set. The actual
+signal, cross-checked against `refs/BattleShip`'s interpreter
+(`interpreter.cpp:3071-3074`, which checks the identical bit positions):
+whether either cycle's blend equation reads the framebuffer (`G_BL_CLR_MEM`)
+weighted by `1 - alpha` (`G_BL_1MA`) — `RM_XLU_SURF`'s actual equation.
+Measured with the corrected signal: **52 of 360 (14.4%) genuinely
+translucent**, unchanged from the naive count only because this ROM's
+12 distinct values happened not to produce a counterexample — a
+coincidence, not something to rely on again. Separately, `CVG_X_ALPHA |
+ALPHA_CVG_SEL` together (the `TEX_EDGE` family, cutout surfaces like
+foliage) covers **130 of 360 (36.1%)**.
+
+**How to approximate what the PSP cannot do.** The RDP resolves `TEX_EDGE`
+surfaces through multisampled edge coverage — no PSP GE equivalent exists.
+`refs/sf64-psp` (a real, shipped N64-to-PSP port doing this exact
+translation at runtime, not build time) was consulted for a validated
+answer rather than inventing one:
+`refs/sf64-psp/src/psp/renderer.c`'s `psp_renderer_apply_rsp_alpha_state`
+approximates it with a plain `sceGuAlphaFunc(GU_GREATER, 0, 0xFF)` —
+discard only fully-transparent texels, relying on the source texture's own
+alpha (typically binary for a cutout asset) to do the real shaping. The
+same file's `psp_renderer_should_blend`/`sceGuBlendFunc(GU_ADD,
+GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA)` confirmed the standard "over"
+equation for real translucency.
+
+**Implemented.** `crates/ssb-rom/src/mesh.rs` decodes the render-mode
+field into `MeshMaterial::alpha_test`/`translucent`
+(`render_mode_is_translucent` mirrors `GBL_c1`/`GBL_c2`'s bit layout
+directly, not a magic constant). `pack.rs` gained `flags::ALPHA_TEST`/
+`TRANSLUCENT` (pack version 8→9 — additive, but a silent format change is
+worse than a version bump, per RE-049's precedent). `psp/src/meshdraw.rs`
+toggles `GuState::AlphaTest`/`sceGuAlphaFunc` exactly as `sf64-psp` does.
+
+**A real bug found before shipping, not after.** Both flags initially
+fired on *any* primitive with the render-mode bits set, textured or not.
+46 of 380 `alpha_test` and 7 of 362 `translucent` primitives had no bound
+texture at all — and for those, testing/blending against "alpha" actually
+tested/blended against a **packed normal component** for lit geometry
+(`push_vertex`'s own doc comment: "Shade alpha is not a coverage value
+here — Mario's vertices are all zero"), not a real coverage value. On
+device this discarded Dream Land's decorative flower triangles entirely —
+confirmed by screenshotting with the bug present, fixing it, and
+confirming the flowers return exactly at that fix (a before/after diff
+against the buggy build showed a 0-pixel difference until the gate was
+added, i.e. the earlier "it's probably the untextured case" hypothesis
+was verified, not assumed). Fixed: `material_now()` now gates both flags
+on `texture.is_some()`. New test
+`alpha_test_and_translucent_are_gated_on_having_a_real_texture` pins it.
+
+**A second, harder bug found in translucency specifically — deferred, not
+shipped.** Even after the texture gate, enabling `GuState::Blend` from
+`TRANSLUCENT` turned Dream Land's canopy-highlight surface (file 104's
+lists at `0x708`/`0x820`/`0xA78`, all targeting the CI4 texture at file
+103 offset `0x5F0` — RE-053's "second 64×64 whose highlight is a dithered
+diagonal wash") into a harsh checkerboard, confirmed genuinely caused by
+blend (not alpha test) by toggling each independently: disabling blend
+alone restored the clean image; disabling alpha test alone did not. The
+render mode itself is a real, decomp-verified `XLU`-family value, not a
+detection bug — the equation cross-checked bit-for-bit against
+`GBL_c1(CLR_IN, A_IN, CLR_MEM, G_BL_1MA)`. The likely cause is the same
+open problem RE-053 already found for this exact texture family: a
+dithered, binary-alpha (RGBA5551 has one alpha bit) CI4 texture that the
+RDP resolves through multisampled coverage, which point-sampled alpha
+blending on the PSP cannot reproduce — the dither reads as raw
+checkerboard noise instead of a soft blend, the same "sharper not
+softer" symptom RE-053 documented for the opaque path. **Not fixed here**:
+`psp/src/meshdraw.rs` leaves `GuState::Blend` permanently disabled and
+does not read `TRANSLUCENT` at all, with a comment explaining why,
+pending whoever investigates RE-053's dithering/coverage question next.
+The detection code (`mesh.rs`, `pack.rs`) ships anyway — it is correct and
+tested independent of the open rendering question, the same way RE-048
+found unplayed stage material animation and recorded it before anything
+consumed it.
+
+**Result.** `alpha_test` (foliage/grate cutouts, 36% of non-default render
+modes) is live on device. `translucent` (14%) is packed but not yet
+consumed, an open item, not a silent gap. `PLAN.md` R0.6's "alpha behavior
+verified" item is checked for the cutout case; "blending verified" stays
+open with this entry as its starting point.
+
+**Verified.** `cargo test --workspace`: 351 passing (was 347). `cargo
+clippy --release -p romtool -p ssb-rom`: clean. `romtool pack`: 4138.2 KiB
+(was 4138.1; pack version 8→9). `cargo psp --release`: builds clean.
+`tools/run-ppsspp.sh`: Dream Land renders at 60 FPS, clean log, pixel-
+identical to the pre-alpha-test baseline in the canopy region (the only
+per-pixel changes anywhere are the expected foliage-cutout diffs
+elsewhere in the frame, not a regression).
+
+**Confidence: high** on the render-mode decode (bit-for-bit against
+`gbi.h`'s own macros, unit-tested against hand-derived values, not copied
+from a hex dump) and on the untextured-primitive fix (reproduced the
+failure, fixed it, watched the exact symptom disappear). **Medium** on
+whether `sf64-psp`'s `alpha==0` threshold is the *tightest* approximation
+available for every cutout texture in this ROM, since it was validated
+against a real port, not against every one of the 130 measured TEX_EDGE
+occurrences individually. **Low**, deliberately, on what a correct
+translucent implementation should do here — that is the open question
+this entry leaves for `PLAN.md` R0.6/R0.5, not a claim.
