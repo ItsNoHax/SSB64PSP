@@ -16,7 +16,79 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-091 (this session) shipped step 5's pack
+`IN_PROGRESS` on `R0.10`. RE-092 (this session) solved RE-091's blocker
+and wired `romtool`'s real build loop, closing step 6 for real archive
+data.
+
+**The fix was in `mesh.rs` all along — no new bookkeeping needed to find
+the texture, only to remember the script.** Re-read `State::apply_mobj`
+before designing anything new: for a palette-only `MObj` (`sprite: None`,
+RE-091's own finding, true for all 33 real cases), `apply_mobj` sets
+`timg_addr` to the *palette's* address first — and the display list's own
+subsequent `G_LOADTLUT`+`G_SETTIMG` (ordinary commands `mesh.rs` already
+walks, nothing `MObj`-specific about them) load the TLUT and then
+overwrite `timg_addr` with the real texture image address. By the time a
+primitive is emitted, `State::current_texture()` already resolves the
+correct texture through this existing mechanism. The only real gap was
+remembering *that a script drove this palette* across those same
+intervening commands — a bookkeeping problem, not a texture-identification
+one.
+
+Added `MeshMaterial::mat_anim: Option<MatAnimRef>` (`{ source_file,
+script }`, identity only — the same "where, not the decoded bytes"
+division `TextureRef` already draws) and a parallel `mat_anims` slice on
+`SequenceItem`/`State`, indexed by the same segment-`0x0E` heap index
+`mobjs` already is. Set inside the *same* `if let Some(palette) = m.palette`
+branch that sets `timg_addr` in `apply_mobj` — not merely "when a script
+is present" — so a *later*, unanimated palette-bearing `MObj` correctly
+clears a stale marker instead of leaking it onto whatever texture ends up
+bound next. `forget_texture` clears it too, for the same reason it
+already clears `palette_offset`.
+
+**Verified the clearing rule can fail, not just that it compiles.** A new
+test builds two `MObj` calls in one node — first animated, second not,
+each binding a different texture — and asserts the second primitive's
+`mat_anim` is `None`. Confirmed this test can actually fail: reverting
+`apply_mobj` to the naive `if mat_anim.is_some() { ... }` form (RE-091's
+own original sketch) made it fail with the stale reference still
+attached, before reverting back to the fix. A second test confirms the
+positive case. `cargo test --workspace`: 243 passing (was 241), all 48
+pre-existing `mesh` tests and all 35 pre-existing `pack` tests unaffected.
+
+**Wired `romtool`'s real `pack` build loop, not just `mesh.rs`.** Added
+`resolve_layer_mat_anims` (per stage-layer graph, same-file only per
+RE-089's scope: ticks `MaterialJoint` and calls `mobj::read_palettes`
+exactly as RE-089/090 already do) and `convert_mat_anim_palette` (the
+same RGBA5551→ABGR8888 conversion `convert_texture` already applies to
+the static palette, just per resolved variant). `pack_mesh` now checks
+every primitive's `mat_anim` after resolving its texture, dedupes by
+script the same way textures dedupe by texel address, and calls
+`add_mat_anim`/`set_texture_mat_anim` for real.
+
+**Result, run against the real ROM: 17 of RE-089's 33 known scripts
+survived the whole pipeline — 181 palette variants, 23 textures
+animated.** Not a guess: every surviving case's entry count agrees
+*exactly* with RE-089's own independently-recorded numbers — file 117
+contributed both of its scripts, still 16 entries each (the
+decomp-matching case); file 114 contributed 6 of 13, still 18 entries
+each; file 105 contributed 8 of 18, entry counts (2, 3, 4) still inside
+RE-089's own recorded range. That agreement is strong evidence the
+pipeline carries data through correctly end to end, not merely that it
+runs without erroring. Pack size grew 4311.0 → 4470.3 KiB (+159.3 KiB of
+palette blobs). `cargo run --release -p romtool -- pack`: "verified loads
+back cleanly". `cargo psp --release` + `tools/run-ppsspp.sh`: builds and
+runs clean, Dream Land pixel-identical at 60 FPS — expected, since Dream
+Land uses none of files 105/114/117 and nothing on the device side reads
+`mat_anim` yet.
+
+`PLAN.md` R0.10's "material state updated correctly" acceptance item is
+now checked, with real verified pack data behind it. **Not investigated
+this session**: why 16 of the 33 known scripts did not survive
+(candidates: unplaced nodes, a display list this project's own discovery
+pass never authoritatively reaches, or something else — genuinely
+unknown, not swept under the 17/33 success).
+
+Immediately before this, RE-091 (previous session) shipped step 5's pack
 format — `MatAnimDesc`/`MatAnimPalette` (a new table pair mirroring
 `AnimDesc`/`AnimJoint`) plus `TextureDesc::mat_anim` (filling 4 bytes of
 existing padding, no size change), `pack::VERSION` 11 → 12,
@@ -1060,37 +1132,36 @@ a lookup:
    plus `TextureDesc::mat_anim`, `pack::VERSION` 11→12, round-trip
    verified. **The population half is blocked, on a real measured gap,
    not a design choice left open:**
-6. **Now the actual next step, and it is `mesh.rs`-level, not `pack.rs`.**
-   RE-091 tried to populate `TextureDesc::mat_anim` by keying a texture's
-   animated-palette table off the driving `MObjSub`'s own `sprite` field
-   (the same one RE-090 already reads `palettes[]` from) — checked
-   archive-wide before committing to it, and found **all 33 real
-   `PaletteID`-cycling `MObjSub`s have `sprite: None`**. A palette-cycling
-   material never names its own texture image; the texture it applies to
-   is whichever CI4/CI8 image is already bound at that point in the
-   node's draw sequence, tracked correctly today only by `mesh.rs`'s own
-   cross-node material-state threading (RE-064's `Builder`/`State`).
-   Closing this needs a marker ("this material's palette is driven by
-   script S") threaded through `mesh.rs`'s existing state inheritance the
-   same way texture/palette state already is, surfaced on the built
-   `Prim`/`TextureRef` so `pack_mesh` can see it — architecturally similar
-   to how RE-073/074 added and threaded `combiner_texture_blend` through
-   `MeshMaterial`, but for animation state. This is real `mesh.rs` design
-   work (a new `MeshMaterial` field plus its inheritance rule), not a
-   `romtool`/`pack.rs` lookup — read RE-064's inheritance test
-   (`crates/ssb-rom/src/mesh.rs`) before starting, since a wrong
-   inheritance rule for this marker would silently mis-attribute an
-   animation to the wrong primitive the same way a wrong texture/palette
-   inheritance rule once did.
-7. Once `mesh.rs` surfaces that marker, finish wiring `romtool`'s real
-   build loop: convert each resolved palette variant (reusing
-   `convert_texture`'s existing TLUT→ABGR8888 conversion, just per
-   variant instead of once) and call `add_mat_anim`/
-   `set_texture_mat_anim` for real, then verify archive-wide that the
-   pack's `mat_anim_count` matches RE-089's 33 (or however many `mesh.rs`
-   can now attribute) and that the pack still "loads back cleanly" and
-   Dream Land is still pixel-identical (nothing consumes `mat_anim` yet,
-   so no visual change is expected at this step).
+6. ~~Correlate an animated `MObjSub` to its texture via `mesh.rs`'s own
+   state, and finish wiring `romtool`'s build loop~~ — done (RE-092). The
+   texture was already resolvable through `mesh.rs`'s existing
+   `State::apply_mobj`/`current_texture` (a palette-only `MObj` sets
+   `timg_addr` to the palette's own address, and the display list's own
+   subsequent `G_LOADTLUT`+`G_SETTIMG` overwrite it with the real texture
+   image — no new texture-identification logic needed). Added
+   `MeshMaterial::mat_anim` threaded the same way `timg_addr`/`palette_offset`
+   already are, verified the clearing rule (a later unanimated palette
+   must not leak a stale marker) can actually fail before trusting it, and
+   wired `romtool`'s real `pack` build loop (`resolve_layer_mat_anims`,
+   `convert_mat_anim_palette`, `pack_mesh` deduplicating by script).
+   Archive-wide: **17 of RE-089's 33 known scripts survived the whole
+   pipeline** (181 palette variants, 23 textures), every surviving case's
+   entry count matching RE-089's own numbers exactly (file 117: both
+   scripts, 16 entries each; file 114: 6/13, 18 each; file 105: 8/18,
+   2–4 each). Pack "loads back cleanly", 4311.0 → 4470.3 KiB, Dream Land
+   pixel-identical (nothing consumes `mat_anim` on-device yet).
+7. **Open, not investigated: why only 17 of 33 known scripts survived.**
+   Candidates, none checked: unplaced nodes (`placed_meshes`/`node_dls`
+   already shows some node lists go unplaced archive-wide), a display
+   list only reachable through this project's blind-discovery pass rather
+   than an authoritative graph walk (RE-092's wiring only resolves
+   `mat_anims` for the authoritative per-graph path, not the "Discovery
+   fills in only what the graphs never named" block later in `pack()`),
+   or `current_texture()` returning `None` for some of these at the exact
+   point `material_now()` reads it. Worth a real measurement before the
+   next step, since it may reveal either an acceptable, explained gap
+   (RE-076/077's shape) or a second real bug (RE-088's shape) — treat it
+   as unknown, not as "the missing 16 don't matter."
 8. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
    wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each

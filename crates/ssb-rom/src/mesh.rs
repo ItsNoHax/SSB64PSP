@@ -144,6 +144,27 @@ pub struct MeshMaterial {
     /// the same way `prim_color`'s scale and `texture_blend`'s base colour
     /// are (`push_vertex`); not yet separately verified on device.
     pub flat_color: Option<[u8; 4]>,
+    /// The texture's active palette is driven by a material animation
+    /// script rather than fixed at the `MObjSub`'s own `palettes[0]`
+    /// (RE-089/RE-090/RE-091) — identity only (which script), not the
+    /// resolved palette data, the same division [`TextureRef`] already
+    /// draws between "where the texels are" and their decoded bytes.
+    /// Tied to the same palette-setting `MObj` call as `texture` itself
+    /// (`State::apply_mobj`): a later palette-bearing call that carries no
+    /// script correctly clears this rather than leaving it attached to
+    /// whatever texture ends up bound next.
+    pub mat_anim: Option<MatAnimRef>,
+}
+
+/// Identifies the material animation script driving a texture's active
+/// palette. See [`MeshMaterial::mat_anim`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MatAnimRef {
+    /// Archive file the driving script lives in. Always the graph's own
+    /// file for now — RE-089 resolves `p_matanim_joints` same-file only.
+    pub source_file: u32,
+    /// Byte offset of the driving script within that file.
+    pub script: u32,
 }
 
 impl MeshMaterial {
@@ -727,6 +748,8 @@ struct State {
     two_cycle: bool,
     /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
     mobjs: Vec<crate::mobj::MObjMaterial>,
+    /// Parallel to `mobjs`; see `SequenceItem::mat_anims`.
+    mat_anims: Vec<Option<MatAnimRef>>,
 }
 
 impl State {
@@ -750,6 +773,7 @@ impl State {
             combiner: None,
             two_cycle: false,
             mobjs: Vec::new(),
+            mat_anims: Vec::new(),
         }
     }
 
@@ -786,10 +810,15 @@ impl State {
     /// itself, then the sprite overwrites the image address. A node whose
     /// `MObj` only supplies a palette leaves the `G_LOADTLUT` to its own
     /// display list, which is the common fighter case.
-    fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial) {
+    fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial, mat_anim: Option<MatAnimRef>) {
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette.offset);
             self.timg_file = palette.file;
+            // Tied to the same condition as the palette itself, not merely
+            // "set when present": a later palette-bearing `MObj` with no
+            // script must clear a previous one rather than leave it
+            // attached to whatever texture ends up bound next.
+            self.material.mat_anim = mat_anim;
             if m.loads_tlut {
                 self.palette_offset = Some(palette.offset);
                 self.palette_file = palette.file;
@@ -819,6 +848,7 @@ impl State {
         self.palette_offset = None;
         self.palette_file = None;
         self.texture_enabled = false;
+        self.material.mat_anim = None;
     }
 
     /// The material a primitive emitted right now would carry.
@@ -895,6 +925,10 @@ impl State {
             alpha_test: self.material.alpha_test && texture.is_some(),
             translucent: self.material.translucent && texture.is_some(),
             texture_blend,
+            // Same reasoning as `alpha_test`/`translucent`'s gate: an
+            // animated palette with no texture to apply it to is orphaned
+            // state, not a primitive worth carrying it on.
+            mat_anim: self.material.mat_anim.filter(|_| texture.is_some()),
             ..self.material
         }
     }
@@ -1052,6 +1086,11 @@ pub struct SequenceItem<'a> {
     /// it. Empty when we could not recover one, which is not the same as the
     /// node having none: see [`crate::mobj::PartTables`].
     pub mobjs: &'a [crate::mobj::MObjMaterial],
+    /// Parallel to `mobjs`: which entries are driven by a material animation
+    /// script, if any were resolved for this node (RE-089/RE-091). Shorter
+    /// than or the same length as `mobjs`; a missing or `None` entry means
+    /// "not animated", not "unknown" — most `MObj`s never are.
+    pub mat_anims: &'a [Option<MatAnimRef>],
 }
 
 /// Converts display lists that share one RSP vertex cache, in draw order.
@@ -1093,6 +1132,7 @@ pub fn convert_sequence(items: &[SequenceItem], src: Source<'_>) -> Vec<Result<M
     for (i, item) in items.iter().enumerate() {
         state.space = i as u16;
         state.mobjs = item.mobjs.to_vec();
+        state.mat_anims = item.mat_anims.to_vec();
         // A singular node matrix (zero scale) means nothing borrowed from
         // elsewhere can be expressed here; identity keeps it in its own space
         // rather than producing infinities.
@@ -1180,7 +1220,10 @@ fn walk(
                     // offset names which of the node's materials to apply.
                     let index = (addr.offset() / 8) as usize;
                     match state.mobjs.get(index) {
-                        Some(m) => state.apply_mobj(&m.clone()),
+                        Some(m) => {
+                            let mat_anim = state.mat_anims.get(index).copied().flatten();
+                            state.apply_mobj(&m.clone(), mat_anim);
+                        }
                         // A material we know is there and cannot supply. Its
                         // whole purpose is to replace the binding, so keeping
                         // the previous list's is worse than dropping it.
@@ -1469,11 +1512,13 @@ mod tests {
                 cmds: &a,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
+                mat_anims: &[],
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::from_trs([100.0, 0.0, 0.0], [0.0; 3], [1.0; 3]),
                 mobjs: &[],
+                mat_anims: &[],
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file));
@@ -1563,6 +1608,7 @@ mod tests {
             cmds: &cmds,
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
+            mat_anims: &[],
         }];
         let mesh = convert_sequence(&items, Source::bare(&file))
             .pop()
@@ -1572,6 +1618,155 @@ mod tests {
         assert_eq!(texture.palette_offset, Some(0x200));
         assert_eq!(texture.data_offset, 0x400);
         assert_eq!(texture.format, Format::Ci);
+    }
+
+    /// RE-091: a resolved material animation script is carried onto the
+    /// primitive the same `MObj` call binds a texture for -- `mat_anims` is
+    /// parallel to `mobjs`, keyed by the same heap index.
+    #[test]
+    fn an_animated_palette_is_carried_onto_the_primitive_that_uses_it() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = ci4_list_calling_the_heap(8); // index 1, as above.
+        let mobjs = [
+            MObjMaterial::default(),
+            MObjMaterial {
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x200,
+                }),
+                ..MObjMaterial::default()
+            },
+        ];
+        let animated = MatAnimRef {
+            source_file: 104,
+            script: 0x3098,
+        };
+        let mat_anims = [None, Some(animated)];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &mat_anims,
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert_eq!(mesh.primitives[0].material.mat_anim, Some(animated));
+    }
+
+    /// The correctness case that matters most: a *later* palette-bearing
+    /// `MObj` with no script must clear a previous animation marker rather
+    /// than let it leak onto an unrelated texture. Getting this wrong would
+    /// silently mis-attribute an animation the same way a wrong texture/
+    /// palette inheritance rule once mis-attributed a binding (RE-064).
+    #[test]
+    fn a_later_unanimated_palette_clears_a_previous_mat_anim() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            // MObj 0: animated palette, texture A.
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            // MObj 1: a different, unanimated palette, texture B.
+            Cmd::Call(SegAddr(0x0E00_0000 + 8)),
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x500),
+                slot: 0,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let mobjs = [
+            MObjMaterial {
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x100,
+                }),
+                ..MObjMaterial::default()
+            },
+            MObjMaterial {
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x200,
+                }),
+                ..MObjMaterial::default()
+            },
+        ];
+        let animated = MatAnimRef {
+            source_file: 104,
+            script: 0x3098,
+        };
+        let mat_anims = [Some(animated), None];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &mat_anims,
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert_eq!(mesh.primitives.len(), 2, "two distinct textures, two primitives");
+        let by_texture = |offset: u32| {
+            mesh.primitives
+                .iter()
+                .find(|p| p.material.texture.is_some_and(|t| t.data_offset == offset))
+                .unwrap_or_else(|| panic!("no primitive bound to texture 0x{offset:X}"))
+        };
+        assert_eq!(by_texture(0x400).material.mat_anim, Some(animated));
+        assert_eq!(
+            by_texture(0x500).material.mat_anim,
+            None,
+            "the second MObj's own palette carries no script and must clear the first one's"
+        );
     }
 
     #[test]
@@ -1586,6 +1781,7 @@ mod tests {
             cmds: &cmds,
             world: Mat4::IDENTITY,
             mobjs: &[],
+            mat_anims: &[],
         }];
         let mesh = convert_sequence(&items, Source::bare(&file))
             .pop()
@@ -1668,11 +1864,13 @@ mod tests {
                 cmds: &a,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
+                mat_anims: &[],
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
+                mat_anims: &[],
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file));
