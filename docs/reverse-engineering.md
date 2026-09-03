@@ -4612,3 +4612,64 @@ confidence that eyeballing a single screenshot without controlling for
 what binary actually produced it is not sufficient evidence on this
 project going forward — rebuild from a deleted artifact, or diff the
 source, before trusting a "looks fixed" result.
+
+## RE-071 — RE-070's dither fix does not make RE-069's blend safe (two ruled-out leads)
+
+**Question.** RE-070 measurably softened Dream Land's canopy dither by
+pre-blurring and packing unquantized. RE-069 had separately deferred
+enabling real translucent blending on the canopy *highlight* surface (the
+same texture, file 103 offset `0x5F0`) because it produced a checkerboard.
+Does RE-070's fix make that blend safe to turn on now?
+
+**No — re-tested directly, got worse, not better.** Temporarily re-enabled
+`GuState::Blend` from the `TRANSLUCENT` flag (the same code RE-069
+deferred, reapplied as a reversible experiment against the now-blurred
+texture) and rebuilt clean (confirmed via a deleted `EBOOT.PBP`, per
+RE-070's own lesson about stale binaries). Objective pixel statistics
+showed a small improvement (~4% less local noise, `std` dropped
+57.2→48.2), but the actual on-screen result was **worse**: blown-out,
+oversaturated bright-green highlights that erased the flowers and most of
+the canopy's other detail — not the harsh-but-legible checkerboard RE-069
+saw, but a different, more disruptive failure mode. Objective noise
+statistics alone are not sufficient evidence for this kind of artifact;
+looked at the actual image, not just the number, before concluding
+anything.
+
+**A second lead tested and also ruled out.** Hypothesized the blowout was
+colour bleeding from unpremultiplied-alpha blurring — `box_blur_wrapped`
+averages RGB and alpha independently, which is a well-known way to leak
+"supposed to be invisible" bright colours from fully-transparent texels
+into partially-transparent output once alpha changes under a blur.
+Implemented a premultiplied-alpha variant (blur RGB\*alpha and alpha
+separately, then divide back out) as a temporary experiment and reran the
+same blend-enabled test: **identical result**, blown-out and flower-free.
+This rules out unpremultiplied blurring as the (or at least the sole)
+cause.
+
+**Left as an accepted deviation, not a mystery to solve blindly.** Two
+plausible mechanisms are now eliminated (dither coarseness alone, alpha-
+premultiplication) without finding the real one, which likely lies deeper
+than blur post-processing can reach: possibly the decoded alpha channel
+itself being systematically too high for a "highlight" effect meant to
+blend subtly (worth checking against the original `MObjSub`/combiner alpha
+path rather than the raw texture alpha this converter currently uses
+verbatim), or a real difference between this project's model-matrix-only
+rendering pipeline (no true RSP/RDP emulation, D-001) and how the RDP's
+blender actually composites across draws. Both experiments (blend-enable,
+premultiplied blur) were reverted before commit — `git status` is clean of
+this investigation, only this record remains. `psp/src/meshdraw.rs`'s
+existing comment deferring `TRANSLUCENT` is updated to note this was
+re-checked and still fails, so a future session doesn't re-run the same
+now-ruled-out experiment.
+
+**Result.** `PLAN.md` R0.6's "blending verified" item stays open. No code
+changed from this entry — the value is entirely in ruling out two specific
+hypotheses so the next attempt starts further along, not at the same
+"maybe it's the dither" or "maybe it's premultiplication" guesses this
+entry already tested and rejected.
+
+**Confidence: high** that dither coarseness and alpha premultiplication
+are not the cause (both directly tested, both reverted cleanly, both
+produced no visible change or a worse one). **Low**, honestly, on what
+the actual cause is — this entry narrows the search, it does not find the
+answer.
