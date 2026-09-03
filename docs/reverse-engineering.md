@@ -3872,3 +3872,91 @@ kinds enumerated exhaustively, kinds 33-40's `func_800108xx` family, kind
 measured, not sampled); the decomp switch statement is unambiguous C, not
 an inference. Medium on real-hardware visual confirmation, which this pass
 didn't reach — PPSSPP alone doesn't satisfy R2 either way (`STATUS.md` §8).
+
+## RE-063 — Kinds 33-40 are runtime-only; kind 50 is `Kind48`'s twin, unused
+
+**Question.** RE-062 left R0.8's other acceptance items open: enumerate
+transform kinds exhaustively, and specifically kinds 33-40 (`func_800108xx`
+family) and kind 50.
+
+**Two different "kind" spaces share one switch.** `gcPrepDObjMatrix`
+(`objdisplay.c:322`) switches on `xobj->kind`, an `XObj`'s own kind byte —
+not directly on a `DObjDesc`'s `id` field. The only place that turns a ROM
+`DObjDesc` array into `XObj`s is `gcSetupCommonDObjs`
+(`objanim.c:2153`), and it tests exactly four high-nibble bits in priority
+order:
+
+```c
+if (dobjdesc->id & 0x8000) gcAddXObjForDObjFixed(dobj, nGCMatrixKindRecalcRotRpyRSca, 0);
+else if (dobjdesc->id & 0x4000) gcAddXObjForDObjFixed(dobj, nGCMatrixKind46, 0);
+else if (dobjdesc->id & 0x2000) gcAddXObjForDObjFixed(dobj, nGCMatrixKind48, 0);
+else if (dobjdesc->id & 0x1000) gcAddXObjForDObjFixed(dobj, nGCMatrixKind50, 0);
+else gcAddDObjTransformTraRotSca(dobj);
+```
+
+Only kinds 44, 46, 48 and 50 are reachable this way — the same four values
+[`TransformKind`](../crates/ssb-rom/src/scene.rs) already models. Every
+other `gcPrepDObjMatrix` case (1-2, 18-32, 33-43, 45, 47, 49, 56-63, and the
+`kind >= 66` catch-all) is only reached when other game-code modules call
+`gcAddXObjForDObjFixed`/`gcAddXObjForDObjVar` directly with a literal kind —
+grepping the whole decompilation for these calls turns up dozens of sites
+(`ef/efmanager.c`, `it/itcommon/*.c`, `gr/grcommon/*.c`, `mv/mvopening/*.c`,
+etc.) passing kinds like `0x1C`/28, `0x28`/40, `0x2A`/42, `0x2C`/44,
+`0x2E`/46, `0x46`/70, `0x48`/72 — real fighter/item/effect/stage-decoration
+code, but none of it is `DObjDesc`-array-driven, and none of it is
+exercised by this project yet (combat and most gameplay systems are gated
+by `PLAN.md`'s rendering gate). **Kinds 33-40 specifically** (the
+`func_800108xx` family: `func_80010748`/`func_80010918`/`func_80010AE8`/
+`func_80010C2C`, each with a translate/no-translate pair) are true
+per-object look-at billboards computed from the object-to-camera distance
+vector, distinct in shape from kinds 44-50's shared-camera-basis approach —
+but they are not reachable from any `DObjDesc` this crate parses, so there
+is nothing for the ROM importer to do with them until the calling game
+systems exist.
+
+**Kind 50 is real, reachable, and completely unused.** Case 50
+(`objdisplay.c:1050`) is byte-for-byte the same move-word layout and
+per-node scale math as case 48 (already `FLAG_BILLBOARD`), reading
+`sGCMatrixMod2F` instead of `sGCMatrixMod1F`. Those two matrices are
+computed once per frame from the camera (`objdisplay.c:3033-3066`):
+`Mod1F` is a look-at with `eye.x`/`at.x` pinned to 0 (rotation confined to
+the camera's pitch, locked in yaw), `Mod2F` pins `eye.y`/`at.y` to 0
+instead (locked in pitch, follows yaw) — genuinely different bases, not a
+copy-paste. A temporary example
+(`crates/ssb-rom/examples/tmp_kind50_scan.rs`, written to check and then
+deleted, not committed) walked every scene graph in the ROM: **0 of 3117**
+nodes archive-wide carry the `0x1000` bit (34 carry `0x4000`, 47 carry
+`0x2000`, 28 carry `0x8000`, matching RE-062's count). Kind 50 is legal per
+the runtime, present in shipped assets exactly nowhere.
+
+**Fix.** `crates/ssb-rom/src/pack.rs`'s `add_object`: added
+`TransformKind::Kind50` to the same `FLAG_BILLBOARD` match arm as
+`Kind46`/`Kind48`/`RecalcRotRpyRSca`. This is fidelity with the decomp's
+case structure (case 50 is structurally `Kind48`'s twin) rather than a
+measured fix, since no shipped node exercises it — recorded as such, not
+disguised as more than it is (`AGENTS.md` §9).
+
+**Verified.** New test
+`a_kind_50_node_is_flagged_as_a_billboard_like_kind_48` (`pack.rs`)
+confirms a `0x1001`-id node reaches the pack flagged. `cargo test
+--workspace`: 340 passing (was 339). `cargo clippy --release -p romtool -p
+ssb-rom`: clean. `romtool pack` still reports 109 billboard nodes (Kind50
+contributes 0, as expected). `cargo psp --release`: builds clean.
+`tools/run-ppsspp.sh --no-build --seconds 8`: Dream Land renders correctly
+at 60 FPS (`FPS: 60.0`, `cpu 2353us / budget 16667us`), canopy sprites
+unchanged (expected — no node uses the new flag path), log clean.
+
+**Result.** `PLAN.md` R0.8's "transform kinds enumerated" acceptance item
+is satisfied: every `gcPrepDObjMatrix` case has a traced origin, and every
+case reachable from this project's data (`DObjDesc` arrays) is
+implemented. The remaining cases are correctly out of scope until the game
+systems that call them directly are implemented — not a rendering gap.
+
+**Confidence: high.** `gcSetupCommonDObjs` is unambiguous C naming exactly
+four bit tests; the archive-wide scan (3117/3117 nodes, not sampled)
+confirms kind 50's absence directly rather than inferring it. Medium on
+whether kinds 33-43/45/47/49 will need their own work later — that depends
+on which gameplay systems this project eventually implements and whether
+any of them turn out to use these paths on `DObjDesc`-sourced `DObj`s
+after all (unlikely per the call-site grep, but not exhaustively proven
+for every future system).

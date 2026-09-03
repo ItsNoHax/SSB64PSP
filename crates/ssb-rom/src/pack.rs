@@ -969,18 +969,27 @@ impl PackWriter {
                 rest_translate: node.desc.translate,
                 rest_rotate: node.desc.rotate,
                 rest_scale: node.desc.scale,
-                // Kinds 45-48 and `0x8000` are all camera-relative: none of
+                // Kinds 45-50 and `0x8000` are all camera-relative: none of
                 // them multiply the node's own rotation into the MVP
-                // (`gcPrepDObjMatrix` cases 44-48 in `objdisplay.c`; 44 is
-                // `0x8000`/`RecalcRotRpyRSca`, the only one of the five that
+                // (`gcPrepDObjMatrix` cases 44-50 in `objdisplay.c`; 44 is
+                // `0x8000`/`RecalcRotRpyRSca`, the only one of this group that
                 // skips the sin/cos spin term entirely). Every shipped
                 // `0x8000` node's `rotate` is `[0, 0, 0]` (checked across the
-                // whole archive, RE-061), so treating it as a spin-0
+                // whole archive, RE-062), so treating it as a spin-0
                 // `FLAG_BILLBOARD` node reuses the already-verified 46/48
-                // path (RE-048, RE-049) exactly.
+                // path (RE-048, RE-049) exactly. `0x1000`/`Kind50` (case 50)
+                // is structurally identical to `Kind48` (case 48) -- same
+                // move-word layout, same per-node scale math -- just built
+                // from `sGCMatrixMod2F` (locked to the camera's yaw) instead
+                // of `sGCMatrixMod1F` (locked to the camera's pitch), so it
+                // gets the same treatment for the same reason. No shipped
+                // node uses it (RE-063: 0/3117 archive-wide), so this is
+                // fidelity for a kind the ROM never actually exercises, not a
+                // measured fix.
                 flags: match node.desc.transform_kind() {
                     crate::scene::TransformKind::Kind46
                     | crate::scene::TransformKind::Kind48
+                    | crate::scene::TransformKind::Kind50
                     | crate::scene::TransformKind::RecalcRotRpyRSca => NodeDesc::FLAG_BILLBOARD,
                     _ => 0,
                 },
@@ -2934,6 +2943,41 @@ mod tests {
             pack.node(0).unwrap().flags & NodeDesc::FLAG_BILLBOARD,
             NodeDesc::FLAG_BILLBOARD,
             "a 0x8000 node must reach the device flagged"
+        );
+    }
+
+    #[test]
+    fn a_kind_50_node_is_flagged_as_a_billboard_like_kind_48() {
+        // `gcPrepDObjMatrix` case 50 (`0x1000`/`Kind50`, `objdisplay.c`) is
+        // the same move-word layout and per-node scale math as case 48
+        // (`Kind48`, already `FLAG_BILLBOARD`), just sourced from
+        // `sGCMatrixMod2F` instead of `sGCMatrixMod1F`. No shipped node uses
+        // this bit (RE-063: 0/3117 archive-wide), so this is fidelity with
+        // the decomp's case structure, not a fix for an observed bug.
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let sprite = DObjDesc {
+            id: 0x1001,
+            dl: None,
+            translate: [0.0; 3],
+            rotate: [0.0; 3],
+            scale: [1.0; 3],
+        };
+        let graph = SceneGraph {
+            offset: 0x100,
+            nodes: alloc::vec![DObjNode {
+                desc: sprite,
+                parent: None
+            }],
+        };
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 104, |_| None, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(
+            pack.node(0).unwrap().flags & NodeDesc::FLAG_BILLBOARD,
+            NodeDesc::FLAG_BILLBOARD,
+            "a 0x1000 node must reach the device flagged"
         );
     }
 

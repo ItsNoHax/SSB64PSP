@@ -90,7 +90,9 @@ pub enum TransformKind {
     Kind46,
     /// `0x2000` — `nGCMatrixKind48`.
     Kind48,
-    /// `0x1000` — `nGCMatrixKind50`. Unused by shipped data, kept for fidelity.
+    /// `0x1000` — `nGCMatrixKind50`. Unused by shipped data (RE-063:
+    /// 0/3117 nodes archive-wide); flagged `FLAG_BILLBOARD` like `Kind48`
+    /// in `pack.rs` anyway, for fidelity with the decomp's case structure.
     Kind50,
 }
 
