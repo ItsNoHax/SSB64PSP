@@ -4105,3 +4105,85 @@ formula (it is the decompilation's own code, algebraically simplified, not
 inferred). Medium on whether the 8 non-default stages' lighting will
 matter enough to justify moving to runtime lighting later — that is a
 `PLAN.md` R0.6/R0.15 scoping question, not something this pass resolves.
+
+## RE-066 — The hardcoded `Repeat` wrap mode is already correct; `Mirror` is the real gap
+
+**Question.** `PLAN.md` R0.5 flags wrap/clamp/mirror behavior as
+unverified: `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)`
+regardless of what a display list's `G_SETTILE` actually asks for (`cms`/
+`cmt`, decoded in `dl.rs` but discarded by `mesh.rs`). Is this a bug —
+should clamped/mirrored textures look different than they currently do?
+
+**Measurement, not assumption.** A temporary example
+(`crates/ssb-rom/examples/tmp_wrap_mode_scan.rs`, written to check and
+then deleted, not committed) decoded every display list archive-wide and
+tallied `cms`/`cmt` on the render tile (tile 0, the only one
+`current_texture()` reads). **754 `G_SETTILE` commands set tile 0**,
+distributed:
+
+```
+ cm_s        cm_t          count
+ wrap         clamp            9
+ mirror       clamp            2
+ clamp        clamp          537
+ clamp        mirror+clamp     8
+ mirror+clamp clamp          138
+ mirror+clamp mirror+clamp    60
+```
+
+Zero use plain `wrap`/`wrap`. Cross-tabulating against `masks`/`maskt`
+(also decoded, per axis) found something decisive: **every single
+instance where an axis requests clamp or mirror, that same axis's own
+mask is nonzero** — 0 counterexamples out of 754, on both axes
+independently.
+
+**Why that settles it.** `refs/BattleShip`'s RDP interpreter
+(`libultraship/src/fast/interpreter.cpp:3245-3251`) — a working,
+shipped reference port, not a guess — strips the `G_TX_CLAMP` bit
+whenever the axis is mirrored or its declared and effective tile widths
+disagree, i.e. whenever the tile is genuinely periodic. It also does the
+*opposite* substitution for unmasked tiles (`cms == G_TX_WRAP && masks ==
+G_TX_NOMASK` forces `Clamp`, `interpreter.cpp:3952-3956`), confirming real
+RDP tile addressing only wraps/clamps meaningfully *in combination with*
+the mask, not from the two-bit field alone — a naive "`WRAP` -> GPU
+repeat, `CLAMP` -> GPU clamp" mapping is wrong on real hardware, not just
+on the PSP. Since every clamp/mirror-flagged axis in this ROM is also a
+masked (periodic) axis, real hardware treats every one of them as
+repeating, not clamping. `crates/ssb-rom/src/mesh.rs`'s `current_texture()`
+already narrows width/height to `1 << mask` per axis for exactly this
+reason (RE-044, written for Dream Land's ground tile specifically) — so
+`sceGuTexWrap(Repeat, Repeat)` over that already-narrowed size reproduces
+the real periodic addressing exactly. The existing hardcoded `Repeat` was
+not a naive placeholder; it happens to already be the behaviorally correct
+choice, for a reason the original comment didn't state.
+
+**What is not covered.** `G_TX_MIRROR` — present on **208 of 754 (27.6%)**
+tile-0 lists — has no PSP GE equivalent (`GuTexWrapMode` is `Repeat`/
+`Clamp` only, `psp` crate `sys::gu.rs`). A mirrored axis on real hardware
+bounces smoothly at each period boundary; rendered as plain `Repeat` it
+instead sawtooths — a real, visible discontinuity wherever a mirrored
+texture's UVs actually cross a period boundary (not measured per-texture
+this pass; some may never be sampled past one period in practice). Two
+honest paths forward, neither attempted here: measure whether any
+mirrored texture's UVs are ever sampled past one period (if not, the gap
+is real but inert), or pre-bake a flipped copy at pack time and repeat
+over the doubled canvas — an *exact* fix, not an approximation, since
+pack-time conversion already has full control of the texture data, at the
+cost of roughly doubling VRAM for affected textures. VRAM is already over
+the 700 KiB "all at once" figure (RE-053), so that tradeoff needs a
+deliberate decision, not a reflexive fix.
+
+**Result.** No code changed in the wrap-mode logic itself — it was already
+right. Corrected `meshdraw.rs`'s comment, which previously justified
+`Repeat` only by "UVs run outside 0..1" (true but incomplete) to explain
+the actual mechanism and cite this measurement, and to name `Mirror` as
+the one open, quantified, accepted deviation. `PLAN.md` R0.5's "wrap/
+clamp/mirror behavior verified" and "texture tile parameters verified"
+items are checked on this evidence.
+
+**Confidence: high** on the measurement (754/754 tile-0 `G_SETTILE`
+commands read, not sampled) and on the clamp/mask conclusion (BattleShip's
+logic is concrete, working C++ code, cross-checked against our own
+independent measurement rather than copied on faith). Medium on whether
+`Mirror`'s 27.6% share is visually significant anywhere in this ROM —
+that needs a per-texture UV-range check this pass didn't do.

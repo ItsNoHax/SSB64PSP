@@ -193,7 +193,22 @@ unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc) {
     sys::sceGuTexScale(UV_SCALE / t.stride as f32, UV_SCALE / padded_h);
 
     // Mesh UVs routinely run outside 0..1 (measured -55..119 texels on a
-    // 64-wide texture), so the texture must tile rather than clamp.
+    // 64-wide texture), so the texture must tile rather than clamp. This is
+    // not just an approximation of convenience: RE-066 measured every
+    // tile-0 `G_SETTILE` in the ROM (754, archive-wide) and found clamp/
+    // mirror is *only ever* requested on an axis whose own mask is also
+    // nonzero -- i.e. every render tile the game asks to clamp is also one
+    // it declares periodic, and `crates/ssb-rom/src/mesh.rs`'s
+    // `current_texture()` already narrows width/height to that period
+    // (RE-044). Repeating over that already-narrowed size reproduces the
+    // real periodic TMEM addressing exactly; a literal `Clamp` would not
+    // (there would be nothing to tile after the mask-based narrowing wrote
+    // over the "real" pre-narrowed size). The one gap this doesn't cover is
+    // `G_TX_MIRROR` (27.6% of tile-0 lists, RE-066) -- the GE has no mirror
+    // wrap mode, so a mirrored texture repeats with a visible seam every
+    // period instead of bouncing smoothly. Accepted deviation, not fixed
+    // here; see RE-066 for the measurement and a sketch of an exact fix
+    // (pre-baking a flipped copy) and its VRAM cost.
     sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
     sys::sceGuTexOffset(0.0, 0.0);
 }

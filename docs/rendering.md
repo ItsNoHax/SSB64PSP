@@ -310,9 +310,16 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
   sharpens at higher resolution, which points at texture *magnification*
   behaviour rather than minification/LOD selection. This is `PLAN.md` R0.5's
   open acceptance criterion, not a solved problem.
-* Wrap modes beyond `Repeat`: `G_TX_CLAMP` and `G_TX_MIRROR` are decoded from
-  `G_SETTILE` but `psp/src/meshdraw.rs` still hardcodes
-  `sceGuTexWrap(Repeat, Repeat)` for every draw.
+* `G_TX_MIRROR`: no PSP GE equivalent exists (`sceGuTexWrap` is `Repeat`/
+  `Clamp` only). Present on 27.6% of tile-0 `G_SETTILE` lists archive-wide;
+  renders as a seam at each repeat boundary instead of a smooth bounce.
+  Accepted deviation (RE-066) — an exact fix would pre-bake a flipped copy
+  per mirrored texture at pack time, at a real VRAM cost not yet spent.
+  `G_TX_CLAMP`, by contrast, is *not* a gap: `psp/src/meshdraw.rs` hardcodes
+  `sceGuTexWrap(Repeat, Repeat)` for every draw, and RE-066 measured that
+  every clamp-flagged tile-0 axis archive-wide is also a masked (periodic)
+  one, so the existing mask-narrowed-width `Repeat` (RE-044) already
+  reproduces real hardware's addressing exactly.
 
 ## Coordinate handling
 

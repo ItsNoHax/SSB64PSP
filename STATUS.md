@@ -12,31 +12,50 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness` (its lighting item)
+`R0.5 — Texture Filtering / LOD / Mipmapping`
 
 ## Task Status
 
-`IN_PROGRESS`. RE-065 (this session) replaced `pack.rs`'s arbitrary
-`LIGHT_DIR` placeholder `(2, 4, 3)` with a real, ROM-measured value: read
-`MPGroundData.light_angle` (a per-stage field this session added to
-`stage::GroundData`, byte offset independently corroborated against the
-already-verified `camera_bound_top` offset) across all 41 stages and found
-33 of them (80%) share one `(20, 45)` degree angle — now used exactly.
-The other 8 stages (special-lighting locations: Brinstar, Sector Z, Metal
-Mario's stage, etc.) diverge up to 111 degrees and are recorded as an
-explicit, measured, `AGENTS.md` §9-compliant accepted deviation, not an
-unlabeled guess — full per-stage correctness needs runtime `sceGuLight`
-lighting, which this pack-time-baked-shading architecture cannot do
-without a larger redesign, out of scope for this pass. R0.6's "lighting
+`IN_PROGRESS`. RE-066 (this session) closed R0.5's "wrap/clamp/mirror
+behavior verified" and "texture tile parameters verified" items with a
+measurement, not a code fix: read every tile-0 `G_SETTILE` archive-wide
+(754, not sampled) and found `psp/src/meshdraw.rs`'s hardcoded
+`sceGuTexWrap(Repeat, Repeat)` is already correct — every axis that
+requests clamp also has its own mask nonzero (0 counterexamples), and
+`refs/BattleShip`'s reference RDP interpreter strips `G_TX_CLAMP` under
+exactly that condition on real hardware, confirming `mesh.rs`'s existing
+mask-narrowed texture sizing (RE-044) already reproduces correct periodic
+addressing. Corrected `meshdraw.rs`'s comment, which previously justified
+`Repeat` for an incomplete reason. The one real, quantified gap is
+`G_TX_MIRROR` (208/754, 27.6%) — no PSP GE equivalent exists — recorded as
+an explicit accepted deviation (exact fix would pre-bake a flipped texture
+copy at pack time, at a real VRAM cost against RE-053's already-over-budget
+figure), not measured per-texture or fixed this pass. R0.5's remaining
+open items (filtering modes, magnification/minification/LOD behavior, the
+still-unresolved Dream Land canopy discrepancy) are untouched — RE-053
+already concluded the canopy issue is a magnification/dithering problem,
+not wrap mode, so this pass does not affect it either way.
+
+## Last Completed Task
+
+R0.6 — Material System Correctness — its lighting placeholder replaced
+with a real, ROM-measured value this session (RE-065): read
+`MPGroundData.light_angle` (a per-stage field added to `stage::GroundData`,
+byte offset independently corroborated against the already-verified
+`camera_bound_top` offset) across all 41 stages and found 33 of them (80%)
+share one `(20, 45)` degree angle — now used exactly for `pack.rs`'s baked
+`LIGHT_DIR`. The other 8 stages (special-lighting locations: Brinstar,
+Sector Z, Metal Mario's stage, etc.) diverge up to 111 degrees and are
+recorded as an explicit, measured, `AGENTS.md` §9-compliant accepted
+deviation — full per-stage correctness needs runtime `sceGuLight` lighting,
+out of scope for a pack-time-baked-shading architecture. R0.6's "lighting
 verified" acceptance item stays unchecked (the deviation is now properly
 recorded, not eliminated), and its other open items (material tables,
 combiner/alpha/blend/fog/depth/culling verification) are untouched.
 
-## Last Completed Task
-
 R0.4 — TLUT / Palette Correctness — its "palette inheritance/state
-verified" acceptance item closed this session (RE-064): added a direct
-unit test (`a_texture_binding_persists_into_a_node_that_sets_no_new_state`,
+verified" acceptance item closed in an earlier pass (RE-064): added a
+direct unit test (`a_texture_binding_persists_into_a_node_that_sets_no_new_state`,
 `crates/ssb-rom/src/mesh.rs`) pinning that RDP texture/palette state
 threads across a node sequence the way real hardware keeps it, previously
 only measured archive-wide. Confirmed the test can actually fail (broke
@@ -109,23 +128,29 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-`R0.6 — Material System Correctness` remains `IN_PROGRESS` after this
-session's lighting-direction fix (RE-065, see above) — its other open
-acceptance items are untouched: material tables resolved, combiner
-behavior, primitive/environment colour, alpha, blending, fog, depth state,
-culling, and "unsupported material behavior identified." `TODO.md` Phase D
-still separately calls out removing `RE-021`'s shading-detection majority
-vote (a different, structural problem: per-list conversion can't see
-per-object `G_LIGHTING` state) and implementing `MOBJ_FLAG_LIGHT1/2`
-(uploading real light colours, though RE-024 already found they're all
-white so this may be low-value). `R0.5` (Texture Filtering / LOD /
-Mipmapping — wrap modes decoded but not wired to `sceGuTexWrap`, Dream
-Land canopy discrepancy still open) is also `IN_PROGRESS` and was not
-evaluated this session. `R0.4`'s own remaining item ("all missing palette
-cases resolved") is already fully attributed to `R0.7`'s file-86 long
-tail, so R0.4 has no further independently-actionable work. `R0.7` remains
-technically `IN_PROGRESS` but its remaining scope is an accepted long tail
-— only worth revisiting if the upstream decompilation types
+`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS` after
+this session's wrap/clamp/mirror investigation (RE-066, see above). Its
+real remaining open items are the harder ones RE-053 already scoped out:
+filtering modes (bilinear vs point, not yet verified per texture),
+magnification/minification/LOD behavior, and specifically the still-open
+"Dream Land canopy discrepancy resolved" item — RE-053 already
+root-caused the canopy issue as *magnification*, not minification/LOD
+(a pattern that sharpens at higher resolution can't be a mip problem), and
+BattleShip corroborates (RE-054: the reference port has no LOD support at
+all). A fresh session tackling the canopy should start from "what does
+softening a magnified, dithered CI4 gradient actually require" (filtering
+mode, or resolving the dither at conversion time), not more mipmap work.
+`R0.6 — Material System Correctness` also remains `IN_PROGRESS` — its
+lighting *direction* is now measured (RE-065), but material tables,
+combiner behavior, primitive/environment colour, alpha, blending, fog,
+depth state and culling verification are all untouched, as is `TODO.md`
+Phase D's separate `RE-021` shading-detection majority vote (a different,
+structural problem: per-list conversion can't see per-object `G_LIGHTING`
+state). `R0.4`'s own remaining item ("all missing palette cases resolved")
+is already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
+further independently-actionable work. `R0.7` remains technically
+`IN_PROGRESS` but its remaining scope is an accepted long tail — only
+worth revisiting if the upstream decompilation types
 `llITCommonDataNBumperWaitMObjSub` or Spin Attack's `WPAttributes`
 instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
@@ -306,6 +331,22 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.5: wrap/clamp verified correct, Mirror recorded as a deviation (RE-066)
+
+* Wrote a temporary example (`crates/ssb-rom/examples/tmp_wrap_mode_scan.rs`, deleted before commit) decoding every display list archive-wide and tallying `cms`/`cmt` on tile 0 (the render tile `current_texture()` reads): 754 `G_SETTILE` commands found, 0 using plain `wrap`/`wrap`
+* Cross-tabulated per-axis against that axis's own `masks`/`maskt`: every single instance where an axis requests clamp or mirror also has that axis's own mask nonzero — 0/754 counterexamples on both axes independently
+* Read `refs/BattleShip/libultraship/src/fast/interpreter.cpp:3245-3251` (strips `G_TX_CLAMP` when the tile is genuinely periodic) and `:3952-3956` (forces `Clamp` for an unmasked `WRAP` tile) — confirmed real RDP tile addressing only wraps/clamps meaningfully in combination with the mask, not from the two-bit field alone; a naive `WRAP`→repeat/`CLAMP`→clamp mapping is wrong on real hardware too, not just the PSP
+* Concluded `crates/ssb-rom/src/mesh.rs`'s existing mask-narrowed texture sizing (RE-044) combined with `psp/src/meshdraw.rs`'s hardcoded `sceGuTexWrap(Repeat, Repeat)` already reproduces the correct periodic addressing for every tile-0 texture in this ROM — not a bug, no code change needed
+* Quantified the one real gap: `G_TX_MIRROR` on 208/754 (27.6%) tile-0 lists, which `sys::GuTexWrapMode` (`Repeat`/`Clamp` only) cannot represent at all
+* Corrected `meshdraw.rs`'s comment (previously justified `Repeat` only by "UVs run outside 0..1", true but incomplete) to explain the actual mechanism and cite the measurement
+* `cargo test --workspace` — 341 passing, unchanged (no functional code changed)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `cargo psp --release` — builds clean (comment-only change to `meshdraw.rs`)
+* Result: RE-066 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.5 ("wrap/clamp/mirror behavior verified", "texture tile parameters verified" checked), `TODO.md` Phase C, `docs/rendering.md`, `docs/porting-status.md` updated to match
+* Affected subsystem: `psp/src/meshdraw.rs` (comment only) — plus documentation; no functional/runtime change
+* PPSSPP: not run this pass (no production behavior changed)
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.6: baked key light direction measured from real stage data (RE-065)
 
