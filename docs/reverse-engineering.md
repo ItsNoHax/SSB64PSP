@@ -6664,3 +6664,117 @@ positive result with a clear mechanism for why the risky case (node 20)
 is unaffected. `PLAN.md` R0.10's known-script survival rate is now 33/33
 — the open question from RE-092/093 is fully closed, not partially
 explained.
+
+## RE-095 — `MaterialAnimator`: the device-side player, wired into every draw path
+
+**Question.** `PLAN.md` R0.10's pipeline (RE-086–094) resolves every real
+`PaletteID` script, reads its palettes, and packs them — but nothing on the
+device side had ever ticked one or reloaded a CLUT. Step 8 of this file's
+own pipeline: build the runtime player, mirroring `StageAnimator`'s
+three-phase lifecycle (start, tick, apply in draw).
+
+**Design.** Unlike `Skeleton`/`StageAnimator`, a `MatAnimDesc` entry is a
+property of a *texture*, not a fighter or a stage layer — there is no
+per-object "start" boundary to restart on. `MaterialAnimator` (new,
+`skeleton.rs`, alongside the other two players) starts once when the pack
+loads and ticks every frame for the pack's whole lifetime, independent of
+which stage or fighter is on screen: cheap either way, since RE-089 found
+33 real scripts archive-wide and `MAX_MAT_ANIMS = 64` leaves headroom the
+same way `MAX_JOINTS`/`MAX_STAGE_JOINTS` do. `MaterialJoint` gained
+`#[derive(Clone, Copy)]` (previously unneeded — nothing stored it in a
+fixed array before) so it can live in `MaterialAnimator`'s array the same
+way `StageJoint` already does in `StageAnimator`'s.
+
+A pack's `MatAnimDesc` table order is stable, so array position `i` in
+`MaterialAnimator` is always the same `i` a `TextureDesc::mat_anim` index
+names directly — no separate lookup table needed, mirroring how
+`Skeleton`/`StageAnimator` index by absolute node/joint number.
+`resolved_palette(pack, mat_anim)` reads the ticked script's current
+`PaletteID` value (only trusting it when `track_is_stepped` — matching
+`MaterialJoint`'s own established rule) and clamps it into *that entry's
+own* `palette_count` before adding `first_palette`: a corrupted or
+out-of-range replay must fail into this entry's last real variant, not
+read into a neighbouring `MatAnimDesc`'s own palette data in the shared
+table (verified: a test asserting the clamp fails without it, confirmed,
+then restored).
+
+**A `no_std` build error caught a real portability gap before it shipped.**
+`f32::round()` does not exist in `core` without `std`/`libm` — `scene.rs`
+already avoids `libm` for `sin`/`cos` for the same reason. Fixed with the
+same "add a half, truncate" trick `mesh.rs`'s own vertex rounding already
+uses (`(v.max(0.0) + 0.5) as u32`), rather than adding a new dependency.
+Caught by actually running `cargo psp --release` before considering this
+done, not just `cargo test` on the host — the crate's `std` feature is
+enabled by default, so `cargo test`/`cargo clippy --workspace` alone would
+never have found this.
+
+**Wired into every draw path, not just one.** `bind_texture` issues a
+second `sceGuClutLoad` after the static one whenever `TextureDesc::
+mat_anim` names a live, resolvable entry — it wins because it runs later,
+and a texture with no animation or an animator that has not produced a
+value yet keeps its baked palette rather than showing nothing.
+`apply_material`'s existing `last_texture` cache (reset once per frame)
+means this naturally reloads exactly when it needs to: once per
+texture-change within a frame, and always at least once per frame per
+texture actually drawn, which is exactly the cadence a value that only
+changes frame-to-frame needs. Threaded `Option<&MaterialAnimator>` through
+`draw_mesh`/`draw_object`/`draw_object_posed`/`draw_stage`/
+`draw_stage_animated`/`apply_material` — six functions, mirroring how
+`pack: &Pack<'_>` is already threaded explicitly everywhere rather than
+stashed in `DrawState`, and updated all four real call sites in
+`psp/src/main.rs` plus `draw_texture_quad`'s diagnostic (passes `None`,
+correctly inert for a bare texture-upload check with no primitive
+context).
+
+**Verified.** New tests in `skeleton.rs`: one ticks a script reproducing
+RE-086/087's real archive shape (three `PaletteID` steps, then `SET_ANIM`
+looping forever) through a full `PackWriter`/`Pack` round-trip and
+confirms `MaterialAnimator` visits every one of its three real variants
+and keeps cycling rather than freezing — deliberately not asserting exact
+tick-by-tick values, since `MaterialJoint`'s own precise timing is already
+pinned by `matanim::tick_tests`; this is about the wrapper resolving it
+correctly, not re-deriving that timing. A second test proves the
+neighbouring-table-read risk is real (fails without the clamp) and that
+the clamp closes it. `cargo test --workspace`: 247 passing (was 245).
+`cargo clippy --release` (workspace): clean. `cargo psp --release`: builds
+clean once the `round()` portability issue was fixed.
+`tools/run-ppsspp.sh`: runs clean, no panics, Dream Land pixel-identical
+at 60 FPS (expected: Dream Land's own file 104 layer is RE-086's
+`TraU`/`SetLFrac` texture-sway case, not `PaletteID`).
+
+Loaded stage index 2 (source file 257, whose render layer lives in
+archive file 105 — RE-089's `StageZebesFile2`, one of the two concrete
+non-Dream-Land candidates this pipeline has targeted since RE-089) via a
+temporary, reverted `stage_index` override — confirmed on the real device
+profile that this stage renders at 60 FPS with no panics, 464 triangles,
+one layer, and correctly reports `tex 0/648` matching the current pack.
+**Did not conclusively confirm the palette visibly cycles frame-to-frame
+by screenshot.** The harness takes exactly one screenshot per independent
+launch and each launch restarts the simulation from tick 0, so two
+screenshots from two separate invocations cannot isolate "different tick
+count, same everything else" — a floating platform's own stage-animation
+motion (RE-050/051, unrelated to this feature) confounded a naive
+before/after crop comparison, and a fast palette cycle is not something a
+pair of blurry, differently-timed static screenshots can conclusively
+settle either way. This is an honest gap, not a claimed success: the
+*mechanism* is verified by construction (a real-shaped script through the
+real pack format, ticked and resolved correctly, wired into the actual
+`sceGuClutLoad` call the hardware needs), but *watching it happen* needs
+either video capture or interactive play, the same category of limitation
+`STATUS.md` already recorded for `R0.12`/`R0.14`'s remaining items.
+
+**Result.** `crates/ssb-rom/src/skeleton.rs` gains `MaterialAnimator`
+and `MAX_MAT_ANIMS`; `crates/ssb-rom/src/matanim.rs`'s `MaterialJoint`
+gains `Clone, Copy`; `psp/src/meshdraw.rs` and `psp/src/main.rs` wire it
+into every real draw path. `PLAN.md` R0.10's step 8 (the `MaterialAnimator`
+itself) is done. Step 9 (visual verification on a stage that needs it)
+is partially done: confirmed the pipeline runs correctly on file 105 with
+no regressions, not yet confirmed by eye that the cycle is visible.
+
+**Confidence: high** on the mechanism (a real-shaped script ticks and
+resolves correctly through the actual pack format and draw path, verified
+host-side with tests proven capable of failing, and clean on real-device
+compilation and execution). **Not confident, and explicitly not
+claimed**: that the palette cycle is visually confirmed on screen — that
+remains open, honestly, for a session with video capture or interactive
+input.

@@ -1114,6 +1114,38 @@ capable of failing. **Archive-wide: 33 of 33 known scripts now survive**
 unchanged. `cargo test --workspace`: 245 passing. `cargo psp --release` +
 `tools/run-ppsspp.sh`: clean, Dream Land pixel-identical.
 
+RE-095 shipped step 8: `MaterialAnimator` (new, `skeleton.rs`), mirroring
+`StageAnimator`'s lifecycle but starting once at pack load rather than
+per-object, since a `MatAnimDesc` entry is a texture's property with no
+per-object boundary to restart on. Array position mirrors `TextureDesc::
+mat_anim`'s index directly. `resolved_palette` clamps into each entry's
+own `palette_count` before adding `first_palette`, verified against a
+neighbouring-table-read regression test proven capable of failing.
+Caught a real `no_std` portability gap before shipping: `f32::round()`
+does not exist without `std`/`libm`; fixed with the same
+"add-a-half-truncate" trick `mesh.rs`'s own vertex rounding already
+uses, found only because `cargo psp --release` was actually run (`cargo
+test`/`clippy --workspace` alone never would have). Wired
+`Option<&MaterialAnimator>` through `draw_mesh`/`draw_object`/
+`draw_object_posed`/`draw_stage`/`draw_stage_animated`/`apply_material` —
+`bind_texture` issues a second `sceGuClutLoad` after the static one
+whenever `TextureDesc::mat_anim` names a live, resolvable entry, riding
+the existing per-frame texture-cache reset for correct cadence. New
+tests: one ticks a real-shaped script (three `PaletteID` steps then
+`SET_ANIM` looping) through a full pack round-trip and confirms every
+variant is visited and it keeps cycling; one proves the clamp regression
+is real. `cargo test --workspace`: 247 passing. `cargo psp --release` +
+`tools/run-ppsspp.sh`: clean, Dream Land pixel-identical. Loaded file
+105's stage (temporary, reverted `stage_index` override) and confirmed it
+renders at 60 FPS with no panics — but did **not** conclusively confirm
+the palette visibly cycles by screenshot: the harness takes one
+screenshot per independent launch, each restarting from tick 0, so two
+separate invocations cannot isolate "more ticks, nothing else changed" —
+a moving stage-animated platform confounded a naive crop comparison.
+Honestly left open, the same category of limitation already recorded for
+`R0.12`/`R0.14`'s remaining items: the mechanism is verified by
+construction, watching it happen needs video capture or interactive play.
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -1127,14 +1159,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [x] material state updated correctly — RE-089/RE-090/RE-092/RE-093/RE-094: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, `mobj::read_palettes` reads the real array using that bound, and `mesh.rs`'s existing state threading (RE-064, fixed by RE-093 for shared-image `G_LOADTLUT` groups and RE-094 for a stale inherited `Cmd::Texture` disable) correctly correlates the resolved animation to the texture it applies to — **all 33 of RE-089's known scripts** (321 palette variants, 24 textures) now flow all the way into the real pack, verified against RE-089's own per-file numbers; nothing on the device side calls `MaterialJoint` or reloads a CLUT yet (that is `PLAN.md`'s own steps 6/8, not this item)
-* [ ] representative animated materials verified
-* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114), now confirmed (RE-092) to actually carry packed animation data, but not yet verified on-screen
+* [x] material state updated correctly — RE-089/RE-090/RE-092/RE-093/RE-094: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, `mobj::read_palettes` reads the real array using that bound, and `mesh.rs`'s existing state threading (RE-064, fixed by RE-093 for shared-image `G_LOADTLUT` groups and RE-094 for a stale inherited `Cmd::Texture` disable) correctly correlates the resolved animation to the texture it applies to — **all 33 of RE-089's known scripts** (321 palette variants, 24 textures) now flow all the way into the real pack, verified against RE-089's own per-file numbers; RE-095 added the device-side `MaterialAnimator` and wired it into every draw path (`sceGuClutLoad` per animated texture, per frame)
+* [ ] representative animated materials verified — RE-095 wired `MaterialAnimator` into every draw path and confirmed file 105's stage runs clean on the real device profile, but did not confirm by eye that the palette cycle is visible on screen (needs video capture or interactive play, not another screenshot diff)
+* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114); RE-092 confirmed they carry packed animation data; RE-095 wired and ran the `MaterialAnimator` runtime path against file 105 on the real device profile (clean, no panics) but has not yet confirmed the cycle is visually correct
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094, RE-095 in `docs/reverse-engineering.md`.
 
 ---
 

@@ -269,6 +269,16 @@ unsafe fn run() -> ! {
     let mut stage_anim_loaded: Option<u32> = None;
     let mut show_collision = true;
 
+    // Material animation (RE-089-095): a `MatAnimDesc` entry is a property of
+    // a *texture*, not a stage layer or a fighter, so unlike `stage_anim`
+    // above there is no per-object "start" boundary to restart on -- it loads
+    // once here, when the pack loads, and ticks every frame for as long as
+    // the pack is loaded, independent of which stage or fighter is shown.
+    let mut material_anim = ssb_rom::skeleton::MaterialAnimator::new();
+    if let Some(p) = &pack {
+        material_anim.start(p);
+    }
+
     // The gameplay slice: one fighter, placed at the stage's first spawn and
     // ticked against its collision every simulation step. This is the join
     // between the ported physics and the ported collision, and running it here
@@ -537,6 +547,9 @@ unsafe fn run() -> ! {
         gpu.set_perspective(38.0, aspect, 1.0, (dbg_cam * 4.0).max(10_000.0));
         gpu.reset_modelview();
         draw_state.begin_frame();
+        if let Some(p) = &pack {
+            material_anim.tick(p);
+        }
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
         let mut dbg_bb = [0i32; 6];
@@ -627,8 +640,14 @@ unsafe fn run() -> ! {
                         Some(())
                     });
                     let scenery = animated.map(|()| &stage_anim);
-                    let (mut tris, layers) =
-                        meshdraw::draw_stage_animated(p, &stage, &base, scenery, &mut draw_state);
+                    let (mut tris, layers) = meshdraw::draw_stage_animated(
+                        p,
+                        &stage,
+                        &base,
+                        scenery,
+                        &mut draw_state,
+                        Some(&material_anim),
+                    );
                     let segments = if show_collision {
                         meshdraw::draw_collision(p, &stage, &base, &mut gpu)
                     } else {
@@ -665,6 +684,7 @@ unsafe fn run() -> ! {
                                     &m,
                                     &posed[..n],
                                     &mut draw_state,
+                                    Some(&material_anim),
                                 );
                                 gpu.model_transform(cam, [0.0, 0.0, 0.0], sc);
                             }
@@ -738,6 +758,7 @@ unsafe fn run() -> ! {
                         &base,
                         &posed[..posed_len],
                         &mut draw_state,
+                        Some(&material_anim),
                     );
                     let placed = (0..obj.node_count)
                         .filter_map(|k| p.node(obj.first_node + k))
@@ -792,7 +813,7 @@ unsafe fn run() -> ! {
                         .filter_map(|k| p.prim(desc.first_prim + k))
                         .filter(|pr| pr.texture != ssb_rom::pack::PrimDesc::NO_TEXTURE)
                         .count() as u32;
-                    meshdraw::draw_mesh(p, &desc, &mut draw_state);
+                    meshdraw::draw_mesh(p, &desc, &mut draw_state, Some(&material_anim));
                     shown = (draw_state.triangles, desc.vertex_count, desc.prim_count);
                 }
             }
