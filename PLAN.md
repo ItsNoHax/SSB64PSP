@@ -955,6 +955,21 @@ script's own length). `cargo test --workspace`: 375 passing (was 368).
 `cargo psp --release` + `tools/run-ppsspp.sh`: builds and runs clean
 under the real PSP target too, though nothing calls this yet.
 
+RE-088 tried the obvious next step — extending `mobj.rs` to read
+`MObjSub.palettes[1..]` — and retracted it after archive-wide measurement.
+The struct has no length field, and the decomp's own two real examples
+disagree on shape (one NULL-terminated, one not); a walk bounded by "is
+this slot a real relocated pointer" looked sound against synthetic unit
+fixtures but, measured against the real ROM, produced nonsense for 45%
+of cases (110/243 hit an arbitrary 32-entry cap; one traced case was a
+repeating arithmetic sequence from unrelated neighbouring file data, not
+a palette table). No code shipped from this; `mobj.rs` is unchanged. The
+real bound has to come from the driving material animation script (its
+`SET_VAL`/`SET_VAL_AFTER_BLOCK` payloads name every `PaletteID` the game
+ever asks for) — so reading `palettes[]` and resolving `p_matanim_joints`
+are not separable steps as this task's own prior note assumed; they need
+to land together.
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -968,14 +983,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [ ] material state updated correctly — nothing resolves `p_matanim_joints` into per-(node, `MObj`) script references at pack time yet, `mobj.rs` still reads `MObjSub.palettes[0]` only, no pack table carries any of this, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
+* [ ] material state updated correctly — nothing resolves `p_matanim_joints` into per-(node, `MObj`) script references at pack time yet, `mobj.rs` still reads `MObjSub.palettes[0]` only (RE-088: extending this in isolation is not possible — the real palette-table length is only recoverable from the driving script), no pack table carries any of this, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
 * [ ] representative animated materials verified
 * [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); a representative verification pass needs a palette-cycling stage, not Dream Land
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088 in `docs/reverse-engineering.md`.
 
 ---
 

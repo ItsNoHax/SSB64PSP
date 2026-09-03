@@ -6027,3 +6027,92 @@ scripts archive-wide uses exactly this same `AFTER_BLOCK`+`SET_ANIM`
 shape, or whether some use a plain `JUMP` (also now supported) or a
 different step count — RE-086's census confirmed the track, not the
 exact per-script control flow, for all of them.
+
+---
+
+## RE-088 — `MObjSub.palettes[1..]` cannot be recovered from local ROM structure alone; retracted after archive-wide measurement
+
+**Question.** RE-087 shipped the tick engine `PaletteID` cycling needs;
+`STATUS.md`'s own "Next Eligible Task" note framed the next step as
+step 2 of a numbered pipeline: "Extend `mobj.rs` to read
+`MObjSub.palettes[1..]`, not just `[0]`". `mobj.rs`'s existing `indirect`
+reads only `palettes[0]` (the entry a freshly-added `MObj` starts on);
+the raw bytes for every other palette a script could ever cycle to
+already exist in the ROM and are silently discarded.
+
+**The struct has no length field.** `refs/ssb-decomp-re/src/sys/objtypes.h`'s
+`MObjSub::palettes` is `void **`, a bare pointer with no adjacent count.
+Grepping the decomp for real instances (`328_KirbyModel.c`'s
+`..._palettes[6]`, NULL-terminated at index 5; `117_StageMetalFile2.c`'s
+`..._palettes[16]`, **not** terminated at all — it runs straight into the
+next `MObjSub` struct's own bytes) confirms the true length is a
+compile-time constant baked in by whichever source authored that table,
+not a runtime-discoverable value. Neither shape is universal: a NULL in
+the middle of a real table is just a legitimate "no palette here" entry
+in some tables, not always a sentinel — so "stop at the first NULL" is
+not even a safe rule for the terminated case, only a lucky one for
+Kirby's.
+
+**Tried the only bound the ROM itself offers, and measured it archive-wide
+before trusting it (temporary `romtool` census + `mobj.rs` instrumentation,
+reverted, not committed).** Implemented a walk from `palettes[0]`'s array
+base, advancing one slot at a time and accepting an entry only if it passes
+exactly the same validity test `indirect`'s existing, already-shipped
+entry-0 logic uses (a real intern-relocated pointer, or a zero word backed
+by an extern relocation), stopping at the first slot that fails either
+check — capped at 32 entries as a sanity bound (twice the largest known
+real table). Unit tests against synthetic fixtures (isolated, sparse,
+mostly-zero byte arrays) passed cleanly and made the approach look sound.
+
+Run archive-wide against the real ROM, it was not: of 243 palette-carrying
+materials, **110 (45%) hit the artificial 32-entry cap outright**, and the
+rest span every length from 2 to 30 with no visible distribution shape a
+real "table of N palettes" would produce. Traced one concretely (file 75,
+`MVOpeningRunCrash`, `MObjSub` at `0x2C60`) by dumping every word the walk
+read: the "entries" are not palette pointers at all but a perfect
+arithmetic sequence — `1280, 1240, 1200, ..., 280` (stride `-40`, 26
+steps) — that **wraps and repeats identically** at index 26. No real
+per-palette pointer table looks like that; it is what happens when the
+walk keeps stepping through a completely unrelated, densely
+pointer-laden region of the file (this file interleaves many small
+structures — Vtx arrays, DL fragments, sub-object pointers — every few
+words) after running off the end of a table that, most likely, only ever
+had the one entry `indirect` already reads correctly today.
+
+**Root cause: `is_ptr` is necessary but not sufficient.** It answers "was
+this slot relocated as *some* pointer in the original compiled file?", not
+"does this slot belong to *this* array" — and a real game data file is
+dense enough with unrelated pointers (thousands per file) that a fixed
+4-byte stride past a table's true end reliably keeps finding *something*
+that validates, often for dozens of slots. The fixture-based unit tests
+could not have caught this: they were sparse, single-purpose byte arrays
+with nothing else nearby to accidentally look like a pointer, which is
+exactly the condition that does not hold in the real ROM.
+
+**Result: reverted.** `crates/ssb-rom/src/mobj.rs` is unchanged;
+`MObjMaterial` still exposes only `palette` (index 0). No sound way to
+bound `palettes[]`'s real length exists from this array's own bytes alone.
+The only bound the project actually has is external to `MObjSub`: the
+material animation script that drives `palette_id` at runtime
+(`gcPlayMObjMatAnim`, decoded by RE-087's own `MaterialJoint`) names,
+via its `SET_VAL`/`SET_VAL_AFTER_BLOCK` payloads, every index the game
+ever asks `palettes[]` for — an upper bound the script supplies for free,
+without guessing at file layout at all. `STATUS.md`'s numbered pipeline
+(§"Next Eligible Task") treated "extend `mobj.rs`" (step 2) and "resolve
+`p_matanim_joints`" (step 3) as sequential; this session's measurement
+shows they are not separable that way — the palette table's length is
+only knowable once its driving script has been decoded and its resolved
+per-node script reference is available at the same call site that reads
+`palettes[]`. The real next step merges what were framed as steps 2–4:
+resolve a node's `p_matanim_joints` script, find the max `PaletteID` it
+ever sets, and use *that* as the read bound, rather than reading
+`palettes[]` in isolation first.
+
+**Confidence: high** that the walk-until-non-pointer heuristic is unsound
+(direct byte-level trace of a concrete failing case, not just an
+aggregate statistic) and that no purely-local alternative exists (the
+decomp's own two real examples already disagree on whether NULL
+terminates). **Not yet known**: whether every stage's animated palette
+table is reachable this way once `p_matanim_joints` resolution exists, or
+whether some (like file 75's, whatever it actually turns out to be) sit
+in scene graphs `R0.7`'s pairing gaps already flagged as unresolved.
