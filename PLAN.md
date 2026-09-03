@@ -1055,6 +1055,39 @@ Dream Land pixel-identical (uses none of these files; nothing on-device
 consumes `mat_anim` yet). Why only 17 of 33 survived is not yet
 investigated.
 
+RE-093 investigated that gap and found a real bug, not an acceptable
+absence. Diagnostics (reverted) proving every resolved script's chain
+index genuinely gets called, on a placed node, ruled out the other two
+candidates and narrowed it to "resolved but never reached by any
+primitive." A raw ROM display-list dump (file 105 node 1) showed why: real
+stage data legitimately calls several palette-only `MObj`s back to back
+against *one already-loaded texture image*, reissuing only `G_LOADTLUT`
+per palette and no `G_SETTIMG` for entries after the first — a real,
+deliberate hardware pattern this project's `Cmd::LoadTlut` handler did not
+model. It nulled the texture-image binding outright on the documented but
+unverified assumption "the real texture follows with its own SETTIMG",
+which this ROM data falsifies; the null had nothing to restore it, so
+`current_texture()` returned `None` for the rest of that group's
+geometry, dropping not just `mat_anim` but the texture entirely (those
+triangles packed untextured). Fixed by having `State` remember the last
+genuine image binding (`real_timg`, updated only by a real `G_SETTIMG` or
+an `MObj`'s own `sprite` field) and restoring from it after `G_LOADTLUT`
+instead of clearing — strictly more hardware-faithful, since the RDP's
+texture-image register has no "unset" state and a fresh `G_SETTIMG`, when
+one *does* follow, simply overwrites the restore immediately. Verified
+capable of failing (a test reproducing the exact real shape fails without
+the fix, passes with it). Archive-wide: **17 → 25 of 33 known scripts now
+survive** (297 palette variants), with every other pack figure —
+including texture count (639) — unchanged, the expected signature of a
+correlation fix rather than a new-texture side effect. `cargo psp
+--release` + `tools/run-ppsspp.sh`: clean, Dream Land pixel-identical,
+notable this time because the fix is archive-wide (not animation-scoped)
+so Dream Land was a genuine, not guaranteed, candidate to change. Still
+open: 8 of 33 remain missing, with a concrete, different, unchecked lead
+(node 27's `texture_enabled` was `false` for its whole span despite
+actively loading textures — a cross-node state-inheritance question, not
+a `Cmd::LoadTlut` one).
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -1068,14 +1101,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [x] material state updated correctly — RE-089/RE-090/RE-092: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, `mobj::read_palettes` reads the real array using that bound, and `mesh.rs`'s existing state threading (RE-064) correctly correlates the resolved animation to the texture it applies to — 17 of 33 known scripts (181 palette variants, 23 textures) now flow all the way into the real pack, verified against RE-089's own per-file numbers; still open: why only 17 of 33 survived is not investigated, and nothing on the device side calls `MaterialJoint` or reloads a CLUT yet (that is `PLAN.md`'s own steps 6/8, not this item)
+* [x] material state updated correctly — RE-089/RE-090/RE-092/RE-093: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, `mobj::read_palettes` reads the real array using that bound, and `mesh.rs`'s existing state threading (RE-064, fixed by RE-093 for shared-image `G_LOADTLUT` groups) correctly correlates the resolved animation to the texture it applies to — 25 of 33 known scripts (297 palette variants, 23 textures) now flow all the way into the real pack, verified against RE-089's own per-file numbers; still open: 8 of 33 remain missing (a `texture_enabled` cross-node inheritance question, RE-093's own flagged lead, not yet checked), and nothing on the device side calls `MaterialJoint` or reloads a CLUT yet (that is `PLAN.md`'s own steps 6/8, not this item)
 * [ ] representative animated materials verified
 * [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114), now confirmed (RE-092) to actually carry packed animation data, but not yet verified on-screen
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093 in `docs/reverse-engineering.md`.
 
 ---
 

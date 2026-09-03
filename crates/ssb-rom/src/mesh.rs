@@ -723,6 +723,16 @@ struct State {
     timg_addr: Option<u32>,
     /// File the current texture image lives in, when not this one.
     timg_file: Option<u16>,
+    /// The last genuinely real (non-palette) image binding: from an actual
+    /// `G_SETTIMG`, or an `MObj`'s own `sprite` field (RE-093).
+    ///
+    /// A `G_LOADTLUT` restores `timg_addr`/`timg_file` from here rather than
+    /// clearing them, because a multi-palette group sharing one already-loaded
+    /// texture image legitimately has no `G_SETTIMG` of its own between its
+    /// `MObj` call and its triangles — real hardware's texture-image register
+    /// keeps whatever it last held, it does not go blank just because a
+    /// palette load read a different address in between.
+    real_timg: Option<(u32, Option<u16>)>,
     /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
     tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
@@ -762,6 +772,7 @@ impl State {
             material: MeshMaterial::rdp_default(),
             timg_addr: None,
             timg_file: None,
+            real_timg: None,
             tile0_fmt: None,
             tile_dims: None,
             tile0_mask: None,
@@ -829,6 +840,7 @@ impl State {
         if let Some(sprite) = m.sprite {
             self.timg_addr = Some(sprite.offset);
             self.timg_file = sprite.file;
+            self.real_timg = Some((sprite.offset, sprite.file));
         }
         if let Some(c) = m.prim_color {
             self.material.prim_color = Some(c);
@@ -845,6 +857,7 @@ impl State {
     fn forget_texture(&mut self) {
         self.timg_addr = None;
         self.timg_file = None;
+        self.real_timg = None;
         self.palette_offset = None;
         self.palette_file = None;
         self.texture_enabled = false;
@@ -1259,10 +1272,12 @@ fn walk(
                 (0, Some((target_file, offset))) => {
                     state.timg_addr = Some(offset);
                     state.timg_file = Some(target_file);
+                    state.real_timg = Some((offset, Some(target_file)));
                 }
                 _ => {
                     state.timg_addr = Some(addr.0);
                     state.timg_file = None;
+                    state.real_timg = Some((addr.0, None));
                 }
             },
 
@@ -1306,12 +1321,17 @@ fn walk(
             Cmd::LoadTlut { count, .. } => {
                 // A TLUT load reads from whatever image address is current, so
                 // that address *is* the palette — including which file it is
-                // in. The real texture follows with its own SETTIMG.
+                // in. The real texture usually follows with its own SETTIMG,
+                // but a multi-palette group that keeps drawing the same
+                // already-resident texture image legitimately does not
+                // reissue one (RE-093) -- restoring the last real binding
+                // rather than clearing it is correct either way: if a fresh
+                // SETTIMG *does* follow, it overwrites this immediately.
                 state.palette_offset = state.timg_addr;
                 state.palette_file = state.timg_file;
                 state.palette_entries = count;
-                state.timg_addr = None;
-                state.timg_file = None;
+                state.timg_addr = state.real_timg.map(|(a, _)| a);
+                state.timg_file = state.real_timg.and_then(|(_, f)| f);
             }
 
             Cmd::Texture { on, .. } => state.texture_enabled = on,
@@ -1766,6 +1786,114 @@ mod tests {
             by_texture(0x500).material.mat_anim,
             None,
             "the second MObj's own palette carries no script and must clear the first one's"
+        );
+    }
+
+    /// RE-093: a real ROM display list (file 105's `StageZebesFile2`, node 1)
+    /// draws several `MObj` entries against the *same* already-loaded texture
+    /// image, reissuing only `G_LOADTLUT` for each one's own palette and never
+    /// a fresh `G_SETTIMG` -- because the image itself has not changed, only
+    /// the palette has. A `G_LOADTLUT` that clears the image address instead
+    /// of restoring it drops the texture entirely for every entry after the
+    /// first, producing untextured geometry the real hardware never draws.
+    #[test]
+    fn a_palette_only_mobj_keeps_the_image_a_prior_settimg_bound() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let ci4_tile = || Cmd::SetTile {
+            format: Format::Ci as u8,
+            size: BitSize::Bits4 as u8,
+            line: 2,
+            tmem: 0,
+            tile: 0,
+            palette: 0,
+            cm_s: 2,
+            cm_t: 2,
+            mask_s: 5,
+            mask_t: 5,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let cmds = [
+            ci4_tile(),
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            // The one and only `G_SETTIMG`: both `MObj` entries below draw
+            // this same image, differing only in which palette they load.
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            // MObj 0: palette A, drawn against the image just bound.
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            // MObj 1: palette B, no `G_SETTIMG` of its own -- same image.
+            Cmd::Call(SegAddr(0x0E00_0000 + 8)),
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let mobjs = [
+            MObjMaterial {
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x100,
+                }),
+                ..MObjMaterial::default()
+            },
+            MObjMaterial {
+                palette: Some(crate::mobj::Ptr {
+                    file: None,
+                    offset: 0x200,
+                }),
+                ..MObjMaterial::default()
+            },
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            mesh.primitives.len(),
+            2,
+            "same image, two different palettes -- still two distinct materials"
+        );
+        let by_palette = |offset: u32| {
+            mesh.primitives
+                .iter()
+                .find(|p| p.material.texture.is_some_and(|t| t.palette_offset == Some(offset)))
+                .unwrap_or_else(|| panic!("no primitive bound to palette 0x{offset:X}"))
+        };
+        assert_eq!(by_palette(0x100).material.texture.unwrap().data_offset, 0x400);
+        assert_eq!(
+            by_palette(0x200).material.texture.unwrap().data_offset,
+            0x400,
+            "the second MObj's own geometry uses the same image the first one's G_SETTIMG bound"
         );
     }
 
