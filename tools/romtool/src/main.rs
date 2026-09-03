@@ -2701,6 +2701,9 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut matanim_fail = 0usize;
     let mut matanim_categories = [0usize; ssb_rom::matanim::TICK_TRACK_COUNT];
     let mut palette_examples: Vec<(u32, u32, u32, u32)> = Vec::new(); // (file, graph, script, entries needed)
+    // RE-090: does the script-computed bound actually read a real
+    // `palettes[]` array, not just a plausible-looking number?
+    let (mut palette_reads_ok, mut palette_reads_fail, mut palette_reads_dup) = (0usize, 0usize, 0usize);
     for s in &loaded.stages {
         if only_file.is_some_and(|f| f != s.file) {
             continue;
@@ -2803,8 +2806,9 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                         let scripts = ssb_rom::matanim::resolve_scripts(f, mat, nodes, |n| {
                             chain_table.as_ref().map_or(0, |t| t.nodes[n].len())
                         });
-                        for chain in &scripts {
-                            for &script in chain.iter().flatten() {
+                        for (node, chain) in scripts.iter().enumerate() {
+                            for (m, script) in chain.iter().enumerate() {
+                                let Some(script) = *script else { continue };
                                 matanim_scripts += 1;
                                 let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
                                 let mut max_palette = 0.0f32;
@@ -2844,6 +2848,38 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                                             && entries > 1
                                         {
                                             palette_examples.push((mf, l.graph.1, script, entries));
+                                            // RE-090: read the real array using
+                                            // this computed bound, rather than
+                                            // trust that a plausible-looking
+                                            // number is a correct one.
+                                            let sub_at = chain_table
+                                                .as_ref()
+                                                .and_then(|t| t.nodes[node].get(m))
+                                                .map(|m| m.at);
+                                            if let Some(sub_at) = sub_at {
+                                                match ssb_rom::mobj::read_palettes(
+                                                    f,
+                                                    sub_at,
+                                                    entries as usize,
+                                                ) {
+                                                    Some(ptrs) => {
+                                                        palette_reads_ok += 1;
+                                                        let unique: BTreeSet<_> = ptrs
+                                                            .iter()
+                                                            .map(|p| (p.file, p.offset))
+                                                            .collect();
+                                                        if unique.len() != ptrs.len() {
+                                                            palette_reads_dup += 1;
+                                                        }
+                                                    }
+                                                    None => {
+                                                        palette_reads_fail += 1;
+                                                        println!(
+                                                            "  PALETTEFAIL file {mf} MObjSub 0x{sub_at:X}: computed {entries} entries but the array does not resolve that many"
+                                                        );
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2971,6 +3007,9 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
         for (file, graph, script, entries) in &palette_examples {
             println!("    file {file} graph 0x{graph:X} script 0x{script:X}: {entries} entries");
         }
+        println!(
+            "  read_palettes against that bound: {palette_reads_ok} ok, {palette_reads_fail} failed, {palette_reads_dup} with a duplicate entry"
+        );
     }
 
     if let Some(pack_path) = pack_path {

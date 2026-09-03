@@ -990,6 +990,22 @@ non-Dream-Land candidates for step 6's "representative palette-cycling
 stage". Step 2 (reading `palettes[1..]`) is now unblocked, using this
 resolved bound rather than guessing at file layout.
 
+RE-090 shipped that step. `mobj::read_palettes(file, sub_at, count)` reads
+exactly `count` consecutive `palettes[]` entries — no discovery, since
+`count` is supplied externally (RE-089's bound) rather than guessed from
+local bytes the way RE-088's retracted attempt did — and fails outright
+rather than silently truncating if any entry within `count` does not
+validate. Wired into the same `romtool stages` replay: for every real
+`PaletteID` script found, reads its actual `palettes[]` array using the
+bound that script itself computed. Archive-wide: **33/33 succeeded, 0
+failures, 0 arrays with a duplicate entry** — full end-to-end validation
+of decode script → compute bound → read the real array → confirm it
+resolves and is not degenerate, across three files and three different
+entry counts (2–4, 16, 18). `cargo test --workspace`: 238 passing (was
+234). This closes R0.10's step 2 at the `ssb-rom`/`romtool` level; what
+remains is packing this into the runtime format (step 4) and the
+device-side wiring (steps 5–6).
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -1003,14 +1019,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [ ] material state updated correctly — RE-089: `p_matanim_joints` now resolves into per-(node, `MObj`-chain-position) script addresses (`matanim::resolve_scripts`), and the real `palettes[]` bound each script needs is now known (ticking `MaterialJoint` to completion); still open: `mobj.rs` itself still reads `MObjSub.palettes[0]` only, no pack table carries any of this yet, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
+* [ ] material state updated correctly — RE-089/RE-090: `p_matanim_joints` resolves into per-(node, `MObj`-chain-position) script addresses, each script's real `palettes[]` bound is computed by ticking `MaterialJoint` to completion, and `mobj::read_palettes` reads the real array using that bound (33/33 correct archive-wide); still open: no pack table carries any of this yet, and nothing on the device side calls `MaterialJoint` or reloads a CLUT — this item is about the runtime pack/device pipeline, which is `PLAN.md`'s own steps 4–6, not the `ssb-rom`-level read path this and the prior two entries closed
 * [ ] representative animated materials verified
 * [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114) but did not verify either on-screen
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088, RE-089 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089, RE-090 in `docs/reverse-engineering.md`.
 
 ---
 
