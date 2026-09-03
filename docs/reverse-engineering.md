@@ -6468,3 +6468,117 @@ exactly with RE-089's own separately-computed numbers). **Not confident**
 about, and did not investigate, why the surviving count is 17 of 33
 rather than all of them — a real, open, measured gap, not swept under a
 success message.
+
+## RE-093 — A shared-texture `G_LOADTLUT` was clearing the image binding instead of restoring it, dropping both animation and static texture on any `MObj` after the first
+
+**Question.** RE-092 left one open item: why did only 17 of RE-089's 33
+known `PaletteID`-cycling scripts survive into the pack? Three candidates
+were named and none checked: unplaced nodes, a display list only reachable
+through blind discovery (which never threads `MObj` state at all), or
+`current_texture()` returning `None` at the exact point `material_now()`
+reads it.
+
+**Investigation.** Temporary instrumentation (reverted before committing,
+matching RE-079/081/089's pattern) tagged every resolved script as
+resolved/seen-by-a-primitive/written and found the first two candidates
+false: all 33 resolved scripts' chain positions are genuinely called by
+their node's own display list (`heap_indices_called` always contained the
+target index), and every node was placed. The gap was entirely
+"resolved but never reached by any primitive" — 16 scripts, 0 of which
+were reached-but-dropped for lack of a texture. That ruled out
+`current_texture()` returning `None` *at the point of drawing* as the
+proximate cause and pointed further upstream, into *why* it returned
+`None`.
+
+Dumping the raw, recursively-decoded display list for file 105 node 1 (a
+representative 3-entry chain, `StageZebesFile2`) against the real ROM
+showed the actual call order is **reversed** from array order — index 2
+first, then 1, then 0 — and that indices 2 and 0 each open with their own
+`G_SETTIMG` + `G_LOADBLOCK` before drawing, but **index 1's block has
+neither**: `Call(heap 1) → G_LOADTLUT → G_SETTILESIZE → G_VTX → G_TRI`,
+reusing the texture image index 2's block already loaded into TMEM and
+only swapping the palette. This is a deliberate, legitimate hardware
+pattern — one shared indexed-color image, several palette variants, no
+reason to reload identical texel data three times. File 105 node 27 (a
+7-entry chain, all 7 missing) showed the same shape at larger scale: only
+3 of its 7 `Call`s reissue `G_SETTIMG`, the other 4 ride on whichever
+image a neighbor most recently loaded.
+
+`mesh.rs`'s own `Cmd::LoadTlut` handler did not model this. Its comment
+said outright: "the real texture follows with its own SETTIMG" — an
+assumption, not a verified invariant, and this ROM data falsifies it.
+Concretely: `apply_mobj` writes a palette-bearing `MObj`'s address into
+`state.timg_addr` (impersonating a `G_SETTIMG` the runtime injects), the
+list's own `G_LOADTLUT` correctly captures that address as `palette_offset`
+— but then **nulled** `timg_addr`/`timg_file` outright, on the assumption
+a fresh `G_SETTIMG` was coming. When the list instead relies on the
+image already bound from a *previous* group, nulling threw that binding
+away with nothing to restore it, and `current_texture()` returned `None`
+for the rest of that group's geometry — not just its `mat_anim` tag, but
+its *texture entirely*: those triangles packed as flat-shaded, untextured
+primitives. `no_texture_at_that_primitive` staying at 0 in the earlier
+census was consistent with this the whole time — the primitive that
+should have carried `mat_anim` never existed as a *textured* primitive at
+all, so it never got the chance to reach the `mat_anim` gate in the first
+place.
+
+**Fix.** `State` gained `real_timg: Option<(u32, Option<u16>)>`, updated
+only by a genuine image binding — an actual `Cmd::SetTimg`, or an `MObj`'s
+own `sprite` field (both bypass `Cmd::LoadTlut` entirely, so they were
+never at risk) — and left untouched by a palette-only `MObj`'s injected
+address. `Cmd::LoadTlut` now restores `timg_addr`/`timg_file` from
+`real_timg` after capturing the palette, instead of clearing them. This is
+strictly more faithful to real hardware, not a special case for this
+shape: the RDP has one texture-image register that keeps whatever it last
+held — there is no hardware concept of "unset" — so restoring the last
+real value is correct whether or not a fresh `G_SETTIMG` follows. When one
+does follow (the ordinary case, e.g. RE-090/091's own "common fighter
+case"), it simply overwrites the restored value immediately, so nothing
+about the already-working cases changes.
+
+**Verified the fix can fail, not just that it compiles.** New test
+`a_palette_only_mobj_keeps_the_image_a_prior_settimg_bound` builds one
+`G_SETTIMG` shared by two `MObj` calls, the second with no `G_SETTIMG` of
+its own (reproducing file 105 node 1's real shape exactly). Confirmed it
+fails without the fix: reverting `Cmd::LoadTlut` to unconditionally null
+`timg_addr` collapsed the two expected primitives into one (the second
+`MObj`'s geometry silently merged into an untextured group instead of
+carrying the shared image with its own palette), then restored. `cargo
+test --workspace`: 244 passing (was 243).
+
+**Result, run against the real ROM: 17 → 25 of RE-089's 33 known scripts
+now survive** (297 palette variants, up from 181; pack size 4470.3 →
+4478.7 KiB). Every other summary figure — meshes, triangles, draws,
+**texture count (639, unchanged)**, objects, node placement — is
+byte-for-byte identical to the pre-fix pack. The unchanged texture count is
+expected, not a red flag: the dedup key is `(data_file, data_offset)`
+alone, so a shared-image group was always going to resolve to an
+*existing* texture entry, not create a new one — this fix corrects which
+primitives point at it and carry a palette/`mat_anim`, not how many
+textures exist. `cargo clippy --release` (workspace): clean. `cargo psp
+--release` + `tools/run-ppsspp.sh`: builds and runs clean, no panics,
+Dream Land pixel-identical at 60 FPS — notable because, unlike every prior
+RE-089–092 session, this fix is **not** scoped to animated palettes at
+all: it corrects `Cmd::LoadTlut` handling archive-wide, so any *static*
+multi-palette-sharing-one-image primitive anywhere in the ROM was a
+candidate to change. Dream Land showing no difference means it either has
+none of this shape or none visible at the tested camera distance, not that
+the fix was inert.
+
+**Still open, and still not fully explained: 8 of 33 known scripts remain
+missing.** File 105 node 27's own diagnostic dump showed a second,
+distinct wrinkle this fix does not address: `texture_enabled` was `false`
+for that entire node's span (no `Cmd::Texture` at all in its own list),
+despite the node actively loading TLUTs and, for 3 of its 7 entries,
+issuing real `G_SETTIMG`/`G_LOADBLOCK` pairs — behavior that only makes
+sense if texturing is genuinely on. That points at the *cross-node*
+`texture_enabled` inheritance itself (RE-064's state threading) rather
+than at `Cmd::LoadTlut`, and was not investigated further this session.
+
+**Confidence: high** on the fix itself — grounded in a raw ROM byte dump
+of the actual failing case (not a synthetic fixture), a test proven
+capable of failing, an unchanged texture count that is the expected
+signature of a correlation fix rather than a new-texture side effect, and
+a clean on-device run. **Not confident**, and explicitly unresolved: why
+8 scripts still don't survive (the `texture_enabled` inheritance question
+above is the concrete lead, not yet checked).
