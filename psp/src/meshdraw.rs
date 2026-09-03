@@ -238,6 +238,20 @@ unsafe fn apply_material(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState) {
         } else {
             sys::ShadingModel::Flat
         });
+
+        // `Z_BUFFER` is the real per-primitive signal (RE-068): the RDP's
+        // per-frame reset (`refs/ssb-decomp-re/src/sys/rdp.c`'s
+        // `sSYRdpResetDisplayList`) turns depth testing on by default, so a
+        // node whose own list never mentions it is not "unknown", it is
+        // z-buffered like everything else -- 98.3% of packed primitives
+        // carry the flag. The 1.7% that clear it (an always-on-top overlay,
+        // typically) must not be depth-tested against geometry drawn under
+        // the default.
+        if p.flags & flags::Z_BUFFER != 0 {
+            sys::sceGuEnable(GuState::DepthTest);
+        } else {
+            sys::sceGuDisable(GuState::DepthTest);
+        }
     }
 
     if st.last_texture != Some(p.texture) {

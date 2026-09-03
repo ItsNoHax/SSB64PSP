@@ -4291,3 +4291,112 @@ frame-accurate reference capture exists to diff against, and RE-053's
 separate magnification/dithering question is explicitly still open.
 **High** on the VRAM figure (measured via the packer's own conversion
 path, not estimated).
+
+## RE-068 — The archive-wide geometry-mode default was backwards
+
+**Question.** Investigating `PLAN.md` R0.6's "depth state verified" item:
+`psp/src/meshdraw.rs` never toggles the GE's depth test per primitive at
+all — it is enabled once, globally, at startup and never touched again.
+Does that matter? A quick archive-wide scan of the packed
+`PrimDesc::flags` (`crates/ssb-rom/examples/tmp_zbuffer_scan.rs`, written
+to check and then deleted, not committed) found something far bigger than
+one missing toggle: **`Z_BUFFER` was set on only 6 of 3426 packed
+primitives (0.17%)**. Every other flag looked similarly starved —
+`flags == 0` (no cull, no lit, no smooth, no z-buffer) on the overwhelming
+majority. Is the ROM really drawing almost everything unbuffered,
+unshaded, and uncilled, or is this a conversion gap?
+
+**The RDP has a default, and it is not all-off.** Read
+`refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList`:
+
+```c
+gsSPClearGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BOTH | G_FOG |
+                       G_LIGHTING | G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR |
+                       G_LOD | G_SHADING_SMOOTH),
+...
+gsSPSetGeometryMode(G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH),
+...
+gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
+...
+gsDPSetTextureFilter(G_TF_BILERP),
+...
+gsDPSetAlphaCompare(G_AC_NONE),
+gsDPSetRenderMode(G_RM_OPA_SURF, G_RM_OPA_SURF2),
+```
+
+`syRdpResetSettings` (`rdp.c:93`) plays this list, and is called from
+`taskman.c:308` — the per-frame graphics task scheduler, not anything
+object-specific. So **every object's display list starts from `G_ZBUFFER |
+G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH` on**, `G_LIGHTING` off, bilinear
+filtering, opaque render mode, no alpha test, shade-only combining —
+already once per frame, before a single `DObj` draws. A node's own list
+that never mentions geometry mode is not "mode unknown" the way an absent
+combiner or texture bind genuinely is (those really do vary node to node)
+— it is drawing under this baseline, the same as any other object would
+on real hardware. `crates/ssb-rom/src/mesh.rs`'s `State::new()` seeded
+`material: MeshMaterial::default()` — every field false/`None` — which is
+backwards for `cull_back`, `smooth` and `z_buffer` specifically (`lit`
+correctly defaults off, matching `G_LIGHTING` being cleared here; RE-021's
+existing normal-detection heuristic is what recovers real per-object
+lighting, not this default).
+
+**This is the same shape of bug as RE-021, one level up.** RE-021 found
+`G_LIGHTING` has "an enormous false-negative rate, because [it] is set
+per-object by `objdisplay.c` before the list runs." This is that same
+structural limit — a per-list converter cannot see state some other code
+set earlier — but at the *per-frame* level instead of per-object, for
+geometry mode broadly rather than lighting specifically.
+
+**Fix.** Added `MeshMaterial::rdp_default()` (`cull_back: true, smooth:
+true, z_buffer: true`, everything else `Default`) and made `State::new()`
+seed from it instead of the all-off `Default`. `psp/src/meshdraw.rs`'s
+`apply_material` now also toggles `GuState::DepthTest` per primitive from
+the `Z_BUFFER` flag, the same way it already toggled `CullFace` — the
+flag was already being packed (`pack.rs`'s `add_object`), just never read
+on the device side.
+
+**Measured effect.** Re-ran the same archive-wide scan after the fix:
+
+```
+                before        after
+Z_BUFFER        6 / 3426      3384 / 3442  (98.3%)
+CULL_BACK       (not measured)  2972 / 3442  (86.3%)
+CULL_FRONT      (not measured)     5 / 3442  (0.1%)
+SMOOTH          (not measured)  2633 / 3442  (76.5%)
+```
+
+(Primitive count moved slightly, 3426→3442, from unrelated pack-content
+changes earlier in this session, not from this fix.) The post-fix
+percentages are exactly the shape a real game's geometry should have:
+depth-buffered nearly everywhere (the 1.7% that clear it are legitimate
+always-on-top overlays), mostly back-face culled with front-face culling
+rare, and a real mix of smooth/flat shading (matching RE-039's finding
+that Mario's body is deliberately flat-shaded).
+
+**Verified.** New test
+`a_list_with_no_geometry_mode_command_draws_under_the_rdp_reset_default`
+(`mesh.rs`) pins the four defaults (and that `cull_front`/`lit` stay off)
+from a display list containing no geometry-mode command at all — every
+existing geometry-mode test already set an explicit command and was
+unaffected, and none of the 203 pre-existing tests broke, confirming the
+new default doesn't fight anything already relying on the old one.
+`cargo test --workspace`: 347 passing (was 346). `cargo clippy --release
+-p romtool -p ssb-rom`: clean. `romtool pack`: 4138.1 KiB (was 4137.6).
+`cargo psp --release`: builds clean. `tools/run-ppsspp.sh`: Dream Land
+still renders correctly at 60 FPS, clean log; a before/after pixel diff
+shows a small, localized change (2199 of 522240 pixels, ~0.4%) around
+thin/double-sided decorations, not a wholesale change or any missing
+geometry — consistent with a scoped correctness fix, not a regression.
+
+**Result.** This affects every object converted by this project, not one
+stage — culling, shading and depth testing were wrong by default for the
+overwhelming majority of packed geometry until now. `PLAN.md` R0.6's
+"depth state verified" and "culling verified" items are checked; "primitive
+color"/"environment color"/"alpha"/"blending"/"fog" remain open (the reset
+list's other defaults — `G_AC_NONE`, `G_RM_OPA_SURF`, `G_CC_SHADE` — are
+recorded here as leads for whoever picks those up next, not yet acted on).
+
+**Confidence: high.** The reset list and its once-per-frame call site are
+unambiguous C, not inferred; the before/after archive-wide percentages
+match what a shipped 3D fighting game's geometry should look like, which
+the pre-fix numbers conspicuously did not.
