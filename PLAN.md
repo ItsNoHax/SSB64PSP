@@ -1398,15 +1398,42 @@ Status: `TODO`
 ### Current evidence
 
 No framebuffer-based rendering path (render-to-texture, screen wipes) is
-implemented. RE-055 (`docs/reverse-engineering.md`) identifies the concrete
+implemented. RE-055 (`docs/reverse-engineering.md`) identified the concrete
 target: the LB (loading-break) transition system's `sLBTransitionPhotoHeap`,
-a `300x220` 16-bit heap buffer the engine fills with a copy of the last frame
-drawn to the framebuffer (`refs/ssb-decomp-re/src/sys/... /lb/lbtransition.c`),
-bound to RSP segment `0x1` once per frame and sampled by 11 between-match
-transition effects (aeroplane, curtain, cannon, star, bamboo-blind ×2,
-camera, block, rotscale, check, "gakubuthi"). These are exactly the 26
-segment-0x01 entries currently reported (and accepted as out of scope) under
-R0.3. Genuinely not started.
+bound to RSP segment `0x1` and sampled by a set of between-match transition
+effects. Genuinely not started, but no longer unscoped — RE-099 (this
+session) read the mechanism directly rather than continuing to reason from
+RE-055's paraphrase, and it is considerably simpler than "framebuffer
+rendering" suggests:
+
+* **Not a per-frame render pass.** `lbTransitionSetupTransition` runs
+  exactly once, when a transition begins: a plain, one-time CPU-side copy
+  of the current framebuffer into a `300×220` `u16` heap. `lbTransitionProcDisplay`
+  (per frame, after that) only binds the already-captured snapshot as
+  segment `0x1` and draws the transition's own perfectly ordinary
+  `DObjDesc`/`AObjEvent32` scene graph — the same tree-walk this project
+  already converts for every other object. No new animation system and no
+  live render-to-texture pass are needed.
+* **The only new capability required:** a PSP-side one-time framebuffer
+  snapshot into a texture-shaped buffer when a transition starts, and
+  recognizing segment `0x1` as that special texture identity instead of
+  failing to resolve it (the same shape `mobj::GRAPHICS_HEAP_SEGMENT`
+  already gets for a different runtime-only segment).
+* **The real scope is 13 files, not 11**, measured directly against the
+  ROM (`romtool textures --file <id>`), not just the decomp's own
+  `dLBTransitionDescs` table: files 39 and 47 also carry the identical
+  two-bind (`300×5`/`300×6`, both RGBA5551, segment `0x1` offset `0`)
+  signature but are not among the 11 named transitions — one extra
+  `lb`-prefixed file, one unrelated `if`-prefixed file whose real purpose
+  was not identified this session. Every one of the 13 files' bind shape
+  is identical, cross-checked archive-wide: 26 segment-`0x01` binds total,
+  matching R0.3's original count exactly, now fully attributed.
+* **A likely, but unverified, design simplification:** the N64 tiles this
+  300×220 image into small strips because the RSP's TMEM is only 4 KB; the
+  PSP GE has no equivalent capacity limit, so one full-size PSP texture
+  capture may let every transition's existing UV coordinates address into
+  it unchanged, with no strip-by-strip capture needed. Not implemented or
+  verified.
 
 ### Objective
 
@@ -1419,12 +1446,16 @@ Implement every framebuffer-based rendering path required by SSB64.
 
 ### Acceptance
 
-* [ ] framebuffer usage identified
+* [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
 * [ ] framebuffer texture paths implemented
 * [ ] screen wipes implemented
 * [ ] render-to-texture paths implemented where required
 * [ ] framebuffer synchronization verified
 * [ ] visual verification completed
+
+### Evidence
+
+RE-055, RE-099 in `docs/reverse-engineering.md`.
 
 ---
 
