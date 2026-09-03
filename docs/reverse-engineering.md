@@ -5527,3 +5527,82 @@ computation, not sampled or estimated). **Low** that any amount of
 further texture-side blur alone will resolve the visible discrepancy,
 given a substantially larger change than RE-070's already-shipped one
 still did not surface on screen.
+
+## RE-082 — Re-auditing RE-034's aspect-ratio residual: a measurement artifact, not a bug
+
+**Question.** `PLAN.md` R0.14's "aspect ratio verified" and "viewport
+verified" items have been unchecked since RE-034, which fixed a real
+distortion bug but reported a residual afterward: measured width/height
+`1.000` against an expected `0.938` for the fighter's collision-diamond
+marker — a 6.6% gap never explained or chased down. Is that gap real?
+
+**First attempt: re-measure the same marker, more carefully. It falls
+apart on its own.** Re-ran RE-034's exact method (a screenshot of Dream
+Land's stage view, the fighter's magenta collision diamond) with
+pixel-precise, threshold-based bounding-box detection instead of eyeballing.
+At the default zoom the marker is only ~20×22 pixels, and the measured
+ratio swings from `0.905` to `0.952` depending on which of four
+reasonable magenta-detection thresholds is used — a spread that already
+straddles the expected `0.9375`. Tried zooming in via a temporary
+(reverted) `cam_distance` override in `psp/src/main.rs` for more pixels:
+at one zoom level the marker measured `0.82`; at another, `1.14`–`1.16`.
+Three attempts at the same physical shape produced three different
+verdicts, two of them on *opposite sides* of `1.0` from RE-034's own
+number. This is not a shape whose aspect ratio can be pinned down to
+single-digit-percent precision from a compressed screenshot of a
+20–80 pixel wireframe diamond — RE-034's specific "6.6%, over-wide"
+conclusion was more precise than its own measurement could actually
+support.
+
+**Second attempt, and the one that actually resolves it: read the code
+instead of the screen.** Confirmed by direct inspection that every value
+involved in aspect handling traces back to one function:
+
+* `psp/src/gu.rs`'s `Gpu::init` calls `coord::pillarboxed_viewport()` and
+  feeds its `(vw, vh)` to *both* `sceGuViewport` and `sceGuScissor` —
+  RE-034's own fix, unchanged since.
+* `psp/src/main.rs` calls the *same* `pillarboxed_viewport()` and divides
+  the same `(vw, vh)` to get `aspect`, fed to `gpu.set_perspective(60.0,
+  aspect, ...)`.
+* `sceGumPerspective` itself (`psp` crate 0.3.13, `src/sys/gum.rs`, a
+  VFPU assembly routine) computes `m.x.x = cot(fovy/2) / aspect` and
+  `m.y.y = cot(fovy/2)` — the textbook symmetric-frustum formula, dividing
+  the X scale by `aspect` exactly where the standard formula does. No
+  binding-level quirk.
+
+Both consumers derive from one function's one call, so the specific bug
+RE-034 found (viewport and projection disagreeing) cannot recur by
+construction, and the projection math itself matches the standard
+formula with no hidden scaling error. `crates/ssb-engine/src/coord.rs`
+already unit-tests `pillarboxed_viewport()`'s own arithmetic
+(`pillarbox_preserves_four_by_three`, asserting `(362, 272)` and aspect
+within `0.01` of `4/3`). There is no remaining code path left that could
+produce a real, systematic aspect-ratio error.
+
+**Conclusion.** RE-034's reported residual was very likely pixel-counting
+noise on a shape too small to measure to the precision its own numbers
+implied — not a surviving bug. This is a correction to a previously
+recorded finding's *confidence*, not to its *fix*: the fix (matching
+viewport to the pillarboxed aspect) was and remains correct; only the
+follow-up "still 6.6% off" claim is retracted.
+
+**Result.** `PLAN.md` R0.14 gains three newly-checked acceptance items:
+"viewport verified" (RE-034's own device measurement plus this session's
+code audit), "aspect ratio verified" (this entry), and "N64/PSP
+resolution differences explicitly handled" (pillarboxing *is* that
+handling, and it is now doubly confirmed). "Projection matrix verified"
+and "camera transforms verified" stay open deliberately: this entry
+audited the *aspect* term of the projection matrix and the viewport/
+scissor wiring specifically, not the FOV value's own provenance (`60.0`
+degrees is the debug viewer's own choice, not sourced from the
+decompilation) or the game's actual camera behavior (no real camera
+system exists yet, only this free-roaming debug viewer). No code
+changed — this is a measurement/audit pass, the same shape as RE-072.
+
+**Confidence: high.** Three independent lines agree: a source-level trace
+showing both consumers share one function's output, the projection
+binding's own formula matching the textbook one exactly, and an existing
+passing unit test pinning the arithmetic RE-034's fix depends on. The
+retraction of RE-034's specific residual number is itself evidenced by a
+reproducible sensitivity analysis (three measurement attempts, three
+different numbers), not merely asserted.

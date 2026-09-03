@@ -1053,6 +1053,22 @@ implemented and verified (D-007). Full projection-matrix and camera-transform
 correctness against the original's camera behavior has not been separately
 verified — this task and R0.12 (billboards) share that open dependency.
 
+RE-082 re-audited RE-034's own reported residual (measured `1.000` against
+an expected `0.938` for the fighter collision-diamond marker, a 6.6% gap
+never explained). Three independent re-measurement attempts (default zoom,
+threshold sensitivity, and a temporary zoomed-in device screenshot) produced
+three different ratios — `0.82`, `0.90`–`0.95`, `1.14`–`1.16` — spanning both
+sides of `1.0` and of the expected value, showing the marker is too small
+(20–80 px depending on zoom) to support single-digit-percent precision
+claims from a screenshot. A source-level audit found no remaining bug to
+explain a real residual: `psp/src/gu.rs`'s `Gpu::init` and `psp/src/main.rs`
+both derive their viewport/aspect values from the same
+`coord::pillarboxed_viewport()` call (so they cannot disagree the way
+RE-034's original bug had them disagree), and the `psp` crate's
+`sceGumPerspective` binding implements the textbook `cot(fovy/2)/aspect`
+formula with no quirk. RE-034's fix stands; its follow-up "still 6.6% off"
+number is retracted as measurement noise, not confirmed as a bug.
+
 ### Objective
 
 Reproduce the original camera and projection behavior.
@@ -1063,13 +1079,17 @@ Reproduce the original camera and projection behavior.
 
 ### Acceptance
 
-* [ ] projection matrix verified
-* [ ] viewport verified
-* [ ] aspect ratio verified
-* [ ] depth mapping verified
-* [ ] camera transforms verified
-* [ ] N64/PSP resolution differences explicitly handled
-* [ ] representative scenes compared
+* [ ] projection matrix verified — RE-082 audited the aspect term specifically (see below); the FOV value itself (`60.0` degrees) is the debug viewer's own arbitrary choice, not sourced from the decompilation, so this item stays open
+* [x] viewport verified — RE-034 (device measurement, before/after screenshots) plus RE-082 (source-level confirmation that `Gpu::init` and `main.rs` share one `pillarboxed_viewport()` call, so they cannot diverge)
+* [x] aspect ratio verified — RE-082: `pillarboxed_viewport()` is unit-tested (`pillarbox_preserves_four_by_three`), its output is the sole source for both the GE viewport/scissor and the projection's `aspect` parameter, and `sceGumPerspective`'s own binding uses the standard formula; RE-034's previously-reported residual is a measurement artifact on a too-small on-screen shape, not a surviving defect
+* [ ] depth mapping verified — D-007 states "verified working" but has no dedicated RE entry with device evidence the way viewport/aspect now do; not re-audited this session
+* [ ] camera transforms verified — no real game camera system exists yet, only the debug viewer's free-roaming camera; nothing to verify against the original's actual camera behavior until one exists
+* [x] N64/PSP resolution differences explicitly handled — RE-082: pillarboxing (D-008) is precisely this handling, now confirmed by both a device measurement (RE-034) and a source audit (RE-082) rather than one alone
+* [ ] representative scenes compared — no side-by-side N64-vs-PSP reference comparison exists
+
+### Evidence
+
+RE-034, RE-082 in `docs/reverse-engineering.md`.
 
 ---
 
