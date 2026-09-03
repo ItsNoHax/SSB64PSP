@@ -277,41 +277,69 @@ impl<'a> Source<'a> {
 /// result of `st*SHADE*TEXEL` is exactly `GU_TFX_MODULATE`. Anything else —
 /// an additive term, a texture in an unmodulated position — is left alone
 /// rather than approximated.
+/// Each term carries its coefficient *and* whether that term is structurally
+/// present at all, tracked separately from the coefficient's numeric value.
+///
+/// `PRIMITIVE`/`ENVIRONMENT` are real colours the display list can set to
+/// anything, including exactly black -- `(PRIM-ZERO)*SHADE+ZERO` with
+/// `PRIM=[0,0,0]` legitimately reduces to `s=[0,0,0]`, not to "no `s` term".
+/// A value-only representation cannot tell those apart: a bare zero-value
+/// coefficient and an absent one look identical, and this model used to
+/// treat both as "the combiner shape is unrecognised" (RE-079 measured 1118
+/// primitives, always with `PRIM` set to exactly `[0,0,0,255]`, silently
+/// falling back to unmodified vertex shade instead of the solid black the
+/// real hardware always produces here). Carrying a `_used` flag alongside
+/// each coefficient keeps "present with value zero" and "absent" distinct
+/// all the way to the final shape match.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Combined {
     k: [f32; 3],
+    k_used: bool,
     s: [f32; 3],
+    s_used: bool,
     t: [f32; 3],
+    t_used: bool,
     st: [f32; 3],
+    st_used: bool,
 }
 
 impl Combined {
     const ZERO: Combined = Combined {
         k: [0.0; 3],
+        k_used: false,
         s: [0.0; 3],
+        s_used: false,
         t: [0.0; 3],
+        t_used: false,
         st: [0.0; 3],
+        st_used: false,
     };
 
     fn constant(c: [f32; 3]) -> Combined {
         Combined {
             k: c,
+            k_used: true,
             ..Combined::ZERO
         }
     }
 
-    /// Whether every varying term is zero, so this is a plain colour.
+    /// Whether every varying term is *structurally absent*, so this is a
+    /// plain colour -- regardless of what its own value happens to be.
     fn is_constant(&self) -> bool {
-        self.s == [0.0; 3] && self.t == [0.0; 3] && self.st == [0.0; 3]
+        !self.s_used && !self.t_used && !self.st_used
     }
 
     fn zip(&self, o: &Combined, f: impl Fn(f32, f32) -> f32) -> Combined {
         let g = |a: [f32; 3], b: [f32; 3]| [f(a[0], b[0]), f(a[1], b[1]), f(a[2], b[2])];
         Combined {
             k: g(self.k, o.k),
+            k_used: self.k_used || o.k_used,
             s: g(self.s, o.s),
+            s_used: self.s_used || o.s_used,
             t: g(self.t, o.t),
+            t_used: self.t_used || o.t_used,
             st: g(self.st, o.st),
+            st_used: self.st_used || o.st_used,
         }
     }
 
@@ -328,35 +356,57 @@ impl Combined {
     /// Two varying terms multiplied — `SHADE * TEXEL` aside, which the shapes
     /// below cover — is not representable, and returning `None` is how a
     /// combiner this model cannot follow declines to be guessed at.
+    ///
+    /// Scaling by a *real* constant (one some source actually set, however
+    /// its value happens to come out) never removes the other side's
+    /// presence -- only its value changes. Scaling by a constant side that
+    /// is itself structurally empty (`is_constant()` true and its own `k`
+    /// unused, e.g. two literal-zero multiplexer reads subtracted from each
+    /// other) is different: that side's real numeric value is unconditionally
+    /// zero, so the whole product genuinely is nothing, not "the other side's
+    /// terms, scaled to zero" -- e.g. `(ONE-ZERO)*ZERO` must collapse away
+    /// entirely so `+SHADE` afterwards still reads as a bare `SHADE` term,
+    /// not a declined shape (RE-079 found this distinction matters: without
+    /// it, fixing the black-`PRIM`-scale case below regressed this one).
     fn mul(&self, o: &Combined) -> Option<Combined> {
-        let (c, v) = if o.is_constant() {
-            (o.k, self)
+        let (c, c_used, v) = if o.is_constant() {
+            (o.k, o.k_used, self)
         } else if self.is_constant() {
-            (self.k, o)
+            (self.k, self.k_used, o)
         } else {
             // The one mixed product worth keeping: shade times texel.
             let shade_by_texel = |a: &Combined, b: &Combined| {
-                (a.s != [0.0; 3]
-                    && b.t != [0.0; 3]
-                    && a.k == [0.0; 3]
-                    && a.t == [0.0; 3]
-                    && a.st == [0.0; 3]
-                    && b.k == [0.0; 3]
-                    && b.s == [0.0; 3]
-                    && b.st == [0.0; 3])
+                (a.s_used
+                    && b.t_used
+                    && !a.k_used
+                    && !a.t_used
+                    && !a.st_used
+                    && !b.k_used
+                    && !b.s_used
+                    && !b.st_used)
                     .then(|| Combined {
                         st: [a.s[0] * b.t[0], a.s[1] * b.t[1], a.s[2] * b.t[2]],
+                        st_used: true,
                         ..Combined::ZERO
                     })
             };
             return shade_by_texel(self, o).or_else(|| shade_by_texel(o, self));
         };
+        if !c_used {
+            // A structurally empty constant's real value is unconditionally
+            // zero, so it absorbs the other side entirely.
+            return Some(Combined::ZERO);
+        }
         let g = |a: [f32; 3]| [a[0] * c[0], a[1] * c[1], a[2] * c[2]];
         Some(Combined {
             k: g(v.k),
+            k_used: v.k_used,
             s: g(v.s),
+            s_used: v.s_used,
             t: g(v.t),
+            t_used: v.t_used,
             st: g(v.st),
+            st_used: v.st_used,
         })
     }
 }
@@ -377,10 +427,12 @@ fn to_f(c: [u8; 4]) -> [f32; 3] {
 fn source(code: u32, slot: u8, prim: [f32; 3], env: [f32; 3]) -> Option<Combined> {
     const SHADE: Combined = Combined {
         s: [1.0; 3],
+        s_used: true,
         ..Combined::ZERO
     };
     const TEXEL: Combined = Combined {
         t: [1.0; 3],
+        t_used: true,
         ..Combined::ZERO
     };
     Some(match (code, slot) {
@@ -482,16 +534,39 @@ fn combiner_shade_scale(
     let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
 
     // Usable only as a scale on the shade. A constant term would need a second
-    // colour source the vertex format does not have.
-    if out.k != [0.0; 3] || out.t != [0.0; 3] {
+    // colour source the vertex format does not have. Presence, not value: a
+    // combiner can legitimately scale the shade by exactly black.
+    if out.k_used || out.t_used {
         return None;
     }
-    match (out.s == [0.0; 3], out.st == [0.0; 3]) {
+    match (out.s_used, out.st_used) {
         // `SHADE * TEXEL` is what the GE's modulate already does.
-        (true, false) => Some(out.st),
-        (false, true) => Some(out.s),
+        (false, true) => Some(out.st),
+        (true, false) => Some(out.s),
         _ => None,
     }
+}
+
+/// Whether any slot across the active cycle(s) reads `code` (`3` =
+/// `PRIMITIVE`, `5` = `ENVIRONMENT`) -- independent of that source's value.
+///
+/// [`combiner_texture_blend`] needs this to gate on `PRIMITIVE`/`ENVIRONMENT`
+/// being set *only when the combiner actually reads them*: a shape like
+/// `(ONE-ENV)*TEXEL+ENV` never reads `PRIMITIVE` at all, so requiring
+/// `prim_color` to be set to evaluate it declined every occurrence needlessly
+/// (RE-079).
+fn combiner_reads(hi: u32, lo: u32, two_cycle: bool, code: u32) -> bool {
+    let c0 = [
+        (hi >> 20) & 0xF,
+        (lo >> 28) & 0xF,
+        (hi >> 15) & 0x1F,
+        (lo >> 15) & 0x7,
+    ];
+    if c0.contains(&code) {
+        return true;
+    }
+    two_cycle
+        && [(hi >> 5) & 0xF, (lo >> 24) & 0xF, hi & 0x1F, (lo >> 6) & 0x7].contains(&code)
 }
 
 /// Recognises `(A-B)*TEXEL+B` -- an affine blend from a base colour `B` (at
@@ -507,10 +582,13 @@ fn combiner_shade_scale(
 /// 255; the real combiner's alpha cycle is not modelled here, matching how
 /// `combiner_shade_scale` only ever resolves RGB).
 ///
-/// Unlike `combiner_shade_scale`, an unset `PRIMITIVE`/`ENVIRONMENT`
-/// declines rather than defaulting to white: white is a safe *scale*
-/// identity, but here it would be baked in as a real, wrong constant
-/// colour, and there is nothing safe to substitute instead.
+/// Unlike `combiner_shade_scale`, an unset `PRIMITIVE`/`ENVIRONMENT` that the
+/// combiner actually reads declines rather than defaulting to white: white
+/// is a safe *scale* identity, but here it would be baked in as a real,
+/// wrong constant colour, and there is nothing safe to substitute instead.
+/// One that the combiner does *not* read (e.g. `(ONE-ENV)*TEXEL+ENV`, which
+/// never touches `PRIMITIVE`) is not required at all -- gating on it
+/// unconditionally declined every such shape needlessly (RE-079).
 fn combiner_texture_blend(
     hi: u32,
     lo: u32,
@@ -518,14 +596,20 @@ fn combiner_texture_blend(
     prim: Option<[u8; 4]>,
     env: Option<[u8; 4]>,
 ) -> Option<([u8; 4], [u8; 4])> {
-    let p = to_f(prim?);
-    let e = to_f(env?);
-    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
-
-    if out.s != [0.0; 3] || out.st != [0.0; 3] {
+    if combiner_reads(hi, lo, two_cycle, 3) && prim.is_none() {
         return None;
     }
-    if out.k == [0.0; 3] || out.t == [0.0; 3] {
+    if combiner_reads(hi, lo, two_cycle, 5) && env.is_none() {
+        return None;
+    }
+    let p = prim.map_or([0.0; 3], to_f);
+    let e = env.map_or([0.0; 3], to_f);
+    let out = evaluate_combiner(hi, lo, two_cycle, p, e)?;
+
+    if out.s_used || out.st_used {
+        return None;
+    }
+    if !out.k_used || !out.t_used {
         // No constant term is `combiner_shade_scale`'s job; no texel term is
         // a plain constant colour neither function needs to special-case.
         return None;
@@ -2413,6 +2497,7 @@ mod tests {
     const PRIM: u32 = 3;
     const SHADE: u32 = 4;
     const ENV: u32 = 5;
+    const ONE: u32 = 6;
     const ZERO_A: u32 = 8;
     const ZERO_C: u32 = 16;
     const ZERO_D: u32 = 7;
@@ -2423,6 +2508,37 @@ mod tests {
         let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
         let got = combiner_shade_scale(hi, lo, false, Some([255, 0, 0, 255]), None);
         assert_eq!(got, Some([1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn prim_times_shade_is_recognised_even_when_the_primitive_is_black(
+    ) {
+        // RE-079: 1118 primitives archive-wide set exactly this shape with
+        // `PRIM=[0,0,0,255]`. A value-only reading of the evaluated combiner
+        // cannot tell "the shade scale is black" apart from "no shade-scale
+        // term exists at all" -- both look like an all-zero `s` field -- and
+        // silently fell back to unmodified (non-black) vertex shade before
+        // this was fixed to track a term's presence separately from its
+        // value.
+        let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
+        let got = combiner_shade_scale(hi, lo, false, Some([0, 0, 0, 255]), None);
+        assert_eq!(got, Some([0.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn multiplying_by_a_true_zero_source_still_reaches_a_later_shade_term() {
+        // `(ONE-ZERO)*ZERO+SHADE`: unlike the case above, this cycle's own
+        // `C` slot is a literal hardware-zero read (not a real, merely-black
+        // colour), so `(ONE-ZERO)*ZERO` must collapse away entirely rather
+        // than being treated as "a real term worth keeping, whose value is
+        // presently zero" -- otherwise the surviving `+SHADE` term would
+        // wrongly carry a phantom constant alongside it and this shape
+        // (27 primitives archive-wide) would regress to declined.
+        let (hi, lo) = combine(ONE, ZERO_A, ZERO_C, SHADE, 0, 0, 0, 0);
+        assert_eq!(
+            combiner_shade_scale(hi, lo, false, None, None),
+            Some([1.0; 3])
+        );
     }
 
     #[test]
@@ -2528,6 +2644,21 @@ mod tests {
         assert_eq!(
             combiner_texture_blend(hi, lo, true, prim, env),
             Some(([10, 20, 30, 255], [200, 100, 50, 255])),
+        );
+    }
+
+    #[test]
+    fn a_texture_blend_that_never_reads_primitive_does_not_need_it_set() {
+        // `(ONE-ENV)*TEXEL+ENV` -- a blend from ENV to a fixed white target,
+        // found archive-wide (RE-079) -- never reads PRIMITIVE at all. The
+        // old unconditional `prim?`/`env?` gate declined every occurrence
+        // whenever `prim_color` merely hadn't been set, even though nothing
+        // in this shape depends on it.
+        let (hi, lo) = combine(ONE, ENV, TEXEL0, ENV, ONE, ENV, TEXEL0, ENV);
+        let env = Some([40, 60, 80, 255]);
+        assert_eq!(
+            combiner_texture_blend(hi, lo, true, None, env),
+            Some(([40, 60, 80, 255], [255, 255, 255, 255])),
         );
     }
 

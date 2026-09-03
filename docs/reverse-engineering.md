@@ -5230,3 +5230,132 @@ not left as a bare heuristic hit) and for the false-positive catch on
 file 85 (re-verified with an anchored, not substring, search pattern).
 **None claimed** for the seven left alone — correctly inconclusive, not
 quietly dropped.
+
+## RE-079 — Systematic combiner-shape census finds a real black-scale bug and an over-strict gate
+
+**Question.** RE-073 left `PLAN.md` R0.6's "primitive color verified" and
+"environment color verified" items open, noting that "a systematic
+accounting of every distinct shape `SetCombine` uses archive-wide has not
+been done." This measures that directly, rather than continuing to guess
+from spot cases.
+
+**Method.** Temporarily instrumented `mesh.rs`'s `material_now` (gated
+`#[cfg(feature = "std")]`, reverted before committing — the codebase's
+established pattern for this kind of investigation, e.g. RE-057) to log
+every combiner-bearing primitive's raw `(hi, lo)` words, its two-cycle
+flag, whether `prim_color`/`env_color` were set, and whether
+`combiner_shade_scale`/`combiner_texture_blend` already recognised it.
+Added a temporary `romtool` subcommand that ran the real archive-wide
+`pack()` walk (the same one that builds the shipped asset pack — not a
+separate, possibly-divergent scan) and grouped the log by decoded
+multiplexer shape. Archive-wide: **262,778 combiner-bearing primitives**,
+97.0% already recognised before any fix.
+
+**Finding 1: a value-only reading cannot tell "scaled to black" from "not
+recognised".** `(PRIM-ZERO)*SHADE+ZERO` — the exact shape RE-039 already
+identified as "the constant the shade is multiplied by" — declined for
+**1,118 primitives**, always with `PRIM` set to exactly `[0, 0, 0, 255]`.
+`combiner_shade_scale` evaluates the combiner into a `k`/`s`/`t`/`st`
+decomposition and then infers *which* term is present by checking which
+one is numerically nonzero (`out.s == [0.0; 3]` read as "no `s` term").
+That conflates two different things: "this combiner has no shade-scale
+term" and "this combiner's shade-scale term is currently black" produce
+the identical `[0.0; 0.0; 0.0]` value, and the second case silently fell
+back to unmodified (non-black) vertex shade instead of the solid black
+real hardware always produces here. `refs/ssb-decomp-re`'s own
+`dFTCommonDataShadowColorDefault = {0, 0, 0, 0xA0}` (`ft/ftcommondata.c`)
+confirms black-`PRIM`-driven surfaces are a real, intentional technique
+in this engine (that particular instance is the fighters' runtime-drawn
+floor shadow, not these archive primitives, but it establishes the
+pattern is deliberate, not an authoring mistake this project should
+paper over).
+
+**Fix: track presence, not just value.** `Combined` (`mesh.rs`) gained a
+`_used` bool alongside each of its four coefficients (`k`, `s`, `t`,
+`st`), threaded through `zip`/`sub`/`add` (`used = self_used ||
+other_used`) and `mul`. `combiner_shade_scale`/`combiner_texture_blend`
+now match on the `_used` flags instead of comparing values to `[0.0; 3]`.
+One subtlety cost a regression before it was caught: multiplying by a
+constant whose own value is zero is not always the same operation.
+`(PRIM-ZERO)*SHADE` with `PRIM` black is "a real, sourced term whose
+value happens to be black" — presence must survive. But
+`(ONE-ZERO)*ZERO+SHADE` (27 primitives archive-wide) has a *literal*
+hardware-zero read in the `C` slot — multiplying anything by a truly
+unsourced zero really does produce nothing, and the first version of this
+fix instead propagated the non-constant operand's presence through
+unconditionally, which flipped this shape from hit to declined. Fixed by
+having `mul` also carry whether the constant side's own `k` is a real,
+sourced value (`k_used`) or a structurally empty `Combined::ZERO`; only
+the latter collapses the whole product away. Verified both directions
+with unit tests
+(`prim_times_shade_is_recognised_even_when_the_primitive_is_black`,
+`multiplying_by_a_true_zero_source_still_reaches_a_later_shade_term`).
+
+**Finding 2: `combiner_texture_blend` required `PRIMITIVE`*and*
+`ENVIRONMENT` even when a shape never reads one of them.** RE-073's
+`(PRIM-ENV)*TEXEL+ENV` always reads both, but the archive also has
+`(ONE-ENV)*TEXEL+ENV` (125 occurrences) — the same affine-blend shape
+with a fixed white endpoint instead of a `PRIMITIVE`-driven one. The
+function's `prim?`/`env?` early return declined the whole shape whenever
+`prim_color` was unset, even though this shape's arithmetic never
+touches `PRIMITIVE` at all. Fixed with a new `combiner_reads(hi, lo,
+two_cycle, code)` helper that checks the raw multiplexer bits directly
+(independent of `evaluate_combiner`'s arithmetic) for whether `PRIMITIVE`
+(`3`) or `ENVIRONMENT` (`5`) is read by either active cycle, and only
+requires the corresponding colour to be set when the shape actually reads
+it. Verified with
+`a_texture_blend_that_never_reads_primitive_does_not_need_it_set`.
+
+**Measured effect, archive-wide.** `(PRIM-ZERO)*SHADE+ZERO`: 30,230
+primitives, 0% → 100% recognised. `(ONE-ZERO)*ZERO+SHADE`: confirmed
+unchanged at 100% (27/27) after the `mul` refinement — this is the
+regression the first attempt introduced and the second fixed, not new
+progress. `(ONE-ENV)*TEXEL0+ENV`: 0/125 → 45/125 recognised (the
+remaining 80 have no texture bound at all, correctly declined by the
+existing `texture.is_some()` gate in `material_now`, unrelated to this
+fix). Overall: 97.0% → 97.5% of all combiner-bearing primitives
+recognised. `cargo test --workspace`: 364 passing (was 361; three new
+tests, no regressions). `cargo clippy --release -p romtool -p ssb-rom`:
+clean. `cargo psp --release` + `tools/run-ppsspp.sh`: Dream Land renders
+at 60 FPS, pixel-identical to before (expected — the fixed shapes are not
+the ones its own primitives use).
+
+**What remains open.** The temporary census surfaced the actual shape of
+what "primitive color verified"/"environment color verified" still lack,
+rather than leaving it a guess:
+
+* `(PRIM-ENV)*TEXEL0+ENV` still declines for 3,085 of 4,580 primitives —
+  not a classification bug like the two above, but a genuine absence:
+  neither `prim_color` nor `env_color` had been set on this converter's
+  own node-sequence state by the time the primitive is emitted. Whether
+  real hardware would have inherited a value from a different node, a
+  different object, or a material table this project's `MObj` pairing
+  does not yet resolve (`R0.7`) is a materially different, larger
+  question this pass did not chase.
+* `(ZERO-ZERO)*ZERO+PRIM` (1,589 primitives) is a real third shape
+  neither function models: a flat, constant `PRIMITIVE` colour with *no*
+  shade or texture dependence at all. Worth a dedicated
+  `combiner_flat_color`-style function later; not attempted here since it
+  needs a new `MeshMaterial` field, not just a classification fix.
+* `(TEXEL1-TEXEL0)*PRIM_LOD_FRAC+TEXEL0` (364 primitives) is genuine
+  trilinear mip-level blending — `R0.5`'s territory (LOD is not modelled
+  at all), not `R0.6`'s.
+* `(ZERO-COMBINED)*ZERO+COMBINED` (1,009 primitives) reads `COMBINED` in
+  cycle 0 with no previous cycle to substitute, which `cycle()` already
+  declines correctly (`*prev?` on `None`) — confirmed by tracing, not a
+  bug.
+
+None of these four are misclassifications the way the two fixed findings
+were; they are correctly-declined shapes this model does not (yet, or
+ever, for the LOD case) attempt.
+
+**Confidence: high** for both fixes — each is a mechanical, structural
+change verified by unit tests with concrete expected values, an
+archive-wide before/after census showing exactly the intended shapes
+move and nothing else regress, and a clean full-workspace test run.
+**Not independently confirmed on-device**: no fighter's specific
+black-`PRIM` primitive (plausibly a solid-colour cosmetic detail such as
+eyes/pupils, based on where else this shape appears — not confirmed to
+be any specific game element) was screenshotted before/after the way
+RE-074 did for its own combiner fix; only the unaffected Dream Land
+regression scene was.

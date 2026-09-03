@@ -565,6 +565,26 @@ correct grey-to-orange gradient. Dream Land's stage view (the main
 regression scene, unaffected by this shape) was screenshotted before and
 after too and is pixel-identical.
 
+RE-079 did the "systematic accounting of every distinct shape
+`SetCombine` uses archive-wide" RE-073 flagged as missing for "primitive
+color"/"environment color verified". Found and fixed two real bugs, not
+just measured: `combiner_shade_scale` could not tell a shade-scale term
+that is *present with value black* from one that is *absent entirely*
+(both read as `[0.0; 3]`), silently declining 1,118 primitives whose
+`PRIM` is exactly `[0,0,0,255]` back to unmodified vertex shade instead
+of the solid black real hardware produces; and `combiner_texture_blend`
+required both `PRIMITIVE` and `ENVIRONMENT` to be set even for shapes
+that only read one of them (`(ONE-ENV)*TEXEL+ENV`, 125 occurrences,
+0/125 → 45/125 recognised, the rest untextured and correctly gated
+elsewhere). Fixed by giving `Combined` a presence flag per term,
+independent of value, threaded through the whole evaluator; caught and
+fixed a regression this introduced in a literal-hardware-zero
+multiplication case before shipping. Archive-wide: 97.0% → 97.5% of
+262,778 combiner-bearing primitives now recognised. Also identified,
+but did not fix, a third real shape (`(ZERO-ZERO)*ZERO+PRIM`, 1,589
+primitives, a flat constant colour with no shade/texture term at all)
+that needs a new `MeshMaterial` field rather than a classification fix.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -578,8 +598,8 @@ Reproduce original SSB64 material behavior.
 
 * [ ] material tables resolved
 * [x] combiner behavior verified — RE-073/RE-074: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models), detected, packed, wired to the PSP GE's native `TextureEffect::Blend`, and visually confirmed correct against Link's own model (before/after screenshots). The general two-cycle evaluation model itself was already verified (RE-039/RE-043); the remaining ~8% of ENV-reading combiners and whatever `combiner_shade_scale` declines outside that are not exhaustively catalogued, but are not the dominant case and are tracked under "primitive color"/"environment color" below rather than blocking this item
-* [ ] primitive color verified — read by RE-073's shape (now consumed) and by others `combiner_shade_scale` already folds, but not exhaustively accounted for
-* [ ] environment color verified — same as primitive color
+* [ ] primitive color verified — RE-079 did the systematic archive-wide shape census this item needed: fixed a real bug where a black `PRIM` scale was indistinguishable from "no scale term" (1,118 primitives recovered), and an over-strict gate that required `PRIM` set even when a shape never read it. One real, uncaught shape remains (`(ZERO-ZERO)*ZERO+PRIM`, a flat constant colour, 1,589 primitives) — needs a new `MeshMaterial` field, not a classification fix, so this item stays open
+* [ ] environment color verified — same census, same two fixes (both touch `ENV` symmetrically with `PRIM`); the `(PRIM-ENV)*TEXEL0+ENV` shape's remaining 3,085/4,580 misses are a genuine absence (neither colour set on this converter's own state, likely `R0.7`'s material-table pairing gaps), not a classification bug, so this item also stays open
 * [ ] lighting verified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
@@ -590,7 +610,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079 in `docs/reverse-engineering.md`.
 
 ### Evidence
 

@@ -16,8 +16,65 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.6`, with RE-078 (this session) extending RE-077's
-method archive-wide instead of stopping after Kirby's one fix. Ran
+`IN_PROGRESS` on `R0.6`, with RE-079 (this session) doing the
+"systematic accounting of every distinct `SetCombine` shape" RE-073 left
+as the open reason "primitive color verified"/"environment color
+verified" were unchecked. Temporarily instrumented `mesh.rs`'s
+`material_now` (reverted before committing) to log every
+combiner-bearing primitive's raw combiner words and whether
+`combiner_shade_scale`/`combiner_texture_blend` already recognised them,
+then ran it through the real `romtool pack` archive walk: 262,778
+combiner-bearing primitives, 97.0% already recognised.
+
+Found and fixed two real bugs in the two misses that mattered, not just
+measured them. First: `combiner_shade_scale` evaluated a combiner into a
+`k`/`s`/`t`/`st` decomposition and inferred *which* term was present by
+checking which was numerically nonzero — indistinguishable from "this
+term is present with value exactly black". `(PRIM-ZERO)*SHADE+ZERO`
+(RE-039's own "prim_color" mechanism) declined for 1,118 primitives
+whose `PRIM` was set to exactly `[0,0,0,255]`, silently rendering
+unmodified (non-black) vertex shade instead of the solid black real
+hardware always produces. Second: `combiner_texture_blend` required
+*both* `PRIMITIVE` and `ENVIRONMENT` to be set even for shapes that only
+read one of them — `(ONE-ENV)*TEXEL0+ENV` (125 occurrences) never reads
+`PRIMITIVE` at all, but declined whenever `prim_color` merely hadn't
+been set elsewhere.
+
+Fixed by giving `Combined` a `_used` presence flag per term, independent
+of its numeric value, threaded through `zip`/`sub`/`add`/`mul`; and a
+new `combiner_reads(hi, lo, two_cycle, code)` helper so
+`combiner_texture_blend` only requires a colour the shape actually
+reads. The first version of the presence-flag fix regressed a separate
+27-primitive shape (`(ONE-ZERO)*ZERO+SHADE`) by conflating "multiplied
+by a real constant that happens to be black" with "multiplied by a
+literal, structurally-absent hardware zero" — caught by the archive-wide
+before/after census (hit count dropped from 27 to 0), not by a unit
+test, and fixed by having `mul` collapse the whole product away only
+when the constant side's own value is itself unsourced. Verified with
+three new unit tests, `cargo test --workspace` (364 passing, up from
+361, no regressions), `cargo clippy --release -p romtool -p ssb-rom`
+clean, and a fresh `cargo psp --release` + `tools/run-ppsspp.sh`: Dream
+Land renders at 60 FPS, pixel-identical (expected — its own primitives
+don't use either fixed shape). Archive-wide effect: 97.0% → 97.5%
+recognised. Temporary instrumentation (the `mesh::census` module and a
+`romtool combine-census` subcommand) was fully reverted before
+committing, matching `AGENTS.md` §17's "do not commit temporary
+debugging artifacts" — `git diff --stat` on `tools/romtool/src/main.rs`
+is empty; only `mesh.rs`'s real fix and tests remain.
+
+Both `PLAN.md` R0.6 acceptance items stay unchecked: a third real,
+uncaught shape (`(ZERO-ZERO)*ZERO+PRIM`, 1,589 primitives, a flat
+constant colour with no shade/texture dependence) needs a new
+`MeshMaterial` field rather than a classification fix, and
+`(PRIM-ENV)*TEXEL0+ENV`'s remaining 3,085/4,580 misses are a genuine
+absence of `prim_color`/`env_color` on this converter's own state
+(likely `R0.7`'s material-table pairing gaps), not something this pass's
+fix could reach.
+
+## Last Completed Task
+
+`R0.7`-adjacent (RE-078, previous session) extended RE-077's method
+archive-wide instead of stopping after Kirby's one fix. Ran
 `ssb_rom::mobj::search_tables` over all 63 graphs R0.7 still had no
 table for; 13 came back with exactly one demand-matching candidate
 (the other 50 stayed ambiguous). Checked each of the 13 against its own
@@ -45,8 +102,6 @@ view re-screenshotted and pixel-identical. The other 7 unique hits
 (file 85's two false positives, plus one each in a stage file and two
 special-move files landing on still-untyped bytes) were checked and
 correctly left unfixed.
-
-## Last Completed Task
 
 `R0.7` — RE-077 (earlier this session) followed up directly on RE-076's
 own hedge instead of leaving it
@@ -438,16 +493,25 @@ point already recorded rather than an open-ended search:
    "primitive color verified", "environment color verified", "unsupported
    material behavior identified". "Fog verified" (RE-072), "depth state
    verified"/"culling verified" (RE-068), "alpha behavior verified"
-   (RE-069) and now "combiner behavior verified" (RE-073/RE-074) are all
-   checked. The remaining ~8% of ENV-reading combiners (and whatever
-   `combiner_shade_scale` declines that never reads ENV at all) are not
-   exhaustively catalogued, but are folded into "primitive color
-   verified"/"environment color verified" rather than blocking anything
-   further — a smaller-scoped, lower-priority tail, not a new open
-   question. Read `PLAN.md` R0.6's acceptance list fresh rather than
-   assuming — the pattern that has paid off repeatedly this session
-   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode,
-   RE-072's fog, RE-073/RE-074's combiner shape) is: find where
+   (RE-069) and "combiner behavior verified" (RE-073/RE-074) are all
+   checked. RE-079 did the systematic archive-wide census "primitive
+   color"/"environment color verified" were waiting on, and fixed the two
+   real classification bugs it found (a black-`PRIM`-scale ambiguity and
+   `combiner_texture_blend`'s over-strict `PRIM`+`ENV` gate) — but both
+   items stay open, now for two well-scoped, *different* reasons than
+   before: (a) `(ZERO-ZERO)*ZERO+PRIM` (1,589 primitives archive-wide) is
+   a real, uncaught third shape — a flat constant `PRIMITIVE` colour with
+   no shade or texture term at all — that needs a new `MeshMaterial`
+   field (a `flat_color: Option<[u8;4]>` alongside `prim_color`, or
+   similar), not another classification fix; (b) `(PRIM-ENV)*TEXEL0+ENV`
+   still misses for 3,085/4,580 primitives because neither colour was
+   ever set on this converter's own per-graph state — likely the same
+   `R0.7` material-table pairing gap already tracked there, not a new
+   independent problem, but not confirmed as such. Read `PLAN.md` R0.6's
+   acceptance list fresh rather than assuming — the pattern that has paid
+   off repeatedly this session (RE-065's lighting angle, RE-068's
+   geometry mode, RE-069's render mode, RE-072's fog, RE-073/RE-074's
+   combiner shape, RE-079's presence-vs-value bug) is: find where
    `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the *default* for
    whatever's being checked, or measure what a declined case actually
    looks like archive-wide, before assuming `mesh.rs`'s current fallback
