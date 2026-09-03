@@ -67,6 +67,15 @@ pub struct TextureRef {
     /// Byte offset of the palette, for `Ci` formats.
     pub palette_offset: Option<u32>,
     pub palette_entries: u16,
+    /// `G_TX_MIRROR` on the render tile, per axis -- only meaningful (and
+    /// only ever set) when that axis's own `mask` is nonzero: a texture with
+    /// no repeat period has nothing to mirror. RE-066 measured 208/754
+    /// tile-0 `G_SETTILE` commands archive-wide with this set on at least
+    /// one axis; the PSP GE has no native mirror wrap mode, so this flag
+    /// exists to let pack-time conversion pre-bake a mirrored copy instead
+    /// (RE-067) rather than silently rendering a plain, incorrect repeat.
+    pub mirror_s: bool,
+    pub mirror_t: bool,
 }
 
 /// Render state a primitive is drawn under.
@@ -441,6 +450,11 @@ struct State {
     /// `G_SETTILE`'s `masks`/`maskt` on tile 0: the texture wraps every
     /// `1 << mask` texels, and zero means it does not wrap at all.
     tile0_mask: Option<(u8, u8)>,
+    /// `G_SETTILE`'s `cms`/`cmt` on tile 0 (raw 2-bit fields: bit 0 mirror,
+    /// bit 1 clamp). Only the mirror bit is acted on -- RE-066 found clamp
+    /// is only ever requested alongside a nonzero mask, where the existing
+    /// mask-narrowed `Repeat` already reproduces real hardware exactly.
+    tile0_cm: Option<(u8, u8)>,
     palette_offset: Option<u32>,
     palette_file: Option<u16>,
     palette_entries: u16,
@@ -470,6 +484,7 @@ impl State {
             tile0_fmt: None,
             tile_dims: None,
             tile0_mask: None,
+            tile0_cm: None,
             palette_offset: None,
             palette_file: None,
             palette_entries: 0,
@@ -594,13 +609,18 @@ impl State {
         // and taking the drawn rect instead asks for 16 KiB of texels out of a
         // 12 KiB file (RE-044). A mask of zero means no wrapping, so the drawn
         // rect is the texture.
-        let (w, h) = match self.tile0_mask {
-            Some((ms, mt)) => (
-                if ms > 0 { w.min(1 << ms) } else { w },
-                if mt > 0 { h.min(1 << mt) } else { h },
-            ),
-            None => (w, h),
-        };
+        let (mask_s, mask_t) = self.tile0_mask.unwrap_or((0, 0));
+        let (w, h) = (
+            if mask_s > 0 { w.min(1 << mask_s) } else { w },
+            if mask_t > 0 { h.min(1 << mask_t) } else { h },
+        );
+        // `G_TX_MIRROR` is bit 0 of `cms`/`cmt`. Only meaningful with an
+        // actual repeat period (RE-066: every real occurrence in this ROM
+        // already has one), so gate on the mask too rather than trusting the
+        // bit alone.
+        let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
+        let mirror_s = mask_s > 0 && cm_s & 0x1 != 0;
+        let mirror_t = mask_t > 0 && cm_t & 0x1 != 0;
         Some(TextureRef {
             data_file: self.timg_file,
             data_offset: offset,
@@ -611,6 +631,8 @@ impl State {
             palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
+            mirror_s,
+            mirror_t,
         })
     }
 }
@@ -883,6 +905,8 @@ fn walk(
                 tile,
                 mask_s,
                 mask_t,
+                cm_s,
+                cm_t,
                 ..
             } => {
                 // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
@@ -894,6 +918,7 @@ fn walk(
                 if tile == RENDER_TILE {
                     state.tile0_fmt = Some((format, size));
                     state.tile0_mask = Some((mask_s, mask_t));
+                    state.tile0_cm = Some((cm_s, cm_t));
                 }
             }
 
@@ -1478,6 +1503,79 @@ mod tests {
         assert_eq!((tex.width, tex.height), (32, 16));
         assert_eq!(tex.format, Format::Ci, "tile 0 wins over SETTIMG");
         assert_eq!(tex.size, BitSize::Bits4);
+    }
+
+    #[test]
+    fn mirror_is_flagged_only_alongside_a_real_repeat_period() {
+        // RE-067: Dream Land's canopy gradient (file 104 offset 0x798) sets
+        // exactly `cm_s=3 cm_t=3 mask_s=6 mask_t=6` -- mirror+clamp on both
+        // axes, 64-texel period -- reproduced verbatim here.
+        let file = vertex_data(3);
+        let settile = |cm_s: u8, cm_t: u8, mask_s: u8, mask_t: u8| Cmd::SetTile {
+            format: 2,
+            size: 0,
+            line: 0,
+            tmem: 0,
+            tile: 0,
+            palette: 0,
+            cm_s,
+            cm_t,
+            mask_s,
+            mask_t,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let mirrored = |cm_s, cm_t, mask_s, mask_t| {
+            let cmds = [
+                vtx(3),
+                Cmd::SetTimg {
+                    format: 0,
+                    size: 2,
+                    width: 1,
+                    addr: SegAddr(0x100),
+                    slot: 0,
+                },
+                settile(cm_s, cm_t, mask_s, mask_t),
+                Cmd::SetTileSize {
+                    tile: 0,
+                    uls: 0,
+                    ult: 0,
+                    lrs: 255 << 2,
+                    lrt: 255 << 2,
+                },
+                Cmd::Texture {
+                    level: 0,
+                    tile: 0,
+                    on: true,
+                    scale_s: 0,
+                    scale_t: 0,
+                },
+                Cmd::Tri1([0, 1, 2]),
+                Cmd::End,
+            ];
+            convert(&cmds, Source::bare(&file)).unwrap().primitives[0]
+                .material
+                .texture
+                .unwrap()
+        };
+
+        let canopy = mirrored(3, 3, 6, 6);
+        assert!(canopy.mirror_s && canopy.mirror_t, "cm=3 (mirror+clamp) with a real period must flag mirror");
+
+        let clamp_only = mirrored(2, 2, 6, 6);
+        assert!(
+            !clamp_only.mirror_s && !clamp_only.mirror_t,
+            "cm=2 (clamp, no mirror bit) must not flag mirror"
+        );
+
+        let mirror_no_period = mirrored(3, 3, 0, 0);
+        assert!(
+            !mirror_no_period.mirror_s && !mirror_no_period.mirror_t,
+            "mirror with mask=0 has no period to bounce at, so it must not be flagged"
+        );
+
+        let s_only = mirrored(3, 2, 6, 6);
+        assert!(s_only.mirror_s && !s_only.mirror_t, "axes are independent");
     }
 
     /// Non-render tiles configure TLUT staging and must not affect the

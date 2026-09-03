@@ -4187,3 +4187,107 @@ logic is concrete, working C++ code, cross-checked against our own
 independent measurement rather than copied on faith). Medium on whether
 `Mirror`'s 27.6% share is visually significant anywhere in this ROM —
 that needs a per-texture UV-range check this pass didn't do.
+
+## RE-067 — `G_TX_MIRROR` traced to Dream Land's canopy and fixed, at a real VRAM cost
+
+**Question.** RE-066 quantified `G_TX_MIRROR` as a real, unaddressed gap
+(27.6% of tile-0 lists) but did not check whether it explains anything
+visible. RE-053's still-open Dream Land canopy discrepancy is described as
+a "diagonal pattern" that survives mipmapping and sharpens under a
+higher-resolution backend — is mirror the missing piece?
+
+**Finding the exact texture.** `romtool textures --file 104` reproduces
+RE-053's canopy binding exactly (`64x64 Ci/Bits4 <- file 103 +0xE20 ...
+uv span 237.0x87.1 texels = 3.70x1.36 repeats`). A temporary probe
+(`crates/ssb-rom/examples/tmp_canopy_tile.rs`, written to check and then
+deleted, not committed) decoded file 104's display lists directly and
+found the one that binds it, at offset `0x798`:
+
+```
+SetTile tile=0 fmt=2 size=0 cm_s=3 cm_t=3 mask_s=6 mask_t=6
+```
+
+`cm=3` is mirror+clamp on *both* axes, mask 6 (a 64-texel period matching
+the texture exactly). This is not a guess about which texture might be
+affected — it is the literal display list that draws the canopy.
+
+**Confirming it matters before fixing it.** Per `AGENTS.md`'s investigation
+protocol, tested the hypothesis before committing to an implementation:
+temporarily changed `psp/src/meshdraw.rs`'s hardcoded
+`sceGuTexWrap(Repeat, Repeat)` to `Clamp, Clamp` (a two-line, fully
+reversible edit), rebuilt, and screenshotted. Under `Clamp` the canopy's
+repeating pattern disappeared entirely, replaced by a single stretched
+copy — a dramatically different image, proving the wrap boundary (not
+magnification alone) drives what is visible here. Reverted the diagnostic
+change immediately after.
+
+**The fix: pre-bake the mirror, don't approximate it.** The PSP GE has no
+mirror wrap mode, but this project already converts textures at pack time
+with full control over the pixel data — so the fix is exact, not a
+heuristic. `crates/ssb-rom/src/texture.rs::mirror_extend(img, mirror_s,
+mirror_t)` doubles the decoded image on each mirrored axis, placing a
+column/row-reversed copy in the second half (both axes: four quadrants —
+identity, h-flip, v-flip, h+v-flip). `sceGuTexScale` already renormalises
+UVs against whatever width/height a packed texture reports
+(`psp/src/meshdraw.rs`), so swapping in the wider/taller image needs no
+other change anywhere — the existing `Repeat` wrap then bounces at the
+real period instead of jumping. `mesh.rs`'s `current_texture()` gained
+`mirror_s`/`mirror_t` on `TextureRef`, gated on the corresponding axis
+actually having a nonzero mask (mirror without a period to bounce at is
+meaningless — RE-066 already showed this ROM never does that, but the
+gate costs nothing and stays correct if a future revision did).
+`tools/romtool/src/main.rs`'s `convert_texture` applies `mirror_extend`
+right after decoding, before mip generation, so mip levels are built from
+the already-mirrored image and stay correct.
+
+**Verifying the fix, not just the mechanism.** `mirror_extend` is
+unit-tested directly (`texture.rs`): a plain copy when neither axis
+mirrors, correct bounce-not-jump ordering for each single axis, and all
+four quadrant orientations for both axes together, checked pixel by pixel
+against a source with a distinct value in every corner. Separately,
+`mesh.rs::mirror_is_flagged_only_alongside_a_real_repeat_period`
+reproduces Dream Land's canopy's exact `SetTile` parameters
+(`cm_s=3 cm_t=3 mask_s=6 mask_t=6`) and checks the flag comes out right,
+plus that mirror without a mask does not flag, and that axes are
+independent. On device: rebuilt the pack and diffed a Dream Land
+screenshot against the pre-fix baseline pixel by pixel — the canopy region
+changes substantially (not a no-op), consistent with the `Repeat`-vs-
+`Clamp` experiment's conclusion that the wrap boundary is where the
+visible difference lives. The remaining dithered texture pattern still
+looks busy at native/emulated resolution — expected and unrelated: RE-053
+already attributes that part to unresolved dithering/magnification, which
+this fix does not touch. **`PLAN.md` R0.5's "Dream Land canopy discrepancy
+resolved" item stays unchecked** — one real contributing cause is fixed
+with evidence, but the magnification/dithering component is not, and the
+acceptance criterion is about the whole symptom.
+
+**The real cost.** This is not free: 187 of 638 packed textures (29%)
+carry `G_TX_MIRROR` on at least one axis, not just Dream Land's — measured
+by instrumenting `romtool textures`' existing per-texture dedup loop
+temporarily (removed before commit) rather than guessing from the
+tile-0-command-level count alone. Packed texture VRAM rose from 763.2 KiB
+to **1059.0 KiB** (+39%), because mirroring is applied before mip
+generation, so the doubled/quadrupled size also carries its own full mip
+chain. This pushes the packed set to 1.5x the ~700 KiB budget
+(`docs/memory.md`), up from the already-over 1.1x baseline. Presented this
+tradeoff to the user explicitly before shipping — mirror correctness
+archive-wide vs. a texture-streaming requirement that was already looming
+but is now unambiguous — and shipped it unconditionally per their decision
+rather than picking a partial scope (e.g. paletted-formats-only) unilaterally.
+
+**Result.** `crates/ssb-rom/src/texture.rs` gains `mirror_extend` (+4
+tests), `mesh.rs` gains `TextureRef::mirror_s`/`mirror_t` (+1 test),
+`tools/romtool/src/main.rs`'s `convert_texture` applies it. `cargo test
+--workspace`: 346 passing (was 341 after RE-066). `cargo clippy --release
+-p romtool -p ssb-rom`: clean. `romtool pack`: 4137.6 KiB (was 3841.0 KiB).
+`cargo psp --release`: builds clean. `tools/run-ppsspp.sh`: Dream Land
+renders at 60 FPS, clean log, measurably different canopy shading.
+
+**Confidence: high** on the mechanism (unit-tested pixel-exact) and on the
+wrap boundary being the cause of *a* real visible discrepancy (the
+`Clamp` A/B is a controlled experiment, not an inference). **Medium** on
+whether the canopy now matches the original N64 frame exactly — no
+frame-accurate reference capture exists to diff against, and RE-053's
+separate magnification/dithering question is explicitly still open.
+**High** on the VRAM figure (measured via the packer's own conversion
+path, not estimated).

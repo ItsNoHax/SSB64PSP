@@ -121,7 +121,7 @@ already moved since these were first written (see below).
 
 ### Phase C — Texture Semantics (R0.5) (HIGH)
 - [x] **Wrap/Clamp — verified correct, not a gap (RE-066).** `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)`; measured archive-wide that every tile-0 `G_SETTILE` requesting clamp also has that axis's own mask nonzero (0/754 counterexamples), and cross-checked against `refs/BattleShip`'s interpreter (which strips `G_TX_CLAMP` under the same condition on real hardware) — `mesh.rs`'s existing mask-narrowed width (RE-044) makes `Repeat` exactly correct here, no code change needed.
-- [ ] **Mirror — real, quantified, accepted deviation (RE-066).** `G_TX_MIRROR` is set on 208/754 (27.6%) tile-0 lists and has no PSP GE equivalent (`Repeat`/`Clamp` only) — renders as a visible seam at each period boundary instead of a smooth bounce. Not measured per-texture (some may never sample past one period, making the gap inert in practice) or fixed (exact fix needs pre-baking a flipped copy per mirrored texture at pack time, roughly doubling its VRAM — a real budget tradeoff against RE-053's already-over-700-KiB figure, not a free change).
+- [x] **Mirror — fixed by pre-baking, not approximated (RE-067).** `G_TX_MIRROR` is set on 187/638 (29%) packed textures and has no PSP GE equivalent (`Repeat`/`Clamp` only). `crates/ssb-rom/src/texture.rs::mirror_extend` doubles the decoded image on each mirrored axis (bouncing, not repeating) before `romtool` packs it, so a plain hardware `Repeat` reproduces a real mirror exactly. Traced to Dream Land's canopy specifically and confirmed via a reversible on-device `Repeat`-vs-`Clamp` A/B that the wrap boundary was visibly wrong. Costs +296 KiB VRAM (763→1059 KiB, 1.5x the ~700 KiB budget) — shipped deliberately, per user decision, making texture streaming (below) non-optional.
 - [ ] **UV Scroll** — Implement `scrollu`/`scrollv` from MObjSub (`objdisplay.c:1386-1397`).
 - [ ] **Mipmap/LOD** — Mip chains are now generated at build time (`psp_texture::pack_mipped`, 151 textures) but did **not** fix the Dream Land canopy discrepancy (RE-053) — the pattern sharpens at higher resolution, which points at magnification, not minification/LOD selection. Still open. RE-054's BattleShip cross-reference found the reference PC port has no LOD support at all (always samples level 0) — corroborates that mipmapping isn't the fix here.
 - [ ] **Filtering** — Verify bilinear vs point per texture.
@@ -148,7 +148,7 @@ already moved since these were first written (see below).
 
 ### Phase G — Assets (R0.11) (MEDIUM)
 - [ ] **Complete costume palettes** — All fighter costumes, not just 0.
-- [ ] **Texture streaming** — Scene-aware residency (700 KiB VRAM budget; current packed set measures ~717 KiB, already over).
+- [ ] **Texture streaming** — Scene-aware residency (700 KiB VRAM budget; current packed set measures **1059 KiB, 1.5x over**, after RE-067's mirror-texture fix added +296 KiB on top of RE-053's mip chains — no longer optional headroom, required for the game to fit in real VRAM).
 - [ ] **Scene dependency graph** — `scene → nodes → materials → textures → palettes`.
 
 ### Phase H — Validation (R0.1 / R1 / R2) (HIGH)

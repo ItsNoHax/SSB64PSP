@@ -384,13 +384,29 @@ hardware only wraps/clamps meaningfully in combination with the mask, not
 from the two-bit field alone) — confirming `mesh.rs`'s existing
 mask-narrowed-width approach (RE-044) already reproduces the correct
 periodic addressing via `Repeat`, for every tile-0 texture in this ROM.
-This was not a bug. The one real, unaddressed, quantified gap is
-`G_TX_MIRROR` (208/754, 27.6%) — the PSP GE has no mirror wrap mode at
-all, so a mirrored axis renders with a visible seam at each period
-boundary instead of bouncing smoothly; recorded as an accepted deviation
-(exact fix would need pre-baking a flipped copy per mirrored texture,
-roughly doubling its VRAM, weighed against RE-053's already-over-budget
-VRAM figure) rather than measured per-texture and fixed this pass.
+This was not a bug. The one real, unaddressed, quantified gap was
+`G_TX_MIRROR` (208/754 tile-0 lists, 27.6%) — the PSP GE has no mirror
+wrap mode at all, so a mirrored axis rendered with a visible seam at each
+period boundary instead of bouncing smoothly.
+
+RE-067 traced this directly to Dream Land's still-open canopy discrepancy
+(RE-053): its exact display list (file 104, offset `0x798`) sets
+`cm_s=3 cm_t=3 mask_s=6 mask_t=6` — mirror+clamp, 64-texel period.
+Confirmed the wrap boundary mattered before fixing it, via a reversible
+on-device `Repeat`-vs-`Clamp` experiment. Fixed by pre-baking a mirrored
+copy of each affected texture at pack time
+(`crates/ssb-rom/src/texture.rs::mirror_extend`, applied in
+`tools/romtool/src/main.rs`'s `convert_texture`) — an exact reproduction,
+not an approximation, since `sceGuTexScale` already renormalises UVs
+against the packed texture's actual dimensions. This affects 187 of 638
+packed textures archive-wide (29%), not just Dream Land, and raises
+packed texture VRAM from 763.2 KiB to **1059.0 KiB** (1.5x the ~700 KiB
+budget). Presented this cost to the user explicitly; shipped
+unconditionally per their decision, making texture streaming
+(`TODO.md` Phase G) no longer optional. The canopy's remaining "diagonal
+pattern" is *not* fully resolved — RE-053's separate magnification/
+dithering diagnosis is untouched by this fix, confirmed by a before/after
+pixel diff showing real change but not a fully smoothed texture.
 
 ### Objective
 
@@ -411,13 +427,13 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [ ] mipmapping behavior identified
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified
-* [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; `Mirror` (27.6% of tile-0 lists) is a real, quantified, accepted deviation (no PSP GE mirror mode)
-* [ ] Dream Land canopy discrepancy resolved
+* [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; RE-067: `Mirror` (29% of packed textures) is now exactly reproduced by pre-baking, not approximated
+* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed one real contributing cause (the mirror wrap boundary) with on-device evidence, but RE-053's magnification/dithering diagnosis is a separate, still-open component of the same symptom
 * [ ] no unsupported mipmapping assumptions remain
 
 ### Evidence
 
-RE-044, RE-053, RE-066 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067 in `docs/reverse-engineering.md`.
 
 ---
 
