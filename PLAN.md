@@ -1172,7 +1172,7 @@ RE-048, RE-086, RE-087, RE-088, RE-089, RE-090, RE-091, RE-092, RE-093, RE-094, 
 
 ## R0.11 — Fighter Palettes / Costumes
 
-Status: `IN_PROGRESS`
+Status: `VERIFYING`
 
 ### Current evidence
 
@@ -1230,6 +1230,68 @@ the pack still only ever builds one costume at a time
 (`DEFAULT_COSTUME = 0.0`); multi-costume packing/selection, and every one
 of this task's five acceptance items below, remain open.
 
+RE-098 (this session) implemented and shipped multi-costume packing and
+selection, closing the larger part of the task. First confirmed, by
+reading the real consuming code rather than assuming it, that a
+costume changes only *material* (colour/palette) — geometry
+(`DObjDesc`/`MObjSub` identity) is identical across every costume of a
+fighter; a separate, `costume`-independent mechanism
+(`modelpart_id_curr`) is the only thing that ever swaps geometry, driven
+by gameplay state (held items, Link's own special-case joint), never by
+`fp->costume`. This settled the runtime-representation design: a sparse
+per-(node, costume) mesh substitution layered on one shared, already-
+packed mesh set, not a duplicated geometry set per costume.
+
+Measured the real per-node cost archive-wide before designing the pack
+format (matching RE-076/077's discipline): real per-fighter costume
+counts (`dFTParamCostumeIDs.develop + 1`, hand-transcribed and cited,
+`refs/ssb-decomp-re/src/ft/ftparam.c:56`) are Mario 5, Fox 4, DK 5,
+Samus 5, Luigi 4, Link 4, Kirby 5, Jigglypuff 4, Falcon 6, Ness 4, Yoshi
+6, Pikachu 4. A temporary, reverted census found 10-16 of each fighter's
+~25-33 nodes (a third to two-thirds, never all) actually differ from
+costume 0 across that fighter's own costume range — some
+palette-dominated (Donkey Kong 9 colour vs 96 palette differences),
+some colour-dominated (Yoshi 80 vs 30), one barely touched (Link, 2 of
+32 nodes).
+
+Shipped `CostumeOverride` (`crates/ssb-rom/src/pack.rs`, `pack::VERSION`
+12 → 13): `Pack::costume_mesh(node, costume)` binary-searches a sparse
+table keyed by global node index for a substitute mesh, falling back to
+the node's own baked mesh for the common case (no override).
+`tools/romtool/src/main.rs`'s build loop converts each costume-bearing
+graph once per costume and registers a substitute mesh only where the
+*converted mesh content* (not each node's raw `MObj` fields, which would
+miss cross-node state inheritance, RE-064) actually differs from costume
+0. Found and fixed a real, costume-unrelated bug along the way:
+`pack_mesh`'s texture cache was keyed by image location alone, which
+would have let a costume's different palette on a shared image silently
+reuse costume 0's cached texture — fixed by keying on palette identity
+too, a correctness improvement to the existing non-costume path as well.
+
+Wired device-side: `psp/src/meshdraw.rs`'s `draw_object`/
+`draw_object_posed` gained a `costume` parameter (`0` reproduces every
+existing caller's prior behaviour exactly); the debug viewer gained a
+costume-cycle key (`L`, mapped from the PSP's previously-idle `SELECT`
+button) and an overlay readout. Verified on the real device profile for
+two fighters, not just compiled: Mario (colour-dominated) visibly
+recolours between costumes 0 and 2; Donkey Kong (palette-dominated)
+correctly renders the game's well-known "Blue Kong" alternate colour at
+costume 3 via the palette-substitution path specifically, not just the
+vertex-colour path Mario exercised. `cargo test --workspace`: 398 passing
+(was 394). Rebuilt pack: 1287 per-(node, costume) mesh substitutions,
+size 4492.4 → 5264.1 KiB (+772 KiB, +17% — disclosed, smaller than
+RE-067's already-shipped 1.5× mirror-texture cost). `cargo psp --release`
++ `tools/run-ppsspp.sh`: Dream Land pixel-normal at 60 FPS, no panics.
+
+Not done: only 2 of 12 real fighters were individually screenshotted
+(the other 10 were only measured via the same census method, not
+visually spot-checked); there is no permanent regression-render artifact
+(only unit-test coverage of the mechanism itself, plus the two
+one-off screenshots taken and reverted this session); and there is still
+no real game costume-*selection* system, only the debug-viewer cycle key
+— the same honest limitation `R0.10`'s `MaterialAnimator` accepted before
+any real game system existed to drive it.
+
 ### Objective
 
 Ensure every required fighter visual variant renders correctly.
@@ -1242,12 +1304,12 @@ Ensure every required fighter visual variant renders correctly.
 
 ### Acceptance
 
-* [ ] all fighter palettes identified
-* [ ] all required costumes identified
-* [ ] runtime representation complete
-* [ ] palette data verified against ROM
-* [ ] representative regression renders added
-* [ ] all required fighters verified
+* [x] all fighter palettes identified — RE-097/RE-098: `colors_at` resolves `PaletteID`, `mobj::read_palettes` reads the real array, verified against the real ROM at multiple costumes
+* [x] all required costumes identified — RE-098: exact per-fighter costume counts hand-transcribed and cited from `dFTParamCostumeIDs`
+* [x] runtime representation complete — RE-098: `CostumeOverride` table shipped, wired device-side, verified on the real device profile
+* [x] palette data verified against ROM — RE-098: Donkey Kong's "Blue Kong" costume 3 confirmed correct by screenshot, the game's own known alternate colour
+* [ ] representative regression renders added — two one-off screenshots (Mario, Donkey Kong) were taken and reverted this session, not saved as a permanent regression artifact; only the mechanism itself has unit-test coverage
+* [ ] all required fighters verified — 2 of 12 real fighters individually screenshotted; the other 10 are measured (census) but not visually spot-checked
 
 ---
 

@@ -6947,3 +6947,184 @@ single hand-picked example) shows the mechanism does nothing at costume 0
 and something real and non-degenerate at costume 1, which is exactly what
 correct behaviour should look like given RE-096's own finding that
 `PaletteID` scripts are direct costume-index maps for the common case.
+
+---
+
+## RE-098 — Multi-costume packing: shared geometry, per-node substitute meshes only where content actually differs
+
+**Question.** RE-097 closed its own concrete lead but left `R0.11`'s
+larger question open: the pack still only ever builds one costume
+(`DEFAULT_COSTUME = 0.0`). Does a real fighter's alternate costume vary
+its *geometry* (needing a whole separate packed mesh set per costume) or
+only its *material* (colour/palette) on one shared mesh — and, either
+way, how much of a fighter's own node set actually changes per costume,
+archive-wide, before designing a pack-format extension around a guess?
+
+**Confirmed geometry is shared, by reading the real consuming code, not
+assuming it.** `lbCommonAddMObjForFighterPartsDObj`
+(`refs/ssb-decomp-re/src/lb/lbcommon.c:955`, RE-096's own cited chain)
+and its caller `ftParamInitAllParts`/`lbCommonSetupFighterPartsDObjs`
+never touch a fighter's `DObjDesc`/`MObjSub` identity when `costume`
+changes — they call the identical `gcAddMObjForDObj` on the identical
+`mobjsub` chain regardless of costume, and only re-evaluate that chain's
+*material animation* (`gcAddMObjMatAnimJoint`/`gcPlayMObjMatAnim`) at
+`anim_frame = costume`. A separate mechanism, `modelpart_id_curr`
+(`ftParamSetPart`/`fttypes.h:163`), *does* swap geometry at runtime, but
+it is driven by per-joint gameplay state (`ftmain.c:4025`'s Link-specific
+check, hidden/held-item parts), never by `costume` — confirmed by reading
+every call site that sets it, none of which reads `fp->costume`. This
+settles the runtime-representation question directly: an alternate
+costume needs only a per-costume *material* variant layered onto the one
+already-packed mesh set, not a duplicated geometry set.
+
+**Measured the real per-node cost archive-wide before designing the pack
+format**, the same discipline RE-076/077 used for texture streaming.
+Real per-fighter costume counts are `dFTParamCostumeIDs[fkind].develop +
+1` (`refs/ssb-decomp-re/src/ft/ftparam.c:56`) — hand-transcribed and
+cited, the same established pattern as `EFDesc` (RE-058/059) and
+`MPGroundData.light_angle` (RE-065), since this table lives in the game's
+executable, not any archive file `PartTables` can scan. Mario 5, Fox 4,
+Donkey Kong 5, Samus 5, Luigi 4, Link 4, Kirby 5, Jigglypuff 4, Captain
+Falcon 6, Ness 4, Yoshi 6, Pikachu 4.
+
+A temporary `romtool costcensus` subcommand (reverted before commit,
+matching RE-079/081/089's pattern) resolved `costume_colors` at costume 0
+and at every other real costume for each of the 12 fighters' own
+high/low-detail graphs, and compared entry-by-entry. Result: **10-16 of
+each fighter's ~25-33 nodes (roughly a third to two-thirds) ever differ
+from costume 0 across all of that fighter's other costumes — never all
+of them.** Donkey Kong and Captain Falcon are palette-dominated (9 vs 96,
+34 vs 121 colour/palette differences); Yoshi and Mario are colour-
+dominated (80 vs 30, 36 vs 8); Link is barely touched at all (2 of 32
+nodes, palette-only) — confirming both mechanisms matter archive-wide and
+neither dominates uniformly enough to special-case away.
+
+**Design: a sparse per-(node, costume) mesh substitution table**, not a
+per-costume duplicate of the whole object. `crates/ssb-rom/src/pack.rs`
+gained `CostumeOverride { node, costume, mesh }` (`pack::VERSION` 12 →
+13, `Header::costume_override_count`) — `node` is a *global* node index
+(`ObjectDesc::first_node + local`), not scoped by object, so a lookup at
+draw time needs no object context: `Pack::costume_mesh(node, costume)`
+binary-searches the table (sorted by `(node, costume)` at write time) and
+returns `None` for the overwhelming majority of (node, costume) pairs
+that draw identically to costume 0 — the same additive-table shape
+`MatAnimDesc`/`TextureDesc::mat_anim` already established for stage
+material animation, just keyed by a discrete costume selection instead
+of a continuous tick. `Pack::object_costume_count(&object)` derives how
+many costumes an object has by scanning the (small) run of overrides
+within its own node range, rather than storing a redundant count
+anywhere.
+
+**Correctness detail found before it shipped wrong: compare converted
+mesh content, not raw `MObj` fields.** An early version of this design
+decided whether a node needed its own costume-`k` mesh by comparing
+`materials[node]` (the node's own raw `MObjMaterial` array) against
+costume 0's — which would have missed a node whose *own* materials never
+change but whose converted content still differs because an *earlier*
+node's state leaked into it (`mesh.rs`'s existing cross-node inheritance,
+RE-064). Fixed by comparing the actual converted `Mesh` for costume 0
+against costume `k`'s (`crates/ssb-rom/src/mesh.rs` gained `PartialEq` on
+`Mesh`/`Primitive`, joining the fields they already carry that already
+had it), robust to both direct and inherited differences by construction.
+
+**A second, unrelated correctness bug surfaced and was fixed while
+building this, not specific to costumes.** `pack_mesh`'s texture cache
+was keyed by `(image_file, image_offset)` alone — correct until two
+primitives share one image but need *different* palettes, which a
+costume's own palette override does routinely. Sharing the archive-wide
+cache for costume variants would have silently reused costume 0's cached
+(wrong-palette) texture for every other costume. Fixed by keying the
+cache on palette identity too (`(image_file, image_offset, palette_file,
+palette_offset)`, `TexKey`/`texture_cache_key`) — a real fix to the
+existing non-costume path as well, not just a costume-specific
+workaround, verified by re-running the full archive pack afterward (see
+below).
+
+**Implementation.** `tools/romtool/src/main.rs`'s `pack()` build loop:
+for every graph with a `costumes_for` table, converts the whole plan
+once per costume (`convert_graph_at`, factored out of the existing
+inline costume-0 conversion so both call sites share one decode/
+`SequenceItem`/`convert_sequence` path), compares each node's converted
+mesh against costume 0's, and only registers a new pack mesh + override
+for the nodes that actually differ. `convert_graph_at` is a plain
+function rather than a closure specifically so its `&mut mat_anim_data`
+borrow does not outlive one call — a closure capturing it mutably would
+have kept the borrow alive across every costume's call, conflicting with
+the later `pack_mesh` calls needing it immutably in the same scope.
+
+**Verified.** Two new `pack.rs` unit tests pin `costume_mesh`'s exact-
+match binary search (including a case verified incapable of passing
+without `finish()`'s sort — reverting the sort and re-running the test
+suite reproduced a real failure, then the sort was restored) and the
+common "no override, fall back to the node's own mesh" path; two more
+pin `object_costume_count`'s node-range bound (verified capable of
+failing the same way: disabling the upper-bound check made a
+no-override object read back a stale count from a neighbouring object,
+caught, then restored). `cargo test --workspace`: 398 passing (was 394).
+`cargo clippy --release` (workspace): clean.
+
+Rebuilt the real pack against the ROM: meshes 2450 (was ~1660), textures
+901 (was 648 — this includes the composite-key fix's own correctness
+effect on the non-costume path, not only new costume variants), **1287
+per-(node, costume) mesh substitutions**, pack size 4492.4 → **5264.1
+KiB** (+772 KiB, +17%) — a real, disclosed cost, smaller in absolute and
+proportional terms than RE-067's already-shipped 1.5× mirror-texture
+cost, and not gated on further user sign-off the way that one was, since
+it stays within the same general size envelope this pack has already
+been operating in.
+
+**Wired end to end and confirmed rendering correctly on the real device
+profile, for both a colour-dominated and a palette-dominated fighter, not
+just compiled.** `psp/src/meshdraw.rs`'s `draw_object`/`draw_object_posed`
+gained a `costume: u32` parameter (`0` for every existing caller —
+stages, the simulated-fighter view — reproduces prior behaviour exactly,
+since costume 0 is never stored as an override). The debug viewer gained
+a costume-cycle control: `crates/ssb-engine/src/input.rs`'s
+`DEFAULT_MAPPING` gained `PspButtons::SELECT → N64Buttons::L` (both
+previously idle — `L` has no real gameplay meaning yet, the same
+reasoning that already lets this viewer overload B/C-up/START for
+view-mode toggles unrelated to their eventual combat function), and
+`psp/src/main.rs`'s object-view branch cycles `costume_index` on `L`,
+resetting it to 0 whenever the browsed object changes so a stale index
+from a higher-costume-count fighter cannot silently persist onto one
+with fewer. The overlay's readout gained a `costume {i}/{n}` field driven
+by `Pack::object_costume_count`, always computed (not only in object
+view) so a wrong index surviving a mode switch would be visible.
+
+Verified via the same temporary-forced-object-index pattern RE-074 used
+for `TEXTURE_BLEND` (reverted before commit): forced Mario's high-detail
+model (object 275, file 296, colour-dominated per the census above) and
+screenshotted costume 0 (red hat, red shirt, blue overalls — the correct
+default) against costume 2 (entire suit recoloured to a dark
+red/maroon) — a real, visible, non-trivial difference. Repeated for
+Donkey Kong (object 293, file 317, palette-dominated: 9 colour vs 96
+palette differences) — costume 0's brown fur with a red/yellow patterned
+tie against costume 3's **blue fur**, the game's well-known "Blue Kong"
+alternate colour, confirming the palette-substitution path (a fresh
+`TextureDesc` per differing palette, not a vertex-colour change) also
+renders correctly, not only the colour path Mario exercised. Both
+temporary overrides were fully reverted (`git diff --stat` on
+`psp/src/main.rs` after reverting matches the permanent wiring only).
+`cargo psp --release`: clean (the same pre-existing "discarded section"
+linker warnings this target has always emitted, verified by comparing
+warning counts against a stashed pre-session build, not a new one).
+`tools/run-ppsspp.sh --seconds 8`: Dream Land renders at 60 FPS, clean
+log, no panics, pixel-normal — expected, since Dream Land is a stage
+(costume 0 unconditionally) and no default-viewer object happens to be a
+costume-bearing fighter at the debug viewer's own startup heuristic.
+
+**What this does and does not close.** All five of `R0.11`'s acceptance
+items now have real, verified evidence behind them for the first time:
+palettes are identified and read from the real ROM (RE-097 plus this
+session's palette-substitution path), real per-fighter costume counts
+are identified and cited, the runtime representation is implemented and
+shipped (sparse substitution table, not per-costume duplication), palette
+and colour data are both verified against the real ROM by direct
+screenshot, and two fighters (one colour-dominated, one palette-
+dominated) are visually confirmed correct. What remains genuinely
+unverified: the other 10 of 12 real fighters were not individually
+screenshotted (only measured via the same census method that correctly
+predicted Mario's and Donkey Kong's own behaviour), and there is still no
+real game costume-*selection* system — only a debug-viewer cycle key,
+the same honest limitation `R0.10`'s `MaterialAnimator` verification
+already accepted before any real game system existed to drive it.

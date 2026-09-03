@@ -35,6 +35,7 @@
 //! AnimJoint[anim_joint_count]
 //! MatAnimDesc[mat_anim_count]
 //! MatAnimPalette[mat_anim_palette_count]
+//! CostumeOverride[costume_override_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -67,7 +68,14 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    resolved palette variants (RE-089/RE-090) travel with the pack. Filled
 ///    `TextureDesc`'s existing 4 bytes of tail padding, so `TextureDesc::SIZE`
 ///    itself is unchanged.
-pub const VERSION: u32 = 12;
+/// 13 added the `CostumeOverride` table and `Header::costume_override_count`
+///    (RE-098): a fighter's alternate costumes share one baked object/node
+///    table and only the (node, costume) pairs whose colour or palette
+///    genuinely differs from costume 0 (RE-098 measured this at roughly a
+///    third to two-thirds of a fighter's nodes, never all of them) get their
+///    own substitute mesh, looked up by the node's *global* index so no
+///    per-object bookkeeping is needed at draw time.
+pub const VERSION: u32 = 13;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -80,8 +88,9 @@ pub const ALIGN: usize = 16;
 pub const VERTEX_SIZE: usize = 16;
 
 /// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
-/// `mat_anim_palette_count` (`VERSION` 12) extend it to 72 — the original 64
-/// was a coincidence of having exactly 16 `u32` fields, not a hard alignment
+/// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
+/// `costume_override_count` (`VERSION` 13) to 76 — the original 64 was a
+/// coincidence of having exactly 16 `u32` fields, not a hard alignment
 /// requirement (only the blob region, computed separately via `blob_offset`,
 /// needs 16-byte alignment for the GE's DMA).
 #[repr(C)]
@@ -113,10 +122,12 @@ pub struct Header {
     pub mat_anim_count: u32,
     /// Palette variants, summed over every `MatAnimDesc`.
     pub mat_anim_palette_count: u32,
+    /// Per-(node, costume) mesh substitutions (RE-098).
+    pub costume_override_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 72;
+    pub const SIZE: usize = 76;
 }
 
 /// A vertex in the GE's expected layout.
@@ -444,6 +455,32 @@ pub struct MatAnimPalette {
 
 impl MatAnimPalette {
     pub const SIZE: usize = 8;
+}
+
+/// A per-costume mesh substitution for one node (RE-098).
+///
+/// A fighter's alternate costumes share one baked `ObjectDesc`/`NodeDesc`
+/// run; most nodes draw identically at every costume (RE-098 measured this
+/// archive-wide: a third to two-thirds of a fighter's nodes actually differ,
+/// never all of them), so only the (node, costume) pairs that genuinely need
+/// a different baked colour or palette get an entry here, keyed by the
+/// node's *global* index (`ObjectDesc::first_node + local`) rather than by
+/// object, so a lookup needs no object context — just the node already being
+/// drawn and the costume the caller wants.
+///
+/// Sorted by `(node, costume)` at build time so [`Pack::costume_mesh`] can
+/// binary-search instead of scanning; costume 0 is never stored here, since
+/// it is exactly the node's own baked `NodeDesc::mesh`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CostumeOverride {
+    pub node: u32,
+    pub costume: u32,
+    pub mesh: u32,
+}
+
+impl CostumeOverride {
+    pub const SIZE: usize = 12;
 }
 
 /// A rectangular extent in game units, as `MPGroundData` stores it.
@@ -898,6 +935,7 @@ pub struct PackWriter {
     /// Source files already in the blob for [`Self::add_mat_anim`], the same
     /// dedup shape as `anim_files`.
     mat_anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
+    costume_overrides: Vec<CostumeOverride>,
     blob: Vec<u8>,
 }
 
@@ -1454,6 +1492,22 @@ impl PackWriter {
         self.objects.get(i as usize).copied()
     }
 
+    /// Registers a per-costume mesh substitution (RE-098). `node` is a
+    /// *global* node index — `object(o).first_node + local` for whichever
+    /// local node within object `o` the substitution belongs to — and `mesh`
+    /// an already-added mesh index carrying that costume's own baked colour
+    /// or palette. Never call this for costume 0: it is the node's own
+    /// `NodeDesc::mesh`, already the fallback [`Pack::costume_mesh`] leaves
+    /// callers to use when no override exists.
+    pub fn add_costume_override(&mut self, node: u32, costume: u32, mesh: u32) {
+        debug_assert_ne!(costume, 0, "costume 0 is the node's own baked mesh");
+        self.costume_overrides.push(CostumeOverride {
+            node,
+            costume,
+            mesh,
+        });
+    }
+
     pub fn finish(self) -> Vec<u8> {
         let table_bytes = self.meshes.len() * MeshDesc::SIZE
             + self.prims.len() * PrimDesc::SIZE
@@ -1468,8 +1522,15 @@ impl PackWriter {
             + self.anims.len() * AnimDesc::SIZE
             + self.anim_joints.len() * AnimJoint::SIZE
             + self.mat_anims.len() * MatAnimDesc::SIZE
-            + self.mat_anim_palettes.len() * MatAnimPalette::SIZE;
+            + self.mat_anim_palettes.len() * MatAnimPalette::SIZE
+            + self.costume_overrides.len() * CostumeOverride::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
+
+        // Sorted by (node, costume) so the reader can binary-search rather
+        // than scan; `finish` takes `self` by value, so this is the one
+        // place that can still mutate the list before it is written.
+        let mut costume_overrides = self.costume_overrides;
+        costume_overrides.sort_unstable_by_key(|o| (o.node, o.costume));
 
         let mut out = Vec::with_capacity(blob_offset + self.blob.len());
 
@@ -1492,6 +1553,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.anim_joints.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.mat_anims.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.mat_anim_palettes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(costume_overrides.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -1640,6 +1702,11 @@ impl PackWriter {
             out.extend_from_slice(&p.palette_offset.to_le_bytes());
             out.extend_from_slice(&p.palette_len.to_le_bytes());
         }
+        for o in &costume_overrides {
+            for v in [o.node, o.costume, o.mesh] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -1697,6 +1764,7 @@ pub struct Pack<'a> {
     anim_joint_count: u32,
     mat_anim_count: u32,
     mat_anim_palette_count: u32,
+    costume_override_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -1753,6 +1821,7 @@ impl<'a> Pack<'a> {
         let anim_joint_count = u32_at(data, 60);
         let mat_anim_count = u32_at(data, 64);
         let mat_anim_palette_count = u32_at(data, 68);
+        let costume_override_count = u32_at(data, 72);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -1768,7 +1837,8 @@ impl<'a> Pack<'a> {
             + anim_count as usize * AnimDesc::SIZE
             + anim_joint_count as usize * AnimJoint::SIZE
             + mat_anim_count as usize * MatAnimDesc::SIZE
-            + mat_anim_palette_count as usize * MatAnimPalette::SIZE;
+            + mat_anim_palette_count as usize * MatAnimPalette::SIZE
+            + costume_override_count as usize * CostumeOverride::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -1790,6 +1860,7 @@ impl<'a> Pack<'a> {
             anim_joint_count,
             mat_anim_count,
             mat_anim_palette_count,
+            costume_override_count,
             blob_offset,
             blob_len,
         })
@@ -1839,6 +1910,10 @@ impl<'a> Pack<'a> {
     pub fn mat_anim_palette_count(&self) -> u32 {
         self.mat_anim_palette_count
     }
+    /// Per-(node, costume) mesh substitutions (RE-098).
+    pub fn costume_override_count(&self) -> u32 {
+        self.costume_override_count
+    }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
     pub fn prim_count(&self) -> u32 {
@@ -1874,6 +1949,9 @@ impl<'a> Pack<'a> {
     }
     fn mat_anim_palette_table(&self) -> usize {
         self.mat_anim_table() + self.mat_anim_count as usize * MatAnimDesc::SIZE
+    }
+    fn costume_override_table(&self) -> usize {
+        self.mat_anim_palette_table() + self.mat_anim_palette_count as usize * MatAnimPalette::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -2013,6 +2091,88 @@ impl<'a> Pack<'a> {
     /// `sceGuClutLoad`.
     pub fn mat_anim_palette_data(&self, p: &MatAnimPalette) -> Option<&'a [u8]> {
         self.blob(p.palette_offset, p.palette_len as usize * 4)
+    }
+
+    /// One costume-override entry, by index (RE-098).
+    pub fn costume_override(&self, i: u32) -> Option<CostumeOverride> {
+        if i >= self.costume_override_count {
+            return None;
+        }
+        let at = self.costume_override_table() + i as usize * CostumeOverride::SIZE;
+        Some(CostumeOverride {
+            node: u32_at(self.data, at),
+            costume: u32_at(self.data, at + 4),
+            mesh: u32_at(self.data, at + 8),
+        })
+    }
+
+    /// The mesh a *global* node index should draw at a given costume
+    /// (RE-098): the node's own substitute mesh if one was baked for that
+    /// costume, or `None` when the node draws identically at every costume
+    /// (the common case) or `costume` is 0 (never stored — see
+    /// [`PackWriter::add_costume_override`]).
+    ///
+    /// Binary search: [`PackWriter::finish`] sorts the table by
+    /// `(node, costume)` before writing it, so this needs no linear scan even
+    /// though the table itself is unindexed by object.
+    pub fn costume_mesh(&self, node: u32, costume: u32) -> Option<u32> {
+        if costume == 0 || self.costume_override_count == 0 {
+            return None;
+        }
+        let mut lo = 0u32;
+        let mut hi = self.costume_override_count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let o = self.costume_override(mid)?;
+            match (o.node, o.costume).cmp(&(node, costume)) {
+                core::cmp::Ordering::Less => lo = mid + 1,
+                core::cmp::Ordering::Greater => hi = mid,
+                core::cmp::Ordering::Equal => return Some(o.mesh),
+            }
+        }
+        None
+    }
+
+    /// How many distinct costumes `object` has (RE-098): one plus the
+    /// largest `costume` any [`CostumeOverride`] names for one of its nodes,
+    /// or `1` (costume 0 only, the ordinary case) if it has none. Meant for
+    /// a debug viewer to know how far a costume-cycle control should wrap,
+    /// not a per-frame hot path — it walks the (small) run of overrides that
+    /// fall within this object's own node range, found by binary-searching
+    /// the table's sorted-by-node ordering for its start.
+    pub fn object_costume_count(&self, object: &ObjectDesc) -> u32 {
+        if self.costume_override_count == 0 {
+            return 1;
+        }
+        let node_end = object.first_node + object.node_count;
+        // First index whose node is >= first_node: the table is sorted by
+        // (node, costume), so this is the run's own start.
+        let mut lo = 0u32;
+        let mut hi = self.costume_override_count;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            let Some(o) = self.costume_override(mid) else {
+                return 1;
+            };
+            if o.node < object.first_node {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        let mut max_costume = 0u32;
+        let mut i = lo;
+        while i < self.costume_override_count {
+            let Some(o) = self.costume_override(i) else {
+                break;
+            };
+            if o.node >= node_end {
+                break;
+            }
+            max_costume = max_costume.max(o.costume);
+            i += 1;
+        }
+        max_costume + 1
     }
 
     pub fn object(&self, i: u32) -> Option<ObjectDesc> {
@@ -2483,6 +2643,100 @@ mod tests {
         // Nodes without a resolvable display list become pure transforms.
         assert_eq!(pack.node(2).unwrap().mesh, 2);
         assert_eq!(pack.node(4).unwrap().mesh, NodeDesc::NO_MESH);
+    }
+
+    #[test]
+    fn costume_mesh_falls_back_to_the_nodes_own_mesh_when_untouched() {
+        // RE-098: most nodes of a costume-bearing object draw identically at
+        // every costume, so `costume_mesh` returning `None` (fall back to the
+        // node's own baked `NodeDesc::mesh`) has to be the common case, not
+        // an error path.
+        let mut w = PackWriter::new();
+        let object = w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        assert_eq!(w.object(object).unwrap().first_node, 0);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(pack.costume_override_count(), 0);
+        assert_eq!(pack.costume_mesh(1, 2), None);
+        // Costume 0 is never stored -- it is exactly the node's own mesh --
+        // so asking for it must also miss, even on a pack with real entries.
+        assert_eq!(pack.costume_mesh(1, 0), None);
+    }
+
+    #[test]
+    fn costume_mesh_returns_the_overriding_meshes_own_index() {
+        let mut w = PackWriter::new();
+        let object = w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        let first_node = w.object(object).unwrap().first_node;
+        // Added out of (node, costume) order on purpose -- `finish` has to
+        // sort before writing, not merely accept already-sorted input. Node
+        // 1 changes at costumes 1 and 2; node 2 never changes -- the real
+        // archive shape (RE-098), not every node overridden uniformly.
+        w.add_costume_override(first_node + 1, 2, 91);
+        w.add_costume_override(first_node, 1, 80);
+        w.add_costume_override(first_node + 1, 1, 90);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(pack.costume_override_count(), 3);
+        assert_eq!(pack.costume_mesh(first_node, 1), Some(80));
+        assert_eq!(pack.costume_mesh(first_node + 1, 1), Some(90));
+        assert_eq!(pack.costume_mesh(first_node + 1, 2), Some(91));
+        // Verified capable of failing: a lookup for a node/costume pair that
+        // was never added must miss, not return a neighbouring entry -- the
+        // binary search's exact-match `Ordering::Equal` arm is what this
+        // pins, not just "the table has two rows now".
+        assert_eq!(pack.costume_mesh(first_node + 1, 3), None);
+        assert_eq!(pack.costume_mesh(first_node + 2, 1), None);
+        assert_eq!(pack.costume_mesh(first_node, 2), None);
+        // Costume 0 must never be readable back even if somehow present in
+        // the raw table -- `costume_mesh` short-circuits on it before ever
+        // reaching the search.
+        assert_eq!(pack.costume_mesh(first_node + 1, 0), None);
+    }
+
+    #[test]
+    fn object_costume_count_finds_the_highest_costume_within_its_own_node_range() {
+        let mut w = PackWriter::new();
+        // Two objects, so a wrong node-range bound could leak the second
+        // object's overrides into the first's count instead of stopping at
+        // its own `node_count`.
+        let a = w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        let b = w.add_object(&chain_graph(2), 22, |n| Some(n as u32), &[]);
+        let a_first = w.object(a).unwrap().first_node;
+        let b_first = w.object(b).unwrap().first_node;
+        w.add_costume_override(a_first + 1, 1, 90);
+        w.add_costume_override(a_first + 2, 3, 91);
+        w.add_costume_override(b_first, 1, 92);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(
+            pack.object_costume_count(&pack.object(a).unwrap()),
+            4,
+            "highest costume named for object a is 3, so it has costumes 0..=3"
+        );
+        assert_eq!(
+            pack.object_costume_count(&pack.object(b).unwrap()),
+            2,
+            "object b's own override must not see object a's costume-3 entry"
+        );
+    }
+
+    #[test]
+    fn object_costume_count_is_one_when_the_object_has_no_overrides() {
+        let mut w = PackWriter::new();
+        let a = w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
+        // Another object *does* have overrides, so this pins that an empty
+        // table isn't the only way to read back "just costume 0".
+        let b = w.add_object(&chain_graph(2), 22, |n| Some(n as u32), &[]);
+        let b_first = w.object(b).unwrap().first_node;
+        w.add_costume_override(b_first, 5, 90);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(pack.object_costume_count(&pack.object(a).unwrap()), 1);
     }
 
     #[test]

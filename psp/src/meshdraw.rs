@@ -444,8 +444,9 @@ pub unsafe fn draw_object(
     base: &ScePspFMatrix4,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    costume: u32,
 ) -> u32 {
-    draw_object_posed(pack, object, base, &[], st, mat_anim)
+    draw_object_posed(pack, object, base, &[], st, mat_anim, costume)
 }
 
 /// Places a screen-aligned sprite, and returns its composed position and scale.
@@ -499,6 +500,12 @@ fn billboard_place(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ([f32; 3], 
 /// [`draw_object`] — the animated and static paths are the same code, which is
 /// what keeps a bug in one from being invisible in the other.
 ///
+/// `costume` looks up [`Pack::costume_mesh`] (RE-098) for every node before
+/// falling back to its own baked mesh; `0` is exactly "no substitution",
+/// since costume 0 is never stored as an override, so every existing caller
+/// that has no notion of costume selection can pass `0` for identical output
+/// to before this parameter existed.
+///
 /// # Safety
 ///
 /// Same as [`draw_mesh`].
@@ -509,16 +516,21 @@ pub unsafe fn draw_object_posed(
     posed: &[ssb_rom::scene::Mat4],
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    costume: u32,
 ) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
-        let Some(node) = pack.node(object.first_node + i) else {
+        let global_node = object.first_node + i;
+        let Some(node) = pack.node(global_node) else {
             continue;
         };
-        if node.mesh == NodeDesc::NO_MESH {
+        let mesh_index = pack
+            .costume_mesh(global_node, costume)
+            .unwrap_or(node.mesh);
+        if mesh_index == NodeDesc::NO_MESH {
             continue; // pure transform: a joint with no geometry
         }
-        let Some(mesh) = pack.mesh(node.mesh) else {
+        let Some(mesh) = pack.mesh(mesh_index) else {
             continue;
         };
 
@@ -808,9 +820,9 @@ pub unsafe fn draw_stage_animated(
         tris += match anim {
             Some(a) => {
                 let n = a.compose(pack, &object, &mut posed);
-                draw_object_posed(pack, &object, base, &posed[..n], st, mat_anim)
+                draw_object_posed(pack, &object, base, &posed[..n], st, mat_anim, 0)
             }
-            None => draw_object(pack, &object, base, st, mat_anim),
+            None => draw_object(pack, &object, base, st, mat_anim, 0),
         };
         drawn += 1;
     }

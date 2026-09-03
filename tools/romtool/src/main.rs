@@ -840,10 +840,28 @@ impl<'a> Texels<'a> {
 /// points the texture at the resulting [`ssb_rom::pack::MatAnimDesc`] --
 /// deduplicated via `mat_anim_index` the same way textures already are, so
 /// many primitives sharing one script do not upload its palettes twice.
+/// Keys the texture cache by both the texel location *and* the palette
+/// identity: `(image_file, image_offset, palette_file, palette_offset)`.
+/// Palette-less formats key their last two fields as `(id, u32::MAX)`, a
+/// sentinel no real palette offset can ever equal, so two different-palette
+/// primitives sharing one image (RE-098: exactly the shape a costume's own
+/// `PaletteID` override produces) get their own cache entries instead of
+/// silently reusing whichever palette happened to be resolved first.
+type TexKey = (u32, u32, u32, u32);
+
+fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
+    (
+        t.data_file.map_or(id, u32::from),
+        t.data_offset,
+        t.palette_file.map_or(id, u32::from),
+        t.palette_offset.unwrap_or(u32::MAX),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
-    tex_index: &mut BTreeMap<(u32, u32), u32>,
+    tex_index: &mut BTreeMap<TexKey, u32>,
     mat_anim_index: &mut BTreeMap<(u32, u32), u32>,
     mat_anim_data: &BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
     src: Texels<'_>,
@@ -857,7 +875,7 @@ fn pack_mesh(
         let texture_index = match prim.material.texture {
             None => None,
             Some(t) => {
-                let key = (t.data_file.map_or(id, u32::from), t.data_offset);
+                let key = texture_cache_key(id, &t);
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
@@ -924,6 +942,51 @@ fn convert_mat_anim_palette(
             .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
             .collect(),
     )
+}
+
+/// Converts one graph's whole plan under a given per-node materials array
+/// (RE-098): the same shape [`pack`]'s own main loop builds inline for
+/// costume 0, factored out so a fighter's alternate costumes can call it
+/// again with a different materials array without duplicating the
+/// decode/`SequenceItem`/`convert_sequence` plumbing.
+///
+/// A plain function rather than a closure on purpose: it needs `&mut
+/// mat_anim_data` only for the duration of one call
+/// (`resolve_layer_mat_anims` returns an owned `Vec`, retaining no borrow),
+/// and a closure capturing that mutably for its own lifetime would keep the
+/// borrow alive across every call site using it -- including the later
+/// `pack_mesh` calls that need `&mat_anim_data` immutably in the same scope.
+fn convert_graph_at(
+    loaded: &Loaded,
+    file: &ssb_rom::archive::File,
+    graph_offset: u32,
+    plan: &[PlannedList],
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    mat_anim_data: &mut BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
+) -> Vec<Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError>> {
+    use ssb_rom::mesh;
+
+    let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+        .iter()
+        .map(|p| {
+            file.data
+                .get(p.dl as usize..)
+                .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                .unwrap_or_default()
+        })
+        .collect();
+    let mat_anims = resolve_layer_mat_anims(loaded, file, graph_offset, materials, mat_anim_data);
+    let items: Vec<mesh::SequenceItem> = plan
+        .iter()
+        .zip(&decoded)
+        .map(|(p, cmds)| mesh::SequenceItem {
+            cmds,
+            world: p.world,
+            mobjs: &materials[p.node],
+            mat_anims: &mat_anims[p.node],
+        })
+        .collect();
+    mesh::convert_sequence(&items, mesh::Source::of(file))
 }
 
 /// For a stage layer's own scene graph, resolves which `(node,
@@ -1040,8 +1103,9 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let archive = Archive::open(&data, info.region)?;
 
     let mut writer = fmt::PackWriter::new();
-    // The same texture is bound by many primitives; upload each once.
-    let mut tex_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    // The same texture (image *and* palette, RE-098) is bound by many
+    // primitives; upload each once.
+    let mut tex_index: BTreeMap<TexKey, u32> = BTreeMap::new();
     // The same material animation script drives many primitives; upload
     // each once. Keyed the same way `resolve_layer_mat_anims` resolves a
     // script's identity: (source archive file, script offset) (RE-091).
@@ -1058,6 +1122,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut placed_meshes = 0usize;
     let mut node_dls = 0usize;
     let mut extra_leaves = 0usize;
+    let mut costume_overrides_added = 0usize;
     // A stage names its render layers by the `DObjDesc` address they start at,
     // and `add_object` is given that same address -- so the layer lookup is an
     // exact match, never a search.
@@ -1231,6 +1296,66 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             let object = writer.add_object(graph, id, |n| node_mesh[gi][n], &node_extra[gi]);
             object_index.insert((id, graph.offset), object);
             objects += 1;
+
+            // RE-098: a fighter's alternate costumes share this one object's
+            // node table. Most nodes draw identically at every costume
+            // (measured archive-wide: a third to two-thirds actually
+            // differ, never all of them), so only the (node, costume) pairs
+            // whose *converted mesh content* genuinely differs from costume
+            // 0 get their own substitute mesh, looked up by global node
+            // index at draw time (`Pack::costume_mesh`). Comparing the full
+            // converted `Mesh` rather than each node's own raw `MObj`
+            // fields is deliberate: a node's colour can also change because
+            // an *earlier* node's state leaked into it (RE-064's
+            // cross-node inheritance), not only because its own materials
+            // table entry did.
+            //
+            // Scoped to each node's own primary mesh slot -- the rare
+            // "extra leaf" shape `node_extra` covers (a joint drawn a
+            // second time into another render layer) is not handled by
+            // this pass; no costume-bearing graph in the archive was found
+            // to need it.
+            let costumes = fighter_costume_count(id);
+            if costumes > 1 && loaded.tables.costumes_for(id, graph.offset).is_some() {
+                let base_materials = loaded.materials(file, graph);
+                let first_node = writer.object(object).unwrap().first_node;
+                let plan = &plans[gi];
+                let base_converted =
+                    convert_graph_at(&loaded, file, graph.offset, plan, &base_materials, &mut mat_anim_data);
+                for costume in 1..costumes {
+                    let materials_k = loaded.materials_at(file, graph, costume as f32);
+                    let converted_k =
+                        convert_graph_at(&loaded, file, graph.offset, plan, &materials_k, &mut mat_anim_data);
+                    for (p, m_k) in plan.iter().zip(&converted_k) {
+                        if !p.own_space() {
+                            continue;
+                        }
+                        let Ok(m_k) = m_k else { continue };
+                        if m_k.triangle_count() == 0 {
+                            continue;
+                        }
+                        if base_converted.get(p.node) == Some(&Ok(m_k.clone())) {
+                            continue;
+                        }
+                        let variant_index = pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: file,
+                                all: &loaded.files,
+                            },
+                            id,
+                            p.dl,
+                            m_k,
+                            swizzle,
+                        );
+                        writer.add_costume_override(first_node + p.node as u32, costume, variant_index);
+                        costume_overrides_added += 1;
+                    }
+                }
+            }
         }
     }
 
@@ -1478,6 +1603,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         println!(
             "  extra       {extra_leaves} leaf nodes for lists a node could not hold \
              (extra link entries, and pre-matrix pair halves drawn in the parent's space)"
+        );
+    }
+    if costume_overrides_added > 0 {
+        println!(
+            "  costumes    {costume_overrides_added} per-(node, costume) mesh substitutions \
+             ({} pack entries, RE-098)",
+            pack.costume_override_count()
         );
     }
     println!(
@@ -1883,12 +2015,25 @@ fn load_all(archive: &Archive) -> Loaded {
 }
 
 impl Loaded {
-    /// The materials for each node of a graph, or empty vectors when no record
-    /// names its table.
+    /// The materials for each node of a graph at the default costume, or
+    /// empty vectors when no record names its table.
     fn materials(
         &self,
         file: &ssb_rom::archive::File,
         graph: &ssb_rom::scene::SceneGraph,
+    ) -> Vec<ssb_rom::mobj::NodeMaterials> {
+        self.materials_at(file, graph, DEFAULT_COSTUME)
+    }
+
+    /// The materials for each node of a graph at a given costume (RE-098),
+    /// or empty vectors when no record names its table. Costume 0 is
+    /// [`DEFAULT_COSTUME`], the one every non-fighter graph and every
+    /// existing call site before RE-098 implicitly used.
+    fn materials_at(
+        &self,
+        file: &ssb_rom::archive::File,
+        graph: &ssb_rom::scene::SceneGraph,
+        costume: f32,
     ) -> Vec<ssb_rom::mobj::NodeMaterials> {
         let mut nodes = self
             .tables
@@ -1906,7 +2051,7 @@ impl Loaded {
                 at,
                 graph.nodes.len(),
                 |n| nodes.get(n).map_or(0, Vec::len),
-                DEFAULT_COSTUME,
+                costume,
             );
             for (chain, per_node) in nodes.iter_mut().zip(colors) {
                 for (m, c) in chain.iter_mut().zip(per_node) {
@@ -1950,6 +2095,40 @@ impl Loaded {
 /// converter has to pick one. Zero is the default the character select opens
 /// on — Mario in red, Luigi in green.
 const DEFAULT_COSTUME: f32 = 0.0;
+
+/// Real per-fighter costume counts (RE-098): `dFTParamCostumeIDs[fkind]
+/// .develop + 1`, `refs/ssb-decomp-re/src/ft/ftparam.c:56`. `develop` is the
+/// highest costume index `ftParamGetCostumeDebug` (the same table's own
+/// accessor) ever returns for that fighter, and every `royal`/`team` colour
+/// choice the game exposes is within `0..=develop` — so `develop + 1` is the
+/// exact count of costumes that can ever be selected, not a guess. This
+/// table lives in the game's executable, not any archive file, so it cannot
+/// be read from the ROM the way `PartTables` reads structural pairings; it is
+/// hand-transcribed and cited, the same established pattern as `EFDesc`
+/// (RE-058/059) and `MPGroundData.light_angle` (RE-065). Keyed by archive
+/// file id (`FTCommonPart`'s own model file), matching RE-077's own per-
+/// fighter file-id census.
+const FIGHTER_COSTUME_COUNTS: &[(u32, u32)] = &[
+    (296, 5), // Mario
+    (313, 4), // Fox
+    (317, 5), // Donkey Kong
+    (320, 5), // Samus
+    (323, 4), // Luigi
+    (324, 4), // Link
+    (328, 5), // Kirby
+    (330, 4), // Jigglypuff
+    (332, 6), // Captain Falcon
+    (335, 4), // Ness
+    (338, 6), // Yoshi
+    (341, 4), // Pikachu
+];
+
+fn fighter_costume_count(file: u32) -> u32 {
+    FIGHTER_COSTUME_COUNTS
+        .iter()
+        .find(|&&(f, _)| f == file)
+        .map_or(1, |&(_, n)| n)
+}
 
 /// Every mesh a file yields, converted the way [`pack`] converts it.
 ///
@@ -3401,6 +3580,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     }
     Ok(())
 }
+
 
 /// Searches for the material table of every graph no record names, and scores
 /// the result against the decomp's own declarations.

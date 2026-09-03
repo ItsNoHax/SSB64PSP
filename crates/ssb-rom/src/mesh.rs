@@ -195,7 +195,7 @@ impl MeshMaterial {
 }
 
 /// A run of triangles sharing one material, indexing [`Mesh::vertices`].
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Primitive {
     pub material: MeshMaterial,
     /// Triangle list, three indices per triangle, into the mesh-wide buffer.
@@ -215,7 +215,7 @@ impl Primitive {
 /// otherwise be stored twice; measured over the whole archive that inflated
 /// the vertex count by 25% *above* what the N64 uploads. A single buffer also
 /// lets the GE's post-transform cache do its job across draws.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Mesh {
     pub vertices: Vec<MeshVertex>,
     pub primitives: Vec<Primitive>,

@@ -151,6 +151,15 @@ pub const DEFAULT_MAPPING: &[ButtonMapping] = &[
         psp: PspButtons::SQUARE,
         n64: N64Buttons::C_DOWN,
     },
+    // SELECT has no N64 counterpart and was otherwise idle; the debug
+    // viewer uses it as a costume-cycle key (RE-098) the same way it
+    // already overloads B/C_UP/START for view-mode toggles that have
+    // nothing to do with those buttons' real gameplay meaning -- there is
+    // no real gameplay yet for L (shield) to conflict with.
+    ButtonMapping {
+        psp: PspButtons::SELECT,
+        n64: N64Buttons::L,
+    },
 ];
 
 /// The PSP nub reports 0..=255 centred near 128; the N64 stick reports roughly
