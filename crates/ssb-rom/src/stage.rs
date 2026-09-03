@@ -52,6 +52,13 @@ const D_MATANIM_JOINTS: u32 = 0x0C;
 
 // Field offsets within `MPGroundData`.
 const G_MAP_GEOMETRY: u32 = 0x40;
+/// `Vec3f light_angle`, in degrees. Immediately precedes `camera_bound_top`
+/// (`0x6C - sizeof(Vec3f)`) — confirmed by that adjacency, not assumed: three
+/// `GR*Map` files place `unused` (the `s32` right before it) at `0x5C`, so
+/// `0x5C + 4 = 0x60` lines up exactly. Only `.x`/`.y` are read by
+/// `ftDisplayLightsDrawReflect` (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`);
+/// `.z` has no known reader.
+const G_LIGHT_ANGLE: u32 = 0x60;
 const G_CAMERA_BOUNDS: u32 = 0x6C;
 const G_MAP_BOUNDS: u32 = 0x74;
 const G_BGM_ID: u32 = 0x7C;
@@ -101,7 +108,7 @@ impl Bounds {
 }
 
 /// A stage's `MPGroundData` header.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GroundData {
     /// File holding the header, and its offset within it.
     pub file: u32,
@@ -115,6 +122,12 @@ pub struct GroundData {
     pub camera_bounds: Bounds,
     pub map_bounds: Bounds,
     pub bgm_id: u32,
+    /// `light_angle.x`/`.y` in degrees — the angles
+    /// `ftDisplayLightsDrawReflect` turns into the key light every fighter
+    /// (and, per R0.6/RE-065, this project's baked vertex shading) is lit
+    /// by while standing on this stage. `.z` is not read by any known
+    /// consumer, so it is not carried here.
+    pub light_angle: [f32; 2],
 }
 
 fn read_u32(data: &[u8], at: u32) -> Option<u32> {
@@ -125,6 +138,13 @@ fn read_u32(data: &[u8], at: u32) -> Option<u32> {
 fn read_i16(data: &[u8], at: u32) -> Option<i16> {
     let at = at as usize;
     Some(i16::from_be_bytes(data.get(at..at + 2)?.try_into().ok()?))
+}
+
+fn read_f32(data: &[u8], at: u32) -> Option<f32> {
+    let at = at as usize;
+    Some(f32::from_bits(u32::from_be_bytes(
+        data.get(at..at + 4)?.try_into().ok()?,
+    )))
 }
 
 fn read_bounds(data: &[u8], at: u32) -> Option<Bounds> {
@@ -232,6 +252,10 @@ pub fn read_ground_data(
     if !camera_bounds.plausible() || !map_bounds.plausible() {
         return None;
     }
+    let light_angle = [
+        read_f32(&file.data, base + G_LIGHT_ANGLE)?,
+        read_f32(&file.data, base + G_LIGHT_ANGLE + 4)?,
+    ];
 
     Some(GroundData {
         file: file.id,
@@ -242,6 +266,7 @@ pub fn read_ground_data(
         camera_bounds,
         map_bounds,
         bgm_id: read_u32(&file.data, base + G_BGM_ID)?,
+        light_angle,
     })
 }
 
@@ -282,6 +307,11 @@ mod tests {
         bounds(base + G_CAMERA_BOUNDS, [4000, -2000, 3900, -3900]);
         bounds(base + G_MAP_BOUNDS, [8300, -3500, 9000, -9000]);
 
+        let angle_x = (base + G_LIGHT_ANGLE) as usize;
+        data[angle_x..angle_x + 4].copy_from_slice(&30.0f32.to_be_bytes());
+        let angle_y = (base + G_LIGHT_ANGLE + 4) as usize;
+        data[angle_y..angle_y + 4].copy_from_slice(&(-40.0f32).to_be_bytes());
+
         File {
             id: 255,
             data,
@@ -315,6 +345,7 @@ mod tests {
         assert_eq!(h.map_geometry, Some((104, 0x1F34)));
         assert_eq!(h.camera_bounds.top, 4000);
         assert_eq!(h.map_bounds.left, -9000);
+        assert_eq!(h.light_angle, [30.0, -40.0]);
     }
 
     #[test]

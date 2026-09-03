@@ -126,7 +126,7 @@ already moved since these were first written (see below).
 - [ ] **Filtering** — Verify bilinear vs point per texture.
 
 ### Phase D — Materials (R0.6 / R0.7) (HIGH)
-- [ ] **Remove majority-vote lighting heuristic** — Use `MObj` light colors + per-object `G_LIGHTING` (RE-021, RE-043).
+- [ ] **Remove the shading-detection majority vote** — `pack::looks_like_unit_normal` plus an 80% per-primitive vote (RE-021) stands in for per-object `G_LIGHTING` state a per-list conversion can't see; still needed. Separately, the light *direction* itself is no longer a guess: `pack.rs`'s baked `LIGHT_DIR` now uses the real, measured, ROM-derived `(20, 45)` degree angle that 80% of stages share (RE-065) instead of an arbitrary constant. Full correctness (varying the light per stage) needs runtime `sceGuLight` lighting, not pack-time baking — tracked as an accepted deviation, not attempted here.
 - [ ] **Implement `MOBJ_FLAG_LIGHT1/2`** — Upload light colors via `sceGuLight`.
 - [ ] **Implement `MOBJ_FLAG_FRAC`** — Fractional frame blend for animated textures.
 - [ ] **Combiner coverage** — `crates/ssb-rom/src/mesh.rs` now evaluates a general `(A-B)*C+D` combiner over both cycles and declines to guess at anything it can't resolve, rather than hardcoding a fixed set of modes as this item originally described. Remaining work is enumerating which real display-list combiner modes are still declined and whether that's acceptable or a gap.

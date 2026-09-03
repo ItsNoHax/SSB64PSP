@@ -413,9 +413,25 @@ than approximating (RE-039, RE-043). Primitive/environment colour, alpha and
 depth state are threaded through. Lighting is **not** derived from `MObj`
 light state — a single neutral key light is used as a placeholder
 (`DECISIONS.md` D-024), and `TODO.md` Phase D explicitly calls out removing
-this "majority-vote lighting heuristic." Per `AGENTS.md` §9, an approximation
-like this needs to be recorded as an `ACCEPTED_DEVIATION` with its effect
-measured, or replaced — it is currently neither.
+this "majority-vote lighting heuristic."
+
+RE-065 investigated this properly instead of leaving it an undocumented
+guess. The real light direction is `MPGroundData.light_angle` (a per-stage
+`Vec3f`, `refs/ssb-decomp-re/src/mp/mptypes.h:187`), converted to a vector
+by `ftDisplayLightsDrawReflect` (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`)
+every time a fighter draws — direct reproduction is not possible without
+moving from this project's pack-time-baked shading to PSP-side runtime
+lighting (`sceGuLight`) with per-stage context threaded through the whole
+material pipeline, which is out of this task's scope. Measured
+archive-wide: **33 of 41 stages (80%) use exactly the same angle**
+(`20.0, 45.0` degrees), which the old `(2, 4, 3)` placeholder happened to
+sit only 9.9 degrees from; the constant now uses that measured angle's
+actual direction instead, so those 33 stages' baked shading matches the
+real key light exactly, up to the libm-vs-lookup-table sin/cos difference.
+The other 8 stages (mostly special-lighting locations — Brinstar, Sector
+Z, Hyrule, Final Destination, Metal Mario's stage) use their own angle, up
+to 111 degrees away, and remain an explicit, measured, accepted
+deviation per `AGENTS.md` §9 rather than an undocumented placeholder.
 
 ### Objective
 

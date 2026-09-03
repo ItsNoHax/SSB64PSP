@@ -682,11 +682,26 @@ pub const MODEL_SCALE: f32 = 32768.0;
 
 /// Direction the baked key light comes from, normalised.
 ///
-/// Smash's real lighting comes from per-material `MObj` light colours, which
-/// are not extracted yet. Until then a single neutral key light gives shape
-/// definition instead of the psychedelic look you get from drawing packed
-/// normals as vertex colours.
-const LIGHT_DIR: [f32; 3] = [0.372, 0.743, 0.557]; // normalised (2, 4, 3)
+/// This project bakes shading into vertex colour at pack time rather than
+/// lighting at draw time on the PSP, so it cannot vary the light per stage
+/// the way `ftDisplayLightsDrawReflect`
+/// (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`) does on real hardware —
+/// doing that would need runtime `sceGuLight` and per-stage context wired
+/// through the whole material pipeline, out of this task's scope. What this
+/// constant *can* do is be the right single direction rather than an
+/// arbitrary one: RE-065 read every stage's real `MPGroundData.light_angle`
+/// (`crates/ssb-rom/src/stage.rs`) and found **33 of 41 stages (80%) use
+/// exactly `(20.0, 45.0)` degrees** — the game's actual default key light,
+/// not a guess. This is that angle's direction, replacing an arbitrary
+/// `(2, 4, 3)` placeholder that happened to measure only 9.9 degrees away
+/// from it. The remaining 8 stages (Brinstar, Sector Z, Hyrule, Final
+/// Destination, Metal Mario's stage, and others) use their own angle, up to
+/// 111 degrees away from this one — an accepted, measured deviation until
+/// lighting moves to runtime (see RE-065).
+// The y component is sin(45 deg), which coincides with 1/sqrt(2) -- that is
+// the actual measured direction, not a stand-in for the named constant.
+#[allow(clippy::approx_constant)]
+const LIGHT_DIR: [f32; 3] = [0.2419, 0.7071, 0.6645]; // (20, 45) degrees, RE-065
 
 /// Floor brightness, so surfaces facing away are shaded rather than black.
 const AMBIENT: f32 = 0.35;
@@ -2441,6 +2456,7 @@ mod tests {
                 left: -3500,
             },
             bgm_id: 0x11,
+            light_angle: [0.0, 0.0],
         };
 
         let v = |x, y, flags| V { pos: [x, y], flags };

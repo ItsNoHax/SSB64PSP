@@ -4021,3 +4021,87 @@ that has been shown to fail on the bug it targets, not just shown to pass;
 the no-cross-object-leakage claim follows directly from reading the one
 call site that constructs a `State`, which is unambiguous — there is
 exactly one, and it is fresh every time.
+
+## RE-065 — The baked key light is now a real, measured stage angle
+
+**Question.** `PLAN.md` R0.6 flags lighting as a known gap: `pack.rs` bakes
+every lit vertex's shade using a fixed `LIGHT_DIR = normalise(2, 4, 3)`
+with no ROM basis at all, and `AGENTS.md` §9 requires an approximation
+like this be either replaced or explicitly recorded as a measured,
+accepted deviation — as of RE-021/RE-024 it was neither. Is real per-stage
+light direction data available in the ROM, and if reproducing it exactly
+is impossible, how close is the placeholder actually get?
+
+**Finding the real data.** `ftdisplaymain.c`'s fighter draw path (line
+1240) sets a light via `ftDisplayLightsDrawReflect(dls,
+gMPCollisionLightAngleX, gMPCollisionLightAngleY)`; `mpcollision.c:4008-9`
+sets those globals from `gMPCollisionGroundData->light_angle.{x,y}` — a
+field of `MPGroundData` (`mptypes.h:187`), the same per-stage header this
+crate already parses for camera/map bounds (`crates/ssb-rom/src/stage.rs`).
+Computed its byte offset from the struct's field order rather than
+guessing: `unused` (an `s32` right before it) sits at `0x5C`, so
+`light_angle` (a `Vec3f`) is at `0x5C + 4 = 0x60` — and `0x60 + sizeof(Vec3f)
+(0xC) = 0x6C` lands exactly on `camera_bound_top`'s already-confirmed
+offset, corroborating the arithmetic independently. Added `light_angle:
+[f32; 2]` to `stage::GroundData` (only `.x`/`.y`; `.z` has no known reader)
+and a `reads_a_stage_header_and_its_layers` assertion pinning the read.
+
+**The conversion.** `ftDisplayLightsDrawReflect` turns the two angles
+(degrees) into a direction via `lbCommonSin`/`lbCommonCos` (a 4096-entry
+lookup table, `lbcommon.c:321-353`), which reduces to an ordinary
+spherical-to-Cartesian conversion: `dir = (sin(x)*cos(y), sin(y),
+cos(x)*cos(y))`. Reproducing this host-side with `f32::sin`/`cos` (libm)
+instead of the game's LUT is not a bit-exact replay, but the LUT has 4096
+steps per full turn (~0.09 degrees resolution) — far finer than anything
+visible in baked vertex shading.
+
+**Measurement.** A temporary example
+(`crates/ssb-rom/examples/tmp_light_angle_scan.rs`, written to check and
+then deleted, not committed) read every stage's `light_angle`, computed
+its real direction, and compared each against the old placeholder:
+
+```
+ 33 stages: (20.0,  45.0) deg -> 9.9 deg from the old placeholder
+  4 stages: ( 0.0, -60.0) deg -> 111.4 deg away (light from below)
+  1 stage:  (80.0,  25.0) deg -> 42.9 deg away
+  1 stage:  (-30.0,-30.0) deg -> 96.6 deg away
+  1 stage:  ( 0.0,  90.0) deg -> 42.0 deg away (light straight up)
+  1 stage:  ( 0.0, 120.0) deg -> 68.6 deg away
+```
+
+The four `(0, -60)` outliers and the `(80, 25)`/`(-30,-30)`/`(0,90)`/
+`(0,120)` ones map to `refs/ssb-decomp-re/src/relocData/257_GRZebesMap.c`
+(Brinstar), `261_GRJungleMap.c`, `262_GRSectorMap.c` (Sector Z),
+`265_GRHyruleMap.c`, `266_GRLastMap.c` (Final Destination),
+`268_GRZakoMap.c`, `269_GRMetalMap.c` (Metal Mario's stage — an indoor,
+metallic arena, exactly where a game designer would light from a
+different angle) and `295_GRBonus3Map.c` (a bonus minigame, not a combat
+stage) — special-lighting locations, not noise. **33 of 41 (80%)** use the
+exact same `(20.0, 45.0)` angle: the game's actual default key light.
+
+**Fix.** `crates/ssb-rom/src/pack.rs`'s `LIGHT_DIR` now holds `(20, 45)`
+degrees' real direction (`[0.2419, 0.7071, 0.6645]`) instead of the
+arbitrary `(2, 4, 3)`. This is not a full fix — the architecture bakes one
+light at pack time and cannot vary it per stage without moving lighting to
+runtime (`sceGuLight`), which is out of this task's scope — but it changes
+the constant from an unrelated guess to the literal value the majority of
+the ROM actually uses, and documents the remaining 8-stage gap as a sized,
+measured, accepted deviation rather than an unlabeled placeholder,
+satisfying `AGENTS.md` §9's recording requirement.
+
+**Verified.** `cargo test --workspace`: 198 `ssb-rom` tests passing
+(unchanged count — no test asserted the old constant's exact value, only
+relative brightness, which still holds). `cargo clippy --release -p
+romtool -p ssb-rom`: clean (one `#[allow(clippy::approx_constant)]` added
+where `sin(45°)` legitimately coincides with `1/sqrt(2)`). `romtool pack`
+regenerated. `tools/run-ppsspp.sh --no-build --seconds 8`: Dream Land
+renders correctly at 60 FPS, clean log, subtly different (and now
+correct, for this stage's `(20, 45)` angle) shading versus before.
+
+**Confidence: high** on the measurement (41/41 stage headers read, not
+sampled; the byte-offset arithmetic is independently corroborated by
+`camera_bound_top`'s already-verified position) and on the conversion
+formula (it is the decompilation's own code, algebraically simplified, not
+inferred). Medium on whether the 8 non-default stages' lighting will
+matter enough to justify moving to runtime lighting later — that is a
+`PLAN.md` R0.6/R0.15 scoping question, not something this pass resolves.
