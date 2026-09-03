@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-03 (RE-097)
 
 ---
 
@@ -16,7 +16,56 @@
 
 ## Task Status
 
-RE-095's own open item closed first: the user watched RE-095's
+RE-097 (this session) implemented and shipped the concrete lead RE-096
+handed off: `colors_at` (`crates/ssb-rom/src/matanim.rs`) now also reads
+`PaletteID` (joint track 9) alongside its existing `PRIM`/`ENV`/`BLEND`
+colour tracks, using the same step/base/target bookkeeping, resolved via
+`f32::from_bits` then the same `(s32)` cast `objdisplay.c`'s own draw path
+performs. `Colors` gained a `palette_id: Option<i32>` field;
+`costume_colors` needed no changes. `tools/romtool/src/main.rs`'s
+`Loaded::materials` — the loop that already bakes
+`prim_color`/`env_color`/`blend_color` from `costume_colors` — now also
+calls the already-shipped `mobj::read_palettes` (previously only ever
+called from the stage material-animation path, RE-090/092) to overwrite
+`m.palette` with the costume's own resolved palette entry.
+
+Verified with 4 new `matanim` unit tests reproducing the real
+shared-clock archive shape by hand-tracing the same semantics
+`mario_arm`'s existing colour test already exercises. `cargo test
+--workspace`: 394 passing (was 390). `cargo clippy --release
+(workspace)`: clean.
+
+Verified against the real ROM, not just unit fixtures — and did not stop
+at a null result. Rebuilding the pack at the default costume (0) is
+byte-for-byte unchanged (648 textures, 4492.4 KiB, every other figure
+identical). Before trusting that as "correctly does nothing" rather than
+"silently broken," ran a temporary, reverted census (`eprintln!` in the
+same loop, matching RE-079/081/089's pattern): the new path genuinely
+fires 198 times archive-wide, and every one of those 198 resolves
+`palette_id = 0` at costume 0 — the pack is unchanged because costume 0's
+`PaletteID` really is 0 everywhere, not because the read silently failed.
+Re-ran the same census with `DEFAULT_COSTUME` temporarily set to `1.0`:
+188/198 now resolve to `id = 1` (10 stay `0`, plausibly costumes that
+share a palette with costume 0), and `read_palettes` succeeded for all
+198 with zero failures and zero short reads — confirming the mechanism is
+real and varies correctly, not hardcoded. `cargo psp --release` +
+`tools/run-ppsspp.sh --seconds 8`: clean build, 8s run, no panics,
+`FPS: 60.0`, screenshot has 31k+ distinct colours (not a blank/locked
+screen).
+
+**This does not close `R0.11`.** The pack still only ever builds one
+costume at a time (`DEFAULT_COSTUME = 0.0`, unchanged); multi-costume
+packing/selection and all five of the task's own acceptance items ("all
+fighter palettes identified", "all required costumes identified",
+"runtime representation complete", "palette data verified against ROM",
+"representative regression renders added", "all required fighters
+verified") remain open. What this session closes is narrower: the one
+concrete, decomp-confirmed gap RE-096 identified (`colors_at` silently
+never reading `PaletteID`) is now implemented, wired into the real build
+loop, and verified end to end against the real ROM — a real step, not the
+whole task.
+
+Immediately before this, RE-095's own open item closed first: the user watched RE-095's
 `MaterialAnimator` run interactively (PPSSPP launched windowed and left
 running rather than the auto-killing screenshot harness) and confirmed
 the `PaletteID` cycle is visibly working on file 105's stage (stage
@@ -1346,37 +1395,45 @@ remain real, measured, unimplemented follow-on work if a future session
 wants it, but nothing blocks on them and `PaletteID` alone was 71% of the
 real archive-wide need.
 
-**`R0.11 — Fighter Palettes / Costumes` is next**, unblocked now that its
-`R0.10` dependency is done (its other two, `R0.4`/`R0.6`, are
-`IN_PROGRESS` but not hard blockers — the same reading of "depends on"
-this project has already used for `R0.9`). RE-096 (this session) handed
-it off with a concrete, decomp-confirmed starting point rather than a
-cold start:
+**`R0.11 — Fighter Palettes / Costumes` is still `IN_PROGRESS`**, but its
+concrete starting lead is now done. RE-097 (this session) read, added and
+wired the `PaletteID` gap RE-096 handed off:
+`colors_at`/`costume_colors` now resolve which packed palette variant a
+given costume selects (where a script names one), and
+`tools/romtool/src/main.rs`'s `Loaded::materials` bakes it into `m.palette`
+the same way it already bakes `prim_color`/`env_color`/`blend_color` —
+verified against the real ROM by a temporary, reverted census at both
+costume 0 (198 hits, all resolve to `id = 0`, matching the unchanged pack)
+and costume 1 (188/198 resolve to `id = 1`, 0 `read_palettes` failures).
+Full detail: `PLAN.md` R0.11 "Current evidence", RE-097 in
+`docs/reverse-engineering.md`.
 
-1. **Read `costume_colors`'s real gap.** It decodes `PRIM`/`ENV`/`BLEND`
-   from a fighter's `p_costume_matanim_joints` scripts but never
-   `PaletteID`, even though 45% (200/441) of those real scripts carry
-   one. Traced to the decomp: `lbCommonAddMObjForFighterPartsDObj` plays
-   a costume script through the same `gcPlayMObjMatAnim` engine stages
-   use, its `PaletteID` case sets `mobj->palette_id`, and the draw path
-   reads `mobjsub->palettes[palette_id]` — the identical array
-   `mobj::read_palettes` already parses for stages. This is confirmed at
-   the source, not inferred.
-2. Design and add a one-shot `PaletteID` read alongside `colors_at`'s
-   existing `PRIM`/`ENV`/`BLEND` evaluation — a `MaterialAnimator`
-   concern this is not, since these scripts provably never loop
-   (RE-096: 441/441, 0 loops). The natural shape mirrors `colors_at`
-   itself: evaluate at `frame = costume`, read `TRACK_PALETTE_ID` the
-   same way, and resolve which packed palette variant that selects.
-3. Wire it into whichever pack-time step currently bakes only costume
-   0's palette, so every costume's own `PaletteID` selection (where a
-   script has one) picks its own variant rather than silently inheriting
-   costume 0's.
-4. This is one piece of a larger task — `R0.11`'s acceptance list ("all
-   fighter palettes identified", "all required costumes identified",
-   "runtime representation complete", etc.) is not yet scoped beyond
-   this lead; expect real investigation before implementation, the same
-   shape `R0.10` itself needed at RE-086.
+**What is left is the larger part of the task, not more investigation of
+this lead.** The pack still only ever builds one costume at a time
+(`tools/romtool/src/main.rs`'s `DEFAULT_COSTUME = 0.0`, a single
+compile-time constant) — nothing yet packs more than one costume's
+geometry/materials, and nothing on the device side selects a costume at
+runtime. Concrete next steps, roughly in the shape `R0.10` itself took
+(design before implementing, not the other way round):
+
+1. **Decide the runtime representation.** Does every costume get its own
+   full packed mesh set (simple, likely large — `R0.11`'s "runtime
+   representation complete" acceptance item), or can costumes that only
+   differ by baked colour/palette share geometry and vary only a small
+   per-costume table the device reads at select time (cheaper, more
+   design work, no existing precedent in this pack format to extend from)?
+   This is an open design question, not a known answer to look up.
+2. **Measure the real archive-wide need first**, the way RE-076/077 did
+   for texture streaming before implementing anything: how many costumes
+   does each fighter actually have (`FTCommonPart`'s own costume count,
+   not assumed to be a fixed number), and does `PRIM`/`ENV`/`BLEND`
+   costume variation (already read, RE-040) diverge from `PaletteID`
+   variation (RE-097) enough that some costumes are pure recolours and
+   others need different textures entirely?
+3. Once scoped, extend the pack format/build loop to carry more than
+   `DEFAULT_COSTUME`, and wire a device-side selection point (even a
+   debug-viewer cycle key, mirroring how `R0.10`'s work landed before any
+   real game-select-screen system existed).
 
 **Other, now-secondary threads, each already investigated as far as this
 session's methods reach:**

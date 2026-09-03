@@ -1203,6 +1203,33 @@ stages. Packing only costume 0 today means every other costume's
 lands. `costume_colors` needs a sibling one-shot `PaletteID` read feeding
 which packed palette variant a given costume bakes.
 
+RE-097 (this session) shipped that read and wired it end to end.
+`colors_at` (`crates/ssb-rom/src/matanim.rs`) now also tracks joint track
+`TRACK_PALETTE_ID` through the same step/base/target bookkeeping the
+colour tracks already use, and resolves it the same way `MaterialJoint`
+does (`f32::from_bits`, then the same `(s32)` cast `objdisplay.c` itself
+performs) — `Colors` gained a `palette_id: Option<i32>` field;
+`costume_colors` needed no changes, since it already layers `colors_at`
+over `resolve_scripts`. `tools/romtool/src/main.rs`'s `Loaded::materials`
+(the loop that already bakes `prim_color`/`env_color`/`blend_color`) now
+also calls the already-shipped `mobj::read_palettes` — previously only
+ever called from the stage material-animation path — to overwrite
+`m.palette` with the costume's own resolved entry. Verified with 4 new
+`matanim` unit tests reproducing the real shared-clock archive shape
+(`cargo test --workspace`: 394 passing, was 390). Verified against the
+real ROM, not just unit fixtures: rebuilding the pack at the default
+costume (0) is byte-for-byte unchanged, and a temporary, reverted census
+confirmed *why* — the new path genuinely fires 198 times archive-wide and
+every one resolves `palette_id = 0` at costume 0 (not a silent no-op);
+re-running the same census at costume 1 confirmed the mechanism is real
+and varies correctly (188/198 resolve to `id = 1`, `read_palettes`
+0 failures across all 198). `cargo psp --release` + `tools/run-ppsspp.sh`:
+clean, 60 FPS, no panics, screenshot has real varied content. This closes
+the concrete lead RE-096 handed off, but does not close `R0.11` itself —
+the pack still only ever builds one costume at a time
+(`DEFAULT_COSTUME = 0.0`); multi-costume packing/selection, and every one
+of this task's five acceptance items below, remain open.
+
 ### Objective
 
 Ensure every required fighter visual variant renders correctly.

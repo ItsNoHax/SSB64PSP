@@ -1920,6 +1920,23 @@ impl Loaded {
                     if c.blend.is_some() {
                         m.blend_color = c.blend;
                     }
+                    // `PaletteID` (RE-096: 45% of real fighter costume
+                    // scripts carry one) selects which of
+                    // `MObjSub.palettes[]` this costume actually wears --
+                    // `m.palette` otherwise only ever holds `palettes[0]`
+                    // (`read_material`'s own scope), silently costume 0's
+                    // choice for every other costume. `objdisplay.c` reads
+                    // it back as `palettes[(s32)mobj->palette_id]`, the same
+                    // cast `colors_at` already applied.
+                    if let Some(id) = c.palette_id.filter(|&id| id >= 0) {
+                        if let Some(ptrs) =
+                            ssb_rom::mobj::read_palettes(file, m.at, id as usize + 1)
+                        {
+                            if let Some(&p) = ptrs.get(id as usize) {
+                                m.palette = Some(p);
+                            }
+                        }
+                    }
                 }
             }
         }

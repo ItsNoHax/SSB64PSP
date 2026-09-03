@@ -110,6 +110,12 @@ pub struct Colors {
     pub prim: Option<[u8; 4]>,
     pub env: Option<[u8; 4]>,
     pub blend: Option<[u8; 4]>,
+    /// `PaletteID` (joint track [`TRACK_PALETTE_ID`]), cast the same way the
+    /// real draw path casts it (`(s32)mobj->palette_id`) — an index into
+    /// `MObjSub.palettes[]`, not a colour. RE-096: 45% (200/441) of real
+    /// fighter costume scripts carry one, which `colors_at` did not read
+    /// until this field existed.
+    pub palette_id: Option<i32>,
 }
 
 /// One colour track's interpolation state, holding raw `SYColorPack` words.
@@ -125,14 +131,19 @@ struct Track {
 }
 
 impl Track {
-    /// `gcPlayMObjMatAnim`'s `nGCAnimKindStep` branch, on the raw bytes.
-    fn color(&self) -> [u8; 4] {
-        let v = if self.length_invert <= self.length {
+    /// `gcPlayMObjMatAnim`'s `nGCAnimKindStep` branch: base before the step
+    /// fires, target after.
+    fn resolved(&self) -> u32 {
+        if self.length_invert <= self.length {
             self.target
         } else {
             self.base
-        };
-        v.to_be_bytes()
+        }
+    }
+
+    /// The resolved word, reinterpreted as colour bytes.
+    fn color(&self) -> [u8; 4] {
+        self.resolved().to_be_bytes()
     }
 }
 
@@ -189,6 +200,9 @@ fn is_ext(opcode: u32) -> bool {
 /// costume list uses; anything else is an error rather than a guess.
 pub fn colors_at(data: &[u8], script: u32, frame: f32) -> Result<Colors, MatAnimError> {
     let mut tracks = [Track::default(); TRACK_COUNT];
+    // Only [`TRACK_PALETTE_ID`] of the ten joint tracks is read (RE-096); the
+    // costume-selection use case has no need for the other nine yet.
+    let mut palette = Track::default();
     let mut pc = script as usize;
     // `anim_wait = -anim_frame` on the first parse, then commands run until one
     // blocks past it.
@@ -236,6 +250,13 @@ pub fn colors_at(data: &[u8], script: u32, frame: f32) -> Result<Colors, MatAnim
                     t.step = matches!(opcode, OP_EXT_VAL_AFTER_BLOCK | OP_EXT_VAL_AFTER);
                     t.length_invert = payload;
                     t.length = -anim_wait - SPEED;
+                } else if i == TRACK_PALETTE_ID {
+                    palette.live = true;
+                    palette.base = palette.target;
+                    palette.target = value;
+                    palette.step = matches!(opcode, OP_SET_VAL_AFTER_BLOCK | OP_SET_VAL_AFTER);
+                    palette.length_invert = payload;
+                    palette.length = -anim_wait - SPEED;
                 }
                 pc += 4 * per_track;
             }
@@ -259,10 +280,18 @@ pub fn colors_at(data: &[u8], script: u32, frame: f32) -> Result<Colors, MatAnim
         t.length += SPEED;
         Some(t.color())
     };
+    let palette_id = (palette.live && palette.step).then(|| {
+        let mut t = palette;
+        t.length += SPEED;
+        // The raw word is a genuine `f32` (RE-087), not colour bytes, then
+        // cast the same way `objdisplay.c`'s `(s32)mobj->palette_id` does.
+        f32::from_bits(t.resolved()) as i32
+    });
     Ok(Colors {
         prim: read(TRACK_PRIM),
         env: read(TRACK_ENV),
         blend: read(TRACK_BLEND),
+        palette_id,
     })
 }
 
@@ -702,6 +731,73 @@ mod tests {
         assert!(c.prim.is_some());
         assert_eq!(c.env, None);
         assert_eq!(c.blend, None);
+    }
+
+    #[test]
+    fn a_script_that_never_sets_palette_id_leaves_it_unset() {
+        // Mario's arm (colour only) must not fabricate a palette selection.
+        let d = mario_arm();
+        assert_eq!(colors_at(&d, 0, 0.0).unwrap().palette_id, None);
+    }
+
+    /// A costume list carrying `PaletteID` (joint track 9) instead of colour —
+    /// the real archive-wide majority shape (RE-096: 45% of 441 fighter
+    /// costume scripts), same one-costume-per-`Wait(1)`-block layout as
+    /// `mario_arm`.
+    fn palette_costume_script() -> alloc::vec::Vec<u8> {
+        script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 1),
+            1.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 1),
+            3.0f32.to_bits(),
+            cmd(OP_WAIT, 0, 97), // parks the clock past every costume
+            cmd(OP_END, 0, 0),
+        ])
+    }
+
+    #[test]
+    fn palette_id_steps_one_costume_per_frame_like_colour_does() {
+        let d = palette_costume_script();
+        let at = |c: f32| colors_at(&d, 0, c).unwrap().palette_id;
+        assert_eq!(at(0.0), Some(0));
+        assert_eq!(at(1.0), Some(1));
+        assert_eq!(at(2.0), Some(3), "the raw f32 word, cast to i32, not the step index");
+    }
+
+    #[test]
+    fn palette_id_is_read_from_a_real_ieee754_bit_pattern_not_an_integer() {
+        // RE-087: a real script's word is `0x3F800000`-style IEEE-754, not a
+        // small integer reinterpreted — reading it as anything else would
+        // give nonsense for every real archive script.
+        let d = script(&[
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0x3F80_0000, // 1.0f32
+            cmd(OP_WAIT, 0, 97),
+            cmd(OP_END, 0, 0),
+        ]);
+        assert_eq!(colors_at(&d, 0, 0.0).unwrap().palette_id, Some(1));
+    }
+
+    #[test]
+    fn palette_id_and_colour_survive_in_the_same_script() {
+        // A costume list can carry both a colour track and `PaletteID` at
+        // once, each with its own independent step sequence; reading one
+        // must not clobber the other.
+        let d = script(&[
+            cmd(OP_EXT_VAL_AFTER_BLOCK, 1 << TRACK_PRIM, 0),
+            0xff00_00ff,
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 1),
+            2.0f32.to_bits(),
+            cmd(OP_WAIT, 0, 97),
+            cmd(OP_END, 0, 0),
+        ]);
+        let c = colors_at(&d, 0, 1.0).unwrap();
+        assert_eq!(c.prim, Some([0xff, 0x00, 0x00, 0xff]), "unaffected by frame");
+        assert_eq!(c.palette_id, Some(2), "palette's own second step");
     }
 
     fn file_of(data: alloc::vec::Vec<u8>) -> crate::archive::File {
