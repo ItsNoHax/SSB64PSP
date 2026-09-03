@@ -16,7 +16,42 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.14`. RE-084 (this session) did the "actionable-right-
+`IN_PROGRESS` on `R0.14`. RE-085 (this session) closed the last
+actionable-right-now item this file's own previous note named:
+"depth mapping verified", the one `R0.14` acceptance item with no
+decomp-side constant to look up (the N64's Z-buffer is inherent RDP
+hardware behavior, not a game-configurable value like the FOV RE-084
+just fixed).
+
+Confirmed `psp/src/gu.rs`'s `sceGuDepthRange(65535, 0)` +
+`DepthFunc::GreaterOrEqual` matches the `psp` crate's *own documented*
+`sceGuDepthRange` contract exactly: the SDK binding's own doc comment
+(`sys/gu.rs:1162` in `psp` 0.3.13) states "the depth buffer is inversed,
+and takes values from 65535 to 0" — this project's near=65535/far=0
+call is the documented convention, not a workaround invented for a bug.
+`DepthFunc::GreaterOrEqual` correctly complements it (larger buffer
+value = nearer in this convention, so keeping the greater value keeps
+the nearer fragment, same semantic a standard depth test achieves with
+`LessOrEqual` under the opposite sign). Read the binding's own
+`sceGuDepthRange` implementation to confirm the arguments are consumed
+as a plain range remap, not special-cased in a way that could hide a
+mismatch. Corroborated on-device: screenshotted Dream Land's stage view
+(already-built, already-committed binary — no source change needed for
+this check) and inspected every overlapping-geometry case visible (tree
+trunk vs. canopy, decorative sprites, platform edges, the fighter
+marker) for z-fighting or inside-out rendering — found none.
+
+`PLAN.md` R0.14's "depth mapping verified" item is checked, and
+`DECISIONS.md` D-007's previously uncited "Verified working" now points
+at RE-085. No code changed — a documentation/audit pass confirming an
+already-shipped implementation matches its own SDK's stated contract,
+the same shape as RE-072/RE-082/RE-084's non-fix findings. `R0.14` is
+now 5 of 7 items checked; the remaining two ("camera transforms
+verified", "representative scenes compared") are structurally blocked
+on a real game camera system that does not exist yet, not on further
+investigation of this kind.
+
+Immediately before this, RE-084 (this session) did the "actionable-right-
 now" `R0.14` FOV lookup this file's own previous "Next Eligible Task" note
 named directly: read the decompilation's real camera setup instead of
 continuing to carry an unsourced constant.
@@ -724,48 +759,45 @@ real blocker this session, recorded rather than papered over:
    decompilation coverage would just re-find the same ambiguous/untyped
    set RE-078 already found and correctly left alone.
 
-3. **`R0.14`'s remaining items now genuinely need a real camera system,
-   not another lookup.** RE-082 closed "viewport verified", "aspect
-   ratio verified" and "N64/PSP resolution differences explicitly
-   handled"; RE-084 (this session) closed "projection matrix verified"
-   by replacing the FOV's unsourced `60.0` with the decompilation's real
-   default (`38.0`, `gm/gmcamera.c:1191`). What is left — "camera
-   transforms verified", "representative scenes compared" — cannot be
-   verified at all until a real game camera exists; right now only the
-   debug viewer's free-roaming inspection camera does, and per `PLAN.md`
-   §5's gate, gameplay/camera systems are downstream of rendering
-   correctness, not the other way round. "Depth mapping verified" is a
-   smaller, separate loose end: D-007's evidence ("verified working", no
-   RE citation) is thinner than the other items now have, and was not
-   re-audited this session — a same-shape "read `psp/src/gu.rs`, read
-   the decomp's depth setup, compare" pass, likely quick.
+3. **`R0.14` has no more code-reading/lookup items left.** RE-082
+   closed "viewport verified", "aspect ratio verified" and "N64/PSP
+   resolution differences explicitly handled"; RE-084 closed "projection
+   matrix verified" (the FOV); RE-085 (this session) closed "depth
+   mapping verified" (matches the `psp` crate's own documented
+   `sceGuDepthRange` convention exactly). 5 of 7 items are now checked.
+   What is left — "camera transforms verified", "representative scenes
+   compared" — cannot be verified at all until a real game camera
+   exists; right now only the debug viewer's free-roaming inspection
+   camera does, and per `PLAN.md` §5's gate, gameplay/camera systems are
+   downstream of rendering correctness, not the other way round. This
+   task is now genuinely blocked on that, not merely under-investigated.
 4. **`R0.12`'s remaining items need either a decomp-derived expected
    value or a real camera to test against — the same shape as `R0.14`'s
-   remainder, not a fresh angle.** RE-083 closed "billboard types
-   enumerated", "camera-facing transforms verified" and "depth behavior
-   verified", and narrowed "alpha behavior verified" to a single,
-   already-tracked blocker (RE-069/RE-071's `translucent` checkerboard,
-   now known to hit billboards at ~2x the archive-wide rate). What
-   remains — "scale verified", "orientation verified", "texture
-   orientation verified", "all flagged billboard nodes verified" — all
-   need either a decomp-derived expected value per billboard type or a
-   rotated/moved camera to test against beyond RE-049's own single Dream
-   Land spot check, which the debug viewer's zoom/orbit controls can
-   already do — this is device-interactive verification work, not a
-   code-reading or archive-census task the way the last several
-   sessions' progress was.
+   remainder.** RE-083 closed "billboard types enumerated", "camera-
+   facing transforms verified" and "depth behavior verified", and
+   narrowed "alpha behavior verified" to a single, already-tracked
+   blocker (RE-069/RE-071's `translucent` checkerboard, now known to hit
+   billboards at ~2x the archive-wide rate). What remains — "scale
+   verified", "orientation verified", "texture orientation verified",
+   "all flagged billboard nodes verified" — all need either a
+   decomp-derived expected value per billboard type or a rotated/moved
+   camera to test against beyond RE-049's own single Dream Land spot
+   check, which the debug viewer's zoom/orbit controls can already do —
+   this is device-interactive verification work, not a code-reading or
+   archive-census task the way the last several sessions' progress was.
 
-The one genuinely *actionable-right-now* item left across both tasks is
-`R0.14`'s "depth mapping verified" (read `psp/src/gu.rs`'s depth-range
-setup against the decomp's own, the same shape as RE-082/RE-084 — likely
-a quick, bounded lookup). After that, both `R0.12` and `R0.14`'s
-remaining items need either device-interactive verification (moving the
-debug camera, not just reading code) or a real game camera system that
-doesn't exist yet — a different *kind* of work than the last several
-sessions' code-reading/archive-census pattern. `RE-069`/`RE-071`'s
-`translucent` checkerboard (still unsolved, confirmed by RE-083 to matter
-more for billboards specifically than previously weighted) remains the
-other standing lead, unchanged from before.
+Every code-reading/archive-census-shaped lookup this file has been able
+to name is now done. What is left on `R0.12`/`R0.14` needs either
+device-interactive verification (moving the debug camera by hand, not
+scripting a fixed screenshot) or a real game camera system that does not
+exist yet — genuinely different *kinds* of work than the last several
+sessions' pattern, not just a next item in the same list.
+`RE-069`/`RE-071`'s `translucent` checkerboard (still unsolved, confirmed
+by RE-083 to matter more for billboards specifically than previously
+weighted) remains the one standing lead of the previous kind, unchanged
+from before — worth a fresh pair of eyes on the alpha-channel-provenance
+idea `TODO.md` Phase D already suggests, if a future session wants one
+more attempt before treating it as needing real hardware too.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a

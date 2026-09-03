@@ -5777,3 +5777,55 @@ project has not yet examined — the four-vs-two split is strong but not
 exhaustive, and the two special-case modes' own actual FOV values were
 not looked up (they are caller-supplied, situational, and out of scope
 until a real camera system calls them).
+
+## RE-085 — Depth range inversion matches the PSP SDK's own documented convention exactly
+
+**Question.** `PLAN.md` R0.14's "depth mapping verified" item was open
+with the thinnest evidence of any item in the task: `DECISIONS.md` D-007
+says only "Verified working," with no RE citation. Unlike the FOV (RE-084)
+there is no decomp-side constant to look up — the N64's Z-buffer is
+inherent RDP hardware behavior, not a game-configurable value — so this
+needed a different kind of check: is `psp/src/gu.rs`'s depth setup
+(`sceGuDepthRange(65535, 0)` + `DepthFunc::GreaterOrEqual`) actually
+correct, or just asserted?
+
+**The PSP SDK binding documents the exact convention this code
+assumes.** `sceGuDepthRange`'s own doc comment in the `psp` crate
+(`sys/gu.rs:1162`, version 0.3.13) states outright: "The depth buffer is
+inversed, and takes values from 65535 to 0." That is not a workaround
+for a bug this project found — it is the hardware/API's documented
+native behavior, and `psp/src/gu.rs` passes `sceGuDepthRange(65535, 0)`
+to match it exactly: near maps to the buffer's actual near-end value
+(`65535`), far to its actual far-end value (`0`). `DepthFunc::GreaterOrEqual`
+correctly complements this: with larger buffer values meaning *nearer*
+in this convention, keeping the fragment with the greater value keeps
+the nearer one — the same semantic a standard (non-inverted) depth test
+achieves with `LessOrEqual`, just for the opposite-signed convention.
+Read the binding's own `sceGuDepthRange` implementation
+(computing `ViewportZScale`/`ViewportZCenter`/`MinZ`/`MaxZ` from the
+`near`/`far` arguments) to confirm the values are consumed as a plain
+range remap, not given special-cased treatment that could hide a mismatch.
+
+**On-device: no depth-order artifact found.** Screenshotted Dream Land's
+stage view (unmodified regression scene, already built and committed —
+no source changes needed for this check) and inspected the areas most
+likely to expose a depth bug: the tree trunk against the canopy behind
+it, decorative leaf/flower sprites against the canopy surface, the
+platform edge against the ground and sky, and the fighter marker against
+the platform. Every occlusion is correct — no z-fighting, no
+inside-out geometry, no sprite rendering through something in front of
+it.
+
+**Result.** `PLAN.md` R0.14's "depth mapping verified" item is checked.
+No code changed — this is a documentation/audit pass confirming an
+existing, already-shipped implementation matches its SDK's own stated
+contract, the same shape as RE-072/RE-082. `DECISIONS.md` D-007's thin
+"Verified working" note now has a citation.
+
+**Confidence: high** — the strongest kind of evidence available for this
+question: the SDK author's own explicit documentation of the convention
+this code was written to match, not an inference from decomp values or
+a measurement with error bars. The on-device check is corroborating, not
+load-bearing on its own (a single regression scene cannot rule out every
+possible depth-order case, but it did not need to — the SDK-documentation
+match already settles the question).
