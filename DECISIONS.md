@@ -101,11 +101,11 @@ G) is no longer optional headroom.
 ### D-007: Depth Buffer — Inverted Range
 **Decision:** PSP depth buffer inverted: near=65535, far=0. Use `sceGuDepthRange(65535, 0)` + `DepthFunc::GreaterOrEqual`.
 
-**Reasoning:** Classic source of "everything renders in wrong order" bugs. Verified working.
+**Reasoning:** Classic source of "everything renders in wrong order" bugs. Verified working. RE-085 confirmed this matches the `psp` crate's own documented `sceGuDepthRange` convention exactly ("the depth buffer is inversed, and takes values from 65535 to 0" — the SDK binding's own doc comment, not an inference), not a workaround for a bug this project introduced.
 
 **Implemented:** `psp/src/gu.rs`
 
-**Reference:** `docs/rendering.md` "Depth"
+**Reference:** `docs/rendering.md` "Depth", RE-085
 
 ---
 

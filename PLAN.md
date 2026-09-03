@@ -1104,6 +1104,17 @@ constants that depended on the old FOV (`FIT`, `1/tan(30°)` → `1/tan(19°)`,
 the viewer's default zoom — verified by a before/after screenshot of Dream
 Land's stage view, not just by arithmetic.
 
+RE-085 closed "depth mapping verified" — the one item on this task with
+no decomp-side constant to look up, since the N64's Z-buffer is inherent
+RDP hardware behavior, not a game-configurable value. Confirmed
+`psp/src/gu.rs`'s `sceGuDepthRange(65535, 0)` + `DepthFunc::GreaterOrEqual`
+matches the `psp` crate's *own documented* `sceGuDepthRange` convention
+exactly ("the depth buffer is inversed, and takes values from 65535 to
+0" — the SDK binding's own doc comment), not a workaround invented for a
+bug this project hit. Corroborated by inspecting Dream Land's stage view
+for depth-order artifacts (tree trunk vs. canopy, decorative sprites,
+platform edges, fighter marker) — none found. No code changed.
+
 ### Objective
 
 Reproduce the original camera and projection behavior.
@@ -1117,14 +1128,14 @@ Reproduce the original camera and projection behavior.
 * [x] projection matrix verified — RE-082 audited the aspect term; RE-084 replaced the FOV term's unsourced `60.0` degree guess with the decompilation's own real default (`38.0` degrees, four agreeing call sites). Near/far clip planes are this project's own debug-viewer framing choice, not part of the original's projection behavior, so nothing further to source there
 * [x] viewport verified — RE-034 (device measurement, before/after screenshots) plus RE-082 (source-level confirmation that `Gpu::init` and `main.rs` share one `pillarboxed_viewport()` call, so they cannot diverge)
 * [x] aspect ratio verified — RE-082: `pillarboxed_viewport()` is unit-tested (`pillarbox_preserves_four_by_three`), its output is the sole source for both the GE viewport/scissor and the projection's `aspect` parameter, and `sceGumPerspective`'s own binding uses the standard formula; RE-034's previously-reported residual is a measurement artifact on a too-small on-screen shape, not a surviving defect
-* [ ] depth mapping verified — D-007 states "verified working" but has no dedicated RE entry with device evidence the way viewport/aspect now do; not re-audited this session
+* [x] depth mapping verified — RE-085: `sceGuDepthRange(65535, 0)` + `GreaterOrEqual` matches the `psp` crate's own documented depth-buffer convention exactly, not a workaround; corroborated on-device with no depth-order artifacts found in a complex, multi-layer regression scene
 * [ ] camera transforms verified — no real game camera system exists yet, only the debug viewer's free-roaming camera; RE-084 sourced the FOV *value* the original uses, but reproducing the camera's actual positioning/movement logic needs a real camera system this project does not have yet
 * [x] N64/PSP resolution differences explicitly handled — RE-082: pillarboxing (D-008) is precisely this handling, now confirmed by both a device measurement (RE-034) and a source audit (RE-082) rather than one alone
 * [ ] representative scenes compared — no side-by-side N64-vs-PSP reference comparison exists
 
 ### Evidence
 
-RE-034, RE-082, RE-084 in `docs/reverse-engineering.md`.
+RE-034, RE-082, RE-084, RE-085 in `docs/reverse-engineering.md`.
 
 ---
 
