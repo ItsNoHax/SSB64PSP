@@ -5700,3 +5700,80 @@ percentages (a real archive-wide walk of the built pack, not a sample).
 **Not attempted**: confirming any specific billboard node beyond Dream
 Land's own six canopy sprites (RE-049) actually looks correct on
 screen — this entry is a state census, not a visual verification pass.
+
+## RE-084 — The debug viewer's FOV was an unsourced guess; the decomp's real default is 38 degrees, not 60
+
+**Question.** `PLAN.md` R0.14's "projection matrix verified" item has
+been open since the task was created. `psp/src/main.rs` calls
+`gpu.set_perspective(60.0, aspect, ...)` every frame — where did `60.0`
+come from, and does it match anything real?
+
+**It does not — it was never sourced at all.** `git log -S"60.0"` and a
+read of the surrounding code found no comment, decision record, or
+citation for the value; it is simply the number that was there. Searched
+the decompilation for the real camera's FOV instead of continuing to
+assume: `refs/ssb-decomp-re/src/gm/gmcamera.c:1191` sets
+`gGMCameraStruct.fovy = 38.0F` when the default battle camera is created
+(`gmCameraMakeDefaultCamera`), and `gmCameraAdjustFOV(38.0F)` — the
+function that smoothly LERPs the live FOV toward a target
+(`fovy += (target - fovy) * 0.1`) — is called with exactly `38.0F` from
+**four separate** camera-behavior functions in the same file (lines 636,
+686, 765, 813). Only two call sites use a different, situational value:
+`gmCameraSetStatusPlayerZoom`/`...PlayerFollow` take their FOV as a
+caller-supplied argument for what read as specific special-case cameras
+(a player-zoom and a player-follow mode), not the default battle view.
+Four-to-two, all in the same file, is about as strong as decomp evidence
+gets without an exhaustive cross-reference of every caller: `38.0`
+degrees is the real default, and `60.0` degrees was this project's own
+unsourced number, 58% wider than the original.
+
+**Fixed, with the framing math it interacts with.** Changed
+`psp/src/main.rs`'s `set_perspective` call to `38.0`. Two other spots
+depended on the old value without saying so explicitly in code (only in
+a comment): the stage-view and object-view debug camera's distance
+calculations both use `const FIT: f32 = 1.733`, derived (per their own
+existing comments) as `1 / tan(30°)` — half of the *old* 60-degree FOV —
+to place the camera far enough back that a stage or object's whole
+bounding radius fits the frame at the default zoom. A narrower FOV needs
+proportionally *more* distance to keep the same framing, not the same
+distance: recomputed `FIT` as `1 / tan(19°) ≈ 2.904` (half of the *new*
+38-degree FOV) for both occurrences, `ratio ≈ 1.677` over the old value.
+Without this, every stage and object would appear to zoom in and crop at
+the debug viewer's default zoom level purely as a side effect of fixing
+the FOV, which is not what this change is about.
+
+**Verified the framing survived the fix, not just that it compiled.**
+Built clean, ran under `tools/run-ppsspp.sh` from a freshly deleted
+`EBOOT.PBP` (RE-070's lesson), and compared Dream Land's stage view
+before (60°/`FIT=1.733`) and after (38°/`FIT=2.904`) side by side: the
+stage's framing at the default zoom is visually unchanged — the whole
+stage still fits the frame the same way — confirming the `FIT`
+recalculation did its job rather than merely being asserted correct by
+arithmetic. `cargo test --workspace`: unaffected (368 passing; `psp/` is
+excluded from the host workspace and has no test suite of its own, per
+`Cargo.toml`), `cargo clippy --release` (workspace): clean, `cargo psp
+--release`: clean. Only the stage view was screenshotted; the object
+view's identical `FIT` correction was applied by the same derivation but
+not separately screenshotted (no scripted way to toggle into it in this
+harness without interactive input).
+
+**Result.** `PLAN.md` R0.14's "projection matrix verified" item can now
+be checked for the FOV term specifically: the debug viewer (the only
+rendering pipeline that exists, since no real game camera has been built
+yet) uses the decompilation's own default value, not an arbitrary guess.
+The near/far clip planes and the projection matrix's other terms (already
+covered by RE-082's aspect/viewport audit) are not newly claimed here.
+"Camera transforms verified" stays open — matching a single scalar
+constant is not the same as reproducing the camera's actual positioning
+and movement logic, which needs a real camera system this project does
+not have yet.
+
+**Confidence: high** for the FOV value itself (four independent call
+sites in the source agreeing, not one number taken in isolation) and for
+the `FIT` correction's arithmetic (a direct trigonometric consequence of
+the FOV change, not tuned by eye). **Not verified**: whether `38.0`
+degrees is truly constant across *every* stage and camera mode this
+project has not yet examined — the four-vs-two split is strong but not
+exhaustive, and the two special-case modes' own actual FOV values were
+not looked up (they are caller-supplied, situational, and out of scope
+until a real camera system calls them).

@@ -523,7 +523,18 @@ unsafe fn run() -> ! {
         gpu.begin_frame(Some(Color::rgba(0x20, 0x28, 0x38, 0xFF)));
         // Far plane follows the camera: meshes range from a few units across to
         // tens of thousands, and a fixed far plane clips the large ones entirely.
-        gpu.set_perspective(60.0, aspect, 1.0, (dbg_cam * 4.0).max(10_000.0));
+        //
+        // 38 degrees, not an arbitrary round number: `refs/ssb-decomp-re/src/
+        // gm/gmcamera.c:1191` sets `gGMCameraStruct.fovy = 38.0F` as the
+        // default battle camera's FOV, and every normal camera-behavior
+        // function that resets it (`gmCameraAdjustFOV(38.0F)`, four call
+        // sites) targets the same value; only two special modes (a
+        // KO/photo-finish player-zoom and a player-follow camera) take a
+        // different, situational FOV from their own caller (RE-084). This
+        // viewer has no real camera system yet, so this is the closest
+        // still-correct thing to reproduce: the original's own default,
+        // not this project's previous unsourced guess of `60.0`.
+        gpu.set_perspective(38.0, aspect, 1.0, (dbg_cam * 4.0).max(10_000.0));
         gpu.reset_modelview();
         draw_state.begin_frame();
 
@@ -563,7 +574,13 @@ unsafe fn run() -> ! {
                         }
                         None => ([0.0; 3], 1000.0),
                     };
-                    const FIT: f32 = 1.733;
+                    // d = r / tan(19) ~= 2.90 * r, matching the 38-degree FOV
+                    // above (half-angle 19). Was 1.733 (`1/tan(30)`) for the
+                    // FOV's old, unsourced 60-degree guess -- keeps "whole
+                    // stage fits at the default zoom" true after RE-084's fix
+                    // narrowed the FOV, rather than silently cropping every
+                    // stage.
+                    const FIT: f32 = 2.904;
                     let dist = radius * FIT * cam_distance / 200.0;
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
@@ -694,12 +711,12 @@ unsafe fn run() -> ! {
                         }
                         None => ([0.0; 3], 100.0),
                     };
-                    // Fit the radius to the 60-degree vertical FOV:
-                    // d = r / tan 30 ~= 1.73 * r. The mesh path's 2x-extent
+                    // Fit the radius to the 38-degree vertical FOV (RE-084):
+                    // d = r / tan 19 ~= 2.90 * r. The mesh path's 2x-extent
                     // rule leaves an object filling a ninth of the frame,
                     // which for a stage whose parts are spread over 33000
                     // units means specks.
-                    const FIT: f32 = 1.733;
+                    const FIT: f32 = 2.904;
                     let dist = radius * FIT * cam_distance / 200.0;
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
