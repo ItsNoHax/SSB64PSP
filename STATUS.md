@@ -12,19 +12,31 @@
 
 ## Current Task
 
-`R0.4 — TLUT / Palette Correctness` (its one remaining open item; see Next
-Eligible Task)
+`R0.4 — TLUT / Palette Correctness`
 
 ## Task Status
 
-`TODO` (not yet started this session — R0.4 was already `IN_PROGRESS`
-before this session on an unrelated item, its palette-inheritance/state
-gap is untouched)
+`IN_PROGRESS`. This session closed the "palette inheritance/state
+verified" acceptance item (RE-064): added a direct unit test
+(`a_texture_binding_persists_into_a_node_that_sets_no_new_state`,
+`crates/ssb-rom/src/mesh.rs`) pinning that RDP texture/palette state
+threads across a node sequence the way real hardware keeps it, previously
+only measured archive-wide. Confirmed the test can actually fail (broke
+the inheritance mechanism temporarily, watched it fail, reverted) before
+trusting it green. Also confirmed by reading `tools/romtool/src/main.rs`'s
+pack loop that state cannot leak *between* different objects/graphs by
+construction (fresh `State::new()` per graph). One item remains open on
+R0.4 — "all missing palette cases resolved" (1 `MissingPalette` failure,
+file 86) — already fully attributed to `R0.7`'s scope, not touched this
+pass; `R0.4` stays `IN_PROGRESS` rather than closing, since that item is
+still literally unmet even though it isn't this task's fault.
 
 ## Last Completed Task
 
-R0.8 — Transform Correctness — `COMPLETE` (RE-063, this session). Closed by
-enumerating every transform kind (see above), implementing `Kind50` the
+R0.8 — Transform Correctness — `COMPLETE` (RE-063, previous session pass).
+Closed by enumerating every transform kind (`gcSetupCommonDObjs` only ever
+emits kinds 44/46/48/50 from a ROM `DObjDesc` array; everything else is
+runtime-game-code-only and out of scope), implementing `Kind50` the
 same way `RecalcRotRpyRSca`/`Kind46`/`Kind48` already were, and adding
 regression coverage (`a_kind_50_node_is_flagged_as_a_billboard_like_kind_48`,
 `crates/ssb-rom/src/pack.rs`). `cargo test --workspace`: 340 passing (was
@@ -81,23 +93,23 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-Set to `R0.4`'s one remaining open item as a concrete starting point:
-"palette inheritance/state verified" is unchecked because state leakage
-across display lists was never explicitly tested; it's tracked toward
-`R0.15 — Render-State Isolation` and is genuinely distinct from the
-`MissingPalette` pairing gap RE-057 already root-caused (that one belongs
-to R0.7). Two other tasks are also `IN_PROGRESS` with substantial open
-acceptance items and were not evaluated in depth this session: `R0.5`
-(Texture Filtering / LOD / Mipmapping — wrap modes decoded but not wired to
-`sceGuTexWrap`, Dream Land canopy discrepancy still open) and `R0.6`
-(Material System Correctness — lighting uses a placeholder neutral key
-light that `AGENTS.md` §9 requires be recorded as an `ACCEPTED_DEVIATION`
-or replaced, currently neither). A fresh session should read all three
-tasks' full acceptance lists in `PLAN.md` before picking one. `R0.7`
-remains technically `IN_PROGRESS` but its remaining scope is an accepted
-long tail (see above) — only worth revisiting if the upstream
+`R0.4`'s own remaining item ("all missing palette cases resolved") is
+already fully attributed to `R0.7`'s file-86 long tail, so R0.4 has no
+further independently-actionable work right now. Two other tasks are
+`IN_PROGRESS` with substantial open acceptance items and were not
+evaluated in depth this session: `R0.5` (Texture Filtering / LOD /
+Mipmapping — wrap modes decoded but not wired to `sceGuTexWrap`, Dream
+Land canopy discrepancy still open) and `R0.6` (Material System
+Correctness — lighting uses a placeholder neutral key light that
+`AGENTS.md` §9 requires be recorded as an `ACCEPTED_DEVIATION` or
+replaced, currently neither). A fresh session should read both tasks' full
+acceptance lists in `PLAN.md` and pick one — `R0.6`'s lighting item looks
+like the more concrete starting point (it names a specific, already-known
+non-compliant heuristic; `R0.5`'s items need fresh investigation first).
+`R0.7` remains technically `IN_PROGRESS` but its remaining scope is an
+accepted long tail (see above) — only worth revisiting if the upstream
 decompilation types `llITCommonDataNBumperWaitMObjSub` or Spin Attack's
-`WPAttributes` instance. `R0.8 — Transform Correctness` is now `COMPLETE`.
+`WPAttributes` instance. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 
@@ -276,6 +288,20 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.4: palette/texture state inheritance pinned by a test (RE-064)
+
+* Read `mesh.rs`'s `convert_sequence` (`mesh.rs:743`) — `State`'s texture/tile/palette fields are declared once and mutated across the node-sequence loop, reset only by an explicit state command or `forget_texture()`; a node with no material commands keeps whatever the previous node left, by construction
+* Read `tools/romtool/src/main.rs`'s pack-building loop (`main.rs:952`) — `convert_sequence` is called fresh, with a new `State::new()`, once per scene graph; confirmed no code path reuses a `State` across two different objects, so cross-object leakage cannot happen architecturally
+* Added `crates/ssb-rom/src/mesh.rs::a_texture_binding_persists_into_a_node_that_sets_no_new_state` — joint A fully binds a CI4 texture+palette, joint B sets no material state at all, asserts joint B's `TextureRef` equals joint A's exactly
+* Verified the test can fail: temporarily reset `timg_addr`/`palette_offset`/`texture_enabled` per sequence item, reran, watched it fail with the expected panic, reverted the injected bug, confirmed the suite is clean again
+* `cargo test --workspace` — 341 passing (was 340)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* No production code changed — the inheritance mechanism was already correct, only untested; `romtool pack`/PPSSPP verification skipped as disproportionate to a test-only diff (no build/runtime artifact could differ)
+* Result: RE-064 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.4's "palette inheritance/state verified" item checked; `docs/porting-status.md` "Mesh conversion" row updated
+* Affected subsystem: `crates/ssb-rom/src/mesh.rs` (test-only) — plus documentation
+* PPSSPP: not run this pass (no production change to verify)
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.8 closed: transform kinds enumerated, `Kind50` fixed (RE-063)
 

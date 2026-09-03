@@ -1216,6 +1216,100 @@ mod tests {
     }
 
     #[test]
+    fn a_texture_binding_persists_into_a_node_that_sets_no_new_state() {
+        // R0.4's open "palette inheritance/state" item: `convert_sequence`'s
+        // doc comment claims RDP state carries across a node sequence the
+        // way real hardware keeps it, measured archive-wide (378/394 texture
+        // resolutions) but never pinned by a direct unit test. This is that
+        // test: joint A fully binds a CI4 texture+palette and draws; joint B
+        // sets no texture state at all and must inherit the exact same
+        // binding, not merely "some" binding.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(6);
+        let a = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let b = [
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+            },
+        ];
+        let out = convert_sequence(&items, Source::bare(&file));
+        let first = out[0].as_ref().unwrap().primitives[0]
+            .material
+            .texture
+            .expect("joint A binds its own texture");
+        let second = out[1].as_ref().unwrap().primitives[0]
+            .material
+            .texture
+            .expect("joint B must inherit joint A's texture, not draw unbound");
+        assert_eq!(
+            second, first,
+            "a node that sets no new material state must inherit the previous node's exactly"
+        );
+    }
+
+    #[test]
     fn tri2_emits_two_triangles() {
         let file = vertex_data(6);
         let cmds = [vtx(6), Cmd::Tri2([0, 1, 2], [3, 4, 5]), Cmd::End];
