@@ -12,11 +12,55 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness`
+`R0.14 — Camera / Projection Correctness`
 
 ## Task Status
 
-`VERIFYING` on `R0.12`. RE-083 (this session) picked up the concrete,
+`IN_PROGRESS` on `R0.14`. RE-084 (this session) did the "actionable-right-
+now" `R0.14` FOV lookup this file's own previous "Next Eligible Task" note
+named directly: read the decompilation's real camera setup instead of
+continuing to carry an unsourced constant.
+
+`psp/src/main.rs` called `sceGumPerspective(60.0, ...)` every frame with
+no comment, citation, or decision record explaining where `60.0` came
+from — checked, and it does not trace to anything. `refs/ssb-decomp-re/
+src/gm/gmcamera.c:1191` sets the real default battle camera's
+`gGMCameraStruct.fovy = 38.0F`, and `gmCameraAdjustFOV(38.0F)` (the
+function that smoothly re-targets the live FOV) is called with exactly
+that value from four separate camera-behavior functions in the same
+file — only two other call sites (`...PlayerZoom`/`...PlayerFollow`, a
+KO/photo-finish zoom and a follow-camera mode) take a different,
+caller-supplied situational value. Four-to-two in one file is strong,
+non-exhaustive evidence that `38.0` degrees is the real default, and
+`60.0` was this project's own unsourced guess, 58% wider than the
+original.
+
+Fixed the constant, and — because this interacts with framing, not just
+a number in isolation — recomputed the two `FIT` constants
+(`psp/src/main.rs`'s stage-view and object-view debug-camera distance
+calculations) that were themselves derived from the *old* 60-degree FOV
+(`1/tan(30°) ≈ 1.733`, by their own existing comments) to their
+38-degree equivalent (`1/tan(19°) ≈ 2.904`, `≈1.677×` larger) — without
+this, every stage and object would visibly zoom in and crop at the
+viewer's default zoom purely as a side effect of correcting the FOV,
+an unrelated regression this fix should not introduce. Verified by
+screenshot, not just arithmetic: Dream Land's stage view before
+(60°/`FIT=1.733`) and after (38°/`FIT=2.904`) frames the whole stage the
+same way at the default zoom. `cargo psp --release` clean, fresh
+`tools/run-ppsspp.sh` run clean (no panics), `cargo test --workspace`
+unaffected (`psp/` has no host test suite, excluded from the workspace
+per `Cargo.toml`), `cargo clippy --release` (workspace) clean.
+
+`PLAN.md` R0.14's "projection matrix verified" item is now checked — the
+FOV term is sourced from the decompilation, joining RE-082's already-
+verified aspect/viewport terms. Left open: "depth mapping verified"
+(D-007's evidence is thinner than the others and wasn't re-audited),
+"camera transforms verified" and "representative scenes compared" (both
+need a real game camera system, which doesn't exist yet — sourcing the
+FOV *value* is not the same as reproducing the camera's actual
+positioning/movement behavior).
+
+Immediately before this, RE-083 (this session) picked up the concrete,
 ready candidate this file's own previous "Next Eligible Task" note
 pointed at once `R0.14`'s aspect-ratio work (RE-082, below) closed out
 what it could reach without a real game camera.
@@ -680,40 +724,48 @@ real blocker this session, recorded rather than papered over:
    decompilation coverage would just re-find the same ambiguous/untyped
    set RE-078 already found and correctly left alone.
 
-3. **`R0.14`'s remaining items need a real camera system or the decomp's
-   FOV, neither of which exists here yet.** RE-082 closed "viewport
-   verified", "aspect ratio verified" and "N64/PSP resolution differences
-   explicitly handled". What is left: "projection matrix verified" needs
-   the decompilation's actual FOV/near/far values (this project's `60.0`
-   degrees is the debug viewer's own arbitrary pick, never cross-checked
-   against `refs/ssb-decomp-re`'s camera setup — a concrete, well-scoped
-   lookup, likely in a `camera`/`mpcamera`-named source file, **doable now,
-   not blocked**), and "camera transforms verified"/"representative scenes
-   compared" cannot be verified at all until a real game camera exists —
-   right now only the debug viewer's free-roaming inspection camera does,
-   and per `PLAN.md` §5's gate, gameplay/camera systems are downstream of
-   rendering correctness, not the other way round.
+3. **`R0.14`'s remaining items now genuinely need a real camera system,
+   not another lookup.** RE-082 closed "viewport verified", "aspect
+   ratio verified" and "N64/PSP resolution differences explicitly
+   handled"; RE-084 (this session) closed "projection matrix verified"
+   by replacing the FOV's unsourced `60.0` with the decompilation's real
+   default (`38.0`, `gm/gmcamera.c:1191`). What is left — "camera
+   transforms verified", "representative scenes compared" — cannot be
+   verified at all until a real game camera exists; right now only the
+   debug viewer's free-roaming inspection camera does, and per `PLAN.md`
+   §5's gate, gameplay/camera systems are downstream of rendering
+   correctness, not the other way round. "Depth mapping verified" is a
+   smaller, separate loose end: D-007's evidence ("verified working", no
+   RE citation) is thinner than the other items now have, and was not
+   re-audited this session — a same-shape "read `psp/src/gu.rs`, read
+   the decomp's depth setup, compare" pass, likely quick.
 4. **`R0.12`'s remaining items need either a decomp-derived expected
    value or a real camera to test against — the same shape as `R0.14`'s
-   remainder, not a fresh angle.** RE-083 (this session) closed
-   "billboard types enumerated", "camera-facing transforms verified" and
-   "depth behavior verified", and narrowed "alpha behavior verified" to
-   a single, already-tracked blocker (RE-069/RE-071's `translucent`
-   checkerboard, now known to hit billboards at ~2x the archive-wide
-   rate). What remains — "scale verified", "orientation verified",
-   "texture orientation verified", "all flagged billboard nodes
-   verified" — all need either a decomp-derived expected value per
-   billboard type (parallel to the FOV lookup above) or a rotated/moved
-   camera to test against beyond RE-049's own single Dream Land spot
-   check, which the debug viewer's zoom/orbit controls can already do —
-   this is device-interactive verification work, not a code-reading or
-   archive-census task the way the last several sessions' progress was.
+   remainder, not a fresh angle.** RE-083 closed "billboard types
+   enumerated", "camera-facing transforms verified" and "depth behavior
+   verified", and narrowed "alpha behavior verified" to a single,
+   already-tracked blocker (RE-069/RE-071's `translucent` checkerboard,
+   now known to hit billboards at ~2x the archive-wide rate). What
+   remains — "scale verified", "orientation verified", "texture
+   orientation verified", "all flagged billboard nodes verified" — all
+   need either a decomp-derived expected value per billboard type or a
+   rotated/moved camera to test against beyond RE-049's own single Dream
+   Land spot check, which the debug viewer's zoom/orbit controls can
+   already do — this is device-interactive verification work, not a
+   code-reading or archive-census task the way the last several
+   sessions' progress was.
 
-The two genuinely *actionable-right-now* items across both tasks are the
-`R0.14` FOV lookup (read the decomp's camera setup, compare to `60.0`) and
-`RE-069`/`RE-071`'s `translucent` checkerboard (still unsolved, now known
-to matter more than previously weighted) — both are reads/measurements
-against existing code and data, not new device-interactive verification.
+The one genuinely *actionable-right-now* item left across both tasks is
+`R0.14`'s "depth mapping verified" (read `psp/src/gu.rs`'s depth-range
+setup against the decomp's own, the same shape as RE-082/RE-084 — likely
+a quick, bounded lookup). After that, both `R0.12` and `R0.14`'s
+remaining items need either device-interactive verification (moving the
+debug camera, not just reading code) or a real game camera system that
+doesn't exist yet — a different *kind* of work than the last several
+sessions' code-reading/archive-census pattern. `RE-069`/`RE-071`'s
+`translucent` checkerboard (still unsolved, confirmed by RE-083 to matter
+more for billboards specifically than previously weighted) remains the
+other standing lead, unchanged from before.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a
