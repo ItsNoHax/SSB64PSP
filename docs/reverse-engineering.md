@@ -6277,3 +6277,92 @@ entry counts (2–4, 16, 18), with zero failures and zero degenerate
 results. **Not yet known**: whether cross-file `PaletteID` scripts (not
 attempted by RE-089's own scope limit) behave the same way — untested,
 since none were found to test against.
+
+---
+
+## RE-091 — Pack format shipped for animated palettes; wiring blocked on a real, measured gap: the animated `MObjSub` never names its own texture
+
+**Question.** `PLAN.md` R0.10 step 5 asks to pack RE-089/RE-090's resolved
+script and palette data into the runtime format. Two sub-questions: does a
+`MatAnimDesc`/`MatAnimPalette` table pair (mirroring `AnimDesc`/`AnimJoint`'s
+shape) round-trip correctly, and can `romtool`'s real build loop actually
+populate it from the 33 real archive cases?
+
+**Format, shipped and round-trip verified.** Added `MatAnimDesc` (driving
+script's file/offset, resolved palette range, source `MObjSub` for
+debugging) and `MatAnimPalette` (one resolved variant's CLUT blob location,
+the same shape `TextureDesc::palette_offset`/`palette_len` already use) as
+a new table pair appended after `AnimJoint[]` — the simplest insertion
+point, since it required no changes to any existing table-offset function,
+only two new ones. `TextureDesc` gained `mat_anim: u32` (a `MatAnimDesc`
+index, or `NO_ANIM`) by filling 4 bytes of pre-existing tail padding —
+`TextureDesc::SIZE` is unchanged at 32. `Header` grew from 64 to 72 bytes
+for the two new table counts; its old 64-byte size was a coincidence of
+having exactly 16 `u32` fields, never a hard alignment requirement (only
+the blob region needs 16-byte alignment, computed separately). `PackWriter::
+add_mat_anim` follows `add_anim`'s own established shape exactly: the
+*whole source file's* bytes are deduplicated per archive file
+(`mat_anim_files`, mirroring `anim_files`) rather than trying to slice out
+one script's own bytes, since a script's real length is not knowable
+without decoding it — `MatAnimDesc::script` is an offset within that file
+blob, matching how `AnimJoint::script` already works and how
+`MaterialJoint::tick` is already built to be called (against a whole
+file's bytes, not a pre-sliced script). `pack::VERSION` 11 → 12. Verified
+with 3 new round-trip unit tests (a full script+palettes round trip, a
+texture correctly reading back `NO_ANIM` when nothing animates it, and a
+shared-file dedup test mirroring the existing animation one) plus the
+crate's full existing suite unaffected (241 passing, was 238; all 35
+pre-existing `pack` tests pass byte-for-byte unchanged). `cargo run
+--release -p romtool -- pack` against the real ROM: builds cleanly at
+`VERSION` 12, reports "verified loads back cleanly", same 639 textures/41
+stages/other counts as before (nothing populates the new tables yet, so
+this is a schema-only change). `cargo psp --release` + `tools/run-ppsspp.sh`:
+builds and runs clean, Dream Land pixel-identical at 60 FPS.
+
+**Wiring the real build loop found a genuine blocker, checked before
+writing around it.** The natural design was to key a texture's animated
+palette table the same way `pack_mesh`'s existing texture cache already
+does — by `(data_file, data_offset)`, the texel address — using each
+animated `MObjSub`'s own `sprite` field (RE-089's `chain_table.nodes[node][m]
+.sprite`, resolved from the exact same `MObjMaterial` RE-090 already reads
+`palettes[]` from) as the correlating key. Checked this against the real
+ROM before writing the wiring code, the same way RE-088's now-retracted
+attempt should have been checked earlier: instrumented `romtool stages`'s
+existing replay loop (temporary, reverted, matching the established
+pattern) to print `sprite` for all 33 real `PaletteID`-cycling `MObjSub`s.
+
+**Every single one reads `sprite: None`.** A palette-cycling `MObjSub`
+never names its own texture image — its `flags` carry `MOBJ_FLAG_PALETTE`
+alone, not the `FRAC`/`SPLIT`/`ALPHA` combination `read_material`'s
+`sprite` field is gated on. The texture a cycling palette actually applies
+to is whichever CI4/CI8 image is already bound at that point in the node's
+own draw sequence — set either by an *earlier* `MObj` in the same chain, or
+by the display list's own `G_SETTIMG`, and tracked correctly today only by
+`mesh.rs`'s existing cross-node material-state threading (RE-064). There is
+no `(file, offset)` pair on the animated `MObjSub` itself that identifies
+its texture; the correlation genuinely requires walking the same state
+`mesh.rs`'s `apply_mobj`/`Builder` already thread through a node's sequence,
+not a post-hoc lookup at the `romtool`/`pack.rs` level the way RE-089/090's
+own work was scoped.
+
+**Result.** The pack format addition ships (real, tested, unconditionally
+correct regardless of how the correlation eventually gets solved) and
+`TextureDesc::mat_anim` stays `NO_ANIM` for every real texture for now —
+deliberately not populated with a guessed or heuristic correlation. Populating
+it for real requires `mesh.rs`-level work: threading an "this material's
+palette is driven by script S" marker through `State`/`MeshMaterial`'s
+existing inheritance (the same mechanism that already threads texture and
+palette state across a node's sequence, RE-064), surfacing it on the built
+`Prim`/`TextureRef` so `pack_mesh` can see it when it adds the texture —
+architecturally similar to how `combiner_texture_blend` (RE-073/074) added
+a new `MeshMaterial` field and threaded it through, but for animation state
+rather than combiner state.
+
+**Confidence: high** for both halves — the format round-trips correctly
+(direct, multi-case unit tests) and the blocker is real, not assumed
+(archive-wide, all 33 cases, not one hand-picked example). **Not yet
+known**: whether `mesh.rs`'s existing state-threading already carries
+enough information at the point an `MObj` fires (RE-064's `Builder`) to
+identify the CI4/CI8 texture cleanly, or whether it needs new bookkeeping
+of its own — this was not investigated this session, since the format
+work above was already a full, independently-verifiable unit on its own.
