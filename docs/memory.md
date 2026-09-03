@@ -70,10 +70,26 @@ paletted textures matter (see `docs/rendering.md`) — a 64x64 CI4 texture is
 The packed texture set currently measures **1170.9 KiB**, 1.7x the ~700 KiB
 budget (RE-053's mip chains, RE-067's mirrored-texture pre-baking, and
 RE-070's targeted dither-blur are all correctness fixes that cost real
-VRAM). Every texture cannot be resident at once; texture streaming
-(`TODO.md` Phase G, "scene-aware residency") is not yet implemented and is
-no longer optional headroom —
-it is required for the game to run within the PSP's real VRAM budget.
+VRAM). But that figure is the **archive-wide** total — every stage, every
+fighter, every menu and effect combined — not what any single scene
+actually needs at once, and it should not be compared to the 700 KiB
+*per-scene* budget directly (RE-076). A direct measurement of the actual
+worst case a real match can put on screen — one stage plus four
+fighters, texture indices deduped rather than summed blind — came to
+**217.1 KiB** for the largest stage (Dream Land) plus the four largest
+of the 12 real playable fighters. That number is very likely an
+undercount (`PLAN.md` R0.7's 64 still-unpaired `MObj` graphs mean several
+fighters' measured texture counts are implausibly low — Yoshi at 0.8 KiB
+across 5 textures almost certainly has real texture references this
+project cannot see yet, not an actually near-empty model), so it should
+not be read as "streaming is unnecessary." What it does mean: the
+`AssetArena` plan below — one contiguous per-scene load, sized by the
+current scene's dependency closure, mirroring the original's own
+`lbRelocLoadFilesExtern` pattern — may already resolve most of this
+pressure once implemented as already planned, without a separate
+runtime residency/eviction system. Re-measure once R0.7's pairing gaps
+close before committing to a more complex streaming architecture than
+that.
 
 ## Allocator plan
 
