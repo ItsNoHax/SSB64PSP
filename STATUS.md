@@ -16,45 +16,63 @@
 
 ## Task Status
 
-`IN_PROGRESS`. RE-073 (this session) measured what `combiner_shade_scale`
-actually declines, rather than leaving "combiner behavior verified"
-unchecked with no further data. A reloc-anchored scan (not `Exhaustive`,
-per RE-072's lesson) over every `G_SETCOMBINE` found 79 of 1360 (5.8%)
-reading `ENVIRONMENT`, 72 of those (91%) matching one shape in some
-cycle: `(PRIM-ENV)*TEXEL+ENV`, a texture-driven blend from `ENV` to
-`PRIM` with no shade term at all — across 28 files, including three
-fighters' own base models (Link, Ness, Pikachu). Verified one occurrence
-directly against ROM bytes (Link's own model, offset `0x11670`,
-`hi=0x00309661 lo=0x552EFF7F`), not just the scan output.
+`IN_PROGRESS`. RE-074 (this session) closed the loop RE-073 left open.
+RE-073's low-confidence deferral was whether baking a `TEXTURE_BLEND`
+primitive's flat base colour into its vertices could corrupt a vertex
+shared with a normally-shaded primitive loading the same RSP
+vertex-cache slot. Reading `crates/ssb-rom/src/mesh.rs`'s existing
+`Builder::push_vertex` answered it without new experimentation: it
+already folds `prim_color`'s scale into a vertex's `rgba` *before*
+deduplicating (`Builder::seen: BTreeMap<MeshVertex, u16>`, keyed on the
+already-coloured vertex), and its own doc comment says the dedup turns a
+vertex shared by two differently-coloured primitives into two entries by
+itself. `texture_blend` baking a flat base colour the same way inherits
+that guarantee for free — the "risk" was a real gap in what had been
+*checked*, not a real gap in the architecture.
 
-`combiner_shade_scale` correctly declines this shape: it has a nonzero
-constant term *and* a nonzero texel term with no shade dependence, which
-cannot be folded into a single scale on the vertex shade. Recognized
-separately as its own case: added `combiner_texture_blend`
-(`crates/ssb-rom/src/mesh.rs`), which returns `(base, target)` and is
-gated on a real texture being bound (same reasoning as RE-069's
-`alpha_test`/`translucent` gate — `TEXEL` means nothing without one).
-Factored the shared two-cycle evaluation logic both functions need out
-into `evaluate_combiner` (behaviour-preserving refactor, existing
-`combiner_shade_scale` tests unchanged).
+Shipped the bake (mirroring `prim_color`'s branch) and wired
+`psp/src/meshdraw.rs`'s `apply_material` to
+`sceGuTexFunc(TextureEffect::Blend, ...)`/`sceGuTexEnvColor`. Doing the
+wiring correctly surfaced a real, previously-latent bug: `bind_texture`
+unconditionally called `sceGuTexFunc(Modulate, ...)` on every texture
+change, which would have silently clobbered a `Blend` state set moments
+earlier whenever a `TEXTURE_BLEND` primitive's texture changed but its
+coarse `flags` word didn't (two primitives can share identical flags with
+different target colours). Fixed by removing that hardcoded call and
+tracking the blend state in its own `DrawState::last_texture_blend`
+field, independent of the existing `last_flags`/`last_texture` fields —
+the same reasoning that gives each of those its own field already.
 
-This maps exactly to the PSP GE's native `TextureEffect::Blend`
-(`Cv = Cf*(1-Ct) + Cc*Ct`, `Cf`=base, `Cc`=target via
-`sceGuTexEnvColor`) — unlike RE-067's mirror-texture fix, this costs
-**zero VRAM**. Shipped detection into the pack format
-(`crates/ssb-rom/src/pack.rs`'s `flags::TEXTURE_BLEND` plus two new
-`PrimDesc` fields, `PrimDesc::SIZE` 24→32 bytes, `VERSION` 9→10), but
-followed the same detect-now/consume-later precedent RE-069 set for
-`translucent`: `psp/src/meshdraw.rs` does not wire it to
-`sceGuTexFunc`/`sceGuTexEnvColor` yet, because doing so correctly needs
-affected primitives' vertices baked with a flat base colour instead of
-their usual shade, and whether any of those vertices are shared with a
-normally-shaded primitive (which a blanket override would then corrupt)
-has not been checked this pass. `PLAN.md` R0.6's "combiner behavior
-verified" stays unchecked for that reason, but is now backed by a real
-measurement and a shipped, tested detector rather than an open question.
+Verified visually, not just by compiling: no existing debug-viewer
+control reaches a specific fighter's specific object headlessly, so a
+temporary, fully reverted patch to `psp/src/main.rs` forced the viewer
+onto object 306 (file 324 LinkModel's own `TEXTURE_BLEND` piece, found by
+scanning the pack for the flag). Screenshotted before (via `git stash` of
+the wiring changes, rebuilding from a deleted `EBOOT.PBP` each time per
+RE-070's lesson) and after: before, a flat monochrome grey shape (the raw
+packed-normal byte, no combiner colour); after, the correct grey-to-orange
+gradient. Also re-screenshotted Dream Land's stage view (unaffected by
+this shape) before and after — pixel-identical, no regression. `PLAN.md`
+R0.6's "combiner behavior verified" item is now checked.
 
 ## Last Completed Task
+
+R0.6 — Material System Correctness — RE-073 (earlier this session)
+measured what `combiner_shade_scale` actually declines. A reloc-anchored
+scan (not `Exhaustive`, per RE-072's lesson) over every `G_SETCOMBINE`
+found 79 of 1360 (5.8%) reading `ENVIRONMENT`, 72 of those (91%) matching
+one shape in some cycle: `(PRIM-ENV)*TEXEL+ENV`, a texture-driven blend
+from `ENV` to `PRIM` with no shade term at all — across 28 files,
+including three fighters' own base models (Link, Ness, Pikachu). Verified
+one occurrence directly against ROM bytes (Link's own model, offset
+`0x11670`, `hi=0x00309661 lo=0x552EFF7F`), not just the scan output.
+Added `combiner_texture_blend` (`crates/ssb-rom/src/mesh.rs`) to detect
+it, gated on a real texture being bound (same reasoning as RE-069's
+`alpha_test`/`translucent` gate), and factored the shared two-cycle
+evaluation logic out into `evaluate_combiner` (behaviour-preserving).
+Shipped detection into the pack format (`pack.rs`'s `flags::TEXTURE_BLEND`
+plus two new `PrimDesc` fields, `PrimDesc::SIZE` 24→32, `VERSION` 9→10) —
+device-side consumption followed in RE-074, above.
 
 R0.6 — Material System Correctness — RE-072 (earlier this session)
 closed the "fog verified" item, and along the way caught its own
@@ -311,22 +329,22 @@ point already recorded rather than an open-ended search:
    Phase D's updated entry.
 3. **`R0.6`'s remaining, less-scoped items** — "material tables resolved",
    "primitive color verified", "environment color verified", "unsupported
-   material behavior identified". "Fog verified" is checked (RE-072); the
-   dominant declined combiner shape is now identified, measured and
-   detected (RE-073), but "combiner behavior verified" itself stays
-   unchecked until either (a) `combiner_texture_blend`'s detection is
-   wired up on the device side (needs a vertex-sharing check first — see
-   RE-073's confidence note) or (b) the remaining ~8% of ENV-reading
-   combiners (and whatever `combiner_shade_scale` declines that never
-   reads ENV at all) get the same treatment. Read `PLAN.md` R0.6's
-   acceptance list fresh rather than assuming — the pattern that has paid
-   off repeatedly this session (RE-065's lighting angle, RE-068's geometry
-   mode, RE-069's render mode, RE-072's fog, RE-073's combiner shape) is:
-   find where `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the
-   *default* for whatever's being checked, or measure what a declined case
-   actually looks like archive-wide, before assuming `mesh.rs`'s current
-   fallback already matches reality or that a rare-but-nonzero count means
-   nothing.
+   material behavior identified". "Fog verified" (RE-072), "depth state
+   verified"/"culling verified" (RE-068), "alpha behavior verified"
+   (RE-069) and now "combiner behavior verified" (RE-073/RE-074) are all
+   checked. The remaining ~8% of ENV-reading combiners (and whatever
+   `combiner_shade_scale` declines that never reads ENV at all) are not
+   exhaustively catalogued, but are folded into "primitive color
+   verified"/"environment color verified" rather than blocking anything
+   further — a smaller-scoped, lower-priority tail, not a new open
+   question. Read `PLAN.md` R0.6's acceptance list fresh rather than
+   assuming — the pattern that has paid off repeatedly this session
+   (RE-065's lighting angle, RE-068's geometry mode, RE-069's render mode,
+   RE-072's fog, RE-073/RE-074's combiner shape) is: find where
+   `refs/ssb-decomp-re/src/sys/rdp.c`'s reset list sets the *default* for
+   whatever's being checked, or measure what a declined case actually
+   looks like archive-wide, before assuming `mesh.rs`'s current fallback
+   already matches reality or that a rare-but-nonzero count means nothing.
 
 **Before trusting any on-device comparison**, delete
 `psp/target/mipsel-sony-psp/release/EBOOT.PBP` (or otherwise confirm a

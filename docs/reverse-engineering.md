@@ -4809,3 +4809,83 @@ decoded from Link's own file, not just synthetic test vectors). **Low**
 for whether baking a flat vertex colour is safe to wire up without
 corrupting shared vertices — that is exactly why it is deferred rather
 than shipped.
+
+## RE-074 — The texture blend's "shared vertex" risk was already handled; shipped and verified on Link's own model
+
+**Question.** RE-074 picks up exactly where RE-073 left off. The
+low-confidence concern that deferred device-side consumption was whether
+baking `combiner_texture_blend`'s flat base colour into a primitive's
+vertices could corrupt a vertex shared with a normally-shaded primitive
+loading the same RSP vertex-cache slot. Is that actually a risk, or was
+it never checked against how this converter already handles the
+analogous case?
+
+**It was already handled — by the same mechanism `prim_color` folding
+already relies on.** `crates/ssb-rom/src/mesh.rs`'s `Builder::push_vertex`
+already folds a resolved `prim_color` scale into a vertex's `rgba` bytes
+*before* deduplicating it (`Builder::seen: BTreeMap<MeshVertex, u16>`,
+keyed on the full, already-coloured vertex, including `rgba`) — its own
+doc comment says so explicitly: "the dedup below turns a vertex shared by
+two primitives of different colours into two entries by itself, because
+the folded colour is part of the key." Two primitives loading the
+*same* underlying N64 vertex data under *different* material state
+already produce two *different* `MeshVertex` entries post-fold, by
+construction, with no special-casing needed. `texture_blend` baking a
+flat `base` colour the same way inherits the same guarantee for free:
+a `TEXTURE_BLEND` primitive's baked vertex cannot collide with a
+differently-coloured vertex from another primitive, because the bake
+happens before the same content-keyed dedup runs. The "unverified risk"
+in RE-073 was a real gap in what had been *checked*, not a real gap in
+the architecture — reading `push_vertex`'s existing behaviour (and its
+own doc comment) resolved it without needing new code to prove it safe.
+
+**Shipped device-side consumption, plus one wiring bug the design work
+surfaced.** Added the bake to `push_vertex` (mirroring `prim_color`'s
+existing branch) and wired `psp/src/meshdraw.rs`'s `apply_material` to
+`sceGuTexFunc(TextureEffect::Blend, ...)` / `sceGuTexEnvColor` when
+`PrimDesc::flags::TEXTURE_BLEND` is set. Doing this correctly surfaced a
+real, previously-latent bug: `bind_texture` unconditionally called
+`sceGuTexFunc(Modulate, ...)` on every texture change, which would have
+silently clobbered a `Blend` state set moments earlier in the same
+`apply_material` call whenever a `TEXTURE_BLEND` primitive's texture
+changed but its coarse `flags` word didn't (two primitives can share
+identical flags with different target colours, or an identical
+`TEXTURE_BLEND` bit across different textures). Fixed by removing the
+hardcoded call from `bind_texture` and tracking the blend state with its
+own `DrawState::last_texture_blend` field, independent of both
+`last_flags` and `last_texture` (the same reasoning that gives each of
+those its own field already) — `draw_texture_quad`, `bind_texture`'s only
+other caller, now sets `Modulate` itself rather than relying on a shared
+default.
+
+**Verified visually, not just by compiling.** No existing debug-viewer
+control reaches a specific fighter's specific object headlessly, so a
+temporary, reverted patch to `psp/src/main.rs` (`stage_view = false`,
+`object_index = 306` — object 306 is file 324 LinkModel's own
+`TEXTURE_BLEND` piece, 18 triangles, found by scanning the pack for a
+primitive with the flag set) forced the debug viewer to show it
+directly. Screenshotted **before** (this session's own prior commit,
+detection shipped but not consumed: `git stash` of the wiring changes)
+and **after** (the fix applied), rebuilding from a deleted `EBOOT.PBP`
+both times per RE-070's stale-binary lesson. Before: a flat, monochrome
+grey shape — the untouched packed-normal byte with no combiner colour at
+all. After: the same shape with a warm grey-to-orange gradient, base to
+target. Also re-screenshotted Dream Land's stage view (the project's
+main regression scene, which does not use this combiner shape) before
+and after — pixel-identical, no regression. The temporary viewer patch
+was reverted before committing; only the two screenshots and this
+record remain.
+
+**Result.** `PLAN.md` R0.6's "combiner behavior verified" item is now
+checked: the dominant declined shape is identified, measured, detected,
+packed, consumed on device, and visually confirmed correct against a
+real affected model, with a genuine wiring bug caught and fixed along
+the way rather than merely assumed away.
+
+**Confidence: high.** The vertex-sharing concern was resolved by reading
+existing, already-tested code (`push_vertex`'s dedup, doc-commented as
+deliberate) rather than by assumption; the `bind_texture` clobbering bug
+was caught by tracing the actual call graph, not guessed at; the fix was
+confirmed on a real affected primitive from Link's own model with a
+before/after screenshot pair, plus a same-technique regression check on
+the project's primary test scene.

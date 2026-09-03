@@ -535,12 +535,24 @@ including three fighters' own base models (Link, Ness, Pikachu). Added
 `combiner_texture_blend` to detect it (gated on a real texture, same as
 `alpha_test`/`translucent`), which maps exactly to the PSP GE's native
 `TextureEffect::Blend` at zero VRAM cost. Shipped detection into
-`pack.rs` (`flags::TEXTURE_BLEND`, `VERSION` 9 → 10) but deliberately not
-wired to `sceGuTexFunc` on the device side yet: doing so needs affected
-primitives' vertices baked with a flat base colour, and whether any of
-those vertices are shared with a normally-shaded primitive (which a
-blanket override would then corrupt) has not been checked — same
-detect-now/consume-later shape as RE-069's `translucent`.
+`pack.rs` (`flags::TEXTURE_BLEND`, `VERSION` 9 → 10).
+
+RE-074 closed the loop: the "shared vertex" risk RE-073 deferred on turned
+out to already be handled by `push_vertex`'s existing content-keyed vertex
+dedup (the same mechanism `prim_color` folding already relies on, per its
+own doc comment) — reading that code, not new experimentation, resolved
+it. Wired `apply_material` to `sceGuTexFunc(Blend, ...)`/
+`sceGuTexEnvColor`, catching a real latent bug along the way
+(`bind_texture` unconditionally reset the texture function to `Modulate`
+on every texture change, which would have silently clobbered a `Blend`
+state); fixed by tracking it in its own `DrawState` field, independent of
+the flags/texture dedup fields already there. Verified visually, not just
+by compiling: a temporary, reverted debug-viewer patch forced a direct
+view of Link's own model's `TEXTURE_BLEND` primitive (object 306, file
+324) — before, a flat grey shape (raw packed-normal bytes); after, the
+correct grey-to-orange gradient. Dream Land's stage view (the main
+regression scene, unaffected by this shape) was screenshotted before and
+after too and is pixel-identical.
 
 ### Objective
 
@@ -554,8 +566,8 @@ Reproduce original SSB64 material behavior.
 ### Acceptance
 
 * [ ] material tables resolved
-* [ ] combiner behavior verified — RE-073: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models); detection shipped, device-side consumption deferred pending a vertex-sharing check; no systematic accounting of every other distinct `SetCombine` shape yet
-* [ ] primitive color verified — read by RE-073's shape and by others `combiner_shade_scale` already folds, but not exhaustively accounted for
+* [x] combiner behavior verified — RE-073/RE-074: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models), detected, packed, wired to the PSP GE's native `TextureEffect::Blend`, and visually confirmed correct against Link's own model (before/after screenshots). The general two-cycle evaluation model itself was already verified (RE-039/RE-043); the remaining ~8% of ENV-reading combiners and whatever `combiner_shade_scale` declines outside that are not exhaustively catalogued, but are not the dominant case and are tracked under "primitive color"/"environment color" below rather than blocking this item
+* [ ] primitive color verified — read by RE-073's shape (now consumed) and by others `combiner_shade_scale` already folds, but not exhaustively accounted for
 * [ ] environment color verified — same as primitive color
 * [ ] lighting verified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
@@ -567,7 +579,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074 in `docs/reverse-engineering.md`.
 
 ### Evidence
 
