@@ -16,7 +16,56 @@
 
 ## Task Status
 
-`IN_PROGRESS` on `R0.10`. RE-093 (this session) picked up exactly the
+`IN_PROGRESS` on `R0.10`. RE-094 (this session) closed the lead RE-093
+(previous session) left open: node 27's `texture_enabled` was `false` for
+its whole span despite actively loading textures. Traced `texture_enabled`
+node-by-node across the same graph (temporary instrumentation, reverted)
+and found it flips to `false` exactly once, inside **node 20's own
+list** — `SetCombine → Texture{on: false} → one untextured triangle`, a
+self-contained decal with no `G_SETTIMG` of its own. Nothing re-enables it
+from node 21 through node 27, yet four of those seven nodes each issue a
+complete, independent `G_SETTIMG`/`G_SETTILE`/`G_LOADTLUT`/`G_LOADBLOCK`
+chain and draw real triangles — only explicable if texturing is genuinely
+active there.
+
+Measured before fixing (temporary bypass on `current_texture()`'s
+`texture_enabled` gate, reverted): ignoring the flag outright takes the
+pack from 639→648 textures and 25/33→33/33 surviving `mat_anim` scripts,
+confirming the exact scope — but a blanket ignore is not *correct*, since
+it would also re-texture node 20's own deliberately-untextured decal
+using whatever stale binding preceded it. Shipped a narrower rule
+instead: `Cmd::SetTimg` now sets `texture_enabled = true` unconditionally
+— a display list has no reason to reissue a whole texture chain for
+geometry meant to draw untextured, so a fresh `G_SETTIMG` is as strong a
+signal as an explicit `Texture{on: true}`. Re-measured with the narrower
+rule: **identical result** to the blanket bypass (639→648, 25→33),
+confirming it loses nothing the blanket version gained while leaving node
+20 (no `SetTimg` of its own) genuinely untouched.
+
+**Also fixed a test that was passing for the wrong reason.**
+`texture_disabled_means_no_binding` omitted `Cmd::SetTile` entirely, so
+its `None` result was actually caused by a missing tile format, not the
+disabled flag its name claims to cover — after this fix it would have
+kept passing vacuously. Rewrote it with a complete texture setup plus an
+*explicit* `Texture{on: false}`. Added
+`a_later_nodes_own_settimg_overrides_an_inherited_texture_off`,
+reproducing nodes 20→21's exact real shape, verified capable of failing
+(reverted the `SetTimg` change, confirmed the panic, restored). `cargo
+test --workspace`: 245 passing (was 244). `cargo clippy --release`
+(workspace): clean.
+
+**Result, run against the real ROM: 33 of 33 known scripts now survive**
+(321 palette variants, up from 297) — every script RE-089 originally
+found. Texture count 639 → 648 (+9, all static/non-animated textures
+recovered the same way). Meshes/triangles unchanged; `draws` rose
+3447→3494 (more primitives correctly split into their own textured group
+instead of merging into an untextured one). `cargo psp --release` +
+`tools/run-ppsspp.sh`: builds and runs clean, no panics, Dream Land
+pixel-identical at 60 FPS. **The RE-092/093 open question is now fully
+closed, not partially explained** — step 7 of this file's own pipeline
+list is done.
+
+Immediately before this, RE-093 (previous session) picked up exactly the
 open item the previous session's own note flagged: why did only 17 of
 RE-089's 33 known `PaletteID`-cycling scripts survive RE-092's pipeline?
 Treated as a real unknown, not a rounding error, per this file's own
@@ -1240,14 +1289,25 @@ a lookup:
    multi-palette-sharing-one-image primitive anywhere in the archive was
    exposed — yet Dream Land still renders pixel-identical (it has none of
    this shape, or none visible at the tested distance).
-7b. **Open, not investigated: 8 of 33 known scripts still don't survive.**
-   One concrete, different lead from this session's own diagnostic: file
-   105 node 27's `texture_enabled` was `false` for its entire span despite
-   actively loading TLUTs and, for 3 of 7 entries, issuing real
-   `G_SETTIMG`/`G_LOADBLOCK` pairs — behavior that only makes sense with
-   texturing genuinely on. This points at `mesh.rs`'s cross-node
-   `texture_enabled` inheritance (RE-064) itself, not at `Cmd::LoadTlut` —
-   a different mechanism from this session's fix, unchecked.
+7b. ~~Investigate why 8 of 33 known scripts still don't survive~~ — done
+   (RE-094). Traced `texture_enabled` node-by-node and found it flips
+   `false` exactly once, inside node 20's own self-contained untextured
+   decal (no `G_SETTIMG` of its own), and nothing re-enables it through
+   nodes 21-27 despite four of those seven issuing a complete, independent
+   texture chain and drawing real triangles. Measured a blanket bypass
+   first (reverted): fixes it (639→648 textures, 25→33 scripts) but isn't
+   *correct* (would also re-texture node 20's decal). Shipped the narrower
+   rule instead — `Cmd::SetTimg` now sets `texture_enabled = true`
+   unconditionally, since a display list has no reason to reissue a whole
+   texture chain for geometry meant to stay untextured — re-measured to
+   the identical result while leaving node 20 untouched. Also caught and
+   fixed an existing test that was passing for the wrong reason (missing
+   tile format, not the disabled flag its name claimed). New test
+   reproduces nodes 20→21's exact shape, verified capable of failing.
+   **Archive-wide: all 33 of RE-089's known scripts now survive** (321
+   palette variants), +9 static textures recovered, meshes/triangles
+   unchanged. `cargo test --workspace`: 245 passing. Dream Land
+   pixel-identical. This closes the RE-092/093 open question completely.
 8. A `MaterialAnimator` (mirroring `StageAnimator`'s three-phase
    lifecycle: start on layer change, tick per frame, apply in draw) that
    wraps `MaterialJoint::tick`, resolves the live `PaletteID` value each
