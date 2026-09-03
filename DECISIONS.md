@@ -305,7 +305,17 @@ G) is no longer optional headroom.
 
 **Reasoning:** Not worth runtime cost. Confirmed by `romtool scan` opcode counts.
 
-**Reference:** `docs/rendering.md` "Measured usage"
+**Re-verified (RE-072):** the "twice" figure held up against a stricter check
+than the original opcode count — reliable, reloc-anchored display-list
+discovery (an `Exhaustive`-mode re-scan initially found 7/4, both false
+positives from that mode's known noise). Both real occurrences are
+functionally inert, not just rare: no code anywhere in the decompilation
+calls `gSPFogPosition` to configure a fog range, and the one real stage
+that sets a fog colour (`118_StageYosterSmallFile2`) never references
+`G_BL_CLR_FOG` in its own render mode, so the colour is set and never
+read by anything.
+
+**Reference:** `docs/rendering.md` "Measured usage", RE-072
 
 ---
 

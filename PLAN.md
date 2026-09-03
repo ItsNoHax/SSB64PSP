@@ -545,14 +545,14 @@ Reproduce original SSB64 material behavior.
 * [ ] lighting verified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
-* [ ] fog verified
+* [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
 * [ ] unsupported material behavior identified
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072 in `docs/reverse-engineering.md`.
 
 ### Evidence
 
