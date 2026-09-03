@@ -5444,3 +5444,86 @@ repack's own reported numbers, not assumed). **Not independently
 confirmed on-device** beyond the unaffected regression scene: no specific
 flat-coloured primitive elsewhere in the archive was screenshotted
 before/after the way RE-074 did for its own combiner shape.
+
+## RE-081 — Dream Land's two canopy textures are scaled oppositely; a second blur pass measurably helps the texture but not confirmed on screen
+
+**Question.** RE-053 found Dream Land's canopy dither pattern "sharpens
+with resolution", arguing for *magnification*, while its own UV-span
+measurement (`3.70×1.36` repeats) said *minification*. RE-070/075
+treated both of `NEEDS_DITHER_BLUR`'s two named textures identically.
+Which is actually true, for which texture, and does that change what the
+next step should be?
+
+**Measured, not assumed: the two textures scale oppositely.** `romtool
+textures --file 104` prints each bound texture's UV-span-derived repeat
+count. The "Dream Land canopy gradient" (file 103, offset `0xE20`) binds
+at `3.70×1.36` repeats — genuinely minified, confirming RE-053's own
+number for *that* texture. The "Dream Land canopy highlight" (file 103,
+offset `0x5F0`) binds at `1.56×0.88` repeats — its V axis is **below
+1.0**, meaning it is magnified vertically, not minified. RE-053's
+"sharpens with resolution" symptom and its "3.70×1.36 means minified"
+measurement were never in conflict about the same texture; they were
+each correct about a *different* one of the two textures the fix was
+applied to uniformly.
+
+**A second blur pass reduces texture-level noise substantially further.**
+A temporary `romtool` subcommand (reverted, not committed) decoded both
+textures directly from the ROM and measured mean adjacent-pixel channel
+difference (the same "local noise" quantity RE-070 used) at zero, one,
+two and three `box_blur_wrapped` passes:
+
+| texture   | raw   | 1× (shipped) | 2×   | 3×   |
+|-----------|-------|---------------|------|------|
+| gradient  | 18.95 | 5.64          | 3.69 | 2.84 |
+| highlight | 23.65 | 6.14          | 3.73 | 2.92 |
+
+Going from one pass (already shipped) to two reduces noise a further
+~35–40% on both textures — a bigger relative gain than "diminishing
+returns" would suggest, and exactly the "larger blur radius or multiple
+passes" option `STATUS.md` had listed as untried.
+
+**Not confirmed to be visible, so not shipped.** Applied a second pass as
+a reversible, temporary change to `convert_texture`, rebuilt the pack
+(no `psp/` source changes needed -- only the data differs), and captured
+before/after screenshots of Dream Land's canopy from a fixed camera,
+cropped to the same region. `magick compare -metric MAE` measured a real
+but small difference (0.26% of full range, `RMSE` 1.5%), and side-by-side
+enlarged crops of the canopy look indistinguishable to the eye -- the
+diagonal dither pattern is still clearly present in both. This is the
+same outcome RE-075 already found for a different change to these same
+textures: a measured, real difference at the byte level that does not
+surface as a visible difference at the debug viewer's tested camera
+distance. Per RE-071's lesson (a measured improvement is not sufficient
+on its own -- the image has to actually look better), this was **not**
+shipped. Reverted the experimental subcommand and the double-blur change
+completely; `git status`/`git diff` confirm the tree matches `HEAD`
+before this investigation, and a repack from the reverted state matches
+the previously committed one.
+
+**What this changes going forward.** The "push further on the dither"
+lead is now narrower, not closed: blur radius/pass count is not obviously
+the bottleneck (it measurably helps the source texture a lot, but that
+does not reach the screen at this distance), and RE-053's own suggested
+next step -- deciding this on real hardware, or rendering the surface in
+isolation at a controlled, known scale -- looks more necessary than
+before, not less. `PPSSPP`'s software rasteriser has no equivalent of the
+N64's composite-video softening (RE-053's original observation), so a
+PSP LCD at native resolution may simply never reproduce the original's
+look here regardless of texture-side preprocessing, which is a real
+possibility this investigation cannot rule in or out without `R2`
+physical hardware access. Two, not three, ideas from `STATUS.md`'s list
+now remain: RE-053's magnification-vs-minification confusion is resolved
+(this entry), the "larger blur radius" idea is tried and inconclusive
+(this entry) -- what has not been tried is blurring *only* the correct
+axis for each texture's actual scaling (anisotropic, matching each
+texture's real magnification/minification direction instead of an
+isotropic 3×3 box blur applied to both uniformly), which this entry did
+not attempt.
+
+**Confidence: high** for the UV-span measurement (the same mechanism
+`romtool textures --file` already used and trusted for other stages) and
+for the blur-pass noise reduction (direct, reproducible pixel-level
+computation, not sampled or estimated). **Low** that any amount of
+further texture-side blur alone will resolve the visible discrepancy,
+given a substantially larger change than RE-070's already-shipped one
+still did not surface on screen.

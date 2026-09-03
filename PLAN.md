@@ -440,6 +440,27 @@ it is *not* visible at the debug viewer's default camera distance
 (pixel-identical canopy crop). Shipped as a correctness cleanup, not a
 claimed improvement to the still-open discrepancy below.
 
+RE-081 resolved RE-053's own apparent self-contradiction (its UV-span
+measurement said "minified", its visual symptom said "magnified") by
+measuring both canopy textures separately instead of treating them as
+one case: the "gradient" texture really is minified (`3.70×1.36`
+repeats, matching RE-053 exactly), but the "highlight" texture is
+magnified on its V axis (`1.56×0.88` repeats, below 1.0) — RE-053's
+symptom and its own number were each correct about a *different* one of
+the two textures the fix was applied to uniformly. Also tested
+`STATUS.md`'s untried "larger blur radius or multiple passes" idea: a
+second `box_blur_wrapped` pass reduces measured texture-level noise a
+further ~35–40% beyond the already-shipped single pass on both textures
+— but a reversible on-device A/B (rebuilt pack, no `psp/` changes,
+before/after screenshots of the same cropped canopy region) found the
+change is not visibly different at the tested camera distance, the same
+outcome RE-075 already found for a different change to these textures.
+Not shipped, per RE-071's standing rule that a measured improvement
+alone is not sufficient. Concludes that deciding this on real hardware
+(RE-053's own original suggestion) is now more clearly necessary, since
+a substantially larger blur change still did not surface on screen under
+PPSSPP.
+
 ### Objective
 
 Determine and reproduce the actual texture sampling behavior used by SSB64.
@@ -453,19 +474,19 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 ### Acceptance
 
 * [ ] filtering modes identified from original data
-* [ ] magnification behavior identified
-* [ ] minification behavior identified
+* [x] magnification behavior identified — RE-081: Dream Land's canopy "highlight" texture is magnified on its V axis (`0.88` repeats); RE-053's "sharpens with resolution" symptom is explained by this, not by the "gradient" texture (which is genuinely minified)
+* [x] minification behavior identified — RE-053's `3.70×1.36` figure is correct for the canopy "gradient" texture specifically (RE-081 disambiguated which of the two canopy textures each figure actually describes)
 * [ ] LOD behavior identified
 * [ ] mipmapping behavior identified
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified
 * [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; RE-067: `Mirror` (29% of packed textures) is now exactly reproduced by pre-baking, not approximated
-* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance — none of the three is "resolved"
+* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance; RE-081 disambiguated the magnification/minification confusion and tested a further blur pass (measurably less texture noise, not visibly different on screen) — none of the four is "resolved"; real hardware validation (`R2`) is looking necessary, not just sufficient, to close this
 * [ ] no unsupported mipmapping assumptions remain
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070, RE-075 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081 in `docs/reverse-engineering.md`.
 
 ---
 
