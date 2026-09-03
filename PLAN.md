@@ -970,6 +970,26 @@ ever asks for) — so reading `palettes[]` and resolving `p_matanim_joints`
 are not separable steps as this task's own prior note assumed; they need
 to land together.
 
+RE-089 resolved `p_matanim_joints` into per-(node, `MObj`-chain-position)
+script addresses: generalised `matanim.rs`'s existing fighter-costume walk
+into `resolve_scripts` (shared, tested, `costume_colors` rebuilt on top of
+it unchanged), and wired it permanently into `romtool stages`, which
+replays every resolved script with the already-shipped `MaterialJoint`
+engine. Archive-wide (same-file tables only, matching RE-086's own scope
+limit): 61 scripts, 0 failures — the first archive-wide exercise of
+`MaterialJoint` beyond RE-087's one hand-picked example. Ticking each
+`PaletteID` script to completion and taking its largest value gives the
+exact `palettes[]` bound RE-088 said could not come from the struct
+itself: file 117 (`StageMetalFile2`, RE-088's own cited decomp example)
+independently resolves to exactly 16 entries, matching its ROM source's
+`..._palettes[16]` byte-for-byte from a completely different method (the
+runtime script's own values, not the C array's declared size). File 105
+(`StageZebesFile2`, 18 scripts needing 2–4 entries) and file 114
+(`StageLastFile2`, 13 scripts needing 18 entries each) are concrete,
+non-Dream-Land candidates for step 6's "representative palette-cycling
+stage". Step 2 (reading `palettes[1..]`) is now unblocked, using this
+resolved bound rather than guessing at file layout.
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -983,14 +1003,14 @@ Implement material animation used by SSB64.
 
 * [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
 * [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
-* [ ] material state updated correctly — nothing resolves `p_matanim_joints` into per-(node, `MObj`) script references at pack time yet, `mobj.rs` still reads `MObjSub.palettes[0]` only (RE-088: extending this in isolation is not possible — the real palette-table length is only recoverable from the driving script), no pack table carries any of this, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
+* [ ] material state updated correctly — RE-089: `p_matanim_joints` now resolves into per-(node, `MObj`-chain-position) script addresses (`matanim::resolve_scripts`), and the real `palettes[]` bound each script needs is now known (ticking `MaterialJoint` to completion); still open: `mobj.rs` itself still reads `MObjSub.palettes[0]` only, no pack table carries any of this yet, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
 * [ ] representative animated materials verified
-* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); a representative verification pass needs a palette-cycling stage, not Dream Land
+* [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); RE-089 found concrete representative candidates (file 105, file 114) but did not verify either on-screen
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086, RE-087, RE-088 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087, RE-088, RE-089 in `docs/reverse-engineering.md`.
 
 ---
 

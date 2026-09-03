@@ -2675,6 +2675,32 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut with_table = 0usize;
     let mut collision_ok = 0usize;
     let mut collision_bad = 0usize;
+    // Stage material animation (RE-089): replay every script `p_matanim_joints`
+    // resolves, the same way the joint-animation block above already replays
+    // `anim_joints`. Cross-checks `matanim::resolve_scripts` (RE-089) and the
+    // already-shipped `MaterialJoint` tick engine (RE-087) against RE-086's
+    // independently-produced archive-wide census.
+    const MATANIM_TRACK_NAMES: [&str; ssb_rom::matanim::TICK_TRACK_COUNT] = [
+        "TextureIDCurrent",
+        "TraU",
+        "TraV",
+        "ScaU",
+        "ScaV",
+        "TextureIDNext",
+        "ScrU",
+        "ScrV",
+        "SetLFrac",
+        "PaletteID",
+        "PrimColor",
+        "EnvColor",
+        "BlendColor",
+        "Light1Color",
+        "Light2Color",
+    ];
+    let mut matanim_scripts = 0usize;
+    let mut matanim_fail = 0usize;
+    let mut matanim_categories = [0usize; ssb_rom::matanim::TICK_TRACK_COUNT];
+    let mut palette_examples: Vec<(u32, u32, u32, u32)> = Vec::new(); // (file, graph, script, entries needed)
     for s in &loaded.stages {
         if only_file.is_some_and(|f| f != s.file) {
             continue;
@@ -2758,6 +2784,70 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                                 }
                             }
                             anim_frames += frames as u64;
+                        }
+                    }
+                }
+            }
+            // Same-file only (RE-086's own scope limit): both the script table
+            // and the chain-length source it is walked against have to live in
+            // the graph's own file for `resolve_scripts` to make sense of them.
+            if let Some((mf, mat)) = l.matanim_joints {
+                if mf == l.graph.0 {
+                    if let Some(f) = loaded.files.get(mf as usize).and_then(Option::as_ref) {
+                        let chain_table = match l.mobjsub_table {
+                            Some((tf, at)) if tf == l.graph.0 => {
+                                ssb_rom::mobj::read_table(f, at, nodes)
+                            }
+                            _ => None,
+                        };
+                        let scripts = ssb_rom::matanim::resolve_scripts(f, mat, nodes, |n| {
+                            chain_table.as_ref().map_or(0, |t| t.nodes[n].len())
+                        });
+                        for chain in &scripts {
+                            for &script in chain.iter().flatten() {
+                                matanim_scripts += 1;
+                                let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
+                                let mut max_palette = 0.0f32;
+                                let mut frames = 0u32;
+                                let mut err = None;
+                                loop {
+                                    if let Err(e) = j.tick(&f.data, 1.0) {
+                                        err = Some(e);
+                                        break;
+                                    }
+                                    frames += 1;
+                                    if let Some(v) =
+                                        j.track_value(ssb_rom::matanim::TRACK_PALETTE_ID)
+                                    {
+                                        max_palette = max_palette.max(v);
+                                    }
+                                    if j.ended() || j.looped() || frames >= ANIM_REPLAY_FRAMES {
+                                        break;
+                                    }
+                                }
+                                match err {
+                                    Some(e) => {
+                                        matanim_fail += 1;
+                                        println!(
+                                            "  MATANIMFAIL file {mf} script 0x{script:X}: {e}"
+                                        );
+                                    }
+                                    None => {
+                                        for (i, count) in matanim_categories.iter_mut().enumerate()
+                                        {
+                                            if j.track_value(i).is_some() {
+                                                *count += 1;
+                                            }
+                                        }
+                                        let entries = max_palette.round() as u32 + 1;
+                                        if j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID)
+                                            && entries > 1
+                                        {
+                                            palette_examples.push((mf, l.graph.1, script, entries));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2856,6 +2946,32 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
         "  pose values: {anim_denormal} denormal, {anim_wild} non-finite or absurd, largest {anim_max:.1}"
     );
     println!("collision maps decoded: {collision_ok}, failed: {collision_bad}");
+
+    // RE-089: cross-checks against RE-086's independently-produced census
+    // (172 scripts, 122 PaletteID / 71%) using the shipped `MaterialJoint`
+    // engine end-to-end for the first time, and finds the true `palettes[]`
+    // bound RE-088 showed cannot come from the ROM's own struct layout.
+    println!(
+        "stage material animations replayed: {matanim_scripts} script(s), {matanim_fail} failure(s)"
+    );
+    for (i, name) in MATANIM_TRACK_NAMES.iter().enumerate() {
+        if matanim_categories[i] > 0 {
+            println!(
+                "  {name:<17} {:4} script(s) ({:.0}%)",
+                matanim_categories[i],
+                100.0 * matanim_categories[i] as f64 / matanim_scripts.max(1) as f64
+            );
+        }
+    }
+    if !palette_examples.is_empty() {
+        println!(
+            "  {} PaletteID script(s) cycle through more than one palette:",
+            palette_examples.len()
+        );
+        for (file, graph, script, entries) in &palette_examples {
+            println!("    file {file} graph 0x{graph:X} script 0x{script:X}: {entries} entries");
+        }
+    }
 
     if let Some(pack_path) = pack_path {
         verify_stage_anims_against_pack(&loaded, &pack_path)?;
