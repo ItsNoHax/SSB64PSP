@@ -935,6 +935,26 @@ image from CLUT (`sceGuClutLoad`), so swapping a bound texture's active
 palette needs no new combiner or vertex-recolouring machinery. No code
 changed — a scoping/measurement pass, the same shape as RE-072/RE-081.
 
+RE-087 decoded a real `PaletteID`-cycling script byte-for-byte (temporary
+`romtool` subcommands, reverted) and found it is a genuine, continuous
+loop — `SET_VAL_AFTER_BLOCK` stepping `PaletteID` through
+`0,1,2,3,2,1,0,...`, then `SET_ANIM` jumping back to the script's own
+start, not a one-shot key list. `colors_at` declines `JUMP` outright
+("a costume list has no reason to jump"), correct for its own use case
+but confirmed wrong for the general one. Added
+`matanim::MaterialJoint`, a persistent tick-based player reusing
+`crate::figatree::Aobj`/`Kind` — the same interpolation state
+`crate::objanim::StageJoint` already plays joint tracks with — over a
+unified 15-track window (ten material tracks, then the five colour
+tracks), with the same `JUMP`/`SET_ANIM` handling `StageJoint` already
+has correctly. `colors_at`/`Colors`/`costume_colors` (fighter costume
+selection, `R0.11`'s mechanism) are untouched. Verified with 7 new unit
+tests reproducing the exact real shape (immediate and delayed steps,
+real `f32` bit patterns, a `SET_ANIM` loop ticked well past the
+script's own length). `cargo test --workspace`: 375 passing (was 368).
+`cargo psp --release` + `tools/run-ppsspp.sh`: builds and runs clean
+under the real PSP target too, though nothing calls this yet.
+
 ### Objective
 
 Implement material animation used by SSB64.
@@ -946,16 +966,16 @@ Implement material animation used by SSB64.
 
 ### Acceptance
 
-* [ ] animation data decoded — the colour-track decoder (`matanim.rs::colors_at`) exists but is a one-shot "evaluate at frame N" costume-selection reader, not a persistent per-tick engine; RE-086 found colour is under 2% of what actually needs decoding, so a `PaletteID`/`TextureIDCurrent`/UV-track decoder (mirroring `objanim.rs::StageJoint`'s persistent tick model, not `colors_at`'s) is the real remaining work here
-* [ ] runtime clock implemented — needs the same three-phase lifecycle `StageAnimator` (R0.9) already established (start-on-layer-change, tick-per-frame, apply-in-draw), not yet built for material tracks
-* [ ] material state updated correctly
+* [x] animation data decoded — RE-087: `matanim::MaterialJoint`, a persistent tick-based decoder covering the material and colour track windows and every opcode a real script uses (including `JUMP`/`SET_ANIM`, which `colors_at` declines), verified against the real `PaletteID`-cycling shape
+* [x] runtime clock implemented — RE-087: `MaterialJoint::tick` is the clock itself (parse-then-age, mirroring `StageJoint`'s own tick contract exactly); what remains is the *lifecycle* around it (start-on-layer-change, apply-in-draw), not the clock mechanism
+* [ ] material state updated correctly — nothing resolves `p_matanim_joints` into per-(node, `MObj`) script references at pack time yet, `mobj.rs` still reads `MObjSub.palettes[0]` only, no pack table carries any of this, and nothing on the device side calls `MaterialJoint` or reloads a CLUT
 * [ ] representative animated materials verified
 * [ ] stage material animation verified — RE-086 identified Dream Land's own layer as a texture-UV-sway case specifically (`TraU`/`SetLFrac`), not representative of the archive-wide dominant case (`PaletteID`); a representative verification pass needs a palette-cycling stage, not Dream Land
 * [ ] fighter material animation verified where applicable — this is `R0.11`'s costume-selection mechanism (already working via `colors_at`), a different code path from stage material animation; "where applicable" likely means confirming the two do not need to be unified, not implementing anything new here
 
 ### Evidence
 
-RE-048, RE-086 in `docs/reverse-engineering.md`.
+RE-048, RE-086, RE-087 in `docs/reverse-engineering.md`.
 
 ---
 

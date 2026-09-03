@@ -5934,3 +5934,96 @@ not). **Not attempted**: cross-file `p_matanim_joints` tables (skipped
 for this census, so the true archive-wide script count is a lower bound,
 not exhaustive) and any device-side implementation of any of the three
 mechanisms this entry identifies.
+
+## RE-087 — A tick-based `PaletteID` decoder, verified against a real script's exact shape
+
+**Question.** RE-086 scoped R0.10 correctly (`PaletteID` cycling, not
+colour, is the dominant case) but implemented nothing. Before writing a
+runtime engine, what does a real `PaletteID`-cycling script's *exact*
+instruction sequence look like, and can [`crate::matanim`]'s existing
+[`colors_at`] be extended to play it, or does it need something else?
+
+**A real example, decoded byte-for-byte (temporary `romtool` subcommands,
+reverted, not committed).** A representative script (found by searching
+every stage's `p_matanim_joints` table for one that sets `PaletteID`)
+is a loop: `SET_VAL_AFTER_BLOCK` steps `PaletteID` through
+`0,1,2,3,2,1,0,1,2,3,2,1,0` (the first step at `payload=0`, immediate;
+every later one at `payload=10`, a ten-frame hold), then a
+`SET_ANIM` command jumps back to the script's own start — a genuine,
+continuous, looping animation, not a one-shot key list. Two things this
+means for the engine:
+
+* The raw value words are real IEEE-754 `f32` bit patterns holding small
+  integers (`0x3F800000` = `1.0`, not `1` reinterpreted some other way) —
+  the palette index is `value.round() as u32` at read time, not a raw
+  bit reinterpretation the way colour tracks are.
+* `SET_ANIM`'s jump has to actually work. [`colors_at`] declines `JUMP`
+  outright ("a costume list has no reason to jump"), which was correct
+  for its own use case but is now confirmed wrong for the general case —
+  a real script *does* rely on `SET_ANIM`'s jump to loop forever.
+
+**Reused, not reinvented, the interpolation state machine.** `SET_VAL_AFTER_BLOCK`
+is exactly the "step" shape [`crate::figatree::Aobj`]/`Kind::Step` already
+implements for joint tracks (`crate::objanim::StageJoint` already plays a
+structurally identical opcode stream correctly, including `JUMP`/`SET_ANIM`,
+for position/rotation/scale). Added `matanim::MaterialJoint`, a persistent,
+tick-based player built the same way `StageJoint` is — same `parse()`/`apply()`
+shape, same `Aobj` per-track state — but over a *unified* 15-track window
+(`TICK_TRACK_COUNT`) instead of `StageJoint`'s ten: the ten material tracks
+(`nGCAnimTrackMaterialStart..`, index `0..10`) followed by the five colour
+tracks (`nGCAnimTrackMaterialSubStart..`, index `10..15`), so the same engine
+can eventually play `PrimColor`/`EnvColor`/`BlendColor` too without a third
+parallel implementation. `colors_at`'s existing costume-selection decoder is
+untouched — it solves a different problem (one-shot "evaluate at frame N",
+where `frame` is a costume index, not elapsed time) correctly, and nothing
+about the general case should disturb it.
+
+**The one real subtlety: colour and material tracks are stored the same way,
+but are not interchangeable.** A material track's word is a genuine `f32`;
+a colour track's word is four RGBA bytes `gcPlayMObjMatAnim` reinterprets
+directly, never arithmetic. Storing both in the same `f32`-typed `Aobj`
+slots is safe *only* because a colour track this project's data actually
+uses is always `Kind::Step` (a pure "pick base or target, unchanged"
+selection — matanim.rs's own pre-existing `colors_at` already has this same
+limitation, declining anything else), never `Kind::Linear`/`Kind::Cubic`
+(which perform real arithmetic that would corrupt bit-transmuted colour
+bytes). `MaterialJoint::track_is_stepped` makes this explicit and checkable
+rather than a silent assumption, and a unit test
+(`a_colour_track_set_by_a_ramp_is_not_trusted_as_a_step`) confirms a
+non-step colour track is flagged rather than trusted.
+
+**Verified against the real shape, not just a plausible one.** Unit tests
+reproduce the exact archive pattern found: a step that fires immediately
+(`payload=0`), a step that waits (`payload=3`, chosen distinct from the
+real script's `10` only to keep the test's frame count small), raw
+`0x3F800000`-style float words, and a `SET_ANIM`-terminated infinite loop
+ticked twelve times past the script's own length to confirm it keeps
+cycling rather than erroring or freezing on its first value. `cargo test
+--workspace`: 375 passing (was 368; seven new tests, no regressions).
+`cargo clippy --release` (workspace): clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: builds and runs clean under the real `no_std` PSP
+target too (this code is reachable from there even though nothing calls
+it yet), no panics, Dream Land unchanged (nothing wired to rendering).
+
+**Result.** `crates/ssb-rom/src/matanim.rs` gained `MaterialJoint`
+(the tick engine) with no changes to its existing `colors_at`/`Colors`/
+`costume_colors` API. This is "animation data decoded" (properly, as a
+persistent engine, superseding the earlier assumption that `colors_at`
+could be stretched to cover the general case) and the core of "runtime
+clock implemented" for `PLAN.md` R0.10. **Not done yet**: `mobj.rs` still
+only reads `MObjSub.palettes[0]`; nothing resolves `p_matanim_joints`
+into per-(node, `MObj`-chain-position) script references at pack time;
+no pack format carries any of this to the device; nothing calls
+`MaterialJoint` from `romtool` or `psp/`. "Material state updated
+correctly" and both "verified" items stay open.
+
+**Confidence: high** for the engine's correctness against the exact
+opcode shape a real script uses (traced by hand against `Aobj`'s own
+arithmetic before writing the test, not just "it compiles and looks
+plausible") and for `colors_at` being unaffected (its own test suite,
+unchanged, still passes; the new engine lives alongside it, not inside
+it). **Not verified**: whether every one of the other ~120 `PaletteID`
+scripts archive-wide uses exactly this same `AFTER_BLOCK`+`SET_ANIM`
+shape, or whether some use a plain `JUMP` (also now supported) or a
+different step count — RE-086's census confirmed the track, not the
+exact per-script control flow, for all of them.
