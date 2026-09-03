@@ -16,27 +16,44 @@
 
 ## Task Status
 
-`IN_PROGRESS`. RE-066 (this session) closed R0.5's "wrap/clamp/mirror
-behavior verified" and "texture tile parameters verified" items with a
-measurement, not a code fix: read every tile-0 `G_SETTILE` archive-wide
-(754, not sampled) and found `psp/src/meshdraw.rs`'s hardcoded
-`sceGuTexWrap(Repeat, Repeat)` is already correct — every axis that
-requests clamp also has its own mask nonzero (0 counterexamples), and
-`refs/BattleShip`'s reference RDP interpreter strips `G_TX_CLAMP` under
-exactly that condition on real hardware, confirming `mesh.rs`'s existing
-mask-narrowed texture sizing (RE-044) already reproduces correct periodic
-addressing. Corrected `meshdraw.rs`'s comment, which previously justified
-`Repeat` for an incomplete reason. The one real, quantified gap is
-`G_TX_MIRROR` (208/754, 27.6%) — no PSP GE equivalent exists — recorded as
-an explicit accepted deviation (exact fix would pre-bake a flipped texture
-copy at pack time, at a real VRAM cost against RE-053's already-over-budget
-figure), not measured per-texture or fixed this pass. R0.5's remaining
-open items (filtering modes, magnification/minification/LOD behavior, the
-still-unresolved Dream Land canopy discrepancy) are untouched — RE-053
-already concluded the canopy issue is a magnification/dithering problem,
-not wrap mode, so this pass does not affect it either way.
+`IN_PROGRESS`. RE-067 (this session) traced `G_TX_MIRROR` (RE-066's one
+real, quantified gap) directly to Dream Land's still-open canopy
+discrepancy (RE-053): its exact display list (file 104, offset `0x798`)
+sets `cm_s=3 cm_t=3 mask_s=6 mask_t=6`. Confirmed the wrap boundary
+actually mattered *before* implementing anything — a reversible on-device
+`Repeat`-vs-`Clamp` experiment (2-line change, screenshotted, reverted)
+showed a dramatically different image, proving the repeat boundary drives
+real visible output here. Implemented the real fix: `crates/ssb-rom/src/
+texture.rs::mirror_extend` pre-bakes a mirrored copy of each affected
+texture at pack time (exact, not approximated, since `sceGuTexScale`
+already renormalises UVs against the packed texture's own dimensions).
+This is not scoped to Dream Land alone: 187 of 638 packed textures (29%)
+are affected archive-wide, and packed texture VRAM rose from 763.2 KiB to
+**1059.0 KiB (1.5x the ~700 KiB budget)**. Given the scale of that
+tradeoff, stopped and asked the user how to proceed (ship fully / scope to
+paletted formats only / document without shipping / revert) rather than
+deciding unilaterally — the user chose to ship it fully. Verified via a
+before/after pixel diff on Dream Land (substantial, real change in the
+canopy region) and a clean `tools/run-ppsspp.sh` run. `PLAN.md` R0.5's
+"Dream Land canopy discrepancy resolved" item stays unchecked — this
+fixed one real contributing cause, but RE-053's separate magnification/
+dithering diagnosis is untouched. Texture streaming (`TODO.md` Phase G)
+is no longer optional headroom given the new VRAM figure.
 
 ## Last Completed Task
+
+R0.5 — Texture Filtering / LOD / Mipmapping — RE-066 (earlier this
+session) closed its "wrap/clamp/mirror behavior verified" and "texture
+tile parameters verified" items with a measurement, not a code fix at the
+time: read every tile-0 `G_SETTILE` archive-wide (754, not sampled) and
+found `psp/src/meshdraw.rs`'s hardcoded `sceGuTexWrap(Repeat, Repeat)` is
+already correct for clamp — every axis that requests clamp also has its
+own mask nonzero (0 counterexamples), and `refs/BattleShip`'s reference
+RDP interpreter strips `G_TX_CLAMP` under exactly that condition on real
+hardware, confirming `mesh.rs`'s existing mask-narrowed texture sizing
+(RE-044) already reproduces correct periodic addressing. Identified
+`G_TX_MIRROR` (208/754 tile-0 lists, 27.6%) as the one real, quantified
+gap — which RE-067 (above) then traced and fixed.
 
 R0.6 — Material System Correctness — its lighting placeholder replaced
 with a real, ROM-measured value this session (RE-065): read
@@ -129,18 +146,25 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 ## Next Eligible Task
 
 `R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS` after
-this session's wrap/clamp/mirror investigation (RE-066, see above). Its
-real remaining open items are the harder ones RE-053 already scoped out:
-filtering modes (bilinear vs point, not yet verified per texture),
-magnification/minification/LOD behavior, and specifically the still-open
-"Dream Land canopy discrepancy resolved" item — RE-053 already
-root-caused the canopy issue as *magnification*, not minification/LOD
-(a pattern that sharpens at higher resolution can't be a mip problem), and
-BattleShip corroborates (RE-054: the reference port has no LOD support at
-all). A fresh session tackling the canopy should start from "what does
+this session's wrap/clamp/mirror work (RE-066 investigated, RE-067 fixed
+`Mirror` and traced it to Dream Land's canopy). Its real remaining open
+items are the harder ones RE-053 already scoped out: filtering modes
+(bilinear vs point, not yet verified per texture), magnification/
+minification/LOD behavior, and specifically the still-open "Dream Land
+canopy discrepancy resolved" item — RE-053 already root-caused *part* of
+the canopy issue as magnification, not minification/LOD (a pattern that
+sharpens at higher resolution can't be a mip problem), and BattleShip
+corroborates (RE-054: the reference port has no LOD support at all). RE-067
+fixed the OTHER contributing cause (the mirror wrap boundary) but a
+before/after diff shows the dithered pattern is still busy after that fix
+— a fresh session tackling the remainder should start from "what does
 softening a magnified, dithered CI4 gradient actually require" (filtering
-mode, or resolving the dither at conversion time), not more mipmap work.
-`R0.6 — Material System Correctness` also remains `IN_PROGRESS` — its
+mode, or resolving the dither at conversion time), not more wrap-mode or
+mipmap work. Given RE-067 pushed packed texture VRAM to 1059 KiB (1.5x the
+~700 KiB budget, `docs/memory.md`), `TODO.md` Phase G's "texture
+streaming" item is also now a strong candidate — it was optional headroom
+before this session, and is not anymore. `R0.6 — Material System
+Correctness` also remains `IN_PROGRESS` — its
 lighting *direction* is now measured (RE-065), but material tables,
 combiner behavior, primitive/environment colour, alpha, blending, fog,
 depth state and culling verification are all untouched, as is `TODO.md`
@@ -331,6 +355,24 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-03 — R0.5: `G_TX_MIRROR` traced to Dream Land's canopy and fixed (RE-067)
+
+* Ran `romtool textures --file 104` — reproduced RE-053's exact canopy binding (`64x64 Ci/Bits4 <- file 103 +0xE20`, `3.70x1.36 repeats`)
+* Wrote a temporary probe (`crates/ssb-rom/examples/tmp_canopy_tile.rs`, deleted before commit) decoding file 104's display lists directly and found the one binding it (offset `0x798`): `SetTile cm_s=3 cm_t=3 mask_s=6 mask_t=6` — mirror+clamp on both axes, exactly matching the texture's 64-texel period
+* Confirmed the wrap boundary mattered before implementing anything: temporarily changed `psp/src/meshdraw.rs`'s `sceGuTexWrap(Repeat, Repeat)` to `Clamp, Clamp` (2-line, reversible), rebuilt, screenshotted — the canopy's repeating pattern disappeared entirely under `Clamp`, a dramatic difference proving the boundary drives real visible output; reverted immediately after
+* Implemented the real fix: `crates/ssb-rom/src/texture.rs::mirror_extend` pre-bakes a mirrored copy of the decoded image per mirrored axis (4 unit tests: no-op, S-only, T-only, both-axes-all-four-quadrants); `crates/ssb-rom/src/mesh.rs` gained `TextureRef::mirror_s`/`mirror_t` gated on a nonzero mask (1 unit test reproducing Dream Land's exact `SetTile` parameters); `tools/romtool/src/main.rs`'s `convert_texture` applies it before mip generation
+* Measured the real scope and cost (temporarily instrumented `romtool textures`' existing dedup loop, reverted before commit): **187 of 638 packed textures (29%)** carry `G_TX_MIRROR` on at least one axis, not just Dream Land's; packed texture VRAM rose from 763.2 KiB to **1059.0 KiB (+39%, 1.5x the ~700 KiB budget)**
+* Given the scale of that tradeoff, stopped and presented the finding + four options to the user (ship fully / paletted-formats-only / document-only / revert) rather than deciding unilaterally — user chose to ship it fully
+* `cargo test --workspace` — 346 passing (was 341)
+* `cargo clippy --release -p romtool -p ssb-rom` — clean
+* `romtool pack` — 4137.6 KiB (was 3841.0 KiB), 218 of 637 textures carry mip levels
+* `cargo psp --release` — builds clean
+* `tools/run-ppsspp.sh --no-build --seconds 8` — Dream Land renders at 60 FPS, clean log; before/after pixel diff confirms substantial real change in the canopy region (not a no-op), though the dithered pattern still looks busy at native resolution — expected, since RE-053's separate magnification/dithering diagnosis is untouched by this fix
+* Result: RE-067 recorded in `docs/reverse-engineering.md`; `PLAN.md` R0.5, `DECISIONS.md` D-003, `TODO.md` Phase C/G, `docs/rendering.md`, `docs/porting-status.md`, `docs/memory.md` updated to match. `PLAN.md` R0.5's "Dream Land canopy discrepancy resolved" item stays unchecked — one real contributing cause fixed, the magnification/dithering component is not
+* Affected subsystem: `crates/ssb-rom/src/texture.rs`, `crates/ssb-rom/src/mesh.rs`, `tools/romtool/src/main.rs` — code change, plus a significant VRAM-budget documentation update
+* PPSSPP: tested this pass, no crash/regression, visually different as expected
+* Physical PSP: not tested this pass — see §8 below
 
 ## 2026-09-03 — R0.5: wrap/clamp verified correct, Mirror recorded as a deviation (RE-066)
 

@@ -1423,16 +1423,20 @@ fn convert_texture(
     // instead of reading as shading (RE-053). Every level is generated from the
     // decoded image; for a paletted texture level 0 comes back bit-identical,
     // since each texel's nearest palette entry is the one it was decoded from.
+    // `t.width`/`t.height` are already narrowed to one repeat period
+    // (`mesh.rs`'s `current_texture()`, RE-044), so a mirrored axis here
+    // pre-bakes exactly the real hardware's mirror-repeat into the pixel
+    // data -- a plain `Repeat` wrap over the resulting wider/taller image
+    // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
+    // whatever dimensions the packed texture actually reports (RE-067).
+    let decode_mirrored = |tlut: Option<&[u16]>| {
+        let img = texture::decode(texels, t.width as u32, t.height as u32, t.format, t.size, tlut)
+            .ok()?;
+        Some(texture::mirror_extend(&img, t.mirror_s, t.mirror_t))
+    };
+
     let mipped = |palette: Vec<u32>| {
-        let img = texture::decode(
-            texels,
-            t.width as u32,
-            t.height as u32,
-            t.format,
-            t.size,
-            (!tlut.is_empty()).then_some(tlut.as_slice()),
-        )
-        .ok()?;
+        let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
         Some(psp::pack_mipped(&img, psm, &palette, swizzle))
     };
 
@@ -1449,16 +1453,8 @@ fn convert_texture(
         // avoid (RE-047).
         mipped(psp::intensity_palette(t.size))
     } else {
-        texture::decode(
-            texels,
-            t.width as u32,
-            t.height as u32,
-            t.format,
-            t.size,
-            (!tlut.is_empty()).then_some(tlut.as_slice()),
-        )
-        .ok()
-        .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
+        decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))
+            .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
     }
 }
 

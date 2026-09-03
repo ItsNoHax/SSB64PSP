@@ -158,23 +158,27 @@ failed                  27
   decode: MissingPalette          1
   segmented addr (seg 0x01)      26
 note: CI texture, no TLUT recorded  1  (packs successfully; informational)
-swizzled               366 (57%)
+swizzled               432 (68%)
 
 by PSP format:
-  Psm8888     65 textures      337.8 KiB
-  PsmT4      551 textures      343.6 KiB
-  PsmT8       22 textures       81.8 KiB
+  Psm8888     65 textures      513.3 KiB
+  PsmT4      551 textures      458.3 KiB
+  PsmT8       22 textures       87.4 KiB
 
 VRAM budget
-  packed (chosen formats)      763.2 KiB
+  packed (chosen formats)     1059.0 KiB
   naive, all RGBA8888         2432.8 KiB
-  saving                        68.6%
-  fits in ~700 KiB texture VRAM? no — needs streaming (1.1x over)
+  saving                        56.5%
+  fits in ~700 KiB texture VRAM? no — needs streaming (1.5x over)
 ```
 
-**68.6% saved** by keeping paletted textures paletted. `PsmT4` carries 551 of
-638 packed textures in 344 KiB; expanding those to RGBA8888 would cost eight
-times as much and blow the VRAM budget outright.
+**56.5% saved** by keeping paletted textures paletted, down from 68.6%
+before RE-067's mirror-texture fix (which raised the packed total from
+763.2 KiB) — pre-baking a mirrored copy for a texture spends real bytes on
+every mirrored axis regardless of format, and `Psm8888` is the most
+expensive per texel affected. `PsmT4` still carries 551 of 638 packed
+textures; expanding those to RGBA8888 would cost eight times as much and
+blow the VRAM budget far worse.
 
 `unique textures bound` rose from 647 to 665 and `packed` from 617 to 638
 this session (R0.7, RE-059/RE-060): resolving two files' `MObj` material
@@ -304,22 +308,32 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
 
 ### Not yet handled
 
-* Mipmap chains are generated at build time for 151 textures
-  (`psp_texture::pack_mipped`), but generating them did **not** resolve the
-  Dream Land canopy discrepancy (RE-053) — the wrong pattern survives and
-  sharpens at higher resolution, which points at texture *magnification*
-  behaviour rather than minification/LOD selection. This is `PLAN.md` R0.5's
-  open acceptance criterion, not a solved problem.
-* `G_TX_MIRROR`: no PSP GE equivalent exists (`sceGuTexWrap` is `Repeat`/
-  `Clamp` only). Present on 27.6% of tile-0 `G_SETTILE` lists archive-wide;
-  renders as a seam at each repeat boundary instead of a smooth bounce.
-  Accepted deviation (RE-066) — an exact fix would pre-bake a flipped copy
-  per mirrored texture at pack time, at a real VRAM cost not yet spent.
-  `G_TX_CLAMP`, by contrast, is *not* a gap: `psp/src/meshdraw.rs` hardcodes
-  `sceGuTexWrap(Repeat, Repeat)` for every draw, and RE-066 measured that
-  every clamp-flagged tile-0 axis archive-wide is also a masked (periodic)
-  one, so the existing mask-narrowed-width `Repeat` (RE-044) already
-  reproduces real hardware's addressing exactly.
+* Mipmap chains are generated at build time for 151+ textures
+  (`psp_texture::pack_mipped`), but generating them did **not** fully resolve
+  the Dream Land canopy discrepancy (RE-053) — a diagonal pattern survived
+  and sharpened at higher resolution, which points at texture
+  *magnification* behaviour rather than minification/LOD selection. RE-067
+  found and fixed one real, contributing cause (a missing `G_TX_MIRROR`
+  reproduction, see below) but did not touch magnification/dithering, which
+  remains `PLAN.md` R0.5's open acceptance criterion.
+* `G_TX_MIRROR` is now reproduced exactly rather than approximated (RE-067):
+  since the PSP GE has no native mirror wrap mode (`sceGuTexWrap` is
+  `Repeat`/`Clamp` only), `romtool`'s texture conversion pre-bakes a
+  mirrored copy of the decoded image on each mirrored axis before packing
+  — a real fix, not a heuristic, since pack-time conversion has full
+  control of the pixel data and `sceGuTexScale` already renormalises UVs
+  against whatever dimensions a packed texture reports. Traced to Dream
+  Land's canopy specifically (`file 104` offset `0x798` sets `cm_s=3 cm_t=3
+  mask_s=6 mask_t=6` — mirror+clamp, 64-texel period) and confirmed via a
+  reversible on-device experiment that the un-mirrored repeat boundary was
+  visibly wrong. Costs real VRAM: 187 of 638 packed textures (29%) carry
+  the flag on at least one axis, raising packed texture VRAM from 763.2 KiB
+  to 1059.0 KiB (+39%). `G_TX_CLAMP`, by contrast, is *not* a gap:
+  `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)` for every
+  draw, and RE-066 measured that every clamp-flagged tile-0 axis
+  archive-wide is also a masked (periodic) one, so the existing
+  mask-narrowed-width `Repeat` (RE-044) already reproduces real hardware's
+  addressing exactly.
 
 ## Coordinate handling
 

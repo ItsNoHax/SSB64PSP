@@ -84,6 +84,39 @@ impl Rgba8 {
     pub fn put(&mut self, i: usize, rgba: [u8; 4]) {
         self.pixels[i * 4..i * 4 + 4].copy_from_slice(&rgba);
     }
+
+    pub fn get(&self, i: usize) -> [u8; 4] {
+        self.pixels[i * 4..i * 4 + 4].try_into().unwrap()
+    }
+}
+
+/// Pre-bakes `G_TX_MIRROR` into the pixel data by doubling the affected
+/// axes, so a plain hardware `Repeat` wrap reproduces a real mirror-repeat
+/// exactly (RE-067): `sceGuTexScale` already renormalises UVs against
+/// whatever width/height a texture actually reports, so a caller that just
+/// swaps in this wider/taller image needs no other change.
+///
+/// `img` must already be exactly one repeat period on each mirrored axis
+/// (`crates/ssb-rom/src/mesh.rs`'s `current_texture()` narrows a `TextureRef`
+/// to `1 << mask` for this reason) -- mirroring anything else would bake in
+/// whatever partial pattern happened to be visible, not the real period.
+pub fn mirror_extend(img: &Rgba8, mirror_s: bool, mirror_t: bool) -> Rgba8 {
+    if !mirror_s && !mirror_t {
+        return img.clone();
+    }
+    let (w, h) = (img.width, img.height);
+    let out_w = if mirror_s { w * 2 } else { w };
+    let out_h = if mirror_t { h * 2 } else { h };
+    let mut out = Rgba8::new(out_w, out_h);
+    for y in 0..out_h {
+        let sy = if y < h { y } else { 2 * h - 1 - y };
+        for x in 0..out_w {
+            let sx = if x < w { x } else { 2 * w - 1 - x };
+            let px = img.get((sy * w + sx) as usize);
+            out.put((y * out_w + x) as usize, px);
+        }
+    }
+    out
 }
 
 /// Expands an RGBA5551 texel. The single alpha bit becomes 0 or 255.
@@ -249,6 +282,77 @@ mod tests {
         assert_eq!(rgba5551(0x0000), [0, 0, 0, 0]);
         // Pure red, alpha set.
         assert_eq!(rgba5551(0xF801), [255, 0, 0, 255]);
+    }
+
+    /// A 2x1 image whose pixels are distinct enough to read positions back
+    /// off the result unambiguously: (0,0)=A, (1,0)=B.
+    fn ab_2x1() -> Rgba8 {
+        let mut img = Rgba8::new(2, 1);
+        img.put(0, [1, 0, 0, 255]);
+        img.put(1, [2, 0, 0, 255]);
+        img
+    }
+
+    #[test]
+    fn mirror_extend_with_neither_axis_is_a_plain_copy() {
+        let img = ab_2x1();
+        let out = mirror_extend(&img, false, false);
+        assert_eq!(out, img);
+    }
+
+    #[test]
+    fn mirror_extend_s_only_flips_the_second_half_horizontally() {
+        let out = mirror_extend(&ab_2x1(), true, false);
+        assert_eq!((out.width, out.height), (4, 1));
+        // A B | B A -- the second copy is the first one reversed, so the
+        // pattern bounces smoothly across the seam at x=2 instead of
+        // jumping straight back to A.
+        assert_eq!(
+            [out.get(0), out.get(1), out.get(2), out.get(3)],
+            [[1, 0, 0, 255], [2, 0, 0, 255], [2, 0, 0, 255], [1, 0, 0, 255]]
+        );
+    }
+
+    #[test]
+    fn mirror_extend_t_only_flips_the_second_half_vertically() {
+        let mut img = Rgba8::new(1, 2);
+        img.put(0, [1, 0, 0, 255]);
+        img.put(1, [2, 0, 0, 255]);
+        let out = mirror_extend(&img, false, true);
+        assert_eq!((out.width, out.height), (1, 4));
+        assert_eq!(
+            [out.get(0), out.get(1), out.get(2), out.get(3)],
+            [[1, 0, 0, 255], [2, 0, 0, 255], [2, 0, 0, 255], [1, 0, 0, 255]]
+        );
+    }
+
+    #[test]
+    fn mirror_extend_both_axes_produces_all_four_orientations() {
+        // A 2x2 source with a distinct pixel in every corner, so the four
+        // quadrants of a both-axes mirror (identity, h-flip, v-flip,
+        // h+v-flip) are each individually checkable.
+        let mut img = Rgba8::new(2, 2);
+        img.put(0, [1, 0, 0, 255]); // (0,0) top-left
+        img.put(1, [2, 0, 0, 255]); // (1,0) top-right
+        img.put(2, [3, 0, 0, 255]); // (0,1) bottom-left
+        img.put(3, [4, 0, 0, 255]); // (1,1) bottom-right
+
+        let out = mirror_extend(&img, true, true);
+        assert_eq!((out.width, out.height), (4, 4));
+        let px = |x: u32, y: u32| out.get((y * out.width + x) as usize);
+
+        // Top-left quadrant: the source, unmirrored.
+        assert_eq!(px(0, 0), [1, 0, 0, 255]);
+        assert_eq!(px(1, 1), [4, 0, 0, 255]);
+        // Top-right quadrant: horizontally mirrored (columns reversed).
+        assert_eq!(px(2, 0), [2, 0, 0, 255]);
+        assert_eq!(px(3, 0), [1, 0, 0, 255]);
+        // Bottom-left quadrant: vertically mirrored (rows reversed).
+        assert_eq!(px(0, 2), [3, 0, 0, 255]);
+        assert_eq!(px(0, 3), [1, 0, 0, 255]);
+        // Bottom-right quadrant: mirrored on both axes (180 degree turn).
+        assert_eq!(px(2, 2), [4, 0, 0, 255]);
+        assert_eq!(px(3, 3), [1, 0, 0, 255]);
     }
 
     #[test]

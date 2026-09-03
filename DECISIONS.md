@@ -46,6 +46,12 @@ Permanent technical decisions recovered from the repository. Each entry records 
 
 **Implemented:** `crates/ssb-rom/src/psp_texture.rs`
 
+**Update (RE-053, RE-067):** the packed total has grown since this decision as
+correctness fixes were added on top of the format choice above — mip chains
+(RE-053) and mirrored-texture pre-baking (RE-067) both cost real VRAM. Current
+measured total is **1059 KiB**, 1.5x the ~700 KiB budget; texture streaming
+(`TODO.md` Phase G) is no longer optional headroom.
+
 **Reference:** `docs/rendering.md` "Texture conversion results", `docs/memory.md` VRAM budget
 
 ---
