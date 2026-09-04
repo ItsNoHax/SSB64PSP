@@ -544,6 +544,25 @@ written up (see `docs/reverse-engineering.md` RE-101/RE-102's own entries
 for the caveat); that is a good next step for a session working fighter
 rendering specifically, not yet done.
 
+RE-127 closed this task's three remaining LOD/mipmapping items by
+applying RE-124's exact method to the two other fields
+`G_SETOTHERMODE_H` carries alongside `G_MDSFT_TEXTFILT`. Measured
+archive-wide via the real `romtool pack` build: 131/131 real
+`G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (never `G_TL_LOD`),
+121/121 real `G_MDSFT_TEXTDETAIL` commands request `G_TD_CLAMP` — both
+matching the RDP's own reset default, meaning real hardware never
+performs LOD-blended mipmapping for any content in this ROM. A third
+field, `G_TEXTURE`'s own `level` (nonzero in 241 real asset display
+lists), briefly looked like a missed signal but is confirmed inert:
+`level` only matters once `G_TL_LOD` or `G_TD_SHARPEN`/`G_TD_DETAIL` is
+active, and neither ever is. This project's own PSP-side
+`pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are therefore a
+deliberate anti-aliasing technique for dithered CI4 textures (RE-053/070),
+not an attempted reproduction of a real N64 mechanic — there is none to
+reproduce. `R0.5`'s only two remaining open items ("texture coordinate
+behavior verified", "Dream Land canopy discrepancy resolved") are
+unaffected by this finding.
+
 ### Objective
 
 Determine and reproduce the actual texture sampling behavior used by SSB64.
@@ -559,17 +578,17 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] filtering modes identified from original data — RE-124: measured archive-wide via the real `romtool pack` build, 151/151 real `G_MDSFT_TEXTFILT` commands request `G_TF_BILERP` (zero `G_TF_POINT`/`G_TF_AVERAGE`), matching the RDP's own per-frame reset default; this project's existing unconditional `sceGuTexFilter(Linear, Linear)` is already correct
 * [x] magnification behavior identified — RE-081: Dream Land's canopy "highlight" texture is magnified on its V axis (`0.88` repeats); RE-053's "sharpens with resolution" symptom is explained by this, not by the "gradient" texture (which is genuinely minified)
 * [x] minification behavior identified — RE-053's `3.70×1.36` figure is correct for the canopy "gradient" texture specifically (RE-081 disambiguated which of the two canopy textures each figure actually describes)
-* [ ] LOD behavior identified
-* [ ] mipmapping behavior identified
+* [x] LOD behavior identified — RE-127: measured archive-wide via the real `romtool pack` build, 131/131 real `G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (zero `G_TL_LOD`), matching the RDP's own per-frame reset default — real hardware never engages RDP LOD blending for any content in this ROM
+* [x] mipmapping behavior identified — RE-127: same measurement; `G_MDSFT_TEXTDETAIL` is 121/121 `G_TD_CLAMP` (zero `G_TD_SHARPEN`/`G_TD_DETAIL`), the mode that would make mip-tile blending meaningful even if `G_TL_LOD` were active — traditional N64 mipmapping is never used by this game's content
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [ ] texture coordinate behavior verified — RE-101 fixed a real gap (`G_TEXTURE` UV scale, never applied), unit-tested but not independently re-verified on a fighter's own screenshot; not yet exhaustive enough to check this item
 * [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis
 * [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance; RE-081 disambiguated the magnification/minification confusion and tested a further blur pass (measurably less texture noise, not visibly different on screen) — none of the four is "resolved"; real hardware validation (`R2`) is looking necessary, not just sufficient, to close this
-* [ ] no unsupported mipmapping assumptions remain
+* [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127 in `docs/reverse-engineering.md`.
 
 ---
 

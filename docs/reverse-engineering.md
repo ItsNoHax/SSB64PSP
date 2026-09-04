@@ -9657,3 +9657,93 @@ dependency (R0.14's camera model) rather than a vague "needs more
 investigation." "Scale verified" gains a related, unconfirmed lead
 (non-uniform ancestor scale) rather than being closed either. No code
 changed this pass; `cargo test --workspace`: 405 passing, unaffected.
+
+---
+
+## RE-127 — Real N64 LOD/mipmapping is never engaged archive-wide; `G_TEXTURE`'s own `level` field is measured, present, and inert (`PLAN.md` R0.5)
+
+RE-126 concluded every currently `IN_PROGRESS`/`VERIFYING` R0.x task is
+blocked on upstream decomp typing or a missing camera/game-state system
+— but that audit only covered R0.4/R0.6/R0.7/R0.12/R0.13/R0.14, not
+every `IN_PROGRESS` R0.x task. `R0.5 — Texture Filtering / LOD /
+Mipmapping` was left `IN_PROGRESS` with three open acceptance items
+("LOD behavior identified", "mipmapping behavior identified", "no
+unsupported mipmapping assumptions remain") that RE-124 did not touch
+(it closed only the filtering-mode item) and that depend on neither
+blocked resource — a genuinely actionable item RE-126's own audit missed
+by not re-checking every R0.x section individually.
+
+**Applied RE-124's exact method to the two other fields the same
+`G_SETOTHERMODE_H` command carries.** `G_MDSFT_TEXTFILT` (already
+measured, RE-124) shares its command with `G_MDSFT_TEXTLOD` (shift 16,
+1 bit: `G_TL_TILE`=0 or `G_TL_LOD`=1 — whether the RDP ever blends
+between texture LOD levels at all) and `G_MDSFT_TEXTDETAIL` (shift 17, 2
+bits: `G_TD_CLAMP`=0/`G_TD_SHARPEN`=1/`G_TD_DETAIL`=2 — a further
+detail-texture mode meaningful only once `G_TL_LOD` is active). Neither
+had ever been decoded by `mesh.rs` — `Cmd::SetOtherModeH`'s only
+existing match arm reads the cycle-type field (shift 20); shifts 16/17
+fell into the catch-all `_ => continue`.
+
+**A temporary, reverted census (`#[cfg(feature = "std")]` `eprintln!` in
+the same match block, run through the real `romtool pack` build against
+the actual ROM) found zero real requests for either non-default
+mode**: **131/131 real `G_MDSFT_TEXTLOD` commands request `G_TL_TILE`**,
+**121/121 real `G_MDSFT_TEXTDETAIL` commands request `G_TD_CLAMP`** —
+both exactly matching the RDP's own per-frame reset default
+(`sSYRdpResetDisplayList`, `refs/ssb-decomp-re/src/sys/rdp.c:39,41`),
+the identical shape RE-124 already found for `G_MDSFT_TEXTFILT`. No
+display list in this ROM ever asks the RDP to compute a per-pixel LOD
+or blend between tiles — real N64 hardware never performs traditional
+mipmap blending for any content in this game.
+
+**A related field looked genuinely positive at first, then resolved to
+inert.** `Cmd::Texture`'s `level` parameter (`gSPTexture`'s third
+argument — a mip-tile count, decoded by `dl.rs` since RE-002 era but
+never read by `mesh.rs`) is nonzero in **241 real occurrences archive-wide
+(236×1, 2×2, 3×3)** — not the clean zero the LOD/detail measurement
+found, and initially looked like a real, missed mipmapping signal.
+Checking `refs/ssb-decomp-re/src/**/*.c` for every hand-authored
+`gSPTexture`/`gSPTextureL` call (engine code, not baked assets) found
+every single one passes `level = 0` — the nonzero values are confined to
+authored asset display lists (model/stage geometry), not engine logic.
+`level` only has an observable effect on real hardware in combination
+with an active `G_TL_LOD` (to select which of `tile..tile+level` the RDP
+samples) or `G_TD_SHARPEN`/`G_TD_DETAIL` (detail-texture blending) — both
+confirmed zero archive-wide by the measurement above. **`level` being
+baked nonzero in these assets is real, measured data with no reachable
+effect on any actual pixel this ROM ever draws**, not a gap this
+project's decoder is missing.
+
+**What this closes.** All three of `R0.5`'s remaining LOD/mipmapping
+acceptance items: "LOD behavior identified" (never engaged — `G_TL_TILE`
+always), "mipmapping behavior identified" (same), "no unsupported
+mipmapping assumptions remain" (the one non-zero-looking field, `level`,
+is confirmed inert by the same measurement, not a silently-wrong
+assumption). This project's own PSP-side `psp_texture::pack_mipped` +
+`sceGuTexLevelMode(Auto)` (which *does* generate and sample real mip
+chains on the PSP GE) is therefore not reproducing an N64 mechanic at
+all — it is a deliberate, already-documented PSP-side anti-aliasing
+technique for dithered CI4 gradients (RE-053's canopy investigation),
+independently justified on its own terms, not something to reconcile
+against real hardware's LOD behavior since real hardware has none to
+reconcile against. `R0.5`'s only remaining open item is "Dream Land
+canopy discrepancy resolved", already noted (RE-081) as likely needing
+`R2`'s real-hardware validation rather than further `romtool`-side
+investigation.
+
+`cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+--release --workspace`: clean. All temporary census code
+(`mesh.rs`'s two `SetOtherModeH` shift-16/17 arms and `Cmd::Texture`'s
+`level` check, all gated `#[cfg(feature = "std")]`) fully reverted;
+`git diff --stat` against the pre-session baseline is empty for
+`crates/ssb-rom/src/mesh.rs` — this session is documentation-only.
+
+**Broader note for task selection.** RE-126's "every `IN_PROGRESS` R0.x
+task is blocked" conclusion was itself an unaudited generalization — it
+listed the tasks investigated that session, not literally every
+`IN_PROGRESS`/`VERIFYING` row in `PLAN.md`. This session's actual next
+step should be to re-check the remaining ones (there may be no more;
+`R0.4`/`R0.6`/`R0.7`/`R0.12`/`R0.13`/`R0.14` are confirmedly blocked, and
+`R0.5` is now down to one item needing `R2`) before assuming a genuine
+architectural undertaking (a camera/game-state system) is the only path
+forward.
