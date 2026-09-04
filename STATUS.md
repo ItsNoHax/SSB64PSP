@@ -102,6 +102,16 @@ by the renderer at all, instead of eliminating a fifth GE state. See
   reachable geometry (8 photo towers) is fully confirmed correct. The
   remaining work is unchanged in kind (screenshot the other 12 files) but
   no longer has an asterisk next to file 45.
+* **Addendum:** `romtool scene --list --nodes` across all 13 files found
+  file 45's exact 9-node/8-dl shape in files 39, 41, 50, 51 too (files 40,
+  48 and 42/43/44/46/47/49 all have genuinely different structures).
+  Attempted a second on-device file (41, object 13) to extend visual
+  verification beyond file 45 — object selection and draws worked, but
+  nothing was visible at `spin = 0` or `π/2`, the same debug-viewer
+  camera-framing limitation RE-109 already documented for screen-covering
+  objects, not a new issue. Not chased further this session (fixing the
+  viewer's camera is RE-109's own separate, already-recorded lead). All
+  temporary code reverted; `git diff --stat` empty.
 
 ## Previous Task Status
 
