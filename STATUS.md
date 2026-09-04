@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-108, then a `PLAN.md` restructure)
+**Last updated:** 2026-09-04 (RE-109, after a `PLAN.md` restructure and RE-108)
 
 ---
 
@@ -26,23 +26,83 @@ are new `TODO` tasks, not yet started, and do not block `R0.13`'s completion.
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-108 (this session)
-root-caused the "black rectangle" defect RE-107 flagged as open: it was
-misattributed to the wrong primitive (an untextured backing quad that
-was never actually visible on screen in any test), and the real cause is
-a genuine scope gap in RE-100's own capture design (it only ever stores
-the top of the real N64 buffer; one of file 45's two photo tiles samples
-the bottom) — see "Task Status" below. `screen wipes implemented`
-remains open (no real trigger event exists yet); `visual verification
-completed` now names a specific, understood defect rather than an
-unexplained one, still unfixed and likely present in some of the other
-11 unscreenshotted files too. `R0.11 — Fighter Palettes / Costumes`
-closed `COMPLETE` in an earlier session (RE-098 plus its closing
-addendum: all 12 real fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-109 (this session)
+shipped RE-108's own recorded fix for the "black rectangle" defect:
+rebasing a framebuffer-role primitive's baked UV by its own tile's
+`uls`/`ult` origin at pack time, fixing the real root cause RE-108 found
+(the runtime capture only ever stores the *top* of the real 220-texel-tall
+N64 buffer, but one of file 45's two photo tiles samples its *bottom*).
+Verified by a unit test (reproduces RE-108's own real numbers, confirmed
+capable of failing) and a real archive-wide packed-byte pack diff
+(3,572,132 bytes differ, +87.3 KiB — a real, expected effect, not a no-op).
+Could not obtain an on-device screenshot of the previously-black region
+this session (a debug-viewer camera-framing limitation for this specific
+screen-covering object, not a defect in the fix — see RE-109's own
+write-up). `screen wipes implemented` remains open (no real trigger event
+exists yet); `visual verification completed` stays open on this basis.
+`R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in an earlier
+session (RE-098 plus its closing addendum: all 12 real fighters
+individually verified).
 
 ## Task Status
 
-RE-108 (this session) picked up exactly where RE-107 left off: a
+RE-109 (this session) picked up RE-108's own two recorded fix candidates
+and shipped the one RE-108 itself judged more general: rebasing each
+framebuffer-role primitive's baked UV by its own tile's `uls`/`ult` origin
+at pack time, rather than trying to guess a second capture band. See
+`docs/reverse-engineering.md` RE-109 for the full account; summary:
+
+* **Root cause confirmed before implementing.** `crates/ssb-rom/src/
+  mesh.rs`'s `Cmd::SetTileSize` handler decoded `uls`/`ult` but only ever
+  used them to compute `tile_dims` (width/height), discarding the origin
+  itself — exactly the gap RE-108 named. Ordinary textures never needed
+  it (pack-time extraction already starts at the tile's own origin);
+  framebuffer-role textures do, because their synthetic small capture
+  always starts at its own row/column 0 regardless of the tile's real
+  absolute position in the conceptual 300×220 image.
+* **Implemented via the existing per-vertex bake mechanism**, not a new
+  one: `State::tile0_origin` → `TextureRef::origin_s`/`origin_t` →
+  subtracted from the vertex UV in `Builder::push_vertex`, the same place
+  `prim_color`/`texture_blend`/`flat_color` already bake adjustments
+  before the content-keyed vertex dedup runs.
+* **New unit test** (`a_framebuffer_role_tile_not_at_the_origin_has_its_
+  uv_rebased`) reproduces RE-108's own exact real numbers (file 45's
+  300×5 tile, `ult = 860`) and was confirmed capable of failing (removed
+  the fix, reran, confirmed the exact `860*8` discrepancy, restored it).
+* **Verified real archive-wide effect**, not just the unit fixture: built
+  the real pack twice (with/without the fix) and diffed the two `.pak`
+  files directly — 3,572,132 bytes differ, size 5165.9 → 5253.2 KiB
+  (+87.3 KiB, an expected dedup-correctness side effect: two framebuffer-
+  role vertices that previously collided in the content-keyed dedup by
+  sharing an absolute UV now correctly diverge once rebased per tile).
+* `cargo test --workspace`: 262 `ssb-rom` (405 total workspace), all
+  passing. `cargo clippy --release --workspace`: clean. Default
+  (non-transition) build re-screenshotted clean (Dream Land pixel-normal,
+  60 FPS, no panics) both before and after.
+* **On-device visual re-verification attempted, not achieved.** Followed
+  RE-100/RE-107/RE-108's own recipe (temporary, fully reverted
+  `psp/src/main.rs` patch: force `object_view`, `object_index = 17`
+  [file 45], magenta-clear + `request_transition_capture()`). Object
+  selection worked (overlay confirmed `file 45 ... tris 704`, no panic,
+  60 FPS), but the debug viewer's generic `object_view` auto-framing
+  camera — built for ordinary models, not a screen-covering "transition
+  wipe" plane — never brought the primitive into visible frame across two
+  attempts (3s and 8s, well past enough rotation to rule out a momentary
+  edge-on angle). RE-107/RE-108 used the identical mechanism successfully
+  before on this exact object, so this is a this-session-specific viewer
+  gap, not evidence against the fix. `git diff --stat` on
+  `psp/src/main.rs` is empty (fully reverted).
+* **What remains:** `visual verification completed` stays unchecked — a
+  fix backed by a unit test and a packed-byte diff is not the same as a
+  device screenshot showing the previously-black region now correct. The
+  concrete next step is fixing the debug viewer's camera framing for
+  screen-covering objects (or writing a bespoke close-in test camera),
+  not re-attempting the same generic path unchanged. The other 11 (of
+  13) transition files also remain unscreenshotted.
+
+## Previous Task Status
+
+RE-108 (a previous session) picked up exactly where RE-107 left off: a
 backing primitive supposedly rendering solid black on the real device
 despite genuinely non-black raw vertex colour, with `prim_color`,
 `flat_color`, and RE-103's per-vertex lit-normal fallback already ruled
@@ -102,7 +162,7 @@ not shipping a fix on top of it. The other 12 transition files may well
 have the same shape (a "drawn once" tile sampling somewhere other than
 the captured top band) and are not yet checked.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-107 (a previous session) started from "continue with the plan" and found
 the working tree already held a large, fully implemented, fully tested,

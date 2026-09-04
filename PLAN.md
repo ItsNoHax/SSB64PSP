@@ -1598,17 +1598,44 @@ UV by its own tile's origin at pack time) but neither was attempted; the
 goal was root-causing an already very long investigation, not shipping
 on top of it.
 
-**Still open:** nothing calls `request_transition_capture` from real game
-logic — there is no match-start/match-end event to call it from yet, since
-this project has no game-state/transition system at all. 11 of the 13
-files' geometry still has no on-device screenshot of its own (2 of 13
-now confirmed, chosen to cover both known backing-colour variants). The
-"black rectangle" defect is now root-caused (a capture-scope gap, not a
-rendering bug) but not fixed — every one of the other 12 files may hit
-the same 300×5-style entry, so this is very likely not file-45-specific.
-"Render-to-texture paths implemented where required" is not a separate
-gap: RE-099/RE-100 both confirm the real mechanism has no render-to-texture
-pass at all, only a one-time capture.
+**Still open (before RE-109):** nothing calls `request_transition_capture`
+from real game logic — there is no match-start/match-end event to call it
+from yet, since this project has no game-state/transition system at all.
+11 of the 13 files' geometry still has no on-device screenshot of its own
+(2 of 13 confirmed pre-RE-109). "Render-to-texture paths implemented where
+required" is not a separate gap: RE-099/RE-100 both confirm the real
+mechanism has no render-to-texture pass at all, only a one-time capture.
+
+RE-109 shipped RE-108's own recorded fix (option (b): rebase each
+framebuffer-role primitive's baked UV by its own tile's `uls`/`ult` origin
+at pack time — the RDP's own TMEM addressing does the equivalent
+subtraction in hardware). `crates/ssb-rom/src/mesh.rs`'s `Cmd::SetTileSize`
+handler decoded `uls`/`ult` but discarded them; ordinary textures never
+needed them (pack-time extraction already starts at the tile's own origin),
+but a framebuffer-role binding's synthetic small capture always starts at
+its own row/column 0 regardless of which absolute band of the conceptual
+300×220 image the tile pointed at — exactly RE-108's root cause. Fixed by
+threading the origin through `State`/`TextureRef` and subtracting it from
+the vertex UV in `Builder::push_vertex`, the same mechanism
+`prim_color`/`texture_blend`/`flat_color` already use to bake per-primitive
+adjustments before the content-keyed vertex dedup runs. New unit test
+reproduces RE-108's own real numbers (file 45's 300×5 tile, `ult = 860`)
+and is verified capable of failing (removed the fix, confirmed the test
+fails with the exact `860*8` discrepancy, restored it). Verified the fix
+has real archive-wide effect, not just in the unit fixture, by building the
+real pack twice (with and without the fix) and diffing: 3,572,132 bytes
+differ, pack size 5165.9 → 5253.2 KiB (+87.3 KiB, an expected dedup-
+correctness side effect — see RE-109). `cargo test --workspace`: 262
+`ssb-rom` tests (405 total workspace). `cargo clippy --release --workspace`:
+clean. Default (non-transition) build re-screenshotted clean (Dream Land
+pixel-normal, 60 FPS, no panics) after the fix. On-device visual
+re-verification of the specific previously-black region was attempted
+(the same `object_view`-forcing recipe RE-100/RE-107/RE-108 used
+successfully before) but did not reach a usable screenshot this session —
+a debug-viewer camera-framing limitation for this particular screen-
+covering object shape, not evidence against the fix; see RE-109 for the
+full account and the honest reason "visual verification completed" stays
+unchecked below despite the underlying defect now being fixed.
 
 ### Objective
 
@@ -1622,15 +1649,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap within this implementation (not a reason to uncheck "implemented", since the mechanism genuinely exists and mostly works): the capture only stores the top of the real 220-texel-tall N64 buffer, so any framebuffer-role tile sampling elsewhere in that range (confirmed: one of file 45's two photo tiles, `V ≈ 215..220`) reads the wrong rows
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time, verified by a unit test (capable of failing) and a real archive-wide packed-byte diff
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
-* [ ] framebuffer synchronization verified — verified for the one shape tested this session (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly (chosen to cover both known backing-colour variants, not two arbitrary picks); RE-108 root-caused the one defect those two files shared (a capture-scope gap, see above) rather than leaving it a mystery, but did not fix it; the other 11 files remain unscreenshotted and may hit the same gap
+* [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
+* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly pre-RE-109. RE-108 root-caused the shared defect those two files hit; RE-109 fixed it (unit-tested, packed-byte-diff-verified) but could not obtain a device screenshot of the previously-black region this session (debug-viewer camera-framing gap for this object shape, not a fix defect — see RE-109). This item stays open: a fix with strong non-visual evidence is not the same as visual verification, and the other 11 files remain unscreenshotted regardless
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109 in `docs/reverse-engineering.md`.
 
 ---
 

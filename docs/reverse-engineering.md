@@ -7800,3 +7800,112 @@ use; `git diff --stat` is empty for every file except this document.
 `cargo clippy --release --workspace` stayed clean throughout; the
 default (non-transition) build was re-screenshotted clean (Dream Land
 pixel-normal, 60 FPS) after every revert.
+
+---
+
+## RE-109 — Shipped RE-108's option (b): rebasing a framebuffer-role primitive's UV by its own tile origin, fixing the "black rectangle" defect's root cause
+
+Picked up RE-108's own recorded fix candidates directly (`PLAN.md` R0.13,
+this file's own RE-108 entry) rather than re-investigating: option (b),
+rebasing each framebuffer-role primitive's baked UV by its own tile's
+`uls`/`ult` origin at pack time, "the way real RDP hardware's TMEM
+addressing implicitly does". RE-108 called this "likely the more general,
+format-correct fix" over option (a) (capturing a second band near the real
+buffer's bottom edge) because it needs no assumption about where else in the
+conceptual 220-row image a still-unmeasured 14th file's own tile might
+sample — it fixes the addressing itself rather than adding another
+special-cased capture.
+
+**Confirmed the mechanism before implementing.** `crates/ssb-rom/src/
+mesh.rs`'s `Cmd::SetTileSize` handler decoded `uls`/`ult` into `tile_dims`
+(width/height) but discarded the tile's own origin entirely — exactly the
+gap RE-108 named. Ordinary (non-framebuffer) textures never needed it: their
+baked UV is implicitly tile-origin-relative for free, because pack-time
+texture extraction reads the *source ROM image* starting at that same
+origin, so an absolute-image-space UV and an extraction that begins at the
+same origin agree automatically. A framebuffer-role primitive breaks that
+symmetry: its "source" is a small, synthetic runtime capture that always
+starts at row/column 0 of *whatever screen content it captures*, not at the
+tile's own absolute position within the conceptual 300×220 buffer — which is
+exactly why the 300×5 entry's `V = 215..220` (RE-108's own measurement)
+wrapped into the wrong rows of an 8-row buffer that was never meant to
+represent absolute position 215 at all.
+
+**Implemented as a new `State` field, not a new pass.** Added
+`tile0_origin: Option<(u16, u16)>`, set alongside `tile_dims` from the same
+`G_SETTILESIZE` command, and threaded it into `TextureRef` as
+`origin_s`/`origin_t` (raw S10.2, matching `dl::Cmd::SetTileSize`'s own
+decode) — `0` for every non-framebuffer binding, since it is provably
+irrelevant there by the symmetry argument above. The actual rebase lives in
+`Builder::push_vertex`, in the same place `prim_color`/`texture_blend`/
+`flat_color` already bake per-primitive adjustments into a vertex before the
+content-keyed dedup runs (RE-039/RE-073/RE-080): `if t.framebuffer`, subtract
+`origin_s * 8`/`origin_t * 8` (aligning S10.2 to the vertex's own S10.5)
+from the vertex UV. This is architecturally the same mechanism those three
+fixes already use, not a new one — and because it runs before the dedup
+lookup, two same-shaped quads with different tile origins now correctly
+produce distinct vertex content instead of an accidental cache-slot
+collision.
+
+**Verified capable of failing, not just passing.** New test
+`a_framebuffer_role_tile_not_at_the_origin_has_its_uv_rebased` reproduces
+RE-108's own real numbers exactly: `ult = 860` (texel 215, the file-45
+300×5 tile's real measured origin), a vertex baked at that same absolute
+position, asserting the rebased result is exactly `0`. Chose the raw pre-
+scale vertex value (`6881`, not `6880`) specifically to land on an exact `0`
+*after* `G_TEXTURE`'s own default `scale_t` (`0xFFFF`, not true `1.0`,
+RE-101) rounds it down by one — otherwise the test would assert an
+off-by-one artifact of an unrelated, pre-existing quirk instead of the
+rebase itself. Removed the `push_vertex` fix (reverted after) and reran:
+the test fails (`left: 6880, right: 0`), confirming it is not vacuous.
+`cargo test --workspace`: 55 `ssb-rom` mesh tests, 262 `ssb-rom` total, all
+passing with the fix restored. `cargo clippy --release --workspace`: clean.
+
+**Verified the fix has real, nonzero effect on the actual archive, not
+just the unit fixture.** Built the real pack twice from the same ROM —
+once with the fix, once with it temporarily reverted — and diffed the two
+`.pak` files directly: 3,572,132 bytes differ (out of ~5.3 MB), and the
+fixed pack is 87.3 KiB larger (5253.2 KiB vs. 5165.9 KiB). The size
+change itself is expected, not just incidental: rebasing UV by tile origin
+means two framebuffer-role vertices that previously collided in the
+content-keyed dedup (same absolute UV, different tiles) now correctly
+diverge, so some framebuffer-role vertices that were incorrectly shared
+before are now correctly distinct — the same category of dedup-correctness
+side effect RE-098's `CostumeOverride` and RE-080's `flat_color` shipping
+both measured for their own fixes. `cargo run --release -p romtool -- pack`
+reports "verified loads back cleanly" both times.
+
+**On-device visual re-verification was attempted and did not reach a
+usable screenshot this session — recorded honestly, not glossed over.**
+Followed RE-100/RE-107/RE-108's own established recipe (`psp/src/main.rs`,
+temporary and fully reverted): force `object_view = true`/`stage_view =
+false`, `object_index = 17` (file 45, confirmed against this session's own
+pack build output — "object 17 file 45 704 triangles", matching RE-107's
+number exactly), call `gpu.request_transition_capture()` on a magenta-
+cleared frame, and view from several frames later. The object selection
+itself worked (`obje 17/363 file 45 @0x74A8 ... tris 704 ... draws 352` on
+the debug overlay, no panic, 60 FPS) but the debug viewer's generic
+`object_view` auto-framing camera — built for ordinary fighter/stage
+models, not this one screen-covering "transition wipe" plane — never
+brought the primitive into visible frame across two attempts (3 and 8 real
+seconds, well past enough of `spin`'s rotation to rule out a momentary
+edge-on angle by chance). This is a debug-viewer camera-framing gap for
+this specific object shape, not evidence the fix itself is wrong: RE-107/
+RE-108's own prior sessions used the identical mechanism successfully for
+this exact object, so the difference is in this session's specific attempt,
+not investigated further here. The temporary patch (a frame counter, the
+magenta clear, and the forced object/view-mode override) was fully
+reverted; `git diff --stat` on `psp/src/main.rs` is empty.
+
+**What this closes and what it does not.** `PLAN.md` R0.13's "framebuffer
+texture paths implemented" item gains a real correctness fix on top of its
+already-checked status (the mechanism now samples the right content, not
+merely *some* content); "visual verification completed" stays unchecked —
+RE-108's root-cause finding is now fixed, evidenced by a unit test, a
+packed-byte diff, and a clean archive-wide regression, but not by a device
+screenshot showing the previously-black region correctly filled, which is
+what that acceptance item actually requires. The concrete next step for
+whoever picks this back up is either fixing the debug viewer's camera
+framing for screen-covering objects, or writing a bespoke, closer-in test
+camera the way RE-100's own original test likely used, rather than
+re-attempting the generic `object_view` path a third time unchanged.
