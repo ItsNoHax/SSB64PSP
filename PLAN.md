@@ -884,14 +884,29 @@ new classes). The other 7 unique hits (file 85's two false positives,
 plus one each in files 114 x3/351/352 landing on still-untyped bytes)
 were checked and correctly left alone.
 
-The remaining 57 unpaired graphs archive-wide (mostly menu/character-
-select emblem models, stage files, and fighters' special-move files, not
-core fighter bodies — see RE-077's breakdown) and file 86's and 353's
-specific blocked cases are now treated as an accepted long tail rather
-than a task-blocking gap; R0.7 stays `IN_PROGRESS` but further progress
-here depends on upstream decomp typing or a demand-search candidate
-narrowing to one with something to confirm it against, not open-ended
-`romtool` investigation.
+**RE-125 (this session) found 20 more** by systematically applying RE-078's
+own cross-check method to the "several candidates" bucket, not just the
+already-unique one: cross-referenced all 50 archive-wide ambiguous graphs'
+candidate lists against `tools/mobjtable-ground-truth.py`'s decomp-typed
+answer key, found 23 landing near a real symbol, independently confirmed
+20 of them via `read_table` (the decomp's own labeled address does *not*
+satisfy the graph's demand vector; the search's reported candidate does —
+ruling out coincidence), each explained by a decomp-documented `PAD()` or
+`NULL`-entries shape. Rejected the other 3 on the same evidence standard:
+file 86 is the identical 27-way-ambiguous case RE-061 already declined,
+and files 108/152's one candidate land inside a texture's own trailing
+bytes with no real gap. `romtool mobj`: paired `70 → 90`, unpaired
+`57 → 37`, mismatches held at 0 across 407 nodes. The remaining 37
+unpaired graphs archive-wide (mostly menu/character-select emblem models,
+stage files, and fighters' special-move files, not core fighter bodies —
+see RE-077's breakdown) and file 86's and 353's specific blocked cases are
+still an accepted long tail rather than a task-blocking gap; R0.7 stays
+`IN_PROGRESS` but further progress again depends on upstream decomp
+typing or a demand-search candidate narrowing to one with something to
+confirm it against, not open-ended `romtool` investigation — RE-125's own
+systematic pass over every ambiguous candidate, not just unique ones, was
+that "something new to try" for this session, and it is now exhausted
+again.
 
 ### Objective
 
@@ -903,11 +918,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 7 more graphs (Kirby's + 6 archive-wide) traced and fixed via search-plus-decomp-cross-check, landing on exactly one candidate each (RE-077, RE-078); 57 other archive-wide unpaired graphs are untraced, mostly menu/character-select emblem models, stage files and fighters' special-move files rather than core fighter bodies (RE-077's breakdown) — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
-* [ ] original material data identified — done for 14 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files); not done for the other 57 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
+* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 27 more graphs (Kirby's + 6 archive-wide via RE-077/078, +20 more via RE-125) traced and fixed via search-plus-decomp-cross-check, each landing on exactly one candidate confirmed against a real decomp-typed table; 37 other archive-wide unpaired graphs are untraced, mostly menu/character-select emblem models, stage files and fighters' special-move files rather than core fighter bodies (RE-077's breakdown) — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
+* [ ] original material data identified — done for 34 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files via RE-077/078, 20 more via RE-125); not done for the other 37 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — file 353's two, file 52's five, and the 7 search-confirmed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078); nothing else verified yet
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (383 nodes) is that regression detector for these fixes.
+* [ ] affected scenes verified — file 353's two, file 52's five, and the 27 search-confirmed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078, RE-125); nothing else verified yet
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (407 nodes) is that regression detector for these fixes.
 
 ---
 
@@ -2249,13 +2264,21 @@ can be re-run and diffed automatically as the renderer changes.
 
 `docs/visual-regression.md` is the full methodology: a `regression_capture`
 Cargo feature (`psp/Cargo.toml`, `psp/src/main.rs`) freezes every per-frame
-mutation (fighter physics, skeleton/stage/material animation, and the
-otherwise-nondeterministic perf-counter HUD fields) once 240 simulation
-ticks have run, so a screenshot taken any time afterward is byte-identical
-regardless of real-world capture timing. Measured directly: two captures 9
-real seconds apart (`--seconds 6` and `--seconds 15`) are exact-match, both
-via `cmp` and via the new `tools/compare-screenshot.sh` pixel-diff tool
-(0 differing pixels; threshold documented as 0 given the measured exactness).
+mutation (fighter physics, skeleton/stage/material animation) once 240
+simulation ticks have run, and never draws the on-screen debug HUD at all
+(RE-125 — three narrower fixes for the HUD's own live perf counters were
+tried and each ghosted or corrupted differently, since `sceGuDebugPrint`
+is a PPSSPP-only overlay that does not fully clear between calls; not
+drawing it at all sidesteps the problem rather than out-guessing it), so a
+screenshot taken any time afterward is byte-identical regardless of
+real-world capture timing. Measured directly: two captures 39 real seconds
+apart (`--seconds 6` and `--seconds 45`) are exact-match, both via `cmp`
+and via `tools/compare-screenshot.sh` (0 differing pixels; threshold
+documented as 0 given the measured exactness) — RE-123's own original "9
+seconds, byte-identical" claim was true but fragile (true by luck of one
+test's specific timing, since the HUD bug it shipped with was not yet
+found), superseded by this stronger, HUD-free result once RE-125 found and
+fixed it while re-verifying determinism after an unrelated pack rebuild.
 The golden image is committed at `tests/golden/r0-dream-land-default.png`.
 All 4 capture sources are documented; PPSSPP software rendering is the one
 actually executed so far, matching the "run at least once end-to-end"

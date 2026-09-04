@@ -40,16 +40,25 @@ stays at its default `true`, `sim_fighter` stays `true`, no button is
 pressed) — the debug viewer boots directly into this state with a pack
 loaded and no input.
 
-**The one thing left unpinned:** the on-screen debug HUD
-(`gpu.debug_text`) prints live perf counters (`cpu`, `frame`, `tick`) that
-are meaningless once the sim is frozen and would otherwise be the only
-non-deterministic content left in the frame. `regression_capture` pins
-those three fields to `0` once frozen rather than skipping the
-`sceGuDebugPrint` call outright — an earlier version of this skipped the
-call, and that confused PPSSPP's own debug-overlay HLE hook (which is not
-real GE drawing) into a stuck, partial-width redraw. See
-`docs/reverse-engineering.md` RE-123 for the full account of both the
-freeze mechanism and that specific pitfall.
+**The on-screen debug HUD is never drawn at all under `regression_capture`,
+from frame 0.** `gpu.debug_text` normally prints live perf counters
+(`cpu`, `frame`, `tick`) that are meaningless once the sim is frozen and
+would otherwise be the only non-deterministic content left in the frame.
+Three narrower fixes were tried before this one and each failed for a
+different reason specific to `sceGuDebugPrint` (a PPSSPP-only debug
+overlay hook, not real GE drawing, that does not fully clear between
+calls): skipping the call once frozen left a stuck, partial-width redraw
+behind; pinning the three fields to `0` once frozen left old, wider digits
+ghosted behind a shorter string; pinning them to their real last-seen
+values fixed the width but not the content, since `cpu`/`frame` are
+genuine wall-clock timing measurements that legitimately differ between
+runs; and even a hardcoded, safely-wide sentinel value still ghosted,
+meaning the corruption was never simply about string width. Never calling
+`sceGuDebugPrint` in a `regression_capture` build sidesteps whatever
+PPSSPP-internal state causes this rather than trying to out-guess it — and
+a developer diagnostic overlay was never actually part of the golden scene
+this task wants captured. See `docs/reverse-engineering.md` RE-123 and
+RE-125 for the full account.
 
 ## Capture procedure
 
@@ -145,12 +154,15 @@ suitable frame is identified.
 ## Evidence
 
 Executed once end-to-end for capture source 1 (PPSSPP software rendering).
-See `docs/reverse-engineering.md` RE-123 for the full account: two captures
-of the same `regression_capture` build, taken 9 real seconds apart
-(`--seconds 6` and `--seconds 15`, both past the tick-240 freeze point),
-compared with `cmp` and found byte-identical, and separately with
-`tools/compare-screenshot.sh` (0 differing pixels). The golden image is
-committed at `tests/golden/r0-dream-land-default.png`.
+See `docs/reverse-engineering.md` RE-123 and RE-125 for the full account:
+after landing on "never draw the debug HUD under `regression_capture`" as
+the robust fix (three narrower attempts each ghosted or corrupted in a
+different way — see above), two captures of the same build were taken 39
+real seconds apart (`--seconds 6` and `--seconds 45`, both comfortably
+past the tick-240 freeze point), compared with `cmp` and found
+byte-identical, and separately with `tools/compare-screenshot.sh` (0
+differing pixels). The golden image is committed at
+`tests/golden/r0-dream-land-default.png`.
 
 This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured
