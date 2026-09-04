@@ -9747,3 +9747,112 @@ step should be to re-check the remaining ones (there may be no more;
 `R0.5` is now down to one item needing `R2`) before assuming a genuine
 architectural undertaking (a camera/game-state system) is the only path
 forward.
+
+---
+
+## RE-128 — RE-101/RE-102 confirmed correct on two real fighters' own face textures, and a real, unexplained black patch found (and only partly root-caused) while verifying (`PLAN.md` R0.5/R0.6)
+
+RE-127 closed `R0.5`'s LOD/mipmapping items but left "texture coordinate
+behavior verified" open — RE-101 (`G_TEXTURE`'s UV scale) and RE-102
+(`G_TX_CLAMP`) were both unit-tested but explicitly never checked against
+a real fighter's own screenshot (both entries say so directly). This
+session did that check, directly and decisively — and found a second,
+real, unrelated defect while doing it, which is reported honestly below
+without a full root cause.
+
+**Method.** The debug viewer has no "select fighter by name" control, so
+a temporary, reverted patch to `psp/src/main.rs` forced `object_view`'s
+initial `object_index`/`stage_view` to land on a specific fighter,
+rebuilt, and screenshotted, cycling across Fox (file 313), Captain Falcon
+(file 332) and Kirby (file 328) — the exact three fighters RE-102's own
+fix comment names for the clamp+mirror combination. A second temporary
+`romtool` subcommand walked a packed object's nodes/meshes/prims to find
+which texture index a given node actually binds, since the debug
+viewer's own `TEXVIEW` mode (`C_UP`) can display any packed texture
+directly, bypassing lighting and geometry entirely — the cleanest
+possible test of whether a texture's own UV/wrap handling is correct,
+independent of any material/lighting question.
+
+**Result: both real fighter face textures RE-101/RE-102 were written for
+display correctly.** Fox's face texture (pack texture index 550, a 64×32
+CI4 image with both eyes drawn side by side, `wrap` = `CLAMP_S|CLAMP_T`)
+and Kirby's face texture (index 734, 32×32 CI4, same wrap) both render
+via `TEXVIEW` exactly as their own ROM data decodes (cross-checked
+against `romtool texdump`'s independent reference decoder): correct
+colours, correct proportions, no melting, no clamp-boundary seam, no
+tiling artefact. This is direct, on-device, visual confirmation of
+RE-101/RE-102 that neither entry had before — closes `R0.5`'s "texture
+coordinate behavior verified" acceptance item.
+
+**A real, separate, unexplained defect found while doing this.** Fox's
+*full lit object-view render* (not `TEXVIEW`) shows a large, solid,
+uniform `(0, 0, 0)` black region covering most of his face — confirmed
+by direct per-pixel sampling (not eyeballed), confirmed still present
+with the debug HUD forced fully off (ruling out the overlay's own text
+background as a confound), confirmed still present with `romtool pack
+--no-swizzle` (ruling out a swizzle/deswizzle bug specific to that
+texture layout). This is not a subtle defect — it is a large, flat,
+fully opaque black area on a real, currently-rendered fighter.
+
+**Two concrete hypotheses were tested and eliminated, not guessed away.**
+
+1. *Texture corruption.* Decoded the actual packed bytes for every
+   texture on Fox's head (548, 549, 550, 551, 552) straight out of the
+   `.pak` file, independent of the PSP GE entirely (a temporary
+   `romtool` CI4+palette decoder). None is black: 548/549 are the
+   olive-green ear-interior pieces, 550/551 are the orange eye/muzzle-line
+   pieces, 552 is a small brown gradient accent. `TEXVIEW` independently
+   confirmed the PSP uploads and samples 550 correctly. The black patch
+   is not a bad texture.
+2. *A double-application of `prim_color`'s scale.* `mesh.rs`'s
+   `push_vertex` folds `material.prim_color` into a vertex's shade once;
+   `pack.rs`'s `add_mesh` *separately* multiplies `shade_normal`'s
+   already-computed, ambient-floored (RE-065: floor `0.35`, so its
+   output can mathematically never be `0`) grey by `prim_color` a
+   *second* time via its own `prim_scale` array. A resolved `prim_color`
+   of exactly `(0, 0, 0, 0)` there would crush the floored grey back to
+   black through integer-division truncation (`89 * 1 / 255 == 0`),
+   which looked at first like exactly the right shape of bug. Decoding
+   the real display list at every candidate node's own source offset
+   (`romtool`'s own `dl::decode_list_at`, a temporary subcommand) found
+   **no `G_SETPRIMCOLOR` command anywhere near zero** — the two real
+   `SetPrimColor` values present (`[238,238,170,255]`, `[168,98,4,255]`)
+   match the *non-zero* `prim_color`s already seen elsewhere on the same
+   model exactly, and the specific primitives whose exported
+   `prim_color` reads `0x00000000` have **no `SetPrimColor` in their own
+   list at all** — meaning `material.prim_color` is genuinely `None`
+   there (the pre-command default, indistinguishable from `Some(black)`
+   only in the *exported, inspection-only* field, per `add_object`'s
+   `m.prim_color.map_or(0, pack_abgr)`), not a resolved black scale.
+   `None` takes pack.rs's un-scaled path entirely. This hypothesis is
+   wrong for the specific primitives checked.
+
+**Not resolved.** Which exact primitive draws the visible black pixels
+was inferred from screen position, not confirmed via a geometric
+(vertex-bounding-box-to-screen) method — a gap in this session's own
+rigor, recorded rather than papered over. The true mechanism remains
+open. Both eliminated hypotheses are real, useful negative results
+(matching the standing project precedent set by RE-070/071's dithering
+investigation): a future session should not re-try either, and should
+start by actually identifying the drawing primitive geometrically before
+forming a third hypothesis.
+
+**Filed against the already-open items this shape of bug belongs to,
+not as a new task.** `PLAN.md` R0.6's "primitive color verified" item
+already anticipated exactly this shape of gap in the abstract (3,085/
+4,580 combiner misses attributed to "a genuine absence of `prim_color`
+on this converter's own per-graph state") and "lighting verified" is
+also already open on RE-065's single-baked-light basis. This is the
+first *concrete, visually-confirmed, on-device* instance of a fighter
+rendering visibly wrong in a way plausibly connected to that same
+family, not a new, unrelated task — recorded as a lead on both existing
+items rather than opening a new acceptance item for it.
+
+`cargo test --workspace`: 405 passing, unaffected — no shipped code
+changed, only temporary `psp/src/main.rs` overrides (forced
+`object_index`/`stage_view`/`tex_view`/disabled HUD) and temporary
+`romtool` subcommands (`re127findobj`, `re127dumpobj`, `re127dumptex`,
+`re128decodelist`), all fully reverted; `git diff --stat` against the
+pre-session baseline is empty for both files. `cargo clippy --release
+--workspace`: clean. Default (Dream Land) build re-screenshotted clean
+after every revert (pixel-normal, 60 FPS, no panics).
