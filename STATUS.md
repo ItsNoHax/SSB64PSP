@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-116)
+**Last updated:** 2026-09-04 (RE-117)
 
 ---
 
@@ -12,32 +12,84 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-116 (this session)
-retracted RE-113's file 46 "diagonal banding defect" entirely — it was
-never a rendering bug. A close pixel scanline across the "black" bands
-found exact linear anti-aliased interpolation between the real
-background colour and the real magenta capture colour on all three
-channels simultaneously; an exhaustive, bounding-box-restricted census of
-both of file 46's rendered squares found zero pure `(0, 0, 0)` pixels.
-RE-113's "116,152 genuine black pixels" figure came from an
-un-restricted, whole-image pixel scan — the exact window-decoration
-confound RE-111 had already identified and documented, which RE-113
-incorrectly asserted did not apply here. Also confirmed RE-115's culling
-fix is unrelated to file 46 (toggling `force_no_cull` produces
-pixel-identical output). **All 13 LB-transition files are now confirmed
-fully correct on the real device — `visual verification completed` is
-now checked.** See "Task Status" below for the full account.
-`screen wipes implemented` and `framebuffer synchronization verified`
-remain the task's only open items, both blocked on this project having
-no real match-transition/game-state system yet (downstream of rendering
-per the project's own gate ordering, not further rendering work).
-`R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in an earlier
-session (RE-098 plus its closing addendum: all 12 real fighters
-individually verified).
+`R0.15 — Render-State Isolation` (`IN_PROGRESS`, moved from `TODO` this
+session). `R0.13 — Framebuffer Rendering` has no further actionable
+rendering work: RE-116 (previous session) retracted file 46's apparent
+diagonal-banding defect as its own measurement artifact, closing
+`visual verification completed` — **all 13 LB-transition files are
+confirmed fully correct on the real device.** R0.13's only remaining
+items (`screen wipes implemented`, `framebuffer synchronization
+verified`) are blocked on this project having no real match-transition/
+game-state system yet, downstream of the rendering gate this task
+belongs to — not further rendering investigation. Per `PLAN.md`'s own
+task ordering, moved to `R0.15`, the next `TODO` task with no unmet
+dependency.
+
+RE-117 (this session) surveyed `crates/ssb-rom/src/mesh.rs`'s render-state
+threading and found 9 of R0.15's 10 state categories had no cross-node
+persistence test at all — only texture image binding (RE-064) did. Added
+four new tests closing the gap (TLUT/palette, combiner+primitive+
+environment color, blend/alpha render-mode, depth+culling+geometry/
+lighting mode); confirmed texture addressing was already covered
+implicitly by RE-064's own whole-`TextureRef` equality check. All four
+new tests confirmed capable of failing (a temporary, reverted change
+rebuilding `State` fresh every node broke all four, plus two pre-existing
+tests). See "Task Status" below for the full account. `R0.11 — Fighter
+Palettes / Costumes` closed `COMPLETE` in an earlier session (RE-098 plus
+its closing addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-116 (this session) picked up R0.13's one remaining thread: root-cause
+RE-117 (this session) surveyed before writing any test, rather than
+guessing which R0.15 categories needed coverage. See
+`docs/reverse-engineering.md` RE-117 for the full account; summary:
+
+* **One shared mechanism, one existing test.** Every render-state
+  category R0.15 names lives in a single `State` struct `convert_sequence`
+  constructs exactly once per scene graph, then mutates in place across
+  every node — by construction, nothing resets between nodes except
+  `State::forget_texture`'s narrow, intentional, image-only clear. Only
+  texture image binding (RE-064) had a direct cross-node persistence
+  test; the other nine categories had only single-list "sets correctly"
+  tests, not "survives/resets correctly across a node boundary" tests.
+* **Texture addressing was already covered, just undocumented.**
+  `TextureRef` (`derive(PartialEq, Eq)`) bundles `mirror_s`/`mirror_t`/
+  `clamp_s`/`clamp_t`/dimensions/palette fields together, and RE-064's
+  own assertion already compares whole `TextureRef` structs with
+  non-default `mask`/`cm` values set in its own test — confirmed this
+  precisely (checked the derive and full field list) rather than assumed.
+* **Four new tests close the remaining categories:**
+  `a_palette_binding_survives_a_new_image_bind_without_a_new_tlut_load`
+  (TLUT — the direction RE-093 never covered: image changes, palette
+  must persist), `combiner_and_colour_constants_persist_into_a_node_
+  that_sets_none_of_them` (combiner + primitive + environment color, via
+  Link's own real combiner word), `render_mode_persists_into_a_node_
+  that_sets_no_new_render_mode` (blend/alpha, via a real translucent
+  render-mode word), `geometry_mode_persists_into_a_node_that_sets_no_
+  new_geometry_mode` (depth + culling + geometry/lighting mode, all four
+  bits in one test).
+* **Verified capable of failing.** A temporary, reverted change to
+  `convert_sequence` (rebuilding `State::new()` every loop iteration
+  instead of reusing one) made all four new tests fail with the expected
+  mismatch, plus two pre-existing tests (the vertex cache and RE-064's
+  own texture test) — confirming this is one shared mechanism, not
+  independent per-category logic. Reverted before committing.
+* `cargo test --workspace`: 266 `ssb-rom` (405 total workspace, was
+  401). `cargo clippy --release --workspace`: clean. Rebuilt pack:
+  byte-identical to baseline (test-only change, no conversion-logic
+  change). `cargo psp --release` + `tools/run-ppsspp.sh`: Dream Land
+  re-screenshotted clean (pixel-normal, 60 FPS, no panics).
+* **What remains:** the PSP-side `psp/src/meshdraw.rs::DrawState`'s own
+  GE draw-state cache (`last_texture`/`last_flags`/`last_texture_blend`)
+  is a second, distinct layer this task's objective also covers — RE-074
+  already found and fixed one real bug there incidentally (not from a
+  dedicated audit). `PLAN.md` R0.15 moves `TODO` → `IN_PROGRESS`; its
+  "state leakage tests added" item stays open pending that second
+  layer's own audit.
+
+## Previous Task Status
+
+RE-116 (a previous session) picked up R0.13's one remaining thread: root-cause
 file 46's diagonal black banding. See `docs/reverse-engineering.md`
 RE-116 for the full account; summary:
 
@@ -84,7 +136,7 @@ RE-116 for the full account; summary:
   work exists, which is itself gated behind the rendering-correctness
   milestone this task belongs to.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-115 (a previous session) picked up the camera-framing gap RE-109 first
 recorded and RE-113/114 left as the remaining blocker for files 41, 43,

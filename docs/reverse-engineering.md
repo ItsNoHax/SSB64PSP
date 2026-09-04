@@ -8605,3 +8605,98 @@ and `framebuffer synchronization verified` for a real (not
 manually-triggered) capture timing — are the only ones left open, and
 both are blocked on this project not yet having a game-state/transition
 system at all, not on any further rendering investigation.
+
+---
+
+## RE-117 — R0.15 started: nine of ten render-state categories had no cross-node persistence test at all; four new tests close the gap
+
+R0.13 having no further actionable rendering work, moved to the next
+eligible task per `PLAN.md`'s own ordering: `R0.15 — Render-State
+Isolation`. Surveyed `crates/ssb-rom/src/mesh.rs`'s `State`/`MeshMaterial`
+threading before writing anything, rather than guessing which categories
+needed coverage.
+
+**One shared mechanism, one existing test.** Every render-state category
+R0.15's checklist names — texture image, TLUT/palette, combiner,
+primitive color, environment color, blend/alpha state, depth, culling,
+geometry/lighting mode, tile addressing — lives in a single `State`
+struct that `convert_sequence` constructs exactly once per scene graph
+(`State::new()`, one call site) and then mutates in place across every
+node's own command list. By construction, nothing resets between nodes
+except `State::forget_texture`'s narrow, intentional, image-only clear
+(fired only on an unfollowable `Call`/`Branch` or a missed heap-index
+`MObj` lookup) — every other field persists exactly like the vertex
+cache does. Despite this, only **one** of the ten categories (texture
+image binding) had a direct unit test pinning that cross-node
+persistence: RE-064's own `a_texture_binding_persists_into_a_node_that_
+sets_no_new_state`. The other nine had only single-list "does the field
+get set correctly within one list" tests — real coverage of the
+mechanism's *output*, but nothing that would catch a future change
+accidentally resetting a field between nodes.
+
+**Texture addressing turned out to already be covered, just
+undocumented.** `TextureRef` (`derive(PartialEq, Eq)`) bundles
+`mirror_s`/`mirror_t`/`clamp_s`/`clamp_t`/dimensions/palette fields
+together, and RE-064's own assertion compares whole `TextureRef` structs
+for equality — its own item A already sets non-default `mask`/`cm`
+values on its `SetTile`, so that single existing assertion already
+exercises tile-addressing (and TLUT) persistence across the node
+boundary. Checked this precisely (confirmed `PartialEq`/`Eq` derive and
+the full field list) rather than assuming it from the struct's shape —
+worth documenting explicitly since nothing about RE-064's own test name
+or write-up said so.
+
+**Four new tests close the remaining, genuinely uncovered categories:**
+
+* `a_palette_binding_survives_a_new_image_bind_without_a_new_tlut_load` —
+  the direction RE-093's own fix never covered: node A binds a CI4 image
+  and loads a palette; node B binds a *different* image via its own
+  `G_SETTIMG` but never reissues `G_LOADTLUT`. Real hardware's CLUT and
+  texture-image registers are independent, so node B must draw with node
+  A's palette on its own new image, not no palette. This is a genuinely
+  different, previously-untested scenario from RE-064's "node B sets
+  nothing at all" case.
+* `combiner_and_colour_constants_persist_into_a_node_that_sets_none_of_
+  them` — reuses Link's own real combiner word
+  (`links_own_model_sets_the_lerp_shape_for_real`, RE-073) so that a
+  single `texture_blend` assertion breaks if the combiner shape, PRIM, or
+  ENV fails to carry over into node B; `G_SETBLENDCOLOR` checked directly
+  in the same test since it passes through `material_now()` unmodified.
+* `render_mode_persists_into_a_node_that_sets_no_new_render_mode` —
+  reuses `xlu_render_mode_is_translucent`'s own real render-mode word;
+  node B inherits `translucent`/`alpha_test` with no render-mode command
+  of its own.
+* `geometry_mode_persists_into_a_node_that_sets_no_new_geometry_mode` —
+  one `G_GEOMETRYMODE` in node A sets `cull_back`, `lit`, `smooth` and
+  `z_buffer` together; node B, with no geometry-mode command at all,
+  must inherit all four (plus `cull_front`'s continued absence).
+
+**Verified capable of failing, not just passing.** A temporary, reverted
+change to `convert_sequence` (rebuilding `State::new()` fresh every loop
+iteration instead of reusing one `State` across the whole sequence) made
+all four new tests fail with the expected mismatch — and also broke two
+pre-existing tests (the vertex-cache-across-lists test and RE-064's own
+texture test), confirming this is genuinely one shared mechanism under
+audit, not independent per-category logic that could pass by accident.
+Reverted before committing.
+
+`cargo test --workspace`: 266 `ssb-rom` tests (405 total workspace, was
+401 before this session). `cargo clippy --release --workspace`: clean.
+Rebuilt the real pack: byte-identical to the pre-session baseline
+(5253.2 KiB, identical mesh/texture/triangle counts) — expected, since
+only test code changed, not the conversion logic itself. `cargo psp
+--release` + `tools/run-ppsspp.sh`: Dream Land re-screenshotted clean
+(pixel-normal, 60 FPS, no panics).
+
+**Not yet done.** `PLAN.md` R0.15's own objective ("render state cannot
+incorrectly leak between display-list/material/node draws") also covers
+the PSP-side `psp/src/meshdraw.rs::DrawState`'s GE draw-state cache
+(`last_texture`/`last_flags`/`last_texture_blend`) — a second, distinct
+layer from `mesh.rs`'s decode-time threading. RE-074 already found and
+fixed one real bug there (`bind_texture` unconditionally resetting the
+texture function, which would have clobbered an active `TEXTURE_BLEND`
+state), but that was incidental to RE-073/074's own combiner work, not
+from a dedicated audit of that layer the way this session gave
+`mesh.rs`. `PLAN.md` R0.15 moves `TODO` → `IN_PROGRESS`, not `COMPLETE` —
+its "state leakage tests added" item stays open pending that second
+layer's own audit.

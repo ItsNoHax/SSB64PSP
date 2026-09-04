@@ -1876,14 +1876,67 @@ RE-034, RE-082, RE-084, RE-085 in `docs/reverse-engineering.md`.
 
 ## R0.15 — Render-State Isolation
 
-Status: `TODO`
+Status: `IN_PROGRESS`
 
 ### Current evidence
 
-No dedicated state-leakage tests were found. `RE-010`'s unresolved `MObjSub`
-fields and the majority-vote lighting heuristic (R0.6) are related open
-questions but do not by themselves demonstrate isolation. Genuinely not
-started as a distinct verification effort.
+RE-117 surveyed `crates/ssb-rom/src/mesh.rs`'s `State`/`MeshMaterial`
+threading first, rather than guessing which categories needed new tests.
+Every state category lives in one `State` struct, reused across
+`convert_sequence`'s whole loop (`State::new()` called exactly once per
+scene graph, confirmed by code reading — matching R0.4/RE-064's own
+"no cross-object leakage by construction" finding) — so by construction,
+nothing resets between nodes except `State::forget_texture`'s narrow,
+intentional, image-only clear on an unfollowable `Call`/`Branch`. The
+survey found only one category (texture image binding) had a direct
+cross-node persistence test at all (RE-064). Added four new tests
+closing the other nine:
+
+* `a_palette_binding_survives_a_new_image_bind_without_a_new_tlut_load`
+  (TLUT/palette) — the direction RE-093's own fix never covered: here the
+  *image* changes via a fresh `G_SETTIMG`, and the palette (`G_LOADTLUT`)
+  must still carry over unchanged, since real hardware's CLUT and
+  texture-image registers are independent.
+* `combiner_and_colour_constants_persist_into_a_node_that_sets_none_of_them`
+  (combiner, primitive color, environment color, blend color) — uses
+  Link's own real combiner word (RE-073) so a single `texture_blend`
+  assertion would break if PRIM, ENV or the combiner shape failed to
+  carry over; `G_SETBLENDCOLOR` checked directly in the same test.
+* `render_mode_persists_into_a_node_that_sets_no_new_render_mode`
+  (blend/alpha state) — reuses `xlu_render_mode_is_translucent`'s real
+  render-mode word.
+* `geometry_mode_persists_into_a_node_that_sets_no_new_geometry_mode`
+  (depth, culling, geometry/lighting mode) — one `G_GEOMETRYMODE` set in
+  node A, nothing in node B, all five bits (`cull_back`, `cull_front`,
+  `lit`, `smooth`, `z_buffer`) checked.
+
+**Texture addressing was already covered, just not documented as such.**
+`RE-064`'s own existing test asserts whole-`TextureRef` equality between
+nodes, and `TextureRef` (`derive(PartialEq, Eq)`) bundles `mirror_s`/
+`mirror_t`/`clamp_s`/`clamp_t`/dimensions/palette fields together —
+its item A's own `SetTile` already sets non-default `mask`/`cm` values,
+so that single assertion already exercises tile-addressing persistence,
+it just was never labelled as doing so.
+
+All four new tests confirmed capable of failing: a temporary, reverted
+change to `convert_sequence` (rebuilding `State::new()` fresh every loop
+iteration instead of reusing one) made all four fail with the expected
+mismatch, plus two pre-existing tests (the vertex cache and RE-064's own
+texture test) — confirming the whole mechanism this task audits is a
+single shared construction, not per-category logic that could pass
+independently. Reverted; `cargo test --workspace`: 266 `ssb-rom` (405
+total workspace, was 401). `cargo clippy --release --workspace`: clean.
+Rebuilt pack: byte-identical to baseline (5253.2 KiB, same counts —
+test-only change). `cargo psp --release` + `tools/run-ppsspp.sh`: Dream
+Land re-screenshotted clean (pixel-normal, 60 FPS, no panics).
+
+**Not yet covered:** the PSP-side `psp/src/meshdraw.rs::DrawState`'s own
+GE draw-state cache (`last_texture`/`last_flags`/`last_texture_blend`) is
+a *second* layer this task's "leak between draws" objective also
+touches — RE-074 already found and fixed one real bug there (`bind_texture`
+unconditionally resetting the texture function, clobbering `TEXTURE_BLEND`
+state), but no systematic audit of that layer has been done the way this
+session did for `mesh.rs`. Left as further work before this task closes.
 
 ### Objective
 
@@ -1896,17 +1949,21 @@ Ensure render state cannot incorrectly leak between display-list/material/node d
 
 ### Acceptance
 
-* [ ] texture state tracked
-* [ ] TLUT state tracked
-* [ ] combiner state tracked
-* [ ] primitive color tracked
-* [ ] environment color tracked
-* [ ] blend state tracked
-* [ ] depth state tracked
-* [ ] culling tracked
-* [ ] geometry state tracked
-* [ ] texture addressing tracked
-* [ ] state leakage tests added
+* [x] texture state tracked — RE-064 (pre-existing), cross-node persistence pinned by a direct test
+* [x] TLUT state tracked — RE-117: `a_palette_binding_survives_a_new_image_bind_without_a_new_tlut_load`
+* [x] combiner state tracked — RE-117: `combiner_and_colour_constants_persist_into_a_node_that_sets_none_of_them`
+* [x] primitive color tracked — same test
+* [x] environment color tracked — same test
+* [x] blend state tracked — RE-117: `render_mode_persists_into_a_node_that_sets_no_new_render_mode` (alpha/translucent) plus `G_SETBLENDCOLOR` in the combiner test
+* [x] depth state tracked — RE-117: `geometry_mode_persists_into_a_node_that_sets_no_new_geometry_mode`
+* [x] culling tracked — same test
+* [x] geometry state tracked — same test (lighting/shading-smooth bits)
+* [x] texture addressing tracked — RE-064's existing test already covers this via whole-`TextureRef` equality (RE-117 documents it explicitly)
+* [ ] state leakage tests added — `mesh.rs`'s decode-time state threading is now covered; `psp/src/meshdraw.rs::DrawState`'s device-side GE cache layer is not yet systematically audited (RE-074 found one real bug there, but that was incidental, not from a dedicated pass)
+
+### Evidence
+
+RE-064, RE-074, RE-117 in `docs/reverse-engineering.md`.
 
 ---
 
