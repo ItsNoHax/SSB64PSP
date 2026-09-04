@@ -461,6 +461,36 @@ alone is not sufficient. Concludes that deciding this on real hardware
 a substantially larger blur change still did not surface on screen under
 PPSSPP.
 
+RE-101 fixed a real, separate texture-coordinate gap: `G_TEXTURE`'s
+`scale_s`/`scale_t` (an unsigned Q0.16 UV multiplier the RSP applies at
+`G_VTX` load time) was decoded by `dl.rs` but never applied by `mesh.rs`.
+Several fighters' face textures are authored at a UV scale below 1.0;
+left unscaled, their raw vertex UVs ran several texture periods wider
+than intended, reading as a "melted", jumbled texture. Fixed by threading
+`State::tex_scale` through the vertex-cache-load path, the same point
+real hardware applies it.
+
+RE-102 corrected RE-066's own "`Repeat` is correct for every measured
+case" conclusion. RE-066 found every clamp/mirror request in the ROM has
+its own axis mask nonzero and read that as clamp always being redundant
+with RE-044's mask-based narrowing — true only when narrowing actually
+shrinks the drawn rect. Several fighters' face/torso/head textures are a
+counter-example (mask not smaller than the drawn rect, so narrowing is a
+no-op); real hardware clamps there, and UVs were measured overflowing by
+up to ~110 texels, or past a mirrored pair 2x or more on Fox/Falcon/Kirby
+specifically. Fixed via `TextureRef::clamp_s`/`clamp_t`
+(`TextureDesc::wrap`, `pack::VERSION` 14 → 15) and wiring
+`meshdraw::bind_texture` to call `sceGuTexWrap` with the GE's native
+`Clamp` mode per axis instead of always `Repeat`.
+
+Both RE-101 and RE-102 are unit-tested and included in the same
+`cargo psp`/`tools/run-ppsspp.sh` regression check RE-100 already
+recorded (Dream Land pixel-normal, no default-path regression) — neither
+was independently re-verified against a fighter's own screenshot when
+written up (see `docs/reverse-engineering.md` RE-101/RE-102's own entries
+for the caveat); that is a good next step for a session working fighter
+rendering specifically, not yet done.
+
 ### Objective
 
 Determine and reproduce the actual texture sampling behavior used by SSB64.
@@ -479,14 +509,14 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [ ] LOD behavior identified
 * [ ] mipmapping behavior identified
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
-* [ ] texture coordinate behavior verified
-* [x] wrap/clamp/mirror behavior verified — RE-066: `Repeat` is correct for every measured clamp/plain-wrap case; RE-067: `Mirror` (29% of packed textures) is now exactly reproduced by pre-baking, not approximated
+* [ ] texture coordinate behavior verified — RE-101 fixed a real gap (`G_TEXTURE` UV scale, never applied), unit-tested but not independently re-verified on a fighter's own screenshot; not yet exhaustive enough to check this item
+* [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis
 * [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance; RE-081 disambiguated the magnification/minification confusion and tested a further blur pass (measurably less texture noise, not visibly different on screen) — none of the four is "resolved"; real hardware validation (`R2`) is looking necessary, not just sufficient, to close this
 * [ ] no unsupported mipmapping assumptions remain
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102 in `docs/reverse-engineering.md`.
 
 ---
 
@@ -624,6 +654,43 @@ all, now correctly dropped. `cargo test --workspace`: 368 passing (was
 unchanged at 60 FPS, debug overlay's texture counter reads `0/639`
 matching the repack.
 
+RE-106 found and fixed a real consumption gap in `combiner_shade_scale`'s
+own already-classified output: `material_now()` (RE-043) resolves
+`MeshMaterial::prim_color` correctly for a `SHADE * constant` combiner
+shape, but nothing downstream ever multiplied it back into a vertex —
+the PSP GE has no fixed-function stage to scale an *untextured* vertex
+colour by a separate constant, unlike `TEXTURE_BLEND`'s baseline colour
+which maps onto a real GE blend mode. Left unconsumed, any primitive
+using this shape rendered its raw, unscaled shade instead — wrong
+wherever the resolved scale is not identity, including a resolved scale
+of pure black, which reads on screen as a primitive rendering solid
+black despite non-black raw vertex data. Fixed by folding the scale into
+the vertex at pack time (`PackWriter::add_mesh`), the same place `lit`'s
+shading and `flat_color`/`texture_blend`'s baked colours are already
+applied. Five pre-existing `pack.rs` unit tests had unknowingly relied on
+`prim_color` being `None` and needed correcting once this was noticed;
+`cargo test --workspace` passes with the fold applied.
+
+RE-103 found the pre-existing lit-vs-literal heuristic (the "majority-vote
+lighting heuristic" `DECISIONS.md` D-024 already flagged) was wrong by
+construction, not merely imprecise: it decided per *primitive* by voting,
+but a fighter's mixed material (decal highlights as literal colour
+sharing a vertex buffer with a lit body) routinely splits 20–80% within
+one primitive — concretely measured on Fox, Falcon, Kirby and Ness, where
+the losing side's raw normal bytes were painted straight into RGB, the
+exact shape of a "melted", rainbow-noise surface. Fixed by deciding `lit`
+per *vertex* instead. RE-105 then closed the remaining gap this fix
+exposed: `material.lit` (the per-primitive input this per-vertex logic
+still trusts when set) had no reliable in-list signal, since RE-021
+already found real hardware turns `G_LIGHTING` on externally, per-object.
+`G_MOVEWORD`'s `G_MW_LIGHTCOL` index — updating a light's colour, which
+is meaningless unless lighting is already on — is an unambiguous,
+data-driven signal instead of a guess, confirmed against a real four-command
+ROM sample (file 313/Fox, offset `0x1AB0`, cross-checked against
+`refs/ssb-decomp-re/include/PR/gbi.h`'s `G_MWO_*` constants). Both are
+unit-tested; neither was independently re-verified against a fighter's
+own screenshot when written up.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -637,9 +704,9 @@ Reproduce original SSB64 material behavior.
 
 * [ ] material tables resolved
 * [x] combiner behavior verified — RE-073/RE-074: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models), detected, packed, wired to the PSP GE's native `TextureEffect::Blend`, and visually confirmed correct against Link's own model (before/after screenshots). The general two-cycle evaluation model itself was already verified (RE-039/RE-043); the remaining ~8% of ENV-reading combiners and whatever `combiner_shade_scale` declines outside that are not exhaustively catalogued, but are not the dominant case and are tracked under "primitive color"/"environment color" below rather than blocking this item
-* [ ] primitive color verified — RE-079's census plus RE-080's `combiner_flat_color` now cover every shape this model resolves at all: shade-scale, texture-blend and flat-constant are structurally disjoint and together account for 97.5%+ of archive-wide combiner-bearing primitives. What remains open is not a classification gap: `(PRIM-ENV)*TEXEL0+ENV`'s 3,085/4,580 misses are a genuine absence of `prim_color` on this converter's own per-graph state (likely `R0.7`'s material-table pairing gaps), which no combiner-shape work can fix
+* [ ] primitive color verified — RE-079's census plus RE-080's `combiner_flat_color` now cover every shape this model resolves at all: shade-scale, texture-blend and flat-constant are structurally disjoint and together account for 97.5%+ of archive-wide combiner-bearing primitives. What remains open is not a classification gap: `(PRIM-ENV)*TEXEL0+ENV`'s 3,085/4,580 misses are a genuine absence of `prim_color` on this converter's own per-graph state (likely `R0.7`'s material-table pairing gaps), which no combiner-shape work can fix. RE-106 additionally found and fixed a *consumption* gap in the cases that already classified correctly: `prim_color` was resolved but never multiplied into the actual vertex, baked in now
 * [ ] environment color verified — same as primitive color; the remaining gap is the same genuine-absence case, symmetric in `ENV`
-* [ ] lighting verified
+* [ ] lighting verified — RE-103/RE-105 fixed the input this still depends on (per-vertex, not per-primitive-majority, lit/literal decisions, driven by a real `G_MW_LIGHTCOL` ROM signal rather than a guess) but the shading itself is still RE-065's single baked-in neutral key light, not per-object real lighting — this item stays open on that basis
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
@@ -649,7 +716,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106 in `docs/reverse-engineering.md`.
 
 ### Evidence
 
@@ -1421,7 +1488,8 @@ tiles it vertically by ordinary wrap addressing (V span 22.5–215 texels,
 **Implemented and device-verified this session**, not just scoped:
 `mobj::LB_TRANSITION_SEGMENT`, `mesh::TextureRef::framebuffer` (set by a
 segment-`0x1` `G_SETTIMG`, cleared by any real one), `pack::TextureDesc::role`
-(`pack::VERSION` 13 → 14, `TextureDesc::SIZE` 32 → 36), `romtool`'s
+(`pack::VERSION` 13 → 14, later 15 once RE-102 added `wrap` the same
+session, `TextureDesc::SIZE` 32 → 36 → 40), `romtool`'s
 `pack_mesh` deduplicating the 13 files' 26 binds down to the 2 distinct
 shapes that exist, `Gpu::request_transition_capture` (a CPU-side VRAM
 readback into a small `Psm8888` buffer, the PSP-side equivalent of
@@ -1434,14 +1502,52 @@ and confirmed it appears correctly on a real transition object's geometry
 compiles. Dream Land's own rendering is unaffected (pixel-normal at 60
 FPS, confirmed by screenshot after fully reverting the temporary patch).
 
+RE-107 (a later session) extended verification archive-wide before
+touching the black-rectangle question. A temporary, reverted `romtool`
+census across all 13 files (39–51) confirmed the two-primitive shape
+(one framebuffer-textured primitive plus one untextured "backing"
+primitive) generalizes to every one of them, not just file 40 — but
+found file 40 is *not* representative of the backing primitive's colour:
+12 of the 13 files' backing primitives carry raw vertex colour
+`[255,255,255,0]` (white), and only file 40 itself uses the navy
+`[0,0,127/128,0]` RE-100 originally measured. Extended on-device
+verification to a second file on this basis (file 45, a white-backing,
+unlit case, deliberately different from file 40's navy-backing, lit
+one): a temporary, reverted `psp/src/main.rs` patch (magenta clear +
+capture at frame 30, forced object switch to file 45's object from frame
+35) screenshotted a correct magenta render on the framebuffer-textured
+primitive, confirming the capture/bind mechanism generalizes beyond
+file 40's own hand-picked case, not merely by inference from the shape
+census.
+
+**The black-rectangle question is not resolved — and is now stranger
+than "not investigated".** Both tested files' backing primitives render
+pure black (`0,0,0`, confirmed by direct pixel sampling) on the real
+device despite genuinely non-black raw vertex colour data (file 40:
+dark navy; file 45: pure white). Two plausible mechanisms were checked
+and directly ruled out for file 45 via a temporary, reverted census: the
+primitive's `prim_color` and `flat_color` are both confirmed `None` at
+the point `pack_mesh` builds it (so neither RE-106's shade-scale bake nor
+RE-080's flat-colour bake is multiplying it to black), and its raw
+`[255,255,255,0]` bytes fail `looks_like_unit_normal`'s check by a wide
+margin (length² of 3 against an 11,000–21,000 window), so RE-103's
+per-vertex lit fallback cannot be shading it as a normal either. Nothing
+in the material pipeline as read explains a genuinely white, unlit,
+untextured, unscaled vertex colour rendering black on screen. Left open
+rather than guessed at further — see `docs/reverse-engineering.md`
+RE-106's own closing note for the same finding recorded where RE-106's
+mechanism was the most likely (and now eliminated) suspect.
+
 **Still open:** nothing calls `request_transition_capture` from real game
 logic — there is no match-start/match-end event to call it from yet, since
-this project has no game-state/transition system at all. Only one of the
-13 files' geometry was actually looked at, and one of its own primitives
-(a solid black rectangle alongside the magenta-textured one) was not
-investigated. "Render-to-texture paths implemented where required" is not
-a separate gap: RE-099/RE-100 both confirm the real mechanism has no
-render-to-texture pass at all, only a one-time capture.
+this project has no game-state/transition system at all. 11 of the 13
+files' geometry still has no on-device screenshot of its own (2 of 13
+now confirmed, chosen to cover both known backing-colour variants), and
+the black-rectangle primitive is now actively investigated and still
+unexplained, not merely unlooked-at. "Render-to-texture paths implemented
+where required" is not a separate gap: RE-099/RE-100 both confirm the
+real mechanism has no render-to-texture pass at all, only a one-time
+capture.
 
 ### Objective
 
@@ -1455,15 +1561,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested this session (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — one file's (of 13) geometry confirmed to sample real captured screen content correctly; the other 12 files and the black-rectangle primitive noted above are unverified
+* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly (chosen to cover both known backing-colour variants, not two arbitrary picks); the other 11 files remain unscreenshotted, and both tested files share one unexplained defect (the backing primitive renders black regardless of its real, non-black vertex colour) that is not yet root-caused
 
 ### Evidence
 
-RE-055, RE-099, RE-100 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107 in `docs/reverse-engineering.md`.
 
 ---
 
