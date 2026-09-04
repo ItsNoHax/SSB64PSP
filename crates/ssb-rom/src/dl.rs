@@ -195,6 +195,15 @@ pub enum Cmd {
     },
     /// A sync or no-op with no effect on geometry conversion.
     Sync(u8),
+    /// `G_MOVEWORD`: writes one 32-bit RSP data word (light colours/
+    /// directions, fog range, clip planes, ...) named by `index` (`G_MW_*`)
+    /// and `offset` (`G_MWO_*`) within it. `index == G_MW_LIGHTCOL` (RE-105)
+    /// is the one this converter acts on -- see `mesh.rs`.
+    MoveWord {
+        index: u8,
+        offset: u16,
+        data: u32,
+    },
     /// A command we decode but do not model yet.
     Other {
         opcode: u8,
@@ -354,6 +363,19 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
             data: w1,
         },
 
+        // F3DEX2's `gMoveWd`/`gDma1p(pkt, G_MOVEWORD, data, offset, index)`:
+        // `w0 = (G_MOVEWORD << 24) | (index << 16) | offset`, `w1 = data`.
+        // Verified against `refs/ssb-decomp-re/include/PR/gbi.h`'s
+        // `G_MWO_aLIGHT_1`/`bLIGHT_1`/`aLIGHT_2`/`bLIGHT_2` (0x00/0x04/0x18/
+        // 0x1c) against a real four-command run (file 313, offset 0x1AB0)
+        // that writes exactly those four offsets under `index = G_MW_LIGHTCOL`
+        // (0x0a) -- RE-105.
+        G_MOVEWORD => Cmd::MoveWord {
+            index: ((w0 >> 16) & 0xFF) as u8,
+            offset: (w0 & 0xFFFF) as u16,
+            data: w1,
+        },
+
         _ => Cmd::Other { opcode, w0, w1 },
     })
 }
@@ -497,6 +519,47 @@ mod tests {
         assert_eq!(
             cmd(0x0600_0204, 0x0006_080A),
             Cmd::Tri2([0, 1, 2], [3, 4, 5])
+        );
+    }
+
+    #[test]
+    fn decodes_moveword_lightcol_from_a_real_rom_sample() {
+        // RE-105: file 313 (Fox), offset 0x1AB0, four consecutive
+        // `gMoveWd` commands writing `G_MW_LIGHTCOL`'s (0x0a) `aLIGHT_1`/
+        // `bLIGHT_1`/`aLIGHT_2`/`bLIGHT_2` offsets (0x00/0x04/0x18/0x1c),
+        // verified against `refs/ssb-decomp-re/include/PR/gbi.h`'s
+        // `G_MWO_*` constants.
+        assert_eq!(
+            cmd(0xDB0A_0000, 0xFFFF_FF00),
+            Cmd::MoveWord {
+                index: 0x0a,
+                offset: 0x00,
+                data: 0xFFFF_FF00,
+            }
+        );
+        assert_eq!(
+            cmd(0xDB0A_0004, 0xFFFF_FF00),
+            Cmd::MoveWord {
+                index: 0x0a,
+                offset: 0x04,
+                data: 0xFFFF_FF00,
+            }
+        );
+        assert_eq!(
+            cmd(0xDB0A_0018, 0x4C4C_4C00),
+            Cmd::MoveWord {
+                index: 0x0a,
+                offset: 0x18,
+                data: 0x4C4C_4C00,
+            }
+        );
+        assert_eq!(
+            cmd(0xDB0A_001C, 0x4C4C_4C00),
+            Cmd::MoveWord {
+                index: 0x0a,
+                offset: 0x1c,
+                data: 0x4C4C_4C00,
+            }
         );
     }
 

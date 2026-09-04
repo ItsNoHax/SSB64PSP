@@ -874,13 +874,26 @@ fn pack_mesh(
     for prim in &m.primitives {
         let texture_index = match prim.material.texture {
             None => None,
+            // RE-099/RE-100: no ROM bytes to convert -- the device fills
+            // this in at run time (`Gpu::request_transition_capture`).
+            // Keyed on `(u32::MAX, u32::MAX, width, height)` rather than
+            // through `texture_cache_key`: a framebuffer `TextureRef` always
+            // has `data_file: None, data_offset: 0, palette: None`, which
+            // would otherwise collide with a real, unpaletted texture
+            // legitimately bound at offset 0 of the same file.
+            Some(t) if t.framebuffer => {
+                let key = (u32::MAX, u32::MAX, t.width as u32, t.height as u32);
+                Some(*tex_index.entry(key).or_insert_with(|| {
+                    writer.add_framebuffer_texture(t.width, t.height)
+                }))
+            }
             Some(t) => {
                 let key = texture_cache_key(id, &t);
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
                     convert_texture(src, &t, swizzle).map(|tex| {
-                        let i = writer.add_texture(&tex);
+                        let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
                         tex_index.insert(key, i);
                         i
                     })

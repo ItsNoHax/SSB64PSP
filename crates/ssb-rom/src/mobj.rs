@@ -37,6 +37,17 @@ pub const MOBJSUB_SIZE: u32 = 0x78;
 /// Segment holding the display list `gcDrawMObjForDObj` builds.
 pub const GRAPHICS_HEAP_SEGMENT: u8 = 0x0E;
 
+/// Segment the LB ("loading-break") transition system binds to
+/// `sLBTransitionPhotoHeap`, a one-time CPU-side snapshot of the framebuffer
+/// taken when a transition starts (`gSPSegment(dl, 0x1, sLBTransitionPhotoHeap)`,
+/// `refs/ssb-decomp-re/src/lb/lbtransition.c:155`; RE-055/RE-099/RE-100).
+///
+/// Like [`GRAPHICS_HEAP_SEGMENT`], this segment resolves to something the RSP
+/// fills in at run time rather than to archive data — a `G_SETTIMG` naming it
+/// has nothing for a pack-time converter to read, only a marker to carry
+/// through to the device, which supplies the real pixels.
+pub const LB_TRANSITION_SEGMENT: u8 = 0x01;
+
 /// Bytes per `MObj` entry point in that segment: one `gSPBranchList`.
 const ENTRY_SIZE: u32 = 8;
 

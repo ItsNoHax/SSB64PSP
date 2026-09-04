@@ -76,6 +76,31 @@ pub struct TextureRef {
     /// (RE-067) rather than silently rendering a plain, incorrect repeat.
     pub mirror_s: bool,
     pub mirror_t: bool,
+    /// `G_TX_CLAMP` on the render tile, per axis, independent of `mirror_s`/
+    /// `mirror_t` (RE-102). Real hardware clamps addressing at the tile
+    /// bound instead of wrapping past it; the PSP GE supports this natively
+    /// (`sceGuTexWrap`'s `Clamp` mode). When an axis mirrors too (`cms`/
+    /// `cmt` == 3), real hardware mirrors exactly once and then clamps --
+    /// applying `Clamp` on top of `mirror_s`/`mirror_t`'s pre-baked doubled
+    /// texture reproduces that precisely, since sampling past the doubled
+    /// image then just holds its far edge. Skipping this made every
+    /// primitive whose drawn UV rect legitimately exceeds its own tile --
+    /// true for the small decal-style textures fighter faces are built
+    /// from, and for several fighters' torso/head textures overflowing a
+    /// mirrored pair by 2x or more -- wrap and repeat texels the RDP would
+    /// have clamped, reading as a jumbled, "melted" texture instead of one
+    /// coherent (if partially off-screen) image.
+    pub clamp_s: bool,
+    pub clamp_t: bool,
+    /// `true` when this binding came from `mobj::LB_TRANSITION_SEGMENT`
+    /// rather than any archive file (RE-099/RE-100). Every other field still
+    /// describes the tile's real, decoded shape (`format`/`size`/`width`/
+    /// `height`, taken from the same `G_SETTILE`/`G_SETTILESIZE` commands as
+    /// any other texture) — only `data_file`/`data_offset`/`palette_*` are
+    /// meaningless placeholders, since there is no ROM data to point at. A
+    /// pack-time converter must skip decoding texels for these and emit a
+    /// runtime-filled entry instead.
+    pub framebuffer: bool,
 }
 
 /// Render state a primitive is drawn under.
@@ -748,6 +773,18 @@ struct State {
     palette_file: Option<u16>,
     palette_entries: u16,
     texture_enabled: bool,
+    /// `G_TEXTURE`'s `scale_s`/`scale_t` (RE-101): an unsigned Q0.16
+    /// multiplier the RSP applies to a vertex's raw ST the moment `G_VTX`
+    /// loads it, before it ever reaches the cache. `0xFFFF` is the SDK's "no
+    /// scaling" value (true 1.0 does not fit in 16 bits). Skipping this made
+    /// the face texture on every fighter -- authored at a UV scale below 1.0
+    /// -- sample several texture periods wider than the artist intended,
+    /// reading as a "melted" jumble of unrelated texels instead of a face.
+    tex_scale: (u16, u16),
+    /// Set by a `G_SETTIMG` targeting `mobj::LB_TRANSITION_SEGMENT`; cleared
+    /// by any other `G_SETTIMG` or `forget_texture`. See
+    /// [`TextureRef::framebuffer`].
+    framebuffer_capture: bool,
     /// The `G_SETCOMBINE` words in force, if one has been set. A list that
     /// draws before setting one is a list whose colour cannot be resolved, and
     /// leaving the shade alone is the safe answer.
@@ -781,6 +818,8 @@ impl State {
             palette_file: None,
             palette_entries: 0,
             texture_enabled: false,
+            tex_scale: (0xFFFF, 0xFFFF),
+            framebuffer_capture: false,
             combiner: None,
             two_cycle: false,
             mobjs: Vec::new(),
@@ -825,6 +864,7 @@ impl State {
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette.offset);
             self.timg_file = palette.file;
+            self.framebuffer_capture = false;
             // Tied to the same condition as the palette itself, not merely
             // "set when present": a later palette-bearing `MObj` with no
             // script must clear a previous one rather than leave it
@@ -841,6 +881,7 @@ impl State {
             self.timg_addr = Some(sprite.offset);
             self.timg_file = sprite.file;
             self.real_timg = Some((sprite.offset, sprite.file));
+            self.framebuffer_capture = false;
         }
         if let Some(c) = m.prim_color {
             self.material.prim_color = Some(c);
@@ -861,6 +902,7 @@ impl State {
         self.palette_offset = None;
         self.palette_file = None;
         self.texture_enabled = false;
+        self.framebuffer_capture = false;
         self.material.mat_anim = None;
     }
 
@@ -951,7 +993,6 @@ impl State {
         if !self.texture_enabled {
             return None;
         }
-        let offset = self.timg_addr?;
         let (fmt, siz) = self.tile0_fmt?;
         let (w, h) = self.tile_dims?;
         // `G_SETTILESIZE` gives the rectangle being *drawn*, which for a
@@ -962,17 +1003,62 @@ impl State {
         // 12 KiB file (RE-044). A mask of zero means no wrapping, so the drawn
         // rect is the texture.
         let (mask_s, mask_t) = self.tile0_mask.unwrap_or((0, 0));
-        let (w, h) = (
+        let (nw, nh) = (
             if mask_s > 0 { w.min(1 << mask_s) } else { w },
             if mask_t > 0 { h.min(1 << mask_t) } else { h },
         );
+        let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
+        let (w, h) = (nw, nh);
         // `G_TX_MIRROR` is bit 0 of `cms`/`cmt`. Only meaningful with an
         // actual repeat period (RE-066: every real occurrence in this ROM
         // already has one), so gate on the mask too rather than trusting the
         // bit alone.
-        let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
         let mirror_s = mask_s > 0 && cm_s & 0x1 != 0;
         let mirror_t = mask_t > 0 && cm_t & 0x1 != 0;
+        // `G_TX_CLAMP` is bit 1 (RE-102). Unlike mirror it is not gated on
+        // the mask being nonzero -- a mask of zero already means "the drawn
+        // rect is the texture" per the comment above, so clamp is a no-op
+        // there either way, and gating it out would just be redundant, not
+        // wrong. Nor is it gated on mirror: `cms`/`cmt` == 3 (both bits) is
+        // real hardware's "mirror once, then clamp beyond that single
+        // bounce" -- not "mirror forever". The PSP GE's `Clamp` wrap mode
+        // applied *on top of* RE-067's pre-baked mirrored-double texture
+        // reproduces that exactly (sampling past the doubled image just
+        // holds its far edge); treating a `cms == 3` axis as pure mirror
+        // (plain `Repeat`, the first cut of this fix) kept tiling the
+        // mirrored pair past the point real hardware clamps, which is
+        // exactly what a UV overflowing several periods -- Fox's and Captain
+        // Falcon's head/body textures, measured well past 2x here -- turns
+        // into a jarring rainbow repeat instead of one held edge.
+        let clamp_s = cm_s & 0x2 != 0;
+        let clamp_t = cm_t & 0x2 != 0;
+
+        if self.framebuffer_capture {
+            // No archive location: the real content is filled in on the
+            // device from a runtime framebuffer capture (RE-099/RE-100).
+            // `format`/`size`/`width`/`height` still describe the tile's real
+            // decoded shape, taken from the same `G_SETTILE`/`G_SETTILESIZE`
+            // commands as any other texture -- a pack-time converter uses
+            // these to size the runtime buffer, just skips decoding texels.
+            return Some(TextureRef {
+                data_file: None,
+                data_offset: 0,
+                format: Format::from_raw(fmt)?,
+                size: BitSize::from_raw(siz)?,
+                width: w,
+                height: h,
+                palette_file: None,
+                palette_offset: None,
+                palette_entries: 0,
+                mirror_s,
+                mirror_t,
+                clamp_s,
+                clamp_t,
+                framebuffer: true,
+            });
+        }
+
+        let offset = self.timg_addr?;
         Some(TextureRef {
             data_file: self.timg_file,
             data_offset: offset,
@@ -985,6 +1071,9 @@ impl State {
             palette_entries: self.palette_entries,
             mirror_s,
             mirror_t,
+            clamp_s,
+            clamp_t,
+            framebuffer: false,
         })
     }
 }
@@ -1203,10 +1292,18 @@ fn walk(
                         .map_err(|_| MeshError::VertexDataOutOfBounds { offset: at as u32 })?;
                     let slot = dest_index as usize + i;
                     if slot < state.cache.len() {
+                        // Real hardware bakes the `G_TEXTURE` scale into ST at
+                        // load time, not draw time, so it must use whatever
+                        // `tex_scale` is current right here.
+                        let (scale_s, scale_t) = state.tex_scale;
+                        let scaled_uv = [
+                            ((v.uv[0] as i32 * scale_s as i32) >> 16) as i16,
+                            ((v.uv[1] as i32 * scale_t as i32) >> 16) as i16,
+                        ];
                         state.cache[slot] = Some(CacheEntry {
                             vertex: MeshVertex {
                                 pos: v.pos,
-                                uv: v.uv,
+                                uv: scaled_uv,
                                 rgba: v.rgba,
                             },
                             space: state.space,
@@ -1280,16 +1377,30 @@ fn walk(
                 // `Texture{on: true}` of their own to undo the earlier
                 // `off` -- `Cmd::Texture` alone cannot be the sole signal.
                 state.texture_enabled = true;
-                match (addr.0, src.extern_at(slot)) {
-                    (0, Some((target_file, offset))) => {
-                        state.timg_addr = Some(offset);
-                        state.timg_file = Some(target_file);
-                        state.real_timg = Some((offset, Some(target_file)));
-                    }
-                    _ => {
-                        state.timg_addr = Some(addr.0);
-                        state.timg_file = None;
-                        state.real_timg = Some((addr.0, None));
+                if addr.segment() == crate::mobj::LB_TRANSITION_SEGMENT {
+                    // The LB "loading transition" system binds this segment to
+                    // a one-time CPU-side snapshot of the framebuffer
+                    // (RE-099/RE-100), not to any archive data -- there is
+                    // nothing here to resolve at pack time, only a marker to
+                    // carry through (`State::framebuffer_capture`,
+                    // `TextureRef::framebuffer`) to the device, which fills
+                    // the real pixels in at runtime.
+                    state.framebuffer_capture = true;
+                    state.timg_addr = None;
+                    state.timg_file = None;
+                } else {
+                    state.framebuffer_capture = false;
+                    match (addr.0, src.extern_at(slot)) {
+                        (0, Some((target_file, offset))) => {
+                            state.timg_addr = Some(offset);
+                            state.timg_file = Some(target_file);
+                            state.real_timg = Some((offset, Some(target_file)));
+                        }
+                        _ => {
+                            state.timg_addr = Some(addr.0);
+                            state.timg_file = None;
+                            state.real_timg = Some((addr.0, None));
+                        }
                     }
                 }
             }
@@ -1347,7 +1458,15 @@ fn walk(
                 state.timg_file = state.real_timg.and_then(|(_, f)| f);
             }
 
-            Cmd::Texture { on, .. } => state.texture_enabled = on,
+            Cmd::Texture {
+                on,
+                scale_s,
+                scale_t,
+                ..
+            } => {
+                state.texture_enabled = on;
+                state.tex_scale = (scale_s, scale_t);
+            }
 
             Cmd::GeometryMode { clear, set } => {
                 let apply = |cur: bool, bit: u32| (cur && clear & bit == 0) || set & bit != 0;
@@ -1357,6 +1476,18 @@ fn walk(
                 state.material.smooth = apply(state.material.smooth, G_SHADING_SMOOTH);
                 state.material.z_buffer = apply(state.material.z_buffer, G_ZBUFFER);
             }
+
+            // `G_MW_LIGHTCOL` (RE-105): updating a light's colour has no
+            // effect unless `G_LIGHTING` is (or is about to be) on for this
+            // draw -- no display list would spend a command on it otherwise.
+            // Real hardware sets `G_LIGHTING` itself per-object, externally
+            // (RE-021), so this in-list command is the one unambiguous,
+            // ROM-verified signal (not a data-shape guess) that a segment
+            // relying on that external state is about to draw lit geometry.
+            Cmd::MoveWord {
+                index: G_MW_LIGHTCOL,
+                ..
+            } => state.material.lit = true,
 
             Cmd::SetCombine { hi, lo } => state.combiner = Some((hi, lo)),
 
@@ -1440,6 +1571,10 @@ const G_CULL_FRONT: u32 = 0x0000_0200;
 const G_CULL_BACK: u32 = 0x0000_0400;
 const G_LIGHTING: u32 = 0x0002_0000;
 const G_SHADING_SMOOTH: u32 = 0x0020_0000;
+
+/// `G_MOVEWORD`'s `index` for a light colour update (`gbi.h`'s
+/// `G_MW_LIGHTCOL`, RE-105).
+const G_MW_LIGHTCOL: u8 = 0x0a;
 
 // Render mode bits (`G_SETOTHERMODE_L` at `G_MDSFT_RENDERMODE`, from
 // `gbi.h`), RE-069. `data` there is already the raw `w1` word -- the GBI's
@@ -2027,6 +2162,126 @@ mod tests {
             second, first,
             "a node that sets no new material state must inherit the previous node's exactly"
         );
+    }
+
+    #[test]
+    fn a_lb_transition_segment_bind_produces_a_marked_framebuffer_texture() {
+        // RE-099/RE-100: the LB transition's `G_SETTIMG` names segment
+        // `0x1` (`sLBTransitionPhotoHeap`), not any archive location. Real
+        // ROM data (file 40) measured a 300x5 tile at exactly this shape.
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 300,
+                addr: SegAddr(0x0100_0000), // segment 1, offset 0
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            // (lrs - uls) >> 2 + 1 == 300, (lrt - ult) >> 2 + 1 == 5.
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 1196,
+                lrt: 16,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let t = mesh.primitives[0]
+            .material
+            .texture
+            .expect("a segment-0x1 bind must still produce a texture reference");
+        assert!(t.framebuffer, "segment 0x1 must be marked as a framebuffer capture, not a ROM location");
+        assert_eq!(t.data_file, None);
+        assert_eq!(t.data_offset, 0);
+        assert_eq!(t.width, 300);
+        assert_eq!(t.height, 5);
+        assert_eq!(t.format, Format::Rgba);
+        assert_eq!(t.size, BitSize::Bits16);
+    }
+
+    #[test]
+    fn a_real_settimg_after_a_transition_segment_clears_the_framebuffer_marker() {
+        // A node that binds segment 0x1 and then rebinds an ordinary texture
+        // must not still be marked as a framebuffer capture -- the marker is
+        // exactly as overridable as any other `G_SETTIMG` state.
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 1,
+                addr: SegAddr(0x0100_0000),
+                slot: 0,
+            },
+            Cmd::SetTimg {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                width: 1,
+                addr: SegAddr(0x40),
+                slot: 4,
+            },
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 4,
+                mask_t: 4,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 60,
+                lrt: 60,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let t = mesh.primitives[0].material.texture.expect("real texture bound");
+        assert!(!t.framebuffer, "a later real G_SETTIMG must clear the framebuffer marker");
+        assert_eq!(t.data_offset, 0x40);
     }
 
     #[test]

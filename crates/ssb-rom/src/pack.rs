@@ -75,7 +75,25 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    third to two-thirds of a fighter's nodes, never all of them) get their
 ///    own substitute mesh, looked up by the node's *global* index so no
 ///    per-object bookkeeping is needed at draw time.
-pub const VERSION: u32 = 13;
+/// 14 added `TextureDesc::role` (RE-099/RE-100): the LB "loading transition"
+///    system's `G_SETTIMG` names segment `0x1`
+///    (`mobj::LB_TRANSITION_SEGMENT`), a one-time framebuffer snapshot the
+///    device fills in at run time, not any archive location. Such a texture
+///    has no baked bytes at all (`data_len`/`palette_len` are 0), so a reader
+///    needs a way to tell it apart from an ordinary texture that simply
+///    failed to convert -- `role` is that marker. Grows `TextureDesc::SIZE`
+///    32 -> 36, the same shape `mat_anim` (`VERSION` 12) would have needed
+///    had it not found spare tail padding to fill instead.
+/// 15 added `TextureDesc::wrap` (RE-102): `G_SETTILE`'s `cms`/`cmt` clamp bit
+///    per axis, threaded through so the device can call `sceGuTexWrap` with
+///    `Clamp` instead of always `Repeat`. A primitive whose drawn UV rect
+///    legitimately exceeds a texture's own tile -- true of the small
+///    decal-style textures fighter faces are built from -- was wrapping and
+///    repeating texels real hardware would have clamped at the edge, the
+///    remaining cause (after RE-101's `G_TEXTURE` UV-scale fix) of fighter
+///    faces reading as a jumbled, "melted" texture. Grows `TextureDesc::SIZE`
+///    36 -> 40.
+pub const VERSION: u32 = 15;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -258,20 +276,49 @@ pub struct TextureDesc {
     /// CLUT for one of `MatAnimDesc`'s resolved variants instead of reading
     /// these two fields, but they stay meaningful as the frame-0 fallback.
     pub mat_anim: u32,
+    /// [`TextureDesc::ROLE_NORMAL`] or [`TextureDesc::ROLE_FRAMEBUFFER`]
+    /// (RE-099/RE-100, `VERSION` 14). A framebuffer-role entry has
+    /// `data_len`/`palette_len` of 0 by construction — there is no ROM data
+    /// to bake, only `width`/`height`/`psm` describing the small buffer the
+    /// device must fill at run time before this texture is first drawn.
+    pub role: u32,
+    /// [`TextureDesc::CLAMP_S`] / [`TextureDesc::CLAMP_T`] (RE-102,
+    /// `VERSION` 15): `G_SETTILE`'s `cms`/`cmt` clamp bit per axis, from
+    /// [`crate::mesh::TextureRef::clamp_s`]/`clamp_t`. Unset for every axis
+    /// that mirrors instead (mirroring is pre-baked into the pixel data at
+    /// pack time, RE-067) or that never wraps at all -- both read identically
+    /// to `Repeat` on the PSP GE, so leaving the bit off for them costs
+    /// nothing and keeps this purely additive over `VERSION` 14 packs.
+    pub wrap: u8,
 }
 
 impl TextureDesc {
-    /// 32: `u16 * 3 + u8 * 2` is 8 bytes, plus six `u32` is 24, padded to a
-    /// 16-byte multiple. `mat_anim` (`VERSION` 12) fills what used to be 4
-    /// bytes of unused tail padding, so this stays 32 rather than growing.
+    /// 40: `u16 * 3 + u8 * 2` is 8 bytes, plus seven `u32` is 28 (36 total),
+    /// plus `wrap`'s 1 byte padded to a 4-byte multiple (there is no
+    /// requirement each descriptor itself be 16-byte aligned, only the blob
+    /// region as a whole -- `PrimDesc::SIZE` is 36 for a similar reason).
+    /// `wrap` (`VERSION` 15) is the second field to grow this struct, after
+    /// `role` (`VERSION` 14) did the same to 36; neither found spare tail
+    /// padding to fill instead.
     ///
     /// This was declared as 20 and the writer emitted 24, so every descriptor
     /// after the first was read from the wrong offset and textures came out as
     /// coloured noise on device. The size guard test below exists because the
     /// original round-trip test only checked texture 0, where the offset is
     /// correct no matter what the stride says.
-    pub const SIZE: usize = 32;
+    pub const SIZE: usize = 40;
     pub const NO_ANIM: u32 = u32::MAX;
+    /// Baked from real ROM texel data at pack time -- every texture before
+    /// `VERSION` 14.
+    pub const ROLE_NORMAL: u32 = 0;
+    /// No baked bytes: filled in on the PSP device from a runtime framebuffer
+    /// capture the first time it is needed (RE-099/RE-100). `data_offset`/
+    /// `data_len`/`palette_offset`/`palette_len` are all 0 for this role.
+    pub const ROLE_FRAMEBUFFER: u32 = 1;
+    /// `wrap` bit for `G_TX_CLAMP` on the S axis (RE-102).
+    pub const CLAMP_S: u8 = 1 << 0;
+    /// `wrap` bit for `G_TX_CLAMP` on the T axis (RE-102).
+    pub const CLAMP_T: u8 = 1 << 1;
 }
 
 /// An assembled object: a run of nodes forming one `DObjDesc` hierarchy.
@@ -895,13 +942,6 @@ pub fn looks_like_unit_normal(c: [u8; 4]) -> bool {
     (11_000..=21_000).contains(&m)
 }
 
-/// Fraction of a primitive's vertices that must look like normals before the
-/// whole primitive is treated as lit.
-///
-/// Decided per-primitive rather than per-vertex so a single surface is not
-/// split into shaded and unshaded halves by a few ambiguous vertices.
-const NORMAL_MAJORITY: f32 = 0.8;
-
 /// Rounds `v` up to the next multiple of [`ALIGN`].
 pub fn align_up(v: usize) -> usize {
     v.div_ceil(ALIGN) * ALIGN
@@ -952,8 +992,15 @@ impl PackWriter {
         at as u32
     }
 
-    /// Adds a texture, returning its index.
-    pub fn add_texture(&mut self, tex: &crate::psp_texture::PspTexture) -> u32 {
+    /// Adds a texture, returning its index. `clamp_s`/`clamp_t` are
+    /// `mesh::TextureRef::clamp_s`/`clamp_t` (RE-102): whether the device
+    /// must sample this axis with `Clamp` rather than the default `Repeat`.
+    pub fn add_texture(
+        &mut self,
+        tex: &crate::psp_texture::PspTexture,
+        clamp_s: bool,
+        clamp_t: bool,
+    ) -> u32 {
         let data_offset = self.push_blob(&tex.data);
         let palette_bytes: Vec<u8> = tex.palette.iter().flat_map(|c| c.to_le_bytes()).collect();
         let palette_offset = if palette_bytes.is_empty() {
@@ -961,6 +1008,7 @@ impl PackWriter {
         } else {
             self.push_blob(&palette_bytes)
         };
+        let wrap = (clamp_s as u8 * TextureDesc::CLAMP_S) | (clamp_t as u8 * TextureDesc::CLAMP_T);
 
         self.textures.push(TextureDesc {
             width: tex.width as u16,
@@ -974,6 +1022,38 @@ impl PackWriter {
             palette_len: tex.palette.len() as u32,
             levels: tex.levels.max(1),
             mat_anim: TextureDesc::NO_ANIM,
+            role: TextureDesc::ROLE_NORMAL,
+            wrap,
+        });
+        (self.textures.len() - 1) as u32
+    }
+
+    /// Adds a "framebuffer capture" texture entry: no baked bytes at all, a
+    /// small buffer the PSP device fills from the just-rendered screen the
+    /// first time the LB "loading transition" system starts (RE-099/RE-100,
+    /// `mobj::LB_TRANSITION_SEGMENT`). `width`/`height` come from the real
+    /// display list's own `G_SETTILESIZE` (`mesh::TextureRef::framebuffer`),
+    /// since that is what the primitive's baked UVs were authored against.
+    pub fn add_framebuffer_texture(&mut self, width: u16, height: u16) -> u32 {
+        self.textures.push(TextureDesc {
+            width,
+            height,
+            // Matches every other `TextureDesc`'s convention: `stride` is the
+            // power-of-two the GE actually addresses (`sceGuTexImage`'s
+            // `bufferwidth`), `width` is metadata only.
+            stride: width.next_power_of_two(),
+            psm: crate::psp_texture::Psm::Psm8888 as u8,
+            swizzled: 0,
+            data_offset: 0,
+            data_len: 0,
+            palette_offset: 0,
+            palette_len: 0,
+            levels: 1,
+            mat_anim: TextureDesc::NO_ANIM,
+            role: TextureDesc::ROLE_FRAMEBUFFER,
+            // Always a single full-frame quad (RE-099/RE-100): its UVs never
+            // exceed the tile, so `Repeat` vs `Clamp` cannot be told apart.
+            wrap: 0,
         });
         (self.textures.len() - 1) as u32
     }
@@ -1043,32 +1123,64 @@ impl PackWriter {
         source_offset: u32,
         texture_for: impl Fn(usize) -> Option<u32>,
     ) -> u32 {
-        // Which vertices belong to a lit primitive. The IR keeps the raw bytes
-        // (it is deliberately lossless); interpreting them is this lowering
-        // step's job, and it has to be per-vertex because a mesh can mix lit
-        // and unlit materials over one shared vertex buffer.
+        // Which vertices are shaded from a normal rather than drawn as a
+        // literal colour. The IR keeps the raw bytes (it is deliberately
+        // lossless); interpreting them is this lowering step's job.
+        //
+        // Decided per-vertex, not per-primitive (RE-103): a fighter's mixed
+        // material -- decal highlights drawn as literal colour alongside a
+        // lit body sharing the same vertex buffer -- routinely lands at a
+        // 20-80% split within one primitive, nowhere near unanimous. Voting
+        // by majority forces every vertex on the losing side to the wrong
+        // interpretation: shaded when it should have stayed a literal
+        // colour, or (what RE-103 actually found, on Fox/Falcon/Kirby/Ness)
+        // left as a raw normal read straight into RGB when it should have
+        // been shaded -- normals are small, near-zero-centred bytes, and
+        // painting them as colour directly is exactly what a "melted",
+        // rainbow-noise surface looks like. `p.material.lit` (trusted when
+        // the geometry mode says so) still applies to every vertex the
+        // primitive touches, since real hardware computes lighting for the
+        // whole draw once G_LIGHTING is on; `looks_like_unit_normal`'s
+        // per-vertex, data-driven fallback is what makes the two kinds of
+        // vertex coexist correctly within one primitive.
         let mut lit = alloc::vec![false; mesh.vertices.len()];
         for p in &mesh.primitives {
-            // Trust the geometry mode when it says lit; otherwise fall back to
-            // inspecting the data, because the mode is often inherited from
-            // outside the list. See `looks_like_unit_normal`.
-            let treat_as_lit = p.material.lit || {
-                let mut seen = 0usize;
-                let mut normals = 0usize;
-                for &i in &p.indices {
-                    if let Some(v) = mesh.vertices.get(i as usize) {
-                        seen += 1;
-                        normals += looks_like_unit_normal(v.rgba) as usize;
-                    }
+            for &i in &p.indices {
+                let Some(slot) = lit.get_mut(i as usize) else {
+                    continue;
+                };
+                if *slot {
+                    continue;
                 }
-                seen > 0 && (normals as f32 / seen as f32) >= NORMAL_MAJORITY
-            };
+                *slot = p.material.lit
+                    || mesh
+                        .vertices
+                        .get(i as usize)
+                        .is_some_and(|v| looks_like_unit_normal(v.rgba));
+            }
+        }
 
-            if treat_as_lit {
-                for &i in &p.indices {
-                    if let Some(slot) = lit.get_mut(i as usize) {
-                        *slot = true;
-                    }
+        // RE-106: `MeshMaterial::prim_color` is not a literal colour despite
+        // the name -- `material_now()` (mesh.rs) overwrites it with
+        // `combiner_shade_scale`'s result whenever the combiner reads
+        // `PRIMITIVE`/`ENVIRONMENT` in a `SHADE * constant` shape (RE-043).
+        // Nothing downstream ever multiplied it back in: the device has no
+        // fixed-function stage to scale an untextured vertex colour by a
+        // constant, so unlike `TEXTURE_BLEND`'s baseline colour (also baked
+        // at vertex-assembly time, but into `push_vertex`) this one is
+        // cheapest to fold in here instead. First primitive to touch a
+        // vertex wins, mirroring `lit` just above -- a vertex shared across
+        // primitives with different scales is already the rare case
+        // `merge_by_material` keeps as separate primitives to begin with.
+        let mut prim_scale: alloc::vec::Vec<Option<[u8; 4]>> =
+            alloc::vec![None; mesh.vertices.len()];
+        for p in &mesh.primitives {
+            let Some(s) = p.material.prim_color else {
+                continue;
+            };
+            for &i in &p.indices {
+                if let Some(slot @ None) = prim_scale.get_mut(i as usize) {
+                    *slot = Some(s);
                 }
             }
         }
@@ -1077,6 +1189,15 @@ impl PackWriter {
         let mut verts = Vec::with_capacity(mesh.vertices.len() * VERTEX_SIZE);
         for (i, v) in mesh.vertices.iter().enumerate() {
             let rgba = if lit[i] { shade_normal(v.rgba) } else { v.rgba };
+            let rgba = match prim_scale[i] {
+                Some(s) => [
+                    ((rgba[0] as u32 * s[0] as u32) / 255) as u8,
+                    ((rgba[1] as u32 * s[1] as u32) / 255) as u8,
+                    ((rgba[2] as u32 * s[2] as u32) / 255) as u8,
+                    rgba[3],
+                ],
+                None => rgba,
+            };
             let packed = PackedVertex {
                 u: v.uv[0],
                 v: v.uv[1],
@@ -1595,8 +1716,9 @@ impl PackWriter {
             out.extend_from_slice(&t.palette_len.to_le_bytes());
             out.extend_from_slice(&t.levels.to_le_bytes());
             out.extend_from_slice(&t.mat_anim.to_le_bytes());
-            // No padding left: `mat_anim` (VERSION 12) filled what used to
-            // be TextureDesc::SIZE - 28 bytes of it exactly.
+            out.extend_from_slice(&t.role.to_le_bytes());
+            out.push(t.wrap);
+            out.extend_from_slice(&[0u8; 3]);
         }
         for o in &self.objects {
             for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
@@ -2265,6 +2387,8 @@ impl<'a> Pack<'a> {
             palette_len: u32_at(self.data, at + 20),
             levels: u32_at(self.data, at + 24).max(1),
             mat_anim: u32_at(self.data, at + 28),
+            role: u32_at(self.data, at + 32),
+            wrap: self.data[at + 36],
         })
     }
 
@@ -2462,6 +2586,10 @@ mod tests {
         // isolates stride rather than also depending on the lighting bake.
         let mut m = sample_mesh();
         m.primitives[0].material.lit = false;
+        // `sample_mesh`'s `prim_color` is a `combiner_shade_scale` result
+        // (RE-106), not a literal colour: it would multiply into every
+        // vertex here too, defeating this test's own point.
+        m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
         w.add_mesh(&m, 0, 0, |_| None);
         let bytes = w.finish();
@@ -2507,7 +2635,7 @@ mod tests {
             palette: alloc::vec![0xFF00_00FFu32; 16],
             levels: 1,
         };
-        w.add_texture(&tex);
+        w.add_texture(&tex, false, false);
         w.add_mesh(&sample_mesh(), 0, 0, |_| Some(0));
         let bytes = w.finish();
 
@@ -2547,7 +2675,7 @@ mod tests {
             levels: 1,
         };
         for n in 0..4 {
-            w.add_texture(&tex(n));
+            w.add_texture(&tex(n), false, false);
         }
         w.add_mesh(&sample_mesh(), 1, 2, |_| Some(3));
         w.add_object(&chain_graph(3), 11, |_| None, &[]);
@@ -2770,7 +2898,7 @@ mod tests {
             palette: alloc::vec![0xFF00_00FFu32; 16],
             levels: 1,
         };
-        w.add_texture(&tex);
+        w.add_texture(&tex, false, false);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -2784,6 +2912,42 @@ mod tests {
         let pal = pack.palette_data(&t).unwrap();
         assert_eq!(pal.len(), 64);
         assert_eq!(u32_at(pal, 0), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn a_framebuffer_texture_round_trips_with_no_baked_bytes() {
+        // RE-099/RE-100, VERSION 14: added after an ordinary texture, so a
+        // wrong `TextureDesc::SIZE` (the exact bug the doc comment on
+        // `TextureDesc::SIZE` describes) would misread this one's offset,
+        // not just its own -- the same guard `texture_round_trips_with_palette`
+        // exercises for `mat_anim`.
+        let mut w = PackWriter::new();
+        let tex = PspTexture {
+            width: 32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![0xABu8; 128],
+            swizzled: true,
+            palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
+        };
+        w.add_texture(&tex, false, false);
+        w.add_framebuffer_texture(300, 6);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+
+        let normal = pack.texture(0).unwrap();
+        assert_eq!(normal.role, TextureDesc::ROLE_NORMAL);
+
+        let fb = pack.texture(1).unwrap();
+        assert_eq!(fb.role, TextureDesc::ROLE_FRAMEBUFFER);
+        assert_eq!((fb.width, fb.height), (300, 6));
+        assert_eq!(fb.stride, 512, "stride must pad to a power of two like every other texture");
+        assert_eq!(fb.data_len, 0, "a framebuffer entry has no baked bytes");
+        assert_eq!(fb.palette_len, 0);
+        assert_eq!(fb.mat_anim, TextureDesc::NO_ANIM);
     }
 
     #[test]
@@ -2821,6 +2985,9 @@ mod tests {
         let mut m = sample_mesh();
         // Vertex 1 is white; unlit, it must survive untouched.
         m.primitives[0].material.lit = false;
+        // Not a literal colour (RE-106); it would multiply into the "must
+        // survive untouched" vertex below too.
+        m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
         w.add_mesh(&m, 0, 0, |_| None);
         let bytes = w.finish();
@@ -2831,6 +2998,7 @@ mod tests {
         // The same mesh marked lit must have that vertex replaced by a shade.
         let mut m = sample_mesh();
         m.primitives[0].material.lit = true;
+        m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
         w.add_mesh(&m, 0, 0, |_| None);
         let bytes = w.finish();
@@ -2857,6 +3025,7 @@ mod tests {
         // the common case, since the mode is usually inherited.
         let mut m = sample_mesh();
         m.primitives[0].material.lit = false;
+        m.primitives[0].material.prim_color = None; // not a literal colour (RE-106)
         for v in &mut m.vertices {
             v.rgba = [127, 0, 0, 255];
         }
@@ -2878,6 +3047,7 @@ mod tests {
     fn genuine_vertex_colours_are_left_alone() {
         let mut m = sample_mesh();
         m.primitives[0].material.lit = false;
+        m.primitives[0].material.prim_color = None; // not a literal colour (RE-106)
         for v in &mut m.vertices {
             v.rgba = [255, 255, 255, 255]; // clearly a colour
         }
@@ -2887,6 +3057,71 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
         assert_eq!(u32_at(v, 4), 0xFFFF_FFFF, "colours must survive untouched");
+    }
+
+    #[test]
+    fn a_mixed_primitive_shades_only_its_normal_looking_vertices() {
+        // RE-103: a fighter's decal highlights (literal colour) and lit body
+        // (normals) routinely share one primitive's vertex buffer, nowhere
+        // near the old 80% per-primitive majority either way -- Fox's,
+        // Falcon's, and Kirby's models measured splits as even as 20/80.
+        // Voting sent every vertex on the minority side to the wrong
+        // interpretation; deciding per-vertex must not.
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = false;
+        m.primitives[0].material.prim_color = None; // not a literal colour (RE-106)
+        m.vertices[0].rgba = [127, 0, 0, 255]; // a unit normal along x
+        m.vertices[1].rgba = [255, 255, 255, 255]; // a genuine colour
+        m.primitives[0].indices = alloc::vec![0, 1, 0]; // both in one primitive
+
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+
+        let normal_shaded = u32_at(v, 4);
+        let c = normal_shaded;
+        let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
+        assert_eq!(r, g, "the normal-looking vertex must be shaded to grey");
+        assert_eq!(g, b);
+
+        assert_eq!(
+            u32_at(v, VERTEX_SIZE + 4),
+            0xFFFF_FFFF,
+            "the colour-looking vertex in the same primitive must survive untouched"
+        );
+    }
+
+    #[test]
+    fn prim_color_scale_is_baked_into_the_vertex_at_pack_time() {
+        // RE-106: `material.prim_color` is `combiner_shade_scale`'s result
+        // (RE-043) whenever the combiner is a `SHADE * PRIMITIVE` shape --
+        // e.g. Mario's own hat (file 296, offset 0x1E80). Nothing on the PSP
+        // side ever multiplied it back in (no `prim_color` reference anywhere
+        // in `psp/src/meshdraw.rs`), so a correctly-lit, grey-shaded surface
+        // that should have read red stayed plain grey. The device has no
+        // fixed-function stage to scale an untextured vertex colour by a
+        // constant, so this is folded in here instead, the same time
+        // `TEXTURE_BLEND`'s baseline colour already is.
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = false;
+        m.primitives[0].material.prim_color = Some([255, 0, 0, 255]); // pure red scale
+        for v in &mut m.vertices {
+            v.rgba = [128, 128, 128, 255]; // a mid-grey literal colour
+        }
+
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+
+        let c = u32_at(v, 4);
+        let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
+        assert_eq!(r, 128, "the scale's red channel is full-strength, so red passes through");
+        assert_eq!(g, 0, "the scale's green channel is zero, so it must be zeroed");
+        assert_eq!(b, 0, "the scale's blue channel is zero, so it must be zeroed");
     }
 
     #[test]
@@ -3414,7 +3649,7 @@ mod tests {
             palette: alloc::vec![0xFF00_00FFu32; 16],
             levels: 1,
         };
-        let texture = w.add_texture(&tex);
+        let texture = w.add_texture(&tex, false, false);
 
         let file_bytes = alloc::vec![0x11u8; 200];
         // File 117's real shape (RE-089/RE-090): a script cycling through
@@ -3468,7 +3703,7 @@ mod tests {
             palette: alloc::vec::Vec::new(),
             levels: 1,
         };
-        w.add_texture(&tex);
+        w.add_texture(&tex, false, false);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();

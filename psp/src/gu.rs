@@ -106,10 +106,85 @@ impl<const N: usize> core::fmt::Write for FixedStr<N> {
     }
 }
 
+/// Real content width of the LB "loading transition" framebuffer capture
+/// (RE-099/RE-100): the real ROM's own snapshot buffer is 300 texels wide
+/// (`sLBTransitionPhotoHeap`, `refs/ssb-decomp-re/src/lb/lbtransition.c:224`),
+/// and every real display list's own baked UVs were authored against exactly
+/// that width. Matches `TextureDesc::width` for every `ROLE_FRAMEBUFFER`
+/// entry the pack builds (`PackWriter::add_framebuffer_texture`).
+pub const TRANSITION_PHOTO_WIDTH: usize = 300;
+
+/// Row stride in texels the GE actually addresses -- `TRANSITION_PHOTO_WIDTH`
+/// padded to a power of two, matching every other `TextureDesc::stride`'s own
+/// convention (`crate::meshdraw::bind_texture`'s general path already reads
+/// `t.stride`, never `t.width`, for `sceGuTexImage`'s `bufferwidth`). Real
+/// measured UV spans never exceed the real width (RE-100: U repeats maxed out
+/// at 1.00 across all 13 files), so the padding columns are never sampled.
+const TRANSITION_PHOTO_STRIDE: usize = 512; // TRANSITION_PHOTO_WIDTH.next_power_of_two()
+
+/// Height of the capture buffer, padded to a power of two.
+///
+/// RE-100 measured the real ROM only ever samples the top 5 or 6 rows of the
+/// N64's 220-row snapshot (both `G_SETTIMG`s bind offset 0, tiled/repeated
+/// across much taller geometry by ordinary wrap addressing) -- not the whole
+/// 220-row image RE-099 originally guessed a PSP port might need. 6 pads to
+/// 8, which also covers the 5-row case, so one capture buffer serves both of
+/// `TextureDesc::ROLE_FRAMEBUFFER`'s real shapes.
+pub const TRANSITION_PHOTO_HEIGHT: usize = 8;
+
+/// Real captured rows before the wrap-periodicity padding described on
+/// [`Gpu::capture_transition_photo`].
+const TRANSITION_PHOTO_REAL_ROWS: usize = 6;
+
+/// Captured by [`Gpu::request_transition_capture`], read by
+/// `meshdraw::bind_texture` whenever a primitive's `TextureDesc::role` is
+/// `ROLE_FRAMEBUFFER`.
+///
+/// A plain module static, not threaded through the draw call chain the way
+/// `MaterialAnimator` is: unlike a per-object material animator there is
+/// exactly one of these for the whole process, the same shape `DISPLAY_LIST`
+/// above already uses for the same reason.
+///
+/// Captured in the PSP's own native `Psm8888` rather than the N64's
+/// RGBA5551 -- the GE already reads the real draw buffer in that format, so
+/// this is a plain block copy with no conversion, and a screen-colour smear
+/// has no need for the original's 16-bit precision. An accepted format
+/// deviation, not a fidelity gap that matters here.
+static mut TRANSITION_PHOTO: Align16<[u32; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]> =
+    Align16([0; TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT]);
+
+/// Bytes the GE should read for the transition photo capture.
+///
+/// # Safety
+///
+/// Aliases [`TRANSITION_PHOTO`]; the caller must not hold this across a call
+/// to [`Gpu::request_transition_capture`]'s eventual capture (i.e. not across
+/// a frame boundary), the same rule the pack's own texture data already
+/// follows since the GE reads it by DMA.
+pub unsafe fn transition_photo_data() -> &'static [u8] {
+    let ptr = core::ptr::addr_of!(TRANSITION_PHOTO.0) as *const u8;
+    core::slice::from_raw_parts(ptr, TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT * 4)
+}
+
 /// Owns the GU context and the frame lifecycle.
 pub struct Gpu {
     frame_open: bool,
     frames: u64,
+    /// CPU-dereferenceable (not GE-relative) pointers to the two colour
+    /// buffers, retained so a transition capture can read one back after it
+    /// finishes rendering. `init()`'s local `VramMemChunk`s only live long
+    /// enough to hand the GE their GE-relative addresses.
+    fbp0_direct: *mut u8,
+    fbp1_direct: *mut u8,
+    /// Which physical buffer the GE is *currently* drawing into. Toggled once
+    /// per `end_frame`, in lockstep with the one `sceGuSwapBuffers` call this
+    /// code makes -- the PSP SDK swaps the draw/display roles internally on
+    /// that call without needing `sceGuDrawBuffer` reissued, so nothing else
+    /// changes which physical address is "the draw buffer" between calls.
+    draw_is_fbp0: bool,
+    /// Set by [`Gpu::request_transition_capture`]; consumed (and cleared) the
+    /// next time `end_frame` finishes syncing the frame that was requested.
+    capture_requested: bool,
 }
 
 impl Gpu {
@@ -131,6 +206,12 @@ impl Gpu {
             allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm8888);
         let zbp =
             allocator.alloc_texture_pixels(BUF_WIDTH, SCREEN_HEIGHT, TexturePixelFormat::Psm4444);
+
+        // Retained past `init()` for `request_transition_capture`'s CPU-side
+        // readback -- `as_mut_ptr_from_zero()` below is only meaningful as the
+        // GE's own relative addressing, not a pointer the CPU can dereference.
+        let fbp0_direct = fbp0.as_mut_ptr_direct_to_vram();
+        let fbp1_direct = fbp1.as_mut_ptr_direct_to_vram();
 
         sys::sceGuInit();
         sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
@@ -190,6 +271,60 @@ impl Gpu {
         Gpu {
             frame_open: false,
             frames: 0,
+            fbp0_direct,
+            fbp1_direct,
+            // `sceGuDrawBuffer(fbp0, ...)` above is the initial draw target.
+            draw_is_fbp0: true,
+            capture_requested: false,
+        }
+    }
+
+    /// Requests that the frame currently in flight be copied into the
+    /// transition photo buffer once it finishes rendering.
+    ///
+    /// This is the PSP-side equivalent of `lbTransitionSetupTransition`'s
+    /// one-time framebuffer photocopy (RE-099/RE-100): a plain block copy,
+    /// not a render pass, taken once and reused by every primitive whose
+    /// `TextureDesc::role` is `ROLE_FRAMEBUFFER` until requested again.
+    pub fn request_transition_capture(&mut self) {
+        self.capture_requested = true;
+    }
+
+    /// Copies the top-left corner of whichever buffer just finished
+    /// rendering into [`TRANSITION_PHOTO`].
+    ///
+    /// # Safety
+    ///
+    /// Must only be called between `sceGuSync(Finish, Wait)` completing (so
+    /// the buffer's contents are final) and the next `sceGuSwapBuffers` (so
+    /// `draw_is_fbp0` still names the buffer that was just drawn into).
+    ///
+    /// Rows beyond [`TRANSITION_PHOTO_REAL_ROWS`] are not left stale: the GE
+    /// wraps a `ROLE_FRAMEBUFFER` texture at `TRANSITION_PHOTO_HEIGHT` (8),
+    /// not at the real 6-row content, because `TextureDesc::height`'s padded
+    /// power-of-two is what `sceGuTexImage`/`sceGuTexScale` actually use
+    /// (same convention every other non-power-of-two-height texture in the
+    /// pack already follows). Filling them with a copy of rows 0-1 makes the
+    /// 8-row buffer repeat the real 6-row pattern seamlessly, matching the
+    /// real ROM's own period for the one primitive shape that measurably
+    /// wraps its V axis (RE-100: the 300x6 tile, up to 35.83 repeats) rather
+    /// than introducing two extra, unintended rows into that repeat.
+    unsafe fn capture_transition_photo(&self) {
+        let src = if self.draw_is_fbp0 {
+            self.fbp0_direct
+        } else {
+            self.fbp1_direct
+        } as *const u32;
+        let dst = core::ptr::addr_of_mut!(TRANSITION_PHOTO.0) as *mut u32;
+        for y in 0..TRANSITION_PHOTO_REAL_ROWS {
+            let src_row = src.add(y * BUF_WIDTH as usize);
+            let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
+            core::ptr::copy_nonoverlapping(src_row, dst_row, TRANSITION_PHOTO_WIDTH);
+        }
+        for y in TRANSITION_PHOTO_REAL_ROWS..TRANSITION_PHOTO_HEIGHT {
+            let wrap_from = (y - TRANSITION_PHOTO_REAL_ROWS) * TRANSITION_PHOTO_STRIDE;
+            let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
+            core::ptr::copy_nonoverlapping(dst.add(wrap_from), dst_row, TRANSITION_PHOTO_WIDTH);
         }
     }
 
@@ -229,9 +364,18 @@ impl Gpu {
             // a GE command, so flushing before the sync would just get erased
             // by the sceGuClear that is still sitting in the display list.
             sys::sceGuDebugFlush();
+            if self.capture_requested {
+                self.capture_requested = false;
+                self.capture_transition_photo();
+            }
             sys::sceDisplayWaitVblankStart();
             sys::sceGuSwapBuffers();
         }
+        // Mirrors the swap `sceGuSwapBuffers` just performed internally: the
+        // buffer that was the draw target for the frame just finished
+        // becomes the display buffer, and the GE will draw the next frame
+        // into whichever buffer was previously being displayed.
+        self.draw_is_fbp0 = !self.draw_is_fbp0;
     }
 
     pub fn frame_count(&self) -> u64 {

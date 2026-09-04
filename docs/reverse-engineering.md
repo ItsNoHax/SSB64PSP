@@ -7258,3 +7258,155 @@ unchanged. The latter looks strongly favoured by this session's own
 reading — the strip pattern is an N64 TMEM-capacity workaround, not
 something the transition's own geometry or UVs depend on structurally —
 but was not implemented or verified this session.
+
+---
+
+## RE-100 — RE-099's "one full 300x220 capture" hypothesis was wrong; the real geometry only ever needs a 300x6 corner. Implemented, packed, and device-verified (PLAN.md R0.13)
+
+**Question.** RE-099 scoped the mechanism but left one concrete design
+question open and explicitly unverified: does a PSP port need a full
+300×220 framebuffer capture with the N64's own strip-by-strip TMEM
+addressing reproduced, or does one full-size capture with unmodified UVs
+suffice? Measuring this directly, not guessing, was the obvious next step
+before writing any capture code.
+
+**Measured all 13 files' real UV spans with `romtool textures --file
+<id>`, not just file 40.** Every one of the 13 files (39–51) binds exactly
+two textures — a 300×5 tile and a 300×6 tile, both at segment-`0x1` offset
+0 — but their *drawn* UV spans tell a very different story than "sample
+the whole photo":
+
+* The 300×5 tile's V span is **always exactly 5.0 texels (1.00 repeat)**
+  in every one of the 13 files — drawn once, never tiled.
+* The 300×6 tile's V span ranges from **22.5 to 215 texels (3.75× to
+  35.83× repeat)** depending on the file — the same small 6-row strip
+  tiled vertically, over and over, to cover geometry far taller than the
+  loaded texture.
+* Neither tile's U span ever exceeds its own width (300 texels, 1.00
+  repeat, in the files that use the full width; several files sample as
+  little as 0.12–0.5 of it). U never wraps in any of the 13 files.
+
+This falsifies RE-099's own favoured hypothesis. The real ROM does not
+show a crisp photo of the last frame — it shows a **repeating 6-row
+smear** of the top-left corner of the screen, vertically tiled by
+ordinary N64 TMEM wrap addressing, the same mechanism `mesh.rs` already
+reproduces for every other periodic texture in this project (RE-044).
+"Capture 300×220 and leave the UVs alone" would have shown only the
+photo's own top 5–6 rows once, at the top of the geometry, with the rest
+reading black past `v=1.0` — visually wrong. The correct PSP-side capture
+is a **tiny 300×6 top-left corner** (3,600 real texels), not the full
+snapshot RE-099 guessed a port might need.
+
+**Implemented the full pipeline this session, not just the measurement.**
+
+* `crates/ssb-rom/src/mobj.rs`: `LB_TRANSITION_SEGMENT = 0x01`, alongside
+  the existing `GRAPHICS_HEAP_SEGMENT` precedent.
+* `crates/ssb-rom/src/mesh.rs`: `Cmd::SetTimg` recognises segment `0x1`
+  and sets a new `State::framebuffer_capture` marker (cleared by any real
+  `G_SETTIMG`, `apply_mobj`'s own real bindings, or `forget_texture`) —
+  mirroring how segment `0x0E` is already special-cased in the
+  `Cmd::Call`/`Cmd::Branch` handling, just at `SetTimg` instead, since this
+  segment is bound directly rather than called into.  `current_texture()`
+  now returns a `TextureRef` with a new `framebuffer: bool` field: `true`
+  means every location field (`data_file`/`data_offset`/`palette_*`) is a
+  meaningless placeholder and only `format`/`size`/`width`/`height` (still
+  read from the real `G_SETTILE`/`G_SETTILESIZE`, unaffected) matter.
+* `crates/ssb-rom/src/pack.rs`: `TextureDesc::role` (`ROLE_NORMAL` /
+  `ROLE_FRAMEBUFFER`), `pack::VERSION` 13 → 14, growing `TextureDesc::SIZE`
+  32 → 36 (the first growth since `mat_anim`, RE-091, ran out of spare tail
+  padding to reuse). `PackWriter::add_framebuffer_texture(width, height)`
+  emits a descriptor with `data_len`/`palette_len` of 0 and `stride =
+  width.next_power_of_two()`, matching every other `TextureDesc`'s own
+  "`stride` is a power of two, `width` is metadata" convention.
+* `tools/romtool/src/main.rs`: `pack_mesh` dedups framebuffer references by
+  `(u32::MAX, u32::MAX, width, height)` rather than through
+  `texture_cache_key` — a framebuffer `TextureRef`'s `(data_file: None,
+  data_offset: 0, palette: None)` would otherwise collide with a real,
+  unpaletted texture legitimately bound at a file's own offset 0.
+* `psp/src/gu.rs`: `Gpu::request_transition_capture()` — the PSP-side
+  equivalent of `lbTransitionSetupTransition`'s one-time photocopy, not a
+  per-frame render pass, matching RE-099's own finding about the
+  mechanism's real shape. `Gpu` now retains `fbp0`/`fbp1`'s **CPU-dereferenceable**
+  VRAM pointers (`VramMemChunk::as_mut_ptr_direct_to_vram()` — the
+  `as_mut_ptr_from_zero()` pointers already used for `sceGuDrawBuffer` are
+  GE-relative only, not valid for a CPU read) plus a `draw_is_fbp0` flag
+  toggled once per `end_frame` in lockstep with the one `sceGuSwapBuffers`
+  call already there, since the PSP SDK swaps the draw/display roles
+  internally without `sceGuDrawBuffer` being reissued. The capture itself
+  is a plain `core::ptr::copy_nonoverlapping` loop, run right before the
+  swap once `sceGuSync(Finish, Wait)` guarantees the frame is final — the
+  same CPU-loop shape `lbTransitionSetupTransition` itself uses, just
+  reading PSP VRAM instead of N64 RDRAM. Captured in the PSP's own native
+  `Psm8888` rather than the N64's RGBA5551 (the GE already reads the real
+  draw buffer in that format, so this is a zero-conversion block copy) —
+  an accepted, documented format deviation, not a fidelity gap that
+  matters for a screen-colour smear. Rows 6–7 of the padded 8-row buffer
+  are filled with a copy of rows 0–1 rather than left stale: the GE wraps
+  at the *padded* height (8), not the real 6, so without this the 6-row
+  pattern would gain two unintended extra rows before repeating.
+* `psp/src/meshdraw.rs`: `bind_texture` checks `t.role ==
+  TextureDesc::ROLE_FRAMEBUFFER` before ever touching `pack.texture_data`
+  (which would return `Some(&[])`, not `None`, for a zero-length entry —
+  falling through to the ordinary path would silently bind nothing rather
+  than erroring). The framebuffer branch reads `t.stride`/`t.height` the
+  same way the general path does (never `t.width` — matching the existing,
+  established convention that the GE always addresses the padded stride)
+  and sources its pixels from `crate::gu::transition_photo_data()` instead
+  of the pack blob.
+
+**Verified, not just built.** `cargo test --workspace`: 401 passing (was
+398; 3 new tests — two in `mesh.rs` proving a segment-`0x1` bind produces
+a correctly-marked `TextureRef` and that a later real `G_SETTIMG` clears
+the marker, one in `pack.rs` proving `role`/`stride` round-trip and that
+growing `TextureDesc` doesn't corrupt a neighbouring descriptor, the same
+guard class the struct's own doc comment describes for `mat_anim`).
+`cargo clippy --release` (workspace): clean.
+
+Rebuilt the real pack: 901 → **903 textures** (exactly 2 new entries, not
+26 — the `(u32::MAX, u32::MAX, width, height)` dedup key correctly
+collapses all 13 files' 26 segment-`0x1` binds down to the two distinct
+shapes that exist, 300×5 and 300×6). Size 5264.1 → 5267.7 KiB (+3.6 KiB —
+almost entirely `TextureDesc::SIZE`'s 32→36 growth applied to all 901
+pre-existing textures, 901×4 = 3,604 bytes, plus the two new tiny
+descriptors; not new texel bytes, since a framebuffer entry bakes none).
+
+**Confirmed the whole path works on the real device profile, not just
+that it compiles.** A temporary, reverted `romtool`-adjacent example
+binary (`crates/ssb-rom/examples/find_transition_object.rs`, deleted
+after use, matching RE-098's own precedent) found that all 13 transition
+files' scene graphs already exist as ordinary pack objects (11–23),
+confirmed each one's primitives really do carry `ROLE_FRAMEBUFFER`
+textures. A temporary, reverted `psp/src/main.rs` patch (`git diff --stat`
+after reverting is empty) then: (1) let Dream Land's stage view render for
+30 frames, (2) set the clear colour to an unmistakable magenta for exactly
+frame 30, (3) called `gpu.request_transition_capture()` on that same
+frame, (4) forced the viewer onto object 12 (file 40, the "paper
+airplane" transition, 1,000 triangles — the largest single object in the
+whole pack) from frame 35 onward. Screenshot: the transition's largest
+primitive renders the **magenta test colour**, not black or noise —
+direct, unambiguous evidence the capture reads real just-rendered screen
+content and the bind correctly displays it, not a plausibility argument.
+A second, smaller primitive on the same object rendered solid black
+throughout — not investigated further this session (plausibly a
+deliberate black background panel behind the "photo" window in the
+airplane's own design, but not confirmed). `tools/run-ppsspp.sh` on the
+unmodified build afterward: Dream Land renders pixel-normal at 60 FPS, no
+panics — this session's changes do not disturb the default (non-transition)
+rendering path.
+
+**What this does and does not close.** `PLAN.md` R0.13's "framebuffer
+texture paths implemented" is now checked, with real device evidence
+behind it. "Render-to-texture paths implemented where required" is not a
+separate open gap — RE-099 already established, and this session's own
+measurement reconfirms, that no render-to-texture pass exists in the real
+mechanism at all, only a one-time capture. "Framebuffer synchronization"
+is verified for the one shape this session tested (a manually-triggered
+capture, read back the same frame it was requested) but not for whatever
+the real trigger conditions end up being once a match-transition state
+machine exists — `Gpu::request_transition_capture` is a real, tested
+capability with no caller yet, the same shape `MaterialAnimator`
+(RE-095) shipped in before anything drove it. "Screen wipes implemented"
+and "visual verification completed" remain genuinely open: nothing
+currently calls `request_transition_capture` from real game logic (there
+is no match-start/match-end event to call it from yet), and only one of
+the 13 transition files' geometry was actually looked at.
