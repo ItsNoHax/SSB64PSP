@@ -1876,7 +1876,7 @@ RE-034, RE-082, RE-084, RE-085 in `docs/reverse-engineering.md`.
 
 ## R0.15 — Render-State Isolation
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -1938,6 +1938,33 @@ unconditionally resetting the texture function, clobbering `TEXTURE_BLEND`
 state), but no systematic audit of that layer has been done the way this
 session did for `mesh.rs`. Left as further work before this task closes.
 
+RE-118 (a later session) completed that second layer's audit. Read
+`apply_material`/`bind_texture` end to end against every category:
+culling/shading/depth/alpha-test are each set inside an explicit
+if/else with no skipped branch (no leak possible); a stale
+`sceGuTexLevelMode`/CLUT left from a previous texture are both inert
+(the GE clamps LOD to the mip count `sceGuTexMode` just declared, and
+non-indexed formats never consult CLUT); `GuState::Blend` is confirmed
+never enabled anywhere in the crate. **Found one real, new gap:**
+`Gpu::draw_triangles`/`draw_line_strip` disable `Texture2D` directly,
+bypassing `DrawState` entirely — and `draw_collision`/`draw_fighter`
+(the collision-line and simulated-fighter-marker overlays, both calling
+`draw_line_strip`) run *between* two cached mesh draws whenever
+`show_collision`/`sim_fighter` are on, which is the default. A primitive
+drawn afterward that happens to share a texture index with whatever was
+bound before the overlay (the pack dedups textures by content, so this
+is plausible though not guaranteed) would wrongly stay untextured.
+Checked whether this manifests for the current default scene (it does
+not — Dream Land's own last texture and the simulated fighter's first
+texture don't happen to coincide) before concluding the underlying
+cache-invariant violation is still real regardless. Fixed by adding
+`DrawState::forget_texture()`, called at the end of both overlay
+functions, forcing the next real primitive to always rebind rather than
+trust an invalidated comparison. Verified inert for the
+non-triggering case: `tools/run-ppsspp.sh` re-screenshotted
+pixel-identical to the pre-fix baseline (same overlay counts, same
+fighter-model crop).
+
 ### Objective
 
 Ensure render state cannot incorrectly leak between display-list/material/node draws.
@@ -1959,11 +1986,11 @@ Ensure render state cannot incorrectly leak between display-list/material/node d
 * [x] culling tracked — same test
 * [x] geometry state tracked — same test (lighting/shading-smooth bits)
 * [x] texture addressing tracked — RE-064's existing test already covers this via whole-`TextureRef` equality (RE-117 documents it explicitly)
-* [ ] state leakage tests added — `mesh.rs`'s decode-time state threading is now covered; `psp/src/meshdraw.rs::DrawState`'s device-side GE cache layer is not yet systematically audited (RE-074 found one real bug there, but that was incidental, not from a dedicated pass)
+* [x] state leakage tests added — `mesh.rs`'s decode-time state threading has direct unit tests (RE-117, 4 new + RE-064's existing one) for all 10 categories. `psp/src/meshdraw.rs::DrawState`'s device-side GE cache layer was systematically audited by code reading (RE-118, since raw `sceGu*` calls have no host-side mocking harness to unit-test against) — every category checked, one real gap found (the collision/fighter overlay bypassing the texture cache) and fixed, verified by an on-device screenshot showing the fix is inert for the current non-triggering scene
 
 ### Evidence
 
-RE-064, RE-074, RE-117 in `docs/reverse-engineering.md`.
+RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
 
 ---
 

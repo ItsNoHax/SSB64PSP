@@ -109,6 +109,28 @@ impl DrawState {
         // caller (main.rs), based on which debug-viewer mode is active, and
         // must survive `begin_frame`'s reset of everything else.
     }
+
+    /// Forgets the cached texture binding, forcing the next primitive to
+    /// rebind (and re-enable `GuState::Texture2D`) unconditionally.
+    ///
+    /// R0.15: `Gpu::draw_triangles`/`draw_line_strip` (used by the collision
+    /// overlay and simulated-fighter marker, `draw_collision`/`draw_fighter`
+    /// below) call `sceGuDisable(GuState::Texture2D)` directly, bypassing
+    /// this cache entirely. `apply_material`'s own texture-change check
+    /// (`last_texture != Some(p.texture)`) has no way to know that happened
+    /// -- if the next real primitive drawn afterward happens to name the
+    /// *same* texture index as whatever was bound before the overlay ran
+    /// (plausible: the pack dedups textures by content, so two unrelated
+    /// objects sharing one small/common texture is a real, if not
+    /// guaranteed, case), the cache wrongly concludes nothing changed and
+    /// leaves texturing disabled. Callers of `draw_triangles`/
+    /// `draw_line_strip` that run between two cached mesh draws in the same
+    /// frame must call this afterward so the next one always rebinds for
+    /// real, rather than trusting a comparison a side channel already
+    /// invalidated.
+    pub fn forget_texture(&mut self) {
+        self.last_texture = None;
+    }
 }
 
 /// The GE accepts eight mip levels.
@@ -908,6 +930,7 @@ pub unsafe fn draw_collision(
     stage: &ssb_rom::pack::StageDesc,
     base: &ScePspFMatrix4,
     gpu: &mut crate::gu::Gpu,
+    draw_state: &mut DrawState,
 ) -> u32 {
     const PASS_BIT: u16 = 1 << 14;
 
@@ -944,6 +967,13 @@ pub unsafe fn draw_collision(
         gpu.draw_line_strip(&buf.0[..n]);
         segments += n as u32 - 1;
     }
+    // R0.15/RE-118: `draw_line_strip` disabled `Texture2D` directly above,
+    // bypassing `draw_state`'s own cache -- the next real primitive drawn
+    // must not trust a stale `last_texture` that no longer reflects the
+    // GE's actual state.
+    if segments > 0 {
+        draw_state.forget_texture();
+    }
     segments
 }
 
@@ -974,6 +1004,7 @@ pub unsafe fn draw_fighter(
     grounded: bool,
     base: &ScePspFMatrix4,
     gpu: &mut crate::gu::Gpu,
+    draw_state: &mut DrawState,
 ) {
     // Magenta grounded, white airborne. Not green: the overlay draws solid
     // floors in exactly `0xFF40_FF40`, so a grounded fighter standing on one
@@ -1012,6 +1043,10 @@ pub unsafe fn draw_fighter(
     buf.0[0] = v(-half * 0.25, bottom);
     buf.0[1] = v(half * 0.25, bottom);
     gpu.draw_line_strip(&buf.0[..2]);
+
+    // R0.15/RE-118: see `draw_collision`'s own comment -- `draw_line_strip`
+    // just disabled `Texture2D` directly, bypassing `draw_state`'s cache.
+    draw_state.forget_texture();
 }
 
 /// A stage's extent in normalised units, from its collision and its layers.

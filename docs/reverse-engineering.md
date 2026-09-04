@@ -8700,3 +8700,90 @@ from a dedicated audit of that layer the way this session gave
 `mesh.rs`. `PLAN.md` R0.15 moves `TODO` → `IN_PROGRESS`, not `COMPLETE` —
 its "state leakage tests added" item stays open pending that second
 layer's own audit.
+
+---
+
+## RE-118 — `psp/src/meshdraw.rs::DrawState`'s own GE cache audited: one real gap found and fixed (the collision/fighter overlay bypasses it), the rest already correctly guarded
+
+Continued R0.15's second, still-open layer: `DrawState`'s device-side GE
+draw-state cache, distinct from `mesh.rs`'s decode-time threading RE-117
+already covered.
+
+**Read `apply_material`/`bind_texture` end to end against every category
+R0.15 names.** Culling, shading, depth test and alpha test are each
+applied inside an `if flags-changed` block with an explicit
+`sceGuEnable`/`sceGuDisable` on *both* branches — no leak possible, since
+neither branch is ever skipped conditionally. `bind_texture` always
+explicitly sets `sceGuTexFilter`, `sceGuTexWrap`, `sceGuTexOffset`,
+`sceGuTexScale`, and unconditionally passes the real mip count to
+`sceGuTexMode` — checked whether a stale `sceGuTexLevelMode` (only set
+`if top > 0`) could leak between a mipped and unmipped texture, and
+confirmed it can't: the GE clamps LOD selection to whatever mip count
+`sceGuTexMode` just declared, so a stale "Auto" level mode is inert when
+the current texture only has one real level. Skipping `sceGuClutMode`/
+`sceGuClutLoad` for a non-paletted texture (when `pack.palette_data`
+returns `None`) leaves a stale CLUT, but non-indexed pixel formats never
+consult it, so it's inert too. `GuState::Blend` is never enabled anywhere
+in the crate, confirming the "not wired yet" comment (RE-069) rather than
+assuming it. `TEXTURE_BLEND`'s own `sceGuTexFunc`/`sceGuTexEnvColor` pair
+is already the one previously-known real bug here, fixed incidentally by
+RE-074.
+
+**Found one real, new gap: `Gpu::draw_triangles`/`draw_line_strip` bypass
+`DrawState` entirely.** Both call `sceGuDisable(GuState::Texture2D)`
+directly (`psp/src/gu.rs`) so their own untextured vertex format renders
+correctly — but neither touches `DrawState::last_texture`, which
+`apply_material`'s texture-change check (`last_texture != Some(p.texture)`)
+relies on to decide whether re-binding (and re-*enabling* `Texture2D`) is
+necessary. `draw_collision` and `draw_fighter` (the collision-line and
+simulated-fighter-marker overlays) both call `draw_line_strip` and are
+both called **between** two cached mesh draws in the same frame whenever
+`show_collision`/`sim_fighter` are on — which they are by default
+(`main.rs`'s own initial values, `true` and `true`). If a primitive drawn
+after either overlay happens to name the *same* texture index as
+whatever was bound before it (plausible, not guaranteed: the pack dedups
+textures by content, so two unrelated objects sharing one small/common
+texture is a real if uncommon case), `apply_material` wrongly concludes
+nothing changed and leaves texturing disabled for that primitive.
+
+**Checked whether this manifests visibly for the current default scene
+before fixing it — it does not, and that is not the same as the bug
+being fake.** Zoomed into the simulated fighter model in Dream Land's
+default view (`sim_fighter`/`show_collision` both on, the exact code path
+this bug requires): it renders fully textured, multi-coloured, exactly as
+expected. This only shows that Dream Land's own last-drawn texture and
+the simulated fighter's own first-drawn texture do not happen to share an
+index — not that the underlying cache-invariant violation isn't real.
+The bug is a structural violation of an invariant `apply_material`'s
+comment already documents (`last_flags`/`last_texture` mean "the GE
+matches this exactly"), independent of whether today's specific
+stage/fighter pairing happens to trigger a visible symptom, and R0.15's
+purpose is closing exactly this kind of systematic gap before it does.
+
+**Fixed by invalidating the cache, not by trying to restore prior
+state.** Added `DrawState::forget_texture()` (clears `last_texture`
+only — the one field these two calls actually disturb), called at the
+end of `draw_collision` (only if it actually drew a segment) and
+`draw_fighter` (unconditional, it always draws). This forces the next
+primitive to always rebind for real rather than trust a comparison a
+side channel already invalidated — a small, unconditionally-correct fix
+(worst case, one redundant-but-harmless rebind) rather than a fragile
+attempt to track and restore the exact prior GE state from outside
+`apply_material`.
+
+`cargo test --workspace`: 405 passing, unaffected (this fix lives
+entirely in the `psp` crate, no host-runnable unit tests there).
+`cargo clippy --release --workspace`: clean. `cargo psp --release`:
+builds clean. `tools/run-ppsspp.sh`: Dream Land re-screenshotted
+pixel-identical to the pre-fix baseline (same `draws`/`state changes`
+overlay counts, same fighter-model close-up crop) — confirms the fix is
+inert for the currently-non-triggering case, not just "doesn't crash".
+
+**What this closes.** `PLAN.md` R0.15's "state leakage tests added" item
+now has its second layer's audit done: every category `apply_material`/
+`bind_texture` touch was checked against the same standard `mesh.rs`'s
+audit used (does a leak risk exist, is it inert or real, is it fixed),
+not just re-confirmed against RE-074's own prior finding. `R0.15` can
+move toward `COMPLETE` once its remaining acceptance items (all now
+addressed except the general "state leakage tests added" checklist item,
+which this closes) are reconciled in `PLAN.md`.
