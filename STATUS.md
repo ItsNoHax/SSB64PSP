@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-117)
+**Last updated:** 2026-09-04 (RE-118)
 
 ---
 
@@ -12,35 +12,85 @@
 
 ## Current Task
 
-`R0.15 — Render-State Isolation` (`IN_PROGRESS`, moved from `TODO` this
-session). `R0.13 — Framebuffer Rendering` has no further actionable
-rendering work: RE-116 (previous session) retracted file 46's apparent
-diagonal-banding defect as its own measurement artifact, closing
-`visual verification completed` — **all 13 LB-transition files are
-confirmed fully correct on the real device.** R0.13's only remaining
-items (`screen wipes implemented`, `framebuffer synchronization
-verified`) are blocked on this project having no real match-transition/
-game-state system yet, downstream of the rendering gate this task
-belongs to — not further rendering investigation. Per `PLAN.md`'s own
-task ordering, moved to `R0.15`, the next `TODO` task with no unmet
-dependency.
+`R0.15 — Render-State Isolation` is now `COMPLETE`. RE-117 (previous
+session) closed 9 of its 10 state categories with new cross-node
+persistence tests in `crates/ssb-rom/src/mesh.rs`. RE-118 (this session)
+closed the remaining thread — a systematic audit of
+`psp/src/meshdraw.rs::DrawState`'s own device-side GE draw-state cache,
+the second layer R0.15's objective covers. Found one real, new gap:
+`Gpu::draw_triangles`/`draw_line_strip` (used by the collision overlay
+and simulated-fighter marker) disable `Texture2D` directly, bypassing
+`DrawState` entirely — since `show_collision`/`sim_fighter` default to
+`true`, this runs between cached mesh draws on every default boot, and a
+later primitive sharing a texture index with whatever was bound before
+the overlay would wrongly stay untextured. Fixed by adding
+`DrawState::forget_texture()`, called after both overlay functions.
+Verified inert for the current default scene (Dream Land's own textures
+don't happen to collide with the simulated fighter's) via a pixel-identical
+before/after screenshot — the underlying cache-invariant violation was
+real regardless of whether today's specific scene triggers a visible
+symptom. **`R0.15` acceptance is now fully satisfied.**
 
-RE-117 (this session) surveyed `crates/ssb-rom/src/mesh.rs`'s render-state
-threading and found 9 of R0.15's 10 state categories had no cross-node
-persistence test at all — only texture image binding (RE-064) did. Added
-four new tests closing the gap (TLUT/palette, combiner+primitive+
-environment color, blend/alpha render-mode, depth+culling+geometry/
-lighting mode); confirmed texture addressing was already covered
-implicitly by RE-064's own whole-`TextureRef` equality check. All four
-new tests confirmed capable of failing (a temporary, reverted change
-rebuilding `State` fresh every node broke all four, plus two pre-existing
-tests). See "Task Status" below for the full account. `R0.11 — Fighter
-Palettes / Costumes` closed `COMPLETE` in an earlier session (RE-098 plus
-its closing addendum: all 12 real fighters individually verified).
+Per `PLAN.md`'s task ordering, the next eligible task is `R0.16 — N64
+Render-State Model Fidelity` (depends on R0.2 ✓, R0.6 — substantial
+progress, meets this project's own "needs meaningful progress from, not
+100% complete" precedent, R0.15 ✓ as of this session).
+
+`R0.13 — Framebuffer Rendering` has no further actionable rendering
+work (RE-116, previous session: all 13 LB-transition files confirmed
+correct; remaining items blocked on a game-state system that doesn't
+exist yet, downstream of this rendering gate). `R0.11 — Fighter
+Palettes / Costumes` closed `COMPLETE` in an earlier session (RE-098
+plus its closing addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-117 (this session) surveyed before writing any test, rather than
+RE-118 (this session) picked up R0.15's remaining thread: audit
+`psp/src/meshdraw.rs::DrawState`'s own device-side GE cache, the layer
+`mesh.rs`'s decode-time state (RE-117) doesn't cover. See
+`docs/reverse-engineering.md` RE-118 for the full account; summary:
+
+* **Read `apply_material`/`bind_texture` end to end against every
+  category.** Culling, shading, depth test and alpha test are each set
+  inside an explicit if/else with no skipped branch — no leak possible.
+  A stale `sceGuTexLevelMode` or CLUT left from a previous texture are
+  both inert (the GE clamps LOD to the mip count `sceGuTexMode` just
+  declared; non-indexed formats never consult CLUT). `GuState::Blend` is
+  confirmed never enabled anywhere in the crate (grepped, not assumed).
+* **Found one real, new gap.** `Gpu::draw_triangles`/`draw_line_strip`
+  disable `Texture2D` directly, bypassing `DrawState` entirely.
+  `draw_collision`/`draw_fighter` (the collision-line and
+  simulated-fighter-marker overlays, both calling `draw_line_strip`) run
+  *between* two cached mesh draws whenever `show_collision`/`sim_fighter`
+  are on — which is the default (`main.rs`'s own initial values). A
+  primitive drawn afterward that happens to share a texture index with
+  whatever was bound before the overlay (the pack dedups textures by
+  content, so this is plausible, not guaranteed) would wrongly stay
+  untextured.
+* **Checked whether this manifests visibly before fixing it — it does
+  not, and that's not the same as the bug being fake.** Zoomed into the
+  simulated fighter model in Dream Land's default view (the exact
+  triggering code path): renders fully textured. This only shows Dream
+  Land's own last texture and the fighter's own first texture don't
+  happen to coincide — the underlying cache-invariant violation is a
+  structural fact independent of today's specific scene.
+* **Fixed by invalidating the cache, not restoring prior state.** Added
+  `DrawState::forget_texture()` (clears `last_texture` only), called at
+  the end of `draw_collision` (if it drew anything) and `draw_fighter`
+  (always). Forces the next primitive to always rebind for real.
+* `cargo test --workspace`: 405 passing, unaffected (fix lives entirely
+  in the `psp` crate). `cargo clippy --release --workspace`: clean.
+  `cargo psp --release`: builds clean. `tools/run-ppsspp.sh`: Dream Land
+  re-screenshotted pixel-identical to the pre-fix baseline (same overlay
+  counts, same fighter-model crop) — confirms the fix is inert for the
+  currently-non-triggering case.
+* **What this closes:** `PLAN.md` R0.15's "state leakage tests added"
+  item is now satisfied for both layers. **`R0.15 — Render-State
+  Isolation` moves `IN_PROGRESS` → `COMPLETE`.**
+
+## Previous Task Status
+
+RE-117 (a previous session) surveyed before writing any test, rather than
 guessing which R0.15 categories needed coverage. See
 `docs/reverse-engineering.md` RE-117 for the full account; summary:
 
@@ -87,7 +137,7 @@ guessing which R0.15 categories needed coverage. See
   "state leakage tests added" item stays open pending that second
   layer's own audit.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-116 (a previous session) picked up R0.13's one remaining thread: root-cause
 file 46's diagonal black banding. See `docs/reverse-engineering.md`

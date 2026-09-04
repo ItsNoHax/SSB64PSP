@@ -681,7 +681,7 @@ unsafe fn run() -> ! {
                         Some(&material_anim),
                     );
                     let segments = if show_collision {
-                        meshdraw::draw_collision(p, &stage, &base, &mut gpu)
+                        meshdraw::draw_collision(p, &stage, &base, &mut gpu, &mut draw_state)
                     } else {
                         0
                     };
@@ -730,6 +730,7 @@ unsafe fn run() -> ! {
                                 pl.fighter.is_grounded(),
                                 &base,
                                 &mut gpu,
+                                &mut draw_state,
                             );
                         }
                     }
