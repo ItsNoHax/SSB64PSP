@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-127)
+**Last updated:** 2026-09-05 (RE-128)
 
 ---
 
@@ -12,34 +12,37 @@
 
 ## Current Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS`.
-RE-127 (this session) re-checked RE-126's own "every `IN_PROGRESS`/
-`VERIFYING` R0.x task is blocked" conclusion and found it was itself an
-unaudited generalization — it covered the tasks RE-126 happened to
-investigate that session, not literally every open row in `PLAN.md`.
-`R0.5` had three open LOD/mipmapping acceptance items depending on
-neither blocked resource (not upstream decomp typing, not the missing
-camera/game-state system), and RE-124 had already established the exact
-method needed: `G_MDSFT_TEXTFILT`'s `G_SETOTHERMODE_H` command also
-carries `G_MDSFT_TEXTLOD` (shift 16) and `G_MDSFT_TEXTDETAIL` (shift
-17), neither previously decoded by `mesh.rs`. A temporary, reverted
-census through the real `romtool pack` build found **131/131 real
-`G_MDSFT_TEXTLOD` commands request `G_TL_TILE`** and **121/121 real
-`G_MDSFT_TEXTDETAIL` commands request `G_TD_CLAMP`** — both exactly the
-RDP's own per-frame reset default, the same shape RE-124 already found
-for `TEXTFILT`. Real N64 hardware never engages LOD-blended mipmapping
-for any content in this ROM. A third field, `G_TEXTURE`'s own `level`
-(nonzero in 241 real asset display lists, never read by `mesh.rs`)
-briefly looked like a missed signal, but is confirmed inert: it only
-matters once `G_TL_LOD` or `G_TD_SHARPEN`/`G_TD_DETAIL` is active, and
-neither ever is archive-wide. Closes all three open items; `R0.5`'s only
-two remaining items ("texture coordinate behavior verified", "Dream
-Land canopy discrepancy resolved") are both already known to need
-independent screenshot verification or `R2`'s real-hardware validation,
-not more `romtool`-side investigation — `R0.5` stays `IN_PROGRESS`.
+`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS`,
+down to its last item. RE-128 (this session) closed the "texture
+coordinate behavior verified" item RE-127 left open: a temporary patch
+pointed the debug viewer's `TEXVIEW` mode (direct texture display,
+bypassing lighting/geometry) at Fox's real face texture and Kirby's real
+face texture, and both display exactly as `romtool texdump`'s
+independent reference decoder says the ROM data should — no melting, no
+clamp-boundary seam. RE-101 (UV scale)/RE-102 (clamp) are now
+independently confirmed on real fighters, closing the one gap both
+entries had left open. `R0.5`'s only remaining item is "Dream Land
+canopy discrepancy resolved," already known to need `R2`'s real-hardware
+validation, not more `romtool`-side work.
 
-**Task-selection note for the next session.** With `R0.5` now also down
-to items needing external validation, re-check whether any other
+**A real, separate, only-partly-explained defect was found while
+verifying this.** Fox's face shows a large, confirmed-`(0,0,0)` black
+patch in the full lit render (not in `TEXVIEW`, so not a texture bug;
+confirmed independent of the debug HUD and of `--no-swizzle`). Two
+specific hypotheses were tested via direct ROM display-list decoding and
+eliminated: texture corruption (every candidate texture decodes fine
+independent of the PSP), and a double-application of `prim_color`'s
+scale crushing `shade_normal`'s ambient-floored grey to zero (the real
+display list has no `G_SETPRIMCOLOR` near zero anywhere close to the
+primitives checked). Not resolved — filed as a concrete lead on `R0.6`'s
+already-open "primitive color verified"/"lighting verified" items, not
+as a new task. See `docs/reverse-engineering.md` RE-128 for the full
+account, including the explicit gap in this session's own rigor (which
+primitive actually draws the black pixels was inferred from screen
+position, not confirmed geometrically).
+
+**Task-selection note for the next session.** With `R0.5` now down to
+one item needing external validation, re-check whether any other
 `IN_PROGRESS`/`VERIFYING` `PLAN.md` row was similarly missed before
 concluding a genuine architectural undertaking (a camera/game-state
 system, to unblock `R0.12`/`R0.13`/`R0.14`) is the only path forward —
@@ -111,7 +114,63 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-127 (this session) re-checked RE-126's own "every `IN_PROGRESS`/
+RE-128 (this session) closed `R0.5`'s last mipmapping-adjacent item
+("texture coordinate behavior verified") and found a real, only-partly
+explained fighter rendering defect while doing it. See
+`docs/reverse-engineering.md` RE-128 for the full account; summary:
+
+* **Directly confirmed RE-101/RE-102 on two real fighters.** No
+  "select fighter" control exists in the debug viewer, so a temporary,
+  reverted patch forced `object_view` to a specific packed object index,
+  cycling Fox (file 313), Captain Falcon (file 332), Kirby (file 328) —
+  the three fighters RE-102's own fix names. `TEXVIEW` mode (direct
+  texture display, bypassing lighting/geometry) showed Fox's real face
+  texture (index 550) and Kirby's real face texture (index 734) both
+  matching `romtool texdump`'s independent reference decode exactly —
+  correct colours, no melting, no clamp-boundary seam.
+* **What this closes.** `R0.5`'s "texture coordinate behavior verified"
+  item, the one both RE-101 and RE-102 explicitly left open pending a
+  real fighter screenshot. `R0.5` now has exactly one open item left
+  ("Dream Land canopy discrepancy resolved"), already known to need
+  `R2`'s real-hardware validation.
+* **A real, separate defect found while verifying, not chased into a
+  fix.** Fox's *full lit* render (not `TEXVIEW`) shows a large, solid,
+  confirmed-`(0,0,0)` black patch on his face — confirmed via direct
+  per-pixel sampling, confirmed still present with the debug HUD forced
+  fully off (rules out the overlay's own text background), confirmed
+  still present under `romtool pack --no-swizzle` (rules out a
+  swizzle/deswizzle bug).
+* **Two concrete hypotheses tested and eliminated, not guessed away.**
+  (1) Texture corruption: decoded every texture on Fox's head straight
+  out of the `.pak` bytes, independent of the PSP GE — none is black.
+  (2) A double-application of `prim_color`'s scale (`mesh.rs::push_vertex`
+  folds it once, `pack.rs::add_mesh`'s own `prim_scale` step multiplies
+  again) crushing `shade_normal`'s ambient-floored grey (RE-065: floor
+  `0.35`, mathematically never `0` on its own) to exact zero via integer
+  truncation — decoding the real display list at the candidate
+  primitives' own source offsets (a temporary `romtool` subcommand
+  wrapping `dl::decode_list_at`) found no `G_SETPRIMCOLOR` anywhere near
+  zero nearby; their exported `prim_color` reads `0x00000000` only
+  because `add_object` cannot distinguish `None` from `Some(black)` in
+  that inspection-only field, and tracing to source confirms it really
+  is `None` there. Eliminated for the primitives checked.
+* **Not resolved, and said so plainly.** Which exact primitive draws the
+  visible black pixels was inferred from screen position, not confirmed
+  geometrically — an explicit gap in this session's own rigor. Filed as
+  a concrete lead on `R0.6`'s already-open "primitive color verified"/
+  "lighting verified" items (which already anticipated this shape of gap
+  in the abstract), not as a new acceptance item.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. All temporary code (`psp/src/main.rs`'s
+  forced `object_index`/`stage_view`/`tex_view`/disabled-HUD overrides;
+  `romtool`'s `re127findobj`/`re127dumpobj`/`re127dumptex`/
+  `re128decodelist` subcommands) fully reverted; `git diff --stat`
+  against the pre-session baseline is empty for both files. Default
+  (Dream Land) build re-screenshotted clean after every revert.
+
+## Previous Task Status
+
+RE-127 (an earlier session) re-checked RE-126's own "every `IN_PROGRESS`/
 `VERIFYING` task is blocked" claim and found `R0.5` had three open
 LOD/mipmapping items that were actually actionable. See
 `docs/reverse-engineering.md` RE-127 for the full account; summary:
@@ -156,7 +215,7 @@ LOD/mipmapping items that were actually actionable. See
   still re-check the remaining rows before assuming a camera/game-state
   system is the only way forward, per "Current Task" above.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-126 (an earlier session) investigated R0.12's open "orientation verified"/
 "scale verified" items and found a real, measured, previously-uncounted
