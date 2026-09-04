@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-100)
+**Last updated:** 2026-09-04 (RE-107)
 
 ---
 
@@ -12,19 +12,98 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-100 (this session)
-implemented and device-verified the framebuffer capture/bind mechanism —
-see "Task Status" below. `screen wipes implemented` and `visual
-verification completed` remain open: there is no real trigger event
-(match start/end) to call the new capture capability from yet, and only
-1 of 13 transition files' geometry was actually looked at. `R0.11 —
-Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
-(RE-098 plus its closing addendum: all 12 real fighters individually
-verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-107 (this session)
+recovered and documented a large body of undocumented work (RE-101–106)
+that had accumulated in the working tree, then extended R0.13's own
+verification archive-wide and to a second file — see "Task Status"
+below. `screen wipes implemented` remains open (no real trigger event
+exists yet); `visual verification completed` is now more precisely
+scoped (2 of 13 files confirmed, an archive-wide structural census
+covering the rest, and one real, confirmed, still-unexplained defect —
+a backing primitive rendering black despite non-black ROM vertex data)
+rather than simply "not done". `R0.11 — Fighter Palettes / Costumes`
+closed `COMPLETE` in an earlier session (RE-098 plus its closing
+addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-100 (this session) picked up exactly where RE-099 (previous session)
+RE-107 (this session) started from "continue with the plan" and found
+the working tree already held a large, fully implemented, fully tested,
+but almost entirely undocumented diff — `STATUS.md`'s own narrative
+(below) described only RE-099/RE-100, but the code already contained
+RE-101 through RE-106 (`pack::VERSION` was already `15`, not the `14`
+this file claimed). Committed that diff first, since it was real, tested
+(`cargo test --workspace`, `cargo clippy --release --workspace` both
+clean), regression-checked (Dream Land pixel-normal at 60 FPS) code, not
+something to discard for being undocumented — then read it in full and
+wrote up RE-101 (`G_TEXTURE` UV-scale, `PLAN.md` R0.5), RE-102
+(`G_TX_CLAMP` wrap, `PLAN.md` R0.5), RE-103 (per-vertex lit decision,
+`PLAN.md` R0.6), RE-105 (`G_MW_LIGHTCOL` as the real "this is lit"
+signal, `PLAN.md` R0.6) and RE-106 (`prim_color` was resolved but never
+consumed, `PLAN.md` R0.6) in `docs/reverse-engineering.md`, with
+`PLAN.md`'s own acceptance items updated to match. RE-104's number is
+skipped — nothing in the diff corresponds to it, and no entry was
+fabricated to fill the numbering gap.
+
+With the record caught up, continued R0.13 itself rather than stopping
+at documentation. A temporary, reverted `romtool` census across all 13
+LB-transition files (39–51) found the two-primitive shape RE-100
+verified on file 40 alone (one framebuffer-textured primitive, one
+untextured "backing" primitive) generalizes archive-wide — but file 40
+is **not** representative of the backing primitive's own colour: 12 of
+13 files' backing primitives are white (`[255,255,255,0]`), only file 40
+is navy (`[0,0,127/128,0]`), and file 40 is the only one of the 13 whose
+primitives are `lit`. Chose a second file to verify on-device precisely
+because the census flagged it as different on both axes: file 45 (white
+backing, unlit). A temporary, reverted `psp/src/main.rs` patch,
+following RE-100's own recipe exactly (magenta clear + capture at frame
+30, forced object switch to file 45's object from frame 35), produced a
+screenshot showing the framebuffer-textured primitive rendering the
+correct magenta test colour — real, independent confirmation of the
+capture/bind mechanism on a second, deliberately different file, not an
+inference from the shape census alone.
+
+**The black-rectangle question RE-100 left unlooked-at turned out to be
+real, and stranger than expected.** Both file 40's navy backing and file
+45's white backing render **pure black** (`0,0,0`, confirmed by direct
+pixel sampling, not eyeballing) on the real device, despite neither raw
+vertex colour being anywhere close to black. Checked rather than
+guessed: a temporary, reverted census confirmed file 45's backing
+primitive has `prim_color = None` and `flat_color = None` at the exact
+point `pack_mesh` builds it (ruling out RE-106's shade-scale bake and
+RE-080's flat-colour bake), and its raw bytes fail RE-103's
+`looks_like_unit_normal` check by a wide margin (length² `3` against an
+`11,000..=21,000` window, computed by hand — ruling out the per-vertex
+lit fallback shading it as a normal). All three of this project's known
+vertex-colour-overriding mechanisms are eliminated by direct evidence;
+nothing in the material pipeline as currently understood explains the
+result. Left genuinely open, not swept under the two files' own
+otherwise-successful verification — see `docs/reverse-engineering.md`
+RE-107 for the full account, and RE-106's own closing note for where the
+same finding is recorded against the mechanism it first looked most
+likely to implicate.
+
+`cargo test --workspace`: 261 `ssb-rom` tests passing throughout (no
+regressions from either the temporary census or the temporary device
+patch — both fully reverted, `git diff --stat` empty after each).
+`cargo clippy --release --workspace`: clean.
+
+**What this does and does not close.** `PLAN.md` R0.13 stays
+`IN_PROGRESS`. Visual verification now covers 2 of 13 files (up from 1),
+chosen to span the two known backing-colour/lit variants rather than an
+arbitrary second pick; 11 files remain unscreenshotted. The archive-wide
+census is real, permanent, structural evidence the other 11 share the
+same primitive shape — not proof they render correctly, since the
+black-rectangle defect demonstrates structural similarity alone does not
+guarantee visual correctness. The concrete next lead for whoever picks
+this back up is the black-rectangle defect itself: three plausible
+causes are now eliminated with direct evidence, which narrows but does
+not yet answer where a genuinely white, unlit, untextured vertex colour
+is actually turning black between the pack and the screen.
+
+## Previous Task Status
+
+RE-100 (a previous session) picked up exactly where RE-099 (the session before that)
 left off: RE-099 scoped the LB transition mechanism but explicitly left
 one design question unverified — does a PSP port need the N64's own full
 `300×220` capture with strip-by-strip TMEM addressing reproduced, or does
@@ -41,7 +120,7 @@ crisp photo — the correct PSP capture is a **300×6 top-left corner**
 (3,600 texels), far smaller than RE-099's own "maybe the full 300×220"
 guess.
 
-**Implemented the whole pipeline this session, verified at every layer:**
+**Implemented the whole pipeline that session, verified at every layer:**
 
 * `crates/ssb-rom`: `mobj::LB_TRANSITION_SEGMENT`, `mesh::State::
   framebuffer_capture` (set by a segment-`0x1` `G_SETTIMG`, cleared by
@@ -109,9 +188,9 @@ game-state/transition system at all — `screen wipes implemented` and
 confirm there is no render-to-texture pass to implement — satisfied by
 there being nothing here that applies) now checked.
 
-## Previous Task Status
+## Earlier Task Status
 
-RE-099 (previous session) scoped `R0.13` precisely instead of starting
+RE-099 (an earlier session) scoped `R0.13` precisely instead of starting
 implementation cold. Read `refs/ssb-decomp-re/src/lb/lbtransition.c`
 directly (239 lines, the whole file) rather than continuing to reason
 from RE-055's own paraphrase, and found the mechanism is considerably
@@ -135,14 +214,12 @@ undercount by 2, now fully resolved. A likely design simplification was
 identified but explicitly left unverified: the N64 tiles the image into
 small strips purely because the RSP's TMEM is 4 KB; the PSP GE has no
 equivalent limit, so one full-size PSP texture capture might need no
-strip-by-strip capture logic at all. **RE-100 (this session) checked this
-directly and found it was wrong** — see "Task Status" above.
+strip-by-strip capture logic at all. **RE-100 (an earlier session) checked
+this directly and found it was wrong** — see "Previous Task Status" above.
 
 Not implemented that session — a scoping pass, the same shape as
 RE-076/081/096. `git diff --stat` after RE-099's own `R0.13` work was
 documentation-only.
-
-## Earlier Task Status
 
 RE-098 (an earlier session) implemented and shipped multi-costume packing and
 device-side selection, closing four of `R0.11`'s five acceptance items.

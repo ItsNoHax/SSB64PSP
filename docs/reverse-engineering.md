@@ -7410,3 +7410,271 @@ and "visual verification completed" remain genuinely open: nothing
 currently calls `request_transition_capture` from real game logic (there
 is no match-start/match-end event to call it from yet), and only one of
 the 13 transition files' geometry was actually looked at.
+
+---
+
+## RE-101 — `G_TEXTURE`'s `scale_s`/`scale_t` was never applied; fighter face textures sampled several periods too wide
+
+**This entry, and RE-102/RE-103/RE-105/RE-106 below, were implemented in
+the same working session as RE-099/RE-100 but left undocumented when that
+session's own notes were written up — recovered and written up
+retroactively from the shipped code, its tests, and its own comments,
+which already cite the concrete ROM evidence each fix is based on. Where
+a fix's own comment cites a specific measured example (a file, an offset,
+a named fighter), that citation is reproduced here; a fresh archive-wide
+re-measurement was not repeated for this write-up.**
+
+`dl.rs`'s `Cmd::Texture { on, level, tile, .. }` already decoded
+`G_TEXTURE`'s `scale_s`/`scale_t` fields but `mesh.rs` discarded them,
+only reading `on`. Real hardware applies `scale_s`/`scale_t` — an
+unsigned Q0.16 multiplier — to a vertex's raw ST the moment `G_VTX` loads
+it into the cache, before any triangle ever reads it; `0xFFFF` is the
+SDK's own "no scaling" sentinel (true `1.0` does not fit in 16 bits).
+Skipping it left every vertex's UV at its raw, unscaled value.
+
+This matters most exactly where the scale is not the identity: several
+fighters' face textures are authored at a UV scale below 1.0, so their
+raw vertex UVs run several texture periods wider than the artist
+intended once left unscaled — sampling reads as a "melted", jumbled
+texture rather than a face.
+
+Fixed by adding `State::tex_scale: (u16, u16)` (default `(0xFFFF,
+0xFFFF)`), set from `Cmd::Texture`'s own fields, and applying it at the
+same point real hardware does — inside the `G_VTX` cache-load path, not
+at draw time — via `((uv * scale) >> 16)`. Verified with a unit test
+reproducing the mechanism directly (`cargo test --workspace`: part of the
+same test-count increase RE-100's own entry records).
+
+---
+
+## RE-102 — `G_TX_CLAMP` was dropped entirely; several fighters' torso/head textures overflow a mirrored pair and need it
+
+RE-066 (`PLAN.md` R0.5) measured that every real clamp/mirror request in
+the ROM has its own axis mask nonzero, and read that as "clamp is always
+redundant with RE-044's mask-based narrowing" — so `psp/src/meshdraw.rs`
+always called `sceGuTexWrap` with `Repeat`, never `Clamp`.
+
+That reading holds only when RE-044's narrowing actually *shrinks* the
+drawn rect below the tile's declared width/height. It found a
+counter-example this session: on several fighters' face/torso/head
+textures the mask period is *not* smaller than the drawn rect (a
+concrete pattern the fix's own comment cites as "mask 32, drawn rect
+24"), so narrowing is a no-op — real hardware clamps at that undisturbed
+size, and a UV overflowing it (measured up to ~110 texels on one texture)
+must not tile. Worse, when an axis both mirrors and clamps (`cms`/`cmt`
+== `3`, both bits set) real hardware "mirrors once, then clamps beyond
+that single bounce", not "mirrors forever" — plain `Repeat` over RE-067's
+already-pre-baked mirrored-double texture kept tiling past that point,
+reading as a jarring rainbow repeat instead of one held edge. The fix's
+own comments name Fox, Captain Falcon and Kirby as fighters whose
+torso/head textures hit this combination, with UVs overflowing the
+mirrored pair by 2x or more.
+
+Shipped as `TextureRef::clamp_s`/`clamp_t` (`mesh.rs`, decoded from
+`G_SETTILE`'s `cms`/`cmt` bit 1, independent of the mirror bit and *not*
+gated on the mask being nonzero, since a zero mask already makes clamp a
+no-op there either way), `TextureDesc::wrap` (`pack.rs`, `pack::VERSION`
+14 → 15, `TextureDesc::SIZE` 36 → 40 bytes — the second growth in two
+versions, following `role`'s), and `meshdraw::bind_texture` calling
+`sceGuTexWrap` with the GE's native `Clamp` mode per axis instead of
+always `Repeat`. A framebuffer-role texture (RE-099/RE-100) always packs
+`wrap: 0` — it is always a single full-frame quad whose UVs never exceed
+the tile, so `Repeat` vs `Clamp` cannot be told apart and does not
+matter.
+
+Not independently re-verified on a fighter screenshot for this write-up;
+the existing regression check (`tools/run-ppsspp.sh`: Dream Land
+pixel-normal at 60 FPS after the full RE-099–RE-106 change set) confirms
+no default-path regression, not that the fighter-face fix specifically
+looks right on screen. That remains a good follow-up for a session
+working fighter rendering.
+
+---
+
+## RE-103 — Lit-vs-literal-colour was decided per *primitive* by majority vote; needed to be per *vertex*
+
+The pre-existing heuristic (`PLAN.md` R0.6's "majority-vote lighting
+heuristic", `DECISIONS.md` D-024) decided whether a whole primitive's
+vertices were lit (raw bytes are a packed normal to shade) or literal
+(raw bytes are a real vertex colour) by counting what fraction of its
+vertices `looks_like_unit_normal` and comparing against a majority
+threshold.
+
+Found wrong by construction, not merely imprecise: a fighter's mixed
+material — decal highlights drawn as a literal colour sharing one vertex
+buffer with a lit body — routinely lands at a 20–80% split within a
+*single* primitive, nowhere near a clean majority either way. Voting
+forces every vertex on the losing side to the wrong interpretation.
+Concretely measured on Fox, Captain Falcon, Kirby and Ness: normals
+(small, near-zero-centred bytes) read straight into RGB when they should
+have been shaded, producing exactly what a "melted", rainbow-noise
+surface looks like.
+
+Fixed by deciding `lit` per *vertex* instead of per primitive in
+`pack.rs`'s vertex-lowering step (`PackWriter::add_mesh`): a vertex is
+lit if any primitive touching it has `material.lit` set (trusted,
+mirroring real hardware computing lighting for the whole draw once
+`G_LIGHTING` is on — see RE-105 below for where that trust now comes
+from) or, per vertex, `looks_like_unit_normal` on its own raw bytes —
+never a whole-primitive vote. First primitive to touch a shared vertex
+wins, matching the existing rule for `prim_color` baking (RE-106).
+`cargo test --workspace` covers the mechanism (existing `lit`-shading
+tests continue to pass with the new per-vertex logic).
+
+---
+
+## RE-105 — `G_MW_LIGHTCOL` is the one in-list, ROM-verified signal that a segment is about to draw lit geometry
+
+`mesh.rs`'s `material.lit` (RE-103's per-primitive trust source) had no
+reliable in-list signal to set it from: RE-021 already established real
+hardware turns `G_LIGHTING` on externally, per-object, outside any single
+node's own display list, so a node's list alone usually cannot say
+whether it is lit.
+
+`G_MOVEWORD` with `index == G_MW_LIGHTCOL` (`gbi.h`'s constant `0x0a`) is
+different — it updates a light's colour, which has no effect unless
+`G_LIGHTING` is (or is about to be) on for this draw, so a display list
+would not spend a command on it otherwise. This is an unambiguous,
+data-driven signal rather than a guess. Confirmed against a real ROM
+sample: file 313 (Fox), offset `0x1AB0`, four consecutive `gMoveWd`
+commands writing exactly `G_MW_LIGHTCOL`'s `aLIGHT_1`/`bLIGHT_1`/
+`aLIGHT_2`/`bLIGHT_2` offsets (`0x00`/`0x04`/`0x18`/`0x1c`), cross-checked
+against `refs/ssb-decomp-re/include/PR/gbi.h`'s `G_MWO_*` constants.
+
+Implemented in two layers: `dl.rs` gained `Cmd::MoveWord { index, offset,
+data }` (decoding `G_MOVEWORD`'s `w0 = (opcode << 24) | (index << 16) |
+offset`, `w1 = data`), verified with a unit test reproducing the file
+313 sample exactly (all four offsets, real data words); `mesh.rs` sets
+`state.material.lit = true` on any `MoveWord` with `index ==
+G_MW_LIGHTCOL`, regardless of `offset`/`data` — the mere presence of the
+command is the signal, not its payload. `scan.rs`'s opcode-frequency
+table gained the matching `Cmd::MoveWord => dl::G_MOVEWORD` arm so the
+new variant does not fall through to `Other` and skew "unhandled opcode"
+counts.
+
+---
+
+## RE-106 — `MeshMaterial::prim_color` is `combiner_shade_scale`'s result, not a literal colour; the device has nowhere to apply it
+
+`mesh.rs`'s `material_now()` (RE-043) overwrites `MeshMaterial::prim_color`
+with `combiner_shade_scale`'s resolved value whenever the combiner reads
+`PRIMITIVE`/`ENVIRONMENT` in a `SHADE * constant` shape — a real,
+already-shipped mechanism, but one whose name invites treating it as a
+literal paint colour, which several `pack.rs` unit tests had done (each
+had to be corrected to set `prim_color = None` once this was noticed, so
+their own "vertex colour survives untouched" assertions still tested
+what they claimed to).
+
+Nothing downstream ever multiplied `prim_color` back into anything: the
+PSP GE has no fixed-function stage that scales an *untextured* vertex
+colour by a separate constant, unlike `TEXTURE_BLEND`'s baseline colour
+(RE-073/RE-074, baked at vertex-assembly time into `push_vertex`) which
+maps onto a real GE blend mode. Left unconsumed, any primitive whose
+combiner reduced to this shape would render its raw, unscaled vertex
+shade — visibly wrong wherever the resolved scale is not identity,
+including a resolved scale of pure black, which reads on screen as a
+primitive rendering solid black despite non-black raw vertex data.
+
+Fixed the same way `lit`'s shading and `flat_color`/`texture_blend`'s
+baked colours are already handled — folded into the vertex at pack time,
+in `PackWriter::add_mesh`, since the device has no other stage to apply
+it in. First primitive touching a shared vertex wins (mirroring RE-103's
+`lit` rule); `prim_scale[i]` multiplies each of R/G/B by `s/255`,
+alpha left alone (matching the existing shade-scale rule elsewhere that
+alpha is not a coverage value here). Verified by correcting the five
+existing `pack.rs` tests that had unknowingly relied on `prim_color`
+being `None` and confirming they still pass with the fold applied
+(`cargo test --workspace`, part of RE-100's own recorded count).
+
+**A live, on-device candidate for this exact "resolved-black" case
+surfaced independently in a later session (see `STATUS.md`) while
+extending R0.13's framebuffer verification to a second file: an
+untextured backing primitive with a genuinely white raw vertex colour
+(`[255,255,255,0]`, confirmed via a temporary, reverted `romtool`
+census) rendered pure black (`0,0,0`, confirmed via pixel sampling) on
+the real device. That primitive's `prim_color` and `flat_color` were
+both directly confirmed `None` at the point `pack_mesh` builds it,
+meaning RE-106's own mechanism, as measured, is not the explanation for
+that specific case — left open rather than assumed solved by this entry;
+see `STATUS.md`'s current task status.**
+
+---
+
+## RE-107 — RE-101–RE-106 recovered and documented retroactively; R0.13's framebuffer capture confirmed archive-wide and on a second file; the "black rectangle" is real and still unexplained
+
+Picked up "continue with the plan" and found the working tree already
+held a large, fully implemented, fully tested, but almost entirely
+undocumented diff: `STATUS.md`'s own narrative described only RE-099/
+RE-100 (the framebuffer capture), but the code itself already contained
+RE-101 through RE-106 (`pack::VERSION` was already `15`, not the `14`
+`STATUS.md` claimed). Committed the diff — it was real, tested,
+verified-not-to-regress-Dream-Land code, not something to discard — then
+read it in full and wrote up RE-101/RE-102/RE-103/RE-105/RE-106 above
+from the code, its tests, and its own comments (RE-104's number is
+skipped; nothing in the diff corresponds to it, and no fabricated entry
+was written to fill the gap). This entry covers what was actually done
+in the current session, after that recovery.
+
+**Archive-wide census before assuming file 40 is representative.** RE-100
+verified the framebuffer capture mechanism against exactly one of the 13
+LB-transition files (40). A temporary, reverted `romtool` instrumentation
+(`pack_mesh`, gated on `id` in `39..=51`) checked every file's real
+primitive material shape instead of trusting file 40 to generalize.
+Result: all 13 files share the same two-primitive shape (one
+framebuffer-textured primitive, one untextured "backing" primitive) —
+but file 40 is **not** representative of the backing primitive's colour:
+12 of 13 files' backing primitives carry raw vertex colour
+`[255,255,255,0]` (white); only file 40 uses the `[0,0,127/128,0]` navy
+RE-100 originally measured. File 40 is also the only one of the 13 whose
+primitives are `lit`; the other 12 are all unlit. Neither file's backing
+primitive sets `flat_color`, confirmed archive-wide, not just for the two
+files individually tested on-device.
+
+**Extended on-device verification to a second file, chosen to cover the
+untested variant, not an arbitrary second pick.** File 45 (white
+backing, unlit) is deliberately different from file 40 (navy backing,
+lit) on both axes the census found varying. A temporary, reverted
+`psp/src/main.rs` patch — matching RE-100's own recipe exactly (Dream
+Land renders normally for 30 frames, clear colour forced to magenta and
+`gpu.request_transition_capture()` called on frame 30, viewer forced onto
+file 45's object from frame 35 onward) — produced a screenshot showing
+the framebuffer-textured primitive rendering the correct magenta test
+colour. This is real, independent confirmation the capture/bind mechanism
+works beyond file 40's own hand-picked case, not an inference from the
+material-shape census alone. `git diff --stat` after reverting the patch
+is empty; `cargo test --workspace` (261 `ssb-rom` tests) and
+`cargo clippy --release --workspace` both stayed clean throughout.
+
+**The black-rectangle question, left open by RE-100, turned out to be
+real and stranger than "not investigated".** Both file 40's navy backing
+and file 45's white backing render **pure black** (`0,0,0`, confirmed by
+direct pixel sampling of the screenshot, not eyeballing) on the real
+device, despite neither raw vertex colour being anywhere near black.
+Checked the two most likely explanations directly rather than guessing:
+
+* RE-106's shade-scale bake (`prim_color`, multiplied into the vertex at
+  pack time) — a temporary, reverted census confirmed `prim_color` is
+  `None` for file 45's backing primitive at the exact point `pack_mesh`
+  builds it. Not the cause, at least not for this primitive.
+* RE-103's per-vertex lit fallback (`looks_like_unit_normal`, which would
+  read `[255,255,255,0]` as a packed normal and shade it) — computed by
+  hand: as signed bytes this is `(-1,-1,-1)`, length² `3`, nowhere near
+  the `11,000..=21,000` window the check requires. Not the cause.
+
+`RE-080`'s `flat_color` was already confirmed `None` by the same archive-
+wide census above. With all three of this project's own known
+vertex-colour-overriding mechanisms ruled out by direct evidence, nothing
+in the material pipeline as currently understood explains the result.
+Left genuinely open — `PLAN.md` R0.13's "visual verification completed"
+item now names this as an active, characterized defect rather than an
+unlooked-at primitive, and is the concrete next lead for whoever picks
+R0.13 back up.
+
+**What this does and does not close.** `PLAN.md` R0.13 stays
+`IN_PROGRESS`. Visual verification now covers 2 of 13 files (up from 1),
+chosen to span the two known backing-colour/lit variants rather than
+picked arbitrarily; 11 files remain unscreenshotted. The archive-wide
+material-shape census is real, permanent evidence that those 11 are
+*structurally* the same shape as the two tested — not proof they render
+correctly, since the black-rectangle defect demonstrates structural
+similarity does not guarantee visual correctness.
