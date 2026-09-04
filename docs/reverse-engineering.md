@@ -7909,3 +7909,32 @@ whoever picks this back up is either fixing the debug viewer's camera
 framing for screen-covering objects, or writing a bespoke, closer-in test
 camera the way RE-100's own original test likely used, rather than
 re-attempting the generic `object_view` path a third time unchanged.
+
+**Addendum, same session: measured why, instead of leaving the camera gap
+unexplained.** Before giving up on a device screenshot, dumped file 45's
+real vertex position bounds directly (a temporary, reverted `romtool`
+subcommand converting each of its 9 display lists and printing raw min/max
+per axis — not a guess): every one of the 9 lists has `z 0..0` exactly.
+The whole object is a flat plane lying in its own local `XY` plane (`x`
+spanning roughly `-1500..1500`, `y` roughly `-1100..1100` before the
+node's own `-2600` world offset) — confirmed, not inferred, consistent
+with "a screen-covering transition wipe" and with `romtool mobj`'s own
+labelling of this content family. That rules out a gross framing bug
+(the auto-camera's bounding-sphere math has real, sane geometry to work
+with) but does not by itself explain total invisibility across two
+different sampled `spin` angles: backface culling on a single-sided
+`z`-normal plane is invisible across a full 180° hemisphere of rotation,
+not a narrow sliver, so two independent ~40–200° samples landing in the
+invisible half by chance (~25% joint probability) is plausible but not
+certain, and a baked rotation in the node's own `TraRotSca` transform
+(not shown by `romtool scene --nodes`, which only prints translation)
+could also put the "front" face away from this debug viewer's default
+orientation independently of `spin`. Left unresolved by design — this
+addendum is a scoping pass, the same shape as RE-076/081/096, not a
+second attempt at the fix itself. The concrete, narrower next step for a
+future session: force a small fixed set of exact `spin` values (e.g. `0`,
+`π/2`, `π`, `3π/2`) across separate runs instead of relying on elapsed
+real time, which would either find the visible half directly or rule out
+`spin`-angle bad luck entirely and point at culling/depth/blend state
+instead. All temporary code (`tools/romtool/src/main.rs`'s dump
+subcommand) was reverted; `git diff --stat` is empty except this file.

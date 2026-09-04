@@ -99,6 +99,20 @@ at pack time, rather than trying to guess a second capture band. See
   screen-covering objects (or writing a bespoke close-in test camera),
   not re-attempting the same generic path unchanged. The other 11 (of
   13) transition files also remain unscreenshotted.
+* **Addendum, same session:** measured *why* the camera framing fails
+  instead of leaving it a mystery. A temporary, reverted `romtool`
+  subcommand dumped file 45's real vertex bounds directly: every one of
+  its 9 display lists has `z 0..0` exactly — a flat plane in its own
+  local `XY` plane, confirming "screen-covering transition wipe" as data,
+  not inference. This rules out a gross framing/bounding-sphere bug but
+  does not fully explain the invisibility (backface culling on a
+  `z`-normal plane is invisible across a full 180° hemisphere, and a
+  baked node rotation `romtool scene --nodes` doesn't print could also be
+  involved). Concrete next step recorded in `docs/reverse-engineering.md`
+  RE-109's addendum: force a small fixed set of exact `spin` values
+  (`0`, `π/2`, `π`, `3π/2`) across separate runs rather than relying on
+  elapsed real time. `git diff --stat` on `tools/romtool/src/main.rs` is
+  empty (temporary dump subcommand fully reverted).
 
 ## Previous Task Status
 
