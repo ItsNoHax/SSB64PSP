@@ -2202,6 +2202,301 @@ mod tests {
     }
 
     #[test]
+    fn a_palette_binding_survives_a_new_image_bind_without_a_new_tlut_load() {
+        // R0.15: RE-064 pinned "a node that sets nothing inherits everything
+        // unchanged", but real hardware's CLUT register and texture-image
+        // register are genuinely independent -- a node that binds a *new*
+        // image via its own `G_SETTIMG` without reissuing `G_LOADTLUT` must
+        // still draw with the *previous* palette, not no palette (or the
+        // previous image's palette accidentally tied to the old address).
+        // This is the direction RE-093's own fix (a palette-only `MObj`
+        // keeping a prior image) never covered: here the *image* is the one
+        // changing, not the palette.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(6);
+        let a = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        // Node B binds a genuinely different image, but never reissues
+        // G_LOADTLUT -- the same shape a fighter's own multi-part model uses
+        // when several joints share one palette across different sprites.
+        let b = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x800),
+                slot: 0,
+            },
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+        ];
+        let out = convert_sequence(&items, Source::bare(&file));
+        let first = out[0].as_ref().unwrap().primitives[0]
+            .material
+            .texture
+            .expect("joint A binds its own texture and palette");
+        let second = out[1].as_ref().unwrap().primitives[0]
+            .material
+            .texture
+            .expect("joint B must inherit the palette, not draw unpaletted");
+        assert_eq!(
+            second.palette_file, first.palette_file,
+            "a new image bind with no new G_LOADTLUT must keep the previous palette's file"
+        );
+        assert_eq!(
+            second.palette_offset, first.palette_offset,
+            "a new image bind with no new G_LOADTLUT must keep the previous palette's offset"
+        );
+        assert_ne!(
+            second.data_offset, first.data_offset,
+            "the test is only meaningful if the image really did change"
+        );
+    }
+
+    #[test]
+    fn combiner_and_colour_constants_persist_into_a_node_that_sets_none_of_them() {
+        // R0.15: `state.combiner`, `material.prim_color` and
+        // `material.env_color` all persist by construction (one `State`
+        // reused across `convert_sequence`'s whole loop, RE-064's own
+        // `Current evidence`), but nothing had directly pinned it the way
+        // RE-064 pinned texture binding. Uses Link's own real combiner word
+        // (RE-073's `links_own_model_sets_the_lerp_shape_for_real`) because
+        // its `texture_blend` output reflects PRIM *and* ENV *and* the
+        // combiner shape all at once -- a single assertion that would break
+        // if any one of the three failed to carry over.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(6);
+        let mut a = alloc::vec![vtx(3)];
+        a.extend(bind_a_texture());
+        a.extend([
+            Cmd::SetCombine {
+                hi: 0x0030_9661,
+                lo: 0x552e_ff7f,
+            },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [255, 255, 255, 255],
+            },
+            Cmd::SetEnvColor([128, 128, 128, 255]),
+            Cmd::SetBlendColor([10, 20, 30, 255]),
+            Cmd::Tri1([0, 1, 2]),
+        ]);
+        let b = [
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+        ];
+        let out = convert_sequence(&items, Source::bare(&file));
+        let first = out[0].as_ref().unwrap().primitives[0].material;
+        let second = out[1].as_ref().unwrap().primitives[0].material;
+        assert!(
+            first.texture_blend.is_some(),
+            "joint A's own combiner/PRIM/ENV must resolve to a real blend"
+        );
+        assert_eq!(
+            second.texture_blend, first.texture_blend,
+            "a node that sets no new combiner/PRIM/ENV must inherit all three exactly"
+        );
+        assert_eq!(
+            second.blend_color, first.blend_color,
+            "G_SETBLENDCOLOR must persist into a node that sets none"
+        );
+    }
+
+    #[test]
+    fn render_mode_persists_into_a_node_that_sets_no_new_render_mode() {
+        // R0.15: `material.alpha_test`/`translucent` (RE-069) persist by the
+        // same single-`State` construction as everything else here, but had
+        // no direct cross-node test. Reuses `xlu_render_mode_is_translucent`'s
+        // own real render-mode word.
+        use crate::scene::Mat4;
+
+        const FORCE_BL: u32 = 0x4000;
+        const CLR_IN: u32 = 0;
+        const A_IN: u32 = 0;
+        const CLR_MEM: u32 = 1;
+        const G_BL_1MA: u32 = 0;
+        let data = render_mode(
+            FORCE_BL,
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+            (CLR_IN, A_IN, CLR_MEM, G_BL_1MA),
+        );
+
+        let file = vertex_data(6);
+        let mut a = alloc::vec![vtx(3)];
+        a.extend(bind_a_texture());
+        a.extend([set_render_mode(data), Cmd::Tri1([0, 1, 2])]);
+        let b = [
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+        ];
+        let out = convert_sequence(&items, Source::bare(&file));
+        let first = out[0].as_ref().unwrap().primitives[0].material;
+        let second = out[1].as_ref().unwrap().primitives[0].material;
+        assert!(first.translucent, "joint A's own render mode must be translucent");
+        assert_eq!(
+            second.translucent, first.translucent,
+            "a node that sets no new render mode must inherit translucency"
+        );
+        assert_eq!(second.alpha_test, first.alpha_test);
+    }
+
+    #[test]
+    fn geometry_mode_persists_into_a_node_that_sets_no_new_geometry_mode() {
+        // R0.15: `material.{cull_back, cull_front, lit, smooth, z_buffer}`
+        // are cumulative bit-applies over one `State` (RE-068's default
+        // reset plus every `G_GEOMETRYMODE` since), but had no direct
+        // cross-node test -- only `geometry_mode_sets_and_clears`'s own
+        // single-list set/clear coverage.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(6);
+        let a = [
+            vtx(3),
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH | G_ZBUFFER,
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let b = [
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &a,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+            SequenceItem {
+                cmds: &b,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+            },
+        ];
+        let out = convert_sequence(&items, Source::bare(&file));
+        let first = out[0].as_ref().unwrap().primitives[0].material;
+        let second = out[1].as_ref().unwrap().primitives[0].material;
+        assert!(first.cull_back && first.lit && first.smooth && first.z_buffer);
+        assert_eq!(second.cull_back, first.cull_back);
+        assert_eq!(second.cull_front, first.cull_front);
+        assert_eq!(second.lit, first.lit);
+        assert_eq!(second.smooth, first.smooth);
+        assert_eq!(
+            second.z_buffer, first.z_buffer,
+            "a node that sets no new geometry mode must inherit depth/cull/lighting state"
+        );
+    }
+
+    #[test]
     fn a_lb_transition_segment_bind_produces_a_marked_framebuffer_texture() {
         // RE-099/RE-100: the LB transition's `G_SETTIMG` names segment
         // `0x1` (`sLBTransitionPhotoHeap`), not any archive location. Real
