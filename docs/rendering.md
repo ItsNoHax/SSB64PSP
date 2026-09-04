@@ -20,6 +20,38 @@ not merely preferable, it is nearly free.
 
 We do **not** emulate the RDP.
 
+## Rendering status
+
+Per-area status, evidence and remaining work. This table is the rendering
+counterpart to `docs/porting-status.md`'s per-crate subsystem table — this one
+is scoped to exactly the rendering-correctness categories `PLAN.md` R0
+tracks (§6.0's hierarchy cross-reference), not the whole engine. Update it
+in the same work cycle as any change to the areas below (`AGENTS.md` §11).
+
+| Area | Status | Evidence/Test | Remaining work |
+| --- | --- | --- | --- |
+| Geometry | COMPLETE | `PLAN.md` R0.8 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); `romtool mesh` converts every root display list, 0 failures archive-wide | Billboard scale/orientation/texture-orientation still open under R0.12 |
+| Projection | IN_PROGRESS | `PLAN.md` R0.14: FOV sourced from the decompilation (`38.0°`, RE-084); viewport/aspect device-measured and source-audited (RE-034, RE-082); depth mapping confirmed against the `psp` crate's own documented convention (RE-085) | No real game camera exists yet (only a free-roaming debug camera); no N64-vs-PSP side-by-side comparison (R0.17) |
+| Texture decode | 🟢 85% | `PLAN.md` R0.3 `COMPLETE`: RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded, unit-tested; 638/665 bound textures packed | 27 unconverted, each root-caused and attributed elsewhere: 26 to R0.13, 1 to R0.7 |
+| CI4 | COMPLETE | `PLAN.md` R0.4: unit-tested decode; dominant format (1192/3483 `G_SETTILE`) | None |
+| CI8 | COMPLETE | `PLAN.md` R0.4: unit-tested decode | None |
+| TLUT | IN_PROGRESS | `PLAN.md` R0.4: loading verified; cross-node palette inheritance pinned by a unit test confirmed capable of failing (RE-064); palette pointers resolved through extern relocations (RE-037) | 1 `MissingPalette` case, attributed to R0.7's material-table pairing gap |
+| Texture filtering | TODO | `PLAN.md` R0.5: filtering mode not yet identified from original data | Open R0.5 acceptance item — bilinear-vs-point per texture unverified |
+| Texture addressing | 🟢 mostly done | `PLAN.md` R0.5/R0.2: repeat (RE-044/RE-066), mirror (RE-067, pre-baked at pack time), clamp (RE-102, native `sceGuTexWrap(Clamp, ...)` per axis), masks/shifts (RE-044) all measured archive-wide and reproduced | RE-101/RE-102 not yet independently re-verified against a fighter's own screenshot |
+| LOD/mipmaps | TODO | `PLAN.md` R0.5: mip chains generated for 151+ textures (`psp_texture::pack_mipped`) but did not resolve the still-open Dream Land canopy discrepancy (RE-053); BattleShip (the reference PC port) has no LOD support either (RE-054) | LOD/mipmapping behavior not identified from original data; open R0.5 acceptance items |
+| Combiner | 🟢 IN_PROGRESS | `PLAN.md` R0.6: general `(A-B)*C+D` two-cycle evaluator (RE-039/RE-043); `combiner_texture_blend` (RE-073/RE-074, device-verified on Link's own model), `combiner_flat_color` (RE-080), shade-scale consumption (RE-106); 97.5%+ of 262,778 combiner-bearing primitives archive-wide recognized (RE-079) | Remaining ~2.5% plus genuine `prim_color`/`env_color` absence cases, tied to R0.7's pairing gaps, not a combiner-shape gap |
+| Lighting | ACCEPTED_DEVIATION (partial) | `PLAN.md` R0.6: per-vertex lit/literal decision is now data-driven via the real `G_MW_LIGHTCOL` signal (RE-103/RE-105), not a majority vote; light direction measured from real ROM data for 33/41 stages (RE-065) | Single baked neutral key light, not per-object real `sceGuLight` lighting (`TODO.md` Phase D); 8/41 stages' own light angle diverges up to 111° and is an accepted, documented deviation |
+| Alpha | COMPLETE | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation | None |
+| Blending | TODO (known open bug) | `PLAN.md` R0.6: `translucent` render mode correctly detected and packed (14.4% of non-default render modes archive-wide) | Not enabled on device — produces a checkerboard on Dream Land's canopy-highlight surface (RE-069); root cause still unknown after two eliminated hypotheses (RE-071) |
+| Depth | COMPLETE | `PLAN.md` R0.6/R0.14: RDP per-frame default (`Z_BUFFER` on) fixed and wired per-primitive (RE-068); PSP depth convention (`sceGuDepthRange(65535, 0)` + `GreaterOrEqual`) confirmed against the `psp` crate's own documented convention (RE-085) | None |
+| Culling | COMPLETE | `PLAN.md` R0.6: RDP per-frame default (`CULL_BACK` on) fixed, measured 86.3% of packed primitives post-fix (RE-068) | None |
+| Transparency | TODO (same bug as Blending) | `PLAN.md` R0.12: billboards are measurably more affected than the archive-wide average (29.7% vs. 14.4%, RE-083) | Same open translucency bug as Blending, above |
+| Particles | NOT STARTED | A repository-wide search for particle-rendering code returns zero implementation | No design exists; belongs under top-level R1 §7 ("all required effects render") once scoped — not yet a numbered R0.x task |
+| Shadows | NOT STARTED | Only `shadow_size` — a fighter attribute constant extracted from `FTAttributes` — exists; nothing renders a shadow | No design exists; not yet a numbered R0.x task |
+| Framebuffer effects | IN_PROGRESS | `PLAN.md` R0.13: LB-transition one-time capture implemented and device-verified on 2 of 13 files (RE-100, RE-107); the two-primitive shape confirmed archive-wide | Known bug: at least one file's 300×5 tile samples outside the captured window (RE-108, root-caused, not fixed); no real game-logic trigger exists yet; 11/13 files remain unscreenshotted |
+| UI | NOT STARTED | Debug overlay only, via `sceGuDebugFlush` (software-rasterizer-dependent, RE-014) — not real GE geometry | "Renderer 3" below is explicitly not started |
+| Physical PSP | BLOCKED (not validated) | `PLAN.md` R2 is `BLOCKED_BY_R1`; historical smoke-testing occurred but predates the current renderer and was not captured against R2's acceptance criteria (`STATUS.md` §8) | The entire R2 milestone |
+
 ## Pipeline
 
 ```
@@ -394,8 +426,18 @@ Per plan §32:
   debug overlay is still `sceGuDebugFlush` rather than GE geometry, which is
   why it needs the software rasteriser (RE-014).
 * **Renderer 4** — batching, state sorting, caching. **Not before the game is
-  visibly running.** Primitives are already merged by material at build time,
-  which is the build-time half of the same idea.
+  visibly running**, and not before the state being merged/sorted/cached has
+  passed its own correctness gate (D-036, `PLAN.md` R0.16). Primitives are
+  already merged by material at build time, which is the build-time half of
+  the same idea — that merge only combines primitives whose full material
+  state already agrees, so it does not discard state R0.16's audit would
+  need to find later.
+
+`PLAN.md` R0.18 tracks a systematic comparison against `sf64-psp` and
+`oot-PSP` (both PSP targets, so their `sceGu` usage is directly comparable)
+beyond the ad hoc BattleShip cross-references already scattered through this
+document and `docs/reverse-engineering.md`. Treat all three as technical
+references, not authorities, per D-037.
 
 ## Vertex layout
 

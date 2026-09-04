@@ -147,20 +147,22 @@ When determining how SSB64 originally behaves, use this order:
 2. Original ROM/data extracted from the user's ROM.
 3. BattleShip.
 4. `sf64-psp`.
-5. `n64psp`.
-6. Existing SSB64PSP implementation.
-7. Engineering assumptions.
+5. `oot-PSP`.
+6. `n64psp`.
+7. Existing SSB64PSP implementation.
+8. Engineering assumptions.
 
 Primary references:
 
 * `VetriTheRetri/ssb-decomp-re`
 * `JRickey/BattleShip`
 * `TheMrIron2/sf64-psp`
+* `z2442/oot-PSP`
 * `TheMrIron2/n64psp`
 
-BattleShip is a technical reference, not an authority.
+BattleShip, `sf64-psp`, `oot-PSP` and `n64psp` are all technical references, not authorities — none of them outranks the decompilation or ROM (D-037).
 
-If BattleShip disagrees with the decompilation or ROM:
+If a reference project disagrees with the decompilation or ROM:
 
 1. Identify the discrepancy.
 2. Determine why it exists.
@@ -273,11 +275,11 @@ Never disguise an approximation as an exact implementation.
 
 ---
 
-# 10. BattleShip Usage
+# 10. BattleShip / sf64-psp / oot-PSP Usage
 
-BattleShip should be actively consulted for N64 rendering and runtime behavior.
+BattleShip, `sf64-psp` and `oot-PSP` should be actively consulted for N64 rendering and runtime behavior.
 
-Use it particularly for:
+Use them particularly for:
 
 * F3DEX/F3DEX2;
 * GBI semantics;
@@ -286,14 +288,19 @@ Use it particularly for:
 * TMEM;
 * display lists;
 * material/render state;
+* combiner translation to a target GPU;
 * framebuffer behavior;
-* N64 rendering architecture.
+* N64 rendering architecture;
+* PSP `sceGu` usage patterns (`sf64-psp`, `oot-PSP` specifically — both already target the PSP);
+* debugging methodology and performance technique (`sf64-psp`, `oot-PSP`).
 
-BattleShip must be treated as a reference implementation.
+All three must be treated as reference implementations, per D-037.
 
-Do not copy its PC renderer architecture into the PSP renderer without a concrete technical reason.
+Do not copy BattleShip's PC/desktop renderer architecture, or `sf64-psp`'s/`oot-PSP`'s specific state-translation choices, into this project's PSP renderer without a concrete technical reason recorded in `PLAN.md` R0.18 or `docs/reverse-engineering.md`.
 
-The goal is correct SSB64 behavior on PSP, not architectural similarity to BattleShip.
+`sf64-psp` and `oot-PSP` both target the PSP, which makes their `sceGu` usage and texture/material handling directly comparable to this project's — but Star Fox 64 and Ocarina of Time are not Smash 64. A technique either project uses is only adopted here once it is confirmed SSB64 actually needs it, per D-037's four-way classification.
+
+The goal is correct SSB64 behavior on PSP, not architectural similarity to any reference project.
 
 ---
 

@@ -1,6 +1,20 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-108)
+**Last updated:** 2026-09-04 (RE-108, then a `PLAN.md` restructure)
+
+---
+
+# 0. Planning-Document Restructure (this update)
+
+`PLAN.md` was restructured to add an explicit rendering-correctness hierarchy
+cross-reference (§6.0) and three new tasks — `R0.16` (N64 render-state model
+fidelity), `R0.17` (visual-regression methodology), `R0.18` (reference-port
+comparative audit against `sf64-psp`/`oot-PSP`) — per a user request to make
+the rendering-correctness track more rigorous. **No implementation changed.**
+`AGENTS.md` §4/§6/§10, `README.md`, `docs/rendering.md` (new "Rendering
+status" table) and `DECISIONS.md` (new D-036, D-037) were updated to match.
+The current task below (`R0.13`) is unaffected and unchanged; `R0.16`–`R0.18`
+are new `TODO` tasks, not yet started, and do not block `R0.13`'s completion.
 
 ---
 
