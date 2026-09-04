@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-126)
+**Last updated:** 2026-09-04 (RE-127)
 
 ---
 
@@ -12,7 +12,41 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (this
+`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS`.
+RE-127 (this session) re-checked RE-126's own "every `IN_PROGRESS`/
+`VERIFYING` R0.x task is blocked" conclusion and found it was itself an
+unaudited generalization — it covered the tasks RE-126 happened to
+investigate that session, not literally every open row in `PLAN.md`.
+`R0.5` had three open LOD/mipmapping acceptance items depending on
+neither blocked resource (not upstream decomp typing, not the missing
+camera/game-state system), and RE-124 had already established the exact
+method needed: `G_MDSFT_TEXTFILT`'s `G_SETOTHERMODE_H` command also
+carries `G_MDSFT_TEXTLOD` (shift 16) and `G_MDSFT_TEXTDETAIL` (shift
+17), neither previously decoded by `mesh.rs`. A temporary, reverted
+census through the real `romtool pack` build found **131/131 real
+`G_MDSFT_TEXTLOD` commands request `G_TL_TILE`** and **121/121 real
+`G_MDSFT_TEXTDETAIL` commands request `G_TD_CLAMP`** — both exactly the
+RDP's own per-frame reset default, the same shape RE-124 already found
+for `TEXTFILT`. Real N64 hardware never engages LOD-blended mipmapping
+for any content in this ROM. A third field, `G_TEXTURE`'s own `level`
+(nonzero in 241 real asset display lists, never read by `mesh.rs`)
+briefly looked like a missed signal, but is confirmed inert: it only
+matters once `G_TL_LOD` or `G_TD_SHARPEN`/`G_TD_DETAIL` is active, and
+neither ever is archive-wide. Closes all three open items; `R0.5`'s only
+two remaining items ("texture coordinate behavior verified", "Dream
+Land canopy discrepancy resolved") are both already known to need
+independent screenshot verification or `R2`'s real-hardware validation,
+not more `romtool`-side investigation — `R0.5` stays `IN_PROGRESS`.
+
+**Task-selection note for the next session.** With `R0.5` now also down
+to items needing external validation, re-check whether any other
+`IN_PROGRESS`/`VERIFYING` `PLAN.md` row was similarly missed before
+concluding a genuine architectural undertaking (a camera/game-state
+system, to unblock `R0.12`/`R0.13`/`R0.14`) is the only path forward —
+this session did not have time to re-audit every remaining row itself,
+only `R0.5`.
+
+`R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
 items by reading the real `gcPrepDObjMatrix` algorithm directly rather
 than trusting the enum names `Kind46`/`Kind48`/`Kind50` already in use.
@@ -77,7 +111,54 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-126 (this session) investigated R0.12's open "orientation verified"/
+RE-127 (this session) re-checked RE-126's own "every `IN_PROGRESS`/
+`VERIFYING` task is blocked" claim and found `R0.5` had three open
+LOD/mipmapping items that were actually actionable. See
+`docs/reverse-engineering.md` RE-127 for the full account; summary:
+
+* **Applied RE-124's exact method to the two other fields
+  `G_SETOTHERMODE_H` carries alongside `G_MDSFT_TEXTFILT`.**
+  `G_MDSFT_TEXTLOD` (shift 16) and `G_MDSFT_TEXTDETAIL` (shift 17) had
+  never been decoded by `mesh.rs` — only the cycle-type field (shift 20)
+  had a match arm.
+* **A temporary, reverted census through the real `romtool pack` build
+  found zero real requests for either non-default mode.** 131/131 real
+  `G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (never `G_TL_LOD`);
+  121/121 real `G_MDSFT_TEXTDETAIL` commands request `G_TD_CLAMP` — both
+  exactly the RDP's own per-frame reset default, the identical shape
+  RE-124 already found for `TEXTFILT`. Real N64 hardware never engages
+  LOD-blended mipmapping for any content in this ROM.
+* **A third field looked like a real, missed signal at first, then
+  resolved to inert.** `G_TEXTURE`'s own `level` (decoded by `dl.rs`
+  since early on, never read by `mesh.rs`) is nonzero in 241 real asset
+  display lists (236×1, 2×2, 3×3) — but every hand-authored `gSPTexture`
+  call in the decomp's own engine C code passes `level = 0`, and `level`
+  only has an observable effect once `G_TL_LOD` or
+  `G_TD_SHARPEN`/`G_TD_DETAIL` is active, both confirmed zero
+  archive-wide. The nonzero data is real but unreachable.
+* **What this closes.** All three of `R0.5`'s remaining LOD/mipmapping
+  acceptance items. This project's own PSP-side `pack_mipped`/
+  `sceGuTexLevelMode(Auto)` mip chains are confirmed to be a deliberate
+  anti-aliasing technique for dithered CI4 textures (RE-053/070), not an
+  attempted reproduction of a real N64 mechanic — there is none to
+  reproduce. `R0.5`'s remaining two items ("texture coordinate behavior
+  verified", "Dream Land canopy discrepancy resolved") both already need
+  independent screenshot verification or `R2`'s real-hardware
+  validation, not more `romtool`-side work — `R0.5` stays `IN_PROGRESS`.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. All temporary census code
+  (`mesh.rs`'s two `SetOtherModeH` arms and `Cmd::Texture`'s `level`
+  check) fully reverted; documentation-only session.
+* **Broader task-selection note.** RE-126's "every task is blocked"
+  conclusion only covered the tasks it happened to investigate, not
+  literally every open `PLAN.md` row — a generalization this session
+  caught and corrected for `R0.5` specifically. The next session should
+  still re-check the remaining rows before assuming a camera/game-state
+  system is the only way forward, per "Current Task" above.
+
+## Previous Task Status
+
+RE-126 (an earlier session) investigated R0.12's open "orientation verified"/
 "scale verified" items and found a real, measured, previously-uncounted
 billboard-transform gap. See `docs/reverse-engineering.md` RE-126 for
 the full account; summary:
@@ -123,7 +204,7 @@ the full account; summary:
   the full reasoning — the next session should read it before picking a
   task rather than assume an easy item remains.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-125 (an earlier session) advanced R0.7's material-table pairing and
 fixed a real determinism bug in R0.17's own claim found while
