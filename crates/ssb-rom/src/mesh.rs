@@ -101,6 +101,21 @@ pub struct TextureRef {
     /// pack-time converter must skip decoding texels for these and emit a
     /// runtime-filled entry instead.
     pub framebuffer: bool,
+    /// `G_SETTILESIZE`'s `uls`/`ult` on the render tile — the tile's own
+    /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
+    /// form `dl::Cmd::SetTileSize` decodes). Only meaningful when
+    /// `framebuffer` is set, where it is `0` otherwise (RE-108/RE-109): an
+    /// ordinary ROM texture's baked vertex UV is implicitly tile-origin-
+    /// relative for free, because pack-time extraction reads the source
+    /// image starting at that same origin. A framebuffer-role binding
+    /// instead samples a small, synthetic runtime capture that always
+    /// starts at *its own* origin regardless of which absolute band of the
+    /// real N64 buffer the tile originally pointed at, so the tile's own
+    /// origin must be subtracted from the vertex UV at conversion time
+    /// instead — the real RDP performs the equivalent subtraction in
+    /// hardware when it converts a tile-relative ST into a TMEM address.
+    pub origin_s: u16,
+    pub origin_t: u16,
 }
 
 /// Render state a primitive is drawn under.
@@ -761,6 +776,9 @@ struct State {
     /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
     tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
+    /// `G_SETTILESIZE`'s `uls`/`ult` on tile 0, raw S10.2 fixed point. See
+    /// [`TextureRef::origin_s`]/`origin_t` (RE-108/RE-109).
+    tile0_origin: Option<(u16, u16)>,
     /// `G_SETTILE`'s `masks`/`maskt` on tile 0: the texture wraps every
     /// `1 << mask` texels, and zero means it does not wrap at all.
     tile0_mask: Option<(u8, u8)>,
@@ -812,6 +830,7 @@ impl State {
             real_timg: None,
             tile0_fmt: None,
             tile_dims: None,
+            tile0_origin: None,
             tile0_mask: None,
             tile0_cm: None,
             palette_offset: None,
@@ -1040,6 +1059,7 @@ impl State {
             // decoded shape, taken from the same `G_SETTILE`/`G_SETTILESIZE`
             // commands as any other texture -- a pack-time converter uses
             // these to size the runtime buffer, just skips decoding texels.
+            let (origin_s, origin_t) = self.tile0_origin.unwrap_or((0, 0));
             return Some(TextureRef {
                 data_file: None,
                 data_offset: 0,
@@ -1055,6 +1075,8 @@ impl State {
                 clamp_s,
                 clamp_t,
                 framebuffer: true,
+                origin_s,
+                origin_t,
             });
         }
 
@@ -1074,6 +1096,10 @@ impl State {
             clamp_s,
             clamp_t,
             framebuffer: false,
+            // Irrelevant outside the framebuffer role -- see
+            // `TextureRef::origin_s`/`origin_t`.
+            origin_s: 0,
+            origin_t: 0,
         })
     }
 }
@@ -1127,6 +1153,16 @@ impl Builder {
             // keeps a shared cache-slot vertex distinct across primitives
             // that need different flat colours.
             v.rgba = c;
+        }
+        if let Some(t) = self.material.texture {
+            if t.framebuffer {
+                // Rebase by the tile's own origin (RE-108/RE-109): see
+                // `TextureRef::origin_s`/`origin_t`. `origin_s`/`origin_t`
+                // are raw S10.2 (quarter-texel); `v.uv` is S10.5, so align
+                // scales with `* 8` before subtracting.
+                v.uv[0] = (v.uv[0] as i32 - t.origin_s as i32 * 8) as i16;
+                v.uv[1] = (v.uv[1] as i32 - t.origin_t as i32 * 8) as i16;
+            }
         }
         if let Some(&i) = self.seen.get(&v) {
             return Ok(i);
@@ -1440,6 +1476,7 @@ fn walk(
                 let w = ((lrs.saturating_sub(uls)) >> 2) + 1;
                 let h = ((lrt.saturating_sub(ult)) >> 2) + 1;
                 state.tile_dims = Some((w, h));
+                state.tile0_origin = Some((uls, ult));
             }
 
             Cmd::LoadTlut { count, .. } => {
@@ -2282,6 +2319,98 @@ mod tests {
         let t = mesh.primitives[0].material.texture.expect("real texture bound");
         assert!(!t.framebuffer, "a later real G_SETTIMG must clear the framebuffer marker");
         assert_eq!(t.data_offset, 0x40);
+    }
+
+    #[test]
+    fn a_framebuffer_role_tile_not_at_the_origin_has_its_uv_rebased() {
+        // RE-108/RE-109: file 45's real 300x5 "photo" tile sets
+        // `ult = 860` (texel 215, the *bottom* of the real 220-texel-tall
+        // N64 buffer) with vertex V baked at exactly the same absolute
+        // position -- so the raw, un-rebased UV pointed at content this
+        // project's small top-of-buffer runtime capture never populates,
+        // reading back whatever was there instead (measured black on
+        // device). A conversion-time rebase must subtract the tile's own
+        // origin so the same vertex instead samples relative position 0,
+        // matching a tile whose origin genuinely is 0 (the working 300x6
+        // entry, RE-100).
+        let mut file = Vec::new();
+        // One vertex: x=0 y=0 z=0 pad=0 u=0 v=6881 rgba=opaque white.
+        // `G_TEXTURE`'s default `scale_t` (0xFFFF) is the SDK's "no
+        // scaling" value, not exactly 1.0 (RE-101) -- `(6881 * 0xFFFF) >>
+        // 16 == 6880`, which is exactly `860` quarter-texels (this tile's
+        // own `ult`) in S10.5. Using the raw value that scales to exactly
+        // that keeps the assertion below an exact `0`, not off by the
+        // scale rounding's own unrelated -1.
+        file.extend_from_slice(&0i16.to_be_bytes());
+        file.extend_from_slice(&0i16.to_be_bytes());
+        file.extend_from_slice(&0i16.to_be_bytes());
+        file.extend_from_slice(&0u16.to_be_bytes());
+        file.extend_from_slice(&0i16.to_be_bytes());
+        file.extend_from_slice(&6881i16.to_be_bytes());
+        file.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        // Two more vertices at the same UV, for a real triangle.
+        for _ in 0..2 {
+            file.extend_from_slice(&10i16.to_be_bytes());
+            file.extend_from_slice(&0i16.to_be_bytes());
+            file.extend_from_slice(&0i16.to_be_bytes());
+            file.extend_from_slice(&0u16.to_be_bytes());
+            file.extend_from_slice(&0i16.to_be_bytes());
+            file.extend_from_slice(&6881i16.to_be_bytes());
+            file.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        }
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 300,
+                addr: SegAddr(0x0100_0000), // segment 1, offset 0
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            // uls=0, ult=860 (texel 215); (lrs-uls)>>2+1 == 300,
+            // (lrt-ult)>>2+1 == 5, matching RE-108's real file-45 measurement.
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 860,
+                lrs: 1196,
+                lrt: 876,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let t = mesh.primitives[0]
+            .material
+            .texture
+            .expect("a segment-0x1 bind must still produce a texture reference");
+        assert!(t.framebuffer);
+        assert_eq!(t.origin_t, 860, "the tile's own origin must be recorded");
+        assert_eq!(
+            mesh.vertices[0].uv[1], 0,
+            "a vertex baked at the tile's own origin must rebase to 0, not stay at the tile's absolute position in the conceptual 220-row image"
+        );
     }
 
     #[test]
