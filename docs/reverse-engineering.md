@@ -9547,3 +9547,113 @@ original RE-123 claim was true but fragile (true by luck of one specific
 test's timing, not by construction), and is now true for a documented,
 understood reason (no debug-overlay interaction possible if the overlay
 is never drawn).
+
+## RE-126 — Kind48's camera-pitch-locked billboard is measurably real (47 nodes, including Dream Land), and this project treats it identically to Kind46's fully screen-aligned one
+
+**Question.** `PLAN.md` R0.12's "orientation verified" acceptance item is
+still open. RE-049 implemented and tested billboard camera-facing, but
+only for the camera rotation its own test happened to apply; RE-063's
+own comment already distinguishes `Kind48`/`Kind50` from `Kind46`
+mathematically (`pack.rs`: "`sGCMatrixMod1F` (locked to the camera's
+pitch)... `sGCMatrixMod2F` (locked to the camera's yaw)") but only
+measured `Kind50` as archive-unused (0/3117, RE-063) before deciding it
+was safe to fold both into the same `FLAG_BILLBOARD` path as `Kind46`.
+`Kind48` itself was never separately measured. Is it also unused, or is
+this project rendering real content with the wrong billboard math?
+
+**Reading the real algorithm first, not assuming from the enum name.**
+`refs/ssb-decomp-re/src/sys/objdisplay.c`'s `gcPrepDObjMatrix`:
+
+* Kinds 44/45/46 build their MVP directly from `gGCMatrixPerspF` (the
+  pure projection matrix) with every off-diagonal term zeroed and only
+  the diagonal (per-axis scale) terms kept, plus 45/46 add an in-plane
+  spin (`dobj->rotate.x`/`.z`). No camera-orientation term survives at
+  all — a real "screen-aligned" billboard, facing the camera from any
+  angle, matching this project's own `billboard_place` (drop the
+  composed rotation, keep composed scale, apply an in-plane spin).
+* Kinds 47/48 instead build their MVP from `sGCMatrixMod1F`
+  (`objdisplay.c:3033-3038`), itself `syMatrixLookAtF(eye=(0, eye_y,
+  eye_z), at=(0, at_y, 0), up=(0,1,0))` concatenated with the
+  projection — eye/at both pinned to `x=0`, so the resulting basis
+  depends only on the camera's Y/Z relationship to the object and is
+  *invariant to the camera's X-axis position/yaw*. That is a real,
+  different transform from Kind46's, not an equivalent one under a
+  different name.
+* Kinds 49/50 are the mirror case: `sGCMatrixMod2F`
+  (`objdisplay.c:3061-3066`), `syMatrixLookAtF(eye=(eye_x, 0, eye_z),
+  at=(at_x, 0, 0), up=(0,1,0))` — Z pinned this time, invariant to the
+  camera's Y-axis position/pitch.
+
+**Measured, not assumed: `Kind48` is real, archive-wide, and in this
+project's own primary regression scene.** A temporary, reverted
+`eprintln!` in `pack.rs`'s `add_object` (gated `#[cfg(feature =
+"std")]`, run through the real `romtool pack` build) counted every node
+whose `transform_kind()` is `Kind48`: **47 nodes archive-wide**,
+including **file 104 — Dream Land's own geometry file** (node ids
+`0x2001`/`0x2002`). Combined with RE-063's existing count (109 total
+`FLAG_BILLBOARD` nodes = 28 `RecalcRotRpyRSca` + 81 matching the
+`id & 0x6000` mask RE-048/049 originally used, which does not
+distinguish `Kind46` from `Kind48` since both bits fall inside that
+mask), this splits the 81 into **34 `Kind46` and 47 `Kind48`** — `Kind48`
+is not a rare edge case, it is the *largest* individual billboard
+category in the archive, at 43% of all `FLAG_BILLBOARD` nodes, and
+`Kind50` remains the only one confirmed unused (0/3117, RE-063).
+
+**What this project currently does.** `pack.rs`'s `add_object` maps
+`Kind46`, `Kind48`, `Kind50` and `RecalcRotRpyRSca` all to the same
+single-bit `NodeDesc::FLAG_BILLBOARD`, and `meshdraw.rs`'s
+`draw_object_posed` applies one uniform placement
+(`billboard_place`: discard composed rotation, keep composed position/
+scale, apply an in-plane Z spin) to every flagged node regardless of
+which of the four kinds it actually was. For `Kind48` nodes this is an
+*approximation* of the real pitch-locked transform, not an equivalent
+reproduction of it — under a camera that yaws (moves in X) relative to
+the object, the real `Kind48` billboard would not turn to track that
+motion (locked to pitch only), while this project's screen-aligned
+approximation always faces the camera fully regardless of which axis it
+moved along.
+
+**Why this was not caught by RE-049's own test, and is not fixed here.**
+RE-049's rotated-camera A/B test forced the stage camera through a
+single rotation, `[0, 0.7, 0]`; the debug viewer's stage camera is
+otherwise always "face-on" with no free yaw/pitch of its own
+(`psp/src/main.rs`'s stage-view camera comment: "A stage is a place, not
+an object... Face-on, always"), and `PLAN.md` R0.14 (this task's own
+second dependency) still lists "an actual game camera" as an open item.
+Whether `Kind46`'s screen-aligned approximation and `Kind48`'s real
+pitch-locked transform produce *different* pixels depends on the camera
+actually varying along the axis each construction is invariant to — a
+property neither RE-049's one forced test nor the current, still-fixed
+gameplay camera exercises. Implementing the real per-kind transform
+would require: (1) widening `NodeDesc::FLAG_BILLBOARD` from one bit into
+a kind-preserving field (a pack-format version bump), and (2) the render
+call knowing the camera's own eye/at position as a decomposed pitch/yaw
+pair rather than only the single composed `base` matrix
+`billboard_place` currently receives — plumbing that does not exist yet
+and is naturally R0.14's own scope, not this task's. Recorded here as a
+measured, quantified, and now-understood gap rather than an unexamined
+approximation, per `AGENTS.md` §9.
+
+**A related, smaller, unconfirmed lead found while reading the same
+code.** The real per-axis scale for every one of kinds 44-50 is not a
+uniform composed-basis length: `f12 = dobj->scale.y * gGCScaleX` uses
+the node's *own* Y-scale multiplied by the *ancestor chain's* cumulative
+**X**-scale (`gGCScaleX`), not by the ancestor chain's own cumulative
+Y-scale. This project's `billboard_place` instead takes the length of
+each composed basis column independently, which only produces the same
+number as the real formula when every ancestor's own scale is uniform
+(scale.x == scale.y all the way up the chain). Not measured this pass
+whether any real `Kind46`/`Kind48` node's ancestor chain ever applies
+non-uniform scale — if none do, the two formulas are numerically
+identical and this is a non-issue; if any do, this project's billboard
+scale is wrong for that specific node. Left as an open lead, not chased
+further in this pass — the primary finding above is the one with
+confirmed archive-wide impact.
+
+**What this does and does not close.** Does not close `PLAN.md` R0.12's
+"orientation verified" item — it replaces an unexamined gap with a
+measured, understood, and honestly-still-open one, with a concrete
+dependency (R0.14's camera model) rather than a vague "needs more
+investigation." "Scale verified" gains a related, unconfirmed lead
+(non-uniform ancestor scale) rather than being closed either. No code
+changed this pass; `cargo test --workspace`: 405 passing, unaffected.
