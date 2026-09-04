@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-119)
+**Last updated:** 2026-09-04 (RE-120)
 
 ---
 
@@ -13,26 +13,26 @@
 ## Current Task
 
 `R0.16 — N64 Render-State Model Fidelity` (`IN_PROGRESS`, moved from
-`TODO` this session, following `R0.15 — Render-State Isolation`'s
-closure). RE-119 (this session) started from R0.2's own opcode inventory
-(`docs/rendering.md`) and found it needed re-measuring before it could
-be trusted as a checklist: `romtool scan`'s own `geometry_mode_name`
-helper had `G_SHADE` mapped to the wrong bit (a real bug in this
-project's own diagnostic tooling, not the game data), hiding 60 real
-occurrences under a blank label; fixed. The whole opcode table had also
-gone stale since R0.2 (every count drifted from later conversion-fidelity
-fixes), and `G_MOVEWORD` was still wrongly listed as "never emitted"
-despite RE-105 already relying on real usage — refreshed the table.
-**Found two geometry-mode categories genuinely used by SSB64 with zero
-handling in `mesh.rs`:** `G_SHADE` (60 occurrences, likely already
-handled correctly in most cases via existing combiner-shape detection,
-but not yet cross-referenced per-primitive) and `G_TEXTURE_GEN`/
-`G_TEXTURE_GEN_LINEAR` (156/13 occurrences — the "Metal [Character]"
-transformation's environment-mapped shiny effect, genuinely needed but
-correctly deferred behind the combat/item systems this project's own
-rendering gate blocks). See "Task Status" below for the full account.
+`TODO` in the previous session, following `R0.15 — Render-State
+Isolation`'s closure). RE-119 (previous session) fixed a real bug in
+`romtool`'s own diagnostic tooling (`G_SHADE` mapped to the wrong bit),
+refreshed R0.2's stale opcode inventory, and found two geometry-mode
+categories with zero handling in `mesh.rs`: `G_SHADE` (60 occurrences)
+and `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` (156/13 occurrences, the
+"Metal [Character]" transformation effect, correctly deferred behind
+combat/items). RE-120 (this session) closed the `G_SHADE` cross-
+reference RE-119 left open: confirmed 31 archive-wide occurrences of
+`G_SHADE` off with a combiner that still reads `SHADE`, with real file
+attribution. **29 of 31 are in content this project doesn't render yet**
+(items, fighter special-move effects, general effects — correctly gated
+behind the combat/item systems this project's own rendering gate
+blocks). **2 affect content already rendered**: one primitive each in
+Yoshi's Island's two stage variants — a real, narrow, currently-live gap,
+not fixed this session since the correct real-hardware behavior isn't
+well-defined by `gbi.h`'s own documentation. See "Task Status" below for
+the full account.
 
-`R0.15 — Render-State Isolation` closed `COMPLETE` in the previous
+`R0.15 — Render-State Isolation` closed `COMPLETE` in an earlier
 session (RE-117/118: all 10 state categories covered across both the
 decode-time `mesh.rs` layer and the device-side `DrawState` GE-cache
 layer, one real bug found and fixed in the latter). `R0.13 —
@@ -45,7 +45,54 @@ verified).
 
 ## Task Status
 
-RE-119 (this session) started R0.16 from its own first acceptance
+RE-120 (this session) closed RE-119's own open item: does any real
+primitive combine `G_SHADE` cleared with a combiner that still reads
+`SHADE` — the one scenario that would actually render wrong. See
+`docs/reverse-engineering.md` RE-120 for the full account; summary:
+
+* **Confirmed archive-wide, with real file attribution.** A temporary,
+  reverted census threaded a `shade: bool` field through `mesh.rs`'s
+  `State` (mirroring the existing `cull_back`/`lit`/`smooth`/`z_buffer`
+  handling) and checked, at every triangle, whether `!state.shade` while
+  `combiner_shade_scale` still resolves. Getting file attribution needed
+  a temporary `Source::file_id` field — the first attempt used `romtool
+  scan`'s own discovery mechanism and found nothing, because (per
+  RE-112) that heuristic differs from the real graph-based
+  `convert_sequence` pipeline `romtool pack` actually uses; moving the
+  census into the real pipeline found matches immediately.
+* **Result: 31 occurrences, concentrated almost entirely in content this
+  project does not render at all yet.** 29 of 31 (files 86
+  `ITCommonObject`/items, 350 `CaptainSpecial2`, 85
+  `EFCommonEffects3`, 353 `LinkSpecial2`) are items, fighter
+  special-move effects, and general effects — correctly gated behind
+  the combat/item systems `AGENTS.md` §5 blocks. These cannot produce a
+  visible defect today since nothing calls into that content at all.
+* **2 occurrences affect content already rendered**: one primitive each
+  in `StageYosterFile2`/`StageYosterSmallFile2` (Yoshi's Island, both
+  variants) — real, currently-live, but extremely narrow (a single
+  primitive per stage, not core platform geometry; neither stage
+  previously flagged as visually wrong).
+* **Not fixed.** The correct real-hardware behavior for `G_SHADE` off
+  with a shade-reading combiner isn't well-defined by `gbi.h`'s own
+  documentation ("use primcolor to see anything" describes what the
+  author should have done, not what hardware actually displays) —
+  implementing a fix risks guessing at undefined behavior, the exact
+  failure mode `AGENTS.md` §9 warns against. Recorded as a concrete,
+  narrow, low-priority open lead.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Pack rebuild confirmed byte-identical
+  to the pre-session baseline after reverting. All temporary code
+  (`mesh.rs`'s `shade` field/census, `Source::file_id`,
+  `combiner_shade_scale`'s brief `pub` bump) fully reverted; `git diff
+  --stat` is empty — this session is documentation-only.
+* **What this closes:** `PLAN.md` R0.16's "every state category has an
+  explicit field or documented reason" acceptance item is now satisfied
+  for `G_SHADE` — its real impact is measured, attributed by file, and
+  classified, not left as an unexamined risk.
+
+## Previous Task Status
+
+RE-119 (a previous session) started R0.16 from its own first acceptance
 item — R0.2's opcode inventory — rather than guessing which state
 categories needed auditing. See `docs/reverse-engineering.md` RE-119 for
 the full account; summary:
@@ -95,7 +142,7 @@ the full account; summary:
   or documented reason" item stays open pending `G_SHADE`'s own
   per-primitive cross-reference. `R0.16` moves `TODO` → `IN_PROGRESS`.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-118 (a previous session) picked up R0.15's remaining thread: audit
 `psp/src/meshdraw.rs::DrawState`'s own device-side GE cache, the layer

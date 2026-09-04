@@ -2057,6 +2057,22 @@ criteria: every category found is now either handled, explicitly
 deferred with a reason, or flagged as needing further investigation —
 none is silently absent from `docs/rendering.md` any more.
 
+RE-120 (a later session) closed the `G_SHADE` cross-reference. Confirmed
+archive-wide, with real file attribution: 31 occurrences of `G_SHADE`
+off with a combiner that still reads `SHADE`. **29 of 31 (files 86
+`ITCommonObject`, 350 `CaptainSpecial2`, 85 `EFCommonEffects3`, 353
+`LinkSpecial2`) are items, fighter special-move effects, and general
+effects — none of which this project renders yet**, since combat/items
+are correctly gated behind the rendering-completeness milestone. **2
+occurrences affect content already rendered**: one primitive each in
+`StageYosterFile2`/`StageYosterSmallFile2` (Yoshi's Island, both
+variants) — a real, narrow, currently-live gap (a single primitive per
+stage, not core platform geometry, neither stage previously flagged as
+visually wrong). Not fixed: the correct real-hardware behavior for this
+combination isn't well-defined by `gbi.h`'s own documentation, and
+guessing at it risks the exact failure mode `AGENTS.md` §9 warns
+against. Recorded as a concrete, narrow, low-priority open lead.
+
 ### Objective
 
 Audit and, where necessary, harden the intermediate representation between
@@ -2080,16 +2096,19 @@ established (D-036).
 
 ### Acceptance
 
-* [ ] every state category R0.2's command inventory found SSB64 actually
+* [x] every state category R0.2's command inventory found SSB64 actually
   exercising (texture state, tile state, combiner state, primitive color,
   environment color, geometry mode, lighting mode, alpha state, blend state,
   depth state, filtering, addressing, LOD, palette/TLUT state, render-pass
   state) has an explicit field or explicit "does not apply to SSB64, measured"
   note in `MeshMaterial`/the pack record formats — RE-119 found geometry mode's
   own category was incomplete (`G_SHADE`, `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`
-  had zero field or documented reason); now documented in `docs/rendering.md`
-  with a reason each, but `G_SHADE` still needs the per-primitive
-  cross-reference noted above before this item can close
+  had zero field or documented reason); RE-120 closed `G_SHADE`'s own
+  remaining gap with a real, file-attributed archive-wide measurement (29/31
+  occurrences in not-yet-rendered content, 2 in Yoshi's Island, documented as
+  a narrow open lead rather than fixed or ignored) — every category found by
+  this audit now has either handling, a documented deferral, or a measured,
+  scoped, named open item
 * [ ] no state category is silently dropped between `mesh.rs`'s conversion and
   `pack.rs`'s on-disk record without a documented reason (cross-reference
   against R0.15's leakage tests) — not yet audited beyond geometry mode
@@ -2117,7 +2136,7 @@ established (D-036).
 
 ### Evidence
 
-RE-119 in `docs/reverse-engineering.md`.
+RE-119, RE-120 in `docs/reverse-engineering.md`.
 
 ---
 
