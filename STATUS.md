@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-124)
+**Last updated:** 2026-09-04 (RE-125)
 
 ---
 
@@ -12,57 +12,126 @@
 
 ## Current Task
 
-`R0.18 — Reference-Port Comparative Audit` is now `COMPLETE`. RE-124
-(this session) cloned `oot-PSP` into `refs/` (previously only
-`sf64-psp`/`BattleShip`/`n64psp` had been) and read both PSP-targeting
-reference ports' actual graphics-backend source, classifying every
-difference found per `DECISIONS.md` D-037's four-way scheme:
-**render architecture and culling** differences are fully explained by
-D-001's own already-decided offline-conversion choice (both references
-are runtime F3DEX2 interpreters that need software clipping anyway; this
-project's build-time conversion does not, so GPU-side culling is correct
-for it) — not gaps. **Texture filtering** was measured archive-wide via
-the real `romtool pack` build: 151/151 real `G_MDSFT_TEXTFILT` commands
-request `G_TF_BILERP`, matching the RDP's own per-frame reset default —
-closes `PLAN.md` R0.5's open filtering item in this project's favor, no
-fix needed. **Texture mirroring**: `oot-PSP` independently reached the
-same pre-baked-doubled-texture fix this project's own RE-067 already
-shipped; `sf64-psp` took the cheaper opposite tradeoff — confirms RE-067
-was a real tradeoff, not an obvious-answer gap. **Blending**: both
-references successfully ship standard `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`
-blending, ruling out "the PSP GE can't do this" as an explanation for
-R0.6's still-open canopy-dithering blend failure — a new lead added to
-that open item, not resolved. **Lighting/CLUT/combiner approximation**:
-all three projects converge on the same strategies already used here; no
-gap. **Performance technique** (material-state hashing plus a
-batch/replay draw pool, both references) recorded as a lead for `R3`
-once it unblocks, not implemented now. **All 5 of R0.18's acceptance
-items are now satisfied.** See "Task Status" below for the full account.
+`R0.7 — Missing Material Tables` remains `IN_PROGRESS` but advanced
+significantly. RE-125 (this session) systematically re-applied RE-078's
+own search-plus-decomp-cross-check method to the "several candidates"
+bucket, not just already-unique candidates: cross-referenced all 50
+archive-wide ambiguous graphs against `tools/mobjtable-ground-truth.py`'s
+decomp-typed answer key, found 23 landing near a real symbol,
+independently confirmed 20 of them via `read_table` (the decomp's own
+labeled address does *not* satisfy the graph's demand vector; the
+search's reported candidate does), each explained by a decomp-documented
+`PAD()` or `NULL`-entries shape. Rejected the other 3 correctly: file 86
+is the identical 27-way-ambiguous case RE-061 already declined; files
+108/152's one candidate land inside a texture's own trailing bytes with
+no real gap. **`romtool mobj`: paired 70 → 90, unpaired 57 → 37,
+mismatches held at 0 across 407 nodes.** Rebuilt the shipped pack
+(5348.1 → 5368.2 KiB) and confirmed Dream Land's own default-view
+screenshot is pixel-identical except the HUD's own texture-count readout.
 
-Per `PLAN.md`'s task ordering, the next eligible task is `R0.7 —
-Missing Material Tables` (57 of 127 graphs still unpaired as of the last
-measurement) — both `R0.4`'s and `R0.6`'s own remaining open acceptance
-items are already explicitly attributed to this same root cause, not
-independent gaps, so closing `R0.7`'s pairing gap is the actual
-bottleneck for both rather than a parallel, unrelated task.
+**Also found and fixed a real bug in R0.17's own determinism claim while
+re-verifying it against the rebuilt pack.** RE-123's "two captures 9
+seconds apart are byte-identical" was true but fragile — a hidden bug in
+its debug-HUD-freezing logic (not simulation state, the on-screen
+`cpu`/`frame`/`tick` counters) only showed up at different capture
+timings. Three fix attempts each failed for a different `sceGuDebugPrint`-
+specific reason (see RE-125's full writeup); fixed by never drawing the
+debug HUD at all under `regression_capture`, verified byte-identical
+across a 39-second timing spread. `docs/visual-regression.md` and the
+committed golden image are both updated to the now-HUD-free capture.
 
+Per `PLAN.md`'s task ordering, `R0.7` stays `IN_PROGRESS` but further
+pairing progress again depends on upstream decomp typing or a fresh
+demand-search narrowing, not open-ended `romtool` investigation — the
+same wall as before RE-125, just with fewer graphs behind it. The next
+eligible, actually-actionable task is `R0.12 — Billboard Correctness`
+(status `VERIFYING`, depends on R0.8 ✓, no unmet dependency) rather than
+continuing to grind on R0.7's now-exhausted search angle.
+
+`R0.18 — Reference-Port Comparative Audit` closed `COMPLETE` in an
+earlier session (RE-124: `oot-PSP` cloned and compared against `sf64-psp`
+and this project's own choices; closed R0.5's filtering item, added a
+new lead to R0.6's blending item, recorded an R3 performance lead).
 `R0.17 — Visual Regression Methodology` closed `COMPLETE` in an earlier
-session (RE-123: a `regression_capture` Cargo feature freezes every
-per-frame mutation once 240 simulation ticks have run, producing a
-byte-identical golden capture regardless of real-world timing).
-`R0.16 — N64 Render-State Model Fidelity` closed `COMPLETE` in an
-earlier session (RE-119 through RE-122: a real `romtool` diagnostic bug
-fixed, `G_SHADE`'s archive-wide impact measured and classified,
-`blend_color`'s correct-but-undocumented absence found and documented,
-and a genuine 126-occurrence texture-cache dedup bug found and fixed).
-`R0.15 — Render-State Isolation` closed `COMPLETE` in an earlier
-session (RE-117/118: all 10 state categories covered across both the
-decode-time `mesh.rs` layer and the device-side `DrawState` GE-cache
-layer, one real bug found and fixed in the latter).
+session (RE-123, refined this session by RE-125: a `regression_capture`
+Cargo feature freezes every per-frame mutation once 240 simulation ticks
+have run and never draws the debug HUD, producing a byte-identical golden
+capture regardless of real-world timing). `R0.16 — N64 Render-State Model
+Fidelity` closed `COMPLETE` in an earlier session (RE-119 through
+RE-122: a real `romtool` diagnostic bug fixed, `G_SHADE`'s archive-wide
+impact measured and classified, `blend_color`'s correct-but-undocumented
+absence found and documented, and a genuine 126-occurrence texture-cache
+dedup bug found and fixed).
 
 ## Task Status
 
-RE-124 (this session) performed R0.18's systematic reference-port
+RE-125 (this session) advanced R0.7's material-table pairing and fixed a
+real determinism bug in R0.17's own claim found while re-verifying it.
+See `docs/reverse-engineering.md` RE-125 for the full account; summary:
+
+* **R0.7: systematically re-applied RE-078's own method to the
+  "several candidates" bucket, not just already-unique candidates.**
+  `tools/mobjtable-ground-truth.py` (existing, previously unused this
+  way) emits every decomp-typed `MObjSub **name[N]` table with its real
+  address. Cross-referencing all 50 archive-wide ambiguous graphs against
+  it (within 8 bytes' slack, the shape RE-078 already found once for file
+  84's `PAD(8)`) found 23 candidates landing near a real symbol.
+* **Proximity alone is not evidence — independently confirmed each of
+  the 23 with `read_table`:** does the graph's own demand vector match at
+  the search's reported candidate, and does it also match at the
+  decomp's own labeled address? All 23 showed the same shape (candidate
+  matches, decomp's own address does not), ruling out coincidence.
+* **3 of the 23 rejected on the same evidence standard already in use.**
+  File 86 is the identical 27-way-ambiguous NBumper graph RE-061 already
+  declined — a match against 1 of 27 is exactly the near-chance
+  fingerprint already rejected for this graph, not new evidence. Files
+  108/152's one candidate land inside a texture's own trailing pixel
+  bytes with no real gap in the decomp at all.
+* **The other 20, across 8 files, each have a decomp-documented reason**
+  for the gap: explicit `PAD(4)` before a 1-entry table (105, 111, 112,
+  157), explicit `NULL` entries the decomp itself declares (104, 152's
+  other candidate, 342), or an explicit "combined chain" comment naming
+  the exact sub-range (328's `JointVerts_Vtx`, a second real table in
+  RE-077's own Kirby file). Inserted via `PartTables::insert()`.
+* **Verified.** `romtool mobj`: paired 70 → 90, unpaired 57 → 37,
+  mismatches held at **0** across all 407 nodes (up from 383) — every
+  inserted pairing self-consistent across its whole node list, not just
+  the checked subset. `romtool textures`: packed 646 → 657. Rebuilt the
+  shipped pack (5348.1 → 5368.2 KiB); Dream Land's own default screenshot
+  is pixel-identical except the HUD's own `tex 0/935` → `tex 0/949`
+  readout (file 104 is one of the 20 newly-paired graphs, not previously
+  visible from the default camera framing).
+* **A real, separate bug found while re-verifying R0.17's own
+  determinism claim** against the rebuilt pack. RE-123's "two captures 9
+  seconds apart are byte-identical" turned out true but fragile: a hidden
+  bug in the debug HUD's own `cpu`/`frame`/`tick` freezing logic (not
+  simulation state) only surfaced at different capture timings. Three fix
+  attempts each failed differently: pinning to `0` ghosted old, wider
+  digits behind a shorter string (`sceGuDebugPrint` does not fully clear
+  between calls); freezing the real last-seen values fixed the width but
+  not the content (`cpu`/`frame` are genuine wall-clock measurements that
+  differ between runs by design, confirmed directly: `cpu 8603us` vs
+  `cpu 2603us`, same width, different real value); even a hardcoded,
+  safely-wide sentinel (`999999`) still showed ghosted/corrupted digits.
+* **Fixed by never drawing the debug HUD at all under
+  `regression_capture`**, from frame 0, rather than continuing to
+  out-guess `sceGuDebugPrint`'s own internal state — a developer overlay
+  was never actually part of the golden scene anyway. Verified
+  byte-identical across a 39-second timing spread (`--seconds 6` vs `45`).
+  `docs/visual-regression.md` and the committed golden image are both
+  updated to this cleaner, HUD-free capture.
+* **What this closes:** 20 more of `PLAN.md` R0.7's unpaired graphs
+  (70 → 90 archive-wide); strengthens R0.17's "methodology is actually
+  run at least once end-to-end" evidence from true-by-luck to true-by-
+  construction. `cargo test --workspace`: 405 passing throughout.
+  `cargo clippy --release` (both `psp` feature states, and `romtool`):
+  no new warnings. **`R0.7` stays `IN_PROGRESS`** (37 unpaired graphs
+  remain, an accepted long tail); **`R0.17` stays `COMPLETE`** with a
+  stronger evidence base.
+
+## Previous Task Status
+
+RE-124 (an earlier session) performed R0.18's systematic reference-port
 comparison and closed all of its acceptance items. See
 `docs/reverse-engineering.md` RE-124 for the full account; summary:
 
@@ -125,7 +194,7 @@ comparison and closed all of its acceptance items. See
   fully-reverted census instrumentation. **`R0.18 — Reference-Port
   Comparative Audit` moves `TODO` → `COMPLETE`.**
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-123 (an earlier session) built R0.17's deterministic capture mode
 and closed all of its acceptance items. See `docs/reverse-engineering.md`

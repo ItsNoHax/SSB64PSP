@@ -2048,6 +2048,73 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-125: re-ran `--search` over every one of the 57 still-unpaired
+    // graphs (not just ones that already narrowed to exactly one
+    // candidate) and cross-referenced every candidate within 8 bytes of a
+    // fully-typed `MObjSub **name[N]` decomp symbol
+    // (`tools/mobjtable-ground-truth.py`'s own answer key). 23 candidates
+    // landed close to a real, typed symbol; the *typed symbol's own
+    // address* was independently checked with `read_table` and found to
+    // NOT satisfy each graph's own demand vector at all, while the search's
+    // reported (nearby, not identical) candidate did -- ruling out the
+    // labeled address as an equally-plausible alternate reading, the same
+    // check that would have caught a coincidence rather than a real match.
+    //
+    // 3 of the 23 were rejected on that same evidence standard: file 86's
+    // is the identical 27-way-ambiguous NBumper graph RE-061 already
+    // measured and declined -- a match against 1 of 27 candidates is
+    // exactly the near-chance fingerprint this project already rejected
+    // for this specific graph, not new evidence. Files 108's and one of
+    // 152's two candidates land inside a texture's own trailing pixel
+    // bytes with no gap of any kind in the decomp (the preceding texture's
+    // declared size ends exactly where the table begins) -- any
+    // non-pointer byte range trivially reads as a zero-length chain, so a
+    // demand-vector match there is not evidence, unlike the other 20.
+    //
+    // The other 20, across 8 files, each have a *decomp-documented* reason
+    // for the small gap between the search's own candidate and the typed
+    // symbol's label: an explicit `PAD(4)` immediately preceding a 1-entry
+    // table (105, 111, 112, 157 -- the same shape RE-078 already confirmed
+    // once for file 84's `PAD(8)`), explicit leading/trailing `NULL`
+    // entries the decomp source itself declares inside a larger typed
+    // array (104, 152's other candidate, 342), or an explicitly
+    // documented "combined chain" comment naming exactly this sub-range
+    // (328's `JointVerts_Vtx`, RE-077's own file, a second real table in
+    // it distinct from the one RE-077 already fixed).
+    for &(file, graph, table) in &[
+        (104u32, 0x33B8u32, 0x1F54u32), // StagePupupuFile2 (Dream Land) -- gap_0x1D00_sub_0x250[4], entries [0][1] decomp-documented NULL
+        (105u32, 0xCEE8u32, 0xCC90u32), // StageZebesFile2 -- data_0xCC94[1], PAD(4) immediately before it
+        (105u32, 0xDE28u32, 0xCC90u32), // StageZebesFile2, same table, second graph
+        (111u32, 0x77E0u32, 0x7610u32), // StageYosterFile2 -- data_0x7614[1], PAD(4) immediately before it
+        (111u32, 0x8528u32, 0x7610u32), // StageYosterFile2, same table
+        (111u32, 0x8778u32, 0x7610u32), // StageYosterFile2, same table
+        (111u32, 0x96E8u32, 0x7610u32), // StageYosterFile2, same table
+        (111u32, 0xA5A8u32, 0x7610u32), // StageYosterFile2, same table
+        (111u32, 0xB458u32, 0x7610u32), // StageYosterFile2, same table
+        (112u32, 0x9958u32, 0x9790u32), // StageYamabukiFile2 -- data_0x9794[1], PAD(4) immediately before it
+        (112u32, 0xC890u32, 0x9790u32), // StageYamabukiFile2, same table
+        (112u32, 0xE400u32, 0x9790u32), // StageYamabukiFile2, same table
+        (112u32, 0xFE58u32, 0x9790u32), // StageYamabukiFile2, same table
+        (152u32, 0x1770u32, 0x13B0u32), // StagePupupuFile3 -- mobjlink_0x13AC[7], entries [0..3]/[5][6] decomp-documented NULL
+        (157u32, 0xB08u32, 0x8C0u32),  // StageZebesFile3 -- mobjlink_0x08C4[1], PAD(4) immediately before it
+        (328u32, 0x4230u32, 0x18u32),  // KirbyModel -- JointVerts_Vtx[8] slots 6-7, decomp's own "combined chain" comment
+        (328u32, 0x49D8u32, 0x18u32),  // KirbyModel, same slots
+        (328u32, 0x16AB0u32, 0x18u32), // KirbyModel, same slots
+        (328u32, 0x176D8u32, 0x18u32), // KirbyModel, same slots
+        (342u32, 0x2258u32, 0x101Cu32), // PikachuSpecial3 -- gap_0x0000_sub_0x1018[8], decomp-documented "2 NULL slots + 6 pointers"
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,

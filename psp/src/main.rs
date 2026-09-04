@@ -986,115 +986,116 @@ unsafe fn run() -> ! {
             .unwrap_or(1);
 
         const WHITE: u32 = 0xFFFF_FFFF;
-        // Pinned once `regression_capture` freezes the sim: `cpu`/`frame`/
-        // `tick` are live perf counters that vary run to run by design (host
-        // speed, OS scheduling) even with every other game-state mutation
-        // frozen, so left alone they would put the one
-        // guaranteed-nondeterministic content directly in the golden frame.
-        // The call itself always runs, every frame, regardless -- an earlier
-        // version of this skipped the call once frozen instead, and that
-        // left `sceGuDebugPrint` (a PPSSPP-only debug HLE hook with its own
-        // internal overlay state, not real GE drawing) stuck showing a
-        // stale, truncated partial-width redraw rather than either the live
-        // text or nothing.
-        let (shown_cpu_us, shown_frame_us, shown_tick) = if regression_frozen(sim_frame_index) {
-            (0, 0, 0)
-        } else {
-            (cpu_us, last_frame_us, sim.tick)
-        };
-        gpu.debug_text(
-            8,
-            8,
-            WHITE,
-            format_args!(
-                "SSB64-PSP  M4 scene viewer\n\
-                 pack: {}\n\
-                 \n\
-                 {} {}/{}  file {}  @0x{:X}  costume {}/{}\n\
-                 fighter {}  x {} y {}  line {}  mat {}  air {}\n\
-                 attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
-                 anim dash {}f  land {}f\n\
-                 play {} {}/{}  fighter {} slot {}  joints {}  f {}\n\
-                 tris {}  {} {}  {} {}\n\
-                 draws {}  state changes {}\n\
-                 \n\
-                 cpu {}us / budget {}us\n\
-                 frame {}us  tick {}\n\
-                 \n\
-                 tex {}  bb {} {} {} .. {} {} {}\n\
-                 TEXVIEW {}  tex {}/{}\n\
-                 cam {} r {}\n\
-                 \n\
-                 dpad: browse  start: stage  B: collision\n\
-                 stick: move  C-left: jump  C-right: respawn\n\
-                 C-up: fighter sim on/off\n\
-                 R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
-                 in obj view -- B: animate  dpad: anim/fighter  L: costume",
-                pack_status,
-                mode,
-                index,
-                count,
-                src_file,
-                src_offset,
-                costume_index,
-                costume_count_shown,
-                ft_state,
-                ft_x,
-                ft_y,
-                ft_line,
-                ft_mat,
-                ft_air,
-                ft_src,
-                ft_grav,
-                ft_tvel,
-                ft_bw,
-                ft_bh,
-                ft_dash,
-                ft_land,
-                if anim_playing { "on " } else { "off" },
-                anim_index,
-                anim_count,
-                anim_fighter,
-                anim_slot,
-                skeleton.joint_count(),
-                skeleton.frame() as i32,
-                shown.0,
-                if stage_view {
-                    "layers"
-                } else if object_view {
-                    "nodes"
-                } else {
-                    "verts"
-                },
-                shown.1,
-                if stage_view {
-                    "coll-segs"
-                } else if object_view {
-                    "placed"
-                } else {
-                    "prims"
-                },
-                shown.2,
-                draw_state.draws,
-                draw_state.state_changes,
-                shown_cpu_us,
-                FRAME_BUDGET_US,
-                shown_frame_us,
-                shown_tick,
-                dbg_tex,
-                dbg_bb[0],
-                dbg_bb[1],
-                dbg_bb[2],
-                dbg_bb[3],
-                dbg_bb[4],
-                dbg_bb[5],
-                tex_view,
-                tex_index,
-                tex_count,
-                dbg_cam as i32,
-                dbg_radius as i32,
-            ),
-        );
+        // Never drawn at all under `regression_capture`, from frame 0 --
+        // not just hidden once frozen. Two narrower fixes were tried and
+        // both failed for reasons specific to `sceGuDebugPrint` (RE-123,
+        // RE-125): it is a PPSSPP-only debug overlay, not real GE drawing,
+        // and it does not fully clear between calls. Pinning `cpu`/`frame`/
+        // `tick` to `0` once frozen left old, longer digits ghosted behind
+        // a shorter string; pinning them to the real last-seen values fixed
+        // the width but not the content, since `cpu`/`frame` are genuine
+        // wall-clock timing measurements that differ between runs by
+        // design; and a hardcoded, safely-wide sentinel still ghosted,
+        // meaning the corruption is not simply about string width at all.
+        // Never calling `sceGuDebugPrint` in a `regression_capture` build
+        // sidesteps whatever PPSSPP-internal state causes it, rather than
+        // trying to out-guess it, and a developer diagnostic overlay was
+        // never part of the golden scene R0.17 wants captured anyway.
+        if !cfg!(feature = "regression_capture") {
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "SSB64-PSP  M4 scene viewer\n\
+                     pack: {}\n\
+                     \n\
+                     {} {}/{}  file {}  @0x{:X}  costume {}/{}\n\
+                     fighter {}  x {} y {}  line {}  mat {}  air {}\n\
+                     attrs {}  grav {}/10  tvel {}  body {}w {}h\n\
+                     anim dash {}f  land {}f\n\
+                     play {} {}/{}  fighter {} slot {}  joints {}  f {}\n\
+                     tris {}  {} {}  {} {}\n\
+                     draws {}  state changes {}\n\
+                     \n\
+                     cpu {}us / budget {}us\n\
+                     frame {}us  tick {}\n\
+                     \n\
+                     tex {}  bb {} {} {} .. {} {} {}\n\
+                     TEXVIEW {}  tex {}/{}\n\
+                     cam {} r {}\n\
+                     \n\
+                     dpad: browse  start: stage  B: collision\n\
+                     stick: move  C-left: jump  C-right: respawn\n\
+                     C-up: fighter sim on/off\n\
+                     R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
+                     in obj view -- B: animate  dpad: anim/fighter  L: costume",
+                    pack_status,
+                    mode,
+                    index,
+                    count,
+                    src_file,
+                    src_offset,
+                    costume_index,
+                    costume_count_shown,
+                    ft_state,
+                    ft_x,
+                    ft_y,
+                    ft_line,
+                    ft_mat,
+                    ft_air,
+                    ft_src,
+                    ft_grav,
+                    ft_tvel,
+                    ft_bw,
+                    ft_bh,
+                    ft_dash,
+                    ft_land,
+                    if anim_playing { "on " } else { "off" },
+                    anim_index,
+                    anim_count,
+                    anim_fighter,
+                    anim_slot,
+                    skeleton.joint_count(),
+                    skeleton.frame() as i32,
+                    shown.0,
+                    if stage_view {
+                        "layers"
+                    } else if object_view {
+                        "nodes"
+                    } else {
+                        "verts"
+                    },
+                    shown.1,
+                    if stage_view {
+                        "coll-segs"
+                    } else if object_view {
+                        "placed"
+                    } else {
+                        "prims"
+                    },
+                    shown.2,
+                    draw_state.draws,
+                    draw_state.state_changes,
+                    cpu_us,
+                    FRAME_BUDGET_US,
+                    last_frame_us,
+                    sim.tick,
+                    dbg_tex,
+                    dbg_bb[0],
+                    dbg_bb[1],
+                    dbg_bb[2],
+                    dbg_bb[3],
+                    dbg_bb[4],
+                    dbg_bb[5],
+                    tex_view,
+                    tex_index,
+                    tex_count,
+                    dbg_cam as i32,
+                    dbg_radius as i32,
+                ),
+            );
+        }
 
         gpu.end_frame();
         last_frame_us = frame.elapsed_us();

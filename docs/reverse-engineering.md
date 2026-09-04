@@ -9411,3 +9411,139 @@ recorded for `R3`; conclusions cross-referenced into `R0.5` (filtering,
 closed), `R0.6` (blending, new lead added to an already-open item) and
 `R3` (batching lead). `R0.18 — Reference-Port Comparative Audit` moves
 `TODO` → `COMPLETE`.
+
+## RE-125 — 20 more material-table pairings found by systematically re-checking every "several candidates" graph against decomp-typed tables, plus a real HUD-determinism bug found while verifying
+
+**Question.** `PLAN.md` R0.7's own evidence log says further progress
+"depends on upstream decomp typing or a demand-search candidate narrowing
+to one with something to confirm it against, not open-ended `romtool`
+investigation." Re-ran `romtool mobj --search` over the current 57
+unpaired graphs first, to check that starting point rather than assume
+it: identical to RE-078's own numbers (70 paired, 57 unpaired; the search
+itself found 7 with exactly one candidate, all already investigated and
+correctly left alone, and 50 with several). `refs/ssb-decomp-re` was also
+confirmed at the exact commit RE-078 already worked from (`git fetch`
+found nothing new) — no drift, and no new typing to exploit there either.
+
+**The actual opening: RE-078's own methodology had only ever been applied
+to the *already-unique* candidates, never to the "several candidates"
+bucket.** `tools/mobjtable-ground-truth.py` (already existing, unused
+this session until now) emits every `MObjSub **name[N]` the decomp
+declares, with its real address. Cross-referencing all 50 ambiguous
+graphs' full candidate lists against that answer key (allowing up to 8
+bytes of slack, the same shape RE-078 already found once for file 84's
+`PAD(8)`) found 23 candidates landing near a real, typed table — a
+`read_table`-only search had never surfaced these because a demand vector
+this short (2–7 entries) legitimately matches several unrelated byte
+ranges in a large file; the near-decomp-symbol filter is doing real
+discriminating work the raw search alone cannot.
+
+**Proximity alone is not evidence — checked what this project's own
+source already says it isn't.** `search_tables`'s own doc comment: "a
+search that returns one candidate has identified it; a search that
+returns three has identified nothing." Proximity to a named symbol is a
+lead, not a confirmation, so each of the 23 was independently checked
+with `read_table`: does the graph's own full demand vector match at the
+*search's reported candidate*, and does it also (coincidentally) match at
+the *decomp's own labeled address*? All 23 showed the same shape —
+candidate matches, the decomp's own address does not — ruling out the
+labeled address as an equally-plausible alternate reading of the same
+data, the check that would have caught a coincidence.
+
+**3 of the 23 were still rejected, on the same evidence standard the
+project already uses.** File 86's candidate is the identical 27-way-
+ambiguous NBumper graph RE-061 already measured and declined — a match
+against 1 of 27 candidates is exactly the near-chance fingerprint this
+project rejected for this specific graph already, not new evidence just
+because it happens to sit 4 bytes from a real symbol (with 27 candidates
+spread across a large file, some landing near *something* named is
+expected by chance). Files 108's and one of 152's two candidates land
+inside a texture's own trailing pixel bytes with literally no gap in the
+decomp at all — the preceding texture's own declared size ends exactly
+where the table begins — so the "0" match on that byte range is not a
+semantically meaningful NULL/pad, just an artifact of almost any non-
+pointer byte range reading as a zero-length chain.
+
+**The other 20, across 8 files, each have a decomp-documented reason for
+the gap.** An explicit `PAD(4)` immediately preceding a 1-entry table
+(files 105, 111, 112, 157 — the exact shape RE-078 already confirmed once
+for file 84's `PAD(8)`); explicit leading/trailing `NULL` entries the
+decomp source itself declares inside a larger typed array (104: "entries
+[0],[1] unused/NULL"; 152's other candidate: a 7-entry table with 6 of 7
+entries `NULL`; 342: "2 NULL slots + 6 pointers"); or an explicit
+"combined chain" comment naming exactly this sub-range (328's
+`JointVerts_Vtx[8]`, in RE-077's own Kirby file — a second real table in
+it, distinct from the one RE-077 already fixed, covering slots 6–7 of
+that same array). Inserted via `PartTables::insert()` in `tools/romtool/
+src/main.rs`'s `load_all`, the same mechanism RE-059/060/077/078 already
+established.
+
+**Verified.** `romtool mobj`: paired `70 → 90` (+20, matching exactly),
+unpaired `57 → 37`, chain-length mismatches held at **0** across all 407
+nodes (up from 383) — every inserted pairing is internally self-
+consistent across its *entire* node list, not just the demand-nonzero
+subset independently checked above. `romtool textures`: packed
+`646 → 657` (+11 newly-resolved bindings); the 3 rejected candidates
+(files 86, 108, 152) correctly still show up in the unchanged failure
+counts, confirming nothing was silently papered over. `cargo test
+--workspace`: 405 passing, unaffected (the fix lives in `romtool`, not
+the library crate). Rebuilt the shipped pack (`5348.1 → 5368.2` KiB) and
+re-screenshotted Dream Land (file 104 is one of the 20 — its own graph
+`0x33B8` gained a real material): the only pixel difference from the
+prior golden capture was the debug HUD's own `tex 0/935` → `tex 0/949`
+readout, confirmed by direct crop comparison — the actual rendered scene
+is pixel-identical, as expected (this specific graph's own primitives
+were not previously visible from the default camera framing).
+
+**A real, separate bug found while re-verifying R0.17's own determinism
+claim against the new pack.** RE-123 measured "two captures 9 seconds
+apart are byte-identical" and shipped that as proof of the
+`regression_capture` freeze mechanism. Re-running the exact same check
+after this session's pack rebuild found it was **not** reliably true —
+three further bugs, each masked by the specific timing of RE-123's own
+one test run:
+
+1. Pinning `cpu`/`frame`/`tick` to `0` once frozen (RE-123's own fix)
+   shrinks the printed string relative to whatever was there the frame
+   before freezing (e.g. "tick 0" replacing "tick 239") — `sceGuDebugPrint`
+   does not fully clear between calls, so the old string's trailing
+   glyphs ghost behind the shorter one. Visible only when the specific
+   pre-freeze value happened to have more digits than the pinned
+   placeholder, which RE-123's own single test apparently did not hit.
+2. Freezing the *real* last-seen values instead (this session's first
+   attempted fix) solves the width problem but not the content: `cpu`/
+   `frame` are genuine wall-clock timing measurements, not simulation
+   state, and legitimately differ between two otherwise-identical runs
+   depending on host load at the exact instant the freeze triggers —
+   confirmed directly (`cpu 8603us` in one capture, `cpu 2603us` in
+   another, same digit width, different real value).
+3. A third attempt — a hardcoded, safely-wide sentinel (`999999`, chosen
+   wider than anything realistically printed before freezing) — still
+   showed ghosted/corrupted leading digits on repeat testing, meaning the
+   corruption was not simply a matter of string width or content after
+   all; some other aspect of `sceGuDebugPrint`'s own internal state
+   (a PPSSPP-only debug HLE hook, not real GE drawing, per RE-014/RE-123)
+   was not fully characterized by either theory.
+
+**Fixed by not calling `sceGuDebugPrint` at all under `regression_capture`
+build**, from frame 0, rather than trying to further out-guess its
+internal behavior. A developer diagnostic overlay was never actually part
+of the golden scene R0.17 wants captured in the first place, so the
+robust fix and the conceptually-correct one turned out to be the same
+fix. Verified with three widening timing gaps (`--seconds 6` vs `15`,
+`30`, and finally `45` — a 39-second spread), all byte-identical via
+`cmp`; the earlier "9 seconds, byte-identical" claim in RE-123 is
+superseded by this stronger, HUD-free result. `docs/visual-regression.md`
+and the committed golden image (`tests/golden/r0-dream-land-default.png`)
+are both updated to match — the golden capture is now a clean scene with
+no diagnostic text at all, which is a better artifact for this task's
+purpose than the earlier HUD-visible one, not merely a different one.
+
+**What this closes.** 20 more of `PLAN.md` R0.7's unpaired graphs (70 →
+90 archive-wide), with the other 37 remaining an honestly-tracked long
+tail per the same standard as before. Also strengthens R0.17's own
+"methodology is actually run at least once end-to-end" evidence: the
+original RE-123 claim was true but fragile (true by luck of one specific
+test's timing, not by construction), and is now true for a documented,
+understood reason (no debug-overlay interaction possible if the overlay
+is never drawn).
