@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-115)
+**Last updated:** 2026-09-04 (RE-116)
 
 ---
 
@@ -12,31 +12,81 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-115 (this session)
-fixed the debug-viewer camera-framing gap that had blocked files 41, 43
-and 50 since RE-109. It was never the camera or `object_bounds` — both
-always computed sane values. Disabling backface culling made file 41
-visible immediately: these are one-sided authored planes, and the
-free-roaming inspection camera has no guarantee (unlike a real game
-camera) of viewing a plane from its authored front side. Fixed with
-`DrawState::force_no_cull`, set to `object_view` once per frame and
-checked in `apply_material`'s existing cull decision — scoped strictly to
-the debug viewer's own inspection mode; real gameplay culling (RE-068) is
-untouched. Files 41 and 43 confirmed clean by direct pixel scan; file 50
-confirmed correct by direct on-device observation (user-confirmed live in
-PPSSPP; automated screenshot timing could not reliably catch this file's
-specific frame — a tooling limitation, not a rendering defect). **12 of
-13 transition files are now fully verified correct on the real device.**
-Only file 46's RE-113 diagonal-banding defect remains open for
-`visual verification completed`. See "Task Status" below for the full
-account. `screen wipes implemented` remains open (no real trigger event
-exists yet). `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in
-an earlier session (RE-098 plus its closing addendum: all 12 real
-fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-116 (this session)
+retracted RE-113's file 46 "diagonal banding defect" entirely — it was
+never a rendering bug. A close pixel scanline across the "black" bands
+found exact linear anti-aliased interpolation between the real
+background colour and the real magenta capture colour on all three
+channels simultaneously; an exhaustive, bounding-box-restricted census of
+both of file 46's rendered squares found zero pure `(0, 0, 0)` pixels.
+RE-113's "116,152 genuine black pixels" figure came from an
+un-restricted, whole-image pixel scan — the exact window-decoration
+confound RE-111 had already identified and documented, which RE-113
+incorrectly asserted did not apply here. Also confirmed RE-115's culling
+fix is unrelated to file 46 (toggling `force_no_cull` produces
+pixel-identical output). **All 13 LB-transition files are now confirmed
+fully correct on the real device — `visual verification completed` is
+now checked.** See "Task Status" below for the full account.
+`screen wipes implemented` and `framebuffer synchronization verified`
+remain the task's only open items, both blocked on this project having
+no real match-transition/game-state system yet (downstream of rendering
+per the project's own gate ordering, not further rendering work).
+`R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in an earlier
+session (RE-098 plus its closing addendum: all 12 real fighters
+individually verified).
 
 ## Task Status
 
-RE-115 (this session) picked up the camera-framing gap RE-109 first
+RE-116 (this session) picked up R0.13's one remaining thread: root-cause
+file 46's diagonal black banding. See `docs/reverse-engineering.md`
+RE-116 for the full account; summary:
+
+* **A close pixel scanline showed a smooth blend, not a hard cut.**
+  Sampling across a "black" band pixel-by-pixel found values like
+  `(74, 32, 93)`, `(157, 17, 168)` — each one sits exactly on the linear
+  interpolation between the real background `(32, 40, 56)` and the real
+  magenta capture `(255, 0, 255)` on all three channels simultaneously.
+  This is anti-aliased polygon-edge blending, not a sampling/capture
+  error (a real defect would not reproduce two independent channels'
+  worth of exact linear interpolation).
+* **An exhaustive, bounding-box-restricted census found zero pure
+  `(0, 0, 0)` pixels** in either of file 46's two rendered squares —
+  every pixel checked, not sampled.
+* **RE-113's own "116,152 genuine black pixels" figure was itself the
+  bug.** Recomputing it found it came from a whole-image `Counter` scan
+  with no bounding-box restriction at all — the exact window-decoration
+  confound RE-111 had already identified and documented. RE-113 asserted
+  the opposite ("not the window-border artifact RE-111 already
+  identified") without re-deriving the bounding box for file 46's own
+  screen position.
+* **Confirmed RE-115's culling fix is unrelated.** Temporarily set
+  `force_no_cull = false` (the pre-RE-115 behaviour) and re-rendered:
+  pixel-identical to the fixed behaviour. File 46's primitives were never
+  being culled either way.
+* **The diagonal `U`-shifting pattern is real, correct ROM data.** RE-113's
+  own finding (an 11-step shifting/full-width cycle per strip) is very
+  likely file 46's own authored diagonal-wipe shear; the diagonal magenta
+  bands with soft anti-aliased gaps are the correct rendered result for
+  that shape, not a bug in how RE-113 characterized the underlying data —
+  only in treating the *rendered result* as defective.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Default build re-screenshotted clean
+  (Dream Land pixel-normal, 60 FPS, no panics). All temporary code fully
+  reverted; `git diff --stat` is empty — this session is
+  documentation-only.
+* **What this closes:** `PLAN.md` R0.13's "visual verification
+  completed" item is now fully satisfied — **all 13 LB-transition files
+  are confirmed correct on the real device.** R0.13's only remaining open
+  items (`screen wipes implemented`, `framebuffer synchronization
+  verified`) are both blocked on this project having no real
+  match-transition/game-state system yet, not on further rendering
+  investigation — R0.13 cannot progress further until upstream game-state
+  work exists, which is itself gated behind the rendering-correctness
+  milestone this task belongs to.
+
+## Previous Task Status
+
+RE-115 (a previous session) picked up the camera-framing gap RE-109 first
 recorded and RE-113/114 left as the remaining blocker for files 41, 43,
 50. See `docs/reverse-engineering.md` RE-115 for the full account;
 summary:
@@ -84,7 +134,7 @@ summary:
   open since RE-109, is closed for good — structurally, for any future
   one-sided object browsed via `object_view`, not just these three files.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-114 (a previous session) finished the file-by-file screenshotting RE-113
 left unaddressed (`39, 48, 50, 51`), using the same recipe. See

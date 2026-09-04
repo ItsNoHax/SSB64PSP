@@ -1758,6 +1758,23 @@ reliably catch this specific file's frame, a tooling limitation, not a
 rendering defect). **12 of 13 transition files are now fully verified
 correct**; only file 46's RE-113 diagonal-banding defect remains open.
 
+RE-116 (a later session) retracted RE-113's file 46 defect entirely — it
+was never a rendering bug, it was RE-113's own measurement artifact. A
+close pixel-by-pixel scanline across the "black" bands found exact
+linear interpolation between the real background colour and the real
+magenta capture colour on all three channels simultaneously (anti-aliased
+polygon-edge blending, not a sampling error). An exhaustive,
+bounding-box-restricted census of both of file 46's rendered squares
+found zero pure `(0, 0, 0)` pixels. RE-113's "116,152 genuine black
+pixels" figure came from an un-restricted, whole-image scan — the exact
+window-decoration confound RE-111 had already identified and documented,
+which RE-113 asserted (incorrectly) did not apply here. Also confirmed
+RE-115's culling fix is unrelated: toggling `force_no_cull` off and on
+produces pixel-identical output for file 46. The diagonal `U`-shifting
+pattern RE-113 found is real, authored ROM data for a diagonal (not
+horizontal) wipe shape, and renders correctly. **All 13 LB-transition
+files are now confirmed fully correct on the real device.**
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1774,11 +1791,11 @@ Implement every framebuffer-based rendering path required by SSB64.
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — **12 of 13 files now confirmed fully correct on the real device** (`39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry), and the debug-viewer camera-framing gap that blocked 41/43/50 is fixed for good (RE-115 — `DrawState::force_no_cull`, scoped to `object_view` only). **1 file has a real, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). This item stays open only on file 46
+* [x] visual verification completed — **all 13 LB-transition files are confirmed fully correct on the real device.** File 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). The debug-viewer camera-framing gap that blocked 41/43/50 is fixed for good (RE-115 — `DrawState::force_no_cull`, scoped to `object_view` only). File 46's apparent diagonal black banding (RE-113) is retracted (RE-116) — a measurement artifact (an un-restricted pixel scan catching the same window-decoration confound RE-111 already documented), not a rendering defect; a close pixel scanline shows exact linear anti-aliased blending between real background and real magenta, and an exhaustive bounding-box-restricted census finds zero black pixels
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116 in `docs/reverse-engineering.md`.
 
 ---
 

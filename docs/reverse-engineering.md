@@ -8533,3 +8533,75 @@ item now has only one remaining open item: file 46's diagonal-banding
 defect. The debug-viewer camera-framing gap, open since RE-109, is
 closed for good — not just for these three files, but structurally, for
 any future one-sided object browsed via `object_view`.
+
+---
+
+## RE-116 — File 46's "diagonal banding" was never a defect: RE-113's own pixel census had the same window-border confound RE-111 already found and ruled out
+
+Picked up the one remaining R0.13 thread: root-causing file 46's
+diagonal black bands. Reproduced RE-113's exact recipe (object 18,
+`spin = 0`, magenta capture at frame 30) to inspect the transition
+gradient closely before forming a hypothesis.
+
+**A horizontal scanline across the stripes showed a smooth linear blend,
+not a hard cut to black.** Sampling pixel-by-pixel across a "black" band
+found values like `(74, 32, 93)`, `(157, 17, 168)`, `(213, 7, 218)` —
+checked against the two real endpoints (background `(32, 40, 56)` and
+the magenta capture `(255, 0, 255)`), each one sits exactly on the linear
+interpolation between them (e.g. `(74, 32, 93)` is `t ≈ 0.19` of the way
+from background to magenta on all three channels simultaneously). This
+is anti-aliased polygon-edge blending between real magenta content and
+real background, not a texture or capture defect — a hard sampling error
+(reading uninitialized buffer memory, a stale capture, a wrong UV) would
+not reliably reproduce two independent channels' worth of exact linear
+interpolation.
+
+**An exhaustive, bounding-box-restricted pixel census of both of file
+46's rendered squares found zero pure `(0, 0, 0)` pixels — not sampled,
+every pixel.** RE-113's original "116,152 genuine `(0, 0, 0)` pixels"
+figure was recomputed: it came from a whole-image `Counter` scan with no
+bounding-box restriction at all, the exact window-decoration confound
+RE-111 already discovered and documented ("pure black pixels ... from
+the window manager's own border/decoration, not game content"). Redoing
+RE-111's own established methodology (crop to the object's actual
+on-screen rectangle before counting) on file 46's own screenshot finds
+nothing. RE-113's claim of "116,152 genuine
+pure-`(0,0,0)` pixels ... not the window-border artifact RE-111 already
+identified" was itself wrong — it *was* that artifact; RE-113 asserted
+the opposite without re-deriving the bounding box for this specific
+object's own screen position, unlike RE-111's own careful bbox-restricted
+check for files 44/47/etc.
+
+**Confirmed this was never related to RE-115's culling fix either.**
+Temporarily set `force_no_cull = false` (restoring the pre-RE-115
+behavior) and re-rendered file 46: pixel-identical to the `force_no_cull
+= true` result. File 46's primitives were never being culled either way
+— RE-115 fixed a real, different, already-confirmed problem for files
+41/43/50, and had no effect on file 46, positive or negative.
+
+**The diagonal `U`-range-shifting pattern RE-113 found is real ROM data
+and renders correctly.** The 11-step cycle (5 narrow/shifted primitives,
+6 full-width) is very likely file 46's own authored diagonal-wipe UV
+shear, exactly as RE-113 already suspected; what RE-113 got wrong was
+treating the *rendered result* of that authored shear as a defect. The
+diagonal magenta bands with soft-edged gaps between them, revealing
+background where the shear geometrically leaves no coverage, is the
+correct picture for this transition's own design — a diagonal blind, not
+a horizontal one.
+
+`cargo test --workspace`: 405 passing, unaffected (investigation-only).
+`cargo clippy --release --workspace`: clean. Default (non-transition)
+build re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no
+panics). All temporary code (`psp/src/main.rs`'s forced object/spin/
+capture patch and the `force_no_cull` toggle test) fully reverted;
+`git diff --stat` is empty — this entry is documentation-only.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item's last open item is retracted: file 46 was never defective. **All
+13 LB-transition files are now confirmed fully correct on the real
+device profile.** The remaining acceptance items for R0.13 —
+`screen wipes implemented` (no real match-transition trigger exists yet)
+and `framebuffer synchronization verified` for a real (not
+manually-triggered) capture timing — are the only ones left open, and
+both are blocked on this project not yet having a game-state/transition
+system at all, not on any further rendering investigation.
