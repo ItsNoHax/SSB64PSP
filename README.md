@@ -101,11 +101,14 @@ The remaining work is focused on reproducing the original N64 renderer more comp
 * screen wipes
 * camera/projection correctness
 * render-state isolation
+* N64 render-state model fidelity (the intermediate representation must not collapse to `mesh + texture + basic colour` before correctness is established)
+* deterministic visual-regression methodology (reference vs. PPSSPP software vs. PPSSPP hardware vs. physical PSP)
+* comparative audit against `sf64-psp` and `oot-PSP`
 * rendering regression coverage
 * PSP VRAM usage
 * rendering performance
 
-These are tracked individually in `PLAN.md`.
+These are tracked individually in `PLAN.md` (see R0.1–R0.18).
 
 ### Not yet implemented
 
@@ -397,8 +400,11 @@ These projects are used as technical and architectural references, not as source
 1. [ssb-decomp-re][decomp] — SSB64 decompilation
 2. [BattleShip](https://github.com/JRickey/BattleShip) — PC/Mac/Linux/Android SSB64 port based on the decompilation
 3. [sf64-psp](https://github.com/TheMrIron2/sf64-psp) — Star Fox 64 PSP port
-4. [n64psp](https://github.com/TheMrIron2/n64psp) — reusable N64 → PSP runtime
-5. [rust-psp][rustpsp] — Rust support for PSP
+4. [oot-PSP](https://github.com/z2442/oot-PSP) — Ocarina of Time PSP port
+5. [n64psp](https://github.com/TheMrIron2/n64psp) — reusable N64 → PSP runtime
+6. [rust-psp][rustpsp] — Rust support for PSP
+
+References 2–5 are technical references, not authorities — see `DECISIONS.md` D-037.
 
 ### Local reference setup
 
@@ -411,6 +417,7 @@ cd refs
 git clone https://github.com/VetriTheRetri/ssb-decomp-re
 git clone https://github.com/JRickey/BattleShip
 git clone https://github.com/TheMrIron2/sf64-psp
+git clone https://github.com/z2442/oot-PSP
 git clone https://github.com/TheMrIron2/n64psp
 git clone https://github.com/overdrivenpotato/rust-psp
 ```

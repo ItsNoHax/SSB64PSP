@@ -441,4 +441,28 @@ read by anything.
 
 **Reasoning:** Compiles ≠ works. Porting status tracks validated subsystems.
 
+---
+
+## Rendering Fidelity
+
+### D-036: N64 Render-State Fidelity Must Precede Optimization
+**Decision:** The intermediate representation between display-list decoding and PSP translation (`mesh::State`/`MeshMaterial`, `pack::PrimDesc`/`TextureDesc`/`MatAnimDesc`) must preserve N64 render state — texture/tile state, combiner shape, primitive/environment colour, geometry mode, lighting mode, alpha/blend state, depth state, filtering/addressing, LOD, palette/TLUT state, relevant render-pass state — for as long as SSB64 actually uses that state. It must not be collapsed early into `mesh + texture + basic colour`. Draw-call batching, state sorting, vertex-cache tricks and other aggressive collapsing/merging optimizations (`PLAN.md` R3, `docs/rendering.md` "Renderer 4") may only discard state *after* the correctness gate (`PLAN.md` R0/R1) has passed for the state in question, and only where discarding it does not change rendering semantics. Build-time vertex/index merging that does not destroy state (D-002) is exempt — it already happens after each primitive's full material state is resolved, not instead of resolving it.
+
+**Reasoning:** Every regression this project has hit and fixed in `R0.6`/`R0.7`/`R0.10` (RE-039, RE-064, RE-068, RE-073, RE-079, RE-080, RE-092–094, RE-106) was a case of state being dropped, not threaded, before it reached the PSP translation step — never a case of the PSP GE lacking the feature. Optimizing state away before its correctness is established makes the *next* such bug undetectable, because there is nothing left to compare against the original's behaviour.
+
+**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State`, `MeshMaterial`), `crates/ssb-rom/src/pack.rs` (record formats)
+
+**Reference:** `PLAN.md` R0.16, `docs/rendering.md` "Renderer evolution"
+
+---
+
+### D-037: Reference Ports Are Technical References, Not Authorities
+**Decision:** `BattleShip`, `sf64-psp`, `n64psp` and `oot-PSP` (`https://github.com/z2442/oot-PSP`) are all held to the same standard: consult them for N64 rendering/runtime technique, do not copy their architecture or assumptions wholesale, and do not treat any of them as authoritative over the SSB64 decompilation or ROM. Where a reference port's implementation disagrees with the decompilation/ROM for SSB64's own behaviour, investigate and prefer the decompilation/ROM (`AGENTS.md` §6). Where a reference port does something this project's renderer does not, classify the difference as one of: (1) SSB64 genuinely needs it, (2) SSB64 does not use it, (3) PSP needs a different implementation than that reference's target platform, or (4) this project's implementation is simply incomplete — and record the conclusion (`PLAN.md` R0.18).
+
+**Reasoning:** `sf64-psp` was previously the only reference port with an explicit "not an authority" rule (`AGENTS.md` §10, originally written for BattleShip). `oot-PSP` targets the same platform (PSP) as this project, unlike BattleShip (PC/Mac/Linux/Android) or sf64-psp/n64psp's own original scope — closer architecturally, but Ocarina of Time's rendering needs are not SSB64's, so the same non-authority rule applies without exception.
+
+**Implemented:** n/a (documentation/process decision)
+
+**Reference:** `AGENTS.md` §6, §10, `PLAN.md` R0.18, `README.md` "References"
+
 **Reference:** AGENTS.md §13 (Task Completion Semantics), `docs/porting-status.md` header

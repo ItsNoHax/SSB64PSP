@@ -123,15 +123,28 @@ When determining original SSB64 behavior:
 2. Original ROM/data
 3. BattleShip
 4. sf64-psp
-5. n64psp
-6. Existing SSB64PSP implementation
-7. Engineering assumptions
+5. oot-PSP
+6. n64psp
+7. Existing SSB64PSP implementation
+8. Engineering assumptions
 
 BattleShip:
 
 `https://github.com/JRickey/BattleShip`
 
-BattleShip is a technical reference, not an authority.
+sf64-psp:
+
+`https://github.com/TheMrIron2/sf64-psp`
+
+oot-PSP:
+
+`https://github.com/z2442/oot-PSP`
+
+n64psp:
+
+`https://github.com/TheMrIron2/n64psp`
+
+BattleShip, sf64-psp, oot-PSP and n64psp are all technical references, not authorities (`DECISIONS.md` D-037). `sf64-psp` and `oot-PSP` both target the PSP, which makes their `sceGu`/texture/material translation choices directly comparable — see R0.18.
 
 Disagreements must be investigated.
 
@@ -182,6 +195,38 @@ Status: `IN_PROGRESS`
 This is the current development gate.
 
 The objective is to determine and reproduce the actual rendering behavior used by SSB64 rather than merely producing visually plausible output.
+
+## 6.0 Rendering-Correctness Hierarchy (Cross-Reference)
+
+This project already organizes rendering-correctness work as `R0.1`–`R0.18`
+below, not as a separate top-level `R1`–`R8` sequence — this repository's own
+top-level milestone names `R1`/`R2`/`R3` (§7–§9) already mean *Rendering
+Completeness* / *Physical PSP Validation* / *Rendering Performance*. A second,
+unrelated `R1`–`R8` would collide with those names. The table below maps each
+rendering-correctness category onto the `R0.x` task(s) that actually own it,
+so nothing is duplicated and nothing is missing an owner.
+
+| Correctness category | Owning task(s) | Status |
+| --- | --- | --- |
+| Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | R0.8 `COMPLETE`; R0.14, R0.6 `IN_PROGRESS` |
+| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16** (new), R0.15 (render-state isolation), R0.6 (state threading) | R0.16 `TODO`, R0.15 `TODO` |
+| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | R0.3 `COMPLETE`; R0.4, R0.5 `IN_PROGRESS` |
+| Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `IN_PROGRESS` |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `IN_PROGRESS` (accepted deviation: single baked key light, not per-object `sceGuLight`) |
+| Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `IN_PROGRESS` (alpha test shipped; translucency detected but not enabled — open bug) |
+| Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 (state), R0.14 (depth mapping) | `COMPLETE` for both owned items |
+| Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 `VERIFYING`, R0.13 `IN_PROGRESS`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
+| Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** (new) | `TODO` |
+| Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** (new) | `TODO` |
+
+`R0.16`, `R0.17` and `R0.18` are new tasks added below to close the gaps this
+table identifies: this project already has extensive, evidence-driven
+per-feature correctness work (`R0.1`–`R0.15`), but no task previously owned
+(a) auditing whether the intermediate representation itself is faithful
+rather than merely "whatever the current code happens to carry through", (b)
+a deterministic, repeatable visual-regression methodology, or (c) a
+systematic comparison against `sf64-psp`/`oot-PSP` beyond the ad hoc
+BattleShip cross-checks already recorded in `docs/reverse-engineering.md`.
 
 ---
 
@@ -1700,6 +1745,176 @@ Ensure render state cannot incorrectly leak between display-list/material/node d
 
 ---
 
+## R0.16 — N64 Render-State Model Fidelity
+
+Status: `TODO`
+
+### Objective
+
+Audit and, where necessary, harden the intermediate representation between
+N64 display-list decoding and PSP translation (`mesh::State`/`MeshMaterial`,
+`pack::PrimDesc`/`TextureDesc`/`MatAnimDesc`/`NodeDesc`) so that it preserves
+N64 render state faithfully rather than reducing it prematurely to
+`mesh + texture + basic colour` (D-036).
+
+This is not a request to re-architect the pipeline in `docs/rendering.md`
+("The central decision") — build-time display-list-to-PSP-vertex-buffer
+conversion (D-001) stays. It is a request to verify the *state* that survives
+that conversion is complete relative to what SSB64 actually uses, and that no
+future optimization pass is allowed to remove state before its correctness is
+established (D-036).
+
+### Dependencies
+
+* R0.2
+* R0.6
+* R0.15
+
+### Acceptance
+
+* [ ] every state category R0.2's command inventory found SSB64 actually
+  exercising (texture state, tile state, combiner state, primitive color,
+  environment color, geometry mode, lighting mode, alpha state, blend state,
+  depth state, filtering, addressing, LOD, palette/TLUT state, render-pass
+  state) has an explicit field or explicit "does not apply to SSB64, measured"
+  note in `MeshMaterial`/the pack record formats
+* [ ] no state category is silently dropped between `mesh.rs`'s conversion and
+  `pack.rs`'s on-disk record without a documented reason (cross-reference
+  against R0.15's leakage tests)
+* [ ] `docs/rendering.md`'s N64→PSP state-mapping table (referenced from R0.2)
+  is complete against this audit's findings, not just the opcodes that
+  convert cleanly
+* [ ] D-036's ordering rule (state fidelity before batching/state-sorting/
+  draw-call reduction) is checked against every existing optimization already
+  shipped (vertex dedup, material merge, `TexKey`/`texture_cache` dedup) and
+  each one is confirmed not to have discarded state this audit found required
+* [ ] any state this audit finds genuinely unrecoverable on PSP is recorded as
+  an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent
+
+### Verification
+
+* source-level audit of `mesh.rs`, `pack.rs`, `psp/src/meshdraw.rs`
+* cross-reference against R0.2's opcode/state inventory
+* cross-reference against R0.18's reference-port comparison
+
+### Evidence
+
+Not started.
+
+---
+
+## R0.17 — Visual Regression Methodology
+
+Status: `TODO`
+
+### Objective
+
+Establish a deterministic, repeatable visual-regression methodology, not an
+optional future improvement. Screenshots taken ad hoc during individual
+investigations (as recorded throughout `R0.1`–`R0.15`'s evidence sections)
+remain valid evidence for the specific claims they were taken for, but they do
+not substitute for this task: a fixed, reproducible scene/camera/frame that
+can be re-run and diffed automatically as the renderer changes.
+
+### Dependencies
+
+* R0.1
+* R0.2
+
+### Acceptance
+
+* [ ] at least one deterministic test scene defined: fixed stage (Dream Land,
+  the project's existing primary regression scene), fixed fighter, fixed
+  camera, fixed animation/frame, fixed game state — every value pinned, no
+  randomness, no free-roaming debug camera
+* [ ] a documented procedure exists to capture the same scene from: (1) the
+  original SSB64 (ROM/emulator reference), (2) PPSSPP software rendering,
+  (3) PPSSPP hardware rendering, (4) physical PSP hardware where practical
+* [ ] a test matrix exists covering, at minimum: untextured geometry,
+  textured geometry, CI4, CI8, palette changes, filtering, clamp/mirror/
+  repeat, lighting, each recognized combiner shape (R0.6), transparency,
+  depth, culling, particles, shadows, UI — each row names the concrete asset/
+  display list it exercises (not a hypothetical example)
+* [ ] captured reference images are compared automatically wherever
+  practical (pixel diff or equivalent), with the comparison threshold and
+  method documented — not "looks the same" (`AGENTS.md` §7)
+* [ ] the methodology is actually run at least once end-to-end and its
+  output recorded, not merely specified
+* [ ] `PLAN.md` R1's "golden/reference renders are established" acceptance
+  item and `TODO.md` Phase H's "Screenshot regression" item are satisfied by
+  this task's output, not left as separate unowned work
+
+### Verification
+
+* run the documented procedure against the current renderer
+* record pass/fail per test-matrix row with evidence
+
+### Evidence
+
+Not started. `TODO.md` Phase H ("Reference renderer", "Screenshot regression",
+"Strict rendering mode") is the prior unowned form of this gap; this task
+supersedes it.
+
+---
+
+## R0.18 — Reference-Port Comparative Audit (sf64-psp, oot-PSP)
+
+Status: `TODO`
+
+### Objective
+
+Perform the systematic comparison against `sf64-psp` and `oot-PSP` this
+project's reference hierarchy (§4) calls for, beyond the ad hoc BattleShip
+cross-checks already recorded (RE-054, RE-066). Both reference projects
+target the PSP, which makes their N64-state translation, texture handling,
+material handling, `sceGu` usage, render architecture, debugging methodology
+and performance technique directly comparable to this project's own choices.
+
+For every material difference found, classify it as exactly one of:
+
+1. SSB64 genuinely needs it (missing here — becomes a new/updated task);
+2. SSB64 does not use it (measured, not assumed — cite the R0.2 usage data or
+   a fresh archive-wide measurement);
+3. PSP requires a different implementation than that reference's own choice
+   (explain why);
+4. this project's implementation is simply incomplete (becomes a new/updated
+   task).
+
+Do not blindly copy either project's implementation (`AGENTS.md` §6, §10,
+D-037).
+
+### Dependencies
+
+* R0.2
+
+### Acceptance
+
+* [ ] `sf64-psp`'s N64-state translation, texture/material handling and
+  `sceGu` usage compared against this project's own (BattleShip's F3DEX2/
+  S2DEX interpreter was already checked, RE-054; `sf64-psp` itself has not)
+* [ ] `oot-PSP` cloned into `refs/` and its N64-state translation, texture/
+  material handling, `sceGu` usage and render architecture compared against
+  this project's own
+* [ ] every material difference found is classified 1–4 above and recorded,
+  not left as an unexplained observation
+* [ ] debugging methodology and performance technique from both projects
+  reviewed for applicability to `R3` (rendering performance) — recorded as
+  leads for `R3`, not implemented here (`R3` is `BLOCKED_BY_R2`)
+* [ ] conclusions are written into `docs/reverse-engineering.md` as `RE-`
+  entries and cross-referenced from the `R0.x` task(s) each conclusion
+  actually affects
+
+### Verification
+
+* source-level comparison against cloned reference repositories
+* cross-reference conclusions against R0.2's own usage measurements
+
+### Evidence
+
+Not started.
+
+---
+
 # 7. R1 — Rendering Completeness
 
 Status: `BLOCKED_BY_R0`
@@ -1895,6 +2110,9 @@ Rendering may only be declared complete when:
 23. VRAM usage is safe.
 24. Performance has been measured.
 25. Documentation agrees with implementation.
+26. The N64 render-state intermediate representation is audited as faithful, not merely convenient (R0.16).
+27. The visual-regression methodology (R0.17) has been run end-to-end with recorded results across the full test matrix.
+28. The reference-port comparative audit against `sf64-psp` and `oot-PSP` (R0.18) is complete, with every material difference classified and recorded.
 
 Only then may R0/R1/R2/R3 be completed and combat unlocked.
 
