@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-125)
+**Last updated:** 2026-09-04 (RE-126)
 
 ---
 
@@ -12,62 +12,123 @@
 
 ## Current Task
 
-`R0.7 — Missing Material Tables` remains `IN_PROGRESS` but advanced
-significantly. RE-125 (this session) systematically re-applied RE-078's
-own search-plus-decomp-cross-check method to the "several candidates"
-bucket, not just already-unique candidates: cross-referenced all 50
-archive-wide ambiguous graphs against `tools/mobjtable-ground-truth.py`'s
-decomp-typed answer key, found 23 landing near a real symbol,
-independently confirmed 20 of them via `read_table` (the decomp's own
-labeled address does *not* satisfy the graph's demand vector; the
-search's reported candidate does), each explained by a decomp-documented
-`PAD()` or `NULL`-entries shape. Rejected the other 3 correctly: file 86
-is the identical 27-way-ambiguous case RE-061 already declined; files
-108/152's one candidate land inside a texture's own trailing bytes with
-no real gap. **`romtool mobj`: paired 70 → 90, unpaired 57 → 37,
-mismatches held at 0 across 407 nodes.** Rebuilt the shipped pack
-(5348.1 → 5368.2 KiB) and confirmed Dream Land's own default-view
-screenshot is pixel-identical except the HUD's own texture-count readout.
+`R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (this
+session) investigated its open "orientation verified"/"scale verified"
+items by reading the real `gcPrepDObjMatrix` algorithm directly rather
+than trusting the enum names `Kind46`/`Kind48`/`Kind50` already in use.
+**Found a real, measured, previously-uncounted gap**: kinds 47/48 and
+49/50 build their MVP from camera-axis-*locked* LookAt matrices
+(pitch-locked and yaw-locked respectively), not the same fully
+screen-aligned transform kinds 44/45/46 use — a materially different
+algorithm this project currently approximates with one shared,
+screen-aligned `billboard_place` for all four kinds. A temporary,
+reverted census through the real `romtool pack` build found **47 real
+`Kind48` nodes archive-wide, including Dream Land's own file 104** — the
+*largest* individual billboard category (43% of all 109 flagged nodes,
+splitting RE-049's original 81 into 34 `Kind46` + 47 `Kind48`; `Kind50`
+remains the only confirmed-unused one at 0/3117, RE-063). Not yet
+visibly wrong on screen because doing so requires a camera that
+yaws/pitches relative to the object — neither RE-049's one forced test
+rotation nor the current, still-face-on debug/gameplay camera ever
+varies along the axis the two transforms disagree on. Also found a
+related, smaller, **unconfirmed** lead: the real per-axis scale formula
+multiplies a node's own Y-scale by the ancestor chain's cumulative
+*X*-scale, not this project's composed-basis-column-length approach —
+identical only if every ancestor's own scale is uniform, not measured
+either way this pass.
 
-**Also found and fixed a real bug in R0.17's own determinism claim while
-re-verifying it against the rebuilt pack.** RE-123's "two captures 9
-seconds apart are byte-identical" was true but fragile — a hidden bug in
-its debug-HUD-freezing logic (not simulation state, the on-screen
-`cpu`/`frame`/`tick` counters) only showed up at different capture
-timings. Three fix attempts each failed for a different `sceGuDebugPrint`-
-specific reason (see RE-125's full writeup); fixed by never drawing the
-debug HUD at all under `regression_capture`, verified byte-identical
-across a 39-second timing spread. `docs/visual-regression.md` and the
-committed golden image are both updated to the now-HUD-free capture.
+**This does not close R0.12's open items** — it replaces two unexamined
+gaps with measured, understood, and honestly-still-open ones. Fixing
+`Kind48` properly needs: (1) a pack-format change preserving which kind
+a node had, not just one collapsed `FLAG_BILLBOARD` bit, and (2) the
+render call knowing the camera's own eye/at position decomposed into
+pitch/yaw, which `PLAN.md` R0.14 (this task's own second dependency)
+does not have yet ("an actual game camera" is still an open R0.14 item)
+— this finding gives that item a concrete, quantified reason to need
+doing, rather than a hypothetical one.
 
-Per `PLAN.md`'s task ordering, `R0.7` stays `IN_PROGRESS` but further
-pairing progress again depends on upstream decomp typing or a fresh
-demand-search narrowing, not open-ended `romtool` investigation — the
-same wall as before RE-125, just with fewer graphs behind it. The next
-eligible, actually-actionable task is `R0.12 — Billboard Correctness`
-(status `VERIFYING`, depends on R0.8 ✓, no unmet dependency) rather than
-continuing to grind on R0.7's now-exhausted search angle.
+**Per `PLAN.md`'s task ordering, this session's investigation found every
+currently `IN_PROGRESS`/`VERIFYING` R0.x rendering-correctness task is
+now blocked on one of two things this project does not have yet, not on
+more `romtool`-side investigation:** `R0.7`/`R0.4`/`R0.6` on upstream
+decomp typing (RE-125, exhausted again); `R0.12`/`R0.14` on an actual
+game camera system; `R0.13` on a game-state system (per an earlier
+session's own finding). None of these is a "smallest appropriate fix"
+away from closing without either new upstream decomp data or a genuine
+architectural addition (a real camera/game-state layer) — which is
+larger-scoped work this session did not start unprompted. The next
+session should read this note and `PLAN.md`'s own dependency graph
+before picking a task, rather than assume an easy next item remains.
 
+`R0.7 — Missing Material Tables` advanced significantly in an earlier
+session this same day (RE-125: paired 70 → 90 archive-wide, unpaired
+57 → 37, via a systematic re-application of RE-078's own search-plus-
+decomp-cross-check method; also found and fixed a real determinism bug
+in R0.17's own debug-HUD-freezing logic while re-verifying it).
 `R0.18 — Reference-Port Comparative Audit` closed `COMPLETE` in an
 earlier session (RE-124: `oot-PSP` cloned and compared against `sf64-psp`
 and this project's own choices; closed R0.5's filtering item, added a
 new lead to R0.6's blending item, recorded an R3 performance lead).
 `R0.17 — Visual Regression Methodology` closed `COMPLETE` in an earlier
-session (RE-123, refined this session by RE-125: a `regression_capture`
-Cargo feature freezes every per-frame mutation once 240 simulation ticks
-have run and never draws the debug HUD, producing a byte-identical golden
-capture regardless of real-world timing). `R0.16 — N64 Render-State Model
-Fidelity` closed `COMPLETE` in an earlier session (RE-119 through
-RE-122: a real `romtool` diagnostic bug fixed, `G_SHADE`'s archive-wide
-impact measured and classified, `blend_color`'s correct-but-undocumented
-absence found and documented, and a genuine 126-occurrence texture-cache
-dedup bug found and fixed).
+session (RE-123, refined by RE-125: a `regression_capture` Cargo feature
+freezes every per-frame mutation once 240 simulation ticks have run and
+never draws the debug HUD, producing a byte-identical golden capture
+regardless of real-world timing).
 
 ## Task Status
 
-RE-125 (this session) advanced R0.7's material-table pairing and fixed a
-real determinism bug in R0.17's own claim found while re-verifying it.
-See `docs/reverse-engineering.md` RE-125 for the full account; summary:
+RE-126 (this session) investigated R0.12's open "orientation verified"/
+"scale verified" items and found a real, measured, previously-uncounted
+billboard-transform gap. See `docs/reverse-engineering.md` RE-126 for
+the full account; summary:
+
+* **Read the real `gcPrepDObjMatrix` algorithm directly**, not trusting
+  the enum names already in use. Kinds 44/45/46 build their MVP from the
+  pure projection matrix, fully screen-aligned — matching this project's
+  existing `billboard_place`. Kinds 47/48 and 49/50 instead build theirs
+  from `sGCMatrixMod1F`/`Mod2F`, camera-axis-*locked* LookAt matrices
+  (pitch-locked and yaw-locked respectively) — a materially different
+  transform this project does not implement separately.
+* **Measured `Kind48`'s real archive-wide impact**, which RE-063 had
+  only done for `Kind50` (0/3117, confirmed unused) before folding both
+  into the same `FLAG_BILLBOARD` path as `Kind46`. A temporary, reverted
+  census through the real `romtool pack` build found **47 real `Kind48`
+  nodes archive-wide, including Dream Land's own file 104** — the
+  *largest* individual billboard category, splitting RE-049's original
+  81 into 34 `Kind46` + 47 `Kind48` (43% of all 109 flagged nodes).
+* **Not yet visibly wrong on screen, for an identifiable reason.**
+  Telling `Kind46`'s screen-aligned approximation apart from `Kind48`'s
+  real pitch-locked transform needs a camera that yaws/pitches relative
+  to the object; neither RE-049's one forced test rotation nor the
+  current, still-face-on debug/gameplay camera ever varies along the
+  axis the two transforms disagree on — the same "no actual game camera
+  yet" gap `PLAN.md` R0.14 already tracks as open, now with a concrete,
+  quantified dependent rather than a hypothetical one.
+* **A related, smaller, unconfirmed lead found reading the same code:**
+  the real per-axis scale formula multiplies a node's own Y-scale by the
+  ancestor chain's cumulative *X*-scale, not this project's composed-
+  basis-column-length approach — identical only if every ancestor's own
+  scale is uniform, not measured either way this pass.
+* **This does not close either open acceptance item** — it replaces two
+  unexamined gaps with measured, understood, honestly-still-open ones.
+  Fixing `Kind48` needs a pack-format change (preserve which kind a node
+  had, not one collapsed bit) plus camera eye/at data this project's
+  render call does not have yet. `cargo test --workspace`: 405 passing,
+  unaffected (no code changed, only a temporary, fully-reverted census).
+* **Broader conclusion for task selection:** every currently
+  `IN_PROGRESS`/`VERIFYING` R0.x task (`R0.7`/`R0.4`/`R0.6`, `R0.12`/
+  `R0.14`, `R0.13`) is now blocked on either upstream decomp typing or a
+  foundational camera/game-state system this project does not have yet,
+  not on more `romtool`-side investigation. See "Current Task" above for
+  the full reasoning — the next session should read it before picking a
+  task rather than assume an easy item remains.
+
+## Previous Task Status
+
+RE-125 (an earlier session) advanced R0.7's material-table pairing and
+fixed a real determinism bug in R0.17's own claim found while
+re-verifying it. See `docs/reverse-engineering.md` RE-125 for the full
+account; summary:
 
 * **R0.7: systematically re-applied RE-078's own method to the
   "several candidates" bucket, not just already-unique candidates.**
@@ -129,7 +190,7 @@ See `docs/reverse-engineering.md` RE-125 for the full account; summary:
   remain, an accepted long tail); **`R0.17` stays `COMPLETE`** with a
   stronger evidence base.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-124 (an earlier session) performed R0.18's systematic reference-port
 comparison and closed all of its acceptance items. See

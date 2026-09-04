@@ -1473,16 +1473,37 @@ Status: `VERIFYING`
 
 ### Current evidence
 
-Matrix kinds 44/46/48/50 are implemented, all 109 flagged nodes billboard
-at draw time (RE-062/RE-063 grew this from an earlier 81 once
-`RecalcRotRpyRSca` was added), and camera-facing behavior was verified A/B
-under a deliberately rotated camera (RE-049; Dream Land's six canopy
-sprites stay upright when honoured, skew into slivers when ignored).
-Depends on R0.14 (camera/projection), now further along after RE-082
-(viewport, aspect ratio and resolution-difference handling confirmed) —
-its remaining gaps (real FOV provenance, an actual game camera) do not
-block anything billboards need, since billboard camera-facing math
-(RE-049) does not depend on either.
+Matrix kinds 44/46/48/50 are all recognized and flagged, all 109 flagged
+nodes billboard at draw time using one shared, screen-aligned placement
+(RE-062/RE-063 grew this from an earlier 81 once `RecalcRotRpyRSca` was
+added), and camera-facing behavior was verified A/B under a deliberately
+rotated camera (RE-049; Dream Land's six canopy sprites stay upright when
+honoured, skew into slivers when ignored).
+
+**RE-126 found this shared placement is an approximation for `Kind48`,
+not an equivalent reproduction, and measured how much of the archive it
+affects.** Reading `gcPrepDObjMatrix` directly: kinds 44/45/46 really are
+one family (build the MVP from the pure projection matrix, fully screen-
+aligned, matching this project's implementation), but kinds 47/48 and
+49/50 build theirs from `sGCMatrixMod1F`/`Mod2F` — camera-axis-*locked*
+LookAt matrices (pitch-locked and yaw-locked respectively), a materially
+different transform this project does not implement separately. `Kind50`
+was already measured unused (0/3117, RE-063); `Kind48` had not been
+separately measured before this pass. A temporary, reverted census
+through the real `romtool pack` build found **47 real `Kind48` nodes
+archive-wide, including Dream Land's own geometry file (104)** — the
+largest individual billboard category (43% of all 109 flagged nodes,
+splitting the earlier 81 into 34 `Kind46` + 47 `Kind48`). Not yet visibly
+wrong on screen because doing so requires a camera that yaws/pitches
+relative to the object, which neither RE-049's one forced test rotation
+nor the current, still-face-on debug/gameplay camera ever exercises —
+this is the same camera-model gap R0.14 already tracks as open ("an
+actual game camera"), now with a concrete, quantified dependent
+(`Kind48`'s correctness) rather than a hypothetical one. Depends on R0.14
+(camera/projection); RE-082 (viewport, aspect ratio and resolution-
+difference handling confirmed) does not touch this, so this specific
+item still needs R0.14's "actual game camera" work, not just its already-
+closed items.
 
 RE-083 closed the "decomp's `rot_mode` choice" worry as a non-issue: that
 logic (`gcDecideDObj3TransformsKind`) belongs to the runtime/dynamic
@@ -1511,10 +1532,10 @@ Verify every billboard rendering path.
 
 ### Acceptance
 
-* [x] billboard types enumerated — RE-063 exhaustively traced every `gcPrepDObjMatrix` case reachable from a ROM `DObjDesc` array (kinds 44/46/48/50, all four implemented); RE-083 confirmed no fifth reachable kind hides behind the `rot_mode` branch, since that branch belongs to an unreachable runtime-only path
-* [x] camera-facing transforms verified — RE-049's rotated-camera A/B test (Dream Land's six canopy sprites upright vs skewed into slivers)
-* [ ] scale verified
-* [ ] orientation verified
+* [x] billboard types enumerated — RE-063 exhaustively traced every `gcPrepDObjMatrix` case reachable from a ROM `DObjDesc` array (kinds 44/46/48/50, all four flagged); RE-083 confirmed no fifth reachable kind hides behind the `rot_mode` branch, since that branch belongs to an unreachable runtime-only path
+* [x] camera-facing transforms verified — RE-049's rotated-camera A/B test (Dream Land's six canopy sprites upright vs skewed into slivers) for the `Kind46`/screen-aligned family specifically
+* [ ] scale verified — RE-126: found a related, unconfirmed lead reading the same decomp code (the real per-axis scale multiplies a node's own Y-scale by the ancestor chain's cumulative *X*-scale, not this project's composed-basis-column-length approach; identical numerically only if every ancestor's own scale is uniform, not yet measured archive-wide either way)
+* [ ] orientation verified — RE-126 measured this is a real, open gap, not an unexamined one: `Kind48` (camera-pitch-locked, distinct from `Kind46`'s fully screen-aligned transform) is 47 real nodes archive-wide including Dream Land's own file 104, the largest individual billboard category (43% of all 109 flagged nodes) — currently rendered with `Kind46`'s screen-aligned approximation instead of its own real pitch-locked one. Not yet visibly wrong on screen because neither RE-049's test camera nor the current, still-face-on gameplay camera ever varies along the axis the two transforms disagree on; blocked on R0.14's still-open "actual game camera" item, which this finding gives a concrete reason to need
 * [ ] texture orientation verified
 * [ ] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` is the blocker, measured to affect billboards (29.7%) at roughly double the archive-wide rate (14.4%), tracked under RE-069/RE-071's still-open finding, not a new problem
 * [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
@@ -1522,7 +1543,7 @@ Verify every billboard rendering path.
 
 ### Evidence
 
-RE-049, RE-062, RE-063, RE-083 in `docs/reverse-engineering.md`.
+RE-049, RE-062, RE-063, RE-083, RE-126 in `docs/reverse-engineering.md`.
 
 ---
 
