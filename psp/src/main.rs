@@ -572,6 +572,13 @@ unsafe fn run() -> ! {
         gpu.set_perspective(38.0, aspect, 1.0, (dbg_cam * 4.0).max(10_000.0));
         gpu.reset_modelview();
         draw_state.begin_frame();
+        // RE-115: the object-view inspection camera has no guarantee it
+        // views authored geometry from its intended front side (unlike a
+        // real game camera, which always does) -- a one-sided plane, viewed
+        // from behind, is real geometry rendering nothing, not a bug in the
+        // material/UV/texture pipeline. Object view exists specifically to
+        // inspect whatever is there, so it must not hide half of it.
+        draw_state.force_no_cull = object_view;
         if let Some(p) = &pack {
             material_anim.tick(p);
         }

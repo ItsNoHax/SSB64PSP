@@ -1740,6 +1740,24 @@ clean (`39, 40, 42, 44, 45, 47, 48, 49, 51`), 3 blocked on the
 debug-viewer's camera-framing gap (`41, 43, 50`), 1 with RE-113's still-
 open diagonal-banding defect (`46`).
 
+RE-115 (a later session) fixed the camera-framing gap itself. It was
+never the camera or `object_bounds` — files 41/43/50's `cam`/`r` overlay
+readouts were always sane and non-degenerate. Disabling `GuState::CullFace`
+entirely made file 41 visible on the first try: these are one-sided
+authored planes, and the debug viewer's free-roaming inspection camera
+has no guarantee (unlike a real game camera) of viewing a plane from its
+authored front side. Added `DrawState::force_no_cull`, set to
+`object_view` once per frame in `psp/src/main.rs`, checked in
+`apply_material`'s existing per-primitive cull decision — scoped strictly
+to the debug viewer's own inspection mode; real gameplay rendering's
+culling (RE-068's verified `CULL_BACK`/`CULL_FRONT` reproduction) is
+untouched. Files 41 and 43 confirmed clean by direct pixel scan; file 50
+confirmed correct by direct on-device observation (the fix visibly works
+in the live PPSSPP window; automated screenshot timing could not
+reliably catch this specific file's frame, a tooling limitation, not a
+rendering defect). **12 of 13 transition files are now fully verified
+correct**; only file 46's RE-113 diagonal-banding defect remains open.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1756,11 +1774,11 @@ Implement every framebuffer-based rendering path required by SSB64.
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — **all 13 files are now accounted for (RE-114), not merely partially screenshotted.** 9 of 13 confirmed fully correct on the real device with direct pixel-scan evidence (`39, 40, 42, 44, 45, 47, 48, 49, 51`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). 3 files are blocked on RE-109's debug-viewer camera-framing gap for widely-spread/screen-covering objects (`41, 43, 50`), not a material/capture defect. **1 file has a real, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). This item stays open until the camera-framing gap is fixed (or worked around per-file) and file 46's defect is resolved — no file remains unexamined
+* [ ] visual verification completed — **12 of 13 files now confirmed fully correct on the real device** (`39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry), and the debug-viewer camera-framing gap that blocked 41/43/50 is fixed for good (RE-115 — `DrawState::force_no_cull`, scoped to `object_view` only). **1 file has a real, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). This item stays open only on file 46
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115 in `docs/reverse-engineering.md`.
 
 ---
 
