@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-128)
+**Last updated:** 2026-09-05 (RE-129)
 
 ---
 
@@ -12,42 +12,48 @@
 
 ## Current Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping` remains `IN_PROGRESS`,
-down to its last item. RE-128 (this session) closed the "texture
-coordinate behavior verified" item RE-127 left open: a temporary patch
-pointed the debug viewer's `TEXVIEW` mode (direct texture display,
-bypassing lighting/geometry) at Fox's real face texture and Kirby's real
-face texture, and both display exactly as `romtool texdump`'s
-independent reference decoder says the ROM data should — no melting, no
-clamp-boundary seam. RE-101 (UV scale)/RE-102 (clamp) are now
-independently confirmed on real fighters, closing the one gap both
-entries had left open. `R0.5`'s only remaining item is "Dream Land
-canopy discrepancy resolved," already known to need `R2`'s real-hardware
-validation, not more `romtool`-side work.
+`R0.6 — Material System Correctness` remains `IN_PROGRESS`. RE-129 (this
+session) answered RE-071's own standing "no new experiment has been run"
+note on the canopy-highlight blend failure that has been open since
+RE-069. This project's combiner model (`mesh.rs`) only ever resolves the
+*colour* formula — the alpha formula's own multiplexer slots occupy
+different bits of the same `G_SETCOMBINE` word and were never decoded.
+Hand-derived the real bit layout from `gbi.h`'s macros (a real trap
+caught along the way: the macros' own internal parameter names do not
+match which call-site slot they actually receive) and applied it to the
+exact `SetCombine` word RE-069 already identified for Dream Land's
+canopy highlight (file 104, offsets `0x708`/`0xA78`) via a temporary
+`romtool` subcommand decoding the real ROM bytes directly. **Result:
+`TEXEL0_ALPHA * SHADE_ALPHA` in both cycles** — real hardware multiplies
+texture alpha by vertex shade alpha, which this project's renderer
+(`TRANSLUCENT` never wired to `GuState::Blend` at all) currently does
+not.
 
-**A real, separate, only-partly-explained defect was found while
-verifying this.** Fox's face shows a large, confirmed-`(0,0,0)` black
-patch in the full lit render (not in `TEXVIEW`, so not a texture bug;
-confirmed independent of the debug HUD and of `--no-swizzle`). Two
-specific hypotheses were tested via direct ROM display-list decoding and
-eliminated: texture corruption (every candidate texture decodes fine
-independent of the PSP), and a double-application of `prim_color`'s
-scale crushing `shade_normal`'s ambient-floored grey to zero (the real
-display list has no `G_SETPRIMCOLOR` near zero anywhere close to the
-primitives checked). Not resolved — filed as a concrete lead on `R0.6`'s
-already-open "primitive color verified"/"lighting verified" items, not
-as a new task. See `docs/reverse-engineering.md` RE-128 for the full
-account, including the explicit gap in this session's own rigor (which
-primitive actually draws the black pixels was inferred from screen
-position, not confirmed geometrically).
+**Tested the direct implication — it is not a safe general fix.** The
+existing default texture function is already `Modulate`, so enabling
+blend with a standard equation should already compute the newly-decoded
+formula for free. Wiring it up as a temporary, reversible experiment
+produced neither RE-069's checkerboard nor RE-071's blowout this time —
+it made Dream Land's decorative flower triangles vanish instead, a
+different `TRANSLUCENT`-flagged primitive whose own vertex alpha is not
+a meaningful coverage value. Confirms `TRANSLUCENT` alone is too coarse
+a gate for real blending; the fix needs the same per-primitive
+alpha-formula classification this model already does for colour
+(`combiner_shade_scale`/`combiner_texture_blend`/`combiner_flat_color`),
+not attempted this session. Reverted before committing. See
+`docs/reverse-engineering.md` RE-129 for the full account.
 
-**Task-selection note for the next session.** With `R0.5` now down to
-one item needing external validation, re-check whether any other
+**Task-selection note for the next session.** `R0.5` is down to one item
+needing `R2`'s real-hardware validation (RE-128); `R0.6`'s "blending
+verified" is now a well-scoped, concrete next step (decode each
+translucent primitive's own alpha formula at pack time, the alpha-side
+twin of the colour classification already shipped) rather than an open
+mystery — a good candidate for the next session specifically working
+material correctness. Still worth re-checking whether any other
 `IN_PROGRESS`/`VERIFYING` `PLAN.md` row was similarly missed before
 concluding a genuine architectural undertaking (a camera/game-state
-system, to unblock `R0.12`/`R0.13`/`R0.14`) is the only path forward —
-this session did not have time to re-audit every remaining row itself,
-only `R0.5`.
+system, to unblock `R0.12`/`R0.13`/`R0.14`) is the only other path
+forward.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -114,7 +120,58 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-128 (this session) closed `R0.5`'s last mipmapping-adjacent item
+RE-129 (this session) decoded the real alpha combiner for Dream Land's
+long-open canopy-highlight blend failure and tested the direct
+implication, narrowing the mystery further without fully resolving it.
+See `docs/reverse-engineering.md` RE-129 for the full account; summary:
+
+* **This project's combiner model never decoded the alpha formula, only
+  the colour one.** `mesh.rs`'s `evaluate_combiner`/`cycle` resolve
+  `G_SETCOMBINE`'s RGB multiplexers; the alpha formula's own four slots
+  live at different bit positions in the same 64-bit word and have no
+  code path at all.
+* **Hand-derived the real bit layout from `gbi.h`'s macros**, catching a
+  real trap along the way: the macros' own internal parameter names
+  (`aRGB0`, `mA0`, etc.) do not correspond to which call-site slot
+  (`a0`/`b0`/`c0`/`d0`) they actually receive — had to read the
+  invocation (`gsDPSetCombineLERP`), not just the macro body, to get it
+  right.
+* **Applied it to the real ROM word** (a temporary `romtool` subcommand
+  wrapping `dl::decode_list_at` against file 104 offsets `0x708`/`0xA78`,
+  the exact list RE-069 already identified): the alpha formula is
+  `TEXEL0_ALPHA * SHADE_ALPHA` in **both** cycles. Real hardware
+  multiplies the texture's own alpha by the vertex's shade alpha; this
+  project's renderer currently does neither, since `TRANSLUCENT` was
+  never wired to `GuState::Blend` at all (RE-069's own deferral).
+* **Tested the direct implication — narrows the problem, does not solve
+  it.** The existing default texture function is already `Modulate`, so
+  turning blend on with a standard equation should compute the
+  newly-decoded formula for free. A temporary, reversible experiment
+  doing exactly that produced neither RE-069's checkerboard nor RE-071's
+  blowout — it made Dream Land's decorative flower triangles vanish
+  instead, a different `TRANSLUCENT`-flagged primitive whose own vertex
+  alpha is not a meaningful coverage value (confirmed via a clean
+  before/after pixel diff: the whole canopy body is pixel-identical,
+  only the five flower triangles go from opaque to absent).
+* **What this establishes.** `TRANSLUCENT` alone cannot safely gate real
+  blending — this project has no per-primitive record of *which* alpha
+  formula a translucent primitive resolves to, unlike the colour
+  formula's already-classified shapes
+  (`combiner_shade_scale`/`combiner_texture_blend`/`combiner_flat_color`).
+  The real fix needs that same classification done for alpha. Not
+  attempted this session — a concrete, scoped, well-evidenced next step,
+  not a vague "investigate more."
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. All temporary code (`psp/src/meshdraw.rs`'s
+  blend-enable experiment, `romtool`'s `re129decodelist` subcommand)
+  fully reverted; `git diff --stat` against the pre-session baseline is
+  empty for both files. Default (Dream Land) build re-screenshotted
+  clean after reverting (pixel-normal, 60 FPS, no panics, flowers
+  present).
+
+## Previous Task Status
+
+RE-128 (an earlier session) closed `R0.5`'s last mipmapping-adjacent item
 ("texture coordinate behavior verified") and found a real, only-partly
 explained fighter rendering defect while doing it. See
 `docs/reverse-engineering.md` RE-128 for the full account; summary:
@@ -168,7 +225,7 @@ explained fighter rendering defect while doing it. See
   against the pre-session baseline is empty for both files. Default
   (Dream Land) build re-screenshotted clean after every revert.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-127 (an earlier session) re-checked RE-126's own "every `IN_PROGRESS`/
 `VERIFYING` task is blocked" claim and found `R0.5` had three open

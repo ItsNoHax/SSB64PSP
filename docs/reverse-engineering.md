@@ -9856,3 +9856,93 @@ changed, only temporary `psp/src/main.rs` overrides (forced
 pre-session baseline is empty for both files. `cargo clippy --release
 --workspace`: clean. Default (Dream Land) build re-screenshotted clean
 after every revert (pixel-normal, 60 FPS, no panics).
+
+---
+
+## RE-129 — The canopy-highlight's real alpha combiner reads `SHADE_ALPHA`, and naively wiring that up breaks Dream Land's flowers (`PLAN.md` R0.6)
+
+RE-071 left `R0.6`'s "blending verified" item with an explicit unexplored
+lead: "worth checking against the original `MObjSub`/combiner alpha path
+rather than the raw texture alpha this converter currently uses
+verbatim" — and its own closing line said plainly "no new experiment
+against the actual texture has been run on this evidence yet." This
+session ran one.
+
+**Decoded the real alpha combiner directly from the ROM, not the RGB one
+this project already models.** `mesh.rs`'s `evaluate_combiner`/`cycle`
+functions only ever resolve the *colour* (RGB) combiner formula — the
+alpha formula's four multiplexer slots (`Aa`/`Ab`/`Ac`/`Ad` per cycle)
+live at different bit positions in the same 64-bit `G_SETCOMBINE` word
+and are not decoded anywhere in this codebase. Hand-derived the real bit
+layout from `gbi.h`'s own `GCCc0w0`/`GCCc0w1`/`GCCc1w0`/`GCCc1w1` macros
+(cross-checked against the macro's real call site, `gsDPSetCombineLERP`,
+since the macros' own internal parameter *names* do not match which
+call-site slot they actually receive — a real trap, caught by reading
+the invocation, not just the macro body) and applied it to the exact
+`SetCombine` word RE-069 already identified (file 104, offsets
+`0x708`/`0xA78`, `hi=0x121824 lo=0xFF33FFFF`, confirmed via a temporary
+`romtool` subcommand wrapping `dl::decode_list_at` against the real ROM
+bytes at that exact source offset).
+
+**Result: `(TEXEL0_ALPHA - 0) * SHADE_ALPHA + 0`, identically in both
+cycles** — i.e. real hardware multiplies the texture's own alpha by the
+vertex's shade alpha before anything else happens to it. This project's
+current renderer does neither: `TRANSLUCENT` is not wired to
+`GuState::Blend` at all yet (RE-069's own deferral), so today the raw
+texel alpha is not consulted for blending in any form, verbatim or
+otherwise.
+
+**Tested the direct implication as a reversible experiment — and it
+regresses a different, already-fixed feature.** `apply_material`'s
+existing default texture function is already `Modulate` (vertex colour ×
+texture colour, all four channels, per `bind_texture`'s own governing
+comment), which already computes exactly `TEXEL_ALPHA * SHADE_ALPHA` if
+the two states this needs (`GuState::Blend` enabled, a standard
+`SrcAlpha`/`OneMinusSrcAlpha` equation) are simply turned on for
+`TRANSLUCENT` primitives — so the fix implied by the newly-decoded
+formula is not "compute a new value", only "stop leaving the existing
+per-vertex alpha unused." Wiring exactly that up (temporary, reverted:
+`GuState::Blend` + `sceGuBlendFunc(Add, SrcAlpha, OneMinusSrcAlpha)`
+gated on `flags::TRANSLUCENT`) and rebuilding did **not** produce a
+checkerboard or a blowout this time — it made **Dream Land's decorative
+flower triangles vanish entirely** (confirmed via a before/after pixel
+diff: the whole canopy body is pixel-identical, only the five flower
+triangles differ, from fully opaque to fully absent). These are the
+same flowers RE-069 already fixed once (an `ALPHA_TEST` gating bug) —
+apparently distinct geometry that also happens to carry `TRANSLUCENT`,
+whose own vertex alpha byte is not a meaningful coverage value (matching
+`push_vertex`'s own already-documented caveat: "Shade alpha is not a
+coverage value here — Mario's vertices are all zero"). Reverted before
+committing; `git diff --stat` is empty for `psp/src/meshdraw.rs`.
+
+**What this narrows, and what it does not.** Confirms, for the first
+time with real ROM evidence rather than a guess, exactly what real
+hardware's alpha formula is for the canopy-highlight surface
+specifically. Rules out "just turn blending on with the existing
+default Modulate state" as a safe general fix: `TRANSLUCENT` alone is
+too coarse a gate — at least two different primitives share it with
+alpha bytes that mean different things (one a real coverage value per
+the newly-decoded formula, one not), and this project has no per-primitive
+record of *which* alpha formula a `TRANSLUCENT` primitive actually
+resolved to (unlike `combiner_shade_scale`/`combiner_texture_blend`/
+`combiner_flat_color`, which already do exactly this classification for
+the *colour* formula). The real fix likely needs the same treatment on
+the alpha side: decode each translucent primitive's own alpha formula
+at pack time, record whether it reads `SHADE_ALPHA` at all, and only
+enable blend-with-vertex-alpha for the ones that do — not attempted here,
+recorded as a concrete, scoped, well-evidenced next step rather than a
+vague "investigate more."
+
+**Confidence: high** on the decoded formula itself (derived from the
+macro definitions directly, matches the real ROM word exactly, and the
+experiment's own failure mode is consistent with vertex alpha genuinely
+being read and genuinely being wrong for at least one real primitive).
+**Low** on the full fix, which is not yet designed, let alone
+implemented.
+
+`cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+--release --workspace`: clean. All temporary code (`psp/src/meshdraw.rs`'s
+blend-enable experiment, `tools/romtool`'s `re129decodelist` subcommand)
+fully reverted; `git diff --stat` against the pre-session baseline is
+empty for both files. Default (Dream Land) build re-screenshotted clean
+after reverting (pixel-normal, 60 FPS, no panics, flowers present).
