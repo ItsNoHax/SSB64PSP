@@ -8016,3 +8016,149 @@ framebuffer-capture primitive is now confirmed correct on the real device
 The item as a whole stays open — 11 of 13 files remain unscreenshotted, and
 the backing-quad defect this session isolated is itself a new, unresolved
 gap, not evidence the file is "done".
+
+---
+
+## RE-111 — RE-110's "backing quad renders black" was misattributed too: the real cause is the pillarbox scissor, and `capture_transition_photo` is fixed
+
+Picked up RE-110's fresh lead directly: file 45's untextured backing quad
+(raw colour `[255,255,255,0]`) reproducing RE-107's original "renders solid
+black" finding now that RE-109's UV-origin fix had made the photo tile
+correct. Followed the same recipe (`psp/src/main.rs`, temporary and fully
+reverted: force `object_view`/`object_index = 17`/`spin = 0.0`, magenta
+clear + `request_transition_capture()` at frame 30) plus a new, more
+targeted elimination step than RE-108's: a temporary, reverted `pack.rs`
+hack recoloured only vertices belonging to an *untextured* primitive with
+the exact raw colour `[255,255,255,0]` to screaming green — narrower than
+RE-108's archive-wide recolour, because a `romtool` census (also temporary,
+reverted) found the framebuffer-role *photo* primitive's own vertices carry
+the identical raw colour as a modulate identity, so recolouring every match
+archive-wide would have corrupted the photo tile's own texture modulation
+instead of isolating the backing quad.
+
+**The backing quad still never painted a single visible pixel — the
+"black rectangle" is a third primitive, not the quad RE-107/RE-110 named.**
+With the targeted recolour active, the on-screen result was unchanged: a
+solid black region and a solid magenta region, no green anywhere. This
+means RE-110's own attribution (reopening RE-107's "backing quad renders
+black" finding) was itself wrong, the same way RE-108 once found RE-107's
+first attribution wrong — the backing quad's on-screen appearance still has
+never actually been isolated by direct evidence in any session.
+
+**A `romtool` census of file 45's real primitive structure explained why.**
+Object 17 is not "one photo primitive plus one backing primitive" as
+RE-100/RE-108 described — it is **8 side-by-side vertical strips**, each an
+independent node pair: a 44-primitive "photo tower" (43 ordinary
+framebuffer-role binds plus one distinct-height one, all `ROLE_FRAMEBUFFER`)
+and a separate 1-primitive untextured "backing" strip directly below it in
+V (texel `215..220`, the real 220-tall buffer's bottom band). The 8 towers
+tile the real 300-texel width in ~37.5-texel columns (`x_range` stepping in
+exact 375-unit increments, `u_texel` stepping in exact 37.5-texel
+increments) — the "8 repetitions" RE-108 described were never 8 copies of
+the *same* content, they are 8 *different* horizontal slices of the same
+captured image, exactly as `RE-099`'s "N64 tiles this into TMEM-sized
+strips" description predicted.
+
+Dumping each of the 8 towers' baked vertex UVs (`v.uv`, post RE-109's
+origin-rebase) found them **byte-for-byte identical** across all 8 —
+`v_texel = (-0.03125, 4.96875)` for every tower's every primitive, proving
+RE-109's UV-rebase fix is correct and uniform archive-wide for this file.
+The defect is not in UV, material, or vertex-colour handling at all: it is
+purely about *which real screen content* four of the eight towers'
+identical, correctly-addressed texture reads land on.
+
+**Isolated the true cause with two decisive tests, not more guessing.**
+First, replaced `crate::gu::TRANSITION_PHOTO`'s static initial content with
+a uniform solid magenta and temporarily disabled the real
+`request_transition_capture()` call entirely, so every tower samples a
+buffer whose content is known and controlled rather than genuinely
+captured. Result: the object rendered **100% uniform magenta, zero
+black**, for the first time in this whole investigation lineage (RE-107
+through RE-110). This proves the rendering/sampling/material pipeline is
+completely correct, and the defect is entirely in what
+`capture_transition_photo` actually copies from the real screen.
+
+Second, restored the real capture and instead disabled `GuState::ScissorTest`
+around the debug-frame's magenta clear, this time correctly timed *inside*
+`Gpu::begin_frame`'s already-open display list (an earlier attempt placed
+the toggle calls outside any open `sceGuStart`/`sceGuFinish` pair and had no
+effect, itself worth recording: GE state commands issued outside an open
+list are not reliably applied to the next one). Result: same as the
+synthetic-buffer test — **100% uniform magenta, zero black** — with the
+*real* capture mechanism now reading a fully magenta-cleared screen.
+
+**Root cause: `Gpu::new` permanently scissors every draw — including
+`sceGuClear` — to the pillarboxed 4:3 viewport, but `capture_transition_photo`
+read from absolute column 0 of the raw 480-wide buffer.** `psp/src/gu.rs`'s
+setup pillarboxes the PSP's 480×272 screen to the N64's 4:3 aspect
+(`ssb_engine::coord::pillarboxed_viewport()`: `vx = 59`, `vw = 362`) and
+enables `ScissorTest` permanently so "nothing bleeds into the black bars"
+(the setup code's own comment). Every real draw this project issues,
+including a full-screen debug clear, is therefore confined to columns
+`59..421` — columns `0..59` and `421..480` are never written by anything,
+ever, and sit at their power-on-zeroed value (solid black) for the whole
+program's life, by design. `capture_transition_photo` copied
+`TRANSITION_PHOTO_WIDTH` (300) columns starting at column 0 of the raw
+buffer (`src.add(y * BUF_WIDTH)`), so it captured columns `0..300`: the
+left `0..59` slice of permanently-black bar, then `59..300` of real
+(correctly magenta, in the debug test; real game content, in real use)
+screen content. Four of the 8 towers' `u_texel` ranges (`0..37.5`,
+`37.5..75`, `75..112.5`, `112.5..150`) fall entirely or mostly within that
+first 59-texel black-bar slice, which is exactly the observed 4-of-8,
+left-of-screen black region.
+
+**This is a genuine bug independent of the debug-viewer recipe used to find
+it.** In real gameplay, a real LB transition's capture would hit the same
+bar: the PSP never draws real game content into columns `0..59`/`421..480`
+under this project's own permanent pillarbox, so a literal "copy from
+column 0" reproduces the black bar every time, not just under a magenta
+debug clear. The N64 original has no such bar (its own native buffer
+already is 4:3), so the correct PSP equivalent of "capture the top-left
+corner of the displayed picture" is the pillarboxed viewport's own left
+edge, not the raw framebuffer's column 0.
+
+**Fixed with a one-line offset, not a re-tuned capture size.**
+`capture_transition_photo` now reads starting at
+`BUF_WIDTH * y + pillarboxed_viewport().0` instead of `BUF_WIDTH * y`.
+`TRANSITION_PHOTO_WIDTH` (300) already fits entirely inside the pillarboxed
+width (362) starting from that edge (`59 + 300 = 359 < 421`), so no other
+constant changes. Re-verified on the real device profile with the same
+debug recipe used to find the bug, this time with the fix applied and no
+diagnostic overrides (real scissor state, real capture call, no forced
+buffer content): the object renders **100% uniform magenta** — a direct
+pixel scan of the object's own screen region found zero `(0, 0, 0)` pixels
+(was 28,993–34,584 across three earlier measurements in this and RE-110's
+sessions).
+
+**Not investigated: the other 12 transition files' own backing/photo
+strips**, though the fix is structural (`capture_transition_photo` is
+shared code, not per-file), so there is no reason to expect a
+file-specific exception. The debug-flush-ordering hypothesis tried en
+route (does `sceGuDebugFlush`'s HUD-text paint contaminate the captured
+corner, since it currently runs before the capture in `end_frame`?) was
+tested directly (temporarily reordered) and made no measurable difference
+— eliminated by evidence, not assumption, and left in its original order.
+
+`cargo test --workspace`: 405 passing, unaffected (the fix lives entirely
+in the `psp` crate, which carries no host-runnable unit tests).
+`cargo clippy --release --workspace`: clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: default (non-transition) build re-screenshotted
+clean after every revert and again after the final fix (Dream Land
+pixel-normal, 60 FPS, no panics). All temporary code (`pack.rs`'s targeted
+green-force hack, `tools/romtool/src/main.rs`'s file-45 UV/position census,
+`psp/src/main.rs`'s forced object/spin/magenta-capture patch, `gu.rs`'s
+synthetic-buffer and mistimed/retimed scissor-toggle experiments) was fully
+reverted; `git diff --stat` shows only the permanent fix in `psp/src/gu.rs`.
+
+**What this closes.** `PLAN.md` R0.13's "framebuffer texture paths
+implemented" item now covers a second, independent, real bug (beyond
+RE-109's UV-origin fix) with the same on-device evidence standard. File
+45's transition object is now confirmed fully correct on the real device
+profile — both its photo tower and (by the same fix) whichever of its 8
+towers previously fell in the black bar. RE-107's and RE-110's own
+"backing quad renders black" attribution is retracted a second time: no
+session has ever actually observed the untextured backing quad rendering
+anything, correct or incorrect, since it has never been proven visible on
+screen at all. "Visual verification completed" stays open — 11 of 13 files
+remain unscreenshotted, and the backing quad's own on-screen appearance
+remains genuinely unobserved, not merely unresolved.

@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-110)
+**Last updated:** 2026-09-04 (RE-111)
 
 ---
 
@@ -12,36 +12,101 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-109 (a previous
-session) shipped RE-108's own recorded fix for the "black rectangle"
-defect: rebasing a framebuffer-role primitive's baked UV by its own
-tile's `uls`/`ult` origin at pack time, fixing the real root cause RE-108
-found (the runtime capture only ever stores the *top* of the real
-220-texel-tall N64 buffer, but one of file 45's two photo tiles samples
-its *bottom*) — verified by a unit test and a real archive-wide
-packed-byte pack diff, but not yet on the real device that session.
-
-RE-110 (this session) closed that gap: forcing the debug viewer's `spin`
-to a fixed `0` (rather than relying on elapsed real time, per RE-109's
-own recorded next step) immediately showed file 45's previously-black
-photo tile rendering the exact captured test colour (`(255, 0, 255)`,
-measured by direct pixel sampling, not eyeballing) — the fix is now
-confirmed on the real device. The same measurement also found a second,
-real, spatially distinct pure-black region (`(0, 0, 0)`, 34,584 sampled
-pixels, not the `(32, 40, 56)` clear colour) — a newly re-isolated
-recurrence of RE-107's own original "backing primitive renders black
-despite non-black raw vertex colour" mystery, which RE-108 had only ever
-retracted the *attribution* of (not resolved). See "Task Status" below.
-`screen wipes implemented` remains open (no real trigger event exists
-yet). `visual verification completed` stays open: 2 of 13 files have any
-on-device evidence, 11 remain unscreenshotted, and the newly re-isolated
-backing-quad defect is itself unresolved. `R0.11 — Fighter Palettes /
-Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
-closing addendum: all 12 real fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-111 (this session)
+found and fixed a real, independent bug behind RE-110's own "backing quad
+renders black" lead: it was never the backing quad at all (a second
+misattribution, the same shape as RE-108's correction of RE-107) — file
+45's object is 8 side-by-side vertical strips, and 4 of their 8
+identical, correctly-UV-rebased photo towers sampled a permanently-black
+59-texel-wide slice of the raw framebuffer that this project's own
+pillarbox scissor (`Gpu::new`, 4:3-in-16:9) never draws to. Fixed
+`capture_transition_photo`'s read offset to start at the pillarbox's own
+left edge instead of absolute column 0. Re-verified on the real device
+profile: zero black pixels remain in the object's own screen region (was
+28,993–34,584 across three earlier measurements). See "Task Status"
+below. `screen wipes implemented` remains open (no real trigger event
+exists yet). `visual verification completed` stays open: file 45's photo
+towers are now fully confirmed correct, but the backing quad's own
+on-screen appearance has still never been directly observed in four
+sessions of investigation (RE-107/108/110/111), and 11 of 13 files remain
+unscreenshotted. `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE`
+in an earlier session (RE-098 plus its closing addendum: all 12 real
+fighters individually verified).
 
 ## Task Status
 
-RE-110 (this session) picked up RE-109's own addendum lead directly:
+RE-111 (this session) picked up RE-110's own fresh lead directly: the
+backing quad (raw colour `[255,255,255,0]`) reproducing RE-107's original
+"renders solid black" finding now that RE-109's fix made the photo tile
+correct. See `docs/reverse-engineering.md` RE-111 for the full account;
+summary:
+
+* **The backing quad still never painted a single visible pixel.** A
+  targeted, reverted `pack.rs` hack recoloured only untextured primitives
+  with the exact raw colour to screaming green (narrower than RE-108's
+  archive-wide version, since a `romtool` census found the *photo*
+  primitive's own vertices share that identical raw colour as a modulate
+  identity — recolouring those too would have corrupted the texture
+  instead of isolating the backing quad). No visible change. RE-110's own
+  attribution was wrong, the same way RE-108 once corrected RE-107's.
+* **A `romtool` census found the real structure.** File 45's object is 8
+  side-by-side vertical strips, each an independent 44-primitive "photo
+  tower" (all `ROLE_FRAMEBUFFER`) plus a separate 1-primitive backing
+  strip below it — not "one photo primitive plus one backing primitive"
+  as earlier sessions described. All 8 towers' baked UVs are
+  byte-for-byte identical post-RE-109-rebase, ruling out the
+  material/UV/vertex-colour pipeline entirely.
+* **Two decisive tests isolated the real cause.** (1) Pre-filling
+  `TRANSITION_PHOTO` with solid magenta and skipping the real capture:
+  the object rendered 100% uniform magenta, zero black — proves the
+  rendering/sampling pipeline is correct. (2) Restoring the real capture
+  and disabling `ScissorTest` around the debug clear, correctly timed
+  *inside* `Gpu::begin_frame`'s open display list (an earlier,
+  incorrectly-timed attempt outside any open list had no effect — itself
+  worth knowing): same result, 100% uniform magenta.
+* **Root cause: the permanent 4:3 pillarbox scissor.** `Gpu::new` scopes
+  every draw, including `sceGuClear`, to the pillarboxed viewport
+  (`vx = 59`, `vw = 362` of the raw 480-wide buffer) and enables
+  `ScissorTest` permanently. Columns `0..59` are never drawn to by
+  anything, ever, and sit at their power-on-zeroed (black) value for the
+  program's whole life, by design (the setup code's own comment: "nothing
+  bleeds into the black bars"). `capture_transition_photo` read
+  `TRANSITION_PHOTO_WIDTH` (300) columns starting at absolute column 0,
+  not the pillarbox's own left edge — 4 of the 8 towers' `u` ranges fall
+  in that permanently-black slice. This is a real bug independent of the
+  debug recipe: a real transition capture in real gameplay would hit the
+  same bar, since nothing this project draws ever reaches those columns.
+* **Fixed with a one-line offset**
+  (`BUF_WIDTH * y + pillarboxed_viewport().0`), not a re-tuned capture
+  size — `TRANSITION_PHOTO_WIDTH` (300) already fits inside the
+  pillarboxed width (362) from that edge. Re-verified with the real
+  capture and no diagnostic overrides: a direct pixel scan of the
+  object's own screen region found zero `(0, 0, 0)` pixels.
+* **Also tested and eliminated:** whether `sceGuDebugFlush`'s HUD-text
+  paint (which currently runs before the capture in `end_frame`)
+  contaminates the captured corner — temporarily reordered, no measurable
+  difference, reverted to the original order.
+* `cargo test --workspace`: 405 passing, unaffected (fix lives entirely
+  in the `psp` crate, no host-runnable unit tests there).
+  `cargo clippy --release --workspace`: clean. Default (non-transition)
+  build re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no
+  panics) after every revert and again after the final fix. All temporary
+  code (`pack.rs`'s targeted recolour hack, `tools/romtool/src/main.rs`'s
+  file-45 census, `psp/src/main.rs`'s forced object/spin/capture patch,
+  `gu.rs`'s synthetic-buffer and scissor-toggle experiments) fully
+  reverted; `git diff --stat` shows only the permanent fix in
+  `psp/src/gu.rs`.
+* **What this closes:** `PLAN.md` R0.13's "framebuffer texture paths
+  implemented" item now covers a second, independent, real bug in the
+  same mechanism, fixed and device-verified. File 45's photo towers are
+  fully confirmed correct now (all 8, not just some). "Visual
+  verification completed" stays open — 11 of 13 files remain
+  unscreenshotted, and the backing quad's own on-screen appearance is
+  still genuinely unobserved after four sessions, not merely unresolved.
+
+## Previous Task Status
+
+RE-110 (a previous session) picked up RE-109's own addendum lead directly:
 force a small fixed set of exact `spin` values across separate runs
 instead of relying on elapsed real time. `spin = 0.0` (a temporary,
 reverted constant in `psp/src/main.rs`, alongside the same `object_view`/
@@ -88,7 +153,13 @@ account; summary:
   stays open — 11 of 13 files remain unscreenshotted, and the newly
   re-isolated backing-quad defect is itself a new, unresolved gap.
 
-## Previous Task Status
+  **Retracted by RE-111 (a later session): this attribution was wrong
+  too.** The "second, real, spatially distinct" black region named here
+  was never actually the backing quad — see "Task Status" above for the
+  real cause (the pillarbox scissor leaving part of the raw framebuffer
+  permanently black, unrelated to material/vertex-colour handling).
+
+## Earlier Task Status
 
 RE-109 (a previous session) picked up RE-108's own two recorded fix candidates
 and shipped the one RE-108 itself judged more general: rebasing each

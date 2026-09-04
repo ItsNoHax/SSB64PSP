@@ -309,15 +309,27 @@ impl Gpu {
     /// real ROM's own period for the one primitive shape that measurably
     /// wraps its V axis (RE-100: the 300x6 tile, up to 35.83 repeats) rather
     /// than introducing two extra, unintended rows into that repeat.
+    ///
+    /// `TRANSITION_PHOTO_WIDTH`'s columns are read starting at the
+    /// pillarbox's own left edge (`pillarboxed_viewport().0`), not absolute
+    /// column 0 of the raw 480-wide buffer (RE-111). Every real draw --
+    /// including this project's own game content -- is scoped to the
+    /// pillarboxed 4:3 viewport by the permanently-enabled scissor
+    /// (`Gpu::new`), so columns left of it are never drawn to at all and
+    /// stay at their power-on value (zero, i.e. solid black) for the whole
+    /// program's life. `TRANSITION_PHOTO_WIDTH` (300) already fits entirely
+    /// inside the pillarboxed width (362) starting from that edge, so this
+    /// is a pure offset correction, not a re-tuned capture size.
     unsafe fn capture_transition_photo(&self) {
         let src = if self.draw_is_fbp0 {
             self.fbp0_direct
         } else {
             self.fbp1_direct
         } as *const u32;
+        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
         let dst = core::ptr::addr_of_mut!(TRANSITION_PHOTO.0) as *mut u32;
         for y in 0..TRANSITION_PHOTO_REAL_ROWS {
-            let src_row = src.add(y * BUF_WIDTH as usize);
+            let src_row = src.add(y * BUF_WIDTH as usize + vx as usize);
             let dst_row = dst.add(y * TRANSITION_PHOTO_STRIDE);
             core::ptr::copy_nonoverlapping(src_row, dst_row, TRANSITION_PHOTO_WIDTH);
         }
