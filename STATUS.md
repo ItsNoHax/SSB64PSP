@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-113)
+**Last updated:** 2026-09-04 (RE-114)
 
 ---
 
@@ -12,27 +12,60 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-113 (this session)
-continued the remaining concrete work from RE-112's handoff —
-screenshotting the 12 transition files beyond file 45. Files 42, 44, 47
-and 49 are now confirmed fully correct on the real device (uniform
-capture colour, zero black pixels by direct pixel scan) — **6 of 13
-files now have real on-device evidence, up from 2 at session start**.
-File 43 hits RE-109's already-documented camera-framing limitation for
-widely-spread objects (not a new issue). **File 46 shows a real, new,
-distinct defect**: regular diagonal black bands, traced to its own
-`U`-range cycling through an 11-step shifting/full-width pattern per
-strip (likely an authored diagonal-wipe UV shear) — what produces solid
-black at the narrowed edge of each shifted band was not isolated this
-session. See "Task Status" below for the full account. `screen wipes
-implemented` remains open (no real trigger event exists yet). `R0.11 —
-Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
-(RE-098 plus its closing addendum: all 12 real fighters individually
-verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-114 (this session)
+finished screenshotting the remaining transition files (39, 48, 50, 51),
+completing the accounting RE-113 started. **All 13 LB-transition files
+are now accounted for**: 9 confirmed fully correct on the real device by
+direct pixel scan (`39, 40, 42, 44, 45, 47, 48, 49, 51`), 3 blocked on
+RE-109's already-documented debug-viewer camera-framing gap for
+widely-spread/screen-covering objects (`41, 43, 50` — not a
+material/capture defect), and 1 with RE-113's still-open, characterized
+diagonal-banding defect (`46`). No file remains unexamined. See "Task
+Status" below for the full account. `screen wipes implemented` remains
+open (no real trigger event exists yet). `R0.11 — Fighter Palettes /
+Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
+closing addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-113 (this session) picked up RE-112's own handoff — screenshot the
+RE-114 (this session) finished the file-by-file screenshotting RE-113
+left unaddressed (`39, 48, 50, 51`), using the same recipe. See
+`docs/reverse-engineering.md` RE-114 for the full account; summary:
+
+* **Three more files confirmed fully correct.** File 39 (object 11,
+  `spin = 0`, the same 8-node "sudare" shape as file 45) rendered clean,
+  uniform magenta, zero black. File 51 (object 23) rendered as an
+  8-pointed radial "starburst" matching its circular node layout
+  (`--nodes` census: 8 nodes on a circle), zero black. File 48 (object
+  20, the one structurally distinct 30-node/29-dl outlier) rendered as a
+  scattered ~29-panel cluster matching its particle-like layout, zero
+  black.
+* **File 50 (object 22) hits the same camera-framing gap as 41 and 43.**
+  Tried `spin = 0` (file 45's working value) and `spin = π`; neither
+  brought it into view despite drawing (`draws 352`, `tris 704`, matching
+  its 8-tower structure). Not investigated further — same
+  already-tracked, separate limitation.
+* **All 13 transition files are now accounted for**, not just partially
+  screenshotted: 9 confirmed clean (`39, 40, 42, 44, 45, 47, 48, 49, 51`),
+  3 blocked on the camera-framing gap (`41, 43, 50`), 1 with RE-113's
+  still-open diagonal-banding defect (`46`).
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Default build re-screenshotted clean
+  (Dream Land pixel-normal, 60 FPS, no panics) after reverting. All
+  temporary code (`psp/src/main.rs`'s forced object/spin/capture patch,
+  cycled across objects 11/22/23/20) fully reverted; `git diff --stat`
+  is empty — this session is documentation-only.
+* **What this closes:** `PLAN.md` R0.13's "visual verification
+  completed" item now has a complete accounting of every one of the 13
+  files. The item itself cannot close yet — the camera-framing gap and
+  file 46's defect are both still open — but no file remains unexamined.
+  The two concrete remaining threads are independent and well-scoped:
+  fix the debug viewer's auto-framing camera (unblocks 41/43/50), and
+  root-cause file 46's diagonal banding.
+
+## Previous Task Status
+
+RE-113 (a previous session) picked up RE-112's own handoff — screenshot the
 remaining 12 transition files — starting with the six structurally
 simple ones (1–2 nodes: `42, 43, 44, 46, 47, 49`). See
 `docs/reverse-engineering.md` RE-113 for the full account; summary:
@@ -79,7 +112,7 @@ simple ones (1–2 nodes: `42, 43, 44, 46, 47, 49`). See
   (which file 43 also hits). 5 files remain unscreenshotted
   (`39, 41, 48, 50, 51`; 41 also blocked on the camera-framing gap).
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-112 (a previous session) checked whether the backing quad is even reachable
 by the renderer at all, instead of eliminating a fifth GE state. See

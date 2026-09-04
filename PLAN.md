@@ -1728,6 +1728,18 @@ range cycling through an 11-step shifting/full-width pattern per strip
 produces solid black at the narrowed edge of each shifted band is not
 yet isolated; recorded as a concrete lead, not fixed this session.
 
+RE-114 (a later session) finished screenshotting the remaining files
+(39, 48, 50, 51). Files 39 (object 11, the same 8-node "sudare" shape as
+file 45), 51 (object 23, an 8-pointed radial "starburst" matching its
+circular node layout) and 48 (object 20, a scattered ~29-panel cluster,
+the one structurally distinct outlier) are all confirmed fully correct —
+zero black pixels by direct pixel scan. File 50 (object 22, tested at
+both `spin = 0` and `spin = π`) hits the same camera-framing gap as 41
+and 43. **All 13 transition files are now accounted for**: 9 confirmed
+clean (`39, 40, 42, 44, 45, 47, 48, 49, 51`), 3 blocked on the
+debug-viewer's camera-framing gap (`41, 43, 50`), 1 with RE-113's still-
+open diagonal-banding defect (`46`).
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1744,11 +1756,11 @@ Implement every framebuffer-based rendering path required by SSB64.
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — 6 of 13 files now confirmed fully correct on the real device with direct pixel-scan evidence (`40, 42, 44, 45, 47, 49`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). Two files are blocked on RE-109's debug-viewer camera-framing gap for widely-spread/screen-covering objects (`41, 43`), not a material/capture defect. **One file has a real, new, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). Five files remain unscreenshotted (`39, 41, 48, 50, 51` — 41 additionally blocked as above)
+* [ ] visual verification completed — **all 13 files are now accounted for (RE-114), not merely partially screenshotted.** 9 of 13 confirmed fully correct on the real device with direct pixel-scan evidence (`39, 40, 42, 44, 45, 47, 48, 49, 51`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). 3 files are blocked on RE-109's debug-viewer camera-framing gap for widely-spread/screen-covering objects (`41, 43, 50`), not a material/capture defect. **1 file has a real, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). This item stays open until the camera-framing gap is fixed (or worked around per-file) and file 46's defect is resolved — no file remains unexamined
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114 in `docs/reverse-engineering.md`.
 
 ---
 
