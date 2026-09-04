@@ -1714,6 +1714,20 @@ fixed this session — `find_root_display_lists` is shared well beyond
 R0.13, and a correct fix needs an archive-wide before/after measurement,
 recorded as a concrete lead rather than shipped mid-investigation.
 
+RE-113 (a later session) continued the remaining concrete work —
+screenshotting the other 12 files — starting with the six structurally
+simple ones (1–2 nodes). Files 42, 44, 47 and 49 are now confirmed fully
+correct on the real device (uniform capture colour, zero black pixels by
+direct pixel scan) — 6 of 13 files now have real on-device evidence, up
+from 2. File 43 hits RE-109's already-documented camera-framing
+limitation for widely-spread objects (not a new issue). **File 46 shows
+a real, new, distinct defect**: regular diagonal black bands (116,152
+genuine `(0, 0, 0)` pixels, not window-capture noise), traced to its `U`
+range cycling through an 11-step shifting/full-width pattern per strip
+(a diagonal-wipe UV shear, likely authored, not decode noise) — what
+produces solid black at the narrowed edge of each shifted band is not
+yet isolated; recorded as a concrete lead, not fixed this session.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1730,11 +1744,11 @@ Implement every framebuffer-based rendering path required by SSB64.
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — file 45 is now **fully** confirmed correct on the real device: its only reachable geometry is 8 photo towers (RE-112, via `romtool scene --nodes`), all 8 confirmed correct (RE-111: zero black pixels post-fix, direct pixel scan). The "backing quad" that RE-107/108/110/111 spent four sessions chasing is retracted entirely by RE-112 — it was never reachable geometry, only a scan-discovery duplicate of tail commands already inside the real mesh, so there is no remaining open defect on file 45 at all. File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all, both now fully clean; the other 11 remain unscreenshotted — the sole remaining concrete work for this item
+* [ ] visual verification completed — 6 of 13 files now confirmed fully correct on the real device with direct pixel-scan evidence (`40, 42, 44, 45, 47, 49`); file 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). Two files are blocked on RE-109's debug-viewer camera-framing gap for widely-spread/screen-covering objects (`41, 43`), not a material/capture defect. **One file has a real, new, open defect**: file 46 shows diagonal black banding traced to its own authored diagonal-wipe UV shear, root cause not yet isolated (RE-113). Five files remain unscreenshotted (`39, 41, 48, 50, 51` — 41 additionally blocked as above)
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113 in `docs/reverse-engineering.md`.
 
 ---
 
