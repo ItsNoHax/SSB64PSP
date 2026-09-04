@@ -8400,3 +8400,53 @@ recorded as open, separate from RE-111's already-fixed pillarbox bug and
 RE-109's already-recorded camera-framing gap (which file 43 also hits).
 7 of 13 files remain either unscreenshotted (39, 41, 48, 50, 51) or
 blocked on the camera-framing gap (41, 43) or newly defective (46).
+
+---
+
+## RE-114 — All 13 transition files now accounted for: 9 confirmed clean, 3 blocked on the known camera-framing gap, 1 with RE-113's open defect
+
+Finished screenshotting the remaining transition files RE-113 left
+unaddressed (`39, 48, 50, 51`), using the same recipe.
+
+**Three more files confirmed fully correct.** File `39` (object 11,
+`spin = 0`, the same 8-node "sudare" shape as file 45) rendered clean,
+uniform magenta with zero `(0, 0, 0)` pixels by direct pixel scan. File
+`51` (object 23) rendered as a distinctive 8-pointed radial "starburst" —
+its `--nodes` census entry places its 8 nodes on a circle
+(`(0, 1550), (1100, 1100), (1550, 0), ...`), and the render matches that
+shape exactly — uniform magenta, zero black. File `48` (object 20, the
+one 30-node/29-display-list outlier, structurally unlike every other
+transition file) rendered as a scattered cluster of ~29 rectangular
+panels, matching its particle-like node layout, also zero black.
+
+**File 50 (object 22) hits the same camera-framing gap as 41 and 43.**
+Tried both `spin = 0` (file 45's working value) and `spin = π`; neither
+brought it into view despite drawing (`draws 352`, `tris 704`, matching
+its 8-tower structure exactly). Not investigated further — same
+already-tracked, separate limitation.
+
+**All 13 LB-transition files are now accounted for, not just
+partially screenshotted:**
+
+* **9 confirmed fully correct on the real device**, zero black pixels by
+  direct pixel scan: `39, 40, 42, 44, 45, 47, 48, 49, 51`.
+* **3 blocked on RE-109's debug-viewer camera-framing gap**, not a
+  material/capture defect: `41, 43, 50`.
+* **1 with RE-113's open, characterized diagonal-banding defect**: `46`.
+
+`cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+--release --workspace`: clean. Default (non-transition) build
+re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics) after
+reverting. All temporary code (`psp/src/main.rs`'s forced object/spin/
+capture patch, cycled across objects 11/22/23/20) fully reverted;
+`git diff --stat` is empty — this entry is documentation-only.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item now has a complete, evidence-backed accounting of every one of the
+13 files, not just a running "N remain unscreenshotted" count. The item
+itself cannot yet close — 3 files are blocked on a real (if
+separately-tracked) camera-framing gap, and file 46 has a genuine,
+unresolved rendering defect — but there is no more unexamined territory
+in this task's own scope. Fixing the debug viewer's auto-framing camera
+(unblocking `41, 43, 50`) and root-causing file 46's diagonal banding are
+now the two concrete, independent, well-scoped remaining threads.
