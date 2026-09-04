@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-112)
+**Last updated:** 2026-09-04 (RE-113)
 
 ---
 
@@ -12,34 +12,76 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-112 (this session)
-closed the "backing quad" question for good: it was never reachable
-geometry at all. `romtool scene --file 45 --list --nodes` shows file 45's
-one scene graph has 9 nodes, 8 with a display list, and all 8 are the
-photo towers RE-109/RE-111 already fixed and confirmed correct — none of
-the "backing" offsets RE-107/108/110/111 spent four sessions chasing
-appear in this object's node list at all. A scan-inventory census traced
-them to a real gap in `crates/ssb-rom/src/scan.rs`'s
-`find_root_display_lists`: its "outermost list" dedup measures a kept
-list's own literal decoded byte span, not the larger range it actually
-renders via an inlined `Call`, so a tiny dispatch list's own real target
-(a tower's 310-word body) is never itself found as plausible (no
-preceding `G_VTX` in view when decoded in isolation), while that body's
-own *tail* commands (the real "drawn once" sub-tile primitive, already
-correctly included in the real mesh) independently re-decode as a second,
-spurious "root" list — missing the real texture state that lived earlier
-in the true list, hence untextured and never drawn by anything. See "Task
-Status" below for the full account. `screen wipes implemented` remains
-open (no real trigger event exists yet). `visual verification completed`
-narrows to its one real remaining item: file 45 is now **fully** verified
-correct (both fixes applied, no open defect), so the only work left is
-screenshotting the other 12 transition files. `R0.11 — Fighter Palettes /
-Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
-closing addendum: all 12 real fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-113 (this session)
+continued the remaining concrete work from RE-112's handoff —
+screenshotting the 12 transition files beyond file 45. Files 42, 44, 47
+and 49 are now confirmed fully correct on the real device (uniform
+capture colour, zero black pixels by direct pixel scan) — **6 of 13
+files now have real on-device evidence, up from 2 at session start**.
+File 43 hits RE-109's already-documented camera-framing limitation for
+widely-spread objects (not a new issue). **File 46 shows a real, new,
+distinct defect**: regular diagonal black bands, traced to its own
+`U`-range cycling through an 11-step shifting/full-width pattern per
+strip (likely an authored diagonal-wipe UV shear) — what produces solid
+black at the narrowed edge of each shifted band was not isolated this
+session. See "Task Status" below for the full account. `screen wipes
+implemented` remains open (no real trigger event exists yet). `R0.11 —
+Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
+(RE-098 plus its closing addendum: all 12 real fighters individually
+verified).
 
 ## Task Status
 
-RE-112 (this session) checked whether the backing quad is even reachable
+RE-113 (this session) picked up RE-112's own handoff — screenshot the
+remaining 12 transition files — starting with the six structurally
+simple ones (1–2 nodes: `42, 43, 44, 46, 47, 49`). See
+`docs/reverse-engineering.md` RE-113 for the full account; summary:
+
+* **Four files fully confirmed correct, first time for any of them.**
+  Files `44` (object 16), `42` (object 14), `47` (object 19) and `49`
+  (object 21), tested with the same `spin = 0` /
+  magenta-clear-and-capture-at-frame-30 recipe RE-110/RE-111 established,
+  each rendered a clean, uniform magenta shape with zero `(0, 0, 0)`
+  pixels in its own screen region (direct pixel scan). File 42 renders as
+  a diamond — an authored shape difference, not a defect. **6 of 13 files
+  now have real on-device evidence** (`40, 42, 44, 45, 47, 49`), up from 2
+  at session start.
+* **File 43 (object 15) hit RE-109's already-documented camera-framing
+  limitation**, not a new issue: two widely-separated nodes drew
+  (non-zero draw count) but nothing appeared on screen at `spin = 0`.
+* **File 46 (object 18) is a real, new, distinct defect.** Both its nodes
+  rendered as visible squares, but each showed alternating
+  magenta/pure-black *diagonal* stripes instead of a uniform capture
+  colour — 116,152 genuinely pure-`(0, 0, 0)` pixels by full-resolution
+  pixel census, not the window-border artifact RE-111 already identified
+  and ruled out as unrelated screenshot-tooling noise (that artifact sits
+  at the image's outer edges, not inside an object's own silhouette). A
+  temporary, reverted `romtool` census of its baked UV data ruled out the
+  V-axis/pillarbox mechanism (every primitive's `V` range is identical to
+  file 45's already-fixed shape); the difference is in `U`, which cycles
+  through an 11-step shifting/full-width pattern per strip as `origin_t`
+  advances — very likely the ROM's own authored diagonal-wipe shape, not
+  a decode error. What produces solid black at the narrowed edge of each
+  shifted band was not isolated this session — recorded as a concrete,
+  characterized, reproducible lead.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Default (non-transition) build
+  re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics)
+  after every revert. All temporary code (`tools/romtool/src/main.rs`'s
+  object-index lookups and file-46 UV census, `psp/src/main.rs`'s forced
+  object/spin/capture patch cycled across objects 14/15/16/18/19/21)
+  fully reverted; `git diff --stat` is empty — this session is
+  documentation-only.
+* **What this closes:** `PLAN.md` R0.13's "visual verification completed"
+  item: 6 of 13 files now have real on-device evidence. One new,
+  distinct, characterized defect (file 46) is open, separate from
+  RE-111's already-fixed pillarbox bug and RE-109's camera-framing gap
+  (which file 43 also hits). 5 files remain unscreenshotted
+  (`39, 41, 48, 50, 51`; 41 also blocked on the camera-framing gap).
+
+## Previous Task Status
+
+RE-112 (a previous session) checked whether the backing quad is even reachable
 by the renderer at all, instead of eliminating a fifth GE state. See
 `docs/reverse-engineering.md` RE-112 for the full account; summary:
 
@@ -113,7 +155,7 @@ by the renderer at all, instead of eliminating a fifth GE state. See
   viewer's camera is RE-109's own separate, already-recorded lead). All
   temporary code reverted; `git diff --stat` empty.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-111 (a previous session) picked up RE-110's own fresh lead directly: the
 backing quad (raw colour `[255,255,255,0]`) reproducing RE-107's original

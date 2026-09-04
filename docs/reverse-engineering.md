@@ -8321,3 +8321,82 @@ further: this is RE-109's own already-recorded, separate limitation
 camera), not a new lead. All temporary code (`tools/romtool/src/main.rs`'s
 object-index lookup, `psp/src/main.rs`'s forced object/spin/capture patch
 targeting object 13) fully reverted; `git diff --stat` is empty.
+
+---
+
+## RE-113 — Four more transition files visually confirmed clean; file 46 shows a real, distinct new defect (diagonal black banding)
+
+Continued R0.13's remaining concrete work — screenshotting the 12
+transition files beyond file 45 — starting with the six structurally
+simple files (1–2 nodes: `42, 43, 44, 46, 47, 49`) identified in RE-112's
+archive-wide `romtool scene` census, on the theory that a small,
+non-tiled quad is less likely to hit RE-109's screen-covering-plane
+camera-framing limitation than the 8-node "sudare" files.
+
+**Four files visually confirmed fully correct, first time for any of
+them.** Files `44` (object 16), `42` (object 14), `47` (object 19) and
+`49` (object 21), tested with the same `spin = 0` /
+magenta-clear-and-capture-at-frame-30 recipe RE-110/RE-111 established,
+each rendered a clean, uniform magenta shape with **zero** `(0, 0, 0)`
+pixels in its own screen region (direct pixel scan, not eyeballing) —
+matching file 45's now-fully-verified result. File 42 renders as a
+diamond (45°-rotated square) rather than a flat rectangle, an authored
+shape difference, not a defect. `PLAN.md` R0.13's "visual verification
+completed" item gains four more files with real on-device evidence: 6 of
+13 now confirmed clean (`40, 44, 42, 45, 47, 49`).
+
+**File 43 (object 15) hit RE-109's already-documented camera-framing
+limitation, not a new issue.** Two widely-separated nodes (`world` at
+`±1500`, matching its `--nodes` census entry) drew (`draws 88`,
+non-zero) but nothing appeared on screen at `spin = 0`. Not investigated
+further — this is the same open, separately-tracked gap RE-109 recorded
+for screen-covering/widely-spread objects, not a new defect.
+
+**File 46 (object 18) is a real, new, distinct defect: regular diagonal
+black bands, not window artifacts or a camera issue.** Both of its two
+nodes rendered as visible squares, but each showed alternating
+magenta/pure-black diagonal stripes rather than a uniform capture colour.
+A full-resolution pixel census found 116,152 genuinely pure-`(0, 0, 0)`
+pixels within the rendered shapes (not the window-border artifact
+RE-111 already identified and ruled out as unrelated screenshot-tooling
+noise — that artifact sits at the image's outer edges, not inside an
+object's own rendered silhouette).
+
+A temporary, reverted `romtool` census of file 46's baked UV data found
+the cause is *not* a V-axis/pillarbox problem — every primitive's `V`
+range is `(-0.03, 4.97)` texels, identical to file 45's already-fixed
+shape. The difference is in `U`: unlike file 45 (every primitive spans
+the full `0..300` texel width), file 46's primitives cycle through an
+11-step pattern as `origin_t` advances — 5 primitives with a
+progressively narrower, right-shifted `U` range (e.g. `(0.0, 269.28)` →
+`(6.78, 276.09)` → … → `(27.22, 296.56)`), then 6 primitives back at the
+full `(0.0, 299.97)` range, repeating 4 times across the 44 primitives.
+This is very likely the ROM's own authored diagonal-wipe shape for this
+specific transition (a sheared UV window per strip, producing a diagonal
+reveal edge instead of a horizontal one) rather than a decode error — the
+pattern is too regular and too tightly tied to the real `origin_t` cycle
+to be noise. What produces solid black specifically at the narrowed
+edge of each shifted band was not isolated this session: candidates not
+yet individually tested include the padded texture stride (`300..512`,
+never written by `capture_transition_photo`, potentially reachable by
+bilinear-filter sampling near a `U` boundary close to 300) and a
+geometry/UV mismatch specific to this file's own authored shear. Left as
+a concrete, reproducible, characterized lead — not guessed at
+same-session.
+
+`cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+--release --workspace`: clean. Default (non-transition) build
+re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics)
+after every revert. All temporary code (`tools/romtool/src/main.rs`'s
+object-index lookups and file-46 UV census, `psp/src/main.rs`'s forced
+object/spin/capture patch cycled across objects 14/15/16/18/19/21) fully
+reverted; `git diff --stat` is empty — this entry is documentation-only.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item: 6 of 13 files now have real on-device evidence, up from 2 at the
+start of this session (40, 45 before; +42, 44, 47, 49 this session). One
+new, distinct, characterized defect (file 46's diagonal black banding) is
+recorded as open, separate from RE-111's already-fixed pillarbox bug and
+RE-109's already-recorded camera-framing gap (which file 43 also hits).
+7 of 13 files remain either unscreenshotted (39, 41, 48, 50, 51) or
+blocked on the camera-framing gap (41, 43) or newly defective (46).
