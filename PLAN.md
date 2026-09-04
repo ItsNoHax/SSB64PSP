@@ -1996,7 +1996,66 @@ RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
 
 ## R0.16 — N64 Render-State Model Fidelity
 
-Status: `TODO`
+Status: `IN_PROGRESS`
+
+### Current evidence
+
+RE-119 started this audit from R0.2's own opcode inventory (`docs/
+rendering.md`) instead of guessing which state categories needed
+attention, and found the inventory itself was stale enough to need
+re-measuring before it could be trusted as a checklist. `romtool scan`'s
+own `geometry_mode_name` helper had `G_SHADE` mapped to the wrong bit
+(`0x2`, disagreeing with `refs/ssb-decomp-re`'s real `gbi.h`, which
+defines it as `0x4`) — a real bug in this project's own diagnostic
+tooling, not the game data, that hid 60 archive-wide occurrences under a
+blank label instead of `G_SHADE`. Fixed. Re-running the scan after the
+fix, and independently, surfaced that the *whole* opcode table had gone
+stale since R0.2 was first measured (every count shifted, e.g. `G_TRI2`
+10954 → 13523, consistent with later conversion-fidelity fixes changing
+how many triangles the same 1,864 discovered lists parse into) and that
+`G_MOVEWORD` was wrongly listed as "never emitted" — RE-105 (a much
+earlier session) had already found and relied on real `G_MOVEWORD`
+usage (`G_MW_LIGHTCOL`) without this table ever being corrected to
+match. Refreshed `docs/rendering.md`'s whole opcode table and its
+"Geometry modes set" line from a fresh `romtool scan`.
+
+**Found two real, previously-undocumented geometry-mode categories with
+zero handling in `mesh.rs`:**
+
+* `G_SHADE` (60 occurrences) — real GBI semantics (`gbi.h`): "necessary
+  in order to see the color that you passed down with the vertex... if
+  not set, you need to use primcolor". Archive-wide, every occurrence
+  clears it together with `G_LIGHTING`/`G_SHADING_SMOOTH` in the same
+  command, never re-setting it in that command (checked, not assumed) —
+  consistent with a deliberate switch to flat, `PRIMITIVE`-driven
+  rendering that this project's existing `combiner_flat_color`/
+  `combiner_texture_blend` detection (R0.6) likely already reproduces
+  correctly for most cases, since those combiner shapes never read
+  `SHADE` regardless of `G_SHADE`'s own state. **Not yet cross-referenced
+  per-primitive** against which specific primitives clear `G_SHADE`
+  *and* still have a combiner that reads `SHADE` — the one scenario that
+  would actually render wrong today. Affects several stage files, the
+  main menu title, the staff roll, and one fighter special-move file
+  (file IDs recorded in `docs/rendering.md`).
+* `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` (156/13 occurrences) —
+  RSP-computed environment-mapped UVs. Used by `StageMetalFile2` and
+  `MMarioModel`/`NMarioModel`/`NFoxModel`: this is the "Metal
+  [Character]" transformation's signature shiny/reflective look (the
+  Metal Box item). Classified as SSB64 genuinely needing it
+  (`PLAN.md` R0.18's classification 1), but implementation is correctly
+  deferred — it is an item-pickup visual effect, downstream of the
+  combat/item systems `AGENTS.md` §5 gates behind rendering correctness.
+  Not an `ACCEPTED_DEVIATION` (it is technically reproducible on the PSP
+  GE), just out of scope until items exist.
+
+Neither gap was fixed this session — both need either a per-primitive
+cross-reference (`G_SHADE`) or a real feature (environment-mapped UV
+generation, `G_TEXTURE_GEN`) gated behind out-of-scope game systems.
+Recorded as concrete, scoped, characterized leads rather than guessed at
+or silently left unlisted, matching this audit's own acceptance
+criteria: every category found is now either handled, explicitly
+deferred with a reason, or flagged as needing further investigation —
+none is silently absent from `docs/rendering.md` any more.
 
 ### Objective
 
@@ -2026,19 +2085,29 @@ established (D-036).
   environment color, geometry mode, lighting mode, alpha state, blend state,
   depth state, filtering, addressing, LOD, palette/TLUT state, render-pass
   state) has an explicit field or explicit "does not apply to SSB64, measured"
-  note in `MeshMaterial`/the pack record formats
+  note in `MeshMaterial`/the pack record formats — RE-119 found geometry mode's
+  own category was incomplete (`G_SHADE`, `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`
+  had zero field or documented reason); now documented in `docs/rendering.md`
+  with a reason each, but `G_SHADE` still needs the per-primitive
+  cross-reference noted above before this item can close
 * [ ] no state category is silently dropped between `mesh.rs`'s conversion and
   `pack.rs`'s on-disk record without a documented reason (cross-reference
-  against R0.15's leakage tests)
-* [ ] `docs/rendering.md`'s N64→PSP state-mapping table (referenced from R0.2)
+  against R0.15's leakage tests) — not yet audited beyond geometry mode
+* [x] `docs/rendering.md`'s N64→PSP state-mapping table (referenced from R0.2)
   is complete against this audit's findings, not just the opcodes that
-  convert cleanly
+  convert cleanly — RE-119 refreshed the whole opcode table (stale since R0.2,
+  every count had drifted) and the geometry-mode-set line (`G_SHADE`/
+  `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` added, each with its own real ROM
+  file references and current handling status)
 * [ ] D-036's ordering rule (state fidelity before batching/state-sorting/
   draw-call reduction) is checked against every existing optimization already
   shipped (vertex dedup, material merge, `TexKey`/`texture_cache` dedup) and
   each one is confirmed not to have discarded state this audit found required
 * [ ] any state this audit finds genuinely unrecoverable on PSP is recorded as
-  an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent
+  an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent — neither
+  `G_SHADE` nor `G_TEXTURE_GEN` is unrecoverable (both are reproducible on the
+  PSP GE), so neither qualifies; both are documented as deferred/needing
+  further work instead
 
 ### Verification
 
@@ -2048,7 +2117,7 @@ established (D-036).
 
 ### Evidence
 
-Not started.
+RE-119 in `docs/reverse-engineering.md`.
 
 ---
 

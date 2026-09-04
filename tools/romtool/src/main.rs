@@ -314,7 +314,11 @@ fn scan(path: &Path, opts: &[&str]) -> Res {
 fn geometry_mode_name(bit: u32) -> &'static str {
     match bit {
         0x0000_0001 => "G_ZBUFFER",
-        0x0000_0002 => "G_SHADE",
+        // R0.16/RE-119: was `0x0000_0002`, disagreeing with
+        // `refs/ssb-decomp-re/include/PR/gbi.h`'s own `#define G_SHADE
+        // 0x00000004` -- the display-only mislabel this fixes hid 60
+        // archive-wide occurrences under a blank name instead of `G_SHADE`.
+        0x0000_0004 => "G_SHADE",
         0x0000_0200 => "G_CULL_FRONT",
         0x0000_0400 => "G_CULL_BACK",
         0x0001_0000 => "G_FOG",

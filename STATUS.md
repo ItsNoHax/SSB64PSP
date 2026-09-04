@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-118)
+**Last updated:** 2026-09-04 (RE-119)
 
 ---
 
@@ -12,40 +12,92 @@
 
 ## Current Task
 
-`R0.15 — Render-State Isolation` is now `COMPLETE`. RE-117 (previous
-session) closed 9 of its 10 state categories with new cross-node
-persistence tests in `crates/ssb-rom/src/mesh.rs`. RE-118 (this session)
-closed the remaining thread — a systematic audit of
-`psp/src/meshdraw.rs::DrawState`'s own device-side GE draw-state cache,
-the second layer R0.15's objective covers. Found one real, new gap:
-`Gpu::draw_triangles`/`draw_line_strip` (used by the collision overlay
-and simulated-fighter marker) disable `Texture2D` directly, bypassing
-`DrawState` entirely — since `show_collision`/`sim_fighter` default to
-`true`, this runs between cached mesh draws on every default boot, and a
-later primitive sharing a texture index with whatever was bound before
-the overlay would wrongly stay untextured. Fixed by adding
-`DrawState::forget_texture()`, called after both overlay functions.
-Verified inert for the current default scene (Dream Land's own textures
-don't happen to collide with the simulated fighter's) via a pixel-identical
-before/after screenshot — the underlying cache-invariant violation was
-real regardless of whether today's specific scene triggers a visible
-symptom. **`R0.15` acceptance is now fully satisfied.**
+`R0.16 — N64 Render-State Model Fidelity` (`IN_PROGRESS`, moved from
+`TODO` this session, following `R0.15 — Render-State Isolation`'s
+closure). RE-119 (this session) started from R0.2's own opcode inventory
+(`docs/rendering.md`) and found it needed re-measuring before it could
+be trusted as a checklist: `romtool scan`'s own `geometry_mode_name`
+helper had `G_SHADE` mapped to the wrong bit (a real bug in this
+project's own diagnostic tooling, not the game data), hiding 60 real
+occurrences under a blank label; fixed. The whole opcode table had also
+gone stale since R0.2 (every count drifted from later conversion-fidelity
+fixes), and `G_MOVEWORD` was still wrongly listed as "never emitted"
+despite RE-105 already relying on real usage — refreshed the table.
+**Found two geometry-mode categories genuinely used by SSB64 with zero
+handling in `mesh.rs`:** `G_SHADE` (60 occurrences, likely already
+handled correctly in most cases via existing combiner-shape detection,
+but not yet cross-referenced per-primitive) and `G_TEXTURE_GEN`/
+`G_TEXTURE_GEN_LINEAR` (156/13 occurrences — the "Metal [Character]"
+transformation's environment-mapped shiny effect, genuinely needed but
+correctly deferred behind the combat/item systems this project's own
+rendering gate blocks). See "Task Status" below for the full account.
 
-Per `PLAN.md`'s task ordering, the next eligible task is `R0.16 — N64
-Render-State Model Fidelity` (depends on R0.2 ✓, R0.6 — substantial
-progress, meets this project's own "needs meaningful progress from, not
-100% complete" precedent, R0.15 ✓ as of this session).
-
-`R0.13 — Framebuffer Rendering` has no further actionable rendering
-work (RE-116, previous session: all 13 LB-transition files confirmed
-correct; remaining items blocked on a game-state system that doesn't
-exist yet, downstream of this rendering gate). `R0.11 — Fighter
-Palettes / Costumes` closed `COMPLETE` in an earlier session (RE-098
-plus its closing addendum: all 12 real fighters individually verified).
+`R0.15 — Render-State Isolation` closed `COMPLETE` in the previous
+session (RE-117/118: all 10 state categories covered across both the
+decode-time `mesh.rs` layer and the device-side `DrawState` GE-cache
+layer, one real bug found and fixed in the latter). `R0.13 —
+Framebuffer Rendering` has no further actionable rendering work
+(RE-116: all 13 LB-transition files confirmed correct; remaining items
+blocked on a game-state system that doesn't exist yet). `R0.11 —
+Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
+(RE-098 plus its closing addendum: all 12 real fighters individually
+verified).
 
 ## Task Status
 
-RE-118 (this session) picked up R0.15's remaining thread: audit
+RE-119 (this session) started R0.16 from its own first acceptance
+item — R0.2's opcode inventory — rather than guessing which state
+categories needed auditing. See `docs/reverse-engineering.md` RE-119 for
+the full account; summary:
+
+* **Fixed a real bug in `romtool`'s own diagnostic tooling.** A fresh
+  `romtool scan` showed geometry-mode bit `0x00000004` occurring 60
+  times with no name printed. `geometry_mode_name` had `G_SHADE` mapped
+  to `0x2`, disagreeing with `refs/ssb-decomp-re`'s real `gbi.h`
+  (`0x4`). Fixed the one-line constant.
+* **The whole opcode table in `docs/rendering.md` had gone stale, not
+  just `G_SHADE`'s label.** Every count had drifted since R0.2's
+  original measurement (e.g. `G_TRI2` 10954 → 13523) — the same 135
+  files/1,864 lists now parse into more triangles (22,515 → 28,089)
+  thanks to later conversion-fidelity fixes. More significantly,
+  `G_MOVEWORD` was still listed under "Never emitted", flatly
+  contradicted by its current count (3,722) and by RE-105 (a much
+  earlier session) already relying on real `G_MW_LIGHTCOL` usage.
+  Refreshed the whole table.
+* **Found two geometry-mode categories genuinely used by SSB64 with
+  zero handling in `mesh.rs`, previously absent from the docs
+  entirely.** `G_SHADE` (60 occurrences) — always cleared together with
+  `G_LIGHTING`/`G_SHADING_SMOOTH` in the same command, never re-set in
+  that command (checked archive-wide via a temporary, reverted census),
+  consistent with a deliberate flat/unlit switch this project's existing
+  `combiner_flat_color`/`combiner_texture_blend` detection likely
+  already reproduces correctly — but not yet cross-referenced
+  per-primitive against combiner shape, the one scenario that would
+  actually render wrong. `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`
+  (156/13 occurrences) — used by Metal Mario's stage and
+  `MMarioModel`/`NMarioModel`/`NFoxModel`: the "Metal [Character]"
+  transformation's environment-mapped shiny effect. Genuinely needed,
+  but correctly deferred (an item-pickup effect, downstream of the
+  combat/item systems this project's own rendering gate blocks) — not
+  an `ACCEPTED_DEVIATION` since it's technically reproducible on the PSP
+  GE, just out of scope until items exist.
+* `cargo test --workspace`: 405 passing, unaffected (diagnostic label
+  and documentation only, no `ssb-rom`/`psp` logic changed). `cargo
+  clippy --release --workspace`: clean. No pack rebuild needed
+  (`geometry_mode_name` is display-only, not used by pack-building). All
+  temporary census code fully reverted; `git diff --stat` shows only the
+  permanent one-line bit-value fix.
+* **What this closes:** `PLAN.md` R0.16's "docs/rendering.md's state-mapping
+  table is complete against this audit's findings" item is satisfied —
+  every category the refreshed scan surfaced now has handling, a
+  documented deferral reason, or a named open cross-reference; nothing
+  is silently missing. The "every state category has an explicit field
+  or documented reason" item stays open pending `G_SHADE`'s own
+  per-primitive cross-reference. `R0.16` moves `TODO` → `IN_PROGRESS`.
+
+## Previous Task Status
+
+RE-118 (a previous session) picked up R0.15's remaining thread: audit
 `psp/src/meshdraw.rs::DrawState`'s own device-side GE cache, the layer
 `mesh.rs`'s decode-time state (RE-117) doesn't cover. See
 `docs/reverse-engineering.md` RE-118 for the full account; summary:
@@ -88,7 +140,7 @@ RE-118 (this session) picked up R0.15's remaining thread: audit
   item is now satisfied for both layers. **`R0.15 — Render-State
   Isolation` moves `IN_PROGRESS` → `COMPLETE`.**
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-117 (a previous session) surveyed before writing any test, rather than
 guessing which R0.15 categories needed coverage. See
