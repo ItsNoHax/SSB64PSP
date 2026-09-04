@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-107)
+**Last updated:** 2026-09-04 (RE-108)
 
 ---
 
@@ -12,22 +12,85 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-107 (this session)
-recovered and documented a large body of undocumented work (RE-101–106)
-that had accumulated in the working tree, then extended R0.13's own
-verification archive-wide and to a second file — see "Task Status"
-below. `screen wipes implemented` remains open (no real trigger event
-exists yet); `visual verification completed` is now more precisely
-scoped (2 of 13 files confirmed, an archive-wide structural census
-covering the rest, and one real, confirmed, still-unexplained defect —
-a backing primitive rendering black despite non-black ROM vertex data)
-rather than simply "not done". `R0.11 — Fighter Palettes / Costumes`
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-108 (this session)
+root-caused the "black rectangle" defect RE-107 flagged as open: it was
+misattributed to the wrong primitive (an untextured backing quad that
+was never actually visible on screen in any test), and the real cause is
+a genuine scope gap in RE-100's own capture design (it only ever stores
+the top of the real N64 buffer; one of file 45's two photo tiles samples
+the bottom) — see "Task Status" below. `screen wipes implemented`
+remains open (no real trigger event exists yet); `visual verification
+completed` now names a specific, understood defect rather than an
+unexplained one, still unfixed and likely present in some of the other
+11 unscreenshotted files too. `R0.11 — Fighter Palettes / Costumes`
 closed `COMPLETE` in an earlier session (RE-098 plus its closing
 addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-107 (this session) started from "continue with the plan" and found
+RE-108 (this session) picked up exactly where RE-107 left off: a
+backing primitive supposedly rendering solid black on the real device
+despite genuinely non-black raw vertex colour, with `prim_color`,
+`flat_color`, and RE-103's per-vertex lit-normal fallback already ruled
+out by direct evidence. Continued eliminating on the real device rather
+than guessing, one isolated variable at a time, each change temporary
+and reverted before the next: forced the backing primitive's vertex
+colour to screaming green (confirmed present in the built `.pak` by
+grepping for the packed byte pattern) — no visible change. Ruled out
+backface culling, depth testing, stale texture-state caching, and shade
+model the same way, each individually, each with the green-forcing hack
+still active. None of the seven eliminations changed anything on screen.
+
+**The premise itself was wrong, and a single decisive test exposed it.**
+Forcing `crate::gu::TRANSITION_PHOTO` (the framebuffer capture buffer
+RE-099/RE-100 built) to a uniform green *before any capture ever
+runs* turned the **entire** visible shape green — not just the region
+RE-107 called "backing". The untextured backing quad, exhaustively
+tested above, never painted a single visible pixel in any test; the
+region everyone had been calling "the black backing panel" was actually
+one of the object's two `ROLE_FRAMEBUFFER` *photo* texture entries the
+whole time. Comparing the two entries directly (a 300×5 "drawn once"
+tile and a 300×6 "tiles vertically" tile) isolated which one is broken:
+nudging the 300×6 entry's own wrap mode broke its previously-correct
+magenta render, proving it samples correctly by default and occupies the
+region that already worked. A raw-UV dump of the 300×5 entry then
+explained why it fails: its baked `V` range is `214.97..219.97` texels
+— the *bottom* edge of the real N64 `sLBTransitionPhotoHeap` (300×220),
+not the top. RE-100's capture only ever stores the buffer's top 6–8
+rows (exactly right for the 300×6 entry, whose own `V` starts at 0), so
+the 300×5 entry wraps into memory the capture never populates with
+anything relevant to it.
+
+**This is a scope gap in RE-100's own original measurement, not a bug
+in anything this session or RE-107 tested and eliminated.** RE-100's
+write-up recorded the 300×5 entry's *span* ("always exactly 5.0
+texels") correctly, but never checked its *absolute position* within
+the real 220-texel-tall buffer — a genuinely reasonable oversight, since
+nothing about "span" alone would have flagged it, and the assumption
+that "top 6–8 rows suffice" held for every other measurement RE-100 made.
+
+`cargo test --workspace`: 261 `ssb-rom` tests passing throughout.
+`cargo clippy --release --workspace`: clean. All temporary patches
+(`pack.rs` colour-force, `meshdraw.rs` cull/depth/texture-cache/shade-model
+overrides, `gu.rs`'s `TRANSITION_PHOTO` initial value, `main.rs`'s
+forced object view, `romtool`'s material/UV census) were reverted
+individually after use; `git diff --stat` was empty after each. The
+default (non-transition) build was rebuilt and re-screenshotted clean
+(Dream Land pixel-normal, 60 FPS) after every revert, not just once at
+the end.
+
+**Not fixed this session.** Two candidate fixes are recorded in
+`docs/reverse-engineering.md` RE-108 (capturing a second band near the
+real buffer's bottom edge, or rebasing each framebuffer-role primitive's
+UV by its own tile's origin at pack time) but neither was attempted —
+this session's goal was root-causing an already very long investigation,
+not shipping a fix on top of it. The other 12 transition files may well
+have the same shape (a "drawn once" tile sampling somewhere other than
+the captured top band) and are not yet checked.
+
+## Previous Task Status
+
+RE-107 (a previous session) started from "continue with the plan" and found
 the working tree already held a large, fully implemented, fully tested,
 but almost entirely undocumented diff — `STATUS.md`'s own narrative
 (below) described only RE-099/RE-100, but the code already contained
@@ -83,6 +146,13 @@ RE-107 for the full account, and RE-106's own closing note for where the
 same finding is recorded against the mechanism it first looked most
 likely to implicate.
 
+**Retracted by RE-108 (the next session): this attribution was wrong.**
+The "backing primitive" named here was never actually visible on screen
+in any test above — the black region is one of the object's *photo*
+(framebuffer-role) texture entries, not the untextured backing quad. See
+"Task Status" above for the real cause (a capture-scope gap in RE-100's
+own design, not a material-pipeline bug).
+
 `cargo test --workspace`: 261 `ssb-rom` tests passing throughout (no
 regressions from either the temporary census or the temporary device
 patch — both fully reverted, `git diff --stat` empty after each).
@@ -101,9 +171,9 @@ causes are now eliminated with direct evidence, which narrows but does
 not yet answer where a genuinely white, unlit, untextured vertex colour
 is actually turning black between the pack and the screen.
 
-## Previous Task Status
+## Earlier Task Status
 
-RE-100 (a previous session) picked up exactly where RE-099 (the session before that)
+RE-100 (an earlier session) picked up exactly where RE-099 (the session before that)
 left off: RE-099 scoped the LB transition mechanism but explicitly left
 one design question unverified — does a PSP port need the N64's own full
 `300×220` capture with strip-by-strip TMEM addressing reproduced, or does
@@ -188,9 +258,7 @@ game-state/transition system at all — `screen wipes implemented` and
 confirm there is no render-to-texture pass to implement — satisfied by
 there being nothing here that applies) now checked.
 
-## Earlier Task Status
-
-RE-099 (an earlier session) scoped `R0.13` precisely instead of starting
+Immediately before this, RE-099 (an earlier session) scoped `R0.13` precisely instead of starting
 implementation cold. Read `refs/ssb-decomp-re/src/lb/lbtransition.c`
 directly (239 lines, the whole file) rather than continuing to reason
 from RE-055's own paraphrase, and found the mechanism is considerably

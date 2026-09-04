@@ -1520,34 +1520,50 @@ primitive, confirming the capture/bind mechanism generalizes beyond
 file 40's own hand-picked case, not merely by inference from the shape
 census.
 
-**The black-rectangle question is not resolved — and is now stranger
-than "not investigated".** Both tested files' backing primitives render
-pure black (`0,0,0`, confirmed by direct pixel sampling) on the real
-device despite genuinely non-black raw vertex colour data (file 40:
-dark navy; file 45: pure white). Two plausible mechanisms were checked
-and directly ruled out for file 45 via a temporary, reverted census: the
-primitive's `prim_color` and `flat_color` are both confirmed `None` at
-the point `pack_mesh` builds it (so neither RE-106's shade-scale bake nor
-RE-080's flat-colour bake is multiplying it to black), and its raw
-`[255,255,255,0]` bytes fail `looks_like_unit_normal`'s check by a wide
-margin (length² of 3 against an 11,000–21,000 window), so RE-103's
-per-vertex lit fallback cannot be shading it as a normal either. Nothing
-in the material pipeline as read explains a genuinely white, unlit,
-untextured, unscaled vertex colour rendering black on screen. Left open
-rather than guessed at further — see `docs/reverse-engineering.md`
-RE-106's own closing note for the same finding recorded where RE-106's
-mechanism was the most likely (and now eliminated) suspect.
+RE-108 (a later session) found the "black rectangle" question was
+misattributed from the start, and root-caused the real defect. Seven
+mechanisms were eliminated on the real device before the premise itself
+was questioned: forcing the *backing* primitive's vertex colour to
+screaming green (a temporary `pack.rs` hack, confirmed present in the
+built `.pak`) never painted a single visible pixel, and neither did
+ruling out culling, depth testing, texture-state caching, or shade model.
+The decisive test forced `crate::gu::TRANSITION_PHOTO` itself — the
+framebuffer capture buffer — to a uniform green *before any capture
+ever runs*: the **entire** visible shape turned green, proving the
+region RE-107 called "black backing panel" was never the untextured
+backing quad at all. It is one of the object's two `ROLE_FRAMEBUFFER`
+*photo* texture entries (300×5 "drawn once" vs 300×6 "tiles
+vertically") — the backing quad is a thin sliver that was never actually
+visible in any of these tests. Comparing the two photo entries directly
+(nudging one's wrap mode broke its previously-correct magenta,
+identifying it as the working one) isolated the 300×5 entry as the
+broken one, and a raw-UV dump explained why: its baked `V` range is
+`214.97..219.97` texels — the *bottom* edge of the real N64's
+`sLBTransitionPhotoHeap` 300×220 buffer, not the top. RE-100's capture
+only ever stores the buffer's top 6–8 rows (correct for the 300×6
+entry, whose own `V` range starts at 0), so the 300×5 entry wraps into
+memory RE-100's capture never populates with anything relevant. This is
+a scope gap in RE-100's own original measurement (which recorded the
+300×5 entry's *span* — 5.0 texels — correctly, but never checked its
+*absolute position*), not a bug in any of the seven mechanisms this
+session and RE-107 spent real, on-device effort eliminating. Not fixed
+this session — two candidate fixes are recorded (capture a second band
+near the real bottom edge, or rebase each framebuffer-role primitive's
+UV by its own tile's origin at pack time) but neither was attempted; the
+goal was root-causing an already very long investigation, not shipping
+on top of it.
 
 **Still open:** nothing calls `request_transition_capture` from real game
 logic — there is no match-start/match-end event to call it from yet, since
 this project has no game-state/transition system at all. 11 of the 13
 files' geometry still has no on-device screenshot of its own (2 of 13
-now confirmed, chosen to cover both known backing-colour variants), and
-the black-rectangle primitive is now actively investigated and still
-unexplained, not merely unlooked-at. "Render-to-texture paths implemented
-where required" is not a separate gap: RE-099/RE-100 both confirm the
-real mechanism has no render-to-texture pass at all, only a one-time
-capture.
+now confirmed, chosen to cover both known backing-colour variants). The
+"black rectangle" defect is now root-caused (a capture-scope gap, not a
+rendering bug) but not fixed — every one of the other 12 files may hit
+the same 300×5-style entry, so this is very likely not file-45-specific.
+"Render-to-texture paths implemented where required" is not a separate
+gap: RE-099/RE-100 both confirm the real mechanism has no render-to-texture
+pass at all, only a one-time capture.
 
 ### Objective
 
@@ -1561,15 +1577,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap within this implementation (not a reason to uncheck "implemented", since the mechanism genuinely exists and mostly works): the capture only stores the top of the real 220-texel-tall N64 buffer, so any framebuffer-role tile sampling elsewhere in that range (confirmed: one of file 45's two photo tiles, `V ≈ 215..220`) reads the wrong rows
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested this session (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly (chosen to cover both known backing-colour variants, not two arbitrary picks); the other 11 files remain unscreenshotted, and both tested files share one unexplained defect (the backing primitive renders black regardless of its real, non-black vertex colour) that is not yet root-caused
+* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly (chosen to cover both known backing-colour variants, not two arbitrary picks); RE-108 root-caused the one defect those two files shared (a capture-scope gap, see above) rather than leaving it a mystery, but did not fix it; the other 11 files remain unscreenshotted and may hit the same gap
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108 in `docs/reverse-engineering.md`.
 
 ---
 

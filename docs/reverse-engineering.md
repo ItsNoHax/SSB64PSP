@@ -7678,3 +7678,125 @@ material-shape census is real, permanent evidence that those 11 are
 *structurally* the same shape as the two tested — not proof they render
 correctly, since the black-rectangle defect demonstrates structural
 similarity does not guarantee visual correctness.
+
+---
+
+## RE-108 — The "black rectangle" was misattributed from the start; it is a framebuffer-role primitive sampling outside RE-100's captured window, not the untextured backing quad
+
+Picked up exactly where RE-107 left off, which had attributed the
+black-rendering defect to file 45's untextured "backing" primitive
+(raw colour `[255,255,255,0]`, `prim_color`/`flat_color`/RE-103's
+per-vertex lit fallback all confirmed `None`/non-matching). Continued
+elimination on the real device, one isolated variable at a time, each
+change temporary and reverted before the next.
+
+**First corrected the scope of the mystery.** A temporary, reverted
+`romtool` census dumped every primitive of every one of file 45's 8
+display-list nodes, not just the two shapes RE-107 examined. Result: the
+object's `nodes 9`/`tris 704` overlay reading is fully accounted for by 8
+repetitions of one node pair — a framebuffer-textured "photo" node (2 +
+86 triangles, 88 × 8 = 704) and a separate, adjacent, untextured
+"backing" node (2 triangles × 8 = 16, outside the primary-slot total). A
+tiled, Venetian-blind-style construction, not one giant quad plus one
+giant panel.
+
+**Tested whether the packed colour value itself reaches the screen,
+independent of every material-classification question.** A temporary,
+reverted `pack.rs` hack forced any vertex whose raw colour was exactly
+`[255,255,255,0]` (the backing quad's colour) to a screaming green.
+Confirmed the hack took effect by grepping the built `.pak` for the
+packed ABGR8888 pattern (9,971 occurrences). On the real device: no green
+anywhere in the primitive's own screen region — still solid black.
+Eliminated three further GE-state hypotheses the same way (backface
+culling, depth testing, stale texture-state caching, and `ShadeModel`) —
+each ruled out individually, on the real device, with the green-forcing
+hack still active so a fix would have shown green. None changed anything.
+
+**This full elimination was real, but the premise underneath it was
+wrong.** A decisive test exposed it: forcing `crate::gu::TRANSITION_PHOTO`
+(the framebuffer-role capture buffer) to a uniform opaque green,
+*before any capture ever runs*, turned the **entire** visible
+silhouette — both the region RE-107 called "photo" and the region it
+called "backing" — solid green. The untextured backing quad's own green
+override, tested extensively above, never once painted a visible pixel;
+overriding the *photo buffer itself* painted the whole shape on the
+first try. **The backing quad was never visible on screen at all in any
+of these tests** — it is a thin 2-triangle sliver that happens to sit
+directly behind or adjacent to the much larger, and actually-broken,
+photo primitive. RE-107's attribution of the black region to the backing
+quad was a reasonable first guess, given RE-100's own prior note calling
+it "a second, smaller primitive," but it was never verified against the
+device — this session is the first time the two regions were positively
+identified by direct evidence rather than assumption.
+
+**With the real capture restored, comparing the two framebuffer-role
+texture entries directly settled which one is broken.** File 45's photo
+node binds two distinct `ROLE_FRAMEBUFFER` textures, deduplicated by
+`(width, height)` per RE-100's own scheme: a 300×5 entry ("drawn once")
+and a 300×6 entry ("tiles vertically"). Nudging only the 300×6 entry's
+wrap mode and UV offset broke its *previously correct* magenta render —
+proof it samples correctly by default, and proof the on-screen region it
+occupies is the one that already works. That leaves the other region —
+consistently black across every prior test — as the 300×5 entry.
+
+**Reading that entry's actual baked UV data explains everything.** A
+temporary, reverted `romtool` dump of the raw vertex UVs (in real texel
+units, `raw / 32`) for both entries, at every one of the 8 repeated
+nodes:
+
+* 300×6 (works): `V = 0.00..214.97` — starts at the image's own top row.
+* 300×5 (black): `V = 214.97..219.97` — a 5-texel span, but starting at
+  texel 215, not 0.
+
+RE-099's own decompiled source is unambiguous that the real N64
+mechanism copies a **300×220** framebuffer snapshot
+(`sLBTransitionPhotoHeap`), not a 300×6 one. RE-100 measured that every
+file's actual *geometry* only ever samples a small band of that
+220-texel-tall buffer and, from that, built a capture that stores only
+the **top** 6–8 rows — correct for the 300×6 entry, whose own `V` range
+(`0..215`) is itself the wrapped/tiled read RE-100 already knew about.
+It is not correct for the 300×5 entry: `V = 215..220` sits at the
+*bottom* edge of the real 220-tall buffer, a distinct, non-repeating 5
+texels of content RE-100's top-left-only capture never stores at all.
+Wrapped against the actual 8-row buffer PSP builds (`214.97 mod 8 ≈ 7`,
+`219.97 mod 8 ≈ 4`), this samples rows 7→0→1→2→3→4 — a real memory
+region, so no crash and no garbage colour, but the *wrong* rows: RE-100's
+own wrap-fill logic only ever populates rows 6–7 as a copy of rows 0–1
+specifically to serve the 300×6 entry's own repeat period, not as a
+general-purpose stand-in for unrelated absolute offsets elsewhere in the
+conceptual 220-row image. What lands there by construction is whatever
+happens to be in that memory at those row indices — in every test this
+session, that was black.
+
+**This is a scope gap in RE-099/RE-100's own original measurement, not a
+rendering-pipeline bug.** Every one of the seven mechanisms this session
+and RE-107 eliminated (colour data, `prim_color`, `flat_color`, the
+per-vertex lit fallback, culling, depth testing, texture-state caching,
+shade model) was correctly ruled out — none of them is where the defect
+lives. The defect is that RE-100's capture design assumed "every file's
+geometry only needs the top of the real 220-tall buffer" and built
+around that; the 300×5 entry is a real, ROM-verified counterexample RE-100
+did not measure (its own write-up recorded the 300×5 entry's *span* —
+"always exactly 5.0 texels" — correctly, but never recorded or checked
+its *absolute position*).
+
+**Not fixed this session.** A correct fix needs either (a) capturing a
+second, non-adjacent band of the real framebuffer near where the 300×5
+entries actually sample (device-resolution-relative, so "the bottom",
+not a fixed row range, unless a fixed relationship to screen height is
+confirmed across files) or (b) rebasing each framebuffer-role primitive's
+baked UV by its own tile's `ult`/`uls` origin at pack time, the way real
+RDP hardware's TMEM addressing implicitly does, so every entry samples
+from a shared, small, origin-relative capture regardless of where in the
+conceptual 220-row image its own tile originally pointed. Option (b) is
+likely the more general, format-correct fix, but was not attempted this
+session — the goal here was root-causing, not shipping a fix on top of
+an already very long investigation. All temporary patches (`pack.rs`
+colour-force, `meshdraw.rs` cull/depth/texture-cache/shade-model
+overrides, `gu.rs`'s `TRANSITION_PHOTO` initial value, `main.rs`'s
+forced object view, `romtool`'s UV/material census) were reverted after
+use; `git diff --stat` is empty for every file except this document.
+`cargo test --workspace` (261 `ssb-rom` tests) and
+`cargo clippy --release --workspace` stayed clean throughout; the
+default (non-transition) build was re-screenshotted clean (Dream Land
+pixel-normal, 60 FPS) after every revert.
