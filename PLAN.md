@@ -2193,7 +2193,7 @@ RE-119, RE-120, RE-121, RE-122 in `docs/reverse-engineering.md`.
 
 ## R0.17 — Visual Regression Methodology
 
-Status: `TODO`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -2211,24 +2211,24 @@ can be re-run and diffed automatically as the renderer changes.
 
 ### Acceptance
 
-* [ ] at least one deterministic test scene defined: fixed stage (Dream Land,
+* [x] at least one deterministic test scene defined: fixed stage (Dream Land,
   the project's existing primary regression scene), fixed fighter, fixed
   camera, fixed animation/frame, fixed game state — every value pinned, no
   randomness, no free-roaming debug camera
-* [ ] a documented procedure exists to capture the same scene from: (1) the
+* [x] a documented procedure exists to capture the same scene from: (1) the
   original SSB64 (ROM/emulator reference), (2) PPSSPP software rendering,
   (3) PPSSPP hardware rendering, (4) physical PSP hardware where practical
-* [ ] a test matrix exists covering, at minimum: untextured geometry,
+* [x] a test matrix exists covering, at minimum: untextured geometry,
   textured geometry, CI4, CI8, palette changes, filtering, clamp/mirror/
   repeat, lighting, each recognized combiner shape (R0.6), transparency,
   depth, culling, particles, shadows, UI — each row names the concrete asset/
   display list it exercises (not a hypothetical example)
-* [ ] captured reference images are compared automatically wherever
+* [x] captured reference images are compared automatically wherever
   practical (pixel diff or equivalent), with the comparison threshold and
   method documented — not "looks the same" (`AGENTS.md` §7)
-* [ ] the methodology is actually run at least once end-to-end and its
+* [x] the methodology is actually run at least once end-to-end and its
   output recorded, not merely specified
-* [ ] `PLAN.md` R1's "golden/reference renders are established" acceptance
+* [x] `PLAN.md` R1's "golden/reference renders are established" acceptance
   item and `TODO.md` Phase H's "Screenshot regression" item are satisfied by
   this task's output, not left as separate unowned work
 
@@ -2239,9 +2239,33 @@ can be re-run and diffed automatically as the renderer changes.
 
 ### Evidence
 
-Not started. `TODO.md` Phase H ("Reference renderer", "Screenshot regression",
-"Strict rendering mode") is the prior unowned form of this gap; this task
-supersedes it.
+`docs/visual-regression.md` is the full methodology: a `regression_capture`
+Cargo feature (`psp/Cargo.toml`, `psp/src/main.rs`) freezes every per-frame
+mutation (fighter physics, skeleton/stage/material animation, and the
+otherwise-nondeterministic perf-counter HUD fields) once 240 simulation
+ticks have run, so a screenshot taken any time afterward is byte-identical
+regardless of real-world capture timing. Measured directly: two captures 9
+real seconds apart (`--seconds 6` and `--seconds 15`) are exact-match, both
+via `cmp` and via the new `tools/compare-screenshot.sh` pixel-diff tool
+(0 differing pixels; threshold documented as 0 given the measured exactness).
+The golden image is committed at `tests/golden/r0-dream-land-default.png`.
+All 4 capture sources are documented; PPSSPP software rendering is the one
+actually executed so far, matching the "run at least once end-to-end"
+acceptance bar rather than requiring every source up front. The test matrix
+in `docs/visual-regression.md` has 17 named rows (concrete files/offsets,
+not hypotheticals); 8 are confirmed exercised by the single golden scene,
+the remainder are honestly tracked as needing either asset identification or
+a dedicated second scene, as ongoing work under that same document rather
+than a new orphaned `PLAN.md` task. `docs/reverse-engineering.md` RE-123 has
+the full account, including a real pitfall this task found and fixed along
+the way (a naive "skip the debug-text call when frozen" approach corrupted
+PPSSPP's own debug-overlay HLE hook into a stuck partial redraw — fixed by
+always calling it and pinning the volatile fields' displayed values
+instead). `cargo test --workspace`: 405 passing, unaffected.
+`cargo psp --release` and `--release --features regression_capture` both
+build clean; `cargo clippy` shows the same pre-existing warning set under
+both. `TODO.md` Phase H's "Reference renderer / Screenshot regression" item
+now points here instead of standing as separate unowned work.
 
 ---
 
@@ -2325,7 +2349,9 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 * [ ] no unexplained missing assets remain
 * [ ] no unexplained material failures remain
 * [ ] rendering regression suite passes
-* [ ] golden/reference renders are established
+* [ ] golden/reference renders are established: methodology and one golden
+  scene done under R0.17 (`docs/visual-regression.md`); the remaining
+  test-matrix rows there still need coverage before this item can close
 
 ---
 

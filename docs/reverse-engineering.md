@@ -9120,3 +9120,90 @@ satisfied for all three named optimizations: vertex dedup and material
 merge were confirmed safe by construction, and `TexKey`/texture-cache
 dedup had one real, measured violation (126 archive-wide occurrences),
 now fixed rather than merely documented as a risk.
+
+## RE-123 — A deterministic capture mode for R0.17's visual regression methodology, and a PPSSPP debug-overlay pitfall found along the way
+
+**Question.** `PLAN.md` R0.17 requires "a fixed, reproducible scene/camera/
+frame that can be re-run and diffed automatically" — but every existing
+screenshot in this project's own history (RE-050 onward) was captured with
+`tools/run-ppsspp.sh --seconds N`, which waits N *real* seconds, not N
+*simulation ticks*. Whether that already produces a deterministic frame, or
+only looks like it does because nobody had compared two captures pixel-for-
+pixel before, had not been measured.
+
+**It does not, as shipped.** The debug viewer boots directly into Dream
+Land with Mario simulated (`sim_fighter = true` by default,
+`psp/src/main.rs`), and `Play::at_spawn` always places him at the stage's
+own spawn 0 (`psp/src/play.rs`) — no randomness anywhere in that path. But
+`Play::tick_animation`'s own doc comment names the actual gap: a status's
+animation "carries its own clock" and "a looping one is left to loop" — so
+even after Mario lands and settles into `Wait`, the idle animation keeps
+cycling forever. Two captures at different wall-clock offsets from boot can
+therefore land on different phases of that loop, and nothing in the harness
+controlled for it. Separately, `MaterialAnimator::tick` and
+`StageAnimator::tick` are called once per *rendered* frame
+(`psp/src/main.rs`, outside the fixed-60 Hz tick loop that drives
+`Play::tick`), not once per simulation tick — so their phase is tied
+directly to however fast PPSSPP's software rasteriser happens to be
+running on the host at capture time, which is exactly the kind of thing
+`tools/run-ppsspp.sh`'s own defensive engineering already treats as
+untrustworthy (locked-screen timing, window-border artifacts, etc.).
+
+**Fix: freeze every per-frame mutation past a fixed simulation-tick count,
+not a fixed wall-clock time.** Added a `regression_capture` Cargo feature
+to the `ssb64-psp` crate (`psp/Cargo.toml`), off by default so the
+interactive debug viewer is unaffected. A new `sim_frame_index: u64`
+counter increments once per simulation tick (the loop already iterates
+`for _ in 0..ticks` at a fixed 60 Hz, `psp/src/main.rs`); a
+`regression_frozen(sim_frame_index)` helper returns `true` once it passes
+`regression::TARGET_TICKS` (240 — 4 real seconds, comfortably past Mario's
+fall from Dream Land's spawn height) when the feature is enabled, and
+always `false` otherwise, so call sites need one guard rather than a `cfg`
+each. Gated behind it: `Play::tick` (fighter physics), the object-view
+skeleton tick, `StageAnimator::tick`, and `MaterialAnimator::tick`. Once
+frozen, nothing in the sim ever changes again, so a screenshot at tick 240
+and one at tick 900 are the same frame — the capture script's `--seconds N`
+no longer has to hit an exact value, only "past the freeze point".
+
+**A real pitfall: don't stop calling a PPSSPP debug hook, pin its output
+instead.** The first version of this fix also skipped the on-screen HUD's
+`gpu.debug_text` call once frozen, reasoning that its live `cpu`/`frame`/
+`tick` perf counters are the one remaining nondeterministic content in the
+frame. That produced two screenshots that were still *visually* different
+at 6 s and 15 s past boot — not the live counters this time, but the whole
+HUD rendering in a corrupted, truncated, partial-width form, cut off
+mid-word at a fixed pixel column, compared to the full-width text a normal
+build (or an early, pre-freeze frame) shows. `gpu.debug_text` is a thin
+wrapper over `sceGuDebugPrint` (`psp/src/gu.rs`) — a PPSSPP-only debug HLE
+hook, not real GE drawing (the same function `tools/run-ppsspp.sh`'s own
+comments already flag: "`sceGuDebugFlush` paints the debug overlay" in a
+way invisible under hardware backends, RE-014). Calling it on some frames
+and never again evidently leaves PPSSPP's own internal overlay state
+machine in a stuck, half-redrawn condition — an artifact of that debug
+hook's implementation, not of anything in the emulated framebuffer. Fixed
+by always calling `gpu.debug_text` every frame, unconditionally, and
+instead pinning the three volatile values it prints (`shown_cpu_us`,
+`shown_frame_us`, `shown_tick`, all `0` once frozen) so the *printed
+string* stops changing rather than the call itself stopping.
+
+**Verified.** Built `cargo psp --release --features regression_capture`,
+ran `tools/run-ppsspp.sh --no-build --seconds 6` then
+`--no-build --seconds 15` (9 real seconds apart, both past the tick-240
+freeze point): the two screenshots are byte-identical (`cmp`, exit 0) and
+0 differing pixels under `tools/compare-screenshot.sh` (new tool, wraps
+`magick compare -metric AE`). Before the debug-text fix, the same two-
+capture comparison showed exactly the truncated-HUD artifact described
+above; after it, full-width text reading `frame 0us tick 0` in both
+captures. `cargo test --workspace`: 405 passing, unaffected. `cargo psp
+--release` (default, feature off) and `--release --features
+regression_capture` both build clean; `cargo clippy --release` shows the
+same pre-existing 6-warning set under both (mutable-static-ref,
+unnecessary-min-or-max, and two dead-code warnings already present before
+this change) — nothing new introduced.
+
+**What this closes.** `PLAN.md` R0.17's "at least one deterministic test
+scene", "methodology is actually run at least once end-to-end", and
+"captured reference images are compared automatically... with the
+comparison threshold and method documented" acceptance items. Full account
+and the remaining test-matrix work is in `docs/visual-regression.md`; the
+golden image is `tests/golden/r0-dream-land-default.png`.

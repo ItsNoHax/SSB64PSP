@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-122)
+**Last updated:** 2026-09-04 (RE-123)
 
 ---
 
@@ -12,56 +12,104 @@
 
 ## Current Task
 
-`R0.16 — N64 Render-State Model Fidelity` is now `COMPLETE`. RE-119
-fixed a real bug in `romtool`'s own diagnostic tooling (`G_SHADE` mapped
-to the wrong bit) and refreshed R0.2's stale opcode inventory, surfacing
-two undocumented geometry-mode categories (`G_SHADE`, `G_TEXTURE_GEN` —
-the latter is the "Metal [Character]" transformation effect, correctly
-deferred behind combat/items). RE-120 closed the `G_SHADE` cross-
-reference: 31 archive-wide occurrences, 29 in content this project
-doesn't render yet (items/effects), 2 affecting Yoshi's Island (a real,
-narrow, documented open lead). RE-121 audited every `MeshMaterial` field
-against its real consumers and found `blend_color` is never packed at
-all — measured it archive-wide and confirmed it's genuinely inert (no
-blend equation ever reads the blend-color register), the same shape
-RE-072 found for fog; also fixed two stale "not consumed on the device"
-doc comments RE-074 had already contradicted. **RE-122 (this session)
-found and fixed a real, previously-unknown bug**: `tools/romtool`'s
-`TexKey` texture-cache dedup ignored wrap/mirror/clamp mode entirely,
-so two bindings of the same image+palette with *different* real
-`cms`/`cmt` silently shared one cache entry — one of them getting the
-wrong pre-baked (possibly mirrored) texture bytes. Measured 126
-archive-wide occurrences across 19+ files; fixed by widening `TexKey` to
-include wrap/mirror/clamp mode. Textures `899 → 935` (+36), pack size
-+1.8%, default build re-screenshotted clean. **All 5 of R0.16's
-acceptance items are now satisfied.** See "Task Status" below for the
-full account.
+`R0.17 — Visual Regression Methodology` is now `COMPLETE`. RE-123 (this
+session) built the deterministic capture mode R0.17 requires: a
+`regression_capture` Cargo feature on `ssb64-psp` (off by default) that
+freezes every per-frame mutation — fighter physics, skeleton/stage/
+material animation, and the otherwise-live perf-counter HUD fields —
+once 240 simulation ticks have run, so a screenshot taken any time
+afterward is byte-identical regardless of real-world capture timing.
+Measured directly: two captures 9 real seconds apart are exact-match via
+both `cmp` and the new `tools/compare-screenshot.sh` pixel-diff tool (0
+differing pixels). Along the way, found and fixed a real pitfall: an
+early version skipped the debug-text call entirely once frozen, which
+corrupted PPSSPP's own `sceGuDebugPrint` debug-overlay hook into a stuck,
+truncated partial redraw — fixed by always calling it and pinning its
+volatile fields' *displayed values* instead of skipping the call. The
+golden image is `tests/golden/r0-dream-land-default.png`; the full
+methodology (deterministic scene definition, 4-source capture procedure,
+17-row test matrix, comparison tooling) is `docs/visual-regression.md`.
+**All 6 of R0.17's acceptance items are now satisfied.** See "Task
+Status" below for the full account.
 
-Per `PLAN.md`'s task ordering, the next eligible task is `R0.17 —
-Visual Regression Methodology` (depends on R0.1 ✓, R0.2 ✓, no unmet
-dependency) — establishing a deterministic, repeatable test scene/
-camera/frame that can be captured and diffed automatically, rather than
-the ad hoc, per-investigation screenshots this project has relied on so
-far. `R0.18 — Reference-Port Comparative Audit` (depends on R0.2 ✓) is
-also eligible if R0.17 turns out blocked.
+Per `PLAN.md`'s task ordering, the next eligible task is `R0.18 —
+Reference-Port Comparative Audit` (depends on R0.2 ✓, no unmet
+dependency) — auditing this project's own conclusions against cloned
+reference-port repositories (`sf64-psp`, `oot-PSP`) rather than only
+this project's own prior findings.
 
+`R0.16 — N64 Render-State Model Fidelity` closed `COMPLETE` in an
+earlier session (RE-119 through RE-122: a real `romtool` diagnostic bug
+fixed, `G_SHADE`'s archive-wide impact measured and classified,
+`blend_color`'s correct-but-undocumented absence found and documented,
+and a genuine 126-occurrence texture-cache dedup bug found and fixed).
 `R0.15 — Render-State Isolation` closed `COMPLETE` in an earlier
 session (RE-117/118: all 10 state categories covered across both the
 decode-time `mesh.rs` layer and the device-side `DrawState` GE-cache
 layer, one real bug found and fixed in the latter). `R0.13 —
 Framebuffer Rendering` has no further actionable rendering work
 (RE-116: all 13 LB-transition files confirmed correct; remaining items
-blocked on a game-state system that doesn't exist yet). `R0.11 —
-Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
-(RE-098 plus its closing addendum: all 12 real fighters individually
-verified).
+blocked on a game-state system that doesn't exist yet).
 
 ## Task Status
 
-RE-122 (this session) closed R0.16's last acceptance item: checking
-D-036's ordering rule (state fidelity before batching/dedup) against
-every shipped optimization. See `docs/reverse-engineering.md` RE-122 for
-the full account; summary:
+RE-123 (this session) built R0.17's deterministic capture mode and
+closed all of its acceptance items. See `docs/reverse-engineering.md`
+RE-123 and `docs/visual-regression.md` for the full account; summary:
+
+* **The existing screenshot harness was not actually deterministic.**
+  `tools/run-ppsspp.sh --seconds N` waits N *real* seconds, not N
+  *simulation ticks*. Mario's idle animation loops forever once he lands
+  (`Play::tick_animation`'s own doc comment says as much), and
+  `MaterialAnimator`/`StageAnimator` tick once per *rendered* frame, not
+  per simulation tick — so both are tied to however fast PPSSPP's
+  software rasteriser happens to run on the host at capture time.
+  Neither had been checked pixel-for-pixel before.
+* **Fixed with a `regression_capture` Cargo feature** (off by default)
+  on `ssb64-psp`. A `sim_frame_index` counter tracks simulation ticks
+  since boot; once it passes 240 (4 real seconds — comfortably past
+  Mario's fall from Dream Land's spawn height), `Play::tick`, the
+  object-view skeleton tick, `StageAnimator::tick`, and
+  `MaterialAnimator::tick` all freeze. Nothing in the sim is random, so
+  a frozen state never changes again regardless of capture timing.
+* **A real pitfall found and fixed along the way.** The first version
+  also skipped the on-screen debug HUD's `gpu.debug_text` call once
+  frozen, to hide its live `cpu`/`frame`/`tick` perf counters (the one
+  remaining nondeterministic content). That corrupted PPSSPP's own
+  `sceGuDebugPrint` overlay into a stuck, truncated partial-width
+  redraw — it is a PPSSPP-only debug HLE hook, not real GE drawing, and
+  evidently does not tolerate being called on some frames and never
+  again. Fixed by always calling it, every frame, and pinning the three
+  volatile values it prints to `0` once frozen instead.
+* **Verified.** Two captures 9 real seconds apart
+  (`--seconds 6` / `--seconds 15`, both past the freeze point) are
+  byte-identical via `cmp` and 0 differing pixels via the new
+  `tools/compare-screenshot.sh` (wraps `magick compare -metric AE`,
+  threshold documented as 0 given the measured exactness). Golden image
+  committed at `tests/golden/r0-dream-land-default.png`.
+* **Also produced:** a 17-row test matrix in `docs/visual-regression.md`
+  naming concrete assets/files per rendering category (CI4, mirror wrap,
+  lighting, depth, culling, etc.), 8 confirmed covered by this one
+  scene, the rest honestly tracked as needing further work rather than
+  assumed; a documented (not yet fully executed) 4-source capture
+  procedure covering PPSSPP software/hardware, physical PSP, and N64
+  reference.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo psp
+  --release` (feature off) and `--release --features
+  regression_capture` both build clean; `cargo clippy --release` shows
+  the same pre-existing 6-warning set under both.
+* **What this closes:** all 6 of `PLAN.md` R0.17's acceptance items,
+  including consolidating `TODO.md` Phase H's "Reference renderer /
+  Screenshot regression" item and giving R1's "golden/reference renders"
+  item a concrete owner. **`R0.17 — Visual Regression Methodology`
+  moves `TODO` → `COMPLETE`.**
+
+## Previous Task Status
+
+RE-122 (an earlier session) closed R0.16's last acceptance item:
+checking D-036's ordering rule (state fidelity before batching/dedup)
+against every shipped optimization. See `docs/reverse-engineering.md`
+RE-122 for the full account; summary:
 
 * **Vertex dedup and material merge are both safe by construction.**
   `Builder::push_vertex` keys on the full post-bake `MeshVertex`;
@@ -97,7 +145,7 @@ the full account; summary:
   last of its 5 items, is now satisfied. **`R0.16 — N64 Render-State
   Model Fidelity` moves `IN_PROGRESS` → `COMPLETE`.**
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-121 (earlier in this session) closed R0.16's second acceptance item:
 is any state category silently dropped between `mesh.rs`'s
