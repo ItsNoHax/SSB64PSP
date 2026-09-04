@@ -399,6 +399,7 @@ fn opcode_of(cmd: &Cmd) -> u8 {
         Cmd::SetOtherModeH { .. } => dl::G_SETOTHERMODE_H,
         Cmd::SetOtherModeL { .. } => dl::G_SETOTHERMODE_L,
         Cmd::Sync(op) => op,
+        Cmd::MoveWord { .. } => dl::G_MOVEWORD,
         Cmd::Other { opcode, .. } => opcode,
     }
 }

@@ -135,6 +135,31 @@ unsafe fn bind_texture(
     t: &TextureDesc,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
 ) {
+    // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099/RE-100)
+    // -- `pack.texture_data` would return an empty slice, not `None`, so it
+    // must be intercepted here rather than falling into the ordinary path
+    // below. The real pixels live in `crate::gu`'s transition-photo capture,
+    // filled in by `Gpu::request_transition_capture` the first time the LB
+    // "loading transition" system starts.
+    if t.role == TextureDesc::ROLE_FRAMEBUFFER {
+        sys::sceGuEnable(GuState::Texture2D);
+        let psm = psm_of(t.psm);
+        sys::sceGuTexMode(psm, 0, 0, 0);
+        let data = crate::gu::transition_photo_data();
+        // Matches the general path below: the GE addresses `t.stride`
+        // (padded power of two), never `t.width`, and `sceGuTexScale`'s
+        // denominators must be exactly what was handed to `sceGuTexImage`.
+        let w = t.stride as i32;
+        let h = (t.height as u32).next_power_of_two() as i32;
+        sys::sceGuTexImage(mip_level(0), w, h, w, data.as_ptr() as *const c_void);
+        sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
+        const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0;
+        sys::sceGuTexScale(UV_SCALE / w as f32, UV_SCALE / h as f32);
+        sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
+        sys::sceGuTexOffset(0.0, 0.0);
+        return;
+    }
+
     let Some(data) = pack.texture_data(t) else {
         return;
     };
@@ -226,23 +251,37 @@ unsafe fn bind_texture(
     sys::sceGuTexScale(UV_SCALE / t.stride as f32, UV_SCALE / padded_h);
 
     // Mesh UVs routinely run outside 0..1 (measured -55..119 texels on a
-    // 64-wide texture), so the texture must tile rather than clamp. This is
-    // not just an approximation of convenience: RE-066 measured every
-    // tile-0 `G_SETTILE` in the ROM (754, archive-wide) and found clamp/
-    // mirror is *only ever* requested on an axis whose own mask is also
-    // nonzero -- i.e. every render tile the game asks to clamp is also one
-    // it declares periodic, and `crates/ssb-rom/src/mesh.rs`'s
-    // `current_texture()` already narrows width/height to that period
-    // (RE-044). Repeating over that already-narrowed size reproduces the
-    // real periodic TMEM addressing exactly; a literal `Clamp` would not
-    // (there would be nothing to tile after the mask-based narrowing wrote
-    // over the "real" pre-narrowed size). The one gap this doesn't cover is
-    // `G_TX_MIRROR` (27.6% of tile-0 lists, RE-066) -- the GE has no mirror
-    // wrap mode, so a mirrored texture repeats with a visible seam every
-    // period instead of bouncing smoothly. Accepted deviation, not fixed
-    // here; see RE-066 for the measurement and a sketch of an exact fix
-    // (pre-baking a flipped copy) and its VRAM cost.
-    sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
+    // 64-wide texture), so most textures must tile rather than clamp -- RE-066
+    // measured every tile-0 `G_SETTILE` in the ROM (754, archive-wide) and
+    // found clamp/mirror is *only ever* requested on an axis whose own mask
+    // is also nonzero. RE-066 read that as "clamp is always redundant with
+    // mask-based narrowing" and always used `Repeat`, but RE-102 found a
+    // counter-example on fighter face textures: `current_texture()`'s
+    // `RE-044` narrowing only *shrinks* width/height when the mask period is
+    // smaller than the drawn rect, and on these it is not (mask 32, drawn
+    // rect 24) -- so narrowing is a no-op, real hardware clamps at that
+    // undisturbed 24, and a UV that runs well past it (measured up to 110
+    // texels on one) must not tile. `t.wrap` (`TextureDesc::CLAMP_S`/
+    // `CLAMP_T`) carries the real `cms`/`cmt` clamp bit per axis for exactly
+    // this case, independent of mirroring (RE-067's pre-baked flipped copy):
+    // `cms`/`cmt` == 3 (both bits) is real hardware's "mirror once, then
+    // clamp", and clamping past RE-067's doubled texture reproduces that
+    // exactly, since the last sampled row/column of the doubled image *is*
+    // the held edge. Several fighters' torso/head textures are exactly this
+    // combination with UVs overflowing the mirrored pair by 2x or more
+    // (Fox, Captain Falcon, Kirby) -- see `mesh::TextureRef::clamp_s`/
+    // `clamp_t`.
+    let wrap_of = |clamp: bool| {
+        if clamp {
+            sys::GuTexWrapMode::Clamp
+        } else {
+            sys::GuTexWrapMode::Repeat
+        }
+    };
+    sys::sceGuTexWrap(
+        wrap_of(t.wrap & TextureDesc::CLAMP_S != 0),
+        wrap_of(t.wrap & TextureDesc::CLAMP_T != 0),
+    );
     sys::sceGuTexOffset(0.0, 0.0);
 }
 

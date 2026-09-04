@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-099)
+**Last updated:** 2026-09-04 (RE-100)
 
 ---
 
@@ -12,15 +12,106 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`TODO`). RE-099 (this session) scoped it
-precisely — see "Task Status" below — but no implementation has landed
-yet; that is the next session's work. `R0.11 — Fighter Palettes /
-Costumes` closed `COMPLETE` earlier this session (RE-098 plus its closing
-addendum: all 12 real fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-100 (this session)
+implemented and device-verified the framebuffer capture/bind mechanism —
+see "Task Status" below. `screen wipes implemented` and `visual
+verification completed` remain open: there is no real trigger event
+(match start/end) to call the new capture capability from yet, and only
+1 of 13 transition files' geometry was actually looked at. `R0.11 —
+Fighter Palettes / Costumes` closed `COMPLETE` in an earlier session
+(RE-098 plus its closing addendum: all 12 real fighters individually
+verified).
 
 ## Task Status
 
-RE-099 (this session) scoped `R0.13` precisely instead of starting
+RE-100 (this session) picked up exactly where RE-099 (previous session)
+left off: RE-099 scoped the LB transition mechanism but explicitly left
+one design question unverified — does a PSP port need the N64's own full
+`300×220` capture with strip-by-strip TMEM addressing reproduced, or does
+a smaller capture with unmodified UVs suffice? Measured it directly
+(`romtool textures --file <id>` across all 13 files, not just one) before
+writing any implementation.
+
+**RE-099's own favoured hypothesis was wrong.** Every file's 300×5 tile
+draws once (V span always exactly 5.0 texels); every file's 300×6 tile
+tiles vertically by ordinary wrap addressing (V span 22.5–215 texels,
+3.75×–35.83× repeat depending on the file). U never wraps in any of the
+13 files. The real ROM shows a **repeating 6-row colour smear**, not a
+crisp photo — the correct PSP capture is a **300×6 top-left corner**
+(3,600 texels), far smaller than RE-099's own "maybe the full 300×220"
+guess.
+
+**Implemented the whole pipeline this session, verified at every layer:**
+
+* `crates/ssb-rom`: `mobj::LB_TRANSITION_SEGMENT`, `mesh::State::
+  framebuffer_capture` (set by a segment-`0x1` `G_SETTIMG`, cleared by
+  any real one), `mesh::TextureRef::framebuffer`, `pack::TextureDesc::role`
+  (`pack::VERSION` 13 → 14, `TextureDesc::SIZE` 32 → 36 — the first growth
+  since `mat_anim`, RE-091, exhausted the struct's spare tail padding).
+* `tools/romtool`: `pack_mesh` dedups the 13 files' 26 segment-`0x1`
+  binds down to the 2 distinct shapes that actually exist (`(u32::MAX,
+  u32::MAX, width, height)`, not `texture_cache_key` — a framebuffer ref's
+  placeholder `(data_file: None, data_offset: 0, palette: None)` would
+  otherwise collide with a real unpaletted texture at a file's own
+  offset 0).
+* `psp/src/gu.rs`: `Gpu::request_transition_capture()`, a CPU-side VRAM
+  readback (`VramMemChunk::as_mut_ptr_direct_to_vram()`, not the
+  GE-relative `as_mut_ptr_from_zero()` pointers `sceGuDrawBuffer` already
+  uses) into a small `Psm8888` buffer, timed against a manually-tracked
+  `draw_is_fbp0` flag kept in lockstep with the PSP SDK's own internal
+  `sceGuSwapBuffers` buffer-role swap. Rows 6–7 of the padded 8-row buffer
+  are filled with a wrapped copy of rows 0–1 so the GE's own padded-height
+  wrap period (8, not the real 6) doesn't introduce two unintended extra
+  rows into the repeat.
+* `psp/src/meshdraw.rs`: `bind_texture` intercepts `ROLE_FRAMEBUFFER`
+  before `pack.texture_data` (which returns `Some(&[])`, not `None`, for
+  a zero-length entry) and sources pixels from the new capture buffer
+  instead, using `t.stride`/`t.height` the same way the general path
+  already does.
+
+**Verified at every layer, not just built.** `cargo test --workspace`:
+401 passing (was 398; 3 new tests: two in `mesh.rs` proving the segment
+marker sets and clears correctly, one in `pack.rs` proving `role`/`stride`
+round-trip without corrupting a neighbouring descriptor — the same guard
+class the struct's own doc comment already describes for `mat_anim`).
+`cargo clippy --release` (workspace): clean. Rebuilt the real pack: 901 →
+**903 textures** (exactly 2 new entries, confirming the dedup key
+collapses 26 real binds correctly), size 5264.1 → 5267.7 KiB (+3.6 KiB,
+almost entirely `TextureDesc::SIZE`'s growth applied to the 901
+pre-existing textures, not new texel bytes — a framebuffer entry bakes
+none).
+
+**Confirmed on the real device profile, not just compiled.** A temporary,
+reverted example binary found all 13 transition files' scene graphs
+already exist as ordinary pack objects and really do carry
+`ROLE_FRAMEBUFFER` textures. A temporary, reverted `psp/src/main.rs`
+patch (`git diff --stat` after reverting is empty) let Dream Land render
+for 30 frames, set the clear colour to an unmistakable magenta for
+exactly frame 30, called `gpu.request_transition_capture()` that same
+frame, then forced the viewer onto file 40's transition object (1,000
+triangles, the largest single object in the whole pack) from frame 35
+onward. Screenshot: the transition's largest primitive renders the
+**magenta test colour** — direct evidence the capture reads real
+just-rendered screen content and the bind displays it correctly, not a
+plausibility argument. `tools/run-ppsspp.sh` on the unmodified build
+afterward: Dream Land renders pixel-normal at 60 FPS, confirming this
+session's changes don't disturb the default rendering path.
+
+**Not fully closed.** A second, smaller primitive on the same object
+rendered solid black throughout — not investigated (plausibly a
+deliberate black panel behind the "photo" window, not confirmed). Nothing
+calls `request_transition_capture` from real game logic: there is no
+match-start/match-end event to call it from, since this project has no
+game-state/transition system at all — `screen wipes implemented` and
+`visual verification completed` stay open. `PLAN.md` R0.13 moved
+`TODO` → `IN_PROGRESS`, with `framebuffer texture paths implemented` and
+`render-to-texture paths implemented where required` (RE-099/RE-100 both
+confirm there is no render-to-texture pass to implement — satisfied by
+there being nothing here that applies) now checked.
+
+## Previous Task Status
+
+RE-099 (previous session) scoped `R0.13` precisely instead of starting
 implementation cold. Read `refs/ssb-decomp-re/src/lb/lbtransition.c`
 directly (239 lines, the whole file) rather than continuing to reason
 from RE-055's own paraphrase, and found the mechanism is considerably
@@ -30,12 +121,7 @@ the current framebuffer into a `300×220` `u16` heap — not a per-frame
 render-to-texture pass. Every frame after that, `lbTransitionProcDisplay`
 just binds the already-captured snapshot as RSP segment `0x1` and draws
 the transition's own ordinary `DObjDesc`/`AObjEvent32` scene graph, the
-same tree-walk this project already converts for every other object. The
-only genuinely new capability `R0.13` needs is a one-time PSP-side
-framebuffer snapshot into a texture, plus recognising segment `0x1` as
-that special identity instead of failing to resolve it (mirroring how
-`mobj::GRAPHICS_HEAP_SEGMENT`, `0x0E`, is already special-cased for a
-different runtime-only segment).
+same tree-walk this project already converts for every other object.
 
 Also corrected RE-055's own scope: measured directly against the ROM
 (`romtool textures --file <id>`, not the decomp's `dLBTransitionDescs`
@@ -46,23 +132,19 @@ identified this session) and 47 (`LBTransitionPaperAirplane`, not in the
 binds = 26, exactly matching R0.3's original segment-`0x01` failure
 count — so RE-055's "26" was right, its "11 files" attribution was an
 undercount by 2, now fully resolved. A likely design simplification was
-identified but not verified: the N64 tiles the image into small strips
-purely because the RSP's TMEM is 4 KB; the PSP GE has no equivalent
-limit, so one full-size PSP texture capture may need no strip-by-strip
-capture logic at all, letting every transition's existing UV coordinates
-address into it unchanged.
+identified but explicitly left unverified: the N64 tiles the image into
+small strips purely because the RSP's TMEM is 4 KB; the PSP GE has no
+equivalent limit, so one full-size PSP texture capture might need no
+strip-by-strip capture logic at all. **RE-100 (this session) checked this
+directly and found it was wrong** — see "Task Status" above.
 
-**Not implemented — this is a scoping pass**, the same shape as
-RE-076/081/096. `git diff --stat` after this session's `R0.13` work is
-documentation-only (`PLAN.md`, `STATUS.md`, `docs/reverse-engineering.md`).
-`PLAN.md` R0.13's "framebuffer usage identified" acceptance item is now
-checked; the other five (texture paths, screen wipes, render-to-texture,
-synchronization, visual verification) remain genuinely open — this
-session de-risked the design, it did not build anything.
+Not implemented that session — a scoping pass, the same shape as
+RE-076/081/096. `git diff --stat` after RE-099's own `R0.13` work was
+documentation-only.
 
-## Previous Task Status
+## Earlier Task Status
 
-RE-098 (this session) implemented and shipped multi-costume packing and
+RE-098 (an earlier session) implemented and shipped multi-costume packing and
 device-side selection, closing four of `R0.11`'s five acceptance items.
 Confirmed by reading the real consuming code (not assumed) that a
 fighter's alternate costumes share identical geometry and vary only
@@ -145,9 +227,7 @@ introduced. All temporary patches (the forced object/costume override,
 a throwaway example binary used to look up object indices by source
 file) were fully reverted. **`R0.11` is now `COMPLETE`.**
 
-## Earlier Task Status
-
-RE-097 (previous session) implemented and shipped the concrete lead RE-096
+Immediately before this, RE-097 (previous session) implemented and shipped the concrete lead RE-096
 handed off: `colors_at` (`crates/ssb-rom/src/matanim.rs`) now also reads
 `PaletteID` (joint track 9) alongside its existing `PRIM`/`ENV`/`BLEND`
 colour tracks, using the same step/base/target bookkeeping, resolved via

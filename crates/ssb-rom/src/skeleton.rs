@@ -642,7 +642,7 @@ mod tests {
             palette: alloc::vec![0xFF00_00FFu32; 16],
             levels: 1,
         };
-        let texture = w.add_texture(&tex);
+        let texture = w.add_texture(&tex, false, false);
         let file_bytes = palette_cycle_script();
         let palettes = alloc::vec![
             alloc::vec![0x1111_1111u32; 16],
@@ -710,7 +710,7 @@ mod tests {
             palette: alloc::vec![0xFF00_00FFu32; 16],
             levels: 1,
         };
-        let texture = w.add_texture(&tex);
+        let texture = w.add_texture(&tex, false, false);
         const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
         const OP_END: u32 = 0;
         const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;

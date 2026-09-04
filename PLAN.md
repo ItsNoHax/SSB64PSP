@@ -1393,47 +1393,55 @@ RE-049, RE-062, RE-063, RE-083 in `docs/reverse-engineering.md`.
 
 ## R0.13 — Framebuffer Rendering
 
-Status: `TODO`
+Status: `IN_PROGRESS`
 
 ### Current evidence
 
-No framebuffer-based rendering path (render-to-texture, screen wipes) is
-implemented. RE-055 (`docs/reverse-engineering.md`) identified the concrete
-target: the LB (loading-break) transition system's `sLBTransitionPhotoHeap`,
-bound to RSP segment `0x1` and sampled by a set of between-match transition
-effects. Genuinely not started, but no longer unscoped — RE-099 (this
-session) read the mechanism directly rather than continuing to reason from
-RE-055's paraphrase, and it is considerably simpler than "framebuffer
-rendering" suggests:
+RE-055 (`docs/reverse-engineering.md`) identified the concrete target: the
+LB (loading-break) transition system's `sLBTransitionPhotoHeap`, bound to
+RSP segment `0x1` and sampled by a set of between-match transition effects.
+RE-099 read `lbtransition.c` directly and found the mechanism is a one-time
+CPU-side snapshot, not a per-frame render pass, and measured the real scope
+at 13 files (not the decomp's own 11-entry `dLBTransitionDescs` table), but
+left one concrete design question explicitly unverified: does a PSP port
+need the N64's own full `300×220` capture with strip-by-strip TMEM
+addressing reproduced, or does a smaller capture with unmodified UVs
+suffice?
 
-* **Not a per-frame render pass.** `lbTransitionSetupTransition` runs
-  exactly once, when a transition begins: a plain, one-time CPU-side copy
-  of the current framebuffer into a `300×220` `u16` heap. `lbTransitionProcDisplay`
-  (per frame, after that) only binds the already-captured snapshot as
-  segment `0x1` and draws the transition's own perfectly ordinary
-  `DObjDesc`/`AObjEvent32` scene graph — the same tree-walk this project
-  already converts for every other object. No new animation system and no
-  live render-to-texture pass are needed.
-* **The only new capability required:** a PSP-side one-time framebuffer
-  snapshot into a texture-shaped buffer when a transition starts, and
-  recognizing segment `0x1` as that special texture identity instead of
-  failing to resolve it (the same shape `mobj::GRAPHICS_HEAP_SEGMENT`
-  already gets for a different runtime-only segment).
-* **The real scope is 13 files, not 11**, measured directly against the
-  ROM (`romtool textures --file <id>`), not just the decomp's own
-  `dLBTransitionDescs` table: files 39 and 47 also carry the identical
-  two-bind (`300×5`/`300×6`, both RGBA5551, segment `0x1` offset `0`)
-  signature but are not among the 11 named transitions — one extra
-  `lb`-prefixed file, one unrelated `if`-prefixed file whose real purpose
-  was not identified this session. Every one of the 13 files' bind shape
-  is identical, cross-checked archive-wide: 26 segment-`0x01` binds total,
-  matching R0.3's original count exactly, now fully attributed.
-* **A likely, but unverified, design simplification:** the N64 tiles this
-  300×220 image into small strips because the RSP's TMEM is only 4 KB; the
-  PSP GE has no equivalent capacity limit, so one full-size PSP texture
-  capture may let every transition's existing UV coordinates address into
-  it unchanged, with no strip-by-strip capture needed. Not implemented or
-  verified.
+RE-100 (this session) answered that by measuring every one of the 13
+files' real UV spans (`romtool textures --file <id>`), not guessing:
+RE-099's own favoured hypothesis ("capture the full 300×220 image, leave
+UVs alone") was **wrong**. The real geometry only ever needs a **300×6
+top-left corner** of the framebuffer — the 300×5 tile draws it once
+(V span always exactly 5.0 texels across all 13 files), the 300×6 tile
+tiles it vertically by ordinary wrap addressing (V span 22.5–215 texels,
+3.75×–35.83× repeat depending on the file). U never wraps in any of the
+13 files. This is a repeating 6-row colour smear, not a crisp photo.
+
+**Implemented and device-verified this session**, not just scoped:
+`mobj::LB_TRANSITION_SEGMENT`, `mesh::TextureRef::framebuffer` (set by a
+segment-`0x1` `G_SETTIMG`, cleared by any real one), `pack::TextureDesc::role`
+(`pack::VERSION` 13 → 14, `TextureDesc::SIZE` 32 → 36), `romtool`'s
+`pack_mesh` deduplicating the 13 files' 26 binds down to the 2 distinct
+shapes that exist, `Gpu::request_transition_capture` (a CPU-side VRAM
+readback into a small `Psm8888` buffer, the PSP-side equivalent of
+`lbTransitionSetupTransition`'s own one-time photocopy), and
+`meshdraw::bind_texture`'s new framebuffer-role branch. Verified with 3
+new unit tests (401 passing total) and, on the real device profile, a
+temporary reverted patch that captured an unmistakable magenta test colour
+and confirmed it appears correctly on a real transition object's geometry
+(file 40, the "paper airplane" transition) — not merely that the code
+compiles. Dream Land's own rendering is unaffected (pixel-normal at 60
+FPS, confirmed by screenshot after fully reverting the temporary patch).
+
+**Still open:** nothing calls `request_transition_capture` from real game
+logic — there is no match-start/match-end event to call it from yet, since
+this project has no game-state/transition system at all. Only one of the
+13 files' geometry was actually looked at, and one of its own primitives
+(a solid black rectangle alongside the magenta-textured one) was not
+investigated. "Render-to-texture paths implemented where required" is not
+a separate gap: RE-099/RE-100 both confirm the real mechanism has no
+render-to-texture pass at all, only a one-time capture.
 
 ### Objective
 
@@ -1447,15 +1455,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [ ] framebuffer texture paths implemented
-* [ ] screen wipes implemented
-* [ ] render-to-texture paths implemented where required
-* [ ] framebuffer synchronization verified
-* [ ] visual verification completed
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture
+* [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
+* [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
+* [ ] framebuffer synchronization verified — verified for the one shape tested this session (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
+* [ ] visual verification completed — one file's (of 13) geometry confirmed to sample real captured screen content correctly; the other 12 files and the black-rectangle primitive noted above are unverified
 
 ### Evidence
 
-RE-055, RE-099 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100 in `docs/reverse-engineering.md`.
 
 ---
 
