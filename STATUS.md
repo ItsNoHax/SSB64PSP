@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-123)
+**Last updated:** 2026-09-04 (RE-124)
 
 ---
 
@@ -12,32 +12,44 @@
 
 ## Current Task
 
-`R0.17 — Visual Regression Methodology` is now `COMPLETE`. RE-123 (this
-session) built the deterministic capture mode R0.17 requires: a
-`regression_capture` Cargo feature on `ssb64-psp` (off by default) that
-freezes every per-frame mutation — fighter physics, skeleton/stage/
-material animation, and the otherwise-live perf-counter HUD fields —
-once 240 simulation ticks have run, so a screenshot taken any time
-afterward is byte-identical regardless of real-world capture timing.
-Measured directly: two captures 9 real seconds apart are exact-match via
-both `cmp` and the new `tools/compare-screenshot.sh` pixel-diff tool (0
-differing pixels). Along the way, found and fixed a real pitfall: an
-early version skipped the debug-text call entirely once frozen, which
-corrupted PPSSPP's own `sceGuDebugPrint` debug-overlay hook into a stuck,
-truncated partial redraw — fixed by always calling it and pinning its
-volatile fields' *displayed values* instead of skipping the call. The
-golden image is `tests/golden/r0-dream-land-default.png`; the full
-methodology (deterministic scene definition, 4-source capture procedure,
-17-row test matrix, comparison tooling) is `docs/visual-regression.md`.
-**All 6 of R0.17's acceptance items are now satisfied.** See "Task
-Status" below for the full account.
+`R0.18 — Reference-Port Comparative Audit` is now `COMPLETE`. RE-124
+(this session) cloned `oot-PSP` into `refs/` (previously only
+`sf64-psp`/`BattleShip`/`n64psp` had been) and read both PSP-targeting
+reference ports' actual graphics-backend source, classifying every
+difference found per `DECISIONS.md` D-037's four-way scheme:
+**render architecture and culling** differences are fully explained by
+D-001's own already-decided offline-conversion choice (both references
+are runtime F3DEX2 interpreters that need software clipping anyway; this
+project's build-time conversion does not, so GPU-side culling is correct
+for it) — not gaps. **Texture filtering** was measured archive-wide via
+the real `romtool pack` build: 151/151 real `G_MDSFT_TEXTFILT` commands
+request `G_TF_BILERP`, matching the RDP's own per-frame reset default —
+closes `PLAN.md` R0.5's open filtering item in this project's favor, no
+fix needed. **Texture mirroring**: `oot-PSP` independently reached the
+same pre-baked-doubled-texture fix this project's own RE-067 already
+shipped; `sf64-psp` took the cheaper opposite tradeoff — confirms RE-067
+was a real tradeoff, not an obvious-answer gap. **Blending**: both
+references successfully ship standard `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA`
+blending, ruling out "the PSP GE can't do this" as an explanation for
+R0.6's still-open canopy-dithering blend failure — a new lead added to
+that open item, not resolved. **Lighting/CLUT/combiner approximation**:
+all three projects converge on the same strategies already used here; no
+gap. **Performance technique** (material-state hashing plus a
+batch/replay draw pool, both references) recorded as a lead for `R3`
+once it unblocks, not implemented now. **All 5 of R0.18's acceptance
+items are now satisfied.** See "Task Status" below for the full account.
 
-Per `PLAN.md`'s task ordering, the next eligible task is `R0.18 —
-Reference-Port Comparative Audit` (depends on R0.2 ✓, no unmet
-dependency) — auditing this project's own conclusions against cloned
-reference-port repositories (`sf64-psp`, `oot-PSP`) rather than only
-this project's own prior findings.
+Per `PLAN.md`'s task ordering, the next eligible task is `R0.7 —
+Missing Material Tables` (57 of 127 graphs still unpaired as of the last
+measurement) — both `R0.4`'s and `R0.6`'s own remaining open acceptance
+items are already explicitly attributed to this same root cause, not
+independent gaps, so closing `R0.7`'s pairing gap is the actual
+bottleneck for both rather than a parallel, unrelated task.
 
+`R0.17 — Visual Regression Methodology` closed `COMPLETE` in an earlier
+session (RE-123: a `regression_capture` Cargo feature freezes every
+per-frame mutation once 240 simulation ticks have run, producing a
+byte-identical golden capture regardless of real-world timing).
 `R0.16 — N64 Render-State Model Fidelity` closed `COMPLETE` in an
 earlier session (RE-119 through RE-122: a real `romtool` diagnostic bug
 fixed, `G_SHADE`'s archive-wide impact measured and classified,
@@ -46,15 +58,77 @@ and a genuine 126-occurrence texture-cache dedup bug found and fixed).
 `R0.15 — Render-State Isolation` closed `COMPLETE` in an earlier
 session (RE-117/118: all 10 state categories covered across both the
 decode-time `mesh.rs` layer and the device-side `DrawState` GE-cache
-layer, one real bug found and fixed in the latter). `R0.13 —
-Framebuffer Rendering` has no further actionable rendering work
-(RE-116: all 13 LB-transition files confirmed correct; remaining items
-blocked on a game-state system that doesn't exist yet).
+layer, one real bug found and fixed in the latter).
 
 ## Task Status
 
-RE-123 (this session) built R0.17's deterministic capture mode and
-closed all of its acceptance items. See `docs/reverse-engineering.md`
+RE-124 (this session) performed R0.18's systematic reference-port
+comparison and closed all of its acceptance items. See
+`docs/reverse-engineering.md` RE-124 for the full account; summary:
+
+* **Cloned `oot-PSP`** (`https://github.com/z2442/oot-PSP`) into
+  `refs/` — previously only `sf64-psp`/`BattleShip`/`n64psp` had been.
+  Read both PSP-targeting reference ports' actual graphics-backend
+  source directly (`sf64-psp`'s PSPGL/OpenGL-ES wrapper over `sceGu`;
+  `oot-PSP`'s direct `sceGu`/`sceGum` calls), not their documentation.
+* **Render architecture and culling — (3), explained by D-001, not a
+  gap.** Both references are runtime F3DEX2 interpreters that translate
+  live N64 display lists every frame; this project converts offline
+  (`romtool pack`) per `DECISIONS.md` D-001. Neither reference enables
+  GPU-side culling — both do it in software as a byproduct of the
+  runtime frustum clipping their architecture needs anyway, which this
+  project's baked geometry never requires.
+* **Texture filtering — (2), measured, not assumed.** Both references
+  conditionally use point vs. bilinear filtering per N64's own bit; this
+  project hardcodes `Linear` always, and `mesh.rs` never even decoded
+  `G_MDSFT_TEXTFILT`. A temporary, reverted census through the real
+  `romtool pack` build found **151/151 real `G_MDSFT_TEXTFILT` commands
+  archive-wide request `G_TF_BILERP`** — zero `G_TF_POINT`/`G_TF_AVERAGE`
+  — matching the RDP's own per-frame reset default
+  (`sSYRdpResetDisplayList`, the same reset RE-068 already found for
+  `Z_BUFFER`/`CULL_BACK`/`SHADE`). This project's existing unconditional
+  `Linear` filtering is already correct; closes `PLAN.md` R0.5's open
+  "filtering modes identified" item in this project's favor.
+* **Texture mirroring — (3)/confirmed, independent validation of
+  RE-067.** `oot-PSP` independently reached the identical fix this
+  project's own RE-067 already shipped (pre-bake a doubled, mirrored
+  texture, sample with plain repeat, since the PSP GE has no hardware
+  mirror mode). `sf64-psp` took the opposite, cheaper tradeoff (plain
+  repeat, visible seam) — confirming RE-067 was a real tradeoff between
+  two valid answers, not an obvious gap.
+* **Blending — new lead for R0.6, not resolved.** Both references
+  successfully ship standard `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` blending
+  for their own translucent surfaces on the same PSP hardware, ruling
+  out "the GE can't do this" as an explanation for R0.6's still-open
+  canopy-dithering blend failure (RE-069/071). Whatever is wrong is
+  specific to that one dithered CI4-to-RGBA texture's interaction with
+  blending, not a platform limitation — added as a lead, no new
+  experiment run against the actual texture yet.
+* **Lighting/CLUT/combiner approximation — (2)/confirmed, no gap.** All
+  three projects pre-bake lighting into vertex colors, load palettes via
+  `sceGuClutMode`/`sceGuClutLoad` (or the GL equivalent), and approximate
+  the RDP combiner with a small fixed set of recognized shapes rather
+  than general per-pixel evaluation — matching this project's own
+  RE-065/RE-079/RE-080 approach.
+* **Performance technique — lead recorded for `R3`, not implemented**
+  (R3 is `BLOCKED_BY_R2`): both references have materially more
+  sophisticated state batching (`sf64-psp`'s FNV-1a material-hash batch/
+  replay pool measured 177→89 draws/frame; `oot-PSP`'s sampler/shader
+  hash caches) than this project's current "skip a redundant `sceGu`
+  call" approach — concrete precedent for the state-sorting
+  `DECISIONS.md` D-036 already anticipates needing once state fidelity
+  (`R0.15`/`R0.16`, both `COMPLETE`) is no longer the open question.
+* **What this closes:** all 5 of `PLAN.md` R0.18's acceptance items;
+  conclusions cross-referenced into `R0.5` (closed), `R0.6` (new lead)
+  and `R3` (new lead). `cargo test --workspace`: 405 passing,
+  unaffected — this task touched no shipped code, only a temporary,
+  fully-reverted census instrumentation. **`R0.18 — Reference-Port
+  Comparative Audit` moves `TODO` → `COMPLETE`.**
+
+## Previous Task Status
+
+RE-123 (an earlier session) built R0.17's deterministic capture mode
+and closed all of its acceptance items. See `docs/reverse-engineering.md`
 RE-123 and `docs/visual-regression.md` for the full account; summary:
 
 * **The existing screenshot harness was not actually deterministic.**
@@ -104,7 +178,7 @@ RE-123 and `docs/visual-regression.md` for the full account; summary:
   item a concrete owner. **`R0.17 — Visual Regression Methodology`
   moves `TODO` → `COMPLETE`.**
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-122 (an earlier session) closed R0.16's last acceptance item:
 checking D-036's ordering rule (state fidelity before batching/dedup)

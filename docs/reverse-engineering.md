@@ -9207,3 +9207,207 @@ scene", "methodology is actually run at least once end-to-end", and
 comparison threshold and method documented" acceptance items. Full account
 and the remaining test-matrix work is in `docs/visual-regression.md`; the
 golden image is `tests/golden/r0-dream-land-default.png`.
+
+## RE-124 — Reference-port comparative audit against `sf64-psp` and `oot-PSP` (`PLAN.md` R0.18)
+
+**Question.** `PLAN.md` R0.18 calls for a systematic comparison of this
+project's N64-to-PSP rendering translation against `sf64-psp` and
+`oot-PSP`, beyond the ad hoc BattleShip cross-checks RE-054/RE-066 already
+did. Both target the PSP directly, making their `sceGu` usage, texture/
+material handling and render architecture directly comparable to this
+project's own choices — unlike BattleShip, which targets desktop GPUs
+through a modern API. `oot-PSP` had never been cloned into `refs/`.
+
+**Setup.** Cloned `https://github.com/z2442/oot-PSP` into `refs/oot-PSP`
+(`refs/` is gitignored, matching `refs/BattleShip`/`refs/sf64-psp`'s own
+precedent). Read both projects' actual PSP graphics-backend source —
+`sf64-psp`'s `src/psp/gfx/gfx_pspgl.c`/`gfx_psp_dl.c` (a PSPGL/OpenGL-ES
+wrapper over `sceGu`, not raw `sceGu` calls directly, but the same
+hardware underneath) and `oot-PSP`'s `src/port/psp/gfx/gfx_scegu.c`/
+`gfx_fast3d.c` (calls `sceGu`/`sceGum` directly) — rather than trusting
+either project's own documentation or commit messages. Classified each
+difference found per `DECISIONS.md` D-037's four-way scheme: (1) SSB64
+genuinely needs it, (2) SSB64 does not use it (measured), (3) PSP/this
+project's architecture needs a different implementation, (4) this
+project's implementation is incomplete.
+
+### Render architecture — (3), a deliberate, already-decided difference
+
+Both reference ports are **runtime F3DEX2 interpreters**: they walk the
+original game's own N64 display lists every frame and translate each
+command to `sceGu`/GL calls live (`oot-PSP`'s dispatch loop is
+`gfx_run_dl()`, `src/port/psp/gfx/gfx_fast3d.c:6516`; `sf64-psp`'s is
+`gfx_psp_dl.c`'s own per-opcode switch). This project instead converts
+assets **offline** (`romtool pack`) into a baked intermediate format the
+PSP binary only walks at runtime, per `DECISIONS.md` D-001 ("no RSP
+emulation, build-time conversion"). This is not a gap — D-001 already
+made this choice deliberately, for reasons unrelated to what either
+reference port does. Recorded here because R0.18 asks for the comparison
+to be made explicit, not because it changes anything.
+
+### Culling — (3), explained by the architecture difference above, not a gap
+
+Neither reference port enables GPU-side culling in the general case:
+`oot-PSP` calls `sceGuDisable(GU_CULL_FACE)` at init
+(`gfx_scegu.c:1791`) and never re-enables it, instead rejecting
+back-facing triangles in software via a homogeneous winding-order cross
+product computed per triangle (`gfx_fast3d.c:4079-4113`, VFPU-accelerated
+on real hardware). `sf64-psp` has the equivalent (`gfx_psp_dl.c`'s own
+clip-code/clip-sample infrastructure, `clipCode`/`clipSampleVertexCount`
+etc., `gfx_psp_dl.c:118-450`) and no `glCullFace` call was found in its
+active renderer. Both need this because they are live display-list
+interpreters that must clip arbitrary, possibly off-screen or
+degenerate N64 geometry against the view frustum every frame regardless
+— folding a cull test into that already-mandatory clipping pass costs
+them nothing extra. This project has no such requirement (D-001's
+offline-converted geometry never needs runtime frustum clipping), so
+`psp/src/meshdraw.rs`'s existing `sceGuEnable(GuState::CullFace)`/
+`sceGuFrontFace` per-primitive approach is both correct and simpler for
+this project's own architecture. Not a gap; the difference is fully
+explained by the same architectural split as above.
+
+### Blending — new lead for R0.6, not resolved here
+
+Both reference ports **do** enable real GPU alpha blending for
+translucent surfaces, with the same standard factors: `oot-PSP` calls
+`sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0)`
+(`gfx_scegu.c:1631`); `sf64-psp`'s PSPGL backend calls the GL equivalent,
+`glBlendFunc(premultiplied ? GL_ONE : GL_SRC_ALPHA,
+GL_ONE_MINUS_SRC_ALPHA)` (`gfx_pspgl.c:2371-2376`), gated on its own
+`FORCE_BL`-plus-texture-alpha check. Neither treats the RDP's
+`CVG_X_ALPHA | ALPHA_CVG_SEL` coverage-based cutout as a blending case at
+all — both handle it as a separate alpha-test path
+(`sf64-psp`: `gfx_psp_dl.c:782`; `oot-PSP`:
+`sceGuAlphaFunc(GU_GREATER, 0x55, 0xff)`/`(0, 0xff)`,
+`gfx_scegu.c:1325`/`1331`), matching this project's own RE-069 approach
+exactly (alpha test approximates `CVG_X_ALPHA`, blending is the separate,
+genuinely-translucent case). Neither project's source shows any special
+dithering/multisampled-coverage workaround for translucency itself.
+
+This means standard `GU_SRC_ALPHA`/`GU_ONE_MINUS_SRC_ALPHA` blending is
+not something PSP hardware handles badly in general — two real, shipped
+ports use it successfully. `PLAN.md` R0.6's still-open "blending
+verified" item (RE-069/RE-071: enabling blend on Dream Land's
+canopy-highlight surface produces a checkerboard, cause unknown) is
+therefore very likely a problem specific to that one texture's dithered-
+CI4-to-RGBA precomputed content interacting with blending, not a
+platform-wide limitation. This does not resolve R0.6's open item — no
+new experiment was run against the actual texture in this pass — but it
+does rule out "PSP can't do this" as a hypothesis worth spending more
+time on, and confirms the standard blend factors this project would use
+if it re-enabled the flag are the same ones two working reference ports
+already validate on real hardware. Classification: (4) this project's
+implementation is incomplete (already tracked, R0.6), with this pass
+adding evidence rather than a new task.
+
+### Texture filtering — (2), measured, not assumed
+
+Both reference ports conditionally select `GU_NEAREST`/`GL_NEAREST` vs
+`GU_LINEAR`/`GL_LINEAR` per texture, driven by the N64 geometry mode's
+own `G_MDSFT_TEXTFILT` field (`oot-PSP`: `gfx_scegu.c:1468-1482`;
+`sf64-psp`: `gfx_pspgl.c:2394-2395`, sourced from
+`gfx_psp_dl.c:785-793`). `psp/src/meshdraw.rs` instead hardcodes
+`sceGuTexFilter(Linear, Linear)` unconditionally — and
+`crates/ssb-rom/src/mesh.rs` does not decode `G_MDSFT_TEXTFILT`
+(`G_SETOTHERMODE_H`, shift 12, len 2, per
+`refs/ssb-decomp-re/include/PR/gbi.h:603/641-643`) at all. `PLAN.md`
+R0.5 already flagged this exact question as open ("Filtering mode
+(bilinear vs point) is not yet verified per texture").
+
+**Measured, not assumed.** A temporary instrumentation (a single
+`#[cfg(feature = "std")]`-gated `eprintln!` arm added to `mesh.rs`'s
+`convert_sequence` match, run through the real archive-wide
+`romtool pack` build — the same pipeline that produces the shipped
+asset pack, not a separate heuristic scan, per RE-112's own established
+lesson — then fully reverted) found **151 `G_MDSFT_TEXTFILT` commands
+archive-wide, all 151 requesting `G_TF_BILERP` (value 2). Zero
+`G_TF_POINT`, zero `G_TF_AVERAGE`.** Cross-checked against the RDP's own
+per-frame reset defaults (`refs/ssb-decomp-re/src/sys/rdp.c:43`,
+`sSYRdpResetDisplayList` — the same reset RE-068 already found sets
+`Z_BUFFER`/`CULL_BACK`/`SHADE` on by default): it *also* sets
+`gsDPSetTextureFilter(G_TF_BILERP)` as the frame-level default. Real
+hardware renders every one of this ROM's own display lists with
+bilinear filtering, both by explicit command and by the default a list
+that never sets it falls back to.
+
+**Classification: (2) SSB64 does not use it — measured archive-wide,
+not assumed.** `psp/src/meshdraw.rs`'s existing unconditional `Linear`
+filtering is already correct for this ROM's actual content; no fix
+needed. This closes `PLAN.md` R0.5's "Filtering mode ... not yet
+verified per texture" acceptance item with real evidence, resolving an
+open unknown in this project's own favor rather than finding a bug.
+
+### Texture wrap/mirror — (3)/confirmed, independent validation of RE-067
+
+`oot-PSP` solves the identical problem RE-066/RE-067 found (the PSP GE
+has no hardware mirror wrap mode) the same way this project does:
+pre-baking a doubled, mirrored copy of the texture at conversion time
+and sampling it with plain `GU_REPEAT`/`GU_CLAMP`
+(`gfx_fast3d.c:1090-1194`, `mirror_s`/`mirror_t` detection at
+`:1178-1179`, the actual doubling loop at `:1140-1158`, doubled upload
+dimensions at `:1099`) — never `GU_MIRROR`, because it does not exist.
+`sf64-psp` instead takes the opposite, cheaper tradeoff: it maps
+`G_TX_MIRROR` straight to plain `GL_REPEAT` (`gfx_pspgl.c:2383-2391`),
+accepting the sawtooth seam RE-066 already identified as the naive
+alternative, rather than paying the VRAM cost of a doubled texture.
+
+This is independent confirmation from a real, shipped PSP port that
+RE-067's pre-baked-mirror approach is not just correct but the same
+solution another team reached for the same hardware gap — `sf64-psp`'s
+different choice shows it is a real tradeoff (VRAM vs. a visible seam),
+not a case where one obvious right answer exists. No `PLAN.md` item
+changes; this validates RE-067's existing decision rather than opening
+new work.
+
+### Lighting, CLUT/palette, combiner approximation — (2)/confirmed, no gap
+
+All three projects pre-bake N64 directional/ambient lighting into vertex
+colors rather than using the GE's hardware lighting unit (`oot-PSP`
+explicitly disables it, `sceGuDisable(GU_LIGHTING)`,
+`gfx_scegu.c:1789`) — matching this project's own RE-065 approach. All
+three load palettes via `sceGuClutMode`/`sceGuClutLoad` (or the GL
+equivalent); `oot-PSP`'s is functionally identical to this project's own
+(`GU_PSM_8888` output format, `psp_texture_manager.c:373-380`). All
+three approximate the RDP's two-cycle combiner with a small, fixed set
+of recognized shapes mapped onto `sceGuTexFunc`-equivalent modes rather
+than a general per-pixel evaluation (`sf64-psp` recognizes 8 shapes,
+`gfx_psp_dl.c:248-259`; `oot-PSP` caches by combiner ID and maps to
+`GU_TFX_MODULATE`/`BLEND`/`DECAL`/`REPLACE`, `gfx_scegu.c:1220-1357`).
+This project recognizes 3 (`combiner_shade_scale`/`texture_blend`/
+`flat_color`), already measured (RE-079/080) to cover 97.5%+ of
+archive-wide combiner-bearing primitives, with the remainder already
+attributed to a different, already-tracked cause (R0.7's material-table
+pairing gaps, not missing combiner-shape classification). No new gap;
+recorded as confirmation the general "detect a handful of shapes, decline
+the rest" strategy matches what shipped PSP ports do, not a corner this
+project cut alone.
+
+### Performance technique — lead recorded for R3, not implemented
+
+Both reference ports have materially more sophisticated state
+batching/caching than this project's current "skip a redundant `sceGu`
+call between consecutive same-material primitives": `sf64-psp` hashes
+effective material state (FNV-1a) into a 64-slot batch pool per material
+and records/replays draw calls rather than issuing them immediately
+(`gfx_psp_dl.c:2280-2394`, `:72-77`; a code comment cites a real
+measured win, 177→89 draws/frame, 24.2→22.0 ms, from activating this);
+`oot-PSP` caches sampler state and shader-mode lookups in a 256-entry
+hash table (`gfx_scegu.c:1450-1466`, `:288-340`). This project's `R3 —
+Rendering Performance` is `BLOCKED_BY_R2` and explicitly should not be
+worked on yet, so this is recorded as a lead for when R3 unblocks, not
+implemented now: material-state hashing plus a batch/replay pool is a
+concrete, working precedent for the kind of state-sorting this project's
+own `DECISIONS.md` D-036 already anticipates needing eventually, once
+state fidelity (this project's `R0.15`/`R0.16`, both now `COMPLETE`) is
+no longer the open question it was when D-036 was written.
+
+**What this closes.** All 5 of `PLAN.md` R0.18's acceptance items: both
+reference ports' N64-state translation, texture/material handling and
+`sceGu` usage compared (plus `oot-PSP`'s render architecture,
+specifically required by that item); `oot-PSP` cloned into `refs/`;
+every difference found classified 1-4 and recorded above rather than
+left as an unexplained observation; a performance-technique lead
+recorded for `R3`; conclusions cross-referenced into `R0.5` (filtering,
+closed), `R0.6` (blending, new lead added to an already-open item) and
+`R3` (batching lead). `R0.18 — Reference-Port Comparative Audit` moves
+`TODO` → `COMPLETE`.

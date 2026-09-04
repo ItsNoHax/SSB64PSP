@@ -415,9 +415,17 @@ Mip chains are generated at build time for 151 textures
 (`psp_texture::pack_mipped`), but this did **not** resolve the Dream Land
 canopy discrepancy (RE-053) — the wrong pattern survives and sharpens at
 higher resolution, pointing at magnification rather than minification/LOD.
-Filtering mode (bilinear vs point) is not yet verified per texture. This
-task's explicit acceptance item "Dream Land canopy discrepancy resolved"
-remains open — do not close this task while it is.
+**RE-124 closed the filtering-mode question.** Measured archive-wide via
+the real `romtool pack` build (not a heuristic scan): 151 real
+`G_MDSFT_TEXTFILT` commands, all 151 requesting `G_TF_BILERP`, zero
+`G_TF_POINT`/`G_TF_AVERAGE` — cross-checked against the RDP's own
+per-frame reset default (`sSYRdpResetDisplayList`,
+`refs/ssb-decomp-re/src/sys/rdp.c:43`), which also defaults to
+`G_TF_BILERP`. `psp/src/meshdraw.rs`'s existing unconditional
+`sceGuTexFilter(Linear, Linear)` is already correct for this ROM; no fix
+needed. This task's explicit acceptance item "Dream Land canopy
+discrepancy resolved" remains open — do not close this task while it
+is.
 
 RE-066 investigated wrap/clamp/mirror instead of leaving it an open
 question. `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)`;
@@ -548,7 +556,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 
 ### Acceptance
 
-* [ ] filtering modes identified from original data
+* [x] filtering modes identified from original data — RE-124: measured archive-wide via the real `romtool pack` build, 151/151 real `G_MDSFT_TEXTFILT` commands request `G_TF_BILERP` (zero `G_TF_POINT`/`G_TF_AVERAGE`), matching the RDP's own per-frame reset default; this project's existing unconditional `sceGuTexFilter(Linear, Linear)` is already correct
 * [x] magnification behavior identified — RE-081: Dream Land's canopy "highlight" texture is magnified on its V axis (`0.88` repeats); RE-053's "sharpens with resolution" symptom is explained by this, not by the "gradient" texture (which is genuinely minified)
 * [x] minification behavior identified — RE-053's `3.70×1.36` figure is correct for the canopy "gradient" texture specifically (RE-081 disambiguated which of the two canopy textures each figure actually describes)
 * [ ] LOD behavior identified
@@ -753,7 +761,7 @@ Reproduce original SSB64 material behavior.
 * [ ] environment color verified — same as primitive color; the remaining gap is the same genuine-absence case, symmetric in `ENV`
 * [ ] lighting verified — RE-103/RE-105 fixed the input this still depends on (per-vertex, not per-primitive-majority, lit/literal decisions, driven by a real `G_MW_LIGHTCOL` ROM signal rather than a guess) but the shading itself is still RE-065's single baked-in neutral key light, not per-object real lighting — this item stays open on that basis
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
-* [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away
+* [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away. **RE-124 (R0.18) added a lead, did not resolve it**: both `sf64-psp` and `oot-PSP` successfully ship standard `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` blending for their own translucent surfaces on the same PSP hardware, ruling out "the GE can't do this" as an explanation — whatever is wrong is specific to this one dithered CI4-to-RGBA texture's interaction with blending, not a platform limitation. No new experiment against the actual texture has been run on this evidence yet
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
@@ -2271,7 +2279,7 @@ now points here instead of standing as separate unowned work.
 
 ## R0.18 — Reference-Port Comparative Audit (sf64-psp, oot-PSP)
 
-Status: `TODO`
+Status: `COMPLETE`
 
 ### Objective
 
@@ -2301,18 +2309,18 @@ D-037).
 
 ### Acceptance
 
-* [ ] `sf64-psp`'s N64-state translation, texture/material handling and
+* [x] `sf64-psp`'s N64-state translation, texture/material handling and
   `sceGu` usage compared against this project's own (BattleShip's F3DEX2/
   S2DEX interpreter was already checked, RE-054; `sf64-psp` itself has not)
-* [ ] `oot-PSP` cloned into `refs/` and its N64-state translation, texture/
+* [x] `oot-PSP` cloned into `refs/` and its N64-state translation, texture/
   material handling, `sceGu` usage and render architecture compared against
   this project's own
-* [ ] every material difference found is classified 1–4 above and recorded,
+* [x] every material difference found is classified 1–4 above and recorded,
   not left as an unexplained observation
-* [ ] debugging methodology and performance technique from both projects
+* [x] debugging methodology and performance technique from both projects
   reviewed for applicability to `R3` (rendering performance) — recorded as
   leads for `R3`, not implemented here (`R3` is `BLOCKED_BY_R2`)
-* [ ] conclusions are written into `docs/reverse-engineering.md` as `RE-`
+* [x] conclusions are written into `docs/reverse-engineering.md` as `RE-`
   entries and cross-referenced from the `R0.x` task(s) each conclusion
   actually affects
 
@@ -2323,7 +2331,24 @@ D-037).
 
 ### Evidence
 
-Not started.
+RE-124 in `docs/reverse-engineering.md`. Render architecture and culling
+differences fully explained by this project's own D-001 (offline
+conversion vs. both references' runtime F3DEX2 interpretation) — not
+gaps. Texture filtering measured archive-wide (151/151 real
+`G_MDSFT_TEXTFILT` commands request `G_TF_BILERP`, matching the RDP's own
+frame-reset default) and closes R0.5's open filtering item in this
+project's favor. Blending: both references successfully ship standard
+`SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` blending, ruling out "PSP can't do
+this" as an explanation for R0.6's still-open canopy-dithering blend
+failure — a new lead added to that item, not resolved here. Texture
+mirroring: `oot-PSP` independently reached the same pre-baked-doubled-
+texture solution as this project's own RE-067; `sf64-psp` took the
+cheaper opposite tradeoff (plain repeat, visible seam) — confirms RE-067
+was a real tradeoff, not an obvious-answer gap. Lighting/CLUT/combiner
+approximation: all three projects converge on the same strategies this
+project already uses; no gap found. Performance technique (material-state
+hashing plus a batch/replay draw pool, both references) recorded as a
+lead for `R3` once it unblocks.
 
 ---
 
@@ -2390,6 +2415,23 @@ Status: `BLOCKED_BY_R2`
 ### Objective
 
 Optimize rendering without sacrificing fidelity.
+
+### Leads from R0.18's reference-port audit (not yet actioned — R3 is blocked)
+
+RE-124 found both `sf64-psp` and `oot-PSP` use materially more
+sophisticated state batching than this project's current "skip a
+redundant `sceGu` call between consecutive same-material primitives":
+`sf64-psp` hashes effective material state (FNV-1a) into a 64-slot batch
+pool per material and records/replays draw calls rather than issuing
+them immediately (`refs/sf64-psp/src/psp/gfx/gfx_psp_dl.c:2280-2394`,
+`:72-77` — a code comment there cites a real measured win, 177→89
+draws/frame, 24.2→22.0 ms, from activating this); `oot-PSP` caches
+sampler state and shader-mode lookups in a 256-entry hash table
+(`refs/oot-PSP/src/port/psp/gfx/gfx_scegu.c:1450-1466`, `:288-340`).
+Concrete, working precedent for the state-sorting `DECISIONS.md` D-036
+already anticipates this project needing eventually, once state fidelity
+(`R0.15`/`R0.16`, both `COMPLETE`) is no longer the open question it was
+when D-036 was written. Not implemented here; R3 is `BLOCKED_BY_R2`.
 
 ### Acceptance
 
