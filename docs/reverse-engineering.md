@@ -8899,3 +8899,85 @@ scoped, open cross-reference still needed, and nothing is silently
 missing from the table any more. The "every state category has an
 explicit field or documented reason" item stays open pending `G_SHADE`'s
 own per-primitive cross-reference. `R0.16` moves `TODO` → `IN_PROGRESS`.
+
+---
+
+## RE-120 — `G_SHADE`-off-with-a-shade-reading-combiner cross-referenced: 29 of 31 archive-wide cases are in content this project doesn't render yet; 2 affect Yoshi's Island
+
+Closed RE-119's own open item: does any real primitive combine `G_SHADE`
+cleared with a combiner shape that still reads `SHADE` — the one scenario
+that would actually render wrong today, as opposed to `G_SHADE` clears
+that pair with a combiner shape that never reads `SHADE` anyway (already
+correctly handled by the existing `combiner_flat_color`/
+`combiner_texture_blend` detection, R0.6).
+
+**Confirmed archive-wide, with real file attribution.** A temporary,
+reverted census threaded a `shade: bool` field through `mesh.rs`'s
+`State` (mirroring `GeometryMode`'s existing `cull_back`/`lit`/`smooth`/
+`z_buffer` handling, defaulting `true` to match `rdp_default`'s already-
+documented-but-unimplemented RDP-reset default) and checked, at every
+triangle, whether `!state.shade` while `combiner_shade_scale` still
+resolves. Getting real file attribution required a small, temporary
+`Source::file_id` field (`archive::File::id`, threaded through
+`Source::of`) — the first attempt used `romtool scan`'s own
+`find_root_display_lists` discovery and found nothing, because (per
+RE-112) that heuristic per-list discovery is a different mechanism from
+the real graph-based `convert_sequence` pipeline `romtool pack` actually
+uses; moving the census into the real pipeline (via the packed build)
+immediately found matches.
+
+**Result: 31 occurrences, concentrated almost entirely in content this
+project does not render at all yet.**
+
+| File | Real name | Occurrences |
+|---|---|---:|
+| 86 | `ITCommonObject` (items) | 12 |
+| 350 | `CaptainSpecial2` (Captain Falcon's special move) | 14 |
+| 85 | `EFCommonEffects3` (effects) | 1 |
+| 73 | `MVOpeningSector` (opening movie) | 1 |
+| 353 | `LinkSpecial2` (Link's special move) | 1 |
+| 111 | `StageYosterFile2` (Yoshi's Island) | 1 |
+| 118 | `StageYosterSmallFile2` (Yoshi's Island, small variant) | 1 |
+
+**29 of 31 occurrences (files 86, 350, 85, 353) are items, fighter
+special-move effects, and general effects — none of which this project
+renders yet, since combat/items are correctly gated behind the
+rendering-completeness milestone (`AGENTS.md` §5).** These cannot
+produce a visible defect today because nothing calls into that content
+at all; when combat eventually unlocks, whichever of these primitives
+survive into the final feature will need the same fix stages do.
+
+**2 occurrences affect content this project *does* already render**:
+one primitive each in `StageYosterFile2`/`StageYosterSmallFile2`
+(Yoshi's Island's two stage variants). This is a real, currently-live,
+but extremely narrow gap — a single primitive per stage, not core
+platform geometry, and neither stage has been individually flagged as
+visually wrong in any prior verification pass. `MVOpeningSector`'s one
+occurrence is in the opening movie, not yet wired into this project at
+all (no cutscene playback system exists).
+
+**Not fixed this session.** The correct behavior for a primitive whose
+`G_SHADE` is off but whose combiner still reads `SHADE` is genuinely
+unclear from `gbi.h`'s own documentation alone ("you need to use
+primcolor to see anything" describes what the *author* should have done,
+not what real hardware actually displays if they didn't) — implementing
+a fix risks guessing at undefined behavior rather than reproducing it,
+the exact failure mode `AGENTS.md` §9 warns against. Recorded as a
+concrete, narrow, low-priority lead (2 live occurrences, each a single
+primitive, in stages already rendering without a flagged defect) rather
+than guessed at.
+
+`cargo test --workspace`: 405 passing, unaffected (investigation-only).
+`cargo clippy --release --workspace`: clean. Pack rebuild confirmed
+byte-identical to the pre-session baseline after reverting (no
+production code changed). All temporary code (`mesh.rs`'s `shade`
+field/census and `Source::file_id`, `combiner_shade_scale`'s brief `pub`
+bump) fully reverted; `git diff --stat` is empty — this entry is
+documentation-only.
+
+**What this closes.** `PLAN.md` R0.16's "every state category has an
+explicit field or documented reason" acceptance item is now satisfied
+for `G_SHADE`: its real archive-wide impact is measured, attributed by
+file, and classified — 29 of 31 occurrences are correctly out of scope
+(ungated content), and the remaining 2 are a documented, narrow,
+low-priority open item rather than an unexamined risk.
