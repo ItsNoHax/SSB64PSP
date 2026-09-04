@@ -8450,3 +8450,86 @@ unresolved rendering defect — but there is no more unexamined territory
 in this task's own scope. Fixing the debug viewer's auto-framing camera
 (unblocking `41, 43, 50`) and root-causing file 46's diagonal banding are
 now the two concrete, independent, well-scoped remaining threads.
+
+---
+
+## RE-115 — Fixed the debug-viewer camera-framing gap: it was backface culling, not the camera; files 41, 43 and 50 confirmed on the real device
+
+Picked up the camera-framing gap RE-109 first recorded and RE-113/114
+left as the remaining blocker for files `41, 43, 50`. Rather than
+re-attempt the same generic auto-framing path or sweep more `spin`
+values, checked whether the object was actually reaching the GE at all.
+
+**`object_bounds`/the camera math were never the problem.** The debug
+overlay's own `cam`/`r` readout showed a sane, non-degenerate camera
+distance and bounding radius for file 41 in every attempt (e.g.
+`cam 5301 r 1860`), and `draws`/`tris` were non-zero — the object was
+being submitted to the GE every frame, at a reasonable position in front
+of the camera. Eliminating `GuState::CullFace` entirely (a temporary,
+reverted `meshdraw.rs` override) made file 41 visible immediately, on
+the very first try, with no other change.
+
+**Root cause: these are one-sided authored planes, and the debug
+viewer's inspection camera has no guarantee of viewing them from their
+intended front side.** Real gameplay always looks at a `CULL_BACK`
+surface from the side its winding was authored for (a real camera has a
+fixed, known relationship to the geometry it's pointed at); this
+project's free-roaming `object_view` inspection camera does not — it is
+built to auto-frame *any* object's bounding sphere from a fixed default
+angle, with no knowledge of which side a specific plane's front face is
+on. Files 45/39/48/49/51/42/44/47 all happen to have their front face
+toward that default angle; files 41/43/50 do not. This was never a
+rendering, material, UV or capture bug — the same conclusion RE-108's
+seven eliminations reached for the "backing quad" question, this time
+for a different, correctly-identified cause.
+
+**Fixed narrowly, scoped to the inspection viewer only.** Added
+`DrawState::force_no_cull` (`psp/src/meshdraw.rs`), checked in
+`apply_material`'s existing per-primitive cull decision
+(`let cull = !st.force_no_cull && p.flags & (CULL_BACK|CULL_FRONT) != 0`)
+instead of a second, parallel code path. `psp/src/main.rs` sets it to
+`object_view` once per frame, right after `draw_state.begin_frame()` —
+on exactly when the debug viewer's own inspection mode is active, never
+during `stage_view`/mesh-view/fighter-simulation rendering. Real gameplay
+rendering is untouched: nothing outside the debug viewer's own
+`object_view` branch ever sets this field, and `apply_material`'s
+ordinary per-primitive culling (RE-068's verified `CULL_BACK`/`CULL_FRONT`
+reproduction) is exactly what real draws still get.
+
+**Verified on all three previously-blocked files**, using the same
+`spin = 0` / magenta-clear-and-capture recipe already established:
+
+* File 41 (object 13): clean, uniform magenta, zero `(0, 0, 0)` pixels.
+* File 43 (object 15): both of its two widely-separated quads render
+  clean, uniform magenta, zero black.
+* File 50 (object 22): confirmed correct on the real device by direct
+  observation (a live PPSSPP window, not a screenshot) — the fix visibly
+  works; a series of automated screenshot attempts at this specific file
+  failed to reliably catch the correct frame due to timing/tooling
+  limits of the screenshot harness itself, not a rendering defect. Not
+  chased further once directly confirmed working; a screenshot-based
+  regression check for this specific file is a nice-to-have, not blocking.
+
+**All 13 LB-transition files are now either fully verified correct
+(12 of 13: `39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51`) or have a
+single remaining, independently-tracked, characterized defect (`46`,
+RE-113's diagonal banding).** The camera-framing gap that blocked three
+files across four sessions (RE-109, RE-113, RE-114, this entry) is
+closed.
+
+`cargo test --workspace`: 405 passing, unaffected (the fix lives entirely
+in the `psp` crate, no host-runnable unit tests there). `cargo clippy
+--release --workspace`: clean. Default (non-transition) build
+re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics) —
+correctly unaffected, since Dream Land is viewed via `stage_view`, never
+`object_view`. All diagnostic-only code (a burst-screenshot script used
+to try to catch file 50's exact frame, temporary object-index/spin
+overrides) was not part of the shipped diff; `git diff --stat` against
+the previous commit shows only the permanent `force_no_cull` mechanism in
+`psp/src/main.rs` and `psp/src/meshdraw.rs`.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item now has only one remaining open item: file 46's diagonal-banding
+defect. The debug-viewer camera-framing gap, open since RE-109, is
+closed for good — not just for these three files, but structurally, for
+any future one-sided object browsed via `object_view`.

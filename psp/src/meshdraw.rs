@@ -79,6 +79,22 @@ pub struct DrawState {
     pub draws: u32,
     pub triangles: u32,
     pub state_changes: u32,
+    /// Debug-viewer-only override: suppresses culling entirely regardless
+    /// of each primitive's own `CULL_BACK`/`CULL_FRONT` flags.
+    ///
+    /// A one-sided authored plane (several LB-transition "screen wipe"
+    /// objects, RE-115) shows its front face only from whichever side the
+    /// ROM's own game code always views it from; the debug viewer's
+    /// free-roaming inspection camera has no such guarantee and can land on
+    /// the back side, rendering nothing despite correct geometry, UV and
+    /// texture data (measured on files 41/43/50: `object_bounds` computes a
+    /// sane non-degenerate radius and centre, `draws` is non-zero, yet
+    /// nothing appears — disabling culling entirely made the geometry
+    /// visible immediately). Real gameplay rendering must never set this:
+    /// `apply_material`'s ordinary per-primitive culling already reproduces
+    /// the ROM's own `CULL_BACK`/`CULL_FRONT` state faithfully (RE-068), and
+    /// a real camera always views authored geometry from its intended side.
+    pub force_no_cull: bool,
 }
 
 impl DrawState {
@@ -89,6 +105,9 @@ impl DrawState {
         self.draws = 0;
         self.triangles = 0;
         self.state_changes = 0;
+        // Not reset here: `force_no_cull` is set once per frame by the
+        // caller (main.rs), based on which debug-viewer mode is active, and
+        // must survive `begin_frame`'s reset of everything else.
     }
 }
 
@@ -296,7 +315,7 @@ unsafe fn apply_material(
         st.last_flags = Some(p.flags);
         st.state_changes += 1;
 
-        let cull = p.flags & (flags::CULL_BACK | flags::CULL_FRONT) != 0;
+        let cull = !st.force_no_cull && p.flags & (flags::CULL_BACK | flags::CULL_FRONT) != 0;
         if cull {
             sys::sceGuEnable(GuState::CullFace);
             // The N64's front-face winding is the opposite of the GE's default

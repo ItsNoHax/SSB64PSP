@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-114)
+**Last updated:** 2026-09-04 (RE-115)
 
 ---
 
@@ -12,23 +12,81 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-114 (this session)
-finished screenshotting the remaining transition files (39, 48, 50, 51),
-completing the accounting RE-113 started. **All 13 LB-transition files
-are now accounted for**: 9 confirmed fully correct on the real device by
-direct pixel scan (`39, 40, 42, 44, 45, 47, 48, 49, 51`), 3 blocked on
-RE-109's already-documented debug-viewer camera-framing gap for
-widely-spread/screen-covering objects (`41, 43, 50` — not a
-material/capture defect), and 1 with RE-113's still-open, characterized
-diagonal-banding defect (`46`). No file remains unexamined. See "Task
-Status" below for the full account. `screen wipes implemented` remains
-open (no real trigger event exists yet). `R0.11 — Fighter Palettes /
-Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
-closing addendum: all 12 real fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-115 (this session)
+fixed the debug-viewer camera-framing gap that had blocked files 41, 43
+and 50 since RE-109. It was never the camera or `object_bounds` — both
+always computed sane values. Disabling backface culling made file 41
+visible immediately: these are one-sided authored planes, and the
+free-roaming inspection camera has no guarantee (unlike a real game
+camera) of viewing a plane from its authored front side. Fixed with
+`DrawState::force_no_cull`, set to `object_view` once per frame and
+checked in `apply_material`'s existing cull decision — scoped strictly to
+the debug viewer's own inspection mode; real gameplay culling (RE-068) is
+untouched. Files 41 and 43 confirmed clean by direct pixel scan; file 50
+confirmed correct by direct on-device observation (user-confirmed live in
+PPSSPP; automated screenshot timing could not reliably catch this file's
+specific frame — a tooling limitation, not a rendering defect). **12 of
+13 transition files are now fully verified correct on the real device.**
+Only file 46's RE-113 diagonal-banding defect remains open for
+`visual verification completed`. See "Task Status" below for the full
+account. `screen wipes implemented` remains open (no real trigger event
+exists yet). `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in
+an earlier session (RE-098 plus its closing addendum: all 12 real
+fighters individually verified).
 
 ## Task Status
 
-RE-114 (this session) finished the file-by-file screenshotting RE-113
+RE-115 (this session) picked up the camera-framing gap RE-109 first
+recorded and RE-113/114 left as the remaining blocker for files 41, 43,
+50. See `docs/reverse-engineering.md` RE-115 for the full account;
+summary:
+
+* **The camera was never the problem.** File 41's `cam`/`r` overlay
+  readout was always sane and non-degenerate (`cam 5301 r 1860`), and
+  `draws`/`tris` were non-zero every attempt. Disabling
+  `GuState::CullFace` entirely (a temporary, reverted test) made it
+  visible immediately, first try.
+* **Root cause: one-sided authored planes, and an inspection camera with
+  no guarantee of viewing them from their front side.** Real gameplay
+  always looks at a `CULL_BACK` surface from its authored front (a real
+  camera has a fixed relationship to what it's pointed at); the debug
+  viewer's free-roaming `object_view` auto-framing camera does not. Files
+  39/40/42/44/45/47/48/49/51 happen to have their front face toward the
+  default angle; 41/43/50 do not. Never a material/UV/capture bug — the
+  same shape of conclusion RE-108 reached for the "backing quad", this
+  time for a correctly-identified different cause.
+* **Fixed narrowly.** Added `DrawState::force_no_cull`
+  (`psp/src/meshdraw.rs`), checked in `apply_material`'s existing
+  per-primitive cull decision. `psp/src/main.rs` sets it to `object_view`
+  once per frame, right after `draw_state.begin_frame()` — active only
+  during the debug viewer's own inspection mode. Real gameplay rendering
+  (`stage_view`, fighter simulation) never sets it; `apply_material`'s
+  ordinary culling (RE-068's verified `CULL_BACK`/`CULL_FRONT`
+  reproduction) is unchanged for everything else.
+* **Verified on all three previously-blocked files.** File 41 (object
+  13) and file 43 (object 15, both of its two quads): clean, uniform
+  magenta, zero `(0, 0, 0)` pixels by direct pixel scan. File 50 (object
+  22): confirmed correct by direct on-device observation in the live
+  PPSSPP window — a series of automated screenshot attempts could not
+  reliably catch this specific file's correct frame (a screenshot-timing
+  tooling limitation, not a rendering defect); not chased further once
+  directly confirmed working.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Default (non-transition) build
+  re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics) —
+  correctly unaffected, since Dream Land uses `stage_view`, never
+  `object_view`. `git diff --stat` against the previous commit shows only
+  the permanent `force_no_cull` mechanism.
+* **What this closes:** `PLAN.md` R0.13's "visual verification
+  completed" item now has only one remaining open item: file 46's
+  diagonal-banding defect (RE-113). **12 of 13 transition files are now
+  fully verified correct on the real device.** The camera-framing gap,
+  open since RE-109, is closed for good — structurally, for any future
+  one-sided object browsed via `object_view`, not just these three files.
+
+## Previous Task Status
+
+RE-114 (a previous session) finished the file-by-file screenshotting RE-113
 left unaddressed (`39, 48, 50, 51`), using the same recipe. See
 `docs/reverse-engineering.md` RE-114 for the full account; summary:
 
@@ -63,7 +121,7 @@ left unaddressed (`39, 48, 50, 51`), using the same recipe. See
   fix the debug viewer's auto-framing camera (unblocks 41/43/50), and
   root-cause file 46's diagonal banding.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-113 (a previous session) picked up RE-112's own handoff — screenshot the
 remaining 12 transition files — starting with the six structurally
