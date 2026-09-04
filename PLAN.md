@@ -1996,7 +1996,7 @@ RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
 
 ## R0.16 — N64 Render-State Model Fidelity
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -2073,6 +2073,46 @@ combination isn't well-defined by `gbi.h`'s own documentation, and
 guessing at it risks the exact failure mode `AGENTS.md` §9 warns
 against. Recorded as a concrete, narrow, low-priority open lead.
 
+RE-121 (a later session) closed the second acceptance item: went field
+by field through all 14 of `MeshMaterial`'s fields against `pack.rs`/
+`psp/src/meshdraw.rs`'s real consumers. Found `blend_color`
+(`G_SETBLENDCOLOR`, 366 archive-wide occurrences) is never packed at
+all — no field, no flag, no documented reason, unlike every other field
+in the struct. Measured whether it matters rather than assuming: a
+temporary, reverted census checked every real blend equation
+archive-wide for the blend-color register (`G_BL_CLR_BL`) as a colour
+source — **zero occurrences**, the identical shape RE-072 already found
+for fog. `blend_color`'s absence is correct, now measured and documented
+instead of merely unaddressed. Also found and fixed two stale "not yet
+consumed on the device side" doc comments (`MeshMaterial::texture_blend`,
+`pack::flags::TEXTURE_BLEND`) both contradicted by RE-074, several
+sessions earlier, having already wired `TEXTURE_BLEND` up — neither
+comment was ever updated afterward. Added missing "inspection only, not
+read back by the device" clarifications to `PrimDesc::prim_color`/
+`env_color` and `pack::flags::LIT`, matching `flat_color`'s own existing
+note.
+
+RE-122 (a later session) closed the final acceptance item: checked
+D-036's ordering rule against every shipped optimization. Vertex dedup
+and material merge are both safe by construction (each keys on the
+*entire* relevant struct, not a hand-picked subset). **Found a real
+violation in `tools/romtool/src/main.rs`'s `TexKey`**: a hand-picked
+4-tuple `(image_file, image_offset, palette_file, palette_offset)` that
+left out wrap/mirror/clamp mode entirely — but `convert_texture`
+pre-bakes a genuinely different, mirrored copy of a texture's bytes when
+`mirror_s`/`mirror_t` is set (RE-067), so two bindings of the same
+image+palette with different wrap modes need different cache entries.
+Measured archive-wide: **126 occurrences** across 19+ files where two
+different-wrap bindings silently shared one cache entry, one of them
+getting the wrong pre-baked bytes/wrap flags. Fixed by extending `TexKey`
+to an 8-tuple including `mirror_s`/`mirror_t`/`clamp_s`/`clamp_t`.
+Verified archive-wide: textures `899 → 935` (+36, un-merging the
+previously-collapsed variants), pack size `5253.2 → 5348.1 KiB` (+1.8%).
+`cargo test --workspace` and `cargo psp --release` +
+`tools/run-ppsspp.sh` both clean; not independently re-verified against
+one specific newly-fixed fighter/stage screenshot this session (the same
+caveat RE-102 recorded for its own structurally similar fix).
+
 ### Objective
 
 Audit and, where necessary, harden the intermediate representation between
@@ -2109,24 +2149,35 @@ established (D-036).
   a narrow open lead rather than fixed or ignored) — every category found by
   this audit now has either handling, a documented deferral, or a measured,
   scoped, named open item
-* [ ] no state category is silently dropped between `mesh.rs`'s conversion and
+* [x] no state category is silently dropped between `mesh.rs`'s conversion and
   `pack.rs`'s on-disk record without a documented reason (cross-reference
-  against R0.15's leakage tests) — not yet audited beyond geometry mode
+  against R0.15's leakage tests) — RE-121 went field by field through all 14
+  `MeshMaterial` fields; found and fixed one real, previously-undocumented
+  drop (`blend_color`, measured genuinely inert archive-wide, the same shape
+  RE-072 found for fog) and two stale doc comments claiming `texture_blend`
+  was unconsumed when RE-074 had already wired it up
 * [x] `docs/rendering.md`'s N64→PSP state-mapping table (referenced from R0.2)
   is complete against this audit's findings, not just the opcodes that
   convert cleanly — RE-119 refreshed the whole opcode table (stale since R0.2,
   every count had drifted) and the geometry-mode-set line (`G_SHADE`/
   `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` added, each with its own real ROM
   file references and current handling status)
-* [ ] D-036's ordering rule (state fidelity before batching/state-sorting/
+* [x] D-036's ordering rule (state fidelity before batching/state-sorting/
   draw-call reduction) is checked against every existing optimization already
   shipped (vertex dedup, material merge, `TexKey`/`texture_cache` dedup) and
   each one is confirmed not to have discarded state this audit found required
-* [ ] any state this audit finds genuinely unrecoverable on PSP is recorded as
-  an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent — neither
-  `G_SHADE` nor `G_TEXTURE_GEN` is unrecoverable (both are reproducible on the
-  PSP GE), so neither qualifies; both are documented as deferred/needing
-  further work instead
+  — RE-122: vertex dedup and material merge are safe by construction (each
+  keys on its entire relevant struct); `TexKey` had a real violation
+  (wrap/mirror/clamp mode omitted from the cache key, 126 archive-wide
+  occurrences of two different-wrap bindings silently sharing one entry),
+  now fixed by widening the key to include it
+* [x] any state this audit finds genuinely unrecoverable on PSP is recorded as
+  an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent — checked
+  every category this audit found (`G_SHADE`, `G_TEXTURE_GEN`, `blend_color`):
+  none is genuinely unrecoverable (`G_SHADE`/`G_TEXTURE_GEN` are reproducible
+  on the PSP GE, just deferred; `blend_color` is measured inert, not
+  "impossible to reproduce"), so no `ACCEPTED_DEVIATION` applies — confirmed,
+  not assumed
 
 ### Verification
 
@@ -2136,7 +2187,7 @@ established (D-036).
 
 ### Evidence
 
-RE-119, RE-120 in `docs/reverse-engineering.md`.
+RE-119, RE-120, RE-121, RE-122 in `docs/reverse-engineering.md`.
 
 ---
 

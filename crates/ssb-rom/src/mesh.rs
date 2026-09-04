@@ -165,10 +165,10 @@ pub struct MeshMaterial {
     /// Ness, Yoshi, Pikachu), currently declined by `combiner_shade_scale`
     /// because it cannot be expressed as a single vertex-shade scale. Maps
     /// exactly to the PSP GE's native `TextureEffect::Blend` (`Cf`=base,
-    /// `Cc`=target via `sceGuTexEnvColor`) -- not consumed on the device
-    /// side yet, since that also needs affected primitives' vertices baked
-    /// with a flat `base` colour instead of their usual shade-derived one,
-    /// which touches vertex-sharing assumptions this pass didn't verify.
+    /// `Cc`=target via `sceGuTexEnvColor`) -- consumed on the device side
+    /// by `psp/src/meshdraw.rs`'s `apply_material` (RE-074), which bakes
+    /// the base colour into affected vertices (`push_vertex`) and sets
+    /// `sceGuTexFunc`/`sceGuTexEnvColor` per primitive.
     pub texture_blend: Option<([u8; 4], [u8; 4])>,
     /// A combiner that reduces to a plain constant colour -- no shade, no
     /// texel, driven only by `PRIMITIVE`/`ENVIRONMENT`/literal constants
