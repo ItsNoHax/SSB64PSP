@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-111)
+**Last updated:** 2026-09-04 (RE-112)
 
 ---
 
@@ -12,30 +12,100 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-111 (this session)
-found and fixed a real, independent bug behind RE-110's own "backing quad
-renders black" lead: it was never the backing quad at all (a second
-misattribution, the same shape as RE-108's correction of RE-107) — file
-45's object is 8 side-by-side vertical strips, and 4 of their 8
-identical, correctly-UV-rebased photo towers sampled a permanently-black
-59-texel-wide slice of the raw framebuffer that this project's own
-pillarbox scissor (`Gpu::new`, 4:3-in-16:9) never draws to. Fixed
-`capture_transition_photo`'s read offset to start at the pillarbox's own
-left edge instead of absolute column 0. Re-verified on the real device
-profile: zero black pixels remain in the object's own screen region (was
-28,993–34,584 across three earlier measurements). See "Task Status"
-below. `screen wipes implemented` remains open (no real trigger event
-exists yet). `visual verification completed` stays open: file 45's photo
-towers are now fully confirmed correct, but the backing quad's own
-on-screen appearance has still never been directly observed in four
-sessions of investigation (RE-107/108/110/111), and 11 of 13 files remain
-unscreenshotted. `R0.11 — Fighter Palettes / Costumes` closed `COMPLETE`
-in an earlier session (RE-098 plus its closing addendum: all 12 real
-fighters individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-112 (this session)
+closed the "backing quad" question for good: it was never reachable
+geometry at all. `romtool scene --file 45 --list --nodes` shows file 45's
+one scene graph has 9 nodes, 8 with a display list, and all 8 are the
+photo towers RE-109/RE-111 already fixed and confirmed correct — none of
+the "backing" offsets RE-107/108/110/111 spent four sessions chasing
+appear in this object's node list at all. A scan-inventory census traced
+them to a real gap in `crates/ssb-rom/src/scan.rs`'s
+`find_root_display_lists`: its "outermost list" dedup measures a kept
+list's own literal decoded byte span, not the larger range it actually
+renders via an inlined `Call`, so a tiny dispatch list's own real target
+(a tower's 310-word body) is never itself found as plausible (no
+preceding `G_VTX` in view when decoded in isolation), while that body's
+own *tail* commands (the real "drawn once" sub-tile primitive, already
+correctly included in the real mesh) independently re-decode as a second,
+spurious "root" list — missing the real texture state that lived earlier
+in the true list, hence untextured and never drawn by anything. See "Task
+Status" below for the full account. `screen wipes implemented` remains
+open (no real trigger event exists yet). `visual verification completed`
+narrows to its one real remaining item: file 45 is now **fully** verified
+correct (both fixes applied, no open defect), so the only work left is
+screenshotting the other 12 transition files. `R0.11 — Fighter Palettes /
+Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
+closing addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-111 (this session) picked up RE-110's own fresh lead directly: the
+RE-112 (this session) checked whether the backing quad is even reachable
+by the renderer at all, instead of eliminating a fifth GE state. See
+`docs/reverse-engineering.md` RE-112 for the full account; summary:
+
+* **`romtool scene --file 45 --list --nodes` settled it directly.** File
+  45's one scene graph has 9 nodes, 8 with a display list, and all 8 are
+  the photo towers already confirmed correct. None of the "backing"
+  offsets appear in this object's node list, and `add_object` folds
+  extra-leaf pre/post-pair lists into the same `node_count` the debug
+  overlay reads (`nodes 9 placed 8`, unchanged all along) — 17 would show
+  if they were attached extra-leaf siblings. They are attached to nothing.
+* **A scan-inventory census explained where they come from.**
+  `crates/ssb-rom/src/scan.rs::find_root_display_lists`'s "outermost
+  list" dedup advances its coverage boundary using a kept list's own
+  literal decoded byte span, not the larger range it actually renders via
+  an inlined `Call`. File 45's tiny 9-word dispatch list (`0x1950`) calls
+  into each tower's real 310-word body (`0x1998` etc.) — `mesh::convert`
+  correctly inlines that when asked to convert from `0x1950` (the real,
+  704-triangle mesh RE-111 verified), but the scan's *independent* attempt
+  to decode starting at `0x1998` itself fails (no `G_VTX` in its own
+  window, since that lived in `0x1950`'s body before the `Call`) and is
+  correctly rejected — except the *tail* ~40 bytes of that same body
+  (`0x2320`, matching RE-108's already-identified "300×5, drawn once"
+  sub-tile — the *same* triangles as primitive 0 of the real mesh) happens
+  to be its own self-contained `G_VTX`+`G_TRI`+`G_ENDDL`, so it
+  independently re-decodes as a second, spurious "root" list — untextured,
+  because the real `G_SETTIMG` lived earlier in the true list, outside
+  this tail window.
+* **Impact: pack-time waste, not a rendering bug.** These duplicates get
+  packed by `pack()`'s own "discovery" fallback loop (meant to catch
+  genuinely un-named lists), inflating mesh/texture/triangle counts by a
+  small, unquantified amount archive-wide — not measured this session.
+  They are never attached to any object's node list, so
+  `draw_object`/`draw_object_posed` can never emit them; no on-device fix
+  applies, and none was needed.
+* **This retracts RE-107/108/110/111's entire "backing quad" line of
+  questioning, not just RE-110's specific attempt.** There was never a
+  second, real backing primitive rendering (in)correctly on file 45's
+  object. Every prior session's elimination (colour, culling, depth test,
+  texture-state caching, shade model, alpha test) correctly proved the
+  primitive is never visible — for the right reason (never submitted to
+  the GE when drawing object 17), just not the reason assumed until the
+  node-list check above.
+* **Not fixed this session, deliberately.** `find_root_display_lists` is
+  shared well beyond R0.13 (opcode inventory, stage-animation discovery,
+  others); extending its containment check to follow `Call`/`Branch`
+  targets transitively is a real, scoped fix, but touches every file's
+  discovered-list inventory archive-wide and needs the same
+  archive-wide before/after measurement this project always requires for
+  a shared-function change. Recorded as a concrete, reproducible lead.
+* `cargo test --workspace`: 405 passing, unaffected (investigation-only).
+  `cargo clippy --release --workspace`: clean. Default build
+  re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no panics)
+  after reverting. All temporary code (`meshdraw.rs`'s forced-off
+  depth-test/cull/alpha-test overrides, `psp/src/main.rs`'s forced
+  object-view patch, `tools/romtool/src/main.rs`'s position and
+  scan-inventory censuses) fully reverted; `git diff --stat` is empty
+  relative to RE-111's commit — this session is documentation-only.
+* **What this closes:** `PLAN.md` R0.13's "visual verification completed"
+  item no longer carries an open defect for file 45 at all — its only
+  reachable geometry (8 photo towers) is fully confirmed correct. The
+  remaining work is unchanged in kind (screenshot the other 12 files) but
+  no longer has an asterisk next to file 45.
+
+## Previous Task Status
+
+RE-111 (a previous session) picked up RE-110's own fresh lead directly: the
 backing quad (raw colour `[255,255,255,0]`) reproducing RE-107's original
 "renders solid black" finding now that RE-109's fix made the photo tile
 correct. See `docs/reverse-engineering.md` RE-111 for the full account;
@@ -104,7 +174,7 @@ summary:
   unscreenshotted, and the backing quad's own on-screen appearance is
   still genuinely unobserved after four sessions, not merely unresolved.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-110 (a previous session) picked up RE-109's own addendum lead directly:
 force a small fixed set of exact `spin` values across separate runs

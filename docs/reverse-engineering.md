@@ -8162,3 +8162,136 @@ anything, correct or incorrect, since it has never been proven visible on
 screen at all. "Visual verification completed" stays open — 11 of 13 files
 remain unscreenshotted, and the backing quad's own on-screen appearance
 remains genuinely unobserved, not merely unresolved.
+
+---
+
+## RE-112 — The "backing quad" does not exist as reachable geometry: it is a duplicate, out-of-context decode of the same tail commands already inside the real photo-tower mesh, produced by a gap in the scan's discovery dedup
+
+Picked up exactly where RE-111 left off: the backing quad's own on-screen
+appearance has never been directly observed across RE-107/108/110/111,
+despite four sessions of state elimination (colour, culling, depth
+testing, texture-state caching, shade model, and — this session —
+alpha test too, each forced off individually on the real device with no
+change). Rather than eliminate a fifth GE state, checked whether the
+primitive is reachable by the renderer at all.
+
+**`romtool scene --file 45 --list --nodes` settled it directly.** File 45
+has exactly one scene graph, 9 nodes, 8 carrying a display list — and
+every one of those 8 `dl` addresses (`0x1950, 0x2348, 0x2CF8, 0x36A8,
+0x4058, 0x4E10, 0x5A70, 0x6830`) is one of the *photo* towers RE-111
+already confirmed correct. **None of the "backing" offsets
+(`0x2320, 0x2CD0, 0x3680, 0x4030, 0x4DD0, 0x5A38, 0x67F0, 0x7458`) appear
+in this object's node list at all.** `pack::PackWriter::add_object`
+(`crates/ssb-rom/src/pack.rs`) also folds any "extra leaf" pre/post-pair
+lists into the same `ObjectDesc::node_count` the debug overlay reads
+(`nodes 9 placed 8`, unchanged across every session's screenshot) — had
+the backing quads been real extra-leaf siblings of the 8 real nodes,
+`node_count` would read 17, not 9. They are attached to nothing this
+object's own node tree reaches, by either mechanism.
+
+**A temporary, reverted census of `pack()`'s own scan output explained
+where they come from.** `crates/ssb-rom/src/scan.rs::find_root_display_lists`
+scans every 8-byte-aligned file offset, decodes a candidate list, and
+keeps it if it terminates properly and "draws" (`mesh::convert` reports a
+non-zero triangle count) — then keeps only outermost lists, dropping any
+whose *own decoded byte span* falls inside an earlier kept list's span.
+For file 45 this scan's full result (`all`) is exactly 9 entries: the
+small `0x1950` dispatch list (9 words, the real, authoritative node
+entry) and the 8 backing offsets — **the real, large 310-word per-tower
+bodies (`0x1998, 0x2348, ...`, decompiled as `DL_0x1998` etc. in
+`refs/ssb-decomp-re/src/relocData/45_LBTransitionSudare1.c`) never appear
+in `all` at all.**
+
+**Decoded, this is exactly what the mechanism predicts.** `0x1950`'s own
+9-word body loads vertices (`G_VTX`) and texture state, then `Call`s into
+`0x1998`'s body, which issues the actual `G_TRI`s against that
+already-loaded state — `mesh::convert` correctly inlines the callee when
+asked to convert starting at `0x1950` (matching the pack-time comment
+"`convert()` inlines `G_DL` callees"), which is why `pack_mesh(offset=
+0x1950)` produces the full, correct 44-primitive/704-triangle mesh RE-111
+already verified. But `find_root_display_lists` also independently tries
+decoding **at** `0x1998` in isolation, with no preceding `G_VTX` in view
+— its `G_TRI`s reference vertex-cache slots nothing in its own window
+ever loaded, so `mesh::convert` on that isolated slice reports zero
+triangles and `0x1998` is correctly rejected as "not a real root list".
+The *tail* ~40 bytes of `0x1998`'s own body (`0x2320..0x2348`, and the
+same relative position in each of the other 7 towers) is different: real
+display lists' final few commands are typically a small,
+self-contained `G_VTX` + `G_TRI` + `G_ENDDL` for their last sub-tile
+(this is RE-108's own already-identified "300×5, drawn once" primitive —
+the *same* triangles as primitive 0 of the real, correctly-converted
+mesh), so decoding *from that offset* independently succeeds: it is a
+short, properly-terminated, real-triangle-drawing sequence, just missing
+the `G_SETTIMG`/palette state that lived earlier in the real list, outside
+its own truncated window. Untextured with a default/leftover vertex
+colour is exactly what decoding a real list's tail out of its own context
+produces.
+
+**Root cause: `find_root_display_lists`'s outermost-list dedup measures
+the wrong span.** It advances `covered_to` using `FoundDl::end_offset()`
+— the *literal decoded byte length* of the kept list's own top-level
+command sequence (9 words / 72 bytes for `0x1950`) — not the much larger
+range that list actually renders once its `Call` is followed (`0x1950`
+through `0x2348`, matching every one of `mesh.rs`'s own "`convert()`
+inlines `G_DL` callees" comments elsewhere). Because `covered_to` is left
+at `0x1998` instead of `0x2348`, offsets genuinely inside the real,
+already-drawn list (like `0x2320`) are never recognised as contained, and
+the tail-fragment re-decode survives the dedup as if it were a second,
+independent root list.
+
+**Impact is real but narrow: pack-time waste, not a rendering bug.**
+These duplicates are packed (`Discovery fills in only what the graphs
+never named`, `pack()`'s own fallback loop, gated on `!called.contains &&
+!authoritative.contains` — a filter this specific case slips past for the
+reason above) as ordinary meshes/textures, inflating `meshes`/`triangles`/
+`textures` build counters and pack size by a small, currently
+unquantified amount archive-wide (not just file 45 — any display list
+whose tail happens to be independently decodable this way is affected;
+not measured this session). They are never attached to any object's node
+list, so `draw_object`/`draw_object_posed` can never emit them — this is
+not a gap `psp/src/meshdraw.rs` needs to close, and no on-device fix
+applies. The real, actually-drawn geometry (all 8 photo towers) was
+already fully verified correct by RE-109 and RE-111.
+
+**This retracts RE-107/108/110/111's entire "backing quad" line of
+questioning, not just RE-110's specific attempt.** There never was a
+second, real, backing primitive rendering incorrectly on file 45's
+object — every session's observation of "an untextured white
+`[255,255,255,0]` primitive" was the pack's own duplicate decode of
+already-correct tail geometry, never reachable through the object this
+project's debug viewer or any real game code would ever draw. RE-108's
+own seven state eliminations, and this session's additional two (culling,
+alpha test), were not wasted: they correctly proved the primitive is
+never visible, for the entirely correct reason (it is never submitted to
+the GE at all when drawing object 17), just not the reason any session
+assumed until the node-list check above.
+
+**Not fixed this session, deliberately.** `find_root_display_lists` is a
+shared, foundational scan used well beyond R0.13 (opcode inventory,
+stage-animation discovery, and others per its own callers) — extending
+its containment check to follow `Call`/`Branch` targets transitively
+before computing coverage is a real, scoped fix, but changing it touches
+every file's discovered-list inventory archive-wide, not just the 13 LB
+transition files, and needs the same archive-wide before/after
+measurement this project always requires for a shared-function change
+(mirroring RE-099/RE-108's own precedent of root-causing before shipping
+a fix on top of an already-long investigation). Recorded here as a
+concrete, reproducible lead — not guessed at same-session.
+
+`cargo test --workspace`: 405 passing, unaffected (investigation-only, no
+production code changed). `cargo clippy --release --workspace`: clean.
+`cargo psp --release` + `tools/run-ppsspp.sh`: Dream Land re-screenshotted
+clean (pixel-normal, 60 FPS, no panics). All temporary code (`meshdraw.rs`'s
+forced-off depth-test/cull/alpha-test overrides, `psp/src/main.rs`'s
+forced object-view patch, `tools/romtool/src/main.rs`'s file-45 position
+and scan-inventory censuses) was fully reverted; `git diff --stat` is
+empty relative to RE-111's commit — this entry is documentation-only.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item no longer carries an open "backing quad" defect at all: file 45's
+*only* real, reachable geometry is its 8 photo towers, and all 8 are
+confirmed correct (RE-109 + RE-111). File 45 can now be counted as fully
+verified. The concrete remaining work is unchanged in kind — screenshot
+the other 12 transition files — but no longer has an asterisk next to it
+for file 45's own unresolved defect, because there was never a second
+defect to resolve.

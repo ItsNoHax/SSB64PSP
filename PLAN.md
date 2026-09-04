@@ -1690,6 +1690,30 @@ recipe used to find it: a real LB transition's capture would hit the same
 permanently-black bar in real gameplay, since nothing this project draws
 ever reaches columns `0..59`/`421..480` under the standing pillarbox.
 
+RE-112 (a later session) resolved the "backing quad" question entirely —
+it never existed as reachable geometry. `romtool scene --file 45 --list
+--nodes` shows file 45's one scene graph has 9 nodes, 8 with a display
+list, and all 8 are the photo towers already confirmed correct; none of
+the "backing" offsets are in this object's node list (nor its packed
+`ObjectDesc::node_count`, which would read 17 instead of 9 if they were
+attached extra-leaf siblings). A scan-inventory census explained why they
+exist in the pack at all: `crates/ssb-rom/src/scan.rs`'s
+`find_root_display_lists` tracks an "outermost list" dedup using each
+kept list's own literal decoded byte span, not the larger range it
+actually renders once its own `Call` is followed — so the tiny 9-word
+dispatch list that calls into each tower's real 310-word body only
+"covers" its own 9 words, not the full body, and a display list's own
+tail commands (the same real "300×5, drawn once" primitive already inside
+the correctly-converted mesh) independently re-decode as a second,
+spurious "root" list, missing the real texture state that lived earlier
+in the true list outside that tail window — producing exactly the
+untextured, raw-white, never-drawn duplicate every prior session chased.
+This retracts RE-107/108/110/111's entire line of questioning: there was
+never a second, real backing primitive on file 45's object at all. Not
+fixed this session — `find_root_display_lists` is shared well beyond
+R0.13, and a correct fix needs an archive-wide before/after measurement,
+recorded as a concrete lead rather than shipped mid-investigation.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1706,11 +1730,11 @@ Implement every framebuffer-based rendering path required by SSB64.
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — file 45's photo tower is now confirmed fully correct on the real device across all 8 of its strips (RE-111: zero black pixels post-fix, direct pixel scan). The backing quad's own on-screen appearance is still, after four sessions (RE-107/108/110/111), never actually observed by direct evidence — RE-111 retracts RE-110's attribution the same way RE-108 retracted RE-107's, and it remains open which primitive (if any currently visible) is the backing quad at all. File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all; the other 11 remain unscreenshotted
+* [ ] visual verification completed — file 45 is now **fully** confirmed correct on the real device: its only reachable geometry is 8 photo towers (RE-112, via `romtool scene --nodes`), all 8 confirmed correct (RE-111: zero black pixels post-fix, direct pixel scan). The "backing quad" that RE-107/108/110/111 spent four sessions chasing is retracted entirely by RE-112 — it was never reachable geometry, only a scan-discovery duplicate of tail commands already inside the real mesh, so there is no remaining open defect on file 45 at all. File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all, both now fully clean; the other 11 remain unscreenshotted — the sole remaining concrete work for this item
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112 in `docs/reverse-engineering.md`.
 
 ---
 
