@@ -844,14 +844,26 @@ impl<'a> Texels<'a> {
 /// points the texture at the resulting [`ssb_rom::pack::MatAnimDesc`] --
 /// deduplicated via `mat_anim_index` the same way textures already are, so
 /// many primitives sharing one script do not upload its palettes twice.
-/// Keys the texture cache by both the texel location *and* the palette
-/// identity: `(image_file, image_offset, palette_file, palette_offset)`.
-/// Palette-less formats key their last two fields as `(id, u32::MAX)`, a
-/// sentinel no real palette offset can ever equal, so two different-palette
-/// primitives sharing one image (RE-098: exactly the shape a costume's own
-/// `PaletteID` override produces) get their own cache entries instead of
-/// silently reusing whichever palette happened to be resolved first.
-type TexKey = (u32, u32, u32, u32);
+/// Keys the texture cache by the texel location, the palette identity, and
+/// the wrap/mirror/clamp mode: `(image_file, image_offset, palette_file,
+/// palette_offset, mirror_s, mirror_t, clamp_s, clamp_t)`. Palette-less
+/// formats key their palette fields as `(id, u32::MAX)`, a sentinel no real
+/// palette offset can ever equal, so two different-palette primitives
+/// sharing one image (RE-098: exactly the shape a costume's own `PaletteID`
+/// override produces) get their own cache entries instead of silently
+/// reusing whichever palette happened to be resolved first.
+///
+/// The wrap/mirror/clamp fields matter for the identical reason (R0.16/
+/// RE-122): `convert_texture` pre-bakes a *mirrored* copy of the texture
+/// when `mirror_s`/`mirror_t` is set (RE-067) — two different bytes for the
+/// same source image, not a runtime flag on otherwise-identical data. Before
+/// this fix, the key ignored wrap mode entirely, so the same image+palette
+/// bound once with mirroring and once without (measured: 126 archive-wide
+/// occurrences) shared one cache entry — whichever binding was converted
+/// first "won", and every other binding silently got that texture's own
+/// wrap-dependent bytes and `TextureDesc::wrap` bits, regardless of its own
+/// real `cms`/`cmt`.
+type TexKey = (u32, u32, u32, u32, bool, bool, bool, bool);
 
 fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
     (
@@ -859,6 +871,10 @@ fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
         t.data_offset,
         t.palette_file.map_or(id, u32::from),
         t.palette_offset.unwrap_or(u32::MAX),
+        t.mirror_s,
+        t.mirror_t,
+        t.clamp_s,
+        t.clamp_t,
     )
 }
 
@@ -886,7 +902,16 @@ fn pack_mesh(
             // would otherwise collide with a real, unpaletted texture
             // legitimately bound at offset 0 of the same file.
             Some(t) if t.framebuffer => {
-                let key = (u32::MAX, u32::MAX, t.width as u32, t.height as u32);
+                let key = (
+                    u32::MAX,
+                    u32::MAX,
+                    t.width as u32,
+                    t.height as u32,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
                 Some(*tex_index.entry(key).or_insert_with(|| {
                     writer.add_framebuffer_texture(t.width, t.height)
                 }))

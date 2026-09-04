@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-120)
+**Last updated:** 2026-09-04 (RE-122)
 
 ---
 
@@ -12,25 +12,38 @@
 
 ## Current Task
 
-`R0.16 — N64 Render-State Model Fidelity` (`IN_PROGRESS`, moved from
-`TODO` in the previous session, following `R0.15 — Render-State
-Isolation`'s closure). RE-119 (previous session) fixed a real bug in
-`romtool`'s own diagnostic tooling (`G_SHADE` mapped to the wrong bit),
-refreshed R0.2's stale opcode inventory, and found two geometry-mode
-categories with zero handling in `mesh.rs`: `G_SHADE` (60 occurrences)
-and `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` (156/13 occurrences, the
-"Metal [Character]" transformation effect, correctly deferred behind
-combat/items). RE-120 (this session) closed the `G_SHADE` cross-
-reference RE-119 left open: confirmed 31 archive-wide occurrences of
-`G_SHADE` off with a combiner that still reads `SHADE`, with real file
-attribution. **29 of 31 are in content this project doesn't render yet**
-(items, fighter special-move effects, general effects — correctly gated
-behind the combat/item systems this project's own rendering gate
-blocks). **2 affect content already rendered**: one primitive each in
-Yoshi's Island's two stage variants — a real, narrow, currently-live gap,
-not fixed this session since the correct real-hardware behavior isn't
-well-defined by `gbi.h`'s own documentation. See "Task Status" below for
-the full account.
+`R0.16 — N64 Render-State Model Fidelity` is now `COMPLETE`. RE-119
+fixed a real bug in `romtool`'s own diagnostic tooling (`G_SHADE` mapped
+to the wrong bit) and refreshed R0.2's stale opcode inventory, surfacing
+two undocumented geometry-mode categories (`G_SHADE`, `G_TEXTURE_GEN` —
+the latter is the "Metal [Character]" transformation effect, correctly
+deferred behind combat/items). RE-120 closed the `G_SHADE` cross-
+reference: 31 archive-wide occurrences, 29 in content this project
+doesn't render yet (items/effects), 2 affecting Yoshi's Island (a real,
+narrow, documented open lead). RE-121 audited every `MeshMaterial` field
+against its real consumers and found `blend_color` is never packed at
+all — measured it archive-wide and confirmed it's genuinely inert (no
+blend equation ever reads the blend-color register), the same shape
+RE-072 found for fog; also fixed two stale "not consumed on the device"
+doc comments RE-074 had already contradicted. **RE-122 (this session)
+found and fixed a real, previously-unknown bug**: `tools/romtool`'s
+`TexKey` texture-cache dedup ignored wrap/mirror/clamp mode entirely,
+so two bindings of the same image+palette with *different* real
+`cms`/`cmt` silently shared one cache entry — one of them getting the
+wrong pre-baked (possibly mirrored) texture bytes. Measured 126
+archive-wide occurrences across 19+ files; fixed by widening `TexKey` to
+include wrap/mirror/clamp mode. Textures `899 → 935` (+36), pack size
++1.8%, default build re-screenshotted clean. **All 5 of R0.16's
+acceptance items are now satisfied.** See "Task Status" below for the
+full account.
+
+Per `PLAN.md`'s task ordering, the next eligible task is `R0.17 —
+Visual Regression Methodology` (depends on R0.1 ✓, R0.2 ✓, no unmet
+dependency) — establishing a deterministic, repeatable test scene/
+camera/frame that can be captured and diffed automatically, rather than
+the ad hoc, per-investigation screenshots this project has relied on so
+far. `R0.18 — Reference-Port Comparative Audit` (depends on R0.2 ✓) is
+also eligible if R0.17 turns out blocked.
 
 `R0.15 — Render-State Isolation` closed `COMPLETE` in an earlier
 session (RE-117/118: all 10 state categories covered across both the
@@ -45,7 +58,84 @@ verified).
 
 ## Task Status
 
-RE-120 (this session) closed RE-119's own open item: does any real
+RE-122 (this session) closed R0.16's last acceptance item: checking
+D-036's ordering rule (state fidelity before batching/dedup) against
+every shipped optimization. See `docs/reverse-engineering.md` RE-122 for
+the full account; summary:
+
+* **Vertex dedup and material merge are both safe by construction.**
+  `Builder::push_vertex` keys on the full post-bake `MeshVertex`;
+  `merge_by_material` keys on the full, `derive(Ord)` `MeshMaterial`.
+  Neither can silently ignore a field, since the key *is* the whole
+  struct, not a hand-picked subset.
+* **`tools/romtool`'s `TexKey` was different, and had a real bug.** It
+  was a hand-picked 4-tuple `(image_file, image_offset, palette_file,
+  palette_offset)` — no wrap/mirror/clamp mode. But `convert_texture`
+  pre-bakes a genuinely different, mirrored copy of a texture's bytes
+  when `mirror_s`/`mirror_t` is set (RE-067), so two bindings of the
+  same image+palette with different wrap modes need different cache
+  entries. A temporary, reverted census recording each `TexKey`'s first
+  wrap mode and flagging later mismatches found **126 archive-wide
+  occurrences** across 19+ files — two different-wrap bindings silently
+  sharing one entry, one of them getting the wrong pre-baked bytes/wrap
+  flags.
+* **Fixed by widening `TexKey` to an 8-tuple** including `mirror_s`/
+  `mirror_t`/`clamp_s`/`clamp_t`. The framebuffer-role texture cache's
+  own separate sentinel key needed the same widening to stay valid.
+* **Verified archive-wide.** Textures `899 → 935` (+36, un-merging
+  previously-collapsed variants — not new discovery, same image/palette
+  identities just no longer wrongly shared), pack size `5253.2 → 5348.1
+  KiB` (+1.8%). `cargo test --workspace`: 405 passing (fix lives in
+  `romtool`, not the library crate). `cargo clippy --release
+  --workspace`: clean. `cargo psp --release` + `tools/run-ppsspp.sh`:
+  Dream Land re-screenshotted clean (pixel-normal, 60 FPS, no panics;
+  overlay's own `tex 0/935` confirms the pack regenerated). Not
+  independently re-verified against one specific newly-fixed
+  fighter/stage screenshot this session — the same caveat RE-102
+  recorded for its own structurally similar fix.
+* **What this closes:** `PLAN.md` R0.16's D-036 acceptance item, the
+  last of its 5 items, is now satisfied. **`R0.16 — N64 Render-State
+  Model Fidelity` moves `IN_PROGRESS` → `COMPLETE`.**
+
+## Previous Task Status
+
+RE-121 (earlier in this session) closed R0.16's second acceptance item:
+is any state category silently dropped between `mesh.rs`'s
+`MeshMaterial` and `pack.rs`'s on-disk record without a documented
+reason? See `docs/reverse-engineering.md` RE-121 for the full account;
+summary:
+
+* **Went field by field through all 14 `MeshMaterial` fields** against
+  `pack.rs`/`psp/src/meshdraw.rs`'s real consumers, rather than assuming
+  the existing fields were already exhaustive.
+* **Found one real gap: `blend_color` (`G_SETBLENDCOLOR`, 366
+  archive-wide occurrences) is never packed into `PrimDesc`/
+  `TextureDesc` at all** — no field, no flag, no documented reason,
+  unlike every other field in the struct.
+* **Measured whether it matters, rather than assuming either way.** A
+  temporary, reverted census checked every real blend equation
+  archive-wide for the blend-color register (`G_BL_CLR_BL`) as a colour
+  source: **zero occurrences** — the identical shape RE-072 already
+  found for fog. `blend_color`'s absence is correct, now measured and
+  documented instead of merely unaddressed.
+* **Also found and fixed two stale "not yet consumed on the device
+  side" doc comments** (`MeshMaterial::texture_blend`,
+  `pack::flags::TEXTURE_BLEND`), both contradicted by RE-074 (several
+  sessions earlier) having already wired `TEXTURE_BLEND` up — neither
+  comment was ever updated afterward. Added missing "inspection only,
+  not read back by the device" clarifications to `PrimDesc::prim_color`/
+  `env_color` and `pack::flags::LIT`, matching `flat_color`'s own
+  existing note.
+* `cargo test --workspace`: 405 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. Pack rebuild confirmed byte-identical
+  to the pre-session baseline. All temporary census code fully reverted.
+* **What this closes:** `PLAN.md` R0.16's "no state category is
+  silently dropped... without a documented reason" acceptance item is
+  now satisfied.
+
+## Earlier Task Status
+
+RE-120 (a previous session) closed RE-119's own open item: does any real
 primitive combine `G_SHADE` cleared with a combiner that still reads
 `SHADE` — the one scenario that would actually render wrong. See
 `docs/reverse-engineering.md` RE-120 for the full account; summary:
@@ -90,7 +180,7 @@ primitive combine `G_SHADE` cleared with a combiner that still reads
   for `G_SHADE` — its real impact is measured, attributed by file, and
   classified, not left as an unexamined risk.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-119 (a previous session) started R0.16 from its own first acceptance
 item — R0.2's opcode inventory — rather than guessing which state

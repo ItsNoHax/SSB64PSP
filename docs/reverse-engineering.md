@@ -8981,3 +8981,142 @@ for `G_SHADE`: its real archive-wide impact is measured, attributed by
 file, and classified — 29 of 31 occurrences are correctly out of scope
 (ungated content), and the remaining 2 are a documented, narrow,
 low-priority open item rather than an unexamined risk.
+
+---
+
+## RE-121 — `blend_color` is correctly dropped between `mesh.rs` and `pack.rs` (measured, not assumed); two stale "not yet consumed" doc comments corrected
+
+Continued R0.16's second acceptance item: is any state category silently
+dropped between `mesh.rs`'s `MeshMaterial` and `pack.rs`'s on-disk
+`PrimDesc`/`TextureDesc` records without a documented reason? Went field
+by field through `MeshMaterial`'s all 14 fields and cross-referenced
+each against `pack.rs`'s `add_mesh` and `psp/src/meshdraw.rs`'s actual
+consumers, rather than assuming the existing fields were already
+exhaustive.
+
+**Found one real gap: `MeshMaterial::blend_color` (`G_SETBLENDCOLOR`,
+366 archive-wide occurrences per RE-119's refreshed count) is never
+packed into `PrimDesc`/`TextureDesc` at all** — grepped both `pack.rs`
+and `psp/src/meshdraw.rs`, zero matches. Unlike `prim_color`/`env_color`
+(packed but only for inspection, since their real effect is already
+baked into vertices) or `translucent` (packed, deliberately not wired to
+`GuState::Blend` yet, extensively documented in RE-069/071), `blend_color`
+had no field, no flag, and no written reason for its absence at all.
+
+**Measured whether this matters, rather than assuming either way.** The
+real N64 blend equation can read the blend-color register
+(`G_BL_CLR_BL`, value `2`) as either cycle's second colour source
+(`refs/ssb-decomp-re/include/PR/gbi.h`) — if any real primitive's render
+mode actually selected it, `blend_color` would be genuinely load-bearing
+data this project silently discards. A temporary, reverted census
+checked every `G_SETOTHERMODE_L` render-mode word archive-wide for
+`CLR_BL` at either colour-source field (bits 22-23 or 20-21): **zero
+occurrences**. `render_mode_is_translucent`'s own existing detection
+(`CLR_MEM`, "read the framebuffer") already covers every blend shape
+that shows up in this game; `G_SETBLENDCOLOR`'s value is emitted 366
+times but never actually read by any equation, the identical shape RE-072
+already found and measured for `G_SETFOGCOLOR`/fog. `blend_color`'s
+absence from the pack format is correct, exactly like fog's — now
+measured and documented as such instead of merely unaddressed.
+
+**Also found and fixed two stale "not yet consumed on the device side"
+doc comments, both contradicted by RE-074 (a much earlier session) that
+had already wired `TEXTURE_BLEND` up.** `MeshMaterial::texture_blend`'s
+own doc comment and `pack::flags::TEXTURE_BLEND`'s doc comment both still
+said "not consumed on the device side yet" / "not yet consumed on the
+device side" — RE-074 shipped `psp/src/meshdraw.rs`'s `apply_material`
+handling for exactly this (`sceGuTexFunc`/`sceGuTexEnvColor`) several
+sessions ago, and visually confirmed it against Link's own model. Neither
+comment was ever updated afterward. Corrected both. Also added the
+missing "packed for inspection only, not read back by the device"
+clarification to `PrimDesc::prim_color`/`env_color` (which had no doc
+comment explaining this at all, unlike `flat_color`'s own explicit note)
+and `pack::flags::LIT` (same pattern: baked into vertex colour at pack
+time, never read back).
+
+`cargo test --workspace`: 405 passing, unaffected (doc comments and one
+measurement-only census, no behavioural change). `cargo clippy --release
+--workspace`: clean. Pack rebuild confirmed byte-identical to the
+pre-session baseline. All temporary census code (a `SetOtherModeL`
+handler addition checking for `CLR_BL`) fully reverted; `git diff --stat`
+shows only doc-comment changes in `mesh.rs`/`pack.rs`.
+
+**What this closes.** `PLAN.md` R0.16's "no state category is silently
+dropped... without a documented reason" acceptance item is now satisfied:
+every `MeshMaterial` field has been individually traced to either a real
+consumer, a documented inspection-only packing, or (for `blend_color`) a
+measured, correct absence — and two real, stale documentation
+contradictions this same audit surfaced along the way are fixed rather
+than left for a future session to trip over again.
+
+---
+
+## RE-122 — `TexKey` ignored wrap/mirror/clamp mode entirely: 126 archive-wide cases where two different-wrap bindings of the same image+palette silently shared one (possibly wrong) cache entry
+
+Continued R0.16's D-036 acceptance item — checking every shipped
+optimization (vertex dedup, material merge, `TexKey`/texture-cache dedup)
+against the state this audit found required — rather than assuming the
+existing dedup keys were already complete. Vertex dedup
+(`Builder::push_vertex`, keyed on the full post-bake `MeshVertex`) and
+material merge (`merge_by_material`, keyed on the full, `derive(Ord)`
+`MeshMaterial`) were both confirmed safe by construction: the dedup key
+in each case is the *entire* relevant struct, so no field can be silently
+ignored by either optimization even in principle.
+
+**`tools/romtool/src/main.rs`'s `TexKey` was different: a hand-picked
+4-tuple, not a whole-struct key, and it left out real state.** `TexKey`
+was `(image_file, image_offset, palette_file, palette_offset)` — no
+`mirror_s`/`mirror_t`/`clamp_s`/`clamp_t`. But `convert_texture`
+pre-bakes a **mirrored copy of the texture's actual bytes** when
+`mirror_s`/`mirror_t` is set (RE-067) — two genuinely different texel
+buffers for the same source image, not a runtime-only distinction like
+`clamp_s`/`clamp_t` (which only affects `TextureDesc::wrap`, read at draw
+time). A temporary, reverted census recorded the wrap/mirror/clamp mode
+alongside each `TexKey`'s first insertion and flagged every later cache
+*hit* whose own wrap/mirror/clamp mode disagreed with what was recorded.
+
+**Result: 126 archive-wide occurrences**, across at least 19 distinct
+files (73, 104, 106, 111, 112, 113, 118, 129, 132, 134, 136, 137, 142,
+143, 147, 296, 310, 312, 317, and more past the sampled head) — the same
+image+palette combination bound once with one wrap/mirror/clamp mode and
+again with a *different* one, silently sharing one cache entry keyed only
+on image+palette identity. Whichever binding got converted first "won":
+every other binding with the same image+palette but a different real
+`cms`/`cmt` got that first binding's own pre-baked bytes and
+`TextureDesc::wrap` value, not its own.
+
+**Fixed by extending `TexKey` to the full 8-tuple**
+`(image_file, image_offset, palette_file, palette_offset, mirror_s,
+mirror_t, clamp_s, clamp_t)` — the same fix shape D-036 itself prescribes:
+state fidelity (the real key identity) resolved before the batching/dedup
+optimization runs, not after. The framebuffer-role texture cache's own
+separate key (a 4-tuple sentinel, `(u32::MAX, u32::MAX, width, height)`)
+needed the same widening to stay a valid `TexKey`; extended with `false`
+sentinels since a framebuffer-role capture has no real wrap/mirror/clamp
+distinction to preserve.
+
+**Verified archive-wide, not just compiled.** Rebuilding the pack:
+textures `899 → 935` (+36, matching the expected effect of correctly
+un-merging previously-collapsed wrap-mode variants — not new discovery,
+the same image/palette identities, just no longer wrongly shared), size
+`5253.2 → 5348.1 KiB` (+94.9 KiB, +1.8%). `cargo test --workspace`: 405
+passing, unaffected (this fix lives in `romtool`, not the library crate).
+`cargo clippy --release --workspace`: clean. `cargo psp --release` +
+`tools/run-ppsspp.sh`: Dream Land re-screenshotted clean (pixel-normal,
+60 FPS, no panics; overlay's own `tex 0/935` count confirms the pack
+regenerated correctly). Not independently re-verified against a specific
+affected fighter/stage's own screenshot this session — the same
+"measured archive-wide effect plus a clean baseline, not yet re-checked
+against one of the specific newly-fixed cases" caveat RE-102 itself
+recorded for its own, structurally similar clamp fix.
+
+All temporary census code (a `TexKey`-keyed wrap-mode `thread_local`
+census in `pack_mesh`) fully reverted; `git diff --stat` shows only the
+permanent `TexKey`/`texture_cache_key` widening and the two call sites
+that construct a `TexKey` literal.
+
+**What this closes.** `PLAN.md` R0.16's D-036 acceptance item is now
+satisfied for all three named optimizations: vertex dedup and material
+merge were confirmed safe by construction, and `TexKey`/texture-cache
+dedup had one real, measured violation (126 archive-wide occurrences),
+now fixed rather than merely documented as a risk.

@@ -177,6 +177,11 @@ pub struct PackedVertex {
 pub mod flags {
     pub const CULL_BACK: u32 = 1 << 0;
     pub const CULL_FRONT: u32 = 1 << 1;
+    /// Whether real hardware would light this primitive (RE-103/RE-105).
+    /// The actual lighting effect is already baked into the primitive's
+    /// vertex colours at pack time (RE-065's key light, applied per vertex
+    /// before `push_vertex`); `psp/src/meshdraw.rs` never reads this bit
+    /// back, kept for inspection like `prim_color`/`env_color` above.
     pub const LIT: u32 = 1 << 2;
     pub const SMOOTH: u32 = 1 << 3;
     pub const Z_BUFFER: u32 = 1 << 4;
@@ -189,7 +194,8 @@ pub mod flags {
     /// RE-073: a combiner blending from a base colour to a target colour
     /// driven by the texture, with no shade involved -- `PrimDesc`'s
     /// `texture_blend_base`/`texture_blend_target` carry the two colours.
-    /// Not yet consumed on the device side; see `MeshMaterial::texture_blend`.
+    /// Consumed on the device side by `psp/src/meshdraw.rs`'s
+    /// `apply_material` (RE-074); see `MeshMaterial::texture_blend`.
     pub const TEXTURE_BLEND: u32 = 1 << 7;
     /// RE-079: a combiner that reduces to a plain constant colour -- no
     /// shade, no texel. `PrimDesc::flat_color` carries it; already baked
@@ -207,7 +213,19 @@ pub struct PrimDesc {
     /// Index into the texture table, or `u32::MAX` for untextured.
     pub texture: u32,
     pub flags: u32,
+    /// `combiner_shade_scale`'s resolved scale (RE-106), already folded into
+    /// affected vertices at pack time (`add_mesh`) -- like `flat_color`
+    /// below, kept here for inspection, not because `psp/src/meshdraw.rs`
+    /// reads it back (R0.16/RE-121: grepped, zero consumers).
     pub prim_color: u32,
+    /// The raw `G_SETENVCOLOR` value a primitive resolved, when one exists.
+    /// Not consumed by `psp/src/meshdraw.rs` either -- primitives that need
+    /// it at runtime already carry it via `texture_blend_base` (RE-073);
+    /// this copy is for inspection only, same as `prim_color` above. R0.6's
+    /// "environment color verified" acceptance item, not this field, is
+    /// where the remaining real gap (primitives whose combiner reads
+    /// `ENVIRONMENT` in a shape this converter can't yet resolve) is
+    /// tracked.
     pub env_color: u32,
     /// Byte offset into the blob of the first index.
     pub index_offset: u32,
