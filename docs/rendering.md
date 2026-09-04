@@ -84,28 +84,41 @@ drawing, so garbage fails almost immediately. Using relocation targets as
 candidate list starts does *not* work: most reloc targets are the vertex-array
 pointers carried by `G_VTX`, not list starts.
 
-Result: **135 files, 1,864 display lists, 22,515 triangles, 0 conversion
+Result: **135 files, 1,864 display lists, 28,089 triangles, 0 conversion
 failures.**
 
-**Opcodes actually emitted:**
+**Opcodes actually emitted** (re-measured for R0.16/RE-119; the previous
+table predated several conversion-fidelity fixes — e.g. RE-093/RE-094's
+texture-state corrections — that changed how many triangles the same
+1,864 lists parse into, and predated RE-105's discovery that
+`G_MOVEWORD` is genuinely load-bearing, not unused):
 
 | Opcode | Count | | Opcode | Count |
 |---|---:|---|---|---:|
-| `G_TRI2` | 10954 | | `G_SETCOMBINE` | 1360 |
-| `G_RDPPIPESYNC` | 6987 | | `G_LOADTLUT` | 1288 |
-| `G_VTX` | 3918 | | `G_TEXTURE` | 1272 |
-| `G_SETTILE` | 3483 | | `G_NOOP` | 1072 |
-| `G_RDPLOADSYNC` | 2854 | | `G_RDPTILESYNC` | 776 |
-| `G_SETTIMG` | 2549 | | `G_DL` | 680 |
-| `G_SETTILESIZE` | 1804 | | `G_TRI1` | 607 |
-| `G_GEOMETRYMODE` | 1766 | | `G_SETBLENDCOLOR` | 355 |
-| `G_LOADBLOCK` | 1566 | | `G_SETPRIMCOLOR` | 209 |
-| `G_SETOTHERMODE_H` | 1526 | | `G_SETENVCOLOR` | 92 |
-| `G_SETOTHERMODE_L` | 1415 | | `G_SETFOGCOLOR` | 2 |
+| `G_TRI2` | 13523 | | `G_LOADTLUT` | 1558 |
+| `G_RDPPIPESYNC` | 9015 | | `G_NOOP` | 1484 |
+| `G_VTX` | 4756 | | `G_SETOTHERMODE_L` | 1444 |
+| `G_SETTILE` | 4327 | | `G_TRI1` | 1043 |
+| `G_MOVEWORD` | 3722 | | `G_RDPTILESYNC` | 1006 |
+| `G_RDPLOADSYNC` | 3445 | | `G_DL` | 826 |
+| `G_SETTIMG` | 3074 | | `G_SETBLENDCOLOR` | 366 |
+| `G_SETTILESIZE` | 2218 | | `G_SETPRIMCOLOR` | 246 |
+| `G_SETOTHERMODE_H` | 1954 | | `G_SETENVCOLOR` | 95 |
+| `G_GEOMETRYMODE` | 1894 | | `G_RDPFULLSYNC` | 16 |
+| `G_LOADBLOCK` | 1886 | | `G_SETFOGCOLOR` | 3 |
+| `G_ENDDL` | 1864 | | | |
+| `G_SETCOMBINE` | 1660 | | | |
+| `G_TEXTURE` | 1596 | | | |
+
+`G_MOVEWORD` is real and load-bearing (RE-105): its `G_MW_LIGHTCOL`
+index is the one unambiguous, ROM-verified signal that a segment relies
+on externally-enabled `G_LIGHTING`, used to decide per-vertex lit/literal
+classification in `mesh.rs` (R0.6). It was wrongly listed as "never
+emitted" until this re-measurement.
 
 **Never emitted** — not worth implementing: `G_QUAD`, `G_CULLDL`, `G_BRANCH_Z`,
 `G_MODIFYVTX`, `G_TEXRECT`, `G_FILLRECT`, `G_LOADTILE`, `G_SETSCISSOR`,
-`G_MOVEMEM`, `G_MOVEWORD`.
+`G_MOVEMEM`.
 
 `G_TRI2` outnumbers `G_TRI1` 18:1, so geometry is overwhelmingly paired
 triangles. `G_SETFOGCOLOR` appears twice in the entire game — **fog is
@@ -141,8 +154,49 @@ PSP. That matters because only ~700 KiB of VRAM is left after framebuffers
 Counts against `Ci 16bpp` and `Rgba 4bpp` are tile *descriptors* used to stage
 TLUT loads, not real texture formats — CI is only ever 4- or 8-bit.
 
-**Geometry modes set:** `G_LIGHTING`, `G_SHADING_SMOOTH`, `G_CULL_BACK`,
-`G_CULL_FRONT`, `G_ZBUFFER`. No `G_FOG`.
+**Geometry modes set:** `G_LIGHTING` (539), `G_SHADING_SMOOTH` (449),
+`G_CULL_BACK` (399), `G_TEXTURE_GEN` (156), `G_SHADE` (60),
+`G_ZBUFFER` (19), `G_TEXTURE_GEN_LINEAR` (13), `G_CULL_FRONT` (5). No
+`G_FOG`. Counts are `set`-mask occurrences (`romtool scan`), not net
+per-primitive state.
+
+`G_SHADE` and `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` were not previously
+listed — `romtool scan`'s own `geometry_mode_name` had `G_SHADE` mapped
+to the wrong bit (`0x2`, disagreeing with `refs/ssb-decomp-re`'s own
+`gbi.h`, which defines it as `0x4`), so its 60 real occurrences showed as
+an unlabelled bit rather than under its real name; fixed (R0.16/RE-119).
+Neither category has any explicit handling in `mesh.rs`'s `GeometryMode`
+match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
+`G_LIGHTING`/`G_SHADING_SMOOTH`/`G_ZBUFFER`:
+
+* **`G_SHADE`** ("enable Gouraud interp" per `gbi.h`; a real display list
+  clearing it needs `PRIMITIVE` colour to show anything, not vertex
+  shade) is always cleared together with `G_LIGHTING`/`G_SHADING_SMOOTH`
+  in the same command, never re-set in that same command (checked
+  archive-wide, RE-119) — consistent with a deliberate switch to flat,
+  unlit, `PRIMITIVE`-driven rendering that this project's existing
+  combiner-shape detection (`combiner_flat_color`/`combiner_texture_blend`,
+  R0.6) likely already reproduces correctly for most cases, since those
+  shapes don't read `SHADE` regardless of `G_SHADE`'s own state. Not yet
+  cross-referenced per-primitive against which specific primitives clear
+  `G_SHADE` *and* have a combiner that still reads `SHADE` — the one
+  scenario that would actually render wrong today. Affects stage files
+  (Zebes, Sector Z, Yoshi's Island, Jungle Japes-era stages), `MNTitle`,
+  `SCStaffroll`, and `FoxSpecial3` (`romtool` file IDs 73/84–86/105/
+  109/111/118/158/160/161/167/195/325/335/336/341/349–353, RE-119).
+* **`G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`** (RSP-computed
+  environment-mapped UVs, not the display list's own baked UVs) is used
+  by file 117 (`StageMetalFile2`, i.e. Metal Mario's stage) and files
+  300/301/303 (`MMarioModel`/`NMarioModel`/`NFoxModel`) — this is the
+  well-known "Metal [Character]" transformation's signature shiny,
+  reflective look from the Metal Box item (RE-119). Genuinely needed by
+  SSB64 (classification 1 of `PLAN.md` R0.18's four-way scheme), but its
+  implementation is correctly out of scope right now: it is an item-pickup
+  visual effect, downstream of the combat/item systems `AGENTS.md` §5
+  gates behind rendering correctness. Recorded here as a confirmed,
+  scoped, deferred lead, not an `ACCEPTED_DEVIATION` — reproducing it on
+  the PSP GE (environment-mapped texture coordinates from vertex normals)
+  is technically feasible, just not yet in scope.
 
 Two hardware invariants are used as validity tests, and both earn their keep:
 the vertex cache holds at most 32 entries, and triangle indices must fall

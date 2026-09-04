@@ -8787,3 +8787,115 @@ not just re-confirmed against RE-074's own prior finding. `R0.15` can
 move toward `COMPLETE` once its remaining acceptance items (all now
 addressed except the general "state leakage tests added" checklist item,
 which this closes) are reconciled in `PLAN.md`.
+
+---
+
+## RE-119 — R0.16 started: a real bug in `romtool`'s own diagnostic labelling, a stale opcode table, and two genuinely undocumented geometry-mode categories (`G_SHADE`, `G_TEXTURE_GEN`)
+
+R0.15 complete, moved to the next eligible task per `PLAN.md`'s ordering:
+`R0.16 — N64 Render-State Model Fidelity`. Its own first acceptance item
+points at R0.2's opcode inventory (`docs/rendering.md`'s "Measured
+usage") as the checklist to audit against — read that first rather than
+assuming it was still accurate.
+
+**`romtool scan`'s own geometry-mode bit-name lookup had a real bug.**
+Running a fresh `romtool scan` showed geometry-mode bit `0x00000004`
+occurring 60 times archive-wide with **no name printed at all**.
+`geometry_mode_name` (`tools/romtool/src/main.rs`) had
+`0x0000_0002 => "G_SHADE"` — but `refs/ssb-decomp-re/include/PR/gbi.h`
+defines `#define G_SHADE 0x00000004`. The display-only mislabel hid 60
+real occurrences under a blank name rather than under `G_SHADE`; fixed
+(`0x0000_0002` → `0x0000_0004`). This is a bug in this project's own
+diagnostic tooling, not in the game data or the conversion pipeline — the
+underlying counts were always measured correctly, only the label was
+wrong.
+
+**The whole opcode table in `docs/rendering.md` had gone stale since
+R0.2's original measurement, not just `G_SHADE`'s label.** Re-running
+`romtool scan` after the fix found every single opcode count had shifted
+from the documented table (e.g. `G_TRI2` 10954 → 13523, `G_VTX` 3918 →
+4756) — consistent with later conversion-fidelity fixes (RE-093/RE-094's
+texture-state corrections, among others) changing how many triangles the
+same 1,864 already-discovered display lists parse into, not new lists
+being found (`files containing DLs`/`display lists` counts are
+unchanged: 135/1,864; only `triangles` grew, 22,515 → 28,089). More
+significantly: **`G_MOVEWORD` was listed under "Never emitted — not
+worth implementing"**, flatly contradicted by the current count (3,722
+occurrences — one of the *more* common opcodes) and by RE-105 (a much
+earlier session), which had already found and relied on real
+`G_MW_LIGHTCOL` usage to decide per-vertex lit/literal classification in
+`mesh.rs`. The table was simply never updated after RE-105's own
+discovery. Refreshed the entire opcode table and the "Geometry modes
+set" line from the current measurement, and moved `G_MOVEWORD` out of
+"never emitted" with a note explaining why it's real and where it's
+used.
+
+**Found two geometry-mode categories genuinely used by SSB64 with zero
+handling in `mesh.rs`, previously absent from `docs/rendering.md`'s own
+list entirely — not merely mislabeled.** `mesh.rs`'s `GeometryMode`
+match arm reads only `G_CULL_BACK`/`G_CULL_FRONT`/`G_LIGHTING`/
+`G_SHADING_SMOOTH`/`G_ZBUFFER`. The refreshed scan surfaced two more real
+bits:
+
+* **`G_SHADE`** (60 occurrences). `gbi.h`'s own comment: "G_SHADE is
+  necessary in order to see the color that you passed down with the
+  vertex. If G_SHADE isn't set, you need to set the DP appropriately and
+  use primcolor to see anything." A temporary, reverted `romtool` census
+  of every `G_GEOMETRYMODE` command that clears this bit, archive-wide,
+  found it is *always* cleared together with `G_LIGHTING`/
+  `G_SHADING_SMOOTH` in the same command (masks like `0x220004`,
+  `0x3f0605`), and *never* re-set within that same command (checked
+  `set & G_SHADE` for every match — always `0`). This is consistent with
+  a deliberate, wholesale switch to flat, unlit, `PRIMITIVE`-driven
+  rendering for whatever follows, not a surgical "keep everything else,
+  disable just per-vertex shading" — and this project's existing
+  `combiner_flat_color`/`combiner_texture_blend` detection (RE-079/080,
+  R0.6) likely already reproduces the correct visual result for most such
+  primitives, since those combiner shapes never read `SHADE` regardless
+  of `G_SHADE`'s own state. **Not fully resolved**: the one scenario that
+  would actually render wrong today — a primitive with `G_SHADE` cleared
+  *and* a combiner shape that still reads `SHADE` — was not
+  cross-referenced per-primitive this session; that requires correlating
+  two independent measurements (geometry-mode state at draw time,
+  combiner shape at the same point) that `mesh.rs`'s current instrumentation
+  doesn't expose together. Affected files: `73, 84, 85, 86, 105, 109,
+  111, 118, 158, 160, 161, 167, 195, 325, 335, 336, 341, 349, 350, 351,
+  352, 353` — a mix of stage files (`StageZebesFile2`, `StageSectorFile2`,
+  `StageYosterFile2`, `StageYosterSmallFile2`, `StageJungleFile3`,
+  `StageYamabukiFile4`), `MNTitle` (main menu), `SCStaffroll` (credits),
+  and `FoxSpecial3`.
+* **`G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`** (156/13 occurrences) — the
+  RSP computes UVs from vertex normals at runtime (environment mapping)
+  instead of using the display list's own baked coordinates. A temporary,
+  reverted census of which files set these bits found `117`
+  (`StageMetalFile2` — Metal Mario's stage) and `300`/`301`/`303`
+  (`MMarioModel`/`NMarioModel`/`NFoxModel`). This is the "Metal
+  [Character]" transformation's well-known shiny, reflective look from
+  the Metal Box item — genuinely needed by SSB64
+  (`PLAN.md` R0.18's classification 1: "SSB64 genuinely needs it"), but
+  its implementation is correctly out of scope right now: it is an
+  item-pickup visual effect, downstream of the combat/item systems
+  `AGENTS.md` §5 gates behind the rendering-correctness milestone this
+  very task belongs to. Not an `ACCEPTED_DEVIATION` (environment-mapped
+  texture coordinates from vertex normals are technically reproducible
+  on the PSP GE, e.g. via `sceGuTexMapMode`) — just deferred, and now
+  recorded as a concrete, scoped lead rather than silently unhandled and
+  undocumented.
+
+`cargo test --workspace`: 405 passing, unaffected (this session changed
+one diagnostic label in `romtool` and documentation only — no
+`ssb-rom`/`psp` logic changed). `cargo clippy --release --workspace`:
+clean. Pack rebuild not needed (`geometry_mode_name` is `scan`'s own
+display-only helper, not used by pack-building). All temporary census
+code (`tools/romtool/src/main.rs`'s `G_SHADE`-clear and
+`G_TEXTURE_GEN`-set scans) fully reverted; `git diff --stat` shows only
+the permanent one-line bit-value fix.
+
+**What this closes.** `PLAN.md` R0.16's "docs/rendering.md's N64→PSP
+state-mapping table is complete against this audit's findings" item is
+satisfied — every category the refreshed scan surfaced now has either
+existing handling, a documented reason it's deferred, or a named,
+scoped, open cross-reference still needed, and nothing is silently
+missing from the table any more. The "every state category has an
+explicit field or documented reason" item stays open pending `G_SHADE`'s
+own per-primitive cross-reference. `R0.16` moves `TODO` → `IN_PROGRESS`.
