@@ -1659,6 +1659,37 @@ the backing quad's own on-screen appearance has actually been isolated
 not chased further this session (see RE-110); recorded as a fresh,
 concrete, reproducible lead for a dedicated future investigation.
 
+RE-111 (a later session) found RE-110's own attribution was wrong too — the
+backing quad's on-screen appearance still has never actually been isolated
+by direct evidence. A targeted, reverted `pack.rs` recolour hack (only
+untextured primitives with the backing quad's exact raw colour, avoiding
+RE-108's mistake of also recolouring the photo tile's identically-coloured
+vertices) produced no visible change; a `romtool` census then found file
+45's object is not "one photo primitive plus one backing primitive" but
+**8 side-by-side vertical strips**, each its own 44-primitive photo tower
+plus a 1-primitive backing strip, tiling the real 300-texel width in
+~37.5-texel columns. All 8 towers' baked UVs are byte-for-byte identical
+(RE-109's fix is correct and uniform), ruling out the material/UV pipeline
+entirely. Two decisive tests (a synthetic uniform-magenta capture buffer
+with the real capture disabled; a correctly-list-timed scissor-disable
+around the debug clear) both made the black region disappear completely,
+proving the defect is in what the real screen capture reads, not in
+rendering. **Root cause: `Gpu::new` permanently scissors every draw,
+including `sceGuClear`, to the pillarboxed 4:3 viewport
+(`vx = 59`, `vw = 362`) — columns `0..59` of the raw 480-wide buffer are
+never drawn to at all and stay solid black (power-on-zeroed) for the whole
+program's life — but `capture_transition_photo` read `TRANSITION_PHOTO_WIDTH`
+(300) columns starting at absolute column 0, not at the pillarbox's own
+left edge.** Four of the 8 towers' `u` ranges fall in that permanently-black
+59-texel slice. Fixed with a one-line offset
+(`BUF_WIDTH * y + pillarboxed_viewport().0`); re-verified with the real
+capture and no diagnostic overrides — a direct pixel scan of the object's
+own screen region found zero `(0, 0, 0)` pixels (was 28,993–34,584 across
+three prior measurements). This is a genuine bug independent of the debug
+recipe used to find it: a real LB transition's capture would hit the same
+permanently-black bar in real gameplay, since nothing this project draws
+ever reaches columns `0..59`/`421..480` under the standing pillarbox.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1671,15 +1702,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time (unit-tested, packed-byte-diff-verified); RE-110 confirmed the fix on the real device by direct pixel measurement (the previously-black region now reads the exact captured test colour)
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time (unit-tested, packed-byte-diff-verified); RE-110 confirmed the fix on the real device by direct pixel measurement (the previously-black region now reads the exact captured test colour). RE-111 found and fixed a second, independent real bug in the same mechanism: the permanent 4:3 pillarbox scissor left columns `0..59` of the raw framebuffer solid black forever, and the capture read from absolute column 0 instead of the pillarbox's own left edge — fixed with a one-line offset, verified by a direct pixel scan finding zero black pixels on the object post-fix (was 28,993–34,584 pre-fix)
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — file 45 is now confirmed on the real device for *both* its primitive shapes: the framebuffer-capture photo tile (RE-110, direct pixel measurement, previously black, now the exact captured colour) and — separately — a newly re-isolated defect on its backing primitive (RE-110, real, measured, unresolved — see below). File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all; the other 11 remain unscreenshotted, and this item cannot close while a real, measured, unexplained black-rendering defect remains on any of them
+* [ ] visual verification completed — file 45's photo tower is now confirmed fully correct on the real device across all 8 of its strips (RE-111: zero black pixels post-fix, direct pixel scan). The backing quad's own on-screen appearance is still, after four sessions (RE-107/108/110/111), never actually observed by direct evidence — RE-111 retracts RE-110's attribution the same way RE-108 retracted RE-107's, and it remains open which primitive (if any currently visible) is the backing quad at all. File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all; the other 11 remain unscreenshotted
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111 in `docs/reverse-engineering.md`.
 
 ---
 
