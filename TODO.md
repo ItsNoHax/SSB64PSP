@@ -159,7 +159,7 @@ already moved since these were first written (see below).
 - [ ] **Scene dependency graph** — `scene → nodes → materials → textures → palettes`.
 
 ### Phase H — Validation (R0.1 / R1 / R2) (HIGH)
-- [ ] **Reference renderer / Screenshot regression** — now owned by `PLAN.md` R0.17 (Visual Regression Methodology), not tracked independently here. R0.17 covers deterministic test scenes, the N64-reference/PPSSPP-software/PPSSPP-hardware/physical-PSP comparison matrix, and R1's "golden/reference renders" acceptance criterion.
+- [x] **Reference renderer / Screenshot regression** — owned by `PLAN.md` R0.17 (Visual Regression Methodology, `COMPLETE`), not tracked independently here. See `docs/visual-regression.md` for the deterministic scene, the N64-reference/PPSSPP-software/PPSSPP-hardware/physical-PSP capture procedure, the test matrix, and the pixel-diff tool. R1's "golden/reference renders" acceptance criterion still tracks the matrix's remaining rows.
 - [ ] **Strict rendering mode** — Fail on unresolved texture/missing palette/unknown transform.
 - [ ] **Physical PSP validation** — R2. See `STATUS.md` §8 for current state; historical smoke-testing has occurred but the formal R2 acceptance criteria have not been demonstrated with evidence.
 

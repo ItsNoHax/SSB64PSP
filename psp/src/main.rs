@@ -38,6 +38,40 @@ use gu::{Gpu, GuVertex};
 use input::PspInput;
 use timing::{PspClock, Stopwatch};
 
+/// R0.17's deterministic capture mode. Every per-frame mutation (physics,
+/// skeleton/stage/material animation) reads its own wall-clock-independent
+/// tick count and no randomness anywhere in the sim, so two runs that reach
+/// the same tick count are byte-identical -- *if* both are stopped there.
+/// Left running, they are not: an idle animation loops, so which tick a
+/// screenshot lands on still depends on host speed and OS scheduling jitter
+/// between the capture script's `--seconds N` and the emulator's own frame
+/// pacing. Freezing every mutation past a fixed tick count removes that
+/// dependency entirely -- a screenshot at tick 240 and one at tick 600 are
+/// the same PNG, so the capture script's timing no longer has to be exact,
+/// only "late enough".
+#[cfg(feature = "regression_capture")]
+mod regression {
+    /// 4 real seconds at the sim's fixed 60 Hz -- comfortably past Mario
+    /// landing from Dream Land's spawn height (RE-098's own costume-cycle
+    /// testing never saw a fall take more than ~30 ticks).
+    pub const TARGET_TICKS: u64 = 240;
+}
+
+/// `true` once `regression_capture` has frozen the sim; always `false`
+/// otherwise, so callers need one guard, not a cfg per call site.
+#[inline]
+fn regression_frozen(sim_frame_index: u64) -> bool {
+    #[cfg(feature = "regression_capture")]
+    {
+        sim_frame_index >= regression::TARGET_TICKS
+    }
+    #[cfg(not(feature = "regression_capture"))]
+    {
+        let _ = sim_frame_index;
+        false
+    }
+}
+
 psp::module!("ssb64_psp", 1, 0);
 
 /// Scratch for the texture-inspection quad. Align16 because the GE DMAs it.
@@ -320,6 +354,10 @@ unsafe fn run() -> ! {
     let mut spin = 0.0f32;
     let mut last_frame_us = 0u32;
     let mut dbg_cam = 1000.0f32;
+    // Simulation-tick count since boot, independent of wall-clock/frame
+    // pacing. Only consulted by `regression_frozen` (R0.17); harmless to
+    // maintain unconditionally.
+    let mut sim_frame_index = 0u64;
 
     loop {
         let frame = Stopwatch::start();
@@ -328,6 +366,7 @@ unsafe fn run() -> ! {
         let ticks = sim.advance(clock.now_us());
 
         for _ in 0..ticks {
+            sim_frame_index = sim_frame_index.saturating_add(1);
             pad.poll();
             let state = pad.state(0);
 
@@ -355,7 +394,7 @@ unsafe fn run() -> ! {
 
             // One tick of every joint, at the simulation rate rather than the
             // frame rate -- animation timing is gameplay timing (RE-035).
-            if anim_playing && object_view {
+            if anim_playing && object_view && !regression_frozen(sim_frame_index) {
                 if let Some(p) = &pack {
                     if skeleton.ended() {
                         start_anim(p, anim_index, &mut skeleton);
@@ -397,7 +436,7 @@ unsafe fn run() -> ! {
 
                 // The tick itself. Ordered after input so a respawn this frame
                 // starts falling this frame rather than next.
-                if sim_fighter {
+                if sim_fighter && !regression_frozen(sim_frame_index) {
                     if let (Some(p), Some(pl)) = (&pack, player.as_mut()) {
                         if let Some(s) = p.stage(stage_index) {
                             // C-left jumps. The original uses any C-button, but
@@ -580,7 +619,9 @@ unsafe fn run() -> ! {
         // inspect whatever is there, so it must not hide half of it.
         draw_state.force_no_cull = object_view;
         if let Some(p) = &pack {
-            material_anim.tick(p);
+            if !regression_frozen(sim_frame_index) {
+                material_anim.tick(p);
+            }
         }
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
@@ -668,7 +709,9 @@ unsafe fn run() -> ! {
                         let script = p.anim_script(&a)?;
                         // A script that desynchronises stops the scenery rather
                         // than posing it from a garbage stream.
-                        stage_anim.tick(script).ok()?;
+                        if !regression_frozen(sim_frame_index) {
+                            stage_anim.tick(script).ok()?;
+                        }
                         Some(())
                     });
                     let scenery = animated.map(|()| &stage_anim);
@@ -943,6 +986,22 @@ unsafe fn run() -> ! {
             .unwrap_or(1);
 
         const WHITE: u32 = 0xFFFF_FFFF;
+        // Pinned once `regression_capture` freezes the sim: `cpu`/`frame`/
+        // `tick` are live perf counters that vary run to run by design (host
+        // speed, OS scheduling) even with every other game-state mutation
+        // frozen, so left alone they would put the one
+        // guaranteed-nondeterministic content directly in the golden frame.
+        // The call itself always runs, every frame, regardless -- an earlier
+        // version of this skipped the call once frozen instead, and that
+        // left `sceGuDebugPrint` (a PPSSPP-only debug HLE hook with its own
+        // internal overlay state, not real GE drawing) stuck showing a
+        // stale, truncated partial-width redraw rather than either the live
+        // text or nothing.
+        let (shown_cpu_us, shown_frame_us, shown_tick) = if regression_frozen(sim_frame_index) {
+            (0, 0, 0)
+        } else {
+            (cpu_us, last_frame_us, sim.tick)
+        };
         gpu.debug_text(
             8,
             8,
@@ -1018,10 +1077,10 @@ unsafe fn run() -> ! {
                 shown.2,
                 draw_state.draws,
                 draw_state.state_changes,
-                cpu_us,
+                shown_cpu_us,
                 FRAME_BUDGET_US,
-                last_frame_us,
-                sim.tick,
+                shown_frame_us,
+                shown_tick,
                 dbg_tex,
                 dbg_bb[0],
                 dbg_bb[1],

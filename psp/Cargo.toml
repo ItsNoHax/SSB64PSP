@@ -15,6 +15,15 @@ ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 
+[features]
+# Freezes every per-frame mutation (physics, skeleton/stage/material
+# animation) once `regression::TARGET_TICKS` simulation ticks have run, so a
+# screenshot taken any time after that point is byte-identical regardless of
+# how long the capture script actually waited (R0.17). Off by default: the
+# debug viewer is normally driven interactively for minutes at a time, and
+# freezing it would break that.
+regression_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true
