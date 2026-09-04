@@ -1,20 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-04 (RE-109, after a `PLAN.md` restructure and RE-108)
-
----
-
-# 0. Planning-Document Restructure (this update)
-
-`PLAN.md` was restructured to add an explicit rendering-correctness hierarchy
-cross-reference (§6.0) and three new tasks — `R0.16` (N64 render-state model
-fidelity), `R0.17` (visual-regression methodology), `R0.18` (reference-port
-comparative audit against `sf64-psp`/`oot-PSP`) — per a user request to make
-the rendering-correctness track more rigorous. **No implementation changed.**
-`AGENTS.md` §4/§6/§10, `README.md`, `docs/rendering.md` (new "Rendering
-status" table) and `DECISIONS.md` (new D-036, D-037) were updated to match.
-The current task below (`R0.13`) is unaffected and unchanged; `R0.16`–`R0.18`
-are new `TODO` tasks, not yet started, and do not block `R0.13`'s completion.
+**Last updated:** 2026-09-04 (RE-110)
 
 ---
 
@@ -26,27 +12,85 @@ are new `TODO` tasks, not yet started, and do not block `R0.13`'s completion.
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-109 (this session)
-shipped RE-108's own recorded fix for the "black rectangle" defect:
-rebasing a framebuffer-role primitive's baked UV by its own tile's
-`uls`/`ult` origin at pack time, fixing the real root cause RE-108 found
-(the runtime capture only ever stores the *top* of the real 220-texel-tall
-N64 buffer, but one of file 45's two photo tiles samples its *bottom*).
-Verified by a unit test (reproduces RE-108's own real numbers, confirmed
-capable of failing) and a real archive-wide packed-byte pack diff
-(3,572,132 bytes differ, +87.3 KiB — a real, expected effect, not a no-op).
-Could not obtain an on-device screenshot of the previously-black region
-this session (a debug-viewer camera-framing limitation for this specific
-screen-covering object, not a defect in the fix — see RE-109's own
-write-up). `screen wipes implemented` remains open (no real trigger event
-exists yet); `visual verification completed` stays open on this basis.
-`R0.11 — Fighter Palettes / Costumes` closed `COMPLETE` in an earlier
-session (RE-098 plus its closing addendum: all 12 real fighters
-individually verified).
+`R0.13 — Framebuffer Rendering` (`IN_PROGRESS`). RE-109 (a previous
+session) shipped RE-108's own recorded fix for the "black rectangle"
+defect: rebasing a framebuffer-role primitive's baked UV by its own
+tile's `uls`/`ult` origin at pack time, fixing the real root cause RE-108
+found (the runtime capture only ever stores the *top* of the real
+220-texel-tall N64 buffer, but one of file 45's two photo tiles samples
+its *bottom*) — verified by a unit test and a real archive-wide
+packed-byte pack diff, but not yet on the real device that session.
+
+RE-110 (this session) closed that gap: forcing the debug viewer's `spin`
+to a fixed `0` (rather than relying on elapsed real time, per RE-109's
+own recorded next step) immediately showed file 45's previously-black
+photo tile rendering the exact captured test colour (`(255, 0, 255)`,
+measured by direct pixel sampling, not eyeballing) — the fix is now
+confirmed on the real device. The same measurement also found a second,
+real, spatially distinct pure-black region (`(0, 0, 0)`, 34,584 sampled
+pixels, not the `(32, 40, 56)` clear colour) — a newly re-isolated
+recurrence of RE-107's own original "backing primitive renders black
+despite non-black raw vertex colour" mystery, which RE-108 had only ever
+retracted the *attribution* of (not resolved). See "Task Status" below.
+`screen wipes implemented` remains open (no real trigger event exists
+yet). `visual verification completed` stays open: 2 of 13 files have any
+on-device evidence, 11 remain unscreenshotted, and the newly re-isolated
+backing-quad defect is itself unresolved. `R0.11 — Fighter Palettes /
+Costumes` closed `COMPLETE` in an earlier session (RE-098 plus its
+closing addendum: all 12 real fighters individually verified).
 
 ## Task Status
 
-RE-109 (this session) picked up RE-108's own two recorded fix candidates
+RE-110 (this session) picked up RE-109's own addendum lead directly:
+force a small fixed set of exact `spin` values across separate runs
+instead of relying on elapsed real time. `spin = 0.0` (a temporary,
+reverted constant in `psp/src/main.rs`, alongside the same `object_view`/
+`object_index = 17`/magenta-capture recipe RE-100/RE-107/RE-108/RE-109
+all used) was the first value tried and was decisive immediately — no
+sweep needed. See `docs/reverse-engineering.md` RE-110 for the full
+account; summary:
+
+* **The fix works, confirmed by direct pixel measurement.** File 45's
+  transition object at `spin = 0` shows a large solid magenta region
+  (`(255, 0, 255)`, 25,778 sampled pixels) exactly where RE-108's own
+  investigation found solid black before.
+* **A second, real, spatially distinct region measured, not
+  background.** Sampling the screenshot broadly found three real colour
+  populations: background `(32, 40, 56)` (57,097 px), pure black
+  `(0, 0, 0)` (34,584 px, genuinely rendered — measurably different from
+  the clear colour), and the magenta capture (25,778 px).
+* **This reopens, not resolves, RE-107's original mystery.** RE-107
+  first found the backing primitive (raw colour `[255,255,255,0]`,
+  white) rendering solid black with every known colour mechanism
+  (`prim_color`, `flat_color`, RE-103's per-vertex lit-normal fallback)
+  ruled out by direct evidence, and left it unexplained. RE-108 then
+  retracted the *attribution* — proving via a green-forcing hack that
+  the backing quad "never painted a single visible pixel" in RE-108's
+  own tests, and that the black region everyone had been looking at was
+  actually the (now-fixed) photo tile. With that fixed, this session is
+  the first time the backing quad's own on-screen appearance has
+  actually been isolated — and it independently reproduces RE-107's
+  original finding.
+* **Deliberately not chased further this session.** A different root
+  cause from the UV/capture-origin gap RE-108/RE-109 addressed, and
+  already a multi-session investigation once (RE-107→RE-108) before
+  being retracted as a misattribution. Recorded as a fresh, concrete,
+  reproducible lead for a dedicated future investigation, not guessed at
+  same-session.
+* All temporary code (`psp/src/main.rs`'s frame counter, magenta clear,
+  forced object/view-mode override, fixed-`spin` constant) was fully
+  reverted; `git diff --stat` on `psp/src/main.rs` is empty. Default
+  build re-screenshotted clean (Dream Land pixel-normal, 60 FPS, no
+  panics) after reverting.
+* **What this closes:** `PLAN.md` R0.13's "framebuffer texture paths
+  implemented" item now has real device evidence for RE-109's fix, not
+  only a unit test and packed-byte diff. "Visual verification completed"
+  stays open — 11 of 13 files remain unscreenshotted, and the newly
+  re-isolated backing-quad defect is itself a new, unresolved gap.
+
+## Previous Task Status
+
+RE-109 (a previous session) picked up RE-108's own two recorded fix candidates
 and shipped the one RE-108 itself judged more general: rebasing each
 framebuffer-role primitive's baked UV by its own tile's `uls`/`ult` origin
 at pack time, rather than trying to guess a second capture band. See
@@ -114,7 +158,7 @@ at pack time, rather than trying to guess a second capture band. See
   elapsed real time. `git diff --stat` on `tools/romtool/src/main.rs` is
   empty (temporary dump subcommand fully reverted).
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-108 (a previous session) picked up exactly where RE-107 left off: a
 backing primitive supposedly rendering solid black on the real device

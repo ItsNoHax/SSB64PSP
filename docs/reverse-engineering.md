@@ -7938,3 +7938,81 @@ real time, which would either find the visible half directly or rule out
 `spin`-angle bad luck entirely and point at culling/depth/blend state
 instead. All temporary code (`tools/romtool/src/main.rs`'s dump
 subcommand) was reverted; `git diff --stat` is empty except this file.
+
+---
+
+## RE-110 — RE-109's fix confirmed on the real device: the previously-black region now renders the captured colour exactly; a second, distinct, genuinely new defect isolated behind it
+
+Picked up RE-109's own addendum lead directly: force a small set of exact
+`spin` values across separate runs instead of relying on elapsed real time.
+`spin = 0.0` (a temporary, reverted constant in `psp/src/main.rs`, alongside
+the same `object_view`/`object_index = 17`/magenta-capture recipe RE-100/
+RE-107/RE-108/RE-109 all used) was the first value tried and was decisive
+immediately — no sweep needed.
+
+**The fix works, confirmed by direct pixel measurement, not eyeballing.**
+File 45's transition object, viewed at `spin = 0`, shows a large solid
+**magenta** region (`(255, 0, 255)`, 25,778 sampled pixels) exactly where
+RE-108's own investigation found solid black before. This is the same
+unmistakable-test-colour methodology RE-100 established for file 40: the
+framebuffer-role primitive now genuinely samples `TRANSITION_PHOTO`'s real
+captured content, not leftover memory outside the capture's populated rows.
+
+**A second, real, spatially distinct region measured — not background.**
+Sampling the screenshot broadly (every second pixel) found three real
+colour populations, not two: background `(32, 40, 56)` (57,097 px), pure
+black `(0, 0, 0)` (34,584 px), and the magenta capture (25,778 px). The
+black region is not merely "no geometry drawn there reading as the clear
+colour" — it is measurably `(0, 0, 0)`, distinct from the `(32, 40, 56)`
+clear colour sampled elsewhere in the same frame, so it is real, rendered
+primitive output.
+
+**This reopens, rather than resolves, RE-107's own original mystery.**
+RE-107 first found file 45's backing primitive (raw vertex colour
+`[255, 255, 255, 0]`, white) rendering solid black on the real device with
+every known colour-overriding mechanism (`prim_color`, `flat_color`,
+RE-103's per-vertex lit-normal fallback) ruled out by direct evidence, and
+left it explicitly unexplained. RE-108 then retracted that specific
+*attribution* — proving, via a green-forcing hack on the backing quad that
+"never painted a single visible pixel," that the black region everyone had
+been looking at was actually the *other* primitive (the un-rebased 300×5
+photo tile), not the backing quad at all, which "was never actually visible
+on screen in any test" RE-108 ran. With RE-109's fix now making the photo
+tile render correctly, this session is the **first time the backing
+quad's own on-screen appearance has actually been isolated and measured** —
+and it independently reproduces RE-107's original finding: solid black,
+despite non-black (white) raw vertex data, on the same primitive shape
+RE-107's own census found on 12 of the 13 transition files.
+
+**Deliberately not chased further this session.** This is a different
+root cause from the one RE-108/RE-109 addressed (a UV/capture-origin gap)
+and was already a multi-session investigation once (RE-107→RE-108) before
+being retracted as a misattribution; reopening it properly deserves its
+own dedicated investigation rather than a same-session follow-on guess.
+Recorded here as a confirmed, reproducible, concrete lead: the backing
+primitive (raw colour `[255,255,255,0]`) renders solid black on the real
+device even though the framebuffer-capture bug it was previously confused
+with is now fixed.
+
+**Not investigated but ruled out by existing evidence:** `prim_color`,
+`flat_color` and RE-103's per-vertex lit-normal fallback were already
+individually eliminated for this exact primitive shape by RE-107's own
+direct evidence (still valid — nothing in this session touched those
+mechanisms or this primitive's material classification). What remains
+open is *where* the colour actually goes black between the pack and the
+screen, not *which* known mechanism explains it — all currently-known
+candidates are already exhausted.
+
+All temporary code (`psp/src/main.rs`'s frame counter, magenta clear,
+forced object/view-mode override, and fixed-`spin` constant) was fully
+reverted; `git diff --stat` on `psp/src/main.rs` is empty. Default
+(non-transition) build rebuilt and re-screenshotted clean (Dream Land
+pixel-normal, 60 FPS, no panics) after reverting.
+
+**What this closes.** `PLAN.md` R0.13's "visual verification completed"
+item gains real, direct evidence for file 45 specifically: its
+framebuffer-capture primitive is now confirmed correct on the real device
+(not merely unit-tested), closing the loop RE-108 left open for this file.
+The item as a whole stays open — 11 of 13 files remain unscreenshotted, and
+the backing-quad defect this session isolated is itself a new, unresolved
+gap, not evidence the file is "done".

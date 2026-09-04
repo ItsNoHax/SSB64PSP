@@ -1634,8 +1634,30 @@ re-verification of the specific previously-black region was attempted
 successfully before) but did not reach a usable screenshot this session —
 a debug-viewer camera-framing limitation for this particular screen-
 covering object shape, not evidence against the fix; see RE-109 for the
-full account and the honest reason "visual verification completed" stays
-unchecked below despite the underlying defect now being fixed.
+full account.
+
+RE-110 (a later session) picked up RE-109's own recorded next step —
+force a small fixed set of exact `spin` values instead of relying on
+elapsed real time — and it worked on the first value tried (`spin = 0`).
+**Direct pixel measurement, not eyeballing:** the previously-black region
+now renders solid magenta (`(255, 0, 255)`, 25,778 sampled pixels),
+exactly the unmistakable test colour captured that frame — the fix is
+now confirmed on the real device, not only by unit test and packed-byte
+diff. The same measurement also found a **second, real, spatially
+distinct region** — pure black (`(0, 0, 0)`, 34,584 pixels, measurably
+different from the `(32, 40, 56)` clear colour sampled elsewhere in the
+same frame, so genuinely rendered, not empty background). This reopens
+RE-107's own original mystery (a white, `[255,255,255,0]`, untextured
+backing primitive rendering solid black with every known colour
+mechanism already ruled out) rather than resolving it: RE-108 had
+retracted the *attribution* of "the black region" to this specific
+primitive (proving via a green-forcing hack that it "never painted a
+single visible pixel" in RE-108's own tests), but with RE-109's fix now
+making the photo tile render correctly, this session is the first time
+the backing quad's own on-screen appearance has actually been isolated
+— and it independently reproduces RE-107's original finding. Deliberately
+not chased further this session (see RE-110); recorded as a fresh,
+concrete, reproducible lead for a dedicated future investigation.
 
 ### Objective
 
@@ -1649,15 +1671,15 @@ Implement every framebuffer-based rendering path required by SSB64.
 ### Acceptance
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
-* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time, verified by a unit test (capable of failing) and a real archive-wide packed-byte diff
+* [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time (unit-tested, packed-byte-diff-verified); RE-110 confirmed the fix on the real device by direct pixel measurement (the previously-black region now reads the exact captured test colour)
 * [ ] screen wipes implemented — the capture/bind mechanism exists; nothing yet triggers it from real game logic, since no match-transition state machine exists in this project at all
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
 * [ ] framebuffer synchronization verified — verified for the one shape tested pre-RE-109 (a manually-triggered capture read back the same frame); not verified for whatever the real trigger timing ends up being once transitions have a real caller
-* [ ] visual verification completed — RE-107: 2 of 13 files' geometry confirmed to sample real captured screen content correctly pre-RE-109. RE-108 root-caused the shared defect those two files hit; RE-109 fixed it (unit-tested, packed-byte-diff-verified) but could not obtain a device screenshot of the previously-black region this session (debug-viewer camera-framing gap for this object shape, not a fix defect — see RE-109). This item stays open: a fix with strong non-visual evidence is not the same as visual verification, and the other 11 files remain unscreenshotted regardless
+* [ ] visual verification completed — file 45 is now confirmed on the real device for *both* its primitive shapes: the framebuffer-capture photo tile (RE-110, direct pixel measurement, previously black, now the exact captured colour) and — separately — a newly re-isolated defect on its backing primitive (RE-110, real, measured, unresolved — see below). File 40 was confirmed pre-RE-109 (RE-100). That is 2 of 13 files with any on-device evidence at all; the other 11 remain unscreenshotted, and this item cannot close while a real, measured, unexplained black-rendering defect remains on any of them
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110 in `docs/reverse-engineering.md`.
 
 ---
 
