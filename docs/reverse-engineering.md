@@ -8295,3 +8295,29 @@ verified. The concrete remaining work is unchanged in kind — screenshot
 the other 12 transition files — but no longer has an asterisk next to it
 for file 45's own unresolved defect, because there was never a second
 defect to resolve.
+
+**Addendum, same session: checked whether the structure generalizes,
+before attempting a second on-device file.** `romtool scene --file <id>
+--list --nodes` across all 13 LB-transition files (39–51) found file 45's
+exact shape (9 nodes, 8 carrying a display list, no extra nodes) in files
+39, 41, 50 and 51 too — the same structural conditions this entry's root
+cause depends on (a small dispatch list per tower calling into a larger
+body) are very likely present in these as well, though not independently
+re-derived per file. File 40 (17 nodes, a genuinely different, deeper
+hierarchy — the "paper aeroplane", already verified pre-RE-109) and files
+42/43/44/46/47/49 (1–2 nodes, much simpler single/double-quad shapes) and
+file 48 (30 nodes, a distinct particle-like arrangement) do not share it.
+
+Attempted on-device verification of file 41 (object 13) as a second data
+point beyond file 45, using the same recipe. Object selection worked
+(overlay confirmed `file 41 ... nodes 9 placed 8`, matching the node
+census above, no panic, 60 FPS) and drew (`draws 176`, non-zero), but
+nothing was visible on screen at either `spin = 0` (RE-110's value for
+file 45) or `spin = π/2` — the same debug-viewer camera-framing
+limitation RE-109 already documented for screen-covering objects, not a
+new issue and not evidence against RE-109/RE-111's fixes. Not chased
+further: this is RE-109's own already-recorded, separate limitation
+(fixing the auto-framing camera, or building a bespoke close-in test
+camera), not a new lead. All temporary code (`tools/romtool/src/main.rs`'s
+object-index lookup, `psp/src/main.rs`'s forced object/spin/capture patch
+targeting object 13) fully reverted; `git diff --stat` is empty.
