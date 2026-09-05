@@ -10367,3 +10367,78 @@ verified" item, not this one.
 clean, same pre-existing 6-warning set. All temporary code (the
 `cam_distance` override, the `pitch_locked`-equals-`screen` A/B test)
 fully reverted before committing.
+
+---
+
+## RE-134 — Billboard scale: measured, not fixed — the real and approximate formulas never actually diverge
+
+RE-126/RE-133 left one explicit lead unmeasured: the real per-axis
+billboard scale formula (`gcPrepDObjMatrix`'s `f12 = gGCScaleX *
+dobj->scale.y`, where `gGCScaleX` is the *ancestor chain's own cumulative
+X-scale*, read *before* this node's own X-scale is folded in) multiplies
+a node's Y-scale by the ancestor chain's X-scale specifically, not by the
+same node's own composed-basis length this project's `billboard_place`
+actually computes. The two formulas are numerically identical only when
+every ancestor in a billboard's own parent chain applies uniform scale
+(`scale.x == scale.y == scale.z`) — not yet checked either way.
+
+**Measured archive-wide, not assumed.** A temporary, reverted `romtool`
+subcommand walked every one of the 109 real `FLAG_BILLBOARD` nodes' own
+ancestor chains (`NodeDesc::parent`, already baked at pack time), reading
+each ancestor's `rest_scale`. **Zero of 109 have any non-uniform-scale
+ancestor** (max chain depth 3, all 109 have at least one ancestor).
+
+**Confirmed the detector itself is sound, not merely quiet.** A zero
+count is only informative if the check can fire at all. A second pass
+over *every* node archive-wide (not just billboard ancestors) found
+**98 real non-uniform-scale nodes** elsewhere in the archive — the same
+"test the test" discipline this project applies throughout: the
+detection logic demonstrably does trigger on real data, so the `0` for
+billboard ancestors specifically is a measured absence, not a check that
+never had a chance to fail.
+
+**Result: this project's existing composed-basis-column-length scale is
+already numerically exact for every real billboard node, not an
+approximation that happens not to have been caught yet.** No code
+change needed or made — `PLAN.md` R0.12's "scale verified" item closes
+by measurement, the same shape of resolution RE-124/RE-127 already
+established for other "is the shortcut actually safe" questions this
+project has asked.
+
+`cargo test --workspace`: 419 passing, unaffected — no shipped code
+changed, only a temporary, fully-reverted `romtool` census. `cargo
+clippy --release --workspace`: clean.
+
+---
+
+## RE-135 — Most billboard translucency is already real blending, thanks to RE-130 — measured, not assumed
+
+`PLAN.md` R0.12's "alpha behavior verified" item named `translucent`
+(29.7% of billboard-flagged primitives, roughly double the archive-wide
+14.4% rate) as "the blocker", tracked under RE-069/RE-071's own
+then-still-open blending mystery. RE-130 (a previous session) resolved
+that mystery generally, classifying and shipping real blending for
+`TRANSLUCENT` primitives whose alpha formula matches one of two
+archive-measured shapes. This entry checked whether that general fix
+actually reaches billboard geometry specifically, rather than assuming
+either way.
+
+**Measured, via a temporary, reverted `romtool` census**: of the 35 real
+`TRANSLUCENT` primitives among `FLAG_BILLBOARD` nodes archive-wide,
+**25 (71%) already carry `flags::ALPHA_BLEND`** — meaning they already
+render with real, classified, on-device-verified blending, not the
+"detected but not blended" safe default. The remaining 10 fall into the
+same already-documented, deliberately-declined categories RE-130's own
+census found archive-wide (the rare `PRIM_ALPHA`-multiply shape and
+two-cycle mode) — not a new, billboard-specific gap.
+
+**What this closes.** `PLAN.md` R0.12's "alpha behavior verified" item:
+the "blocker" it named has already been substantially resolved by
+work this project already shipped, not left open behind an unmeasured
+assumption. The residual 10 unclassified primitives are the same
+accepted, understood long tail RE-130 already recorded, not a reason to
+keep this item open.
+
+`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+--release --workspace`: clean. All temporary census code fully
+reverted.
