@@ -111,7 +111,14 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    real data would aim the camera at a wrong, silently-plausible angle
 ///    rather than visibly failing, the same silent-reinterpretation risk
 ///    `VERSION` 9/16 already bumped for.
-pub const VERSION: u32 = 17;
+/// 18 added `NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED` (RE-132): distinguishes
+///    `Kind48`'s real, camera-pitch-locked billboard transform from
+///    `Kind46`'s fully screen-aligned one, both previously folded into one
+///    bit. Safe either way against an older pack (`Kind48` nodes simply keep
+///    the old screen-aligned approximation, exactly what shipped before),
+///    but bumped anyway to keep this struct's own provenance unambiguous,
+///    matching every other flag addition's own precedent.
+pub const VERSION: u32 = 18;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -438,6 +445,25 @@ impl NodeDesc {
     /// build its matrix from the projection basis rather than its own rotation,
     /// so it always faces the camera (RE-048).
     pub const FLAG_BILLBOARD: u32 = 1 << 0;
+    /// Set alongside [`NodeDesc::FLAG_BILLBOARD`] for `Kind48` specifically
+    /// (RE-126/RE-132): real hardware builds this kind's matrix from
+    /// `sGCMatrixMod1F`, a *camera-pitch-locked* `LookAt` (`objdisplay.c`
+    /// case 48) that collapses the camera's real X/Z position into a single
+    /// horizontal distance before building the matrix, rather than
+    /// `Kind46`'s fully screen-aligned one -- invariant to the camera's yaw,
+    /// but not to its pitch. Confirmed which of `gcPrepCameraMatrix`'s two
+    /// branch variables (`var_s3`) SSB64 actually takes during normal
+    /// gameplay by tracing `gcSetCameraMatrixMode`'s only three call sites:
+    /// `gmCameraDefaultProcDisplay` (the "Default" camera, matching this
+    /// project's own `ssb_game::camera`) sets mode `3`, which sets `var_s3
+    /// = 1` -- the branch that keeps the real `Y` component, matching a
+    /// `Y`-up world. The sibling variable (`spC8`, which would compute
+    /// `Kind50`'s own `sGCMatrixMod2F`) is never set away from its `0`
+    /// default by that same mode, confirming independently (not just by
+    /// archive census, RE-063) that `Kind50` reads an always-zero matrix in
+    /// real gameplay -- genuinely dead, not merely unused, so it is left
+    /// folded into `Kind46`'s treatment rather than guessed at.
+    pub const FLAG_BILLBOARD_PITCH_LOCKED: u32 = 1 << 1;
 }
 
 /// One fighter's animation for one movement status.
@@ -1399,19 +1425,27 @@ impl PackWriter {
                 // skips the sin/cos spin term entirely). Every shipped
                 // `0x8000` node's `rotate` is `[0, 0, 0]` (checked across the
                 // whole archive, RE-062), so treating it as a spin-0
-                // `FLAG_BILLBOARD` node reuses the already-verified 46/48
+                // `FLAG_BILLBOARD` node reuses the already-verified `Kind46`
                 // path (RE-048, RE-049) exactly. `0x1000`/`Kind50` (case 50)
                 // is structurally identical to `Kind48` (case 48) -- same
                 // move-word layout, same per-node scale math -- just built
                 // from `sGCMatrixMod2F` (locked to the camera's yaw) instead
-                // of `sGCMatrixMod1F` (locked to the camera's pitch), so it
-                // gets the same treatment for the same reason. No shipped
-                // node uses it (RE-063: 0/3117 archive-wide), so this is
-                // fidelity for a kind the ROM never actually exercises, not a
-                // measured fix.
+                // of `sGCMatrixMod1F` (locked to the camera's pitch). RE-132
+                // confirmed (not just by archive census, RE-063) that
+                // `sGCMatrixMod2F` is never actually computed during normal
+                // SSB64 gameplay -- `Kind50` is genuinely dead code, not
+                // merely unused content -- so it stays folded into `Kind46`'s
+                // treatment rather than getting its own (unreachable, and so
+                // unverifiable) transform. `Kind48` gets its own
+                // `FLAG_BILLBOARD_PITCH_LOCKED` bit, RE-132 having confirmed
+                // its real matrix *is* reachable and real hardware's own
+                // branch selection during normal play (see that flag's own
+                // doc comment).
                 flags: match node.desc.transform_kind() {
+                    crate::scene::TransformKind::Kind48 => {
+                        NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED
+                    }
                     crate::scene::TransformKind::Kind46
-                    | crate::scene::TransformKind::Kind48
                     | crate::scene::TransformKind::Kind50
                     | crate::scene::TransformKind::RecalcRotRpyRSca => NodeDesc::FLAG_BILLBOARD,
                     _ => 0,
@@ -3894,6 +3928,57 @@ mod tests {
             NodeDesc::FLAG_BILLBOARD,
             "a 0x8000 node must reach the device flagged"
         );
+    }
+
+    #[test]
+    fn a_kind_48_node_is_flagged_pitch_locked_but_kind_46_is_not() {
+        // RE-132: `Kind48` (`0x2000`) gets its own `FLAG_BILLBOARD_PITCH_LOCKED`
+        // bit alongside `FLAG_BILLBOARD`; `Kind46` (`0x4000`) gets only the
+        // latter, since its real transform is fully screen-aligned, not
+        // camera-pitch-locked.
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        let pitch_locked = DObjDesc {
+            id: 0x2001,
+            dl: None,
+            translate: [0.0; 3],
+            rotate: [0.0; 3],
+            scale: [1.0; 3],
+        };
+        let screen_aligned = DObjDesc {
+            id: 0x4001,
+            ..pitch_locked
+        };
+        let graph = SceneGraph {
+            offset: 0x100,
+            nodes: alloc::vec![
+                DObjNode {
+                    desc: pitch_locked,
+                    parent: None
+                },
+                DObjNode {
+                    desc: screen_aligned,
+                    parent: None
+                },
+            ],
+        };
+        let mut w = PackWriter::new();
+        w.add_object(&graph, 104, |_| None, &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let kind48 = pack.node(0).unwrap().flags;
+        let kind46 = pack.node(1).unwrap().flags;
+        assert_eq!(
+            kind48 & (NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED),
+            NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED,
+            "a 0x2000 node must reach the device flagged as pitch-locked"
+        );
+        assert_eq!(
+            kind46 & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED,
+            0,
+            "a 0x4000 node must not be flagged pitch-locked"
+        );
+        assert_eq!(kind46 & NodeDesc::FLAG_BILLBOARD, NodeDesc::FLAG_BILLBOARD);
     }
 
     #[test]

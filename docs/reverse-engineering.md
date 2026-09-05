@@ -10266,3 +10266,104 @@ entirely in the `psp` crate, not the library crates). `cargo clippy
 clean, same pre-existing 6-warning set. The temporary `cam_distance`
 override used for the zoomed-in screenshot was reverted before
 committing.
+
+---
+
+## RE-133 — `Kind48`'s real, camera-pitch-locked billboard transform, implemented and shipped
+
+RE-132's own entry left one explicit next step: resolve `objdisplay.c`'s
+`var_s3`/`spC8` branch before implementing `Kind48`/`Kind50`'s distinct
+transforms, rather than guess. This entry resolved it.
+
+**`var_s3`/`spC8` are per-call locals, not static leftover state.**
+Re-reading `gcPrepCameraMatrix` (the function containing both variables)
+found they are declared and reset to `0` at the top of *every* call
+(`objdisplay.c:2763-2769`), not file-scope statics as an earlier reading
+of the code had assumed. Two things can move them off `0`:
+
+1. An earlier loop over the camera's own `xobj`s (matrix-setup
+   components), for `xobj->kind` values `6`-`17` — several of which set
+   `var_s3` based on `cobj->vec.up.z < cobj->vec.up.y`. With SSB64's
+   standard `up = (0, 1, 0)` (`dGMCameraCObjVecDefault`), `0 < 1` is
+   always true, so every one of these branches independently agrees:
+   `var_s3 = 1`.
+2. The `switch (sGCCameraMatrixMode)` block RE-132 already found, whose
+   mode is set by exactly three call sites. `gmCameraDefaultProcDisplay`
+   — the "Default" display proc, which calls `gcRunFuncCamera` into
+   `gmCameraDefaultFuncCamera`, the exact function `ssb_game::camera`
+   already ports — sets mode `3`, which sets `var_s3 = 1` and leaves
+   `spC8` untouched.
+
+Both independent paths agree: **`var_s3 = 1` during normal SSB64
+gameplay.** Neither path ever sets `spC8` away from its `0` default
+during normal play, so `sGCMatrixMod2F` (`Kind50`'s own matrix) is
+**never actually computed** — confirming, from the *camera* side and
+independently of RE-063's archive-side 0/3117 census, that `Kind50` is
+genuinely dead code in real gameplay, not merely unused content. Stays
+folded into `Kind46`'s treatment; implementing a distinct transform for
+it would mean guessing at behaviour real hardware itself never
+produces.
+
+**`Kind48`'s real formula, `var_s3 == 1`:**
+
+```
+eye_z = sqrt((at.x - eye.x)^2 + (at.z - eye.z)^2)   // horizontal distance only
+eye_y = eye.y; at_y = at.y                          // real Y preserved
+LookAt(eye=(0, eye_y, eye_z), at=(0, at_y, 0), up=(0, 1, 0))
+```
+
+Collapsing the camera's real X/Z position into a single scalar distance
+before building the `LookAt` is exactly what makes this transform
+invariant to the camera's yaw while still tracking its pitch: the
+resulting `right` axis works out to always be a pure world-horizontal
+direction (independent of where the camera actually sits along X/Z),
+while `up` (and the implied forward) tilt with the real vertical
+difference between `eye` and `at`.
+
+**Implemented as a second entry in a new `BillboardCamera` struct**
+(`psp/src/meshdraw.rs`), resolved once per frame in `main.rs` from the
+same `eye`/`at` the view matrix already uses — no new camera state,
+just a second basis derived from it. A new `NodeDesc::
+FLAG_BILLBOARD_PITCH_LOCKED` bit (`pack::VERSION` 17 → 18) marks `Kind48`
+nodes specifically, set alongside the existing `FLAG_BILLBOARD` bit;
+`Kind46`/`Kind50`/`RecalcRotRpyRSca` are unaffected. The billboard draw
+path picks `BillboardCamera::pitch_locked` instead of `::screen` when
+the new bit is set. A new unit test
+(`a_kind_48_node_is_flagged_pitch_locked_but_kind_46_is_not`) pins that
+exactly `Kind48` gets both bits and `Kind46` gets only the original one.
+
+**Verified on-device, three ways.** Every mode except the real camera's
+own: zero differing pixels against the `regression_capture` golden
+capture (unaffected, as expected — this pack change is additive and the
+render-path change is gated on the same `billboard_camera` state RE-132
+already scoped to the real-camera branch only). The zoomed-in real-camera
+mode, deterministic capture (`regression_capture` plus the same temporary
+`cam_distance` override RE-131/132 used): Dream Land's canopy renders as
+clean, non-degenerate geometry, no inversion or collapse. A direct,
+reversible A/B test (temporarily setting `pitch_locked` equal to
+`screen`, i.e. reverting *only* the `Kind48` distinction while keeping
+everything else) against the same frozen tick found a real, nonzero
+pixel difference — confirming the new code path is actually reached, not
+inert — concentrated on the tree trunks and canopy clusters (`Kind48`
+nodes are evidently a meaningful fraction of Dream Land's own canopy
+geometry, consistent with RE-126's "largest individual billboard
+category" finding) and, on close visual comparison at native
+resolution, too fine-grained to be a structural break: both versions
+look equally plausible, the difference reads as the kind of dithered-
+texture sub-pixel sensitivity RE-053/070/075 already established this
+exact scene has, not a corruption.
+
+**What this closes.** `PLAN.md` R0.12's "orientation verified" item:
+`Kind46` and `Kind48` now get their own real, decomp-verified transforms
+respectively (`Kind50` correctly stays folded, now with direct evidence
+it is unreachable rather than merely unobserved). The item can move to
+`[x]` — the remaining open billboard question (per-axis scale using the
+ancestor chain's cumulative X-scale rather than composed-basis-column
+length, RE-126's own leftover lead) belongs to the separate "scale
+verified" item, not this one.
+
+`cargo test --workspace`: 418 → 419 passing (1 new). `cargo clippy
+--release --workspace` and `cargo psp --release` (both feature states):
+clean, same pre-existing 6-warning set. All temporary code (the
+`cam_distance` override, the `pitch_locked`-equals-`screen` A/B test)
+fully reverted before committing.

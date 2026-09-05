@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-132)
+**Last updated:** 2026-09-05 (RE-133)
 
 ---
 
@@ -12,58 +12,62 @@
 
 ## Current Task
 
-RE-131 (earlier this session) built a real, minimal battle camera
-(`gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`) to unblock `R0.12`/
-`R0.13`/`R0.14`. Wiring it in exposed a real, if narrow-angle, latent
-regression: `psp/src/meshdraw.rs`'s `Kind46` billboard code
-(RE-048/049) relied on the view matrix always being identity — true
-only under the debug viewer's old, never-rotating "face-on" camera — to
-make "the object's own axes" equal "the screen's axes". Under RE-131's
-real, rotating view matrix that assumption silently breaks. RE-132
-(this session) fixed it.
+RE-132 (earlier this session) fixed a regression RE-131's new camera
+introduced for `Kind46` billboards, and left one explicit next step:
+resolve `objdisplay.c`'s `var_s3`/`spC8` branch before implementing
+`Kind48`/`Kind50`'s own distinct transforms, rather than guess. RE-133
+(this session) resolved it and shipped `Kind48`'s real transform.
 
-**The fix.** `DrawState` gained `billboard_camera:
-Option<([f32; 3], [f32; 3])>` — `None` under every still-identity-view
-mode (reproducing the exact pre-RE-131 behaviour bit-for-bit), `Some((right,
-up))` under the real camera. The billboard draw path multiplies the
-model matrix by a basis built from `right`/`up`/their cross product
-before the existing spin and scale, so a flagged node's axes track the
-camera instead of the world. `main.rs` derives `right`/`up` from the
-same `eye`/`at` the view matrix already uses (the identical formula
-`Mat4::look_at` computes internally), reset to `None` unconditionally
-once per frame (matching `force_no_cull`'s own precedent) and set for
-real only inside the real-camera branch.
+**Resolved the branch with two independent, agreeing paths.** `var_s3`/
+`spC8` turned out to be per-call locals (reset to `0` every call), not
+static leftover state as an earlier reading assumed. Two things can move
+them: an earlier loop over the camera's own matrix-setup components
+(agrees on `var_s3 = 1` for SSB64's standard `up = (0,1,0)`), and
+`gcSetCameraMatrixMode`'s three real call sites — `gmCameraDefaultProcDisplay`
+(the "Default" display proc, which calls into `gmCameraDefaultFuncCamera`,
+the exact function `ssb_game::camera` already ports) sets mode `3`,
+which sets `var_s3 = 1` and leaves `spC8` untouched. Both paths agree:
+**`var_s3 = 1` during normal gameplay**, and `spC8` never leaves `0` —
+confirming, independently of RE-063's archive census, that `Kind50`'s
+own matrix (`sGCMatrixMod2F`) is never actually computed in real play.
+Genuinely dead, not merely unused; stays folded into `Kind46`'s
+treatment.
 
-**Verified on-device, both branches.** Every mode except the real
-camera's own: zero differing pixels against the `regression_capture`
-golden capture. The zoomed-in real-camera mode (the same temporary,
-reverted `cam_distance` override RE-131 used): Dream Land's canopy
-billboards still render as clean, symmetric, non-degenerate shapes at
-this camera's current shallow pitch/yaw angles.
+**Implemented `Kind48`'s real formula**: collapse the camera's real X/Z
+position into one horizontal distance before building the `LookAt`
+(`eye=(0,eye.y,dist), at=(0,at.y,0), up=(0,1,0))`) — this is exactly what
+makes it invariant to the camera's yaw while still tracking its pitch. A
+new `BillboardCamera` struct carries both bases (`screen` for `Kind46`,
+`pitch_locked` for `Kind48`), resolved once per frame from the same
+`eye`/`at` the view matrix already uses. A new `NodeDesc::
+FLAG_BILLBOARD_PITCH_LOCKED` bit (`pack::VERSION` 17 → 18) marks `Kind48`
+nodes specifically; a new unit test pins that `Kind48` gets both bits and
+`Kind46` gets only the original one.
 
-**What this does and does not fix.** Corrects `Kind46`'s own
-screen-alignment to survive a real camera; does **not** implement
-`Kind48`/`Kind50`'s own distinct pitch-/yaw-locked transforms
-(RE-126's finding) — a `Kind48` node still gets `Kind46`'s (now
-camera-correct) treatment, not its real one. Hand-deriving those two
-matrices from `objdisplay.c` hit an unresolved branch (`var_s3`/`spC8`,
-selecting which world axis the lock applies to) this pass did not have
-enough context to confidently resolve without guessing — left as a
-clearly-scoped next step rather than shipped uncertain. See
-`docs/reverse-engineering.md` RE-131/RE-132 for the full account of
-both this session's changes.
+**Verified on-device, three ways.** Every mode except the real camera's
+own: zero differing pixels against the golden capture. The zoomed-in
+real-camera mode: Dream Land's canopy renders as clean, non-degenerate
+geometry. A reversible A/B test (temporarily folding `Kind48` back into
+`Kind46`'s treatment, against the same deterministic frozen frame) found
+a real, non-zero difference concentrated on Dream Land's own canopy
+geometry — the new code path is reached and does something — that on
+close visual comparison reads as the same fine dithered-texture
+sensitivity RE-053/070/075 already established this scene has, not a
+structural break.
 
-`cargo test --workspace`: 413 → 418 passing (RE-131's 5 new tests;
-RE-132 added no new tests, since the fix lives entirely in the `psp`
-crate, not a library crate with a host test harness). `cargo clippy
+**What this closes.** `PLAN.md` R0.12's "orientation verified" item.
+"Scale verified" (the ancestor-chain-cumulative-X-scale lead RE-126 also
+found reading the same code) remains open, a separate, still-unmeasured
+question. See `docs/reverse-engineering.md` RE-133 for the full account.
+
+`cargo test --workspace`: 418 → 419 passing (1 new). `cargo clippy
 --release --workspace` and `cargo psp --release`/`--features
 regression_capture`: clean, same pre-existing 6-warning set.
 
-**Task-selection note for the next session.** The concrete next step for
-`R0.12`: resolve `objdisplay.c`'s `var_s3`/`spC8` branch (what selects
-it, and whether SSB64 always takes the same one), then port
-`sGCMatrixMod1F`/`Mod2F`'s two LookAt-based matrices using the real
-camera's own `eye`/`at`, now available. Also still open: (1) extend
+**Task-selection note for the next session.** `R0.12` still has two open
+items ("scale verified", "texture orientation verified", "all flagged
+billboard nodes verified") — the scale one has a concrete, already-found
+lead (above) ready to measure. Also still open: (1) extend
 `ssb_game::camera` past the single-fighter case if multiplayer ever
 becomes relevant; (2) `R0.5`'s one remaining item and `R0.6`'s remaining
 three items are still blocked on `R2`/`R0.7` respectively, unchanged by
@@ -134,7 +138,52 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-132 (this session) found and fixed a real regression RE-131's own new
+RE-133 (this session) resolved `objdisplay.c`'s `var_s3`/`spC8` branch
+(RE-132's own explicit next step) and implemented `Kind48`'s real
+camera-pitch-locked billboard transform. See
+`docs/reverse-engineering.md` RE-133 for the full account; summary:
+
+* **Resolved the branch.** `var_s3`/`spC8` are per-call locals (reset to
+  `0` every call), not static state. Two independent paths both agree
+  `var_s3 = 1` during normal gameplay: an earlier per-`xobj`-kind check
+  (true for SSB64's standard `up = (0,1,0)`), and
+  `gcSetCameraMatrixMode`'s three real call sites (`gmCameraDefaultProcDisplay`,
+  the "Default" display proc feeding `gmCameraDefaultFuncCamera` — the
+  exact function already ported — sets mode `3`, which sets `var_s3 = 1`).
+  `spC8` never leaves `0` via either path.
+* **A second, independent confirmation that `Kind50` is dead code.**
+  Since `spC8` never becomes nonzero in real gameplay, `sGCMatrixMod2F`
+  (`Kind50`'s own matrix) is never actually computed — not just unused
+  content (RE-063's 0/3117 archive census) but a genuinely unreachable
+  code path. Stays folded into `Kind46`'s treatment.
+* **Implemented `Kind48`'s real formula**: collapse the camera's real
+  X/Z position into one horizontal distance before building the
+  `LookAt` (`eye=(0,eye.y,dist), at=(0,at.y,0), up=(0,1,0))`) — invariant
+  to the camera's yaw, tracking its pitch. A new `BillboardCamera` struct
+  carries both bases (`screen`/`pitch_locked`), resolved once per frame
+  from the same `eye`/`at` the view matrix uses. A new `NodeDesc::
+  FLAG_BILLBOARD_PITCH_LOCKED` bit (`pack::VERSION` 17 → 18) marks
+  `Kind48` specifically; a new unit test pins `Kind48` getting both bits
+  and `Kind46` only the original one.
+* **Verified on-device, three ways.** Zero differing pixels against the
+  golden capture for every mode except the real camera's own; clean,
+  non-degenerate geometry in the zoomed-in real-camera mode; a reversible
+  A/B test (fold `Kind48` back into `Kind46`'s treatment vs. not, same
+  frozen deterministic frame) found a real, non-zero difference
+  concentrated on Dream Land's own canopy — the new path is reached —
+  that reads as fine dithered-texture sensitivity on close visual
+  comparison, not a structural break.
+* **What this closes.** `PLAN.md` R0.12's "orientation verified" item.
+  "Scale verified" (a separate, already-identified lead from the same
+  code) remains open.
+* `cargo test --workspace`: 418 → 419 passing (1 new). `cargo clippy
+  --release --workspace` and `cargo psp --release` (both feature
+  states): clean, same pre-existing 6-warning set. All temporary code
+  (the `cam_distance` override, the A/B test) fully reverted.
+
+## Previous Task Status
+
+RE-132 (an earlier session) found and fixed a real regression RE-131's own new
 camera introduced: `Kind46` billboards silently broke under a real,
 rotating view matrix. See `docs/reverse-engineering.md` RE-132 for the
 full account; summary:
@@ -168,7 +217,7 @@ full account; summary:
   psp --release` (both feature states): clean, same pre-existing
   6-warning set.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-131 (an earlier session) built a real, minimal battle camera
 (`gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`, ported and verified) to

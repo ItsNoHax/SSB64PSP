@@ -95,10 +95,10 @@ pub struct DrawState {
     /// the ROM's own `CULL_BACK`/`CULL_FRONT` state faithfully (RE-068), and
     /// a real camera always views authored geometry from its intended side.
     pub force_no_cull: bool,
-    /// `(right, up)` the real camera's own basis vectors resolve to this
-    /// frame, or `None` while the active view matrix is identity (RE-131:
-    /// the debug viewer's whole-stage overview and every other mode besides
-    /// the zoomed-in fighter-follow one).
+    /// The real camera's own basis vectors this frame, or `None` while the
+    /// active view matrix is identity (RE-131: the debug viewer's
+    /// whole-stage overview and every other mode besides the zoomed-in
+    /// fighter-follow one).
     ///
     /// `billboard_place` (`Kind46`'s screen-aligned transform, RE-048/049)
     /// used to load the model matrix as pure identity and rely on the *view*
@@ -110,7 +110,23 @@ pub struct DrawState {
     /// by a separate audit): with `None` here, behaviour for every existing
     /// caller is bit-for-bit unchanged; a caller that has set up a real view
     /// matrix must also set this so `Kind46`'s billboards keep facing it.
-    pub billboard_camera: Option<([f32; 3], [f32; 3])>,
+    pub billboard_camera: Option<BillboardCamera>,
+}
+
+/// The real camera's basis, resolved once per frame into the two shapes
+/// this project's billboard code can reproduce (RE-132).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BillboardCamera {
+    /// `Kind46`: fully screen-aligned, `(camera.right, camera.up)`.
+    pub screen: ([f32; 3], [f32; 3]),
+    /// `Kind48`: camera-pitch-locked (`objdisplay.c` case 48,
+    /// `sGCMatrixMod1F`) -- `right` is always a world horizontal axis
+    /// (invariant to the camera's yaw), while `up`/the implied forward tilt
+    /// with the camera's real vertical angle. See
+    /// `NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED`'s own doc comment for the
+    /// decomp evidence this is the real, reachable branch during normal
+    /// SSB64 gameplay, not a guess.
+    pub pitch_locked: ([f32; 3], [f32; 3]),
 }
 
 impl DrawState {
@@ -682,7 +698,18 @@ pub unsafe fn draw_object_posed(
             // needed before. `None` (every mode except the real camera's
             // own) leaves the basis at whatever `sceGumLoadIdentity` just
             // set, identical to this code before RE-131.
-            if let Some((right, up)) = st.billboard_camera {
+            //
+            // RE-132: `Kind48` gets the pitch-locked basis instead of the
+            // fully screen-aligned one -- see `NodeDesc::
+            // FLAG_BILLBOARD_PITCH_LOCKED`'s own doc comment for why this
+            // is the real, reachable transform, not `Kind46`'s.
+            if let Some((right, up)) = st.billboard_camera.map(|bc| {
+                if node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0 {
+                    bc.pitch_locked
+                } else {
+                    bc.screen
+                }
+            }) {
                 let forward = [
                     right[1] * up[2] - right[2] * up[1],
                     right[2] * up[0] - right[0] * up[2],
