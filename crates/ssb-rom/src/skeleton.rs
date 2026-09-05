@@ -265,6 +265,11 @@ impl StageAnimator {
         self.count
     }
 
+    /// Whether every active 32-bit event stream has reached its end marker.
+    pub fn ended(&self) -> bool {
+        self.joints[..self.count].iter().all(|joint| joint.ended())
+    }
+
     /// Loads every joint entry of a stage animation, seeding each pose from the
     /// node's rest transform so a track the script never names keeps it.
     pub fn start(&mut self, pack: &Pack<'_>, anim: &AnimDesc) {

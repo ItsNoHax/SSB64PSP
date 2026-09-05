@@ -505,6 +505,11 @@ pub struct AnimDesc {
 }
 
 impl AnimDesc {
+    /// `fighter` value marking an LB results-screen transition animation.
+    /// Transition entries sit after fighter and stage animations; `slot` is
+    /// the original `dLBTransitionDescs` index (RE-146).
+    pub const TRANSITION: u32 = u32::MAX - 1;
+
     /// `fighter` value marking a *stage* animation rather than a fighter's.
     /// Stage entries sit after the dense fighter block, and `slot` is the
     /// stage index (RE-051).
@@ -2237,6 +2242,39 @@ impl<'a> Pack<'a> {
             .find(|a| a.fighter == AnimDesc::STAGE && a.slot == stage)
     }
 
+    /// A results-screen wipe animation in original descriptor-table order.
+    pub fn transition_anim(&self, transition: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::TRANSITION && a.slot == transition)
+    }
+
+    /// The object containing an absolute node index.
+    ///
+    /// Animation joints store absolute nodes, so generic object animations
+    /// can recover the object they drive without adding another pack table.
+    pub fn object_containing_node(&self, node: u32) -> Option<ObjectDesc> {
+        (0..self.object_count)
+            .filter_map(|i| self.object(i))
+            .find(|object| {
+                node >= object.first_node && node < object.first_node + object.node_count
+            })
+    }
+
+    /// The object driven by a transition animation.
+    pub fn transition_object(&self, anim: &AnimDesc) -> Option<ObjectDesc> {
+        if anim.fighter != AnimDesc::TRANSITION {
+            return None;
+        }
+        (0..anim.joint_count)
+            .filter_map(|i| self.anim_joint(anim.first_joint + i))
+            .find_map(|joint| {
+                (joint.node != AnimJoint::NO_NODE)
+                    .then(|| self.object_containing_node(joint.node))
+                    .flatten()
+            })
+    }
+
     /// One joint entry, by absolute index.
     pub fn anim_joint(&self, i: u32) -> Option<AnimJoint> {
         if i >= self.anim_joint_count {
@@ -3845,6 +3883,43 @@ mod tests {
         assert_eq!(s.fighter, AnimDesc::STAGE);
         assert_eq!(s.source_file, 104);
         assert_eq!(pack.stage_anim(8), None);
+    }
+
+    #[test]
+    fn transition_animation_finds_the_object_its_joint_drives() {
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+
+        let mut w = PackWriter::new();
+        let graph = SceneGraph {
+            offset: 0x1234,
+            nodes: vec![DObjNode {
+                desc: DObjDesc {
+                    id: 0,
+                    dl: None,
+                    translate: [0.0; 3],
+                    rotate: [0.0; 3],
+                    scale: [1.0; 3],
+                },
+                parent: None,
+            }],
+        };
+        let object_index = w.add_object(&graph, 40, |_| None, &[]);
+        let object = w.object(object_index).unwrap();
+        w.add_anim(
+            AnimDesc::TRANSITION,
+            3,
+            40,
+            64,
+            &[0u8; 8],
+            &[(Some(0), Some(object.first_node))],
+        );
+
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let anim = pack.transition_anim(3).unwrap();
+        assert_eq!(anim.frames, 64);
+        assert_eq!(pack.transition_object(&anim), Some(object));
+        assert_eq!(pack.transition_anim(2), None);
     }
 
     #[test]

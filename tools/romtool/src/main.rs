@@ -1616,6 +1616,52 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         stage_anim_joints += joints.len();
     }
 
+    // Results-screen wipes use the same 32-bit DObj event stream as stage
+    // scenery. Append them after both existing animation classes so fighter's
+    // dense arithmetic index remains unchanged (RE-146).
+    let mut transition_anim_joints = 0usize;
+    for (transition_index, asset) in ssb_rom::transition::ASSETS.iter().enumerate() {
+        let file = loaded
+            .files
+            .get(asset.file as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("transition {}: file {} missing", asset.name, asset.file))?;
+        let graph = loaded
+            .graphs
+            .get(&asset.file)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == asset.graph))
+            .ok_or_else(|| {
+                format!(
+                    "transition {}: graph 0x{:X} missing",
+                    asset.name, asset.graph
+                )
+            })?;
+        let object = object_index
+            .get(&(asset.file, asset.graph))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("transition {}: packed object missing", asset.name))?;
+        let joints: Vec<_> =
+            ssb_rom::objanim::joint_scripts(&file.data, asset.anim_joints, graph.nodes.len())
+                .into_iter()
+                .enumerate()
+                .filter_map(|(node, script)| {
+                    script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+                })
+                .collect();
+        if joints.is_empty() {
+            return Err(format!("transition {}: no animation scripts", asset.name).into());
+        }
+        transition_anim_joints += joints.len();
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::TRANSITION,
+            transition_index as u32,
+            asset.file,
+            asset.frames,
+            &file.data,
+            &joints,
+        );
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -1698,6 +1744,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     );
     println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
+    println!(
+        "  transitions {} wipe(s), {transition_anim_joints} animated node(s)",
+        ssb_rom::transition::ASSETS.len()
+    );
     let mat_animated_textures = (0..pack.texture_count())
         .filter_map(|i| pack.texture(i))
         .filter(|t| t.mat_anim != fmt::TextureDesc::NO_ANIM)

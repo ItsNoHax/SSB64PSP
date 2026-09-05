@@ -1,6 +1,6 @@
 //! Verifies and replays the eleven original LB screen-transition animations.
 //!
-//! `cargo run -p ssb-rom --example transition_inventory -- <rom.z64>`
+//! `cargo run -p ssb-rom --example transition_inventory -- <rom.z64> [ssb64.pak]`
 
 use ssb_rom::objanim::StageJoint;
 use ssb_rom::scene::find_scene_graphs;
@@ -9,7 +9,8 @@ use ssb_rom::{rom, Archive};
 const MAX_FRAMES: u32 = 1200;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::args().nth(1).ok_or("expected ROM path")?;
+    let mut args = std::env::args().skip(1);
+    let path = args.next().ok_or("expected ROM path")?;
     let bytes = std::fs::read(path)?;
     let info = rom::identify(&bytes)?;
     let archive = Archive::open(&bytes, info.region)?;
@@ -41,6 +42,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if joints.iter().any(|(joint, _)| !joint.ended()) {
             return Err(format!("{}: animation exceeds {MAX_FRAMES} frames", asset.name).into());
         }
+        if frames != asset.frames {
+            return Err(format!(
+                "{}: expected {} frames, replayed {frames}",
+                asset.name, asset.frames
+            )
+            .into());
+        }
         println!(
             "{id}\t{}\t{}\t0x{:X}\t{}\t{}\t{frames}",
             asset.name,
@@ -50,5 +58,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             active.len()
         );
     }
+
+    if let Some(pack_path) = args.next() {
+        verify_pack(&std::fs::read(pack_path)?)?;
+    }
+    Ok(())
+}
+
+fn verify_pack(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    use ssb_rom::skeleton::{StageAnimator, MAX_NODES};
+
+    let pack = ssb_rom::pack::Pack::open(bytes).map_err(|error| format!("{error:?}"))?;
+    for (id, asset) in ssb_rom::transition::ASSETS.iter().enumerate() {
+        let anim = pack
+            .transition_anim(id as u32)
+            .ok_or_else(|| format!("{}: packed animation missing", asset.name))?;
+        let object = pack
+            .transition_object(&anim)
+            .ok_or_else(|| format!("{}: packed object missing", asset.name))?;
+        let script = pack
+            .anim_script(&anim)
+            .ok_or_else(|| format!("{}: packed script missing", asset.name))?;
+        let mut player = StageAnimator::new();
+        player.start(&pack, &anim);
+        if player.joint_count() == 0 {
+            return Err(format!("{}: no packed joints", asset.name).into());
+        }
+        let mut matrices = [ssb_rom::scene::Mat4::IDENTITY; MAX_NODES];
+        for _ in 0..asset.frames {
+            player.tick(script)?;
+            player.compose(&pack, &object, &mut matrices);
+        }
+        if !player.ended() {
+            return Err(format!("{}: packed animation did not end", asset.name).into());
+        }
+    }
+    println!("packed\t11 transitions replayed and object-bound");
     Ok(())
 }
