@@ -638,9 +638,68 @@ pub unsafe fn draw_object_posed(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     costume: u32,
 ) -> u32 {
+    draw_object_posed_filtered(
+        pack,
+        object,
+        base,
+        posed,
+        billboard_scales,
+        st,
+        mat_anim,
+        costume,
+        None,
+    )
+}
+
+/// Draws exactly one node from an object hierarchy.
+///
+/// This is the device-side half of R0.12's per-node billboard audit: the
+/// selected node retains its real baked world transform and material state,
+/// while siblings cannot hide it or make a whole-scene screenshot look
+/// plausible despite a bad individual billboard.
+///
+/// # Safety
+///
+/// Same as [`draw_mesh`].
+pub unsafe fn draw_object_node(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    global_node: u32,
+    base: &ScePspFMatrix4,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+) -> u32 {
+    draw_object_posed_filtered(
+        pack,
+        object,
+        base,
+        &[],
+        None,
+        st,
+        mat_anim,
+        0,
+        Some(global_node),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_object_posed_filtered(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    base: &ScePspFMatrix4,
+    posed: &[ssb_rom::scene::Mat4],
+    billboard_scales: Option<&[[f32; 2]]>,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    costume: u32,
+    only_node: Option<u32>,
+) -> u32 {
     let mut tris = 0;
     for i in 0..object.node_count {
         let global_node = object.first_node + i;
+        if only_node.is_some_and(|selected| selected != global_node) {
+            continue;
+        }
         let Some(node) = pack.node(global_node) else {
             continue;
         };
@@ -739,7 +798,12 @@ pub unsafe fn draw_object_posed(
             // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
             // Case 45's rotate.x convention is not used by ROM descriptors.
             sys::sceGumRotateZ(node.billboard_rest_spin());
-            sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: 1.0 });
+            // Every reachable original billboard case scales Z by the same
+            // signed `gGCScaleX` value as X (`gcPrepDObjMatrix` kinds
+            // 44/46/48/50). This is observable: 16 of the 109 shipped
+            // billboard meshes have a nonzero local Z span. Leaving Z at 1
+            // compressed that authored depth by MODEL_SCALE (RE-144).
+            sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: sx });
         } else {
             sys::sceGumLoadMatrix(base);
             sys::sceGumMultMatrix(&local);
@@ -801,6 +865,37 @@ pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], 
         }
     }
     any.then_some((min, max))
+}
+
+/// Conservative bounds for a billboard under the transform actually drawn.
+///
+/// A billboard discards the authored basis rotation, so the ordinary object
+/// bounds cannot frame it reliably. This radius is centred on the node translation
+/// and encloses every local corner after the exact X/Y/X scale convention;
+/// it therefore remains valid for either camera basis and any screen-plane
+/// spin without duplicating those rotations in the audit camera.
+pub fn billboard_bounds(pack: &Pack<'_>, node: &NodeDesc) -> Option<([f32; 3], [f32; 3])> {
+    let mesh = pack.mesh(node.mesh)?;
+    let (lo, hi) = bounds(pack, &mesh)?;
+    let axis_length = |column: usize| {
+        ssb_engine::math::sqrt(
+            node.world[column] * node.world[column]
+                + node.world[column + 1] * node.world[column + 1]
+                + node.world[column + 2] * node.world[column + 2],
+        )
+    };
+    let sx = axis_length(0);
+    let sy = axis_length(4);
+    let local_abs = |axis: usize| lo[axis].abs().max(hi[axis].abs()) / VERTEX_16BIT_DIVISOR;
+    let ex = local_abs(0) * sx;
+    let ey = local_abs(1) * sy;
+    let ez = local_abs(2) * sx;
+    let radius = ssb_engine::math::sqrt(ex * ex + ey * ey + ez * ez);
+    let centre = [node.world[12], node.world[13], node.world[14]];
+    Some((
+        [centre[0] - radius, centre[1] - radius, centre[2] - radius],
+        [centre[0] + radius, centre[1] + radius, centre[2] + radius],
+    ))
 }
 
 /// Draws a texture on a screen-filling quad with known UVs.

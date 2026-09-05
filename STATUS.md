@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-143)
+**Last updated:** 2026-09-05 (RE-144)
 
 ---
 
@@ -16,34 +16,41 @@
 
 ## Task Status
 
-`VERIFYING`. RE-143 closes the signed animated-scale gap exposed by RE-142.
-The original `gcPrepDObjMatrix` carries signed `gGCScaleX` through the DObj
-tree: billboard X is `ancestor_x * node.scale.x`, while Y is `ancestor_x *
-node.scale.y`; the tree walker restores the accumulator across siblings.
-`StageAnimator::billboard_scales` reproduces that exact parent-first rule from
-current local poses, and `draw_stage_animated` supplies the signed pairs to the
-PSP billboard draw path instead of deriving unsigned matrix-column lengths.
+`VERIFYING`. RE-144 implements the repeatable node-isolation mechanism the
+last acceptance item needs. From stage view, SELECT/L enters a billboard audit;
+the D-pad selects one of the 109 stable inventory ordinals, and the renderer
+draws exactly that node through its normal transform/material path. The audit
+uses conservative billboard-specific bounds, freezes the unrelated viewer
+spin, and disables culling because its isolated camera is not the asset's
+authored scene camera; RE-136/137's eight whole-stage checks retain real
+culling evidence.
 
-A focused negative-parent regression proves both sign preservation and the
-original's deliberate ancestor-X-for-both-axes behavior. The persistent
-animation inventory now records final scale and first negative frame: the
-three affected file-109 Kind44 nodes first cross below zero at frames 1, 1,
-and 40, then reach zero at frame 240. RE-142's exhaustive reachability result
-still bounds the runtime scope: six direct billboard joints, all stage
-animations, zero fighter references, and zero animated rotations.
+The strengthened inventory proves all 109 billboards own distinct valid
+meshes with drawable primitives: 299 triangles total, zero empty entries.
+It found 24 meshes with a nonzero local Z coordinate and 16 with actual Z
+span. That exposed a real renderer bug: PSP billboards used scale X/Y/1,
+while original `gcPrepDObjMatrix` cases 44/46/48/50 all use the same signed
+`gGCScaleX` for X and Z. The draw path now uses X/Y/X exactly. A deterministic
+Dream Land PPSSPP capture changes 9,972 RGB pixels in affected scenery;
+isolated ordinal 21 (file 104, graph `0x1008`, pack node 549) renders cleanly.
 
 Verification: 422 workspace tests passed (36 engine, 112 game, 274 ROM);
-targeted library/examples Clippy passed with warnings denied; `romtool stages
---pack` replayed 206 scripts/123,600 frames with 0 failures and compared
-444,960 packed-vs-ROM pose values exactly. Normal and regression PSP builds
-passed with the existing six warnings. The deterministic Dream Land PPSSPP
-software capture remains pixel-identical to its golden image (0 RGB pixels).
-Physical PSP was not tested; R2 remains unperformed.
+targeted library/examples Clippy passed with warnings denied; normal and
+regression PSP builds passed with the existing six warnings. The regression
+capture matches the measured 9,972-pixel delta exactly. Normal EBOOT SHA-256:
+`252cd0b8dded59e7332e3f7fd0a4577a3ebde4b7fad608de65d07c6e5d34f6db`;
+regression EBOOT SHA-256:
+`04005699e78881f565a32aa7a767909873141c0526c2745455dd18750a05c12f`;
+pack SHA-256:
+`68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
 
-Next eligible work: continue repeatable per-node visual isolation for the 109
-flagged billboards. Whole-stage plausibility still does not satisfy all-node
-acceptance. Relevant commit: the focused RE-143 commit containing this entry;
-preceding commit `731ed74`. Detailed evidence is in RE-143.
+Next eligible work: review and record audit ordinals 0–20 and 22–108. The
+mechanism is verified, but one of 109 isolated nodes is not enough to close
+the all-node acceptance item. The existing golden capture predates the proven
+Z correction and therefore differs by 9,972 pixels; it has not been silently
+replaced. Physical PSP was not tested; R2 remains unperformed. Relevant commit:
+the focused RE-144 commit containing this entry; preceding commit `5889375`.
+Detailed evidence is in RE-144.
 
 Camera/Kind48 basis shipped (RE-131–133). R0.14 still needs original-output
 comparison; material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs
