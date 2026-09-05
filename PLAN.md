@@ -1642,11 +1642,11 @@ Verify every billboard rendering path.
 * [ ] texture orientation verified
 * [x] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` was the named blocker (29.7% of billboard primitives, double the archive-wide rate), tracked under RE-069/RE-071's then-open blending mystery. **RE-130 resolved that mystery generally; RE-135 measured it reaches billboards specifically**: 25 of 35 real translucent billboard primitives (71%) already carry `flags::ALPHA_BLEND` and render with real, classified blending — the remaining 10 are the same already-documented, deliberately-declined categories (rare `PRIM_ALPHA` multiply, two-cycle mode) RE-130 found archive-wide, not a new billboard-specific gap
 * [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
-* [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check
+* [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check. **RE-136 extended the visual sample**: of 8 stages archive-wide with billboard content, 3 more (Zebes, the jungle stage, a "break the targets" bonus stage) were spot-checked on-device and render as coherent, non-degenerate scenes — still not exhaustive (4 of 8 stages checked, whole-scene plausibility rather than per-node confirmation), left open honestly rather than closed on a partial sample
 
 ### Evidence
 
-RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135 in `docs/reverse-engineering.md`.
+RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135, RE-136 in `docs/reverse-engineering.md`.
 
 ---
 

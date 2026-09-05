@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-135)
+**Last updated:** 2026-09-05 (RE-136)
 
 ---
 
@@ -43,24 +43,29 @@ behavior verified".
 
 **R0.12 now has 4 of 6 acceptance items closed** (billboard types,
 camera-facing/orientation, scale, alpha) — up from 2 at the start of
-this multi-session arc. The remaining two ("texture orientation
-verified", "all flagged billboard nodes verified") need broader
-on-device visual spot-checking across many stages, not a quick
-measurement, and are left honestly open rather than rushed. See
-`docs/reverse-engineering.md` RE-134/RE-135 for the full account.
+this multi-session arc. RE-136 (this session) made real, incremental
+(not exhaustive) progress on the remaining "all flagged billboard nodes
+verified" item: found which stages carry billboard content at all (8 of
+41, via a temporary, reverted `romtool` census), then spot-checked three
+more of them on-device beyond Dream Land — Zebes, the jungle stage, and
+a "break the targets" bonus stage — all rendering as coherent,
+non-degenerate scenes. Explicitly **not** claimed as closing the item:
+4 of 8 relevant stages are checked, and even those only at
+whole-scene-plausibility level, not per-node confirmation. See
+`docs/reverse-engineering.md` RE-134/RE-135/RE-136 for the full account.
 
-`cargo test --workspace`: 419 passing, unaffected by either entry (both
-are measurement-only, no shipped code changed). `cargo clippy --release
---workspace`: clean.
+`cargo test --workspace`: 419 passing, unaffected by any of RE-134/135/136
+(all measurement/spot-check only, no shipped code changed). `cargo
+clippy --release --workspace`: clean.
 
-**Task-selection note for the next session.** `R0.12`'s remaining two
-items are the natural next step if continuing this same thread (would
-need picking several more stages/nodes and spot-checking them on-device,
-similar to RE-049's original Dream Land check, extended). Also still
-open: (1) extend `ssb_game::camera` past the single-fighter case if
-multiplayer ever becomes relevant; (2) `R0.5`'s one remaining item and
-`R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
-respectively, unchanged by this session.
+**Task-selection note for the next session.** `R0.12`'s two remaining
+items ("texture orientation verified", "all flagged billboard nodes
+verified") are the natural next step if continuing this thread — for the
+latter, 4 more stages with billboard content remain unchecked
+on-device. Also still open: (1) extend `ssb_game::camera` past the
+single-fighter case if multiplayer ever becomes relevant; (2) `R0.5`'s
+one remaining item and `R0.6`'s remaining three items are still blocked
+on `R2`/`R0.7` respectively, unchanged by this session.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -127,7 +132,33 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-134/RE-135 (this session) measured R0.12's two remaining
+RE-136 (this session) made real, incremental progress on R0.12's last
+open item ("all flagged billboard nodes verified") without claiming to
+close it. See `docs/reverse-engineering.md` RE-136 for the full account;
+summary:
+
+* **Found which stages have billboard content at all**: a temporary,
+  reverted `romtool` census of `FLAG_BILLBOARD` nodes reachable from
+  each stage's own render layers found 8 of 41 stages carry any (Dream
+  Land included).
+* **Spot-checked three more on-device** (a temporary, reverted
+  `stage_index` override, the same technique RE-113–116 already used for
+  file-by-file checks): Zebes (`GRZebesMap`), the jungle stage
+  (`GRJungleMap`), and a "break the targets" bonus stage
+  (`GRBonus3Map`). All three render as coherent, non-degenerate scenes —
+  no missing textures, no collapsed geometry, no obviously misplaced
+  sprites.
+* **What this is not**: 3 more stages out of 7 still-unchecked ones is a
+  larger sample, not an exhaustive one, and this pass judged whole-scene
+  plausibility rather than confirming each individual billboard node.
+  Left open, honestly, rather than marked closed on a partial sample.
+* `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. All temporary code fully reverted;
+  confirmed via a clean `regression_capture` golden-capture match.
+
+## Previous Task Status
+
+RE-134/RE-135 (an earlier session) measured R0.12's two remaining
 easily-checkable acceptance items, closing both without needing further
 code changes. See `docs/reverse-engineering.md` RE-134/RE-135 for the
 full account; summary:
@@ -159,7 +190,7 @@ full account; summary:
   (both measurement-only). `cargo clippy --release --workspace`: clean.
   All temporary census code fully reverted.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-133 (an earlier session) resolved `objdisplay.c`'s `var_s3`/`spC8` branch
 (RE-132's own explicit next step) and implemented `Kind48`'s real

@@ -10442,3 +10442,38 @@ keep this item open.
 `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
 --release --workspace`: clean. All temporary census code fully
 reverted.
+
+---
+
+## RE-136 — Billboards spot-checked on three more stages beyond Dream Land — real, incremental progress, not a closed item
+
+`PLAN.md` R0.12's "all flagged billboard nodes verified" item has been
+open since RE-083, which measured render *state* archive-wide but never
+looked past RE-049's own six Dream Land canopy sprites for actual visual
+correctness. This entry extended that visual sample, honestly, without
+claiming to finish it.
+
+**Found which stages have billboard content at all**, via a temporary,
+reverted `romtool` census of `FLAG_BILLBOARD` nodes reachable from each
+stage's own render layers: 8 of 41 stages carry any (Dream Land included).
+Spot-checked three of the other seven on-device (a temporary,
+reverted `stage_index` override, the same technique RE-113–116 already
+established for this kind of file-by-file check): **file 257
+(`GRZebesMap`, Metroid's Zebes)**, **file 261 (`GRJungleMap`, the jungle
+stage)**, and **file 295 (`GRBonus3Map`, a "break the targets"-style
+bonus stage)**. All three render as coherent, non-degenerate scenes —
+no missing textures, no collapsed/sliver geometry, no obviously
+misplaced sprites — matching the same "looks right" bar RE-049's
+original Dream Land check used.
+
+**What this is not.** Three more stages out of seven still-unchecked
+ones is a larger sample, not an exhaustive one — `PLAN.md`'s own item
+asks about *all* flagged nodes, and this pass did not individually
+identify which specific node in each screenshot corresponds to which
+billboard entry, only that the overall scene looks plausible. Left open,
+honestly, rather than marked closed on a partial sample.
+
+`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+--release --workspace`: clean. All temporary code (the `romtool` census,
+the `stage_index` override) fully reverted; confirmed via a clean
+`regression_capture` golden-capture match after reverting.
