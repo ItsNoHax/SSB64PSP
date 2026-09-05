@@ -10926,3 +10926,75 @@ pack SHA-256:
 
 R0.12 remains `VERIFYING`. The audit mechanism and one node are verified; 108
 individual ordinal reviews remain. Physical PSP was not tested.
+
+---
+
+## RE-145 — Fixed-tick PPSSPP capture completes the 109-node billboard audit
+
+RE-144 left one mechanical requirement: individually review the other 108
+stable audit ordinals. PPSSPP's saved keyboard mapping did not reliably accept
+synthetic host input, the same problem that made the audit entry key awkward
+to use manually. Added the off-by-default `billboard_audit_capture` PSP
+feature. It boots directly into the existing isolated browser, holds ordinal
+0 for 600 fixed simulation ticks so the host can find the emulator window,
+then advances once per 60 fixed ticks. It changes no normal build behavior and
+keeps the existing interactive SELECT/L and D-pad path intact.
+
+Captured the complete sequence with PPSSPP's software renderer and selected
+one source-labelled frame for every ordinal 0–108. Six generated contact
+sheets were inspected at original resolution. **103/109 nodes draw visible,
+bounded, nondegenerate geometry.** No node is unexpectedly off-screen,
+exploded, collapsed, or associated with the wrong stable index. The dark
+meshes at ordinals 42, 45 and 47 still paint distinct bounded pixels against
+the viewer background; they are dark assets, not missing draws.
+
+The six non-visible cases have direct packed-source explanations:
+
+* ordinals 101–104 (file 161, graph `0x2C30`, local nodes 2–5) each own a
+  valid four-vertex/two-triangle mesh, but every world-basis length is the
+  ROM-authored `0.00001`. Their isolated output is therefore deliberately
+  subpixel; enlarging it in the audit would falsify the transform being
+  verified;
+* ordinals 91–92 (file 112, graph `0x6A70`, local nodes 6 and 8) each submit a
+  valid four-vertex/two-triangle mesh at unit scale. Every packed UV is
+  exactly `[0,0]`, both bind texture 366, and that T4 texture's sampled palette
+  entry has alpha 0. They are deliberately transparent at this rest pose,
+  consistent with RE-142's source finding that these are null-script children
+  of animated Saffron City gate parents rather than lost geometry.
+
+`billboard_inventory` now records the evidence needed to make that distinction
+without another ad-hoc diagnostic: texture indices and dimensions, material
+flags, palette alpha range, texel-zero sample alpha, UV bounds and vertex-alpha
+bounds. Its standing geometry/transform census remains 109 distinct valid
+meshes, 299 triangles and zero structural anomalies.
+
+Generated evidence is outside the repository at
+`/home/alberto/ppsspp-test/re145/`: `selected-final/000.png` through
+`108.png` and `contact-1.png` through `contact-6.png`. These images contain
+ROM-derived graphics and remain intentionally untracked. Every captured frame
+reports 60 FPS. Physical PSP was not tested; that remains a later rendering-
+gate requirement and is not claimed here.
+
+Verification:
+
+* 109/109 ordinal-labelled PPSSPP images present and individually reviewed;
+* `cargo clippy -p ssb-rom --example billboard_inventory -- -D warnings`:
+  clean;
+* `billboard_inventory`: 109 nodes, 109 distinct meshes, 299 triangles, zero
+  empty entries and zero structural anomalies;
+* `cargo psp --release --features billboard_audit_capture`: successful with
+  the existing six warnings;
+* `cargo test --workspace`: **422 passed** (36 engine, 112 game, 274 ROM);
+* audit/normal/regression EBOOT SHA-256:
+  `69356324e88735721c8203f80344a40e29d8e1758c77de9b01c0fbb7819cac89` /
+  `ca90bdc1efcc723f10d6820e2e68ae270cac90ddbd72856fbb0934190dfe4e77` /
+  `4e751ec2967d919ca869a77c2025c7d3b85a49632cdb06d6166e046500af5af2`;
+  selected-image manifest SHA-256:
+  `2318d27e4b059ac898554f2c8b17d57168842f338d53d69627f57857e8c47b99`;
+  pack SHA-256:
+  `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
+
+This closes R0.12's final acceptance item and moves Billboard Correctness to
+`COMPLETE`. The next ordered implementation task is R0.13's real screen-wipe
+caller and synchronization path; combat remains locked behind the rendering
+gate.

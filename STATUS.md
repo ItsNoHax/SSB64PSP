@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-144)
+**Last updated:** 2026-09-05 (RE-145)
 
 ---
 
@@ -12,52 +12,50 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness`: per-node verification.
+`R0.13 — Framebuffer Rendering`: real screen-wipe caller and synchronization.
 
 ## Task Status
 
-`VERIFYING`. RE-144 implements the repeatable node-isolation mechanism the
-last acceptance item needs. From stage view, SELECT/L enters a billboard audit;
-the D-pad selects one of the 109 stable inventory ordinals, and the renderer
-draws exactly that node through its normal transform/material path. The audit
-uses conservative billboard-specific bounds, freezes the unrelated viewer
-spin, and disables culling because its isolated camera is not the asset's
-authored scene camera; RE-136/137's eight whole-stage checks retain real
-culling evidence.
+`IN_PROGRESS`. R0.12 is now complete. RE-145 adds an off-by-default
+`billboard_audit_capture` build that enters the existing isolated browser,
+holds ordinal 0 through startup, then advances once per fixed 60 Hz second.
+PPSSPP software captures now cover and individually review every ordinal
+0–108: 103 visibly draw bounded, nondegenerate geometry. Ordinals 101–104 are
+deliberately subpixel because their ROM-authored basis lengths are `0.00001`.
+Ordinals 91–92 submit their valid two-triangle meshes but all four UVs are
+`[0,0]`, selecting texture 366's palette entry with alpha 0. No unexplained
+missing, collapsed, exploded or unframed billboard remains.
 
-The strengthened inventory proves all 109 billboards own distinct valid
-meshes with drawable primitives: 299 triangles total, zero empty entries.
-It found 24 meshes with a nonzero local Z coordinate and 16 with actual Z
-span. That exposed a real renderer bug: PSP billboards used scale X/Y/1,
-while original `gcPrepDObjMatrix` cases 44/46/48/50 all use the same signed
-`gGCScaleX` for X and Z. The draw path now uses X/Y/X exactly. A deterministic
-Dream Land PPSSPP capture changes 9,972 RGB pixels in affected scenery;
-isolated ordinal 21 (file 104, graph `0x1008`, pack node 549) renders cleanly.
+The persistent inventory now reports each billboard's texture identity and
+dimensions, primitive flags, palette alpha range, texel-zero sample alpha, UV
+bounds and vertex-alpha bounds alongside its existing transform and geometry
+evidence. It still reports 109 distinct valid meshes, 299 triangles and zero
+structural anomalies. Generated evidence remains outside Git at
+`/home/alberto/ppsspp-test/re145/`: 109 selected frames and six contact sheets.
 
 Verification: 422 workspace tests passed (36 engine, 112 game, 274 ROM);
-targeted library/examples Clippy passed with warnings denied; normal and
-regression PSP builds passed with the existing six warnings. The regression
-capture matches the measured 9,972-pixel delta exactly. Normal EBOOT SHA-256:
-`252cd0b8dded59e7332e3f7fd0a4577a3ebde4b7fad608de65d07c6e5d34f6db`;
-regression EBOOT SHA-256:
-`04005699e78881f565a32aa7a767909873141c0526c2745455dd18750a05c12f`;
+`cargo clippy -p ssb-rom --example billboard_inventory -- -D warnings` passed;
+audit, regression and normal PSP builds passed with the existing six warnings.
+Audit/normal/regression EBOOT SHA-256:
+`69356324e88735721c8203f80344a40e29d8e1758c77de9b01c0fbb7819cac89` /
+`ca90bdc1efcc723f10d6820e2e68ae270cac90ddbd72856fbb0934190dfe4e77` /
+`4e751ec2967d919ca869a77c2025c7d3b85a49632cdb06d6166e046500af5af2`.
+Selected-image manifest SHA-256:
+`2318d27e4b059ac898554f2c8b17d57168842f338d53d69627f57857e8c47b99`;
 pack SHA-256:
 `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
 
-Next eligible work: review and record audit ordinals 0–20 and 22–108. The
-mechanism is verified, but one of 109 isolated nodes is not enough to close
-the all-node acceptance item. The existing golden capture predates the proven
-Z correction and therefore differs by 9,972 pixels; it has not been silently
-replaced. Physical PSP was not tested; R2 remains unperformed. Relevant commit:
-the focused RE-144 commit containing this entry; preceding commit `5889375`.
-Detailed evidence is in RE-144.
-
-Camera/Kind48 basis shipped (RE-131–133). R0.14 still needs original-output
-comparison; material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs
-hardware validation; R0.13 needs a transition caller. Combat remains locked.
-Physical PSP: not tested this session; R2 acceptance remains unperformed.
-Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic remains
-untouched. README/architecture/DECISIONS/TODO require no change.
+Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
+work resumes R0.13's two open acceptance items: connect the already-verified
+framebuffer capture/bind path to a real screen-wipe state transition, then
+verify capture timing/synchronization through that caller. The repository
+still has no match-transition state machine, so the next step is to trace the
+smallest original `lbTransition` caller/state sequence and implement only the
+rendering-required slice. R0.14 still needs original-output comparison;
+material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
+validation. Combat remains locked. Physical PSP was not tested this session;
+R2 acceptance remains unperformed. Pre-existing uncommitted
+`tools/romtool/src/main.rs` diagnostic remains untouched.
 
 ## Previous Task Status
 

@@ -57,6 +57,17 @@ mod regression {
     pub const TARGET_TICKS: u64 = 240;
 }
 
+#[cfg(feature = "billboard_audit_capture")]
+mod billboard_capture {
+    pub const START_INDEX: u64 = 0;
+    /// Leave the first node up long enough for PPSSPP and the host capture
+    /// process to find the window, then advance exactly once per second. The
+    /// sequence is driven by fixed simulation ticks, so host scheduling can
+    /// delay a screenshot without changing the order being audited.
+    pub const WARMUP_TICKS: u64 = 600;
+    pub const HOLD_TICKS: u64 = 60;
+}
+
 /// `true` once `regression_capture` has frozen the sim; always `false`
 /// otherwise, so callers need one guard, not a cfg per call site.
 #[inline]
@@ -204,7 +215,11 @@ unsafe fn run() -> ! {
         })
         .unwrap_or_default();
     let billboard_count = billboard_nodes.len() as u32;
-    let mut billboard_view = false;
+    // R0.12's capture build enters the isolated browser before the first
+    // rendered frame. PPSSPP keyboard profiles differ on how they expose the
+    // PSP L/Select button, which made a repeatable host-side audit depend on
+    // local input configuration rather than renderer behaviour.
+    let mut billboard_view = cfg!(feature = "billboard_audit_capture");
     let mut billboard_index = 0u32;
 
     // Which mesh is on screen, and how far back the camera sits.
@@ -397,6 +412,14 @@ unsafe fn run() -> ! {
             sim_frame_index = sim_frame_index.saturating_add(1);
             pad.poll();
             let state = pad.state(0);
+
+            #[cfg(feature = "billboard_audit_capture")]
+            if billboard_count > 0 {
+                let audit_tick = sim_frame_index.saturating_sub(billboard_capture::WARMUP_TICKS);
+                billboard_index = ((billboard_capture::START_INDEX
+                    + audit_tick / billboard_capture::HOLD_TICKS)
+                    % billboard_count as u64) as u32;
+            }
 
             // D-pad steps through the pack; held Z zooms out, A zooms in.
             let prev = pad.previous(0).buttons;

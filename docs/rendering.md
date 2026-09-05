@@ -30,7 +30,7 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 
 | Area | Status | Evidence/Test | Remaining work |
 | --- | --- | --- | --- |
-| Geometry | COMPLETE | `PLAN.md` R0.8 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); RE-143 reproduces signed animated billboard scale; RE-144 corrects billboard Z to the original X/Y/X scale rule after measuring 16/109 real meshes with local depth; `romtool mesh` converts every root display list, 0 failures archive-wide | RE-144's audit mode exists; 108/109 individual visual reviews remain under R0.12 |
+| Geometry | COMPLETE | `PLAN.md` R0.8 and R0.12 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); RE-143 reproduces signed animated billboard scale; RE-144 corrects billboard Z to the original X/Y/X scale rule; RE-145 individually reviews all 109 billboard ordinals; `romtool mesh` converts every root display list, 0 failures archive-wide | Physical PSP validation remains part of the later rendering gate |
 | Projection | IN_PROGRESS | `PLAN.md` R0.14: FOV, viewport/aspect and depth sourced and checked (RE-034/082/084/085); RE-131 ports the real single-fighter battle camera and RE-132/133 feed its bases to billboard placement | Camera coverage beyond the current single-fighter subset and an original-output comparison remain open |
 | Texture decode | 🟢 85% | `PLAN.md` R0.3 `COMPLETE`: RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded, unit-tested; 638/665 bound textures packed | 27 unconverted, each root-caused and attributed elsewhere: 26 to R0.13, 1 to R0.7 |
 | CI4 | COMPLETE | `PLAN.md` R0.4: unit-tested decode; dominant format (1192/3483 `G_SETTILE`) | None |
