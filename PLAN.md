@@ -1552,37 +1552,17 @@ Status: `VERIFYING`
 
 ### Current evidence
 
-Matrix kinds 44/46/48/50 are all recognized and flagged, all 109 flagged
-nodes billboard at draw time using one shared, screen-aligned placement
-(RE-062/RE-063 grew this from an earlier 81 once `RecalcRotRpyRSca` was
-added), and camera-facing behavior was verified A/B under a deliberately
-rotated camera (RE-049; Dream Land's six canopy sprites stay upright when
-honoured, skew into slivers when ignored).
+All 109 billboard nodes are flagged. RE-131–133 shipped the real camera,
+camera-basis-aware screen alignment, and a separate Kind48 basis selected
+by `FLAG_BILLBOARD_PITCH_LOCKED`. RE-126's shared-placement limitation is
+historical, resolved by RE-133. Kind50 is absent from the shipped archive
+and remains folded into the screen-aligned path (RE-063/RE-133).
 
-**RE-126 found this shared placement is an approximation for `Kind48`,
-not an equivalent reproduction, and measured how much of the archive it
-affects.** Reading `gcPrepDObjMatrix` directly: kinds 44/45/46 really are
-one family (build the MVP from the pure projection matrix, fully screen-
-aligned, matching this project's implementation), but kinds 47/48 and
-49/50 build theirs from `sGCMatrixMod1F`/`Mod2F` — camera-axis-*locked*
-LookAt matrices (pitch-locked and yaw-locked respectively), a materially
-different transform this project does not implement separately. `Kind50`
-was already measured unused (0/3117, RE-063); `Kind48` had not been
-separately measured before this pass. A temporary, reverted census
-through the real `romtool pack` build found **47 real `Kind48` nodes
-archive-wide, including Dream Land's own geometry file (104)** — the
-largest individual billboard category (43% of all 109 flagged nodes,
-splitting the earlier 81 into 34 `Kind46` + 47 `Kind48`). Not yet visibly
-wrong on screen because doing so requires a camera that yaws/pitches
-relative to the object, which neither RE-049's one forced test rotation
-nor the current, still-face-on debug/gameplay camera ever exercises —
-this is the same camera-model gap R0.14 already tracks as open ("an
-actual game camera"), now with a concrete, quantified dependent
-(`Kind48`'s correctness) rather than a hypothetical one. Depends on R0.14
-(camera/projection); RE-082 (viewport, aspect ratio and resolution-
-difference handling confirmed) does not touch this, so this specific
-item still needs R0.14's "actual game camera" work, not just its already-
-closed items.
+RE-140 adds a repeatable source-indexed rest-pose inventory:
+`cargo run -p ssb-rom --example billboard_inventory -- assets/generated/ssb64.pak`.
+It reports 109 nodes, 47 pitch-locked, no nonfinite matrices or zero basis
+lengths. This is structural evidence only; per-node visual verification
+remains open, including animation/camera-dependent behavior.
 
 RE-083 closed the "decomp's `rot_mode` choice" worry as a non-issue: that
 logic (`gcDecideDObj3TransformsKind`) belongs to the runtime/dynamic

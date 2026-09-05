@@ -10622,3 +10622,37 @@ taken.
 
 `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
 --release --workspace`: clean.
+
+
+## RE-140 — Repeatable source-indexed billboard rest-pose inventory
+
+Added `crates/ssb-rom/examples/billboard_inventory.rs`, a read-only pack
+consumer. Unlike temporary census code, it persists for repeatable checks
+and emits a TSV row per flagged node, including source file, graph offset,
+local/pack node index, mesh, pitch-lock flag, finite-matrix result, basis
+lengths and translation. It checks unique object ownership and reports
+nonfinite matrices/zero basis lengths as investigation failures. No guessed
+position bounds or corrections are applied; zero scale could be authored.
+
+Source review: `objdisplay.c::gcPrepDObjMatrix` case 44 uses node Y scale
+and cumulative ancestor X scale; runtime `meshdraw.rs::billboard_place`
+uses composed basis lengths. RE-134 already measured the rest-pose ancestor
+condition. BattleShip `interpreter.cpp`'s `G_MW_MATRIX` handler confirms
+these transforms ultimately patch MVP state; it is not a visual oracle for
+this inventory. No renderer algorithm or extraction behavior changed.
+
+Command: `cargo run -p ssb-rom --example billboard_inventory -- assets/generated/ssb64.pak`.
+Result: **109 billboards, 47 pitch-locked, 0 structural anomalies**, every
+node has exactly one object owner. Pack SHA-256:
+`2eca32e7b8c25c82932915b0785f79bcf02f73752abf77ed72b859a6c7966de0`.
+Report generated at `/tmp/ssb64-billboards.tsv`; regenerate with the command
+above rather than treating the temporary file as persistent evidence.
+`cargo clippy -p ssb-rom --example billboard_inventory -- -D warnings`
+passed; `cargo test -p ssb-rom --lib`: 271 passed.
+
+R0.12 remains VERIFYING: this does not measure animated placement, compare
+original rendered output, or confirm each node visually. PPSSPP and physical
+PSP were not run. No pack rebuild needed: this only reads the existing pack.
+Corrected stale current-state prose in STATUS, PLAN and porting status which
+still described the RE-131–133 camera/basis implementation as missing.
+The pre-existing uncommitted romtool diagnostic was left unchanged.
