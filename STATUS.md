@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-138)
+**Last updated:** 2026-09-05 (RE-139)
 
 ---
 
@@ -12,50 +12,47 @@
 
 ## Current Task
 
-RE-137 left R0.12 with one item lacking any concrete investigative lead:
-"texture orientation verified". RE-138 (this session) asked the
-prerequisite question directly — does a *separate* billboard-specific
-texture-orientation mechanism even exist to verify? — rather than
-assuming it needed the same visual-spot-check treatment as everything
-else.
+RE-138 closed R0.12's last no-lead item by showing no separate question
+existed to answer. RE-139 (this session) applied the same move to
+R0.6's own last never-investigated item, "unsupported material behavior
+identified" — which had no notes of its own at all, unlike every other
+item on that task.
 
-**Checked both sides of the question directly.** This project's own
-`mesh.rs` (decodes every display list's UVs) has zero references to
-`transform_kind`/billboard concepts anywhere — a billboard's UVs go
-through the exact same code path as any other primitive, no conditional
-branch exists. Re-read `objdisplay.c`'s `gcPrepDObjMatrix` cases 44-50
-(the original game, already read closely for RE-133) specifically for
-texture/UV logic this time: none exists, every case only ever touches
-matrix/scale state. The only texture-related code nearby is the
-unrelated `MObj` material-animation sprite-cycling mechanism (already
-R0.9/R0.10's own scope).
+**Asked whether a new investigation was actually needed.** R0.6's own
+history already accumulated a dozen-plus `RE-` entries measuring
+specific material-system gaps. Checked whether they already named every
+real divergence, just never gathered into one place — they did.
 
-**Conclusion: no separate mechanism exists to verify, on either side.**
-A billboard's texture renders exactly as correctly as R0.5 already
-established for texture UV/wrap/coordinate behavior archive-wide
-(RE-067/101/102/128) — this item was the same, already-answered
-question asked again under a different name, not a distinct open one.
-Closed on that structural basis; a visual spot-check (Peach's Castle's
-own pennant billboard) was attempted but wasn't distinctive enough to be
-load-bearing evidence either way.
+**Compiled, not measured, five already-cited gaps**: (1) combiner shapes
+outside shade-scale/texture-blend/flat-constant (~2.5% of combiner-
+bearing primitives, RE-079/080); (2) `G_SETCOMBINE`'s alpha formula
+outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`) — the rare
+`PRIM_ALPHA` multiply and two-cycle mode RE-130 measured and declined;
+(3) per-object real lighting, standing in as RE-065's single baked
+neutral key light; (4) `G_SHADE` cleared while a combiner still reads
+`SHADE` (RE-120), undefined real-hardware behavior, mostly in
+not-yet-reachable combat content; (5) `prim_color`/`env_color`'s
+"genuine absence" cases (RE-079), a downstream effect of `R0.7`'s own
+still-open material-table gaps, not a new classification failure.
 
-**R0.12 now has 5 of 6 acceptance items closed.** Only "all flagged
-billboard nodes verified" remains, needing per-node (not per-stage)
-confirmation — the one item in this arc genuinely requiring more
-mechanical breadth than insight. See `docs/reverse-engineering.md`
-RE-138 for the full account.
+**Nothing here is new**; every item was already measured and cited
+elsewhere in this task's own history. The entry's only contribution is
+naming them in one place. No code changed, no new measurement taken.
+See `docs/reverse-engineering.md` RE-139 for the full account.
 
-`cargo test --workspace`: 419 passing, unaffected — this entry is a
-code-reading exercise, no code changed. `cargo clippy --release
---workspace`: clean.
+`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+--release --workspace`: clean.
 
-**Task-selection note for the next session.** `R0.12`'s one remaining
-item needs per-node visual confirmation across the 109 flagged nodes, a
+**Task-selection note for the next session.** `R0.6` now has only four
+items open, all genuinely blocked (three on `R0.7`'s own material-table
+pairing gaps, one on a missing per-object lighting system) — this task
+has no further "compile what's already known" or "is there even a
+question here" moves left, unlike `R0.12` did. `R0.12`'s one remaining
+item needs per-node visual confirmation across 109 flagged nodes, a
 larger undertaking than any single session in this arc has attempted.
 Also still open: (1) extend `ssb_game::camera` past the single-fighter
 case if multiplayer ever becomes relevant; (2) `R0.5`'s one remaining
-item and `R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
-respectively, unchanged by this session.
+item is still blocked on `R2`.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -122,7 +119,39 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-138 (this session) closed R0.12's "texture orientation verified"
+RE-139 (this session) closed R0.6's "unsupported material behavior
+identified" item by compiling five already-measured gaps into one place,
+rather than opening new investigation. See
+`docs/reverse-engineering.md` RE-139 for the full account; summary:
+
+* **The item had no notes of its own at all** — unlike every other item
+  on `R0.6`, which each accumulated a dozen-plus `RE-` entries. Checked
+  whether that history already answered the question before assuming it
+  needed new work.
+* **It did.** Five real divergences, each already measured and cited
+  elsewhere: (1) combiner shapes outside shade-scale/texture-blend/
+  flat-constant (~2.5% of combiner-bearing primitives, RE-079/080); (2)
+  `G_SETCOMBINE`'s alpha formula outside `TEXEL0_ALPHA` (alone or ×
+  `SHADE_ALPHA`) — the rare `PRIM_ALPHA` multiply and two-cycle mode
+  RE-130 measured and declined; (3) per-object real lighting, standing
+  in as RE-065's single baked neutral key light; (4) `G_SHADE` cleared
+  while a combiner still reads `SHADE` (RE-120), undefined real-hardware
+  behavior, mostly in not-yet-reachable combat content; (5)
+  `prim_color`/`env_color`'s "genuine absence" cases (RE-079), a
+  downstream effect of `R0.7`'s own still-open material-table gaps.
+* **Nothing new was discovered or measured**; the entry's only
+  contribution is naming these five in one place instead of leaving the
+  acceptance item blank. No code changed.
+* `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+  --release --workspace`: clean.
+* **What this leaves.** `R0.6` now has exactly four items open, all
+  genuinely blocked (three on `R0.7`'s material-table gaps, one on a
+  missing per-object lighting system) — no further "compile what's
+  known" moves remain for this task.
+
+## Previous Task Status
+
+RE-138 (an earlier session) closed R0.12's "texture orientation verified"
 item by establishing that no separate mechanism exists to verify, rather
 than by more visual spot-checking. See `docs/reverse-engineering.md`
 RE-138 for the full account; summary:
@@ -152,7 +181,7 @@ RE-138 for the full account; summary:
 * `cargo test --workspace`: 419 passing, unaffected (code-reading only,
   no code changed). `cargo clippy --release --workspace`: clean.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-137 (an earlier session) finished what RE-136 started: spot-checked the
 remaining 4 of 8 stages archive-wide with billboard content, completing
