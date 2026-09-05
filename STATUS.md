@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-140)
+**Last updated:** 2026-09-05 (RE-141)
 
 ---
 
@@ -12,33 +12,40 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness`: build a repeatable per-node inventory to
-support the remaining visual verification criterion.
+`R0.12 — Billboard Correctness`: per-node verification; RE-141 corrected
+latent rest-pose spin semantics found while tracing that path.
 
 ## Task Status
 
-`VERIFYING` — read-only pack diagnostic implemented with source graph/node
-identifiers and structural measurements (RE-140). This does not establish visual
-correctness or satisfy the remaining per-node acceptance criterion.
+`VERIFYING`. Kind46 now selects authored Z spin, kinds 44/48/50 ignore
+rotation, following `gcPrepDObjMatrix`. Pack v19 preserves the selector.
+All current rest spin angles are zero, so no visual improvement is claimed.
 
-Camera and Kind48 placement already shipped (RE-131–133); the previous
-current-state narrative incorrectly repeated their earlier blockers.
-R0.14 still needs original-output comparison. R0.4/R0.6/R0.7 retain their
-material/lighting gaps; R0.5 retains physical-hardware validation needs.
-R0.13 still needs a transition caller. Combat remains locked.
+Last completed work: RE-141 spin selector, nonzero-angle regression, expanded
+inventory, rebuilt pack and PPSSPP regression comparison. Relevant commit:
+the focused RE-141 commit containing this entry; preceding commit `8664ba0`.
+Verification: 420 workspace tests passed; targeted library/example Clippy
+passed. All-target warnings-denied Clippy encounters pre-existing test
+expression warnings and the untouched romtool diagnostic. PSP regression
+build passed with existing warnings; software PPSSPP before/after comparison
+has zero differing pixels. Newly staged pack verified by byte comparison.
+Evidence, commands, capture paths and build/pack hashes: RE-141 in
+`docs/reverse-engineering.md`.
 
-Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic is preserved.
-Last completed work: RE-140 inventory and state reconciliation; prior commit
-`7d4afcb` (RE-139). Current commit: the focused RE-140 commit containing this entry.
-Verification: 109 nodes, 47 pitch-locked, zero structural anomalies;
-271 ssb-rom tests passed; example clippy passed with warnings denied.
-Evidence and pack hash: docs/reverse-engineering.md RE-140.
-Documentation updated: STATUS.md, PLAN.md, docs/porting-status.md,
-docs/reverse-engineering.md. No runtime/extraction changes.
-Next eligible work: R0.12 per-node visual validation, using the inventory's
-source identifiers to select and isolate nodes; whole-stage plausibility
-and rest-pose structure alone do not close this criterion.
-Physical PSP: R2 acceptance not performed; no hardware tested this session.
+Next eligible work: R0.12 per-node visual isolation using the inventory's
+source identifiers. Check whether stage animation drives billboard rotation;
+current draw code uses rest spin, even when placement is posed. No claim of
+animated-spin correctness. Whole-stage screenshots remain insufficient for
+all-node acceptance. No tooling/access blocker for continued source work.
+
+Camera/Kind48 basis shipped (RE-131–133). R0.14 still needs original-output
+comparison; material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs
+hardware validation; R0.13 needs a transition caller. Combat remains locked.
+Physical PSP: not tested this session; R2 acceptance remains unperformed.
+Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic preserved.
+Documentation updated: STATUS, PLAN, rendering, porting-status,
+reverse-engineering. README/architecture/DECISIONS require no change for
+this correction of the existing rendering path.
 
 ## Previous Task Status
 

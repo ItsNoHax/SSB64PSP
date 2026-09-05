@@ -1604,6 +1604,13 @@ this project's existing composed-basis-column-length scale is already
 numerically exact for all of them — closes that item too, by
 measurement, with no code change needed.
 
+RE-141 corrected a latent spin-source mismatch: ROM Kind46 uses Z,
+not case 45's X; kinds 44/48/50 ignore rotation. Pack v19 preserves a
+Kind46-only spin selector. All current billboard rest spin angles are zero,
+so the deterministic Dream Land capture stays pixel-identical. The new
+nonzero-angle round-trip test covers the distinction. Animated spin and
+per-node visual validation remain unverified.
+
 ### Objective
 
 Verify every billboard rendering path.

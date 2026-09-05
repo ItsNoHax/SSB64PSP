@@ -722,10 +722,9 @@ pub unsafe fn draw_object_posed(
                     w: ScePspFVector4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
                 });
             }
-            // `rotate.x` is the in-plane spin; with the eye axes aligned to
-            // world axes (or, now, the real camera's own axes) that is a
-            // rotation about local Z.
-            sys::sceGumRotateZ(node.rest_rotate[0]);
+            // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
+            // Case 45's rotate.x convention is not used by ROM descriptors.
+            sys::sceGumRotateZ(node.billboard_rest_spin());
             sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: 1.0 });
         } else {
             sys::sceGumLoadMatrix(base);

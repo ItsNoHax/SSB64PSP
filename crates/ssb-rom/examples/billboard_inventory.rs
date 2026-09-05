@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut count = 0;
     let mut pitch_locked = 0;
     let mut anomalies = 0;
-    println!("file\tgraph\tlocal_node\tpack_node\tmesh\tpitch_locked\tfinite\tscale_x\tscale_y\tscale_z\tx\ty\tz");
+    let mut spinning_kind = 0;
+    println!("file\tgraph\tlocal_node\tpack_node\tmesh\tpitch_locked\tfinite\tscale_x\tscale_y\tscale_z\tx\ty\tz\trotate_x\trotate_y\trotate_z\tspin_z_kind\tspin_angle");
     for i in 0..pack.node_count() {
         let node = pack.node(i).ok_or("missing node")?;
         if node.flags & NodeDesc::FLAG_BILLBOARD == 0 {
@@ -34,9 +35,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let locked = node.flags & NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED != 0;
         pitch_locked += u32::from(locked);
+        let spin_z = node.flags & NodeDesc::FLAG_BILLBOARD_SPIN_Z != 0;
+        spinning_kind += u32::from(spin_z);
         count += 1;
         println!(
-            "{}\t0x{:X}\t{}\t{i}\t{}\t{locked}\t{finite}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t0x{:X}\t{}\t{i}\t{}\t{locked}\t{finite}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{spin_z}\t{}",
             owner.source_file,
             owner.source_offset,
             i - owner.first_node,
@@ -46,10 +49,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scale[2],
             w[12],
             w[13],
-            w[14]
+            w[14],
+            node.rest_rotate[0],
+            node.rest_rotate[1],
+            node.rest_rotate[2],
+            node.billboard_rest_spin()
         );
     }
-    eprintln!("billboards={count} pitch_locked={pitch_locked} structural_anomalies={anomalies}; visual verification pending");
+    eprintln!("billboards={count} pitch_locked={pitch_locked} spin_z_kind={spinning_kind} structural_anomalies={anomalies}; visual verification pending");
     if count == 0 || anomalies != 0 {
         return Err("empty inventory or structural anomalies require investigation".into());
     }
