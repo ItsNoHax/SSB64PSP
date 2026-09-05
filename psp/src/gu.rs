@@ -413,6 +413,27 @@ impl Gpu {
         }
     }
 
+    /// Loads a real view matrix (RE-131) -- an `eye`/`at`/`up` camera, not
+    /// just a translation. `m` is expected column-major, matching
+    /// [`ssb_engine::math::Mat4::as_array`]'s own documented output.
+    ///
+    /// The model matrix is untouched: callers still set per-object placement
+    /// with [`Gpu::model_transform`] as before, now composed under a real
+    /// view transform instead of an implicit identity one.
+    pub fn set_view(&mut self, m: &ssb_engine::math::Mat4) {
+        let a = m.as_array();
+        let fm = sys::ScePspFMatrix4 {
+            x: sys::ScePspFVector4 { x: a[0], y: a[1], z: a[2], w: a[3] },
+            y: sys::ScePspFVector4 { x: a[4], y: a[5], z: a[6], w: a[7] },
+            z: sys::ScePspFVector4 { x: a[8], y: a[9], z: a[10], w: a[11] },
+            w: sys::ScePspFVector4 { x: a[12], y: a[13], z: a[14], w: a[15] },
+        };
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::View);
+            sys::sceGumLoadMatrix(&fm);
+        }
+    }
+
     /// Translates, rotates and uniformly scales the model matrix.
     ///
     /// Calls post-multiply, so the effective transform is `T * R * S`:

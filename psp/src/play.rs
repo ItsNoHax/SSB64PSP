@@ -214,6 +214,17 @@ pub struct Play {
     /// Object whose nodes the skeleton drives, or `u32::MAX` when the pack has
     /// no model for this character.
     pub object: u32,
+    /// The real battle camera (RE-131), ticked alongside the fighter each
+    /// frame in [`Play::tick`].
+    pub camera: ssb_game::camera::Camera,
+    /// `FTAttributes.cam_offset_y` (`refs/ssb-decomp-re/src/ft/fttypes.h`) --
+    /// deliberately *not* part of `PhysicsAttributes` (that struct's own doc
+    /// comment already carves camera offsets out as belonging to "other
+    /// systems"), so it lives here beside the camera that actually uses it,
+    /// added to the fighter's own `y` before every [`ssb_game::camera::Camera::tick`]
+    /// call, matching `gmCameraUpdateInterests`' own `target_pos.y +=
+    /// fp->attr->cam_offset_y`.
+    pub cam_offset_y: f32,
     started: Option<Status>,
 }
 
@@ -232,10 +243,12 @@ impl Play {
         // velocity 44 rather than the 0.09 and 1.7 the first port guessed.
         let desc = pack.fighter(kind as u32);
         let from_pack = desc.is_some();
+        let mut cam_offset_y = 0.0;
         if let Some(d) = desc {
             fighter.attributes = physics_of(&d);
             fighter.coll = body_of(&d);
             fighter.anim = anim_of(&d);
+            cam_offset_y = d.cam_offset_y;
         }
 
         let mut placed = false;
@@ -258,6 +271,13 @@ impl Play {
             // so any one of them names it; a scan over the objects finds which
             // one owns that node. Done once, here, rather than per tick.
             object: fighter_object(pack, kind as u32).unwrap_or(u32::MAX),
+            // Matches real hardware's own `dGMCameraCObjVecDefault` rest
+            // state (RE-131) rather than starting already converged on the
+            // fighter -- the pan-in from that rest state as the match
+            // begins is real, observable behaviour, not a startup glitch to
+            // hide.
+            camera: ssb_game::camera::Camera::default(),
+            cam_offset_y,
             started: None,
         }
     }
@@ -287,6 +307,23 @@ impl Play {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
         self.tick_animation(pack);
+
+        let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        let bounds = ssb_game::camera::Bounds {
+            top: stage.camera.top as f32,
+            bottom: stage.camera.bottom as f32,
+            left: stage.camera.left as f32,
+            right: stage.camera.right as f32,
+        };
+        let mut target = self.fighter.pos;
+        target.y += self.cam_offset_y;
+        self.camera.tick(
+            target,
+            matches!(self.fighter.facing, ssb_game::fighter::Facing::Left),
+            bounds,
+            stage.camera_light_angle_z,
+            vw as f32 / vh as f32,
+        );
     }
 
     /// Starts the animation the current status calls for, then advances it.
