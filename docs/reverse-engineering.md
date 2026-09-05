@@ -10510,3 +10510,61 @@ gap now precisely characterized rather than vague.
 `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
 --release --workspace`: clean. All temporary code fully reverted;
 confirmed via a clean `regression_capture` golden-capture match.
+
+---
+
+## RE-138 — Billboard texture orientation: no separate mechanism exists to verify, confirmed by direct reading on both sides
+
+`PLAN.md` R0.12's "texture orientation verified" item has had no
+concrete investigative lead since the task was created — unlike
+"orientation"/"scale"/"alpha", which each started from a specific
+decomp-code question this multi-session arc answered in turn. This
+entry asked the prerequisite question directly: does a *separate*
+billboard-specific texture-orientation mechanism (a UV flip, a mirror
+based on view angle, anything beyond ordinary texture mapping) exist to
+verify at all?
+
+**Checked this project's own code first.** `grep`'d `mesh.rs` — the
+module that decodes every display list's `G_TEXTURE`/`G_VTX` commands
+into UVs — for any reference to `transform_kind`, `Kind46`/`Kind48`/
+`Kind50`, or "billboard": **zero matches**. Billboard-ness is decided
+entirely in `pack.rs::add_object`, strictly *after* `mesh.rs` has
+already finished converting a node's geometry and UVs. A billboard's
+texture coordinates are decoded through the exact same code path as any
+other primitive's, with no conditional branch of any kind.
+
+**Checked the original game's own code next.** Re-read `objdisplay.c`'s
+`gcPrepDObjMatrix` cases 44-50 (already read closely this session for
+RE-133) specifically looking for texture/UV logic this time, not matrix
+math: none exists — every one of these cases only ever touches
+`sGCMatrixMvpF`/`gGCMatrixPerspF`/`gGCScaleX`, never a texture register,
+tile, or UV value. The only texture-*related* code anywhere near this
+function (`MOBJ_FLAG_TEXTURE`, `texture_id_curr`/`_next`, `sub.sprites`)
+is `MObj` material-*animation* sprite-cycling (which texture is bound,
+not how it is oriented) — an unrelated mechanism this project already
+handles under R0.9/R0.10, not a billboard-orientation concern.
+
+**Conclusion: there is no separate "billboard texture orientation"
+mechanism to verify, on either side.** A billboard's texture renders
+exactly as correctly (or incorrectly) as R0.5 already established for
+texture UV/wrap/coordinate behavior archive-wide (RE-067, RE-101,
+RE-102, RE-128) — nothing about being flagged `FLAG_BILLBOARD` changes
+how its own texture is sampled or oriented. This item is not a distinct
+open question; it is the same, already-closed question asked again
+under a different name.
+
+**A visual spot-check was attempted but is not the load-bearing
+evidence.** Looked for an asymmetric, orientation-obvious texture (text,
+an arrow, a directional pattern) among the billboard nodes already
+screenshotted this session (RE-136/RE-137) to rule a flip in or out by
+eye; Peach's Castle's own pennant billboard (a solid triangle with one
+diagonal highlight stripe) was the best candidate available but is not
+distinctive enough to confirm orientation without the ROM's own texture
+bytes for a pixel-level comparison, which this pass did not do. The
+structural argument above (no separate code path exists to get wrong)
+is the actual basis for closing this item, not this inconclusive visual
+check.
+
+`cargo test --workspace`: 419 passing, unaffected — this entry is a
+code-reading exercise, no code changed. `cargo clippy --release
+--workspace`: clean.
