@@ -29,6 +29,7 @@ pub mod scene;
 pub mod skeleton;
 pub mod stage;
 pub mod texture;
+pub mod transition;
 pub mod vpk0;
 
 pub use archive::{Archive, TableEntry};

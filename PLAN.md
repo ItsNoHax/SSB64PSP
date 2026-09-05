@@ -1949,6 +1949,15 @@ pattern RE-113 found is real, authored ROM data for a diagonal (not
 horizontal) wipe shape, and renders correctly. **All 13 LB-transition
 files are now confirmed fully correct on the real device.**
 
+RE-146 traces the missing caller contract precisely. The only production
+caller is VS Results startup: snapshot the completed battle framebuffer once,
+enter results, create a dedicated 45° camera, choose one of 11 transition
+descriptors, play its finite DObj animation, and remove it at end. A persistent
+real-ROM inventory resolves all 11 source graphs/joint tables and replays every
+script: IDs 0–9 last 64 frames; Curtain (ID 10) lasts 72. The source-indexed
+asset table and verifier are implemented. Packing those generic object
+animations and adding the minimal results-entry caller remain open.
+
 ### Objective
 
 Implement every framebuffer-based rendering path required by SSB64.
@@ -1969,7 +1978,7 @@ Implement every framebuffer-based rendering path required by SSB64.
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116, RE-146 in `docs/reverse-engineering.md`.
 
 ---
 
