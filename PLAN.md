@@ -1956,7 +1956,10 @@ descriptors, play its finite DObj animation, and remove it at end. A persistent
 real-ROM inventory resolves all 11 source graphs/joint tables and replays every
 script: IDs 0–9 last 64 frames; Curtain (ID 10) lasts 72. The source-indexed
 asset table and verifier are implemented. Packing those generic object
-animations and adding the minimal results-entry caller remain open.
+animations is now implemented as RE-147: all eleven append after the dense
+fighter/stage block, replay from the generated pack, and resolve the object
+their absolute joint nodes drive. Adding the minimal results-entry caller
+remains open.
 
 ### Objective
 
@@ -1978,7 +1981,7 @@ Implement every framebuffer-based rendering path required by SSB64.
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116, RE-146 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116, RE-146, RE-147 in `docs/reverse-engineering.md`.
 
 ---
 

@@ -224,6 +224,33 @@ fn rgba(w: u32) -> [u8; 4] {
     w.to_be_bytes()
 }
 
+fn other_mode(opcode: u8, w0: u32, w1: u32) -> Cmd {
+    let len = ((w0 & 0xFF) + 1) as u8;
+    let encoded_shift = ((w0 >> 8) & 0xFF) as u8;
+    let Some(shift) = 32u8
+        .checked_sub(encoded_shift)
+        .and_then(|remaining| remaining.checked_sub(len))
+    else {
+        // Blind display-list discovery can encounter opcode-shaped data.
+        // Impossible F3DEX2 fields are not a command and must not inherit
+        // release-mode integer wrapping (RE-147).
+        return Cmd::Other { opcode, w0, w1 };
+    };
+    if opcode == G_SETOTHERMODE_H {
+        Cmd::SetOtherModeH {
+            shift,
+            len,
+            data: w1,
+        }
+    } else {
+        Cmd::SetOtherModeL {
+            shift,
+            len,
+            data: w1,
+        }
+    }
+}
+
 /// Decodes a single F3DEX2 command.
 pub fn decode(raw: &[u8]) -> Result<Cmd> {
     if raw.len() < CMD_SIZE {
@@ -352,16 +379,7 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
         },
 
         // F3DEX2 encodes these as (32 - shift - len) and (len - 1).
-        G_SETOTHERMODE_H => Cmd::SetOtherModeH {
-            len: ((w0 & 0xFF) + 1) as u8,
-            shift: (32 - ((w0 >> 8) & 0xFF) as u8 - (((w0 & 0xFF) + 1) as u8)),
-            data: w1,
-        },
-        G_SETOTHERMODE_L => Cmd::SetOtherModeL {
-            len: ((w0 & 0xFF) + 1) as u8,
-            shift: (32 - ((w0 >> 8) & 0xFF) as u8 - (((w0 & 0xFF) + 1) as u8)),
-            data: w1,
-        },
+        G_SETOTHERMODE_H | G_SETOTHERMODE_L => other_mode(opcode, w0, w1),
 
         // F3DEX2's `gMoveWd`/`gDma1p(pkt, G_MOVEWORD, data, offset, index)`:
         // `w0 = (G_MOVEWORD << 24) | (index << 16) | offset`, `w1 = data`.
@@ -590,6 +608,20 @@ mod tests {
                 opcode: 0xAB,
                 w0: 0xAB00_0000,
                 w1: 0xDEAD_BEEF
+            }
+        );
+    }
+
+    #[test]
+    fn impossible_othermode_fields_are_preserved_not_wrapped() {
+        // Encoded shift 31 plus length 2 cannot fit in a 32-bit mode word.
+        // This shape occurs when blind scanning encounters ordinary data.
+        assert_eq!(
+            cmd(0xE300_1F01, 0xDEAD_BEEF),
+            Cmd::Other {
+                opcode: G_SETOTHERMODE_H,
+                w0: 0xE300_1F01,
+                w1: 0xDEAD_BEEF,
             }
         );
     }

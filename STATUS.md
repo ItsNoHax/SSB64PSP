@@ -54,18 +54,29 @@ offsets. `transition_inventory` resolves and replays all eleven against the
 user's ROM: IDs 0–9 terminate at frame 64 and Curtain terminates at frame 72;
 all graphs and active scripts resolve without error.
 
-R0.13 investigation verification: the transition table unit test passed;
+RE-147 appends all eleven source-resolved transition animations to the pack
+after the fighter and stage entries. `Pack::transition_anim` finds them by
+original descriptor ID, `transition_object` recovers the driven object from
+the absolute joint nodes, and `StageAnimator::ended` exposes the original
+finite-stream completion condition. The generated pack contains 11 wipes and
+70 animated nodes; its verifier replays and composes every entry successfully.
+An impossible `SETOTHERMODE` scan candidate also exposed debug-only subtraction
+overflow; the decoder now preserves impossible fields as `Cmd::Other` instead
+of relying on release wrapping, and both debug and release pack builds work.
+
+R0.13 verification: the transition table and pack-lookup tests passed;
 `cargo clippy -p ssb-rom --lib --example transition_inventory -- -D warnings`
-passed; the inventory completed against the identified USA ROM; and all 423
-workspace tests passed (36 engine, 112 game, 275 ROM). No PSP artifact changes
-in this investigation-only step.
+passed; the inventory completed against the identified USA ROM and generated
+pack; all 425 workspace tests passed (36 engine, 112 game, 277 ROM); and the
+normal PSP release build succeeded with the existing six warnings. Pack
+SHA-256: `68dac512409c6d5ce7fa48c82e4d1173290c9d642f9790b1b8caa331f3fb0dea`.
+EBOOT SHA-256:
+`0c4a5c9362c0294c44479b8804c302f51dc40b39c40c751f87a54dbca78ce0cf`.
 
 Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
-work resumes R0.13's two open acceptance items. Next, append the eleven
-source-resolved object animations to the pack after its dense fighter/stage
-animation block, then implement the minimal results-entry state that requests
-capture on the previous frame's completion and runs the selected 64/72-frame
-overlay. R0.14 still needs original-output comparison;
+work resumes R0.13's two open acceptance items. Next, implement the minimal
+results-entry state that requests capture on the previous frame's completion
+and runs the selected 64/72-frame overlay. R0.14 still needs original-output comparison;
 material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
 validation. Combat remains locked. Physical PSP was not tested this session;
 R2 acceptance remains unperformed. Pre-existing uncommitted

@@ -11032,3 +11032,33 @@ scene to invoke them. The next bounded change is to append the eleven
 object/animation relationships after the dense fighter/stage animation block,
 then add the minimal results-entry rendering state that requests capture at
 the previous frame's completion and runs the selected 64/72-frame overlay.
+
+---
+
+## RE-147 — All eleven results wipes are packed and replay from the generated pack
+
+Added a distinct `AnimDesc::TRANSITION` key and appended all eleven RE-146
+entries after the dense fighter and stage animation blocks, preserving
+`fighter_anim`'s arithmetic indexing. Each packed entry carries the complete
+source file, its verified 64/72-frame duration, and every active script paired
+with the absolute node it drives. This reuses the existing `AObjEvent32`
+runtime rather than creating a transition-only interpreter.
+
+The pack reader now finds a wipe by original descriptor-table index and
+recovers its object from the absolute joint-node relationship. The extended
+`transition_inventory` opens the generated pack, starts every animation with
+`StageAnimator`, ticks and composes it for the source-measured duration, and
+requires every stream to end. All 11 entries and 70 animated nodes pass.
+
+The first debug pack rebuild exposed an unrelated robustness bug in blind
+display-list discovery: opcode-shaped data with impossible F3DEX2
+`SETOTHERMODE` fields underflowed while decoding `32 - encoded_shift - len`.
+Release mode had silently wrapped the same subtraction. The decoder now
+preserves impossible fields as `Cmd::Other`; a regression test covers the
+case, and the complete pack builds identically in debug and release modes.
+
+The resulting pack is 5563.3 KiB and loads back cleanly. All 425 workspace
+tests pass (36 engine, 112 game, 277 ROM), the `ssb-rom` transition verifier
+and strict clippy pass, and the normal PSP release build succeeds. R0.13 stays
+`IN_PROGRESS`: the remaining work is the results-entry rendering caller and
+its capture-timing verification.
