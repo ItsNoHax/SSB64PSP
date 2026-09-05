@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-133)
+**Last updated:** 2026-09-05 (RE-135)
 
 ---
 
@@ -12,66 +12,55 @@
 
 ## Current Task
 
-RE-132 (earlier this session) fixed a regression RE-131's new camera
-introduced for `Kind46` billboards, and left one explicit next step:
-resolve `objdisplay.c`'s `var_s3`/`spC8` branch before implementing
-`Kind48`/`Kind50`'s own distinct transforms, rather than guess. RE-133
-(this session) resolved it and shipped `Kind48`'s real transform.
+RE-133 (earlier this session) closed R0.12's "orientation verified" item
+and left "scale verified" open as a separate, still-unmeasured lead.
+RE-134/RE-135 (this session) measured both of R0.12's remaining
+easily-checkable items, closing them without needing further code
+changes.
 
-**Resolved the branch with two independent, agreeing paths.** `var_s3`/
-`spC8` turned out to be per-call locals (reset to `0` every call), not
-static leftover state as an earlier reading assumed. Two things can move
-them: an earlier loop over the camera's own matrix-setup components
-(agrees on `var_s3 = 1` for SSB64's standard `up = (0,1,0)`), and
-`gcSetCameraMatrixMode`'s three real call sites — `gmCameraDefaultProcDisplay`
-(the "Default" display proc, which calls into `gmCameraDefaultFuncCamera`,
-the exact function `ssb_game::camera` already ports) sets mode `3`,
-which sets `var_s3 = 1` and leaves `spC8` untouched. Both paths agree:
-**`var_s3 = 1` during normal gameplay**, and `spC8` never leaves `0` —
-confirming, independently of RE-063's archive census, that `Kind50`'s
-own matrix (`sGCMatrixMod2F`) is never actually computed in real play.
-Genuinely dead, not merely unused; stays folded into `Kind46`'s
-treatment.
+**RE-134: billboard scale.** RE-126 found the real per-axis scale
+formula multiplies a node's own Y-scale by the *ancestor chain's*
+cumulative X-scale, not this project's own composed-basis-column-length
+approach — identical only if every ancestor applies uniform scale. A
+temporary, reverted `romtool` census walked all 109 real `FLAG_BILLBOARD`
+nodes' own ancestor chains: **zero have any non-uniform-scale ancestor**
+(max depth 3). Confirmed the detector itself is sound (not just quiet)
+via a second pass finding 98 real non-uniform-scale nodes elsewhere in
+the archive. Result: the two formulas never actually diverge for any
+real billboard node — closes "scale verified" by measurement, no code
+change needed.
 
-**Implemented `Kind48`'s real formula**: collapse the camera's real X/Z
-position into one horizontal distance before building the `LookAt`
-(`eye=(0,eye.y,dist), at=(0,at.y,0), up=(0,1,0))`) — this is exactly what
-makes it invariant to the camera's yaw while still tracking its pitch. A
-new `BillboardCamera` struct carries both bases (`screen` for `Kind46`,
-`pitch_locked` for `Kind48`), resolved once per frame from the same
-`eye`/`at` the view matrix already uses. A new `NodeDesc::
-FLAG_BILLBOARD_PITCH_LOCKED` bit (`pack::VERSION` 17 → 18) marks `Kind48`
-nodes specifically; a new unit test pins that `Kind48` gets both bits and
-`Kind46` gets only the original one.
+**RE-135: billboard alpha/blending.** R0.12's "alpha behavior verified"
+item named `translucent` billboards (29.7%, double the archive-wide
+rate) as "the blocker", tracked under RE-069/RE-071's blending mystery —
+which RE-130 (an earlier session) already resolved generally. This
+checked whether that fix actually reaches billboards specifically:
+**25 of 35 real translucent billboard primitives (71%) already carry
+`flags::ALPHA_BLEND`** and render with real, classified blending — the
+remaining 10 are the same already-documented, deliberately-declined
+categories RE-130 found archive-wide, not a new gap. Closes "alpha
+behavior verified".
 
-**Verified on-device, three ways.** Every mode except the real camera's
-own: zero differing pixels against the golden capture. The zoomed-in
-real-camera mode: Dream Land's canopy renders as clean, non-degenerate
-geometry. A reversible A/B test (temporarily folding `Kind48` back into
-`Kind46`'s treatment, against the same deterministic frozen frame) found
-a real, non-zero difference concentrated on Dream Land's own canopy
-geometry — the new code path is reached and does something — that on
-close visual comparison reads as the same fine dithered-texture
-sensitivity RE-053/070/075 already established this scene has, not a
-structural break.
+**R0.12 now has 4 of 6 acceptance items closed** (billboard types,
+camera-facing/orientation, scale, alpha) — up from 2 at the start of
+this multi-session arc. The remaining two ("texture orientation
+verified", "all flagged billboard nodes verified") need broader
+on-device visual spot-checking across many stages, not a quick
+measurement, and are left honestly open rather than rushed. See
+`docs/reverse-engineering.md` RE-134/RE-135 for the full account.
 
-**What this closes.** `PLAN.md` R0.12's "orientation verified" item.
-"Scale verified" (the ancestor-chain-cumulative-X-scale lead RE-126 also
-found reading the same code) remains open, a separate, still-unmeasured
-question. See `docs/reverse-engineering.md` RE-133 for the full account.
+`cargo test --workspace`: 419 passing, unaffected by either entry (both
+are measurement-only, no shipped code changed). `cargo clippy --release
+--workspace`: clean.
 
-`cargo test --workspace`: 418 → 419 passing (1 new). `cargo clippy
---release --workspace` and `cargo psp --release`/`--features
-regression_capture`: clean, same pre-existing 6-warning set.
-
-**Task-selection note for the next session.** `R0.12` still has two open
-items ("scale verified", "texture orientation verified", "all flagged
-billboard nodes verified") — the scale one has a concrete, already-found
-lead (above) ready to measure. Also still open: (1) extend
-`ssb_game::camera` past the single-fighter case if multiplayer ever
-becomes relevant; (2) `R0.5`'s one remaining item and `R0.6`'s remaining
-three items are still blocked on `R2`/`R0.7` respectively, unchanged by
-this session.
+**Task-selection note for the next session.** `R0.12`'s remaining two
+items are the natural next step if continuing this same thread (would
+need picking several more stages/nodes and spot-checking them on-device,
+similar to RE-049's original Dream Land check, extended). Also still
+open: (1) extend `ssb_game::camera` past the single-fighter case if
+multiplayer ever becomes relevant; (2) `R0.5`'s one remaining item and
+`R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
+respectively, unchanged by this session.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -138,7 +127,41 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-133 (this session) resolved `objdisplay.c`'s `var_s3`/`spC8` branch
+RE-134/RE-135 (this session) measured R0.12's two remaining
+easily-checkable acceptance items, closing both without needing further
+code changes. See `docs/reverse-engineering.md` RE-134/RE-135 for the
+full account; summary:
+
+* **RE-134, billboard scale.** A temporary, reverted `romtool` census
+  walked all 109 real `FLAG_BILLBOARD` nodes' own ancestor chains
+  looking for non-uniform scale (the one condition under which this
+  project's composed-basis-column-length scale approach would diverge
+  from the real ancestor-cumulative-X-scale formula RE-126 found):
+  **zero found** (max chain depth 3). Confirmed the detector itself
+  fires correctly by finding 98 real non-uniform-scale nodes elsewhere
+  in the archive first. Closes "scale verified" — the two formulas never
+  actually diverge for any real node.
+* **RE-135, billboard alpha/blending.** Checked whether RE-130's
+  already-shipped real-blending fix (from an earlier session) actually
+  reaches billboard geometry, the category R0.12's own "alpha behavior
+  verified" item had flagged as blocked. Measured: 25 of 35 real
+  translucent billboard primitives (71%) already carry
+  `flags::ALPHA_BLEND` and render with real blending; the remaining 10
+  are the same already-documented, deliberately-declined categories
+  RE-130 found archive-wide. Closes "alpha behavior verified".
+* **Net result: R0.12 now has 4 of 6 acceptance items closed** (up from
+  2 at the start of this multi-session arc — billboard types,
+  camera-facing/orientation, scale, alpha). The remaining two ("texture
+  orientation verified", "all flagged billboard nodes verified") need
+  broader on-device visual spot-checking across many stages, not a quick
+  measurement — left honestly open.
+* `cargo test --workspace`: 419 passing, unaffected by either entry
+  (both measurement-only). `cargo clippy --release --workspace`: clean.
+  All temporary census code fully reverted.
+
+## Previous Task Status
+
+RE-133 (an earlier session) resolved `objdisplay.c`'s `var_s3`/`spC8` branch
 (RE-132's own explicit next step) and implemented `Kind48`'s real
 camera-pitch-locked billboard transform. See
 `docs/reverse-engineering.md` RE-133 for the full account; summary:
@@ -181,7 +204,7 @@ camera-pitch-locked billboard transform. See
   states): clean, same pre-existing 6-warning set. All temporary code
   (the `cam_distance` override, the A/B test) fully reverted.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-132 (an earlier session) found and fixed a real regression RE-131's own new
 camera introduced: `Kind46` billboards silently broke under a real,

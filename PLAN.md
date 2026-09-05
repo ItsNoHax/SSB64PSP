@@ -1616,9 +1616,13 @@ on-device A/B test (real basis vs. folding `Kind48` into `Kind46`'s
 treatment, both against the same deterministic frozen frame) found a
 real, non-zero, non-degenerate difference concentrated on Dream Land's
 own canopy geometry — the new code path is reached and does something,
-not inert. Closes "orientation verified"; "scale verified" (the
-ancestor-chain-cumulative-X-scale lead RE-126 also found reading the
-same code) remains open as a separate, still-unmeasured question.
+not inert. Closes "orientation verified". RE-134 then measured "scale
+verified"'s own remaining lead (the ancestor-chain-cumulative-X-scale
+formula RE-126 also found reading the same code) archive-wide: zero of
+the 109 real billboard nodes have any non-uniform-scale ancestor, so
+this project's existing composed-basis-column-length scale is already
+numerically exact for all of them — closes that item too, by
+measurement, with no code change needed.
 
 ### Objective
 
@@ -1633,16 +1637,16 @@ Verify every billboard rendering path.
 
 * [x] billboard types enumerated — RE-063 exhaustively traced every `gcPrepDObjMatrix` case reachable from a ROM `DObjDesc` array (kinds 44/46/48/50, all four flagged); RE-083 confirmed no fifth reachable kind hides behind the `rot_mode` branch, since that branch belongs to an unreachable runtime-only path
 * [x] camera-facing transforms verified — RE-049's rotated-camera A/B test (Dream Land's six canopy sprites upright vs skewed into slivers) for the `Kind46`/screen-aligned family specifically. **RE-132 found and fixed a latent regression RE-131's own real camera introduced**: `billboard_place` relied on the view matrix always being identity (true only under the debug viewer's old fixed camera) to make "the object's own axes" equal "the screen's axes" — silently wrong under a real, rotating camera. Fixed by giving `DrawState` a `billboard_camera` basis (`None` under every still-identity-view mode, reproducing old behaviour bit-for-bit; `Some((right, up))` under the real camera), verified via zero pixel difference on every unaffected mode and clean, non-degenerate billboards on-device under the real camera's own shallow angles
-* [ ] scale verified — RE-126: found a related, unconfirmed lead reading the same decomp code (the real per-axis scale multiplies a node's own Y-scale by the ancestor chain's cumulative *X*-scale, not this project's composed-basis-column-length approach; identical numerically only if every ancestor's own scale is uniform, not yet measured archive-wide either way)
+* [x] scale verified — RE-126 found the real per-axis scale formula multiplies a node's own Y-scale by the ancestor chain's cumulative *X*-scale, not this project's composed-basis-column-length approach — identical numerically only if every ancestor's own scale is uniform. **RE-134 measured this archive-wide**: zero of the 109 real `FLAG_BILLBOARD` nodes have any non-uniform-scale ancestor (a second pass confirmed the detector itself fires correctly, finding 98 non-uniform-scale nodes elsewhere in the archive) — the two formulas never actually diverge for any real node, so no code change was needed
 * [x] orientation verified — RE-126 measured this is a real, open gap, not an unexamined one: `Kind48` (camera-pitch-locked, distinct from `Kind46`'s fully screen-aligned transform) is 47 real nodes archive-wide including Dream Land's own file 104, the largest individual billboard category (43% of all 109 flagged nodes). **RE-131 built the real camera this needed** (`ssb_game::camera`, a tested, on-device-verified port of `gmCameraDefaultFuncCamera`); **RE-132 fixed a regression the camera itself introduced for `Kind46`**; **RE-133 resolved `objdisplay.c`'s `var_s3`/`spC8` branch and implemented `Kind48`'s real transform**. Tracing `gcSetCameraMatrixMode`'s three call sites plus an independent per-`xobj`-kind check both agree: `var_s3 = 1` during normal gameplay (the branch that preserves the real `Y` component, matching a `Y`-up world), while `spC8` never leaves its `0` default — confirming, independently of RE-063's archive census, that `Kind50`'s own matrix (`sGCMatrixMod2F`) is never actually computed in real play, genuinely dead rather than merely unused. `Kind48`'s real formula (collapse the camera's X/Z position into one horizontal distance, `LookAt(eye=(0,eye.y,dist),at=(0,at.y,0),up=(0,1,0))`) is implemented as a new `NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED` bit (`pack::VERSION` 18) and a second `BillboardCamera` basis, verified via a reversible on-device A/B test showing a real, non-degenerate difference concentrated on Dream Land's own canopy geometry. `Kind50` stays folded into `Kind46`'s treatment, now with direct evidence (not just archive silence) that no distinct transform could ever be observed for it
 * [ ] texture orientation verified
-* [ ] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` is the blocker, measured to affect billboards (29.7%) at roughly double the archive-wide rate (14.4%), tracked under RE-069/RE-071's still-open finding, not a new problem
+* [x] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` was the named blocker (29.7% of billboard primitives, double the archive-wide rate), tracked under RE-069/RE-071's then-open blending mystery. **RE-130 resolved that mystery generally; RE-135 measured it reaches billboards specifically**: 25 of 35 real translucent billboard primitives (71%) already carry `flags::ALPHA_BLEND` and render with real, classified blending — the remaining 10 are the same already-documented, deliberately-declined categories (rare `PRIM_ALPHA` multiply, two-cycle mode) RE-130 found archive-wide, not a new billboard-specific gap
 * [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
 * [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check
 
 ### Evidence
 
-RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133 in `docs/reverse-engineering.md`.
+RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135 in `docs/reverse-engineering.md`.
 
 ---
 
