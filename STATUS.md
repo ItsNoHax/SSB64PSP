@@ -72,6 +72,8 @@ normal PSP release build succeeded with the existing six warnings. Pack
 SHA-256: `68dac512409c6d5ce7fa48c82e4d1173290c9d642f9790b1b8caa331f3fb0dea`.
 EBOOT SHA-256:
 `0c4a5c9362c0294c44479b8804c302f51dc40b39c40c751f87a54dbca78ce0cf`.
+Relevant commits: `930aafd` (source/ROM inventory) and `7c1da69`
+(packed runtime animations and replay verification).
 
 Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
 work resumes R0.13's two open acceptance items. Next, implement the minimal
