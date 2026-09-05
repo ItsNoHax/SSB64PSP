@@ -618,6 +618,12 @@ unsafe fn run() -> ! {
         // material/UV/texture pipeline. Object view exists specifically to
         // inspect whatever is there, so it must not hide half of it.
         draw_state.force_no_cull = object_view;
+        // RE-131: reset every frame, then set for real inside `stage_view`'s
+        // own real-camera branch below -- every other mode's view matrix is
+        // identity, so `None` (leave the billboard basis at whatever
+        // `sceGumLoadIdentity` set) is correct for them, matching this
+        // code's own behaviour before the real camera existed.
+        draw_state.billboard_camera = None;
         if let Some(p) = &pack {
             if !regression_frozen(sim_frame_index) {
                 material_anim.tick(p);
@@ -697,6 +703,14 @@ unsafe fn run() -> ! {
                             pl.camera.at,
                             ssb_engine::math::Vec3::Y,
                         ));
+                        // RE-131: `Kind46`'s billboards (RE-048/049) need the
+                        // real camera's own right/up to stay screen-aligned
+                        // now that the view matrix actually rotates -- see
+                        // `DrawState::billboard_camera`'s own doc comment.
+                        let forward = (pl.camera.at - pl.camera.eye).normalized();
+                        let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
+                        let up = right.cross(forward);
+                        draw_state.billboard_camera = Some((right.to_array(), up.to_array()));
                         dbg_cam = pl.camera.eye.z;
                         [0.0, 0.0, 0.0]
                     } else {

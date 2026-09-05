@@ -10200,3 +10200,69 @@ open until the real camera's own output is checked against real
 footage, not just "does not crash and looks plausible." What it *does*
 provide, for the first time, is a real, tested, on-device-verified
 camera those three tasks can now build on instead of a placeholder.
+
+---
+
+## RE-132 — RE-131's own camera silently broke `Kind46` billboards; fixed by giving `billboard_place` the camera's real basis
+
+Wiring in a real, rotating camera (RE-131) exposed a latent bug in
+`psp/src/meshdraw.rs`'s billboard code that the debug viewer's old,
+never-rotating "face-on" camera had been masking since RE-048/049.
+
+**The bug.** `Kind46`'s screen-aligned billboard transform
+(`billboard_place` + its caller) loads the node's model matrix as pure
+identity, then translates/spins/scales — relying on "the object's own
+local X/Y axes" happening to already equal "the screen's X/Y axes".
+That was true only because the *view* matrix was always identity too
+(`reset_modelview`, every frame, every mode): with `View = Identity`,
+world axes and screen axes are the same thing by construction. RE-131
+gave the debug viewer's zoomed-in fighter-follow mode a real, rotating
+`Mat4::look_at` view matrix, which silently invalidates that assumption
+for any billboard drawn under it — a real, if narrow-angle, defect
+Dream Land's own canopy billboards would have shown as soon as the
+camera's pitch or yaw moved off dead-centre.
+
+**Fixed by giving the billboard path the real camera's own basis.**
+`DrawState` gained `billboard_camera: Option<([f32; 3], [f32; 3])>` —
+`None` everywhere the view matrix is still identity (every mode except
+the real camera's own), reproducing the exact pre-RE-131 behaviour
+bit-for-bit; `Some((right, up))` under the real camera. The billboard
+draw path multiplies the model matrix by a basis built from `right`,
+`up`, and their cross product (`forward`) before applying the existing
+in-plane spin and scale, so a flagged node's own axes track the camera
+instead of the world. `psp/src/main.rs` computes `right`/`up` from the
+same `eye`/`at` already used to build the view matrix
+(`forward.cross(Vec3::Y)`/`right.cross(forward)`, the identical
+derivation `Mat4::look_at` itself uses internally), reset to `None`
+unconditionally once per frame (matching `force_no_cull`'s own existing
+precedent) and set for real only inside the real-camera branch.
+
+**Verified on-device, both branches.** The whole-stage overview and
+every other debug-viewer mode: zero differing pixels against the
+`regression_capture` golden capture (`billboard_camera` stays `None`
+there, so this is expected, but confirmed rather than assumed). The
+zoomed-in real-camera mode (the same temporary, reverted `cam_distance`
+override RE-131 used): Dream Land's canopy billboards still render as
+clean, symmetric, non-degenerate pink shapes — no inversion, no
+collapse into slivers, no vanishing geometry — at the shallow pitch/yaw
+angles this camera currently reaches.
+
+**What this does and does not fix.** This corrects `Kind46`'s own
+screen-alignment to survive a real camera; it does not implement
+`Kind48`/`Kind50`'s *distinct* pitch-/yaw-locked transforms (RE-126's
+own finding) — `NodeDesc::FLAG_BILLBOARD` still collapses all four
+kinds into one bit, so a `Kind48` node still gets `Kind46`'s (now
+camera-correct) screen-aligned treatment, not its own real one. Hand-
+deriving `Kind48`/`Kind50`'s exact matrix (`sGCMatrixMod1F`/`Mod2F`,
+`gcPrepDObjMatrix` cases 47-50) from `objdisplay.c` involves an
+unresolved branch (`var_s3`/`spC8`, cases 1 vs. 2, selecting which world
+axis the lock applies to) this pass did not have enough context to
+confidently resolve without risking a guess `AGENTS.md` §9 would flag —
+left as a clearly-scoped next step rather than shipped uncertain.
+
+`cargo test --workspace`: 418 passing, unaffected (this fix lives
+entirely in the `psp` crate, not the library crates). `cargo clippy
+--release --workspace` and `cargo psp --release` (both feature states):
+clean, same pre-existing 6-warning set. The temporary `cam_distance`
+override used for the zoomed-in screenshot was reverted before
+committing.
