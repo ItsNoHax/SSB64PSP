@@ -351,27 +351,30 @@ pub fn sqrt(v: f32) -> f32 {
     x
 }
 
+/// Sine and cosine of the same angle (radians). Public, like [`sqrt`], so
+/// game code needs no `libm` dependency of its own.
 #[cfg(feature = "std")]
 #[inline]
-fn sin_cos(v: f32) -> (f32, f32) {
+pub fn sin_cos(v: f32) -> (f32, f32) {
     (v.sin(), v.cos())
 }
 
 #[cfg(not(feature = "std"))]
 #[inline]
-fn sin_cos(v: f32) -> (f32, f32) {
+pub fn sin_cos(v: f32) -> (f32, f32) {
     (sin_poly(v), sin_poly(v + core::f32::consts::FRAC_PI_2))
 }
 
+/// Tangent (radians). Public for the same reason as [`sin_cos`].
 #[cfg(feature = "std")]
 #[inline]
-fn tan(v: f32) -> f32 {
+pub fn tan(v: f32) -> f32 {
     v.tan()
 }
 
 #[cfg(not(feature = "std"))]
 #[inline]
-fn tan(v: f32) -> f32 {
+pub fn tan(v: f32) -> f32 {
     let (s, c) = sin_cos(v);
     s / c
 }

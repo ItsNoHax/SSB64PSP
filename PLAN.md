@@ -1614,7 +1614,7 @@ Verify every billboard rendering path.
 * [x] billboard types enumerated — RE-063 exhaustively traced every `gcPrepDObjMatrix` case reachable from a ROM `DObjDesc` array (kinds 44/46/48/50, all four flagged); RE-083 confirmed no fifth reachable kind hides behind the `rot_mode` branch, since that branch belongs to an unreachable runtime-only path
 * [x] camera-facing transforms verified — RE-049's rotated-camera A/B test (Dream Land's six canopy sprites upright vs skewed into slivers) for the `Kind46`/screen-aligned family specifically
 * [ ] scale verified — RE-126: found a related, unconfirmed lead reading the same decomp code (the real per-axis scale multiplies a node's own Y-scale by the ancestor chain's cumulative *X*-scale, not this project's composed-basis-column-length approach; identical numerically only if every ancestor's own scale is uniform, not yet measured archive-wide either way)
-* [ ] orientation verified — RE-126 measured this is a real, open gap, not an unexamined one: `Kind48` (camera-pitch-locked, distinct from `Kind46`'s fully screen-aligned transform) is 47 real nodes archive-wide including Dream Land's own file 104, the largest individual billboard category (43% of all 109 flagged nodes) — currently rendered with `Kind46`'s screen-aligned approximation instead of its own real pitch-locked one. Not yet visibly wrong on screen because neither RE-049's test camera nor the current, still-face-on gameplay camera ever varies along the axis the two transforms disagree on; blocked on R0.14's still-open "actual game camera" item, which this finding gives a concrete reason to need
+* [ ] orientation verified — RE-126 measured this is a real, open gap, not an unexamined one: `Kind48` (camera-pitch-locked, distinct from `Kind46`'s fully screen-aligned transform) is 47 real nodes archive-wide including Dream Land's own file 104, the largest individual billboard category (43% of all 109 flagged nodes) — currently rendered with `Kind46`'s screen-aligned approximation instead of its own real pitch-locked one. Not yet visibly wrong on screen because neither RE-049's test camera nor the current, still-face-on gameplay camera ever varies along the axis the two transforms disagree on; blocked on R0.14's still-open "actual game camera" item, which this finding gives a concrete reason to need. **RE-131 built that camera** (`ssb_game::camera`, a real, tested, on-device-verified port of `gmCameraDefaultFuncCamera`), closing the literal blocker — but does not yet decompose the camera's own `eye`/`at` into the pitch/yaw pair `Kind48`'s real transform needs, and the debug viewer's zoomed-in fighter-follow mode (the only place the new camera is wired in) still does not vary enough along the disagreeing axis to make the difference visible. The concrete next step is now "wire the existing camera's angle into the billboard draw call," not "build a camera"
 * [ ] texture orientation verified
 * [ ] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` is the blocker, measured to affect billboards (29.7%) at roughly double the archive-wide rate (14.4%), tracked under RE-069/RE-071's still-open finding, not a new problem
 * [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
@@ -1973,6 +1973,24 @@ bug this project hit. Corroborated by inspecting Dream Land's stage view
 for depth-order artifacts (tree trunk vs. canopy, decorative sprites,
 platform edges, fighter marker) — none found. No code changed.
 
+RE-131 built the real camera this task's own "camera transforms
+verified" item has been waiting on. Researched and independently
+verified `gm/gmcamera.c`'s `gmCameraDefaultFuncCamera` (the single-fighter,
+normal-stage case) directly against the source, then ported it call for
+call as `ssb_game::camera` — a portable, `no_std`, platform-free module
+matching Layer A's existing rules. Along the way, found and fixed a real
+error in `stage.rs`'s own record: `light_angle.z` (previously "no known
+reader") is read by the camera's own `gmCameraGetAdjustAtAngle`, and is
+stored pre-converted to radians archive-wide (measured, not assumed) —
+unlike `.x`/`.y`, which are degrees. Wired into `psp/src/main.rs`'s
+debug viewer via a new `Gpu::set_view` (a real `Mat4::look_at`, not the
+translate-only trick the whole-stage debug view still uses and keeps
+unchanged) — verified zero pixel difference against the golden capture
+for every mode except the one it targets, and stable, sane, converging
+behaviour over a 20-second run in that one. Deliberately minimal (no
+weapons, multiplayer, per-move zoom, idle-zoom-out, or pause offset);
+see RE-131's own entry for the full scope statement.
+
 ### Objective
 
 Reproduce the original camera and projection behavior.
@@ -1987,13 +2005,13 @@ Reproduce the original camera and projection behavior.
 * [x] viewport verified — RE-034 (device measurement, before/after screenshots) plus RE-082 (source-level confirmation that `Gpu::init` and `main.rs` share one `pillarboxed_viewport()` call, so they cannot diverge)
 * [x] aspect ratio verified — RE-082: `pillarboxed_viewport()` is unit-tested (`pillarbox_preserves_four_by_three`), its output is the sole source for both the GE viewport/scissor and the projection's `aspect` parameter, and `sceGumPerspective`'s own binding uses the standard formula; RE-034's previously-reported residual is a measurement artifact on a too-small on-screen shape, not a surviving defect
 * [x] depth mapping verified — RE-085: `sceGuDepthRange(65535, 0)` + `GreaterOrEqual` matches the `psp` crate's own documented depth-buffer convention exactly, not a workaround; corroborated on-device with no depth-order artifacts found in a complex, multi-layer regression scene
-* [ ] camera transforms verified — no real game camera system exists yet, only the debug viewer's free-roaming camera; RE-084 sourced the FOV *value* the original uses, but reproducing the camera's actual positioning/movement logic needs a real camera system this project does not have yet
+* [ ] camera transforms verified — RE-084 sourced the FOV *value* the original uses; **RE-131 ported the real positioning/movement logic itself**, `gmCameraDefaultFuncCamera` and every function it calls (interest-box framing, distance damping, look-at panning, eye-direction angling), as `ssb_game::camera` — a real, unit-tested, on-device-verified camera, wired into the debug viewer's zoomed-in fighter-follow mode with zero effect on any other mode (confirmed via a pixel-identical `regression_capture` golden capture). Deliberately scoped down (no weapons, no multiplayer, no per-move zoom, no idle-zoom-out, no entry/explain/dead-up modes, no pause offset — each documented in `camera.rs`'s own module doc) and not yet checked against real camera *output* (footage or a reference emulator), only against the decompiled source and "does not crash and looks plausible" — this item stays open on that basis, but is no longer blocked on a camera not existing at all
 * [x] N64/PSP resolution differences explicitly handled — RE-082: pillarboxing (D-008) is precisely this handling, now confirmed by both a device measurement (RE-034) and a source audit (RE-082) rather than one alone
-* [ ] representative scenes compared — no side-by-side N64-vs-PSP reference comparison exists
+* [ ] representative scenes compared — no side-by-side N64-vs-PSP reference comparison exists; no N64 emulator or reference footage is available in this environment to produce one, so this remains blocked on external resources (matching `R2`'s own real-hardware-validation shape), not on more `romtool`-side work
 
 ### Evidence
 
-RE-034, RE-082, RE-084, RE-085 in `docs/reverse-engineering.md`.
+RE-034, RE-082, RE-084, RE-085, RE-131 in `docs/reverse-engineering.md`.
 
 ---
 

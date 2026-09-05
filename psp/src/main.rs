@@ -671,30 +671,40 @@ unsafe fn run() -> ! {
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
 
-                    // Once zoomed in past the whole-stage framing, follow the
-                    // fighter. The stage's bounding centre is the right thing
-                    // to look at while inspecting a stage, but it sits up in
-                    // the scenery -- on Dream Land it is inside the tree -- so
-                    // zooming in on it walks the fighter off the bottom of the
-                    // screen. At the default zoom the stage still wins, because
-                    // that framing is what makes the collision overlay legible.
-                    let centre = match (sim_fighter && cam_distance < CAM_FIT, &player) {
-                        (true, Some(pl)) => [
-                            pl.fighter.pos.x,
-                            // Look at the middle of the body rather than the
-                            // feet, so a fighter standing on a floor is not
-                            // pinned to the centre of the screen with the
-                            // stage below it out of view.
-                            pl.fighter.pos.y + pl.fighter.coll.center,
-                            centre[2],
-                        ],
-                        _ => centre,
+                    // Once zoomed in past the whole-stage framing, hand
+                    // framing to the real battle camera (RE-131) instead of
+                    // the debug viewer's own fixed, face-on one. The stage's
+                    // bounding centre is the right thing to look at while
+                    // inspecting a stage, but it sits up in the scenery -- on
+                    // Dream Land it is inside the tree -- so a naive
+                    // "look at the fighter" would walk it off the bottom of
+                    // the screen; the real camera's own framing formula
+                    // (`gmCameraUpdateInterests`) already accounts for this
+                    // via `cam_offset_y`. At the default zoom the stage still
+                    // wins, because that whole-stage framing is what makes
+                    // the collision overlay legible -- a real per-object
+                    // camera is only meaningful once there is an object (the
+                    // fighter) to actually watch.
+                    let use_real_camera = sim_fighter && cam_distance < CAM_FIT && player.is_some();
+                    let cam = if let (true, Some(pl)) = (use_real_camera, &player) {
+                        // The real camera's own `eye`/`at` are a genuine
+                        // `look_at`, not the "translate the world" trick the
+                        // whole-stage framing below still uses -- it can pan
+                        // and (via `light_angle.z`) tilt, which a pure
+                        // translation cannot represent.
+                        gpu.set_view(&ssb_engine::math::Mat4::look_at(
+                            pl.camera.eye,
+                            pl.camera.at,
+                            ssb_engine::math::Vec3::Y,
+                        ));
+                        dbg_cam = pl.camera.eye.z;
+                        [0.0, 0.0, 0.0]
+                    } else {
+                        // A stage is a place, not an object: spinning it
+                        // would make the collision overlay impossible to
+                        // read against the geometry. Face-on, always.
+                        [-centre[0], -centre[1], -centre[2] - dist]
                     };
-
-                    // A stage is a place, not an object: spinning it would
-                    // make the collision overlay impossible to read against
-                    // the geometry. Face-on, always.
-                    let cam = [-centre[0], -centre[1], -centre[2] - dist];
                     gpu.model_transform(cam, [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
                     let base = gpu.model_matrix();
                     // (Re)load when the stage changes, then tick and draw.

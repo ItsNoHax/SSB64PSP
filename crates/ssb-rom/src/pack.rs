@@ -103,7 +103,15 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    format-change risk RE-049 already flagged once, hence the bump despite
 ///    no size change (matching `VERSION` 9's own precedent for exactly this
 ///    shape of change).
-pub const VERSION: u32 = 16;
+/// 17 turned `StageDesc`'s trailing `_pad` into `camera_light_angle_z`
+///    (RE-131): `MPGroundData.light_angle.z`, needed by the real camera
+///    system's own eye-direction formula. No struct grows, but an older
+///    pack's `_pad` is always `0` where a real stage's angle is usually
+///    `-0.1745` radians (`-10°`) -- reading it back before this version as
+///    real data would aim the camera at a wrong, silently-plausible angle
+///    rather than visibly failing, the same silent-reinterpretation risk
+///    `VERSION` 9/16 already bumped for.
+pub const VERSION: u32 = 17;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -589,7 +597,7 @@ impl Extent {
 /// the object table — resolved at build time from the layer's `DObjDesc`
 /// address, so the runtime never searches for them.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StageDesc {
     /// First entry in the line table, and how many follow.
     pub first_line: u32,
@@ -607,7 +615,13 @@ pub struct StageDesc {
     /// Archive file holding the `MPGroundData`, for debugging.
     pub source_file: u32,
     pub source_offset: u32,
-    pub _pad: u32,
+    /// `MPGroundData.light_angle.z`, already in radians (RE-131, measured
+    /// archive-wide — the ROM stores this one component pre-converted,
+    /// unlike `.x`/`.y`). The real camera's own eye-direction nudge
+    /// (`gm/gmcamera.c`'s `gmCameraGetAdjustAtAngle`), not a lighting value
+    /// despite sharing a field with one. Was `_pad` (always `0`) before
+    /// `VERSION` 17.
+    pub camera_light_angle_z: f32,
 }
 
 impl StageDesc {
@@ -1570,7 +1584,7 @@ impl PackWriter {
             bgm_id: ground.bgm_id,
             source_file: ground.file,
             source_offset: ground.offset,
-            _pad: 0,
+            camera_light_angle_z: ground.light_angle[2],
         });
         (self.stages.len() - 1) as u32
     }
@@ -1799,9 +1813,10 @@ impl PackWriter {
                     out.extend_from_slice(&v.to_le_bytes());
                 }
             }
-            for v in [s.bgm_id, s.source_file, s.source_offset, s._pad] {
+            for v in [s.bgm_id, s.source_file, s.source_offset] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            out.extend_from_slice(&s.camera_light_angle_z.to_le_bytes());
         }
         for l in &self.lines {
             out.extend_from_slice(&l.first_vertex.to_le_bytes());
@@ -2456,7 +2471,7 @@ impl<'a> Pack<'a> {
             bgm_id: u32_at(self.data, at + 48),
             source_file: u32_at(self.data, at + 52),
             source_offset: u32_at(self.data, at + 56),
-            _pad: 0,
+            camera_light_angle_z: f32::from_bits(u32_at(self.data, at + 60)),
         })
     }
 
@@ -3277,7 +3292,7 @@ mod tests {
                 left: -3500,
             },
             bgm_id: 0x11,
-            light_angle: [0.0, 0.0],
+            light_angle: [0.0, 0.0, 0.0],
         };
 
         let v = |x, y, flags| V { pos: [x, y], flags };

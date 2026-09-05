@@ -10059,3 +10059,144 @@ regression_capture`/plain (both `psp` feature states): clean, same
 pre-existing warning set. All temporary census code (`mesh.rs`'s
 `eprintln!`) fully reverted; `git diff --stat` shows only the permanent
 classification/baking/flag/wiring changes plus the golden image update.
+
+---
+
+## RE-131 — A real, decomp-ported battle camera (`gmCameraDefaultFuncCamera`), replacing the debug viewer's fixed face-on one (`PLAN.md` R0.12/R0.13/R0.14)
+
+Three sessions in a row (RE-126 through RE-130) converged on the same
+conclusion: `R0.12`'s billboard orientation, `R0.13`'s screen-wipe
+triggers, and `R0.14`'s camera-transform item all ultimately need an
+actual game camera this project did not have — only a fixed,
+never-rotating "face-on" debug-viewer camera. Asked the user how to
+proceed given every other independently-fixable rendering gap was
+exhausted; the answer was to build a minimal real camera system rather
+than keep auditing for smaller wins or stop. This entry is that system.
+
+**Researched the real algorithm before writing any Rust.** `gm/gmcamera.c`
+(1,549 lines) implements seven different camera behaviours; the one that
+applies to a single fighter on a normal stage is
+`gmCameraDefaultFuncCamera`. Delegated the initial read (which functions
+call which, in what order, reading what fields) to a research pass, then
+independently verified every load-bearing formula directly against the
+source before writing any implementation — the research pass's own
+report had at least one real error (a smoothed paraphrase of
+`func_ovl2_8010C4D0`'s pan-scale formula that silently dropped its two
+genuine discontinuities), caught by reading the C directly rather than
+trusting the summary.
+
+**The real formula, ported call for call:**
+
+1. `gmCameraUpdateInterests` — for one fighter (no weapons, no
+   multiplayer): an asymmetric bounding box around the fighter,
+   `-1000`/`+700` game units on the facing-away side and the opposite
+   on the facing-toward side, scaled by `dGMCameraPlayerZoomRanges[1]`
+   (`1.5`, the single-player zoom).
+2. `gmCameraAdjustFOV(38.0)` — a 10%-per-frame lerp toward the FOV
+   RE-084 already sourced, not an instant snap.
+3. `gmCameraGetClampDimensionsMax` — the distance at which that box
+   exactly fills the viewport, clamped to `2500..30000`.
+4. `func_ovl2_8010C670` — damps the camera's own `target_dist` 7.5% of
+   the remaining way toward that distance each frame, snapping once
+   within one step of it.
+5. `gmCameraPan` — moves the look-at point a fraction of the way toward
+   the interest box's centre. That fraction (`func_ovl2_8010C4D0`) has
+   two genuine discontinuities at `target_dist == 2000`/`15000` — the
+   decompilation's own comment on this function ("Needs to be two
+   different 0.05s lol") already flags it as an original-game oddity,
+   not a decompiler artifact, so it is reproduced exactly rather than
+   smoothed.
+6. `func_ovl2_8010C3C0` + `gmCameraGetAdjustAtAngle` — derives a unit
+   eye-direction vector from the look-at point itself (clamped pitch
+   `-7°..+5°`, yaw `±17.5°`), nudged by the stage's own
+   `light_angle.z`.
+7. `func_ovl2_8010C5C0` — moves the eye 10% of the way toward
+   `at + target_dist * direction` each frame.
+
+Both `gmCameraPan` and `func_ovl2_8010C5C0`'s own hand-rolled
+diff/normalise/scale/add sequences reduce to exactly
+[`Vec3::lerp`](crates/ssb-engine/src/math.rs), already implemented and
+tested in this project — no new vector-math primitive was needed for
+either.
+
+**A second, independent finding along the way: `light_angle.z` has a
+real reader after all.** `crates/ssb-rom/src/stage.rs`'s own doc comment
+said "`.z` has no known reader" (a claim from an earlier session that
+had only checked `ftDisplayLightsDrawReflect`). `gmCameraGetAdjustAtAngle`
+reads it too, added directly into the camera's own pitch angle — a
+second, unrelated use of the same three stored floats, not a lighting
+value at all despite living in the `light_angle` field. Measured its
+real archive-wide values before assuming a unit convention (a temporary,
+reverted `romtool stages` addition): unlike `.x`/`.y` (degrees), `.z` is
+stored **pre-converted to radians** — the overwhelmingly common value is
+exactly `-0.17453294` (`-10.0°` to five decimal places), confirmed by
+`gmCameraGetAdjustAtAngle` itself adding it to an already-radians angle
+with no `F_CLC_DTOR32()` conversion of its own. Extended `light_angle`
+to `[f32; 3]` and `StageDesc` to carry the real component (repurposing
+its previously-unused trailing `_pad`, `pack::VERSION` 16 → 17 —
+additive, no struct growth, bumped anyway per the same "an old pack's
+plausible-looking default would silently mislead a new reader" reasoning
+`VERSION` 9/16 already established).
+
+**Implemented as `ssb-game`'s new `camera` module** (portable, `no_std`,
+platform-free, matching Layer A's own existing rules) — a `Camera`
+struct (`eye`/`at`/`fovy_degrees`/`target_dist`) and a `Bounds` struct
+whose `clamp` ports `gmCameraSetBoundsPosition`'s own one-axis-at-a-time,
+loop-until-clean shape exactly. `PhysicsAttributes`' own doc comment
+already anticipated this split ("camera offsets... belong to other
+systems"), so `FTAttributes.cam_offset_y` (already extracted into
+`pack::FighterDesc`, just never consumed) was threaded through
+`psp/src/play.rs`'s `Play` instead of into fighter physics. Five new
+unit tests cover `Bounds::clamp`, the pan-scale formula's own
+discontinuities, a stationary fighter settling and staying settled, and
+a moving fighter converging on the mathematically-predicted interest-box
+centre (not a value copied from a screenshot).
+
+**Wired into the render path without disturbing the existing debug
+camera.** `psp/src/gu.rs` gained `Gpu::set_view`, loading a real
+`Mat4::look_at` (already implemented, previously unused anywhere) into
+the GE's own View matrix slot — every mesh-drawing function already
+loads its own baked `base` matrix into the *Model* slot per node
+(`sceGumLoadMatrix(base); sceGumMultMatrix(&local)`), so the GE's
+separate View matrix composes with all of that existing machinery for
+free; no `meshdraw.rs` changes were needed at all. `psp/src/main.rs`'s
+stage-view rendering now branches: at the debug viewer's default
+whole-stage zoom, or in any other mode, behaviour is **completely
+unchanged** (the fixed, face-on, translate-only "camera" the collision
+overlay needs to stay legible while inspecting a stage). Only once
+zoomed in specifically to watch the simulated fighter does it hand
+framing to the real camera instead of the old "just centre on the
+fighter's raw position" placeholder.
+
+**Verified on-device, both branches.** Forcing the zoomed-in branch (a
+temporary, reverted `cam_distance` override) shows the simulated fighter
+through a real perspective shot with actual depth and framing breathing
+room, stable and sane across a 20-second run (no drift, no NaN,
+converges and stays converged). Reverting the override and
+re-screenshotting the default whole-stage view: **zero differing pixels**
+against the `regression_capture` golden capture — this change is
+completely inert for every debug-viewer mode except the one it was
+built for.
+
+`cargo test --workspace`: 413 → 418 passing (5 new, `ssb-game`'s
+`camera` module). `cargo clippy --release --workspace` and `cargo psp
+--release`/`--features regression_capture` (both feature states): clean,
+same pre-existing 6-warning set. All temporary code (the `romtool
+stages` light-angle census, the `cam_distance` override used for the
+zoomed-in screenshot) fully reverted.
+
+**What this closes, and what it does not.** This is deliberately scoped
+as *a* minimal real camera, not the whole system: no weapons, no
+multiplayer, no per-move camera zoom (`camera_zoom_frame`/
+`camera_zoom_range`), no idle-zoom-out, no entry/explain/dead-up modes,
+no pause-camera offset — each a documented simplification in
+`camera.rs`'s own module doc, not a silent one. It does **not** yet wire
+real per-object placement into `R0.12`'s billboard code (the concrete
+next step RE-126 identified: decomposing this camera's own `eye`/`at`
+into pitch/yaw for `Kind48`'s pitch-locked transform), does not yet
+drive `R0.13`'s screen-wipe triggers (no match-transition state machine
+exists), and `R0.14`'s "camera transforms verified" item should stay
+open until the real camera's own output is checked against real
+footage, not just "does not crash and looks plausible." What it *does*
+provide, for the first time, is a real, tested, on-device-verified
+camera those three tasks can now build on instead of a placeholder.

@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-130)
+**Last updated:** 2026-09-05 (RE-131)
 
 ---
 
@@ -12,57 +12,71 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness` remains `IN_PROGRESS`, but its
-"blending verified" item — open since RE-069 — is now `[x]`. RE-129
-(earlier this session) decoded the real alpha-combiner formula for
-Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found
-that naively enabling blend from it broke a different `TRANSLUCENT`
-primitive (the decorative flowers). RE-130 (this session) measured
-every real alpha formula archive-wide (a temporary, reverted census
-through the real `romtool pack` build): 9 distinct combiner values,
-overwhelmingly one of two single-cycle shapes — **`TEXEL0_ALPHA` alone
-(~5,950 occurrences, the flowers' own shape)** or **`TEXEL0_ALPHA *
-SHADE_ALPHA` (1,820, the canopy highlight)** — plus a rare `PRIM_ALPHA`
-multiply (~43) and two-cycle mode (~93, <1%) both deliberately left
-unclassified (real, measured, but not confidently understood or never
-on-device-verified).
+Three sessions in a row (RE-126/128/129/130) converged on the same
+conclusion: every remaining independently-fixable rendering gap was
+exhausted, and `R0.12`/`R0.13`/`R0.14` all ultimately need an actual
+game camera this project did not have. Asked the user how to proceed;
+the answer was to build a minimal real camera system. RE-131 (this
+session) did that.
 
-**Implemented and shipped the fix.** `mesh.rs` gained `AlphaBlend`
-(`TexelOnly`/`Shade`) and `combiner_alpha_blend`, an axis independent of
-the existing RGB combiner classification, with four new unit tests
-pinning the exact archive-measured words. `push_vertex` bakes the
-correct vertex alpha per shape (force opaque for `TexelOnly`, since most
-vertex alpha bytes are not a coverage value at all; leave the raw byte
-alone for `Shade`, since it already *is* `SHADE_ALPHA`). A new
-`pack::flags::ALPHA_BLEND` bit (`VERSION` 15 → 16) sets only when both
-`TRANSLUCENT` and a classified formula agree, so an unclassified
-`TRANSLUCENT` primitive keeps the original safe default untouched.
-`psp/src/meshdraw.rs` now enables `GuState::Blend` with the standard
-equation gated on both flags together, replacing the long-standing
-"deliberately not wired" comment.
+**Researched `gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`** (the
+single-fighter, normal-stage camera) and independently verified every
+load-bearing formula directly against the source before writing any
+Rust — a delegated research pass had already gotten one formula subtly
+wrong (smoothed away two genuine discontinuities in the real pan-scale
+function), caught by reading the C directly. Ported it call for call as
+`ssb_game::camera`: interest-box framing from the fighter's position and
+facing, FOV lerp, viewport-fit distance with damping, look-at panning,
+and an eye-direction angle derived from the look-at point and the
+stage's own light-angle nudge. `gmCameraSetBoundsPosition`'s clamp and
+both hand-rolled diff/normalise/scale/add sequences reduce to this
+project's own existing, tested `Vec3::lerp` and `Bounds::clamp` — no new
+math primitives needed.
 
-**Verified on-device, not just by pixel-statistic.** Rebuilt the shipped
-pack and screenshotted Dream Land: the flowers survive intact, the
-canopy body is pixel-identical from the default framing (the highlight
-is not visible from that angle), and two previously fully-invisible
-decorative props (matching benches flanking the tree) now render
-correctly — confirmed via a clean diff against the `regression_capture`
-golden capture (only those two symmetric regions and a few 1-pixel
-flower-tip antialiasing edges differ), re-verified deterministic across
-a 9-second timing spread. `tests/golden/r0-dream-land-default.png` is
-updated to this new, more-correct capture. See
-`docs/reverse-engineering.md` RE-129/RE-130 for the full account.
+**A second, independent finding along the way.** `light_angle.z`
+(`crates/ssb-rom/src/stage.rs`) was recorded as having no known reader —
+wrong: the real camera reads it too, for its own eye-direction angle,
+not lighting. Measured its real archive-wide values before assuming a
+unit convention: unlike `.x`/`.y` (degrees), `.z` is stored
+**pre-converted to radians** (confirmed both by the measured values and
+by the camera's own C code adding it with no conversion of its own).
+Extended `light_angle` to `[f32; 3]` and `StageDesc` to carry it
+(`pack::VERSION` 16 → 17).
 
-**Task-selection note for the next session.** `R0.5` is down to one item
-needing `R2`'s real-hardware validation (RE-128); `R0.6`'s "blending
-verified" is now closed, but `R0.6` overall stays `IN_PROGRESS` — "material
-tables resolved"/"primitive color verified"/"environment color
-verified"/"lighting verified" remain open, mostly on `R0.7`'s own
-material-table pairing gaps or the still-missing per-object lighting
-system. Still worth re-checking whether any other `IN_PROGRESS`/
-`VERIFYING` `PLAN.md` row was similarly missed before concluding a
-genuine architectural undertaking (a camera/game-state system, to
-unblock `R0.12`/`R0.13`/`R0.14`) is the only other path forward.
+**Wired into the render path without disturbing the existing debug
+camera.** A new `Gpu::set_view` loads a real `Mat4::look_at` (already
+implemented, previously unused anywhere in this codebase) into the GE's
+own View matrix — every mesh-drawing function already loads its own
+baked model matrix per node, so the separate View matrix composes for
+free; zero `meshdraw.rs` changes needed. The debug viewer's whole-stage
+overview mode is **completely unchanged** (confirmed: zero differing
+pixels against the `regression_capture` golden capture); only the
+zoomed-in "follow the fighter" mode now uses the real camera instead of
+a fixed, face-on placeholder — verified stable and sane over a 20-second
+run with real perspective and depth, not just "does not crash."
+
+**Deliberately scoped down, each simplification documented, not
+silent**: no weapons, no multiplayer, no per-move camera zoom
+(`camera_zoom_frame`/`camera_zoom_range`), no idle-zoom-out, no
+entry/explain/dead-up modes, no pause-camera offset. Does not yet wire
+the camera's own angle into `R0.12`'s billboard code, or drive `R0.13`'s
+screen-wipe triggers (no match-transition state machine exists), or
+close `R0.14`'s "camera transforms verified" (needs checking against
+real footage, not just plausibility) — but all three now have a real,
+tested camera to build on instead of nothing. See
+`docs/reverse-engineering.md` RE-131 for the full account.
+
+`cargo test --workspace`: 413 → 418 passing (5 new). `cargo clippy
+--release --workspace` and `cargo psp --release`/`--features
+regression_capture`: clean, same pre-existing 6-warning set.
+
+**Task-selection note for the next session.** The concrete next steps
+this unlocks: (1) decompose the camera's `eye`/`at` into pitch/yaw and
+wire it into `Kind48`'s billboard transform (R0.12's own next step per
+RE-126); (2) extend `ssb_game::camera` past the single-fighter case if
+multiplayer ever becomes relevant; (3) `R0.5`'s one remaining item and
+`R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
+respectively, unchanged by this session.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -129,7 +143,71 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-130 (this session) measured every real alpha-blend formula
+RE-131 (this session) built a real, minimal battle camera
+(`gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`, ported and verified) to
+unblock `R0.12`/`R0.13`/`R0.14`, per the user's own explicit direction
+after three sessions found every smaller independently-fixable rendering
+gap exhausted. See `docs/reverse-engineering.md` RE-131 for the full
+account; summary:
+
+* **Researched before implementing, then independently re-verified.** A
+  delegated research pass summarized `gmCameraDefaultFuncCamera`'s real
+  algorithm; reading the actual C directly caught one real error in that
+  summary (a smoothed paraphrase of the pan-scale formula that dropped
+  its two genuine discontinuities — the decompilation's own comment on
+  that function, "Needs to be two different 0.05s lol," already flags
+  them as an original-game oddity, reproduced exactly rather than fixed).
+* **Ported call for call**: interest-box framing (fighter position +
+  facing-dependent asymmetric offset + single-player zoom), FOV lerp,
+  viewport-fit distance with 7.5%-per-frame damping, look-at panning, and
+  an eye-direction angle derived from the look-at point plus the stage's
+  own light-angle nudge. Both real functions' own hand-rolled
+  diff/normalise/scale/add sequences reduce to this project's existing,
+  tested `Vec3::lerp`; the bounds clamp mirrors
+  `gmCameraSetBoundsPosition`'s own one-axis-at-a-time loop exactly.
+* **A second, independent finding while researching**: `light_angle.z`
+  (`stage.rs`) was recorded as having no known reader — wrong, the real
+  camera reads it too. Measured its real archive-wide values before
+  assuming a unit convention: unlike `.x`/`.y` (degrees), `.z` is stored
+  pre-converted to *radians* (confirmed by both the measured values and
+  the camera's own code adding it with no conversion of its own).
+  Extended `light_angle` to `[f32; 3]`, `StageDesc` to carry it
+  (`pack::VERSION` 16 → 17).
+* **Implemented as `ssb_game::camera`** — portable, `no_std`,
+  platform-free, matching Layer A's own rules. Five new unit tests cover
+  the bounds clamp, the pan-scale formula's own discontinuities, a
+  stationary fighter settling and staying settled, and a moving fighter
+  converging on the mathematically-predicted (not screenshot-derived)
+  interest-box centre.
+* **Wired in without disturbing the existing debug camera.** A new
+  `Gpu::set_view` loads a real `Mat4::look_at` (already implemented,
+  previously unused anywhere) into the GE's own View matrix slot —
+  composes for free with the existing per-node model-matrix machinery,
+  zero `meshdraw.rs` changes needed. The debug viewer's whole-stage
+  overview mode is untouched (confirmed: zero differing pixels against
+  the `regression_capture` golden capture); only the zoomed-in
+  "follow the fighter" mode now uses it, verified stable and sane with
+  real perspective/depth over a 20-second on-device run.
+* **Deliberately scoped down, each simplification documented**: no
+  weapons, multiplayer, per-move camera zoom, idle-zoom-out,
+  entry/explain/dead-up modes, or pause offset.
+* **What this does and does not close.** Does not itself close any
+  acceptance item on `R0.12`/`R0.13`/`R0.14` — `R0.12`'s billboard code
+  does not yet consume this camera's angle, `R0.13` still has no
+  match-transition trigger, and `R0.14`'s "camera transforms verified"
+  needs checking against real footage, not just plausibility. What it
+  removes is the shared blocker on all three: a real camera to build on,
+  where there was none.
+* `cargo test --workspace`: 413 → 418 passing (5 new). `cargo clippy
+  --release --workspace` and `cargo psp --release`/`--features
+  regression_capture`: clean, same pre-existing 6-warning set. All
+  temporary code (a `romtool stages` light-angle census, a `cam_distance`
+  override used to force the zoomed-in mode for a screenshot) fully
+  reverted.
+
+## Previous Task Status
+
+RE-130 (an earlier session) measured every real alpha-blend formula
 archive-wide and shipped a fix, closing `R0.6`'s "blending verified"
 item that has been open since RE-069. See
 `docs/reverse-engineering.md` RE-130 for the full account; summary:
@@ -200,7 +278,7 @@ item that has been open since RE-069. See
   classification/baking/flag/wiring changes plus the golden image
   update.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-129 (an earlier session) decoded the real alpha combiner for Dream Land's
 long-open canopy-highlight blend failure and tested the direct
