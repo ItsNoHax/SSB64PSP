@@ -133,6 +133,17 @@ fn start_anim(
     })
 }
 
+fn object_owning_node(
+    pack: &ssb_rom::pack::Pack<'_>,
+    node: u32,
+) -> Option<(u32, ssb_rom::pack::ObjectDesc)> {
+    (0..pack.object_count()).find_map(|i| {
+        let object = pack.object(i)?;
+        (node >= object.first_node && node < object.first_node + object.node_count)
+            .then_some((i, object))
+    })
+}
+
 /// Which way to turn a model so it faces the way the fighter does.
 ///
 /// Fighter models are authored facing `+Z` — shoulders spanning X — while a
@@ -178,6 +189,23 @@ unsafe fn run() -> ! {
         Some(Err(PackError::OutOfBounds)) => "REJECTED: descriptor out of bounds",
     };
     let mesh_count = pack.as_ref().map_or(0, |p| p.mesh_count());
+    // Stable pack-node indices for R0.12's exhaustive visual audit. The host
+    // inventory prints these same indices, so a screenshot can be tied back
+    // to its source file/graph/local node without recompiling the EBOOT.
+    let billboard_nodes: alloc::vec::Vec<u32> = pack
+        .as_ref()
+        .map(|p| {
+            (0..p.node_count())
+                .filter(|&i| {
+                    p.node(i)
+                        .is_some_and(|n| n.flags & ssb_rom::pack::NodeDesc::FLAG_BILLBOARD != 0)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let billboard_count = billboard_nodes.len() as u32;
+    let mut billboard_view = false;
+    let mut billboard_index = 0u32;
 
     // Which mesh is on screen, and how far back the camera sits.
     // Start on the mesh with the most triangles, so the first frame shows
@@ -373,14 +401,27 @@ unsafe fn run() -> ! {
             // D-pad steps through the pack; held Z zooms out, A zooms in.
             let prev = pad.previous(0).buttons;
             let pressed = ssb_engine::input::newly_pressed(prev, state.buttons);
-            if pressed.contains(N64Buttons::START) && stage_count > 0 {
+            // SELECT/L is unused in stage view. It enters the R0.12 audit and
+            // exits it again; left/right then walks every billboard in stable
+            // pack order while up/down moves ten at a time.
+            if pressed.contains(N64Buttons::L)
+                && billboard_count > 0
+                && (stage_view || billboard_view)
+            {
+                billboard_view = !billboard_view;
+                tex_view = false;
+                anim_playing = false;
+                cam_distance = CAM_FIT;
+                spin = 0.0;
+            }
+            if !billboard_view && pressed.contains(N64Buttons::START) && stage_count > 0 {
                 stage_view = !stage_view;
             }
-            if pressed.contains(N64Buttons::C_DOWN) && object_count > 0 {
+            if !billboard_view && pressed.contains(N64Buttons::C_DOWN) && object_count > 0 {
                 object_view = !object_view;
             }
             // B in the object view starts and stops animation playback.
-            if pressed.contains(N64Buttons::B) && object_view && anim_count > 0 {
+            if !billboard_view && pressed.contains(N64Buttons::B) && object_view && anim_count > 0 {
                 anim_playing = !anim_playing;
                 if anim_playing {
                     if let Some(p) = &pack {
@@ -406,7 +447,21 @@ unsafe fn run() -> ! {
                     }
                 }
             }
-            if stage_view && stage_count > 0 {
+            if billboard_view {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    billboard_index = (billboard_index + 1) % billboard_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    billboard_index = (billboard_index + billboard_count - 1) % billboard_count;
+                }
+                if pressed.contains(N64Buttons::D_UP) {
+                    billboard_index = (billboard_index + 10) % billboard_count;
+                }
+                if pressed.contains(N64Buttons::D_DOWN) {
+                    billboard_index = (billboard_index + billboard_count - 10 % billboard_count)
+                        % billboard_count;
+                }
+            } else if stage_view && stage_count > 0 {
                 let was = stage_index;
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     stage_index = (stage_index + 1) % stage_count;
@@ -551,7 +606,7 @@ unsafe fn run() -> ! {
                     mesh_index = (mesh_index + mesh_count - 50) % mesh_count;
                 }
             }
-            if pressed.contains(N64Buttons::C_UP) {
+            if !billboard_view && pressed.contains(N64Buttons::C_UP) {
                 tex_view = !tex_view;
             }
             if tex_view {
@@ -571,17 +626,18 @@ unsafe fn run() -> ! {
             // The stick spins the model so geometry can be inspected -- except
             // while a fighter is being driven, where it is the fighter's input
             // and a camera that swung with it would be unreadable.
-            let stick_drives_fighter = stage_view && sim_fighter && player.is_some();
+            let stick_drives_fighter =
+                !billboard_view && stage_view && sim_fighter && player.is_some();
             // The slow drift exists so a *static* model can be seen from all
             // sides without touching anything. While an animation is playing it
             // makes the thing being judged unjudgeable: two captures seconds
             // apart differ by most of a turn, and the difference reads as the
             // pose having changed. That cost real time (RE-038), so playback
             // holds the angle still and leaves the stick in charge.
-            if !anim_playing {
+            if !anim_playing && !billboard_view {
                 spin += 0.02;
             }
-            spin += if stick_drives_fighter {
+            spin += if stick_drives_fighter || billboard_view {
                 0.0
             } else {
                 state.stick_x as f32 * 0.0005
@@ -617,7 +673,11 @@ unsafe fn run() -> ! {
         // from behind, is real geometry rendering nothing, not a bug in the
         // material/UV/texture pipeline. Object view exists specifically to
         // inspect whatever is there, so it must not hide half of it.
-        draw_state.force_no_cull = object_view;
+        // Like object view, the isolated billboard camera is not the asset's
+        // authored scene camera. Show both faces here so an otherwise valid
+        // node cannot disappear solely because the audit sees its back; the
+        // eight whole-stage checks retain real culling (RE-136/137).
+        draw_state.force_no_cull = object_view || billboard_view;
         // RE-131: reset every frame, then set for real inside `stage_view`'s
         // own real-camera branch below -- every other mode's view matrix is
         // identity, so `None` (leave the billboard basis at whatever
@@ -636,6 +696,52 @@ unsafe fn run() -> ! {
 
         let mut dbg_radius = 0.0f32;
         match &pack {
+            Some(p) if billboard_view => {
+                let global_node = billboard_nodes[billboard_index as usize];
+                if let (Some(node), Some((_owner_index, object))) =
+                    (p.node(global_node), object_owning_node(p, global_node))
+                {
+                    let (centre, radius) = match meshdraw::billboard_bounds(p, &node) {
+                        Some((min, max)) => {
+                            let c = [
+                                (min[0] + max[0]) * 0.5,
+                                (min[1] + max[1]) * 0.5,
+                                (min[2] + max[2]) * 0.5,
+                            ];
+                            let e = ssb_engine::math::Vec3 {
+                                x: max[0] - min[0],
+                                y: max[1] - min[1],
+                                z: max[2] - min[2],
+                            };
+                            let s = meshdraw::MODEL_SCALE;
+                            (
+                                [c[0] * s, c[1] * s, c[2] * s],
+                                (e.length() * 0.5 * s).max(1.0),
+                            )
+                        }
+                        None => ([0.0; 3], 100.0),
+                    };
+                    const FIT: f32 = 2.904;
+                    let dist = radius * FIT * cam_distance / CAM_FIT;
+                    dbg_radius = radius;
+                    dbg_cam = centre[2] + dist;
+                    gpu.model_transform(
+                        [-centre[0], -centre[1], -centre[2] - dist],
+                        [0.0, spin, 0.0],
+                        meshdraw::MODEL_SCALE,
+                    );
+                    let base = gpu.model_matrix();
+                    let tris = meshdraw::draw_object_node(
+                        p,
+                        &object,
+                        global_node,
+                        &base,
+                        &mut draw_state,
+                        Some(&material_anim),
+                    );
+                    shown = (tris, global_node, node.mesh);
+                }
+            }
             Some(p) if tex_view => {
                 // Flat orthographic-ish view of one texture.
                 gpu.model_transform([0.0, 0.0, -2.2], [0.0, 0.0, 0.0], 1.0);
@@ -958,7 +1064,9 @@ unsafe fn run() -> ! {
 
         // Which browser is driving, so the readout describes what is on screen
         // rather than whichever index happens to be highest.
-        let (mode, index, count) = if stage_view {
+        let (mode, index, count) = if billboard_view {
+            ("billb", billboard_index, billboard_count)
+        } else if stage_view {
             ("stage", stage_index, stage_count)
         } else if object_view {
             ("obj  ", object_index, object_count)
@@ -968,7 +1076,11 @@ unsafe fn run() -> ! {
         let (src_file, src_offset) = pack
             .as_ref()
             .and_then(|p| {
-                if stage_view {
+                if billboard_view {
+                    let node = billboard_nodes[billboard_index as usize];
+                    object_owning_node(p, node)
+                        .map(|(_, object)| (object.source_file, object.source_offset))
+                } else if stage_view {
                     p.stage(stage_index).map(|s| (s.source_file, s.source_offset))
                 } else if object_view {
                     p.object(object_index).map(|o| (o.source_file, o.source_offset))
@@ -1034,6 +1146,11 @@ unsafe fn run() -> ! {
             .unwrap_or(1);
 
         const WHITE: u32 = 0xFFFF_FFFF;
+        let viewer_title = if billboard_view {
+            "BILLBOARD AUDIT  dpad: browse  L: exit"
+        } else {
+            "SSB64-PSP  M4 scene viewer"
+        };
         // Never drawn at all under `regression_capture`, from frame 0 --
         // not just hidden once frozen. Two narrower fixes were tried and
         // both failed for reasons specific to `sceGuDebugPrint` (RE-123,
@@ -1055,7 +1172,7 @@ unsafe fn run() -> ! {
                 8,
                 WHITE,
                 format_args!(
-                    "SSB64-PSP  M4 scene viewer\n\
+                    "{}\n\
                      pack: {}\n\
                      \n\
                      {} {}/{}  file {}  @0x{:X}  costume {}/{}\n\
@@ -1077,7 +1194,9 @@ unsafe fn run() -> ! {
                      stick: move  C-left: jump  C-right: respawn\n\
                      C-up: fighter sim on/off\n\
                      R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
+                     stage L: billboard audit; dpad: billboard; L: exit\n\
                      in obj view -- B: animate  dpad: anim/fighter  L: costume",
+                    viewer_title,
                     pack_status,
                     mode,
                     index,
@@ -1107,7 +1226,9 @@ unsafe fn run() -> ! {
                     skeleton.joint_count(),
                     skeleton.frame() as i32,
                     shown.0,
-                    if stage_view {
+                    if billboard_view {
+                        "pack-node"
+                    } else if stage_view {
                         "layers"
                     } else if object_view {
                         "nodes"
@@ -1115,7 +1236,9 @@ unsafe fn run() -> ! {
                         "verts"
                     },
                     shown.1,
-                    if stage_view {
+                    if billboard_view {
+                        "mesh"
+                    } else if stage_view {
                         "coll-segs"
                     } else if object_view {
                         "placed"

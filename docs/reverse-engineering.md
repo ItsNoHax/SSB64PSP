@@ -10858,3 +10858,71 @@ Verification:
 This closes R0.12's scale item across rest and animated content. R0.12 remains
 `VERIFYING`: individual visual confirmation for all 109 nodes and physical PSP
 validation are still open.
+
+---
+
+## RE-144 — Per-node billboard audit exposes and fixes omitted Z scale
+
+R0.12's last acceptance item could not be completed honestly from the existing
+whole-stage viewer: all eight billboard-bearing stages looked coherent, but a
+small or partially hidden node could still be wrong. Added a device audit mode
+that uses the same stable ordering as `billboard_inventory`. SELECT/L enters
+the mode from stage view, left/right moves one ordinal, up/down moves ten, and
+SELECT/L exits. It draws exactly the selected pack node through the normal
+`draw_object_posed` implementation and real material state. Billboard-specific
+conservative bounds keep the node framed; automatic viewer spin is frozen.
+The isolated camera disables culling because it is not the source asset's
+authored scene camera. Culling remains covered under RE-083 and the real-cull
+whole-stage checks RE-136/137.
+
+Strengthened the persistent inventory before trusting the viewer. Every row
+now includes its stable ordinal, vertex/primitive/triangle counts, and local
+mesh bounds, and missing or empty geometry is an error. On the current pack:
+**109 billboard nodes own 109 distinct valid meshes, 299 triangles total, and
+zero entries are empty or structurally anomalous.** Twenty-four meshes contain
+a nonzero local Z coordinate and 16 have an actual Z span.
+
+That depth measurement found a real implementation mismatch. The PSP path
+called `sceGumScale(x=sx, y=sy, z=1)`. Original
+`sys/objdisplay.c::gcPrepDObjMatrix` cases 44, 46, 48, and 50 all write the Z
+row from the same signed `gGCScaleX` value used for X. This is not a guessed
+visual adjustment: all four reachable original cases agree, and 16 shipped
+meshes prove Z is observable. Changed the PSP call to X/Y/X; RE-143's signed
+animated X value consequently reaches Z as the original requires.
+
+PPSSPP software-renderer verification used a temporary, reverted default into
+the audit mode. Ordinal 21 — file 104, graph `0x1008`, local node 3, pack node
+549, mesh 521 — renders as clean textured tree geometry, with one primitive
+and three triangles. Testing also caught and fixed an audit-only framing bug:
+the ordinary viewer's automatic Y spin rotated a node's placement around the
+object origin after the audit camera had centred it, pushing isolated nodes
+off-screen. The audit now holds spin at zero.
+
+The deterministic Dream Land capture differs from the pre-RE-144 golden by
+**9,972 RGB pixels**. The amplified difference is localized to affected stage
+scenery; the scene remains coherent and runs at 60 FPS. The golden was not
+silently overwritten: its mismatch now records that the baseline predates an
+original-source-proven correction and must be reviewed under R0.17.
+
+Verification:
+
+* `billboard_inventory`: 109 billboards, 109 distinct meshes, 299 triangles,
+  0 empty entries, 0 structural anomalies, 24 with nonzero local Z, 16 with
+  nonzero Z span;
+* `cargo clippy -p ssb-rom --example billboard_inventory -- -D warnings`:
+  clean;
+* `cargo psp --release` and `--features regression_capture`: successful with
+  the existing six warnings;
+* PPSSPP isolated ordinal 21: visible, textured, nondegenerate, 60 FPS;
+* Dream Land deterministic comparison: 9,972 changed RGB pixels against the
+  old golden, reviewed rather than accepted automatically.
+
+Workspace tests: **422 passed** (36 engine, 112 game, 274 ROM). Normal EBOOT
+SHA-256: `252cd0b8dded59e7332e3f7fd0a4577a3ebde4b7fad608de65d07c6e5d34f6db`;
+regression EBOOT SHA-256:
+`04005699e78881f565a32aa7a767909873141c0526c2745455dd18750a05c12f`;
+pack SHA-256:
+`68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
+
+R0.12 remains `VERIFYING`. The audit mechanism and one node are verified; 108
+individual ordinal reviews remain. Physical PSP was not tested.

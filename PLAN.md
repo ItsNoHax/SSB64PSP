@@ -1627,6 +1627,21 @@ lengths. A focused negative-parent regression pins both sign preservation and
 the deliberate X-for-both-axes rule; the archive inventory records the first
 negative frame and final scale for every directly animated billboard.
 
+RE-144 makes the final per-node check repeatable on PPSSPP/PSP. The scene
+viewer now has a SELECT/L billboard-audit mode that walks all 109 nodes in
+the same stable ordinal order printed by `billboard_inventory`, draws exactly
+one node with its real transform/material path, disables the unrelated viewer
+spin, and frames the billboard transform conservatively. Extending that
+inventory to require drawable geometry found 109 distinct valid meshes and
+299 triangles with zero empty entries. It also found 16 meshes with real local
+Z span, exposing a renderer bug: the PSP billboard path scaled Z by `1.0`,
+while every reachable `gcPrepDObjMatrix` billboard case scales Z by the same
+signed `gGCScaleX` value as X. The path now uses X/Y/X exactly. A deterministic
+Dream Land capture changes 9,972 RGB pixels, localized to the affected
+scenery, and the isolated file-104 audit node renders correctly on PPSSPP.
+The audit mechanism is verified, but the remaining 108 nodes have not yet all
+been individually reviewed, so the final acceptance item stays open.
+
 ### Objective
 
 Verify every billboard rendering path.
@@ -1645,11 +1660,11 @@ Verify every billboard rendering path.
 * [x] texture orientation verified — RE-138: checked both sides directly for a *separate* billboard-specific texture-orientation mechanism (a UV flip, a view-based mirror) rather than assuming one exists. `mesh.rs` (this project) has zero references to billboard/transform-kind concepts anywhere — a billboard's UVs decode through the exact same code path as any other primitive. `objdisplay.c`'s `gcPrepDObjMatrix` cases 44-50 (the original game) touch only matrix/scale state, never a texture register or UV value; the only nearby texture-related code is the unrelated `MObj` material-animation sprite-cycling mechanism (R0.9/R0.10's own scope). No separate mechanism exists to verify on either side — this item is the same question R0.5's already-closed UV/wrap/coordinate items (RE-067/101/102/128) already answered, asked again under a different name
 * [x] alpha behavior verified — RE-083: `alpha_test` needs nothing further (already-shipped RE-069 mechanism, archive-wide verified); `translucent` was the named blocker (29.7% of billboard primitives, double the archive-wide rate), tracked under RE-069/RE-071's then-open blending mystery. **RE-130 resolved that mystery generally; RE-135 measured it reaches billboards specifically**: 25 of 35 real translucent billboard primitives (71%) already carry `flags::ALPHA_BLEND` and render with real, classified blending — the remaining 10 are the same already-documented, deliberately-declined categories (rare `PRIM_ALPHA` multiply, two-cycle mode) RE-130 found archive-wide, not a new billboard-specific gap
 * [x] depth behavior verified — RE-083: archive-wide census of billboard-flagged nodes' own primitives found `z_buffer` set on 118/118 (100%), matching RE-068's default with zero exceptions
-* [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check. **RE-136/RE-137 extended the visual sample to all 8 of 8 stages archive-wide with any billboard content** (Dream Land, Zebes, the jungle stage, a "break the targets" bonus stage, Peach's Castle, Inishie, Sector Z, Saffron City) — every one renders as a coherent, non-degenerate scene. Real, meaningfully more complete coverage, but still not full closure: this checks whole-scene plausibility per stage, not that each of the 109 individually-flagged nodes specifically is correct (a node could in principle be present but subtly mispositioned without being caught at this level) — left open with the remaining gap precisely characterized
+* [ ] all flagged billboard nodes verified — RE-083 measured render-state distribution archive-wide, not per-node visual correctness beyond RE-049's own Dream Land spot check. **RE-136/RE-137 extended the visual sample to all 8 of 8 stages archive-wide with any billboard content** (Dream Land, Zebes, the jungle stage, a "break the targets" bonus stage, Peach's Castle, Inishie, Sector Z, Saffron City) — every one renders as a coherent, non-degenerate scene. RE-144 adds the repeatable per-node audit needed to finish this honestly: SELECT/L enters it, D-pad selects one of the stable 109 inventory ordinals, and exactly that node is framed/drawn. Ordinal 21 (file 104, graph `0x1008`, pack node 549) is device-verified; 108 individual reviews remain, so the item stays open
 
 ### Evidence
 
-RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135, RE-136, RE-137, RE-138, RE-140, RE-141, RE-142, RE-143 in `docs/reverse-engineering.md`.
+RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135, RE-136, RE-137, RE-138, RE-140, RE-141, RE-142, RE-143, RE-144 in `docs/reverse-engineering.md`.
 
 ---
 
