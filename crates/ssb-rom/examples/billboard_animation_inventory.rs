@@ -53,7 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "stage\tfile\tgraph\tlocal_node\tpack_node\tpitch_locked\tspin_z_kind\t\
          min_rx\tmax_rx\tmin_ry\tmax_ry\tmin_rz\tmax_rz\tselected_spin_changes\t\
-         translation_changes\tmin_sx\tmax_sx\tmin_sy\tmax_sy\tmin_sz\tmax_sz"
+         translation_changes\tmin_sx\tmax_sx\tmin_sy\tmax_sy\tmin_sz\tmax_sz\t\
+         final_sx\tfinal_sy\tfinal_sz\tfirst_negative_scale_frame"
     );
 
     for stage_index in 0..pack.stage_count() {
@@ -76,6 +77,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             translation_changed: bool,
             min_scale: [f32; 3],
             max_scale: [f32; 3],
+            final_scale: [f32; 3],
+            first_negative_scale_frame: Option<usize>,
         }
 
         let mut ranges = Vec::new();
@@ -104,6 +107,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 translation_changed: false,
                 min_scale: pose.scale,
                 max_scale: pose.scale,
+                final_scale: pose.scale,
+                first_negative_scale_frame: None,
             });
         }
 
@@ -162,6 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     range.min_scale[axis] = range.min_scale[axis].min(pose.scale[axis]);
                     range.max_scale[axis] = range.max_scale[axis].max(pose.scale[axis]);
                 }
+                range.final_scale = pose.scale;
+                if range.first_negative_scale_frame.is_none()
+                    && pose.scale.iter().any(|&component| component < 0.0)
+                {
+                    range.first_negative_scale_frame = Some(frame + 1);
+                }
             }
             if let Some(stage) = pack.stage(stage_index) {
                 for object_index in stage.layers {
@@ -215,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             selected_spin_changes += u32::from(range.spin_changed);
             println!(
                 "{stage_index}\t{}\t0x{:X}\t{}\t{}\t{pitch_locked}\t{spin_z}\t\
-                 {}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                 {}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 owner.source_file,
                 owner.source_offset,
                 range.node - owner.first_node,
@@ -233,7 +244,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 range.min_scale[1],
                 range.max_scale[1],
                 range.min_scale[2],
-                range.max_scale[2]
+                range.max_scale[2],
+                range.final_scale[0],
+                range.final_scale[1],
+                range.final_scale[2],
+                range
+                    .first_negative_scale_frame
+                    .map_or_else(|| "-".to_owned(), |frame| frame.to_string())
             );
         }
     }
