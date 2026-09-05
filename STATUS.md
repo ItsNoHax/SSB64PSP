@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-141)
+**Last updated:** 2026-09-05 (RE-142)
 
 ---
 
@@ -12,40 +12,52 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness`: per-node verification; RE-141 corrected
-latent rest-pose spin semantics found while tracing that path.
+`R0.12 — Billboard Correctness`: animated hierarchy and per-node verification.
 
 ## Task Status
 
-`VERIFYING`. Kind46 now selects authored Z spin, kinds 44/48/50 ignore
-rotation, following `gcPrepDObjMatrix`. Pack v19 preserves the selector.
-All current rest spin angles are zero, so no visual improvement is claimed.
+`VERIFYING`. RE-142 exhaustively measured animation reachability: 6 billboards
+are directly driven by stage animation, none by fighter animation, and none
+changes rotation over 240 frames. Six more null-script billboards inherit
+motion from animated parents. Fixed `StageAnimator::compose` so those children
+recompose from their rest locals instead of incorrectly retaining baked world
+matrices. This is pinned by a focused hierarchy regression.
 
-Last completed work: RE-141 spin selector, nonzero-angle regression, expanded
-inventory, rebuilt pack and PPSSPP regression comparison. Relevant commit:
-the focused RE-141 commit containing this entry; preceding commit `8664ba0`.
-Verification: 420 workspace tests passed; targeted library/example Clippy
-passed. All-target warnings-denied Clippy encounters pre-existing test
-expression warnings and the untouched romtool diagnostic. PSP regression
-build passed with existing warnings; software PPSSPP before/after comparison
-has zero differing pixels. Newly staged pack verified by byte comparison.
-Evidence, commands, capture paths and build/pack hashes: RE-141 in
-`docs/reverse-engineering.md`.
+Saffron City provides the real device case. Its source tables attach scripts
+only to parent nodes while billboard children remain null, exactly matching
+the bug. A detached pre-fix build and corrected build, both frozen at frame
+240 and forced to stage 9, differ in 836 RGB pixels confined to the gate area.
+The temporary stage override and detached worktree were removed. While doing
+this, `tools/compare-screenshot.sh` was fixed: this ImageMagick 7 build's
+`compare -metric AE` returned accumulated channel error (9,835,820), not a
+pixel count; the binary-difference method returns the independently confirmed
+836 and passes/fails correctly at thresholds 836/835.
 
-Next eligible work: R0.12 per-node visual isolation using the inventory's
-source identifiers. Check whether stage animation drives billboard rotation;
-current draw code uses rest spin, even when placement is posed. No claim of
-animated-spin correctness. Whole-stage screenshots remain insufficient for
-all-node acceptance. No tooling/access blocker for continued source work.
+Scale verification is reopened. All 6 directly animated billboards change
+scale; three Kind44 nodes reach small negative uniform values while
+`billboard_place` extracts unsigned column lengths. RE-134 proved rest-pose
+equivalence only. This signed animated-scale difference remains unresolved.
+
+Verification: 421 workspace tests passed (36 engine, 112 game, 273 ROM);
+targeted library/examples Clippy passed with warnings denied; `romtool stages
+--pack` replayed 206 scripts/123,600 frames with 0 failures and compared
+444,960 packed-vs-ROM pose values exactly. Normal and regression PSP builds
+passed with the existing six warnings. PPSSPP software captures ran at 60 FPS.
+Physical PSP was not tested; R2 remains unperformed.
+
+Next eligible work: reproduce signed animated billboard scale without losing
+the original ancestor-X/node-X/node-Y signs, then continue per-node visual
+isolation. Whole-stage plausibility still does not satisfy all-node acceptance.
+Relevant commit: the focused RE-142 commit containing this entry; preceding
+commit `626ec80`. Evidence and capture hashes are in RE-142.
 
 Camera/Kind48 basis shipped (RE-131–133). R0.14 still needs original-output
 comparison; material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs
 hardware validation; R0.13 needs a transition caller. Combat remains locked.
 Physical PSP: not tested this session; R2 acceptance remains unperformed.
 Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic preserved.
-Documentation updated: STATUS, PLAN, rendering, porting-status,
-reverse-engineering. README/architecture/DECISIONS require no change for
-this correction of the existing rendering path.
+Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic remains
+untouched. README/architecture/DECISIONS require no change.
 
 ## Previous Task Status
 

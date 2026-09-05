@@ -311,38 +311,45 @@ impl StageAnimator {
     }
 
     /// Composes world matrices for an object, exactly as [`Skeleton::compose`]
-    /// does — a node this animator does not drive keeps its packed rest matrix.
+    /// does. A node outside every animated ancestor chain keeps its packed
+    /// matrix; an unanimated child of a moving joint is recomposed from rest.
     pub fn compose(&self, pack: &Pack<'_>, object: &ObjectDesc, out: &mut [Mat4]) -> usize {
         let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        let mut changed = [false; MAX_NODES];
         for i in 0..count {
             let index = object.first_node + i as u32;
             let Some(node) = pack.node(index) else {
                 out[i] = Mat4::IDENTITY;
                 continue;
             };
-            let local = match self.pose_for(index) {
-                Some(pose) => {
-                    let t = [
-                        pose.translate[0] / MODEL_SCALE,
-                        pose.translate[1] / MODEL_SCALE,
-                        pose.translate[2] / MODEL_SCALE,
-                    ];
-                    Mat4::from_trs(t, pose.rotate, pose.scale)
-                }
-                // Not animated: the packed world matrix is already this node's
-                // full ancestor-composed transform, so it is used as it stands
-                // and must not be re-multiplied by a parent below.
-                None => {
-                    out[i] = Mat4(node.world);
-                    continue;
-                }
+            let parent_local = node
+                .parent
+                .checked_sub(object.first_node)
+                .filter(|&parent| parent < i as u32)
+                .map(|parent| parent as usize);
+            let pose = self.pose_for(index);
+            changed[i] = pose.is_some() || parent_local.is_some_and(|parent| changed[parent]);
+            if !changed[i] {
+                // Neither this node nor an ancestor moved, so its packed world
+                // matrix remains exact and avoids needless recomposition.
+                out[i] = Mat4(node.world);
+                continue;
+            }
+            let rest = JointPose {
+                rotate: node.rest_rotate,
+                translate: node.rest_translate,
+                scale: node.rest_scale,
             };
-            out[i] = match node.parent {
-                NodeDesc::NO_PARENT => local,
-                p if p >= object.first_node && (p - object.first_node) < i as u32 => {
-                    out[(p - object.first_node) as usize].mul(&local)
-                }
-                _ => local,
+            let pose = pose.unwrap_or(&rest);
+            let t = [
+                pose.translate[0] / MODEL_SCALE,
+                pose.translate[1] / MODEL_SCALE,
+                pose.translate[2] / MODEL_SCALE,
+            ];
+            let local = Mat4::from_trs(t, pose.rotate, pose.scale);
+            out[i] = match parent_local {
+                Some(parent) => out[parent].mul(&local),
+                None => local,
             };
         }
         count
@@ -600,6 +607,40 @@ mod tests {
         Skeleton::new().compose(&pack, &object, &mut a);
         Skeleton::default().compose(&pack, &object, &mut b);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_stage_joint_transform_moves_an_unanimated_child() {
+        // `gcAddAnimJointAll` permits a NULL child script. The child remains
+        // attached to its DObj parent and must inherit that parent's motion.
+        let graph = chain();
+        let bytes = packed(&graph);
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+
+        let mut rest = [Mat4::IDENTITY; MAX_NODES];
+        StageAnimator::new().compose(&pack, &object, &mut rest);
+        for (i, matrix) in rest.iter().take(object.node_count as usize).enumerate() {
+            assert_eq!(matrix.0, pack.node(object.first_node + i as u32).unwrap().world);
+        }
+
+        let mut animator = StageAnimator::new();
+        animator.count = 1;
+        animator.nodes[0] = object.first_node + 1;
+        animator.poses[0] = JointPose {
+            rotate: [0.0, 1.2, 0.0],
+            translate: [5.0, 0.0, -2.0],
+            scale: [2.0, 1.0, 1.0],
+        };
+        let mut posed = [Mat4::IDENTITY; MAX_NODES];
+        animator.compose(&pack, &object, &mut posed);
+
+        assert_eq!(posed[0], rest[0], "the root was not driven");
+        assert_ne!(posed[1], rest[1], "the driven stage joint moved");
+        assert_ne!(
+            posed[2], rest[2],
+            "its child must inherit motion without its own script"
+        );
     }
 
     fn mat_script(words: &[u32]) -> alloc::vec::Vec<u8> {

@@ -10715,3 +10715,86 @@ separately to the draw path (posed matrices replace world placement while
 this accessor reads rest angles); this is an explicit remaining validation
 question, not evidence of animated correctness. No claim that R0.12 is
 complete or that its whole-node acceptance is satisfied.
+
+---
+
+## RE-142 — Animated billboard census finds and fixes null-script child inheritance
+
+RE-141 left a concrete question: can animation change a billboard transform
+that the draw path reconstructs from its posed matrix plus rest spin? Added a
+persistent `billboard_animation_inventory` example and replayed every packed
+animation relationship. Across all 109 billboard nodes, only **6** are direct
+animation joints, all in stage animations; fighter animations reference zero.
+Over 240 frames none changes translation or rotation, so rest spin is exact
+for shipped animated content. All six change scale. Another **6** billboards
+have no script but descend from an animated stage joint.
+
+That second group exposed a general `StageAnimator::compose` bug. The old code
+used a node's baked world matrix whenever that node lacked its own script.
+This detached a null-script child from any moving parent. The original cannot
+behave that way: `gcAddAnimJointAll` explicitly permits NULL per-node scripts,
+while `gcPrepDObjMatrix` still walks and multiplies the DObj hierarchy. The
+fix tracks whether the current node or an ancestor changed. Unaffected
+subtrees retain the fast baked-world path; affected null-script descendants
+recompose their rest-local transform on the parent's current world matrix.
+
+The six real affected billboard descendants are:
+
+* stage 7: file 109, graph `0x44C8` local 11; graph `0x8680` locals 4 and 6;
+* stage 9 (Saffron City): file 112, graph `0x5058` local 3; graph `0x6A70`
+  locals 6 and 8.
+
+File 112 provides direct source confirmation. Its `Layer0Anim_AnimJoint` table
+drives local node 2 and leaves its Kind44 child at local 3 NULL. Its layer-1
+table drives locals 5 and 7 and leaves their Kind48 children at locals 6 and
+8 NULL. The scripts animate the parents' rotation/translation. The stage code
+uses the same DObj hierarchy and `gcPlayAnimAll`; it does not separately move
+those children.
+
+A focused unit test drives the middle node of a three-node stage hierarchy and
+asserts the null-script leaf moves while the root remains byte-identical to
+its packed matrix. The persistent census composes every stage across 240
+frames: all six inherited billboards now move, and the three Saffron City
+nodes differ from rest at deterministic frame 240.
+
+For device evidence, a detached `626ec80` worktree and the corrected tree were
+built with the same temporary `stage_index = 9` and `regression_capture`
+feature. Software PPSSPP captured both after eight seconds. The RGB images
+differ in **836 pixels**, bounding box `(395,107)..(435,205)`, confined to the
+animated Saffron City gate. Both report 60 FPS. Temporary source overrides and
+the detached worktree were removed. Captures remain at
+`/home/alberto/ppsspp-test/re142-before/` and `re142-after/`.
+
+This comparison also found a defect in R0.17's comparison tool. On this
+ImageMagick 7 build, `compare -metric AE` returned accumulated channel error
+(`9,835,820`) rather than the documented changed-pixel count. A binary RGB
+difference followed by `mean × width × height` returns 836, independently
+confirmed with Pillow. `tools/compare-screenshot.sh` now uses that method,
+checks equal dimensions, passes at threshold 836, fails at 835, and reports 0
+for identical input.
+
+Verification:
+
+* `cargo test --workspace`: **421 passed** (36 engine, 112 game, 273 ROM);
+* `cargo clippy -p ssb-rom --lib --examples -- -D warnings`: clean;
+* `romtool stages <ROM> --pack assets/generated/ssb64.pak`: 206 scripts,
+  123,600 replayed frames, zero failures; 444,960 packed-vs-ROM pose values
+  identical;
+* `cargo psp --release` and both regression PSP builds: successful with the
+  existing six warnings;
+* normal EBOOT SHA-256:
+  `d87dcfb95916ecfed42f067a514fc996ed3c10d1f78f2dc796ca95ace93c4695`;
+  pack SHA-256:
+  `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`;
+  before/after capture SHA-256:
+  `82f6ad2514c38c486ebbdac1e5b3cbdd1ba40d33e208c2aaa3700fed86b10a56` /
+  `86066576f29b4b97e10e84fe92e5068536389b87ff808dc1712e3da4d2ba51e4`.
+
+One new gap remains explicit. The six direct billboard joints animate scale;
+three Kind44 nodes range from 1.0 to slightly negative uniform values
+(`-0.000486` to `-0.003`). `billboard_place` takes matrix-column lengths, so
+it preserves magnitude but not sign. RE-134's scale proof covered rest poses
+only and is therefore insufficient for animation. R0.12's scale item is
+reopened until signed animated scale is reproduced from the original
+ancestor-X/node-X/node-Y formula. Per-node visual and physical PSP validation
+also remain open.
