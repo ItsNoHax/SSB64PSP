@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-129)
+**Last updated:** 2026-09-05 (RE-130)
 
 ---
 
@@ -12,48 +12,57 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness` remains `IN_PROGRESS`. RE-129 (this
-session) answered RE-071's own standing "no new experiment has been run"
-note on the canopy-highlight blend failure that has been open since
-RE-069. This project's combiner model (`mesh.rs`) only ever resolves the
-*colour* formula — the alpha formula's own multiplexer slots occupy
-different bits of the same `G_SETCOMBINE` word and were never decoded.
-Hand-derived the real bit layout from `gbi.h`'s macros (a real trap
-caught along the way: the macros' own internal parameter names do not
-match which call-site slot they actually receive) and applied it to the
-exact `SetCombine` word RE-069 already identified for Dream Land's
-canopy highlight (file 104, offsets `0x708`/`0xA78`) via a temporary
-`romtool` subcommand decoding the real ROM bytes directly. **Result:
-`TEXEL0_ALPHA * SHADE_ALPHA` in both cycles** — real hardware multiplies
-texture alpha by vertex shade alpha, which this project's renderer
-(`TRANSLUCENT` never wired to `GuState::Blend` at all) currently does
-not.
+`R0.6 — Material System Correctness` remains `IN_PROGRESS`, but its
+"blending verified" item — open since RE-069 — is now `[x]`. RE-129
+(earlier this session) decoded the real alpha-combiner formula for
+Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found
+that naively enabling blend from it broke a different `TRANSLUCENT`
+primitive (the decorative flowers). RE-130 (this session) measured
+every real alpha formula archive-wide (a temporary, reverted census
+through the real `romtool pack` build): 9 distinct combiner values,
+overwhelmingly one of two single-cycle shapes — **`TEXEL0_ALPHA` alone
+(~5,950 occurrences, the flowers' own shape)** or **`TEXEL0_ALPHA *
+SHADE_ALPHA` (1,820, the canopy highlight)** — plus a rare `PRIM_ALPHA`
+multiply (~43) and two-cycle mode (~93, <1%) both deliberately left
+unclassified (real, measured, but not confidently understood or never
+on-device-verified).
 
-**Tested the direct implication — it is not a safe general fix.** The
-existing default texture function is already `Modulate`, so enabling
-blend with a standard equation should already compute the newly-decoded
-formula for free. Wiring it up as a temporary, reversible experiment
-produced neither RE-069's checkerboard nor RE-071's blowout this time —
-it made Dream Land's decorative flower triangles vanish instead, a
-different `TRANSLUCENT`-flagged primitive whose own vertex alpha is not
-a meaningful coverage value. Confirms `TRANSLUCENT` alone is too coarse
-a gate for real blending; the fix needs the same per-primitive
-alpha-formula classification this model already does for colour
-(`combiner_shade_scale`/`combiner_texture_blend`/`combiner_flat_color`),
-not attempted this session. Reverted before committing. See
-`docs/reverse-engineering.md` RE-129 for the full account.
+**Implemented and shipped the fix.** `mesh.rs` gained `AlphaBlend`
+(`TexelOnly`/`Shade`) and `combiner_alpha_blend`, an axis independent of
+the existing RGB combiner classification, with four new unit tests
+pinning the exact archive-measured words. `push_vertex` bakes the
+correct vertex alpha per shape (force opaque for `TexelOnly`, since most
+vertex alpha bytes are not a coverage value at all; leave the raw byte
+alone for `Shade`, since it already *is* `SHADE_ALPHA`). A new
+`pack::flags::ALPHA_BLEND` bit (`VERSION` 15 → 16) sets only when both
+`TRANSLUCENT` and a classified formula agree, so an unclassified
+`TRANSLUCENT` primitive keeps the original safe default untouched.
+`psp/src/meshdraw.rs` now enables `GuState::Blend` with the standard
+equation gated on both flags together, replacing the long-standing
+"deliberately not wired" comment.
+
+**Verified on-device, not just by pixel-statistic.** Rebuilt the shipped
+pack and screenshotted Dream Land: the flowers survive intact, the
+canopy body is pixel-identical from the default framing (the highlight
+is not visible from that angle), and two previously fully-invisible
+decorative props (matching benches flanking the tree) now render
+correctly — confirmed via a clean diff against the `regression_capture`
+golden capture (only those two symmetric regions and a few 1-pixel
+flower-tip antialiasing edges differ), re-verified deterministic across
+a 9-second timing spread. `tests/golden/r0-dream-land-default.png` is
+updated to this new, more-correct capture. See
+`docs/reverse-engineering.md` RE-129/RE-130 for the full account.
 
 **Task-selection note for the next session.** `R0.5` is down to one item
 needing `R2`'s real-hardware validation (RE-128); `R0.6`'s "blending
-verified" is now a well-scoped, concrete next step (decode each
-translucent primitive's own alpha formula at pack time, the alpha-side
-twin of the colour classification already shipped) rather than an open
-mystery — a good candidate for the next session specifically working
-material correctness. Still worth re-checking whether any other
-`IN_PROGRESS`/`VERIFYING` `PLAN.md` row was similarly missed before
-concluding a genuine architectural undertaking (a camera/game-state
-system, to unblock `R0.12`/`R0.13`/`R0.14`) is the only other path
-forward.
+verified" is now closed, but `R0.6` overall stays `IN_PROGRESS` — "material
+tables resolved"/"primitive color verified"/"environment color
+verified"/"lighting verified" remain open, mostly on `R0.7`'s own
+material-table pairing gaps or the still-missing per-object lighting
+system. Still worth re-checking whether any other `IN_PROGRESS`/
+`VERIFYING` `PLAN.md` row was similarly missed before concluding a
+genuine architectural undertaking (a camera/game-state system, to
+unblock `R0.12`/`R0.13`/`R0.14`) is the only other path forward.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -120,7 +129,80 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-129 (this session) decoded the real alpha combiner for Dream Land's
+RE-130 (this session) measured every real alpha-blend formula
+archive-wide and shipped a fix, closing `R0.6`'s "blending verified"
+item that has been open since RE-069. See
+`docs/reverse-engineering.md` RE-130 for the full account; summary:
+
+* **Measured every real `TRANSLUCENT` primitive's alpha formula, not
+  just the canopy highlight RE-129 already decoded.** A temporary,
+  reverted census through the real `romtool pack` build found 9 distinct
+  explicit combiner values archive-wide. Classified them by hand
+  (`gbi.h`'s macros, RE-129's method): the majority (~5,950 of ~8,800
+  real, textured, single-cycle `TRANSLUCENT` primitives) is `TEXEL0_ALPHA`
+  alone — Dream Land's flowers' own shape, the exact one RE-129's naive
+  experiment broke. A smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA`
+  — the canopy highlight. A rare `PRIM_ALPHA` multiply (~43) and
+  two-cycle mode (~93, <1%) are both deliberately declined rather than
+  guessed at (two-cycle's own D-slot code `0` means `LOD_FRACTION`, not
+  `COMBINED_ALPHA`, the identical per-slot-context trap RE-129 already
+  hit once for the colour table — and this ROM never engages real RDP
+  LOD at all, RE-127).
+* **Implemented the classification as a new, independent axis.**
+  `mesh.rs` gained `AlphaBlend` (`TexelOnly`/`Shade`) and
+  `combiner_alpha_blend`, mirroring `combiner_shade_scale`/
+  `combiner_texture_blend`/`combiner_flat_color`'s existing pattern but
+  operating on the alpha sub-fields those never touch. Four new unit
+  tests pin the exact archive-measured words (canopy, flowers, the
+  declined `PRIM_ALPHA` case, two-cycle-always-declines).
+* **Baked the correct vertex alpha per shape** in `push_vertex`, applied
+  after the existing `prim_color`/`texture_blend`/`flat_color` branches
+  since it is an independent axis: `TexelOnly` forces the vertex alpha to
+  `255` (most vertex alpha bytes are not a coverage value at all —
+  confirmed catastrophically by RE-129's own experiment), `Shade` leaves
+  the raw byte untouched (captured before any RGB branch could overwrite
+  it — `prim_color`'s own branch sets alpha too, for an unrelated reason,
+  RE-106).
+* **A new pack flag gated on both axes agreeing.**
+  `pack::flags::ALPHA_BLEND` (`PrimDesc::flags` bit 9, `VERSION` 15 → 16,
+  additive, no struct growth but bumped anyway per RE-049/RE-069's own
+  precedent) sets only when a primitive is both `TRANSLUCENT` and its
+  alpha formula was classified. A `TRANSLUCENT` primitive without it is
+  completely unchanged from before this session.
+* **Wired up real blending on the device**, replacing
+  `psp/src/meshdraw.rs`'s long-standing "deliberately not wired" comment
+  with `sceGuEnable(Blend)` plus the standard `SrcAlpha`/
+  `OneMinusSrcAlpha` equation, gated on `TRANSLUCENT | ALPHA_BLEND` both
+  being set.
+* **Verified on-device, not just by pixel-statistic.** Rebuilt the
+  shipped pack (`VERSION` 16, 5368.2 KiB — unchanged size) and
+  screenshotted Dream Land: the canopy body is pixel-identical from the
+  default framing (the highlight is not visible from that angle), the
+  flowers survive intact, and two previously fully-invisible decorative
+  props (matching benches flanking the tree) now render correctly —
+  confirmed via a clean diff against the `regression_capture` golden
+  capture: only those two symmetric prop regions and a few 1-pixel
+  flower-tip antialiasing edges differ, nothing else in the scene moves.
+  Re-verified deterministic across a 9-second timing spread (`--seconds
+  6` vs `15`, 0 differing pixels), matching R0.17's own methodology.
+  `tests/golden/r0-dream-land-default.png` updated to this new,
+  more-correct capture — a deliberate content change, not drift.
+* **What this closes.** `PLAN.md` R0.6's "blending verified" acceptance
+  item, open since RE-069. `R0.6` overall stays `IN_PROGRESS` — "material
+  tables resolved"/"primitive color verified"/"environment color
+  verified"/"lighting verified" remain open, mostly on `R0.7`'s own
+  material-table pairing gaps or the still-missing per-object lighting
+  system.
+* `cargo test --workspace`: 409 → 413 passing (4 new). `cargo clippy
+  --release --workspace` and `cargo psp --release` (both feature
+  states): clean, same pre-existing warning set. All temporary census
+  code fully reverted; `git diff --stat` shows only the permanent
+  classification/baking/flag/wiring changes plus the golden image
+  update.
+
+## Previous Task Status
+
+RE-129 (an earlier session) decoded the real alpha combiner for Dream Land's
 long-open canopy-highlight blend failure and tested the direct
 implication, narrowing the mystery further without fully resolving it.
 See `docs/reverse-engineering.md` RE-129 for the full account; summary:
@@ -169,7 +251,7 @@ See `docs/reverse-engineering.md` RE-129 for the full account; summary:
   clean after reverting (pixel-normal, 60 FPS, no panics, flowers
   present).
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-128 (an earlier session) closed `R0.5`'s last mipmapping-adjacent item
 ("texture coordinate behavior verified") and found a real, only-partly

@@ -793,6 +793,36 @@ value. `TRANSLUCENT` alone cannot safely gate real blending; the fix
 needs the same per-primitive alpha-formula classification this model
 already does for colour, not attempted yet. Reverted before committing.
 
+RE-130 did that classification and shipped it. A temporary, reverted
+census measured every real `TRANSLUCENT` primitive's alpha formula
+archive-wide: 9 distinct explicit combiner values, overwhelmingly one of
+two single-cycle shapes — `TEXEL0_ALPHA` alone (~5,950 occurrences,
+Dream Land's flowers) or `TEXEL0_ALPHA * SHADE_ALPHA` (1,820, the
+canopy highlight) — plus a rare `PRIM_ALPHA` multiply (~43) and
+two-cycle mode (~93, <1%) both left unclassified rather than guessed at
+(the latter because its D-slot code `0` means `LOD_FRACTION`, not
+`COMBINED_ALPHA`, the identical per-slot-context trap RE-129 already hit
+once for the colour table, on a ROM that never engages real RDP LOD at
+all per RE-127). Implemented as `mesh.rs`'s `AlphaBlend`/
+`combiner_alpha_blend`, an axis independent of the existing RGB
+classification; baked the right vertex alpha per shape in `push_vertex`
+(force opaque for `TexelOnly`, since most vertex alpha bytes are not a
+coverage value at all; leave the raw byte alone for `Shade`, since it
+already *is* `SHADE_ALPHA`); gated real blending on a new
+`flags::ALPHA_BLEND` bit (`pack::VERSION` 15 → 16) that only sets
+alongside `TRANSLUCENT` when the formula was actually classified, so an
+unclassified `TRANSLUCENT` primitive keeps today's original safe
+default untouched. `psp/src/meshdraw.rs` now enables `GuState::Blend`
+with the standard equation gated on both flags together. Verified
+on-device: the flowers survive, the canopy body is pixel-identical from
+the default camera framing (the highlight is not visible from that
+angle), and two previously fully-invisible decorative props now render
+correctly — confirmed via a clean diff against the updated
+`regression_capture` golden capture (only those two symmetric regions
+and a few 1-pixel flower-tip antialiasing edges differ), re-verified
+deterministic across a 9-second timing spread matching R0.17's own
+methodology.
+
 ### Objective
 
 Reproduce original SSB64 material behavior.
@@ -810,7 +840,7 @@ Reproduce original SSB64 material behavior.
 * [ ] environment color verified — same as primitive color; the remaining gap is the same genuine-absence case, symmetric in `ENV`
 * [ ] lighting verified — RE-103/RE-105 fixed the input this still depends on (per-vertex, not per-primitive-majority, lit/literal decisions, driven by a real `G_MW_LIGHTCOL` ROM signal rather than a guess) but the shading itself is still RE-065's single baked-in neutral key light, not per-object real lighting — this item stays open on that basis. RE-128's black-patch finding is cross-referenced here too, since `shade_normal`'s ambient floor (RE-065) mathematically rules out a lit vertex ever reaching pure black on its own — whatever produces it is either an unlit/literal vertex with a genuinely black authored colour, or a mechanism not yet identified
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
-* [ ] blending verified — RE-069: `translucent` (14.4%) is correctly detected (decomp-verified bit logic) but deliberately not wired to `GuState::Blend` yet; enabling it on Dream Land's canopy-highlight surface produced a checkerboard. RE-071 re-checked after RE-070's dither-blur fix in case that resolved it — it did not; re-testing produced a *worse*, different failure (blown-out highlights), and ruled out unpremultiplied-alpha blurring as the cause too (a premultiplied variant gave an identical result). The real cause remains unknown; two specific hypotheses are eliminated, not guessed away. **RE-124 (R0.18) added a lead, did not resolve it**: both `sf64-psp` and `oot-PSP` successfully ship standard `SRC_ALPHA`/`ONE_MINUS_SRC_ALPHA` blending for their own translucent surfaces on the same PSP hardware, ruling out "the GE can't do this" as an explanation — whatever is wrong is specific to this one dithered CI4-to-RGBA texture's interaction with blending, not a platform limitation. **RE-129 ran the new experiment RE-124 called for.** Decoded the real alpha combiner directly from the ROM (this project's own `mesh.rs` only ever resolved the *colour* formula, never the separate alpha one) — confirmed `TEXEL0_ALPHA * SHADE_ALPHA` for both cycles, real ROM evidence rather than a guess. Wiring exactly that up (`GuState::Blend` + standard `SrcAlpha`/`OneMinusSrcAlpha`, gated on `TRANSLUCENT`, since the existing default texture function already computes the multiply) produced neither the checkerboard nor the blowout this time — it made Dream Land's decorative flower triangles vanish instead, a different primitive that also carries `TRANSLUCENT` but whose own vertex alpha is not a meaningful coverage value. Confirms `TRANSLUCENT` alone is too coarse a gate: this project has no per-primitive record of *which* alpha formula a translucent primitive resolves to, unlike the colour formula's already-classified shapes. The real fix needs that same classification done for alpha; not attempted yet
+* [x] blending verified — RE-069 detected `translucent` (14.4%) correctly but left it unwired after an enabled-blend experiment produced a checkerboard; RE-070/071 eliminated dither coarseness and alpha premultiplication as the cause without finding the real one; RE-124 (R0.18) confirmed both `sf64-psp` and `oot-PSP` ship standard blending fine on the same hardware, ruling out a platform limitation. **RE-129 found the real cause**: this project never decoded `G_SETCOMBINE`'s *alpha* formula at all (only the colour one) — decoded it directly from the ROM for Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found naively wiring that up universally broke a different `TRANSLUCENT` primitive (Dream Land's flowers) whose own alpha formula is different. **RE-130 measured every real alpha formula archive-wide** (9 distinct combiner values across ~8,800 real, textured, single-cycle `TRANSLUCENT` primitives): the majority (~5,950) is `TEXEL0_ALPHA` alone (the flowers' own shape), a smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA` (the canopy highlight), and a rare (~43) `TEXEL0_ALPHA * PRIM_ALPHA` plus two-cycle mode (~93, <1%) are declined rather than guessed at (real, measured, but not confidently understood or never on-device-verified). Implemented as a new classification axis (`mesh.rs`'s `AlphaBlend`/`combiner_alpha_blend`, independent of the existing RGB classification), baked the correct vertex alpha per shape (`push_vertex`), and gated real blending on a new pack flag (`flags::ALPHA_BLEND`, `VERSION` 15→16) that only sets when both `TRANSLUCENT` and a classified alpha formula agree — a `TRANSLUCENT` primitive without it keeps the pre-existing safe default. Verified on-device: the flowers survive, two previously-fully-invisible decorative props now render correctly, confirmed via a clean pixel diff against the `regression_capture` golden capture (updated) and re-verified deterministic across a 9-second timing spread
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
@@ -818,7 +848,7 @@ Reproduce original SSB64 material behavior.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-129 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-129, RE-130 in `docs/reverse-engineering.md`.
 
 ### Evidence
 

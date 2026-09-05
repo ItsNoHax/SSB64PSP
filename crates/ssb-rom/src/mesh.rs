@@ -159,6 +159,13 @@ pub struct MeshMaterial {
     /// RE-069). Drives `sceGuEnable(Blend)` with the standard
     /// source-alpha/one-minus-source-alpha equation, matching `sf64-psp`.
     pub translucent: bool,
+    /// The combiner's *alpha* formula, classified independently of the
+    /// RGB one `combiner_shade_scale`/`evaluate_combiner` resolve
+    /// (RE-129/RE-130) -- `None` when it is not one of the two shapes
+    /// measured archive-wide, in which case `translucent` is detected but
+    /// real blending should not be enabled, the same safe default as
+    /// before this field existed.
+    pub alpha_blend: Option<AlphaBlend>,
     /// A combiner that blends from a base colour to a target colour driven
     /// by the texture, with no shade involved at all -- `(base, target)`
     /// (RE-073). Detected on several playable fighters' own models (Link,
@@ -622,6 +629,78 @@ fn combiner_shade_scale(
     }
 }
 
+/// What a primitive's real alpha-blend equation reduces to (RE-129/RE-130).
+///
+/// `G_SETCOMBINE`'s alpha formula is a second, independent set of four
+/// multiplexers packed into different bits of the same 64-bit word as the
+/// colour formula [`evaluate_combiner`]/[`cycle`] resolve -- this project
+/// never decoded it before RE-129, so real blending (`TRANSLUCENT`) has
+/// never been safe to enable: the GE's plain `Modulate` would multiply
+/// texture alpha by whatever the vertex's own alpha byte happens to hold,
+/// which real hardware's own alpha formula may or may not actually do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AlphaBlend {
+    /// `TEXEL0_ALPHA` alone -- archive-wide majority shape (RE-130:
+    /// ~5,950 of ~8,800 real, textured, single-cycle `TRANSLUCENT`
+    /// primitives). The vertex's own alpha byte must be forced to fully
+    /// opaque before a plain `Modulate` is safe, since for most vertices
+    /// that byte is not a coverage value at all (`push_vertex`'s own
+    /// note: "Mario's vertices are all zero"). Confirmed by direct
+    /// experiment: enabling blend without this override made Dream
+    /// Land's decorative flowers -- this exact shape -- vanish.
+    TexelOnly,
+    /// `TEXEL0_ALPHA * SHADE_ALPHA` -- the shape RE-069/070/071 struggled
+    /// with on Dream Land's canopy highlight (~1,820 occurrences,
+    /// RE-130). The vertex's own alpha byte already *is* `SHADE_ALPHA`
+    /// verbatim regardless of whether the vertex is otherwise lit or
+    /// literal (an N64 `Vtx_tn`'s alpha field is never itself lit), so no
+    /// override is needed here -- a plain `Modulate` already computes
+    /// this formula for free once blend is enabled.
+    Shade,
+}
+
+/// Classifies `G_SETCOMBINE`'s alpha formula into one of the two shapes
+/// [`AlphaBlend`] names, or declines.
+///
+/// Two-cycle mode is declined entirely rather than guessed at: its second
+/// cycle's own D-slot code `0` means `LOD_FRACTION` (an RDP-computed,
+/// per-pixel mip blend fraction), not `COMBINED_ALPHA` the way the *A*/*B*
+/// slots' code `0` does -- the alpha multiplexer table is context-dependent
+/// per slot, the same trap the colour table already sprang once (RE-129).
+/// Since this ROM never actually engages real RDP LOD blending at all
+/// (RE-127: `G_TL_LOD` is 0/131 archive-wide), what real hardware would
+/// output there is not confidently known, so two-cycle alpha is left
+/// unclassified rather than assumed to behave like the single-cycle case.
+fn combiner_alpha_blend(hi: u32, lo: u32, two_cycle: bool) -> Option<AlphaBlend> {
+    if two_cycle {
+        return None;
+    }
+    // Cycle 0's alpha slots, per `gbi.h`'s `GCCc0w0`/`GCCc0w1` macros
+    // (RE-129): `Aa0` is bits 12-14 of `hi`, `Ab0` is bits 12-14 of `lo`,
+    // `Ac0` is bits 9-11 of `hi`, `Ad0` is bits 9-11 of `lo`.
+    let aa = (hi >> 12) & 0x7;
+    let ab = (lo >> 12) & 0x7;
+    let ac = (hi >> 9) & 0x7;
+    let ad = (lo >> 9) & 0x7;
+
+    const TEXEL0_A: u32 = 1;
+    const SHADE_A: u32 = 4;
+    const ZERO: u32 = 7;
+
+    // `(anything - anything) * 0 + TEXEL0_ALPHA`: the `C` slot being the
+    // literal `0` constant zeroes the `(A-B)` term regardless of what it
+    // is, leaving a bare texel alpha -- this project's own tests below
+    // pin the exact archive-measured word for this shape.
+    if ac == ZERO && ad == TEXEL0_A {
+        return Some(AlphaBlend::TexelOnly);
+    }
+    // `(TEXEL0_ALPHA - 0) * SHADE_ALPHA + 0`.
+    if aa == TEXEL0_A && ab == ZERO && ac == SHADE_A && ad == ZERO {
+        return Some(AlphaBlend::Shade);
+    }
+    None
+}
+
 /// Whether any slot across the active cycle(s) reads `code` (`3` =
 /// `PRIMITIVE`, `5` = `ENVIRONMENT`) -- independent of that source's value.
 ///
@@ -989,15 +1068,23 @@ impl State {
             // discarded whole primitives outright until this gate was added
             // (RE-069 measured 46 of 380 `alpha_test` primitives had no
             // texture at all). `translucent` gets the same gate for the same
-            // reason: this converter does not compute the combiner's actual
-            // alpha output (`combiner_shade_scale` only resolves RGB), so
-            // the only alpha channel available with any real fidelity is a
-            // decoded texture's own -- blending untextured, possibly-lit
-            // geometry against a meaningless vertex alpha risks the same
-            // silent-disappearance failure, just via `SrcAlpha` instead of a
-            // discard (7 of 362 `translucent` primitives had no texture).
+            // reason: this converter did not compute the combiner's actual
+            // alpha output at all before RE-129/RE-130 (`combiner_shade_scale`
+            // only ever resolved RGB) -- even now that `alpha_blend` below
+            // does classify some shapes, an untextured primitive still has
+            // no texel alpha for any of them to multiply, so the gate stays.
             alpha_test: self.material.alpha_test && texture.is_some(),
             translucent: self.material.translucent && texture.is_some(),
+            // RE-129/RE-130: independent of the RGB (`texture_blend`/
+            // `flat_color`/shade-scale) classification above, and only
+            // meaningful when `translucent` (just above) actually is --
+            // `material_now` computes it unconditionally regardless since a
+            // stray `Some` on an opaque or untextured primitive is inert
+            // (`psp/src/meshdraw.rs` only ever reads it alongside
+            // `flags::TRANSLUCENT`).
+            alpha_blend: self
+                .combiner
+                .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle)),
             texture_blend,
             // Same reasoning as `alpha_test`/`translucent`'s gate: an
             // animated palette with no texture to apply it to is orphaned
@@ -1128,6 +1215,13 @@ impl Builder {
     /// `texture_blend` (RE-073) uses the same mechanism to bake a flat base
     /// colour in place of the shade instead of scaling it.
     fn push_vertex(&mut self, mut v: MeshVertex) -> Result<u16, MeshError> {
+        // RE-129/RE-130: captured before any of the branches below can
+        // touch it, so `AlphaBlend::Shade` can restore exactly this value
+        // regardless of what the *colour* branches decided for RGB --
+        // real hardware's alpha formula is independent of which of them
+        // fired, and `SHADE_ALPHA` is this raw byte verbatim either way
+        // (an N64 `Vtx_tn`'s alpha field is never itself lit).
+        let raw_alpha = v.rgba[3];
         if let Some(c) = self.material.prim_color {
             for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
                 *shade = ((*shade as u16 * prim as u16) / 255) as u8;
@@ -1153,6 +1247,23 @@ impl Builder {
             // keeps a shared cache-slot vertex distinct across primitives
             // that need different flat colours.
             v.rgba = c;
+        }
+        // RE-129/RE-130: the alpha formula is classified independently of
+        // whichever RGB branch above fired, so it is applied after and
+        // unconditionally rather than folded into any one of them.
+        match self.material.alpha_blend {
+            // `TEXEL0_ALPHA` alone -- most vertex alpha bytes are not a
+            // coverage value at all (see this function's own doc comment
+            // just above), so a plain `Modulate` needs them forced to
+            // fully opaque or they would corrupt a formula that never
+            // reads them on real hardware.
+            Some(AlphaBlend::TexelOnly) => v.rgba[3] = 255,
+            // `TEXEL0_ALPHA * SHADE_ALPHA` -- the raw byte already *is*
+            // `SHADE_ALPHA`; restore it in case an RGB branch above
+            // overwrote it for an unrelated reason (`prim_color`'s own
+            // alpha override, RE-106).
+            Some(AlphaBlend::Shade) => v.rgba[3] = raw_alpha,
+            None => {}
         }
         if let Some(t) = self.material.texture {
             if t.framebuffer {
@@ -3973,6 +4084,56 @@ mod tests {
         let some = Some([10, 20, 30, 255]);
         assert_eq!(combiner_texture_blend(hi, lo, true, None, some), None);
         assert_eq!(combiner_texture_blend(hi, lo, true, some, None), None);
+    }
+
+    #[test]
+    fn real_canopy_highlight_word_reads_texel_times_shade() {
+        // Dream Land's canopy highlight (file 104, offsets 0x708/0xA78),
+        // the exact `TRANSLUCENT` surface RE-069/070/071 could never get a
+        // safe blend out of -- decoded directly from the ROM (RE-129), not
+        // synthesised.
+        let (hi, lo) = (0x0012_1824, 0xFF33_FFFF);
+        assert_eq!(
+            combiner_alpha_blend(hi, lo, false),
+            Some(AlphaBlend::Shade)
+        );
+    }
+
+    #[test]
+    fn real_flower_word_reads_texel_alpha_alone() {
+        // Dream Land's decorative flower triangles (RE-130) -- the
+        // archive-wide majority shape (~5,950 of ~8,800 real, textured,
+        // single-cycle `TRANSLUCENT` primitives). Enabling blend without
+        // classifying this shape separately from `Shade` made these exact
+        // flowers vanish (RE-129's own reversible experiment).
+        let (hi, lo) = (0x0012_7E24, 0xFFFF_F3F9);
+        assert_eq!(
+            combiner_alpha_blend(hi, lo, false),
+            Some(AlphaBlend::TexelOnly)
+        );
+    }
+
+    #[test]
+    fn real_prim_alpha_multiply_word_is_declined() {
+        // A real, measured (RE-130), but rare (43/~12,200 archive-wide) and
+        // never on-device-verified shape: `TEXEL0_ALPHA * PRIM_ALPHA`. Not
+        // one of the two `AlphaBlend` cases this model follows -- must
+        // decline rather than misclassify it as `Shade` or `TexelOnly`,
+        // either of which would bake the wrong multiplier.
+        let (hi, lo) = (0x0060_96C1, 0x552E_FF7F);
+        assert_eq!(combiner_alpha_blend(hi, lo, false), None);
+    }
+
+    #[test]
+    fn two_cycle_alpha_is_always_declined() {
+        // The canopy highlight's own word again, but real hardware only
+        // ever uses it in one-cycle mode -- confirm the *two_cycle* flag
+        // alone is enough to decline, regardless of what the bits say,
+        // since this model does not confidently know what two-cycle
+        // alpha's own D-slot code 0 (`LOD_FRACTION`, not `COMBINED_ALPHA`)
+        // means on a ROM that never engages real RDP LOD (RE-127).
+        let (hi, lo) = (0x0012_1824, 0xFF33_FFFF);
+        assert_eq!(combiner_alpha_blend(hi, lo, true), None);
     }
 
     #[test]
