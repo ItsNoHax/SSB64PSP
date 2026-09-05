@@ -24,6 +24,11 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # freezing it would break that.
 regression_capture = []
 
+# Boots directly into R0.12's isolated billboard browser. This removes the
+# host-specific PPSSPP key mapping needed to enter the audit, while retaining
+# the normal D-pad navigation and on-screen source identity. Off by default.
+billboard_audit_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true

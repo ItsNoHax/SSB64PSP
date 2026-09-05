@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pitch_locked = 0;
     let mut anomalies = 0;
     let mut spinning_kind = 0;
-    println!("ordinal\tfile\tgraph\tlocal_node\tpack_node\tmesh\tvertices\tprimitives\ttriangles\tlocal_min_x\tlocal_min_y\tlocal_min_z\tlocal_max_x\tlocal_max_y\tlocal_max_z\tpitch_locked\tfinite\tscale_x\tscale_y\tscale_z\tx\ty\tz\trotate_x\trotate_y\trotate_z\tspin_z_kind\tspin_angle");
+    println!("ordinal\tfile\tgraph\tlocal_node\tpack_node\tmesh\tvertices\tprimitives\ttriangles\ttextures\ttexture_details\tprimitive_flags\tpalette_alpha\tsample_0_alpha\tuv_bounds\tvertex_alpha\tlocal_min_x\tlocal_min_y\tlocal_min_z\tlocal_max_x\tlocal_max_y\tlocal_max_z\tpitch_locked\tfinite\tscale_x\tscale_y\tscale_z\tx\ty\tz\trotate_x\trotate_y\trotate_z\tspin_z_kind\tspin_angle");
     for i in 0..pack.node_count() {
         let node = pack.node(i).ok_or("missing node")?;
         if node.flags & NodeDesc::FLAG_BILLBOARD == 0 {
@@ -32,10 +32,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or_else(|| format!("node {i}: mesh {} has no vertex bytes", node.mesh))?;
         let mut local_min = [i16::MAX; 3];
         let mut local_max = [i16::MIN; 3];
-        for vertex in vertices
-            .as_chunks::<{ ssb_rom::pack::VERTEX_SIZE }>()
-            .0
-        {
+        let mut uv_min = [i16::MAX; 2];
+        let mut uv_max = [i16::MIN; 2];
+        let mut vertex_alpha = (u8::MAX, u8::MIN);
+        for vertex in vertices.as_chunks::<{ ssb_rom::pack::VERTEX_SIZE }>().0 {
+            for axis in 0..2 {
+                let at = axis * 2;
+                let value = i16::from_le_bytes([vertex[at], vertex[at + 1]]);
+                uv_min[axis] = uv_min[axis].min(value);
+                uv_max[axis] = uv_max[axis].max(value);
+            }
+            vertex_alpha.0 = vertex_alpha.0.min(vertex[7]);
+            vertex_alpha.1 = vertex_alpha.1.max(vertex[7]);
             for axis in 0..3 {
                 let at = 8 + axis * 2;
                 let value = i16::from_le_bytes([vertex[at], vertex[at + 1]]);
@@ -43,10 +51,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 local_max[axis] = local_max[axis].max(value);
             }
         }
-        let triangles: u32 = (0..mesh.prim_count)
+        let primitives: Vec<_> = (0..mesh.prim_count)
             .filter_map(|j| pack.prim(mesh.first_prim + j))
+            .collect();
+        let triangles: u32 = primitives
+            .iter()
             .map(|primitive| primitive.index_count / 3)
             .sum();
+        let textures: Vec<_> = primitives
+            .iter()
+            .map(|primitive| primitive.texture)
+            .collect();
+        let texture_details: Vec<_> = textures
+            .iter()
+            .map(|&texture| {
+                pack.texture(texture)
+                    .map(|texture| (texture.width, texture.height, texture.psm, texture.mat_anim))
+            })
+            .collect();
+        let primitive_flags: Vec<_> = primitives.iter().map(|primitive| primitive.flags).collect();
+        let palette_alpha: Vec<_> = textures
+            .iter()
+            .map(|&texture| {
+                let texture = pack.texture(texture)?;
+                let palette = pack.palette_data(&texture)?;
+                let mut alpha = palette.as_chunks::<4>().0.iter().map(|color| color[3]);
+                let first = alpha.next()?;
+                Some(alpha.fold((first, first), |(min, max), value| {
+                    (min.min(value), max.max(value))
+                }))
+            })
+            .collect();
+        let sample_0_alpha: Vec<_> = textures
+            .iter()
+            .map(|&texture| {
+                let texture = pack.texture(texture)?;
+                let data = pack.texture_data(&texture)?;
+                let palette = pack.palette_data(&texture)?;
+                let index = match texture.psm {
+                    4 => usize::from(*data.first()? & 0x0F),
+                    5 => usize::from(*data.first()?),
+                    _ => return None,
+                };
+                palette.get(index * 4 + 3).copied()
+            })
+            .collect();
         let drawable = mesh.vertex_count > 0 && mesh.prim_count > 0 && triangles > 0;
         let w = node.world;
         let length = |c: usize| w[c].hypot(w[c + 1]).hypot(w[c + 2]);
@@ -63,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         spinning_kind += u32::from(spin_z);
         count += 1;
         println!(
-            "{}\t{}\t0x{:X}\t{}\t{i}\t{}\t{}\t{}\t{triangles}\t{}\t{}\t{}\t{}\t{}\t{}\t{locked}\t{finite}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{spin_z}\t{}",
+            "{}\t{}\t0x{:X}\t{}\t{i}\t{}\t{}\t{}\t{triangles}\t{textures:?}\t{texture_details:?}\t{primitive_flags:?}\t{palette_alpha:?}\t{sample_0_alpha:?}\t{uv_min:?}..{uv_max:?}\t{vertex_alpha:?}\t{}\t{}\t{}\t{}\t{}\t{}\t{locked}\t{finite}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{spin_z}\t{}",
             count - 1,
             owner.source_file,
             owner.source_offset,
