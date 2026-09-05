@@ -10568,3 +10568,57 @@ check.
 `cargo test --workspace`: 419 passing, unaffected — this entry is a
 code-reading exercise, no code changed. `cargo clippy --release
 --workspace`: clean.
+
+---
+
+## RE-139 — R0.6's "unsupported material behavior identified" closed by compiling what this task's own history already found
+
+`PLAN.md` R0.6's last never-investigated item, "unsupported material
+behavior identified", had no notes of its own at all — unlike every
+other item on this task, which each accumulated substantial findings
+across a dozen-plus `RE-` entries. Rather than open a new investigation,
+this entry asked whether one was even necessary: does this task's own
+existing evidence already name every real divergence, just never
+gathered into one place?
+
+**It does.** Compiling directly from this task's own already-cited
+findings, without measuring anything new:
+
+1. **Combiner shapes outside shade-scale/texture-blend/flat-constant**
+   — RE-079/080's own census found these three shapes cover 97.5%+ of
+   archive-wide combiner-bearing primitives; the remaining ~2.5% is
+   declined, not classified, because no fourth recognizable shape was
+   ever found.
+2. **`G_SETCOMBINE`'s alpha formula outside `TEXEL0_ALPHA` (alone or ×
+   `SHADE_ALPHA`)** — RE-130's archive-wide alpha-formula measurement
+   found a rare `PRIM_ALPHA` multiply (~43 occurrences) and two-cycle
+   mode (~93) that are measured but deliberately declined; real blending
+   stays off for those specific primitives.
+3. **Per-object real lighting** — RE-065's single, archive-wide baked
+   neutral key light stands in for `ftDisplayLightsDrawReflect`'s real
+   per-stage (and, per the original game, per-object) computation. Its
+   own "lighting verified" acceptance item already tracks this in
+   detail; named here too since it is squarely a material-behavior gap.
+4. **`G_SHADE` cleared while a combiner still reads `SHADE`** — RE-120
+   found this is undefined behavior on real hardware (`gbi.h`'s own
+   documentation describes intent, not measured hardware output), 31
+   occurrences archive-wide, 29 of them in combat/item/effect content
+   this project's own rendering-first gate has not unlocked yet and 2 in
+   already-rendered geometry (Yoshi's Island, one primitive each). Left
+   unfixed rather than guessed at, per `AGENTS.md` §9.
+5. **`prim_color`/`env_color`'s "genuine absence" cases** — RE-079 found
+   3,085 of 4,580 `(PRIM-ENV)*TEXEL0+ENV` primitives have no resolved
+   `prim_color` at all. This is not a combiner-classification failure;
+   it is a downstream effect of `R0.7`'s own still-open material-table
+   pairing gaps (the state simply was never attached to these graphs at
+   conversion time).
+
+**Nothing here is a new discovery.** Every one of these five items was
+already measured, cited, and cross-referenced somewhere in this task's
+own accumulated evidence before this entry; the entry's only
+contribution is naming them in one place so this acceptance item has an
+answer instead of a blank space. No code changed, no new measurement was
+taken.
+
+`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+--release --workspace`: clean.

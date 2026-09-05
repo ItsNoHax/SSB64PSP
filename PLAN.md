@@ -844,11 +844,11 @@ Reproduce original SSB64 material behavior.
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
-* [ ] unsupported material behavior identified
+* [x] unsupported material behavior identified — RE-139 compiled the enumeration this item asks for from findings already scattered across this task's own evidence, rather than opening new investigation: (1) **combiner shapes outside shade-scale/texture-blend/flat-constant**, ~2.5% of combiner-bearing primitives archive-wide (RE-079/080) — declined, not classified, since no fourth shape was ever identified; (2) **`G_SETCOMBINE`'s alpha formula outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`)** — the rare `PRIM_ALPHA` multiply (~43 occurrences) and two-cycle mode (~93, RE-130) are measured but declined, real blending stays off for them; (3) **per-object real lighting** — a single archive-wide baked neutral key light (RE-065) stands in for `ftDisplayLightsDrawReflect`'s real per-stage/per-object computation, tracked in detail under "lighting verified" above; (4) **`G_SHADE` cleared while a combiner still reads `SHADE`** (RE-120) — undefined real-hardware behavior, 31 occurrences archive-wide, 29 in not-yet-reachable combat/item content and 2 in already-rendered geometry (Yoshi's Island), left unfixed rather than guessed at; (5) **`prim_color`/`env_color`'s "genuine absence" cases**, 3,085/4,580 misses for one shape (RE-079), a downstream effect of `R0.7`'s own still-open material-table pairing gaps, not a combiner-classification failure. None of these is a surprise discovered by this entry — each was already measured and cited elsewhere; this item's own contribution is having them named in one place
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-129, RE-130 in `docs/reverse-engineering.md`.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-120, RE-129, RE-130, RE-139 in `docs/reverse-engineering.md`.
 
 ### Evidence
 
