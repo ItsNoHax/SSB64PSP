@@ -562,15 +562,15 @@ pub unsafe fn draw_object(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     costume: u32,
 ) -> u32 {
-    draw_object_posed(pack, object, base, &[], st, mat_anim, costume)
+    draw_object_posed(pack, object, base, &[], None, st, mat_anim, costume)
 }
 
 /// Places a screen-aligned sprite, and returns its composed position and scale.
 ///
-/// `gcPrepDObjMatrix`'s kinds 45-48 never multiply the node's rotation into the
-/// MVP: they write it straight from the projection basis with every cross term
-/// zeroed, so object X and Y land on screen X and Y and `rotate.x` only spins
-/// the sprite within that plane (RE-048).
+/// The ROM-used `gcPrepDObjMatrix` kinds 44/46/48/50 do not multiply the
+/// node's full rotation into the MVP. They build from the projection basis so
+/// object X and Y remain camera-aligned; Kind46 alone applies `rotate.z` as an
+/// in-plane spin (RE-048, RE-141).
 ///
 /// This build keeps the view matrix at identity and puts the whole camera into
 /// `base`, so "aligned with the eye" is "unrotated in world space". The sprite
@@ -615,6 +615,9 @@ fn billboard_place(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ([f32; 3], 
 /// falls back to the baked one per node, so passing `&[]` is exactly
 /// [`draw_object`] — the animated and static paths are the same code, which is
 /// what keeps a bug in one from being invisible in the other.
+/// `billboard_scales`, when present, supplies the signed X/Y values carried by
+/// the original renderer's `gGCScaleX` traversal. Composed matrix column
+/// lengths cannot preserve those signs (RE-143).
 ///
 /// `costume` looks up [`Pack::costume_mesh`] (RE-098) for every node before
 /// falling back to its own baked mesh; `0` is exactly "no substitution",
@@ -630,6 +633,7 @@ pub unsafe fn draw_object_posed(
     object: &ObjectDesc,
     base: &ScePspFMatrix4,
     posed: &[ssb_rom::scene::Mat4],
+    billboard_scales: Option<&[[f32; 2]]>,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     costume: u32,
@@ -688,7 +692,17 @@ pub unsafe fn draw_object_posed(
         };
         sys::sceGumMatrixMode(sys::MatrixMode::Model);
         if node.flags & NodeDesc::FLAG_BILLBOARD != 0 {
-            let (pos, sx, sy) = billboard_place(base, &local);
+            let (pos, mut sx, mut sy) = billboard_place(base, &local);
+            if let Some(scale) = billboard_scales.and_then(|scales| scales.get(i as usize)) {
+                let base_sx = ssb_engine::math::sqrt(
+                    base.x.x * base.x.x + base.x.y * base.x.y + base.x.z * base.x.z,
+                );
+                let base_sy = ssb_engine::math::sqrt(
+                    base.y.x * base.y.x + base.y.y * base.y.y + base.y.z * base.y.z,
+                );
+                sx = base_sx * scale[0];
+                sy = base_sy * scale[1];
+            }
             sys::sceGumLoadIdentity();
             sys::sceGumTranslate(&ScePspFVector3 { x: pos[0], y: pos[1], z: pos[2] });
             // RE-131: under a real (non-identity) view matrix, the object's
@@ -957,6 +971,7 @@ pub unsafe fn draw_stage_animated(
     let mut tris = 0;
     let mut drawn = 0;
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+    let mut billboard_scales = [[1.0; 2]; ssb_rom::skeleton::MAX_NODES];
     for slot in stage.layers {
         if slot == ssb_rom::pack::StageDesc::NO_LAYER {
             continue;
@@ -967,7 +982,18 @@ pub unsafe fn draw_stage_animated(
         tris += match anim {
             Some(a) => {
                 let n = a.compose(pack, &object, &mut posed);
-                draw_object_posed(pack, &object, base, &posed[..n], st, mat_anim, 0)
+                let scale_count = a.billboard_scales(pack, &object, &mut billboard_scales);
+                debug_assert_eq!(n, scale_count);
+                draw_object_posed(
+                    pack,
+                    &object,
+                    base,
+                    &posed[..n],
+                    Some(&billboard_scales[..scale_count]),
+                    st,
+                    mat_anim,
+                    0,
+                )
             }
             None => draw_object(pack, &object, base, st, mat_anim, 0),
         };

@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-142)
+**Last updated:** 2026-09-05 (RE-143)
 
 ---
 
@@ -12,52 +12,45 @@
 
 ## Current Task
 
-`R0.12 — Billboard Correctness`: animated hierarchy and per-node verification.
+`R0.12 — Billboard Correctness`: per-node verification.
 
 ## Task Status
 
-`VERIFYING`. RE-142 exhaustively measured animation reachability: 6 billboards
-are directly driven by stage animation, none by fighter animation, and none
-changes rotation over 240 frames. Six more null-script billboards inherit
-motion from animated parents. Fixed `StageAnimator::compose` so those children
-recompose from their rest locals instead of incorrectly retaining baked world
-matrices. This is pinned by a focused hierarchy regression.
+`VERIFYING`. RE-143 closes the signed animated-scale gap exposed by RE-142.
+The original `gcPrepDObjMatrix` carries signed `gGCScaleX` through the DObj
+tree: billboard X is `ancestor_x * node.scale.x`, while Y is `ancestor_x *
+node.scale.y`; the tree walker restores the accumulator across siblings.
+`StageAnimator::billboard_scales` reproduces that exact parent-first rule from
+current local poses, and `draw_stage_animated` supplies the signed pairs to the
+PSP billboard draw path instead of deriving unsigned matrix-column lengths.
 
-Saffron City provides the real device case. Its source tables attach scripts
-only to parent nodes while billboard children remain null, exactly matching
-the bug. A detached pre-fix build and corrected build, both frozen at frame
-240 and forced to stage 9, differ in 836 RGB pixels confined to the gate area.
-The temporary stage override and detached worktree were removed. While doing
-this, `tools/compare-screenshot.sh` was fixed: this ImageMagick 7 build's
-`compare -metric AE` returned accumulated channel error (9,835,820), not a
-pixel count; the binary-difference method returns the independently confirmed
-836 and passes/fails correctly at thresholds 836/835.
+A focused negative-parent regression proves both sign preservation and the
+original's deliberate ancestor-X-for-both-axes behavior. The persistent
+animation inventory now records final scale and first negative frame: the
+three affected file-109 Kind44 nodes first cross below zero at frames 1, 1,
+and 40, then reach zero at frame 240. RE-142's exhaustive reachability result
+still bounds the runtime scope: six direct billboard joints, all stage
+animations, zero fighter references, and zero animated rotations.
 
-Scale verification is reopened. All 6 directly animated billboards change
-scale; three Kind44 nodes reach small negative uniform values while
-`billboard_place` extracts unsigned column lengths. RE-134 proved rest-pose
-equivalence only. This signed animated-scale difference remains unresolved.
-
-Verification: 421 workspace tests passed (36 engine, 112 game, 273 ROM);
+Verification: 422 workspace tests passed (36 engine, 112 game, 274 ROM);
 targeted library/examples Clippy passed with warnings denied; `romtool stages
 --pack` replayed 206 scripts/123,600 frames with 0 failures and compared
 444,960 packed-vs-ROM pose values exactly. Normal and regression PSP builds
-passed with the existing six warnings. PPSSPP software captures ran at 60 FPS.
+passed with the existing six warnings. The deterministic Dream Land PPSSPP
+software capture remains pixel-identical to its golden image (0 RGB pixels).
 Physical PSP was not tested; R2 remains unperformed.
 
-Next eligible work: reproduce signed animated billboard scale without losing
-the original ancestor-X/node-X/node-Y signs, then continue per-node visual
-isolation. Whole-stage plausibility still does not satisfy all-node acceptance.
-Relevant commit: the focused RE-142 commit containing this entry; preceding
-commit `626ec80`. Evidence and capture hashes are in RE-142.
+Next eligible work: continue repeatable per-node visual isolation for the 109
+flagged billboards. Whole-stage plausibility still does not satisfy all-node
+acceptance. Relevant commit: the focused RE-143 commit containing this entry;
+preceding commit `731ed74`. Detailed evidence is in RE-143.
 
 Camera/Kind48 basis shipped (RE-131–133). R0.14 still needs original-output
 comparison; material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs
 hardware validation; R0.13 needs a transition caller. Combat remains locked.
 Physical PSP: not tested this session; R2 acceptance remains unperformed.
-Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic preserved.
 Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic remains
-untouched. README/architecture/DECISIONS require no change.
+untouched. README/architecture/DECISIONS/TODO require no change.
 
 ## Previous Task Status
 

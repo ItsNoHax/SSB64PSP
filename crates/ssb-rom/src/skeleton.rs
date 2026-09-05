@@ -355,6 +355,48 @@ impl StageAnimator {
         count
     }
 
+    /// Signed billboard X/Y scales for every node in `object`.
+    ///
+    /// `gcPrepDObjMatrix` does not derive these from a composed matrix. It
+    /// carries `gGCScaleX` down the DObj tree and uses:
+    ///
+    /// ```text
+    /// x = ancestor_x * node.scale.x
+    /// y = ancestor_x * node.scale.y
+    /// ```
+    ///
+    /// Computing from the local poses preserves negative animated scale and
+    /// also matches the original's deliberate use of ancestor X for both
+    /// axes. Entries for non-billboard nodes are populated because descendants
+    /// need their cumulative X value.
+    pub fn billboard_scales(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [[f32; 2]],
+    ) -> usize {
+        let count = (object.node_count as usize).min(out.len()).min(MAX_NODES);
+        let mut cumulative_x = [1.0; MAX_NODES];
+        for i in 0..count {
+            let index = object.first_node + i as u32;
+            let Some(node) = pack.node(index) else {
+                out[i] = [1.0; 2];
+                continue;
+            };
+            let parent_x = node
+                .parent
+                .checked_sub(object.first_node)
+                .filter(|&parent| parent < i as u32)
+                .map_or(1.0, |parent| cumulative_x[parent as usize]);
+            let scale = self
+                .pose_for(index)
+                .map_or(node.rest_scale, |pose| pose.scale);
+            out[i] = [parent_x * scale[0], parent_x * scale[1]];
+            cumulative_x[i] = out[i][0];
+        }
+        count
+    }
+
     fn pose_for(&self, node: u32) -> Option<&JointPose> {
         (0..self.count)
             .find(|&i| self.nodes[i] == node)
@@ -641,6 +683,30 @@ mod tests {
             posed[2], rest[2],
             "its child must inherit motion without its own script"
         );
+    }
+
+    #[test]
+    fn stage_billboard_scales_keep_sign_and_use_ancestor_x_for_both_axes() {
+        let graph = chain();
+        let bytes = packed(&graph);
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let object = pack.object(0).unwrap();
+        let mut animator = StageAnimator::new();
+        animator.count = 1;
+        animator.nodes[0] = object.first_node + 1;
+        animator.poses[0] = JointPose {
+            rotate: [0.0; 3],
+            translate: [0.0; 3],
+            scale: [-2.0, 3.0, 4.0],
+        };
+
+        let mut scales = [[0.0; 2]; MAX_NODES];
+        assert_eq!(animator.billboard_scales(&pack, &object, &mut scales), 3);
+        assert_eq!(scales[0], [1.0, 1.0]);
+        assert_eq!(scales[1], [-2.0, 3.0]);
+        // Node 2's own rest scale is [1, 0.5, 1]. Both axes inherit the
+        // parent's signed X (-2), not its Y (3).
+        assert_eq!(scales[2], [-2.0, -1.0]);
     }
 
     fn mat_script(words: &[u32]) -> alloc::vec::Vec<u8> {

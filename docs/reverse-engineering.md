@@ -10798,3 +10798,63 @@ only and is therefore insufficient for animation. R0.12's scale item is
 reopened until signed animated scale is reproduced from the original
 ancestor-X/node-X/node-Y formula. Per-node visual and physical PSP validation
 also remain open.
+
+---
+
+## RE-143 — Signed animated billboard scale now follows the original tree accumulator
+
+RE-142 identified a narrow but real mismatch: three animated Kind44 nodes in
+file 109 cross below zero, while a composed matrix column length is always
+nonnegative. The original calculation is directly recoverable from
+`refs/ssb-decomp-re/src/sys/objdisplay.c`; no visual heuristic is needed.
+Each billboard case first computes Y as `gGCScaleX * dobj->scale.y`, then
+multiplies `gGCScaleX` by the node's X scale and uses that signed result for X.
+`gcDrawDObjTree` saves the accumulator before a node and restores it after its
+subtree, so children inherit signed X while siblings inherit their parent's
+value.
+
+`StageAnimator::billboard_scales` now performs the same parent-first traversal
+from the current local poses. It emits `[ancestor_x * node_x, ancestor_x *
+node_y]` for every object node and carries the first value to descendants.
+`draw_stage_animated` passes this array beside the composed matrices;
+`draw_object_posed` uses the signed pair for billboard scale after applying the
+positive model-base magnitude. Static objects keep the existing composed
+column calculation, which RE-134 already proved equivalent for every rest-pose
+billboard. Fighter animation needs no second path for shipped content: the
+exhaustive RE-142 intersection found zero fighter-animation references to a
+billboard.
+
+A focused three-node regression animates the middle node to scale `[-2, 3,
+4]`. It proves the node produces `[-2, 3]` and its child with rest scale `[1,
+0.5, 1]` produces `[-2, -1]`: both child axes inherit the parent's signed X,
+not its Y. The persistent animation inventory now also records each direct
+billboard's final scale and first negative frame. Replaying 240 frames finds
+the same six direct billboard joints; file 109 nodes 699 and 712 first cross
+negative at frame 1, node 713 at frame 40, and all return to zero at frame
+240.
+
+Verification:
+
+* `cargo test --workspace`: **422 passed** (36 engine, 112 game, 274 ROM);
+* `cargo clippy -p ssb-rom --lib --examples -- -D warnings`: clean;
+* `billboard_animation_inventory`: 35 stage animations × 240 frames, 6 direct
+  billboard joints, 6 inherited-only billboards, zero animated rotations and
+  zero fighter billboard references;
+* `romtool stages <ROM> --pack assets/generated/ssb64.pak`: 206 scripts,
+  123,600 frames, zero failures, and all 444,960 pack-versus-ROM pose values
+  identical;
+* normal and `regression_capture` `cargo psp --release` builds both succeeded
+  with the existing six warnings;
+* the deterministic Dream Land PPSSPP software capture remains exactly equal
+  to `tests/golden/r0-dream-land-default.png` (0 differing RGB pixels), as
+  expected because Dream Land has no joint animation;
+* normal EBOOT SHA-256:
+  `3a22703fe01cf434a4ec348eb6c2779ef796c5df0067871ec5ff19126215f698`;
+  regression EBOOT SHA-256:
+  `0c996529c4acfb7d41604e24d4596555c5d8a4cd77a54eeac4a6b43307176c14`;
+  asset-pack SHA-256:
+  `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
+
+This closes R0.12's scale item across rest and animated content. R0.12 remains
+`VERIFYING`: individual visual confirmation for all 109 nodes and physical PSP
+validation are still open.

@@ -804,6 +804,7 @@ unsafe fn run() -> ! {
                                     &obj,
                                     &m,
                                     &posed[..n],
+                                    None,
                                     &mut draw_state,
                                     Some(&material_anim),
                                     // No costume-selection game system exists
@@ -883,6 +884,7 @@ unsafe fn run() -> ! {
                         &obj,
                         &base,
                         &posed[..posed_len],
+                        None,
                         &mut draw_state,
                         Some(&material_anim),
                         costume_index,
