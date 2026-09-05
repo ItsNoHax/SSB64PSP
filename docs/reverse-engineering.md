@@ -11098,3 +11098,30 @@ boundary now exist, but the project still has no normal-game results state to
 invoke them. The two acceptance boxes remain open until that real entry is
 available and its synchronization is verified; the audit feature is evidence,
 not a substitute game-state trigger.
+
+---
+
+## RE-149 — R0.13 closes at the renderer boundary; normal match integration belongs to G2
+
+Re-audited the roadmap dependency after RE-148 left two renderer acceptance
+items waiting on a normal results-screen caller. `PLAN.md` explicitly assigns
+match transitions to G2, after combat, while `AGENTS.md` forbids beginning
+combat until the rendering gate passes. Requiring the G2 results state to
+close R0.13 therefore creates a dependency cycle rather than a missing
+renderer verification step.
+
+The renderer-side contract is already concrete and measured. RE-146 identifies
+the production ordering from the decompilation. RE-147 packs and replays all
+eleven original finite wipes. RE-148's explicit lifecycle requests capture
+while the battle scene is still active, performs the copy only after
+`Gpu::end_frame` has synchronized the GE, permits the wipe to enter `Playing`
+only afterward, draws it through the original transition camera, and ejects it
+when its source animation ends. PPSSPP verifies that sequence at 60 FPS and
+finds 3,040 exact source-clear pixels in the captured wipe surface.
+
+R0.13 is therefore `COMPLETE`: its screen-wipe implementation and framebuffer
+synchronization criteria are satisfied. G2 retains the normal match/results
+trigger and will consume this reusable lifecycle when that game state is
+implemented. This changes task ownership only; it does not weaken the later
+end-to-end match-transition or physical-PSP acceptance requirements. The next
+ordered rendering task is R0.14's original-output camera comparison.

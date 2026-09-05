@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-148)
+**Last updated:** 2026-09-05 (RE-149)
 
 ---
 
@@ -12,11 +12,28 @@
 
 ## Current Task
 
-`R0.13 — Framebuffer Rendering`: real screen-wipe caller and synchronization.
+`R0.14 — Camera / Projection Correctness`: verify the ported camera against
+original output and compare representative scenes.
 
 ## Task Status
 
-`IN_PROGRESS`. R0.12 is now complete. RE-145 adds an off-by-default
+`IN_PROGRESS`. R0.13 is complete. RE-149 resolves a roadmap dependency cycle:
+the reusable wipe renderer and synchronized capture boundary are R0.13's
+responsibility, while normal match/results integration is explicitly G2's
+match-transition responsibility. Requiring that post-combat G2 caller before
+closing the pre-combat rendering gate would make the roadmap impossible to
+satisfy. RE-148 already verifies the renderer contract in PPSSPP, so both
+remaining R0.13 acceptance items are closed.
+
+R0.14 now resumes with its two remaining acceptance items: original-output
+verification of the RE-131 camera transform and a representative N64/PSP
+scene comparison. The user's original Dream Land screenshot at
+`/home/alberto/Pictures/Screenshots/Screenshot_20260905_131739.png` removes
+the previous claim that no original reference image is available; the next
+step is to create a controlled PSP comparison frame and measure the camera
+framing rather than compare unmatched debug-viewer states.
+
+R0.12 completion evidence remains: RE-145 adds an off-by-default
 `billboard_audit_capture` build that enters the existing isolated browser,
 holds ordinal 0 through startup, then advances once per fixed 60 Hz second.
 PPSSPP software captures now cover and individually review every ordinal
@@ -93,11 +110,8 @@ Normal EBOOT SHA-256:
 `fa8060771693b766375df44b98083785c9359d6fad5e9ac4b1d881ba6593ca44`.
 Relevant implementation commit: `2bba248`.
 
-Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
-work resumes R0.13's two open acceptance items. The reusable caller and frame
-boundary now exist; next is connecting them to the normal-game results entry
-once that state exists, then performing final synchronization verification.
-R0.14 still needs original-output comparison;
+Last completed task: `R0.13 — Framebuffer Rendering` (RE-149). Current and
+next eligible work is R0.14's controlled original-output camera comparison.
 material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
 validation. Combat remains locked. Physical PSP was not tested this session;
 R2 acceptance remains unperformed. The completed RE-140 temporary diagnostic

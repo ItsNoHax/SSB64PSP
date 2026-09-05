@@ -215,7 +215,7 @@ so nothing is duplicated and nothing is missing an owner.
 | Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `IN_PROGRESS` (accepted deviation: single baked key light, not per-object `sceGuLight`) |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `IN_PROGRESS` (alpha test shipped; translucency detected but not enabled — open bug) |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 (state), R0.14 (depth mapping) | `COMPLETE` for both owned items |
-| Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 `VERIFYING`, R0.13 `IN_PROGRESS`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
+| Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
 | Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** (new) | `TODO` |
 | Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** (new) | `TODO` |
 
@@ -1679,7 +1679,7 @@ RE-049, RE-062, RE-063, RE-083, RE-126, RE-131, RE-132, RE-133, RE-134, RE-135, 
 
 ## R0.13 — Framebuffer Rendering
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -1961,8 +1961,12 @@ fighter/stage block, replay from the generated pack, and resolve the object
 their absolute joint nodes drive. Adding the minimal results-entry caller
 is now implemented as RE-148 with the original capture-before-results frame
 boundary and transition camera. PPSSPP verifies the first packed wipe at a
-deterministic midpoint. Connecting this state to a real results screen remains
-open because that game-state entry does not exist yet.
+deterministic midpoint. RE-149 resolves the roadmap boundary: R0.13 owns the
+reusable renderer, capture lifecycle, and synchronized frame boundary, all of
+which are implemented and verified. Connecting that lifecycle to the eventual
+normal match/results flow belongs to G2's explicitly listed match transitions.
+Holding R0.13 open for a post-combat G2 caller would create a dependency cycle
+with the rendering gate that must pass before combat begins.
 
 ### Objective
 
@@ -1977,14 +1981,14 @@ Implement every framebuffer-based rendering path required by SSB64.
 
 * [x] framebuffer usage identified — RE-099: the one-time-snapshot-into-a-texture mechanism, exactly which 13 files use it (26 segment-`0x01` binds), and what a PSP implementation actually needs to build
 * [x] framebuffer texture paths implemented — RE-100: segment-`0x1` recognition, pack format support (`TextureDesc::role`, `VERSION` 14), and device-side capture-and-bind, verified on the real device profile with an unambiguous test-colour capture; RE-107 confirmed the shape generalizes archive-wide and the capture/bind mechanism itself works on a second, deliberately different file. RE-108 found a real correctness gap (the capture only stores the top of the real 220-texel-tall N64 buffer, so a tile sampling elsewhere in that range reads the wrong rows); RE-109 fixed it by rebasing each framebuffer-role primitive's UV by its own tile origin at pack time (unit-tested, packed-byte-diff-verified); RE-110 confirmed the fix on the real device by direct pixel measurement (the previously-black region now reads the exact captured test colour). RE-111 found and fixed a second, independent real bug in the same mechanism: the permanent 4:3 pillarbox scissor left columns `0..59` of the raw framebuffer solid black forever, and the capture read from absolute column 0 instead of the pillarbox's own left edge — fixed with a one-line offset, verified by a direct pixel scan finding zero black pixels on the object post-fix (was 28,993–34,584 pre-fix)
-* [ ] screen wipes implemented — RE-148 implements and PPSSPP-verifies the reusable capture/play/draw lifecycle through an off-by-default audit caller; the real results-screen state still does not exist to invoke it in normal gameplay
+* [x] screen wipes implemented — RE-146/147 resolve and pack the original eleven finite wipe animations; RE-148 implements their reusable capture/play/draw/eject lifecycle, original 45° transition camera, and PPSSPP-verifies Aeroplane at a deterministic midpoint. RE-149 records that normal match/results integration belongs to G2's match-transition work rather than this renderer task
 * [x] render-to-texture paths implemented where required — RE-099/RE-100: confirmed twice, independently, that the real mechanism has no render-to-texture pass to implement; this item is satisfied by there being nothing here that applies
-* [ ] framebuffer synchronization verified — RE-148 verifies the required frame boundary in PPSSPP: the battle frame renders and completes before the wipe can enter `Playing`; final verification remains tied to the future normal-game results entry
+* [x] framebuffer synchronization verified — RE-148's explicit state machine leaves the battle scene active while capture is requested, performs the copy only after `Gpu::end_frame` completes the GE frame, and permits `Playing` only after that completion; PPSSPP measures 3,040 exact source-clear pixels in the resulting wipe. RE-149 assigns the future normal-game trigger to G2 without weakening this renderer-side synchronization criterion
 * [x] visual verification completed — **all 13 LB-transition files are confirmed fully correct on the real device.** File 45's own "backing quad" question is fully retracted (RE-112 — it was never reachable geometry). The debug-viewer camera-framing gap that blocked 41/43/50 is fixed for good (RE-115 — `DrawState::force_no_cull`, scoped to `object_view` only). File 46's apparent diagonal black banding (RE-113) is retracted (RE-116) — a measurement artifact (an un-restricted pixel scan catching the same window-decoration confound RE-111 already documented), not a rendering defect; a close pixel scanline shows exact linear anti-aliased blending between real background and real magenta, and an exhaustive bounding-box-restricted census finds zero black pixels
 
 ### Evidence
 
-RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116, RE-146, RE-147, RE-148 in `docs/reverse-engineering.md`.
+RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, RE-114, RE-115, RE-116, RE-146, RE-147, RE-148, RE-149 in `docs/reverse-engineering.md`.
 
 ---
 
