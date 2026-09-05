@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-146)
+**Last updated:** 2026-09-05 (RE-148)
 
 ---
 
@@ -75,14 +75,32 @@ EBOOT SHA-256:
 Relevant commits: `930aafd` (source/ROM inventory) and `7c1da69`
 (packed runtime animations and replay verification).
 
+RE-148 adds `ResultsTransition`, a reusable four-phase PSP lifecycle:
+`Idle → AwaitingCapture → CaptureQueued → Playing`. A wipe request leaves the
+battle scene active for that frame, `Gpu::end_frame` synchronizes and copies
+it, and only then can the next frame tick/draw the wipe through the original
+45°/15:11 camera at `eye.z = 1100 / tan(22.5°)`. The off-by-default
+`transition_audit_capture` build triggers Aeroplane at fixed tick 240 and
+holds its midpoint for deterministic inspection. PPSSPP software rendering
+shows the packed animated wipe over Dream Land at 60 FPS, sampling the dark
+blue top rows of the completed stage frame; the emulator-content crop contains
+3,040 exact `(32,40,56)` source-clear pixels. Evidence is outside Git at
+`/home/alberto/ppsspp-test/re148/transition-held.png` (SHA-256
+`2c68212ba3d5dadc11467f695261ae2d2116cf89df5f19079a299afb8e14191a`).
+Audit EBOOT SHA-256:
+`114a83de8024bba4453a3cbbf647c3aff31e1b230a8dcc4f797004569303c3dc`.
+Normal EBOOT SHA-256:
+`fa8060771693b766375df44b98083785c9359d6fad5e9ac4b1d881ba6593ca44`.
+
 Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
-work resumes R0.13's two open acceptance items. Next, implement the minimal
-results-entry state that requests capture on the previous frame's completion
-and runs the selected 64/72-frame overlay. R0.14 still needs original-output comparison;
+work resumes R0.13's two open acceptance items. The reusable caller and frame
+boundary now exist; next is connecting them to the normal-game results entry
+once that state exists, then performing final synchronization verification.
+R0.14 still needs original-output comparison;
 material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
 validation. Combat remains locked. Physical PSP was not tested this session;
-R2 acceptance remains unperformed. Pre-existing uncommitted
-`tools/romtool/src/main.rs` diagnostic remains untouched.
+R2 acceptance remains unperformed. The completed RE-140 temporary diagnostic
+has been removed.
 
 ## Previous Task Status
 

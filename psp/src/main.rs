@@ -21,6 +21,7 @@ mod gu;
 mod input;
 mod meshdraw;
 mod play;
+mod results_transition;
 mod timing;
 
 use core::f32::consts::PI;
@@ -364,6 +365,11 @@ unsafe fn run() -> ! {
         material_anim.start(p);
     }
 
+    // R0.13's real lifecycle boundary: the trigger queues a capture while the
+    // battle frame still renders, and only enters the wipe after end_frame has
+    // synchronized and copied that completed frame (RE-148).
+    let mut results_transition = results_transition::ResultsTransition::new();
+
     // The gameplay slice: one fighter, placed at the stage's first spawn and
     // ticked against its collision every simulation step. This is the join
     // between the ported physics and the ported collision, and running it here
@@ -424,6 +430,21 @@ unsafe fn run() -> ! {
             // D-pad steps through the pack; held Z zooms out, A zooms in.
             let prev = pad.previous(0).buttons;
             let pressed = ssb_engine::input::newly_pressed(prev, state.buttons);
+            #[cfg(feature = "transition_audit_capture")]
+            if sim_frame_index == 240 {
+                if let Some(p) = &pack {
+                    results_transition.begin(p, 0);
+                }
+            }
+            #[cfg(feature = "transition_audit_capture")]
+            let transition_frozen = sim_frame_index >= 272;
+            #[cfg(not(feature = "transition_audit_capture"))]
+            let transition_frozen = false;
+            if !transition_frozen {
+                if let Some(p) = &pack {
+                    results_transition.tick(p);
+                }
+            }
             // SELECT/L is unused in stage view. It enters the R0.12 audit and
             // exits it again; left/right then walks every billboard in stable
             // pack order while up/down moves ten at a time.
@@ -712,6 +733,7 @@ unsafe fn run() -> ! {
                 material_anim.tick(p);
             }
         }
+        results_transition.queue_capture(&mut gpu);
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
         let mut dbg_bb = [0i32; 6];
@@ -1083,6 +1105,10 @@ unsafe fn run() -> ! {
             }
         }
 
+        if let Some(p) = &pack {
+            shown.0 += results_transition.draw(p, &mut gpu, &mut draw_state);
+        }
+
         let cpu_us = cpu.elapsed_us();
 
         // Which browser is driving, so the readout describes what is on screen
@@ -1292,6 +1318,7 @@ unsafe fn run() -> ! {
         }
 
         gpu.end_frame();
+        results_transition.capture_completed();
         last_frame_us = frame.elapsed_us();
     }
 }
