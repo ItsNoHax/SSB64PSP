@@ -710,7 +710,29 @@ unsafe fn run() -> ! {
                         let forward = (pl.camera.at - pl.camera.eye).normalized();
                         let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
                         let up = right.cross(forward);
-                        draw_state.billboard_camera = Some((right.to_array(), up.to_array()));
+                        // RE-132: `Kind48`'s own camera-pitch-locked basis --
+                        // collapse the camera's real X/Z position into a
+                        // single horizontal distance first (`objdisplay.c`
+                        // case 48's own `eye_z = sqrt(dx^2 + dz^2)`), so the
+                        // resulting `right` is always a world horizontal axis
+                        // (invariant to yaw) while `up`/the implied forward
+                        // still tilt with the camera's real vertical angle.
+                        let dx = pl.camera.at.x - pl.camera.eye.x;
+                        let dz = pl.camera.at.z - pl.camera.eye.z;
+                        let dist_xz = ssb_engine::math::sqrt(dx * dx + dz * dz);
+                        let pitch_forward = ssb_engine::math::Vec3::new(
+                            0.0,
+                            pl.camera.at.y - pl.camera.eye.y,
+                            -dist_xz,
+                        )
+                        .normalized();
+                        let pitch_right =
+                            pitch_forward.cross(ssb_engine::math::Vec3::Y).normalized();
+                        let pitch_up = pitch_right.cross(pitch_forward);
+                        draw_state.billboard_camera = Some(meshdraw::BillboardCamera {
+                            screen: (right.to_array(), up.to_array()),
+                            pitch_locked: (pitch_right.to_array(), pitch_up.to_array()),
+                        });
                         dbg_cam = pl.camera.eye.z;
                         [0.0, 0.0, 0.0]
                     } else {
