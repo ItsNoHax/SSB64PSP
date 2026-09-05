@@ -95,6 +95,22 @@ pub struct DrawState {
     /// the ROM's own `CULL_BACK`/`CULL_FRONT` state faithfully (RE-068), and
     /// a real camera always views authored geometry from its intended side.
     pub force_no_cull: bool,
+    /// `(right, up)` the real camera's own basis vectors resolve to this
+    /// frame, or `None` while the active view matrix is identity (RE-131:
+    /// the debug viewer's whole-stage overview and every other mode besides
+    /// the zoomed-in fighter-follow one).
+    ///
+    /// `billboard_place` (`Kind46`'s screen-aligned transform, RE-048/049)
+    /// used to load the model matrix as pure identity and rely on the *view*
+    /// matrix always being identity too, so "the object's own X/Y axes"
+    /// happened to already equal "the screen's X/Y axes" -- true only for a
+    /// camera that never rotates. RE-131 gave the debug viewer a real,
+    /// rotating camera, which silently broke that assumption for any
+    /// billboard rendered under it (found while wiring the camera in, not
+    /// by a separate audit): with `None` here, behaviour for every existing
+    /// caller is bit-for-bit unchanged; a caller that has set up a real view
+    /// matrix must also set this so `Kind46`'s billboards keep facing it.
+    pub billboard_camera: Option<([f32; 3], [f32; 3])>,
 }
 
 impl DrawState {
@@ -659,8 +675,29 @@ pub unsafe fn draw_object_posed(
             let (pos, sx, sy) = billboard_place(base, &local);
             sys::sceGumLoadIdentity();
             sys::sceGumTranslate(&ScePspFVector3 { x: pos[0], y: pos[1], z: pos[2] });
+            // RE-131: under a real (non-identity) view matrix, the object's
+            // own axes must be set to the camera's own right/up/forward for
+            // this to still be screen-aligned -- see `DrawState::
+            // billboard_camera`'s own doc comment for why this was not
+            // needed before. `None` (every mode except the real camera's
+            // own) leaves the basis at whatever `sceGumLoadIdentity` just
+            // set, identical to this code before RE-131.
+            if let Some((right, up)) = st.billboard_camera {
+                let forward = [
+                    right[1] * up[2] - right[2] * up[1],
+                    right[2] * up[0] - right[0] * up[2],
+                    right[0] * up[1] - right[1] * up[0],
+                ];
+                sys::sceGumMultMatrix(&ScePspFMatrix4 {
+                    x: ScePspFVector4 { x: right[0], y: right[1], z: right[2], w: 0.0 },
+                    y: ScePspFVector4 { x: up[0], y: up[1], z: up[2], w: 0.0 },
+                    z: ScePspFVector4 { x: forward[0], y: forward[1], z: forward[2], w: 0.0 },
+                    w: ScePspFVector4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
+                });
+            }
             // `rotate.x` is the in-plane spin; with the eye axes aligned to
-            // world axes that is a rotation about Z.
+            // world axes (or, now, the real camera's own axes) that is a
+            // rotation about local Z.
             sys::sceGumRotateZ(node.rest_rotate[0]);
             sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: 1.0 });
         } else {

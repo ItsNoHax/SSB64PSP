@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-131)
+**Last updated:** 2026-09-05 (RE-132)
 
 ---
 
@@ -12,71 +12,62 @@
 
 ## Current Task
 
-Three sessions in a row (RE-126/128/129/130) converged on the same
-conclusion: every remaining independently-fixable rendering gap was
-exhausted, and `R0.12`/`R0.13`/`R0.14` all ultimately need an actual
-game camera this project did not have. Asked the user how to proceed;
-the answer was to build a minimal real camera system. RE-131 (this
-session) did that.
+RE-131 (earlier this session) built a real, minimal battle camera
+(`gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`) to unblock `R0.12`/
+`R0.13`/`R0.14`. Wiring it in exposed a real, if narrow-angle, latent
+regression: `psp/src/meshdraw.rs`'s `Kind46` billboard code
+(RE-048/049) relied on the view matrix always being identity — true
+only under the debug viewer's old, never-rotating "face-on" camera — to
+make "the object's own axes" equal "the screen's axes". Under RE-131's
+real, rotating view matrix that assumption silently breaks. RE-132
+(this session) fixed it.
 
-**Researched `gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`** (the
-single-fighter, normal-stage camera) and independently verified every
-load-bearing formula directly against the source before writing any
-Rust — a delegated research pass had already gotten one formula subtly
-wrong (smoothed away two genuine discontinuities in the real pan-scale
-function), caught by reading the C directly. Ported it call for call as
-`ssb_game::camera`: interest-box framing from the fighter's position and
-facing, FOV lerp, viewport-fit distance with damping, look-at panning,
-and an eye-direction angle derived from the look-at point and the
-stage's own light-angle nudge. `gmCameraSetBoundsPosition`'s clamp and
-both hand-rolled diff/normalise/scale/add sequences reduce to this
-project's own existing, tested `Vec3::lerp` and `Bounds::clamp` — no new
-math primitives needed.
+**The fix.** `DrawState` gained `billboard_camera:
+Option<([f32; 3], [f32; 3])>` — `None` under every still-identity-view
+mode (reproducing the exact pre-RE-131 behaviour bit-for-bit), `Some((right,
+up))` under the real camera. The billboard draw path multiplies the
+model matrix by a basis built from `right`/`up`/their cross product
+before the existing spin and scale, so a flagged node's axes track the
+camera instead of the world. `main.rs` derives `right`/`up` from the
+same `eye`/`at` the view matrix already uses (the identical formula
+`Mat4::look_at` computes internally), reset to `None` unconditionally
+once per frame (matching `force_no_cull`'s own precedent) and set for
+real only inside the real-camera branch.
 
-**A second, independent finding along the way.** `light_angle.z`
-(`crates/ssb-rom/src/stage.rs`) was recorded as having no known reader —
-wrong: the real camera reads it too, for its own eye-direction angle,
-not lighting. Measured its real archive-wide values before assuming a
-unit convention: unlike `.x`/`.y` (degrees), `.z` is stored
-**pre-converted to radians** (confirmed both by the measured values and
-by the camera's own C code adding it with no conversion of its own).
-Extended `light_angle` to `[f32; 3]` and `StageDesc` to carry it
-(`pack::VERSION` 16 → 17).
+**Verified on-device, both branches.** Every mode except the real
+camera's own: zero differing pixels against the `regression_capture`
+golden capture. The zoomed-in real-camera mode (the same temporary,
+reverted `cam_distance` override RE-131 used): Dream Land's canopy
+billboards still render as clean, symmetric, non-degenerate shapes at
+this camera's current shallow pitch/yaw angles.
 
-**Wired into the render path without disturbing the existing debug
-camera.** A new `Gpu::set_view` loads a real `Mat4::look_at` (already
-implemented, previously unused anywhere in this codebase) into the GE's
-own View matrix — every mesh-drawing function already loads its own
-baked model matrix per node, so the separate View matrix composes for
-free; zero `meshdraw.rs` changes needed. The debug viewer's whole-stage
-overview mode is **completely unchanged** (confirmed: zero differing
-pixels against the `regression_capture` golden capture); only the
-zoomed-in "follow the fighter" mode now uses the real camera instead of
-a fixed, face-on placeholder — verified stable and sane over a 20-second
-run with real perspective and depth, not just "does not crash."
+**What this does and does not fix.** Corrects `Kind46`'s own
+screen-alignment to survive a real camera; does **not** implement
+`Kind48`/`Kind50`'s own distinct pitch-/yaw-locked transforms
+(RE-126's finding) — a `Kind48` node still gets `Kind46`'s (now
+camera-correct) treatment, not its real one. Hand-deriving those two
+matrices from `objdisplay.c` hit an unresolved branch (`var_s3`/`spC8`,
+selecting which world axis the lock applies to) this pass did not have
+enough context to confidently resolve without guessing — left as a
+clearly-scoped next step rather than shipped uncertain. See
+`docs/reverse-engineering.md` RE-131/RE-132 for the full account of
+both this session's changes.
 
-**Deliberately scoped down, each simplification documented, not
-silent**: no weapons, no multiplayer, no per-move camera zoom
-(`camera_zoom_frame`/`camera_zoom_range`), no idle-zoom-out, no
-entry/explain/dead-up modes, no pause-camera offset. Does not yet wire
-the camera's own angle into `R0.12`'s billboard code, or drive `R0.13`'s
-screen-wipe triggers (no match-transition state machine exists), or
-close `R0.14`'s "camera transforms verified" (needs checking against
-real footage, not just plausibility) — but all three now have a real,
-tested camera to build on instead of nothing. See
-`docs/reverse-engineering.md` RE-131 for the full account.
-
-`cargo test --workspace`: 413 → 418 passing (5 new). `cargo clippy
+`cargo test --workspace`: 413 → 418 passing (RE-131's 5 new tests;
+RE-132 added no new tests, since the fix lives entirely in the `psp`
+crate, not a library crate with a host test harness). `cargo clippy
 --release --workspace` and `cargo psp --release`/`--features
 regression_capture`: clean, same pre-existing 6-warning set.
 
-**Task-selection note for the next session.** The concrete next steps
-this unlocks: (1) decompose the camera's `eye`/`at` into pitch/yaw and
-wire it into `Kind48`'s billboard transform (R0.12's own next step per
-RE-126); (2) extend `ssb_game::camera` past the single-fighter case if
-multiplayer ever becomes relevant; (3) `R0.5`'s one remaining item and
-`R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
-respectively, unchanged by this session.
+**Task-selection note for the next session.** The concrete next step for
+`R0.12`: resolve `objdisplay.c`'s `var_s3`/`spC8` branch (what selects
+it, and whether SSB64 always takes the same one), then port
+`sGCMatrixMod1F`/`Mod2F`'s two LookAt-based matrices using the real
+camera's own `eye`/`at`, now available. Also still open: (1) extend
+`ssb_game::camera` past the single-fighter case if multiplayer ever
+becomes relevant; (2) `R0.5`'s one remaining item and `R0.6`'s remaining
+three items are still blocked on `R2`/`R0.7` respectively, unchanged by
+this session.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -143,7 +134,43 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-131 (this session) built a real, minimal battle camera
+RE-132 (this session) found and fixed a real regression RE-131's own new
+camera introduced: `Kind46` billboards silently broke under a real,
+rotating view matrix. See `docs/reverse-engineering.md` RE-132 for the
+full account; summary:
+
+* **The bug.** `billboard_place` and its caller load the model matrix
+  as pure identity, relying on "the object's own axes" already equalling
+  "the screen's axes" — true only when the view matrix is identity too,
+  which it always was before RE-131. A real, rotating view matrix
+  silently invalidates that for any billboard drawn under it.
+* **The fix.** `DrawState` gained `billboard_camera:
+  Option<([f32; 3], [f32; 3])>` — `None` under every still-identity-view
+  mode (bit-for-bit the old behaviour), `Some((right, up))` under the
+  real camera. The billboard draw path multiplies the model matrix by a
+  basis built from `right`/`up`/their cross product before the existing
+  spin/scale. `main.rs` derives `right`/`up` from the same `eye`/`at`
+  the view matrix already uses — the identical formula `Mat4::look_at`
+  computes internally — reset to `None` once per frame (matching
+  `force_no_cull`'s own precedent).
+* **Verified on-device, both branches.** Every mode except the real
+  camera's own: zero differing pixels against the golden capture. The
+  zoomed-in real-camera mode: Dream Land's canopy billboards still
+  render as clean, symmetric, non-degenerate shapes.
+* **What this does not fix.** `Kind48`/`Kind50`'s own distinct
+  pitch-/yaw-locked transforms (RE-126) are still not implemented — a
+  `Kind48` node gets `Kind46`'s (now camera-correct) treatment, not its
+  real one. `objdisplay.c`'s `var_s3`/`spC8` branch (which world axis
+  the lock applies to) is unresolved; left as a scoped next step rather
+  than guessed at.
+* `cargo test --workspace`: 418 passing, unaffected (fix lives entirely
+  in the `psp` crate). `cargo clippy --release --workspace` and `cargo
+  psp --release` (both feature states): clean, same pre-existing
+  6-warning set.
+
+## Previous Task Status
+
+RE-131 (an earlier session) built a real, minimal battle camera
 (`gm/gmcamera.c`'s `gmCameraDefaultFuncCamera`, ported and verified) to
 unblock `R0.12`/`R0.13`/`R0.14`, per the user's own explicit direction
 after three sessions found every smaller independently-fixable rendering
@@ -205,7 +232,7 @@ account; summary:
   override used to force the zoomed-in mode for a screenshot) fully
   reverted.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-130 (an earlier session) measured every real alpha-blend formula
 archive-wide and shipped a fix, closing `R0.6`'s "blending verified"
