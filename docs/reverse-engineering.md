@@ -10998,3 +10998,37 @@ This closes R0.12's final acceptance item and moves Billboard Correctness to
 `COMPLETE`. The next ordered implementation task is R0.13's real screen-wipe
 caller and synchronization path; combat remains locked behind the rendering
 gate.
+
+---
+
+## RE-146 — The production LB wipe contract is 11 finite results-screen animations
+
+Traced the missing caller before attaching capture to an arbitrary viewer
+button. The production call is
+`mn/mnvsmode/mnvsresults.c::mnVSResultsFuncStart`: unless the match ended in
+No Contest, results startup calls `lbTransitionSetupTransition`, creates the
+dedicated transition camera, chooses one of `dLBTransitionDescs`' eleven
+entries, and starts `lbTransitionProcUpdate`. The debug cube is the only other
+caller. Setup copies the previously displayed battle frame before results
+rendering begins; update advances the DObj animation and ejects it when
+`anim_frame <= 0`. The required order is therefore: snapshot the completed
+battle frame, enter results, then draw and advance a finite overlay.
+
+Added `ssb_rom::transition::ASSETS`, matching the original descriptor order
+and exact file-local DObj/animation-table offsets for files 40–50. The new
+read-only `transition_inventory` checks those constants against the user's
+identified ROM, resolves each graph and joint table, replays every non-null
+`AObjEvent32` stream with the existing original-derived `StageJoint`
+interpreter, and rejects a missing, empty, malformed or nonterminating entry.
+
+The real-ROM inventory resolves all eleven. IDs 0–9 terminate after exactly
+64 frames; Curtain (ID 10) terminates after 72. Node/active-script counts are:
+Aeroplane 17/9, Check 9/8, Gakubuthi 2/1, Kannon 3/2, Star 2/1, Sudare1 9/8,
+Sudare2 3/2, Camera 2/1, Block 30/29, RotScale 2/1, Curtain 9/8.
+
+This is continued progress, not completion of R0.13. The pack does not yet
+carry these generic object-animation relationships and the PSP has no results
+scene to invoke them. The next bounded change is to append the eleven
+object/animation relationships after the dense fighter/stage animation block,
+then add the minimal results-entry rendering state that requests capture at
+the previous frame's completion and runs the selected 64/72-frame overlay.

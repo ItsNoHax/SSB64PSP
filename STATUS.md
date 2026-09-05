@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-145)
+**Last updated:** 2026-09-05 (RE-146)
 
 ---
 
@@ -45,13 +45,27 @@ Selected-image manifest SHA-256:
 pack SHA-256:
 `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
 
+RE-146 resumes R0.13 with original-source and real-ROM evidence. The sole
+production caller is VS Results startup: capture the last completed battle
+frame once, enter results, create the 45° transition camera, select one of 11
+descriptors, play its DObj animation, and eject it at end. The new
+`ssb_rom::transition::ASSETS` table records the exact files 40–50 graph/joint
+offsets. `transition_inventory` resolves and replays all eleven against the
+user's ROM: IDs 0–9 terminate at frame 64 and Curtain terminates at frame 72;
+all graphs and active scripts resolve without error.
+
+R0.13 investigation verification: the transition table unit test passed;
+`cargo clippy -p ssb-rom --lib --example transition_inventory -- -D warnings`
+passed; the inventory completed against the identified USA ROM; and all 423
+workspace tests passed (36 engine, 112 game, 275 ROM). No PSP artifact changes
+in this investigation-only step.
+
 Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
-work resumes R0.13's two open acceptance items: connect the already-verified
-framebuffer capture/bind path to a real screen-wipe state transition, then
-verify capture timing/synchronization through that caller. The repository
-still has no match-transition state machine, so the next step is to trace the
-smallest original `lbTransition` caller/state sequence and implement only the
-rendering-required slice. R0.14 still needs original-output comparison;
+work resumes R0.13's two open acceptance items. Next, append the eleven
+source-resolved object animations to the pack after its dense fighter/stage
+animation block, then implement the minimal results-entry state that requests
+capture on the previous frame's completion and runs the selected 64/72-frame
+overlay. R0.14 still needs original-output comparison;
 material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
 validation. Combat remains locked. Physical PSP was not tested this session;
 R2 acceptance remains unperformed. Pre-existing uncommitted
