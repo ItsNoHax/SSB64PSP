@@ -9946,3 +9946,116 @@ blend-enable experiment, `tools/romtool`'s `re129decodelist` subcommand)
 fully reverted; `git diff --stat` against the pre-session baseline is
 empty for both files. Default (Dream Land) build re-screenshotted clean
 after reverting (pixel-normal, 60 FPS, no panics, flowers present).
+
+---
+
+## RE-130 — Classified the real alpha-blend formula archive-wide and shipped it: `PLAN.md` R0.6's "blending verified" item is closed
+
+RE-129 found the shape of the problem (this project never decoded
+`G_SETCOMBINE`'s alpha formula) and one reversible experiment that
+narrowed it further (naive blend-enable breaks Dream Land's flowers).
+This entry measured every real alpha formula archive-wide, classified
+them, and shipped a fix — closing an item that has been open since
+RE-069.
+
+**Measured every real `TRANSLUCENT` primitive's alpha formula, not just
+the one already investigated.** A temporary, reverted `eprintln!` in
+`mesh.rs`'s main conversion loop (gated `#[cfg(feature = "std")]`, run
+through the real `romtool pack` build) printed every resolved
+`(hi, lo, two_cycle)` combiner whenever `material.translucent` was true.
+Archive-wide, only **9 distinct explicit combiner values** appear (plus
+a large "no combiner ever set locally" bucket, ~28%, left untouched —
+the same "genuinely absent per-graph state" shape RE-106/R0.7 already
+describes for `prim_color`). Decoded each one's alpha sub-fields by hand
+from `gbi.h`'s macros (RE-129's method) and classified them:
+
+* **`TEXEL0_ALPHA` alone — the archive-wide majority**, ~5,950 of ~8,800
+  real, textured, single-cycle `TRANSLUCENT` primitives (plus smaller
+  matching buckets: 646 untextured, 255 sharing `(PRIM-ENV)*TEXEL0+ENV`'s
+  RGB shape, ~90 more via two-cycle passthrough not classified here).
+  This is Dream Land's decorative flowers' own real shape — exactly the
+  one RE-129's experiment broke by assuming a shade multiply applied
+  universally.
+* **`TEXEL0_ALPHA * SHADE_ALPHA`**, 1,820 occurrences — Dream Land's
+  canopy highlight (RE-069/070/071's own long-standing mystery).
+* **`TEXEL0_ALPHA * PRIM_ALPHA`**, ~43 occurrences — real, measured, but
+  never on-device-verified. Deliberately left unclassified (declined)
+  rather than guessed at; a `TRANSLUCENT` primitive with this shape
+  keeps today's pre-existing safe default (detected, not blended).
+* **Two-cycle mode, ~93 occurrences (<1%), declined entirely.** Its
+  second cycle's `D`-slot code `0` means `LOD_FRACTION` (an RDP-computed,
+  per-pixel mip-blend fraction), not `COMBINED_ALPHA` the way the `A`/`B`
+  slots' code `0` does — the alpha multiplexer table is context-dependent
+  per slot, the identical trap the *colour* table already sprang once
+  (RE-129). Since this ROM never actually engages real RDP LOD (RE-127:
+  `G_TL_LOD` is 0/131 archive-wide), what real hardware would output
+  there is not confidently known — declined rather than assumed to match
+  the single-cycle case.
+
+**Implemented the classification as a new, independent axis alongside
+the existing RGB one.** `mesh.rs` gained `AlphaBlend` (`TexelOnly` /
+`Shade`) and `combiner_alpha_blend(hi, lo, two_cycle)`, mirroring
+`combiner_shade_scale`/`combiner_texture_blend`/`combiner_flat_color`'s
+existing pattern but operating on the alpha sub-fields those functions
+never touch. Four new unit tests pin the exact archive-measured words
+for the canopy highlight, the flowers, the declined `PRIM_ALPHA` case,
+and confirm two-cycle mode declines regardless of its bits.
+
+**Baked the correct vertex alpha at the same point `prim_color`/
+`texture_blend`/`flat_color` already do.** `Builder::push_vertex` now
+applies `alpha_blend` after those three (independent axis, applied
+last): `TexelOnly` forces the vertex alpha to `255` (most vertex alpha
+bytes are not a coverage value at all — `push_vertex`'s own long-standing
+note, confirmed catastrophically by RE-129's experiment), `Shade` leaves
+the raw byte untouched, captured before any RGB branch could have
+overwritten it (`prim_color`'s own branch sets `v.rgba[3]` too, for an
+unrelated reason — RE-106).
+
+**A new pack flag, gated on both axes agreeing.** `pack::flags::ALPHA_BLEND`
+(`PrimDesc::flags` bit 9, `VERSION` 15 → 16 — additive, no struct growth,
+bumped anyway per RE-049/RE-069's own precedent that a silent behaviour
+change is worse than a version bump) is set only when a primitive is
+both `TRANSLUCENT` *and* its alpha formula was classified. A
+`TRANSLUCENT` primitive without it is completely unchanged from before
+this session: detected, not blended, today's original safe default.
+
+**Wired up real blending on the device, gated on both flags together.**
+`psp/src/meshdraw.rs`'s long-standing "deliberately not wired" comment
+(RE-069 through RE-071) is replaced with `sceGuEnable(Blend)` plus the
+standard `SrcAlpha`/`OneMinusSrcAlpha` equation (matching `sf64-psp`'s
+own validated approach, RE-069), gated on
+`flags::TRANSLUCENT | flags::ALPHA_BLEND` both being set.
+
+**Verified on-device, not just by pixel-statistic.** Rebuilt the shipped
+pack (`VERSION` 16, 5368.2 KiB — unchanged size, additive flag only) and
+screenshotted Dream Land: the canopy body itself is pixel-identical from
+the default camera framing (the highlight surface is not visible from
+that angle, matching an earlier session's own note about this same
+texture family), **the flowers survive intact** (the specific case
+RE-129's naive experiment broke), and **two small decorative props
+(matching benches on each side of the tree) that were previously fully
+invisible now render correctly** — confirmed via a clean before/after
+pixel diff against the `regression_capture` golden capture: only those
+two symmetric prop regions and a few 1-pixel flower-tip antialiasing
+edges differ, nothing else in the scene moves. Re-verified deterministic
+across a 9-second timing spread (`--seconds 6` vs `15`, 0 differing
+pixels), matching R0.17's own methodology. The golden reference
+(`tests/golden/r0-dream-land-default.png`) is updated to this new,
+more-correct capture — a deliberate, understood content change, not
+drift.
+
+**What this closes.** `PLAN.md` R0.6's "blending verified" acceptance
+item, open since RE-069: `TRANSLUCENT` primitives now render with real
+alpha blending wherever this model can classify the formula with
+confidence (the two shapes actually measured archive-wide), and fall
+back to the pre-existing safe default everywhere it cannot (the rare
+`PRIM_ALPHA` shape, two-cycle mode, and the ~28% with no local combiner
+at all) — a scoped, honestly-bounded fix, not a guess extended past what
+was actually measured.
+
+`cargo test --workspace`: 409 → 413 passing (4 new). `cargo clippy
+--release --workspace` and `cargo psp --release --features
+regression_capture`/plain (both `psp` feature states): clean, same
+pre-existing warning set. All temporary census code (`mesh.rs`'s
+`eprintln!`) fully reverted; `git diff --stat` shows only the permanent
+classification/baking/flag/wiring changes plus the golden image update.

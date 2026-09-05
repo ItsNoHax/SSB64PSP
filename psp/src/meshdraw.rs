@@ -385,32 +385,36 @@ unsafe fn apply_material(
             sys::sceGuDisable(GuState::AlphaTest);
         }
 
-        // `TRANSLUCENT` is deliberately not wired to `GuState::Blend` yet.
-        // `crates/ssb-rom/src/pack.rs` already records it correctly (RE-069:
-        // the render mode's blend equation genuinely reads the framebuffer
-        // weighted by `1 - alpha`, cross-checked against `refs/BattleShip`
-        // and matched to `sf64-psp`'s real `sceGuBlendFunc` call), but
-        // enabling it on Dream Land's own translucent highlight surface
-        // (file 104's list at 0x708/0x820/0xA78) produced a harsh
-        // checkerboard, not a soft highlight -- the RDP resolves this
-        // surface's dithered, binary-alpha CI4 texture through multisampled
-        // coverage the GE has no equivalent for, the same open problem
-        // RE-053 already found for the canopy's *opaque* dithering (a
-        // pattern that should look smooth reads as raw noise once sampled
-        // point-for-point instead of filtered).
-        //
-        // RE-071: re-checked after RE-070 pre-blurred this exact texture for
-        // the opaque path, in case that also made blending safe. It did
-        // not -- re-enabling blend against the blurred texture produced a
-        // *different*, more disruptive failure (blown-out, oversaturated
-        // highlights that erased the flowers and most other detail), not an
-        // improvement. Also ruled out unpremultiplied-alpha blurring as the
-        // cause (a premultiplied variant produced an identical result).
-        // Neither dither coarseness nor alpha premultiplication is the
-        // culprit; the real cause is still unknown. Do not re-run either of
-        // those two experiments without new evidence -- see RE-071 for what
-        // was tried. Deferred pending further investigation, not silently
-        // dropped -- see `PLAN.md` R0.6.
+        // `TRANSLUCENT` alone was deliberately not wired to `GuState::Blend`
+        // for a long time (RE-069 through RE-071): enabling it unconditionally
+        // on Dream Land's own translucent highlight surface (file 104's list
+        // at 0x708/0x820/0xA78) produced a harsh checkerboard, and re-testing
+        // after RE-070's dither fix made it *worse* (blown-out highlights).
+        // RE-129 found the real cause: this project never decoded
+        // `G_SETCOMBINE`'s *alpha* formula at all (only the colour one), so
+        // "enable blend, let the GE's existing `Modulate` do the rest" was
+        // silently multiplying texture alpha by whatever a vertex's own alpha
+        // byte happened to hold -- meaningful `SHADE_ALPHA` for this one
+        // surface, but garbage for most `TRANSLUCENT` primitives archive-wide
+        // (`push_vertex`'s own long-standing note: "Mario's vertices are all
+        // zero"). RE-130 classified the real shapes and `flags::ALPHA_BLEND`
+        // (`crates/ssb-rom/src/pack.rs`) now only sets alongside `TRANSLUCENT`
+        // when a primitive's vertices were actually baked for one of them --
+        // gating on both together is what makes this finally safe.
+        if p.flags & (flags::TRANSLUCENT | flags::ALPHA_BLEND)
+            == (flags::TRANSLUCENT | flags::ALPHA_BLEND)
+        {
+            sys::sceGuEnable(GuState::Blend);
+            sys::sceGuBlendFunc(
+                sys::BlendOp::Add,
+                sys::BlendFactor::SrcAlpha,
+                sys::BlendFactor::OneMinusSrcAlpha,
+                0,
+                0,
+            );
+        } else {
+            sys::sceGuDisable(GuState::Blend);
+        }
     }
 
     if st.last_texture != Some(p.texture) {

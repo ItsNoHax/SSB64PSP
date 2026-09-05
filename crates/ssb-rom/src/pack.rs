@@ -93,7 +93,17 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    remaining cause (after RE-101's `G_TEXTURE` UV-scale fix) of fighter
 ///    faces reading as a jumbled, "melted" texture. Grows `TextureDesc::SIZE`
 ///    36 -> 40.
-pub const VERSION: u32 = 15;
+/// 16 added `flags::ALPHA_BLEND` to `PrimDesc::flags` (RE-129/RE-130): a
+///    `TRANSLUCENT` primitive whose alpha-blend formula was also classified,
+///    so its vertices were baked for real blending rather than left at
+///    today's safe "detected, not blended" default. No struct grows, but an
+///    older pack's vertices were never baked with this in mind, so a reader
+///    enabling blend from `TRANSLUCENT` alone against one would darken or
+///    hide geometry that render mode never intended -- the same silent-
+///    format-change risk RE-049 already flagged once, hence the bump despite
+///    no size change (matching `VERSION` 9's own precedent for exactly this
+///    shape of change).
+pub const VERSION: u32 = 16;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -204,6 +214,16 @@ pub mod flags {
     /// inspection, matching `TEXTURE_BLEND`'s precedent, not because the
     /// device needs it to render correctly.
     pub const FLAT_COLOR: u32 = 1 << 8;
+    /// RE-129/RE-130: `TRANSLUCENT` alone is not enough to safely enable
+    /// real blending -- this bit additionally means the primitive's own
+    /// alpha-blend formula was classified into one of the two shapes this
+    /// model reproduces (`MeshMaterial::alpha_blend`), and the vertices
+    /// were baked accordingly (`push_vertex`). `psp/src/meshdraw.rs` only
+    /// enables `GuState::Blend` when both `TRANSLUCENT` and this bit are
+    /// set; a `TRANSLUCENT` primitive without it keeps today's safe
+    /// default (detected, not blended) exactly as before this flag
+    /// existed.
+    pub const ALPHA_BLEND: u32 = 1 << 9;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -1263,6 +1283,12 @@ impl PackWriter {
             }
             if m.translucent {
                 f |= flags::TRANSLUCENT;
+            }
+            // RE-129/RE-130: only set alongside `TRANSLUCENT`, and only
+            // when the alpha formula was actually classified -- see
+            // `flags::ALPHA_BLEND`'s own doc comment.
+            if m.translucent && m.alpha_blend.is_some() {
+                f |= flags::ALPHA_BLEND;
             }
             if m.texture_blend.is_some() {
                 f |= flags::TEXTURE_BLEND;
