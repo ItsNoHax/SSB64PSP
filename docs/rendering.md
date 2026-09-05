@@ -30,8 +30,8 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 
 | Area | Status | Evidence/Test | Remaining work |
 | --- | --- | --- | --- |
-| Geometry | COMPLETE | `PLAN.md` R0.8 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); `romtool mesh` converts every root display list, 0 failures archive-wide | Billboard scale/orientation/texture-orientation still open under R0.12 |
-| Projection | IN_PROGRESS | `PLAN.md` R0.14: FOV sourced from the decompilation (`38.0°`, RE-084); viewport/aspect device-measured and source-audited (RE-034, RE-082); depth mapping confirmed against the `psp` crate's own documented convention (RE-085) | No real game camera exists yet (only a free-roaming debug camera); no N64-vs-PSP side-by-side comparison (R0.17) |
+| Geometry | COMPLETE | `PLAN.md` R0.8 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); `romtool mesh` converts every root display list, 0 failures archive-wide | Animated signed billboard scale and per-node visual validation remain open under R0.12 (RE-142) |
+| Projection | IN_PROGRESS | `PLAN.md` R0.14: FOV, viewport/aspect and depth sourced and checked (RE-034/082/084/085); RE-131 ports the real single-fighter battle camera and RE-132/133 feed its bases to billboard placement | Camera coverage beyond the current single-fighter subset and an original-output comparison remain open |
 | Texture decode | 🟢 85% | `PLAN.md` R0.3 `COMPLETE`: RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded, unit-tested; 638/665 bound textures packed | 27 unconverted, each root-caused and attributed elsewhere: 26 to R0.13, 1 to R0.7 |
 | CI4 | COMPLETE | `PLAN.md` R0.4: unit-tested decode; dominant format (1192/3483 `G_SETTILE`) | None |
 | CI8 | COMPLETE | `PLAN.md` R0.4: unit-tested decode | None |
@@ -513,3 +513,17 @@ to runtime-created transforms, outside the ROM descriptor path. Pack version
 posed matrices do not supply animated spin angles yet. All shipped selected
 rest spin angles are zero; a synthetic nonzero-angle round-trip regression
 pins the distinction without claiming an observed visual improvement.
+
+### Animated billboard hierarchy and scale (RE-142)
+
+Every packed animation was intersected with the 109 billboard nodes. Six are
+direct stage-animation joints and none changes rotation in 240 frames; fighter
+animations reference none. Another six have null scripts but descend from an
+animated joint. `StageAnimator::compose` now propagates the parent transform
+through those rest-local children, matching the original DObj hierarchy.
+
+The persistent `billboard_animation_inventory` example records the affected
+source graph/node and dynamic ranges. All six direct joints animate scale.
+Three Kind44 nodes reach small negative uniform scales, while the PSP path
+currently takes matrix-column lengths and therefore loses the sign. Animated
+signed scale remains open; RE-134's proof applies to rest poses only.
