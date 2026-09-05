@@ -91,6 +91,7 @@ Audit EBOOT SHA-256:
 `114a83de8024bba4453a3cbbf647c3aff31e1b230a8dcc4f797004569303c3dc`.
 Normal EBOOT SHA-256:
 `fa8060771693b766375df44b98083785c9359d6fad5e9ac4b1d881ba6593ca44`.
+Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.12 — Billboard Correctness` (RE-145). Next eligible
 work resumes R0.13's two open acceptance items. The reusable caller and frame
