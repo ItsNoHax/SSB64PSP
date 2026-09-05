@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-137)
+**Last updated:** 2026-09-05 (RE-138)
 
 ---
 
@@ -12,37 +12,46 @@
 
 ## Current Task
 
-RE-136 (earlier this session) spot-checked 3 of 7 non-Dream-Land stages
-with billboard content and left 4 explicitly unchecked. RE-137 (this
-session) checked the remaining 4, completing full stage-level coverage.
+RE-137 left R0.12 with one item lacking any concrete investigative lead:
+"texture orientation verified". RE-138 (this session) asked the
+prerequisite question directly — does a *separate* billboard-specific
+texture-orientation mechanism even exist to verify? — rather than
+assuming it needed the same visual-spot-check treatment as everything
+else.
 
-**Spot-checked on-device** (the same temporary, reverted `stage_index`
-override): Peach's Castle (`GRCastleMap` — floating pennant billboards),
-`GRInishieMap`, Sector Z (`GRSectorMap` — small billboard clusters near
-the Great Fox), and Saffron City (`GRYamabukiMap`). All four render as
-coherent, non-degenerate scenes.
+**Checked both sides of the question directly.** This project's own
+`mesh.rs` (decodes every display list's UVs) has zero references to
+`transform_kind`/billboard concepts anywhere — a billboard's UVs go
+through the exact same code path as any other primitive, no conditional
+branch exists. Re-read `objdisplay.c`'s `gcPrepDObjMatrix` cases 44-50
+(the original game, already read closely for RE-133) specifically for
+texture/UV logic this time: none exists, every case only ever touches
+matrix/scale state. The only texture-related code nearby is the
+unrelated `MObj` material-animation sprite-cycling mechanism (already
+R0.9/R0.10's own scope).
 
-**Combined with RE-136: all 8 of 8 stages archive-wide with any
-`FLAG_BILLBOARD` content have now been visually spot-checked on-device
-at least once**, not just Dream Land — real, meaningfully more complete
-coverage than existed at the start of this session. Still not full
-closure of "all flagged billboard nodes verified": this checks
-whole-scene plausibility per stage, not that each of the 109
-individually-flagged nodes specifically is correct. Left open, with the
-remaining gap now precisely characterized rather than vague. See
-`docs/reverse-engineering.md` RE-136/RE-137 for the full account.
+**Conclusion: no separate mechanism exists to verify, on either side.**
+A billboard's texture renders exactly as correctly as R0.5 already
+established for texture UV/wrap/coordinate behavior archive-wide
+(RE-067/101/102/128) — this item was the same, already-answered
+question asked again under a different name, not a distinct open one.
+Closed on that structural basis; a visual spot-check (Peach's Castle's
+own pennant billboard) was attempted but wasn't distinctive enough to be
+load-bearing evidence either way.
 
-`cargo test --workspace`: 419 passing, unaffected (spot-check only, no
-shipped code changed). `cargo clippy --release --workspace`: clean.
+**R0.12 now has 5 of 6 acceptance items closed.** Only "all flagged
+billboard nodes verified" remains, needing per-node (not per-stage)
+confirmation — the one item in this arc genuinely requiring more
+mechanical breadth than insight. See `docs/reverse-engineering.md`
+RE-138 for the full account.
 
-**Task-selection note for the next session.** `R0.12`'s two remaining
-items: "all flagged billboard nodes verified" now needs per-node (not
-per-stage) confirmation to fully close, a much larger undertaking than
-this session's stage-level pass; "texture orientation verified" still
-has no concrete investigative lead identified (unlike every other R0.12
-item this multi-session arc closed, which each started from a specific
-decomp-code question) — worth a fresh look at what the item is actually
-asking before assuming it needs the same visual-spot-check treatment.
+`cargo test --workspace`: 419 passing, unaffected — this entry is a
+code-reading exercise, no code changed. `cargo clippy --release
+--workspace`: clean.
+
+**Task-selection note for the next session.** `R0.12`'s one remaining
+item needs per-node visual confirmation across the 109 flagged nodes, a
+larger undertaking than any single session in this arc has attempted.
 Also still open: (1) extend `ssb_game::camera` past the single-fighter
 case if multiplayer ever becomes relevant; (2) `R0.5`'s one remaining
 item and `R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
@@ -113,7 +122,39 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-137 (this session) finished what RE-136 started: spot-checked the
+RE-138 (this session) closed R0.12's "texture orientation verified"
+item by establishing that no separate mechanism exists to verify, rather
+than by more visual spot-checking. See `docs/reverse-engineering.md`
+RE-138 for the full account; summary:
+
+* **Asked the prerequisite question directly**: does a billboard-specific
+  texture-orientation mechanism (a UV flip, a view-based mirror) exist
+  at all, separate from ordinary texture mapping? Checked both sides
+  rather than assuming.
+* **This project's own code**: `mesh.rs` has zero references to
+  `transform_kind`/billboard concepts — billboard UVs decode through the
+  exact same path as any other primitive's.
+* **The original game's own code**: re-read `objdisplay.c`'s
+  `gcPrepDObjMatrix` cases 44-50 specifically for texture/UV logic —
+  none exists, only matrix/scale state. The only nearby texture-related
+  code is the unrelated `MObj` material-animation sprite-cycling
+  mechanism (already this project's own R0.9/R0.10 scope).
+* **Conclusion**: no separate mechanism exists on either side — this
+  item was the same question R0.5's already-closed UV/wrap/coordinate
+  items (RE-067/101/102/128) already answered, asked again under a
+  different name. Closed on that structural basis, not a visual
+  spot-check (one was attempted against Peach's Castle's own pennant
+  billboard but wasn't distinctive enough to be load-bearing evidence).
+* **R0.12 now has 5 of 6 acceptance items closed.** Only "all flagged
+  billboard nodes verified" remains, needing per-node confirmation — a
+  larger, more mechanical undertaking than any single session in this
+  arc has attempted.
+* `cargo test --workspace`: 419 passing, unaffected (code-reading only,
+  no code changed). `cargo clippy --release --workspace`: clean.
+
+## Previous Task Status
+
+RE-137 (an earlier session) finished what RE-136 started: spot-checked the
 remaining 4 of 8 stages archive-wide with billboard content, completing
 full stage-level visual coverage. See `docs/reverse-engineering.md`
 RE-137 for the full account; summary:
@@ -138,7 +179,7 @@ RE-137 for the full account; summary:
   --release --workspace`: clean. All temporary code fully reverted;
   confirmed via a clean `regression_capture` golden-capture match.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-136 (an earlier session) made real, incremental progress on R0.12's last
 open item ("all flagged billboard nodes verified") without claiming to
