@@ -10477,3 +10477,36 @@ honestly, rather than marked closed on a partial sample.
 --release --workspace`: clean. All temporary code (the `romtool` census,
 the `stage_index` override) fully reverted; confirmed via a clean
 `regression_capture` golden-capture match after reverting.
+
+---
+
+## RE-137 — Every stage with billboard content has now been spot-checked on-device at least once
+
+RE-136 spot-checked 3 of the 7 non-Dream-Land stages with billboard
+content and left the remaining 4 explicitly unchecked, rather than
+overclaim coverage. This entry checked the other 4.
+
+**Spot-checked (the same temporary, reverted `stage_index` override):**
+file 259 (`GRCastleMap`, Peach's Castle — floating blue pennant/flag
+billboards above the roof), file 260 (`GRInishieMap`), file 262
+(`GRSectorMap`, Sector Z — small dark billboard clusters near the Great
+Fox), and file 264 (`GRYamabukiMap`, Saffron City). All four render as
+coherent, non-degenerate scenes; no missing textures, no collapsed
+geometry, no obviously misplaced sprites — the same bar RE-049's
+original Dream Land check and RE-136's own three used.
+
+**Combined with RE-136, all 8 of 8 stages archive-wide with any
+`FLAG_BILLBOARD` content have now been visually spot-checked on-device
+at least once**, not just Dream Land. This is real, meaningfully more
+complete coverage than existed before this pair of entries — but still
+not a claim that "all flagged billboard nodes verified" is fully
+satisfied: this pass judged whole-scene plausibility per stage, not
+per-node confirmation that each of the 109 individually-flagged nodes
+in particular is correct (a node could in principle be present but
+subtly mispositioned within an otherwise-plausible-looking scene without
+being caught by this level of check). Left open, honestly, with the
+gap now precisely characterized rather than vague.
+
+`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+--release --workspace`: clean. All temporary code fully reverted;
+confirmed via a clean `regression_capture` golden-capture match.

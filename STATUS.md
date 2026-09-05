@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-136)
+**Last updated:** 2026-09-05 (RE-137)
 
 ---
 
@@ -12,60 +12,41 @@
 
 ## Current Task
 
-RE-133 (earlier this session) closed R0.12's "orientation verified" item
-and left "scale verified" open as a separate, still-unmeasured lead.
-RE-134/RE-135 (this session) measured both of R0.12's remaining
-easily-checkable items, closing them without needing further code
-changes.
+RE-136 (earlier this session) spot-checked 3 of 7 non-Dream-Land stages
+with billboard content and left 4 explicitly unchecked. RE-137 (this
+session) checked the remaining 4, completing full stage-level coverage.
 
-**RE-134: billboard scale.** RE-126 found the real per-axis scale
-formula multiplies a node's own Y-scale by the *ancestor chain's*
-cumulative X-scale, not this project's own composed-basis-column-length
-approach — identical only if every ancestor applies uniform scale. A
-temporary, reverted `romtool` census walked all 109 real `FLAG_BILLBOARD`
-nodes' own ancestor chains: **zero have any non-uniform-scale ancestor**
-(max depth 3). Confirmed the detector itself is sound (not just quiet)
-via a second pass finding 98 real non-uniform-scale nodes elsewhere in
-the archive. Result: the two formulas never actually diverge for any
-real billboard node — closes "scale verified" by measurement, no code
-change needed.
+**Spot-checked on-device** (the same temporary, reverted `stage_index`
+override): Peach's Castle (`GRCastleMap` — floating pennant billboards),
+`GRInishieMap`, Sector Z (`GRSectorMap` — small billboard clusters near
+the Great Fox), and Saffron City (`GRYamabukiMap`). All four render as
+coherent, non-degenerate scenes.
 
-**RE-135: billboard alpha/blending.** R0.12's "alpha behavior verified"
-item named `translucent` billboards (29.7%, double the archive-wide
-rate) as "the blocker", tracked under RE-069/RE-071's blending mystery —
-which RE-130 (an earlier session) already resolved generally. This
-checked whether that fix actually reaches billboards specifically:
-**25 of 35 real translucent billboard primitives (71%) already carry
-`flags::ALPHA_BLEND`** and render with real, classified blending — the
-remaining 10 are the same already-documented, deliberately-declined
-categories RE-130 found archive-wide, not a new gap. Closes "alpha
-behavior verified".
+**Combined with RE-136: all 8 of 8 stages archive-wide with any
+`FLAG_BILLBOARD` content have now been visually spot-checked on-device
+at least once**, not just Dream Land — real, meaningfully more complete
+coverage than existed at the start of this session. Still not full
+closure of "all flagged billboard nodes verified": this checks
+whole-scene plausibility per stage, not that each of the 109
+individually-flagged nodes specifically is correct. Left open, with the
+remaining gap now precisely characterized rather than vague. See
+`docs/reverse-engineering.md` RE-136/RE-137 for the full account.
 
-**R0.12 now has 4 of 6 acceptance items closed** (billboard types,
-camera-facing/orientation, scale, alpha) — up from 2 at the start of
-this multi-session arc. RE-136 (this session) made real, incremental
-(not exhaustive) progress on the remaining "all flagged billboard nodes
-verified" item: found which stages carry billboard content at all (8 of
-41, via a temporary, reverted `romtool` census), then spot-checked three
-more of them on-device beyond Dream Land — Zebes, the jungle stage, and
-a "break the targets" bonus stage — all rendering as coherent,
-non-degenerate scenes. Explicitly **not** claimed as closing the item:
-4 of 8 relevant stages are checked, and even those only at
-whole-scene-plausibility level, not per-node confirmation. See
-`docs/reverse-engineering.md` RE-134/RE-135/RE-136 for the full account.
-
-`cargo test --workspace`: 419 passing, unaffected by any of RE-134/135/136
-(all measurement/spot-check only, no shipped code changed). `cargo
-clippy --release --workspace`: clean.
+`cargo test --workspace`: 419 passing, unaffected (spot-check only, no
+shipped code changed). `cargo clippy --release --workspace`: clean.
 
 **Task-selection note for the next session.** `R0.12`'s two remaining
-items ("texture orientation verified", "all flagged billboard nodes
-verified") are the natural next step if continuing this thread — for the
-latter, 4 more stages with billboard content remain unchecked
-on-device. Also still open: (1) extend `ssb_game::camera` past the
-single-fighter case if multiplayer ever becomes relevant; (2) `R0.5`'s
-one remaining item and `R0.6`'s remaining three items are still blocked
-on `R2`/`R0.7` respectively, unchanged by this session.
+items: "all flagged billboard nodes verified" now needs per-node (not
+per-stage) confirmation to fully close, a much larger undertaking than
+this session's stage-level pass; "texture orientation verified" still
+has no concrete investigative lead identified (unlike every other R0.12
+item this multi-session arc closed, which each started from a specific
+decomp-code question) — worth a fresh look at what the item is actually
+asking before assuming it needs the same visual-spot-check treatment.
+Also still open: (1) extend `ssb_game::camera` past the single-fighter
+case if multiplayer ever becomes relevant; (2) `R0.5`'s one remaining
+item and `R0.6`'s remaining three items are still blocked on `R2`/`R0.7`
+respectively, unchanged by this session.
 
 `R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
 session) investigated its open "orientation verified"/"scale verified"
@@ -132,7 +113,34 @@ regardless of real-world timing).
 
 ## Task Status
 
-RE-136 (this session) made real, incremental progress on R0.12's last
+RE-137 (this session) finished what RE-136 started: spot-checked the
+remaining 4 of 8 stages archive-wide with billboard content, completing
+full stage-level visual coverage. See `docs/reverse-engineering.md`
+RE-137 for the full account; summary:
+
+* **Spot-checked the 4 stages RE-136 left unchecked** (same temporary,
+  reverted `stage_index` override): Peach's Castle (`GRCastleMap`),
+  `GRInishieMap`, Sector Z (`GRSectorMap`), Saffron City
+  (`GRYamabukiMap`). All four render as coherent, non-degenerate scenes
+  — no missing textures, no collapsed geometry, no misplaced sprites.
+* **Result: all 8 of 8 stages archive-wide with any `FLAG_BILLBOARD`
+  content have now been visually spot-checked on-device at least once**
+  (Dream Land, Zebes, the jungle stage, a bonus stage, plus these 4) —
+  complete stage-level coverage, up from 1 stage (Dream Land only) at
+  the start of this billboard-verification thread.
+* **What this still does not close.** Whole-scene plausibility per
+  stage is not the same as per-node confirmation for each of the 109
+  individually-flagged nodes — a node could in principle be present but
+  subtly wrong within an otherwise-fine-looking scene. "All flagged
+  billboard nodes verified" stays open, with the remaining gap now
+  precisely characterized.
+* `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
+  --release --workspace`: clean. All temporary code fully reverted;
+  confirmed via a clean `regression_capture` golden-capture match.
+
+## Previous Task Status
+
+RE-136 (an earlier session) made real, incremental progress on R0.12's last
 open item ("all flagged billboard nodes verified") without claiming to
 close it. See `docs/reverse-engineering.md` RE-136 for the full account;
 summary:
@@ -156,7 +164,7 @@ summary:
   --release --workspace`: clean. All temporary code fully reverted;
   confirmed via a clean `regression_capture` golden-capture match.
 
-## Previous Task Status
+## Earlier Task Status
 
 RE-134/RE-135 (an earlier session) measured R0.12's two remaining
 easily-checkable acceptance items, closing both without needing further
