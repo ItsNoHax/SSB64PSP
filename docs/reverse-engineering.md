@@ -11062,3 +11062,39 @@ tests pass (36 engine, 112 game, 277 ROM), the `ssb-rom` transition verifier
 and strict clippy pass, and the normal PSP release build succeeds. R0.13 stays
 `IN_PROGRESS`: the remaining work is the results-entry rendering caller and
 its capture-timing verification.
+
+---
+
+## RE-148 — Results wipes now preserve the original capture-before-entry frame boundary
+
+Implemented `psp::results_transition::ResultsTransition` as four explicit
+phases. `begin` resolves one of RE-147's packed animations and its object but
+does not draw it. `queue_capture` requests the snapshot while the battle scene
+is still the current frame. Only the call immediately after `Gpu::end_frame`
+may advance `CaptureQueued` to `Playing`, ensuring GE completion and the CPU
+copy precede the first results-overlay frame. Playback then uses the existing
+`StageAnimator` and removes itself when every original event stream ends.
+
+Drawing uses the source camera contract from `lbTransitionMakeCamera`: 45°
+vertical FOV, 15:11 aspect, origin look-at, and eye distance
+`1100 / tan(22.5°) = 2655.6348`. The off-by-default
+`transition_audit_capture` feature enters Aeroplane at fixed simulation tick
+240 and freezes at its midpoint, after capture, solely to make PPSSPP evidence
+deterministic.
+
+PPSSPP 1.20.4 software rendering shows the packed animated Aeroplane over
+Dream Land at 60 FPS. Its photo geometry samples the dark blue top-row pixels
+from the completed stage frame, and the stage remains unchanged beneath it. A
+pixel census of the emulator-content crop finds 3,040 exact `(32,40,56)`
+source-clear pixels, so the captured surface is measurable rather than inferred
+only from its dark appearance.
+Screenshot and build evidence are stored outside Git under
+`/home/alberto/ppsspp-test/re148/`. All 425 workspace tests pass, strict
+`romtool` clippy passes after removing the obsolete RE-140 diagnostic, and
+normal plus audit PSP release builds succeed.
+
+This is continued R0.13 progress. The renderer-side lifecycle and exact frame
+boundary now exist, but the project still has no normal-game results state to
+invoke them. The two acceptance boxes remain open until that real entry is
+available and its synchronization is verified; the audit feature is evidence,
+not a substitute game-state trigger.
