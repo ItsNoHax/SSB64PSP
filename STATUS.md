@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-139)
+**Last updated:** 2026-09-05 (RE-140)
 
 ---
 
@@ -12,142 +12,33 @@
 
 ## Current Task
 
-RE-138 closed R0.12's last no-lead item by showing no separate question
-existed to answer. RE-139 (this session) applied the same move to
-R0.6's own last never-investigated item, "unsupported material behavior
-identified" — which had no notes of its own at all, unlike every other
-item on that task.
-
-**Asked whether a new investigation was actually needed.** R0.6's own
-history already accumulated a dozen-plus `RE-` entries measuring
-specific material-system gaps. Checked whether they already named every
-real divergence, just never gathered into one place — they did.
-
-**Compiled, not measured, five already-cited gaps**: (1) combiner shapes
-outside shade-scale/texture-blend/flat-constant (~2.5% of combiner-
-bearing primitives, RE-079/080); (2) `G_SETCOMBINE`'s alpha formula
-outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`) — the rare
-`PRIM_ALPHA` multiply and two-cycle mode RE-130 measured and declined;
-(3) per-object real lighting, standing in as RE-065's single baked
-neutral key light; (4) `G_SHADE` cleared while a combiner still reads
-`SHADE` (RE-120), undefined real-hardware behavior, mostly in
-not-yet-reachable combat content; (5) `prim_color`/`env_color`'s
-"genuine absence" cases (RE-079), a downstream effect of `R0.7`'s own
-still-open material-table gaps, not a new classification failure.
-
-**Nothing here is new**; every item was already measured and cited
-elsewhere in this task's own history. The entry's only contribution is
-naming them in one place. No code changed, no new measurement taken.
-See `docs/reverse-engineering.md` RE-139 for the full account.
-
-`cargo test --workspace`: 419 passing, unaffected. `cargo clippy
---release --workspace`: clean.
-
-**Task-selection note for the next session.** `R0.6` now has only four
-items open, all genuinely blocked (three on `R0.7`'s own material-table
-pairing gaps, one on a missing per-object lighting system) — this task
-has no further "compile what's already known" or "is there even a
-question here" moves left, unlike `R0.12` did. `R0.12`'s one remaining
-item needs per-node visual confirmation across 109 flagged nodes, a
-larger undertaking than any single session in this arc has attempted.
-Also still open: (1) extend `ssb_game::camera` past the single-fighter
-case if multiplayer ever becomes relevant; (2) `R0.5`'s one remaining
-item is still blocked on `R2`.
-
-`R0.12 — Billboard Correctness` remains `VERIFYING`. RE-126 (an earlier
-session) investigated its open "orientation verified"/"scale verified"
-items by reading the real `gcPrepDObjMatrix` algorithm directly rather
-than trusting the enum names `Kind46`/`Kind48`/`Kind50` already in use.
-**Found a real, measured, previously-uncounted gap**: kinds 47/48 and
-49/50 build their MVP from camera-axis-*locked* LookAt matrices
-(pitch-locked and yaw-locked respectively), not the same fully
-screen-aligned transform kinds 44/45/46 use — a materially different
-algorithm this project currently approximates with one shared,
-screen-aligned `billboard_place` for all four kinds. A temporary,
-reverted census through the real `romtool pack` build found **47 real
-`Kind48` nodes archive-wide, including Dream Land's own file 104** — the
-*largest* individual billboard category (43% of all 109 flagged nodes,
-splitting RE-049's original 81 into 34 `Kind46` + 47 `Kind48`; `Kind50`
-remains the only confirmed-unused one at 0/3117, RE-063). Not yet
-visibly wrong on screen because doing so requires a camera that
-yaws/pitches relative to the object — neither RE-049's one forced test
-rotation nor the current, still-face-on debug/gameplay camera ever
-varies along the axis the two transforms disagree on. Also found a
-related, smaller, **unconfirmed** lead: the real per-axis scale formula
-multiplies a node's own Y-scale by the ancestor chain's cumulative
-*X*-scale, not this project's composed-basis-column-length approach —
-identical only if every ancestor's own scale is uniform, not measured
-either way this pass.
-
-**This does not close R0.12's open items** — it replaces two unexamined
-gaps with measured, understood, and honestly-still-open ones. Fixing
-`Kind48` properly needs: (1) a pack-format change preserving which kind
-a node had, not just one collapsed `FLAG_BILLBOARD` bit, and (2) the
-render call knowing the camera's own eye/at position decomposed into
-pitch/yaw, which `PLAN.md` R0.14 (this task's own second dependency)
-does not have yet ("an actual game camera" is still an open R0.14 item)
-— this finding gives that item a concrete, quantified reason to need
-doing, rather than a hypothetical one.
-
-**Per `PLAN.md`'s task ordering, this session's investigation found every
-currently `IN_PROGRESS`/`VERIFYING` R0.x rendering-correctness task is
-now blocked on one of two things this project does not have yet, not on
-more `romtool`-side investigation:** `R0.7`/`R0.4`/`R0.6` on upstream
-decomp typing (RE-125, exhausted again); `R0.12`/`R0.14` on an actual
-game camera system; `R0.13` on a game-state system (per an earlier
-session's own finding). None of these is a "smallest appropriate fix"
-away from closing without either new upstream decomp data or a genuine
-architectural addition (a real camera/game-state layer) — which is
-larger-scoped work this session did not start unprompted. The next
-session should read this note and `PLAN.md`'s own dependency graph
-before picking a task, rather than assume an easy next item remains.
-
-`R0.7 — Missing Material Tables` advanced significantly in an earlier
-session this same day (RE-125: paired 70 → 90 archive-wide, unpaired
-57 → 37, via a systematic re-application of RE-078's own search-plus-
-decomp-cross-check method; also found and fixed a real determinism bug
-in R0.17's own debug-HUD-freezing logic while re-verifying it).
-`R0.18 — Reference-Port Comparative Audit` closed `COMPLETE` in an
-earlier session (RE-124: `oot-PSP` cloned and compared against `sf64-psp`
-and this project's own choices; closed R0.5's filtering item, added a
-new lead to R0.6's blending item, recorded an R3 performance lead).
-`R0.17 — Visual Regression Methodology` closed `COMPLETE` in an earlier
-session (RE-123, refined by RE-125: a `regression_capture` Cargo feature
-freezes every per-frame mutation once 240 simulation ticks have run and
-never draws the debug HUD, producing a byte-identical golden capture
-regardless of real-world timing).
+`R0.12 — Billboard Correctness`: build a repeatable per-node inventory to
+support the remaining visual verification criterion.
 
 ## Task Status
 
-RE-139 (this session) closed R0.6's "unsupported material behavior
-identified" item by compiling five already-measured gaps into one place,
-rather than opening new investigation. See
-`docs/reverse-engineering.md` RE-139 for the full account; summary:
+`VERIFYING` — read-only pack diagnostic implemented with source graph/node
+identifiers and structural measurements (RE-140). This does not establish visual
+correctness or satisfy the remaining per-node acceptance criterion.
 
-* **The item had no notes of its own at all** — unlike every other item
-  on `R0.6`, which each accumulated a dozen-plus `RE-` entries. Checked
-  whether that history already answered the question before assuming it
-  needed new work.
-* **It did.** Five real divergences, each already measured and cited
-  elsewhere: (1) combiner shapes outside shade-scale/texture-blend/
-  flat-constant (~2.5% of combiner-bearing primitives, RE-079/080); (2)
-  `G_SETCOMBINE`'s alpha formula outside `TEXEL0_ALPHA` (alone or ×
-  `SHADE_ALPHA`) — the rare `PRIM_ALPHA` multiply and two-cycle mode
-  RE-130 measured and declined; (3) per-object real lighting, standing
-  in as RE-065's single baked neutral key light; (4) `G_SHADE` cleared
-  while a combiner still reads `SHADE` (RE-120), undefined real-hardware
-  behavior, mostly in not-yet-reachable combat content; (5)
-  `prim_color`/`env_color`'s "genuine absence" cases (RE-079), a
-  downstream effect of `R0.7`'s own still-open material-table gaps.
-* **Nothing new was discovered or measured**; the entry's only
-  contribution is naming these five in one place instead of leaving the
-  acceptance item blank. No code changed.
-* `cargo test --workspace`: 419 passing, unaffected. `cargo clippy
-  --release --workspace`: clean.
-* **What this leaves.** `R0.6` now has exactly four items open, all
-  genuinely blocked (three on `R0.7`'s material-table gaps, one on a
-  missing per-object lighting system) — no further "compile what's
-  known" moves remain for this task.
+Camera and Kind48 placement already shipped (RE-131–133); the previous
+current-state narrative incorrectly repeated their earlier blockers.
+R0.14 still needs original-output comparison. R0.4/R0.6/R0.7 retain their
+material/lighting gaps; R0.5 retains physical-hardware validation needs.
+R0.13 still needs a transition caller. Combat remains locked.
+
+Pre-existing uncommitted `tools/romtool/src/main.rs` diagnostic is preserved.
+Last completed work: RE-140 inventory and state reconciliation; prior commit
+`7d4afcb` (RE-139). Current commit: the focused RE-140 commit containing this entry.
+Verification: 109 nodes, 47 pitch-locked, zero structural anomalies;
+271 ssb-rom tests passed; example clippy passed with warnings denied.
+Evidence and pack hash: docs/reverse-engineering.md RE-140.
+Documentation updated: STATUS.md, PLAN.md, docs/porting-status.md,
+docs/reverse-engineering.md. No runtime/extraction changes.
+Next eligible work: R0.12 per-node visual validation, using the inventory's
+source identifiers to select and isolate nodes; whole-stage plausibility
+and rest-pose structure alone do not close this criterion.
+Physical PSP: R2 acceptance not performed; no hardware tested this session.
 
 ## Previous Task Status
 
