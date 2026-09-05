@@ -118,7 +118,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    the old screen-aligned approximation, exactly what shipped before),
 ///    but bumped anyway to keep this struct's own provenance unambiguous,
 ///    matching every other flag addition's own precedent.
-pub const VERSION: u32 = 18;
+/// 19 preserves Kind46's Z-spin separately from spin-free kinds 44/48/50.
+///    Older packs lack the selector and must be rebuilt (RE-141).
+pub const VERSION: u32 = 19;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -428,11 +430,7 @@ pub struct NodeDesc {
     pub rest_translate: [f32; 3],
     pub rest_rotate: [f32; 3],
     pub rest_scale: [f32; 3],
-    /// `DObjDesc.id & 0xF000`, the matrix kind the original asks for.
-    ///
-    /// Only [`NodeDesc::FLAG_BILLBOARD`] is acted on. It lives in what used to
-    /// be this struct's tail padding, so a pack written before it existed reads
-    /// back as zero — no billboards, which is exactly the old behaviour.
+    /// Renderer flags derived from the source matrix kind (not the raw id).
     pub flags: u32,
 }
 
@@ -441,10 +439,22 @@ impl NodeDesc {
     pub const SIZE: usize = 112;
     pub const NO_MESH: u32 = u32::MAX;
     pub const NO_PARENT: u32 = u32::MAX;
-    /// The node is a screen-aligned sprite: `gcPrepDObjMatrix` kinds 45-48
-    /// build its matrix from the projection basis rather than its own rotation,
-    /// so it always faces the camera (RE-048).
+    /// Camera-relative placement for ROM matrix kinds 44/46/48/50.
+    /// Kind46 spins around Z; kinds 44/48/50 ignore authored rotation.
     pub const FLAG_BILLBOARD: u32 = 1 << 0;
+    /// Kind46 uses the descriptor's Z angle for screen-plane spin (RE-141).
+    pub const FLAG_BILLBOARD_SPIN_Z: u32 = 1 << 2;
+
+    /// Rest-pose spin for ROM-derived billboard kinds. Dynamic animation
+    /// angles are not represented by this accessor.
+    pub fn billboard_rest_spin(&self) -> f32 {
+        if self.flags & Self::FLAG_BILLBOARD_SPIN_Z != 0 {
+            self.rest_rotate[2]
+        } else {
+            0.0
+        }
+    }
+
     /// Set alongside [`NodeDesc::FLAG_BILLBOARD`] for `Kind48` specifically
     /// (RE-126/RE-132): real hardware builds this kind's matrix from
     /// `sGCMatrixMod1F`, a *camera-pitch-locked* `LookAt` (`objdisplay.c`
@@ -1418,35 +1428,17 @@ impl PackWriter {
                 rest_translate: node.desc.translate,
                 rest_rotate: node.desc.rotate,
                 rest_scale: node.desc.scale,
-                // Kinds 45-50 and `0x8000` are all camera-relative: none of
-                // them multiply the node's own rotation into the MVP
-                // (`gcPrepDObjMatrix` cases 44-50 in `objdisplay.c`; 44 is
-                // `0x8000`/`RecalcRotRpyRSca`, the only one of this group that
-                // skips the sin/cos spin term entirely). Every shipped
-                // `0x8000` node's `rotate` is `[0, 0, 0]` (checked across the
-                // whole archive, RE-062), so treating it as a spin-0
-                // `FLAG_BILLBOARD` node reuses the already-verified `Kind46`
-                // path (RE-048, RE-049) exactly. `0x1000`/`Kind50` (case 50)
-                // is structurally identical to `Kind48` (case 48) -- same
-                // move-word layout, same per-node scale math -- just built
-                // from `sGCMatrixMod2F` (locked to the camera's yaw) instead
-                // of `sGCMatrixMod1F` (locked to the camera's pitch). RE-132
-                // confirmed (not just by archive census, RE-063) that
-                // `sGCMatrixMod2F` is never actually computed during normal
-                // SSB64 gameplay -- `Kind50` is genuinely dead code, not
-                // merely unused content -- so it stays folded into `Kind46`'s
-                // treatment rather than getting its own (unreachable, and so
-                // unverifiable) transform. `Kind48` gets its own
-                // `FLAG_BILLBOARD_PITCH_LOCKED` bit, RE-132 having confirmed
-                // its real matrix *is* reachable and real hardware's own
-                // branch selection during normal play (see that flag's own
-                // doc comment).
+                // gcSetupCommonDObjs emits only kinds 44/46/48/50 from
+                // ROM descriptors. Case 46 reads rotate.z; 44/48/50 never
+                // read rotation. Case 45's rotate.x path is runtime-only.
                 flags: match node.desc.transform_kind() {
                     crate::scene::TransformKind::Kind48 => {
                         NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_PITCH_LOCKED
                     }
-                    crate::scene::TransformKind::Kind46
-                    | crate::scene::TransformKind::Kind50
+                    crate::scene::TransformKind::Kind46 => {
+                        NodeDesc::FLAG_BILLBOARD | NodeDesc::FLAG_BILLBOARD_SPIN_Z
+                    }
+                    crate::scene::TransformKind::Kind50
                     | crate::scene::TransformKind::RecalcRotRpyRSca => NodeDesc::FLAG_BILLBOARD,
                     _ => 0,
                 },
@@ -3896,13 +3888,37 @@ mod tests {
     }
 
     #[test]
+    fn billboard_spin_uses_z_only_for_rom_kind_46() {
+        use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+        // Deliberately distinct angles catch the old rotate.x shortcut and
+        // accidental spinning of Kind48's authored nonzero Z rotations.
+        for (id, expected) in [(0x4001, -0.75), (0x8001, 0.0), (0x2001, 0.0), (0x1001, 0.0)] {
+            let graph = SceneGraph {
+                offset: 0x100,
+                nodes: alloc::vec![DObjNode {
+                    desc: DObjDesc {
+                        id,
+                        dl: None,
+                        translate: [0.0; 3],
+                        rotate: [0.25, 0.5, -0.75],
+                        scale: [1.0; 3],
+                    },
+                    parent: None,
+                }],
+            };
+            let mut writer = PackWriter::new();
+            writer.add_object(&graph, 104, |_| None, &[]);
+            let bytes = writer.finish();
+            let pack = Pack::open(&bytes).unwrap();
+            let node = pack.node(0).unwrap();
+            assert_eq!(node.rest_rotate, [0.25, 0.5, -0.75]);
+            assert_eq!(node.billboard_rest_spin(), expected, "kind {id:#x}");
+        }
+    }
+
+    #[test]
     fn a_recalc_node_is_flagged_as_a_spin_free_billboard() {
-        // `gcPrepDObjMatrix` case 44 (`0x8000`/`RecalcRotRpyRSca`,
-        // `objdisplay.c`) never touches `dobj->rotate` at all -- it is the
-        // same camera-relative MVP replacement as kinds 46/48, just with the
-        // sin/cos spin term dropped. Every shipped `0x8000` node's `rotate`
-        // is `[0, 0, 0]` (RE-061), so reusing `FLAG_BILLBOARD`'s spin-from-
-        // `rest_rotate[0]` path is exact, not an approximation.
+        // Case 44 ignores rotation, unlike case 46 (RE-141).
         use crate::scene::{DObjDesc, DObjNode, SceneGraph};
         let sprite = DObjDesc {
             id: 0x8001,

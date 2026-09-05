@@ -501,3 +501,15 @@ describe exactly that order. `GuVertex` is therefore
 Reordering those fields renders garbage with no error. It must also be
 16-byte aligned for GE DMA, which is why vertex buffers are wrapped in
 `psp::Align16`.
+
+
+### Billboard rest-pose spin (RE-141)
+
+The pack's billboard flags distinguish camera basis and spin independently.
+`FLAG_BILLBOARD_SPIN_Z` selects the authored Z angle only for ROM Kind46;
+Kind44/48/50 ignore authored rotation. Case45's X-angle convention belongs
+to runtime-created transforms, outside the ROM descriptor path. Pack version
+19 is required. `NodeDesc::billboard_rest_spin` supplies the PSP draw call;
+posed matrices do not supply animated spin angles yet. All shipped selected
+rest spin angles are zero; a synthetic nonzero-angle round-trip regression
+pins the distinction without claiming an observed visual improvement.

@@ -10656,3 +10656,62 @@ PSP were not run. No pack rebuild needed: this only reads the existing pack.
 Corrected stale current-state prose in STATUS, PLAN and porting status which
 still described the RE-131–133 camera/basis implementation as missing.
 The pre-existing uncommitted romtool diagnostic was left unchanged.
+
+
+## RE-141 — Correct billboard spin semantics by ROM matrix kind
+
+While tracing the per-node verification path, found `meshdraw.rs` applied
+`rest_rotate[0]` to every billboard. This came from RE-048's case-45 example,
+not the ROM descriptor path. `objanim.c::gcSetupCommonDObjs` (2178–2198)
+maps high bits to cases 44/46/48/50 and copies descriptor rotation unchanged.
+`objdisplay.c::gcPrepDObjMatrix` case 46 (902 onward) reads `rotate.z`;
+case 45 reads X, but is not emitted by this ROM setup path. Cases 44, 48,
+and 50 do not read rotation. Earlier generalizations that all these cases
+spin from X are retracted. BattleShip's `G_MW_MATRIX` handler (3794 onward)
+preserves the patched MVP rather than assigning a separate spin convention;
+it corroborates tracing the original matrix construction as the authority.
+
+Extended the persistent inventory with all three authored angles and the
+selected spin. Before correction, all 109 nodes had X=0. Only two had any
+nonzero rotation: file 108, graph 0x8B18, local nodes 3/4, Kind48,
+Z=+/-0.349066. Those must remain spin-free. All 34 Kind46 nodes have zero
+rest angles. Therefore the mismatch is latent in current rest-pose visuals,
+not an explanation for a measured bad screenshot.
+
+Implemented `FLAG_BILLBOARD_SPIN_Z` only for Kind46 and
+`NodeDesc::billboard_rest_spin`, consumed by the PSP draw path. Kinds
+44/48/50 return zero even when authored angles are nonzero. Pack version
+19 prevents old packs silently lacking the selector. The regression test
+round-trips each kind with distinct nonzero XYZ angles through the writer
+and reader, and checks the same accessor used by the PSP.
+
+Verification:
+* Targeted test passed; workspace tests: 420 passed (36 engine, 112 game,
+  272 ROM).
+* `cargo clippy -p ssb-rom --lib --example billboard_inventory -- -D warnings`
+  passed. Broader `--workspace --all-targets -- -D warnings` failed on existing
+  `texture.rs:434–435` identity/erasing operations and the pre-existing
+  uncommitted `re140billboardsanity` dead-code warning; left those unchanged.
+* Rebuilt `assets/generated/ssb64.pak` with `romtool pack`; reload passed.
+  Inventory: 109 billboards, 47 pitch-locked, 34 Z-spin kind, zero structural
+  anomalies; all selected rest spin angles zero.
+* `cargo psp --release --features regression_capture` built with the existing
+  six-warning set. PPSSPP software captures before/after, 8 seconds each:
+  zero differing pixels via `tools/compare-screenshot.sh`; inspected the
+  resulting Dream Land image, FPS overlay 60.0. Staged pack is byte-identical
+  to the newly generated pack (`cmp`).
+* Capture directories: `/home/alberto/ppsspp-test/re141-before/` and
+  `/home/alberto/ppsspp-test/re141-after/`. Initial attempt using `/tmp` failed
+  because Flatpak could not read that private path; rerunning under home
+  succeeded. This was a harness path error, not a renderer failure.
+* Pack SHA-256: `68162d5f1616dcb63107187a646269ba2259bcca03d8a7cf375b50690e845c1c`.
+  Regression EBOOT SHA-256: `7fa9962bd4c102fec606398253710e812b55b6715fba718c22165d118441ae67`.
+* Normal `cargo psp --release` also rebuilt successfully after captures,
+  leaving the default artifact interactive. Physical PSP not tested.
+  Per-node visual validation remains open.
+
+Scope: rest-pose spin only. Animated billboard angles are still not supplied
+separately to the draw path (posed matrices replace world placement while
+this accessor reads rest angles); this is an explicit remaining validation
+question, not evidence of animated correctness. No claim that R0.12 is
+complete or that its whole-node acceptance is satisfied.
