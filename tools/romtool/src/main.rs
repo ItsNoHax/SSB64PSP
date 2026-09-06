@@ -2323,6 +2323,25 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-159: the explanation screen constructs its control-stick interface
+    // with `gcSetupCustomDObjs` followed by `gcAddMObjAll` in the same source
+    // call sequence. The static code therefore names file 198's otherwise
+    // ambiguous graph/table pair directly; its five demand matches are not
+    // evidence enough to select the table by themselves.
+    {
+        let (file, graph, table) = (198u32, 0x5300u32, 0x5028u32);
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,

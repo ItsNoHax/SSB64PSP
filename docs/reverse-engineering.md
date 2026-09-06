@@ -11508,3 +11508,28 @@ the current viewer, so this is source/pipeline validation rather than a visual
 PPSSPP or physical-PSP claim.
 
 **Confidence: certain for all five mappings.**
+
+---
+
+## RE-159 — Explanation-screen control-stick material table follows the original call sequence (`PLAN.md` R0.6/R0.7)
+
+`romtool mobj --file 198 --search` found five demand-compatible candidates for
+the `SCExplainGraphics` control-stick graph, so the archive alone could not
+identify its material table. The original scene code does: `scexplain.c` first
+calls `gcSetupCustomDObjs` with `llSCExplainGraphicsStickDObjDesc`, then calls
+`gcAddMObjAll` on that same GObj with `llSCExplainGraphicsStickMObjSub`.
+`198_SCExplainGraphics.c` identifies those symbols at `0x5300` and `0x5028`.
+
+Added the source-recorded pair `file 198: 0x5300 → 0x5028` to `load_all`.
+The table parses as the graph's two-node material sequence and its MObj starts
+at `0x5048`. `romtool mobj --file 198` reports no unnamed graph and no
+chain/demand mismatch; archive-wide counts change `118 → 119` paired graphs,
+`9 → 8` unpaired graphs, and `448 → 449` matching nodes. `romtool textures`
+changes `703 → 704` bound and `674 → 675` packed textures, retaining the same
+29 understood failures. The rebuilt pack reloads cleanly, SHA-256
+`5e624123d352ab9cf1718628db9124b1cd7c27b5c9e23dfc9b78faacfad3efd8`.
+`cargo +1.98.0 fmt --all -- --check`, strict `cargo +1.98.0 clippy
+--workspace --all-targets -- -D warnings`, and `cargo +1.98.0 test --workspace
+--all-targets` pass (433 tests).
+
+**Confidence: certain.**

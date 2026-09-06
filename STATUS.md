@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-158)
+**Last updated:** 2026-09-06 (RE-159)
 
 ---
 
@@ -15,12 +15,25 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 9 unpaired graphs; per-object lighting remains the
+can disambiguate its 8 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-158 resolves five formerly-unpaired special-move effect
+`IN_PROGRESS`. RE-159 resolves the explanation screen's control-stick graph
+from the direct `gcSetupCustomDObjs` → `gcAddMObjAll` call sequence in
+`scexplain.c`: file 198 `0x5300 → 0x5028`. Its five demand-compatible table
+candidates were insufficient on their own; the matching `SCExplainGraphics`
+relocData symbols establish the relationship. `romtool mobj --file 198`
+reports no unnamed graph and zero chain/demand mismatches; archive-wide it
+reports 119 paired, 8 unpaired and zero mismatches across 449 nodes. `romtool
+textures` rises to 704 bound / 675 packed / 29 understood failures. The
+rebuilt pack reloads cleanly and has SHA-256
+`5e624123d352ab9cf1718628db9124b1cd7c27b5c9e23dfc9b78faacfad3efd8`.
+Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
+pass.
+
+RE-158 resolves five formerly-unpaired special-move effect
 graphs using direct original-source `EFDesc` records: Link Spin Attack in file
 353 (`0x11C0 → 0x1038`), Samus Grapple Beam in file 349 (`0x380 → 0x210`),
 Captain Falcon Kick in file 350 (`0xB08 → 0x960`), Jigglypuff Sing in file 351
