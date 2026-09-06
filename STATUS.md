@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-152)
+**Last updated:** 2026-09-06 (RE-153)
 
 ---
 
@@ -15,12 +15,27 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 37 unpaired graphs; per-object lighting remains the
+can disambiguate its 27 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-152 geometrically isolated Fox's black region to head
+`IN_PROGRESS`. RE-153 resolves all ten formerly-unpaired file-35 emblem
+graphs from the original's explicit parallel `dobjdescs[]`/`mobjsubs[]` call
+pairs in `mnCharactersMakeEmblem` and `mnVSResultsMakeEmblem`. The typed
+leading `MObjSub **..._pre` tables in `35_FTEmblemModels.c` map one-to-one to
+the Mario, Donkey, Metroid, Fox, Zelda, Yoshi, F-Zero, Kirby, PMonsters and
+Mother graphs, with no demand-search choice. `romtool mobj --file 35` reports
+10/10 paired and zero mismatches; archive-wide it reports 100 paired, 27
+unpaired and zero mismatches across 417 nodes. These untextured emblem chains
+do not change the generated pack (SHA-256 remains
+`5129687a33310934790c0ff8c49a8915ee74717391723cd4f6ae9c91849d4e7e`).
+Verification for RE-153: `cargo test --workspace` passes all 433 tests
+(36 engine, 118 game, 279 ROM); strict release-workspace Clippy passes; and
+the normal PSP release build succeeds with the existing six warnings. Physical
+PSP testing was not performed.
+
+RE-152 geometrically isolated Fox's black region to head
 primitive 4/global primitive 4578, texture 551, then decoded file 313's real
 display list at `0x1ED8`. Its clamped render window begins at nonzero
 `G_SETTILESIZE` origin `(95.5,143)` texels. The RDP clamps against that absolute
@@ -155,11 +170,10 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
-Latest completed implementation: RE-152's nonzero clamp-window correction,
-which resolves RE-128's Fox defect and corrects its attribution from R0.6
-material/lighting to R0.5 texture-coordinate lowering. R0.6 remains the
-primary task; its remaining material/primitive/environment items depend on
-R0.7's accepted 37-graph long tail, whose current search methods are exhausted
+Latest completed implementation: RE-153's source-paired character-select and
+results-emblem material tables (implementation commit `8d60f3d`). R0.6 remains
+the primary task; its remaining material/primitive/environment items depend on
+R0.7's accepted 27-graph long tail, whose current search methods are exhausted
 pending upstream typing or newly unique evidence. R0.5's canopy and the full
 rendering gate still need physical-hardware evidence. Combat remains locked.
 All temporary object, primitive, texture-view and diagnostic edits used for

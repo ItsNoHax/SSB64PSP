@@ -11315,3 +11315,37 @@ corrected: the defect was texture-coordinate lowering, not primitive colour or
 lighting. R0.6 remains `IN_PROGRESS` for its independent material-table,
 primitive/environment-colour and per-object-lighting acceptance items.
 Physical PSP was not tested.
+
+---
+
+## RE-153 — Source-paired all ten character-select/result emblem material tables (`PLAN.md` R0.6/R0.7)
+
+`romtool mobj` still reported ten unpaired graphs in file 35
+(`FTEmblemModels`), despite `35_FTEmblemModels.c` already typing both each
+emblem `DObjDesc` and its leading `MObjSub **..._pre` table. Unlike the prior
+search-only cases, the original executable names their relationship directly:
+both `mnCharactersMakeEmblem` (`mn/mndata/mncharacters.c`) and
+`mnVSResultsMakeEmblem` (`mn/mnvsmode/mnvsresults.c`) select matching entries
+from parallel `dobjdescs[]` and `mobjsubs[]` arrays, pass the former to
+`gcSetupCommonDObjs`, then the latter to `gcAddMObjAll`.
+
+The ten pairs are Mario `0x990 → 0x0`, Donkey `0x1348 → 0xB00`, Metroid
+`0x1860 → 0x1470`, Fox `0x21D0 → 0x1940`, Zelda `0x2520 → 0x22B0`, Yoshi
+`0x2F10 → 0x2690`, F-Zero `0x3828 → 0x2FF0`, Kirby `0x3E68 → 0x3900`,
+PMonsters `0x4710 → 0x3F40`, and Mother `0x5A00 → 0x4840`. The table's first
+slot is the intentional root-node `NULL`; the second slot leads to the
+rendered emblem's MObj chain. These were inserted as call-sequence mappings
+in `load_all`, not selected from the 4–11 demand-compatible candidates each
+graph produces under `search_tables`.
+
+Verification against the identified USA ROM: `romtool mobj --file 35` reports
+10 paired / 0 unnamed / 0 mismatches, with all ten display-list demands met.
+Archive-wide, pairings rise `90 → 100`, unpaired graphs fall `37 → 27`, and
+all 417 paired nodes match. The 16 recovered `MObjSub`s carry no palettes, so
+`romtool textures` remains 686 bound / 657 packed / 29 understood failures;
+the rebuilt pack is byte-identical (SHA-256
+`5129687a33310934790c0ff8c49a8915ee74717391723cd4f6ae9c91849d4e7e`).
+`cargo test --workspace` passes all 433 tests and strict release-workspace
+Clippy passes. The normal PSP release build also succeeds with its existing six
+warnings. Physical PSP testing was not performed; R0.7 and R0.6 remain in
+progress for the other 27 graphs and per-object lighting.
