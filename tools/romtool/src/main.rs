@@ -2109,19 +2109,27 @@ fn load_all(archive: &Archive) -> Loaded {
         // the source label's broad 0x7648 data block; the material table is
         // the exact linker target at 0x7488.  This replaces RE-061's former
         // 27-way demand-search ambiguity with a direct original relationship.
-        (86u32, 0x7BE8u32, 0x7488u32),    // NBumper ItemAttributes
-        (353u32, 0x3F8u32, 0x130u32),     // LinkSpecial2 EntryWave
-        (353u32, 0x7B8u32, 0x4F0u32),     // LinkSpecial2 EntryBeam
-        (52u32, 0x7E98u32, 0x42F8u32),    // MVCommon RoomBackground
-        (52u32, 0x1C4A8u32, 0x1BC60u32),  // MVCommon RoomLogo
-        (52u32, 0x1DF28u32, 0x1DCA0u32),  // MVCommon RoomCloseUpEffectAir
-        (52u32, 0x1F270u32, 0x1F0F8u32),  // MVCommon RoomCloseUpEffectGround
-        (52u32, 0x22440u32, 0x20480u32),  // MVCommon RoomDeskGround
+        (86u32, 0x7BE8u32, 0x7488u32), // NBumper ItemAttributes
+        // LinkModel's `JointTree_0x9CF8` uses the raw MObjSub** dispatch at
+        // 0x84B8.  Its three leading NULL slots match the root
+        // Joint_0x93B8's zero graphics-heap demand; slots 3 and 4 name the
+        // 0x86C0/0x86D0 material chains that LinkMain's FTModelPart records
+        // assign to Joint_0x94F0 and Joint_0x9B98.  Record the true source
+        // start (0x84B8), rather than demand search's first nonzero-demand
+        // slot at 0x84C0.
+        (324u32, 0x9CF8u32, 0x84B8u32),  // LinkModel passive-part tree
+        (353u32, 0x3F8u32, 0x130u32),    // LinkSpecial2 EntryWave
+        (353u32, 0x7B8u32, 0x4F0u32),    // LinkSpecial2 EntryBeam
+        (52u32, 0x7E98u32, 0x42F8u32),   // MVCommon RoomBackground
+        (52u32, 0x1C4A8u32, 0x1BC60u32), // MVCommon RoomLogo
+        (52u32, 0x1DF28u32, 0x1DCA0u32), // MVCommon RoomCloseUpEffectAir
+        (52u32, 0x1F270u32, 0x1F0F8u32), // MVCommon RoomCloseUpEffectGround
+        (52u32, 0x22440u32, 0x20480u32), // MVCommon RoomDeskGround
         (328u32, 0x19F08u32, 0x18D60u32), // KirbyModel JointTree_0x19F08
-        (22u32, 0x568u32, 0x408u32),      // MNPlayersSpotlight MObjSub_0x0408
-        (69u32, 0x6950u32, 0x6140u32),    // MVOpeningStandoff LightningMObjSub_MObjSub
-        (75u32, 0x35F8u32, 0x2AA8u32),    // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
-        (83u32, 0x7750u32, 0x73E0u32),    // EFCommonEffects1 DamageSlash_MObjSub
+        (22u32, 0x568u32, 0x408u32),     // MNPlayersSpotlight MObjSub_0x0408
+        (69u32, 0x6950u32, 0x6140u32),   // MVOpeningStandoff LightningMObjSub_MObjSub
+        (75u32, 0x35F8u32, 0x2AA8u32),   // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
+        (83u32, 0x7750u32, 0x73E0u32),   // EFCommonEffects1 DamageSlash_MObjSub
         (84u32, 0x2760u32, 0x22B8u32), // EFCommonEffects2 CatchSwirlMObjSub_head (- 8 bytes of PAD for the 2 zero-demand leading nodes)
         (167u32, 0x28DA8u32, 0x287D8u32), // MNTitle SlashMObjSub_MObjSub
     ] {

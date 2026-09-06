@@ -858,7 +858,7 @@ this pass acted on.
 
 ## R0.7 — Missing Material Tables
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -1032,11 +1032,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — RE-162 resolves the formerly 27-way N-Bumper ambiguity from file 251's typed `ITAttributes` cross-file extern pair (`86: 0x7BE8 → 0x7488`); RE-161 leaves only file 324's `JointTree_0x9CF8` without a named association to any of its three demand-compatible candidates.
-* [ ] original material data identified — done for 70 source/search-confirmed pairings beyond the structural scan, including RE-153–160's 37 pairs and RE-162's N-Bumper pairing; not done for file 324's three-way-ambiguous `JointTree_0x9CF8`, blocked on upstream typing or a new named source relation.
-* [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — the prior source-paired scenes plus RE-160's Sector Z Ship, Final Destination wallpaper effects, Dream Land Whispy eyes, and RE-162's N-Bumper are verified via `romtool mobj`/`romtool textures`; effects have source/pipeline rather than visual runtime verification.
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (467 nodes) is that regression detector for these fixes.
+* [x] all material-table references traced — RE-163 resolves the final file-324 `JointTree_0x9CF8` graph from its source-backed table at `0x84B8`; all 127 discovered graphs are paired.
+* [x] original material data identified — Link's `0x84B8` dispatch has NULL root slots and the exact `0x86C0`/`0x86D0` chains assigned by `FTModelPart` records.
+* [x] heuristic mapping removed where original data exists — `0x84C0` is only the searcher's first nonzero-demand slot; the mapping uses the true source start `0x84B8`.
+* [x] affected scenes verified — archive-wide `romtool mobj` reports 127 paired graphs, 467 matching nodes, and zero mismatches; file 324 textures remain 31/31 packed.
+* [x] regression coverage added — the archive-wide zero-mismatch `romtool mobj` report is the regression detector; all 433 workspace tests and strict Clippy pass.
 
 ---
 

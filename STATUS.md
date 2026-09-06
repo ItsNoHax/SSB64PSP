@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-162)
+**Last updated:** 2026-09-06 (RE-163)
 
 ---
 
@@ -12,15 +12,23 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`: Fox's concrete black-face defect is
-resolved by RE-152. Continue the remaining material-table and
-primitive/environment-colour dependency through R0.7 when new source evidence
-can resolve file 324's sole unpaired graph; per-object lighting remains the
-documented accepted deviation.
+`R0.6 — Material System Correctness`: RE-163 resolves file 324's final
+Link-model material graph; per-object lighting remains the documented
+accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-162 resolves the former 27-way N-Bumper ambiguity from a
+`IN_PROGRESS`. RE-163 adds the source-backed `324:0x9CF8 -> 0x84B8` mapping:
+the raw table's three NULL leading slots and its `0x86C0`/`0x86D0` chains match
+the original LinkMain passive-part assignments. `romtool mobj` now reports
+127 paired graphs, 467 matching nodes, and zero mismatches; file 324 remains
+31/31 textures packed. The rebuilt pack SHA-256 is
+`15e4d5788a452cff9d1ad157b6f5c50ce332af5890ae7e01648af45d0f499601`.
+Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
+pass. R0.7 is complete; no PPSSPP or physical-PSP test was run for this
+source-pipeline-only path.
+
+RE-162 resolves the former 27-way N-Bumper ambiguity from a
 newly typed direct source relation: file 251's
 `dITCommonData_NBumper_ItemAttributes` pairs file 86's `data` and
 `p_mobjsubs` externs. The scene parser's actual graph begins at `0x7BE8`
