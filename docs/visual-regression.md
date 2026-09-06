@@ -25,7 +25,7 @@ comment), so no additional pinning was needed.
 
 **Animation/frame:** pinned by a new `regression_capture` Cargo feature on
 the `ssb64-psp` crate (`psp/Cargo.toml`), off by default. When enabled, once
-240 simulation ticks have run (`regression::TARGET_TICKS`, 4 real seconds at
+240 simulation ticks have run (`DETERMINISTIC_CAPTURE_TICKS`, 4 real seconds at
 the sim's fixed 60 Hz — comfortably past Mario's fall from Dream Land's
 spawn height), every per-frame mutation freezes: the fighter physics tick
 (`Play::tick`), the object/animation-viewer skeleton tick, the stage
@@ -107,14 +107,16 @@ wait past 4 seconds, and photograph or capture the screen. Not yet executed
 in this task; this project's existing device-verification precedent (e.g.
 RE-098, RE-114) is the model to follow when it is.
 
-### 4. Original SSB64 (N64 ROM/emulator reference, documented, not yet executed)
+### 4. Original SSB64 (first representative comparison executed)
 
-Boot the ROM in an N64 emulator, select a match on Dream Land with Mario,
-and let it reach the same idle-on-spawn state. No frame-perfect frame
-count is expected to line up with the PSP port's own tick 240 (different
-engines, different boot sequences) — the comparison is visual (does the
-platform look the same, does Mario's idle pose match), not pixel-exact
-across engines. Not yet executed in this task.
+The user's original Dream Land training screenshot has been compared beside
+RE-150's deterministic real-camera PSP capture. It is representative evidence,
+not a pixel or camera-transform oracle: the original tracks Mario and Pikachu
+spread across the stage, while the current port supplies one Mario interest.
+That difference necessarily changes `gmCameraUpdateInterests`' bounds and
+distance. A future exact camera comparison must boot the ROM in an N64
+emulator with the same one-fighter position and facing, then record the camera
+or capture after it settles.
 
 ## Test matrix
 
@@ -162,12 +164,19 @@ real seconds apart (`--seconds 6` and `--seconds 45`, both comfortably
 past the tick-240 freeze point), compared with `cmp` and found
 byte-identical, and separately with `tools/compare-screenshot.sh` (0
 differing pixels). The golden image is committed at
-`tests/golden/r0-dream-land-default.png`.
+`tests/golden/r0-dream-land-default.png`. RE-150 refreshes it after RE-144's
+source-proven billboard Z-scale correction deliberately changed 9,972 pixels.
+RE-145 subsequently reviewed all 109 billboard nodes; two new PPSSPP runs and
+an isolated pre-RE-150 build all produce the same replacement image. Its
+SHA-256 is
+`9f50c377ad8ae09bbd4f1cbb193b71e436b0454e04ab1e7c4f5934d06e496438`.
 
 This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured
 reference images are compared automatically" acceptance items. The 4-source
-capture procedure is fully documented; only source 1 has been executed.
+capture procedure is fully documented; source 1 has an exact golden and source
+4 now has RE-150's qualitative representative comparison with unmatched
+camera interests explicitly recorded.
 The test matrix exists with named, concrete rows; a minority are confirmed
 covered by the single golden scene, the remainder are honestly tracked as
 not yet covered rather than assumed.

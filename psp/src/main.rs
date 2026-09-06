@@ -50,13 +50,10 @@ use timing::{PspClock, Stopwatch};
 /// dependency entirely -- a screenshot at tick 240 and one at tick 600 are
 /// the same PNG, so the capture script's timing no longer has to be exact,
 /// only "late enough".
-#[cfg(feature = "regression_capture")]
-mod regression {
-    /// 4 real seconds at the sim's fixed 60 Hz -- comfortably past Mario
-    /// landing from Dream Land's spawn height (RE-098's own costume-cycle
-    /// testing never saw a fall take more than ~30 ticks).
-    pub const TARGET_TICKS: u64 = 240;
-}
+/// 4 real seconds at the sim's fixed 60 Hz -- comfortably past Mario landing
+/// from Dream Land's spawn height and long enough for the battle camera to
+/// settle. Shared by R0.17's baseline and R0.14's camera audit.
+const DETERMINISTIC_CAPTURE_TICKS: u64 = 240;
 
 #[cfg(feature = "billboard_audit_capture")]
 mod billboard_capture {
@@ -69,19 +66,13 @@ mod billboard_capture {
     pub const HOLD_TICKS: u64 = 60;
 }
 
-/// `true` once `regression_capture` has frozen the sim; always `false`
-/// otherwise, so callers need one guard, not a cfg per call site.
+/// `true` once either deterministic scene-capture feature has frozen the sim;
+/// always `false` otherwise, so callers need one guard, not a cfg per call
+/// site.
 #[inline]
-fn regression_frozen(sim_frame_index: u64) -> bool {
-    #[cfg(feature = "regression_capture")]
-    {
-        sim_frame_index >= regression::TARGET_TICKS
-    }
-    #[cfg(not(feature = "regression_capture"))]
-    {
-        let _ = sim_frame_index;
-        false
-    }
+fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
+    sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS
+        && (cfg!(feature = "regression_capture") || cfg!(feature = "camera_audit_capture"))
 }
 
 psp::module!("ssb64_psp", 1, 0);
@@ -262,7 +253,11 @@ unsafe fn run() -> ! {
     /// Zoom at which a stage exactly fits the view. Below it the camera is
     /// closer than the stage is wide, so there is a fighter to follow.
     const CAM_FIT: f32 = 200.0;
-    let mut cam_distance = CAM_FIT;
+    let mut cam_distance = if cfg!(feature = "camera_audit_capture") {
+        CAM_FIT - 1.0
+    } else {
+        CAM_FIT
+    };
     let mut draw_state = meshdraw::DrawState::default();
     // Texture inspection mode (C_UP toggles). Proven working, so the mesh
     // view is the default; kept because it cleanly separates an upload bug
@@ -353,7 +348,7 @@ unsafe fn run() -> ! {
     // and ticked once per frame beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut stage_anim_loaded: Option<u32> = None;
-    let mut show_collision = true;
+    let mut show_collision = !cfg!(feature = "camera_audit_capture");
 
     // Material animation (RE-089-095): a `MatAnimDesc` entry is a property of
     // a *texture*, not a stage layer or a fighter, so unlike `stage_anim`
@@ -404,7 +399,7 @@ unsafe fn run() -> ! {
     let mut last_frame_us = 0u32;
     let mut dbg_cam = 1000.0f32;
     // Simulation-tick count since boot, independent of wall-clock/frame
-    // pacing. Only consulted by `regression_frozen` (R0.17); harmless to
+    // pacing. Only consulted by `deterministic_capture_frozen`; harmless to
     // maintain unconditionally.
     let mut sim_frame_index = 0u64;
 
@@ -479,7 +474,7 @@ unsafe fn run() -> ! {
 
             // One tick of every joint, at the simulation rate rather than the
             // frame rate -- animation timing is gameplay timing (RE-035).
-            if anim_playing && object_view && !regression_frozen(sim_frame_index) {
+            if anim_playing && object_view && !deterministic_capture_frozen(sim_frame_index) {
                 if let Some(p) = &pack {
                     if skeleton.ended() {
                         start_anim(p, anim_index, &mut skeleton);
@@ -535,7 +530,7 @@ unsafe fn run() -> ! {
 
                 // The tick itself. Ordered after input so a respawn this frame
                 // starts falling this frame rather than next.
-                if sim_fighter && !regression_frozen(sim_frame_index) {
+                if sim_fighter && !deterministic_capture_frozen(sim_frame_index) {
                     if let (Some(p), Some(pl)) = (&pack, player.as_mut()) {
                         if let Some(s) = p.stage(stage_index) {
                             // C-left jumps. The original uses any C-button, but
@@ -729,7 +724,7 @@ unsafe fn run() -> ! {
         // code's own behaviour before the real camera existed.
         draw_state.billboard_camera = None;
         if let Some(p) = &pack {
-            if !regression_frozen(sim_frame_index) {
+            if !deterministic_capture_frozen(sim_frame_index) {
                 material_anim.tick(p);
             }
         }
@@ -906,7 +901,7 @@ unsafe fn run() -> ! {
                         let script = p.anim_script(&a)?;
                         // A script that desynchronises stops the scenery rather
                         // than posing it from a garbage stream.
-                        if !regression_frozen(sim_frame_index) {
+                        if !deterministic_capture_frozen(sim_frame_index) {
                             stage_anim.tick(script).ok()?;
                         }
                         Some(())
@@ -932,8 +927,10 @@ unsafe fn run() -> ! {
                             // The model, posed by whatever animation the
                             // fighter's status is playing, placed at its
                             // simulated position. The collision diamond is
-                            // still drawn over it, because the point of this
-                            // view is whether the two agree.
+                            // normally drawn over it because the point of the
+                            // interactive view is whether the two agree; the
+                            // R0.14 reference capture suppresses that developer
+                            // marker along with the other diagnostics.
                             if let Some(obj) = p.object(pl.object) {
                                 let n = pl.skeleton.compose(p, &obj, &mut posed);
                                 let sc = meshdraw::MODEL_SCALE;
@@ -965,14 +962,16 @@ unsafe fn run() -> ! {
                                 );
                                 gpu.model_transform(cam, [0.0, 0.0, 0.0], sc);
                             }
-                            meshdraw::draw_fighter(
-                                pl.fighter.pos.to_array(),
-                                &pl.fighter.coll,
-                                pl.fighter.is_grounded(),
-                                &base,
-                                &mut gpu,
-                                &mut draw_state,
-                            );
+                            if !cfg!(feature = "camera_audit_capture") {
+                                meshdraw::draw_fighter(
+                                    pl.fighter.pos.to_array(),
+                                    &pl.fighter.coll,
+                                    pl.fighter.is_grounded(),
+                                    &base,
+                                    &mut gpu,
+                                    &mut draw_state,
+                                );
+                            }
                         }
                     }
                     shown = (tris, layers, segments);
@@ -1215,7 +1214,10 @@ unsafe fn run() -> ! {
         // sidesteps whatever PPSSPP-internal state causes it, rather than
         // trying to out-guess it, and a developer diagnostic overlay was
         // never part of the golden scene R0.17 wants captured anyway.
-        if !cfg!(feature = "regression_capture") {
+        if !cfg!(any(
+            feature = "regression_capture",
+            feature = "camera_audit_capture"
+        )) {
             gpu.debug_text(
                 8,
                 8,
