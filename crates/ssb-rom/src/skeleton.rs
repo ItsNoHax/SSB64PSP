@@ -462,8 +462,12 @@ impl MaterialAnimator {
     /// live relative to each other).
     pub fn tick(&mut self, pack: &Pack<'_>) {
         for i in 0..self.count {
-            let Some(a) = pack.mat_anim(i as u32) else { continue };
-            let Some(data) = pack.mat_anim_file(&a) else { continue };
+            let Some(a) = pack.mat_anim(i as u32) else {
+                continue;
+            };
+            let Some(data) = pack.mat_anim_file(&a) else {
+                continue;
+            };
             let _ = self.joints[i].tick(data, 1.0);
         }
     }
@@ -668,7 +672,10 @@ mod tests {
         let mut rest = [Mat4::IDENTITY; MAX_NODES];
         StageAnimator::new().compose(&pack, &object, &mut rest);
         for (i, matrix) in rest.iter().take(object.node_count as usize).enumerate() {
-            assert_eq!(matrix.0, pack.node(object.first_node + i as u32).unwrap().world);
+            assert_eq!(
+                matrix.0,
+                pack.node(object.first_node + i as u32).unwrap().world
+            );
         }
 
         let mut animator = StageAnimator::new();
@@ -831,7 +838,10 @@ mod tests {
             9.0f32.to_bits(), // far past this entry's own 2 variants
             mat_cmd(OP_END, 0, 0),
         ]);
-        let palettes = alloc::vec![alloc::vec![0x1111_1111u32; 16], alloc::vec![0x2222_2222u32; 16]];
+        let palettes = alloc::vec![
+            alloc::vec![0x1111_1111u32; 16],
+            alloc::vec![0x2222_2222u32; 16]
+        ];
         let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes);
         w.set_texture_mat_anim(texture, mat_anim);
         let bytes = w.finish();

@@ -717,7 +717,13 @@ fn combiner_reads(hi: u32, lo: u32, two_cycle: bool, code: u32) -> bool {
         return true;
     }
     two_cycle
-        && [(hi >> 5) & 0xF, (lo >> 24) & 0xF, hi & 0x1F, (lo >> 6) & 0x7].contains(&code)
+        && [
+            (hi >> 5) & 0xF,
+            (lo >> 24) & 0xF,
+            hi & 0x1F,
+            (lo >> 6) & 0x7,
+        ]
+        .contains(&code)
 }
 
 /// Recognises `(A-B)*TEXEL+B` -- an affine blend from a base colour `B` (at
@@ -777,7 +783,11 @@ fn combiner_texture_blend(
         ]
     };
     let base = out.k;
-    let target = [out.k[0] + out.t[0], out.k[1] + out.t[1], out.k[2] + out.t[2]];
+    let target = [
+        out.k[0] + out.t[0],
+        out.k[1] + out.t[1],
+        out.k[2] + out.t[2],
+    ];
     Some((from_f(base), from_f(target)))
 }
 
@@ -1645,7 +1655,11 @@ fn walk(
             }
 
             // `G_MDSFT_RENDERMODE` is 29 bits starting at bit 3.
-            Cmd::SetOtherModeL { shift: 3, len: 29, data } => {
+            Cmd::SetOtherModeL {
+                shift: 3,
+                len: 29,
+                data,
+            } => {
                 state.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
                 state.material.translucent = render_mode_is_translucent(data);
             }
@@ -2079,7 +2093,11 @@ mod tests {
             .pop()
             .unwrap()
             .unwrap();
-        assert_eq!(mesh.primitives.len(), 2, "two distinct textures, two primitives");
+        assert_eq!(
+            mesh.primitives.len(),
+            2,
+            "two distinct textures, two primitives"
+        );
         let by_texture = |offset: u32| {
             mesh.primitives
                 .iter()
@@ -2191,10 +2209,17 @@ mod tests {
         let by_palette = |offset: u32| {
             mesh.primitives
                 .iter()
-                .find(|p| p.material.texture.is_some_and(|t| t.palette_offset == Some(offset)))
+                .find(|p| {
+                    p.material
+                        .texture
+                        .is_some_and(|t| t.palette_offset == Some(offset))
+                })
                 .unwrap_or_else(|| panic!("no primitive bound to palette 0x{offset:X}"))
         };
-        assert_eq!(by_palette(0x100).material.texture.unwrap().data_offset, 0x400);
+        assert_eq!(
+            by_palette(0x100).material.texture.unwrap().data_offset,
+            0x400
+        );
         assert_eq!(
             by_palette(0x200).material.texture.unwrap().data_offset,
             0x400,
@@ -2554,7 +2579,10 @@ mod tests {
         let out = convert_sequence(&items, Source::bare(&file));
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
-        assert!(first.translucent, "joint A's own render mode must be translucent");
+        assert!(
+            first.translucent,
+            "joint A's own render mode must be translucent"
+        );
         assert_eq!(
             second.translucent, first.translucent,
             "a node that sets no new render mode must inherit translucency"
@@ -2668,7 +2696,10 @@ mod tests {
             .material
             .texture
             .expect("a segment-0x1 bind must still produce a texture reference");
-        assert!(t.framebuffer, "segment 0x1 must be marked as a framebuffer capture, not a ROM location");
+        assert!(
+            t.framebuffer,
+            "segment 0x1 must be marked as a framebuffer capture, not a ROM location"
+        );
         assert_eq!(t.data_file, None);
         assert_eq!(t.data_offset, 0);
         assert_eq!(t.width, 300);
@@ -2731,8 +2762,14 @@ mod tests {
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
-        let t = mesh.primitives[0].material.texture.expect("real texture bound");
-        assert!(!t.framebuffer, "a later real G_SETTIMG must clear the framebuffer marker");
+        let t = mesh.primitives[0]
+            .material
+            .texture
+            .expect("real texture bound");
+        assert!(
+            !t.framebuffer,
+            "a later real G_SETTIMG must clear the framebuffer marker"
+        );
         assert_eq!(t.data_offset, 0x40);
     }
 
@@ -3058,8 +3095,14 @@ mod tests {
         assert!(m.cull_back, "G_CULL_BACK is on in the reset default");
         assert!(m.smooth, "G_SHADING_SMOOTH is on in the reset default");
         assert!(m.z_buffer, "G_ZBUFFER is on in the reset default");
-        assert!(!m.cull_front, "the reset default only sets G_CULL_BACK, not both");
-        assert!(!m.lit, "G_LIGHTING is cleared in the reset default (RE-021 recovers it separately)");
+        assert!(
+            !m.cull_front,
+            "the reset default only sets G_CULL_BACK, not both"
+        );
+        assert!(
+            !m.lit,
+            "G_LIGHTING is cleared in the reset default (RE-021 recovers it separately)"
+        );
     }
 
     /// Builds a `G_SETRENDERMODE`'s raw `data` word the way `GBL_c1`/
@@ -3143,9 +3186,17 @@ mod tests {
             (CLR_IN, G_BL_0, CLR_IN, G_BL_1),
         );
         let file = vertex_data(3);
-        let cmds = [vtx(3), set_render_mode(data), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let cmds = [
+            vtx(3),
+            set_render_mode(data),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
-        assert!(!m.translucent, "FORCE_BL alone must not imply real blending");
+        assert!(
+            !m.translucent,
+            "FORCE_BL alone must not imply real blending"
+        );
         assert!(!m.alpha_test);
     }
 
@@ -3222,13 +3273,24 @@ mod tests {
         );
         let file = vertex_data(3);
 
-        let cmds = [vtx(3), set_render_mode(edge), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let cmds = [
+            vtx(3),
+            set_render_mode(edge),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
-        assert!(!m.alpha_test, "no texture bound: cutout mode must not discard everything");
+        assert!(
+            !m.alpha_test,
+            "no texture bound: cutout mode must not discard everything"
+        );
 
         let cmds = [vtx(3), set_render_mode(xlu), Cmd::Tri1([0, 1, 2]), Cmd::End];
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
-        assert!(!m.translucent, "no texture bound: must not blend against a meaningless alpha");
+        assert!(
+            !m.translucent,
+            "no texture bound: must not blend against a meaningless alpha"
+        );
     }
 
     #[test]
@@ -3341,7 +3403,10 @@ mod tests {
         };
 
         let canopy = mirrored(3, 3, 6, 6);
-        assert!(canopy.mirror_s && canopy.mirror_t, "cm=3 (mirror+clamp) with a real period must flag mirror");
+        assert!(
+            canopy.mirror_s && canopy.mirror_t,
+            "cm=3 (mirror+clamp) with a real period must flag mirror"
+        );
 
         let clamp_only = mirrored(2, 2, 6, 6);
         assert!(
@@ -3497,7 +3562,10 @@ mod tests {
         // Node A: an untextured decal, matching the real shape exactly --
         // no `G_SETTIMG` of its own, just an explicit disable.
         let node_a = [
-            Cmd::SetCombine { hi: 0x00FF_FFFF, lo: 0xFFFF_FDFC },
+            Cmd::SetCombine {
+                hi: 0x00FF_FFFF,
+                lo: 0xFFFF_FDFC,
+            },
             Cmd::Texture {
                 level: 0,
                 tile: 0,
@@ -3914,8 +3982,7 @@ mod tests {
     }
 
     #[test]
-    fn a_flat_colour_combiner_forces_the_primitive_untextured_and_bakes_the_vertex(
-    ) {
+    fn a_flat_colour_combiner_forces_the_primitive_untextured_and_bakes_the_vertex() {
         // Wiring `combiner_flat_color` into `material_now`/`push_vertex` end
         // to end (RE-079): even with a real texture bound, `TEXEL` never
         // enters this shape's formula, so the primitive must come out
@@ -4019,8 +4086,7 @@ mod tests {
     }
 
     #[test]
-    fn prim_times_shade_is_recognised_even_when_the_primitive_is_black(
-    ) {
+    fn prim_times_shade_is_recognised_even_when_the_primitive_is_black() {
         // RE-079: 1118 primitives archive-wide set exactly this shape with
         // `PRIM=[0,0,0,255]`. A value-only reading of the evaluated combiner
         // cannot tell "the shade scale is black" apart from "no shade-scale
@@ -4202,10 +4268,7 @@ mod tests {
         // safe blend out of -- decoded directly from the ROM (RE-129), not
         // synthesised.
         let (hi, lo) = (0x0012_1824, 0xFF33_FFFF);
-        assert_eq!(
-            combiner_alpha_blend(hi, lo, false),
-            Some(AlphaBlend::Shade)
-        );
+        assert_eq!(combiner_alpha_blend(hi, lo, false), Some(AlphaBlend::Shade));
     }
 
     #[test]

@@ -14,6 +14,13 @@ env:
   # which is exactly what happened when 1.98 added `chunks_exact_to_as_chunks`
   # and failed four existing call sites. Bump this on purpose, not by surprise.
   RUST_STABLE: "1.98.0"
+  # `rust-psp` depends on nightly core internals. Keep both values in step with
+  # psp/rust-toolchain.toml and update only after an EBOOT is validated.
+  PSP_NIGHTLY: "nightly-2026-08-01"
+  # `cargo-psp` is part of the PSP release toolchain, not an unbounded build
+  # dependency. Pin it with the nightly above so a crates.io release cannot
+  # silently change how EBOOT.PBP is produced.
+  CARGO_PSP_VERSION: "0.2.9"
 
 jobs:
   # Host-side crates and tools. No ROM required -- every test either uses
@@ -84,20 +91,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The toolchain is pinned by psp/rust-toolchain.toml; rustup picks it up
-      # automatically. rust-psp reaches into unstable core internals and only
-      # builds on a narrow band of nightlies.
+      # Do not rely on directory discovery here: the release toolchain needs
+      # to be reproducible even when a prior action changes the root override.
+      # rust-psp reaches into unstable core internals and only builds on a
+      # narrow band of nightlies.
       - name: Install pinned nightly
         run: |
-          rustup show active-toolchain || true
-          cd psp && rustup show
+          rustup toolchain install "$PSP_NIGHTLY" --profile minimal --component rust-src
+          rustup run "$PSP_NIGHTLY" rustc --version
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: psp
 
-      - name: Install cargo-psp
-        run: cargo install cargo-psp --locked
+      - name: Install pinned cargo-psp
+        run: cargo +${{ env.PSP_NIGHTLY }} install cargo-psp --version "=$CARGO_PSP_VERSION" --locked
 
       - name: Build EBOOT.PBP
         working-directory: psp
@@ -105,7 +113,7 @@ jobs:
         # would fail the build for no reason here.
         env:
           RUSTFLAGS: ""
-        run: cargo psp --release
+        run: cargo +${{ env.PSP_NIGHTLY }} psp --release
 
       - name: Verify the artifact is a real PBP
         working-directory: psp

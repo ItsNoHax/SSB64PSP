@@ -3067,7 +3067,10 @@ mod tests {
         let fb = pack.texture(1).unwrap();
         assert_eq!(fb.role, TextureDesc::ROLE_FRAMEBUFFER);
         assert_eq!((fb.width, fb.height), (300, 6));
-        assert_eq!(fb.stride, 512, "stride must pad to a power of two like every other texture");
+        assert_eq!(
+            fb.stride, 512,
+            "stride must pad to a power of two like every other texture"
+        );
         assert_eq!(fb.data_len, 0, "a framebuffer entry has no baked bytes");
         assert_eq!(fb.palette_len, 0);
         assert_eq!(fb.mat_anim, TextureDesc::NO_ANIM);
@@ -3242,9 +3245,18 @@ mod tests {
 
         let c = u32_at(v, 4);
         let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
-        assert_eq!(r, 128, "the scale's red channel is full-strength, so red passes through");
-        assert_eq!(g, 0, "the scale's green channel is zero, so it must be zeroed");
-        assert_eq!(b, 0, "the scale's blue channel is zero, so it must be zeroed");
+        assert_eq!(
+            r, 128,
+            "the scale's red channel is full-strength, so red passes through"
+        );
+        assert_eq!(
+            g, 0,
+            "the scale's green channel is zero, so it must be zeroed"
+        );
+        assert_eq!(
+            b, 0,
+            "the scale's blue channel is zero, so it must be zeroed"
+        );
     }
 
     #[test]
