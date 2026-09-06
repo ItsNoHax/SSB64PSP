@@ -24,6 +24,10 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # freezing it would break that.
 regression_capture = []
 
+# Boots Dream Land through the real battle camera, freezes at the same fixed
+# tick as the regression scene, and suppresses viewer diagnostics (R0.14).
+camera_audit_capture = []
+
 # Boots directly into R0.12's isolated billboard browser. This removes the
 # host-specific PPSSPP key mapping needed to enter the audit, while retaining
 # the normal D-pad navigation and on-screen source identity. Off by default.

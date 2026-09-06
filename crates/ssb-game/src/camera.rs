@@ -65,14 +65,16 @@ const MAX_DIST: f32 = 30000.0;
 /// `dGMCameraPlayerZoomRanges[1]` -- the single-player zoom multiplier.
 const ONE_PLAYER_ZOOM: f32 = 1.50;
 
-/// `dGMCameraCObjVecDefault` -- the camera's rest state before any fighter
-/// has moved it. Real hardware also stores a default `target_dist`
-/// elsewhere in scene setup, not shown in this struct's own initialiser; a
-/// reasonable stand-in is `eye`'s own distance from `at`; using this later
-/// gives the same first-frame direction the real default vector implies.
-pub const DEFAULT_EYE: Vec3 = Vec3::new(1500.0, 0.0, 0.0);
-pub const DEFAULT_AT: Vec3 = Vec3::new(0.0, 0.0, 0.0);
+/// The final battle-camera state produced by `gmCameraMakeDefaultCamera`.
+///
+/// The constructor briefly copies `dGMCameraCObjVecDefault`, then explicitly
+/// replaces its eye/at vectors and sets `target_dist` to 10000 before the
+/// first camera tick (`gm/gmcamera.c:1157-1171`). These are therefore the
+/// observable initial values; the intermediate `{1500, 0, 0}` eye is not.
+pub const DEFAULT_EYE: Vec3 = Vec3::new(0.0, 300.0, 10000.0);
+pub const DEFAULT_AT: Vec3 = Vec3::new(0.0, 300.0, 0.0);
 pub const DEFAULT_FOVY_DEGREES: f32 = 38.0;
+const DEFAULT_TARGET_DIST: f32 = 10000.0;
 
 /// The real camera's own smoothly-updated state -- one `CObj` plus
 /// `GMCamera`'s `target_dist`/`fovy` fields, reduced to what
@@ -91,7 +93,7 @@ impl Default for Camera {
             eye: DEFAULT_EYE,
             at: DEFAULT_AT,
             fovy_degrees: DEFAULT_FOVY_DEGREES,
-            target_dist: (DEFAULT_EYE - DEFAULT_AT).length(),
+            target_dist: DEFAULT_TARGET_DIST,
         }
     }
 }
@@ -156,15 +158,9 @@ impl Camera {
         let hz_dist = hz / (half_fovy_tan * viewport_aspect);
         let dist = vt_dist.max(hz_dist).clamp(MIN_DIST, MAX_DIST);
 
-        // func_ovl2_8010C670: damp `target_dist` 7.5% of the way toward
-        // `dist` each frame, snapping once within one step of it.
-        let delta = self.target_dist - dist;
-        let step = delta * 0.075;
-        self.target_dist = if delta.abs() <= step.abs() {
-            dist
-        } else {
-            self.target_dist - step
-        };
+        // func_ovl2_8010C670: snap outward immediately, or damp an inward
+        // move 7.5% of the way toward `dist` each frame.
+        self.target_dist = approach_target_distance(self.target_dist, dist);
 
         // gmCameraPan: `syVectorDiff`/`Mag`/`Norm`/`Scale`/`Add` compose
         // into exactly `at.lerp(interest, scale)` when `interest != at`
@@ -221,14 +217,27 @@ fn pan_scale(target_dist: f32) -> f32 {
     }
 }
 
+/// `func_ovl2_8010C670` (`gm/gmcamera.c:587`) exactly as written. When the
+/// requested distance is farther away, the original snaps outward in one
+/// tick (`delta < 0`, therefore `delta <= delta * 0.075`). It only damps a
+/// move inward. Using absolute values here changes that asymmetric behavior.
+fn approach_target_distance(current: f32, requested: f32) -> f32 {
+    let delta = current - requested;
+    let step = delta * 0.075;
+    if delta <= step {
+        requested
+    } else {
+        current - step
+    }
+}
+
 /// `func_ovl2_8010C3C0` + `gmCameraGetAdjustAtAngle` combined
 /// (`gm/gmcamera.c:507`/`320`): a unit eye-direction vector derived from
 /// the look-at point `at`, nudged by the stage's own `light_angle.z`.
 fn eye_direction(at: Vec3, light_angle_z_radians: f32) -> Vec3 {
-    let y = (-((at.y - 900.0) / 133.0).to_radians())
-        .clamp((-7.0f32).to_radians(), 5.0f32.to_radians());
-    let x =
-        (-(at.x / 133.0).to_radians()).clamp((-17.5f32).to_radians(), 17.5f32.to_radians());
+    let y =
+        (-((at.y - 900.0) / 133.0).to_radians()).clamp((-7.0f32).to_radians(), 5.0f32.to_radians());
+    let x = (-(at.x / 133.0).to_radians()).clamp((-17.5f32).to_radians(), 17.5f32.to_radians());
 
     // `gGMCameraPauseCameraEyeY`/`X` are always `0.0` outside the pause
     // menu (not ported), so only `y`/`x` and the stage's own nudge remain.
@@ -248,6 +257,22 @@ fn eye_direction(at: Vec3, light_angle_z_radians: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_matches_the_post_constructor_battle_camera_state() {
+        let camera = Camera::default();
+        assert_eq!(camera.at, Vec3::new(0.0, 300.0, 0.0));
+        assert_eq!(camera.eye, Vec3::new(0.0, 300.0, 10000.0));
+        assert_eq!(camera.target_dist, 10000.0);
+        assert_eq!(camera.fovy_degrees, 38.0);
+    }
+
+    #[test]
+    fn target_distance_snaps_outward_and_damps_inward_like_the_original() {
+        assert_eq!(approach_target_distance(2500.0, 4000.0), 4000.0);
+        assert!((approach_target_distance(10000.0, 4000.0) - 9550.0).abs() < f32::EPSILON);
+        assert_eq!(approach_target_distance(4000.0, 4000.0), 4000.0);
+    }
 
     #[test]
     fn bounds_clamp_leaves_an_interior_point_alone() {
@@ -316,7 +341,12 @@ mod tests {
         for _ in 0..30 {
             cam.tick(Vec3::ZERO, false, bounds, 0.0, 15.0 / 11.0);
         }
-        assert!((cam.at.x - settled.at.x).abs() < 1.0, "at.x drifted from {} to {}", settled.at.x, cam.at.x);
+        assert!(
+            (cam.at.x - settled.at.x).abs() < 1.0,
+            "at.x drifted from {} to {}",
+            settled.at.x,
+            cam.at.x
+        );
         assert!((cam.eye - settled.eye).length() < 1.0);
         assert!(cam.eye.x.is_finite() && cam.eye.y.is_finite() && cam.eye.z.is_finite());
     }

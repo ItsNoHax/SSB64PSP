@@ -2061,6 +2061,21 @@ behaviour over a 20-second run in that one. Deliberately minimal (no
 weapons, multiplayer, per-move zoom, idle-zoom-out, or pause offset);
 see RE-131's own entry for the full scope statement.
 
+RE-150 re-audited that port against `gmCameraMakeDefaultCamera` and found two
+real source mismatches. The observable constructor state is `at = (0,300,0)`,
+`eye = (0,300,10000)`, `target_dist = 10000`; the earlier port stopped at the
+intermediate `dGMCameraCObjVecDefault` copy. Its distance update had also
+replaced the original signed comparison with absolute values, losing the
+original's immediate outward snap. Both are corrected and pinned by tests. A
+new off-by-default `camera_audit_capture` feature produces a HUD-free,
+diagnostic-free, fixed-tick Dream Land frame through the real camera; independent
+7- and 9-second PPSSPP runs are byte-identical. The user's N64 Dream Land image
+is now paired with that capture. It exposes the known incomparable camera input
+(two widely separated fighters in the N64 training scene versus the port's one
+Mario), plus the already-tracked missing stage background/effects/UI work. The
+comparison closes the representative-scene item, but not exact camera-output
+verification: a same-interest original frame is still required for that.
+
 ### Objective
 
 Reproduce the original camera and projection behavior.
@@ -2075,13 +2090,13 @@ Reproduce the original camera and projection behavior.
 * [x] viewport verified — RE-034 (device measurement, before/after screenshots) plus RE-082 (source-level confirmation that `Gpu::init` and `main.rs` share one `pillarboxed_viewport()` call, so they cannot diverge)
 * [x] aspect ratio verified — RE-082: `pillarboxed_viewport()` is unit-tested (`pillarbox_preserves_four_by_three`), its output is the sole source for both the GE viewport/scissor and the projection's `aspect` parameter, and `sceGumPerspective`'s own binding uses the standard formula; RE-034's previously-reported residual is a measurement artifact on a too-small on-screen shape, not a surviving defect
 * [x] depth mapping verified — RE-085: `sceGuDepthRange(65535, 0)` + `GreaterOrEqual` matches the `psp` crate's own documented depth-buffer convention exactly, not a workaround; corroborated on-device with no depth-order artifacts found in a complex, multi-layer regression scene
-* [ ] camera transforms verified — RE-084 sourced the FOV *value* the original uses; **RE-131 ported the real positioning/movement logic itself**, `gmCameraDefaultFuncCamera` and every function it calls (interest-box framing, distance damping, look-at panning, eye-direction angling), as `ssb_game::camera` — a real, unit-tested, on-device-verified camera, wired into the debug viewer's zoomed-in fighter-follow mode with zero effect on any other mode (confirmed via a pixel-identical `regression_capture` golden capture). Deliberately scoped down (no weapons, no multiplayer, no per-move zoom, no idle-zoom-out, no entry/explain/dead-up modes, no pause offset — each documented in `camera.rs`'s own module doc) and not yet checked against real camera *output* (footage or a reference emulator), only against the decompiled source and "does not crash and looks plausible" — this item stays open on that basis, but is no longer blocked on a camera not existing at all
+* [ ] camera transforms verified — RE-084 sourced the FOV *value*; RE-131 ported `gmCameraDefaultFuncCamera`'s single-Mario path; RE-150 corrected its constructor state and signed target-distance update directly from `gmCameraMakeDefaultCamera`/`func_ovl2_8010C670`, pins both with tests, and PPSSPP-verifies a deterministic real-camera frame. The supplied N64 reference has two widely separated fighter interests while this project currently supplies one, so it cannot verify numerical output equivalence. This stays open until a same-interest original frame or reference-emulator trace exists; the deliberately unimplemented weapon/multiplayer/per-move/idle/entry/dead/pause inputs remain documented in `camera.rs`
 * [x] N64/PSP resolution differences explicitly handled — RE-082: pillarboxing (D-008) is precisely this handling, now confirmed by both a device measurement (RE-034) and a source audit (RE-082) rather than one alone
-* [ ] representative scenes compared — no side-by-side N64-vs-PSP reference comparison exists; no N64 emulator or reference footage is available in this environment to produce one, so this remains blocked on external resources (matching `R2`'s own real-hardware-validation shape), not on more `romtool`-side work
+* [x] representative scenes compared — RE-150 pairs the user's original N64 Dream Land training screenshot with a deterministic PPSSPP real-camera capture. The comparison is intentionally qualitative because its camera inputs differ (two fighters versus one); it identifies the wider N64 framing and the port's visible missing background/effects/UI and fidelity gaps without misreporting pixel equivalence
 
 ### Evidence
 
-RE-034, RE-082, RE-084, RE-085, RE-131 in `docs/reverse-engineering.md`.
+RE-034, RE-082, RE-084, RE-085, RE-131, RE-150 in `docs/reverse-engineering.md`.
 
 ---
 

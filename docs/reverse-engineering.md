@@ -11125,3 +11125,63 @@ trigger and will consume this reusable lifecycle when that game state is
 implemented. This changes task ownership only; it does not weaken the later
 end-to-end match-transition or physical-PSP acceptance requirements. The next
 ordered rendering task is R0.14's original-output camera comparison.
+
+---
+
+## RE-150 — Original-output comparison fixes two camera-port errors; the supplied frame has different interests
+
+Re-read the complete original constructor and distance update before comparing
+screenshots. RE-131 had started `Camera` from `dGMCameraCObjVecDefault`'s
+intermediate `{1500,0,0}` eye and inferred `target_dist = 1500`. The production
+`gmCameraMakeDefaultCamera` immediately overwrites that state before the first
+tick: `target_dist = 10000`, `at = (0,300,0)`, `eye = (0,300,10000)`
+(`gm/gmcamera.c:1157-1171`). The Rust port now starts from those observable
+values, with a focused regression test.
+
+The same audit found that `func_ovl2_8010C670` is deliberately asymmetric.
+For `delta = current - requested`, the original tests `delta <= delta * 0.075`.
+A negative delta therefore snaps outward to the requested distance in one
+tick; a positive delta damps inward by 7.5%. RE-131 had compared absolute
+values and damped both directions. `approach_target_distance` now preserves
+the original signed comparison, with direct tests for outward, inward, and
+equal cases. Mario's `camera_zoom_frame` is exactly 1.0 in the real ROM, so the
+current single-Mario `adjust = dGMCameraPlayerZoomRanges[1] = 1.5` remains
+correct for this slice.
+
+Added an off-by-default `camera_audit_capture` PSP feature. It selects the real
+battle-camera branch from boot, suppresses the collision overlay and debug HUD,
+and freezes all simulation/camera mutation at fixed tick 240. PPSSPP 1.20.4
+software captures after independent 7- and 9-second runs are byte-identical
+and differ in zero pixels. Screenshot SHA-256:
+`012612b3e898878560fd0a4e4a7bb279a6ef9efb032b661f78af90edd0f9512f`.
+
+Paired that frame with the user's original N64 Dream Land screenshot. The
+comparison is valuable but cannot be treated as an exact camera oracle: the
+training screenshot contains Mario and Pikachu far apart, so the original
+camera unions two interest boxes; the PSP slice currently provides one Mario.
+For one stationary fighter, the port's source formula targets approximately
+`1050 / tan(19°) = 3049` units from the vertical half-extent alone, explaining
+the much tighter view. The image also plainly exposes renderer/gameplay gaps
+outside R0.14: the sky/background pass, stage effects, and real HUD are absent,
+and texture/material fidelity remains visibly below the reference. Comparison
+artifact SHA-256:
+`7d9f450c7bbe371226bd80ce9423bd85f0df7f9db422bb590ab628e00f38d56e`.
+
+This closes R0.14's representative-scene comparison, not its final camera-
+transform acceptance item. Exact output needs the same fighter count,
+positions, facings, and camera mode on an N64 reference emulator or trace.
+
+The regression check also surfaced a known stale golden rather than a new
+camera regression. Current output differed by exactly 9,972 pixels in bounding
+box `(343,283)..(616,354)`, the change RE-144 already measured and attributed
+to its source-proven billboard X/Y/X scale correction. An isolated build of
+pre-RE-150 commit `0f4e714` produced the exact same current image, proving this
+camera patch is inert in the default overview. RE-145 has since reviewed all
+109 billboard nodes, so the golden is now deliberately refreshed; two current
+runs match it at zero pixels. New golden SHA-256:
+`9f50c377ad8ae09bbd4f1cbb193b71e436b0454e04ab1e7c4f5934d06e496438`.
+
+Verification: all 427 workspace tests pass (36 engine, 114 game, 277 ROM),
+strict `ssb-game` Clippy passes, camera-audit/regression/normal PSP release
+builds succeed with the existing six warnings, and both deterministic PPSSPP
+capture pairs compare at zero pixels. Physical PSP was not tested.

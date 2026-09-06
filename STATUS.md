@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-05 (RE-149)
+**Last updated:** 2026-09-06 (RE-150)
 
 ---
 
@@ -17,21 +17,51 @@ original output and compare representative scenes.
 
 ## Task Status
 
-`IN_PROGRESS`. R0.13 is complete. RE-149 resolves a roadmap dependency cycle:
+`IN_PROGRESS`, with six of seven acceptance items complete. RE-150 found and
+fixed two mismatches in RE-131's camera source port. The original constructor
+finishes at `at = (0,300,0)`, `eye = (0,300,10000)`, and `target_dist = 10000`;
+the port had retained the constructor's intermediate vector copy and distance
+1500. The original distance update snaps outward immediately and damps only
+inward motion; the port's absolute-value rewrite damped both directions. Tests
+now pin the exact constructor state and asymmetric update.
+
+The off-by-default `camera_audit_capture` feature boots Dream Land through the
+real camera, hides viewer HUD/collision diagnostics, and freezes at tick 240.
+Independent PPSSPP software runs captured after 7 and 9 seconds are byte-
+identical (zero differing pixels), SHA-256
+`012612b3e898878560fd0a4e4a7bb279a6ef9efb032b661f78af90edd0f9512f`.
+The side-by-side N64/PSP comparison is outside Git at
+`/home/alberto/ppsspp-test/re150/dream-land-comparison.png` (SHA-256
+`7d9f450c7bbe371226bd80ce9423bd85f0df7f9db422bb590ab628e00f38d56e`).
+It closes "representative scenes compared" while preserving the key limit:
+the N64 training screenshot tracks two spread-out fighters, while the port
+currently provides one Mario camera interest, so it cannot prove exact camera
+output equivalence. That final camera-transform item remains open.
+
+RE-150 also resolves the intentionally stale R0.17 golden. RE-144 had already
+measured and explained its exact 9,972-pixel change from the original's
+X/Y/X billboard scale rule, and RE-145 later verified all 109 nodes. The golden
+now matches two independent current captures and an isolated pre-RE-150 build,
+proving the camera edit did not alter the default overview. New golden SHA-256:
+`9f50c377ad8ae09bbd4f1cbb193b71e436b0454e04ab1e7c4f5934d06e496438`.
+
+Verification: all 427 workspace tests pass (36 engine, 114 game, 277 ROM);
+strict `ssb-game` Clippy passes; camera-audit, regression, and normal PSP
+release builds succeed with the existing six warnings. Normal EBOOT SHA-256:
+`12f6733ba8585edc57bfb7eb00acb8d5d84d8a1ced4ec8a7e7677f0938588a30`;
+camera-audit EBOOT SHA-256:
+`6e24216fbd8252e13d143de352411ad9e67e8235d7929cd03656f84d4a8485ad`;
+regression EBOOT SHA-256:
+`cdea6baf22b1dd0d5c6c5c66cfe89327aacb14449bf06cf0abdfdaa23aa548e5`.
+Physical PSP was not tested.
+
+R0.13 remains complete. RE-149 resolves a roadmap dependency cycle:
 the reusable wipe renderer and synchronized capture boundary are R0.13's
 responsibility, while normal match/results integration is explicitly G2's
 match-transition responsibility. Requiring that post-combat G2 caller before
 closing the pre-combat rendering gate would make the roadmap impossible to
 satisfy. RE-148 already verifies the renderer contract in PPSSPP, so both
 remaining R0.13 acceptance items are closed.
-
-R0.14 now resumes with its two remaining acceptance items: original-output
-verification of the RE-131 camera transform and a representative N64/PSP
-scene comparison. The user's original Dream Land screenshot at
-`/home/alberto/Pictures/Screenshots/Screenshot_20260905_131739.png` removes
-the previous claim that no original reference image is available; the next
-step is to create a controlled PSP comparison frame and measure the camera
-framing rather than compare unmatched debug-viewer states.
 
 R0.12 completion evidence remains: RE-145 adds an off-by-default
 `billboard_audit_capture` build that enters the existing isolated browser,
@@ -111,7 +141,7 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.13 — Framebuffer Rendering` (RE-149). Current and
-next eligible work is R0.14's controlled original-output camera comparison.
+next eligible work is R0.14's same-interest original-output camera comparison.
 material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
 validation. Combat remains locked. Physical PSP was not tested this session;
 R2 acceptance remains unperformed. The completed RE-140 temporary diagnostic
