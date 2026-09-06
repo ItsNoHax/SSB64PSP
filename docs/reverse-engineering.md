@@ -11465,3 +11465,46 @@ cleanly; SHA-256 is
 --all-targets` pass (433 tests).
 
 **Confidence: certain for all four mappings.**
+
+---
+
+## RE-158 — Static effect descriptors recover five special-move material tables (`PLAN.md` R0.6/R0.7)
+
+**Question.** Do the remaining Link, Samus, Captain Falcon, Jigglypuff and
+Ness special-move graphs have original-source material-table relationships,
+rather than merely demand-compatible candidates?
+
+**Evidence.** The five records in `ef/efmanager.c` pair each graph's linker
+symbol with its material-table linker symbol in the adjacent
+`EFDesc.o_dobjsetup`/`o_mobjsub` fields: Link Spin Attack, Samus Grapple Beam,
+Captain Falcon Kick, Jigglypuff Sing and Ness Psychic Magnet. The relevant
+relocData declarations independently fix the offsets: file 353
+`0x11C0 → 0x1038`, file 349 `0x380 → 0x210`, file 350 `0xB08 → 0x960`, file
+351 `0x2130 → 0x1C20`, and file 352 `0x9A8 → 0x810`. This settles three
+previously ambiguous demand searches (Samus and Captain had two candidates
+each) and two formerly unique-but-unconfirmed candidates without using the
+search result as authority. While applying the Ness mapping, the initially
+suspected `0x880` wrapper did not parse; the typed relocData layout identifies
+the actual two-entry table at `0x810`, which parses and leads to the embedded
+`MObjSub` at `0x820`.
+
+**Implementation.** Added the five source-recorded mappings to
+`tools/romtool/src/main.rs::load_all`, guarded by the existing named-graph and
+table-parse checks.
+
+**Verification.** Against the identified USA ROM, `romtool mobj --file 349`,
+`--file 350`, `--file 351`, `--file 352`, and `--file 353` each report no
+unnamed graph and zero chain/demand mismatches. Archive-wide pairings rise
+`113 → 118`, unpaired graphs fall `14 → 9`, and all 448 paired nodes match
+their display-list material demand. `romtool textures` rises `696 → 703` bound
+and `667 → 674` packed, retaining the same 29 understood failures (three
+MissingPalette and 26 runtime framebuffer references). The rebuilt pack reloads
+cleanly; SHA-256 is
+`a1d95fa4ae08a1c48d46ecf8efbf18063e804db922d56887bd691aa4cab1d117`.
+`cargo +1.98.0 fmt --all -- --check`, strict `cargo +1.98.0 clippy
+--workspace --all-targets -- -D warnings`, and `cargo +1.98.0 test --workspace
+--all-targets` pass (433 tests). These special-move effects are not exposed by
+the current viewer, so this is source/pipeline validation rather than a visual
+PPSSPP or physical-PSP claim.
+
+**Confidence: certain for all five mappings.**

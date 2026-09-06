@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-157)
+**Last updated:** 2026-09-06 (RE-158)
 
 ---
 
@@ -15,12 +15,28 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 14 unpaired graphs; per-object lighting remains the
+can disambiguate its 9 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-157 resolves four formerly-unpaired graphs using direct
+`IN_PROGRESS`. RE-158 resolves five formerly-unpaired special-move effect
+graphs using direct original-source `EFDesc` records: Link Spin Attack in file
+353 (`0x11C0 → 0x1038`), Samus Grapple Beam in file 349 (`0x380 → 0x210`),
+Captain Falcon Kick in file 350 (`0xB08 → 0x960`), Jigglypuff Sing in file 351
+(`0x2130 → 0x1C20`), and Ness Psychic Magnet in file 352 (`0x9A8 → 0x810`).
+The matching relocData declarations verify the table offsets. `romtool mobj`
+for each affected file reports no unnamed graphs and zero chain/demand
+mismatches; archive-wide it reports 118 paired, 9 unpaired and zero
+mismatches across 448 nodes. `romtool textures` rises to 703 bound / 674
+packed / 29 understood failures. The rebuilt pack reloads cleanly and has
+SHA-256 `a1d95fa4ae08a1c48d46ecf8efbf18063e804db922d56887bd691aa4cab1d117`.
+Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
+pass.
+No PPSSPP or physical-PSP test was run because these source-pipeline entries
+are not exposed by the current viewer.
+
+RE-157 resolves four formerly-unpaired graphs using direct
 original-source descriptors: `efground.c`'s `EFGroundDesc` binds Kongo
 Jungle Bird in file 108 (`0xF400 → 0xF230`); `efmanager.c`'s static `EFDesc`
 records bind Pikachu Special2 Unk (`0x800 → 0x640`) and ThunderShock
