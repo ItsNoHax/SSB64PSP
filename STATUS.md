@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-155)
+**Last updated:** 2026-09-06 (RE-156)
 
 ---
 
@@ -39,6 +39,24 @@ release build could not be reproduced in this host's current Rust setup:
 the default toolchain is non-nightly and the available nightly lacks the
 PSP `std` build configuration. No PPSSPP or physical-PSP test was run for
 these newly reachable assets. Implementation commit: `f77ab7a`.
+
+RE-156 repairs CI infrastructure without changing rendering behaviour. The
+host failure was committed `rustfmt` drift across six ROM/tool source files;
+the latest-stable advisory job additionally rejected test-only constant
+expressions containing erasing arithmetic. The sources are formatted with the
+pinned Rust 1.98.0 formatter and the checkerboard expectations now retain the
+same weighted calculation through named `dark`/`light` values. PSP CI no
+longer relies on an implicit directory toolchain or an unbounded `cargo-psp`
+install: it explicitly installs and runs `nightly-2026-08-01` with `rust-src`,
+and pins `cargo-psp 0.2.9`, synchronized with `psp/rust-toolchain.toml`.
+Verification: `cargo +1.98.0 fmt --all -- --check`, strict `cargo +1.98.0
+clippy --workspace --all-targets`, and `cargo +1.98.0 test --workspace
+--all-targets` pass (433 tests); all three no-std crates build for
+`thumbv7em-none-eabi`; and `RUSTFLAGS='' cargo +nightly-2026-08-01 psp
+--release` produces a 4.5 MiB `EBOOT.PBP` with magic `00504250`. The locally
+installed unpinned `stable` is Rust 1.97.1 (below the declared 1.98 MSRV), so
+the GitHub advisory job itself cannot be reproduced locally; its recorded
+Rust-1.98 failures are addressed by this change.
 
 RE-154 resolves four formerly-unpaired file-84 effect graphs
 from the original's static `EFDesc` records: FireSpark (`0x2040 → 0x1EA0`),

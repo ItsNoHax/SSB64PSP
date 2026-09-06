@@ -8,7 +8,9 @@
 # no longer resolves.
 #
 # Before bumping this, build with the new nightly and boot the result in
-# PPSSPP -- a successful compile is not sufficient evidence.
+# PPSSPP -- a successful compile is not sufficient evidence. CI installs this
+# exact nightly and cargo-psp 0.2.9 explicitly; keep its PSP_NIGHTLY value in
+# .github/workflows/ci.yml synchronized with this channel.
 [toolchain]
 channel = "nightly-2026-08-01"
 components = ["rust-src"]

@@ -443,8 +443,9 @@ fn tick_values_per_track(opcode: u32) -> Option<usize> {
         | OP_EXT_VAL_AFTER
         | OP_EXT_VAL_BLOCK
         | OP_EXT_VAL => 1,
-        OP_END | OP_JUMP | OP_WAIT | OP_ADD_LENGTH | OP_SET_INTERP | OP_SET_ANIM
-        | OP_SET_FLAGS => 0,
+        OP_END | OP_JUMP | OP_WAIT | OP_ADD_LENGTH | OP_SET_INTERP | OP_SET_ANIM | OP_SET_FLAGS => {
+            0
+        }
         _ => return None,
     })
 }
@@ -530,8 +531,7 @@ impl MaterialJoint {
                 // `SetAnim` additionally rebases `anim_frame`, which nothing
                 // here reads (matches `objanim::StageJoint`'s own choice).
                 OP_JUMP | OP_SET_ANIM => {
-                    let target =
-                        u32_at(data, self.pc).ok_or(MatAnimError::Truncated { at })?;
+                    let target = u32_at(data, self.pc).ok_or(MatAnimError::Truncated { at })?;
                     self.pc = target as usize;
                     if self.pc == at {
                         return Err(MatAnimError::TooLong);
@@ -763,7 +763,11 @@ mod tests {
         let at = |c: f32| colors_at(&d, 0, c).unwrap().palette_id;
         assert_eq!(at(0.0), Some(0));
         assert_eq!(at(1.0), Some(1));
-        assert_eq!(at(2.0), Some(3), "the raw f32 word, cast to i32, not the step index");
+        assert_eq!(
+            at(2.0),
+            Some(3),
+            "the raw f32 word, cast to i32, not the step index"
+        );
     }
 
     #[test]
@@ -796,7 +800,11 @@ mod tests {
             cmd(OP_END, 0, 0),
         ]);
         let c = colors_at(&d, 0, 1.0).unwrap();
-        assert_eq!(c.prim, Some([0xff, 0x00, 0x00, 0xff]), "unaffected by frame");
+        assert_eq!(
+            c.prim,
+            Some([0xff, 0x00, 0x00, 0xff]),
+            "unaffected by frame"
+        );
         assert_eq!(c.palette_id, Some(2), "palette's own second step");
     }
 
@@ -878,7 +886,11 @@ mod tick_tests {
         ]);
         let mut j = MaterialJoint::start(0, 0.0);
         j.tick(&d, 1.0).expect("ticks");
-        assert_eq!(j.track_value(TRACK_PALETTE_ID), Some(0.0), "steps immediately");
+        assert_eq!(
+            j.track_value(TRACK_PALETTE_ID),
+            Some(0.0),
+            "steps immediately"
+        );
         assert!(j.track_is_stepped(TRACK_PALETTE_ID));
 
         j.tick(&d, 1.0).expect("ticks");

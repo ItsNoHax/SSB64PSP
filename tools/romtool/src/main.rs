@@ -912,9 +912,11 @@ fn pack_mesh(
                     false,
                     false,
                 );
-                Some(*tex_index.entry(key).or_insert_with(|| {
-                    writer.add_framebuffer_texture(t.width, t.height)
-                }))
+                Some(
+                    *tex_index
+                        .entry(key)
+                        .or_insert_with(|| writer.add_framebuffer_texture(t.width, t.height)),
+                )
             }
             Some(t) => {
                 let key = texture_cache_key(id, &t);
@@ -933,26 +935,34 @@ fn pack_mesh(
             let key = (anim.source_file, anim.script);
             let resolved = match mat_anim_index.get(&key) {
                 Some(&i) => Some(i),
-                None => mat_anim_data.get(&key).and_then(|(source_offset, entries, ptrs)| {
-                    let file_bytes = src.bytes(if anim.source_file == id {
-                        None
-                    } else {
-                        Some(anim.source_file as u16)
-                    })?;
-                    let palettes: Vec<Vec<u32>> = ptrs
-                        .iter()
-                        .filter_map(|p| convert_mat_anim_palette(src, *p, *entries))
-                        .collect();
-                    // A partial conversion is a real problem worth declining
-                    // outright, not shipping a script that cycles through
-                    // fewer palettes than it actually names.
-                    if palettes.len() != ptrs.len() {
-                        return None;
-                    }
-                    let i = writer.add_mat_anim(anim.source_file, file_bytes, anim.script, *source_offset, &palettes);
-                    mat_anim_index.insert(key, i);
-                    Some(i)
-                }),
+                None => mat_anim_data
+                    .get(&key)
+                    .and_then(|(source_offset, entries, ptrs)| {
+                        let file_bytes = src.bytes(if anim.source_file == id {
+                            None
+                        } else {
+                            Some(anim.source_file as u16)
+                        })?;
+                        let palettes: Vec<Vec<u32>> = ptrs
+                            .iter()
+                            .filter_map(|p| convert_mat_anim_palette(src, *p, *entries))
+                            .collect();
+                        // A partial conversion is a real problem worth declining
+                        // outright, not shipping a script that cycles through
+                        // fewer palettes than it actually names.
+                        if palettes.len() != ptrs.len() {
+                            return None;
+                        }
+                        let i = writer.add_mat_anim(
+                            anim.source_file,
+                            file_bytes,
+                            anim.script,
+                            *source_offset,
+                            &palettes,
+                        );
+                        mat_anim_index.insert(key, i);
+                        Some(i)
+                    }),
             };
             if let Some(mat_anim) = resolved {
                 writer.set_texture_mat_anim(texture, mat_anim);
@@ -1069,9 +1079,8 @@ fn resolve_layer_mat_anims(
         return empty();
     };
 
-    let scripts = ssb_rom::matanim::resolve_scripts(file, mat, materials.len(), |n| {
-        materials[n].len()
-    });
+    let scripts =
+        ssb_rom::matanim::resolve_scripts(file, mat, materials.len(), |n| materials[n].len());
     let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
         scripts.iter().map(|c| vec![None; c.len()]).collect();
 
@@ -1362,12 +1371,24 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 let base_materials = loaded.materials(file, graph);
                 let first_node = writer.object(object).unwrap().first_node;
                 let plan = &plans[gi];
-                let base_converted =
-                    convert_graph_at(&loaded, file, graph.offset, plan, &base_materials, &mut mat_anim_data);
+                let base_converted = convert_graph_at(
+                    &loaded,
+                    file,
+                    graph.offset,
+                    plan,
+                    &base_materials,
+                    &mut mat_anim_data,
+                );
                 for costume in 1..costumes {
                     let materials_k = loaded.materials_at(file, graph, costume as f32);
-                    let converted_k =
-                        convert_graph_at(&loaded, file, graph.offset, plan, &materials_k, &mut mat_anim_data);
+                    let converted_k = convert_graph_at(
+                        &loaded,
+                        file,
+                        graph.offset,
+                        plan,
+                        &materials_k,
+                        &mut mat_anim_data,
+                    );
                     for (p, m_k) in plan.iter().zip(&converted_k) {
                         if !p.own_space() {
                             continue;
@@ -1393,7 +1414,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             m_k,
                             swizzle,
                         );
-                        writer.add_costume_override(first_node + p.node as u32, costume, variant_index);
+                        writer.add_costume_override(
+                            first_node + p.node as u32,
+                            costume,
+                            variant_index,
+                        );
                         costume_overrides_added += 1;
                     }
                 }
@@ -1843,8 +1868,15 @@ fn convert_texture(
     // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
     // whatever dimensions the packed texture actually reports (RE-067).
     let decode_mirrored = |tlut: Option<&[u16]>| {
-        let img = texture::decode(texels, t.width as u32, t.height as u32, t.format, t.size, tlut)
-            .ok()?;
+        let img = texture::decode(
+            texels,
+            t.width as u32,
+            t.height as u32,
+            t.format,
+            t.size,
+            tlut,
+        )
+        .ok()?;
         Some(texture::mirror_extend(&img, t.mirror_s, t.mirror_t))
     };
 
@@ -2071,18 +2103,18 @@ fn load_all(archive: &Archive) -> Loaded {
     // turned out to be a substring coincidence in a symbol name rather than
     // a real address match, and are left unfixed rather than guessed at.
     for &(file, graph, table) in &[
-        (353u32, 0x3F8u32, 0x130u32), // LinkSpecial2 EntryWave
-        (353u32, 0x7B8u32, 0x4F0u32), // LinkSpecial2 EntryBeam
-        (52u32, 0x7E98u32, 0x42F8u32),  // MVCommon RoomBackground
-        (52u32, 0x1C4A8u32, 0x1BC60u32), // MVCommon RoomLogo
-        (52u32, 0x1DF28u32, 0x1DCA0u32), // MVCommon RoomCloseUpEffectAir
-        (52u32, 0x1F270u32, 0x1F0F8u32), // MVCommon RoomCloseUpEffectGround
-        (52u32, 0x22440u32, 0x20480u32), // MVCommon RoomDeskGround
+        (353u32, 0x3F8u32, 0x130u32),     // LinkSpecial2 EntryWave
+        (353u32, 0x7B8u32, 0x4F0u32),     // LinkSpecial2 EntryBeam
+        (52u32, 0x7E98u32, 0x42F8u32),    // MVCommon RoomBackground
+        (52u32, 0x1C4A8u32, 0x1BC60u32),  // MVCommon RoomLogo
+        (52u32, 0x1DF28u32, 0x1DCA0u32),  // MVCommon RoomCloseUpEffectAir
+        (52u32, 0x1F270u32, 0x1F0F8u32),  // MVCommon RoomCloseUpEffectGround
+        (52u32, 0x22440u32, 0x20480u32),  // MVCommon RoomDeskGround
         (328u32, 0x19F08u32, 0x18D60u32), // KirbyModel JointTree_0x19F08
-        (22u32, 0x568u32, 0x408u32), // MNPlayersSpotlight MObjSub_0x0408
-        (69u32, 0x6950u32, 0x6140u32), // MVOpeningStandoff LightningMObjSub_MObjSub
-        (75u32, 0x35F8u32, 0x2AA8u32), // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
-        (83u32, 0x7750u32, 0x73E0u32), // EFCommonEffects1 DamageSlash_MObjSub
+        (22u32, 0x568u32, 0x408u32),      // MNPlayersSpotlight MObjSub_0x0408
+        (69u32, 0x6950u32, 0x6140u32),    // MVOpeningStandoff LightningMObjSub_MObjSub
+        (75u32, 0x35F8u32, 0x2AA8u32),    // MVOpeningRunCrash MObjSub_0x2AA8_MObjSub
+        (83u32, 0x7750u32, 0x73E0u32),    // EFCommonEffects1 DamageSlash_MObjSub
         (84u32, 0x2760u32, 0x22B8u32), // EFCommonEffects2 CatchSwirlMObjSub_head (- 8 bytes of PAD for the 2 zero-demand leading nodes)
         (167u32, 0x28DA8u32, 0x287D8u32), // MNTitle SlashMObjSub_MObjSub
     ] {
@@ -2146,9 +2178,9 @@ fn load_all(archive: &Archive) -> Loaded {
         (112u32, 0xE400u32, 0x9790u32), // StageYamabukiFile2, same table
         (112u32, 0xFE58u32, 0x9790u32), // StageYamabukiFile2, same table
         (152u32, 0x1770u32, 0x13B0u32), // StagePupupuFile3 -- mobjlink_0x13AC[7], entries [0..3]/[5][6] decomp-documented NULL
-        (157u32, 0xB08u32, 0x8C0u32),  // StageZebesFile3 -- mobjlink_0x08C4[1], PAD(4) immediately before it
-        (328u32, 0x4230u32, 0x18u32),  // KirbyModel -- JointVerts_Vtx[8] slots 6-7, decomp's own "combined chain" comment
-        (328u32, 0x49D8u32, 0x18u32),  // KirbyModel, same slots
+        (157u32, 0xB08u32, 0x8C0u32), // StageZebesFile3 -- mobjlink_0x08C4[1], PAD(4) immediately before it
+        (328u32, 0x4230u32, 0x18u32), // KirbyModel -- JointVerts_Vtx[8] slots 6-7, decomp's own "combined chain" comment
+        (328u32, 0x49D8u32, 0x18u32), // KirbyModel, same slots
         (328u32, 0x16AB0u32, 0x18u32), // KirbyModel, same slots
         (328u32, 0x176D8u32, 0x18u32), // KirbyModel, same slots
         (342u32, 0x2258u32, 0x101Cu32), // PikachuSpecial3 -- gap_0x0000_sub_0x1018[8], decomp-documented "2 NULL slots + 6 pointers"
@@ -2179,8 +2211,8 @@ fn load_all(archive: &Archive) -> Loaded {
     // than selecting one of `search_tables`' several demand-compatible
     // candidates.
     for &(file, graph, table) in &[
-        (35u32, 0x990u32, 0x0u32),    // Mario_MObjSub_pre
-        (35u32, 0x1348u32, 0xB00u32), // Donkey_MObjSub_pre
+        (35u32, 0x990u32, 0x0u32),     // Mario_MObjSub_pre
+        (35u32, 0x1348u32, 0xB00u32),  // Donkey_MObjSub_pre
         (35u32, 0x1860u32, 0x1470u32), // Metroid_MObjSub_pre
         (35u32, 0x21D0u32, 0x1940u32), // Fox_MObjSub_pre
         (35u32, 0x2520u32, 0x22B0u32), // Zelda_MObjSub_pre
@@ -2241,8 +2273,8 @@ fn load_all(archive: &Archive) -> Loaded {
     // fingerprints, so `--search` reports all three for every graph; the
     // source's same-row relationship is the authority selecting them.
     for &(file, graph, table) in &[
-        (85u32, 0x628u32, 0x108u32),   // MBallRaysEffectDesc
-        (85u32, 0x3170u32, 0x2CA8u32), // ItemGetSwirlEffectDesc
+        (85u32, 0x628u32, 0x108u32),    // MBallRaysEffectDesc
+        (85u32, 0x3170u32, 0x2CA8u32),  // ItemGetSwirlEffectDesc
         (136u32, 0x3DA8u32, 0x3720u32), // PlatformSmall
         (136u32, 0x45D8u32, 0x3F70u32), // PlatformMedium
         (136u32, 0x4E08u32, 0x47A0u32), // PlatformLarge
@@ -3340,9 +3372,10 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut matanim_fail = 0usize;
     let mut matanim_categories = [0usize; ssb_rom::matanim::TICK_TRACK_COUNT];
     let mut palette_examples: Vec<(u32, u32, u32, u32)> = Vec::new(); // (file, graph, script, entries needed)
-    // RE-090: does the script-computed bound actually read a real
-    // `palettes[]` array, not just a plausible-looking number?
-    let (mut palette_reads_ok, mut palette_reads_fail, mut palette_reads_dup) = (0usize, 0usize, 0usize);
+                                                                      // RE-090: does the script-computed bound actually read a real
+                                                                      // `palettes[]` array, not just a plausible-looking number?
+    let (mut palette_reads_ok, mut palette_reads_fail, mut palette_reads_dup) =
+        (0usize, 0usize, 0usize);
     for s in &loaded.stages {
         if only_file.is_some_and(|f| f != s.file) {
             continue;
@@ -3833,7 +3866,6 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     }
     Ok(())
 }
-
 
 /// Searches for the material table of every graph no record names, and scores
 /// the result against the decomp's own declarations.

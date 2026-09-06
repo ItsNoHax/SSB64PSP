@@ -357,7 +357,12 @@ mod tests {
         // jumping straight back to A.
         assert_eq!(
             [out.get(0), out.get(1), out.get(2), out.get(3)],
-            [[1, 0, 0, 255], [2, 0, 0, 255], [2, 0, 0, 255], [1, 0, 0, 255]]
+            [
+                [1, 0, 0, 255],
+                [2, 0, 0, 255],
+                [2, 0, 0, 255],
+                [1, 0, 0, 255]
+            ]
         );
     }
 
@@ -370,7 +375,12 @@ mod tests {
         assert_eq!((out.width, out.height), (1, 4));
         assert_eq!(
             [out.get(0), out.get(1), out.get(2), out.get(3)],
-            [[1, 0, 0, 255], [2, 0, 0, 255], [2, 0, 0, 255], [1, 0, 0, 255]]
+            [
+                [1, 0, 0, 255],
+                [2, 0, 0, 255],
+                [2, 0, 0, 255],
+                [1, 0, 0, 255]
+            ]
         );
     }
 
@@ -425,14 +435,19 @@ mod tests {
         for y in 0..4u32 {
             for x in 0..4u32 {
                 let on = (x % 2) ^ (y % 2) == 0;
-                img.put((y * 4 + x) as usize, if on { [0, 0, 0, 255] } else { [200; 4] });
+                img.put(
+                    (y * 4 + x) as usize,
+                    if on { [0, 0, 0, 255] } else { [200; 4] },
+                );
             }
         }
         let out = box_blur_wrapped(&img);
         // Every texel: itself + 4 diagonal same-colour + 4 orthogonal
         // opposite-colour, over 9 samples.
-        let on_avg = (0 * 5 + 200 * 4) / 9;
-        let off_avg = (200 * 5 + 0 * 4) / 9;
+        let dark = 0u32;
+        let light = 200u32;
+        let on_avg = (dark * 5 + light * 4) / 9;
+        let off_avg = (light * 5 + dark * 4) / 9;
         assert_eq!(out.get(0)[0], on_avg as u8, "(0,0) starts 'on'");
         assert_eq!(out.get(1)[0], off_avg as u8, "(1,0) starts 'off'");
     }
@@ -451,7 +466,10 @@ mod tests {
         let out = box_blur_wrapped(&img);
         // (3,3) wraps to be diagonally adjacent to (0,0) through the corner.
         let corner_neighbour = out.get(3 * 4 + 3)[0];
-        assert!(corner_neighbour > 0, "wrapping must reach across the border");
+        assert!(
+            corner_neighbour > 0,
+            "wrapping must reach across the border"
+        );
     }
 
     #[test]
