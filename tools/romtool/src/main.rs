@@ -2291,6 +2291,31 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-157: static effect descriptors also name four more graph/table
+    // relationships that archive-local scans cannot see. `EFGroundDesc`
+    // records in `ef/efground.c` bind Kongo Jungle's bird, while `EFDesc`
+    // records in `ef/efmanager.c` bind Pikachu's two Special2 effects and
+    // Ness's PK Thunder Wave. The matching relocData declarations identify
+    // the linker-target offsets. These are source relationships, not choices
+    // made from the demand-compatible candidates reported by `--search`.
+    for &(file, graph, table) in &[
+        (108u32, 0xF400u32, 0xF230u32), // GRJungleMapBird
+        (347u32, 0x800u32, 0x640u32),   // PikachuSpecial2 Unk
+        (347u32, 0x1640u32, 0x13A0u32), // PikachuSpecial2 ThunderShock
+        (335u32, 0x9A10u32, 0x9870u32), // NessModel PKThunderWave
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,
