@@ -395,13 +395,12 @@ Reproduce original N64 CI/TLUT behavior.
 * [x] TLUT loading behavior verified — the 4 "no TLUT recorded" notes are explained: `MObj` material-table pairing gaps in 3 specific files, not a TLUT-loading bug (RE-057)
 * [x] palette inheritance/state verified — RE-064: direct unit test pins cross-node inheritance (confirmed capable of failing before being confirmed to pass); no cross-object leakage is possible by construction (fresh `State` per graph)
 * [x] palette pointers verified — resolved through archive extern relocations (RE-037)
-* [ ] all missing palette cases resolved — 1 `MissingPalette` failure remains (was 4; files 353 and 52 fixed via RE-059/RE-060), root-caused to a `PartTables` pairing gap in file 86's one remaining graph (RE-057, RE-060); tracked under R0.7, not this task
+* [x] all missing palette cases resolved — RE-162 follows file 251's typed `ITAttributes` extern pair to resolve file 86's former N-Bumper pairing gap; `romtool textures` now reports no `MissingPalette` failures (only the 26 documented runtime-framebuffer references remain)
 * [x] regression coverage added — texture decode unit tests in `crates/ssb-rom/src/texture.rs`; state-inheritance unit test in `crates/ssb-rom/src/mesh.rs` (RE-064)
 
 ### Evidence
 
-RE-037, RE-057, RE-064 in `docs/reverse-engineering.md`. The one remaining
-open item is fully attributed to `R0.7`'s scope, not a gap in this task.
+RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 
 ---
 
@@ -1033,11 +1032,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — 5 structural shapes are known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); RE-160 adds three direct source shapes in `EFGroundDesc`, `SC1PGameBossEffect`, and `grPupupuMakeMapGObj`, resolving Sector Z's Ship, Final Destination's four wallpaper graphs, and Dream Land's Whispy eyes. File 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); RE-161 likewise traces file 324's `JointTree_0x9CF8` through every typed Link descriptor/call site but finds no named association with any of its three candidates. Both remain deliberately unpaired.
-* [ ] original material data identified — done for 69 source/search-confirmed pairings beyond the structural scan, including RE-153–159's 31 pairs and RE-160's six direct source pairings; not done for file 86's 27-way-ambiguous N-Bumper or file 324's three-way-ambiguous `JointTree_0x9CF8`, which are blocked on upstream decomp typing or a new named source relation (RE-161 rules out the currently typed Link records as that relation).
+* [ ] all material-table references traced — RE-162 resolves the formerly 27-way N-Bumper ambiguity from file 251's typed `ITAttributes` cross-file extern pair (`86: 0x7BE8 → 0x7488`); RE-161 leaves only file 324's `JointTree_0x9CF8` without a named association to any of its three demand-compatible candidates.
+* [ ] original material data identified — done for 70 source/search-confirmed pairings beyond the structural scan, including RE-153–160's 37 pairs and RE-162's N-Bumper pairing; not done for file 324's three-way-ambiguous `JointTree_0x9CF8`, blocked on upstream typing or a new named source relation.
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — the prior source-paired scenes plus RE-160's Sector Z Ship, Final Destination wallpaper effects, and Dream Land Whispy eyes are verified via `romtool mobj`/`romtool textures`; effects have source/pipeline rather than visual runtime verification.
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (466 nodes) is that regression detector for these fixes.
+* [ ] affected scenes verified — the prior source-paired scenes plus RE-160's Sector Z Ship, Final Destination wallpaper effects, Dream Land Whispy eyes, and RE-162's N-Bumper are verified via `romtool mobj`/`romtool textures`; effects have source/pipeline rather than visual runtime verification.
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (467 nodes) is that regression detector for these fixes.
 
 ---
 

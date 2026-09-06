@@ -10,6 +10,43 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-162 — Typed N-Bumper item attributes resolve the final palette gap (`PLAN.md` R0.4/R0.6/R0.7)
+
+**Question.** Can the former 27-way material-table ambiguity for file 86's
+N-Bumper graph be resolved from original source rather than demand matching?
+
+**Evidence.** `relocData/251_ITCommonData.c` now types
+`dITCommonData_NBumper_ItemAttributes`: its `data` field names the extern
+`dITCommonObject_NBumper_Item_data_DObjDesc`, while `p_mobjsubs` names the
+same-file extern `dITCommonObject_NBumper_Item_mobjsubs_gap_0x7488`. The
+file-86 relocData definition identifies that table at `0x7488`, including its
+leading NULL node and its N-Bumper CI4 material chain. This is the direct
+original DObj/MObj relationship RE-061 lacked when only the runtime
+`itGetPData` offset computation was typed. The scene parser identifies the
+actual graph at `0x7BE8`, within the broad `0x7648` source data block, so the
+source-backed mapping is `86: 0x7BE8 → 0x7488`.
+
+**Implementation and verification.** Added the guarded mapping to
+`tools/romtool/src/main.rs::load_all`. With the identified USA ROM,
+`romtool mobj --file 86 --search` reports 15 paired nodes, zero unnamed
+graphs, and zero demand mismatches; its formerly missing CI4 palette is now
+bound. `romtool textures --file 86` packs 55/55 textures with no failures.
+Archive-wide, `romtool mobj` reports 126 paired graphs, one unpaired graph
+(file 324's separately documented Link tree), and 467 matching nodes with
+zero mismatches; `romtool textures` reports 706 bound / 680 packed / 26
+understood runtime-framebuffer failures. Rebuilt `assets/generated/ssb64.pak`
+loads cleanly (SHA-256
+`15e4d5788a452cff9d1ad157b6f5c50ce332af5890ae7e01648af45d0f499601`).
+Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
+pass. The pinned-nightly PSP release build succeeds with its existing six
+warnings. No PPSSPP or physical-PSP test was run because the item is not
+exposed by the current viewer.
+
+**Confidence: certain.** The table is selected by original `ITAttributes`
+fields and relocData extern labels, not by the old 27-candidate fingerprint.
+
+---
+
 ## RE-161 — Link-model's final unpaired graph has no typed source relationship (`PLAN.md` R0.6/R0.7)
 
 **Question.** Can the last unpaired Link-model graph be connected to one of

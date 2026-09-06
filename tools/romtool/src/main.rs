@@ -2103,6 +2103,13 @@ fn load_all(archive: &Archive) -> Loaded {
     // turned out to be a substring coincidence in a symbol name rather than
     // a real address match, and are left unfixed rather than guessed at.
     for &(file, graph, table) in &[
+        // ITCommonData's NBumper ItemAttributes names both the DObj resource
+        // and its MObjSub*** table as externs from ITCommonObject.  The scene
+        // parser starts at the first actual DObjDesc record (0x7BE8), within
+        // the source label's broad 0x7648 data block; the material table is
+        // the exact linker target at 0x7488.  This replaces RE-061's former
+        // 27-way demand-search ambiguity with a direct original relationship.
+        (86u32, 0x7BE8u32, 0x7488u32),    // NBumper ItemAttributes
         (353u32, 0x3F8u32, 0x130u32),     // LinkSpecial2 EntryWave
         (353u32, 0x7B8u32, 0x4F0u32),     // LinkSpecial2 EntryBeam
         (52u32, 0x7E98u32, 0x42F8u32),    // MVCommon RoomBackground
