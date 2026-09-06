@@ -54,6 +54,7 @@ camera-audit EBOOT SHA-256:
 regression EBOOT SHA-256:
 `cdea6baf22b1dd0d5c6c5c66cfe89327aacb14449bf06cf0abdfdaa23aa548e5`.
 Physical PSP was not tested.
+Relevant implementation commit: `341c74d`.
 
 R0.13 remains complete. RE-149 resolves a roadmap dependency cycle:
 the reusable wipe renderer and synchronized capture boundary are R0.13's
