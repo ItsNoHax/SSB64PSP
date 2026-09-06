@@ -11387,5 +11387,43 @@ Clippy passes, and the PSP release build succeeds with its existing six
 warnings (EBOOT SHA-256
 `3a4b172b9500cfd9d4da98d7ca916c41dd9b03e6e1c39aabfda5e16b9689c845`).
 These effects are not exposed by the present viewer, so no visual PPSSPP or
-physical-PSP claim is made. R0.6/R0.7 remain in progress for the other 23
-unpaired graphs and the separate material/lighting acceptance work.
+physical-PSP claim is made. At that point R0.6/R0.7 remained in progress for
+the other 23 unpaired graphs and the separate material/lighting acceptance
+work.
+
+---
+
+## RE-155 — Direct effect and Bonus2 platform pairings reduce the material tail (`PLAN.md` R0.6/R0.7)
+
+**Question.** Do five remaining graphs have a named MObj relationship, rather
+than merely a demand-compatible candidate?
+
+**Evidence.** `ef/eftypes.h` defines the adjacent DObj/MObj fields in
+`EFDesc`. `ef/efmanager.c`'s `dEFManagerMBallRaysEffectDesc` and
+`dEFManagerItemGetSwirlEffectDesc` explicitly name file 85's graph/table
+pairs. `85_EFCommonEffects3.c` confirms their linker-target wrapper offsets:
+the leading PAD words correspond to unmaterialed DObj roots before the typed
+MObj table heads. Separately, `sc/sc1pmode/sc1pbonusstage.c` puts the DObj and
+MObj linker symbols for the small, medium and large Bonus2 platforms in the
+same rows of `dSC1PBonusStagePlatformDescs`. `136_Bonus2Common.c` identifies
+their offsets. `romtool mobj --file 136 --search` reports every platform's
+three table candidates as identical, proving that demand matching alone is
+insufficient to choose correctly.
+
+**Implementation.** Added the source-recorded mappings in
+`tools/romtool/src/main.rs::load_all`: MBall Rays `0x628 → 0x108`, Item Get
+Swirl `0x3170 → 0x2CA8`, Platform Small `0x3DA8 → 0x3720`, Platform Medium
+`0x45D8 → 0x3F70`, and Platform Large `0x4E08 → 0x47A0`.
+
+**Verification.** Against the identified USA ROM, `romtool mobj --file 85`
+and `--file 136` report zero unnamed graphs and zero chain/demand mismatches.
+Archive-wide pairings rise `104 → 109`, unpaired graphs fall `23 → 18`, and
+all 436 paired nodes match their demand. `romtool textures` rises `691 → 692`
+bound and `662 → 663` packed while retaining the same 29 understood failures.
+The rebuilt pack reloads cleanly (SHA-256
+`f8c920d5777a683d0ccd27ea5a9c021354e20eafbc2cb13891e15504d91f5ad0`).
+`cargo test --workspace` passes all 433 tests and strict release-workspace
+Clippy passes. The PSP release build was not reproducible on this host's
+installed toolchain configuration; no PPSSPP or physical-PSP test was run.
+
+**Confidence: certain for the five mappings.**
