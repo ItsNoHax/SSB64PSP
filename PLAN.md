@@ -1012,6 +1012,17 @@ all 424 paired nodes match their display-list demand. `romtool textures` rises
 currently exposed by the viewer, so this is pipeline/source verification, not
 a claim of visual runtime validation.
 
+RE-155 adds five more direct source pairings: `ef/efmanager.c`'s static
+`EFDesc` records bind file 85's MBall Rays (`0x628 → 0x108`) and Item Get
+Swirl (`0x3170 → 0x2CA8`), while `sc1pbonusstage.c`'s parallel
+`dSC1PBonusStagePlatformDescs` columns bind Bonus2Common's Small
+(`0x3DA8 → 0x3720`), Medium (`0x45D8 → 0x3F70`) and Large
+(`0x4E08 → 0x47A0`) platforms. The three platform tables deliberately have
+the same demand fingerprint, so source same-row pairing — not `--search` —
+selects the correct table. Archive-wide pairing rises `104 → 109`, unpaired
+graphs fall `23 → 18`, and all 436 paired nodes have zero chain/demand
+mismatches.
+
 ### Objective
 
 Resolve every scene graph containing an unresolved material table.
@@ -1022,11 +1033,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — 5 structural shapes are known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); RE-153 supplies a source-confirmed parallel-array instance of the latter for all ten file-35 emblems, and RE-154 supplies four further static-`EFDesc` pairs for file-84 effects. File 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 27 more graphs (Kirby's + 6 archive-wide via RE-077/078, +20 more via RE-125) were traced by search plus a decomp cross-check. The other 23 unpaired graphs are mostly effects, stage files and fighters' special-move files rather than core fighter bodies — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
-* [ ] original material data identified — done for 48 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files via RE-077/078, 20 via RE-125, 10 source-paired file-35 emblems via RE-153, 4 source-paired file-84 effects via RE-154); not done for the other 23 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
+* [ ] all material-table references traced — 5 structural shapes are known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); RE-153 supplies a source-confirmed parallel-array instance of the latter for all ten file-35 emblems, RE-154 supplies four static-`EFDesc` pairs for file-84 effects, and RE-155 supplies two more static effects plus three source-parallel bonus platforms. File 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 27 more graphs (Kirby's + 6 archive-wide via RE-077/078, +20 more via RE-125) were traced by search plus a decomp cross-check. The other 18 unpaired graphs are mostly effects, stage files and fighters' special-move files rather than core fighter bodies — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
+* [ ] original material data identified — done for 53 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files via RE-077/078, 20 via RE-125, 10 source-paired file-35 emblems via RE-153, 4 source-paired file-84 effects via RE-154, 2 file-85 `EFDesc` effects and 3 parallel bonus-stage platforms via RE-155); not done for the other 18 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — file 353's two, file 52's five, the 27 search-confirmed graphs, all ten file-35 emblems, and file 84's four RE-154 effects are verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078, RE-125, RE-153, RE-154); file-84 effects have source/pipeline rather than visual runtime verification
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (424 nodes) is that regression detector for these fixes.
+* [ ] affected scenes verified — file 353's two, file 52's five, the 27 search-confirmed graphs, all ten file-35 emblems, file 84's four RE-154 effects, and RE-155's two effects/three bonus platforms are verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078, RE-125, RE-153–155); effects have source/pipeline rather than visual runtime verification
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (436 nodes) is that regression detector for these fixes.
 
 ---
 

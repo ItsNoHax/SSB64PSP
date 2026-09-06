@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-154)
+**Last updated:** 2026-09-06 (RE-155)
 
 ---
 
@@ -15,12 +15,32 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 23 unpaired graphs; per-object lighting remains the
+can disambiguate its 18 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-154 resolves four formerly-unpaired file-84 effect graphs
+`IN_PROGRESS`. RE-155 resolves five formerly-unpaired graphs using direct
+original-source pairings: `ef/efmanager.c`'s static `EFDesc` records bind
+file-85 MBall Rays (`0x628 → 0x108`) and Item Get Swirl
+(`0x3170 → 0x2CA8`); `sc1pbonusstage.c`'s parallel
+`dSC1PBonusStagePlatformDescs` rows bind file-136 Small
+(`0x3DA8 → 0x3720`), Medium (`0x45D8 → 0x3F70`) and Large
+(`0x4E08 → 0x47A0`) platforms. The three platform tables are
+demand-indistinguishable, so the original source's same-row relationship,
+not demand search, selects them. `romtool mobj --file 85` and `--file 136`
+each report every graph paired with zero mismatches; archive-wide it reports
+109 paired, 18 unpaired and zero mismatches across 436 nodes. `romtool
+textures` rises to 692 bound / 663 packed / 29 understood failures, and the
+rebuilt pack SHA-256 is
+`f8c920d5777a683d0ccd27ea5a9c021354e20eafbc2cb13891e15504d91f5ad0`.
+All 433 workspace tests and strict release-workspace Clippy pass. The PSP
+release build could not be reproduced in this host's current Rust setup:
+the default toolchain is non-nightly and the available nightly lacks the
+PSP `std` build configuration. No PPSSPP or physical-PSP test was run for
+these newly reachable assets. Implementation commit: `f77ab7a`.
+
+RE-154 resolves four formerly-unpaired file-84 effect graphs
 from the original's static `EFDesc` records: FireSpark (`0x2040 → 0x1EA0`),
 CatchSwirl (`0x3398 → 0x22B8`), ReflectBreak (`0x53E8 → 0x2F78`) and
 DeadExplode (`0x6D00 → 0x4F08`). `ef/efmanager.c` names each effect's
@@ -188,10 +208,10 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
-Latest completed implementation: RE-154's source-paired common-effect
-material tables (implementation commit `3be633e`). R0.6 remains
+Latest completed implementation: RE-155's source-paired effects and Bonus2
+platform material tables (implementation commit `f77ab7a`). R0.6 remains
 the primary task; its remaining material/primitive/environment items depend on
-R0.7's accepted 23-graph long tail, whose current search methods are exhausted
+R0.7's accepted 18-graph long tail, whose current search methods are exhausted
 pending upstream typing or newly unique evidence. R0.5's canopy and the full
 rendering gate still need physical-hardware evidence. Combat remains locked.
 All temporary object, primitive, texture-view and diagnostic edits used for

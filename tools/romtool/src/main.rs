@@ -2229,6 +2229,36 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-155: `EFDesc` also names the two remaining file-85 effect graphs
+    // directly: `dEFManagerMBallRaysEffectDesc` and
+    // `dEFManagerItemGetSwirlEffectDesc` in `ef/efmanager.c`.  The linker
+    // targets are wrapper starts, not the visible `MObjSub **head` arrays:
+    // each leading PAD word corresponds to a DObj with no material.  The
+    // same source-confirmed pairing shape occurs in the one-player bonus
+    // stage: `dSC1PBonusStagePlatformDescs` in `sc1pbonusstage.c` has
+    // parallel DObj/MObj columns for the small, medium, and large platforms.
+    // The three `Bonus2Common` MObj tables happen to have identical demand
+    // fingerprints, so `--search` reports all three for every graph; the
+    // source's same-row relationship is the authority selecting them.
+    for &(file, graph, table) in &[
+        (85u32, 0x628u32, 0x108u32),   // MBallRaysEffectDesc
+        (85u32, 0x3170u32, 0x2CA8u32), // ItemGetSwirlEffectDesc
+        (136u32, 0x3DA8u32, 0x3720u32), // PlatformSmall
+        (136u32, 0x45D8u32, 0x3F70u32), // PlatformMedium
+        (136u32, 0x4E08u32, 0x47A0u32), // PlatformLarge
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,
