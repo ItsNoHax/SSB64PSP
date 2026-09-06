@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-160)
+**Last updated:** 2026-09-06 (RE-161)
 
 ---
 
@@ -35,6 +35,19 @@ has SHA-256 `3a25a0a2c6303f6bca8ca97708d6d50726c8857a7819c7f9ca7d81c64176a91d`.
 Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
 pass. No PPSSPP or physical-PSP test was run: these background/effect paths
 are not exposed by the current viewer.
+
+RE-161 exhausts the remaining source-based lead for file 324 without adding a
+heuristic mapping. The last graph is `dLinkModel_JointTree_0x9CF8`, a distinct
+three-node tree, not the typed file-handle DObj resource or either typed
+`FTCommonPart` body tree. Its three `mobj --search` candidates (`0x48`,
+`0x4388`, `0x84C0`) are demand-compatible but no original descriptor,
+`FTModelPart`, call site, or linker relationship names any for this graph.
+The direct `romtool` verification still reports one unnamed graph and all
+resolved pairs retain zero chain/demand mismatches; `romtool textures --file
+324` has 31/31 packed and zero failures. This remains an upstream
+typing/source-link gap, along with file 86's separately documented 27-way
+N-Bumper ambiguity, so R0.6/R0.7 stay `IN_PROGRESS`; no converter code or
+pack changed.
 
 RE-158 resolves five formerly-unpaired special-move effect
 graphs using direct original-source `EFDesc` records: Link Spin Attack in file
