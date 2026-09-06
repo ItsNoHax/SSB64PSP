@@ -11427,3 +11427,41 @@ Clippy passes. The PSP release build was not reproducible on this host's
 installed toolchain configuration; no PPSSPP or physical-PSP test was run.
 
 **Confidence: certain for the five mappings.**
+
+---
+
+## RE-157 — Static effect descriptors recover Kongo Jungle, Pikachu, and Ness materials (`PLAN.md` R0.6/R0.7)
+
+**Question.** Do the four unpaired effect graphs in files 108, 335, and 347
+have an original-source relationship to a material table, independently of
+their demand-compatible search candidates?
+
+**Evidence.** `ef/efground.c` places `&llGRJungleMapBirdDObjDesc` and
+`&llGRJungleMapBirdMObjSub` in the same `EFGroundDesc` record. Its file-108
+relocData declarations identify the bird graph at `0xF400` and the original
+table wrapper at `0xF230` (the visibly typed `MObjSub **` begins four bytes
+later). `ef/efmanager.c` likewise places the DObj and MObj linker symbols in
+the same static `EFDesc` records for Pikachu Special2's Unk effect and
+ThunderShock, and Ness's PK Thunder Wave. `347_PikachuSpecial2.c` identifies
+their exact graph/table pairs as `0x800 → 0x640` and `0x1640 → 0x13A0`;
+`335_NessModel.c` identifies `0x9A10 → 0x9870`. These are direct original
+descriptor fields, not inferences from `romtool mobj --search`.
+
+**Implementation.** `tools/romtool/src/main.rs::load_all` now inserts those
+four mappings after confirming that each material table parses against the
+named graph's node count.
+
+**Verification.** Against the identified USA ROM, `romtool mobj --file 108`,
+`--file 347`, and `--file 335` each report zero unnamed graphs and zero
+chain/demand mismatches. Archive-wide pairings rise `109 → 113`, unpaired
+graphs fall `18 → 14`, and all 440 paired nodes match display-list material
+demand. `romtool textures` rises `692 → 696` bound and `663 → 667` packed;
+the same 29 understood failures remain (three MissingPalette cases and 26
+runtime framebuffer references). Rebuilding the pack succeeds and reloads
+cleanly; SHA-256 is
+`989e9f658ea98be8c1ee6a9a9b8890584d087d54a7090990616ded4487e35543`.
+`cargo +1.98.0 fmt --all -- --check`, strict `cargo +1.98.0 clippy
+--workspace --all-targets -- -D warnings`, and `cargo +1.98.0 test --workspace
+--all-targets` pass (433 tests).
+
+**Confidence: certain for all four mappings.**
