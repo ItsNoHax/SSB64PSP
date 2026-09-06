@@ -2165,6 +2165,43 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-153: character-select / results emblems use the same fourth
+    // call-sequence mechanism as RE-060, but are all driven through parallel
+    // arrays rather than one call site per graph.  `mnCharactersMakeEmblem`
+    // (`mn/mndata/mncharacters.c`) and `mnVSResultsMakeEmblem`
+    // (`mn/mnvsmode/mnvsresults.c`) give `gcSetupCommonDObjs` one member of
+    // `dobjdescs[]`, then give `gcAddMObjAll` the same-index member of
+    // `mobjsubs[]`.  Each linker symbol is backed by the explicitly typed
+    // leading `MObjSub **..._pre` table in
+    // `relocData/35_FTEmblemModels.c`; the first slot is the intentional
+    // root-node NULL and the second leads to the rendered emblem's MObj
+    // chain.  The mapping below records those original call-pairings, rather
+    // than selecting one of `search_tables`' several demand-compatible
+    // candidates.
+    for &(file, graph, table) in &[
+        (35u32, 0x990u32, 0x0u32),    // Mario_MObjSub_pre
+        (35u32, 0x1348u32, 0xB00u32), // Donkey_MObjSub_pre
+        (35u32, 0x1860u32, 0x1470u32), // Metroid_MObjSub_pre
+        (35u32, 0x21D0u32, 0x1940u32), // Fox_MObjSub_pre
+        (35u32, 0x2520u32, 0x22B0u32), // Zelda_MObjSub_pre
+        (35u32, 0x2F10u32, 0x2690u32), // Yoshi_MObjSub_pre
+        (35u32, 0x3828u32, 0x2FF0u32), // FZero_MObjSub_pre
+        (35u32, 0x3E68u32, 0x3900u32), // Kirby_MObjSub_pre
+        (35u32, 0x4710u32, 0x3F40u32), // PMonsters_MObjSub_pre
+        (35u32, 0x5A00u32, 0x4840u32), // Mother_MObjSub_pre
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,
