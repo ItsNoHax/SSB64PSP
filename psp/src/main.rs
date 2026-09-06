@@ -376,6 +376,13 @@ unsafe fn run() -> ! {
             .map(|s| play::Play::at_spawn(p, &s)),
         _ => None,
     };
+    // The repeatable original-ROM camera reference uses Mario at player 1's
+    // right spawn, looking left toward Pikachu at player 2's left spawn.
+    if cfg!(feature = "camera_audit_capture") {
+        if let Some(pl) = player.as_mut() {
+            pl.fighter.facing = ssb_game::fighter::Facing::Left;
+        }
+    }
 
     // The animation viewer. Pack version 6 stores, per animation, each joint's
     // script and the node it drives (RE-036), so playing one is: start a
@@ -525,6 +532,11 @@ unsafe fn run() -> ! {
                         player = p
                             .stage(stage_index)
                             .map(|s| play::Play::at_spawn(p, &s));
+                        if cfg!(feature = "camera_audit_capture") {
+                            if let Some(pl) = player.as_mut() {
+                                pl.fighter.facing = ssb_game::fighter::Facing::Left;
+                            }
+                        }
                     }
                 }
 
@@ -538,7 +550,39 @@ unsafe fn run() -> ! {
                             // controls and remapping them would make the stage
                             // browser worse to use than the fighter is to play.
                             let jump = state.buttons.contains(N64Buttons::C_LEFT);
-                            pl.tick(p, &s, state, jump);
+                            let second_interest = if cfg!(feature = "camera_audit_capture") {
+                                p.spawn(&s, 1).and_then(|spawn| {
+                                    p.fighter(ssb_game::fighter::FighterKind::Pikachu as u32)
+                                        .map(|desc| {
+                                            let pos = ssb_engine::math::Vec2::new(
+                                                spawn.x as f32,
+                                                spawn.y as f32,
+                                            );
+                                            let floor_y = ssb_game::collision::project_floor(
+                                                play::FloorSegments::new(p, &s),
+                                                pos,
+                                            )
+                                            .map_or(pos.y, |floor| floor.y);
+                                            ssb_game::camera::Interest {
+                                                target_pos: ssb_engine::math::Vec3::new(
+                                                    pos.x,
+                                                    floor_y + desc.cam_offset_y,
+                                                    0.0,
+                                                ),
+                                                facing_left: false,
+                                                zoom_frame: desc.camera_zoom,
+                                                zoom_range: 1.0,
+                                                // The fixed audit frame corresponds
+                                                // to the original's settled Wait
+                                                // state after 120 ticks.
+                                                idle_zoomed_out: true,
+                                            }
+                                        })
+                                })
+                            } else {
+                                None
+                            };
+                            pl.tick(p, &s, state, jump, second_interest);
                         }
                     }
                 }

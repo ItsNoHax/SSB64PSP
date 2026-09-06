@@ -208,16 +208,16 @@ so nothing is duplicated and nothing is missing an owner.
 
 | Correctness category | Owning task(s) | Status |
 | --- | --- | --- |
-| Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | R0.8 `COMPLETE`; R0.14, R0.6 `IN_PROGRESS` |
-| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16** (new), R0.15 (render-state isolation), R0.6 (state threading) | R0.16 `TODO`, R0.15 `TODO` |
+| Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | R0.8 and R0.14 `COMPLETE`; R0.6 `IN_PROGRESS` |
+| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | R0.16 and R0.15 `COMPLETE`; R0.6 `IN_PROGRESS` |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | R0.3 `COMPLETE`; R0.4, R0.5 `IN_PROGRESS` |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `IN_PROGRESS` |
 | Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `IN_PROGRESS` (accepted deviation: single baked key light, not per-object `sceGuLight`) |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `IN_PROGRESS` (alpha test shipped; translucency detected but not enabled — open bug) |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 (state), R0.14 (depth mapping) | `COMPLETE` for both owned items |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
-| Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** (new) | `TODO` |
-| Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** (new) | `TODO` |
+| Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** | `COMPLETE` |
+| Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** | `COMPLETE` |
 
 `R0.16`, `R0.17` and `R0.18` are new tasks added below to close the gaps this
 table identifies: this project already has extensive, evidence-driven
@@ -1994,7 +1994,7 @@ RE-055, RE-099, RE-100, RE-107, RE-108, RE-109, RE-110, RE-111, RE-112, RE-113, 
 
 ## R0.14 — Camera / Projection Correctness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
@@ -2076,6 +2076,21 @@ Mario), plus the already-tracked missing stage background/effects/UI work. The
 comparison closes the representative-scene item, but not exact camera-output
 verification: a same-interest original frame is still required for that.
 
+RE-151 supplies that missing oracle. A scripted Mupen64Plus run boots the
+identified USA ROM, selects Mario and Pikachu, selects Dream Land, and captures
+by core frame index. Direct RDRAM reads at stable frame 1800 recover the
+original camera's `target_dist = 3181.2507`, `at = (-698.5003, 617.1825, 0)`,
+`eye = (-413.7114, 1045.3188, 3137.6443)`, and `fovy = 37.99998`. The port now
+unions one-to-four fighter interests with the original player-count table,
+fighter camera multipliers, facing asymmetry, and 120-tick Wait zoom. It also
+uses the original quantized `lbCommonSin`/`Cos`/`Tan` behavior. A focused test
+matches the trace within 0.1 units for target distance/look-at and 0.67 units
+for eye (the original vector-normalization steady-state residual, below a
+tenth of a captured pixel). Independent 8- and 9-second PPSSPP captures are
+byte-identical. The normalized side-by-side aligns the left platform and
+fighters; its remaining large differences are the already-tracked missing
+render passes/material fidelity, not camera framing.
+
 ### Objective
 
 Reproduce the original camera and projection behavior.
@@ -2090,13 +2105,13 @@ Reproduce the original camera and projection behavior.
 * [x] viewport verified — RE-034 (device measurement, before/after screenshots) plus RE-082 (source-level confirmation that `Gpu::init` and `main.rs` share one `pillarboxed_viewport()` call, so they cannot diverge)
 * [x] aspect ratio verified — RE-082: `pillarboxed_viewport()` is unit-tested (`pillarbox_preserves_four_by_three`), its output is the sole source for both the GE viewport/scissor and the projection's `aspect` parameter, and `sceGumPerspective`'s own binding uses the standard formula; RE-034's previously-reported residual is a measurement artifact on a too-small on-screen shape, not a surviving defect
 * [x] depth mapping verified — RE-085: `sceGuDepthRange(65535, 0)` + `GreaterOrEqual` matches the `psp` crate's own documented depth-buffer convention exactly, not a workaround; corroborated on-device with no depth-order artifacts found in a complex, multi-layer regression scene
-* [ ] camera transforms verified — RE-084 sourced the FOV *value*; RE-131 ported `gmCameraDefaultFuncCamera`'s single-Mario path; RE-150 corrected its constructor state and signed target-distance update directly from `gmCameraMakeDefaultCamera`/`func_ovl2_8010C670`, pins both with tests, and PPSSPP-verifies a deterministic real-camera frame. The supplied N64 reference has two widely separated fighter interests while this project currently supplies one, so it cannot verify numerical output equivalence. This stays open until a same-interest original frame or reference-emulator trace exists; the deliberately unimplemented weapon/multiplayer/per-move/idle/entry/dead/pause inputs remain documented in `camera.rs`
+* [x] camera transforms verified — RE-151 runs the original ROM with the same Dream Land/Mario/Pikachu interests, reads the live `GMCamera` and `CObj` state from emulated RDRAM, and pins the port against `target_dist`, `at`, `eye`, and `fovy`; the one-to-four fighter union, player-count zoom table, fighter multiplier, facing asymmetry, Wait zoom and original quantized trigonometry are implemented. Weapons and special entry/dead/pause camera modes remain future gameplay-system inputs, not mismatches in the verified default battle-camera path
 * [x] N64/PSP resolution differences explicitly handled — RE-082: pillarboxing (D-008) is precisely this handling, now confirmed by both a device measurement (RE-034) and a source audit (RE-082) rather than one alone
-* [x] representative scenes compared — RE-150 pairs the user's original N64 Dream Land training screenshot with a deterministic PPSSPP real-camera capture. The comparison is intentionally qualitative because its camera inputs differ (two fighters versus one); it identifies the wider N64 framing and the port's visible missing background/effects/UI and fidelity gaps without misreporting pixel equivalence
+* [x] representative scenes compared — RE-150 provides the first qualitative Dream Land comparison; RE-151 replaces its mismatched one-fighter input with the same Mario/Pikachu positions, facings and settled Wait state on both versions. The normalized frame aligns the camera-dependent landmarks while clearly isolating the remaining missing background/effects/UI and material-fidelity gaps
 
 ### Evidence
 
-RE-034, RE-082, RE-084, RE-085, RE-131, RE-150 in `docs/reverse-engineering.md`.
+RE-034, RE-082, RE-084, RE-085, RE-131, RE-150, RE-151 in `docs/reverse-engineering.md`.
 
 ---
 

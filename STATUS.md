@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-150)
+**Last updated:** 2026-09-06 (RE-151)
 
 ---
 
@@ -12,49 +12,36 @@
 
 ## Current Task
 
-`R0.14 — Camera / Projection Correctness`: verify the ported camera against
-original output and compare representative scenes.
+`R0.6 — Material System Correctness`: resume the first concrete unresolved
+material defect, Fox's solid-black face region from RE-128.
 
 ## Task Status
 
-`IN_PROGRESS`, with six of seven acceptance items complete. RE-150 found and
-fixed two mismatches in RE-131's camera source port. The original constructor
-finishes at `at = (0,300,0)`, `eye = (0,300,10000)`, and `target_dist = 10000`;
-the port had retained the constructor's intermediate vector copy and distance
-1500. The original distance update snaps outward immediately and damps only
-inward motion; the port's absolute-value rewrite damped both directions. Tests
-now pin the exact constructor state and asymmetric update.
+`IN_PROGRESS`. R0.14 is now complete. RE-151 installed Linux N64 reference
+emulators and built an outside-Git Mupen64Plus Core API harness that boots the
+verified USA ROM, selects Mario/Pikachu and Dream Land, and captures by
+emulated frame index. Direct RDRAM reads at stable frame 1800 recover
+`target_dist = 3181.2507`, `at = (-698.5003,617.1825,0)`,
+`eye = (-413.7114,1045.3188,3137.6443)`, and `fovy = 37.99998`.
 
-The off-by-default `camera_audit_capture` feature boots Dream Land through the
-real camera, hides viewer HUD/collision diagnostics, and freezes at tick 240.
-Independent PPSSPP software runs captured after 7 and 9 seconds are byte-
-identical (zero differing pixels), SHA-256
-`012612b3e898878560fd0a4e4a7bb279a6ef9efb032b661f78af90edd0f9512f`.
-The side-by-side N64/PSP comparison is outside Git at
-`/home/alberto/ppsspp-test/re150/dream-land-comparison.png` (SHA-256
-`7d9f450c7bbe371226bd80ce9423bd85f0df7f9db422bb590ab628e00f38d56e`).
-It closes "representative scenes compared" while preserving the key limit:
-the N64 training screenshot tracks two spread-out fighters, while the port
-currently provides one Mario camera interest, so it cannot prove exact camera
-output equivalence. That final camera-transform item remains open.
+The port now handles one-to-four fighter interests with the original
+player-count zoom table, packed fighter camera multiplier, facing asymmetry,
+stage clamp, and 120-tick Wait zoom. It also reproduces the original camera's
+4096-step, six-decimal `lbCommonSin`/`Cos`/`Tan` behavior. The Dream Land trace
+regression matches distance/look-at within 0.1 game units and eye within 0.67
+units, below a tenth of a captured pixel. The camera audit supplies the same
+settled Mario/Pikachu inputs on PSP. Independent PPSSPP software captures at 8
+and 9 seconds are byte-identical, SHA-256
+`feb2e7453eec8bbe232634180f0f77dc3386bd6eea60fcbbe5f25d881530ce9a`.
+The normalized side-by-side is outside Git at
+`/home/alberto/ppsspp-test/re151/camera-side-by-side-final.png`, SHA-256
+`a9048a0950ab48a45e7ab218dd439bc250d1bc058d0d0687561048be27579af2`.
 
-RE-150 also resolves the intentionally stale R0.17 golden. RE-144 had already
-measured and explained its exact 9,972-pixel change from the original's
-X/Y/X billboard scale rule, and RE-145 later verified all 109 nodes. The golden
-now matches two independent current captures and an isolated pre-RE-150 build,
-proving the camera edit did not alter the default overview. New golden SHA-256:
-`9f50c377ad8ae09bbd4f1cbb193b71e436b0454e04ab1e7c4f5934d06e496438`.
-
-Verification: all 427 workspace tests pass (36 engine, 114 game, 277 ROM);
-strict `ssb-game` Clippy passes; camera-audit, regression, and normal PSP
-release builds succeed with the existing six warnings. Normal EBOOT SHA-256:
-`12f6733ba8585edc57bfb7eb00acb8d5d84d8a1ced4ec8a7e7677f0938588a30`;
-camera-audit EBOOT SHA-256:
-`6e24216fbd8252e13d143de352411ad9e67e8235d7929cd03656f84d4a8485ad`;
-regression EBOOT SHA-256:
-`cdea6baf22b1dd0d5c6c5c66cfe89327aacb14449bf06cf0abdfdaa23aa548e5`.
-Physical PSP was not tested.
-Relevant implementation commit: `341c74d`.
+Verification: all 431 workspace tests pass (36 engine, 118 game, 277 ROM);
+strict `ssb-game` Clippy passes;
+the camera-audit PSP release build succeeds with the existing warnings; both
+PPSSPP runs hold 60 FPS and compare byte-for-byte. Physical PSP was not tested.
+Relevant implementation commit: pending.
 
 R0.13 remains complete. RE-149 resolves a roadmap dependency cycle:
 the reusable wipe renderer and synchronized capture boundary are R0.13's
@@ -141,12 +128,12 @@ Normal EBOOT SHA-256:
 `fa8060771693b766375df44b98083785c9359d6fad5e9ac4b1d881ba6593ca44`.
 Relevant implementation commit: `2bba248`.
 
-Last completed task: `R0.13 — Framebuffer Rendering` (RE-149). Current and
-next eligible work is R0.14's same-interest original-output camera comparison.
-material/lighting gaps remain under R0.4/R0.6/R0.7; R0.5 needs hardware
-validation. Combat remains locked. Physical PSP was not tested this session;
-R2 acceptance remains unperformed. The completed RE-140 temporary diagnostic
-has been removed.
+Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
+Current and next eligible work is R0.6's concrete Fox black-face material
+defect from RE-128; resolving it also advances the material dependency chain
+shared by R0.4/R0.6/R0.7. R0.5 still needs physical-hardware evidence. Combat
+remains locked. Physical PSP was not tested this session; R2 acceptance remains
+unperformed. The completed RE-140 temporary diagnostic remains removed.
 
 ## Previous Task Status
 

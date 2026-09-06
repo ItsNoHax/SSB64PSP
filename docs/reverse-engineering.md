@@ -11185,3 +11185,65 @@ Verification: all 427 workspace tests pass (36 engine, 114 game, 277 ROM),
 strict `ssb-game` Clippy passes, camera-audit/regression/normal PSP release
 builds succeed with the existing six warnings, and both deterministic PPSSPP
 capture pairs compare at zero pixels. Physical PSP was not tested.
+
+---
+
+## RE-151 — A scripted original-ROM trace closes the default battle-camera comparison
+
+Installed two user-scoped Linux N64 front ends for reference work: Rosalie's
+Mupen GUI 0.9.0 (`com.github.Rosalie241.RMG`) and M64Py 0.3.0
+(`net.sourceforge.m64py.M64Py`). RMG's bundled render plugins require its Qt
+process, while M64Py exposes a standard Mupen64Plus core and Rice plugin that
+can be driven through the public core API. The tested ROM is the user's USA
+dump, SHA-1 `e2929e10fccc0aa84e5776227e798abc07cedabf`, which the emulator
+identifies as MD5 `F7C52568A31AADF26E14DC2B6416B2ED`, CRC
+`916B8B5B 780B85A4`.
+
+A temporary, outside-Git input plugin and Python Core API harness advance
+inputs and request screenshots by emulated core frame index. The repeatable
+sequence skips the intro, enters VS Mode, selects Mario for P1 and Pikachu for
+P2, selects Dream Land, and starts the match. Frames 1150 through 1800 show a
+stable state: Mario rests at P1's centre-floor spawn facing left; Pikachu rests
+at P2's left-platform spawn facing right. This recreates the two fighter
+interests in the user's reference image without relying on manual emulator
+timing.
+
+`DebugMemGetPointer(M64P_DBG_PTR_RDRAM)` then reads the original's live globals
+at frame 1800. `gGMCameraStruct` at `0x801314B0` reports
+`target_dist = 3181.2507` and `fovy = 37.99998`. Following
+`gGMCameraGObj` (`0x80248498`) to its `CObj` (`0x80248520`) reports
+`at = (-698.5003, 617.1825, ~0)` and
+`eye = (-413.7114, 1045.3188, 3137.6443)`. The distance independently explains
+the previously missed term: both fighters have remained in `Wait` for at
+least 120 ticks, so `gmCameraCalcFighterZoomRange` multiplies the two-player
+range `1.32` by `0.75`. With the actual settled platform heights, the union's
+vertical half-extent is 1095 units; the original's quantized `lbCommonTan`
+produces `1095 / tan(19°) = 3181.25`.
+
+The port now represents one to four fighter interests and reproduces the
+source's player-count zoom table, per-fighter `camera_zoom_frame`, per-status
+range input, asymmetric facing boxes, bounds clamp, and 120-tick Wait zoom.
+The final numerical mismatch exposed another source detail hidden by ordinary
+libm: the original camera uses `lbCommonSin`/`Cos`/`Tan`, a 4096-step angle
+index over a six-decimal sine table. The Rust camera reproduces that
+quantization. A regression test using the exact Dream Land inputs matches the
+RDRAM trace within 0.1 units for distance and look-at and within 0.67 units for
+eye. That last residual is the original's explicit magnitude/normalize/move
+sequence versus the algebraically equivalent Rust lerp and is below one tenth
+of a pixel in the captured viewport.
+
+The `camera_audit_capture` build supplies the same settled Pikachu interest in
+addition to the simulated Mario. Independent PPSSPP 1.20.4 software captures
+after 8 and 9 seconds are byte-identical, SHA-256
+`feb2e7453eec8bbe232634180f0f77dc3386bd6eea60fcbbe5f25d881530ce9a`.
+After normalizing both 4:3 viewports to 600×450, the left platform endpoints
+and fighter positions align; the obvious remaining differences are stage
+background/effects/UI and material rendering already owned by other R0/R1
+tasks. Evidence remains outside Git under `/home/alberto/ppsspp-test/re151/`;
+the final side-by-side SHA-256 is
+`a9048a0950ab48a45e7ab218dd439bc250d1bc058d0d0687561048be27579af2`.
+
+Verification: all 431 workspace tests pass (36 engine, 118 game, 277 ROM),
+including the trace/table regressions; strict `ssb-game` Clippy passes; the camera-audit PSP release build succeeds
+with the existing warnings; both PPSSPP runs render at 60 FPS and compare
+byte-for-byte. Physical PSP was not tested. R0.14 is complete.

@@ -225,6 +225,9 @@ pub struct Play {
     /// call, matching `gmCameraUpdateInterests`' own `target_pos.y +=
     /// fp->attr->cam_offset_y`.
     pub cam_offset_y: f32,
+    /// Initial `FTStruct.camera_zoom_frame`, copied from the fighter's real
+    /// `FTAttributes.camera_zoom` value.
+    pub camera_zoom_frame: f32,
     started: Option<Status>,
 }
 
@@ -244,11 +247,13 @@ impl Play {
         let desc = pack.fighter(kind as u32);
         let from_pack = desc.is_some();
         let mut cam_offset_y = 0.0;
+        let mut camera_zoom_frame = 1.0;
         if let Some(d) = desc {
             fighter.attributes = physics_of(&d);
             fighter.coll = body_of(&d);
             fighter.anim = anim_of(&d);
             cam_offset_y = d.cam_offset_y;
+            camera_zoom_frame = d.camera_zoom;
         }
 
         let mut placed = false;
@@ -278,6 +283,7 @@ impl Play {
             // hide.
             camera: ssb_game::camera::Camera::default(),
             cam_offset_y,
+            camera_zoom_frame,
             started: None,
         }
     }
@@ -294,6 +300,7 @@ impl Play {
         stage: &StageDesc,
         input: ssb_engine::input::ControllerState,
         jump_held: bool,
+        additional_camera_interest: Option<ssb_game::camera::Interest>,
     ) {
         let tapped = jump_held && !self.jump_was_held;
         let released = !jump_held && self.jump_was_held;
@@ -317,9 +324,18 @@ impl Play {
         };
         let mut target = self.fighter.pos;
         target.y += self.cam_offset_y;
-        self.camera.tick(
-            target,
-            matches!(self.fighter.facing, ssb_game::fighter::Facing::Left),
+        let primary = ssb_game::camera::Interest {
+            target_pos: target,
+            facing_left: matches!(self.fighter.facing, ssb_game::fighter::Facing::Left),
+            zoom_frame: self.camera_zoom_frame,
+            zoom_range: 1.0,
+            idle_zoomed_out: self.fighter.status.status == Status::Wait
+                && self.fighter.status.anim_frame >= 120.0,
+        };
+        let interests = [primary, additional_camera_interest.unwrap_or(primary)];
+        let interest_count = if additional_camera_interest.is_some() { 2 } else { 1 };
+        self.camera.tick_interests(
+            &interests[..interest_count],
             bounds,
             stage.camera_light_angle_z,
             vw as f32 / vh as f32,
