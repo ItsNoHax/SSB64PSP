@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-161)
+**Last updated:** 2026-09-06 (RE-162)
 
 ---
 
@@ -15,26 +15,27 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 2 unpaired graphs; per-object lighting remains the
+can resolve file 324's sole unpaired graph; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-160 resolves six source-named material graphs: Sector Z's
-Ship (`109: 0xB6F8 → 0xB3C0`) through `EFGroundDesc`; Final Destination's
-four wallpaper effects (`114: 0x8960 → 0x86D8`, `0xA188 → 0x97B0`,
-`0xDD90 → 0xD470`, and `0x11268 → 0x10788`) through `SC1PGameBossEffect`;
-and Dream Land's Whispy eyes (`152: 0x10F0 → 0xF00`) through
-`grPupupuMakeMapGObj`. The corresponding linker-offset labels independently
-confirm every target. `romtool mobj` now reports 125 paired, 2 unpaired, and
-zero chain/demand mismatches across 466 nodes; only file 86's N-Bumper and
-file 324's untyped Link-model graph remain. `romtool textures` reports 706
-bound / 679 packed / 27 understood failures (one MissingPalette in file 86,
-26 framebuffer-transition references). The rebuilt pack reloads cleanly and
-has SHA-256 `3a25a0a2c6303f6bca8ca97708d6d50726c8857a7819c7f9ca7d81c64176a91d`.
+`IN_PROGRESS`. RE-162 resolves the former 27-way N-Bumper ambiguity from a
+newly typed direct source relation: file 251's
+`dITCommonData_NBumper_ItemAttributes` pairs file 86's `data` and
+`p_mobjsubs` externs. The scene parser's actual graph begins at `0x7BE8`
+inside the source label's broad data block, and the exact material table is
+the named extern target `0x7488`; this is source evidence, not a demand-search
+choice. `romtool mobj` now reports 126 paired, 1 unpaired, and zero
+chain/demand mismatches across 467 nodes; only file 324's untyped Link-model
+graph remains. `romtool textures` reports 706 bound / 680 packed / 26
+understood framebuffer-transition failures; file 86 is now 55/55 packed with
+no `MissingPalette`. The rebuilt pack reloads cleanly and has SHA-256
+`15e4d5788a452cff9d1ad157b6f5c50ce332af5890ae7e01648af45d0f499601`.
 Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
-pass. No PPSSPP or physical-PSP test was run: these background/effect paths
-are not exposed by the current viewer.
+pass. The pinned-nightly PSP release build succeeds (existing six warnings);
+no PPSSPP or physical-PSP test was run because this item is not exposed by the
+current viewer.
 
 RE-161 exhausts the remaining source-based lead for file 324 without adding a
 heuristic mapping. The last graph is `dLinkModel_JointTree_0x9CF8`, a distinct
@@ -45,9 +46,9 @@ three-node tree, not the typed file-handle DObj resource or either typed
 The direct `romtool` verification still reports one unnamed graph and all
 resolved pairs retain zero chain/demand mismatches; `romtool textures --file
 324` has 31/31 packed and zero failures. This remains an upstream
-typing/source-link gap, along with file 86's separately documented 27-way
-N-Bumper ambiguity, so R0.6/R0.7 stay `IN_PROGRESS`; no converter code or
-pack changed.
+typing/source-link gap. RE-162 subsequently removed file 86 from the tail,
+so R0.6/R0.7 stay `IN_PROGRESS` solely for file 324 and the documented
+per-object-lighting deviation.
 
 RE-158 resolves five formerly-unpaired special-move effect
 graphs using direct original-source `EFDesc` records: Link Spin Attack in file
