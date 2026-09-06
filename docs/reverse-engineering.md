@@ -36,6 +36,41 @@ of the archive region.
 
 ---
 
+## RE-160 — Source descriptors resolve Sector Z, Final Destination, and Dream Land material tables (`PLAN.md` R0.6/R0.7)
+
+**Question.** Do six remaining stage/effect graphs have a direct original-source
+material-table relationship, rather than merely ambiguous `mobj --search`
+candidates?
+
+**Evidence.** `ef/efground.c` puts `llGRSectorMapShipDObjDesc` and
+`llGRSectorMapShipMObjSub` in the same `EFGroundDesc`; the USA linker-offset
+description identifies file 109 as `0xB6F8 → 0xB3C0`. `sc1pgameboss.c`'s
+`SC1PGameBossEffect` records directly pair Final Destination's four DObj/MObj
+symbols, and the same description file resolves their file-114 offsets as
+`0x8960 → 0x86D8`, `0xA188 → 0x97B0`, `0xDD90 → 0xD470`, and
+`0x11268 → 0x10788`. Finally, `grpupupu.c` passes Dream Land's
+Whispy-eyes DObj and MObj linker offsets together to `grPupupuMakeMapGObj`;
+the file-152 labels identify `0x10F0 → 0xF00`. These are named source
+relationships, not table-search selections.
+
+**Implementation and verification.** Added all six mappings to
+`tools/romtool/src/main.rs::load_all`, retaining the existing `read_table`
+parse guard. `romtool mobj --file 109`, `--file 114`, and `--file 152` each
+report no unnamed graph and zero chain/demand mismatches. Archive-wide the
+result is 125 paired graphs, two unpaired graphs, and 466 matching nodes with
+zero mismatches; the two remaining graphs are file 86's N-Bumper and file
+324's untyped Link-model graph. `romtool textures` reports 706 bound / 679
+packed / 27 understood failures: one file-86 `MissingPalette` and 26 runtime
+framebuffer-transition references. The rebuilt pack reloads cleanly, SHA-256
+`3a25a0a2c6303f6bca8ca97708d6d50726c8857a7819c7f9ca7d81c64176a91d`.
+Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
+pass. No PPSSPP or physical-PSP test was run because these paths are not
+exposed in the current viewer.
+
+**Confidence: certain for all six mappings.**
+
+---
+
 ## RE-002 — VPK0 stream format
 
 **Question.** How is the compressed payload encoded?
