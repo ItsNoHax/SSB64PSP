@@ -2342,6 +2342,35 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-160: six remaining graphs are named by source-level scene/effect
+    // descriptors, not by an archive-local pointer relation.  `efground.c`
+    // puts Sector Z's Ship DObj/MObj offsets in the same `EFGroundDesc`;
+    // `sc1pgameboss.c` does the same for Final Destination's four wallpaper
+    // effects in `SC1PGameBossEffect`; and `grpupupu.c` passes Dream Land's
+    // Whispy-eyes pair together to `grPupupuMakeMapGObj`.  The linker-offset
+    // labels in `tools/relocFileDescriptions.us.txt` independently identify
+    // the targets.  These are direct original-source pairings, not choices
+    // among the ambiguous candidates reported by `mobj --search`.
+    for &(file, graph, table) in &[
+        (109u32, 0xB6F8u32, 0xB3C0u32),   // GRSectorMapShip
+        (114u32, 0x8960u32, 0x86D8u32),   // GRLastMapEffects0
+        (114u32, 0xA188u32, 0x97B0u32),   // GRLastMapEffects1
+        (114u32, 0xDD90u32, 0xD470u32),   // GRLastMapEffects2_0
+        (114u32, 0x11268u32, 0x10788u32), // GRLastMapEffects2_1 / Effects3_0
+        (152u32, 0x10F0u32, 0xF00u32),    // GRPupupuMapWhispyEyesTransformKinds
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,

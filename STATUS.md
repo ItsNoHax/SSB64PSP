@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-159)
+**Last updated:** 2026-09-06 (RE-160)
 
 ---
 
@@ -15,23 +15,26 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 8 unpaired graphs; per-object lighting remains the
+can disambiguate its 2 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-159 resolves the explanation screen's control-stick graph
-from the direct `gcSetupCustomDObjs` → `gcAddMObjAll` call sequence in
-`scexplain.c`: file 198 `0x5300 → 0x5028`. Its five demand-compatible table
-candidates were insufficient on their own; the matching `SCExplainGraphics`
-relocData symbols establish the relationship. `romtool mobj --file 198`
-reports no unnamed graph and zero chain/demand mismatches; archive-wide it
-reports 119 paired, 8 unpaired and zero mismatches across 449 nodes. `romtool
-textures` rises to 704 bound / 675 packed / 29 understood failures. The
-rebuilt pack reloads cleanly and has SHA-256
-`5e624123d352ab9cf1718628db9124b1cd7c27b5c9e23dfc9b78faacfad3efd8`.
+`IN_PROGRESS`. RE-160 resolves six source-named material graphs: Sector Z's
+Ship (`109: 0xB6F8 → 0xB3C0`) through `EFGroundDesc`; Final Destination's
+four wallpaper effects (`114: 0x8960 → 0x86D8`, `0xA188 → 0x97B0`,
+`0xDD90 → 0xD470`, and `0x11268 → 0x10788`) through `SC1PGameBossEffect`;
+and Dream Land's Whispy eyes (`152: 0x10F0 → 0xF00`) through
+`grPupupuMakeMapGObj`. The corresponding linker-offset labels independently
+confirm every target. `romtool mobj` now reports 125 paired, 2 unpaired, and
+zero chain/demand mismatches across 466 nodes; only file 86's N-Bumper and
+file 324's untyped Link-model graph remain. `romtool textures` reports 706
+bound / 679 packed / 27 understood failures (one MissingPalette in file 86,
+26 framebuffer-transition references). The rebuilt pack reloads cleanly and
+has SHA-256 `3a25a0a2c6303f6bca8ca97708d6d50726c8857a7819c7f9ca7d81c64176a91d`.
 Pinned-Rust formatting, strict workspace Clippy, and all 433 workspace tests
-pass.
+pass. No PPSSPP or physical-PSP test was run: these background/effect paths
+are not exposed by the current viewer.
 
 RE-158 resolves five formerly-unpaired special-move effect
 graphs using direct original-source `EFDesc` records: Link Spin Attack in file
@@ -272,12 +275,12 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
-Latest completed implementation: RE-155's source-paired effects and Bonus2
-platform material tables (implementation commit `f77ab7a`). R0.6 remains
-the primary task; its remaining material/primitive/environment items depend on
-R0.7's accepted 18-graph long tail, whose current search methods are exhausted
-pending upstream typing or newly unique evidence. R0.5's canopy and the full
-rendering gate still need physical-hardware evidence. Combat remains locked.
+Latest completed implementation: RE-160's six source-paired stage/effect
+material tables (current commit). R0.6 remains the primary task; its
+remaining material/primitive/environment items depend on R0.7's two unpaired
+graphs, both blocked on upstream typing or a new named source relationship.
+R0.5's canopy and the full rendering gate still need physical-hardware
+evidence. Combat remains locked.
 All temporary object, primitive, texture-view and diagnostic edits used for
 RE-152 were removed before verification.
 
