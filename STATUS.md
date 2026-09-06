@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-151)
+**Last updated:** 2026-09-06 (RE-152)
 
 ---
 
@@ -12,12 +12,38 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`: resume the first concrete unresolved
-material defect, Fox's solid-black face region from RE-128.
+`R0.6 — Material System Correctness`: Fox's concrete black-face defect is
+resolved by RE-152. Continue the remaining material-table and
+primitive/environment-colour dependency through R0.7 when new source evidence
+can disambiguate its 37 unpaired graphs; per-object lighting remains the
+documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. R0.14 is now complete. RE-151 installed Linux N64 reference
+`IN_PROGRESS`. RE-152 geometrically isolated Fox's black region to head
+primitive 4/global primitive 4578, texture 551, then decoded file 313's real
+display list at `0x1ED8`. Its clamped render window begins at nonzero
+`G_SETTILESIZE` origin `(95.5,143)` texels. The RDP clamps against that absolute
+window, while the PSP clamps against the uploaded 32×16 image from coordinate
+zero. Ordinary texture bindings discarded the origin, so most of the polygon
+held a black edge texel. `TextureRef` now preserves ordinary tile origins and
+`push_vertex` subtracts them per clamped axis while leaving repeat-axis mask
+phase absolute.
+
+Two focused unit tests cover the exact Fox state and a mixed repeat/clamp tile.
+All 433 workspace tests pass (36 engine, 118 game, 279 ROM), strict release
+workspace Clippy passes, the pack was rebuilt, and the normal PSP release build
+succeeds with the existing six warnings. PPSSPP software rendering restores
+Fox's muzzle/eyes/cheek outline at 60 FPS. Two deterministic Dream Land
+captures are pixel-identical; the intended correction changes 85 prior-golden
+pixels, all inside the small Mario model, and the golden is refreshed. Pack /
+golden / normal EBOOT SHA-256:
+`5129687a33310934790c0ff8c49a8915ee74717391723cd4f6ae9c91849d4e7e` /
+`a1d9c22538d6f56ab0d850630c3649e4b7adede799d10f15d4cdd0ab6ced1194` /
+`3a4b172b9500cfd9d4da98d7ca916c41dd9b03e6e1c39aabfda5e16b9689c845`.
+Physical PSP was not tested. Relevant implementation commit: pending.
+
+R0.14 remains complete. RE-151 installed Linux N64 reference
 emulators and built an outside-Git Mupen64Plus Core API harness that boots the
 verified USA ROM, selects Mario/Pikachu and Dream Land, and captures by
 emulated frame index. Direct RDRAM reads at stable frame 1800 recover
@@ -129,11 +155,15 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
-Current and next eligible work is R0.6's concrete Fox black-face material
-defect from RE-128; resolving it also advances the material dependency chain
-shared by R0.4/R0.6/R0.7. R0.5 still needs physical-hardware evidence. Combat
-remains locked. Physical PSP was not tested this session; R2 acceptance remains
-unperformed. The completed RE-140 temporary diagnostic remains removed.
+Latest completed implementation: RE-152's nonzero clamp-window correction,
+which resolves RE-128's Fox defect and corrects its attribution from R0.6
+material/lighting to R0.5 texture-coordinate lowering. R0.6 remains the
+primary task; its remaining material/primitive/environment items depend on
+R0.7's accepted 37-graph long tail, whose current search methods are exhausted
+pending upstream typing or newly unique evidence. R0.5's canopy and the full
+rendering gate still need physical-hardware evidence. Combat remains locked.
+All temporary object, primitive, texture-view and diagnostic edits used for
+RE-152 were removed before verification.
 
 ## Previous Task Status
 
@@ -529,6 +559,10 @@ RE-128 (an earlier session) closed `R0.5`'s last mipmapping-adjacent item
 ("texture coordinate behavior verified") and found a real, only-partly
 explained fighter rendering defect while doing it. See
 `docs/reverse-engineering.md` RE-128 for the full account; summary:
+
+RE-152 later resolves and corrects the attribution of this historical entry:
+the black patch was primitive 4 sampling texture 551 with an unre-based
+nonzero clamp window, not a primitive-colour or lighting defect.
 
 * **Directly confirmed RE-101/RE-102 on two real fighters.** No
   "select fighter" control exists in the debug viewer, so a temporary,

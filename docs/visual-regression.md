@@ -165,12 +165,13 @@ real seconds apart (`--seconds 6` and `--seconds 45`, both comfortably
 past the tick-240 freeze point), compared with `cmp` and found
 byte-identical, and separately with `tools/compare-screenshot.sh` (0
 differing pixels). The golden image is committed at
-`tests/golden/r0-dream-land-default.png`. RE-150 refreshes it after RE-144's
+`tests/golden/r0-dream-land-default.png`. RE-150 refreshed it after RE-144's
 source-proven billboard Z-scale correction deliberately changed 9,972 pixels.
-RE-145 subsequently reviewed all 109 billboard nodes; two new PPSSPP runs and
-an isolated pre-RE-150 build all produce the same replacement image. Its
-SHA-256 is
-`9f50c377ad8ae09bbd4f1cbb193b71e436b0454e04ab1e7c4f5934d06e496438`.
+RE-152 refreshes it again after the nonzero clamp-window correction changed
+85 pixels, all within the small Mario model at `(479,337)..(486,354)`; stage
+pixels are unchanged. Two independent captures of the new build are
+pixel-identical. Its SHA-256 is
+`a1d9c22538d6f56ab0d850630c3649e4b7adede799d10f15d4cdd0ab6ced1194`.
 
 This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured

@@ -9752,6 +9752,11 @@ forward.
 
 ## RE-128 — RE-101/RE-102 confirmed correct on two real fighters' own face textures, and a real, unexplained black patch found (and only partly root-caused) while verifying (`PLAN.md` R0.5/R0.6)
 
+**Later resolution:** RE-152 geometrically identifies and fixes the black
+patch as an ordinary-texture nonzero clamp-window coordinate bug. RE-128's
+observations and eliminated hypotheses remain the historical evidence, but
+its R0.6 material/lighting attribution is superseded.
+
 RE-127 closed `R0.5`'s LOD/mipmapping items but left "texture coordinate
 behavior verified" open — RE-101 (`G_TEXTURE`'s UV scale) and RE-102
 (`G_TX_CLAMP`) were both unit-tested but explicitly never checked against
@@ -11247,3 +11252,66 @@ Verification: all 431 workspace tests pass (36 engine, 118 game, 277 ROM),
 including the trace/table regressions; strict `ssb-game` Clippy passes; the camera-audit PSP release build succeeds
 with the existing warnings; both PPSSPP runs render at 60 FPS and compare
 byte-for-byte. Physical PSP was not tested. R0.14 is complete.
+
+---
+
+## RE-152 — Fox's black face was a nonzero clamp-window coordinate bug (`PLAN.md` R0.5/R0.6)
+
+RE-128 proved Fox's face textures decoded correctly but stopped before
+identifying which primitive produced the solid black region. This pass first
+made that identification geometrically. Fox object 290, file 313, graph
+`0x2938`, head node 8/global node 2056 uses mesh 1562 from display list
+`0x1ED8`. Isolating its primitives in the existing viewer showed primitive
+4/global primitive 4578 alone draws the exact lower-face black trapezoid. It
+binds packed texture 551. Direct `TEXVIEW` renders texture 551 as a valid tan
+muzzle with dark authored linework, so the image, palette, upload and swizzle
+paths are sound.
+
+Decoding file 313's real display list at `0x1ED8` exposed the state RE-128 had
+not inspected. The first texture batch uses render tile 0 with clamp on both
+axes (`cm_s = cm_t = 2`), masks 5 and 4, `G_TEXTURE` scales 23839 and 65535,
+and `G_SETTILESIZE uls=382, ult=572, lrs=506, lrt=632`. In texel units the
+clamp window therefore starts at `(95.5, 143)` and spans 32×16. The primitive's
+post-scale coordinates are absolute N64 coordinates around U 72–126 and V
+133–180. The RDP clamps those coordinates against the absolute tile window
+before addressing TMEM. This project uploads the extracted 32×16 image to the
+PSP with its first texel at coordinate zero, but ordinary textures discarded
+the tile origin and left those absolute coordinates unchanged. PSP `Clamp`
+therefore held an edge texel over most of the polygon; for this image that
+edge is black.
+
+`TextureRef` now preserves the render tile's `uls`/`ult` for ordinary ROM
+textures as well as runtime framebuffer textures. `Builder::push_vertex`
+subtracts the origin independently on each clamped axis. It continues to
+subtract both axes for framebuffer captures and deliberately leaves ordinary
+repeat axes absolute so their mask phase is preserved. This is the smallest
+translation matching the two address spaces; it does not alter texture data,
+combiner state, lighting or PSP texture-wrap selection.
+
+Two focused tests pin both sides of that rule. The Fox state and near-origin
+S10.5 coordinates rebase to `[0,0]` for a two-axis clamped tile. A mixed tile
+keeps the S coordinate absolute when S repeats while rebasing clamped T. All
+433 workspace tests pass (36 engine, 118 game, 279 ROM), and strict release
+workspace Clippy passes.
+
+The rebuilt pack fixes Fox in PPSSPP 1.20.4 software rendering at 60 FPS. The
+same head-region comparison changes 4,472 pixels and restores the muzzle,
+eyes and cheek outline. A normal Dream Land run remains coherent at 60 FPS.
+The deterministic `regression_capture` differs from the prior golden by only
+85 pixels in bounding box `(479,337)..(486,354)`, entirely within the small
+Mario model; Dream Land stage pixels are unchanged. Two independent new
+captures are pixel-identical, so the golden was refreshed. Golden SHA-256:
+`a1d9c22538d6f56ab0d850630c3649e4b7adede799d10f15d4cdd0ab6ced1194`.
+Pack SHA-256:
+`5129687a33310934790c0ff8c49a8915ee74717391723cd4f6ae9c91849d4e7e`.
+Normal EBOOT SHA-256:
+`3a4b172b9500cfd9d4da98d7ca916c41dd9b03e6e1c39aabfda5e16b9689c845`.
+The reviewed before/after remains outside Git at
+`/home/alberto/ppsspp-test/re152/fox-before-after.png`, SHA-256
+`597fb16771b8afd9bebc61c6cd4774ebaf2c493d1ae18a685e5888523d1c6e9e`.
+
+RE-128's two negative results remain valid, but its task attribution is now
+corrected: the defect was texture-coordinate lowering, not primitive colour or
+lighting. R0.6 remains `IN_PROGRESS` for its independent material-table,
+primitive/environment-colour and per-object-lighting acceptance items.
+Physical PSP was not tested.

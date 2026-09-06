@@ -103,17 +103,14 @@ pub struct TextureRef {
     pub framebuffer: bool,
     /// `G_SETTILESIZE`'s `uls`/`ult` on the render tile — the tile's own
     /// origin, still in raw S10.2 fixed point (quarter-texel units, the same
-    /// form `dl::Cmd::SetTileSize` decodes). Only meaningful when
-    /// `framebuffer` is set, where it is `0` otherwise (RE-108/RE-109): an
-    /// ordinary ROM texture's baked vertex UV is implicitly tile-origin-
-    /// relative for free, because pack-time extraction reads the source
-    /// image starting at that same origin. A framebuffer-role binding
-    /// instead samples a small, synthetic runtime capture that always
-    /// starts at *its own* origin regardless of which absolute band of the
-    /// real N64 buffer the tile originally pointed at, so the tile's own
-    /// origin must be subtracted from the vertex UV at conversion time
-    /// instead — the real RDP performs the equivalent subtraction in
-    /// hardware when it converts a tile-relative ST into a TMEM address.
+    /// form `dl::Cmd::SetTileSize` decodes). A framebuffer binding always
+    /// needs this rebased to its small runtime capture (RE-108/RE-109).
+    /// Ordinary ROM textures need it on a clamped axis too: the RDP clamps
+    /// against the tile's absolute `uls..lrs`/`ult..lrt` window, whereas the
+    /// PSP clamps against an uploaded image whose first texel is coordinate
+    /// zero. RE-152 identified this on Fox's lower-face texture, whose real
+    /// clamp window begins at `(95.5, 143)`; leaving its absolute UVs intact
+    /// made the PSP hold one black edge texel over the entire primitive.
     pub origin_s: u16,
     pub origin_t: u16,
 }
@@ -1183,10 +1180,8 @@ impl State {
             clamp_s,
             clamp_t,
             framebuffer: false,
-            // Irrelevant outside the framebuffer role -- see
-            // `TextureRef::origin_s`/`origin_t`.
-            origin_s: 0,
-            origin_t: 0,
+            origin_s: self.tile0_origin.map_or(0, |o| o.0),
+            origin_t: self.tile0_origin.map_or(0, |o| o.1),
         })
     }
 }
@@ -1266,12 +1261,16 @@ impl Builder {
             None => {}
         }
         if let Some(t) = self.material.texture {
-            if t.framebuffer {
-                // Rebase by the tile's own origin (RE-108/RE-109): see
-                // `TextureRef::origin_s`/`origin_t`. `origin_s`/`origin_t`
-                // are raw S10.2 (quarter-texel); `v.uv` is S10.5, so align
-                // scales with `* 8` before subtracting.
+            // `origin_s`/`origin_t` are raw S10.2 (quarter-texel);
+            // `v.uv` is S10.5, so align scales with `* 8`. A runtime
+            // framebuffer always starts at zero. An ordinary clamped axis
+            // also starts at zero on the PSP, unlike the RDP's absolute tile
+            // window. Repeat axes keep absolute coordinates because their
+            // mask phase is already meaningful (RE-152).
+            if t.framebuffer || t.clamp_s {
                 v.uv[0] = (v.uv[0] as i32 - t.origin_s as i32 * 8) as i16;
+            }
+            if t.framebuffer || t.clamp_t {
                 v.uv[1] = (v.uv[1] as i32 - t.origin_t as i32 * 8) as i16;
             }
         }
@@ -1767,6 +1766,16 @@ mod tests {
             d.extend_from_slice(&0i16.to_be_bytes()); // u
             d.extend_from_slice(&0i16.to_be_bytes()); // v
             d.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // rgba
+        }
+        d
+    }
+
+    fn vertex_data_uv(n: usize, u: i16, v: i16) -> Vec<u8> {
+        let mut d = vertex_data(n);
+        for i in 0..n {
+            let at = i * Vtx::SIZE;
+            d[at + 8..at + 10].copy_from_slice(&u.to_be_bytes());
+            d[at + 10..at + 12].copy_from_slice(&v.to_be_bytes());
         }
         d
     }
@@ -2817,6 +2826,106 @@ mod tests {
             mesh.vertices[0].uv[1], 0,
             "a vertex baked at the tile's own origin must rebase to 0, not stay at the tile's absolute position in the conceptual 220-row image"
         );
+    }
+
+    #[test]
+    fn an_ordinary_clamped_tile_rebases_its_nonzero_origin() {
+        // RE-152: Fox's lower-face tile is an ordinary ROM texture, but its
+        // clamp window begins at uls=382/4 and ult=572/4 rather than zero.
+        // Raw values 3057/4577 become exactly 3056/4576 after the SDK's
+        // 0xFFFF "identity" scale, matching those origins in S10.5.
+        let file = vertex_data_uv(3, 3057, 4577);
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 1,
+                addr: SegAddr(0x40),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 4,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 382,
+                ult: 572,
+                lrs: 506,
+                lrt: 632,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let texture = mesh.primitives[0].material.texture.unwrap();
+        assert_eq!((texture.origin_s, texture.origin_t), (382, 572));
+        assert_eq!(mesh.vertices[0].uv, [0, 0]);
+    }
+
+    #[test]
+    fn an_ordinary_repeat_axis_keeps_its_absolute_mask_phase() {
+        let file = vertex_data_uv(3, 3057, 4577);
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 1,
+                addr: SegAddr(0x40),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 4,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 382,
+                ult: 572,
+                lrs: 506,
+                lrt: 632,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.vertices[0].uv, [3056, 0]);
     }
 
     #[test]
