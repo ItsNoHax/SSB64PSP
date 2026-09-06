@@ -10,6 +10,30 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-163 — Link passive-part dispatch resolves the final material table (`PLAN.md` R0.6/R0.7)
+
+**Question.** Can file 324's final `JointTree_0x9CF8` graph be paired from
+original source rather than demand-search candidates?
+
+**Evidence.** `324_LinkModel.c` defines a raw `MObjSub **` dispatch at
+`0x84B8`: three leading NULL slots, then pointers to chains at `0x86C0` and
+`0x86D0`. The graph's display lists are `0x93B8`, `0x94F0`, and `0x9B98`.
+`225_LinkMain.c`'s typed `FTModelPart` records assign the latter two lists
+those exact chains; the root list has zero graphics-heap demand. The searcher's
+`0x84C0` is only the first nonzero-demand slot, not the table start.
+
+**Implementation and verification.** Added `324:0x9CF8 -> 0x84B8` to
+`romtool::load_all`. `romtool mobj` now reports 127 paired graphs, 467
+matching nodes, and zero mismatches; file 324 textures remain 31/31 packed.
+The rebuilt pack SHA-256 is
+`15e4d5788a452cff9d1ad157b6f5c50ce332af5890ae7e01648af45d0f499601`.
+All 433 workspace tests and strict Clippy pass.
+
+**Confidence: certain.** The table and both non-empty chains are directly
+named/assigned by original source; no demand-search candidate was selected.
+
+---
+
 ## RE-162 — Typed N-Bumper item attributes resolve the final palette gap (`PLAN.md` R0.4/R0.6/R0.7)
 
 **Question.** Can the former 27-way material-table ambiguity for file 86's
