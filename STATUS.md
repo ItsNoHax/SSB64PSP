@@ -41,7 +41,7 @@ golden / normal EBOOT SHA-256:
 `5129687a33310934790c0ff8c49a8915ee74717391723cd4f6ae9c91849d4e7e` /
 `a1d9c22538d6f56ab0d850630c3649e4b7adede799d10f15d4cdd0ab6ced1194` /
 `3a4b172b9500cfd9d4da98d7ca916c41dd9b03e6e1c39aabfda5e16b9689c845`.
-Physical PSP was not tested. Relevant implementation commit: pending.
+Physical PSP was not tested. Relevant implementation commit: `1ec61c6`.
 
 R0.14 remains complete. RE-151 installed Linux N64 reference
 emulators and built an outside-Git Mupen64Plus Core API harness that boots the
