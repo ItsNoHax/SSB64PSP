@@ -983,6 +983,20 @@ systematic pass over every ambiguous candidate, not just unique ones, was
 that "something new to try" for this session, and it is now exhausted
 again.
 
+RE-153 found a sixth, source-confirmed instance of the already-known
+call-sequence mechanism: `mnCharactersMakeEmblem` and
+`mnVSResultsMakeEmblem` use parallel `dobjdescs[]`/`mobjsubs[]` arrays for all
+ten file-35 character-select/result emblems. Each same-index pair is passed
+to `gcSetupCommonDObjs` then `gcAddMObjAll`; the corresponding linker symbol
+is the typed leading `MObjSub **..._pre` table in
+`35_FTEmblemModels.c`. All ten pairings are therefore recorded directly, not
+selected from several demand-compatible candidates. `romtool mobj --file 35`
+reports 10 paired / 0 unnamed / 0 mismatches; archive-wide, pairings rise
+`90 → 100`, unpaired graphs fall `37 → 27`, and all 417 paired nodes still
+match their display-list demand. Their chains carry no palettes, so the
+rebuilt pack is byte-identical; this validates the graph/material relation
+without claiming a visual change.
+
 ### Objective
 
 Resolve every scene graph containing an unresolved material table.
@@ -993,11 +1007,11 @@ Resolve every scene graph containing an unresolved material table.
 
 ### Acceptance
 
-* [ ] all material-table references traced — 5 shapes now known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); files 52 and 353 fully or mostly traced; file 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 27 more graphs (Kirby's + 6 archive-wide via RE-077/078, +20 more via RE-125) traced and fixed via search-plus-decomp-cross-check, each landing on exactly one candidate confirmed against a real decomp-typed table; 37 other archive-wide unpaired graphs are untraced, mostly menu/character-select emblem models, stage files and fighters' special-move files rather than core fighter bodies (RE-077's breakdown) — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
-* [ ] original material data identified — done for 34 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files via RE-077/078, 20 more via RE-125); not done for the other 37 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
+* [ ] all material-table references traced — 5 structural shapes are known (`FTCommonPart`, `MPGroundDesc`, `WPAttributes`, `EFDesc`, plain call-sequence pairing); RE-153 supplies a source-confirmed parallel-array instance of the latter for all ten file-35 emblems. File 86's last graph's mechanism is understood but does not narrow to one table (RE-061, measured: 27 candidates, no named record); 27 more graphs (Kirby's + 6 archive-wide via RE-077/078, +20 more via RE-125) were traced by search plus a decomp cross-check. The other 27 unpaired graphs are mostly effects, stage files and fighters' special-move files rather than core fighter bodies — 9 of the 11 remaining real fighters have zero unpaired graphs of their own
+* [ ] original material data identified — done for 44 pairings (2 `EFDesc` in file 353, 5 call-sequence in file 52, 7 raw-array/search-confirmed across Kirby's file and 6 other archive files via RE-077/078, 20 via RE-125, 10 source-paired file-35 emblems via RE-153); not done for the other 27 unpaired graphs, and file 86's/353's/Ness's remaining candidates are blocked on upstream decomp typing or ambiguous search results, not more tracing
 * [ ] heuristic mapping removed where original data exists — n/a so far, no heuristic was standing in for these; this was a pure discovery gap
-* [ ] affected scenes verified — file 353's two, file 52's five, and the 27 search-confirmed graphs verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078, RE-125); nothing else verified yet
-* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (407 nodes) is that regression detector for these fixes.
+* [ ] affected scenes verified — file 353's two, file 52's five, the 27 search-confirmed graphs, and all ten file-35 emblems are verified via `romtool mobj`/`romtool textures` (RE-059, RE-060, RE-077, RE-078, RE-125, RE-153); the emblem pack is byte-identical because its recovered chains carry no palettes
+* [ ] regression coverage added — no `cargo test` coverage; the fix lives in `romtool` (a CLI tool, not the library crate), and the project's existing regression pattern for ROM-dependent behavior is a `romtool` command's own output (matching how R0.9 verifies stage animation), not a unit test. `romtool mobj`'s archive-wide 0-mismatch check (417 nodes) is that regression detector for these fixes.
 
 ---
 
