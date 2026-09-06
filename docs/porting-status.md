@@ -13,7 +13,7 @@ contradicted the subsystem rows directly below it: it claimed stage rendering
 had "no animation yet" while the animation and stage-animation rows in the
 same file already documented animation playing on device).
 
-Last updated: 2026-09-05.
+Last updated: 2026-09-06.
 
 ## Subsystems
 
@@ -35,6 +35,7 @@ Last updated: 2026-09-05.
 | PSP asset loading | ✅ COMPLETE | 3.6 MB pack loads aligned, cache-flushed, verified on device |
 | PSP mesh drawing | 🟢 88% | Indexed GE draws, CLUT textures, measured repeat/mask/mirror/clamp addressing, baked shading, per-node matrices, and per-primitive depth. Alpha-tested cutouts render correctly (RE-069); RE-129/130 enable real source-alpha blending for the two classified single-cycle alpha formulas while declining the measured rare/two-cycle long tail. RE-144 restores the original billboard X/Y/X scale rule and adds isolated per-node inspection. |
 | Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested; needs on-hardware confirmation (RE-004, RE-005) |
+| Battle camera / projection | ✅ COMPLETE | R0.14: default camera source port, viewport/aspect/depth, one-to-four fighter interest union, Wait zoom and original quantized trigonometry are tested. RE-151 reads the original ROM's live Dream Land camera state and matches distance/look-at within 0.1 game units and eye within 0.67; independent PPSSPP audit captures are byte-identical. Special camera modes belong to future gameplay states; physical PSP validation remains R2. |
 | Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
 | VFPU optimization | 🔴 0% | Deliberately not started |
 | Engine traits (Layer B) | 🟢 70% | Renderer / Audio / Input / Timing / Clock defined |

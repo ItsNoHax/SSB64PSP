@@ -107,16 +107,17 @@ wait past 4 seconds, and photograph or capture the screen. Not yet executed
 in this task; this project's existing device-verification precedent (e.g.
 RE-098, RE-114) is the model to follow when it is.
 
-### 4. Original SSB64 (first representative comparison executed)
+### 4. Original SSB64 (repeatable camera comparison executed)
 
-The user's original Dream Land training screenshot has been compared beside
-RE-150's deterministic real-camera PSP capture. It is representative evidence,
-not a pixel or camera-transform oracle: the original tracks Mario and Pikachu
-spread across the stage, while the current port supplies one Mario interest.
-That difference necessarily changes `gmCameraUpdateInterests`' bounds and
-distance. A future exact camera comparison must boot the ROM in an N64
-emulator with the same one-fighter position and facing, then record the camera
-or capture after it settles.
+RE-151 drives the identified original ROM through Mupen64Plus's public core API
+with frame-indexed inputs and screenshots. The sequence enters VS Mode, selects
+Mario and Pikachu, selects Dream Land, and holds the stable match state. The
+PSP audit build supplies the same positions, facings, camera offsets, fighter
+count and settled Wait zoom. Direct original-RDRAM reads provide a numerical
+oracle for `target_dist`, `at`, `eye`, and `fovy`; a 600×450 normalized
+side-by-side then checks projected landmarks. The reproducible harness and
+copyrighted screenshots remain outside Git under
+`/home/alberto/ppsspp-test/re151/` and `/tmp/n64-camera-audit.*`.
 
 ## Test matrix
 
@@ -175,8 +176,8 @@ This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured
 reference images are compared automatically" acceptance items. The 4-source
 capture procedure is fully documented; source 1 has an exact golden and source
-4 now has RE-150's qualitative representative comparison with unmatched
-camera interests explicitly recorded.
+4 now has RE-151's same-input numerical camera trace and normalized
+representative comparison.
 The test matrix exists with named, concrete rows; a minority are confirmed
 covered by the single golden scene, the remainder are honestly tracked as
 not yet covered rather than assumed.
