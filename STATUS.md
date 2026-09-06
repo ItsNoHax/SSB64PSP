@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-153)
+**Last updated:** 2026-09-06 (RE-154)
 
 ---
 
@@ -15,12 +15,30 @@
 `R0.6 — Material System Correctness`: Fox's concrete black-face defect is
 resolved by RE-152. Continue the remaining material-table and
 primitive/environment-colour dependency through R0.7 when new source evidence
-can disambiguate its 27 unpaired graphs; per-object lighting remains the
+can disambiguate its 23 unpaired graphs; per-object lighting remains the
 documented accepted deviation.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-153 resolves all ten formerly-unpaired file-35 emblem
+`IN_PROGRESS`. RE-154 resolves four formerly-unpaired file-84 effect graphs
+from the original's static `EFDesc` records: FireSpark (`0x2040 → 0x1EA0`),
+CatchSwirl (`0x3398 → 0x22B8`), ReflectBreak (`0x53E8 → 0x2F78`) and
+DeadExplode (`0x6D00 → 0x4F08`). `ef/efmanager.c` names each effect's
+`DObjDesc` and `MObjSub` together; `84_EFCommonEffects2.c` confirms the
+linked table offsets, including the wrapper/header preceding three typed head
+arrays. This is original-source evidence, not demand-search selection.
+`romtool mobj --file 84` reports all five of its graphs paired and zero
+mismatches. Archive-wide, it reports 104 paired, 23 unpaired and zero
+mismatches across 424 nodes. `romtool textures` rises to 691 bound / 662
+packed / 29 understood failures; the rebuilt pack SHA-256 is
+`40ee564d515bab09abe19c975e0f3421ee485b903adb09975fffa75cb90bd322`.
+`cargo test --workspace` passes all 433 tests (36 engine, 118 game, 279 ROM),
+strict release-workspace Clippy passes, and the normal PSP release build
+succeeds with its existing six warnings. No PPSSPP visual or physical-PSP
+test was run for these currently-unreachable effects. Implementation commit:
+`3be633e`.
+
+RE-153 resolves all ten formerly-unpaired file-35 emblem
 graphs from the original's explicit parallel `dobjdescs[]`/`mobjsubs[]` call
 pairs in `mnCharactersMakeEmblem` and `mnVSResultsMakeEmblem`. The typed
 leading `MObjSub **..._pre` tables in `35_FTEmblemModels.c` map one-to-one to
@@ -170,10 +188,10 @@ Normal EBOOT SHA-256:
 Relevant implementation commit: `2bba248`.
 
 Last completed task: `R0.14 — Camera / Projection Correctness` (RE-151).
-Latest completed implementation: RE-153's source-paired character-select and
-results-emblem material tables (implementation commit `8d60f3d`). R0.6 remains
+Latest completed implementation: RE-154's source-paired common-effect
+material tables (implementation commit `3be633e`). R0.6 remains
 the primary task; its remaining material/primitive/environment items depend on
-R0.7's accepted 27-graph long tail, whose current search methods are exhausted
+R0.7's accepted 23-graph long tail, whose current search methods are exhausted
 pending upstream typing or newly unique evidence. R0.5's canopy and the full
 rendering gate still need physical-hardware evidence. Combat remains locked.
 All temporary object, primitive, texture-view and diagnostic edits used for

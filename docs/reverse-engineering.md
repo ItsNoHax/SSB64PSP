@@ -11349,3 +11349,43 @@ the rebuilt pack is byte-identical (SHA-256
 Clippy passes. The normal PSP release build also succeeds with its existing six
 warnings. Physical PSP testing was not performed; R0.7 and R0.6 remain in
 progress for the other 27 graphs and per-object lighting.
+
+---
+
+## RE-154 — Four static `EFDesc` records recover file-84 common-effect materials (`PLAN.md` R0.6/R0.7)
+
+File 84 (`EFCommonEffects2`) still had four unpaired graphs despite the
+original's effect manager explicitly pairing them. `ef/eftypes.h` defines
+`EFDesc` with adjacent `o_dobjsetup` and `o_mobjsub` fields; the static
+records in `ef/efmanager.c` name both fields for FireSpark, CatchSwirl,
+ReflectBreak and DeadExplode. `84_EFCommonEffects2.c` types the corresponding
+graph and material symbols. This is the same structural category as the
+file-353 entrance-effect recovery, but the evidence comes from four direct
+static records rather than demand-compatible table guesses.
+
+The source-confirmed pairs are FireSpark `0x2040 → 0x1EA0`, CatchSwirl
+`0x3398 → 0x22B8`, ReflectBreak `0x53E8 → 0x2F78`, and DeadExplode
+`0x6D00 → 0x4F08`. The material targets intentionally land on the original
+wrapper/header immediately before the following visible `MObjSub **..._head`
+array in three cases; using the linker target preserves the original pointer,
+rather than shifting it to a more convenient-looking typed subarray.
+
+Inserted those mappings in `tools/romtool/src/main.rs::load_all` after
+validating the graph and table parse. Against the identified USA ROM,
+`romtool mobj --file 84` now reports 5 paired / 0 unpaired / 0 mismatches.
+Archive-wide, pairs rise `100 → 104`, unpaired graphs fall `27 → 23`, and all
+424 paired nodes have matching material-chain/display-list demand. `romtool
+textures` rises `686 → 691` bound and `657 → 662` packed while retaining the
+same 29 understood failures: 3 missing-palette cases (two in file 114 and one
+in file 86) and 26 runtime framebuffer `G_SETTIMG` transitions.
+
+The rebuilt pack contains 2,034 meshes, 36,738 triangles, 7,480 draws, 955
+textures and 3,137 nodes; it verifies on reload and has SHA-256
+`40ee564d515bab09abe19c975e0f3421ee485b903adb09975fffa75cb90bd322`.
+`cargo test --workspace` passes all 433 tests, strict release-workspace
+Clippy passes, and the PSP release build succeeds with its existing six
+warnings (EBOOT SHA-256
+`3a4b172b9500cfd9d4da98d7ca916c41dd9b03e6e1c39aabfda5e16b9689c845`).
+These effects are not exposed by the present viewer, so no visual PPSSPP or
+physical-PSP claim is made. R0.6/R0.7 remain in progress for the other 23
+unpaired graphs and the separate material/lighting acceptance work.
