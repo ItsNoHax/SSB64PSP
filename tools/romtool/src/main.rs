@@ -2202,6 +2202,33 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
+    // RE-154: four further `EFDesc` records in `ef/efmanager.c` name
+    // file-84's effect graph and MObj table together.  As with the Link
+    // entry effects above, these descriptors live in the static executable,
+    // so neither archive-local pointer scanning nor demand matching is the
+    // authority for their pairing.  The relocData declarations confirm the
+    // named offsets: each table begins with the original wrapper/header and
+    // its following `MObjSub **..._head` entries, which is why the linker
+    // target is a few bytes before the visibly typed head array in three
+    // cases.
+    for &(file, graph, table) in &[
+        (84u32, 0x2040u32, 0x1EA0u32), // FireSparkEffectDesc
+        (84u32, 0x3398u32, 0x22B8u32), // CatchSwirlEffectDesc
+        (84u32, 0x53E8u32, 0x2F78u32), // ReflectBreakEffectDesc
+        (84u32, 0x6D00u32, 0x4F08u32), // DeadExplodeEffectDesc
+    ] {
+        let nodes = graphs
+            .get(&file)
+            .and_then(|gs| gs.iter().find(|g| g.offset == graph))
+            .map_or(0, |g| g.nodes.len());
+        let parses = files[file as usize]
+            .as_ref()
+            .is_some_and(|f| mobj::read_table(f, table, nodes).is_some());
+        if parses {
+            tables.insert(file, graph, table);
+        }
+    }
+
     Loaded {
         files,
         graphs,
