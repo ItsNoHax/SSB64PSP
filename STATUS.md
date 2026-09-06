@@ -41,7 +41,7 @@ Verification: all 431 workspace tests pass (36 engine, 118 game, 277 ROM);
 strict `ssb-game` Clippy passes;
 the camera-audit PSP release build succeeds with the existing warnings; both
 PPSSPP runs hold 60 FPS and compare byte-for-byte. Physical PSP was not tested.
-Relevant implementation commit: pending.
+Relevant implementation commit: `aa0a2a6`.
 
 R0.13 remains complete. RE-149 resolves a roadmap dependency cycle:
 the reusable wipe renderer and synchronized capture boundary are R0.13's
