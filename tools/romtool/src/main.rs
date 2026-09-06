@@ -2291,18 +2291,25 @@ fn load_all(archive: &Archive) -> Loaded {
         }
     }
 
-    // RE-157: static effect descriptors also name four more graph/table
+    // RE-158: static effect descriptors also name nine more graph/table
     // relationships that archive-local scans cannot see. `EFGroundDesc`
     // records in `ef/efground.c` bind Kongo Jungle's bird, while `EFDesc`
     // records in `ef/efmanager.c` bind Pikachu's two Special2 effects and
-    // Ness's PK Thunder Wave. The matching relocData declarations identify
-    // the linker-target offsets. These are source relationships, not choices
-    // made from the demand-compatible candidates reported by `--search`.
+    // Ness's PK Thunder Wave and Link's Spin Attack, alongside the four
+    // special-move effects whose tables were already typed in relocData. The
+    // matching relocData declarations identify the linker-target offsets.
+    // These are source relationships, not choices made from the
+    // demand-compatible candidates reported by `--search`.
     for &(file, graph, table) in &[
         (108u32, 0xF400u32, 0xF230u32), // GRJungleMapBird
         (347u32, 0x800u32, 0x640u32),   // PikachuSpecial2 Unk
         (347u32, 0x1640u32, 0x13A0u32), // PikachuSpecial2 ThunderShock
         (335u32, 0x9A10u32, 0x9870u32), // NessModel PKThunderWave
+        (353u32, 0x11C0u32, 0x1038u32), // LinkSpecial2 SpinAttack
+        (349u32, 0x380u32, 0x210u32),   // SamusSpecial2 GrappleBeam
+        (350u32, 0xB08u32, 0x960u32),   // CaptainSpecial2 FalconKick
+        (351u32, 0x2130u32, 0x1C20u32), // PurinSpecial2 Sing
+        (352u32, 0x9A8u32, 0x810u32),   // NessSpecial2 PsychicMagnet
     ] {
         let nodes = graphs
             .get(&file)
