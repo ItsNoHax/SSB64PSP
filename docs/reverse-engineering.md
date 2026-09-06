@@ -10,6 +10,47 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-161 — Link-model's final unpaired graph has no typed source relationship (`PLAN.md` R0.6/R0.7)
+
+**Question.** Can the last unpaired Link-model graph be connected to one of
+`romtool mobj --search`'s three candidate material tables from original source,
+rather than treating a demand-compatible table as evidence?
+
+**Evidence.** The graph is `dLinkModel_JointTree_0x9CF8` in relocData file
+324, a distinct three-node tree using display lists `Joint_0x93B8`,
+`Joint_0x94F0`, and `Joint_0x9B98`. It is not file 324's separately typed
+`DObjDesc_0x11908` file-handle resource and it is not either of Link's two
+`FTCommonPart` body trees (`JointTree` and `JointTree_0x74B0`) in
+`225_LinkMain.c`.
+
+`romtool mobj --file 324 --search` returns exactly three demand-compatible
+starts: `0x48`, `0x4388`, and `0x84C0`. The source does type material
+dispatches in those surrounding regions, but it names them for other Link
+body/model-part paths: the file-start dispatch is used by the common body
+tree, while `225_LinkMain.c` explicitly assigns the `0x94F0` and `0x9B98`
+lists their own `MObjSub` chains as individual `FTModelPart`s. No source
+descriptor, file-handle slot, `FTCommonPart`, `FTModelPart`, `WPAttributes`,
+`EFDesc`, or executable call site references `JointTree_0x9CF8` outside its
+own relocData definition. Thus none of the three candidate *tables* is named
+as this graph's table.
+
+**Conclusion.** This is an upstream typing/source-link gap, not an extractor
+gap. Inserting any candidate would repeat the exact demand-only heuristic
+that R0.7 rejects. The graph remains deliberately unpaired; this pass adds no
+converter mapping or asset change.
+
+**Verification.** `target/debug/romtool mobj rom/*.z64 --file 324 --search`
+reports one unnamed graph and the three candidates above; the existing 125
+resolved graph/table pairs retain zero chain/demand mismatches. `romtool
+textures --file 324` packs all 31 directly bound textures with zero failures,
+so this unresolved graph currently creates no palette-conversion failure.
+
+**Confidence: high** that no typed relationship exists in the current
+decompilation; this is a source-wide symbol/call-site audit, not an inference
+from visual similarity.
+
+---
+
 ## RE-001 — relocData table geometry
 
 **Question.** Where is the asset archive, how many files, and how are entries
