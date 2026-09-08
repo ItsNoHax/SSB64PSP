@@ -21,8 +21,8 @@ use ssb_game::collision::Segment;
 use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
-use ssb_game::status::Status;
 use ssb_game::status::AnimLengths;
+use ssb_game::status::Status;
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, Pack, StageDesc};
 
 /// Walks a stage's floor polylines as the `(line_id, segment)` pairs the
@@ -82,9 +82,7 @@ impl Iterator for FloorSegments<'_, '_> {
                 self.current = None;
                 continue;
             }
-            let v = self
-                .pack
-                .coll_vertex(line.first_vertex + self.point as u32);
+            let v = self.pack.coll_vertex(line.first_vertex + self.point as u32);
             self.point += 1;
             let Some(v) = v else {
                 self.current = None;
@@ -333,7 +331,11 @@ impl Play {
                 && self.fighter.status.anim_frame >= 120.0,
         };
         let interests = [primary, additional_camera_interest.unwrap_or(primary)];
-        let interest_count = if additional_camera_interest.is_some() { 2 } else { 1 };
+        let interest_count = if additional_camera_interest.is_some() {
+            2
+        } else {
+            1
+        };
         self.camera.tick_interests(
             &interests[..interest_count],
             bounds,
@@ -358,8 +360,7 @@ impl Play {
         if self.started != Some(status) {
             self.started = Some(status);
             if let Some(anim) = pack.fighter_anim(self.fighter.kind as u32, slot) {
-                self.skeleton
-                    .start(pack, &anim, 0.0, status.anim_speed());
+                self.skeleton.start(pack, &anim, 0.0, status.anim_speed());
             }
         }
         // The slot is read back rather than remembered, so a status whose

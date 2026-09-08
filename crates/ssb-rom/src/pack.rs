@@ -128,7 +128,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 21 adds the original signed vertex normal to every packed vertex (RE-164).
 ///    The GE needs it to reproduce the original's per-fighter directional
 ///    light; previous packs contain only the already-baked RGB result.
-pub const VERSION: u32 = 21;
+/// 22 adds the directional/ambient colours written through `G_MW_LIGHTCOL` to
+///    `PrimDesc` (RE-165). The values are per-material state, not derivable
+///    from a normal or stage angle, so runtime GE lighting cannot faithfully
+///    use a v21 pack.
+pub const VERSION: u32 = 22;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -289,10 +293,16 @@ pub struct PrimDesc {
     pub texture_blend_target: u32,
     /// `flags::FLAT_COLOR`'s colour (packed ABGR), zero otherwise (RE-079).
     pub flat_color: u32,
+    /// `G_MW_LIGHTCOL` LIGHT_1 (directional) colour, packed ABGR; zero when
+    /// this material did not set it.
+    pub light1_color: u32,
+    /// `G_MW_LIGHTCOL` LIGHT_2 (ambient, with one directional light) colour,
+    /// packed ABGR; zero when this material did not set it.
+    pub light2_color: u32,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 36;
+    pub const SIZE: usize = 44;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -1396,6 +1406,8 @@ impl PackWriter {
                 texture_blend_base: blend_base,
                 texture_blend_target: blend_target,
                 flat_color: m.flat_color.map_or(0, crate::psp_texture::pack_abgr),
+                light1_color: m.light1_color.map_or(0, crate::psp_texture::pack_abgr),
+                light2_color: m.light2_color.map_or(0, crate::psp_texture::pack_abgr),
             });
         }
 
@@ -1818,6 +1830,8 @@ impl PackWriter {
                 p.texture_blend_base,
                 p.texture_blend_target,
                 p.flat_color,
+                p.light1_color,
+                p.light2_color,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -2522,6 +2536,8 @@ impl<'a> Pack<'a> {
             texture_blend_base: u32_at(self.data, at + 24),
             texture_blend_target: u32_at(self.data, at + 28),
             flat_color: u32_at(self.data, at + 32),
+            light1_color: u32_at(self.data, at + 36),
+            light2_color: u32_at(self.data, at + 40),
         })
     }
 

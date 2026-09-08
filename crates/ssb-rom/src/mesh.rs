@@ -139,6 +139,13 @@ pub struct MeshMaterial {
     /// is not a safe stand-in for that.
     pub env_color: Option<[u8; 4]>,
     pub blend_color: Option<[u8; 4]>,
+    /// `G_MW_LIGHTCOL`'s `LIGHT_1` value (the directional source when the
+    /// original has `gSPNumLights(..., 1)`). Kept independently of `lit`:
+    /// the former says *how bright*, the latter says whether normals are read.
+    pub light1_color: Option<[u8; 4]>,
+    /// `G_MW_LIGHTCOL`'s `LIGHT_2` value. With one directional light this is
+    /// the RSP's always-present ambient source (`gbi.h`), not a second ray.
+    pub light2_color: Option<[u8; 4]>,
     /// `G_SETRENDERMODE`'s `CVG_X_ALPHA | ALPHA_CVG_SEL` -- a cutout
     /// surface (foliage, grates) whose coverage is driven by texture alpha
     /// (RE-069). The RDP resolves this through multisampled edge coverage,
@@ -1643,8 +1650,23 @@ fn walk(
             // relying on that external state is about to draw lit geometry.
             Cmd::MoveWord {
                 index: G_MW_LIGHTCOL,
-                ..
-            } => state.material.lit = true,
+                offset,
+                data,
+            } => {
+                // F3DEX2's `gSPLightColor` writes each colour twice (the
+                // `aLIGHT_n` and `bLIGHT_n` copies). With `gSPNumLights(1)`,
+                // LIGHT_1 is the directional source at 0/4 and LIGHT_2 is the
+                // mandatory ambient source at 24/28 (gbi.h). Preserve both
+                // rather than using the old command-presence-only lighting
+                // signal: their values are render state, not decoration.
+                let rgba = data.to_be_bytes();
+                match offset {
+                    0x00 | 0x04 => state.material.light1_color = Some(rgba),
+                    0x18 | 0x1C => state.material.light2_color = Some(rgba),
+                    _ => {}
+                }
+                state.material.lit = true;
+            }
 
             Cmd::SetCombine { hi, lo } => state.combiner = Some((hi, lo)),
 
@@ -3079,6 +3101,31 @@ mod tests {
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(!mesh.primitives[0].material.cull_back);
+    }
+
+    #[test]
+    fn lightcol_preserves_directional_and_ambient_colours() {
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::MoveWord {
+                index: G_MW_LIGHTCOL,
+                offset: 0x00,
+                data: 0x11_22_33_00,
+            },
+            Cmd::MoveWord {
+                index: G_MW_LIGHTCOL,
+                offset: 0x18,
+                data: 0x44_55_66_00,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let material = &mesh.primitives[0].material;
+        assert!(material.lit);
+        assert_eq!(material.light1_color, Some([0x11, 0x22, 0x33, 0]));
+        assert_eq!(material.light2_color, Some([0x44, 0x55, 0x66, 0]));
     }
 
     #[test]

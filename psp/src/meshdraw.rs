@@ -20,8 +20,8 @@
 use core::ffi::c_void;
 
 use psp::sys::{
-    self, ClutPixelFormat, GuPrimitive, GuState, ScePspFMatrix4, ScePspFVector3, ScePspFVector4,
-    TexturePixelFormat, VertexType,
+    self, ClutPixelFormat, GuPrimitive, GuState, LightComponent, LightType, ScePspFMatrix4,
+    ScePspFVector3, ScePspFVector4, TexturePixelFormat, VertexType,
 };
 
 use ssb_rom::pack::{flags, MeshDesc, NodeDesc, ObjectDesc, Pack, PrimDesc, TextureDesc};
@@ -78,6 +78,15 @@ pub struct DrawState {
     /// reset the texture function back to `Modulate` — either alone would
     /// under-count a real state change if this piggybacked on those fields.
     last_texture_blend: Option<u32>,
+    /// `Some` only while the caller has installed SSB64's per-fighter light.
+    ///
+    /// A `LIT` primitive alone is deliberately insufficient to enable GE
+    /// lighting: the pack is also used by the stage/object inspectors, where
+    /// the original fighter-display light has not been set up.  This context
+    /// bit makes the source ordering explicit: `ftDisplayMainProcDisplay`
+    /// emits `ftDisplayLightsDrawReflect` immediately before the fighter
+    /// object, then enables `G_LIGHTING` only for the appropriate primitives.
+    runtime_fighter_light: bool,
     pub draws: u32,
     pub triangles: u32,
     pub state_changes: u32,
@@ -136,12 +145,64 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_blend = None;
+        self.runtime_fighter_light = false;
         self.draws = 0;
         self.triangles = 0;
         self.state_changes = 0;
         // Not reset here: `force_no_cull` is set once per frame by the
         // caller (main.rs), based on which debug-viewer mode is active, and
         // must survive `begin_frame`'s reset of everything else.
+    }
+
+    /// Installs the original fighter display's one directional light.
+    ///
+    /// `ftDisplayLightsDrawReflect` converts the stage's X/Y angles (degrees)
+    /// into this exact direction before each fighter draw.  The original
+    /// follows it with `gSPNumLights(1)`/`gSPLight(..., 1)`: one white diffuse
+    /// directional light, no second directional source.  `MObj` light colours
+    /// are white throughout the shipped content (D-024), so this does not
+    /// invent an object colour transform.  Literal-colour primitives remain
+    /// safe because [`apply_material`] enables `GuState::Lighting` only when
+    /// both this context and their packed `flags::LIT` are present.
+    pub unsafe fn configure_fighter_light(&mut self, angles_degrees: [f32; 2]) {
+        let radians = core::f32::consts::PI / 180.0;
+        let (sin_x, cos_x) = ssb_engine::math::sin_cos(angles_degrees[0] * radians);
+        let (sin_y, cos_y) = ssb_engine::math::sin_cos(angles_degrees[1] * radians);
+        let direction = ScePspFVector3 {
+            x: sin_x * cos_y,
+            y: sin_y,
+            z: cos_x * cos_y,
+        };
+
+        // The GE otherwise treats the packed colour as a material colour.
+        // For a lit N64 vertex those bytes are a normal, not a colour; leave
+        // material white and source colour solely from the directional light.
+        sys::sceGuColorMaterial(LightComponent::empty());
+        sys::sceGuMaterial(
+            LightComponent::AMBIENT | LightComponent::DIFFUSE,
+            0xFFFF_FFFF,
+        );
+        // The actual LIGHT_1/LIGHT_2 colours are material state and are
+        // applied from each `PrimDesc` below. Start neutral so a primitive
+        // that contains no colour command cannot inherit a prior render pass.
+        sys::sceGuAmbient(0);
+        sys::sceGuLight(
+            0,
+            LightType::Directional,
+            LightComponent::DIFFUSE,
+            &direction,
+        );
+        self.runtime_fighter_light = true;
+    }
+
+    /// Ends a fighter-light scope before debug geometry or another render
+    /// pass.  The cache must be invalidated too: the next packed primitive
+    /// needs to re-issue all of its GE state rather than trusting a state this
+    /// direct disable has changed behind its back.
+    pub unsafe fn finish_fighter_light(&mut self) {
+        self.runtime_fighter_light = false;
+        self.last_flags = None;
+        sys::sceGuDisable(GuState::Lighting);
     }
 
     /// Forgets the cached texture binding, forcing the next primitive to
@@ -390,6 +451,23 @@ unsafe fn apply_material(
         } else {
             sys::ShadingModel::Flat
         });
+
+        // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
+        // pass, but not every primitive carries normals: decals and other
+        // authored literal-colour material draws must stay literal.  The pack
+        // records that source distinction as `LIT`; GE lighting is a draw
+        // state, so make the equivalent decision at the same granularity.
+        if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
+            if p.light1_color != 0 {
+                sys::sceGuLightColor(0, LightComponent::DIFFUSE, p.light1_color);
+            }
+            if p.light2_color != 0 {
+                sys::sceGuAmbient(p.light2_color);
+            }
+            sys::sceGuEnable(GuState::Lighting);
+        } else {
+            sys::sceGuDisable(GuState::Lighting);
+        }
 
         // `Z_BUFFER` is the real per-primitive signal (RE-068): the RDP's
         // per-frame reset (`refs/ssb-decomp-re/src/sys/rdp.c`'s
@@ -705,9 +783,7 @@ unsafe fn draw_object_posed_filtered(
         let Some(node) = pack.node(global_node) else {
             continue;
         };
-        let mesh_index = pack
-            .costume_mesh(global_node, costume)
-            .unwrap_or(node.mesh);
+        let mesh_index = pack.costume_mesh(global_node, costume).unwrap_or(node.mesh);
         if mesh_index == NodeDesc::NO_MESH {
             continue; // pure transform: a joint with no geometry
         }
@@ -716,10 +792,7 @@ unsafe fn draw_object_posed_filtered(
         };
 
         let node = match posed.get(i as usize) {
-            Some(m) => NodeDesc {
-                world: m.0,
-                ..node
-            },
+            Some(m) => NodeDesc { world: m.0, ..node },
             None => node,
         };
 
@@ -765,7 +838,11 @@ unsafe fn draw_object_posed_filtered(
                 sy = base_sy * scale[1];
             }
             sys::sceGumLoadIdentity();
-            sys::sceGumTranslate(&ScePspFVector3 { x: pos[0], y: pos[1], z: pos[2] });
+            sys::sceGumTranslate(&ScePspFVector3 {
+                x: pos[0],
+                y: pos[1],
+                z: pos[2],
+            });
             // RE-131: under a real (non-identity) view matrix, the object's
             // own axes must be set to the camera's own right/up/forward for
             // this to still be screen-aligned -- see `DrawState::
@@ -791,10 +868,30 @@ unsafe fn draw_object_posed_filtered(
                     right[0] * up[1] - right[1] * up[0],
                 ];
                 sys::sceGumMultMatrix(&ScePspFMatrix4 {
-                    x: ScePspFVector4 { x: right[0], y: right[1], z: right[2], w: 0.0 },
-                    y: ScePspFVector4 { x: up[0], y: up[1], z: up[2], w: 0.0 },
-                    z: ScePspFVector4 { x: forward[0], y: forward[1], z: forward[2], w: 0.0 },
-                    w: ScePspFVector4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
+                    x: ScePspFVector4 {
+                        x: right[0],
+                        y: right[1],
+                        z: right[2],
+                        w: 0.0,
+                    },
+                    y: ScePspFVector4 {
+                        x: up[0],
+                        y: up[1],
+                        z: up[2],
+                        w: 0.0,
+                    },
+                    z: ScePspFVector4 {
+                        x: forward[0],
+                        y: forward[1],
+                        z: forward[2],
+                        w: 0.0,
+                    },
+                    w: ScePspFVector4 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                        w: 1.0,
+                    },
                 });
             }
             // ROM Kind46 reads rotate.z; kinds 44/48/50 have no spin.
@@ -805,7 +902,11 @@ unsafe fn draw_object_posed_filtered(
             // 44/46/48/50). This is observable: 16 of the 109 shipped
             // billboard meshes have a nonzero local Z span. Leaving Z at 1
             // compressed that authored depth by MODEL_SCALE (RE-144).
-            sys::sceGumScale(&ScePspFVector3 { x: sx, y: sy, z: sx });
+            sys::sceGumScale(&ScePspFVector3 {
+                x: sx,
+                y: sy,
+                z: sx,
+            });
         } else {
             sys::sceGumLoadMatrix(base);
             sys::sceGumMultMatrix(&local);
