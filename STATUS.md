@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-08 (RE-165)
+**Last updated:** 2026-09-08 (RE-166)
 
 ---
 
@@ -17,7 +17,25 @@ deviation with the original's runtime directional-light data path.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-165 continues RE-164's runtime-lighting path. It found
+`IN_PROGRESS`. RE-166 corrects a source-state loss in RE-165's runtime-lighting
+path: `G_MW_LIGHTCOL` is independent of material flags and an authored zero is
+a meaningful black light value, but v22's `PrimDesc` could not represent that
+presence distinction and the GE cache therefore skipped a changed colour under
+identical flags. Pack v23 adds LIGHT_1/LIGHT_2 presence bits and the PSP now
+caches/reapplies the optional colour pair independently of flags; this is a
+state-preservation correction, not a brightness adjustment. A focused
+black-LIGHT_1 round-trip test, all 436 workspace tests, strict Clippy,
+pinned-nightly PSP release build (the existing six warnings), `romtool collide`
+(all four Dream Land spawns), and an eight-second PPSSPP software run pass.
+The staged v23 pack SHA-256 is
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`;
+the capture is `/home/alberto/ppsspp-test/re166-light-state/screenshot.png`,
+at 60 FPS with no error/failure log lines. It confirms the v23 binary/pack
+transition, not original lighting equivalence. The next bounded step remains
+an original-game comparison of an equivalent larger fighter view; do not tune
+the purple appearance by eye.
+
+RE-165 continues RE-164's runtime-lighting path. It found
 that `gSPNumLights(1)` means one directional source plus an always-present
 ambient source, so the old `G_MW_LIGHTCOL` presence-only signal had discarded
 two load-bearing per-material colours. Pack v22 now preserves LIGHT_1 at
