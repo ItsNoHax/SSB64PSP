@@ -36,22 +36,31 @@ The stage X/Y direction is still constructed exactly from
 offsets and their byte order; the pack reader/writer round-trip and PSP
 release build succeed.
 
+**Follow-up evidence.** Mario's actual initial `MObjSub` records answer the
+inheritance question: their `0x00022205` flags include `MOBJ_FLAG_LIGHT2`, and
+their `light2color` is `(0x4C, 0x4C, 0x4C, 0x00)`. `objdisplay.c` emits that
+as `gSPLightColor(..., LIGHT_2, ...)`. The converter had decoded MObj palette
+and RDP colours but not its two light-colour fields, so even a correctly
+configured GE ambient source stayed at zero when the command lived in the
+runtime graphics heap. It now decodes the two flagged MObj fields and applies
+them to `MeshMaterial`; a focused parser fixture and conversion test pin the
+ambient propagation. This is source state, not a brightness fallback.
+
 **Current limitation.** The rebuilt v22 pack and an eight-second PPSSPP
-software-renderer capture load and run at 60 FPS with no log errors, but the
-fighter remains visibly darker than the pre-runtime-light baseline. The
-captured material writes do not yet establish the initial ambient register
-when a first lit primitive inherits it rather than setting LIGHT_2 itself.
-Do not insert a brightness floor or claim lighting correctness: trace that
-initial state and compare a larger fighter view against the original first.
+software-renderer capture load and run at 60 FPS with no log errors. The
+fighter is now visible rather than a near-black silhouette, but its purple
+appearance has not yet been compared against the original game's equivalent
+scene. Do not tune the remaining colour/magnitude by eye or claim lighting
+correctness until that comparison exists.
 
 **Verification.** `cargo test --workspace` (434 tests), strict workspace
 Clippy, pinned-nightly PSP release build, `romtool collide --stage 0` (all
 four spawns), and PPSSPP capture at
-`/home/alberto/ppsspp-test/re165-final/screenshot.png`. Rebuilt v22 pack
-SHA-256: `7bfdcb54f1bf01e3bfa4a56aca188a4d256b9f741dc8d6051d7f6412d18270c0`.
+`/home/alberto/ppsspp-test/re166-mobj-lights/screenshot.png`. Rebuilt v22
+pack SHA-256: `cc4fa586ce4b201473899bd8528a2bae4779a3f91b7c29957a5571a04c35cd8e`.
 
-**Confidence: certain** for the original register roles and carried state;
-the inherited-initial-ambient question remains open.
+**Confidence: certain** for the original register roles and Mario's initial
+ambient state; visual equivalence remains open.
 
 ---
 

@@ -24,17 +24,19 @@ two load-bearing per-material colours. Pack v22 now preserves LIGHT_1 at
 F3DEX2 offsets `0x00/0x04` and ambient LIGHT_2 at `0x18/0x1C`; the PSP scopes
 the real stage-angle directional light to the fighter draw, applies these
 colours to lit primitives, and disables GE lighting for authored literal
-colours and the debug marker. A focused converter test, all 434 workspace
-tests, strict Clippy, pinned-nightly PSP release build, `romtool collide`
-(all four Dream Land spawns), and an eight-second PPSSPP software run pass.
-The rebuilt v22 pack SHA-256 is
-`7bfdcb54f1bf01e3bfa4a56aca188a4d256b9f741dc8d6051d7f6412d18270c0`.
-The PPSSPP capture still makes the fighter too dark, despite no errors and
-60 FPS; an unproven brightness floor was tested and removed. The unresolved,
-source-bounded next step is to trace the initial ambient register when a
-fighter primitive inherits LIGHT_2 rather than writing it, then compare a
-larger fighter view against the original. No lighting-correctness claim is
-made yet.
+colours and the debug marker. Follow-up source tracing found that Mario's
+initial MObj records carry `MOBJ_FLAG_LIGHT2` with ambient
+`(0x4C,0x4C,0x4C,0x00)`: `objdisplay.c` emits it through the runtime
+graphics heap, but the converter had not decoded MObj light fields. It now
+does, and the fighter is visible rather than a black silhouette in PPSSPP;
+no brightness heuristic was introduced. Focused parser/converter tests, all
+435 workspace tests, strict Clippy, pinned-nightly PSP release build,
+`romtool collide` (all four Dream Land spawns), and an eight-second PPSSPP
+software run pass. The rebuilt v22 pack SHA-256 is
+`cc4fa586ce4b201473899bd8528a2bae4779a3f91b7c29957a5571a04c35cd8e`.
+The remaining source-bounded next step is an original-game comparison of an
+equivalent, larger fighter view; the current purple appearance must not be
+tuned by eye or claimed correct before then.
 
 RE-164 traced the original fighter display path further:
 `ftDisplayLightsDrawReflect` builds a directional light immediately before a

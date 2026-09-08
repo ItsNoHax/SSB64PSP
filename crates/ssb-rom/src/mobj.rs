@@ -59,6 +59,8 @@ const F_FLAGS: u32 = 0x30;
 const F_PRIMCOLOR: u32 = 0x50;
 const F_ENVCOLOR: u32 = 0x58;
 const F_BLENDCOLOR: u32 = 0x5C;
+const F_LIGHT1COLOR: u32 = 0x60;
+const F_LIGHT2COLOR: u32 = 0x64;
 
 /// `G_IM_SIZ_8b`, the only size that implies a 256-entry TLUT.
 const G_IM_SIZ_8B: u8 = 1;
@@ -70,6 +72,8 @@ const MOBJ_FLAG_FRAC: u16 = 1 << 4;
 const MOBJ_FLAG_PRIMCOLOR: u16 = 1 << 9;
 const MOBJ_FLAG_ENVCOLOR: u16 = 1 << 10;
 const MOBJ_FLAG_BLENDCOLOR: u16 = 1 << 11;
+const MOBJ_FLAG_LIGHT1: u16 = 1 << 12;
+const MOBJ_FLAG_LIGHT2: u16 = 1 << 13;
 
 /// Where one entry of an `MObjSub` pointer table leads.
 ///
@@ -112,6 +116,12 @@ pub struct MObjMaterial {
     pub prim_color: Option<[u8; 4]>,
     pub env_color: Option<[u8; 4]>,
     pub blend_color: Option<[u8; 4]>,
+    /// `gSPLightColor(..., LIGHT_1, ...)`, emitted when the MObj requests
+    /// the directional source colour.
+    pub light1_color: Option<[u8; 4]>,
+    /// `gSPLightColor(..., LIGHT_2, ...)`, emitted when the MObj requests
+    /// the always-present ambient source colour.
+    pub light2_color: Option<[u8; 4]>,
 }
 
 impl MObjMaterial {
@@ -122,6 +132,8 @@ impl MObjMaterial {
             || self.prim_color.is_some()
             || self.env_color.is_some()
             || self.blend_color.is_some()
+            || self.light1_color.is_some()
+            || self.light2_color.is_some()
     }
 }
 
@@ -287,6 +299,8 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         prim_color: flagged(MOBJ_FLAG_PRIMCOLOR, F_PRIMCOLOR),
         env_color: flagged(MOBJ_FLAG_ENVCOLOR, F_ENVCOLOR),
         blend_color: flagged(MOBJ_FLAG_BLENDCOLOR, F_BLENDCOLOR),
+        light1_color: flagged(MOBJ_FLAG_LIGHT1, F_LIGHT1COLOR),
+        light2_color: flagged(MOBJ_FLAG_LIGHT2, F_LIGHT2COLOR),
     })
 }
 
@@ -591,7 +605,10 @@ mod tests {
         put(SUB_B + F_PALETTES, PALSET);
         put(PALSET, PALETTE);
         for sub in [SUB_A, SUB_B] {
-            data[(sub + F_FLAGS) as usize + 1] = MOBJ_FLAG_PALETTE as u8;
+            data[(sub + F_FLAGS) as usize..(sub + F_FLAGS + 2) as usize]
+                .copy_from_slice(&(MOBJ_FLAG_PALETTE | MOBJ_FLAG_LIGHT2).to_be_bytes());
+            data[(sub + F_LIGHT2COLOR) as usize..(sub + F_LIGHT2COLOR + 4) as usize]
+                .copy_from_slice(&[0x4C, 0x4C, 0x4C, 0x00]);
         }
 
         File {
@@ -616,6 +633,11 @@ mod tests {
             })
         );
         assert_eq!(table.nodes[1][0].at, SUB_A);
+        assert_eq!(table.nodes[1][0].light1_color, None);
+        assert_eq!(
+            table.nodes[1][0].light2_color,
+            Some([0x4C, 0x4C, 0x4C, 0x00])
+        );
         assert_eq!(table.nodes[4].len(), 1);
     }
 
