@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-08 (RE-166)
+**Last updated:** 2026-09-09 (RE-167)
 
 ---
 
@@ -12,12 +12,26 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`: replace the former baked-lighting
-deviation with the original's runtime directional-light data path.
+`R0.6 — Material System Correctness`: re-run the source-indexed primitive/
+environment-colour census now that every discovered material table resolves.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-166 corrects a source-state loss in RE-165's runtime-lighting
+`IN_PROGRESS`. RE-167 completes the original-game comparison requested by
+RE-166. The matched Dream Land Wait view exposed a real combiner boundary:
+runtime GE lighting ignored the packed vertex colour into which RE-106 folded
+Mario's `PRIMITIVE * SHADE` costume scale. The PSP now applies that already
+source-resolved scale as ambient/diffuse GE material colour, restoring red
+clothing and blue overalls without a tuned colour or brightness floor. Two
+deterministic captures are byte-identical and the golden is refreshed to
+`4d4ca4628c46884f1a50b8669a146c90d383e3d7ddda6f6e97a629bdd9fdf93b`.
+All 436 workspace tests, strict Clippy, and camera-audit/regression PSP builds
+pass; PPSSPP software runs at 60 FPS with clean logs. Physical PSP remains R2.
+R0.6 lighting is now checked; the next bounded work is its explicitly queued
+post-RE-163 primitive/environment-colour census. Relevant commit: this work's
+`render: preserve lit combiner color scale` commit.
+
+RE-166 corrects a source-state loss in RE-165's runtime-lighting
 path: `G_MW_LIGHTCOL` is independent of material flags and an authored zero is
 a meaningful black light value, but v22's `PrimDesc` could not represent that
 presence distinction and the GE cache therefore skipped a changed colour under

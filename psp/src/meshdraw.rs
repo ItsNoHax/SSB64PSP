@@ -84,6 +84,11 @@ pub struct DrawState {
     /// two primitives with identical geometry/render flags can still require
     /// different GE light colours (RE-166).
     last_fighter_light_colors: Option<(Option<u32>, Option<u32>)>,
+    /// The combiner's resolved scale on `SHADE`, installed as the GE material
+    /// colour for a runtime-lit primitive.  Vertex colour carried this scale
+    /// while lighting was baked; the GE ignores that vertex colour when
+    /// `sceGuColorMaterial` is disabled, so it must be applied here instead.
+    last_fighter_material_color: Option<u32>,
     /// `Some` only while the caller has installed SSB64's per-fighter light.
     ///
     /// A `LIT` primitive alone is deliberately insufficient to enable GE
@@ -152,6 +157,7 @@ impl DrawState {
         self.last_flags = None;
         self.last_texture_blend = None;
         self.last_fighter_light_colors = None;
+        self.last_fighter_material_color = None;
         self.runtime_fighter_light = false;
         self.draws = 0;
         self.triangles = 0;
@@ -165,12 +171,10 @@ impl DrawState {
     ///
     /// `ftDisplayLightsDrawReflect` converts the stage's X/Y angles (degrees)
     /// into this exact direction before each fighter draw.  The original
-    /// follows it with `gSPNumLights(1)`/`gSPLight(..., 1)`: one white diffuse
-    /// directional light, no second directional source.  `MObj` light colours
-    /// are white throughout the shipped content (D-024), so this does not
-    /// invent an object colour transform.  Literal-colour primitives remain
-    /// safe because [`apply_material`] enables `GuState::Lighting` only when
-    /// both this context and their packed `flags::LIT` are present.
+    /// follows it with `gSPNumLights(1)`/`gSPLight(..., 1)`: one directional
+    /// source plus LIGHT_2 as ambient. Literal-colour primitives remain safe
+    /// because [`apply_material`] enables `GuState::Lighting` only when both
+    /// this context and their packed `flags::LIT` are present.
     pub unsafe fn configure_fighter_light(&mut self, angles_degrees: [f32; 2]) {
         let radians = core::f32::consts::PI / 180.0;
         let (sin_x, cos_x) = ssb_engine::math::sin_cos(angles_degrees[0] * radians);
@@ -201,6 +205,7 @@ impl DrawState {
         );
         self.runtime_fighter_light = true;
         self.last_fighter_light_colors = None;
+        self.last_fighter_material_color = None;
     }
 
     /// Ends a fighter-light scope before debug geometry or another render
@@ -211,6 +216,7 @@ impl DrawState {
         self.runtime_fighter_light = false;
         self.last_flags = None;
         self.last_fighter_light_colors = None;
+        self.last_fighter_material_color = None;
         sys::sceGuDisable(GuState::Lighting);
     }
 
@@ -551,6 +557,28 @@ unsafe fn apply_material(
             if let Some(color) = colors.1 {
                 sys::sceGuAmbient(color);
             }
+        }
+
+        // The N64 combiner applies `prim_color` after lighting as a scale on
+        // SHADE (`PRIM * SHADE` for Mario's costume materials). RE-106 folded
+        // that scale into vertex colour for the baked-light path, but GE
+        // lighting does not read vertex colour with ColorMaterial disabled.
+        // Applying the same scale as both ambient and diffuse material colour
+        // reproduces `(ambient + diffuse) * PRIM`; leaving it white preserves
+        // an identity/absent scale. This is source combiner state already
+        // retained in PrimDesc, not a colour chosen from the screenshot.
+        let material_color = if p.prim_color == 0 {
+            0xFFFF_FFFF
+        } else {
+            p.prim_color
+        };
+        if st.last_fighter_material_color != Some(material_color) {
+            st.last_fighter_material_color = Some(material_color);
+            st.state_changes += 1;
+            sys::sceGuMaterial(
+                LightComponent::AMBIENT | LightComponent::DIFFUSE,
+                material_color,
+            );
         }
     }
 

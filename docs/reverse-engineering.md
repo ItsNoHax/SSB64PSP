@@ -10,6 +10,52 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-167 — Runtime lighting must retain the combiner's costume-colour scale (`PLAN.md` R0.6)
+
+**Question.** Why did Mario remain predominantly near-black/purple after
+RE-165/166 preserved the original directional and ambient light registers?
+
+**Evidence.** The repeatable RE-151 original-ROM capture provides the missing
+equivalent view: Mario costume 0, settled Wait, facing left on Dream Land,
+under the two-player battle camera. A current `camera_audit_capture` build uses
+the same fighter, costume, pose, facing, stage angles and camera inputs. The
+original shows the authored red clothing and blue overalls; the v23 port did
+not. This was not a light-colour constant problem. Mario's real combiners
+reduce to `PRIMITIVE * SHADE` (RE-039/043), and RE-106 already retained that
+resolved `prim_color` scale in `PrimDesc` while folding it into packed vertex
+colour for baked lighting. The new GE path calls `sceGuColorMaterial(0)`,
+correctly preventing signed normal bytes from becoming material colour, but
+GE lighting consequently ignores the packed vertex colour and lost the
+combiner scale entirely.
+
+**Implementation.** For a runtime-lit primitive, `apply_material` now installs
+the already-resolved `PrimDesc::prim_color` as both the GE ambient and diffuse
+material colour; an absent identity scale remains white. Thus the GE evaluates
+`(ambient + diffuse) * PRIM`, matching the N64's lighting result subsequently
+scaled by the combiner. The value comes from the ROM/MObj/combiner pipeline,
+not from sampling the comparison screenshot. It is cached independently of
+flags and light-register colours because consecutive primitives can retain
+both while changing costume material.
+
+**Verification.** Before/after matched PPSSPP software captures restore
+Mario's red hat/shirt and blue overalls while retaining directional shading,
+at 60 FPS with clean logs. Two independent `regression_capture` runs separated
+by three wall-clock seconds are byte-identical; the golden was refreshed to
+SHA-256 `4d4ca4628c46884f1a50b8669a146c90d383e3d7ddda6f6e97a629bdd9fdf93b`.
+The old golden differs by 1,237 pixels: the fighter plus small MObj-lighting
+changes introduced by RE-165/166 but not previously folded into the golden.
+The pack test now pins that a red shade scale survives in `PrimDesc` for the
+runtime consumer. All 436 workspace tests pass (36 engine, 118 game, 282 ROM),
+strict workspace Clippy passes, and camera-audit/regression PSP release builds
+succeed with the existing six warnings. Physical PSP was not tested.
+
+**Confidence: high.** The state/equation correction is source-derived and the
+original comparison confirms the missing semantic. Exact cross-renderer pixel
+equivalence is not claimed; the reference includes a second fighter and N64
+passes the port does not yet render.
+
+---
+
 ## RE-166 — Light colours are independent, zero-valid `G_MW_LIGHTCOL` state (`PLAN.md` R0.6)
 
 **Question.** Does the PSP preserve every original light-colour state
