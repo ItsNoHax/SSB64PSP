@@ -423,10 +423,30 @@ impl Gpu {
     pub fn set_view(&mut self, m: &ssb_engine::math::Mat4) {
         let a = m.as_array();
         let fm = sys::ScePspFMatrix4 {
-            x: sys::ScePspFVector4 { x: a[0], y: a[1], z: a[2], w: a[3] },
-            y: sys::ScePspFVector4 { x: a[4], y: a[5], z: a[6], w: a[7] },
-            z: sys::ScePspFVector4 { x: a[8], y: a[9], z: a[10], w: a[11] },
-            w: sys::ScePspFVector4 { x: a[12], y: a[13], z: a[14], w: a[15] },
+            x: sys::ScePspFVector4 {
+                x: a[0],
+                y: a[1],
+                z: a[2],
+                w: a[3],
+            },
+            y: sys::ScePspFVector4 {
+                x: a[4],
+                y: a[5],
+                z: a[6],
+                w: a[7],
+            },
+            z: sys::ScePspFVector4 {
+                x: a[8],
+                y: a[9],
+                z: a[10],
+                w: a[11],
+            },
+            w: sys::ScePspFVector4 {
+                x: a[12],
+                y: a[13],
+                z: a[14],
+                w: a[15],
+            },
         };
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::View);

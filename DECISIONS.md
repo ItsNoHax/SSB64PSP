@@ -294,7 +294,13 @@ G) is no longer optional headroom.
 
 **Reasoning:** RE-024 measured them. Missing light color fields don't affect visual output.
 
-**Implemented:** Single neutral key light in renderer, baked into vertex colour at pack time rather than lit at runtime. Its direction is `MPGroundData.light_angle` converted the way `ftDisplayLightsDrawReflect` does, measured archive-wide (RE-065): 33 of 41 stages (80%) share one `(20, 45)` degree angle, now used exactly; the other 8 (mostly special-lighting locations — Brinstar, Sector Z, Metal Mario's stage, etc.) diverge up to 111 degrees and are an accepted deviation, since varying the light per stage needs runtime `sceGuLight` lighting, not pack-time baking.
+**Implementation status:** RE-164/165 replace the former data-loss basis for
+the baked-light fallback: pack v22 retains stage X/Y angles, raw signed
+normals, and the material's LIGHT_1/LIGHT_2 colour writes; the PSP scopes one
+GE directional light to fighter draws and keeps literal primitives unlit. The
+runtime result is not yet accepted: PPSSPP shows a too-dark fighter while the
+initial inherited ambient state is traced. The historic baked `(20,45)` path
+must not be presented as a final accepted deviation.
 
 **Reference:** RE-024, RE-065, `TODO.md` Phase D (majority-vote lighting heuristic — the *shading-detection* heuristic, RE-021 — still not removed; the *direction* is now measured, not guessed)
 

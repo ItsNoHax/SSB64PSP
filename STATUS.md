@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-08 (RE-164)
+**Last updated:** 2026-09-08 (RE-165)
 
 ---
 
@@ -17,7 +17,26 @@ deviation with the original's runtime directional-light data path.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-164 traced the original fighter display path further:
+`IN_PROGRESS`. RE-165 continues RE-164's runtime-lighting path. It found
+that `gSPNumLights(1)` means one directional source plus an always-present
+ambient source, so the old `G_MW_LIGHTCOL` presence-only signal had discarded
+two load-bearing per-material colours. Pack v22 now preserves LIGHT_1 at
+F3DEX2 offsets `0x00/0x04` and ambient LIGHT_2 at `0x18/0x1C`; the PSP scopes
+the real stage-angle directional light to the fighter draw, applies these
+colours to lit primitives, and disables GE lighting for authored literal
+colours and the debug marker. A focused converter test, all 434 workspace
+tests, strict Clippy, pinned-nightly PSP release build, `romtool collide`
+(all four Dream Land spawns), and an eight-second PPSSPP software run pass.
+The rebuilt v22 pack SHA-256 is
+`7bfdcb54f1bf01e3bfa4a56aca188a4d256b9f741dc8d6051d7f6412d18270c0`.
+The PPSSPP capture still makes the fighter too dark, despite no errors and
+60 FPS; an unproven brightness floor was tested and removed. The unresolved,
+source-bounded next step is to trace the initial ambient register when a
+fighter primitive inherits LIGHT_2 rather than writing it, then compare a
+larger fighter view against the original. No lighting-correctness claim is
+made yet.
+
+RE-164 traced the original fighter display path further:
 `ftDisplayLightsDrawReflect` builds a directional light immediately before a
 fighter draw from `MPGroundData.light_angle.x/.y`; when a colour animation is
 active it instead uses the fighter's facing-adjusted animation angles. This

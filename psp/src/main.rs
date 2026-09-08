@@ -371,9 +371,7 @@ unsafe fn run() -> ! {
     // is the only way to see it happen at 60 Hz rather than in a test.
     let mut sim_fighter = true;
     let mut player = match (&pack, stage_count > 0) {
-        (Some(p), true) => p
-            .stage(stage_index)
-            .map(|s| play::Play::at_spawn(p, &s)),
+        (Some(p), true) => p.stage(stage_index).map(|s| play::Play::at_spawn(p, &s)),
         _ => None,
     };
     // The repeatable original-ROM camera reference uses Mario at player 1's
@@ -529,9 +527,7 @@ unsafe fn run() -> ! {
                 let respawn = pressed.contains(N64Buttons::C_RIGHT) || was != stage_index;
                 if respawn {
                     if let Some(p) = &pack {
-                        player = p
-                            .stage(stage_index)
-                            .map(|s| play::Play::at_spawn(p, &s));
+                        player = p.stage(stage_index).map(|s| play::Play::at_spawn(p, &s));
                         if cfg!(feature = "camera_audit_capture") {
                             if let Some(pl) = player.as_mut() {
                                 pl.fighter.facing = ssb_game::fighter::Facing::Left;
@@ -979,11 +975,7 @@ unsafe fn run() -> ! {
                                 let n = pl.skeleton.compose(p, &obj, &mut posed);
                                 let sc = meshdraw::MODEL_SCALE;
                                 gpu.model_transform(
-                                    [
-                                        cam[0] + pl.fighter.pos.x,
-                                        cam[1] + pl.fighter.pos.y,
-                                        cam[2],
-                                    ],
+                                    [cam[0] + pl.fighter.pos.x, cam[1] + pl.fighter.pos.y, cam[2]],
                                     // The models face +Z; a fighter faces
                                     // along X, so it is turned a quarter turn
                                     // one way or the other (RE-038).
@@ -991,6 +983,16 @@ unsafe fn run() -> ! {
                                     sc,
                                 );
                                 let m = gpu.model_matrix();
+                                // The original fighter renderer rebuilds its
+                                // directional light from the active stage's
+                                // `MPGroundData.light_angle.x/y` immediately
+                                // before drawing each fighter (RE-164).
+                                // Colour-animation-specific angles are not
+                                // reachable in this movement-only viewer yet;
+                                // use the same ordinary-stage path that the
+                                // original selects when no colour animation
+                                // overrides it.
+                                draw_state.configure_fighter_light(stage.light_angle_xy);
                                 tris += meshdraw::draw_object_posed(
                                     p,
                                     &obj,
@@ -1004,6 +1006,10 @@ unsafe fn run() -> ! {
                                     // always draws costume 0.
                                     0,
                                 );
+                                // The collision marker uses a vertex layout
+                                // with no normals, so it must not inherit a
+                                // lit fighter primitive's GE state.
+                                draw_state.finish_fighter_light();
                                 gpu.model_transform(cam, [0.0, 0.0, 0.0], sc);
                             }
                             if !cfg!(feature = "camera_audit_capture") {
@@ -1173,9 +1179,11 @@ unsafe fn run() -> ! {
                     object_owning_node(p, node)
                         .map(|(_, object)| (object.source_file, object.source_offset))
                 } else if stage_view {
-                    p.stage(stage_index).map(|s| (s.source_file, s.source_offset))
+                    p.stage(stage_index)
+                        .map(|s| (s.source_file, s.source_offset))
                 } else if object_view {
-                    p.object(object_index).map(|o| (o.source_file, o.source_offset))
+                    p.object(object_index)
+                        .map(|o| (o.source_file, o.source_offset))
                 } else {
                     p.mesh(mesh_index).map(|m| (m.source_file, m.source_offset))
                 }

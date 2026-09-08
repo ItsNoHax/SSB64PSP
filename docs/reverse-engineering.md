@@ -10,6 +10,51 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-165 — `G_MW_LIGHTCOL` carries the missing directional/ambient colour state (`PLAN.md` R0.6)
+
+**Question.** Why did the first GE runtime-light experiment turn the Dream
+Land fighter into a near-black silhouette even though RE-164 had retained its
+normal and stage direction?
+
+**Evidence.** `gbi.h` documents that `gSPNumLights(NUMLIGHTS_1)` has one
+directional light **plus one always-present ambient light**, and that the
+highest numbered light is ambient. `ftDisplayLightsDrawReflect` emits exactly
+`gSPNumLights(1)`/`gSPLight(..., LIGHT_1)`, while `objdisplay.c` material
+chains write colours with `gSPLightColor`. In F3DEX2 those `G_MW_LIGHTCOL`
+writes target offsets `0x00/0x04` for LIGHT_1 and `0x18/0x1C` for LIGHT_2.
+RE-105 had preserved only their *presence* as a lit/unlit signal, discarding
+both RGB values; therefore the first runtime pass had no source-derived
+ambient state and a zero-ambient test predictably made the visible fighter
+mostly black. The tempting `0x59` ambient fallback merely made it visible; it
+was rejected as an unsupported heuristic and removed.
+
+**Implementation.** `MeshMaterial` now threads both colours through material
+state, pack version 22 grows `PrimDesc` from 36 to 44 bytes, and the PSP
+runtime applies each nonzero directional/ambient value before its lit draw.
+The stage X/Y direction is still constructed exactly from
+`ftDisplayLightsDrawReflect`. A focused converter test pins both F3DEX2
+offsets and their byte order; the pack reader/writer round-trip and PSP
+release build succeed.
+
+**Current limitation.** The rebuilt v22 pack and an eight-second PPSSPP
+software-renderer capture load and run at 60 FPS with no log errors, but the
+fighter remains visibly darker than the pre-runtime-light baseline. The
+captured material writes do not yet establish the initial ambient register
+when a first lit primitive inherits it rather than setting LIGHT_2 itself.
+Do not insert a brightness floor or claim lighting correctness: trace that
+initial state and compare a larger fighter view against the original first.
+
+**Verification.** `cargo test --workspace` (434 tests), strict workspace
+Clippy, pinned-nightly PSP release build, `romtool collide --stage 0` (all
+four spawns), and PPSSPP capture at
+`/home/alberto/ppsspp-test/re165-final/screenshot.png`. Rebuilt v22 pack
+SHA-256: `7bfdcb54f1bf01e3bfa4a56aca188a4d256b9f741dc8d6051d7f6412d18270c0`.
+
+**Confidence: certain** for the original register roles and carried state;
+the inherited-initial-ambient question remains open.
+
+---
+
 ## RE-164 — Runtime-lighting inputs survive pack conversion (`PLAN.md` R0.6)
 
 **Question.** Is the former per-stage baked key light an unavoidable PSP
