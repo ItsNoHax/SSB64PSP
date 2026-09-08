@@ -9,9 +9,10 @@
 //! * **Indexed draws.** One `sceGuDrawArray` per primitive, indexing a vertex
 //!   buffer shared by the whole mesh, so the GE's post-transform cache works
 //!   across primitives.
-//! * **16-bit position and UV.** `GU_VERTEX_16BIT | GU_TEXTURE_16BIT` — 16
-//!   bytes per vertex instead of 24. The N64 data is already integral, so the
-//!   narrowing is lossless (see `docs/rendering.md`).
+//! * **16-bit position and UV, signed-byte normals.** `GU_VERTEX_16BIT |
+//!   GU_TEXTURE_16BIT | GU_NORMAL_8BIT` — 20 bytes per vertex. The N64 data
+//!   is already integral, so the narrowing is lossless; preserving normals is
+//!   required for the original per-fighter directional light (RE-164).
 //! * **State set only when it changes.** Primitives arrive sorted by material
 //!   from the converter, so tracking the last-applied state turns a per-draw
 //!   cost into a per-material one.
@@ -40,10 +41,11 @@ pub const MODEL_SCALE: f32 = VERTEX_16BIT_DIVISOR;
 /// Vertex format of [`ssb_rom::pack::PackedVertex`].
 ///
 /// Must describe the struct's field order exactly: texture coords, colour,
-/// position. A mismatch renders garbage without any error.
+/// normal, position. A mismatch renders garbage without any error.
 const VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
     VertexType::TEXTURE_16BIT.bits()
         | VertexType::COLOR_8888.bits()
+        | VertexType::NORMAL_8BIT.bits()
         | VertexType::VERTEX_16BIT.bits()
         | VertexType::TRANSFORM_3D.bits()
         | VertexType::INDEX_16BIT.bits(),
@@ -976,8 +978,8 @@ pub fn bounds(pack: &Pack<'_>, mesh: &MeshDesc) -> Option<([f32; 3], [f32; 3])> 
         return None;
     }
 
-    // Position sits at byte 8 of each vertex, after u, v and the colour.
-    const POS: usize = 8;
+    // Position sits at byte 12 after u/v, colour, and the signed normal.
+    const POS: usize = 12;
     let stride = ssb_rom::pack::VERTEX_SIZE;
 
     let mut min = [f32::MAX; 3];
