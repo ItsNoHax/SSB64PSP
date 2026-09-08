@@ -78,6 +78,12 @@ pub struct DrawState {
     /// reset the texture function back to `Modulate` — either alone would
     /// under-count a real state change if this piggybacked on those fields.
     last_texture_blend: Option<u32>,
+    /// Last complete pair of original `G_MW_LIGHTCOL` register values applied
+    /// during the current fighter-light scope. This is deliberately separate
+    /// from `last_flags`: light-colour writes are independent RSP state, so
+    /// two primitives with identical geometry/render flags can still require
+    /// different GE light colours (RE-166).
+    last_fighter_light_colors: Option<(Option<u32>, Option<u32>)>,
     /// `Some` only while the caller has installed SSB64's per-fighter light.
     ///
     /// A `LIT` primitive alone is deliberately insufficient to enable GE
@@ -145,6 +151,7 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_blend = None;
+        self.last_fighter_light_colors = None;
         self.runtime_fighter_light = false;
         self.draws = 0;
         self.triangles = 0;
@@ -193,6 +200,7 @@ impl DrawState {
             &direction,
         );
         self.runtime_fighter_light = true;
+        self.last_fighter_light_colors = None;
     }
 
     /// Ends a fighter-light scope before debug geometry or another render
@@ -202,6 +210,7 @@ impl DrawState {
     pub unsafe fn finish_fighter_light(&mut self) {
         self.runtime_fighter_light = false;
         self.last_flags = None;
+        self.last_fighter_light_colors = None;
         sys::sceGuDisable(GuState::Lighting);
     }
 
@@ -458,12 +467,6 @@ unsafe fn apply_material(
         // records that source distinction as `LIT`; GE lighting is a draw
         // state, so make the equivalent decision at the same granularity.
         if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
-            if p.light1_color != 0 {
-                sys::sceGuLightColor(0, LightComponent::DIFFUSE, p.light1_color);
-            }
-            if p.light2_color != 0 {
-                sys::sceGuAmbient(p.light2_color);
-            }
             sys::sceGuEnable(GuState::Lighting);
         } else {
             sys::sceGuDisable(GuState::Lighting);
@@ -526,6 +529,28 @@ unsafe fn apply_material(
             );
         } else {
             sys::sceGuDisable(GuState::Blend);
+        }
+    }
+
+    // `gSPLightColor` is independent of geometry mode and every other
+    // material bit. Do not hide it behind `last_flags`: a later MObj/display
+    // list may write a new colour while retaining the same flags. Presence is
+    // carried explicitly because RGB=0 is an authored light state, not an
+    // absent write (RE-166).
+    if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
+        let colors = (
+            (p.flags & flags::LIGHT1_COLOR != 0).then_some(p.light1_color),
+            (p.flags & flags::LIGHT2_COLOR != 0).then_some(p.light2_color),
+        );
+        if st.last_fighter_light_colors != Some(colors) {
+            st.last_fighter_light_colors = Some(colors);
+            st.state_changes += 1;
+            if let Some(color) = colors.0 {
+                sys::sceGuLightColor(0, LightComponent::DIFFUSE, color);
+            }
+            if let Some(color) = colors.1 {
+                sys::sceGuAmbient(color);
+            }
         }
     }
 

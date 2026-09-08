@@ -132,7 +132,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    `PrimDesc` (RE-165). The values are per-material state, not derivable
 ///    from a normal or stage angle, so runtime GE lighting cannot faithfully
 ///    use a v21 pack.
-pub const VERSION: u32 = 22;
+/// 23 adds presence bits for `PrimDesc`'s two `G_MW_LIGHTCOL` values
+///    (RE-166). Zero is an authored, meaningful light colour, not an absent
+///    update; a previous pack could not distinguish the two. The bits also
+///    make the PSP state cache reapply a changed colour when the rest of a
+///    primitive's material flags are identical.
+pub const VERSION: u32 = 23;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -259,6 +264,13 @@ pub mod flags {
     /// default (detected, not blended) exactly as before this flag
     /// existed.
     pub const ALPHA_BLEND: u32 = 1 << 9;
+    /// The primitive inherits a real LIGHT_1 register value, including an
+    /// authored zero. This is distinct from its packed colour being nonzero.
+    pub const LIGHT1_COLOR: u32 = 1 << 10;
+    /// The primitive inherits a real LIGHT_2 (ambient) register value,
+    /// including an authored zero. This is distinct from its packed colour
+    /// being nonzero.
+    pub const LIGHT2_COLOR: u32 = 1 << 11;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -293,11 +305,12 @@ pub struct PrimDesc {
     pub texture_blend_target: u32,
     /// `flags::FLAT_COLOR`'s colour (packed ABGR), zero otherwise (RE-079).
     pub flat_color: u32,
-    /// `G_MW_LIGHTCOL` LIGHT_1 (directional) colour, packed ABGR; zero when
-    /// this material did not set it.
+    /// `G_MW_LIGHTCOL` LIGHT_1 (directional) colour, packed ABGR. Consult
+    /// [`flags::LIGHT1_COLOR`] for whether it is present: zero is valid.
     pub light1_color: u32,
     /// `G_MW_LIGHTCOL` LIGHT_2 (ambient, with one directional light) colour,
-    /// packed ABGR; zero when this material did not set it.
+    /// packed ABGR. Consult [`flags::LIGHT2_COLOR`] for whether it is present:
+    /// zero is valid.
     pub light2_color: u32,
 }
 
@@ -1388,6 +1401,12 @@ impl PackWriter {
             }
             if m.flat_color.is_some() {
                 f |= flags::FLAT_COLOR;
+            }
+            if m.light1_color.is_some() {
+                f |= flags::LIGHT1_COLOR;
+            }
+            if m.light2_color.is_some() {
+                f |= flags::LIGHT2_COLOR;
             }
             let (blend_base, blend_target) = m.texture_blend.map_or((0, 0), |(base, target)| {
                 (
@@ -2747,6 +2766,23 @@ mod tests {
 
         let idx = pack.indices(&p).unwrap();
         assert_eq!(idx, &[0, 0, 1, 0, 2, 0]); // little-endian u16
+    }
+
+    #[test]
+    fn light_colour_presence_preserves_an_authored_black_register() {
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.light1_color = Some([0, 0, 0, 0]);
+        mesh.primitives[0].material.light2_color = Some([0x4C, 0x4C, 0x4C, 0]);
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let p = pack.prim(0).unwrap();
+
+        assert_ne!(p.flags & flags::LIGHT1_COLOR, 0);
+        assert_ne!(p.flags & flags::LIGHT2_COLOR, 0);
+        assert_eq!(p.light1_color, 0, "black is a real LIGHT_1 write");
+        assert_eq!(p.light2_color, 0x004C_4C4C);
     }
 
     /// The declared stride must match the struct the GE is told to read.

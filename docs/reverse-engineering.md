@@ -10,6 +10,43 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-166 — Light colours are independent, zero-valid `G_MW_LIGHTCOL` state (`PLAN.md` R0.6)
+
+**Question.** Does the PSP preserve every original light-colour state
+transition once RE-165 has decoded LIGHT_1 and LIGHT_2?
+
+**Evidence.** `gbi.h` defines `gSPLightColor` as a `G_MOVEWORD` write to a
+light register; it is independent of `G_GEOMETRYMODE` and its 32-bit value may
+legitimately be zero. `MeshMaterial` already expresses that distinction as
+`Option<[u8; 4]>`, but pack v22 wrote only the packed `u32`, where zero was
+also used for absence. On the PSP, `apply_material` keyed light updates only
+on material flags. Two consecutive lit primitives with identical flags but a
+different `G_MW_LIGHTCOL` value could therefore leave the earlier GE light
+state installed. An authored black light write was likewise impossible to
+represent.
+
+**Implementation.** Pack version 23 adds `LIGHT1_COLOR` and `LIGHT2_COLOR`
+presence bits to `PrimDesc`; zero now means black when its corresponding bit
+is set, not "no update." The GE cache tracks the two optional light-register
+values separately from material flags and reapplies a changed pair before a
+lit fighter primitive. Entering, leaving, or reconfiguring the fighter-light
+scope invalidates that cache. This reproduces the source state transition; it
+does not invent a light colour or brightness floor.
+
+**Verification.** The focused v23 round-trip test pins an authored black
+LIGHT_1 write and a nonzero LIGHT_2 write. `cargo +1.98.0 test --workspace
+--all-targets` passes all 436 tests; strict workspace Clippy and the pinned
+nightly PSP release build pass (with the existing six PSP warnings). Rebuilding
+the ROM-derived pack reports 2,034 meshes, 36,738 triangles, 7,525 draws and
+reloads cleanly. `romtool collide --stage 0` catches all four Dream Land
+spawns. The rebuilt v23 pack SHA-256 is
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+
+**Confidence: certain** for preserving the original register semantics;
+visual equivalence still requires an original-game comparison.
+
+---
+
 ## RE-165 — `G_MW_LIGHTCOL` carries the missing directional/ambient colour state (`PLAN.md` R0.6)
 
 **Question.** Why did the first GE runtime-light experiment turn the Dream
