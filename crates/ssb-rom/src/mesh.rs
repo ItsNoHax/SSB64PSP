@@ -1004,6 +1004,14 @@ impl State {
         if m.blend_color.is_some() {
             self.material.blend_color = m.blend_color;
         }
+        if let Some(c) = m.light1_color {
+            self.material.light1_color = Some(c);
+            self.material.lit = true;
+        }
+        if let Some(c) = m.light2_color {
+            self.material.light2_color = Some(c);
+            self.material.lit = true;
+        }
     }
 
     /// Drops the texture binding a call we cannot follow would have replaced.
@@ -1979,6 +1987,34 @@ mod tests {
         assert_eq!(texture.palette_offset, Some(0x200));
         assert_eq!(texture.data_offset, 0x400);
         assert_eq!(texture.format, Format::Ci);
+    }
+
+    #[test]
+    fn a_heap_mobj_carries_the_ambient_light_colour() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = ci4_list_calling_the_heap(0);
+        let mobjs = [MObjMaterial {
+            light2_color: Some([0x4C, 0x4C, 0x4C, 0x00]),
+            ..MObjMaterial::default()
+        }];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert!(mesh.primitives[0].material.lit);
+        assert_eq!(
+            mesh.primitives[0].material.light2_color,
+            Some([0x4C, 0x4C, 0x4C, 0x00])
+        );
     }
 
     /// RE-091: a resolved material animation script is carried onto the

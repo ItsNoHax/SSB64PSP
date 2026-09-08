@@ -289,18 +289,22 @@ G) is no longer optional headroom.
 
 ---
 
-### D-024: Light Colors — White (Measured)
-**Decision:** `MObjSub::light1color` / `light2color` measured across all MObjSub — they are white. Light **direction** matters, not color.
+### D-024: Light Colors — Preserve Source State
+**Decision:** Preserve flagged `MObjSub::light1color` / `light2color` writes as
+per-material state. Light direction and both source colours affect output.
 
-**Reasoning:** RE-024 measured them. Missing light color fields don't affect visual output.
+**Reasoning:** RE-165 found Mario's initial `MOBJ_FLAG_LIGHT2` record carries
+the non-white ambient `(0x4C,0x4C,0x4C)`. The earlier white-only conclusion
+was incomplete because it did not follow the runtime MObj graphics-heap path.
 
 **Implementation status:** RE-164/165 replace the former data-loss basis for
 the baked-light fallback: pack v22 retains stage X/Y angles, raw signed
 normals, and the material's LIGHT_1/LIGHT_2 colour writes; the PSP scopes one
 GE directional light to fighter draws and keeps literal primitives unlit. The
-runtime result is not yet accepted: PPSSPP shows a too-dark fighter while the
-initial inherited ambient state is traced. The historic baked `(20,45)` path
-must not be presented as a final accepted deviation.
+runtime result is not yet accepted: source ambient removes the black
+silhouette in PPSSPP, but original-game visual comparison remains required.
+The historic baked `(20,45)` path must not be presented as a final accepted
+deviation.
 
 **Reference:** RE-024, RE-065, `TODO.md` Phase D (majority-vote lighting heuristic — the *shading-detection* heuristic, RE-021 — still not removed; the *direction* is now measured, not guessed)
 

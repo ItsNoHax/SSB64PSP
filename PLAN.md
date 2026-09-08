@@ -609,9 +609,11 @@ Status: `IN_PROGRESS`
 RE-165 advances RE-164's runtime-lighting work but does not complete it:
 `gSPNumLights(1)` has one directional and one ambient source, and the real
 `G_MW_LIGHTCOL` writes for both now survive in pack v22 and reach the GE on a
-per-primitive lit/literal split. The first PPSSPP result is too dark because
-the initial inherited ambient state is not yet source-traced; a brightness
-floor was rejected rather than guessed. See RE-165.
+per-primitive lit/literal split. Mario's flagged MObj records supply the
+previously missed inherited ambient `(0x4C,0x4C,0x4C)` and now reach the GE;
+the fighter is no longer a black silhouette in PPSSPP. A brightness floor was
+rejected rather than guessed. Original-game visual comparison remains
+required before a correctness claim. See RE-165.
 
 `crates/ssb-rom/src/mesh.rs` evaluates a general `(A-B)*C+D` combiner across
 both RDP cycles and declines to guess at anything it can't resolve rather
