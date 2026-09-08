@@ -297,14 +297,14 @@ per-material state. Light direction and both source colours affect output.
 the non-white ambient `(0x4C,0x4C,0x4C)`. The earlier white-only conclusion
 was incomplete because it did not follow the runtime MObj graphics-heap path.
 
-**Implementation status:** RE-164/165 replace the former data-loss basis for
-the baked-light fallback: pack v22 retains stage X/Y angles, raw signed
-normals, and the material's LIGHT_1/LIGHT_2 colour writes; the PSP scopes one
-GE directional light to fighter draws and keeps literal primitives unlit. The
-runtime result is not yet accepted: source ambient removes the black
-silhouette in PPSSPP, but original-game visual comparison remains required.
-The historic baked `(20,45)` path must not be presented as a final accepted
-deviation.
+**Implementation status:** RE-164–167 replace the former data-loss basis for
+the baked-light fallback: pack v23 retains stage X/Y angles, raw signed
+normals, zero-valid LIGHT_1/LIGHT_2 writes, and the combiner's resolved shade
+scale; the PSP scopes one GE directional light to fighter draws, keeps literal
+primitives unlit, and applies `PRIMITIVE * SHADE` through GE material colour.
+The matched original Dream Land comparison restores Mario's red/blue costume
+semantics without a brightness approximation. Exact cross-renderer pixels are
+not claimed, and physical PSP validation remains R2.
 
 **Reference:** RE-024, RE-065, `TODO.md` Phase D (majority-vote lighting heuristic — the *shading-detection* heuristic, RE-021 — still not removed; the *direction* is now measured, not guessed)
 

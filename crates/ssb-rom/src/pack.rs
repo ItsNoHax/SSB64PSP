@@ -281,9 +281,9 @@ pub struct PrimDesc {
     pub texture: u32,
     pub flags: u32,
     /// `combiner_shade_scale`'s resolved scale (RE-106), already folded into
-    /// affected vertices at pack time (`add_mesh`) -- like `flat_color`
-    /// below, kept here for inspection, not because `psp/src/meshdraw.rs`
-    /// reads it back (R0.16/RE-121: grepped, zero consumers).
+    /// affected vertices at pack time (`add_mesh`) for the baked-light path.
+    /// Runtime GE lighting also reads this back as the ambient/diffuse
+    /// material colour, preserving the N64 combiner's scale on `SHADE`.
     pub prim_color: u32,
     /// The raw `G_SETENVCOLOR` value a primitive resolved, when one exists.
     /// Not consumed by `psp/src/meshdraw.rs` either -- primitives that need
@@ -3347,6 +3347,11 @@ mod tests {
         assert_eq!(
             b, 0,
             "the scale's blue channel is zero, so it must be zeroed"
+        );
+        assert_eq!(
+            pack.prim(0).unwrap().prim_color,
+            0xFF00_00FF,
+            "runtime lighting must retain the same red SHADE scale"
         );
     }
 
