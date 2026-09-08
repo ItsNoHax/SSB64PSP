@@ -10,6 +10,53 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-164 — Runtime-lighting inputs survive pack conversion (`PLAN.md` R0.6)
+
+**Question.** Is the former per-stage baked key light an unavoidable PSP
+deviation, or did the pack merely discard data needed to reproduce the
+original's runtime path?
+
+**Evidence.** `ft/ftdisplaylights.c::ftDisplayLightsDrawReflect` computes a
+direction from two angles and emits `gSPNumLights(1)` plus `gSPLight` for each
+fighter draw. `ftdisplaymain.c` calls it with the active stage's
+`gMPCollisionLightAngleX/Y`; a fighter colour animation instead supplies its
+own facing-adjusted angles. The existing extractor already reads the source
+`MPGroundData.light_angle` triplet, but pack version 19 retained only `.z` for
+the camera and had baked `.x/.y` into RGB. It also discarded the original
+signed normal bytes after baking them. PSP's GE has native directional lights
+and signed-byte normals (`sceGuLight`, `GU_NORMAL_8BIT`), so this is a lost
+data-path problem, not a demonstrated platform limitation.
+
+**Implementation.** Pack version 21 adds `StageDesc.light_angle_xy` in the
+original degree units and changes packed GE vertices from 16 to 20 bytes,
+preserving raw signed normals after the colour field. The PSP vertex format
+now declares `NORMAL_8BIT`, so it consumes the matching stride even while
+lighting remains disabled. Round-trip tests use distinct X/Y/Z stage values
+and assert the exact normal byte offsets.
+
+**Current limitation.** This intentionally does not turn on GE lighting yet.
+The current converter has an evidence-backed per-vertex lit/literal fallback
+(RE-103); lighting is a primitive-level GE state, so enabling it without a
+verified primitive split would reinterpret literal vertex colours as normals.
+The next change must preserve that distinction while configuring the original
+direction per fighter draw, then be validated in PPSSPP and on hardware.
+
+**Verification.** The focused descriptor round-trip and vertex-stride tests,
+all 433 workspace tests, formatting, and strict workspace Clippy pass. The
+pinned `nightly-2026-08-01` PSP release build succeeds with the pre-existing
+six warnings. An eight-second PPSSPP software-renderer run staged the v21
+pack and current EBOOT, showed Dream Land at 60 FPS, captured a non-blank
+screenshot, and emitted no error/failure log lines. This demonstrates that
+the new binary layout is valid; it is deliberately not claimed as a lighting
+comparison while `GuState::Lighting` is off. The regenerated pack SHA-256 is
+`db75977f1db0ca17320233490895dc70d6734b702a70f2a7d919ba7bec5860bd`; its
+stage-0 collision check catches all four spawns.
+
+**Confidence: certain** for the original light-vector source and the
+previously lost pack data; runtime consumption is in progress.
+
+---
+
 ## RE-163 — Link passive-part dispatch resolves the final material table (`PLAN.md` R0.6/R0.7)
 
 **Question.** Can file 324's final `JointTree_0x9CF8` graph be paired from

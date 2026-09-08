@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-06 (RE-163)
+**Last updated:** 2026-09-08 (RE-164)
 
 ---
 
@@ -12,13 +12,35 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`: RE-163 resolves file 324's final
-Link-model material graph; per-object lighting remains the documented
-accepted deviation.
+`R0.6 — Material System Correctness`: replace the former baked-lighting
+deviation with the original's runtime directional-light data path.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-163 adds the source-backed `324:0x9CF8 -> 0x84B8` mapping:
+`IN_PROGRESS`. RE-164 traced the original fighter display path further:
+`ftDisplayLightsDrawReflect` builds a directional light immediately before a
+fighter draw from `MPGroundData.light_angle.x/.y`; when a colour animation is
+active it instead uses the fighter's facing-adjusted animation angles. This
+is a real runtime state change, so the previous pack-time common direction is
+not an adequate final implementation. Pack format version 21 now preserves
+both source requirements that the former bake irrevocably discarded:
+`StageDesc.light_angle_xy` retains the stage angles in the original degrees,
+and each packed GE vertex retains the raw signed N64 normal alongside its
+current baked colour. The PSP vertex declaration consumes the normal so its
+20-byte stride matches the new pack. Focused pack round-trip/stride tests,
+the 433-test workspace suite, formatting, and strict host Clippy pass. The
+pinned-nightly PSP release build also succeeds (the existing six warnings
+remain), and an eight-second PPSSPP software-renderer run loads the v21 pack,
+shows Dream Land, captures successfully, and reports 60 FPS with no log
+errors. This validates the format/stride transition only, not runtime
+lighting: GE lighting remains deliberately disabled. Runtime GE light
+configuration and a source-verified lit/literal draw split remain the active
+implementation work; no lighting-correctness claim is made yet. The rebuilt
+v21 pack SHA-256 is
+`db75977f1db0ca17320233490895dc70d6734b702a70f2a7d919ba7bec5860bd`;
+`romtool collide --stage 0` reports all four spawns landing.
+
+RE-163 adds the source-backed `324:0x9CF8 -> 0x84B8` mapping:
 the raw table's three NULL leading slots and its `0x86C0`/`0x86D0` chains match
 the original LinkMain passive-part assignments. `romtool mobj` now reports
 127 paired graphs, 467 matching nodes, and zero mismatches; file 324 remains

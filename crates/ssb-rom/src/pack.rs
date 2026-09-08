@@ -120,17 +120,24 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    matching every other flag addition's own precedent.
 /// 19 preserves Kind46's Z-spin separately from spin-free kinds 44/48/50.
 ///    Older packs lack the selector and must be rebuilt (RE-141).
-pub const VERSION: u32 = 19;
+/// 20 preserves `MPGroundData.light_angle.x/.y` in `StageDesc` (RE-164).
+///    These are the original stage-light angles in degrees, consumed by
+///    `ftDisplayLightsDrawReflect` for every fighter draw.  Earlier packs
+///    discarded them after pack-time shading, making a faithful runtime-light
+///    path impossible even though the ROM data had already been decoded.
+/// 21 adds the original signed vertex normal to every packed vertex (RE-164).
+///    The GE needs it to reproduce the original's per-fighter directional
+///    light; previous packs contain only the already-baked RGB result.
+pub const VERSION: u32 = 21;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
 
 /// Bytes per packed vertex. Must equal `size_of::<PackedVertex>()`.
 ///
-/// 16, not 14: the `u32` colour forces 4-byte alignment, so `repr(C)` inserts
-/// tail padding. The GE also requires the vertex stride to be a multiple of the
-/// largest component size, so 16 is what the hardware wants anyway.
-pub const VERTEX_SIZE: usize = 16;
+/// 20: UV (4), colour (4), signed normal plus pad (4), position (6), tail
+/// padding (2). The GE requires a stride aligned to the largest component.
+pub const VERTEX_SIZE: usize = 20;
 
 /// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
 /// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
@@ -178,12 +185,12 @@ impl Header {
 /// A vertex in the GE's expected layout.
 ///
 /// Field order is dictated by hardware: the GE reads texture coordinates,
-/// then colour, then position, and the `VertexType` flags must describe
+/// then colour, normal, and position, and the `VertexType` flags must describe
 /// exactly that order. Reordering renders garbage with no error.
 ///
-/// 16 bytes, against 24 with float position and UV — a third less vertex
-/// bandwidth. N64 data is already `i16` positions and S10.5 UVs, so the
-/// narrowing is lossless.
+/// 20 bytes, against 36 with float position, normal, and UV. N64 data is
+/// already `i16` positions, signed-byte normals and S10.5 UVs, so narrowing
+/// is lossless.
 ///
 /// Colour stays 8888 rather than dropping to 5551 (which would fit in 12
 /// bytes): when a material is lit these bytes carry a packed *normal*, and
@@ -195,6 +202,13 @@ pub struct PackedVertex {
     pub v: i16,
     /// Packed ABGR, matching what `sceGuColor` and vertex colours expect.
     pub color: u32,
+    /// Original N64 normal bytes. Literal-colour vertices retain harmless
+    /// copies of their RGB bytes here; only a future runtime-lit primitive
+    /// enables the GE lighting state that reads this attribute.
+    pub nx: i8,
+    pub ny: i8,
+    pub nz: i8,
+    pub _normal_pad: u8,
     pub x: i16,
     pub y: i16,
     pub z: i16,
@@ -656,6 +670,11 @@ pub struct StageDesc {
     /// Archive file holding the `MPGroundData`, for debugging.
     pub source_file: u32,
     pub source_offset: u32,
+    /// `MPGroundData.light_angle.x/.y`, in degrees.  The original converts
+    /// these with `ftDisplayLightsDrawReflect` into the directional vector it
+    /// loads immediately before drawing a fighter.  Keep the source units:
+    /// conversion is runtime state, not a property of archived geometry.
+    pub light_angle_xy: [f32; 2],
     /// `MPGroundData.light_angle.z`, already in radians (RE-131, measured
     /// archive-wide — the ROM stores this one component pre-converted,
     /// unlike `.x`/`.y`). The real camera's own eye-direction nudge
@@ -666,8 +685,8 @@ pub struct StageDesc {
 }
 
 impl StageDesc {
-    /// `16 + 16 + 8 + 8 + 16`.
-    pub const SIZE: usize = 64;
+    /// `16 + 16 + 8 + 8 + 16 + 8`.
+    pub const SIZE: usize = 72;
     pub const NO_LAYER: u32 = u32::MAX;
 }
 
@@ -970,19 +989,20 @@ pub const MODEL_SCALE: f32 = 32768.0;
 /// This project bakes shading into vertex colour at pack time rather than
 /// lighting at draw time on the PSP, so it cannot vary the light per stage
 /// the way `ftDisplayLightsDrawReflect`
-/// (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`) does on real hardware —
-/// doing that would need runtime `sceGuLight` and per-stage context wired
-/// through the whole material pipeline, out of this task's scope. What this
-/// constant *can* do is be the right single direction rather than an
-/// arbitrary one: RE-065 read every stage's real `MPGroundData.light_angle`
+/// (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`) does on real hardware.
+/// RE-164 now preserves the stage angles and normals needed to replace this
+/// fallback at runtime; it remains active only until the lit/literal primitive
+/// split is source-verified. What this constant can do meanwhile is be the
+/// right single direction rather than an arbitrary one: RE-065 read every
+/// stage's real `MPGroundData.light_angle`
 /// (`crates/ssb-rom/src/stage.rs`) and found **33 of 41 stages (80%) use
 /// exactly `(20.0, 45.0)` degrees** — the game's actual default key light,
 /// not a guess. This is that angle's direction, replacing an arbitrary
 /// `(2, 4, 3)` placeholder that happened to measure only 9.9 degrees away
 /// from it. The remaining 8 stages (Brinstar, Sector Z, Hyrule, Final
 /// Destination, Metal Mario's stage, and others) use their own angle, up to
-/// 111 degrees away from this one — an accepted, measured deviation until
-/// lighting moves to runtime (see RE-065).
+/// 111 degrees away from this one — a measured temporary deviation while
+/// runtime lighting is completed (RE-065/RE-164).
 // The y component is sin(45 deg), which coincides with 1/sqrt(2) -- that is
 // the actual measured direction, not a stand-in for the named constant.
 #[allow(clippy::approx_constant)]
@@ -1295,6 +1315,10 @@ impl PackWriter {
                 u: v.uv[0],
                 v: v.uv[1],
                 color: crate::psp_texture::pack_abgr(rgba),
+                nx: v.rgba[0] as i8,
+                ny: v.rgba[1] as i8,
+                nz: v.rgba[2] as i8,
+                _normal_pad: 0,
                 x: v.pos[0],
                 y: v.pos[1],
                 z: v.pos[2],
@@ -1302,6 +1326,10 @@ impl PackWriter {
             verts.extend_from_slice(&packed.u.to_le_bytes());
             verts.extend_from_slice(&packed.v.to_le_bytes());
             verts.extend_from_slice(&packed.color.to_le_bytes());
+            verts.push(packed.nx as u8);
+            verts.push(packed.ny as u8);
+            verts.push(packed.nz as u8);
+            verts.push(packed._normal_pad);
             verts.extend_from_slice(&packed.x.to_le_bytes());
             verts.extend_from_slice(&packed.y.to_le_bytes());
             verts.extend_from_slice(&packed.z.to_le_bytes());
@@ -1615,6 +1643,7 @@ impl PackWriter {
             bgm_id: ground.bgm_id,
             source_file: ground.file,
             source_offset: ground.offset,
+            light_angle_xy: [ground.light_angle[0], ground.light_angle[1]],
             camera_light_angle_z: ground.light_angle[2],
         });
         (self.stages.len() - 1) as u32
@@ -1845,6 +1874,9 @@ impl PackWriter {
                 }
             }
             for v in [s.bgm_id, s.source_file, s.source_offset] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            for v in s.light_angle_xy {
                 out.extend_from_slice(&v.to_le_bytes());
             }
             out.extend_from_slice(&s.camera_light_angle_z.to_le_bytes());
@@ -2535,7 +2567,11 @@ impl<'a> Pack<'a> {
             bgm_id: u32_at(self.data, at + 48),
             source_file: u32_at(self.data, at + 52),
             source_offset: u32_at(self.data, at + 56),
-            camera_light_angle_z: f32::from_bits(u32_at(self.data, at + 60)),
+            light_angle_xy: [
+                f32::from_bits(u32_at(self.data, at + 60)),
+                f32::from_bits(u32_at(self.data, at + 64)),
+            ],
+            camera_light_angle_z: f32::from_bits(u32_at(self.data, at + 68)),
         })
     }
 
@@ -2722,25 +2758,28 @@ mod tests {
         let v = pack.vertices(&m).unwrap();
         assert_eq!(v.len(), 3 * VERTEX_SIZE);
 
-        // First vertex: u=32, v=64, colour ABGR, then x,y,z.
+        // First vertex: u=32, v=64, colour ABGR, raw signed normal, then
+        // x/y/z.  The normal must survive even while this primitive is drawn
+        // unlit: the GE-lighting path selects it later from the material.
         assert_eq!(i16::from_le_bytes([v[0], v[1]]), 32);
         assert_eq!(i16::from_le_bytes([v[2], v[3]]), 64);
         assert_eq!(u32_at(v, 4), 0x4433_2211);
-        assert_eq!(i16::from_le_bytes([v[8], v[9]]), 1);
-        assert_eq!(i16::from_le_bytes([v[10], v[11]]), 2);
-        assert_eq!(i16::from_le_bytes([v[12], v[13]]), 3);
+        assert_eq!(&v[8..12], &[0x11, 0x22, 0x33, 0]);
+        assert_eq!(i16::from_le_bytes([v[12], v[13]]), 1);
+        assert_eq!(i16::from_le_bytes([v[14], v[15]]), 2);
+        assert_eq!(i16::from_le_bytes([v[16], v[17]]), 3);
 
         // Check the SECOND vertex too. Only checking the first cannot detect a
         // wrong stride, which is exactly the bug this test missed once already.
         let s = VERTEX_SIZE;
-        assert_eq!(i16::from_le_bytes([v[s + 8], v[s + 9]]), 4, "vertex 1 x");
-        assert_eq!(i16::from_le_bytes([v[s + 10], v[s + 11]]), 5, "vertex 1 y");
-        assert_eq!(i16::from_le_bytes([v[s + 12], v[s + 13]]), 6, "vertex 1 z");
+        assert_eq!(i16::from_le_bytes([v[s + 12], v[s + 13]]), 4, "vertex 1 x");
+        assert_eq!(i16::from_le_bytes([v[s + 14], v[s + 15]]), 5, "vertex 1 y");
+        assert_eq!(i16::from_le_bytes([v[s + 16], v[s + 17]]), 6, "vertex 1 z");
         assert_eq!(u32_at(v, s + 4), 0xFFFF_FFFF, "vertex 1 colour");
 
         // And the third, so an off-by-one stride cannot slip through either.
         let t = 2 * VERTEX_SIZE;
-        assert_eq!(i16::from_le_bytes([v[t + 8], v[t + 9]]), 7, "vertex 2 x");
+        assert_eq!(i16::from_le_bytes([v[t + 12], v[t + 13]]), 7, "vertex 2 x");
     }
 
     #[test]
@@ -3368,7 +3407,9 @@ mod tests {
                 left: -3500,
             },
             bgm_id: 0x11,
-            light_angle: [0.0, 0.0, 0.0],
+            // Deliberately non-zero in every component: a pack round-trip
+            // must not silently retain only the camera's Z component.
+            light_angle: [20.0, 45.0, -0.174_532_94],
         };
 
         let v = |x, y, flags| V { pos: [x, y], flags };
@@ -3460,6 +3501,8 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         let s = pack.stage(0).unwrap();
         assert_eq!(s.layers, [7, StageDesc::NO_LAYER, 9, StageDesc::NO_LAYER]);
+        assert_eq!(s.light_angle_xy, [20.0, 45.0]);
+        assert_eq!(s.camera_light_angle_z, -0.174_532_94);
     }
 
     #[test]
