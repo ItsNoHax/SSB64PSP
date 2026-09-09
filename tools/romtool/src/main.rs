@@ -975,11 +975,19 @@ fn pack_mesh(
                     // (`convert_mat_anim_sprite`) -- an effect script whose
                     // primitive resolved no texture at all cannot be
                     // converted this way, same "decline rather than guess"
-                    // shape as the palette check above.
+                    // shape as the palette check above. `texture_shape`
+                    // (RE-177) covers the real gap this left: several
+                    // manager-effect sprite primitives issue `G_SETTILE`/
+                    // `G_SETTILESIZE` for their sprite's shape but never a
+                    // static `G_SETTIMG` for it at all, because real hardware
+                    // only supplies that address at runtime through a
+                    // graphics-heap `Call` this converter cannot follow --
+                    // the shape is real and known even though `texture`
+                    // itself correctly stays `None`.
                     let sprites: Vec<u32> = if anim_data.sprites.is_empty() {
                         Vec::new()
                     } else {
-                        let base = prim.material.texture?;
+                        let base = prim.material.texture.or(prim.material.texture_shape)?;
                         let converted: Vec<u32> = anim_data
                             .sprites
                             .iter()
