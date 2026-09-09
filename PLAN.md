@@ -1000,20 +1000,14 @@ match their display-list demand. Their chains carry no palettes, so the
 rebuilt pack is byte-identical; this validates the graph/material relation
 without claiming a visual change.
 
-RE-154 found four more original-source `EFDesc` pairings in file 84
-(`EFCommonEffects2`): FireSpark `0x2040 → 0x1EA0`, CatchSwirl
-`0x3398 → 0x22B8`, ReflectBreak `0x53E8 → 0x2F78`, and DeadExplode
-`0x6D00 → 0x4F08`. The corresponding static records in `ef/efmanager.c` name
-each `DObjDesc`/`MObjSub` relationship directly, while
-`84_EFCommonEffects2.c` confirms the relocation offsets. Three target the
-original wrapper/header immediately before a visibly typed head array, so the
-source address rather than a heuristic determines the recorded offset.
-`romtool mobj --file 84` now has five paired graphs and zero mismatches;
-archive-wide pairings rise `100 → 104`, unpaired graphs fall `27 → 23`, and
-all 424 paired nodes match their display-list demand. `romtool textures` rises
-`657 → 662` packed, and the generated pack was rebuilt. These effects are not
-currently exposed by the viewer, so this is pipeline/source verification, not
-a claim of visual runtime validation.
+RE-154 initially recorded four file-84 `EFDesc` pairings. RE-172 supersedes
+its stale linker-name interpretation after the current decomp corrected the
+mis-typed graph/wrapper blocks and the ROM independently confirmed every graph
+boundary. The exact pairs are now FireSpark `0x2040 → 0x1EA0`, CatchSwirl
+`0x2760 → 0x22B8`, ReflectBreak `0x3398 → 0x2F78`, DeadExplode
+`0x53E8 → 0x4F08`, and NessPKFlash `0x6D00 → 0x6B40`. File 84 has 12
+matching material-bearing nodes, no mismatch/cross-file fallback, and 7/7
+textures packed. See RE-172 for the corrected evidence and full manager audit.
 
 RE-155 adds five more direct source pairings: `ef/efmanager.c`'s static
 `EFDesc` records bind file 85's MBall Rays (`0x628 → 0x108`) and Item Get
@@ -2669,7 +2663,11 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   R0.9 already verifies all 35 stage `AObjEvent32` animations, R0.10 verifies
   all 33 packed material-animation scripts, and R0.13 verifies the separate
   results-wipe animation path. Physical hardware remains R2
-* [ ] all required effects render
+* [ ] all required effects render — RE-172 inventories all 53 static manager
+  descriptors and packs all 46 unique display-bearing DObj/direct-list assets;
+  `romtool effects` verifies 46/46 objects and 668 triangles. Exhaustive visual
+  capture, effect `AObjEvent32` playback, and the separate `LBParticle`
+  script/texture-bank renderer remain before this row can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

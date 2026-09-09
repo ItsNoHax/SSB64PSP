@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 animation render audit)
+**Last updated:** 2026-09-09 (R1 effect-render inventory)
 
 ---
 
@@ -13,23 +13,43 @@ is temporarily deferred by explicit user direction)
 
 ## Current Task
 
-`R1 — all required animations render`: exhaustive software coverage and
-runtime lookup reconciliation.
+`R1 — all required effects render`: source-backed effect-path inventory and
+software rendering coverage.
 
 ## Task Status
 
-`COMPLETE` (RE-171). `tools/run-ppsspp.sh --audit-animations 532` rendered and
-captured every sparse fighter/slot entry through the PSP `Skeleton` and GE
-path. All 532 source-identifying HUD strips were unique, all centred model
-crops contained measurable render content (minimum standard deviation
-`0.0454806`, rejection threshold `0.003`), representative captures across the
-table showed 60 FPS, and the PPSSPP log contained no error/failure/panic/
-rejection/desynchronisation lines. Captures remain outside Git at
-`/home/alberto/ppsspp-test/re171/animation-audit/`; manifest SHA-256 is
+`IN_PROGRESS` (RE-172). Original-source inspection establishes two distinct
+required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
+separate `LBParticle` script/texture-bank runtime used by dust, flame,
+sparkle, hit and several stage effects. Three descriptors are controller-only
+and four pairs share an asset, leaving 46 unique display-bearing manager
+assets. All 46 now survive the rebuilt pack and `romtool effects` verifies
+668 triangles. This includes 12 direct `Gfx`/`DObjDLLink` constructions the
+generic scene-graph scan previously omitted.
+
+RE-172 also corrects a real shifted file-84 material association from the
+current decomp and ROM layout: Catch Swirl `0x2760 -> 0x22B8`, Reflect Break
+`0x3398 -> 0x2F78`, Dead Explode `0x53E8 -> 0x4F08`, Ness PK Flash
+`0x6D00 -> 0x6B40`. File 84 rises from six to seven packed textures;
+archive-wide material verification now covers 468 nodes with zero mismatches.
+The rebuilt pack SHA-256 is
+`019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87`.
+
+All 438 workspace tests and strict Clippy pass; the PSP release build passes
+with the existing six warnings. A three-second PPSSPP-software smoke run loads
+the pack and renders Dream Land at 60 FPS with a clean log. The next bounded
+step within this same task is exhaustive PPSSPP capture of the 46 manager
+objects and packing/playing their `AObjEvent32` scripts. The independent
+`LBParticle` decoder/runtime remains unimplemented and keeps the R1 row open.
+
+The preceding animation task is `COMPLETE` (RE-171).
+`tools/run-ppsspp.sh --audit-animations 532` rendered and captured every
+sparse fighter/slot entry through the PSP `Skeleton` and GE path. All 532
+source-identifying HUD strips were unique, all centred model crops contained
+measurable render content (minimum standard deviation `0.0454806`, rejection
+threshold `0.003`), and the PPSSPP log was clean. Captures remain outside Git
+at `/home/alberto/ppsspp-test/re171/animation-audit/`; manifest SHA-256 is
 `9afee0e9614816f33d748609700258661e4af8499c99c127a24d976ed4371b8e`.
-EBOOT / pack SHA-256:
-`8a4fc9ffea30a47fdafdb426af2b700e0720d791863432217e587ee4141ddc6f` /
-`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
 
 The viewer now stops before the 35 stage and 11 transition entries, which use
 `AObjEvent32` and their dedicated stage/results paths rather than fighter
@@ -288,21 +308,12 @@ installed unpinned `stable` is Rust 1.97.1 (below the declared 1.98 MSRV), so
 the GitHub advisory job itself cannot be reproduced locally; its recorded
 Rust-1.98 failures are addressed by this change.
 
-RE-154 resolves four formerly-unpaired file-84 effect graphs
-from the original's static `EFDesc` records: FireSpark (`0x2040 → 0x1EA0`),
-CatchSwirl (`0x3398 → 0x22B8`), ReflectBreak (`0x53E8 → 0x2F78`) and
-DeadExplode (`0x6D00 → 0x4F08`). `ef/efmanager.c` names each effect's
-`DObjDesc` and `MObjSub` together; `84_EFCommonEffects2.c` confirms the
-linked table offsets, including the wrapper/header preceding three typed head
-arrays. This is original-source evidence, not demand-search selection.
-`romtool mobj --file 84` reports all five of its graphs paired and zero
-mismatches. Archive-wide, it reports 104 paired, 23 unpaired and zero
-mismatches across 424 nodes. `romtool textures` rises to 691 bound / 662
-packed / 29 understood failures; the rebuilt pack SHA-256 is
-`40ee564d515bab09abe19c975e0f3421ee485b903adb09975fffa75cb90bd322`.
-`cargo test --workspace` passes all 433 tests (36 engine, 118 game, 279 ROM),
-strict release-workspace Clippy passes, and the normal PSP release build
-succeeds with its existing six warnings. No PPSSPP visual or physical-PSP
+RE-154's original file-84 offset interpretation is superseded by RE-172. The
+current decomp corrected formerly mis-typed graph/wrapper blocks and the ROM
+confirms the exact pairs: FireSpark (`0x2040 → 0x1EA0`), CatchSwirl
+(`0x2760 → 0x22B8`), ReflectBreak (`0x3398 → 0x2F78`), DeadExplode
+(`0x53E8 → 0x4F08`) and NessPKFlash (`0x6D00 → 0x6B40`). See the current
+task evidence above; do not reuse RE-154's shifted historical offsets.
 test was run for these currently-unreachable effects. Implementation commit:
 `3be633e`.
 
@@ -3640,14 +3651,14 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R1 — all required effects render` is the next eligible software-only
-task.** R1's stage, fighter, costume and animation rows are complete: RE-170
-captured all 41 stages; R0.11/RE-098 rendered all 12 playable fighters at
-nonzero costumes; RE-171 captured all 532 sparse fighter motions and
-reconciles the already-complete stage/material/results animation evidence.
-The user explicitly deferred unavailable physical-PSP work on 2026-09-09.
-R0.5 therefore remains `VERIFYING`; do not tune the canopy from PPSSPP
-appearance, mark R0/R1 complete, begin R3, or unlock combat.
+**Resume `R1 — all required effects render`.** RE-172 completes the
+source-backed static-manager inventory and packs all 46 display-bearing
+assets. Next, expose those exact objects through an exhaustive PPSSPP capture
+mode and pack/play their `AObjEvent32` animation tables; then investigate the
+separate `LBParticle` script and texture-bank format. The user explicitly
+deferred unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
+`VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
+complete, begin R3, or unlock combat.
 
 Historical eligibility record follows. **`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
 full history in `PLAN.md`'s own R0.10 section and this file's Task Status
@@ -4004,6 +4015,34 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: manager-effect inventory and direct-object packing (RE-172)
+
+* Current decomp `efmanager.c` / relocData layout and ROM `scene --file 84
+  --list --nodes` agree on the corrected Catch Swirl, Reflect Break, Dead
+  Explode and Ness PK Flash graph offsets.
+* `romtool mobj --file 84` — five paired graphs, 12 matching material-bearing
+  nodes, zero mismatches, zero cross-file fallbacks.
+* `romtool textures --file 84` — 7/7 packed (previously 6/6 under the shifted
+  association; Ness PK Flash's real CI4 binding is now present).
+* Archive-wide `romtool mobj` — 127 paired graphs, 468 matching nodes, zero
+  mismatches.
+* Archive-wide `romtool textures` — 707 bound / 681 packed; the only 26
+  failures are the already-understood runtime framebuffer captures.
+* Fresh `romtool pack` — 374 objects, 3,148 nodes, 1,604/1,672 node lists
+  placed; pack SHA-256
+  `019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87`.
+* `romtool effects assets/generated/ssb64.pak` — 46/46 unique manager
+  DObj/direct-list assets renderable, 668 triangles.
+* `cargo +1.98.0 test --workspace --all-targets` — 438 passing.
+* Strict workspace Clippy — pass.
+* Pinned-nightly PSP release build from `psp/` — pass with the existing six
+  warnings. (A prior invocation from the repository root failed because
+  `cargo psp` must be run from `psp/`; no code defect was involved.)
+* Three-second PPSSPP software smoke — rebuilt pack loads, Dream Land renders
+  at 60 FPS, and the log has no relevant error line. Screenshot SHA-256
+  `d99beacf5717bc15548c81b26648cb862052b9cb748eb42618615dc1db65c39a`.
+* No physical PSP was available; R0.5/R2 remain unsatisfied.
 
 ## 2026-09-09 — R1: exhaustive stage-render audit (RE-170)
 

@@ -10,6 +10,76 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-172 — Manager-effect inventory recovers direct objects and corrects shifted file-84 materials (`PLAN.md` R1)
+
+**Problem.** R1's "all required effects render" row had no bounded inventory.
+The existing object pack came from generic `DObjDesc` discovery, while the
+original effect manager constructs objects from static `EFDesc` records and
+also invokes a separate `LBParticle` script system. Treating every loose ROM
+graph as an effect would be heuristic; treating particles and manager DObjs as
+one path would hide an unimplemented renderer.
+
+**Original evidence.** `ef/efmanager.c` contains 53 static `EFDesc` records.
+Three (`DamageSpawnOrbs`, `DamageSpawnSparks`, `DamageSpawnMDust`) have NULL
+display callbacks and are controller-only. Four descriptor pairs share one
+asset (`CommonSpark`, Yoshi's shield/egg escape, Ness's thunder/reflect trail,
+and the two Kirby-star variants), leaving 46 unique display-bearing assets.
+Twelve are not `DObjDesc` arrays: based on their flag path through
+`efManagerMakeEffect`, `o_dobjsetup` is passed directly to
+`gcAddDObjForGObj`/`gcAddChildForDObj` as a `Gfx*` or `DObjDLLink*`.
+The checked-in relocData sources confirm examples explicitly: Pikachu's
+Thunder Trail at file 341 `0x95B0` is a two-entry `DObjDLLink`, and Yoshi's
+entry egg at file 354 `0x530` is a display list.
+
+That inspection also exposed a stale hand-entered file-84 mapping. The current
+decomp and the ROM's six parsed graphs agree that Catch Swirl is `0x2760`,
+Reflect Break `0x3398`, Dead Explode `0x53E8`, and Ness PK Flash `0x6D00`.
+Their material wrappers are respectively `0x22B8`, `0x2F78`, `0x4F08`, and
+`0x6B40`. The previous mapping shifted the last three graphs forward one slot
+and never paired Ness PK Flash with its own CI4 material. `romtool scene
+--file 84 --list --nodes` independently verifies the graph boundaries; the
+corrected `mobj` run has 12 matching material-bearing nodes, no mismatches and
+no cross-file fallback. File 84 texture conversion rises six to seven packed
+textures.
+
+**Implementation.** `load_all` now adds an identity one-node graph for each of
+the 12 source-named direct constructions. This does not guess a hierarchy: it
+models the exact single DObj the manager creates, then lets the existing
+`DlResolver` distinguish direct display lists from `DObjDLLink` dispatch.
+Eight adjacent material-table relationships are entered from the same static
+descriptors. A new `romtool effects <pack>` command checks exact
+`(source_file, source_offset)` identities, requires nonzero geometry, and
+prints stable object indices for the coming visual audit. The `ITCommonData`
+effect offsets correctly target relocData file 86; file 251 merely owns the
+static file-handle/attribute records whose externs point there.
+
+**Verification.** The rebuilt pack contains 374 objects and 1,604/1,672
+placed node lists. `romtool effects assets/generated/ssb64.pak` reports all
+46/46 manager DObj/direct-list effects renderable, totalling 668 triangles.
+Archive-wide `romtool mobj` reports 127 paired graphs, 468 matching nodes and
+zero mismatches; `romtool textures` reports 707 bound / 681 packed, with only
+the 26 already-understood runtime framebuffer references failing. Two
+ROM-free regressions pin the corrected file-84 associations and the unique
+46/12 inventory split. All 438 workspace tests and strict Clippy pass. The
+pinned-nightly PSP release build succeeds with the existing six warnings. A
+three-second PPSSPP-software smoke run loads the rebuilt pack and renders
+Dream Land at 60 FPS with no error/failure/panic/rejection/desynchronisation
+log lines. Pack / EBOOT / screenshot SHA-256:
+`019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87` /
+`53f25a9b97965c9db12493cd16811cc25dca6d667edb2cee2711571c220fed53` /
+`d99beacf5717bc15548c81b26648cb862052b9cb748eb42618615dc1db65c39a`.
+
+This completes the pack/discovery half of the manager-DObj path, not R1's
+effect row. Effect `AObjEvent32` playback and exhaustive visual capture remain.
+The independent `LBParticle` bytecode and texture-bank renderer is still
+absent and is now an explicit, measured subtask rather than hidden under a
+generic "particles" label. No physical-PSP claim is made.
+
+**Confidence: high for the manager inventory, corrected associations, and
+pack coverage; no claim yet for animated or LBParticle rendering.**
+
+---
+
 ## RE-171 — Exhaustive fighter-animation rendering exposes a sparse lookup bug (`PLAN.md` R1)
 
 **Problem.** ROM/pack replay already proved fighter poses numerically, but
@@ -11859,6 +11929,16 @@ progress for the other 27 graphs and per-object lighting.
 ---
 
 ## RE-154 — Four static `EFDesc` records recover file-84 common-effect materials (`PLAN.md` R0.6/R0.7)
+
+**Superseded in part by RE-172.** This entry used the then-current linker
+symbol names, but those names had the `DObjDesc` and preceding MObj wrapper
+blocks mis-typed. The current decomp corrected the layouts, and direct ROM
+scene parsing confirms the graph boundaries. The corrected five pairs are
+FireSpark `0x2040 → 0x1EA0`, CatchSwirl `0x2760 → 0x22B8`, ReflectBreak
+`0x3398 → 0x2F78`, DeadExplode `0x53E8 → 0x4F08`, and NessPKFlash
+`0x6D00 → 0x6B40`. The shifted offsets and historical counts below document
+what RE-154 originally concluded; they are not current evidence and must not
+be reused. RE-172 records the correction and present verification.
 
 File 84 (`EFCommonEffects2`) still had four unpaired graphs despite the
 original's effect manager explicitly pairing them. `ef/eftypes.h` defines
