@@ -2815,7 +2815,30 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   actually executes; the other 11 stay invisible. Pinned by six synthetic
   unit tests and one `SSB64_ROM`-gated archive-wide regression. `LBGenerator`
   itself (the dominant path — 103 real `MAKEGENERATOR` uses vs. 25
-  `MAKESCRIPT`) and a real spawn event still remain
+  `MAKESCRIPT`) and a real spawn event still remain. RE-188 implements
+  `LBGenerator` (`crates/ssb-rom/src/particle.rs::generator::Generator`):
+  archive-wide, a real `MAKEGENERATOR` call only ever targets `kind` `0`
+  (cone, 55), `2` (vortex, 4) or `3` (cone scaled by a random magnitude
+  fraction, 6) — never `1` (line) or an unknown kind, both fully ported
+  anyway since they're unambiguous, cheap, real decompiled code, not
+  guesses. `kind == 2`'s own spawn is a fully known case that always
+  creates a `LBPARTICLE_FLAG_VORTEX` particle no caller can ever observe
+  before it hits the pre-existing `SimError::VortexUnsupported` decline, so
+  this module declines straight there rather than porting unobservable
+  math. Running every one of the 65 real archive-wide targets for up to 240
+  frames (seed 1): 4 decline as vortex, 0 as an unknown kind, and 60 of the
+  remaining 61 spawn a visible particle — the 61st (`efcommon` script 12)
+  has exactly one real frame to live and this seed's own RNG draw happens
+  to fall short of the threshold that frame, a genuine property of the
+  algorithm's shared-RNG timing, not a decode gap. Pinned by eight
+  synthetic unit tests (cone speed/radius invariants, the scaled-cone
+  magnitude, the line lerp, both declines, frame accumulation and
+  `generator_lifetime` ejection) and one `SSB64_ROM`-gated archive-wide
+  regression; `romtool particles` reports the same census. No `psp/` file
+  changed (host-side execution model, same scoping RE-184 used before
+  RE-185's later on-device sweep). A real spawn event (rather than the
+  debug viewer's single fresh root) is the only piece of this row's own
+  "multi-particle"/"`LBGenerator`" remaining scope still open
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:

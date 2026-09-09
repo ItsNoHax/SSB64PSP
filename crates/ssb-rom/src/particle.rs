@@ -560,6 +560,16 @@ pub enum SimError {
     /// A `MAKESCRIPT`/`MAKERAND`/`MAKEID` referenced a script index past the
     /// end of its own bank -- would be a real ROM-data bug, not decoded.
     UnknownScriptId(u16),
+    /// `LBGenerator::kind` was not one of the five real values
+    /// (`generator::Generator::tick`'s module doc comment): `0`/`3`/`4`
+    /// (cone), `1` (line) or `2` (vortex, itself declined into
+    /// [`SimError::VortexUnsupported`] once its particle is created --
+    /// see that module's own doc comment). A kind outside this set falls
+    /// to `sLBParticleGeneratorFuncDefault`, an external, per-game-mode
+    /// function pointer (`lbParticleSetGeneratorFuncs`) this project has no
+    /// way to recover. Zero real US ROM `MAKEGENERATOR` targets do this
+    /// today.
+    UnknownGeneratorKind(u16),
 }
 
 /// One live `LBParticle` instance's simulated state, mirroring `struct
@@ -687,6 +697,56 @@ impl<'a> Particle<'a> {
                 lifetime: script.particle_lifetime.wrapping_add(1),
                 bytecode_csr: 0,
                 bytecode_timer: u16::from(!script.bytecode.is_empty()),
+                return_ptr: 0,
+                loop_ptr: 0,
+                loop_count: 0,
+                alive: true,
+            },
+        }
+    }
+
+    /// `lbParticleMakeStruct` (`lbparticle.c:267-369`) with explicit
+    /// pos/vel/size/gravity/friction, the shape `lbParticleMakeParam` uses
+    /// for every `LBGenerator`-spawned particle (`generator::Generator`)
+    /// instead of indexing a script by ID. `texture_flags`'s `SHAREDPAL`
+    /// bit is omitted for the same reason [`Particle::spawn`] omits it
+    /// (draw-time only; every real `lbParticleMakeParam` call site also
+    /// passes a literal `0` here) and `bank_id`/`gn` are omitted for the
+    /// same reason `ParticleState` itself omits them (own doc comment).
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn_raw(
+        bytecode: &'a [u8],
+        flags: u32,
+        texture_id: u16,
+        particle_lifetime: u16,
+        pos: [f32; 3],
+        vel: [f32; 3],
+        size: f32,
+        gravity: f32,
+        friction: f32,
+    ) -> Self {
+        Particle {
+            bytecode,
+            state: ParticleState {
+                pos,
+                vel,
+                size,
+                size_target: 0.0,
+                size_target_length: 0,
+                gravity,
+                friction,
+                flags,
+                texture_id,
+                frame_id: 0,
+                primcolor: [0xFF; 4],
+                target_primcolor: [0xFF; 4],
+                primcolor_target_length: 0,
+                envcolor: [0, 0, 0, 0],
+                target_envcolor: [0, 0, 0, 0],
+                envcolor_target_length: 0,
+                lifetime: particle_lifetime.wrapping_add(1),
+                bytecode_csr: 0,
+                bytecode_timer: u16::from(!bytecode.is_empty()),
                 return_ptr: 0,
                 loop_ptr: 0,
                 loop_count: 0,
@@ -1356,6 +1416,270 @@ pub mod particle_tree {
     }
 }
 
+// ============================================================================
+// `LBGenerator` execution.
+//
+// `MAKEGENERATOR` (103 real uses, `particle_tree`'s own scope note) creates
+// an `LBGenerator` and queues it on `sLBParticleGeneratorsQueued`, processed
+// once per real game frame by `lbParticleGeneratorFuncRun`
+// (`lbparticle.c:2263-2578`) -- a materially different subsystem from
+// `particle_tree`'s node-splice walk: its own allocator, its own per-frame
+// walk, and its own script-driven spawn *timing* (`update_rate`, possibly
+// spawning more than once per frame) rather than one-shot bytecode calls.
+//
+// Archive-wide census (`SSB64_ROM`-gated, temporary instrumentation, since
+// reverted) of every real `MAKEGENERATOR` target's own `kind` field, found
+// by actually running each of the 160 real scripts' own bytecode (not a
+// static scan) and collecting every reachable `MAKEGENERATOR` operand: 65
+// distinct (bank, target-script) pairs, `kind` `0` (55), `2` (4, vortex),
+// `3` (6). Zero real targets use `kind` `1` (line) or `4`, and zero use any
+// value the real function pointer hook (`sLBParticleGeneratorFuncDefault`)
+// would be needed for.
+//
+// `lbParticleMakeGenerator` copies a template script's header fields once
+// at creation (`kind`, `flags`, `texture_id`, `particle_lifetime`,
+// `generator_lifetime`, `vel`, `gravity`, `friction`, `size`, `bytecode`,
+// `unk_script_0x20`/`0x24` -> `unk_gn_0x38`/`0x3C`, `update_rate`) and never
+// changes most of them again. Two fields this project does not model:
+//   - `gn->dobj`: only ever set to `NULL` by `lbParticleMakeGenerator`
+//     itself; grepping the whole decompilation for another write found
+//     exactly one, a title-screen menu effect
+//     (`refs/ssb-decomp-re/src/mn/mncommon/mntitle.c:1491`) that assigns it
+//     directly on the returned `LBGenerator*`, not through any bytecode this
+//     module executes. Every real *bytecode-triggered* `MAKEGENERATOR`
+//     leaves it `NULL` forever, so `lbParticleGetPosVelDObj`'s pos/vel
+//     override (`lbparticle.c:2329-2334`) never fires for any generator this
+//     module can reach -- the same "needs a live `DObj`" scope this module
+//     already declines for `SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID`.
+//   - `gn->pos`: hardcoded to `(0,0,0)` by `lbParticleMakeGenerator` and (per
+//     the point above) never moved by any bytecode-reachable path. A few
+//     real gameplay call sites (e.g. `efManagerRippleMakeEffect`) set a
+//     freshly-created generator's `pos` directly from a live game-world
+//     position immediately after creation -- the same "caller supplies the
+//     spawn position" shape [`Particle::spawn`]'s own doc comment already
+//     describes for `parent_pos`. [`Generator::spawn`] takes `pos = (0,0,0)`
+//     to match every real *bytecode*-triggered generator exactly (not a
+//     compromise -- there is no bytecode operand that could supply a
+//     different value).
+//
+// `generator_vars.rotate.{base,target}` (kind `0`/`3`/`4`'s cone limits) are
+// fixed at `0`/`360deg` by `lbParticleMakeGenerator` and never written
+// anywhere else in the whole decompilation (grepped); this module inlines
+// them as the constants they provably always are rather than carrying two
+// dead fields.
+//
+// `kind == 2` (vortex) is a fully known case, not the true external-hook
+// `default:` branch -- but every particle it would spawn is created with
+// `LBPARTICLE_FLAG_VORTEX` set and its `gravity`/`friction` fields
+// repurposed to hold the emission axis's own angles
+// (`lbparticle.c:2417-2420`), which is exactly what makes
+// [`SimError::VortexUnsupported`] fire the instant that particle is
+// creation-ticked (`lbParticleMakeParam`'s own immediate
+// `lbParticleUpdateStruct` call, reproduced below as
+// [`Generator::make_particle`]'s own `tick_with`). No caller of
+// [`Generator::tick`] can ever observe a `kind == 2` spawn's own
+// position/velocity -- it always errors before being handed back -- so this
+// module declines straight to that same error without porting the vortex
+// math, rather than computing something nothing downstream can see.
+pub mod generator {
+    use super::{arctan2, sqrt, Particle, Rng, Script, SimError, SpawnRequest};
+    use alloc::vec::Vec;
+    use core::f32::consts::TAU;
+
+    /// One live `LBGenerator`, mirroring `struct LBGenerator`
+    /// (`refs/ssb-decomp-re/src/lb/lbtypes.h:139-179`) minus `next`/
+    /// `generator_id`/`dobj`/`xf` (allocator/attachment bookkeeping this
+    /// module does not model, same reasoning as `ParticleState`'s own doc
+    /// comment) and `generator_vars` (inlined as constants, see the module
+    /// doc comment).
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Generator<'a> {
+        kind: u16,
+        flags: u32,
+        texture_id: u16,
+        particle_lifetime: u16,
+        generator_lifetime: u16,
+        bytecode: &'a [u8],
+        pos: [f32; 3],
+        vel: [f32; 3],
+        gravity: f32,
+        friction: f32,
+        size: f32,
+        unk_0x38: f32,
+        unk_0x3c: f32,
+        update_rate: f32,
+        frame: f32,
+        /// `kind == 1`'s fixed line endpoint: `pos + vel` at creation
+        /// (`lbparticle.c:2671-2673`), never recomputed afterward.
+        line_target: [f32; 3],
+        /// Whether `generator_lifetime` has counted down to ejection
+        /// (`lbparticle.c:2538-2569`'s non-vortex branch). Once `false`,
+        /// [`Generator::tick`] must not be called again, matching a real
+        /// ejected `LBGenerator` no longer being on the queue.
+        pub alive: bool,
+    }
+
+    impl<'a> Generator<'a> {
+        /// `lbParticleMakeGenerator` (`lbparticle.c:2610-2685`) for a real
+        /// bytecode-triggered `MAKEGENERATOR` call, where `pos` is always
+        /// `(0,0,0)` and `vel` is always the template script's own `vel` --
+        /// see the module doc comment on why this is exact, not a stand-in.
+        pub fn spawn(script: &Script<'a>) -> Self {
+            let pos = [0.0; 3];
+            let vel = script.velocity;
+            Generator {
+                kind: script.kind,
+                flags: script.flags,
+                texture_id: script.texture_id,
+                particle_lifetime: script.particle_lifetime,
+                generator_lifetime: script.generator_lifetime,
+                bytecode: script.bytecode,
+                pos,
+                vel,
+                gravity: script.gravity,
+                friction: script.friction,
+                size: script.size,
+                unk_0x38: script.unknown_20,
+                unk_0x3c: script.unknown_24,
+                update_rate: script.update_rate,
+                frame: 0.0,
+                line_target: [pos[0] + vel[0], pos[1] + vel[1], pos[2] + vel[2]],
+                alive: true,
+            }
+        }
+
+        /// One real game frame: `lbParticleGeneratorFuncRun`'s per-generator
+        /// body (`lbparticle.c:2296-2577`), minus the `gobj->flags`
+        /// visibility mask and `LBPARTICLE_FLAG_PAUSE` check at its very top
+        /// (both need a live `GObj`/queue walk this state-only simulator
+        /// doesn't model -- the same scope `ParticleState` itself is already
+        /// silent on). Returns every particle spawned this frame, each
+        /// already creation-ticked once (`lbParticleMakeParam`'s own
+        /// immediate `lbParticleUpdateStruct` call).
+        pub fn tick(&mut self, rng: &mut Rng) -> Result<Vec<Particle<'a>>, SimError> {
+            if self.update_rate < 0.0 {
+                self.frame -= self.update_rate;
+            } else {
+                self.frame += rng.next_float() * self.update_rate;
+            }
+
+            let mut spawned = Vec::new();
+            if self.frame >= 1.0 {
+                let vel = self.vel;
+                let vel_mag = sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
+                let angle1 = arctan2(vel[1], vel[2]);
+                let (sin1, cos1) = crate::scene::sin_cos(angle1);
+                let angle2 = arctan2(vel[0], vel[1] * sin1 + vel[2] * cos1);
+                let (sin2, cos2) = crate::scene::sin_cos(angle2);
+
+                // `generator_vars.rotate.{base,target}` inlined as `0`/`TAU`
+                // (see module doc comment) -- both the cone case's own outer
+                // pre-computation and the shared `default:` branch used by
+                // every other kind reduce to the same `rand() * TAU`.
+                let mut pv0 = rng.next_float() * TAU;
+                let spb8 = TAU / (self.frame as i32) as f32;
+
+                while self.frame >= 1.0 {
+                    match self.kind {
+                        0 | 3 | 4 => {
+                            let (vmag, var_f20) = if self.unk_0x38 < 0.0 {
+                                (1.0, -self.unk_0x38)
+                            } else {
+                                let r = rng.next_float();
+                                let vmag = if self.kind != 0 { sqrt(r) } else { r };
+                                (vmag, self.unk_0x38 * vmag)
+                            };
+                            let pv1 = if self.unk_0x3c < 0.0 {
+                                pv0 += spb8;
+                                -self.unk_0x3c
+                            } else {
+                                pv0 = rng.next_float() * TAU;
+                                vmag * self.unk_0x3c
+                            };
+
+                            let (sin_pv0, cos_pv0) = crate::scene::sin_cos(pv0);
+                            let (sin_pv1, cos_pv1) = crate::scene::sin_cos(pv1);
+                            let spec = cos_pv0 * var_f20;
+                            let temp_f26 = sin_pv0 * var_f20;
+                            let pm1 = sin_pv1 * vel_mag;
+
+                            let (cvx, cvy, cvz) = (cos_pv0 * pm1, sin_pv0 * pm1, cos_pv1 * vel_mag);
+
+                            let pos = [
+                                spec * cos2 + self.pos[0],
+                                -spec * sin1 * sin2 + temp_f26 * cos1 + self.pos[1],
+                                -spec * cos1 * sin2 - temp_f26 * sin1 + self.pos[2],
+                            ];
+                            let mut new_vel = [
+                                cvx * cos2 + cvz * sin2,
+                                -cvx * sin1 * sin2 + cvy * cos1 + cvz * sin1 * cos2,
+                                -cvx * cos1 * sin2 - cvy * sin1 + cvz * cos1 * cos2,
+                            ];
+                            if self.kind == 3 {
+                                new_vel[0] *= vmag;
+                                new_vel[1] *= vmag;
+                                new_vel[2] *= vmag;
+                            }
+                            spawned.push(self.make_particle(rng, pos, new_vel)?);
+                        }
+                        1 => {
+                            let r = rng.next_float();
+                            let pos = [
+                                self.pos[0] + r * (self.line_target[0] - self.pos[0]),
+                                self.pos[1] + r * (self.line_target[1] - self.pos[1]),
+                                self.pos[2] + r * (self.line_target[2] - self.pos[2]),
+                            ];
+                            spawned.push(self.make_particle(rng, pos, vel)?);
+                        }
+                        2 => return Err(SimError::VortexUnsupported),
+                        other => return Err(SimError::UnknownGeneratorKind(other)),
+                    }
+                    self.frame -= 1.0;
+                }
+            }
+
+            if self.generator_lifetime != 0 {
+                self.generator_lifetime -= 1;
+                if self.generator_lifetime == 0 {
+                    // Real hardware's vortex-lingering branch
+                    // (`lbparticle.c:2539-2545`) is unreachable here: `kind
+                    // == 2` already returned `Err` above before ever
+                    // reaching this generator again.
+                    self.alive = false;
+                }
+            }
+            Ok(spawned)
+        }
+
+        /// `lbParticleMakeParam` (`lbparticle.c:406-447`): build the new
+        /// particle with this generator's own (unchanging) flags/texture/
+        /// lifetime/size/gravity/friction/bytecode, then creation-tick it
+        /// once immediately, exactly like `particle_tree::TreeSpawner`'s own
+        /// child spawn.
+        fn make_particle(
+            &self,
+            rng: &mut Rng,
+            pos: [f32; 3],
+            vel: [f32; 3],
+        ) -> Result<Particle<'a>, SimError> {
+            let mut particle = Particle::spawn_raw(
+                self.bytecode,
+                self.flags,
+                self.texture_id,
+                self.particle_lifetime,
+                pos,
+                vel,
+                self.size,
+                self.gravity,
+                self.friction,
+            );
+            let mut sink = Vec::<SpawnRequest>::new();
+            particle.tick_with(rng, &mut sink)?;
+            Ok(particle)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1589,6 +1913,104 @@ mod tests {
         assert_eq!(root_invisible, 12);
         assert_eq!(rescued, 1);
         assert_eq!(errors, 0);
+    }
+
+    /// RE-188: does `generator::Generator` (`MAKEGENERATOR`'s own subsystem,
+    /// still declined by every `SpawnSink` above and by `particle_tree`)
+    /// actually run to completion for every real archive-wide target, or
+    /// does something hit `SimError`? Finds every real `MAKEGENERATOR`
+    /// target the same way `temp_census_makegenerator_target_kinds` did
+    /// (RE-188's own investigation, since reverted): run each of the 160
+    /// real scripts' own root particle far enough to reach every real
+    /// `MAKEGENERATOR` call, then run each distinct target as a `Generator`
+    /// for up to 240 frames (seed 1) or until it ejects/errors.
+    #[test]
+    fn real_rom_generator_targets_run_to_completion_or_a_catalogued_decline() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let mut total_targets = 0usize;
+        let mut vortex_declines = 0usize;
+        let mut unknown_declines = 0usize;
+        let mut ever_spawned = 0usize;
+        let mut ever_visible = 0usize;
+        for &bank in BANKS {
+            let (scripts, textures) = decode_bank(&rom, bank).unwrap();
+            let mut targets = alloc::collections::BTreeSet::new();
+            for script in &scripts {
+                let mut particle = Particle::spawn(script);
+                let mut rng = Rng::new(1);
+                for _ in 0..2000 {
+                    if let Ok(spawns) = particle.tick(&mut rng) {
+                        for s in spawns {
+                            if s.is_generator {
+                                targets.insert(s.script_id);
+                            }
+                        }
+                    }
+                    if !particle.state.alive {
+                        break;
+                    }
+                }
+            }
+            for id in targets {
+                let Some(target_script) = scripts.get(id as usize) else {
+                    continue;
+                };
+                total_targets += 1;
+                let mut gen = generator::Generator::spawn(target_script);
+                let mut rng = Rng::new(1);
+                let mut spawned_any = false;
+                let mut visible_any = false;
+                for _ in 0..240 {
+                    if !gen.alive {
+                        break;
+                    }
+                    match gen.tick(&mut rng) {
+                        Ok(particles) => {
+                            for p in particles {
+                                spawned_any = true;
+                                let frame_count = textures
+                                    .get(p.state.texture_id as usize)
+                                    .map_or(0, |t| t.images.len() as u32);
+                                if p.state.visible(frame_count) {
+                                    visible_any = true;
+                                }
+                            }
+                        }
+                        Err(SimError::VortexUnsupported) => {
+                            vortex_declines += 1;
+                            break;
+                        }
+                        Err(SimError::UnknownGeneratorKind(_)) => {
+                            unknown_declines += 1;
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if spawned_any {
+                    ever_spawned += 1;
+                }
+                if visible_any {
+                    ever_visible += 1;
+                }
+            }
+        }
+        assert_eq!(total_targets, 65);
+        assert_eq!((vortex_declines, unknown_declines), (4, 0));
+        // 60, not 61 = 65 - 4 vortex: `efcommon` script 12 (`kind` 0,
+        // `update_rate` 2.0, `generator_lifetime` 1) has exactly one real
+        // frame to live, and with this test's fixed seed 1 that frame's own
+        // `rand() * update_rate` draw lands at ~0.0013 -- nowhere near the
+        // `>= 1.0` a spawn needs. This is the genuine algorithm, not a
+        // decode gap: whether this specific generator ever spawns for real
+        // depends on the shared global RNG's exact state the instant it is
+        // created, which this project cannot recover (`Rng`'s own doc
+        // comment). A different seed would very plausibly flip this one
+        // generator's own outcome without indicating a bug either way.
+        assert_eq!((ever_spawned, ever_visible), (60, 60));
     }
 }
 
@@ -1980,5 +2402,162 @@ mod tree_tests {
         tree.tick_frame(&bank, &mut rng).unwrap();
         // No child particle was created -- only the root remains live.
         assert_eq!(tree.ever_spawned(), 1);
+    }
+}
+
+#[cfg(test)]
+mod generator_tests {
+    use super::generator::Generator;
+    use super::*;
+
+    fn script_with(kind: u16, velocity: [f32; 3], update_rate: f32) -> Script<'static> {
+        Script {
+            kind,
+            texture_id: 7,
+            generator_lifetime: 0,
+            particle_lifetime: 100,
+            flags: 0,
+            gravity: 0.0,
+            friction: 1.0,
+            velocity,
+            unknown_20: 0.0,
+            unknown_24: 0.0,
+            update_rate,
+            size: 1.5,
+            // A single immediate END: post-creation-tick physics never runs
+            // (the lifetime tail returns before `pos += vel`), so a spawned
+            // particle's `pos`/`vel` are exactly what `Generator::tick`
+            // computed, unperturbed by any further integration.
+            bytecode: &[0xFF],
+        }
+    }
+
+    fn mag(v: [f32; 3]) -> f32 {
+        sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
+    }
+
+    #[test]
+    fn cone_kind0_deterministic_branch_preserves_speed_and_matches_spread_radius() {
+        // Deterministic branches: unknown_20 < 0 fixes the spread radius,
+        // unknown_24 < 0 fixes the azimuth increment instead of drawing a
+        // fresh random one -- lbparticle.c:2404-2413.
+        let mut script = script_with(0, [3.0, 4.0, 0.0], -1.0); // update_rate<0: frame += 1.0 exactly, no rand draw.
+        script.unknown_20 = -2.0; // var_f20 = 2.0
+        script.unknown_24 = -1.0; // pv1 = 1.0, pv0 += spb8 (no rand draw here either)
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        let spawned = gen.tick(&mut rng).unwrap();
+        assert_eq!(spawned.len(), 1);
+        let p = &spawned[0];
+        assert!(
+            (mag(p.state.vel) - 5.0).abs() < 1e-3,
+            "kind 0 must not scale speed: {:?}",
+            p.state.vel
+        );
+        assert!(
+            (mag(p.state.pos) - 2.0).abs() < 1e-3,
+            "offset radius must equal |unknown_20|: {:?}",
+            p.state.pos
+        );
+        assert_eq!(p.state.texture_id, 7);
+        assert_eq!(p.state.size, 1.5);
+    }
+
+    #[test]
+    fn cone_kind3_scales_velocity_by_the_random_magnitude_fraction() {
+        let mut script = script_with(3, [3.0, 4.0, 0.0], -1.0);
+        script.unknown_20 = 4.0; // positive branch: vmag = sqrt(rand())
+        script.unknown_24 = -1.0; // deterministic angle branch, no extra rand draw
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        let spawned = gen.tick(&mut rng).unwrap();
+        assert_eq!(spawned.len(), 1);
+
+        // Replay the same two draws `tick` made (outer pv0, then this
+        // branch's own magnitude fraction) to compute the expected scale
+        // independently of the trig assembly under test.
+        let mut expect_rng = Rng::new(1);
+        let _outer_pv0_draw = expect_rng.next_float();
+        let r = expect_rng.next_float();
+        let expected_vmag = sqrt(r);
+
+        let p = &spawned[0];
+        let expected_speed = 5.0 * expected_vmag;
+        assert!(
+            (mag(p.state.vel) - expected_speed).abs() < 1e-3,
+            "kind 3 must scale speed by vmag: got {:?}, expected magnitude {expected_speed}",
+            p.state.vel
+        );
+    }
+
+    #[test]
+    fn line_kind1_lerps_from_pos_toward_pos_plus_vel() {
+        // pos starts at (0,0,0) (Generator::spawn's own doc comment), so
+        // line_target == vel exactly.
+        let script = script_with(1, [4.0, 0.0, 0.0], -1.0);
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        let spawned = gen.tick(&mut rng).unwrap();
+        assert_eq!(spawned.len(), 1);
+
+        // First draw is the outer (kind-1-unused) pv0; second is this
+        // case's own `pos_random`.
+        let mut expect_rng = Rng::new(1);
+        let _unused_outer_pv0 = expect_rng.next_float();
+        let r = expect_rng.next_float();
+
+        let p = &spawned[0];
+        assert_eq!(p.state.pos, [4.0 * r, 0.0, 0.0]);
+        assert_eq!(p.state.vel, [4.0, 0.0, 0.0]); // gn.vel, unaffected by pos_random
+    }
+
+    #[test]
+    fn vortex_kind2_declines_every_time_a_spawn_would_occur() {
+        let script = script_with(2, [1.0, 0.0, 0.0], -1.0);
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        assert_eq!(gen.tick(&mut rng), Err(SimError::VortexUnsupported));
+    }
+
+    #[test]
+    fn unknown_kind_declines_with_its_own_value_instead_of_guessing() {
+        let script = script_with(9, [1.0, 0.0, 0.0], -1.0);
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        assert_eq!(gen.tick(&mut rng), Err(SimError::UnknownGeneratorKind(9)));
+    }
+
+    #[test]
+    fn frame_accumulates_across_ticks_before_a_spawn_occurs() {
+        let script = script_with(1, [1.0, 0.0, 0.0], -0.5); // frame += 0.5 per tick, deterministic
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        assert_eq!(gen.tick(&mut rng).unwrap().len(), 0); // frame == 0.5
+        assert_eq!(gen.tick(&mut rng).unwrap().len(), 1); // frame == 1.0
+    }
+
+    #[test]
+    fn generator_lifetime_zero_never_ejects() {
+        let script = script_with(0, [1.0, 0.0, 0.0], 0.0); // update_rate == 0: no spawns, no rand draws either
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        for _ in 0..50 {
+            gen.tick(&mut rng).unwrap();
+        }
+        assert!(gen.alive);
+    }
+
+    #[test]
+    fn generator_lifetime_counts_down_and_ejects_on_schedule() {
+        let mut script = script_with(0, [1.0, 0.0, 0.0], 0.0);
+        script.generator_lifetime = 3;
+        let mut gen = Generator::spawn(&script);
+        let mut rng = Rng::new(1);
+        gen.tick(&mut rng).unwrap();
+        assert!(gen.alive);
+        gen.tick(&mut rng).unwrap();
+        assert!(gen.alive);
+        gen.tick(&mut rng).unwrap();
+        assert!(!gen.alive);
     }
 }

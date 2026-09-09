@@ -2974,6 +2974,15 @@ fn particles(path: &Path) -> Res {
     // put a *child* particle on screen by frame 4.
     let mut tree_rescued = 0usize;
     let mut tree_errors: Vec<String> = Vec::new();
+    // RE-188: MAKEGENERATOR's own subsystem (still declined by every
+    // SpawnSink above and by particle_tree) -- does generator::Generator
+    // run every real archive-wide target to completion, or hit a real
+    // decline (kind 2/vortex, or a truly unknown kind)?
+    let mut generator_targets = 0usize;
+    let mut generator_vortex_declines = 0usize;
+    let mut generator_unknown_declines: Vec<String> = Vec::new();
+    let mut generator_ever_spawned = 0usize;
+    let mut generator_ever_visible = 0usize;
 
     println!("LBParticle banks");
     for &spec in ssb_rom::particle::BANKS {
@@ -3094,6 +3103,71 @@ fn particles(path: &Path) -> Res {
                 decoded_total += 1;
             }
         }
+        // RE-188: reachable MAKEGENERATOR targets, found the same way as
+        // RE-186/187's own censuses -- run each of this bank's real scripts
+        // far enough (2000 ticks) to reach every real MAKEGENERATOR call,
+        // then run each distinct target as a `Generator` for up to 240
+        // frames (seed 1) or until it ejects/errors.
+        let mut targets = std::collections::BTreeSet::new();
+        for script in &scripts {
+            let mut particle = ssb_rom::particle::Particle::spawn(script);
+            let mut rng = ssb_rom::particle::Rng::new(1);
+            for _ in 0..2000 {
+                if let Ok(spawns) = particle.tick(&mut rng) {
+                    for s in spawns {
+                        if s.is_generator {
+                            targets.insert(s.script_id);
+                        }
+                    }
+                }
+                if !particle.state.alive {
+                    break;
+                }
+            }
+        }
+        for id in targets {
+            let Some(target_script) = scripts.get(id as usize) else {
+                continue;
+            };
+            generator_targets += 1;
+            let mut gen = ssb_rom::particle::generator::Generator::spawn(target_script);
+            let mut rng = ssb_rom::particle::Rng::new(1);
+            let mut spawned_any = false;
+            let mut visible_any = false;
+            for _ in 0..240 {
+                if !gen.alive {
+                    break;
+                }
+                match gen.tick(&mut rng) {
+                    Ok(particles) => {
+                        for p in particles {
+                            spawned_any = true;
+                            let frame_count = textures
+                                .get(p.state.texture_id as usize)
+                                .map_or(0, |t| t.images.len() as u32);
+                            if p.state.visible(frame_count) {
+                                visible_any = true;
+                            }
+                        }
+                    }
+                    Err(ssb_rom::particle::SimError::VortexUnsupported) => {
+                        generator_vortex_declines += 1;
+                        break;
+                    }
+                    Err(error) => {
+                        generator_unknown_declines
+                            .push(format!("{} script {id}: {error:?}", spec.name));
+                        break;
+                    }
+                }
+            }
+            if spawned_any {
+                generator_ever_spawned += 1;
+            }
+            if visible_any {
+                generator_ever_visible += 1;
+            }
+        }
         let used_bytecode: usize = scripts
             .iter()
             .map(|script| {
@@ -3139,6 +3213,16 @@ fn particles(path: &Path) -> Res {
     );
     for line in &tree_errors {
         println!("  spawn-tree error: {line}");
+    }
+    println!(
+        "MAKEGENERATOR targets: {generator_targets} real (seed 1, up to 240 frames each), \
+         {generator_ever_spawned} ever spawn a particle, {generator_ever_visible} ever spawn a \
+         visible one, {generator_vortex_declines} decline as vortex (kind 2), \
+         {} decline as an unknown kind",
+        generator_unknown_declines.len()
+    );
+    for line in &generator_unknown_declines {
+        println!("  unknown generator kind: {line}");
     }
     Ok(())
 }

@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 multi-particle LBParticle spawn-tree execution — MAKESCRIPT/MAKERAND/MAKEID now actually spawn, one archive-wide rescue found, RE-187)
+**Last updated:** 2026-09-10 (R1 LBGenerator implemented — cone/line spawn math ported, vortex declines to the existing VortexUnsupported, RE-188)
 
 ---
 
@@ -18,7 +18,63 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–187).
+`IN_PROGRESS` (RE-172–188).
+
+RE-188 implements the `LBGenerator` subsystem itself
+(`crates/ssb-rom/src/particle.rs::generator::Generator`), the piece
+RE-184/185/186/187 each left as remaining scope: `MAKEGENERATOR` (103 real
+uses, the dominant spawn opcode archive-wide) creates an `LBGenerator`
+queued on its own allocator and processed once per real frame by
+`lbParticleGeneratorFuncRun` -- a materially different subsystem from
+RE-187's node-splice list, with its own script-driven spawn *timing*
+(`update_rate`, possibly spawning more than once per frame) rather than
+one-shot bytecode calls. Read `lbParticleMakeGenerator` (the constructor)
+and `lbParticleGeneratorFuncRun` (the per-frame body) directly:
+`generator_vars.rotate.{base,target}` (kind 0/3/4's cone limits) are fixed
+at 0/360deg at creation and, grepped project-wide, never written anywhere
+else; `gn->dobj` is `NULL` from every real bytecode-triggered
+`MAKEGENERATOR` (the one other write in the whole decompilation is a
+title-screen menu effect setting it directly on the returned pointer, not
+through bytecode this module executes), so the dobj-driven pos/vel
+override never fires for anything this module can reach -- the same "needs
+a live `DObj`" scope already declined for `SETDISTVEL`/`ADDDISTVELMAG`/
+`SETATTACHID`. Ported kind 0/3/4's shared cone-emission formula (reusing
+the same `arctan2`/`sin_cos` two-angle rotation `SETVELANGLE`'s
+`rotate_vel` already uses) and kind 1's fixed-line movement in full --
+both are unambiguous, real decompiled code, cheap to port regardless of
+real usage frequency. Kind 2 (vortex) is fully decoded too, not a guess,
+but every particle it would spawn always carries
+`LBPARTICLE_FLAG_VORTEX` and has its `gravity`/`friction` fields
+repurposed to hold emission-axis angles, which is exactly what makes the
+pre-existing `SimError::VortexUnsupported` fire the instant that particle
+is creation-ticked -- no caller can ever observe a kind-2 spawn's own
+position/velocity first, so this module declines straight to that same
+error rather than porting position math nothing downstream can see. An
+archive-wide census (temporary instrumentation, since reverted) of every
+real `MAKEGENERATOR` target found 65 distinct (bank, target-script) pairs:
+kind 0 (55), 2 (4), 3 (6) -- zero real targets use kind 1 or 4, and zero
+use any value the true external-hook `default:` branch (an unrecoverable
+per-game-mode function pointer) would be needed for. Eight new synthetic
+unit tests (`particle::generator_tests`) pin the cone/line formulas via
+invariants (velocity-magnitude preservation, spread radius) and both
+`Rng`-replayed random branches, both declines, frame accumulation, and
+`generator_lifetime` ejection timing. One new `SSB64_ROM`-gated
+archive-wide regression runs all 65 real targets for up to 240 frames each
+(seed 1): `(vortex_declines, unknown_declines) == (4, 0)`,
+`(ever_spawned, ever_visible) == (60, 60)` -- not 61: `efcommon` script 12
+has exactly one real frame to live (`generator_lifetime` 1) and this
+seed's own RNG draw that frame falls short of the spawn threshold, a
+genuine property of the algorithm's shared-RNG timing, not a decode gap.
+`romtool particles` now reports the same census against the real ROM,
+reproducing identical numbers. `cargo test --workspace`: 336 `ssb-rom`
+tests (was 327, both with and without `SSB64_ROM` set), strict Clippy
+(default and `--no-default-features`), and `cargo fmt --check` all pass.
+No `psp/` file changed, so no new `cargo psp`/PPSSPP run was needed --
+this is a host-side execution model, the same scoping RE-184/187 used
+before a later on-device sweep. A real spawn event (rather than the debug
+viewer's single fresh root) is now the only piece of the
+"multi-particle"/`LBGenerator` line of work RE-184 first opened that
+remains open. No physical-PSP claim; `R0.5` unaffected. Evidence: RE-188.
 
 RE-187 does the "multi-particle spawn-tree execution" RE-184/185/186 each
 left as open remaining scope. `MAKESCRIPT`/`MAKERAND`/`MAKEID` were
@@ -4405,6 +4461,46 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-10 — R1: LBGenerator implemented, cone/line spawn math ported, vortex declines to VortexUnsupported (RE-188)
+
+* Added `crates/ssb-rom/src/particle.rs::generator` (`Generator::spawn`/
+  `tick`), porting `lbParticleMakeGenerator`/`lbParticleGeneratorFuncRun`'s
+  kind 0/1/3/4 spawn math exactly (reusing the existing `arctan2`/
+  `sin_cos` primitives `rotate_vel` already verified) and declining kind 2
+  (vortex) straight to the pre-existing `SimError::VortexUnsupported`
+  rather than porting position/velocity math no caller can ever observe.
+  Added `Particle::spawn_raw` and `SimError::UnknownGeneratorKind(u16)`.
+* Archive-wide census (temporary, reverted): 65 real `MAKEGENERATOR`
+  targets, kind 0 (55)/2 (4)/3 (6), zero kind 1/4/unknown.
+* Eight new unit tests (`particle::generator_tests`) plus one
+  `SSB64_ROM`-gated regression pinning `(vortex_declines,
+  unknown_declines) == (4, 0)` and `(ever_spawned, ever_visible) == (60,
+  60)` across all 65 real targets (240 frames, seed 1) — the 61st
+  non-vortex target (`efcommon` script 12) has a one-frame
+  `generator_lifetime` and this seed's own draw falls short of the spawn
+  threshold that frame, a real property of the shared-RNG timing.
+* `cargo run --release -p romtool -- particles "rom/Super Smash Bros. (USA).z64"`
+  — `MAKEGENERATOR targets: 65 real (seed 1, up to 240 frames each), 60
+  ever spawn a particle, 60 ever spawn a visible one, 4 decline as vortex
+  (kind 2), 0 decline as an unknown kind` — matches the pinned test.
+* `cargo test --workspace` — 336 passing (was 327), both with and without
+  `SSB64_ROM` set.
+* `cargo clippy --workspace --lib --tests -- -D warnings` — clean.
+* `cargo clippy -p ssb-rom --no-default-features -- -D warnings` — clean.
+* `cargo fmt --check` — clean.
+* No `psp/` crate file changed — no new `cargo psp`/PPSSPP run needed;
+  `draw_particle` still only ever draws the debug viewer's single fresh
+  root.
+* Result: RE-188 recorded in `docs/reverse-engineering.md`; `PLAN.md` R1
+  and this file updated to match. A real spawn event (rather than the
+  debug viewer's fresh root) is now the only remaining piece of the
+  `LBGenerator`/"multi-particle" line of work RE-184 first opened.
+* Affected subsystem: `crates/ssb-rom/src/particle.rs` (new `generator`
+  module, `Particle::spawn_raw`, `SimError::UnknownGeneratorKind`),
+  `tools/romtool/src/main.rs` (`particles` census) — plus documentation.
+* PPSSPP: not run this pass (no `psp/` change).
+* Physical PSP: not tested this pass — see §8 below.
 
 ## 2026-09-09 — R1: archive-wide LBParticle combine-mode census, NOISE/DITHER/ALPHABLEND confirmed unreachable (RE-186)
 
