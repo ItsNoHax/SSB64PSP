@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 LBParticle deterministic script playback, RE-182)
+**Last updated:** 2026-09-09 (R1 LBParticle PSP billboard-drawing proof of concept, RE-183)
 
 ---
 
@@ -18,7 +18,39 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–182).
+`IN_PROGRESS` (RE-172–183).
+
+RE-183 adds the first PSP-side `LBParticle` drawing: `psp/src/meshdraw.rs::
+draw_particle` substitutes an ordinary GE 3D screen-aligned quad for
+`lbParticleDrawTextures`'s RDP-specific manual screen-space rectangle
+projection (`refs/ssb-decomp-re/src/lb/lbparticle.c:1450-2118`) -- the RDP
+has no 3D transform and the GE does, so this is the same substitution
+`billboard_place` already makes for `DObj` billboard kinds 44/46/48/50, not
+an approximation. Colour reuses the existing `Modulate`/`TEXTURE_BLEND` GE
+paths: `PRIM` as vertex colour for the plain `G_CC_MODULATEIA_PRIM` case,
+`ENV` as vertex colour plus `PRIM` as `sceGuTexEnvColor` for
+`LBPARTICLE_FLAG_ENVCOLOR`'s `(PRIM-ENV)*TEXEL+ENV` -- the identical wiring
+RE-073/074 already validated for mesh `TEXTURE_BLEND` primitives.
+`LBPARTICLE_FLAG_NOISE`'s dither combine and the real alpha-compare
+threshold/dither state are declined, not guessed (neither flag's real
+archive-wide usage is censused yet). A new `psp/src/main.rs` debug mode
+(`particle_view`, toggled by `C_RIGHT` -- free everywhere `stage_view`'s own
+use of that key is not active) spawns the D-pad-selected entry of the
+pack's flat `particle_scripts` table fresh, ticks it to frame 4 (RE-172-174's
+own deterministic-settle convention), resolves its bank-local `texture_id`/
+`frame_id` through the owning `ParticleBankDesc`, and draws it. A new
+`particle_render_audit_capture` Cargo feature boots directly into script 0
+of this mode, mirroring `billboard_audit_capture`'s own precedent.
+`cargo psp --release` (both with and without the new feature), `cargo fmt
+--check`, and `cargo test --workspace` (316 `ssb-rom` tests, unaffected --
+no library crate changed) all pass. `tools/run-ppsspp.sh --no-build
+--seconds 8` against the audit-capture build shows script 0 as a correctly
+centred, soft-edged yellow sprite (`tex 1084`, `tris 2`) at 60 FPS with a
+clean log; the same harness against the default build shows Dream Land
+unaffected. Only script 0 was checked visually -- a broader per-script
+sweep (RE-173's own exhaustive-audit pattern), multi-particle spawn-tree
+execution, the `LBGenerator` subsystem, and wiring a real spawn event all
+remain. Evidence: RE-183.
 
 RE-182 adds a deterministic, host-side, single-particle `LBParticle`
 bytecode interpreter (`ssb_rom::particle::Particle`/`ParticleState`),
@@ -4248,6 +4280,38 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: LBParticle PSP billboard-drawing proof of concept (RE-183)
+
+* `psp/src/meshdraw.rs::draw_particle` (new): a screen-aligned GE 3D quad,
+  substituting for `lbParticleDrawTextures`'s RDP-only manual screen-space
+  rectangle projection (`refs/ssb-decomp-re/src/lb/lbparticle.c:1450-2118`).
+  Colour reuses the existing `Modulate` (`PRIM` alone) / `TEXTURE_BLEND`
+  (`ENV` as vertex colour, `PRIM` as `sceGuTexEnvColor`) GE paths already
+  validated for meshes (RE-073/074), matching the real `G_CC_MODULATEIA_PRIM`
+  / `(PRIM-ENV)*TEXEL+ENV` combine shapes read directly from the decomp.
+  `LBPARTICLE_FLAG_NOISE`'s dither combine and the real alpha-compare
+  threshold/dither state are declined, not guessed.
+* `psp/src/main.rs` (new): `particle_view` debug mode, toggled by `C_RIGHT`
+  (free outside `stage_view`, the only place that key already means
+  something); D-pad browses the pack's flat `particle_scripts` table.
+  Spawns fresh, ticks to frame 4 (RE-172-174's convention), resolves the
+  bank-local `texture_id`/`frame_id` via the owning `ParticleBankDesc`, draws.
+  New `particle_render_audit_capture` Cargo feature boots directly into
+  script 0, mirroring `billboard_audit_capture`.
+* `cargo psp --release` and `cargo psp --release --features
+  particle_render_audit_capture` both build clean. `cargo fmt --check`
+  passes. `cargo test --workspace`: 316 `ssb-rom` tests, unaffected (no
+  library crate touched).
+* `tools/run-ppsspp.sh --no-build --seconds 8` against the audit-capture
+  build: script 0 renders as a correctly centred, soft-edged yellow sprite
+  (`tex 1084`, `tris 2`) at 60 FPS, clean application log. The same harness
+  against the default build: Dream Land unaffected, also clean/60 FPS.
+* Only script 0 checked visually. Multi-particle spawn-tree execution, the
+  `LBGenerator` subsystem, an `ENVCOLOR`/`NOISE` archive-wide census, an
+  exhaustive per-script sweep, and a real spawn event (rather than the
+  debug viewer) all remain. No physical-PSP claim; `R0.5` unaffected.
+  Implementation commit: pending.
 
 ## 2026-09-09 — R1: LBParticle pack serialization (RE-181)
 
