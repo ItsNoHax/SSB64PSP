@@ -1963,6 +1963,37 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Independent LBParticle banks live outside relocData. Decode and convert
+    // them after scene work so their frame textures append without disturbing
+    // any existing material texture indices (RE-180/181).
+    let mut particle_scripts = 0usize;
+    let mut particle_textures = 0usize;
+    let mut particle_frames = 0usize;
+    for &spec in ssb_rom::particle::BANKS {
+        let (scripts, textures) = ssb_rom::particle::decode_bank(&data, spec)
+            .map_err(|error| format!("{}: {error:?}", spec.name))?;
+        let mut frames = Vec::with_capacity(textures.len());
+        for texture in &textures {
+            let mut packed = Vec::with_capacity(texture.images.len());
+            for frame in 0..texture.images.len() {
+                packed.push(
+                    convert_particle_frame(texture, frame, swizzle).map_err(|error| {
+                        format!(
+                            "{} texture {} frame {frame}: {error}",
+                            spec.name,
+                            frames.len()
+                        )
+                    })?,
+                );
+            }
+            particle_frames += packed.len();
+            frames.push(packed);
+        }
+        writer.add_particle_bank(&scripts, &textures, &frames);
+        particle_scripts += scripts.len();
+        particle_textures += textures.len();
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -2050,6 +2081,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         ssb_rom::transition::ASSETS.len()
     );
     println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
+    println!(
+        "  particles   {} bank(s), {particle_scripts} script(s), {particle_textures} texture series, {particle_frames} frame(s)",
+        pack.particle_bank_count()
+    );
     let mat_animated_textures = (0..pack.texture_count())
         .filter_map(|i| pack.texture(i))
         .filter(|t| t.mat_anim != fmt::TextureDesc::NO_ANIM)
@@ -2098,6 +2133,70 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         println!("    object {i:<4} file {f:<5} {t} triangles");
     }
     Ok(())
+}
+
+fn convert_particle_frame(
+    texture: &ssb_rom::particle::Texture<'_>,
+    frame: usize,
+    swizzle: bool,
+) -> Result<ssb_rom::psp_texture::PspTexture, String> {
+    use ssb_rom::psp_texture as psp;
+    use ssb_rom::texture::{self, Format};
+
+    let image = texture
+        .images
+        .get(frame)
+        .ok_or_else(|| "frame out of range".to_string())?;
+    let palette_index = if texture.flags & 1 != 0 { 0 } else { frame };
+    let palette: Vec<u16> = texture
+        .palettes
+        .get(palette_index)
+        .map(|bytes| {
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|word| u16::from_be_bytes(*word))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if texture.format == Format::Ci {
+        return psp::pack_paletted(
+            image,
+            texture.width,
+            texture.height,
+            texture.size,
+            &palette,
+            swizzle,
+        )
+        .map_err(|error| format!("{error:?}"));
+    }
+    if texture.format == Format::I {
+        return psp::pack_indexed(
+            image,
+            texture.width,
+            texture.height,
+            texture.size,
+            &psp::intensity_palette(texture.size),
+            swizzle,
+        )
+        .map_err(|error| format!("{error:?}"));
+    }
+    let rgba = texture::decode(
+        image,
+        texture.width,
+        texture.height,
+        texture.format,
+        texture.size,
+        None,
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    Ok(psp::pack_rgba(
+        &rgba,
+        psp::choose_psm(texture.format, texture.size),
+        swizzle,
+    ))
 }
 
 /// Decodes and packs one texture referenced by a primitive.
@@ -2614,6 +2713,7 @@ fn effects(path: &Path) -> Res {
     let mut mat_animated = 0usize;
     let mut mat_animated_prims = 0usize;
     let mut mat_anim_errors = Vec::new();
+    let mut particle_errors = Vec::new();
 
     for (effect_index, asset) in MANAGER_EFFECT_ASSETS.iter().enumerate() {
         let found = (0..pack.object_count()).find_map(|i| {
@@ -2752,7 +2852,68 @@ fn effects(path: &Path) -> Res {
          MBallThrown left-facing table (RE-175)"
     );
     println!("controller-only descriptors: DamageSpawnOrbs, DamageSpawnSparks, DamageSpawnMDust");
-    println!("LBParticle scripts: not packed or rendered (separate R1 effect path)");
+    if (
+        pack.particle_bank_count(),
+        pack.particle_script_count(),
+        pack.particle_texture_count(),
+    ) != (9, 160, 65)
+    {
+        particle_errors.push(format!(
+            "wrong LBParticle counts: {}/{}/{}",
+            pack.particle_bank_count(),
+            pack.particle_script_count(),
+            pack.particle_texture_count()
+        ));
+    }
+    let mut particle_frames = 0u32;
+    for bank_index in 0..pack.particle_bank_count() {
+        let Some(bank) = pack.particle_bank(bank_index) else {
+            particle_errors.push(format!("bank {bank_index}: missing descriptor"));
+            continue;
+        };
+        for script_index in bank.first_script..bank.first_script + bank.script_count {
+            let Some(script) = pack.particle_script(script_index) else {
+                particle_errors.push(format!("bank {bank_index}: missing script {script_index}"));
+                continue;
+            };
+            let Some(bytecode) = pack.particle_bytecode(&script) else {
+                particle_errors.push(format!("script {script_index}: missing bytecode"));
+                continue;
+            };
+            if let Err(error) = ssb_rom::particle::inspect_bytecode(bytecode) {
+                particle_errors.push(format!("script {script_index}: {error:?}"));
+            }
+        }
+        for texture_index in bank.first_texture..bank.first_texture + bank.texture_count {
+            let Some(series) = pack.particle_texture(texture_index) else {
+                particle_errors.push(format!(
+                    "bank {bank_index}: missing texture {texture_index}"
+                ));
+                continue;
+            };
+            particle_frames += series.frame_count;
+            for frame in 0..series.frame_count {
+                let index = series.first_frame.saturating_add(frame);
+                let Some(texture) = pack.texture(index) else {
+                    particle_errors.push(format!("texture {texture_index}: missing frame {frame}"));
+                    continue;
+                };
+                if pack.texture_data(&texture).is_none() {
+                    particle_errors.push(format!("texture {texture_index}: empty frame {frame}"));
+                }
+            }
+        }
+    }
+    if particle_frames != 246 {
+        particle_errors.push(format!("wrong LBParticle frame count: {particle_frames}"));
+    }
+    println!(
+        "LBParticle pack: {}/9 banks, {}/160 scripts, {}/65 texture series, {particle_frames}/246 frames",
+        pack.particle_bank_count(),
+        pack.particle_script_count(),
+        pack.particle_texture_count()
+    );
+    println!("LBParticle runtime/renderer: not implemented");
 
     if !anim_errors.is_empty() {
         for error in &anim_errors {
@@ -2764,15 +2925,25 @@ fn effects(path: &Path) -> Res {
             eprintln!("material animation error: {error}");
         }
     }
-    if missing.is_empty() && anim_errors.is_empty() && mat_anim_errors.is_empty() {
+    if !particle_errors.is_empty() {
+        for error in &particle_errors {
+            eprintln!("particle error: {error}");
+        }
+    }
+    if missing.is_empty()
+        && anim_errors.is_empty()
+        && mat_anim_errors.is_empty()
+        && particle_errors.is_empty()
+    {
         Ok(())
     } else {
         Err(format!(
             "{} manager effect object(s) missing or empty, {} animation error(s), \
-             {} material animation error(s)",
+             {} material animation error(s), {} particle error(s)",
             missing.len(),
             anim_errors.len(),
-            mat_anim_errors.len()
+            mat_anim_errors.len(),
+            particle_errors.len()
         )
         .into())
     }
