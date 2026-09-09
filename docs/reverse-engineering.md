@@ -91,6 +91,90 @@ archive-wide prevalence (not yet measured).
 
 ---
 
+## RE-184 — Exhaustive frame-4 `LBParticle` visibility census (`PLAN.md` R1)
+
+**Problem.** RE-183 checked one script (index 0) by eye and explicitly left
+"a broader per-script sweep (like RE-173's exhaustive rest-pose audit)"
+undone. A single spot check cannot tell a genuinely broken script from one
+that happens to work, across all 160 real US ROM scripts.
+
+**Method.** Added a shared `ParticleState::visible(frame_count)` predicate
+(`crates/ssb-rom/src/particle.rs`) -- `frame_count > 0 && size > 0.0`, exactly
+the condition `psp/src/meshdraw.rs`'s existing draw path already tested
+inline -- so the PSP viewer and a new host-side census ask the identical
+question instead of two hand-written copies that could silently drift apart.
+`romtool particles <rom>` now reproduces RE-183's exact deterministic settle
+point -- `Particle::spawn`, tick 4 times with `Rng::new(1)` -- for every one
+of the 160 real scripts and reports whether each resolves a texture frame at
+that instant.
+
+**Result.** 148/160 visible. The 12 that are not split into three real
+classes, distinguished automatically rather than by a hardcoded index list:
+
+1. **1 authored zero-frame texture** (`efcommon` script 14): its texture
+   series has `frame_count == 0` by design -- RE-181 already documented
+   "EFCommon's zero-frame slot" as a real, intentional pack entry, not a
+   decode bug.
+2. **10 spawner-only scripts** (`efcommon` 26/34/38/105/112, `particles_unk0`
+   12, `particles_unk1` 0, `particles_unk2` 3, `grpupupu` 0/1): each issues at
+   least one `MAKESCRIPT`/`MAKEGENERATOR` within the first 4 ticks and never
+   sets its own size above zero. Traced each to 60 ticks (temporary, reverted
+   check) and confirmed none of them ever becomes visible on its own --
+   consistent with these being pure spawners whose own draw the original
+   never performs; only `lbGeneratorRun`'s not-yet-ported child-spawning
+   (RE-182's own declined scope, the `LBGenerator` subsystem) would ever put
+   pixels on screen for them.
+3. **1 real particle sampled at a periodic zero** (`efcommon` script 80): its
+   bytecode (`ad df 00 00 00 ff 00 43 00 a0 ...`) is a repeating
+   `SETSIZELERP`-driven pulse -- traced tick-by-tick: size is 60 at ticks
+   0-2, dips to exactly 0 at tick 3 (RE-183's own frame-4 sample point,
+   0-indexed), then rises to 75, dips to 0 again at tick 6, rises to 80, and
+   so on before the particle dies partway through the pulse train. RE-183's
+   frame-4 convention (borrowed from the unrelated manager-effect audits,
+   RE-172-174) happens to land exactly on one of this script's own troughs.
+   This is a sampling artifact of the convention, not a rendering defect --
+   the script is genuinely drawable, just not at that one instant.
+
+`romtool`'s classifier only asserts (1) and (2) automatically (a real
+`frame_count == 0`, or a nonzero `MAKESCRIPT`/`MAKEGENERATOR` count within the
+census window); it reports script 80's case as "unexplained -- needs
+individual inspection" rather than hardcoding today's one-off finding into
+code that would silently misclassify a different script after a future ROM
+or decoder change.
+
+**Verification.** New `ParticleState::visible` unit test
+(`visible_requires_positive_size_and_a_real_frame`) and a `SSB64_ROM`-gated
+regression (`real_rom_frame_4_particle_visibility_census_is_148_of_160`) pin
+the exact 148/160 split. `cargo test --workspace` with `SSB64_ROM` set: 318
+`ssb-rom` tests (was 316), full workspace green. Strict workspace Clippy
+(default and `ssb-rom --no-default-features`) and `cargo fmt --check` pass.
+`cargo psp --release` and `cargo psp --release --features
+particle_render_audit_capture` both build clean (same seven pre-existing
+linker/lint warnings as RE-183, no new ones). `tools/run-ppsspp.sh --no-build
+--seconds 8` against the default build: Dream Land unchanged, 60 FPS, clean
+log, EBOOT SHA-256
+`9c46fa78a05e9f1582beb9bc8e04f91e1a778f1e2cf42d276fa84b7fc7d9ad10`. No pack
+change; this task only added a host-side query over ROM data already decoded.
+
+**Remaining scope.** This is a host-side, ROM-decode-level census, not a
+PPSSPP screenshot sweep of all 160 scripts (RE-173's own method for the
+manager-effect table) -- doing that would additionally need per-script PSP
+D-pad automation in `tools/run-ppsspp.sh` (`--audit-particles N`, not yet
+added). Multi-particle spawn-tree execution, the `LBGenerator` subsystem
+itself, a `LBPARTICLE_FLAG_ENVCOLOR`/`NOISE` archive-wide census, and wiring
+a real spawn event all remain, per RE-182's own list, now joined by: an
+on-device screenshot sweep, and confirming script 80's periodic-trough
+explanation generalizes (or does not) to other pulsing scripts once size
+animation is looked at archive-wide.
+
+**Confidence:** high for the 148/160 split and the zero-frame-texture and
+spawner-only classifications (each independently confirmed by a 60-tick
+trace, not just the 4-tick census); high for script 80's specific
+explanation (read directly from its own bytecode and a tick-by-tick trace);
+no claim about `LBGenerator`, `ENVCOLOR`/`NOISE`, or on-device appearance.
+
+---
+
 ## RE-182 — Deterministic single-particle `LBParticle` script playback (`PLAN.md` R1)
 
 **Problem.** RE-180/181 proved every bank decodes and round-trips through the

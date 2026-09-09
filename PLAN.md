@@ -2757,11 +2757,21 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   (`particle_view`, `C_RIGHT`) and `particle_render_audit_capture` feature
   spawn+tick a selected packed script to frame 4 and draw it; verified on
   script 0 via `tools/run-ppsspp.sh` (correct centred sprite, 60 FPS, clean
-  log) with the default build's own regression scene unaffected. Only one
-  script was checked visually; an exhaustive per-script sweep, the
-  `NOISE`/dither/alpha-threshold combine cases, and a real spawn event
-  (rather than the debug viewer) all remain. Facing-dependent alternate
-  manager streams also remain before this row can close
+  log) with the default build's own regression scene unaffected. RE-184 then
+  did the host-side half of the exhaustive per-script sweep RE-183 left open:
+  a shared `ParticleState::visible` predicate and a `romtool particles`
+  census reproduce RE-183's own frame-4 settle point for all 160 real
+  scripts. 148/160 resolve a texture frame; the other 12 are classified, not
+  merely counted — 1 authored zero-frame texture series (RE-181's own
+  documented EFCommon slot), 10 spawner-only scripts that issue
+  `MAKESCRIPT`/`MAKEGENERATOR` and never draw themselves (real, pending the
+  unported `LBGenerator` subsystem), and 1 real particle whose own pulsing
+  `SETSIZELERP` animation is legitimately at zero size on exactly the sampled
+  tick (traced from its bytecode, not guessed). An on-device screenshot
+  sweep (RE-173's own method), the `NOISE`/dither/alpha-threshold combine
+  cases, `LBGenerator` itself, and a real spawn event (rather than the debug
+  viewer) all remain. Facing-dependent alternate manager streams also remain
+  before this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:

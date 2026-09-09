@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 LBParticle PSP billboard-drawing proof of concept, RE-183)
+**Last updated:** 2026-09-09 (R1 exhaustive frame-4 LBParticle visibility census, RE-184)
 
 ---
 
@@ -18,7 +18,34 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–183).
+`IN_PROGRESS` (RE-172–184).
+
+RE-184 does the exhaustive per-script sweep RE-183 explicitly left open. A
+new shared `ParticleState::visible(frame_count)` predicate
+(`crates/ssb-rom/src/particle.rs`) replaces the inline condition
+`psp/src/meshdraw.rs`'s draw path already used, so the PSP viewer and a new
+host-side census in `romtool particles <rom>` ask the identical question.
+Reproducing RE-183's own settle point (spawn, tick 4 times, `Rng::new(1)`)
+for every one of the 160 real US ROM scripts: 148/160 resolve a texture
+frame. The 12 that do not are classified, not just counted: 1 authored
+zero-frame texture series (RE-181's already-documented "EFCommon zero-frame
+slot"), 10 spawner-only scripts that issue `MAKESCRIPT`/`MAKEGENERATOR`
+within the census window and never draw themselves (real, by design -- their
+draw depends on the not-yet-ported `LBGenerator` child-spawning), and 1 real
+particle (`efcommon` script 80) whose own pulsing `SETSIZELERP` animation
+happens to sit at exactly zero size at the frame-4 sample point -- traced
+tick-by-tick from its raw bytecode, confirmed to be a sampling artifact of
+the convention rather than a defect. New unit test plus a `SSB64_ROM`-gated
+regression pin the 148/160 split; `cargo test --workspace` (318 `ssb-rom`
+tests, was 316), strict Clippy (default and `--no-default-features`),
+`cargo fmt --check`, both `cargo psp --release` builds (default and
+`particle_render_audit_capture`), and an 8-second PPSSPP run (Dream Land
+unchanged, 60 FPS, clean log) all pass. This is a host-side ROM-decode
+census, not yet an on-device screenshot sweep of all 160 scripts (RE-173's
+own method for the manager-effect table) -- `tools/run-ppsspp.sh
+--audit-particles N` is not yet added. Multi-particle spawn-tree execution,
+the `LBGenerator` subsystem, an `ENVCOLOR`/`NOISE` census, and a real spawn
+event all still remain. Evidence: RE-184.
 
 RE-183 adds the first PSP-side `LBParticle` drawing: `psp/src/meshdraw.rs::
 draw_particle` substitutes an ordinary GE 3D screen-aligned quad for
@@ -4280,6 +4307,41 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: exhaustive frame-4 LBParticle visibility census (RE-184)
+
+* `crates/ssb-rom/src/particle.rs`: new `ParticleState::visible(frame_count)`
+  (`frame_count > 0 && size > 0.0`), shared by `psp/src/meshdraw.rs`'s draw
+  gate (refactored to call it) and a new host-side census, replacing two
+  copies of the same condition with one.
+* `tools/romtool/src/main.rs`'s `particles` command: reproduces RE-183's
+  settle point (spawn, tick x4, `Rng::new(1)`) for all 160 real scripts and
+  reports visible/invisible with a classified reason per invisible script
+  (zero-frame texture, spawner-only, or "needs individual inspection").
+* Result: 148/160 visible. 1 authored zero-frame texture (RE-181's EFCommon
+  slot), 10 spawner-only scripts (issue `MAKESCRIPT`/`MAKEGENERATOR`, never
+  draw themselves -- confirmed via a temporary 60-tick trace, reverted), 1
+  real particle (`efcommon` script 80) whose own pulsing size animation is
+  exactly zero at the sampled instant (confirmed from its raw bytecode and a
+  tick-by-tick trace) -- a sampling artifact of the frame-4 convention, not a
+  defect.
+* New `visible_requires_positive_size_and_a_real_frame` unit test and
+  `SSB64_ROM`-gated `real_rom_frame_4_particle_visibility_census_is_148_of_160`
+  regression pin the split.
+* `cargo test --workspace` with `SSB64_ROM` set: 318 `ssb-rom` tests (was
+  316), full workspace green. Strict workspace Clippy (default and
+  `ssb-rom --no-default-features`) and `cargo fmt --check` pass.
+* `cargo psp --release` and `cargo psp --release --features
+  particle_render_audit_capture` both build clean (same seven pre-existing
+  warnings as RE-183, no new ones).
+* `tools/run-ppsspp.sh --no-build --seconds 8` against the default build:
+  Dream Land unchanged, 60 FPS, clean log. EBOOT SHA-256
+  `9c46fa78a05e9f1582beb9bc8e04f91e1a778f1e2cf42d276fa84b7fc7d9ad10`. No pack
+  change (host-side query over already-decoded ROM data only).
+* Not done: an on-device screenshot sweep of all 160 scripts
+  (`tools/run-ppsspp.sh --audit-particles N`, RE-173's own method, not yet
+  added), multi-particle spawn-tree execution, the `LBGenerator` subsystem,
+  and an `ENVCOLOR`/`NOISE` census. No physical-PSP claim; `R0.5` unaffected.
 
 ## 2026-09-09 — R1: LBParticle PSP billboard-drawing proof of concept (RE-183)
 
