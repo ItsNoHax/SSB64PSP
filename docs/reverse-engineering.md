@@ -155,6 +155,7 @@ linker/lint warnings as RE-183, no new ones). `tools/run-ppsspp.sh --no-build
 log, EBOOT SHA-256
 `9c46fa78a05e9f1582beb9bc8e04f91e1a778f1e2cf42d276fa84b7fc7d9ad10`. No pack
 change; this task only added a host-side query over ROM data already decoded.
+Implementation commit: `189455b`.
 
 **Remaining scope.** This is a host-side, ROM-decode-level census, not a
 PPSSPP screenshot sweep of all 160 scripts (RE-173's own method for the
