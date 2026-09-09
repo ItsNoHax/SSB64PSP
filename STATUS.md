@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 manager-effect material animation: remaining 3-table gap closed, RE-178)
+**Last updated:** 2026-09-09 (R1 manager-effect live colour playback, RE-179)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–178). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–179). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -49,18 +49,31 @@ All 297 `ssb-rom` tests, both `romtool` tests, strict Clippy, `cargo fmt
 software run shows Dream Land unaffected at 60 FPS with a clean log.
 Implementation/documentation: see `docs/reverse-engineering.md` RE-178.
 
-The next bounded step within this same task is the remaining, larger item
-RE-175 already flagged: consuming live colour-track GE state (`EffectColors`'s
-prim/env/blend/light1/light2 tracks are resolved and unit-tested but nothing
-on the device side reads them yet — vertex-baked colour has no per-primitive
-override point today). In parallel, the broader runtime `MObj` display-state
-parity gap is now explicitly tracked in `PLAN.md` R1, `docs/rendering.md`, and
-`TODO.md`: the decomp's `gcDrawMObjForDObj` default/texture-enable/UV-scale/
-translation/scroll/current-next/fractional-alpha state is not yet represented
-as one end-to-end runtime model. The independent `LBParticle` decoder/runtime
-remains unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
-Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
-the descriptor-selected variant rather than claiming both runtime branches.
+RE-179 closes RE-175's live manager-colour consumption gap at the narrowest
+renderer layer. `EffectColors` now maps animated PRIM/ENV registers onto the
+already-classified flat-colour and texture-blend sources, animated PRIM alpha
+onto transient per-corner vertex copies, and animated LIGHT_1/LIGHT_2 onto the
+existing runtime-lit GE path. Immutable shared pack vertices remain untouched;
+only a colour-animated primitive expands its indexed corners into the current
+GU display-list arena. The source-backed manager census contains 27
+colour-bearing primitive scripts: PRIM plus LIGHT_1/LIGHT_2 only; none emits
+ENV or BLEND, so BLEND needs no speculative PSP mapping for this task. The
+frame-4 PPSSPP software audit remains 24 visible/2 authored-invisible, 26
+unique headers, 60 FPS, and clean logs; Catch Swirl and Item Get Swirl captures
+change from their baked rest colours to their live frame-4 PRIM colours while
+unaffected captures remain stable. All 454 workspace tests pass (one new
+colour-source mapping regression), plus strict workspace Clippy, formatting,
+and the PSP audit release build. Evidence: RE-179.
+
+The next bounded step within this same task is the independent `LBParticle`
+script/texture-bank decoder and renderer used by dust, flame, sparkle, hit,
+and several stage effects. The broader runtime `MObj` display-state parity gap
+remains explicitly tracked in `PLAN.md` R1, `docs/rendering.md`, and `TODO.md`:
+the decomp's default/texture-enable/UV-scale/translation/scroll/current-next/
+fractional-alpha state is not yet represented as one end-to-end runtime model.
+Facing-dependent alternate Poké Ball/Kirby Entry Star streams also remain
+gameplay integration; RE-174 packs the descriptor-selected variant rather than
+claiming both runtime branches.
 
 RE-172 also corrects a real shifted file-84 material association from the
 current decomp and ROM layout: Catch Swirl `0x2760 -> 0x22B8`, Reflect Break
@@ -269,10 +282,11 @@ The captures remain outside Git under
 R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
 The user's temporary hardware deferral permits independent software-only R1
 work; it does not mark R0 complete or unlock R3/combat. The next eligible task
-is manager-effect material `AObjEvent32` playback. Relevant R1 commits: `d68f199`
+is the independent `LBParticle` effect runtime. Relevant R1 commits: `d68f199`
 (stages), `4964a97` (fighters/costumes), `e85aa19` (animations), `826c02a`
 (sparse animation lookup), `dc8043b` (effect packing), and `e6bfc23` (effect
-rest-pose audit), and `c845a5e` (effect transform playback/audit).
+rest-pose audit), `c845a5e` (effect transform playback/audit), and `b249051`
+(manager-effect live colour playback).
 
 RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
@@ -3820,13 +3834,12 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**Resume `R1 — all required effects render`.** RE-172–174 complete the
-source-backed static-manager inventory, packing, and exhaustive PPSSPP
-rest-pose capture for all 46 display-bearing assets, plus packing, host replay,
-and PPSSPP frame-4 capture of all 35 descriptor-selected transform animations.
-Next, pack and play their material `AObjEvent32` tables, then investigate the
-separate `LBParticle` script and texture-bank format. The user explicitly
-deferred unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
+**Resume `R1 — all required effects render`.** RE-172–179 complete the
+source-backed static-manager inventory, packing, exhaustive PPSSPP capture,
+transform animation, material animation, sprite selection, and live colour
+playback for all 46 display-bearing manager assets. Next, investigate and
+implement the separate `LBParticle` script and texture-bank format. The user
+explicitly deferred unavailable physical-PSP work on 2026-09-09. R0.5 remains
 `VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
 complete, begin R3, or unlock combat.
 
@@ -4185,6 +4198,24 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: manager-effect live colour playback (RE-179)
+
+* Source-backed frame-4 census: 27 manager-effect primitive scripts carry
+  colours. All use PRIM; Damage Slash, Reflect Break, Link Entry Wave and Link
+  Entry Beam additionally use LIGHT_1/LIGHT_2. None uses ENV or BLEND.
+* `EffectColors` maps live PRIM/ENV state onto RE-073/080's existing
+  texture-blend/flat-colour sources and live light state onto the existing GE
+  runtime-lit path. Colour-animated primitives use transient expanded corners;
+  static packed draws stay indexed and zero-copy.
+* Focused regression test and all 454 workspace tests pass. Strict workspace
+  Clippy and both formatting checks pass. PSP audit release build succeeds.
+* PPSSPP software material audit: 26/26 unique headers, 24 visible, two
+  authored-invisible, 60 FPS, clean log. Catch Swirl and Item Get Swirl change
+  from their baked rest colours to frame-4 PRIM colours. Manifest SHA-256:
+  `9b22719b331a963e2ddb1a636e25f4ec8da72f50906a3a300fd58b252b3cd503`.
+  Implementation commit: `b249051`.
+* Physical PSP validation remains deferred; R0.5/R2 status unchanged.
 
 ## 2026-09-09 — R1: manager-effect material animation packing (RE-175)
 

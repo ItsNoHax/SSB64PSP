@@ -2711,10 +2711,17 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   MBallThrown's real 4-node DObj tree's own generic `gcAddMatAnimJointAll`
   walk never dereferences the one table slot (of 5) that holds a real script,
   by the source's own `DOBJ_ARRAY_MAX` terminator/cursor-advance semantics.
-  Live colour-track GE state (resolved and unit-tested, not yet consumed by
-  the renderer), facing-dependent alternate streams, and the separate
-  `LBParticle` script/texture-bank renderer all remain before this row can
-  close
+  RE-179 consumes live manager-effect colour tracks on the PSP: PRIM updates
+  flat-colour vertices, texture-blend targets and per-corner alpha; ENV updates
+  texture-blend base vertices; LIGHT_1/LIGHT_2 override the existing runtime-lit
+  GE state. Transient unindexed copies preserve immutable shared pack vertices.
+  The source-backed manager census finds 27 colour-bearing primitive scripts,
+  all using PRIM and optionally LIGHT_1/LIGHT_2; none uses ENV or BLEND. A
+  frame-4 PPSSPP software audit remains 24 visible/2 authored-invisible at 60
+  FPS with 26 unique headers and clean logs, while Catch Swirl and Item Get
+  Swirl now differ from their baked rest colours as their scripts require.
+  Facing-dependent alternate streams and the separate `LBParticle`
+  script/texture-bank renderer remain before this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
