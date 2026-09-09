@@ -2283,17 +2283,18 @@ impl<'a> Pack<'a> {
 
     /// The animation a fighter plays for a movement status, if the pack has it.
     ///
-    /// The table is dense and ordered `(fighter, slot)`, so this is arithmetic
-    /// rather than a search — but the entry's own `fighter` and `slot` are
-    /// checked, so a pack built some other way cannot quietly return the wrong
-    /// animation.
+    /// This table is ordered but sparse: the original motion tables contain
+    /// null placeholders where a character lacks a move (for example Kirby's
+    /// aerial jump), and the pack does not emit rows for those placeholders.
+    /// Scan for the exact pair instead of treating `fighter * slots + slot` as
+    /// an index (RE-171).
     pub fn fighter_anim(&self, fighter: u32, slot: u32) -> Option<AnimDesc> {
-        let slots = crate::anim::SLOT_COUNT as u32;
-        if slot >= slots {
+        if slot >= crate::anim::SLOT_COUNT as u32 {
             return None;
         }
-        let a = self.anim(fighter * slots + slot)?;
-        (a.fighter == fighter && a.slot == slot).then_some(a)
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == fighter && a.slot == slot)
     }
 
     /// A stage's joint animation, if it has one.
@@ -3966,29 +3967,22 @@ mod tests {
         assert_eq!(b.script, 0x200);
     }
 
-    /// `fighter_anim` finds a row by arithmetic, so the fighter entries must
-    /// be a dense block starting at index 0. Stage animations share the table
-    /// and are appended after it; writing one first shifts every fighter
-    /// animation by a row and the fighter silently gets someone else's
-    /// skeleton — which showed up only as a triangle count (RE-051).
+    /// Fighter motion tables are sparse, and stage animations share the table.
+    /// Lookup must select the exact fighter/slot pair across both facts.
     #[test]
-    fn a_stage_animation_does_not_displace_the_fighter_block() {
+    fn fighter_lookup_crosses_sparse_and_stage_rows() {
         let mut w = PackWriter::new();
-        let slots = crate::anim::SLOT_COUNT as u32;
-        for slot in 0..slots {
-            w.add_anim(0, slot, 300, 10, &[0u8; 8], &[(Some(0), Some(0))]);
-        }
+        w.add_anim(0, 0, 300, 10, &[0u8; 8], &[(Some(0), Some(0))]);
         w.add_anim(AnimDesc::STAGE, 7, 104, 0, &[0u8; 8], &[(Some(0), Some(0))]);
+        // Fighter 0 slot 1 and fighter 1 slot 0 are intentionally absent.
+        w.add_anim(1, 1, 301, 11, &[0u8; 8], &[(Some(0), Some(0))]);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
 
-        for slot in 0..slots {
-            let a = pack
-                .fighter_anim(0, slot)
-                .unwrap_or_else(|| panic!("fighter 0 slot {slot} must resolve"));
-            assert_eq!(a.fighter, 0);
-            assert_eq!(a.slot, slot);
-        }
+        assert_eq!(pack.fighter_anim(0, 0).unwrap().source_file, 300);
+        assert_eq!(pack.fighter_anim(0, 1), None);
+        assert_eq!(pack.fighter_anim(1, 0), None);
+        assert_eq!(pack.fighter_anim(1, 1).unwrap().source_file, 301);
         let s = pack
             .stage_anim(7)
             .expect("the stage entry is still findable");
