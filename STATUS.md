@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (RE-167)
+**Last updated:** 2026-09-09 (RE-168)
 
 ---
 
@@ -12,24 +12,28 @@
 
 ## Current Task
 
-`R0.6 — Material System Correctness`: re-run the source-indexed primitive/
-environment-colour census now that every discovered material table resolves.
+`R0.5 — Texture Filtering / LOD / Mipmapping`: validate the remaining Dream
+Land canopy sampling discrepancy on physical PSP hardware.
 
 ## Task Status
 
-`IN_PROGRESS`. RE-167 completes the original-game comparison requested by
-RE-166. The matched Dream Land Wait view exposed a real combiner boundary:
-runtime GE lighting ignored the packed vertex colour into which RE-106 folded
-Mario's `PRIMITIVE * SHADE` costume scale. The PSP now applies that already
-source-resolved scale as ambient/diffuse GE material colour, restoring red
-clothing and blue overalls without a tuned colour or brightness floor. Two
-deterministic captures are byte-identical and the golden is refreshed to
-`4d4ca4628c46884f1a50b8669a146c90d383e3d7ddda6f6e97a629bdd9fdf93b`.
-All 436 workspace tests, strict Clippy, and camera-audit/regression PSP builds
-pass; PPSSPP software runs at 60 FPS with clean logs. Physical PSP remains R2.
-R0.6 lighting is now checked; the next bounded work is its explicitly queued
-post-RE-163 primitive/environment-colour census. Relevant commit: this work's
-`render: preserve lit combiner color scale` commit.
+`VERIFYING`. RE-168 completes R0.6's queued post-RE-163 combiner census.
+The source-attributed current-pack sample accepts 65,000/65,199 emitted
+triangle visits (99.695%). Its former 3,085 missing-constant explanation
+collapses to 13 texture-bound visits: four ordinary-shield and two
+Yoshi-shield triangles whose original display callbacks inject live colours,
+plus seven file-114 triangles in non-stage orphan graphs found only by broad
+discovery. No missing material table or static converter fix remains. Both
+instrumented packs are byte-identical to staged pack v23; the instrumentation
+was reverted. R0.6 and the already-fully-checked R0.4 are now `COMPLETE`.
+
+The first remaining ordered R0 acceptance item is R0.5's Dream Land canopy
+comparison. RE-053/067/070/075/081/124/127 have exhausted the ROM, combiner,
+filtering, LOD, mirror and blur hypotheses; `PLAN.md` records physical PSP
+validation as necessary to distinguish PPSSPP software-renderer behaviour.
+No further parameter tuning is evidence-supported. Relevant commits:
+`9b44173 render: preserve lit combiner color scale`; RE-168 documentation in
+this work's `docs: close material color census` commit.
 
 RE-166 corrects a source-state loss in RE-165's runtime-lighting
 path: `G_MW_LIGHTCOL` is independent of material flags and an authored zero is
@@ -3155,7 +3159,14 @@ fix could reach.
 
 ## Last Completed Task
 
-`R0.7`-adjacent (RE-078, previous session) extended RE-077's method
+`R0.6 — Material System Correctness` is `COMPLETE` (RE-168). The current-pack
+combiner census source-identifies every residual primitive/environment-colour
+absence as runtime-injected shield state or non-authoritative discovery, not
+an unresolved table. All R0.6 acceptance items are checked. R0.4 is also
+corrected to `COMPLETE`; its acceptance list had already been fully checked
+since RE-162.
+
+Historical completed-task record follows. `R0.7`-adjacent (RE-078) extended RE-077's method
 archive-wide instead of stopping after Kirby's one fix. Ran
 `ssb_rom::mobj::search_tables` over all 63 graphs R0.7 still had no
 table for; 13 came back with exactly one demand-matching candidate
@@ -3549,7 +3560,12 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
+**`R0.5 — Dream Land canopy discrepancy` is the first remaining ordered R0
+item.** It is `VERIFYING`, pending a physical-PSP comparison; existing evidence
+has eliminated further source-side filtering, LOD, mirror, coordinate and blur
+hypotheses. Do not tune the texture from PPSSPP appearance alone.
+
+Historical eligibility record follows. **`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
 full history in `PLAN.md`'s own R0.10 section and this file's Task Status
 above — engine decoded and tested, pipeline wired end to end, all 33
 known real scripts survive packing, `MaterialAnimator` ships and is
@@ -3722,7 +3738,9 @@ untyped set. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 
-None currently open. The PPSSPP black screen below is resolved.
+R0.5's final canopy acceptance criterion requires a physical PSP capture. No
+physical PSP was available in this session, and PPSSPP cannot establish the
+real GE sampling result. The historical PPSSPP black screen below is resolved.
 
 ### Resolved: PPSSPP black screen
 

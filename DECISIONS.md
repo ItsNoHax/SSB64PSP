@@ -306,7 +306,7 @@ The matched original Dream Land comparison restores Mario's red/blue costume
 semantics without a brightness approximation. Exact cross-renderer pixels are
 not claimed, and physical PSP validation remains R2.
 
-**Reference:** RE-024, RE-065, `TODO.md` Phase D (majority-vote lighting heuristic — the *shading-detection* heuristic, RE-021 — still not removed; the *direction* is now measured, not guessed)
+**Reference:** RE-024, RE-065, RE-103/105, RE-164–168, `TODO.md` Phase D
 
 ---
 
