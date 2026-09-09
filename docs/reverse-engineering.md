@@ -10,6 +10,144 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-176 — Manager-effect material AObjEvent32 texture-swap consumption on the PSP renderer (`PLAN.md` R1)
+
+**Problem.** RE-175 packed the manager effects' material `AObjEvent32` tables
+(`PrimDesc.mat_anim`, `MatAnimDesc` sprite variants, `EffectMaterialAnimator`)
+and verified them entirely host-side (`romtool effects`, the ROM-free test
+suite). `psp/src/meshdraw.rs` never read `PrimDesc.mat_anim` at all, so no
+manager effect's animated sprite swap reached the PPSSPP/PSP renderer.
+`STATUS.md` named the bounded next step explicitly: texture swap first, since
+it reuses `TextureDesc.mat_anim`'s already-proven CLUT-override binding path;
+live colour-track GE state is a separate design question, left untouched here.
+
+**Implementation.** Threaded a new `effect_mat_anim: Option<&EffectMaterialAnimator>`
+parameter alongside the existing pack-lifetime `mat_anim: Option<&MaterialAnimator>`
+through `apply_material`/`draw_mesh`/`draw_object_posed_filtered`/
+`draw_object_posed`/`draw_object_node`/`draw_object`. `apply_material` resolves
+an effective texture index — `effect_mat_anim.resolved_texture(pack,
+p.mat_anim)`, falling back to `p.texture` when unresolved or absent — before
+the existing bind/dedup logic, so a swapped sprite reuses the same
+`bind_texture` path (UV scale, wrap, mip upload) an ordinary static texture
+already gets. A new `effect_material_audit_capture` Cargo feature and
+`--audit-effect-materials N` `tools/run-ppsspp.sh` flag mirror RE-174's
+transform-audit structure exactly: cycle through the 26 objects whose
+`MANAGER_EFFECT_MAT_ANIM_JOINTS` entry is non-NULL, restart
+`EffectMaterialAnimator` against the object's own bound `PrimDesc.mat_anim`
+indices on selection, tick to the same deterministic frame 4 RE-175's own
+`romtool effects` audit already measured Link Spin Attack's alpha ramp
+against, and capture.
+
+**A real bug found and fixed during verification, not a texture-swap defect.**
+The first capture run showed three of 26 objects blank at frame 4: index 9
+(NessPKFlash) and index 23 (LinkSpinAttack) were expected — both are the same
+authored rest-invisible cases RE-173/175 already established for this table —
+but index 20 (NessPKThunderWave) was not, and RE-173's own plain rest-pose
+audit (no animation at all) had already captured this exact object visibly
+(centre SD 0.25). A reversible on-device experiment — temporarily forcing
+`effective_texture` to always equal `p.texture`, disabling only the swap while
+leaving `effect_mat_anim` fully wired — reproduced the identical blank result,
+proving the regression had nothing to do with which texture was bound. The
+actual cause: RE-174 already fixed a fixed 0.45-radian oblique camera angle
+for `effect_animation_audit_capture` specifically because a free-drifting
+`spin += 0.02`-per-frame debug-viewer camera can, by chance, present a
+`CULL_BACK`, non-billboard single-sided card exactly edge-on or back-face to
+the camera. That fix was never extended to the new
+`effect_material_audit_capture` feature, so the same failure mode reappeared
+under a different build flag — a harness/camera-determinism bug, not a
+rendering-pipeline defect. Fixed by adding
+`effect_material_audit_capture` to both of RE-174's existing
+`cfg!(any(...))` spin gates (the fixed initial angle and the free-drift
+suppression) in `psp/src/main.rs`.
+
+**Verification.** With the spin fix applied, `tools/run-ppsspp.sh
+--audit-effect-materials 26` captures 24/26 objects with measurable frame-4
+content and the same 2 (NessPKFlash, LinkSpinAttack) correctly rest-invisible,
+matching RE-173's own established exceptions for this pair. All 26 identity
+headers are unique and the PPSSPP log is clean. EBOOT SHA-256
+`bfb47896576e2c3c1d7a8f430d6ef8d300fb87550709102b739bc44747293d10`; pack
+SHA-256 (unchanged from RE-175, no pack-format change here)
+`7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`. Captures
+remain outside Git at `/home/alberto/ppsspp-test/effect-material-audit/`. The
+pre-existing `effect_animation_audit_capture` (RE-174, 35/35 unique, transform
+playback) and the default, non-audit build (Dream Land, non-blank, no error/
+panic in the PPSSPP log) were re-verified unaffected by the same run. All 451
+workspace tests, strict workspace Clippy (`-D warnings`), `cargo fmt --all --
+--check` (root and `psp/`), `bash -n tools/run-ppsspp.sh`, and the default PSP
+release build (valid `EBOOT.PBP`, the same pre-existing six linker warnings)
+pass. PPSSPP was confirmed terminated after every run (`pgrep -f PPSSPPSDL`).
+
+This wires texture-id swap consumption only. The remaining 9/26 tables RE-175
+found with no resolvable texture at pack time, live colour-track GE state
+(`EffectColors`'s prim/env/blend/light1/light2 tracks — `resolved_colors` is
+implemented and unit-tested but nothing on the device side reads it yet), and
+the independent `LBParticle` runtime all remain open. No physical-PSP claim is
+made.
+
+**Confidence: high for the texture-swap wiring, the spin-determinism fix, and
+the 24/26 + 2 rest-invisible verification; no claim for colour-track state,
+the 9 unresolved tables, or hardware.**
+
+---
+
+## RE-175 — Manager-effect material `AObjEvent32` tables pack and host-replay (`PLAN.md` R1)
+
+**Problem.** RE-174 packed and replayed the 35 manager effects' *transform*
+`AObjEvent32` streams, but 26 of the 46 unique display assets also name a
+non-NULL `EFDesc.o_matanim_joint` table — a second, independent script family
+driving per-primitive material state (sprite/texture-id swap, palette cycling,
+or colour ramps) rather than node transforms. Without it, effects whose
+visibility depends on this stream — Link Spin Attack's primitive alpha
+ramping from an authored zero, most concretely — never appear, and no sprite-
+swap or colour-ramp manager effect reproduces its original material behaviour.
+
+**Original evidence.** `gcPlayMObjMatAnim`'s real formula interpolates a
+`Kind::Linear` colour track channel-wise (not only the `Kind::Step` case
+RE-089–091's texture-palette cycling needed), and a manager effect's material
+script restarts at spawn/selection (`gcAddMObjMatAnimJoint`/
+`gcParseMObjMatAnimJoint`), not once at pack load like a stage layer's
+pack-lifetime palette cycle. Several primitives — Link Spin Attack's inner
+`AObjEvent32 *[5]` table names the same script from every non-null slot — 
+commonly share one script rather than needing one each.
+
+**Implementation.** Pack format v24 adds `PrimDesc.mat_anim` (a primitive-
+level animation attachment, independent of `TextureDesc.mat_anim`'s
+texture-keyed palette cycling, since an untextured colour script has no
+texture to key off) and grows `MatAnimDesc` with up to eight resolved sprite
+(texture-id) variants. `MaterialJoint::track_color` now interpolates
+`Kind::Linear` colour tracks channel-wise. `resolve_layer_mat_anims`
+(`romtool`) generalizes into a shared resolver for both stage layers and the
+26 non-NULL manager `o_matanim_joint` tables, detecting palette-, texture-id-,
+and colour-track scripts (previously palette-only). A new
+`EffectMaterialAnimator` restarts and ticks only a spawned effect's own
+`MatAnimDesc` entries, mirroring `StageAnimator`'s per-object restart boundary
+instead of `MaterialAnimator`'s pack-lifetime clock.
+
+**Verification.** Against the real ROM, `romtool effects` resolves 17/26
+material tables (34 bound primitive scripts) and confirms Link Spin Attack's
+authored frame-zero primitive alpha of zero measurably ramps up by frame 4.
+The other 9 (ImpactWave, CommonSpark, DamageFlyMDust, ShockSmall, PikachuUnk,
+FalconKick, FalconPunch, MBallThrown, YoshiEntryEgg) decode cleanly but their
+material-animation-carrying `MObj` resolves no texture on its own primitive at
+pack time — an unresolved gap needing per-file source tracing, not fixed here.
+All 295 `ssb-rom`/`romtool` tests, strict Clippy, formatting, the `no_std`
+target build, and the pinned-nightly PSP release build (`EBOOT.PBP`, valid PBP
+magic) pass. Rebuilt pack SHA-256
+`7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`.
+Implementation commit: `2456eea`.
+
+This is pack-format and host-side work only, verified by `romtool effects` and
+the ROM-free test suite — `psp/src/meshdraw.rs` did not yet consume
+`PrimDesc.mat_anim` at all (see RE-176). The 9-table gap, live colour-track GE
+state, and facing-dependent alternate streams (Poké Ball, Kirby Entry Star)
+remain open.
+
+**Confidence: high for the 17 resolved tables, the pack/host-replay pipeline,
+and the Link Spin Attack alpha-ramp verification; no claim for the 9
+unresolved tables or the device-side render path.**
+
+---
+
 ## RE-174 — Manager-effect transform AObjEvent32 streams pack and replay (`PLAN.md` R1)
 
 **Problem.** RE-173 bounded and rendered the manager's static/rest objects, but
