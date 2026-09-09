@@ -175,6 +175,35 @@ is scoped as ongoing work under this same document rather than a new
 `compare-screenshot.sh`) already generalises to any of them once a
 suitable frame is identified.
 
+## R1 exhaustive stage-render audit
+
+R1's "all stages render" row uses a broad smoke audit in addition to the
+single deterministic golden above. Run:
+
+```
+tools/run-ppsspp.sh --no-build --seconds 3 --audit-stages 41
+```
+
+After the initial warm-up, the harness captures the normal stage viewer,
+sends one right-D-pad input, waits one second for the next stage to settle,
+and repeats in stable pack order. It uses `xdotool` when installed and the
+in-repository Python X11 fallback otherwise. Output is written outside Git to
+`$PPSSPP_TEST_DIR/stage-audit/`; `manifest.txt` records the Git revision,
+backend, EBOOT/pack hashes, requested stage count and every PNG hash. This is
+an exhaustive PPSSPP smoke audit, not a new golden suite: stage animations and
+the live diagnostic HUD make exact cross-run pixel equality neither expected
+nor required.
+
+RE-170 executed this for all 41 packed stages under PPSSPP's software
+rasterizer. All 41 captures were nonblank and had distinct SHA-256 hashes;
+the HUD advanced from stage 0/file 255 through stage 40/file 295, every frame
+showed 60 FPS, and the emulator log had no error/failure/panic/rejection
+lines. EBOOT / pack SHA-256:
+`2180df75b52b1f041a8d55ee280f02eb54db4e21c6f22383c1c225ec23dda236` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+This closes the software-side R1 stage row only; it is not physical PSP
+evidence and does not resolve R0.5.
+
 ## Evidence
 
 Executed once end-to-end for capture source 1 (PPSSPP software rendering).

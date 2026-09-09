@@ -3,6 +3,7 @@
 # Build and run the PSP executable under PPSSPP, capturing a screenshot.
 #
 #   tools/run-ppsspp.sh [--no-build] [--backend software|opengl] [--seconds N]
+#                        [--audit-stages N]
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -76,19 +77,31 @@ OUT="${PPSSPP_TEST_DIR:-$HOME/ppsspp-test}"
 BACKEND=software
 SECONDS_TO_RUN=12
 BUILD=1
+AUDIT_STAGES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --backend)  BACKEND="$2"; shift 2 ;;
     --seconds)  SECONDS_TO_RUN="$2"; shift 2 ;;
+    --audit-stages) AUDIT_STAGES="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
 
+case "$AUDIT_STAGES" in
+  ''|*[!0-9]*) echo "--audit-stages needs a non-negative integer" >&2; exit 2 ;;
+esac
+
 for tool in flatpak wmctrl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
+if [ "$AUDIT_STAGES" -gt 0 ]; then
+  if ! command -v xdotool >/dev/null && ! python3 -c 'import Xlib' 2>/dev/null; then
+    echo "--audit-stages requires xdotool or Python Xlib to advance the PSP D-pad" >&2
+    exit 1
+  fi
+fi
 
 # At least one capture tool has to exist. `import` is preferred because it can
 # grab a single window; the rest capture the whole screen, which still shows
@@ -263,6 +276,15 @@ interruptible_sleep() {
   SLEEP_PID=""
 }
 
+send_right() {
+  local win="$1"
+  if command -v xdotool >/dev/null; then
+    xdotool key --window "$win" Right
+  else
+    python3 "$REPO/tools/send-x11-key.py" "$win" Right
+  fi
+}
+
 # Trailing `|| true` matters: `grep` exits non-zero when nothing matches, which
 # is the normal case when no PPSSPP is open, and `set -euo pipefail` would turn
 # that into a silent fatal exit before any output.
@@ -295,7 +317,46 @@ echo "==> window $WIN; running ${SECONDS_TO_RUN}s"
 
 interruptible_sleep "$SECONDS_TO_RUN"
 
-if TOOL=$(capture "$WIN" "$OUT/screenshot.png"); then
+if [ "$AUDIT_STAGES" -gt 0 ]; then
+  AUDIT_OUT="$OUT/stage-audit"
+  mkdir -p "$AUDIT_OUT"
+  rm -f "$AUDIT_OUT"/stage-*.png
+  echo "==> capturing $AUDIT_STAGES stages in pack order"
+  AUDIT_FAILED=0
+  for ((i = 0; i < AUDIT_STAGES; i++)); do
+    printf -v AUDIT_FILE '%s/stage-%02d.png' "$AUDIT_OUT" "$i"
+    if TOOL=$(capture "$WIN" "$AUDIT_FILE"); then
+      echo "==> stage $i: $AUDIT_FILE (via $TOOL)"
+    else
+      echo "warning: stage $i capture failed" >&2
+      AUDIT_FAILED=1
+    fi
+    if [ "$i" -lt $((AUDIT_STAGES - 1)) ]; then
+      # The viewer starts at stage zero and maps keyboard arrows to the PSP
+      # D-pad under PPSSPP's default desktop profile. Focus first: sending a
+      # key to an unfocused SDL window was observed to be ignored on X11.
+      wmctrl -i -a "$WIN"
+      send_right "$WIN"
+      interruptible_sleep 1
+    fi
+  done
+  [ "$AUDIT_FAILED" -eq 0 ] || exit 1
+  {
+    echo "commit=$(git -C "$REPO" rev-parse HEAD)"
+    echo "backend=$BACKEND"
+    echo "stage_count=$AUDIT_STAGES"
+    echo "eboot_sha256=$(sha256sum "$EBOOT" | awk '{print $1}')"
+    if [ -f "$PACK" ]; then
+      echo "pack_sha256=$(sha256sum "$PACK" | awk '{print $1}')"
+    else
+      echo "pack_sha256=absent"
+    fi
+    echo "captures:"
+    sha256sum "$AUDIT_OUT"/stage-*.png | sed "s|$AUDIT_OUT/||"
+  } > "$AUDIT_OUT/manifest.txt"
+  echo "==> manifest: $AUDIT_OUT/manifest.txt"
+  echo "==> stage audit: $AUDIT_OUT"
+elif TOOL=$(capture "$WIN" "$OUT/screenshot.png"); then
   echo "==> screenshot: $OUT/screenshot.png (via $TOOL)"
 else
   # Name the likely cause instead of leaving it to be guessed. The window's

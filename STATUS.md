@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (RE-169)
+**Last updated:** 2026-09-09 (RE-170)
 
 ---
 
@@ -8,16 +8,36 @@
 
 ## Current Milestone
 
-`R0 — Rendering Correctness`
+`R1 — Rendering Completeness` (software-only work while R0.5's physical test
+is temporarily deferred by explicit user direction)
 
 ## Current Task
 
-`R0.5 — Texture Filtering / LOD / Mipmapping`: validate the remaining Dream
-Land canopy sampling discrepancy on physical PSP hardware.
+`R1 — all stages render`: automate and execute an exhaustive PPSSPP stage
+render audit.
 
 ## Task Status
 
-`VERIFYING`. RE-168 completes R0.6's queued post-RE-163 combiner census.
+`COMPLETE` (RE-170). `tools/run-ppsspp.sh --audit-stages 41` now advances the
+existing viewer through stable pack order and captures every stage in one
+PPSSPP run. The run produced 41/41 nonblank, unique screenshots; their HUDs
+identify indices 0–40 and source files 255–295, every capture displayed 60
+FPS, and the PPSSPP log contained no error/failure/panic/rejection lines. The
+external manifest records EBOOT SHA-256
+`2180df75b52b1f041a8d55ee280f02eb54db4e21c6f22383c1c225ec23dda236`
+and pack SHA-256
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+The captures remain outside Git under
+`/home/alberto/ppsspp-test/stage-audit/`; manifest SHA-256 is
+`61997fa1cfdf0588de2cf0a17e385339c58eb1413d763acbef0b4c9d8738f7f0`.
+
+R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
+The user's temporary hardware deferral permits independent software-only R1
+work; it does not mark R0 complete or unlock R3/combat. The next eligible task
+is R1's `all fighters render` audit. Relevant commit: the current
+`test: automate exhaustive stage render audit` commit.
+
+RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
 triangle visits (99.695%). Its former 3,085 missing-constant explanation
 collapses to 13 texture-bound visits: four ordinary-shield and two
@@ -3572,10 +3592,11 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R0.5 — Dream Land canopy discrepancy` is the first remaining ordered R0
-item.** It is `VERIFYING`, pending a physical-PSP comparison; existing evidence
-has eliminated further source-side filtering, LOD, mirror, coordinate and blur
-hypotheses. Do not tune the texture from PPSSPP appearance alone.
+**`R1 — all fighters render` is the next eligible software-only task.** The
+user explicitly deferred unavailable physical-PSP work on 2026-09-09. R0.5
+therefore remains `VERIFYING`; do not tune the canopy from PPSSPP appearance,
+mark R0/R1 complete, begin R3, or unlock combat. RE-170 completed R1's first
+acceptance row by capturing all 41 stages in one PPSSPP software audit.
 
 Historical eligibility record follows. **`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
 full history in `PLAN.md`'s own R0.10 section and this file's Task Status
@@ -3750,12 +3771,14 @@ untyped set. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 ## Blockers
 
-R0.5's final canopy acceptance criterion requires a physical PSP capture. No
-physical PSP was available in this session, and PPSSPP cannot establish the
-real GE sampling result. RE-169 removes stale-build/provenance ambiguity from
-the future hardware run; invoke `tools/stage-psp-regression.sh
-<psp-mount-root>` once the PSP is connected. The historical PPSSPP black screen
-below is resolved.
+R0.5's final canopy acceptance criterion requires a physical PSP capture. The
+user has no hardware access at present and explicitly asked to defer it. R0.5
+remains `VERIFYING`; PPSSPP cannot establish the real GE sampling result.
+RE-169 removes stale-build/provenance ambiguity from the future hardware run;
+invoke `tools/stage-psp-regression.sh <psp-mount-root>` once the PSP is
+connected. Meanwhile only independent software R1 work may proceed; rendering
+gate completion, R3 and combat remain blocked. The historical PPSSPP black
+screen below is resolved.
 
 ### Resolved: PPSSPP black screen
 
@@ -3930,6 +3953,21 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: exhaustive stage-render audit (RE-170)
+
+* `bash -n tools/run-ppsspp.sh` — pass.
+* Python Xlib fallback usage/error path — pass; the current host used this
+  fallback because `xdotool` is absent.
+* Three-stage PPSSPP software smoke audit — pass; viewer/HUD advanced 0→1→2.
+* Full `--audit-stages 41` PPSSPP software audit — pass twice; 41/41 nonblank,
+  unique captures, 60 FPS shown throughout, no error-class log lines; the two
+  runs produced the same manifest SHA-256.
+* `cargo +1.98.0 test --workspace --all-targets` — pass, 436 tests (36 engine,
+  118 game, 282 ROM).
+* `cargo +1.98.0 clippy --workspace --all-targets -- -D warnings` — pass.
+* Physical PSP — intentionally not run; user temporarily deferred unavailable
+  hardware. R0.5/R2 remain unsatisfied.
 
 ## 2026-09-03 — R0.6: fog verified as correctly unimplemented (RE-072)
 

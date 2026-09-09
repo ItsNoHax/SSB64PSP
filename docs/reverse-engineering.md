@@ -10,6 +10,42 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-170 — Exhaustive PPSSPP stage audit makes R1's first row reproducible (`PLAN.md` R1)
+
+**Problem.** The pack and viewer could enumerate all 41 stages, but R1's "all
+stages render" criterion had no exhaustive visual evidence. Prior screenshots
+covered selected stages, and interactively pressing right 40 times left no
+artifact/provenance trail.
+
+**Implementation.** `tools/run-ppsspp.sh --audit-stages N` now captures the
+normal viewer, advances its right D-pad once per second, and writes every
+frame under `$PPSSPP_TEST_DIR/stage-audit/`. It records the Git revision,
+backend, EBOOT/pack hashes, stage count and every screenshot hash in a
+manifest. `tools/send-x11-key.py` supplies a Python-Xlib fallback when
+`xdotool` is unavailable; the existing harness still owns focus, blank-image
+detection, bounded capture and reliable PPSSPP cleanup.
+
+**Verification.** A three-stage smoke run first confirmed that the synthetic
+input really advanced 0→1→2 rather than merely creating three timed copies.
+The full software-rasterizer run then produced 41/41 nonblank screenshots,
+all with unique SHA-256 hashes. Visual contact-sheet review confirmed the HUD
+sequence stage 0/file 255 through stage 40/file 295 and visible geometry in
+every frame; every capture showed 60 FPS. The PPSSPP log contains no
+error/failure/panic/rejection lines. EBOOT / pack SHA-256:
+`2180df75b52b1f041a8d55ee280f02eb54db4e21c6f22383c1c225ec23dda236` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+The external manifest SHA-256 is
+`61997fa1cfdf0588de2cf0a17e385339c58eb1413d763acbef0b4c9d8738f7f0`.
+
+This closes R1's software "all stages render" row. It does not compare stage
+pixels with the original, count as physical PSP validation, resolve R0.5, or
+unlock later rendering gates.
+
+**Confidence: high for PPSSPP software render coverage; no physical-hardware
+claim.**
+
+---
+
 ## RE-169 — Deterministic physical-PSP staging closes the stale-build hole (`PLAN.md` R0.5)
 
 **Problem.** R0.5's final canopy check requires physical PSP evidence, but the
