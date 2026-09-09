@@ -111,6 +111,7 @@ impl ResultsTransition {
             None,
             state,
             None,
+            None,
             0,
         )
     }

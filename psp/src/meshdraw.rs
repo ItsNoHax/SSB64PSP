@@ -442,6 +442,7 @@ unsafe fn apply_material(
     p: &PrimDesc,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
     if st.last_flags != Some(p.flags) {
         st.last_flags = Some(p.flags);
@@ -582,10 +583,25 @@ unsafe fn apply_material(
         }
     }
 
-    if st.last_texture != Some(p.texture) {
-        st.last_texture = Some(p.texture);
+    // `PrimDesc.mat_anim` (RE-175): a manager-effect script can swap which
+    // sprite a primitive samples (`MatAnimDesc::textures`), independent of
+    // `TextureDesc.mat_anim`'s texture-keyed palette cycling above -- this
+    // one is keyed by the primitive, since an untextured colour script and a
+    // sprite-swapping one can both attach to the same `MatAnimDesc` index.
+    // Texture swap only for now; live colour-track GE state is a separate,
+    // harder design question (STATUS.md) left for a later step.
+    let effective_texture = if p.mat_anim != TextureDesc::NO_ANIM {
+        effect_mat_anim
+            .and_then(|m| m.resolved_texture(pack, p.mat_anim))
+            .unwrap_or(p.texture)
+    } else {
+        p.texture
+    };
+
+    if st.last_texture != Some(effective_texture) {
+        st.last_texture = Some(effective_texture);
         st.state_changes += 1;
-        match pack.texture(p.texture) {
+        match pack.texture(effective_texture) {
             Some(t) => bind_texture(pack, &t, mat_anim),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
@@ -639,6 +655,7 @@ pub unsafe fn draw_mesh(
     mesh: &MeshDesc,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) -> u32 {
     let Some(verts) = pack.vertices(mesh) else {
         return 0;
@@ -656,7 +673,7 @@ pub unsafe fn draw_mesh(
             continue;
         }
 
-        apply_material(pack, &p, st, mat_anim);
+        apply_material(pack, &p, st, mat_anim, effect_mat_anim);
 
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
@@ -695,7 +712,7 @@ pub unsafe fn draw_object(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     costume: u32,
 ) -> u32 {
-    draw_object_posed(pack, object, base, &[], None, st, mat_anim, costume)
+    draw_object_posed(pack, object, base, &[], None, st, mat_anim, None, costume)
 }
 
 /// Places a screen-aligned sprite, and returns its composed position and scale.
@@ -761,6 +778,7 @@ fn billboard_place(base: &ScePspFMatrix4, local: &ScePspFMatrix4) -> ([f32; 3], 
 /// # Safety
 ///
 /// Same as [`draw_mesh`].
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn draw_object_posed(
     pack: &Pack<'_>,
     object: &ObjectDesc,
@@ -769,6 +787,7 @@ pub unsafe fn draw_object_posed(
     billboard_scales: Option<&[[f32; 2]]>,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     costume: u32,
 ) -> u32 {
     draw_object_posed_filtered(
@@ -779,6 +798,7 @@ pub unsafe fn draw_object_posed(
         billboard_scales,
         st,
         mat_anim,
+        effect_mat_anim,
         costume,
         None,
     )
@@ -810,6 +830,7 @@ pub unsafe fn draw_object_node(
         None,
         st,
         mat_anim,
+        None,
         0,
         Some(global_node),
     )
@@ -824,6 +845,7 @@ unsafe fn draw_object_posed_filtered(
     billboard_scales: Option<&[[f32; 2]]>,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     costume: u32,
     only_node: Option<u32>,
 ) -> u32 {
@@ -965,7 +987,7 @@ unsafe fn draw_object_posed_filtered(
             sys::sceGumMultMatrix(&local);
         }
 
-        tris += draw_mesh(pack, &mesh, st, mat_anim);
+        tris += draw_mesh(pack, &mesh, st, mat_anim, effect_mat_anim);
     }
     tris
 }
@@ -1265,6 +1287,7 @@ pub unsafe fn draw_stage_animated(
                     Some(&billboard_scales[..scale_count]),
                     st,
                     mat_anim,
+                    None,
                     0,
                 )
             }

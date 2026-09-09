@@ -354,8 +354,22 @@ unsafe fn run() -> ! {
         .collect();
     let effect_animation_count = effect_animation_slots.len() as u32;
     let mut effect_animation_index = 0u32;
+    // RE-176: the material-animation counterpart to `effect_animation_slots`
+    // above, keyed by `MANAGER_EFFECT_MAT_ANIM_JOINTS` (RE-175's per-primitive
+    // `AObjEvent32` scripts) rather than the transform table.
+    let effect_material_slots: alloc::vec::Vec<u32> =
+        ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_JOINTS
+            .iter()
+            .enumerate()
+            .filter_map(|(index, anim)| anim.is_some().then_some(index as u32))
+            .collect();
+    let effect_material_count = effect_material_slots.len() as u32;
+    let mut effect_material_index = 0u32;
     if cfg!(feature = "effect_animation_audit_capture") && effect_animation_count > 0 {
         effect_index = effect_animation_slots[0];
+        object_index = effect_objects[effect_index as usize];
+    } else if cfg!(feature = "effect_material_audit_capture") && effect_material_count > 0 {
+        effect_index = effect_material_slots[0];
         object_index = effect_objects[effect_index as usize];
     } else if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
         object_index = effect_objects[0];
@@ -381,7 +395,8 @@ unsafe fn run() -> ! {
         && !cfg!(any(
             feature = "animation_audit_capture",
             feature = "effect_audit_capture",
-            feature = "effect_animation_audit_capture"
+            feature = "effect_animation_audit_capture",
+            feature = "effect_material_audit_capture"
         ));
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
@@ -391,6 +406,13 @@ unsafe fn run() -> ! {
     let mut effect_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut effect_anim_loaded: Option<u32> = None;
     let mut effect_anim_ticks = 0u32;
+    // RE-176: the material-script counterpart, restarted the same way but
+    // against `EffectMaterialAnimator`'s own per-spawn boundary (its own doc
+    // comment explains why that differs from `MaterialAnimator`'s pack-
+    // lifetime clock below).
+    let mut effect_mat_anim = ssb_rom::skeleton::EffectMaterialAnimator::new();
+    let mut effect_mat_anim_loaded: Option<u32> = None;
+    let mut effect_mat_anim_ticks = 0u32;
     let mut show_collision = !cfg!(feature = "camera_audit_capture");
 
     // Material animation (RE-089-095): a `MatAnimDesc` entry is a property of
@@ -464,8 +486,15 @@ unsafe fn run() -> ! {
     let aspect = vw as f32 / vh as f32;
 
     // A fixed oblique angle keeps single-sided effect cards from landing
-    // exactly edge-on during the deterministic transform audit.
-    let mut spin = if cfg!(feature = "effect_animation_audit_capture") {
+    // exactly edge-on during the deterministic transform/material audits
+    // (RE-174/RE-176) -- a `CULL_BACK` billboard-less card can land back-face
+    // to the camera under the ordinary free-drifting spin below, culling to
+    // a blank capture that has nothing to do with whatever animation state
+    // is under test.
+    let mut spin = if cfg!(any(
+        feature = "effect_animation_audit_capture",
+        feature = "effect_material_audit_capture"
+    )) {
         0.45f32
     } else {
         0.0f32
@@ -676,6 +705,23 @@ unsafe fn run() -> ! {
                         _ => 0.45,
                     };
                 }
+            } else if object_view
+                && cfg!(feature = "effect_material_audit_capture")
+                && effect_material_count > 0
+            {
+                let was = effect_material_index;
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    effect_material_index = (effect_material_index + 1) % effect_material_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    effect_material_index =
+                        (effect_material_index + effect_material_count - 1) % effect_material_count;
+                }
+                effect_index = effect_material_slots[effect_material_index as usize];
+                object_index = effect_objects[effect_index as usize];
+                if was != effect_material_index {
+                    effect_mat_anim_loaded = None;
+                }
             } else if object_view && cfg!(feature = "effect_audit_capture") && effect_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     effect_index = (effect_index + 1) % effect_count;
@@ -815,7 +861,12 @@ unsafe fn run() -> ! {
             // apart differ by most of a turn, and the difference reads as the
             // pose having changed. That cost real time (RE-038), so playback
             // holds the angle still and leaves the stick in charge.
-            if !anim_playing && !billboard_view && !cfg!(feature = "effect_animation_audit_capture")
+            if !anim_playing
+                && !billboard_view
+                && !cfg!(any(
+                    feature = "effect_animation_audit_capture",
+                    feature = "effect_material_audit_capture"
+                ))
             {
                 spin += 0.02;
             }
@@ -1104,6 +1155,7 @@ unsafe fn run() -> ! {
                                     None,
                                     &mut draw_state,
                                     Some(&material_anim),
+                                    None,
                                     // No costume-selection game system exists
                                     // yet (R0.11); the simulated fighter here
                                     // always draws costume 0.
@@ -1156,6 +1208,37 @@ unsafe fn run() -> ! {
                                 }
                             }
                         }
+                    }
+                    // RE-176's material counterpart: restart
+                    // `EffectMaterialAnimator` on selection against this
+                    // object's own bound `PrimDesc.mat_anim` indices (RE-175),
+                    // then tick to the same frame 4 the host `romtool effects`
+                    // audit already measured Link Spin Attack's alpha ramp
+                    // against.
+                    if cfg!(feature = "effect_material_audit_capture")
+                        && effect_mat_anim_loaded != Some(effect_index)
+                    {
+                        effect_mat_anim_loaded = Some(effect_index);
+                        effect_mat_anim_ticks = 0;
+                        let mat_anims = (0..obj.node_count)
+                            .filter_map(|n| p.node(obj.first_node + n))
+                            .filter_map(|n| {
+                                (n.mesh != ssb_rom::pack::NodeDesc::NO_MESH).then_some(n.mesh)
+                            })
+                            .filter_map(|m| p.mesh(m))
+                            .flat_map(|m| {
+                                (0..m.prim_count).filter_map(move |i| p.prim(m.first_prim + i))
+                            })
+                            .filter_map(|prim| {
+                                (prim.mat_anim != ssb_rom::pack::TextureDesc::NO_ANIM)
+                                    .then_some(prim.mat_anim)
+                            });
+                        effect_mat_anim.start(p, mat_anims);
+                    }
+                    if cfg!(feature = "effect_material_audit_capture") && effect_mat_anim_ticks < 4
+                    {
+                        effect_mat_anim.tick(p);
+                        effect_mat_anim_ticks += 1;
                     }
                     posed_len = if cfg!(feature = "effect_animation_audit_capture") {
                         effect_anim.compose(p, &obj, &mut posed)
@@ -1222,6 +1305,7 @@ unsafe fn run() -> ! {
                         None,
                         &mut draw_state,
                         Some(&material_anim),
+                        cfg!(feature = "effect_material_audit_capture").then_some(&effect_mat_anim),
                         costume_index,
                     );
                     let placed = (0..obj.node_count)
@@ -1277,7 +1361,7 @@ unsafe fn run() -> ! {
                         .filter_map(|k| p.prim(desc.first_prim + k))
                         .filter(|pr| pr.texture != ssb_rom::pack::PrimDesc::NO_TEXTURE)
                         .count() as u32;
-                    meshdraw::draw_mesh(p, &desc, &mut draw_state, Some(&material_anim));
+                    meshdraw::draw_mesh(p, &desc, &mut draw_state, Some(&material_anim), None);
                     shown = (draw_state.triangles, desc.vertex_count, desc.prim_count);
                 }
             }
@@ -1414,6 +1498,22 @@ unsafe fn run() -> ! {
                     src_file,
                     src_offset,
                     effect_anim_ticks,
+                    shown.0,
+                ),
+            );
+        } else if cfg!(feature = "effect_material_audit_capture") {
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "EFFECT MATERIAL AUDIT {}/{}  source {}  file {} @0x{:X}  frame {}  tris {}",
+                    effect_material_index,
+                    effect_material_count,
+                    effect_index,
+                    src_file,
+                    src_offset,
+                    effect_mat_anim_ticks,
                     shown.0,
                 ),
             );
