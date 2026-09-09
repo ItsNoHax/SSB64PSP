@@ -2746,8 +2746,22 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   real node-splice double-tick quirk in `lbParticleStructFuncRun`).
   Multi-particle spawn-tree execution, the `LBGenerator` subsystem, PSP
   rectangle rendering, and focused PPSSPP particle audit still remain.
-  Facing-dependent alternate manager streams also remain before this row can
-  close
+  RE-183 adds the PSP-drawing piece as a bounded, single-script proof of
+  concept: `psp/src/meshdraw.rs::draw_particle` substitutes an ordinary GE
+  3D screen-aligned quad for `lbParticleDrawTextures`'s RDP-specific manual
+  screen-space rectangle projection (the RDP has no 3D transform; the GE
+  does, so this is the same substitution `billboard_place` already makes
+  for `DObj` billboards, not an approximation), reusing the existing
+  `Modulate`/`TEXTURE_BLEND` GE paths for the plain/`ENVCOLOR` combine
+  shapes `lbparticle.c` actually uses. A new debug-viewer mode
+  (`particle_view`, `C_RIGHT`) and `particle_render_audit_capture` feature
+  spawn+tick a selected packed script to frame 4 and draw it; verified on
+  script 0 via `tools/run-ppsspp.sh` (correct centred sprite, 60 FPS, clean
+  log) with the default build's own regression scene unaffected. Only one
+  script was checked visually; an exhaustive per-script sweep, the
+  `NOISE`/dither/alpha-threshold combine cases, and a real spawn event
+  (rather than the debug viewer) all remain. Facing-dependent alternate
+  manager streams also remain before this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:

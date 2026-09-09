@@ -10,6 +10,87 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-183 — PSP-side `LBParticle` billboard drawing, single-script proof of concept (`PLAN.md` R1)
+
+**Problem.** RE-180-182 decode, pack and simulate `LBParticle` state end to
+end, but nothing had drawn a particle on screen. RE-182's own remaining scope
+named four unstarted threads (multi-particle spawn trees, the `LBGenerator`
+subsystem, PSP-side billboard drawing, and a PPSSPP particle audit); this
+entry does the drawing one, bounded to one script at a time, before any of
+the others.
+
+**Source evidence.** Read the whole of `lbParticleDrawTextures`
+(`refs/ssb-decomp-re/src/lb/lbparticle.c:1450-2118`), the original's only
+particle draw path. It has no GE-style 3D transform available: the RDP can
+only draw screen-space rectangles, so the function manually projects each
+particle's world position through the camera/viewport and issues one
+`gSPScisTextureRectangle` per particle, sized from the composed
+projection columns' magnitude times `pc->size` (`lbparticle.c:1652-1654,
+1711-1722,1771-1775` — `mx`/`my`, the same "half-extent scales with a
+composed matrix column's length" shape `psp/src/meshdraw.rs`'s existing
+`billboard_place` already uses for `DObj` billboard kinds 44/46/48/50). Colour
+(`lbparticle.c:2055-2077`): without `LBPARTICLE_FLAG_ENVCOLOR` the real
+combine mode is `G_CC_MODULATEIA_PRIM` (texture modulated by `PRIM` alone);
+with the flag set it is `(PRIM-ENV)*TEXEL+ENV` in both cycles — exactly the
+`TEXTURE_BLEND` shape this project already ships for ordinary meshes
+(RE-073/074).
+
+**Implementation.** `psp/src/meshdraw.rs::draw_particle` is the
+non-approximating port: since the GE has a real 3D pipeline the RDP lacked,
+an ordinary screen-aligned quad of world half-size `size`, drawn through the
+GE's existing camera/projection with the model matrix pre-translated to the
+particle's world position, produces the same visual result as the RDP's
+manual per-particle screen-space projection without reproducing RDP-specific
+mechanics that have a direct GE equivalent (the same substitution
+`billboard_place` already makes for `DObj` billboards). Colour reuses
+`TexQuadVertex`/the existing `TextureEffect::Modulate`/`Blend` GE paths:
+`Modulate` with `PRIM` as the vertex colour for the plain case,
+`Blend`/`sceGuTexEnvColor` with `ENV` as the vertex colour and `PRIM` as the
+env colour for `LBPARTICLE_FLAG_ENVCOLOR` — the identical wiring RE-073/074
+already validated for `TEXTURE_BLEND` meshes. `LBPARTICLE_FLAG_NOISE`'s
+dither combine and the real alpha-compare threshold/dither state are not
+reproduced — declined rather than guessed, since neither flag's real
+archive-wide usage has been censused yet.
+
+A new `psp/src/main.rs` debug mode (`particle_view`, toggled by `C_RIGHT`
+outside `stage_view` — free everywhere else, since `stage_view` is the only
+place `C_RIGHT` already means something, its own fighter-respawn key) spawns
+the D-pad-selected entry of the pack's flat `particle_scripts` table
+(RE-181) fresh via `ssb_rom::particle::Particle::spawn`, ticks it to frame 4
+(RE-172-174's own deterministic-settle convention), resolves its bank-local
+`texture_id`/`frame_id` into the pack's global texture table through the
+owning `ParticleBankDesc`, and calls `draw_particle`. A new
+`particle_render_audit_capture` Cargo feature boots directly into this mode
+on script 0, mirroring `billboard_audit_capture`'s own precedent, so the
+PPSSPP harness needs no interactive input.
+
+**Verification.** `cargo psp --release` and `cargo psp --release --features
+particle_render_audit_capture` both build clean (only the two pre-existing
+categories of warning: linker `.pdr`-section notices already present before
+this change, and a `static mut` reference lint already present for the
+pre-existing `TEX_QUAD`, now also emitted once more for the new
+`PARTICLE_QUAD`). `cargo fmt --check` and `cargo test --workspace` (316
+`ssb-rom` tests, unaffected — no library crate changed) both pass.
+`tools/run-ppsspp.sh --no-build --seconds 8` against the audit-capture build
+shows script 0 as a correctly centred, soft-edged yellow sprite (`tex 1084`,
+`tris 2`) at 60 FPS with a clean log; the same harness against the default
+build shows Dream Land unaffected. Only script 0 was checked visually — a
+broader per-script sweep (like RE-173's exhaustive rest-pose audit) is not
+done here.
+
+**Remaining scope.** Single script, single fixed frame, no interactive
+per-script screenshot sweep. Multi-particle spawn-tree execution, the
+`LBGenerator` subsystem, a `LBPARTICLE_FLAG_ENVCOLOR`/`NOISE`/dither/
+alpha-threshold archive-wide census, and wiring a real spawn event (rather
+than the debug viewer) all remain, per RE-182's own list. No physical-PSP
+claim; `R0.5` is unaffected.
+
+**Confidence:** high for the ported combine/quad-sizing mapping (both
+derived directly from the decomp, not guessed); low for `ENVCOLOR`/`NOISE`
+archive-wide prevalence (not yet measured).
+
+---
+
 ## RE-182 — Deterministic single-particle `LBParticle` script playback (`PLAN.md` R1)
 
 **Problem.** RE-180/181 proved every bank decodes and round-trips through the
