@@ -1690,6 +1690,55 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
 
+    // Manager-effect DObjs use the same AObjEvent32 transform stream as stage
+    // scenery and results transitions. Pack the 35 source descriptors that
+    // actually name an o_anim_joint table, keyed by the shared 46-effect
+    // inventory slot so runtime selection cannot depend on pack object order.
+    let mut effect_anims = 0usize;
+    let mut effect_anim_joints = 0usize;
+    for (effect_index, (&(file_id, graph_at), &anim_at)) in ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .zip(ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS)
+        .enumerate()
+    {
+        let Some(anim_at) = anim_at else { continue };
+        let file = loaded
+            .files
+            .get(file_id as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("effect {effect_index}: file {file_id} missing"))?;
+        let graph = loaded
+            .graphs
+            .get(&file_id)
+            .and_then(|graphs| graphs.iter().find(|graph| graph.offset == graph_at))
+            .ok_or_else(|| format!("effect {effect_index}: graph 0x{graph_at:X} missing"))?;
+        let object = object_index
+            .get(&(file_id, graph_at))
+            .and_then(|&index| writer.object(index))
+            .ok_or_else(|| format!("effect {effect_index}: packed object missing"))?;
+        let joints: Vec<_> =
+            ssb_rom::objanim::joint_scripts(&file.data, anim_at, graph.nodes.len())
+                .into_iter()
+                .enumerate()
+                .filter_map(|(node, script)| {
+                    script.map(|script| (Some(script), Some(object.first_node + node as u32)))
+                })
+                .collect();
+        if joints.is_empty() {
+            return Err(format!("effect {effect_index}: no animation scripts").into());
+        }
+        effect_anim_joints += joints.len();
+        effect_anims += 1;
+        writer.add_anim(
+            ssb_rom::pack::AnimDesc::EFFECT,
+            effect_index as u32,
+            file_id,
+            0,
+            &file.data,
+            &joints,
+        );
+    }
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -1776,6 +1825,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         "  transitions {} wipe(s), {transition_anim_joints} animated node(s)",
         ssb_rom::transition::ASSETS.len()
     );
+    println!("  effect anims {effect_anims} effect(s), {effect_anim_joints} animated node(s)");
     let mat_animated_textures = (0..pack.texture_count())
         .filter_map(|i| pack.texture(i))
         .filter(|t| t.mat_anim != fmt::TextureDesc::NO_ANIM)
@@ -2315,9 +2365,12 @@ fn effects(path: &Path) -> Res {
     let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
     let mut missing = Vec::new();
+    let mut anim_errors = Vec::new();
+    let mut animated = 0usize;
+    let mut animated_nodes = 0usize;
     let mut total_tris = 0u32;
 
-    for asset in MANAGER_EFFECT_ASSETS {
+    for (effect_index, asset) in MANAGER_EFFECT_ASSETS.iter().enumerate() {
         let found = (0..pack.object_count()).find_map(|i| {
             let object = pack.object(i)?;
             (object.source_file == asset.file && object.source_offset == asset.graph)
@@ -2350,6 +2403,41 @@ fn effects(path: &Path) -> Res {
             "  object {index:3}  file {:3} @ 0x{:05X}  {tris:4} tris  {}",
             asset.file, asset.graph, asset.name
         );
+
+        if ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS[effect_index].is_some() {
+            let Some(anim) = pack.effect_anim(effect_index as u32) else {
+                anim_errors.push(format!("{}: missing transform animation", asset.name));
+                continue;
+            };
+            let Some(script) = pack.anim_script(&anim) else {
+                anim_errors.push(format!("{}: missing animation bytes", asset.name));
+                continue;
+            };
+            let mut player = ssb_rom::skeleton::StageAnimator::new();
+            player.start(&pack, &anim);
+            if player.joint_count() == 0 {
+                anim_errors.push(format!("{}: no bound animation joints", asset.name));
+                continue;
+            }
+            let mut failed = None;
+            for frame in 0..240 {
+                if let Err(error) = player.tick(script) {
+                    failed = Some(format!("{} frame {frame}: {error}", asset.name));
+                    break;
+                }
+                if player.ended() {
+                    break;
+                }
+            }
+            if let Some(error) = failed {
+                anim_errors.push(error);
+            } else {
+                animated += 1;
+                animated_nodes += player.joint_count();
+            }
+        } else if pack.effect_anim(effect_index as u32).is_some() {
+            anim_errors.push(format!("{}: unexpected transform animation", asset.name));
+        }
     }
 
     println!(
@@ -2359,15 +2447,22 @@ fn effects(path: &Path) -> Res {
     );
     println!("shared descriptors: CommonSpark, YoshiShield, NessPKThunderTrail, KirbyStar");
     println!("authored rest-invisible: NessPKFlash, SamusEntryPoint, LinkSpinAttack (AObjEvent32)");
+    println!("transform animations: {animated}/35 replayable, {animated_nodes} bound node(s)");
     println!("controller-only descriptors: DamageSpawnOrbs, DamageSpawnSparks, DamageSpawnMDust");
     println!("LBParticle scripts: not packed or rendered (separate R1 effect path)");
 
-    if missing.is_empty() {
+    if !anim_errors.is_empty() {
+        for error in &anim_errors {
+            eprintln!("animation error: {error}");
+        }
+    }
+    if missing.is_empty() && anim_errors.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "{} manager effect object(s) missing or empty",
-            missing.len()
+            "{} manager effect object(s) missing or empty, {} animation error(s)",
+            missing.len(),
+            anim_errors.len()
         )
         .into())
     }

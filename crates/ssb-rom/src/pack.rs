@@ -542,6 +542,10 @@ pub struct AnimDesc {
 }
 
 impl AnimDesc {
+    /// `fighter` value marking an effect-manager DObj animation. `slot` is
+    /// the index into `effect::MANAGER_EFFECT_KEYS` (RE-174).
+    pub const EFFECT: u32 = u32::MAX - 2;
+
     /// `fighter` value marking an LB results-screen transition animation.
     /// Transition entries sit after fighter and stage animations; `slot` is
     /// the original `dLBTransitionDescs` index (RE-146).
@@ -2315,6 +2319,13 @@ impl<'a> Pack<'a> {
             .find(|a| a.fighter == AnimDesc::TRANSITION && a.slot == transition)
     }
 
+    /// A manager effect's DObj transform animation in source inventory order.
+    pub fn effect_anim(&self, effect: u32) -> Option<AnimDesc> {
+        (0..self.anim_count)
+            .filter_map(|i| self.anim(i))
+            .find(|a| a.fighter == AnimDesc::EFFECT && a.slot == effect)
+    }
+
     /// The object containing an absolute node index.
     ///
     /// Animation joints store absolute nodes, so generic object animations
@@ -4026,6 +4037,23 @@ mod tests {
         assert_eq!(anim.frames, 64);
         assert_eq!(pack.transition_object(&anim), Some(object));
         assert_eq!(pack.transition_anim(2), None);
+    }
+
+    #[test]
+    fn effect_animation_is_selected_by_source_inventory_slot() {
+        let mut w = PackWriter::new();
+        w.add_anim(
+            AnimDesc::EFFECT,
+            12,
+            85,
+            0,
+            &[0u8; 8],
+            &[(Some(0), Some(0))],
+        );
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.effect_anim(12).unwrap().source_file, 85);
+        assert_eq!(pack.effect_anim(11), None);
     }
 
     #[test]

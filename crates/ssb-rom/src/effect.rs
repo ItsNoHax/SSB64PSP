@@ -54,6 +54,62 @@ pub const MANAGER_EFFECT_KEYS: &[(u32, u32)] = &[
     (161, 0x2C30),
 ];
 
+/// `o_anim_joint` from the source `EFDesc` corresponding to each entry in
+/// [`MANAGER_EFFECT_KEYS`]. A missing value means that descriptor has no DObj
+/// transform animation; material-only animation is tracked separately.
+///
+/// Poké Ball uses the left-facing table selected by
+/// `efManagerMBallThrownMakeEffect`; its right-facing sibling is the same
+/// effect variant and will be added when facing-dependent spawning exists.
+pub const MANAGER_EFFECT_ANIM_JOINTS: &[Option<u32>] = &[
+    Some(0x7800),
+    Some(0x7F40),
+    Some(0x7D40),
+    Some(0x9050),
+    Some(0xCAE0),
+    None,
+    Some(0x20D0),
+    Some(0x28A0),
+    Some(0x34A0),
+    Some(0x54D0),
+    Some(0x6D90),
+    Some(0x0710),
+    Some(0x2B70),
+    Some(0x32B0),
+    None,
+    Some(0x0340),
+    None,
+    Some(0x0890),
+    Some(0x1720),
+    None,
+    Some(0x22E0),
+    None,
+    Some(0x13F0),
+    Some(0x1470),
+    Some(0x1E30),
+    Some(0x24D0),
+    None,
+    Some(0x0410),
+    Some(0x0C20),
+    Some(0x0B90),
+    None,
+    None,
+    Some(0x2270),
+    Some(0x0A30),
+    None,
+    Some(0x9AC0),
+    Some(0x0840),
+    Some(0x0B60),
+    Some(0x1250),
+    Some(0x95E0),
+    None,
+    Some(0x0600),
+    Some(0x0B90),
+    Some(0x0850),
+    Some(0x06C0),
+    None,
+];
+
 /// Effects whose authored rest pose is intentionally invisible until their
 /// AObjEvent32 runtime starts. The ROM gives Ness PK Flash scales X/Y of
 /// `1e-5`, Samus's entry point scale Y of `1e-5`, and Link's spin-attack
@@ -63,7 +119,9 @@ pub const MANAGER_EFFECT_REST_INVISIBLE_KEYS: &[(u32, u32)] =
 
 #[cfg(test)]
 mod tests {
-    use super::{MANAGER_EFFECT_KEYS, MANAGER_EFFECT_REST_INVISIBLE_KEYS};
+    use super::{
+        MANAGER_EFFECT_ANIM_JOINTS, MANAGER_EFFECT_KEYS, MANAGER_EFFECT_REST_INVISIBLE_KEYS,
+    };
     use alloc::collections::BTreeSet;
 
     #[test]
@@ -71,6 +129,14 @@ mod tests {
         let unique: BTreeSet<_> = MANAGER_EFFECT_KEYS.iter().copied().collect();
         assert_eq!(MANAGER_EFFECT_KEYS.len(), 46);
         assert_eq!(unique.len(), MANAGER_EFFECT_KEYS.len());
+        assert_eq!(MANAGER_EFFECT_ANIM_JOINTS.len(), MANAGER_EFFECT_KEYS.len());
+        assert_eq!(
+            MANAGER_EFFECT_ANIM_JOINTS
+                .iter()
+                .filter(|anim| anim.is_some())
+                .count(),
+            35
+        );
         assert!(MANAGER_EFFECT_REST_INVISIBLE_KEYS
             .iter()
             .all(|key| unique.contains(key)));
