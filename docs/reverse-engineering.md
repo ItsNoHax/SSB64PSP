@@ -10,6 +10,61 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-168 — Post-table-resolution combiner census closes the stale colour attribution (`PLAN.md` R0.6)
+
+**Question.** After RE-163 resolved all 127 discovered material graphs, does
+RE-079's 3,085/4,580 missing `PRIMITIVE`/`ENVIRONMENT` result still describe
+an MObj-table gap?
+
+**Method.** Temporarily instrumented the real `romtool pack` traversal at
+triangle emission, recording source file/root display list, normalized RGB
+combiner inputs, two-cycle state, constant presence, texture presence, and
+which of shade-scale, texture-blend, or flat-colour handling accepted the
+result. The instrumentation was removed after the census. Both instrumented
+packs are byte-identical to the staged v23 pack (SHA-256
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`).
+
+**Result.** The source-attributed sample contains 65,199 emitted-triangle
+visits: 65,000 accepted (99.695%) and 199 declined. Only 13 declined visits
+combine a real texture with a missing required `PRIMITIVE` or `ENVIRONMENT`:
+
+* file 163, roots `0x240`/`0x248`, four triangles: the ordinary shield asset;
+  `efManagerShieldProcDisplay` injects player/damage-dependent
+  `gDPSetPrimColor` and `gDPSetEnvColor` immediately before drawing it;
+* file 338, root `0xA858`, two triangles: Yoshi's shield;
+  `efManagerYoshiShieldProcDisplay` computes `ENV` from live shield health and
+  emits `gDPSetEnvColor` immediately before the draw;
+* file 114, roots `0x8808`/`0x88A0`/`0x88D0`/`0x127A8`, seven triangles:
+  broad scene discovery finds these in graphs that are not the file's only
+  authoritative stage layer (`MPGroundData` names graph `0x4D48`). They are
+  not evidence of a missing stage material table.
+
+The other 186 source-attributed declines are already-known unsupported
+equations: invalid first-cycle `COMBINED`, `TEXEL1`/`PRIM_LOD_FRAC` LOD
+forms, or classified two-cycle/constant edge cases. File 84's two
+`(PRIM-ENV)*TEXEL+ENV` visits have no texture, so the texture-blend gate is
+correctly inapplicable. File 166's one missing flat `PRIM` visit starts at
+`0x28`, inside vertex data immediately before the real Magnify display list
+at `0x30`, another blind-discovery false positive.
+
+**Conclusion.** RE-079's R0.7 attribution is superseded. Every remaining
+constant absence is either source-confirmed runtime state or non-authoritative
+discovery, not an unresolved material table and not a reason to invent a
+static colour. Runtime shield colour upload belongs with future effect/
+gameplay integration; combat remains locked. R0.6's primitive/environment
+colour verification can close without a speculative converter change.
+
+**Verification.** Two full current-pack census runs completed; their output
+packs and the staged pack are byte-identical. Temporary instrumentation was
+fully reverted, leaving the working tree unchanged before documentation.
+
+**Confidence: high** for the current source-attributed pack path and its
+dynamic-colour classification. Counts are emitted-triangle visits, not unique
+display-list commands, and are stated as such rather than compared directly
+to RE-079's older pre-costume traversal count.
+
+---
+
 ## RE-167 — Runtime lighting must retain the combiner's costume-colour scale (`PLAN.md` R0.6)
 
 **Question.** Why did Mario remain predominantly near-black/purple after

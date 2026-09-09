@@ -208,11 +208,11 @@ so nothing is duplicated and nothing is missing an owner.
 
 | Correctness category | Owning task(s) | Status |
 | --- | --- | --- |
-| Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | R0.8 and R0.14 `COMPLETE`; R0.6 `IN_PROGRESS` |
-| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | R0.16 and R0.15 `COMPLETE`; R0.6 `IN_PROGRESS` |
-| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | R0.3 `COMPLETE`; R0.4, R0.5 `IN_PROGRESS` |
-| Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `IN_PROGRESS` |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `IN_PROGRESS` (RE-164 removed the data-loss basis for the former baked-light deviation; runtime GE lighting and a source-verified lit/literal draw split remain) |
+| Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | `COMPLETE` |
+| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `COMPLETE` |
+| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | R0.3/R0.4 `COMPLETE`; R0.5 `VERIFYING` on physical PSP |
+| Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `COMPLETE` for R0 (RE-164–167); physical PSP remains R2 |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 (state), R0.14 (depth mapping) | `COMPLETE` for both owned items |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
@@ -357,19 +357,9 @@ cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
 
 ## R0.4 — TLUT / Palette Correctness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
-
-RE-167 completes the bounded original-game comparison RE-166 required and
-finds one more state-consumption loss: the GE light path ignored the packed
-vertex colour into which RE-106 had folded Mario's `PRIMITIVE * SHADE` costume
-scale. Runtime-lit primitives now apply that already-resolved scale as their
-GE ambient/diffuse material colour. In the matched Dream Land Wait view this
-restores the source red clothing and blue overalls without adding a tuned
-colour or brightness floor. Two deterministic captures are byte-identical;
-the refreshed golden is recorded in RE-167. Exact cross-renderer pixels and
-physical PSP validation remain outside this R0 comparison.
 
 RE-064 closed the "palette inheritance/state" acceptance item. `mesh.rs`'s
 `convert_sequence` threads RDP material state (texture image, tile format,
@@ -416,7 +406,8 @@ RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 
 ## R0.5 — Texture Filtering / LOD / Mipmapping
 
-Status: `IN_PROGRESS`
+Status: `VERIFYING` — only the physical-PSP Dream Land canopy comparison
+remains; source-side hypotheses are exhausted (RE-053/067/070/075/081/124/127).
 
 ### Current evidence
 
@@ -612,48 +603,40 @@ RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, 
 
 ## R0.6 — Material System Correctness
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE`
 
 ### Current evidence
 
-RE-166 corrects an independent state-translation loss in RE-165's
-runtime-lighting work but does not complete it: `G_MW_LIGHTCOL` is an
-independent, zero-valid state write, so v23 preserves presence separately
-from its 32-bit value and reapplies a changed LIGHT_1/LIGHT_2 pair even when
-the material flags match. RE-165 established that
-`gSPNumLights(1)` has one directional and one ambient source, and the real
-`G_MW_LIGHTCOL` writes for both now survive in the pack and reach the GE on a
-per-primitive lit/literal split. Mario's flagged MObj records supply the
-previously missed inherited ambient `(0x4C,0x4C,0x4C)` and now reach the GE;
-the fighter is no longer a black silhouette in PPSSPP. A brightness floor was
-rejected rather than guessed. Original-game visual comparison remains
-required before a correctness claim. See RE-166.
+RE-167 completes the matched original-game lighting comparison: runtime-lit
+primitives now apply the already-resolved `PRIMITIVE * SHADE` scale as GE
+material colour, restoring Mario's red clothing and blue overalls without a
+tuned brightness value. RE-168 then re-runs RE-079's combiner census through
+the current, fully paired pack path. In its source-attributed sample, 65,000
+of 65,199 emitted triangle visits (99.695%) resolve through shade-scale,
+texture-blend, or flat-colour handling. The former 3,085 missing-constant
+claim collapses to 13 texture-bound visits: four ordinary-shield triangles
+whose display callback sets player-dependent `PRIM`/`ENV`, two Yoshi-shield
+triangles whose callback computes `ENV` from shield health, and seven
+file-114 triangles belonging to non-stage orphan graphs found by broad scene
+discovery. These are runtime/dynamic or non-authoritative paths, not unresolved
+material tables. The remaining 186 visits are already catalogued unsupported
+combiner/LOD shapes. No new converter fix is justified by the census.
 
 `crates/ssb-rom/src/mesh.rs` evaluates a general `(A-B)*C+D` combiner across
 both RDP cycles and declines to guess at anything it can't resolve rather
 than approximating (RE-039, RE-043). Primitive/environment colour, alpha and
-depth state are threaded through. Lighting is **not** derived from `MObj`
-light state — a single neutral key light is used as a placeholder
-(`DECISIONS.md` D-024), and `TODO.md` Phase D explicitly calls out removing
-this "majority-vote lighting heuristic."
+depth state are threaded through. RE-164–167 replace the former baked neutral
+light with stage-angle runtime GE lighting and source LIGHT_1/LIGHT_2 state.
 
-RE-065 investigated this properly instead of leaving it an undocumented
-guess. The real light direction is `MPGroundData.light_angle` (a per-stage
+RE-065 identified the original input behind the former approximation. The
+real light direction is `MPGroundData.light_angle` (a per-stage
 `Vec3f`, `refs/ssb-decomp-re/src/mp/mptypes.h:187`), converted to a vector
 by `ftDisplayLightsDrawReflect` (`refs/ssb-decomp-re/src/ft/ftdisplaylights.c`)
-every time a fighter draws — direct reproduction is not possible without
-moving from this project's pack-time-baked shading to PSP-side runtime
-lighting (`sceGuLight`) with per-stage context threaded through the whole
-material pipeline, which is out of this task's scope. Measured
+every time a fighter draws. Measured
 archive-wide: **33 of 41 stages (80%) use exactly the same angle**
 (`20.0, 45.0` degrees), which the old `(2, 4, 3)` placeholder happened to
-sit only 9.9 degrees from; the constant now uses that measured angle's
-actual direction instead, so those 33 stages' baked shading matches the
-real key light exactly, up to the libm-vs-lookup-table sin/cos difference.
-The other 8 stages (mostly special-lighting locations — Brinstar, Sector
-Z, Hyrule, Final Destination, Metal Mario's stage) use their own angle, up
-to 111 degrees away, and remain an explicit, measured, accepted
-deviation per `AGENTS.md` §9 rather than an undocumented placeholder.
+sit only 9.9 degrees from. RE-164–167 supersede that interim bake: all stage
+angles, signed normals, and source light colours now reach the runtime GE path.
 
 RE-068 found and fixed a much larger structural gap: `refs/ssb-decomp-re/
 src/sys/rdp.c`'s `sSYRdpResetDisplayList`, replayed once per frame
@@ -857,31 +840,20 @@ Reproduce original SSB64 material behavior.
   `romtool mobj` now reports all 127 discovered graphs paired, all 467 node
   chains matching their display-list demand, and zero unnamed or mismatched
   graphs.
-* [x] combiner behavior verified — RE-073/RE-074: identified and measured the dominant declined shape (`(PRIM-ENV)*TEXEL+ENV`, 91% of ENV-reading combiners, 28 files including Link/Ness/Pikachu's own models), detected, packed, wired to the PSP GE's native `TextureEffect::Blend`, and visually confirmed correct against Link's own model (before/after screenshots). The general two-cycle evaluation model itself was already verified (RE-039/RE-043); the remaining ~8% of ENV-reading combiners and whatever `combiner_shade_scale` declines outside that are not exhaustively catalogued, but are not the dominant case and are tracked under "primitive color"/"environment color" below rather than blocking this item
-* [ ] primitive color verified — RE-079's census plus RE-080's `combiner_flat_color` cover every shape this model then resolved: shade-scale, texture-blend and flat-constant are structurally disjoint and together account for 97.5%+ of archive-wide combiner-bearing primitives. RE-106 fixed a *consumption* gap in already-classified cases: resolved `prim_color` is now baked into the vertex. Its prior 3,085/4,580 missing-constant count was plausibly attributed to R0.7's then-unpaired graphs; that attribution is now stale because RE-163 resolved all 127 discovered graphs. Re-run the source-indexed combiner census before making any further implementation claim. RE-152's Fox black-face lead is unrelated: it was a nonzero clamp-window coordinate bug.
-* [ ] environment color verified — same post-RE-163 remeasurement is required
-  for `ENV`; do not retain the former R0.7-pairing explanation without new
-  evidence.
+* [x] combiner behavior verified — RE-039/043 establish the general two-cycle evaluator; RE-073/074 implement and visually verify the dominant `(PRIM-ENV)*TEXEL+ENV` texture blend; RE-080 handles flat constants; RE-106 consumes shade scales. RE-168 remeasures the current pack path and catalogues every remaining decline without finding a new static classification bug.
+* [x] primitive color verified — RE-079/080 classify shade-scale, texture-blend and flat-constant shapes; RE-106 consumes the resolved scale. RE-168's post-RE-163 census finds no unresolved table attribution: the remaining constant-absence cases are source-confirmed runtime shield colours or non-authoritative orphan graphs. RE-152's Fox black-face lead was unrelated (a nonzero clamp-window coordinate bug).
+* [x] environment color verified — RE-168 source-indexes the remaining cases: ordinary shields set `ENV` in `efManagerShieldProcDisplay`, Yoshi's shield computes it from shield health in `efManagerYoshiShieldProcDisplay`, and no missing material-table case remains.
 * [x] lighting verified — RE-103/RE-105 fixed the input this depends on (per-vertex, not per-primitive-majority, lit/literal decisions, driven by a real `G_MW_LIGHTCOL` ROM signal rather than a guess). RE-164 retained stage X/Y angles and signed normals; RE-165 additionally retains the real directional/ambient LIGHT_1/LIGHT_2 values, scopes GE lighting to fighter draws, and disables it for literal primitives; RE-166 makes each light-colour write zero-valid and independent of otherwise identical material flags. RE-167 performs the equivalent original-game Dream Land/Wait comparison and catches the remaining combiner boundary: GE lighting ignored the vertex colour containing Mario's resolved `PRIMITIVE * SHADE` costume scale. Applying that source-derived scale as the GE ambient/diffuse material restores red clothing and blue overalls without a brightness approximation. Physical PSP remains R2. RE-152 confirms RE-128's Fox black patch was unrelated: it was caused by nonzero clamp-window coordinates
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [x] blending verified — RE-069 detected `translucent` (14.4%) correctly but left it unwired after an enabled-blend experiment produced a checkerboard; RE-070/071 eliminated dither coarseness and alpha premultiplication as the cause without finding the real one; RE-124 (R0.18) confirmed both `sf64-psp` and `oot-PSP` ship standard blending fine on the same hardware, ruling out a platform limitation. **RE-129 found the real cause**: this project never decoded `G_SETCOMBINE`'s *alpha* formula at all (only the colour one) — decoded it directly from the ROM for Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found naively wiring that up universally broke a different `TRANSLUCENT` primitive (Dream Land's flowers) whose own alpha formula is different. **RE-130 measured every real alpha formula archive-wide** (9 distinct combiner values across ~8,800 real, textured, single-cycle `TRANSLUCENT` primitives): the majority (~5,950) is `TEXEL0_ALPHA` alone (the flowers' own shape), a smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA` (the canopy highlight), and a rare (~43) `TEXEL0_ALPHA * PRIM_ALPHA` plus two-cycle mode (~93, <1%) are declined rather than guessed at (real, measured, but not confidently understood or never on-device-verified). Implemented as a new classification axis (`mesh.rs`'s `AlphaBlend`/`combiner_alpha_blend`, independent of the existing RGB classification), baked the correct vertex alpha per shape (`push_vertex`), and gated real blending on a new pack flag (`flags::ALPHA_BLEND`, `VERSION` 15→16) that only sets when both `TRANSLUCENT` and a classified alpha formula agree — a `TRANSLUCENT` primitive without it keeps the pre-existing safe default. Verified on-device: the flowers survive, two previously-fully-invisible decorative props now render correctly, confirmed via a clean pixel diff against the `regression_capture` golden capture (updated) and re-verified deterministic across a 9-second timing spread
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
 * [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
-* [x] unsupported material behavior identified — RE-139 compiled the enumeration this item asks for from findings already scattered across this task's own evidence, rather than opening new investigation: (1) **combiner shapes outside shade-scale/texture-blend/flat-constant**, ~2.5% of combiner-bearing primitives archive-wide (RE-079/080) — declined, not classified, since no fourth shape was ever identified; (2) **`G_SETCOMBINE`'s alpha formula outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`)** — the rare `PRIM_ALPHA` multiply (~43 occurrences) and two-cycle mode (~93, RE-130) are measured but declined, real blending stays off for them; (3) **`G_SHADE` cleared while a combiner still reads `SHADE`** (RE-120) — undefined real-hardware behavior, 31 occurrences archive-wide, 29 in not-yet-reachable combat/item content and 2 in already-rendered geometry (Yoshi's Island), left unfixed rather than guessed at; (4) **`prim_color`/`env_color` absence cases**, 3,085/4,580 misses for one shape in RE-079 — their former attribution to R0.7's material-table gaps is invalid after RE-163 and the post-RE-163 census above must reclassify them. RE-164–167 closed RE-139's former baked-light item with source-derived runtime lighting; it is no longer an unsupported behavior. None of the remaining cases is a surprise discovered by this entry — each was already measured and cited elsewhere; this item's own contribution is having them named in one place
+* [x] unsupported material behavior identified — RE-139 compiled the enumeration this item asks for: (1) combiner shapes outside shade-scale/texture-blend/flat-constant, now 186 of 65,199 source-attributed emitted-triangle visits in RE-168; (2) alpha formulas outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`) — the rare `PRIM_ALPHA` multiply and two-cycle mode (RE-130); (3) `G_SHADE` cleared while a combiner still reads `SHADE` (RE-120); and (4) runtime-injected primitive/environment colours for shields, source-identified by RE-168 and owned by future effect/gameplay integration. RE-164–167 closed RE-139's former baked-light item; it is no longer unsupported.
 
 ### Evidence
 
-RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-120, RE-129, RE-130, RE-139, RE-152, RE-164, RE-165, RE-166, RE-167 in `docs/reverse-engineering.md`.
-
-### Evidence
-
-RE-065, RE-068 in `docs/reverse-engineering.md`. RE-068 also leaves leads
-for the still-open items above: the same reset list fixes
-`G_AC_NONE` (alpha compare off by default), `G_RM_OPA_SURF`/`G_RM_OPA_SURF2`
-(opaque render mode by default, no blending), and `G_CC_SHADE`/`G_CC_SHADE`
-(shade-only combiner by default) as the real starting state, none of which
-this pass acted on.
+RE-065, RE-068, RE-069, RE-071, RE-072, RE-073, RE-074, RE-079, RE-080, RE-103, RE-105, RE-106, RE-120, RE-129, RE-130, RE-139, RE-152, RE-164, RE-165, RE-166, RE-167, RE-168 in `docs/reverse-engineering.md`.
 
 ---
 
