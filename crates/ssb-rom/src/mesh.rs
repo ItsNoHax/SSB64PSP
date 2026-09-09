@@ -205,6 +205,24 @@ pub struct MeshMaterial {
     /// script correctly clears this rather than leaving it attached to
     /// whatever texture ends up bound next.
     pub mat_anim: Option<MatAnimRef>,
+    /// The bound tile's format/size/dimensions/wrap, resolved even when no
+    /// static pixel address exists to pair with them (RE-177). Several
+    /// manager-effect sprite-cycling primitives (`mat_anim` above, texture-id
+    /// tracks) issue `G_SETTILE`/`G_SETTILESIZE` for their sprite's real
+    /// shape but never a static `G_SETTIMG` for it at all — the real pixel
+    /// address is only ever supplied at runtime, through a graphics-heap
+    /// `Call` this converter cannot follow (`objdisplay.c`'s
+    /// `MOBJ_FLAG_FRAC`/`_ALPHA` branch reading `mobj->sub.sprites[
+    /// texture_id_curr]`), because the authored `MObjSub`'s own static flags
+    /// word never sets those bits (real hardware relies on the *runtime*
+    /// material-animation player to do so, matching RE-105's own finding that
+    /// a static `MObjSub`/`MObj` flags word is not always the reliable
+    /// signal). `texture` above stays `None` in exactly that case since there
+    /// is no real address to report; this field still carries the shape
+    /// (format/size/width/height/wrap) needed to convert each of the mat
+    /// anim's own resolved sprite variants, which already have their own real
+    /// per-frame addresses independent of this primitive's static state.
+    pub texture_shape: Option<TextureRef>,
 }
 
 /// Identifies the material animation script driving a texture's active
@@ -1119,6 +1137,7 @@ impl State {
             // here is not orphaned state the way an animated palette with no
             // texture to apply it to would be.
             mat_anim: self.material.mat_anim,
+            texture_shape: self.current_texture_shape(),
             ..self.material
         }
     }
@@ -1200,6 +1219,65 @@ impl State {
         Some(TextureRef {
             data_file: self.timg_file,
             data_offset: offset,
+            format: Format::from_raw(fmt)?,
+            size: BitSize::from_raw(siz)?,
+            width: w,
+            height: h,
+            palette_file: self.palette_file,
+            palette_offset: self.palette_offset,
+            palette_entries: self.palette_entries,
+            mirror_s,
+            mirror_t,
+            clamp_s,
+            clamp_t,
+            framebuffer: false,
+            origin_s: self.tile0_origin.map_or(0, |o| o.0),
+            origin_t: self.tile0_origin.map_or(0, |o| o.1),
+        })
+    }
+
+    /// [`MeshMaterial::texture_shape`]'s resolver: the same format/size/wrap
+    /// logic [`Self::current_texture`] uses, minus its `timg_addr`
+    /// requirement -- and, when no `G_SETTILESIZE` ever ran either (RE-177's
+    /// manager-effect sprite primitives issue none), minus `tile_dims` too,
+    /// falling back to the size the mask alone already names (RE-044: a tile
+    /// repeats every `1 << mask` texels, which *is* the real texture size for
+    /// every one of these). Never reads `timg_addr`/`real_timg` on purpose:
+    /// `Cmd::LoadTlut`'s restore can leave it pointing at the *palette*'s own
+    /// address when, as here, no real pixel `G_SETTIMG` has ever run, and a
+    /// shape carrying that address forward as `data_offset` would be a
+    /// texture pointed at the wrong bytes rather than an honest decline.
+    ///
+    /// Also does not require `texture_enabled` the way `current_texture`
+    /// does: the RDP reset default is texturing *off*
+    /// (`sSYRdpResetDisplayList`'s `gsSPTexture(..., G_OFF)`), and these same
+    /// sprite-cycling primitives turn it on from *inside* the same
+    /// unfollowable graphics-heap call this whole method exists to work
+    /// around (`objdisplay.c`'s `gSPTexture(..., G_ON)`, gated on
+    /// `MOBJ_FLAG_TEXTURE` -- yet another runtime-only flag bit, alongside
+    /// `FRAC`/`SPLIT`/`ALPHA`, this converter cannot read statically). A
+    /// real `G_SETTILE`(render tile)/mask pair -- required just below -- is
+    /// itself unambiguous, data-driven proof texturing is live for this
+    /// primitive; nothing else would need one.
+    fn current_texture_shape(&self) -> Option<TextureRef> {
+        let (fmt, siz) = self.tile0_fmt?;
+        let (mask_s, mask_t) = self.tile0_mask?;
+        let (w, h) = match self.tile_dims {
+            Some((w, h)) => (
+                if mask_s > 0 { w.min(1 << mask_s) } else { w },
+                if mask_t > 0 { h.min(1 << mask_t) } else { h },
+            ),
+            None if mask_s > 0 && mask_t > 0 => (1u16 << mask_s, 1u16 << mask_t),
+            None => return None,
+        };
+        let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
+        let mirror_s = mask_s > 0 && cm_s & 0x1 != 0;
+        let mirror_t = mask_t > 0 && cm_t & 0x1 != 0;
+        let clamp_s = cm_s & 0x2 != 0;
+        let clamp_t = cm_t & 0x2 != 0;
+        Some(TextureRef {
+            data_file: None,
+            data_offset: 0,
             format: Format::from_raw(fmt)?,
             size: BitSize::from_raw(siz)?,
             width: w,
@@ -1994,6 +2072,86 @@ mod tests {
         assert_eq!(texture.palette_offset, Some(0x200));
         assert_eq!(texture.data_offset, 0x400);
         assert_eq!(texture.format, Format::Ci);
+    }
+
+    /// RE-177: several manager-effect sprite-cycling primitives (CommonSpark
+    /// and others) never carry a real pixel `G_SETTIMG` at all — real
+    /// hardware supplies it at runtime from inside the same graphics-heap
+    /// `Call` this converter cannot follow, so `material.texture` correctly
+    /// stays `None`. But the render tile's own static `G_SETTILE` (format +
+    /// mask, no `G_SETTILESIZE`) is real, known shape that
+    /// `MeshMaterial::texture_shape` must still recover, because a texture-id
+    /// material-animation script needs it to convert each of its own
+    /// per-frame sprite variants.
+    #[test]
+    fn a_texture_shape_is_recovered_with_no_static_pixel_address_or_tile_size() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        // The static `MObjSub` this ROM shape reads has real flags for
+        // neither `PALETTE` nor `FRAC`/`SPLIT`/`ALPHA` (RE-177 measured this
+        // directly against the ROM for CommonSpark: flags == 0), so
+        // `mobj::read_material` correctly resolves neither field -- the same
+        // "no static texture" state a genuinely untextured primitive would
+        // have. `texture_shape` must not depend on either.
+        let mobjs = [MObjMaterial::default()];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        let material = &mesh.primitives[0].material;
+        assert_eq!(
+            material.texture, None,
+            "no real pixel address exists to report"
+        );
+        let shape = material
+            .texture_shape
+            .expect("format/size/dims/wrap are known from the static G_SETTILE alone");
+        assert_eq!(shape.format, Format::Ci);
+        assert_eq!(shape.size, BitSize::Bits4);
+        assert_eq!(
+            shape.width, 32,
+            "no G_SETTILESIZE ran; width comes from mask_s=5 (1<<5)"
+        );
+        assert_eq!(shape.height, 32);
+        assert!(shape.clamp_s && shape.clamp_t);
+        // The palette *is* real (loaded statically before the heap call), so
+        // a CI sprite variant can still decode.
+        assert_eq!(shape.palette_offset, Some(0x100));
     }
 
     #[test]
