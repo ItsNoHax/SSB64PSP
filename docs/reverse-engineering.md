@@ -10,6 +10,110 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-177 — Closes 6 of RE-175's 9 unresolved manager-effect sprite tables (`PLAN.md` R1)
+
+**Problem.** RE-175 found 9 of 26 manager-effect material-animation tables
+resolved no texture on their own primitive at pack time, needing per-file
+source tracing rather than a heuristic fix. Traced all 9 directly against the
+ROM (`ImpactWave`, `CommonSpark`, `DamageFlyMDust`, `ShockSmall`,
+`PikachuUnk`, `FalconKick`, `FalconPunch`, `MBallThrown`, `YoshiEntryEgg`).
+
+**Evidence.** For 6 of the 9 (`CommonSpark`, `DamageFlyMDust`, `ShockSmall`,
+`FalconPunch`, `FalconKick`, `YoshiEntryEgg`), the primitive's own display
+list genuinely never carries a real pixel `G_SETTIMG` at all: it issues
+`G_SETTILE(RENDER_TILE)`/`G_LOADBLOCK` for the sprite's real shape, preceded
+by a `Call` into the runtime graphics-heap segment (`SegAddr(0x0E000000)`,
+`crate::mobj::GRAPHICS_HEAP_SEGMENT`) that this converter cannot follow.
+Reading `refs/ssb-decomp-re/src/sys/objdisplay.c` (`gcAddMObjForDObj`'s
+`branch_dl` construction, lines ~1273-1421) shows why: real hardware supplies
+the pixel address *and* re-enables texturing from **inside** that same
+dynamically-patched call — `gDPSetTextureImage(..., mobj->sub.sprites[
+mobj->texture_id_curr])` gated on `MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA`, and
+`gSPTexture(..., G_ON)` gated on the separate `MOBJ_FLAG_TEXTURE` — neither
+bit is set in the *static* `MObjSub`'s own flags word this converter reads
+(confirmed byte-for-byte against the ROM for CommonSpark: `hexdump` of file 83
+@ 0x8EE0 shows `flags == 0x0000` at `mobj.rs`'s `F_FLAGS` offset 0x30, even
+though the `sprites` pointer field at offset 0x04 is a real, valid,
+intern-relocated pointer to `Tex_0x8CC0`). This is the same shape RE-105
+already found for lighting: a static `MObjSub`/`MObj` flags word is not
+always the reliable signal for what real hardware draws; the runtime
+material-animation player supplies the missing state instead. Since
+`mobj::read_material`'s `sprite`/`palette` gates (RE-045/046, verified and
+left untouched) correctly decline given that flags word, `MeshMaterial.
+texture` correctly stays `None` — this was never a texture-resolution bug —
+but `pack_mesh`'s `convert_mat_anim_sprite` then had nothing to read a base
+sprite's format/dimensions/wrap from, so it declined every sprite variant
+too, even though those variants have their own real, independently-resolved
+per-frame addresses (`resolve_one_mat_anim`'s `read_sprites`, ungated on
+flags).
+
+The remaining 3 (`ImpactWave`, `PikachuUnk`, `MBallThrown`) are a different,
+still-open problem, confirmed by direct instrumentation rather than guessed:
+`ImpactWave`'s script (file 83 @ 0x7DA4) decodes cleanly over 12 frames but
+drives none of `TRACK_PALETTE_ID`/`TRACK_TEXTURE_ID_CURRENT`/`_NEXT`/colour —
+its opcode is `nGCAnimEvent32SetVal0RateBlock` (8), a shape not yet
+cross-checked against `matanim.rs`'s track decode. `PikachuUnk`'s real
+`o_matanim_joint` table (file 347 @ 0x1A80) resolves a script only at node
+index 3 of 4 (`materials.len()==4`, not the single synthetic node RE-172's
+`DIRECT_MANAGER_EFFECT_ASSETS` injection would suggest), meaning its
+underlying graph has more real nodes than assumed; `MBallThrown`'s table
+(file 86 @ 0x950C) has a genuinely NULL per-node pointer at that same index 3
+position (`u32_at(data, 0x950C + 12) == 0`). Both need the same kind of
+node-count/table-alignment tracing RE-175 itself asked for, not a texture-
+shape fix — recorded here rather than left silently unattempted.
+
+**Implementation.** Added `MeshMaterial::texture_shape` (`mesh.rs`),
+populated unconditionally in `material_now()` by a new
+`State::current_texture_shape()`. It mirrors `current_texture()`'s existing
+format/size/wrap logic minus two requirements that do not hold for this
+shape: `timg_addr` (there is no real address to report — and deliberately
+does *not* fall back to whatever stale address `Cmd::LoadTlut`'s own restore
+leaves behind, since that can be the *palette*'s own address when, as here,
+no real pixel `G_SETTIMG` ever ran, which would be a texture pointed at the
+wrong bytes, not an honest decline); and `tile_dims` (no `G_SETTILESIZE` runs
+either for these primitives — falls back to the size the render tile's own
+mask already names, `1 << mask`, the same relationship RE-044 already
+established for narrowing an oversized drawn rect down to the texture's real
+size). Also does not require `texture_enabled`, for the same
+`MOBJ_FLAG_TEXTURE` reason above. `tools/romtool/src/main.rs`'s `pack_mesh`
+now tries `prim.material.texture.or(prim.material.texture_shape)` as
+`convert_mat_anim_sprite`'s format/dimension template, instead of requiring
+`texture` alone.
+
+**Verification.** `romtool effects`: material animations 17/26 → 23/26
+replayable (40 bound primitive scripts, up from 34). A new focused test,
+`a_texture_shape_is_recovered_with_no_static_pixel_address_or_tile_size`,
+reproduces CommonSpark's exact shape (`SetTimg`+`LoadTlut`, heap `Call`,
+render-tile `SetTile` with a mask and no `SetTileSize`, no `Texture` toggle)
+and asserts `texture == None` but `texture_shape` carries the correct
+format/32×32 dims/clamp/palette; confirmed capable of failing by temporarily
+reverting `current_texture_shape` to `None` and observing the assertion trip
+before restoring it. All 296 workspace tests (was 295), strict Clippy
+(`-D warnings`), `cargo fmt --check` (root and `psp/`), and the default PSP
+release build (`EBOOT.PBP`, the same pre-existing six linker warnings) pass.
+Rebuilt pack SHA-256
+`f6f01e422e89513bd49857759518a10fe9452b87383a0a9f9bcacaaa17e6b2f5`; EBOOT
+SHA-256 `a752d38a531c2b424ac1b37e7debb8ef35509ca760681da7f21853518433cd1d`.
+`tools/run-ppsspp.sh --audit-effect-materials 26` still captures 24/26
+visible + the same 2 correctly rest-invisible (NessPKFlash, LinkSpinAttack) —
+unchanged from RE-176, because that coarse per-object visibility metric
+cannot distinguish "renders untextured" from "renders the correct sprite";
+these 6 objects were already nonblank before this fix (a plain vertex-shaded
+quad), so this audit is not independent evidence of the fix and is not
+claimed as such here. The stronger evidence is `romtool effects`'s explicit
+per-table pass/fail check plus the focused unit test above; a fighter/effect-
+specific screenshot comparison (the same caveat RE-101/102/175 already flag
+for themselves) remains a good next step for a session with capacity for it.
+PPSSPP was confirmed terminated after the run (`flatpak kill`, `pgrep -f
+PPSSPP`).
+
+**Confidence: high for the 6 tables fixed (traced to the exact ROM bytes and
+decompiled runtime code, not inferred from an aggregate count) and for the
+diagnosis of the remaining 3; no claim that the remaining 3 are fixed, and no
+on-device pixel-level comparison for the 6 that are.**
+
+---
+
 ## RE-176 — Manager-effect material AObjEvent32 texture-swap consumption on the PSP renderer (`PLAN.md` R1)
 
 **Problem.** RE-175 packed the manager effects' material `AObjEvent32` tables
