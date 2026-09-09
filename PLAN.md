@@ -2720,8 +2720,15 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   frame-4 PPSSPP software audit remains 24 visible/2 authored-invisible at 60
   FPS with 26 unique headers and clean logs, while Catch Swirl and Item Get
   Swirl now differ from their baked rest colours as their scripts require.
-  Facing-dependent alternate streams and the separate `LBParticle`
-  script/texture-bank renderer remain before this row can close
+  RE-180 begins the separate `LBParticle` path with a strict decoder derived
+  from `lbParticleSetupBankID`, `LBScript`/`LBTexture`, and
+  `lbParticleUpdateStruct`: all nine real ROM bank pairs validate as 160
+  scripts, 65 texture series, 246 independently decoded image frames, and
+  6,070 used bytecode bytes. This corrects a decomp working-note prose total
+  of 66 whose own per-bank counts and real headers sum to 65. Pack
+  serialization, runtime simulation, PSP rectangle rendering, and PPSSPP
+  audit still remain. Facing-dependent alternate manager streams also remain
+  before this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:

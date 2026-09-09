@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 manager-effect live colour playback, RE-179)
+**Last updated:** 2026-09-09 (R1 LBParticle bank decoding, RE-180)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–179). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–180). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -65,9 +65,18 @@ unaffected captures remain stable. All 454 workspace tests pass (one new
 colour-source mapping regression), plus strict workspace Clippy, formatting,
 and the PSP audit release build. Evidence: RE-179.
 
-The next bounded step within this same task is the independent `LBParticle`
-script/texture-bank decoder and renderer used by dust, flame, sparkle, hit,
-and several stage effects. The broader runtime `MObj` display-state parity gap
+RE-180 completes the first bounded `LBParticle` slice. New
+`ssb_rom::particle` decoding follows the original `lbParticleSetupBankID`,
+`LBScript`/`LBTexture`, and `lbParticleUpdateStruct` layouts without guessing.
+All nine real US ROM bank pairs validate: 160 scripts, 65 texture series, 246
+image frames, and 6,070 used bytecode bytes; every frame passes the existing
+N64 texture decoder. Six focused tests plus all 460 workspace tests pass. A
+decomp working-note prose total of 66 textures is corrected by its own
+per-bank sum and all nine ROM headers, which independently give 65. Banks are
+not yet packed, simulated, or PSP-rendered. Next bounded step: pack scripts
+and converted frame textures, then add deterministic playback/drawing.
+
+The broader runtime `MObj` display-state parity gap
 remains explicitly tracked in `PLAN.md` R1, `docs/rendering.md`, and `TODO.md`:
 the decomp's default/texture-enable/UV-scale/translation/scroll/current-next/
 fractional-alpha state is not yet represented as one end-to-end runtime model.
@@ -3834,11 +3843,12 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**Resume `R1 — all required effects render`.** RE-172–179 complete the
+**Resume `R1 — all required effects render`.** RE-172–180 complete the
 source-backed static-manager inventory, packing, exhaustive PPSSPP capture,
 transform animation, material animation, sprite selection, and live colour
-playback for all 46 display-bearing manager assets. Next, investigate and
-implement the separate `LBParticle` script and texture-bank format. The user
+playback for all 46 display-bearing manager assets and strictly decode all
+nine `LBParticle` bank pairs. Next, serialize particle scripts and converted
+texture frames into `ssb64.pak`; runtime playback/drawing follows. The user
 explicitly deferred unavailable physical-PSP work on 2026-09-09. R0.5 remains
 `VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
 complete, begin R3, or unlock combat.
@@ -4198,6 +4208,19 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: LBParticle bank decoding (RE-180)
+
+* Original-source layouts and all nine US ROM ranges traced; strict decoder
+  validates 160 scripts, 65 texture series, 246 frames, and 6,070 used
+  bytecode bytes. Every frame decodes through the existing texture decoder.
+* Six focused particle tests and all 460 workspace tests pass. Strict Clippy,
+  formatting, `ssb-rom --no-default-features`, and `cargo psp --release`
+  pass; PSP emits only the existing toolchain/source warnings.
+* `romtool particles rom/Super Smash Bros. (USA).z64` reports all nine banks
+  without errors. No copyrighted output is written or committed.
+* Pack/runtime/PSP drawing remain; physical PSP status unchanged.
+  Implementation commit: `c900de4`.
 
 ## 2026-09-09 — R1: manager-effect live colour playback (RE-179)
 

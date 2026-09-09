@@ -10,6 +10,46 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-180 — All LBParticle banks decode from the original ROM (`PLAN.md` R1)
+
+**Problem.** R1 identified `LBParticle` as the second required effect path,
+but the port had no reader for its script or texture banks. Manager-effect
+coverage therefore said nothing about dust, flame, sparkle, hit, or the stage
+particles created through `lbParticleMakeScriptID`/`lbParticleMakeGenerator`.
+
+**Source evidence.** `refs/ssb-decomp-re/src/lb/lbparticle.c` proves both bank
+formats are position-independent: `lbParticleSetupBankID` fixes file-relative
+script, texture, image, and palette offsets after DMA. `lbtypes.h` fixes the
+48-byte `LBScript` header and 24-byte `LBTexture` header;
+`lbParticleUpdateStruct` fixes every bytecode operand width and terminator.
+The nine US ROM ranges come from `smashbrothers.us.yaml`. Direct ROM decoding
+finds **160 scripts, 65 texture series, 246 image frames, and 6,070 used
+bytecode bytes**. The decomp working note's prose says 66 textures, but its own
+nine per-bank counts sum to 65 and all nine real bank headers independently
+confirm 65; project evidence uses measured 65. EFCommon texture 6 is a real
+zero-frame placeholder and remains in the indexed table.
+
+**Implementation.** New `ssb_rom::particle` strictly decodes all headers,
+relative pointer tables, image/palette payloads, shared-versus-per-frame CI
+palettes, and bytecode operand boundaries. Unknown opcodes, truncation, bad
+offsets, bad dimensions/formats/sizes, and unterminated scripts fail rather
+than guess. `romtool particles <rom>` validates all banks and runs every one of
+the 246 image frames through the existing N64 RGBA/IA/I/CI decoder.
+
+**Verification.** Six focused tests cover command widths, long waits, header
+and texture decoding, inventory constants, and optional real-ROM totals. All
+460 workspace tests pass; strict Clippy, formatting, the `no_std` library
+build, and PSP release build pass. The real US ROM command reports all nine
+banks and the totals above without an error. PSP linker warnings are the
+existing toolchain warnings already recorded by prior verification, not new
+decoder failures.
+
+**Remaining scope.** Banks are decoded but not yet serialized into
+`ssb64.pak`, simulated, or drawn by the PSP. Next bounded step is pack-format
+representation for scripts and converted frame textures. Runtime spawning,
+deterministic update playback, billboard rectangle drawing, and PPSSPP audit
+remain after that. Implementation commit: `c900de4`. No physical-PSP claim.
+
 ## RE-179 — Manager-effect live colour tracks reach PSP draw state (`PLAN.md` R1)
 
 **Problem.** RE-175 decoded and replayed all five material colour-track slots,
