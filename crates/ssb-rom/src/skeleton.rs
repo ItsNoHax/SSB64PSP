@@ -550,6 +550,44 @@ pub struct EffectColors {
     pub light2: Option<[u8; 4]>,
 }
 
+impl EffectColors {
+    /// Resolves live material colour registers into one packed PSP vertex
+    /// colour. `flat_color` and `texture_blend` name the two source-backed
+    /// combiner mappings established by RE-073/080; other RGB shapes retain
+    /// their converter-resolved value. PRIM alpha is independent of RGB and
+    /// replaces the packed vertex alpha whenever its track is live.
+    pub fn vertex_color(self, packed: u32, flat_color: bool, texture_blend: bool) -> u32 {
+        let mut rgba = packed.to_le_bytes();
+        if flat_color {
+            if let Some(prim) = self.prim {
+                rgba[..3].copy_from_slice(&prim[..3]);
+            } else if let Some(env) = self.env {
+                rgba[..3].copy_from_slice(&env[..3]);
+            }
+        } else if texture_blend {
+            if let Some(env) = self.env {
+                rgba[..3].copy_from_slice(&env[..3]);
+            }
+        }
+        if let Some(prim) = self.prim {
+            rgba[3] = prim[3];
+        }
+        crate::psp_texture::pack_abgr(rgba)
+    }
+
+    pub fn packed_prim(self) -> Option<u32> {
+        self.prim.map(crate::psp_texture::pack_abgr)
+    }
+
+    pub fn packed_light1(self) -> Option<u32> {
+        self.light1.map(crate::psp_texture::pack_abgr)
+    }
+
+    pub fn packed_light2(self) -> Option<u32> {
+        self.light2.map(crate::psp_texture::pack_abgr)
+    }
+}
+
 impl EffectMaterialAnimator {
     pub fn new() -> Self {
         EffectMaterialAnimator {
@@ -663,6 +701,30 @@ mod tests {
     use super::*;
     use crate::pack::PackWriter;
     use crate::scene::{DObjDesc, DObjNode, SceneGraph};
+
+    #[test]
+    fn effect_colors_map_onto_the_two_packed_combiner_sources() {
+        let colors = EffectColors {
+            prim: Some([0x11, 0x22, 0x33, 0x44]),
+            env: Some([0x55, 0x66, 0x77, 0x88]),
+            ..EffectColors::default()
+        };
+        let original = crate::psp_texture::pack_abgr([1, 2, 3, 4]);
+
+        assert_eq!(
+            colors.vertex_color(original, true, false),
+            crate::psp_texture::pack_abgr([0x11, 0x22, 0x33, 0x44])
+        );
+        assert_eq!(
+            colors.vertex_color(original, false, true),
+            crate::psp_texture::pack_abgr([0x55, 0x66, 0x77, 0x44])
+        );
+        assert_eq!(
+            colors.vertex_color(original, false, false),
+            crate::psp_texture::pack_abgr([1, 2, 3, 0x44])
+        );
+        assert_eq!(colors.packed_prim(), Some(0x4433_2211));
+    }
 
     /// A three-deep chain with a rotation, a translation and a scale at each
     /// level, so composition order and every component are exercised.
