@@ -10,6 +10,153 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-188 — `LBGenerator` implemented: cone/line spawn math ported, vortex declines to the existing `VortexUnsupported` (`PLAN.md` R1)
+
+**Problem.** RE-184/185/186/187 all listed the `LBGenerator` subsystem as
+remaining scope: `MAKEGENERATOR` (103 real uses, the dominant spawn opcode
+archive-wide, vs. 25 `MAKESCRIPT`) is decoded into a `SpawnRequest` but
+never executed by any `SpawnSink`, including RE-187's own `ParticleTree` —
+`lbParticleGeneratorFuncRun` is a materially different subsystem (its own
+allocator, its own per-frame queue walk, its own script-driven spawn
+*timing*), not a variant of the node-splice list RE-187 covers.
+
+**Evidence.** Read `struct LBGenerator` (`lbtypes.h:139-179`),
+`lbParticleMakeGenerator` (`lbparticle.c:2610-2685`, the constructor) and
+`lbParticleGeneratorFuncRun` (`:2263-2578`, the per-frame body) directly:
+
+* `lbParticleMakeGenerator` copies a template script's header fields once
+  (`kind`, `flags`, `texture_id`, `particle_lifetime`, `generator_lifetime`,
+  `vel`, `gravity`, `friction`, `size`, `bytecode`, `unk_script_0x20`/`0x24`
+  -> `unk_gn_0x38`/`0x3C`, `update_rate`) and hardcodes `pos = (0,0,0)`.
+  `generator_vars.rotate.{base,target}` (kind `0`/`3`/`4`'s cone limits) are
+  set to `0`/`360deg` here and — grepped the whole decompilation — never
+  written anywhere else, so they're provably always these two values, not
+  configurable state.
+* `gn->dobj` is set to `NULL` here and, again grepped project-wide, written
+  exactly once more in the entire decompilation:
+  `refs/ssb-decomp-re/src/mn/mncommon/mntitle.c:1491`, a title-screen menu
+  effect setting it directly on the returned pointer, not through any
+  bytecode this module executes. Every real *bytecode-triggered*
+  `MAKEGENERATOR` therefore leaves `dobj` `NULL` forever, so
+  `lbParticleGetPosVelDObj`'s pos/vel override (`lbparticle.c:2329-2334`)
+  never fires for any generator this module can reach — the same "needs a
+  live `DObj`" scope already declined for `SETDISTVEL`/`ADDDISTVELMAG`/
+  `SETATTACHID` (RE-182's own scope note).
+* `lbParticleGeneratorFuncRun`'s per-frame body: accumulate `frame` by
+  `update_rate` (negative = deterministic `-=`, non-negative = `rand() *
+  update_rate`); once `frame >= 1.0`, compute a shared `vel`/angle basis
+  and an initial `pv0 = rand() * 2π` (spent even for kinds that never use
+  it, since the source's own outer `if` computes it unconditionally before
+  the per-kind `switch`); then loop while `frame >= 1.0`, dispatching per
+  `kind`, each iteration calling `lbParticleMakeParam` (== `lbParticleMake
+  Struct` + an immediate creation tick, the same "child ticks once before
+  the parent's dispatch continues" shape RE-187 already found for
+  `MAKESCRIPT`); finally decrement `generator_lifetime` and eject once it
+  hits `0` (a vortex-lingering special case is provably unreachable here,
+  see below).
+* `kind` `0`/`3`/`4` share one cone-emission formula: a random-or-
+  deterministic azimuth (`pv0`, deterministic when `unk_gn_0x3C < 0`,
+  incrementing by a fixed step each spawn instead of drawing fresh) and a
+  random-or-deterministic spread radius (`var_f20`, deterministic when
+  `unk_gn_0x38 < 0`), rotated into the base velocity's own frame via the
+  same two-angle (`arctan2` pitch/yaw) construction `lbParticleRotateVel`
+  already uses for `SETVELANGLE` (already ported as `rotate_vel`). `kind ==
+  3` additionally scales the resulting velocity by the random magnitude
+  fraction (`vmag`). `kind == 1` moves along a fixed line from `gn->pos` to
+  a point fixed at creation (`gn->pos + gn->vel`), ignoring `pv0` entirely
+  (dead compute, but it still consumes the shared RNG draw). `kind == 2`
+  (vortex) is fully decoded too, not a guess — but the particle it creates
+  always carries `LBPARTICLE_FLAG_VORTEX` and has its `gravity`/`friction`
+  fields repurposed to hold the emission axis's own angles
+  (`lbparticle.c:2417-2420`), which is exactly the shape
+  `SimError::VortexUnsupported` already exists to catch the instant that
+  particle is creation-ticked. No caller of `Generator::tick` can ever
+  observe a `kind == 2` spawn's own position/velocity before that decline
+  fires, so this module skips straight to the same error rather than
+  porting position/velocity math nothing downstream can see.
+* Archive-wide census (temporary instrumentation, since reverted): ran
+  every one of the 160 real scripts' own root particle for 2000 ticks
+  (seed 1) collecting every reachable `MAKEGENERATOR` target, then looked
+  up each target's own `kind`. 65 distinct (bank, target-script) pairs: `0`
+  (55), `2` (4), `3` (6). Zero real targets use `kind` `1` or `4`, and zero
+  use any value the true external-hook `default:` branch
+  (`sLBParticleGeneratorFuncDefault`, a per-game-mode function pointer this
+  project has no way to recover) would be needed for.
+
+**Implementation.** `crates/ssb-rom/src/particle.rs`:
+
+* `Particle::spawn_raw` — `lbParticleMakeStruct` with explicit pos/vel/
+  size/gravity/friction instead of indexing a script by ID, the shape every
+  real `lbParticleMakeParam` call needs.
+* `SimError::UnknownGeneratorKind(u16)` — the true external-hook decline;
+  zero real archive-wide occurrences today.
+* `generator::Generator` — `spawn` (`lbParticleMakeGenerator` for a real
+  bytecode-triggered call, `pos = (0,0,0)` exactly, not a stand-in — no
+  bytecode operand could ever supply a different value) and `tick`
+  (`lbParticleGeneratorFuncRun`'s per-generator body, minus the `gobj->
+  flags` visibility mask and `LBPARTICLE_FLAG_PAUSE` check at its top,
+  which need a live `GObj`/queue walk this state-only simulator doesn't
+  model — the same scope `ParticleState` itself is already silent on).
+  Returns every particle spawned this frame, each already creation-ticked
+  once via `Particle::tick_with`, propagating whatever error that tick
+  itself produces (in practice always `VortexUnsupported`, for the reason
+  above).
+
+**Verification.** Eight new synthetic unit tests
+(`particle::generator_tests`): `kind` `0`'s deterministic branch preserves
+velocity magnitude and matches the spread radius to `|unknown_20|`
+(invariants checked via the already-ROM-verified trig primitives, not
+hand-derived decimals — the same style `setvelangle_preserves_speed`
+already uses); `kind` `3` scales speed by the random magnitude fraction,
+independently replayed from the same `Rng`; `kind` `1` lerps from `pos`
+toward `pos + vel`; `kind` `2` declines every time a spawn would occur; an
+unknown `kind` declines with its own value; `frame` accumulates across
+ticks before a spawn occurs; `generator_lifetime == 0` never ejects;
+nonzero `generator_lifetime` ejects exactly on schedule. One new
+`SSB64_ROM`-gated archive-wide regression
+(`real_rom_generator_targets_run_to_completion_or_a_catalogued_decline`)
+runs all 65 real targets for up to 240 frames each (seed 1, or until
+ejection/decline) and pins `(vortex_declines, unknown_declines) == (4, 0)`
+and `(ever_spawned, ever_visible) == (60, 60)` — not `61`: `efcommon`
+script 12 (`update_rate` `2.0`, `generator_lifetime` `1`) has exactly one
+real frame to live, and this seed's own `rand() * update_rate` draw that
+frame lands near `0.0013`, short of the `1.0` a spawn needs. Whether this
+*specific* generator ever spawns for real depends on the shared global
+RNG's exact state the instant it's created, which this project cannot
+recover (`Rng`'s own doc comment) — a different seed could plausibly flip
+this one outcome without indicating a bug either way. `romtool particles`
+now also reports this census and reproduces the same numbers directly
+against the real ROM. `cargo test --workspace`: 336 `ssb-rom` tests (was
+327), both with and without `SSB64_ROM` set. Strict Clippy (`cargo clippy
+--workspace --lib --tests -- -D warnings` and `cargo clippy -p ssb-rom
+--no-default-features -- -D warnings`) and `cargo fmt --check` all pass. No
+`psp/` file changed, so no new `cargo psp`/PPSSPP run was needed — this is
+a host-side execution model, the same scoping RE-184/187 used before a
+later on-device sweep; `draw_particle` still only ever draws the debug
+viewer's single fresh root.
+
+**Remaining scope.** A real spawn event (a gameplay/effect system actually
+calling `MAKEGENERATOR`'s equivalent, rather than the debug viewer's single
+fresh root) is the only piece of the `LBGenerator`/"multi-particle" line of
+work RE-184 first opened that is still outstanding. The real, fixed-size
+`LBGenerator`/`LBParticle` allocator pools remain unmodeled (both arenas
+grow unboundedly in this simulator) — plausible only if a future real
+scene's generator/particle count grows unusually large within a few
+frames; not observed in this census.
+
+**Confidence:** high for the cone/line math (ported directly from the
+decompilation's own case blocks, reusing already-ROM-verified trig
+primitives, and pinned by invariant-based unit tests built to be sensitive
+to a wrong formula) and for the archive-wide kind/decline/visibility counts
+(measured, not sampled, against the real ROM and pinned by a regression
+test). Medium for the vortex decline's own scoping judgement (that no
+caller could ever observe its position/velocity math) — correct given this
+module's current API, but would need revisiting if a future caller needed
+to inspect a vortex generator's spawn *before* it creation-ticks. No
+physical-PSP or on-device claim; `R0.5` is unaffected.
+
+---
+
 ## RE-187 — Multi-particle spawn-tree execution: `MAKESCRIPT`/`MAKERAND`/`MAKEID` actually spawn, one archive-wide rescue found (`PLAN.md` R1)
 
 **Problem.** `Particle::tick` (RE-172-186's shared simulator) decodes
