@@ -45,6 +45,7 @@ Sony device was connected, so R0.5 correctly remains `VERIFYING`. The verified
 regression EBOOT / pack SHA-256 are
 `9678f50695bea1911d8a86086e5f261fda5c89aff3c3d56c1252721b02f29801` /
 `0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+Implementation/documentation commit: `8f953c8`.
 
 RE-166 corrects a source-state loss in RE-165's runtime-lighting
 path: `G_MW_LIGHTCOL` is independent of material flags and an authored zero is
