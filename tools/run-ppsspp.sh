@@ -6,6 +6,7 @@
 #                        [--audit-stages N] [--audit-animations N]
 #                        [--audit-effects N]
 #                        [--audit-effect-animations N]
+#                        [--audit-effect-materials N]
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -83,6 +84,7 @@ AUDIT_STAGES=0
 AUDIT_ANIMATIONS=0
 AUDIT_EFFECTS=0
 AUDIT_EFFECT_ANIMATIONS=0
+AUDIT_EFFECT_MATERIALS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -93,6 +95,7 @@ while [ $# -gt 0 ]; do
     --audit-animations) AUDIT_ANIMATIONS="$2"; shift 2 ;;
     --audit-effects) AUDIT_EFFECTS="$2"; shift 2 ;;
     --audit-effect-animations) AUDIT_EFFECT_ANIMATIONS="$2"; shift 2 ;;
+    --audit-effect-materials) AUDIT_EFFECT_MATERIALS="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -109,7 +112,10 @@ esac
 case "$AUDIT_EFFECT_ANIMATIONS" in
   ''|*[!0-9]*) echo "--audit-effect-animations needs a non-negative integer" >&2; exit 2 ;;
 esac
-ACTIVE_AUDITS=$(( (AUDIT_STAGES > 0) + (AUDIT_ANIMATIONS > 0) + (AUDIT_EFFECTS > 0) + (AUDIT_EFFECT_ANIMATIONS > 0) ))
+case "$AUDIT_EFFECT_MATERIALS" in
+  ''|*[!0-9]*) echo "--audit-effect-materials needs a non-negative integer" >&2; exit 2 ;;
+esac
+ACTIVE_AUDITS=$(( (AUDIT_STAGES > 0) + (AUDIT_ANIMATIONS > 0) + (AUDIT_EFFECTS > 0) + (AUDIT_EFFECT_ANIMATIONS > 0) + (AUDIT_EFFECT_MATERIALS > 0) ))
 if [ "$ACTIVE_AUDITS" -gt 1 ]; then
   echo "choose only one exhaustive audit per run" >&2
   exit 2
@@ -118,13 +124,13 @@ fi
 for tool in flatpak wmctrl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
-if [ "$AUDIT_STAGES" -gt 0 ] || [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
+if [ "$AUDIT_STAGES" -gt 0 ] || [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
   if ! command -v xdotool >/dev/null && ! python3 -c 'import Xlib' 2>/dev/null; then
     echo "exhaustive audits require xdotool or Python Xlib to advance the PSP D-pad" >&2
     exit 1
   fi
 fi
-if { [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; } && ! command -v magick >/dev/null; then
+if { [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; } && ! command -v magick >/dev/null; then
   echo "animation/effect audits require ImageMagick for per-frame content checks" >&2
   exit 1
 fi
@@ -183,7 +189,9 @@ capture() {
 
 if [ "$BUILD" = 1 ]; then
   echo "==> building EBOOT"
-  if [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
+  if [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
+    ( cd "$REPO/psp" && cargo psp --release --features effect_material_audit_capture )
+  elif [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
     ( cd "$REPO/psp" && cargo psp --release --features effect_animation_audit_capture )
   elif [ "$AUDIT_EFFECTS" -gt 0 ]; then
     ( cd "$REPO/psp" && cargo psp --release --features effect_audit_capture )
@@ -351,7 +359,74 @@ echo "==> window $WIN; running ${SECONDS_TO_RUN}s"
 
 interruptible_sleep "$SECONDS_TO_RUN"
 
-if [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
+if [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
+  AUDIT_OUT="$OUT/effect-material-audit"
+  mkdir -p "$AUDIT_OUT"
+  rm -f "$AUDIT_OUT"/effect-material-*.png
+  echo "==> capturing frame 4 of $AUDIT_EFFECT_MATERIALS manager effect material animations"
+  AUDIT_FAILED=0
+  HEADER_HASHES="$(mktemp)"
+  for ((i = 0; i < AUDIT_EFFECT_MATERIALS; i++)); do
+    printf -v AUDIT_FILE '%s/effect-material-%02d.png' "$AUDIT_OUT" "$i"
+    if TOOL=$(capture "$WIN" "$AUDIT_FILE"); then
+      CENTRE_SD=$(magick "$AUDIT_FILE" -gravity center -crop '60%x76%+0+0' \
+        +repage -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
+      case "$i" in
+        # Source-backed rest-invisible exceptions among the 26
+        # material-animated effects, in `effect_material_slots` order
+        # (RE-176): slot 9 is NessPKFlash (X/Y scale 1e-5, needs its
+        # transform stream too -- this material-only audit does not tick
+        # it), slot 23 is LinkSpinAttack (primitive alpha ramps from zero
+        # but is still imperceptibly dim at frame 4, RE-175).
+        9|23)
+          if awk -v s="$CENTRE_SD" 'BEGIN { exit !(s >= 0.003) }'; then
+            echo "warning: effect material $i should remain rest-invisible" >&2
+            AUDIT_FAILED=1
+          fi
+          ;;
+        *)
+          if awk -v s="$CENTRE_SD" 'BEGIN { exit !(s < 0.003) }'; then
+            echo "warning: effect material $i has no measurable central render content" >&2
+            AUDIT_FAILED=1
+          fi
+          ;;
+      esac
+      magick "$AUDIT_FILE" -gravity north -crop '100%x15%+0+0' +repage \
+        -format '%#\n' info: >> "$HEADER_HASHES"
+      echo "==> effect material $i: $AUDIT_FILE (via $TOOL, centre sd $CENTRE_SD)"
+    else
+      echo "warning: effect material $i capture failed" >&2
+      AUDIT_FAILED=1
+    fi
+    if [ "$i" -lt $((AUDIT_EFFECT_MATERIALS - 1)) ]; then
+      wmctrl -i -a "$WIN"
+      send_right "$WIN"
+      interruptible_sleep 0.5
+    fi
+  done
+  UNIQUE_HEADERS=$(sort -u "$HEADER_HASHES" | wc -l)
+  rm -f "$HEADER_HASHES"
+  if [ "$UNIQUE_HEADERS" -ne "$AUDIT_EFFECT_MATERIALS" ]; then
+    echo "warning: only $UNIQUE_HEADERS/$AUDIT_EFFECT_MATERIALS identity headers were unique" >&2
+    AUDIT_FAILED=1
+  fi
+  [ "$AUDIT_FAILED" -eq 0 ] || exit 1
+  {
+    echo "commit=$(git -C "$REPO" rev-parse HEAD)"
+    echo "backend=$BACKEND"
+    echo "manager_effect_material_animation_count=$AUDIT_EFFECT_MATERIALS"
+    echo "capture_frame=4"
+    echo "visible_material_samples=24"
+    echo "rest_invisible_material_samples=2"
+    echo "unique_identity_headers=$UNIQUE_HEADERS"
+    echo "eboot_sha256=$(sha256sum "$EBOOT" | awk '{print $1}')"
+    echo "pack_sha256=$(sha256sum "$PACK" | awk '{print $1}')"
+    echo "captures:"
+    sha256sum "$AUDIT_OUT"/effect-material-*.png | sed "s|$AUDIT_OUT/||"
+  } > "$AUDIT_OUT/manifest.txt"
+  echo "==> manifest: $AUDIT_OUT/manifest.txt"
+  echo "==> effect material audit: $AUDIT_OUT"
+elif [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
   AUDIT_OUT="$OUT/effect-animation-audit"
   mkdir -p "$AUDIT_OUT"
   rm -f "$AUDIT_OUT"/effect-animation-*.png
