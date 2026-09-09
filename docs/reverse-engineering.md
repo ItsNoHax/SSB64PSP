@@ -10,6 +10,60 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-174 — Manager-effect transform AObjEvent32 streams pack and replay (`PLAN.md` R1)
+
+**Problem.** RE-173 bounded and rendered the manager's static/rest objects, but
+35 of the 46 unique display assets name a non-NULL `EFDesc.o_anim_joint` table.
+Without those streams, Ness PK Flash and Samus Entry Point stay degenerate and
+moving/scaling effect cards do not reproduce the original manager path.
+
+**Original evidence.** The 53 static descriptors in `ef/efmanager.c` provide
+the authoritative graph/transform-table associations. Cross-checking their
+linker names against the ROM yields 35 selected tables and 65 non-NULL joint
+scripts. The check caught an important address distinction: Link Entry Beam's
+table begins at file-353 `0xB60`, while its first script begins at `0xB68`.
+Poké Ball's spawn function selects left/right transform and material tables at
+runtime; ROM inspection confirms left `0x95E0` and right `0x9690`. RE-174 packs
+the descriptor-selected left variant and does not claim the unintegrated facing
+branch. Kirby Entry Star has the same facing-dependent integration boundary.
+
+**Implementation.** `ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS` aligns the
+35 non-NULL table offsets with the established 46-key inventory. The pack adds
+an effect animation namespace and binds each non-NULL script to the absolute
+node of its source object. `romtool effects` requires all 35 streams to load
+and replay through `StageAnimator`. The PSP audit feature restarts the matching
+animator on every identity, advances to deterministic frame 4 (before the
+shortest five-frame stream ends), composes the posed matrices, and frames the
+posed rather than rest hierarchy. Audit-only fixed oblique views keep authored
+single-sided cards from being sampled edge-on.
+
+**Verification.** The rebuilt pack reports 35 effect animations and 65 bound
+nodes. `romtool effects` reports 46/46 renderable objects, 668 triangles, and
+35/35 transform streams replayable without a decode error. The PPSSPP software
+audit captured 35/35 unique frame-4 identities at 60 FPS: 34 contain measurable
+effect pixels; Link Spin Attack remains blank exactly because its separate
+material animation begins at primitive alpha zero. EBOOT / pack SHA-256 are
+`9ef4d26146432dcd589ce11e70c944b29e30c698f41c713f817ee3e6c71aee4e` /
+`c0f22ea3deb6caf79d5d440ce9aa80a34a40893f8e9146c4608017dde649a88e`.
+Captures and their manifest remain outside Git at
+`/home/alberto/ppsspp-test/re174/effect-animation-audit/`; manifest SHA-256 is
+`ac5e7019cff1191f7dcdd3ad5840514cb6e3e6e254e2bd8829fcf9d77fabb83b`.
+The full contact sheet was inspected and all captures display 60 FPS. All 440
+workspace tests, strict workspace Clippy, `cargo fmt --check`, `bash -n`, and
+the PSP release audit build pass; the PSP build retains the existing six
+warnings. Implementation commit: `c845a5e`.
+
+This completes only manager-effect DObj transform playback. Per-effect material
+`AObjEvent32` playback, facing-selected alternate streams, and the independent
+`LBParticle` bytecode/texture-bank runtime remain. No physical-PSP claim is
+made.
+
+**Confidence: high for the 35 descriptor-selected transform-table associations,
+packing, host replay, and PPSSPP execution; no claim for the remaining material,
+facing-variant, particle, or hardware paths.**
+
+---
+
 ## RE-173 — Exhaustive manager-effect rest-pose audit identifies three authored invisible states (`PLAN.md` R1)
 
 **Problem.** RE-172 proved that all 46 unique display-bearing manager assets
