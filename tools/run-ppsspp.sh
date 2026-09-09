@@ -3,7 +3,7 @@
 # Build and run the PSP executable under PPSSPP, capturing a screenshot.
 #
 #   tools/run-ppsspp.sh [--no-build] [--backend software|opengl] [--seconds N]
-#                        [--audit-stages N]
+#                        [--audit-stages N] [--audit-animations N]
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -78,6 +78,7 @@ BACKEND=software
 SECONDS_TO_RUN=12
 BUILD=1
 AUDIT_STAGES=0
+AUDIT_ANIMATIONS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -85,6 +86,7 @@ while [ $# -gt 0 ]; do
     --backend)  BACKEND="$2"; shift 2 ;;
     --seconds)  SECONDS_TO_RUN="$2"; shift 2 ;;
     --audit-stages) AUDIT_STAGES="$2"; shift 2 ;;
+    --audit-animations) AUDIT_ANIMATIONS="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -92,15 +94,26 @@ done
 case "$AUDIT_STAGES" in
   ''|*[!0-9]*) echo "--audit-stages needs a non-negative integer" >&2; exit 2 ;;
 esac
+case "$AUDIT_ANIMATIONS" in
+  ''|*[!0-9]*) echo "--audit-animations needs a non-negative integer" >&2; exit 2 ;;
+esac
+if [ "$AUDIT_STAGES" -gt 0 ] && [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
+  echo "choose only one exhaustive audit per run" >&2
+  exit 2
+fi
 
 for tool in flatpak wmctrl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
-if [ "$AUDIT_STAGES" -gt 0 ]; then
+if [ "$AUDIT_STAGES" -gt 0 ] || [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
   if ! command -v xdotool >/dev/null && ! python3 -c 'import Xlib' 2>/dev/null; then
-    echo "--audit-stages requires xdotool or Python Xlib to advance the PSP D-pad" >&2
+    echo "exhaustive audits require xdotool or Python Xlib to advance the PSP D-pad" >&2
     exit 1
   fi
+fi
+if [ "$AUDIT_ANIMATIONS" -gt 0 ] && ! command -v magick >/dev/null; then
+  echo "--audit-animations requires ImageMagick for per-frame content checks" >&2
+  exit 1
 fi
 
 # At least one capture tool has to exist. `import` is preferred because it can
@@ -157,7 +170,11 @@ capture() {
 
 if [ "$BUILD" = 1 ]; then
   echo "==> building EBOOT"
-  ( cd "$REPO/psp" && cargo psp --release )
+  if [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
+    ( cd "$REPO/psp" && cargo psp --release --features animation_audit_capture )
+  else
+    ( cd "$REPO/psp" && cargo psp --release )
+  fi
 fi
 
 EBOOT="$REPO/psp/target/mipsel-sony-psp/release/EBOOT.PBP"
@@ -317,7 +334,64 @@ echo "==> window $WIN; running ${SECONDS_TO_RUN}s"
 
 interruptible_sleep "$SECONDS_TO_RUN"
 
-if [ "$AUDIT_STAGES" -gt 0 ]; then
+if [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
+  AUDIT_OUT="$OUT/animation-audit"
+  mkdir -p "$AUDIT_OUT"
+  rm -f "$AUDIT_OUT"/animation-*.png
+  echo "==> capturing $AUDIT_ANIMATIONS fighter animations in pack order"
+  AUDIT_FAILED=0
+  HEADER_HASHES="$(mktemp)"
+  for ((i = 0; i < AUDIT_ANIMATIONS; i++)); do
+    printf -v AUDIT_FILE '%s/animation-%03d.png' "$AUDIT_OUT" "$i"
+    if TOOL=$(capture "$WIN" "$AUDIT_FILE"); then
+      # Audit builds draw only one identity line above an unobscured model.
+      # A varied whole screenshot could therefore be only the HUD; require
+      # measurable content in a centred crop where the posed fighter belongs.
+      CENTRE_SD=$(magick "$AUDIT_FILE" -gravity center -crop '60%x76%+0+0' \
+        +repage -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
+      if awk -v s="$CENTRE_SD" 'BEGIN { exit !(s < 0.003) }'; then
+        echo "warning: animation $i has no measurable central render content" >&2
+        AUDIT_FAILED=1
+      fi
+      magick "$AUDIT_FILE" -gravity north -crop '100%x15%+0+0' +repage \
+        -format '%#\n' info: >> "$HEADER_HASHES"
+      echo "==> animation $i: $AUDIT_FILE (via $TOOL, centre sd $CENTRE_SD)"
+    else
+      echo "warning: animation $i capture failed" >&2
+      AUDIT_FAILED=1
+    fi
+    if [ "$i" -lt $((AUDIT_ANIMATIONS - 1)) ]; then
+      wmctrl -i -a "$WIN"
+      send_right "$WIN"
+      # About fifteen simulation ticks: enough to render a real posed frame,
+      # short enough to keep the full 532-entry audit practical.
+      interruptible_sleep 0.25
+    fi
+  done
+  UNIQUE_HEADERS=$(sort -u "$HEADER_HASHES" | wc -l)
+  rm -f "$HEADER_HASHES"
+  if [ "$UNIQUE_HEADERS" -ne "$AUDIT_ANIMATIONS" ]; then
+    echo "warning: only $UNIQUE_HEADERS/$AUDIT_ANIMATIONS identity headers were unique" >&2
+    AUDIT_FAILED=1
+  fi
+  [ "$AUDIT_FAILED" -eq 0 ] || exit 1
+  {
+    echo "commit=$(git -C "$REPO" rev-parse HEAD)"
+    echo "backend=$BACKEND"
+    echo "fighter_animation_count=$AUDIT_ANIMATIONS"
+    echo "unique_identity_headers=$UNIQUE_HEADERS"
+    echo "eboot_sha256=$(sha256sum "$EBOOT" | awk '{print $1}')"
+    if [ -f "$PACK" ]; then
+      echo "pack_sha256=$(sha256sum "$PACK" | awk '{print $1}')"
+    else
+      echo "pack_sha256=absent"
+    fi
+    echo "captures:"
+    sha256sum "$AUDIT_OUT"/animation-*.png | sed "s|$AUDIT_OUT/||"
+  } > "$AUDIT_OUT/manifest.txt"
+  echo "==> manifest: $AUDIT_OUT/manifest.txt"
+  echo "==> animation audit: $AUDIT_OUT"
+elif [ "$AUDIT_STAGES" -gt 0 ]; then
   AUDIT_OUT="$OUT/stage-audit"
   mkdir -p "$AUDIT_OUT"
   rm -f "$AUDIT_OUT"/stage-*.png

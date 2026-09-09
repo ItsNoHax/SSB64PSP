@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 fighter/costume reconciliation)
+**Last updated:** 2026-09-09 (R1 animation render audit)
 
 ---
 
@@ -13,12 +13,22 @@ is temporarily deferred by explicit user direction)
 
 ## Current Task
 
-`R1 — all fighters / required costumes render`: reconcile R1 with the existing
-R0.11/RE-098 exhaustive visual evidence.
+`R1 — all required animations render`: add and execute an exhaustive,
+source-identifying PPSSPP audit of every packed fighter motion through the
+runtime skeleton and renderer.
 
 ## Task Status
 
-`COMPLETE`. R0.11/RE-098 already individually rendered all 12 playable
+`IN_PROGRESS`. Existing ROM/pack replay evidence proves all 532 packed fighter
+motions numerically, and R0.9 separately verifies all 35 stage animations
+through their correct 32-bit runtime path. The current work is adding the
+missing exhaustive visual harness for the 532 fighter motions. The generic
+object animation viewer must stop before the 35 stage and 11 transition
+entries: those use `AObjEvent32`, not the fighter figatree decoder, and already
+have dedicated stage/results runtime paths.
+
+The preceding fighter/costume reconciliation is `COMPLETE`.
+R0.11/RE-098 already individually rendered all 12 playable
 fighters at a nonzero costume in PPSSPP at 60 FPS. That work also derives the
 exact costume counts from the original `dFTParamCostumeIDs`, packs every
 sparse node/costume override, verifies both colour and palette substitution
