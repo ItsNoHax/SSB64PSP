@@ -2956,12 +2956,54 @@ fn particles(path: &Path) -> Res {
     let mut frame_total = 0usize;
     let mut decoded_total = 0usize;
     let mut bytecode_total = 0usize;
+    let mut visible_total = 0usize;
+    let mut invisible: Vec<String> = Vec::new();
 
     println!("LBParticle banks");
     for &spec in ssb_rom::particle::BANKS {
         let (scripts, textures) = ssb_rom::particle::decode_bank(&data, spec)
             .map_err(|error| format!("{}: {error:?}", spec.name))?;
         let frames: usize = textures.iter().map(|texture| texture.images.len()).sum();
+        // RE-184: RE-183's PSP proof of concept only checked script 0 render
+        // visibility. Reproduce its exact deterministic settle point --
+        // spawn fresh, tick to frame 4 with the same fixed seed -- for every
+        // real script, so a script that never puts a pixel on screen is
+        // counted rather than silently skipped by a manual spot check.
+        for (index, script) in scripts.iter().enumerate() {
+            let mut particle = ssb_rom::particle::Particle::spawn(script);
+            let mut rng = ssb_rom::particle::Rng::new(1);
+            let mut spawn_count = 0usize;
+            for _ in 0..4 {
+                spawn_count += particle.tick(&mut rng).map_or(0, |v| v.len());
+            }
+            let frame_count = textures
+                .get(particle.state.texture_id as usize)
+                .map_or(0, |t| t.images.len() as u32);
+            if particle.state.visible(frame_count) {
+                visible_total += 1;
+            } else {
+                // RE-184 traced every one of these by hand across 60 ticks
+                // with a fixed seed to tell three real cases apart rather
+                // than reporting one flat "invisible" count: a zero-frame
+                // texture series never has anything to bind (`frame_count ==
+                // 0`); a script that issues `MAKESCRIPT`/`MAKEGENERATOR`
+                // this window is a pure spawner whose own draw the original
+                // never uses (`lbGeneratorRun`'s job, not yet ported --
+                // RE-182's own declined scope); anything else needs a fresh
+                // per-script look before being assumed harmless.
+                let reason = if frame_count == 0 {
+                    "authored zero-frame texture series"
+                } else if spawn_count > 0 {
+                    "spawner script (issues MAKESCRIPT/MAKEGENERATOR, never resolves its own texture)"
+                } else {
+                    "unexplained -- needs individual inspection"
+                };
+                invisible.push(format!(
+                    "{} script {index}: {reason} (size {:.3}, texture {} frames {frame_count})",
+                    spec.name, particle.state.size, particle.state.texture_id
+                ));
+            }
+        }
         for texture in &textures {
             for (frame, image) in texture.images.iter().enumerate() {
                 let palette = texture
@@ -3012,6 +3054,12 @@ fn particles(path: &Path) -> Res {
         "total: {script_total} scripts, {texture_total} textures, {frame_total} frames decoded, {bytecode_total} bytecode bytes"
     );
     debug_assert_eq!(decoded_total, frame_total);
+    println!(
+        "frame-4 render visibility (seed 1, RE-183's settle point): {visible_total}/{script_total} visible"
+    );
+    for line in &invisible {
+        println!("  invisible: {line}");
+    }
     Ok(())
 }
 

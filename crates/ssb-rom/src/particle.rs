@@ -560,6 +560,19 @@ pub struct ParticleState {
     pub alive: bool,
 }
 
+impl ParticleState {
+    /// Whether a draw call this frame would put anything on screen: real
+    /// hardware's `lbParticleDrawTextures` (`lbparticle.c:1450-2118`) skips
+    /// the draw entirely when `size <= 0`, and a zero-frame texture series
+    /// has nothing to bind either. Shared by the PSP viewer
+    /// (`psp/src/main.rs`'s `particle_view`) and `romtool`'s frame-4 census
+    /// so both ask the identical question instead of two hand-written copies
+    /// silently drifting apart.
+    pub fn visible(&self, frame_count: u32) -> bool {
+        frame_count > 0 && self.size > 0.0
+    }
+}
+
 fn read_u8(data: &[u8], cursor: &mut usize) -> Result<u8, SimError> {
     let v = *data.get(*cursor).ok_or(SimError::Truncated)?;
     *cursor += 1;
@@ -1188,6 +1201,40 @@ mod tests {
         }
         assert_eq!((scripts, textures), (160, 65));
     }
+
+    /// RE-184: locks in the frame-4 (RE-183's own settle point) visibility
+    /// census `romtool particles` reports. 148 of 160 real scripts resolve a
+    /// texture frame at that instant; the other 12 are explained by name in
+    /// `docs/reverse-engineering.md` RE-184, not just counted. A drop in
+    /// `visible_count` below 148 without a matching RE update means either a
+    /// real regression or an unreviewed decoder change.
+    #[test]
+    fn real_rom_frame_4_particle_visibility_census_is_148_of_160() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let mut visible_count = 0usize;
+        let mut total = 0usize;
+        for &bank in BANKS {
+            let (scripts, textures) = decode_bank(&rom, bank).unwrap();
+            for script in &scripts {
+                total += 1;
+                let mut particle = Particle::spawn(script);
+                let mut rng = Rng::new(1);
+                for _ in 0..4 {
+                    let _ = particle.tick(&mut rng);
+                }
+                let frame_count = textures
+                    .get(particle.state.texture_id as usize)
+                    .map_or(0, |t| t.images.len() as u32);
+                if particle.state.visible(frame_count) {
+                    visible_count += 1;
+                }
+            }
+        }
+        assert_eq!((visible_count, total), (148, 160));
+    }
 }
 
 #[cfg(test)]
@@ -1210,6 +1257,17 @@ mod sim_tests {
             size: 0.0,
             bytecode,
         }
+    }
+
+    #[test]
+    fn visible_requires_positive_size_and_a_real_frame() {
+        let script = script_with(0, &[0xFF]);
+        let particle = Particle::spawn(&script);
+        assert!(!particle.state.visible(4)); // spawn() defaults size to 0.0
+        let mut visible_state = particle.state;
+        visible_state.size = 1.0;
+        assert!(visible_state.visible(4));
+        assert!(!visible_state.visible(0)); // zero-frame texture series
     }
 
     #[test]

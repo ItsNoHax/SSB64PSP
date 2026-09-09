@@ -1007,7 +1007,7 @@ unsafe fn run() -> ! {
                         p.particle_texture(b.first_texture + particle.state.texture_id as u32)
                     });
                     let tex_global = texture
-                        .filter(|t| t.frame_count > 0 && particle.state.size > 0.0)
+                        .filter(|t| particle.state.visible(t.frame_count))
                         .map(|t| {
                             t.first_frame + (particle.state.frame_id as u32).min(t.frame_count - 1)
                         });
