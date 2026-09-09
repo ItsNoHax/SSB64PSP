@@ -24,7 +24,9 @@ use psp::sys::{
     ScePspFVector3, ScePspFVector4, TexturePixelFormat, VertexType,
 };
 
-use ssb_rom::pack::{flags, MeshDesc, NodeDesc, ObjectDesc, Pack, PrimDesc, TextureDesc};
+use ssb_rom::pack::{
+    flags, MeshDesc, NodeDesc, ObjectDesc, Pack, PackedVertex, PrimDesc, TextureDesc,
+};
 
 /// What the GE divides 16-bit vertex components by.
 ///
@@ -49,6 +51,17 @@ const VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
         | VertexType::VERTEX_16BIT.bits()
         | VertexType::TRANSFORM_3D.bits()
         | VertexType::INDEX_16BIT.bits(),
+);
+
+/// [`VERTEX_FORMAT`] without indexed drawing. Runtime material colours need
+/// one transient copy per submitted corner because the packed vertex buffer
+/// is immutable and shared across primitives.
+const UNINDEXED_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
+    VertexType::TEXTURE_16BIT.bits()
+        | VertexType::COLOR_8888.bits()
+        | VertexType::NORMAL_8BIT.bits()
+        | VertexType::VERTEX_16BIT.bits()
+        | VertexType::TRANSFORM_3D.bits(),
 );
 
 /// Maps a packed `Psm` discriminant back to the GE enum.
@@ -444,6 +457,10 @@ unsafe fn apply_material(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
+    let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
+        .then(|| effect_mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+        .flatten();
+
     if st.last_flags != Some(p.flags) {
         st.last_flags = Some(p.flags);
         st.state_changes += 1;
@@ -546,8 +563,12 @@ unsafe fn apply_material(
     // absent write (RE-166).
     if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
         let colors = (
-            (p.flags & flags::LIGHT1_COLOR != 0).then_some(p.light1_color),
-            (p.flags & flags::LIGHT2_COLOR != 0).then_some(p.light2_color),
+            effect_colors
+                .and_then(|c| c.packed_light1())
+                .or_else(|| (p.flags & flags::LIGHT1_COLOR != 0).then_some(p.light1_color)),
+            effect_colors
+                .and_then(|c| c.packed_light2())
+                .or_else(|| (p.flags & flags::LIGHT2_COLOR != 0).then_some(p.light2_color)),
         );
         if st.last_fighter_light_colors != Some(colors) {
             st.last_fighter_light_colors = Some(colors);
@@ -588,8 +609,6 @@ unsafe fn apply_material(
     // `TextureDesc.mat_anim`'s texture-keyed palette cycling above -- this
     // one is keyed by the primitive, since an untextured colour script and a
     // sprite-swapping one can both attach to the same `MatAnimDesc` index.
-    // Texture swap only for now; live colour-track GE state is a separate,
-    // harder design question (STATUS.md) left for a later step.
     let effective_texture = if p.mat_anim != TextureDesc::NO_ANIM {
         effect_mat_anim
             .and_then(|m| m.resolved_texture(pack, p.mat_anim))
@@ -623,7 +642,11 @@ unsafe fn apply_material(
     // texture function itself for exactly this reason -- either omission
     // would silently leave a stale `Blend`/`Modulate` state or a stale
     // `sceGuTexEnvColor` active on a primitive that needed a different one.
-    let blend_target = (p.flags & flags::TEXTURE_BLEND != 0).then_some(p.texture_blend_target);
+    let blend_target = (p.flags & flags::TEXTURE_BLEND != 0).then_some(
+        effect_colors
+            .and_then(|c| c.packed_prim())
+            .unwrap_or(p.texture_blend_target),
+    );
     if st.last_texture_blend != blend_target {
         st.last_texture_blend = blend_target;
         st.state_changes += 1;
@@ -675,13 +698,48 @@ pub unsafe fn draw_mesh(
 
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
 
-        sys::sceGumDrawArray(
-            GuPrimitive::Triangles,
-            VERTEX_FORMAT,
-            p.index_count as i32,
-            indices.as_ptr() as *const c_void,
-            verts.as_ptr() as *const c_void,
-        );
+        let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
+            .then(|| effect_mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+            .flatten();
+        if let Some(colors) = effect_colors.filter(|c| c.prim.is_some() || c.env.is_some()) {
+            // `sceGuGetMemory` allocates from the current display-list arena,
+            // whose lifetime already matches this asynchronous GE submission.
+            // Expanding the indexed corners avoids mutating shared pack data
+            // or recolouring another primitive that reuses one vertex.
+            let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
+            let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut PackedVertex;
+            for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
+                let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
+                let source_offset = index * core::mem::size_of::<PackedVertex>();
+                let source = verts
+                    .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+                    .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
+                    .unwrap_or_default();
+                dynamic.add(corner).write(PackedVertex {
+                    color: colors.vertex_color(
+                        source.color,
+                        p.flags & flags::FLAT_COLOR != 0,
+                        p.flags & flags::TEXTURE_BLEND != 0,
+                    ),
+                    ..source
+                });
+            }
+            sys::sceGumDrawArray(
+                GuPrimitive::Triangles,
+                UNINDEXED_VERTEX_FORMAT,
+                p.index_count as i32,
+                core::ptr::null(),
+                dynamic as *const c_void,
+            );
+        } else {
+            sys::sceGumDrawArray(
+                GuPrimitive::Triangles,
+                VERTEX_FORMAT,
+                p.index_count as i32,
+                indices.as_ptr() as *const c_void,
+                verts.as_ptr() as *const c_void,
+            );
+        }
 
         st.draws += 1;
         tris += p.index_count / 3;
