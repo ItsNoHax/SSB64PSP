@@ -4311,7 +4311,7 @@ not more `romtool` investigation.
   `LBGenerator` subsystem, an `ENVCOLOR`/`NOISE` archive-wide census, an
   exhaustive per-script sweep, and a real spawn event (rather than the
   debug viewer) all remain. No physical-PSP claim; `R0.5` unaffected.
-  Implementation commit: pending.
+  Implementation commit: `99df6cb`.
 
 ## 2026-09-09 — R1: LBParticle pack serialization (RE-181)
 
