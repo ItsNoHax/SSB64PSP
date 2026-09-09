@@ -1017,17 +1017,36 @@ unsafe fn run() -> ! {
                             != 0)
                             .then_some(particle.state.envcolor);
                         let dist = (particle.state.size * 6.0).max(50.0);
-                        dbg_cam = particle.state.pos[2] + dist;
+                        dbg_cam = dist;
                         dbg_radius = particle.state.size;
-                        gpu.model_transform(
-                            [
-                                -particle.state.pos[0],
-                                -particle.state.pos[1],
-                                -particle.state.pos[2] - dist,
-                            ],
-                            [0.0, 0.0, 0.0],
-                            1.0,
-                        );
+                        // RE-185: earlier baked `-particle.state.pos` into this
+                        // same translate, on the theory it would "move the
+                        // camera to the particle" the way `billboard_view`'s
+                        // `-centre` does. That comparison does not hold: a
+                        // billboard's own drawn vertices already carry their
+                        // absolute `node.world` position, so subtracting
+                        // `centre` there cancels it back to the origin. This
+                        // quad's local vertices (`draw_particle`) are plain
+                        // `-size..size` around local origin with no absolute
+                        // position baked in at all, so subtracting `pos` added
+                        // a phantom offset instead of removing one -- any
+                        // script whose bytecode had moved it from `(0,0,0)` by
+                        // the frame-4 settle point (real motion, not a decode
+                        // bug) was translated off both axes of this viewer's
+                        // narrow 38-degree vertical FOV and silently clipped,
+                        // despite a real, correctly bound, correctly coloured
+                        // draw call still being issued. Found via a reversible
+                        // on-device experiment (an untextured, texture-
+                        // disabled solid-colour override still rendered
+                        // nothing at the same two script indices, ruling out
+                        // the colour/combiner path before this transform was
+                        // suspected). This viewer inspects one particle's own
+                        // authored sprite/colour in isolation, the same way
+                        // `draw_texture_quad` always frames its fixed quad
+                        // regardless of any texture's own addressing, so a
+                        // fixed camera distance with no position term is
+                        // correct here, not merely convenient.
+                        gpu.model_transform([0.0, 0.0, -dist], [0.0, 0.0, 0.0], 1.0);
                         meshdraw::draw_particle(
                             p,
                             frame,
@@ -1677,6 +1696,21 @@ unsafe fn run() -> ! {
                     src_file,
                     skeleton.frame() as i32,
                     shown.0,
+                ),
+            );
+        } else if cfg!(feature = "particle_render_audit_capture") {
+            // Mirrors the other exhaustive audits' single-line overlay
+            // (RE-172/174/176): the generic multi-line viewer text below is
+            // taller than the header crop `tools/run-ppsspp.sh
+            // --audit-particles` excludes, and was found bleeding into the
+            // centre-content check meant to isolate the particle sprite.
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "PARTICLE AUDIT {}/{}  bank {} @0x{:X}  tris {}",
+                    particle_script_index, particle_script_count, src_file, src_offset, shown.0,
                 ),
             );
         } else if !cfg!(any(

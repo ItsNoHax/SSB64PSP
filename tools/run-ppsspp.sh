@@ -7,6 +7,7 @@
 #                        [--audit-effects N]
 #                        [--audit-effect-animations N]
 #                        [--audit-effect-materials N]
+#                        [--audit-particles N]
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -85,6 +86,7 @@ AUDIT_ANIMATIONS=0
 AUDIT_EFFECTS=0
 AUDIT_EFFECT_ANIMATIONS=0
 AUDIT_EFFECT_MATERIALS=0
+AUDIT_PARTICLES=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -96,6 +98,7 @@ while [ $# -gt 0 ]; do
     --audit-effects) AUDIT_EFFECTS="$2"; shift 2 ;;
     --audit-effect-animations) AUDIT_EFFECT_ANIMATIONS="$2"; shift 2 ;;
     --audit-effect-materials) AUDIT_EFFECT_MATERIALS="$2"; shift 2 ;;
+    --audit-particles) AUDIT_PARTICLES="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -115,7 +118,10 @@ esac
 case "$AUDIT_EFFECT_MATERIALS" in
   ''|*[!0-9]*) echo "--audit-effect-materials needs a non-negative integer" >&2; exit 2 ;;
 esac
-ACTIVE_AUDITS=$(( (AUDIT_STAGES > 0) + (AUDIT_ANIMATIONS > 0) + (AUDIT_EFFECTS > 0) + (AUDIT_EFFECT_ANIMATIONS > 0) + (AUDIT_EFFECT_MATERIALS > 0) ))
+case "$AUDIT_PARTICLES" in
+  ''|*[!0-9]*) echo "--audit-particles needs a non-negative integer" >&2; exit 2 ;;
+esac
+ACTIVE_AUDITS=$(( (AUDIT_STAGES > 0) + (AUDIT_ANIMATIONS > 0) + (AUDIT_EFFECTS > 0) + (AUDIT_EFFECT_ANIMATIONS > 0) + (AUDIT_EFFECT_MATERIALS > 0) + (AUDIT_PARTICLES > 0) ))
 if [ "$ACTIVE_AUDITS" -gt 1 ]; then
   echo "choose only one exhaustive audit per run" >&2
   exit 2
@@ -124,13 +130,13 @@ fi
 for tool in flatpak wmctrl; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
-if [ "$AUDIT_STAGES" -gt 0 ] || [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
+if [ "$AUDIT_STAGES" -gt 0 ] || [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ] || [ "$AUDIT_PARTICLES" -gt 0 ]; then
   if ! command -v xdotool >/dev/null && ! python3 -c 'import Xlib' 2>/dev/null; then
     echo "exhaustive audits require xdotool or Python Xlib to advance the PSP D-pad" >&2
     exit 1
   fi
 fi
-if { [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; } && ! command -v magick >/dev/null; then
+if { [ "$AUDIT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECTS" -gt 0 ] || [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ] || [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ] || [ "$AUDIT_PARTICLES" -gt 0 ]; } && ! command -v magick >/dev/null; then
   echo "animation/effect audits require ImageMagick for per-frame content checks" >&2
   exit 1
 fi
@@ -189,7 +195,9 @@ capture() {
 
 if [ "$BUILD" = 1 ]; then
   echo "==> building EBOOT"
-  if [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
+  if [ "$AUDIT_PARTICLES" -gt 0 ]; then
+    ( cd "$REPO/psp" && cargo psp --release --features particle_render_audit_capture )
+  elif [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
     ( cd "$REPO/psp" && cargo psp --release --features effect_material_audit_capture )
   elif [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
     ( cd "$REPO/psp" && cargo psp --release --features effect_animation_audit_capture )
@@ -359,7 +367,83 @@ echo "==> window $WIN; running ${SECONDS_TO_RUN}s"
 
 interruptible_sleep "$SECONDS_TO_RUN"
 
-if [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
+if [ "$AUDIT_PARTICLES" -gt 0 ]; then
+  AUDIT_OUT="$OUT/particle-audit"
+  mkdir -p "$AUDIT_OUT"
+  rm -f "$AUDIT_OUT"/particle-*.png
+  echo "==> capturing frame 4 of $AUDIT_PARTICLES LBParticle scripts"
+  AUDIT_FAILED=0
+  HEADER_HASHES="$(mktemp)"
+  # RE-184's host-side census (`romtool particles`), reproducing RE-183's own
+  # settle point (spawn, tick x4, seed 1), classifies exactly these 12 of the
+  # 160 real US ROM scripts as correctly invisible at frame 4 rather than
+  # missing: index 14 has an authored zero-frame texture series; 26/34/38/
+  # 105/112/131/132/139/143/144 are spawner-only scripts whose own draw
+  # depends on the not-yet-ported LBGenerator; 80 is a real particle whose
+  # pulsing SETSIZELERP animation is legitimately zero-size on this exact
+  # tick. This on-device sweep exists to confirm the host-side census against
+  # the real GE draw, not to re-derive the classification.
+  for ((i = 0; i < AUDIT_PARTICLES; i++)); do
+    printf -v AUDIT_FILE '%s/particle-%03d.png' "$AUDIT_OUT" "$i"
+    if TOOL=$(capture "$WIN" "$AUDIT_FILE"); then
+      # Particle sprites are small and screen-centred; a tight crop keeps the
+      # one-line HUD and viewer chrome from masking a genuinely blank draw.
+      CENTRE_SD=$(magick "$AUDIT_FILE" -gravity center -crop '40%x50%+0+0' \
+        +repage -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)
+      case "$i" in
+        14|26|34|38|80|105|112|131|132|139|143|144)
+          if awk -v s="$CENTRE_SD" 'BEGIN { exit !(s >= 0.003) }'; then
+            echo "warning: particle $i should be invisible at frame 4 (RE-184)" >&2
+            AUDIT_FAILED=1
+          fi
+          ;;
+        *)
+          if awk -v s="$CENTRE_SD" 'BEGIN { exit !(s < 0.003) }'; then
+            echo "warning: particle $i has no measurable frame-4 content" >&2
+            AUDIT_FAILED=1
+          fi
+          ;;
+      esac
+      magick "$AUDIT_FILE" -gravity north -crop '100%x15%+0+0' +repage \
+        -format '%#\n' info: >> "$HEADER_HASHES"
+      echo "==> particle $i: $AUDIT_FILE (via $TOOL, centre sd $CENTRE_SD)"
+    else
+      echo "warning: particle $i capture failed" >&2
+      AUDIT_FAILED=1
+    fi
+    if [ "$i" -lt $((AUDIT_PARTICLES - 1)) ]; then
+      wmctrl -i -a "$WIN"
+      send_right "$WIN"
+      interruptible_sleep 0.25
+    fi
+  done
+  UNIQUE_HEADERS=$(sort -u "$HEADER_HASHES" | wc -l)
+  rm -f "$HEADER_HASHES"
+  if [ "$UNIQUE_HEADERS" -ne "$AUDIT_PARTICLES" ]; then
+    echo "warning: only $UNIQUE_HEADERS/$AUDIT_PARTICLES identity headers were unique" >&2
+    AUDIT_FAILED=1
+  fi
+  [ "$AUDIT_FAILED" -eq 0 ] || exit 1
+  {
+    echo "commit=$(git -C "$REPO" rev-parse HEAD)"
+    echo "backend=$BACKEND"
+    echo "particle_script_count=$AUDIT_PARTICLES"
+    echo "capture_frame=4"
+    echo "visible_particle_samples=148"
+    echo "invisible_particle_samples=12"
+    echo "unique_identity_headers=$UNIQUE_HEADERS"
+    echo "eboot_sha256=$(sha256sum "$EBOOT" | awk '{print $1}')"
+    if [ -f "$PACK" ]; then
+      echo "pack_sha256=$(sha256sum "$PACK" | awk '{print $1}')"
+    else
+      echo "pack_sha256=absent"
+    fi
+    echo "captures:"
+    sha256sum "$AUDIT_OUT"/particle-*.png | sed "s|$AUDIT_OUT/||"
+  } > "$AUDIT_OUT/manifest.txt"
+  echo "==> manifest: $AUDIT_OUT/manifest.txt"
+  echo "==> particle audit: $AUDIT_OUT"
+elif [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
   AUDIT_OUT="$OUT/effect-material-audit"
   mkdir -p "$AUDIT_OUT"
   rm -f "$AUDIT_OUT"/effect-material-*.png
