@@ -190,7 +190,10 @@ Remaining renderer work is governed by the rendering milestones below.
 
 # 6. R0 — Rendering Correctness
 
-Status: `IN_PROGRESS`
+Status: `IN_PROGRESS` — R0.5 remains `VERIFYING` on physical hardware. By the
+user's 2026-09-09 direction, software-only R1 completeness work may proceed
+while that check is temporarily deferred; this does not complete R0, satisfy
+R2, unlock R3/combat, or weaken any hardware acceptance criterion.
 
 This is the current development gate.
 
@@ -2631,9 +2634,14 @@ lead for `R3` once it unblocks.
 
 # 7. R1 — Rendering Completeness
 
-Status: `BLOCKED_BY_R0`
+Status: `IN_PROGRESS` — software-only completeness work is proceeding under
+the narrow hardware-deferral exception recorded above. R1 itself cannot be
+completed until R0.5 is resolved.
 
-R1 cannot begin until R0 is complete.
+Normally R1 cannot begin until R0 is complete. The remaining R0 item now
+requires unavailable physical hardware, so the user explicitly authorized
+continuing independent software work rather than idling the project. No R1
+completion claim may bypass R0.5.
 
 ### Objective
 
@@ -2641,7 +2649,11 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 
 ### Acceptance
 
-* [ ] all stages render
+* [x] all stages render — RE-170: one PPSSPP software run captured all 41
+  packed stages in stable viewer order; all captures are nonblank and unique,
+  retain the source-identifying HUD, show 60 FPS, and produced no error/failure
+  log lines. `tools/run-ppsspp.sh --audit-stages 41` records artifact and
+  capture hashes in a manifest; physical hardware remains R2
 * [ ] all fighters render
 * [ ] all required costumes render
 * [ ] all required animations render
