@@ -18,6 +18,7 @@
 //! romtool fighters <rom>          extract every character's FTAttributes
 //! romtool anims    <rom>          read every fighter's animation lengths
 //! romtool effects  <pack>         verify source-named manager effect objects
+//! romtool particles <rom>         validate LBParticle script/texture banks
 //! ```
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -45,6 +46,7 @@ fn main() -> ExitCode {
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["effects", pack_path] => effects(pack_path.as_ref()),
+        ["particles", rom_path] => particles(rom_path.as_ref()),
         ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
         ["anims", rom_path, rest @ ..] => anims(rom_path.as_ref(), rest),
         ["figatree", rom_path, rest @ ..] => figatree(rom_path.as_ref(), rest),
@@ -86,6 +88,7 @@ USAGE:
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool effects  <pack.pak>
+    romtool particles <rom.z64>
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
     romtool anims    <rom.z64> [--verify]
     romtool figatree <rom.z64> [--fighter <name>] [--slot <name>] [--frames <n>]
@@ -2773,6 +2776,72 @@ fn effects(path: &Path) -> Res {
         )
         .into())
     }
+}
+
+fn particles(path: &Path) -> Res {
+    let (data, _) = load_rom(path)?;
+    let mut script_total = 0usize;
+    let mut texture_total = 0usize;
+    let mut frame_total = 0usize;
+    let mut decoded_total = 0usize;
+    let mut bytecode_total = 0usize;
+
+    println!("LBParticle banks");
+    for &spec in ssb_rom::particle::BANKS {
+        let (scripts, textures) = ssb_rom::particle::decode_bank(&data, spec)
+            .map_err(|error| format!("{}: {error:?}", spec.name))?;
+        let frames: usize = textures.iter().map(|texture| texture.images.len()).sum();
+        for texture in &textures {
+            for (frame, image) in texture.images.iter().enumerate() {
+                let palette = texture
+                    .palettes
+                    .get(if texture.flags & 1 != 0 { 0 } else { frame });
+                let palette: Option<Vec<u16>> = palette.map(|bytes| {
+                    bytes
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|word| u16::from_be_bytes([word[0], word[1]]))
+                        .collect()
+                });
+                ssb_rom::texture::decode(
+                    image,
+                    texture.width,
+                    texture.height,
+                    texture.format,
+                    texture.size,
+                    palette.as_deref(),
+                )
+                .map_err(|error| format!("{} texture frame {frame}: {error:?}", spec.name))?;
+                decoded_total += 1;
+            }
+        }
+        let used_bytecode: usize = scripts
+            .iter()
+            .map(|script| {
+                ssb_rom::particle::inspect_bytecode(script.bytecode)
+                    .unwrap()
+                    .used_bytes
+            })
+            .sum();
+        println!(
+            "  {:14} {:3} scripts  {:2} textures  {:3} frames  {:5} bytecode bytes",
+            spec.name,
+            scripts.len(),
+            textures.len(),
+            frames,
+            used_bytecode
+        );
+        script_total += scripts.len();
+        texture_total += textures.len();
+        frame_total += frames;
+        bytecode_total += used_bytecode;
+    }
+    println!(
+        "total: {script_total} scripts, {texture_total} textures, {frame_total} frames decoded, {bytecode_total} bytecode bytes"
+    );
+    debug_assert_eq!(decoded_total, frame_total);
+    Ok(())
 }
 
 struct Loaded {
