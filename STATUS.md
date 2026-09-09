@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 LBParticle bank decoding, RE-180)
+**Last updated:** 2026-09-09 (R1 LBParticle pack serialization, RE-181)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–180). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–181). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -72,9 +72,16 @@ All nine real US ROM bank pairs validate: 160 scripts, 65 texture series, 246
 image frames, and 6,070 used bytecode bytes; every frame passes the existing
 N64 texture decoder. Six focused tests plus all 460 workspace tests pass. A
 decomp working-note prose total of 66 textures is corrected by its own
-per-bank sum and all nine ROM headers, which independently give 65. Banks are
-not yet packed, simulated, or PSP-rendered. Next bounded step: pack scripts
-and converted frame textures, then add deterministic playback/drawing.
+per-bank sum and all nine ROM headers, which independently give 65.
+
+RE-181 serializes this full inventory into pack version 25. Nine bank-local
+ranges retain all 160 fixed script records and 6,070 bytecode bytes; 65 series
+retain all 246 PSP-converted frames, including EFCommon's zero-frame slot.
+`romtool effects` verifies counts, bytecode, descriptors, frame entries, and
+texel ranges after pack readback. The rebuilt 8,218,128-byte pack loads in an
+8-second PPSSPP software smoke run at 60 FPS with no application error/failure
+lines. Runtime simulation and PSP drawing remain. Next bounded step:
+deterministic script playback.
 
 The broader runtime `MObj` display-state parity gap
 remains explicitly tracked in `PLAN.md` R1, `docs/rendering.md`, and `TODO.md`:
@@ -90,7 +97,7 @@ current decomp and ROM layout: Catch Swirl `0x2760 -> 0x22B8`, Reflect Break
 `0x6D00 -> 0x6B40`. File 84 rises from six to seven packed textures;
 archive-wide material verification now covers 468 nodes with zero mismatches.
 The rebuilt pack SHA-256 is
-`019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87`.
+`7eeac020d16a38760d3bbd77cd14ba63562469277466ea09428536fa8260681d`.
 
 RE-173 adds the completed exhaustive PPSSPP-software rest-pose audit. Its
 source-ordered capture covers all 46 assets: all 43 authored-visible objects
@@ -3843,12 +3850,13 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**Resume `R1 — all required effects render`.** RE-172–180 complete the
+**Resume `R1 — all required effects render`.** RE-172–181 complete the
 source-backed static-manager inventory, packing, exhaustive PPSSPP capture,
 transform animation, material animation, sprite selection, and live colour
 playback for all 46 display-bearing manager assets and strictly decode all
-nine `LBParticle` bank pairs. Next, serialize particle scripts and converted
-texture frames into `ssb64.pak`; runtime playback/drawing follows. The user
+nine `LBParticle` bank pairs and serialize all of them into `ssb64.pak`.
+Next implement deterministic LBParticle script playback; PSP rectangle drawing
+follows. The user
 explicitly deferred unavailable physical-PSP work on 2026-09-09. R0.5 remains
 `VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
 complete, begin R3, or unlock combat.
@@ -4208,6 +4216,20 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: LBParticle pack serialization (RE-181)
+
+* Pack version 25 stores 9 bank ranges, 160 fixed script records, all 6,070
+  bytecode bytes, 65 texture-series descriptors, and 246 PSP-converted frames.
+  EFCommon's authored zero-frame slot remains indexed.
+* Rebuilt `assets/generated/ssb64.pak` is 8,218,128 bytes, SHA-256
+  `7eeac020d16a38760d3bbd77cd14ba63562469277466ea09428536fa8260681d`.
+  `romtool effects` validates every packed bytecode stream and frame range.
+* Focused pack round-trip test and all 461 workspace tests pass. Strict
+  workspace Clippy, formatting, and `ssb-rom --no-default-features` pass.
+* Eight-second PPSSPP software smoke run loads exact rebuilt pack at 60 FPS;
+  application log has no error/failure lines. No physical-PSP claim.
+  Implementation commit: `5342bf0`.
 
 ## 2026-09-09 — R1: LBParticle bank decoding (RE-180)
 
