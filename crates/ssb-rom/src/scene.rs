@@ -388,7 +388,7 @@ impl Mat4 {
 /// ~9e-4 — visible as a degree of skew on a 90-degree joint, and exactly what
 /// the first version of this got wrong. Reducing by quadrant instead keeps
 /// `|a| <= pi/4`, where the same polynomials are accurate to ~1e-8.
-fn sin_cos(x: f32) -> (f32, f32) {
+pub(crate) fn sin_cos(x: f32) -> (f32, f32) {
     const FRAC_PI_2: f32 = core::f32::consts::FRAC_PI_2;
 
     // Nearest quadrant, then the residual within it.
