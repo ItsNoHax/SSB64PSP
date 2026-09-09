@@ -2689,10 +2689,25 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   caught and fixed an unrelated camera-determinism bug (a free-drifting debug
   spin could edge-on a single-sided card), confirmed via a reversible
   on-device experiment to be independent of the texture-swap logic itself.
+  RE-177 traces all 9 directly against the ROM and
+  `refs/ssb-decomp-re/src/sys/objdisplay.c`, and fixes 6 (CommonSpark,
+  DamageFlyMDust, ShockSmall, FalconPunch, FalconKick, YoshiEntryEgg): their
+  primitives never carry a static pixel `G_SETTIMG` at all, because real
+  hardware supplies it (and re-enables texturing) from *inside* the same
+  runtime-patched graphics-heap call this converter cannot follow, gated on
+  `MObj` flag bits a static `MObjSub`'s own flags word never sets — the same
+  "static flags word is not the reliable signal" shape RE-105 already found
+  for lighting. A new `MeshMaterial::texture_shape` recovers format/size/
+  dims/wrap from the primitive's own static `G_SETTILE`/mask state (RE-044's
+  relationship) without needing a pixel address, letting `pack_mesh` convert
+  each sprite variant against it; `romtool effects` now resolves 23/26
+  tables. The remaining 3 (ImpactWave, PikachuUnk, MBallThrown) are diagnosed
+  but not fixed: a `matanim.rs` track-decode gap and two node-count/table-
+  alignment mismatches, each needing its own per-file tracing session.
   Live colour-track GE state (resolved and unit-tested, not yet consumed by
-  the renderer), the 9-table tracing gap, facing-dependent alternate streams,
-  and the separate `LBParticle` script/texture-bank renderer all remain
-  before this row can close
+  the renderer), the remaining 3-table gap, facing-dependent alternate
+  streams, and the separate `LBParticle` script/texture-bank renderer all
+  remain before this row can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 manager-effect material animation texture-swap playback)
+**Last updated:** 2026-09-09 (R1 manager-effect material animation: 6 of 9 unresolved sprite tables fixed)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–176). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–177). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -127,19 +127,66 @@ cleanup was confirmed after every run. EBOOT SHA-256
 SHA-256 unchanged from RE-175 (no pack-format change).
 Captures remain outside Git at
 `/home/alberto/ppsspp-test/effect-material-audit/`. Implementation commit:
-pending (see below).
+`b39ef46`.
 
-The next bounded step within this same task is closing the remaining 9-table
-gap (ImpactWave, CommonSpark, DamageFlyMDust, ShockSmall, PikachuUnk,
-FalconKick, FalconPunch, MBallThrown, YoshiEntryEgg — RE-175's own per-file
-source-tracing gap) and consuming live colour-track GE state
-(`EffectColors`'s prim/env/blend/light1/light2 tracks are resolved and
-unit-tested but nothing on the device side reads them yet — vertex-baked
-colour has no per-primitive override point today, the harder design question
-RE-175 flagged). The independent `LBParticle` decoder/runtime remains
-unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
-Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
-the descriptor-selected variant rather than claiming both runtime branches.
+RE-177 closes 6 of the 9-table gap RE-175 left (ImpactWave, CommonSpark,
+DamageFlyMDust, ShockSmall, FalconPunch, FalconKick, YoshiEntryEgg —
+`CommonSpark`/`DamageFlyMDust`/`ShockSmall`/`FalconPunch`/`FalconKick`/
+`YoshiEntryEgg` fixed; `ImpactWave` diagnosed but not fixed, see below). Traced
+directly against the ROM and `refs/ssb-decomp-re/src/sys/objdisplay.c`: these
+6 primitives' own display lists never carry a real pixel `G_SETTIMG` at all —
+real hardware supplies both the address and a `gSPTexture(..., G_ON)` from
+*inside* the same runtime-patched graphics-heap `Call` this converter cannot
+follow, gated on `MOBJ_FLAG_FRAC`/`_ALPHA`/`_TEXTURE` bits the static
+`MObjSub`'s own flags word (confirmed `0x0000` for CommonSpark, hexdumped
+directly) never sets — the same "static flags word is not the reliable
+signal" shape RE-105 already found for lighting. `mesh.rs`'s existing
+`texture`-resolution gates were correct to decline; the actual gap was that
+`pack_mesh`'s sprite-variant converter had no fallback shape (format/size/
+dims/wrap) to convert against once `texture` correctly stayed `None`. Added
+`MeshMaterial::texture_shape`/`State::current_texture_shape()` (`mesh.rs`):
+the same shape logic as `current_texture()`, minus the pixel-address and
+`G_SETTILESIZE` requirements that do not hold for these primitives — width/
+height fall back to the render tile's own mask (`1 << mask`, RE-044's own
+relationship) when no `G_SETTILESIZE` ran. `pack_mesh` now tries
+`texture.or(texture_shape)` as the sprite converter's base. `romtool effects`:
+material animations 17/26 → 23/26 replayable. New focused test
+`a_texture_shape_is_recovered_with_no_static_pixel_address_or_tile_size`
+reproduces CommonSpark's exact shape; confirmed capable of failing (temporarily
+forced `current_texture_shape` to `None`, watched the assertion trip, reverted).
+296 workspace tests (was 295), strict Clippy, `cargo fmt --check` (root and
+`psp/`), and the default PSP release build pass. Rebuilt pack SHA-256
+`f6f01e422e89513bd49857759518a10fe9452b87383a0a9f9bcacaaa17e6b2f5`; EBOOT
+SHA-256 `a752d38a531c2b424ac1b37e7debb8ef35509ca760681da7f21853518433cd1d`.
+`--audit-effect-materials 26` still reads 24/26 + 2 rest-invisible, unchanged
+from RE-176 — that coarse per-object visibility check cannot distinguish
+"renders untextured" from "renders the correct sprite" for objects that were
+already nonblank before this fix, so it is not claimed as independent
+on-device evidence here; `romtool effects`'s explicit per-table check and the
+new unit test are the real evidence. PPSSPP was confirmed terminated after
+the run.
+
+The remaining 3 tables (ImpactWave, PikachuUnk, MBallThrown) are a different,
+deeper problem, diagnosed but not fixed: ImpactWave's script decodes cleanly
+but drives none of the palette/texture-id/colour tracks this project's
+`matanim.rs` currently reads (its opcode is `SetVal0RateBlock`, not yet
+cross-checked against the decoder); PikachuUnk's and MBallThrown's own
+`o_matanim_joint` tables resolve against a node count/index this project's
+current node-count assumption for their graphs does not match (PikachuUnk's
+real graph has 4 nodes, not the 1 a synthetic single-DObj injection would
+imply; MBallThrown's table is genuinely NULL at the position expected).
+Closing these needs the same per-file source tracing RE-175 itself asked for,
+not a repeat of this session's texture-shape fix.
+
+The next bounded step within this same task is that remaining 3-table gap,
+plus consuming live colour-track GE state (`EffectColors`'s prim/env/blend/
+light1/light2 tracks are resolved and unit-tested but nothing on the device
+side reads them yet — vertex-baked colour has no per-primitive override point
+today, the harder design question RE-175 flagged). The independent
+`LBParticle` decoder/runtime remains unimplemented and keeps the R1 row open.
+Facing-dependent alternate Poké Ball/Kirby Entry Star streams also remain
+gameplay integration; RE-174 packs the descriptor-selected variant rather than
+claiming both runtime branches.
 
 The preceding animation task is `COMPLETE` (RE-171).
 `tools/run-ppsspp.sh --audit-animations 532` rendered and captured every
