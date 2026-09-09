@@ -10,6 +10,122 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-187 — Multi-particle spawn-tree execution: `MAKESCRIPT`/`MAKERAND`/`MAKEID` actually spawn, one archive-wide rescue found (`PLAN.md` R1)
+
+**Problem.** `Particle::tick` (RE-172-186's shared simulator) decodes
+`MAKESCRIPT`/`MAKERAND`/`MAKEID`/`MAKEGENERATOR` into `SpawnRequest`s but
+never executes any of them, per its own module-level scope note — cursor
+sync doesn't depend on it, but it means every census so far (RE-184's
+148/160 visibility, RE-186's combine-mode split) only ever looks at a
+script's own root particle, never at what it spawns. RE-184/185/186 all
+listed "multi-particle spawn-tree execution" as remaining scope.
+
+**Evidence.** Traced `lbParticleStructFuncRun` (`lbparticle.c:1416-1447`)
+and `lbParticleMakeStruct`'s `this_pc != NULL` insertion branch
+(`lbparticle.c:322-325`) by hand against the three spawning opcodes'
+own case blocks (`MAKESCRIPT` `lbparticle.c:872-897`, `MAKERAND`
+`:959-984`, `MAKEID` `:1065-1088`):
+
+* A new child is spliced in **immediately after** the spawning particle
+  (`new_pc->next = this_pc->next; this_pc->next = new_pc;`), not at the
+  list head. A second spawn from the same tick's own dispatch splices
+  between the parent and the first child, so multiple same-tick children
+  end up nearest-most-recent-first.
+* Each opcode's case block calls `lbParticleUpdateStruct` on the child it
+  just created **synchronously, before returning to the parent's own
+  dispatch loop** — an immediate, depth-first "creation tick".
+* `lbParticleStructFuncRun`'s own outer walk advances to whatever
+  `this_pc->next` now is once a node's tick returns. Since a spawning
+  node's `->next` was just updated to point at its newest child, the outer
+  walk reaches every node spliced in this frame a **second time**, ticking
+  it again — real hardware ages a same-frame-spawned particle two ticks in
+  its own birth frame, not one.
+* Traced that a node dying the same frame it spawned does not corrupt this:
+  `next_pc` (the value the outer walk actually uses) is captured *before*
+  the dying node's own `this_pc->next = sLBParticleStructsAllocFree`
+  free-list write (`lbparticle.c:1309-1340`), so the outer loop's
+  `current_pc->next == next_pc` re-check reliably reads false once a node
+  is freed — this is what keeps `prev_pc` from ever ending up pointing at
+  a freed node, without any special-casing needed.
+* `MAKESCRIPT`/`MAKERAND` copy only position from the spawning particle;
+  `MAKEID` additionally copies velocity — confirmed by diffing the three
+  case blocks directly rather than assuming symmetry.
+* `MAKEGENERATOR` is unrelated to this list: it creates an `LBGenerator`
+  queued on `sLBParticleGeneratorsQueued` and processed by the entirely
+  separate `lbParticleGeneratorFuncRun` (`lbparticle.c:2263+`), with no
+  recursive tick of its own. Confirmed still out of scope, not a variant
+  of the list this task covers.
+
+Implemented `ParticleTree` (`crates/ssb-rom/src/particle.rs::particle_tree`)
+reproducing exactly this: an arena-backed singly-linked list, a
+`SpawnSink` trait threaded through `Particle::dispatch_opcode` so spawns
+are handled in real execution order (in place of `Vec<SpawnRequest>`'s
+existing collect-only behaviour, which is unchanged and still used by
+every existing caller/test), and a `tick_frame` that walks the list the
+same way `lbParticleStructFuncRun` does. Six new unit tests on hand-built
+synthetic bytecode confirm: a parent ticks once per frame even when it
+spawns; a spawned child is ticked twice in its own spawn frame (pinned via
+its `lifetime`/`bytecode_timer` deltas); a second same-frame spawn lands
+between the parent and the first child; `MAKESCRIPT` inherits position but
+not velocity while `MAKEID` inherits both; an out-of-range script ID is a
+reported `SimError::UnknownScriptId`, not a panic or a guess;
+`MAKEGENERATOR` is still declined inside a tree (no child created).
+
+Extended `romtool particles` to run this new executor for every one of the
+12 real root-invisible scripts from RE-184's own census (frame 4, seed 1,
+same settle point) and check whether *any* particle in the resulting tree
+puts a pixel on screen. Ran against the real US ROM:
+
+```
+spawn-tree rescue among 12 root-invisible scripts: 1 become visible once MAKESCRIPT/MAKERAND/MAKEID actually spawn (frame 4, seed 1), 0 spawn-tree error(s)
+  spawn-tree rescued: efcommon script 38 (ever spawned 2 particles)
+```
+
+Exactly one script — `efcommon` script 38, previously classified "spawner
+script, never resolves its own texture" — has a real child (its tree ever
+spawns 2 particles total: the root plus one) that *is* visible by frame 4.
+The other 9 spawner-classified scripts and the zero-frame/"unexplained"
+cases (RE-184's own classification) stay invisible even with real spawn
+execution — their children either resolve a zero-frame texture too or
+don't themselves survive/resolve a frame by the settle point. Zero
+`SimError`s (`UnknownScriptId`/`VortexUnsupported`) occurred across all 160
+real scripts' spawn trees.
+
+**Implementation.** `crates/ssb-rom/src/particle.rs`: added `SpawnSink`
+(implemented for both `Vec<SpawnRequest>`, unchanged behaviour, and the new
+`particle_tree::ParticleTree`), `Particle::tick_with` (generic entry point
+`tick` now wraps), and `SimError::UnknownScriptId`. `tools/romtool/src/
+main.rs::particles` runs the new rescue check and reports it. Not wired
+into `psp/` — this is a host-side execution model, the same scoping
+RE-184 used before RE-185's later on-device sweep; `draw_particle` still
+only ever draws the single script 0 root the debug viewer spawns.
+
+**Verification.** `cargo test --workspace`: 327 `ssb-rom` tests (was 320),
+both with and without `SSB64_ROM` set (new pinned test
+`real_rom_spawn_tree_rescues_exactly_one_of_twelve_root_invisible_scripts`
+asserts `(root_invisible, rescued, errors) == (12, 1, 0)`). Strict Clippy
+(`cargo clippy --workspace --lib --tests -- -D warnings` and `cargo clippy
+-p ssb-rom --no-default-features -- -D warnings`) and `cargo fmt --check`
+both pass. No `psp/` file changed, so no new `cargo psp`/PPSSPP run was
+needed this pass.
+
+**Remaining scope.** The `LBGenerator` subsystem
+(`lbParticleGeneratorFuncRun` and its own allocator/queue, dominant in the
+ROM — 103 real `MAKEGENERATOR` uses vs. 25 `MAKESCRIPT`) and wiring a real
+spawn event (rather than the debug viewer's single fresh root) both remain.
+The real, fixed-size `LBParticle` allocator pool is not modeled (this
+arena grows unboundedly) — plausible only if a future real script's tree
+grows unusually large within a few frames; not observed in this census.
+
+**Confidence:** high for the splice/double-tick/inheritance mechanics
+(hand-traced against the decompilation's exact case blocks, not guessed,
+and pinned by unit tests built to fail if the mechanics were wrong before
+being confirmed to pass) and for the archive-wide rescue count (measured,
+not sampled, against the real ROM and pinned by a regression test). No
+physical-PSP or on-device claim; `R0.5` is unaffected.
+
+---
+
 ## RE-186 — Archive-wide `LBParticle` combine-mode census: `NOISE`/`DITHER`/`ALPHABLEND` are real but unreachable at frame 4 (`PLAN.md` R1)
 
 **Problem.** RE-183's `draw_particle` implements only `lbparticle.c:2057-

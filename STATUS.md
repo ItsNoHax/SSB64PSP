@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 archive-wide LBParticle combine-mode census — NOISE/DITHER/ALPHABLEND confirmed unreachable, RE-186)
+**Last updated:** 2026-09-09 (R1 multi-particle LBParticle spawn-tree execution — MAKESCRIPT/MAKERAND/MAKEID now actually spawn, one archive-wide rescue found, RE-187)
 
 ---
 
@@ -18,7 +18,42 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–186).
+`IN_PROGRESS` (RE-172–187).
+
+RE-187 does the "multi-particle spawn-tree execution" RE-184/185/186 each
+left as open remaining scope. `MAKESCRIPT`/`MAKERAND`/`MAKEID` were
+decoded but never executed (`Particle::tick`'s own module-level scope
+note) -- every prior census (RE-184's 148/160 visibility, RE-186's
+combine-mode split) only ever looked at a script's own root particle.
+Hand-traced `lbParticleStructFuncRun`'s linked-list walk and
+`lbParticleMakeStruct`'s splice-after-parent insertion
+(`lbparticle.c:322-325,1416-1447`) directly against the three spawning
+opcodes' own case blocks: a new child is spliced in immediately after its
+parent (not at the list head), the spawning opcode ticks its new child
+synchronously before the parent's own dispatch continues, and the outer
+walk then reaches that same child again once the parent returns -- a real
+double-tick in the child's own spawn frame, not an approximation. Also
+traced that a same-frame death does not corrupt this walk (the value the
+outer loop actually advances on is captured before the dying node's own
+free-list write). Implemented as `crates/ssb-rom/src/particle.rs::
+particle_tree::ParticleTree`, threaded through a new generic `SpawnSink`
+trait (`Particle::tick`'s existing collect-only `Vec<SpawnRequest>`
+behaviour is unchanged, still used by every existing caller/test).
+Extended `romtool particles` to run the new executor against all 12 real
+root-invisible scripts from RE-184's own census: exactly one, `efcommon`
+script 38 (previously "spawner script, never resolves its own texture"),
+has a real child visible by frame 4 once its spawn actually executes; the
+other 11 stay invisible even with real spawn execution. Six new synthetic
+unit tests pin the splice/double-tick/inheritance mechanics; one new
+`SSB64_ROM`-gated regression test pins the archive-wide rescue count
+`(root_invisible, rescued, errors) == (12, 1, 0)`. `cargo test --workspace`
+(327 `ssb-rom` tests, was 320, both with and without `SSB64_ROM` set),
+strict Clippy (default and `--no-default-features`), and `cargo fmt
+--check` all pass. No `psp/` file changed, so no new `cargo psp`/PPSSPP
+run was needed -- this is a host-side execution model, not yet wired into
+the on-device debug viewer. The dominant `LBGenerator` subsystem (103 real
+`MAKEGENERATOR` uses vs. 25 `MAKESCRIPT`) and a real spawn event both
+still remain. No physical-PSP claim; `R0.5` unaffected. Evidence: RE-187.
 
 RE-186 closes the combine-mode census RE-185 left as open "remaining
 scope." Extended `romtool particles`' existing frame-4 settle-point walk
