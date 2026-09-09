@@ -2654,8 +2654,14 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   retain the source-identifying HUD, show 60 FPS, and produced no error/failure
   log lines. `tools/run-ppsspp.sh --audit-stages 41` records artifact and
   capture hashes in a manifest; physical hardware remains R2
-* [ ] all fighters render
-* [ ] all required costumes render
+* [x] all fighters render — R0.11/RE-098 individually rendered all 12
+  playable fighters in PPSSPP at 60 FPS; each was inspected at a nonzero
+  costume, not inferred from pack counts
+* [x] all required costumes render — R0.11/RE-098 identifies the original
+  per-fighter costume counts from `dFTParamCostumeIDs`, packs every sparse
+  node/costume override, verifies colour and palette paths against the ROM,
+  and visually checks every fighter at a nonzero costume. A real match costume
+  selector remains gameplay integration, not a missing renderer path
 * [ ] all required animations render
 * [ ] all required effects render
 * [ ] all required framebuffer paths render

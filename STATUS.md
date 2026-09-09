@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (RE-170)
+**Last updated:** 2026-09-09 (R1 fighter/costume reconciliation)
 
 ---
 
@@ -13,12 +13,23 @@ is temporarily deferred by explicit user direction)
 
 ## Current Task
 
-`R1 — all stages render`: automate and execute an exhaustive PPSSPP stage
-render audit.
+`R1 — all fighters / required costumes render`: reconcile R1 with the existing
+R0.11/RE-098 exhaustive visual evidence.
 
 ## Task Status
 
-`COMPLETE` (RE-170). `tools/run-ppsspp.sh --audit-stages 41` now advances the
+`COMPLETE`. R0.11/RE-098 already individually rendered all 12 playable
+fighters at a nonzero costume in PPSSPP at 60 FPS. That work also derives the
+exact costume counts from the original `dFTParamCostumeIDs`, packs every
+sparse node/costume override, verifies both colour and palette substitution
+against ROM data, and investigates the one observed Jigglypuff anomaly rather
+than silently accepting it. R1 now reuses this stronger earlier evidence for
+both its fighter and costume rows. No new rendering claim was inferred from a
+pack count, and a real match costume selector remains future gameplay
+integration rather than a renderer-completeness gap.
+
+The immediately preceding R1 stage task is also `COMPLETE` (RE-170).
+`tools/run-ppsspp.sh --audit-stages 41` now advances the
 existing viewer through stable pack order and captures every stage in one
 PPSSPP run. The run produced 41/41 nonblank, unique screenshots; their HUDs
 identify indices 0–40 and source files 255–295, every capture displayed 60
@@ -34,8 +45,9 @@ The captures remain outside Git under
 R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
 The user's temporary hardware deferral permits independent software-only R1
 work; it does not mark R0 complete or unlock R3/combat. The next eligible task
-is R1's `all fighters render` audit. Relevant commit: the current
-`test: automate exhaustive stage render audit` commit.
+is R1's `all required animations render` audit. Relevant commits: `d68f199`
+for the stage harness/evidence and the current
+`docs: reconcile R1 fighter and costume coverage` commit.
 
 RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
@@ -3592,11 +3604,13 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R1 — all fighters render` is the next eligible software-only task.** The
-user explicitly deferred unavailable physical-PSP work on 2026-09-09. R0.5
-therefore remains `VERIFYING`; do not tune the canopy from PPSSPP appearance,
-mark R0/R1 complete, begin R3, or unlock combat. RE-170 completed R1's first
-acceptance row by capturing all 41 stages in one PPSSPP software audit.
+**`R1 — all required animations render` is the next eligible software-only
+task.** R1's stage, fighter and costume rows are complete: RE-170 captured all
+41 stages, while the R0.11/RE-098 evidence already individually rendered all
+12 playable fighters at nonzero costumes. The user explicitly deferred
+unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
+`VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
+complete, begin R3, or unlock combat.
 
 Historical eligibility record follows. **`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
 full history in `PLAN.md`'s own R0.10 section and this file's Task Status
