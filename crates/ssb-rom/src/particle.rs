@@ -510,14 +510,45 @@ pub mod flag {
     pub const ATTACH: u32 = 0x8000;
 }
 
-/// A decoded but unexecuted `MAKESCRIPT`/`MAKERAND`/`MAKEID`/`MAKEGENERATOR`
-/// call. See the module-level scope note for why these are reported rather
-/// than spawned.
+/// A decoded `MAKESCRIPT`/`MAKERAND`/`MAKEID`/`MAKEGENERATOR` call, handed to
+/// a [`SpawnSink`]. The plain [`Vec<SpawnRequest>`] sink (`Particle::tick`)
+/// reports it without executing it, matching the module-level scope note.
+/// [`particle_tree::ParticleTree`] is a second sink that actually executes
+/// `MAKESCRIPT`/`MAKERAND`/`MAKEID` (not `MAKEGENERATOR`, still out of
+/// scope; see that module's own doc comment).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpawnRequest {
     pub script_id: u16,
     pub inherit_velocity: bool,
     pub is_generator: bool,
+}
+
+/// Receives each `MAKESCRIPT`-family call as `dispatch_opcode` decodes it,
+/// in real bytecode-execution order. `parent_pos`/`parent_vel` are the
+/// spawning particle's own state *at the point the opcode executes* --
+/// `lbParticleMakeChildScriptID`'s callers always copy position, and
+/// `MAKEID` additionally copies velocity (`lbparticle.c:877-914,1065-1088`).
+pub trait SpawnSink {
+    fn spawn(
+        &mut self,
+        request: SpawnRequest,
+        parent_pos: [f32; 3],
+        parent_vel: [f32; 3],
+        rng: &mut Rng,
+    ) -> Result<(), SimError>;
+}
+
+impl SpawnSink for Vec<SpawnRequest> {
+    fn spawn(
+        &mut self,
+        request: SpawnRequest,
+        _parent_pos: [f32; 3],
+        _parent_vel: [f32; 3],
+        _rng: &mut Rng,
+    ) -> Result<(), SimError> {
+        self.push(request);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -526,6 +557,9 @@ pub enum SimError {
     /// A script set `LBPARTICLE_FLAG_VORTEX`; see the module-level scope
     /// note. Zero real US ROM scripts do this today.
     VortexUnsupported,
+    /// A `MAKESCRIPT`/`MAKERAND`/`MAKEID` referenced a script index past the
+    /// end of its own bank -- would be a real ROM-data bug, not decoded.
+    UnknownScriptId(u16),
 }
 
 /// One live `LBParticle` instance's simulated state, mirroring `struct
@@ -668,24 +702,27 @@ impl<'a> Particle<'a> {
     /// executed (see the module-level scope note).
     pub fn tick(&mut self, rng: &mut Rng) -> Result<Vec<SpawnRequest>, SimError> {
         let mut spawns = Vec::new();
+        self.tick_with(rng, &mut spawns)?;
+        Ok(spawns)
+    }
+
+    /// Same as [`Particle::tick`], but spawns are handed to `sink` in real
+    /// execution order instead of only ever being collected. `ParticleTree`
+    /// uses this to actually execute `MAKESCRIPT`/`MAKERAND`/`MAKEID`.
+    pub fn tick_with<S: SpawnSink>(&mut self, rng: &mut Rng, sink: &mut S) -> Result<(), SimError> {
         if !self.state.alive || self.state.flags & flag::PAUSE != 0 {
-            return Ok(spawns);
+            return Ok(());
         }
         if self.state.bytecode_timer != 0 {
             self.state.bytecode_timer -= 1;
             if self.state.bytecode_timer == 0 {
-                self.run_bytecode(rng, &mut spawns)?;
+                self.run_bytecode(rng, sink)?;
             }
         }
-        self.post_bytecode_update()?;
-        Ok(spawns)
+        self.post_bytecode_update()
     }
 
-    fn run_bytecode(
-        &mut self,
-        rng: &mut Rng,
-        spawns: &mut Vec<SpawnRequest>,
-    ) -> Result<(), SimError> {
+    fn run_bytecode<S: SpawnSink>(&mut self, rng: &mut Rng, sink: &mut S) -> Result<(), SimError> {
         let data = self.bytecode;
         let mut cursor = self.state.bytecode_csr as usize;
         let mut timer;
@@ -701,7 +738,7 @@ impl<'a> Particle<'a> {
                 }
             } else {
                 timer = 0;
-                if !self.dispatch_opcode(command, data, &mut cursor, rng, spawns)? {
+                if !self.dispatch_opcode(command, data, &mut cursor, rng, sink)? {
                     break; // DEAD/END/TRYDEADRAND-kill: matches `goto loop_break`.
                 }
             }
@@ -716,13 +753,13 @@ impl<'a> Particle<'a> {
 
     /// Returns `false` for the `goto loop_break` cases (`DEAD`/`END`, or a
     /// losing `TRYDEADRAND`), matching `lbparticle.c:750-1244`.
-    fn dispatch_opcode(
+    fn dispatch_opcode<S: SpawnSink>(
         &mut self,
         command: u8,
         data: &'a [u8],
         cursor: &mut usize,
         rng: &mut Rng,
-        spawns: &mut Vec<SpawnRequest>,
+        sink: &mut S,
     ) -> Result<bool, SimError> {
         let s = &mut self.state;
         match command {
@@ -801,20 +838,32 @@ impl<'a> Particle<'a> {
             0xA4 => {
                 // MAKESCRIPT
                 let script_id = read_be_u16(data, cursor)?;
-                spawns.push(SpawnRequest {
-                    script_id,
-                    inherit_velocity: false,
-                    is_generator: false,
-                });
+                sink.spawn(
+                    SpawnRequest {
+                        script_id,
+                        inherit_velocity: false,
+                        is_generator: false,
+                    },
+                    s.pos,
+                    s.vel,
+                    rng,
+                )?;
             }
             0xA5 => {
-                // MAKEGENERATOR -- decoded, never executed; see scope note.
+                // MAKEGENERATOR -- decoded; still declined by every
+                // SpawnSink (see the module-level scope note and
+                // `particle_tree`'s own doc comment).
                 let script_id = read_be_u16(data, cursor)?;
-                spawns.push(SpawnRequest {
-                    script_id,
-                    inherit_velocity: false,
-                    is_generator: true,
-                });
+                sink.spawn(
+                    SpawnRequest {
+                        script_id,
+                        inherit_velocity: false,
+                        is_generator: true,
+                    },
+                    s.pos,
+                    s.vel,
+                    rng,
+                )?;
             }
             0xA6 => {
                 // SETLIFERAND
@@ -852,11 +901,16 @@ impl<'a> Particle<'a> {
                 let base = read_be_u16(data, cursor)? as i32;
                 let range = read_be_u16(data, cursor)? as i32;
                 let script_id = (base + (range as f32 * rng.next_float()) as i32) as u16;
-                spawns.push(SpawnRequest {
-                    script_id,
-                    inherit_velocity: false,
-                    is_generator: false,
-                });
+                sink.spawn(
+                    SpawnRequest {
+                        script_id,
+                        inherit_velocity: false,
+                        is_generator: false,
+                    },
+                    s.pos,
+                    s.vel,
+                    rng,
+                )?;
             }
             0xAB => {
                 // MULVELUFORM
@@ -905,11 +959,16 @@ impl<'a> Particle<'a> {
             0xB9 => {
                 // MAKEID -- also inherits velocity.
                 let script_id = read_be_u16(data, cursor)?;
-                spawns.push(SpawnRequest {
-                    script_id,
-                    inherit_velocity: true,
-                    is_generator: false,
-                });
+                sink.spawn(
+                    SpawnRequest {
+                        script_id,
+                        inherit_velocity: true,
+                        is_generator: false,
+                    },
+                    s.pos,
+                    s.vel,
+                    rng,
+                )?;
             }
             0xBA => {
                 // PRIMBLENDRAND (zero real uses; best-effort port, see scope note)
@@ -1121,6 +1180,182 @@ fn blend_rand(
     Ok(())
 }
 
+// ============================================================================
+// Multi-particle spawn-tree execution.
+//
+// `Particle::tick`/`SpawnRequest` decode `MAKESCRIPT`/`MAKERAND`/`MAKEID`
+// without executing them (module-level scope note above). `ParticleTree`
+// is the executing counterpart for those three opcodes, reproducing
+// `lbParticleStructFuncRun`'s per-bank linked-list walk
+// (`lbparticle.c:1416-1447`) together with `lbParticleMakeStruct`'s
+// splice-after-parent insertion (`lbparticle.c:322-325`, the `this_pc !=
+// NULL` branch -- the `this_pc == NULL`/head-insertion branch belongs to
+// generator-spawned roots, still out of scope, see below).
+//
+// Traced directly from the decompilation (not measured on real hardware
+// yet -- see the module doc comment on verification status):
+//   - Each `MAKESCRIPT`/`MAKERAND`/`MAKEID` case, while still inside the
+//     parent's own opcode dispatch loop, immediately calls
+//     `lbParticleUpdateStruct` on the child it just created
+//     (`lbparticle.c:895,986,1086`) -- a synchronous, depth-first
+//     "creation tick" -- *before* the parent's own dispatch loop continues
+//     to its next instruction.
+//   - The child is spliced in immediately after the parent
+//     (`new_pc->next = this_pc->next; this_pc->next = new_pc;`), not at
+//     the list head. A second, later-encountered spawn from the *same*
+//     parent tick splices between the parent and the first child (most
+//     recently spawned ends up closest to the parent).
+//   - `lbParticleStructFuncRun`'s own outer walk returns from a node's
+//     `lbParticleUpdateStruct` call and advances to `this_pc->next` --
+//     which, if the node just spliced in a child, *is* that child. The
+//     outer walk therefore reaches every newly spliced node a second time
+//     this same frame, calling `lbParticleUpdateStruct` on it again --
+//     matching the "double-tick" module-level scope note. Traced by hand
+//     that a dying node's own `this_pc->next = sLBParticleStructsAllocFree`
+//     free-list write (`lbparticle.c:1338-1340`) happens *after* the value
+//     the outer walk actually uses (`next_pc`, captured before the splice
+//     into the free list) is already computed, so death does not corrupt
+//     the walk -- the outer loop's `current_pc->next == next_pc` check
+//     reliably reads as false once a node is freed, which is exactly what
+//     keeps `prev_pc` from ever being left pointing at a freed node.
+//   - `MAKEGENERATOR` is still declined here, same as `Particle::tick`:
+//     creating an `LBGenerator` and scheduling `lbParticleGeneratorProcess`
+//     (`lbparticle.c:2263+`) is a materially different, queue-driven
+//     subsystem with its own allocator, own per-frame walk, and its own
+//     script-driven spawn timing -- not a variant of this list.
+//
+// Not modeled, matching this module's existing "decode correctly, decline
+// rather than guess" convention:
+//   - the real, fixed-size `LBParticle` allocator pool: this arena grows
+//     unboundedly. Exhausting the real pool makes `lbParticleMakeStruct`
+//     return `NULL` and the spawn is silently dropped; a single script's
+//     own spawn tree over a handful of frames is far below any plausible
+//     real pool size, so this has no known real-script consequence yet.
+//   - `gn`/`xf` (the generator-ownership and transform-user-count fields
+//     `LBParticle` also carries) -- this module's state-only `ParticleState`
+//     already omits them for the same reason (see its own doc comment).
+pub mod particle_tree {
+    use super::{Particle, Rng, Script, SimError, SpawnRequest, SpawnSink};
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    /// One bank's `LBParticle` linked list, rooted at a single spawned
+    /// particle, with `MAKESCRIPT`/`MAKERAND`/`MAKEID` actually executed.
+    /// Arena slots are never reused within one `ParticleTree` -- indices
+    /// stay stable for its whole lifetime.
+    pub struct ParticleTree<'a> {
+        arena: Vec<Option<Particle<'a>>>,
+        next: Vec<Option<usize>>,
+        head: Option<usize>,
+    }
+
+    impl<'a> ParticleTree<'a> {
+        /// `lbParticleMakeStruct` with `this_pc == NULL` (head-insertion into
+        /// a fresh, otherwise-empty list) for one root script.
+        pub fn spawn_root(script: &Script<'a>) -> Self {
+            ParticleTree {
+                arena: vec![Some(Particle::spawn(script))],
+                next: vec![None],
+                head: Some(0),
+            }
+        }
+
+        /// The list's current live particles, in list order, paired with
+        /// their arena index (stable for inspection between frames).
+        pub fn live(&self) -> impl Iterator<Item = (usize, &Particle<'a>)> {
+            let mut cursor = self.head;
+            core::iter::from_fn(move || {
+                let idx = cursor?;
+                cursor = self.next[idx];
+                self.arena[idx].as_ref().map(|p| (idx, p))
+            })
+        }
+
+        /// Total particles ever created in this tree (live or since died),
+        /// i.e. the arena size -- how many distinct `LBParticle` slots this
+        /// root's spawn tree consumed across its whole simulated lifetime.
+        pub fn ever_spawned(&self) -> usize {
+            self.arena.len()
+        }
+
+        /// `lbParticleStructFuncRun` for this list, once (`lbparticle.c:
+        /// 1416-1447`): walks from the head, ticking each node (which may
+        /// itself splice in and immediately tick children), unlinking any
+        /// node that died this frame.
+        pub fn tick_frame(&mut self, bank: &[Script<'a>], rng: &mut Rng) -> Result<(), SimError> {
+            let mut prev: Option<usize> = None;
+            let mut current = self.head;
+            while let Some(idx) = current {
+                self.tick_node(idx, bank, rng)?;
+                let next_link = self.next[idx];
+                if self.arena[idx].as_ref().expect("live node").state.alive {
+                    prev = Some(idx);
+                } else if let Some(p) = prev {
+                    self.next[p] = next_link;
+                } else {
+                    self.head = next_link;
+                }
+                current = next_link;
+            }
+            Ok(())
+        }
+
+        fn tick_node(
+            &mut self,
+            idx: usize,
+            bank: &[Script<'a>],
+            rng: &mut Rng,
+        ) -> Result<(), SimError> {
+            let mut particle = self.arena[idx].take().expect("live node");
+            let mut spawner = TreeSpawner {
+                tree: self,
+                current: idx,
+                bank,
+            };
+            let result = particle.tick_with(rng, &mut spawner);
+            self.arena[idx] = Some(particle);
+            result
+        }
+    }
+
+    struct TreeSpawner<'a, 'b> {
+        tree: &'b mut ParticleTree<'a>,
+        current: usize,
+        bank: &'b [Script<'a>],
+    }
+
+    impl<'a> SpawnSink for TreeSpawner<'a, '_> {
+        fn spawn(
+            &mut self,
+            request: SpawnRequest,
+            parent_pos: [f32; 3],
+            parent_vel: [f32; 3],
+            rng: &mut Rng,
+        ) -> Result<(), SimError> {
+            if request.is_generator {
+                return Ok(()); // MAKEGENERATOR: still declined, see module doc comment.
+            }
+            let script = self
+                .bank
+                .get(request.script_id as usize)
+                .ok_or(SimError::UnknownScriptId(request.script_id))?;
+            let mut child = Particle::spawn(script);
+            child.state.pos = parent_pos;
+            if request.inherit_velocity {
+                child.state.vel = parent_vel;
+            }
+            let child_idx = self.tree.arena.len();
+            self.tree.arena.push(Some(child));
+            self.tree.next.push(self.tree.next[self.current]);
+            self.tree.next[self.current] = Some(child_idx);
+            // The parent's own opcode dispatch ticks its new child
+            // immediately, synchronously, before moving to its next
+            // instruction (`lbparticle.c:895,986,1086`).
+            self.tree.tick_node(child_idx, self.bank, rng)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1288,6 +1523,72 @@ mod tests {
         }
         assert_eq!(visible_count, 148);
         assert_eq!((envcolor, noise, dither, alphablend), (90, 0, 0, 0));
+    }
+
+    /// RE-187: does actually executing `MAKESCRIPT`/`MAKERAND`/`MAKEID`
+    /// (`particle_tree::ParticleTree`) change the 148/160 root-only census
+    /// above? Archive-wide, among the 12 root-invisible scripts, exactly one
+    /// -- `efcommon` script 38, previously classified a "spawner script,
+    /// never resolves its own texture" -- puts a *child* particle on screen
+    /// by the same frame-4 settle point once its spawn is actually executed
+    /// (`ever_spawned() == 2`: the root plus one real child). The other 9
+    /// spawner-classified scripts and the zero-frame/"unexplained" cases
+    /// stay invisible even with real spawn-tree execution -- their own
+    /// children either resolve a zero-frame texture too or don't survive to
+    /// frame 4. Zero spawn-tree errors (`UnknownScriptId`/`VortexUnsupported`)
+    /// across all 160 real scripts.
+    #[test]
+    fn real_rom_spawn_tree_rescues_exactly_one_of_twelve_root_invisible_scripts() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let mut rescued = 0usize;
+        let mut errors = 0usize;
+        let mut root_invisible = 0usize;
+        for &bank in BANKS {
+            let (scripts, textures) = decode_bank(&rom, bank).unwrap();
+            for script in &scripts {
+                let mut root = Particle::spawn(script);
+                let mut root_rng = Rng::new(1);
+                for _ in 0..4 {
+                    let _ = root.tick(&mut root_rng);
+                }
+                let root_frame_count = textures
+                    .get(root.state.texture_id as usize)
+                    .map_or(0, |t| t.images.len() as u32);
+                if root.state.visible(root_frame_count) {
+                    continue;
+                }
+                root_invisible += 1;
+
+                let mut tree = particle_tree::ParticleTree::spawn_root(script);
+                let mut tree_rng = Rng::new(1);
+                let mut failed = false;
+                for _ in 0..4 {
+                    if tree.tick_frame(&scripts, &mut tree_rng).is_err() {
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed {
+                    errors += 1;
+                    continue;
+                }
+                let any_visible = tree.live().any(|(_, p)| {
+                    let frame_count = textures
+                        .get(p.state.texture_id as usize)
+                        .map_or(0, |t| t.images.len() as u32);
+                    p.state.visible(frame_count)
+                });
+                if any_visible {
+                    rescued += 1;
+                }
+            }
+        }
+        assert_eq!(root_invisible, 12);
+        assert_eq!(rescued, 1);
+        assert_eq!(errors, 0);
     }
 }
 
@@ -1525,5 +1826,159 @@ mod sim_tests {
         let mut vortex = Particle::spawn(&vortex_script);
         let mut rng = Rng::new(1);
         assert_eq!(vortex.tick(&mut rng), Err(SimError::VortexUnsupported));
+    }
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::particle_tree::ParticleTree;
+    use super::*;
+
+    fn script(velocity: [f32; 3], texture_id: u16, bytecode: &'static [u8]) -> Script<'static> {
+        Script {
+            kind: 0,
+            texture_id,
+            generator_lifetime: 0,
+            particle_lifetime: 100,
+            flags: 0,
+            gravity: 0.0,
+            friction: 1.0,
+            velocity,
+            unknown_20: 0.0,
+            unknown_24: 0.0,
+            update_rate: 0.0,
+            size: 0.0,
+            bytecode,
+        }
+    }
+
+    /// `ADDPOS x += 1.0`; `wait(31)`.
+    const ADDPOS_THEN_PARK: &[u8] = &[0x89, 0x3F, 0x80, 0x00, 0x00, 0x1F];
+    /// `wait(31)` only.
+    const PARK: &[u8] = &[0x1F];
+
+    #[test]
+    fn parent_ticks_once_per_frame_even_when_it_spawns() {
+        // MAKESCRIPT(0); wait(31); END (unreached).
+        let bank = [script([0.0; 3], 0, PARK)];
+        let root = script([0.0; 3], 99, &[0xA4, 0x00, 0x00, 0x1F, 0xFF]);
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+        let (_, parent) = tree.live().next().unwrap();
+        // particle_lifetime 100 -> spawn() adds 1 -> 101; exactly one tick
+        // this frame, not two, since nothing spliced *it* into a list.
+        assert_eq!(parent.state.lifetime, 100);
+    }
+
+    #[test]
+    fn spawned_child_is_ticked_twice_in_its_own_spawn_frame() {
+        // MAKESCRIPT(0); wait(31); END (unreached).
+        let bank = [script([0.0; 3], 11, ADDPOS_THEN_PARK)];
+        let root = script([0.0; 3], 99, &[0xA4, 0x00, 0x00, 0x1F, 0xFF]);
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+
+        assert_eq!(tree.ever_spawned(), 2);
+        let live: Vec<_> = tree.live().collect();
+        assert_eq!(live.len(), 2);
+        let (_, child) = live[1];
+        assert_eq!(child.state.texture_id, 11);
+        // ADDPOS only appears once in the child's own bytecode -- the
+        // creation tick reaches it, the outer walk's second tick starts
+        // past it (parked at `wait(31)`), so it must not apply twice.
+        assert_eq!(child.state.pos[0], 1.0);
+        // particle_lifetime 100 -> spawn() adds 1 -> 101; two ticks this
+        // frame (creation + the outer walk's own) is the "double-tick"
+        // this module's doc comment traces from `lbParticleStructFuncRun`.
+        assert_eq!(child.state.lifetime, 99);
+        assert_eq!(child.state.bytecode_timer, 30); // 31, then -1 on tick two.
+    }
+
+    #[test]
+    fn a_second_same_frame_spawn_is_spliced_between_parent_and_the_first_child() {
+        // MAKESCRIPT(0); MAKESCRIPT(1); wait(31); END (unreached).
+        let bank = [script([0.0; 3], 11, PARK), script([0.0; 3], 22, PARK)];
+        let root = script(
+            [0.0; 3],
+            99,
+            &[0xA4, 0x00, 0x00, 0xA4, 0x00, 0x01, 0x1F, 0xFF],
+        );
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+
+        let live: Vec<u16> = tree.live().map(|(_, p)| p.state.texture_id).collect();
+        // `lbParticleMakeStruct` always splices right after the spawning
+        // parent, so the second spawn this tick (script 1, tex 22) ends up
+        // closer to the parent than the first (script 0, tex 11).
+        assert_eq!(live, [99, 22, 11]);
+    }
+
+    #[test]
+    fn makescript_inherits_position_but_not_velocity() {
+        // SETPOS x=5.0; MAKESCRIPT(0); wait(31); END (unreached).
+        let bank = [script([9.0, 0.0, 0.0], 0, PARK)];
+        let root_code: &[u8] = &[
+            0x81, 0x40, 0xA0, 0x00, 0x00, // SETPOS x=5.0
+            0xA4, 0x00, 0x00, // MAKESCRIPT(0)
+            0x1F, 0xFF,
+        ];
+        let root = script([2.0, 0.0, 0.0], 99, root_code);
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+
+        let (_, child) = tree.live().nth(1).unwrap();
+        // Inherited pos 5.0, then its own vel.x (9.0, not the parent's 2.0)
+        // integrates into position on *both* of its same-frame ticks.
+        assert_eq!(child.state.pos[0], 5.0 + 2.0 * 9.0);
+        assert_eq!(child.state.vel[0], 9.0); // the child's own authored velocity, not the parent's.
+    }
+
+    #[test]
+    fn makeid_inherits_both_position_and_velocity() {
+        // SETPOS x=5.0; MAKEID(0); wait(31); END (unreached).
+        let bank = [script([9.0, 0.0, 0.0], 0, PARK)];
+        let root_code: &[u8] = &[
+            0x81, 0x40, 0xA0, 0x00, 0x00, // SETPOS x=5.0
+            0xB9, 0x00, 0x00, // MAKEID(0)
+            0x1F, 0xFF,
+        ];
+        let root = script([2.0, 0.0, 0.0], 99, root_code);
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+
+        let (_, child) = tree.live().nth(1).unwrap();
+        // Inherited pos 5.0, then the inherited vel.x (2.0) integrates into
+        // position on *both* of its same-frame ticks.
+        assert_eq!(child.state.pos[0], 5.0 + 2.0 * 2.0);
+        assert_eq!(child.state.vel[0], 2.0); // inherited (MAKEID only).
+    }
+
+    #[test]
+    fn unknown_script_id_is_a_reported_error_not_a_guess() {
+        let bank = [script([0.0; 3], 0, PARK)];
+        let root = script([0.0; 3], 99, &[0xA4, 0x00, 0x63, 0x1F, 0xFF]); // MAKESCRIPT(0x63)
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        assert_eq!(
+            tree.tick_frame(&bank, &mut rng),
+            Err(SimError::UnknownScriptId(0x63))
+        );
+    }
+
+    #[test]
+    fn makegenerator_is_still_declined_inside_a_tree() {
+        // MAKEGENERATOR(0); wait(31); END (unreached).
+        let bank = [script([0.0; 3], 0, PARK)];
+        let root = script([0.0; 3], 99, &[0xA5, 0x00, 0x00, 0x1F, 0xFF]);
+        let mut tree = ParticleTree::spawn_root(&root);
+        let mut rng = Rng::new(1);
+        tree.tick_frame(&bank, &mut rng).unwrap();
+        // No child particle was created -- only the root remains live.
+        assert_eq!(tree.ever_spawned(), 1);
     }
 }

@@ -2801,7 +2801,21 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   implementing paths nothing in the ROM reaches. Multi-particle
   spawn-tree execution, `LBGenerator` itself, and a real spawn event still
   remain. Facing-dependent alternate manager streams also remain before
-  this row can close
+  this row can close. RE-187 closes the first of those: hand-traced
+  `lbParticleStructFuncRun`'s linked-list walk and `lbParticleMakeStruct`'s
+  splice-after-parent insertion against `MAKESCRIPT`/`MAKERAND`/`MAKEID`'s
+  own case blocks (a child splices in immediately after its parent, gets an
+  immediate synchronous "creation tick", then the outer walk reaches it a
+  second time this same frame — a real double-tick, not an approximation)
+  and implemented it as `crates/ssb-rom/src/particle.rs::particle_tree::
+  ParticleTree`, a generic `SpawnSink`-driven executor (`Particle::tick`'s
+  existing decode-only behaviour is unchanged). Ran it against all 12 real
+  root-invisible scripts from RE-184's own census: exactly one,
+  `efcommon` script 38, has a real child visible by frame 4 once its spawn
+  actually executes; the other 11 stay invisible. Pinned by six synthetic
+  unit tests and one `SSB64_ROM`-gated archive-wide regression. `LBGenerator`
+  itself (the dominant path — 103 real `MAKEGENERATOR` uses vs. 25
+  `MAKESCRIPT`) and a real spawn event still remain
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:

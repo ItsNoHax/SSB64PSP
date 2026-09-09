@@ -2968,6 +2968,12 @@ fn particles(path: &Path) -> Res {
     let mut noise_count = 0usize;
     let mut dither_count = 0usize;
     let mut alphablend_count = 0usize;
+    // RE-187: does actually executing MAKESCRIPT/MAKERAND/MAKEID (RE-184/186
+    // only ever decoded them) change the frame-4 visibility census? A script
+    // classified "spawner script, never resolves its own texture" may still
+    // put a *child* particle on screen by frame 4.
+    let mut tree_rescued = 0usize;
+    let mut tree_errors: Vec<String> = Vec::new();
 
     println!("LBParticle banks");
     for &spec in ssb_rom::particle::BANKS {
@@ -3025,6 +3031,42 @@ fn particles(path: &Path) -> Res {
                     "{} script {index}: {reason} (size {:.3}, texture {} frames {frame_count})",
                     spec.name, particle.state.size, particle.state.texture_id
                 ));
+
+                // RE-187: this script's own root particle put nothing on
+                // screen -- check whether a real spawn tree (MAKESCRIPT/
+                // MAKERAND/MAKEID actually executed, same settle point)
+                // does, rather than assuming "spawner" means "invisible".
+                let mut tree = ssb_rom::particle::particle_tree::ParticleTree::spawn_root(script);
+                let mut tree_rng = ssb_rom::particle::Rng::new(1);
+                let mut tick_error = None;
+                for _ in 0..4 {
+                    if let Err(error) = tree.tick_frame(&scripts, &mut tree_rng) {
+                        tick_error = Some(error);
+                        break;
+                    }
+                }
+                match tick_error {
+                    Some(error) => tree_errors.push(format!(
+                        "{} script {index}: spawn-tree error {error:?}",
+                        spec.name
+                    )),
+                    None => {
+                        let any_visible = tree.live().any(|(_, p)| {
+                            let frame_count = textures
+                                .get(p.state.texture_id as usize)
+                                .map_or(0, |t| t.images.len() as u32);
+                            p.state.visible(frame_count)
+                        });
+                        if any_visible {
+                            tree_rescued += 1;
+                            println!(
+                                "  spawn-tree rescued: {} script {index} (ever spawned {} particles)",
+                                spec.name,
+                                tree.ever_spawned()
+                            );
+                        }
+                    }
+                }
             }
         }
         for texture in &textures {
@@ -3088,6 +3130,16 @@ fn particles(path: &Path) -> Res {
          ENVCOLOR {envcolor_count}/{visible_total}, NOISE {noise_count}/{visible_total}, \
          DITHER {dither_count}/{visible_total}, ALPHABLEND {alphablend_count}/{visible_total}"
     );
+    let invisible_total = script_total - visible_total;
+    println!(
+        "spawn-tree rescue among {invisible_total} root-invisible scripts: \
+         {tree_rescued} become visible once MAKESCRIPT/MAKERAND/MAKEID actually spawn \
+         (frame 4, seed 1), {} spawn-tree error(s)",
+        tree_errors.len()
+    );
+    for line in &tree_errors {
+        println!("  spawn-tree error: {line}");
+    }
     Ok(())
 }
 
