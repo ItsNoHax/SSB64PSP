@@ -89,6 +89,18 @@ static mut TEX_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> = Align16(
     }; 6],
 );
 
+/// Scratch for the RE-183 particle-billboard proof-of-concept quad.
+static mut PARTICLE_QUAD: Align16<[meshdraw::TexQuadVertex; 6]> = Align16(
+    [meshdraw::TexQuadVertex {
+        u: 0.0,
+        v: 0.0,
+        color: 0,
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    }; 6],
+);
+
 /// A unit tetrahedron, vertex-coloured. Stands in for a fighter until real
 /// geometry conversion lands.
 ///
@@ -265,6 +277,14 @@ unsafe fn run() -> ! {
     let mut tex_view = false;
     let mut tex_index: u32 = 0;
     let tex_count = pack.as_ref().map_or(0, |p| p.texture_count());
+
+    // RE-183: LBParticle render proof-of-concept. Browses the pack's flat
+    // `particle_scripts` table (bank-concatenated, RE-181); C_RIGHT is
+    // otherwise only meaningful inside `stage_view`'s own fighter-respawn
+    // handling below, so it is free everywhere else.
+    let mut particle_view = cfg!(feature = "particle_render_audit_capture");
+    let mut particle_script_index: u32 = 0;
+    let particle_script_count = pack.as_ref().map_or(0, |p| p.particle_script_count());
 
     // Object view: a whole DObjDesc hierarchy assembled from its baked node
     // transforms, rather than one mesh floating at the origin. This is the
@@ -556,6 +576,16 @@ unsafe fn run() -> ! {
                 cam_distance = CAM_FIT;
                 spin = 0.0;
             }
+            // RE-183: entering/leaving the particle-render proof-of-concept.
+            // Guarded on `!stage_view` alone (not `!billboard_view`) so the
+            // toggle always works from any other mode; the render/d-pad arms
+            // below check `particle_view` first, ahead of any stale
+            // `object_view`/`tex_view` flag.
+            if !stage_view && pressed.contains(N64Buttons::C_RIGHT) && particle_script_count > 0 {
+                particle_view = !particle_view;
+                cam_distance = CAM_FIT;
+                spin = 0.0;
+            }
             if !billboard_view && pressed.contains(N64Buttons::START) && stage_count > 0 {
                 stage_view = !stage_view;
             }
@@ -589,7 +619,15 @@ unsafe fn run() -> ! {
                     }
                 }
             }
-            if billboard_view {
+            if particle_view {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    particle_script_index = (particle_script_index + 1) % particle_script_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    particle_script_index =
+                        (particle_script_index + particle_script_count - 1) % particle_script_count;
+                }
+            } else if billboard_view {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     billboard_index = (billboard_index + 1) % billboard_count;
                 }
@@ -930,6 +968,84 @@ unsafe fn run() -> ! {
 
         let mut dbg_radius = 0.0f32;
         match &pack {
+            // RE-183: spawn the selected script fresh, tick it to frame 4
+            // (the same deterministic-settle point RE-172/173/174's own
+            // manager-effect audits use), then draw its resulting billboard.
+            // Host-side, ROM-free single-particle simulation only (RE-182);
+            // no generator/spawn-tree execution.
+            Some(p) if particle_view => {
+                if let Some(script) = p.particle_script(particle_script_index) {
+                    let bytecode = p.particle_bytecode(&script).unwrap_or(&[]);
+                    let source = ssb_rom::particle::Script {
+                        kind: script.kind,
+                        texture_id: script.texture_id,
+                        generator_lifetime: script.generator_lifetime,
+                        particle_lifetime: script.particle_lifetime,
+                        flags: script.flags,
+                        gravity: script.gravity,
+                        friction: script.friction,
+                        velocity: script.velocity,
+                        unknown_20: script.unknown_20,
+                        unknown_24: script.unknown_24,
+                        update_rate: script.update_rate,
+                        size: script.size,
+                        bytecode,
+                    };
+                    let mut particle = ssb_rom::particle::Particle::spawn(&source);
+                    let mut rng = ssb_rom::particle::Rng::new(1);
+                    for _ in 0..4 {
+                        let _ = particle.tick(&mut rng);
+                    }
+
+                    let bank = (0..p.particle_bank_count())
+                        .filter_map(|i| p.particle_bank(i))
+                        .find(|b| {
+                            particle_script_index >= b.first_script
+                                && particle_script_index < b.first_script + b.script_count
+                        });
+                    let texture = bank.and_then(|b| {
+                        p.particle_texture(b.first_texture + particle.state.texture_id as u32)
+                    });
+                    let tex_global = texture
+                        .filter(|t| t.frame_count > 0 && particle.state.size > 0.0)
+                        .map(|t| {
+                            t.first_frame + (particle.state.frame_id as u32).min(t.frame_count - 1)
+                        });
+
+                    if let Some(frame) = tex_global {
+                        let envcolor = (particle.state.flags & ssb_rom::particle::flag::ENVCOLOR
+                            != 0)
+                            .then_some(particle.state.envcolor);
+                        let dist = (particle.state.size * 6.0).max(50.0);
+                        dbg_cam = particle.state.pos[2] + dist;
+                        dbg_radius = particle.state.size;
+                        gpu.model_transform(
+                            [
+                                -particle.state.pos[0],
+                                -particle.state.pos[1],
+                                -particle.state.pos[2] - dist,
+                            ],
+                            [0.0, 0.0, 0.0],
+                            1.0,
+                        );
+                        meshdraw::draw_particle(
+                            p,
+                            frame,
+                            particle.state.size,
+                            particle.state.primcolor,
+                            envcolor,
+                            &mut PARTICLE_QUAD.0,
+                        );
+                        dbg_tex = frame;
+                    }
+                    shown = (
+                        u32::from(tex_global.is_some()) * 2,
+                        particle_script_index,
+                        bank.map(|b| b.first_texture + particle.state.texture_id as u32)
+                            .unwrap_or(0),
+                    );
+                }
+            }
             Some(p) if billboard_view => {
                 let global_node = billboard_nodes[billboard_index as usize];
                 if let (Some(node), Some((_owner_index, object))) =
@@ -1381,7 +1497,9 @@ unsafe fn run() -> ! {
 
         // Which browser is driving, so the readout describes what is on screen
         // rather than whichever index happens to be highest.
-        let (mode, index, count) = if billboard_view {
+        let (mode, index, count) = if particle_view {
+            ("ptcl ", particle_script_index, particle_script_count)
+        } else if billboard_view {
             ("billb", billboard_index, billboard_count)
         } else if stage_view {
             ("stage", stage_index, stage_count)
@@ -1390,10 +1508,21 @@ unsafe fn run() -> ! {
         } else {
             ("mesh ", mesh_index, mesh_count)
         };
+        // Particle scripts carry no `source_file`/`source_offset` (RE-181's
+        // pack layout has no reason to -- they are bank-local, not one
+        // archive object each), so this shows the owning bank index instead.
         let (src_file, src_offset) = pack
             .as_ref()
             .and_then(|p| {
-                if billboard_view {
+                if particle_view {
+                    (0..p.particle_bank_count())
+                        .filter_map(|i| p.particle_bank(i).map(|b| (i, b)))
+                        .find(|(_, b)| {
+                            particle_script_index >= b.first_script
+                                && particle_script_index < b.first_script + b.script_count
+                        })
+                        .map(|(i, _)| (i, 0))
+                } else if billboard_view {
                     let node = billboard_nodes[billboard_index as usize];
                     object_owning_node(p, node)
                         .map(|(_, object)| (object.source_file, object.source_offset))
@@ -1465,7 +1594,9 @@ unsafe fn run() -> ! {
             .unwrap_or(1);
 
         const WHITE: u32 = 0xFFFF_FFFF;
-        let viewer_title = if billboard_view {
+        let viewer_title = if particle_view {
+            "PARTICLE PROOF-OF-CONCEPT (RE-183)  dpad: browse  C-right: exit"
+        } else if billboard_view {
             "BILLBOARD AUDIT  dpad: browse  L: exit"
         } else {
             "SSB64-PSP  M4 scene viewer"
@@ -1580,7 +1711,8 @@ unsafe fn run() -> ! {
                      C-up: fighter sim on/off\n\
                      R/C-up: file  C-dn: obj/mesh  A/Z: zoom\n\
                      stage L: billboard audit; dpad: billboard; L: exit\n\
-                     in obj view -- B: animate  dpad: anim/fighter  L: costume",
+                     in obj view -- B: animate  dpad: anim/fighter  L: costume\n\
+                     C-right (not in stage): particle proof-of-concept; dpad: browse",
                     viewer_title,
                     pack_status,
                     mode,
@@ -1611,7 +1743,9 @@ unsafe fn run() -> ! {
                     skeleton.joint_count(),
                     skeleton.frame() as i32,
                     shown.0,
-                    if billboard_view {
+                    if particle_view {
+                        "script"
+                    } else if billboard_view {
                         "pack-node"
                     } else if stage_view {
                         "layers"
@@ -1621,7 +1755,9 @@ unsafe fn run() -> ! {
                         "verts"
                     },
                     shown.1,
-                    if billboard_view {
+                    if particle_view {
+                        "tex"
+                    } else if billboard_view {
                         "mesh"
                     } else if stage_view {
                         "coll-segs"
