@@ -13,19 +13,45 @@ is temporarily deferred by explicit user direction)
 
 ## Current Task
 
-`R1 — all required animations render`: add and execute an exhaustive,
-source-identifying PPSSPP audit of every packed fighter motion through the
-runtime skeleton and renderer.
+`R1 — all required animations render`: exhaustive software coverage and
+runtime lookup reconciliation.
 
 ## Task Status
 
-`IN_PROGRESS`. Existing ROM/pack replay evidence proves all 532 packed fighter
-motions numerically, and R0.9 separately verifies all 35 stage animations
-through their correct 32-bit runtime path. The current work is adding the
-missing exhaustive visual harness for the 532 fighter motions. The generic
-object animation viewer must stop before the 35 stage and 11 transition
-entries: those use `AObjEvent32`, not the fighter figatree decoder, and already
-have dedicated stage/results runtime paths.
+`COMPLETE` (RE-171). `tools/run-ppsspp.sh --audit-animations 532` rendered and
+captured every sparse fighter/slot entry through the PSP `Skeleton` and GE
+path. All 532 source-identifying HUD strips were unique, all centred model
+crops contained measurable render content (minimum standard deviation
+`0.0454806`, rejection threshold `0.003`), representative captures across the
+table showed 60 FPS, and the PPSSPP log contained no error/failure/panic/
+rejection/desynchronisation lines. Captures remain outside Git at
+`/home/alberto/ppsspp-test/re171/animation-audit/`; manifest SHA-256 is
+`9afee0e9614816f33d748609700258661e4af8499c99c127a24d976ed4371b8e`.
+EBOOT / pack SHA-256:
+`8a4fc9ffea30a47fdafdb426af2b700e0720d791863432217e587ee4141ddc6f` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+
+The viewer now stops before the 35 stage and 11 transition entries, which use
+`AObjEvent32` and their dedicated stage/results paths rather than fighter
+figatrees. The audit also exposed and fixed `Pack::fighter_anim`'s false dense
+table assumption: eight original null motion slots make the 532-row fighter
+block sparse, so exact `(fighter, slot)` lookup is required. A focused test
+pins lookup across missing and stage rows. R0.9, R0.10 and R0.13 already supply
+the ROM/runtime evidence for stage, material and results-wipe animation paths.
+Implementation commits: `e85aa19` (audit), `826c02a` (sparse lookup).
+
+Verification: all 436 workspace tests and strict workspace Clippy pass. A
+fresh `romtool figatree --pack assets/generated/ssb64.pak` run checks all 532
+entries, replays 9,692 joints with every pose identical to the ROM, and
+preserves 567,662 bone lengths. Both audit and normal PSP release builds pass
+with the existing six warnings. A post-fix three-second normal PPSSPP software
+smoke run renders Dream Land at 60 FPS with no relevant log lines; normal
+EBOOT SHA-256 is
+`53f25a9b97965c9db12493cd16811cc25dca6d667edb2cee2711571c220fed53`.
+
+The next eligible software-only task is R1's `all required effects render`
+audit. Physical hardware remains unavailable; R0.5 stays `VERIFYING`, R1 as a
+whole stays `IN_PROGRESS`, and R2/R3/combat remain locked.
 
 The preceding fighter/costume reconciliation is `COMPLETE`.
 R0.11/RE-098 already individually rendered all 12 playable
@@ -55,9 +81,9 @@ The captures remain outside Git under
 R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
 The user's temporary hardware deferral permits independent software-only R1
 work; it does not mark R0 complete or unlock R3/combat. The next eligible task
-is R1's `all required animations render` audit. Relevant commits: `d68f199`
-for the stage harness/evidence and the current
-`docs: reconcile R1 fighter and costume coverage` commit.
+is R1's `all required effects render` audit. Relevant R1 commits: `d68f199`
+(stages), `4964a97` (fighters/costumes), `e85aa19` (animations), and
+`826c02a` (sparse animation lookup).
 
 RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
@@ -3614,13 +3640,14 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**`R1 — all required animations render` is the next eligible software-only
-task.** R1's stage, fighter and costume rows are complete: RE-170 captured all
-41 stages, while the R0.11/RE-098 evidence already individually rendered all
-12 playable fighters at nonzero costumes. The user explicitly deferred
-unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
-`VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
-complete, begin R3, or unlock combat.
+**`R1 — all required effects render` is the next eligible software-only
+task.** R1's stage, fighter, costume and animation rows are complete: RE-170
+captured all 41 stages; R0.11/RE-098 rendered all 12 playable fighters at
+nonzero costumes; RE-171 captured all 532 sparse fighter motions and
+reconciles the already-complete stage/material/results animation evidence.
+The user explicitly deferred unavailable physical-PSP work on 2026-09-09.
+R0.5 therefore remains `VERIFYING`; do not tune the canopy from PPSSPP
+appearance, mark R0/R1 complete, begin R3, or unlock combat.
 
 Historical eligibility record follows. **`R0.10 — Material Animation` is `COMPLETE`** (RE-086 through RE-096;
 full history in `PLAN.md`'s own R0.10 section and this file's Task Status
