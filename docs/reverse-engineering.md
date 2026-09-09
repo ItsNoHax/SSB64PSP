@@ -10,6 +10,42 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-181 — LBParticle banks survive PSP pack conversion (`PLAN.md` R1)
+
+**Problem.** RE-180 proved all nine original banks decode, but none of their
+scripts or image frames reached `ssb64.pak`. Runtime work could not begin
+without a stable bank-local ID mapping and PSP-ready texture representation.
+
+**Source constraints.** Original `lbParticleSetupBankID` keeps script and
+texture IDs local to each bank, while scripts retain their complete 48-byte
+fixed state and variable command stream. `LBTexture.flags & 1` selects one
+shared CI palette; otherwise each CI image has its corresponding palette.
+EFCommon texture 6 is a zero-frame placeholder whose table slot must remain so
+later texture IDs do not shift. Particle sprites have no authored mip chain.
+
+**Implementation.** Pack version 25 adds three tables: bank ranges, fixed
+script records with blob-backed bytecode, and texture-series descriptors whose
+frames reference consecutive ordinary `TextureDesc` entries. CI frames retain
+their source indices and selected palette; I frames use the already-proved
+exact generated intensity CLUT; RGBA and IA frames use the existing decoded
+PSP conversion. The zero-frame slot is represented explicitly. Adding frames
+after scene packing preserves every prior texture index. `romtool effects`
+now reads the pack back and rejects wrong totals, invalid script bytecode,
+missing descriptors, missing frames, or missing texel data.
+
+**Verification.** Rebuilding from the user's US ROM produces 9 banks, 160
+scripts, 65 texture series, 246 frames, and an 8,218,128-byte pack with SHA-256
+`7eeac020d16a38760d3bbd77cd14ba63562469277466ea09428536fa8260681d`.
+Focused round-trip coverage plus all 461 workspace tests pass. Strict workspace
+Clippy, formatting, and `ssb-rom --no-default-features` pass. An 8-second
+PPSSPP software smoke run loads this exact pack at 60 FPS with no application
+error/failure lines; screenshot remains `/home/alberto/ppsspp-test/screenshot.png`.
+
+**Remaining scope.** This is serialization, not visible particle playback.
+Next bounded step is deterministic script simulation, followed by PSP
+rectangle drawing and a focused PPSSPP audit. Physical-PSP status is unchanged.
+Implementation commit: `5342bf0`.
+
 ## RE-180 — All LBParticle banks decode from the original ROM (`PLAN.md` R1)
 
 **Problem.** R1 identified `LBParticle` as the second required effect path,

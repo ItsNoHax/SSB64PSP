@@ -2725,10 +2725,16 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   `lbParticleUpdateStruct`: all nine real ROM bank pairs validate as 160
   scripts, 65 texture series, 246 independently decoded image frames, and
   6,070 used bytecode bytes. This corrects a decomp working-note prose total
-  of 66 whose own per-bank counts and real headers sum to 65. Pack
-  serialization, runtime simulation, PSP rectangle rendering, and PPSSPP
-  audit still remain. Facing-dependent alternate manager streams also remain
-  before this row can close
+  of 66 whose own per-bank counts and real headers sum to 65. RE-181 advances
+  that exact decoded inventory into pack version 25: all nine bank ranges,
+  all 160 fixed script records plus their 6,070 bytecode bytes, all 65 texture
+  series, and all 246 PSP-converted frames survive rebuild and readback.
+  `romtool effects` rejects count, bytecode, descriptor, frame, or texel-range
+  loss. An 8-second PPSSPP software smoke run loads the rebuilt 8,218,128-byte
+  pack at 60 FPS with a clean application log. Runtime simulation, PSP
+  rectangle rendering, and focused PPSSPP particle audit still remain.
+  Facing-dependent alternate manager streams also remain before this row can
+  close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
