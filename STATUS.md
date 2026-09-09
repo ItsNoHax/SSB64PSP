@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 manager-effect material animation: 6 of 9 unresolved sprite tables fixed)
+**Last updated:** 2026-09-09 (R1 manager-effect material animation: remaining 3-table gap closed, RE-178)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–177). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–178). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -26,6 +26,37 @@ and four pairs share an asset, leaving 46 unique display-bearing manager
 assets. All 46 now survive the rebuilt pack and `romtool effects` verifies
 668 triangles. This includes 12 direct `Gfx`/`DObjDLLink` constructions the
 generic scene-graph scan previously omitted.
+
+RE-178 closes the 3-table gap RE-177 left open (ImpactWave, PikachuUnk,
+MBallThrown), completing RE-175's original 9-table manager-effect material
+census: 6 fixed by RE-177, 1 fixed and 2 confirmed correctly inert by RE-178.
+PikachuUnk was a real bug: `crates/ssb-rom/src/effect.rs`'s
+`MANAGER_EFFECT_MAT_ANIM_JOINTS` named `0x0890` (its *transform* joint
+table's own address) instead of `0x0900` (its real material-anim table,
+confirmed word-for-word against `refs/ssb-decomp-re/src/relocData/
+347_PikachuSpecial2.c`'s own inline script) — a one-line fix. ImpactWave and
+MBallThrown are each confirmed, not merely left alone: ImpactWave's one real
+script only ever writes the identity UV transform (never touches
+`PaletteID`/`TextureIDCurrent`/`TextureIDNext`/colour, the tracks a sprite
+resolver reads); MBallThrown's real 4-node DObj tree's own generic
+`gcAddMatAnimJointAll` walk never dereferences the one table slot that holds
+a real script, by the source's own terminator-sentinel and cursor-advance
+semantics. `romtool effects` now exits 0 with "material animations: 24/26
+replayable" (was 23/26) and an explicit "source-unreachable (not errors)"
+line for the two confirmed-inert cases, rather than 2 unexplained failures.
+All 297 `ssb-rom` tests, both `romtool` tests, strict Clippy, `cargo fmt
+--check`, and the pinned-nightly PSP release build pass; an 8-second PPSSPP
+software run shows Dream Land unaffected at 60 FPS with a clean log.
+Implementation/documentation: see `docs/reverse-engineering.md` RE-178.
+
+The next bounded step within this same task is the remaining, larger item
+RE-175 already flagged: consuming live colour-track GE state (`EffectColors`'s
+prim/env/blend/light1/light2 tracks are resolved and unit-tested but nothing
+on the device side reads them yet — vertex-baked colour has no per-primitive
+override point today). The independent `LBParticle` decoder/runtime remains
+unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
+Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
+the descriptor-selected variant rather than claiming both runtime branches.
 
 RE-172 also corrects a real shifted file-84 material association from the
 current decomp and ROM layout: Catch Swirl `0x2760 -> 0x22B8`, Reflect Break
@@ -166,27 +197,14 @@ on-device evidence here; `romtool effects`'s explicit per-table check and the
 new unit test are the real evidence. PPSSPP was confirmed terminated after
 the run.
 
-The remaining 3 tables (ImpactWave, PikachuUnk, MBallThrown) are a different,
-deeper problem, diagnosed but not fixed: ImpactWave's script decodes cleanly
-but drives none of the palette/texture-id/colour tracks this project's
-`matanim.rs` currently reads (its opcode is `SetVal0RateBlock`, not yet
-cross-checked against the decoder); PikachuUnk's and MBallThrown's own
-`o_matanim_joint` tables resolve against a node count/index this project's
-current node-count assumption for their graphs does not match (PikachuUnk's
-real graph has 4 nodes, not the 1 a synthetic single-DObj injection would
-imply; MBallThrown's table is genuinely NULL at the position expected).
-Closing these needs the same per-file source tracing RE-175 itself asked for,
-not a repeat of this session's texture-shape fix.
-
-The next bounded step within this same task is that remaining 3-table gap,
-plus consuming live colour-track GE state (`EffectColors`'s prim/env/blend/
-light1/light2 tracks are resolved and unit-tested but nothing on the device
-side reads them yet — vertex-baked colour has no per-primitive override point
-today, the harder design question RE-175 flagged). The independent
-`LBParticle` decoder/runtime remains unimplemented and keeps the R1 row open.
-Facing-dependent alternate Poké Ball/Kirby Entry Star streams also remain
-gameplay integration; RE-174 packs the descriptor-selected variant rather than
-claiming both runtime branches.
+The remaining 3 tables (ImpactWave, PikachuUnk, MBallThrown) were a different,
+deeper problem, diagnosed but not fixed as of RE-177. RE-178 (see above and
+`docs/reverse-engineering.md`) closed all three: PikachuUnk was a real
+table-address bug (fixed), and ImpactWave/MBallThrown were each confirmed —
+by the exact flag bits their one real script sets, and by the source's own
+`DOBJ_ARRAY_MAX` terminator/cursor-advance semantics, respectively — to
+correctly attach nothing at all, matching the original game's own behaviour
+rather than a converter gap.
 
 The preceding animation task is `COMPLETE` (RE-171).
 `tools/run-ppsspp.sh --audit-animations 532` rendered and captured every

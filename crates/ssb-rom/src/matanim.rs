@@ -1088,4 +1088,49 @@ mod tick_tests {
         j.tick(&d, 1.0).expect("ticks");
         assert_eq!(j.track_value(TRACK_PALETTE_ID), None);
     }
+
+    #[test]
+    fn impact_wave_set_val0_rate_block_drives_uv_transform_not_texture_or_palette() {
+        // Verbatim from file 83 @ 0x7DA4 (ImpactWave's `o_matanim_joint`
+        // script, RE-177/RE-178): two `SetVal0RateBlock` (opcode 8) commands
+        // naming flags `0x1E` (bits 1-4: TraU/TraV/ScaU/ScaV), each writing
+        // the identity UV transform (0, 0, 1.0, 1.0), then `End`. RE-177 found
+        // this opcode was "not yet cross-checked against matanim.rs's track
+        // decode"; this pins that cross-check against the real bytes rather
+        // than a synthetic shape. `apply` already models opcode 8 (it is one
+        // of `tick_values_per_track`'s single-value cases), so this is
+        // confirming existing decode behaviour, not fixing a bug.
+        const FLAGS: u32 =
+            (1 << TRACK_TRA_U) | (1 << TRACK_TRA_V) | (1 << TRACK_SCA_U) | (1 << TRACK_SCA_V);
+        let d = script(&[
+            cmd(OP_SET_VAL0_RATE_BLOCK, FLAGS, 0),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            cmd(OP_SET_VAL0_RATE_BLOCK, FLAGS, 12),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+
+        assert_eq!(j.track_value(TRACK_TRA_U), Some(0.0));
+        assert_eq!(j.track_value(TRACK_TRA_V), Some(0.0));
+        assert_eq!(j.track_value(TRACK_SCA_U), Some(1.0));
+        assert_eq!(j.track_value(TRACK_SCA_V), Some(1.0));
+
+        // The real reason `resolve_one_mat_anim` declines to attach this
+        // script to a primitive (RE-177): it drives none of the three tracks
+        // a manager effect's sprite/palette resolution reads.
+        assert_eq!(j.track_value(TRACK_PALETTE_ID), None);
+        assert_eq!(j.track_value(TRACK_TEXTURE_ID_CURRENT), None);
+        assert_eq!(j.track_value(TRACK_TEXTURE_ID_NEXT), None);
+        for i in 0..5 {
+            assert_eq!(j.track_color(TICK_EXT_START + i), None);
+        }
+    }
 }

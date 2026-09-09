@@ -2691,7 +2691,15 @@ fn effects(path: &Path) -> Res {
         if ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_JOINTS[effect_index].is_some() {
             let mat_anims = object_mat_anims(&pack, &object);
             if mat_anims.is_empty() {
-                mat_anim_errors.push(format!("{}: no bound material animation", asset.name));
+                // RE-178/RE-179: for these two specific effects, the source's
+                // own `gcAddMatAnimJointAll` walk never reaches the one real
+                // script their table carries either -- this is not a missed
+                // attachment, so it is not counted as an error.
+                if !ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS
+                    .contains(&(asset.file, asset.graph))
+                {
+                    mat_anim_errors.push(format!("{}: no bound material animation", asset.name));
+                }
             } else {
                 let mut player = ssb_rom::skeleton::EffectMaterialAnimator::new();
                 player.start(&pack, mat_anims.iter().copied());
@@ -2735,6 +2743,7 @@ fn effects(path: &Path) -> Res {
     println!(
         "material animations: {mat_animated}/26 replayable, {mat_animated_prims} bound primitive script(s)"
     );
+    println!("  source-unreachable (not errors, RE-178/RE-179): ImpactWave, MBallThrown");
     println!(
         "material variant selection: DeadExplode player 0 (DeadExplode1), \
          MBallThrown left-facing table (RE-175)"

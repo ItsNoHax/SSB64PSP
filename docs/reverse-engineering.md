@@ -10,6 +10,100 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-178 — Closes RE-177's remaining 3-table manager-effect material gap (`PLAN.md` R1)
+
+**Problem.** RE-177 left three manager-effect material-animation tables
+unresolved (ImpactWave, PikachuUnk, MBallThrown), each flagged as needing
+"per-file source tracing" rather than a shared fix. Traced all three directly
+against `refs/ssb-decomp-re`'s typed relocData source (not just raw ROM
+bytes) and the real ROM.
+
+**Evidence.**
+
+*ImpactWave (file 83 @ 0x7C28) — confirmed correct decline, not a bug.*
+Hand-decoded the real script (file 83 @ 0x7DA4) byte-for-byte:
+`SetVal0RateBlock(flags=0x1E, payload=0)` then `SetVal0RateBlock(flags=0x1E,
+payload=12)`, each writing `TraU/TraV/ScaU/ScaV = 0, 0, 1.0, 1.0` — the
+identity UV transform, authored twice, never changing. `flags=0x1E` sets bits
+1-4 (`TraU/TraV/ScaU/ScaV`), never bit 0/5/9 (`TextureIDCurrent`/
+`TextureIDNext`/`PaletteID`) or any colour track. `resolve_one_mat_anim`
+(`tools/romtool/src/main.rs`) only attaches a script that drives one of those
+three; this one drives none, so its decline is exactly correct. Added
+`matanim::tick_tests::impact_wave_set_val0_rate_block_drives_uv_transform_not_texture_or_palette`,
+copying the exact real words, confirming `apply` already decodes opcode 8
+(`SetVal0RateBlock`) onto the joint (non-colour) track window correctly (the
+"not yet cross-checked" gap RE-177 flagged) — confirmed the test can fail by
+temporarily corrupting one expected value and reverting.
+
+*PikachuUnk (file 347 @ 0x0800) — a real address bug, now fixed.* RE-177's
+own "materials.len()==4" symptom for this name does not match PikachuUnk's
+real graph, which `romtool scene --file 347 --nodes` confirms has only 2
+nodes; it matches the *other* Pikachu Special2 effect, PikachuThunderShock's
+graph (0x1640, 4 nodes) instead — RE-177 diagnosed the correct symptom under
+the wrong effect's name. Reading `refs/ssb-decomp-re/src/relocData/
+347_PikachuSpecial2.c` directly settled it: `MANAGER_EFFECT_MAT_ANIM_JOINTS`'s
+entry for PikachuUnk was `Some(0x0890)`, but 0x0890 is
+`dPikachuSpecial2_UnkAnimJoint_AnimJoint` — the *transform* joint table
+`MANAGER_EFFECT_ANIM_JOINTS` already names correctly at that same address.
+The source's own comment places `UnkMatAnimJoint @ 0x900`, 0x70 bytes further;
+confirmed against the ROM directly (table at 0x900: `{NULL, 0x950}` → inner
+`{0x908}` → a real `SetValAfterBlock(TEXID, ...)` script cycling
+`TextureIDCurrent` through 0, 1, 2, 1, 0, 0, 2, 0, matching
+`dPikachuSpecial2_UnkMatAnimJoint_MatAnimJoint_0x8` word-for-word). Fixed
+`crates/ssb-rom/src/effect.rs`'s table entry to `Some(0x0900)`.
+`romtool effects` moved from 23/26 to 24/26 replayable material animations
+after this one-line fix; all workspace tests, clippy and `cargo fmt --check`
+still pass.
+
+*MBallThrown (file 86 @ 0x9430) — confirmed correct decline, not a bug.*
+RE-177 found the table's real per-node pointer sits at raw index 4 while
+index 3 (the node that would need it) is `NULL`. Reading
+`refs/ssb-decomp-re/src/relocData/86_ITCommonObject.c` shows why this is not
+an indexing bug: `dITCommonObject_MBall_Item_data_DObjDesc[5]` has exactly 4
+real nodes (ids 0, 1, 2, 2) before a `DOBJ_ARRAY_MAX` (18, `objtypes.h:38`)
+terminator sentinel at raw index 4 — `romtool scene --file 86 --nodes`
+independently confirms 4 real nodes for this graph. `objanim.c`'s
+`gcAddMatAnimJointAll` advances its `p_matanim_joints` cursor once per real
+`DObj` it visits and only dereferences the *current* slot before each advance
+(the same shape already read for `gcParseMObjMatAnimJoint`/
+`gcParseCObjCamAnimJoint`); DObj tree construction stops at the terminator
+sentinel and never creates a 5th `DObj`, so a real 4-node tree only ever
+dereferences table slots 0-3 — exactly the four `NULL` entries this table
+has. The one real script this table carries, at slot 4
+(`dITCommonObject_MBall_Item_data_remainder_gap_0x950C_sub_0xC4`, a
+`TextureIDCurrent` 0-7 sprite cycle), sits one slot past what this specific
+DObj tree's own generic walk ever visits, and no other traced call site
+(`efManagerMBallThrownMakeEffect`/`efManagerMBallThrownProcUpdate`) indexes
+this table by raw position either. This project's decline faithfully
+reproduces that: nothing in the real source makes this script reachable for
+this effect.
+
+**Implementation.** `crates/ssb-rom/src/effect.rs`'s `MANAGER_EFFECT_MAT_ANIM_JOINTS[17]`
+corrected `0x0890 -> 0x0900`. Added `MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS`
+naming ImpactWave and MBallThrown, so `tools/romtool/src/main.rs`'s `effects`
+verifier stops reporting their (confirmed-correct) empty attachment as an
+error; `romtool effects` now exits 0 with "material animations: 24/26
+replayable" and an explicit "source-unreachable (not errors)" line instead of
+2 unexplained failures. New/extended tests: `matanim.rs`'s
+`impact_wave_set_val0_rate_block_drives_uv_transform_not_texture_or_palette`,
+and `effect.rs`'s `manager_effect_keys_are_46_unique_objects` extended to
+assert the new list is exactly 2 keys, unique, and a subset of the graphs
+that actually have a real (non-`NULL`) `o_matanim_joint`. All 297 `ssb-rom`
+tests, both `romtool` tests, strict Clippy, `cargo fmt --check`, and the
+pinned-nightly PSP release build pass; an 8-second PPSSPP software run shows
+Dream Land unaffected at 60 FPS with a clean log, and the process was
+confirmed terminated afterward.
+
+**Confidence.** High for all three: PikachuUnk's fix is confirmed byte-for-byte
+against the decompiled source's own inline `AObjEvent32` script, not inferred
+from a heuristic. ImpactWave's and MBallThrown's declines are each confirmed
+by a specific, cited mechanism (the exact flag bits set; the exact terminator
+sentinel and walk semantics) rather than by absence of a counter-example.
+This closes RE-175's original 9-table gap entirely: 6 fixed by RE-177, 1
+fixed here, 2 confirmed correctly inert here.
+
+---
+
 ## RE-177 — Closes 6 of RE-175's 9 unresolved manager-effect sprite tables (`PLAN.md` R1)
 
 **Problem.** RE-175 found 9 of 26 manager-effect material-animation tables
