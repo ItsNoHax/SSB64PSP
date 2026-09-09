@@ -338,9 +338,8 @@ unsafe fn run() -> ! {
                 .iter()
                 .filter_map(|&(file, offset)| {
                     (0..p.object_count()).find(|&i| {
-                        p.object(i).is_some_and(|o| {
-                            o.source_file == file && o.source_offset == offset
-                        })
+                        p.object(i)
+                            .is_some_and(|o| o.source_file == file && o.source_offset == offset)
                     })
                 })
                 .collect()
@@ -348,7 +347,17 @@ unsafe fn run() -> ! {
         .unwrap_or_default();
     let effect_count = effect_objects.len() as u32;
     let mut effect_index = 0u32;
-    if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
+    let effect_animation_slots: alloc::vec::Vec<u32> = ssb_rom::effect::MANAGER_EFFECT_ANIM_JOINTS
+        .iter()
+        .enumerate()
+        .filter_map(|(index, anim)| anim.is_some().then_some(index as u32))
+        .collect();
+    let effect_animation_count = effect_animation_slots.len() as u32;
+    let mut effect_animation_index = 0u32;
+    if cfg!(feature = "effect_animation_audit_capture") && effect_animation_count > 0 {
+        effect_index = effect_animation_slots[0];
+        object_index = effect_objects[effect_index as usize];
+    } else if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
         object_index = effect_objects[0];
     }
     // RE-098: no real costume-selection game system exists yet, so the only
@@ -371,13 +380,17 @@ unsafe fn run() -> ! {
     let mut stage_view = stage_count > 0
         && !cfg!(any(
             feature = "animation_audit_capture",
-            feature = "effect_audit_capture"
+            feature = "effect_audit_capture",
+            feature = "effect_animation_audit_capture"
         ));
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut stage_anim_loaded: Option<u32> = None;
+    let mut effect_anim = ssb_rom::skeleton::StageAnimator::new();
+    let mut effect_anim_loaded: Option<u32> = None;
+    let mut effect_anim_ticks = 0u32;
     let mut show_collision = !cfg!(feature = "camera_audit_capture");
 
     // Material animation (RE-089-095): a `MatAnimDesc` entry is a property of
@@ -426,9 +439,10 @@ unsafe fn run() -> ! {
     let anim_count = pack.as_ref().map_or(0, |p| {
         (0..p.anim_count())
             .take_while(|&i| {
-                p.anim(i)
-                    .is_some_and(|a| a.fighter != ssb_rom::pack::AnimDesc::STAGE
-                        && a.fighter != ssb_rom::pack::AnimDesc::TRANSITION)
+                p.anim(i).is_some_and(|a| {
+                    a.fighter != ssb_rom::pack::AnimDesc::STAGE
+                        && a.fighter != ssb_rom::pack::AnimDesc::TRANSITION
+                })
             })
             .count() as u32
     });
@@ -449,7 +463,13 @@ unsafe fn run() -> ! {
     let (_vx, _, vw, vh) = coord::pillarboxed_viewport();
     let aspect = vw as f32 / vh as f32;
 
-    let mut spin = 0.0f32;
+    // A fixed oblique angle keeps single-sided effect cards from landing
+    // exactly edge-on during the deterministic transform audit.
+    let mut spin = if cfg!(feature = "effect_animation_audit_capture") {
+        0.45f32
+    } else {
+        0.0f32
+    };
     let mut last_frame_us = 0u32;
     let mut dbg_cam = 1000.0f32;
     // Simulation-tick count since boot, independent of wall-clock/frame
@@ -632,9 +652,31 @@ unsafe fn run() -> ! {
                     }
                 }
             } else if object_view
-                && cfg!(feature = "effect_audit_capture")
-                && effect_count > 0
+                && cfg!(feature = "effect_animation_audit_capture")
+                && effect_animation_count > 0
             {
+                let was = effect_animation_index;
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    effect_animation_index = (effect_animation_index + 1) % effect_animation_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    effect_animation_index = (effect_animation_index + effect_animation_count - 1)
+                        % effect_animation_count;
+                }
+                effect_index = effect_animation_slots[effect_animation_index as usize];
+                object_index = effect_objects[effect_index as usize];
+                if was != effect_animation_index {
+                    effect_anim_loaded = None;
+                    // These two card-like objects face the audit camera at
+                    // the authored angle; Kirby's downward cutter is visible
+                    // from the complementary oblique side.
+                    spin = match effect_animation_index {
+                        20 => 1.0,
+                        30 | 31 => 0.0,
+                        _ => 0.45,
+                    };
+                }
+            } else if object_view && cfg!(feature = "effect_audit_capture") && effect_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     effect_index = (effect_index + 1) % effect_count;
                 }
@@ -773,7 +815,8 @@ unsafe fn run() -> ! {
             // apart differ by most of a turn, and the difference reads as the
             // pose having changed. That cost real time (RE-038), so playback
             // holds the angle still and leaves the stick in charge.
-            if !anim_playing && !billboard_view {
+            if !anim_playing && !billboard_view && !cfg!(feature = "effect_animation_audit_capture")
+            {
                 spin += 0.02;
             }
             spin += if stick_drives_fighter || billboard_view {
@@ -1089,10 +1132,47 @@ unsafe fn run() -> ! {
             }
             Some(p) if object_view => {
                 if let Some(obj) = p.object(object_index) {
+                    // Deterministic manager-effect transform audit: start the
+                    // source-associated AObjEvent32 stream on selection and
+                    // stop at frame 4. The shortest source stream ends after
+                    // frame 5, so this samples every effect while it is still
+                    // active. Host capture timing can then vary
+                    // without changing the pose under inspection (RE-174).
+                    if cfg!(feature = "effect_animation_audit_capture") {
+                        if effect_anim_loaded != Some(effect_index) {
+                            effect_anim_loaded = Some(effect_index);
+                            effect_anim_ticks = 0;
+                            effect_anim = ssb_rom::skeleton::StageAnimator::new();
+                            if let Some(anim) = p.effect_anim(effect_index) {
+                                effect_anim.start(p, &anim);
+                            }
+                        }
+                        if effect_anim_ticks < 4 {
+                            if let Some(anim) = p.effect_anim(effect_index) {
+                                if let Some(script) = p.anim_script(&anim) {
+                                    if effect_anim.tick(script).is_ok() {
+                                        effect_anim_ticks += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    posed_len = if cfg!(feature = "effect_animation_audit_capture") {
+                        effect_anim.compose(p, &obj, &mut posed)
+                    } else if anim_playing {
+                        skeleton.compose(p, &obj, &mut posed)
+                    } else {
+                        0
+                    };
                     // Frame the whole hierarchy, not one node: an object's
                     // nodes are spread over the stage, so bounding only the
                     // first would put the camera inside the scene.
-                    let (centre, radius) = match meshdraw::object_bounds(p, &obj) {
+                    let object_bounds = if cfg!(feature = "effect_animation_audit_capture") {
+                        meshdraw::object_bounds_posed(p, &obj, &posed[..posed_len])
+                    } else {
+                        meshdraw::object_bounds(p, &obj)
+                    };
+                    let (centre, radius) = match object_bounds {
                         Some((min, max)) => {
                             let c = [
                                 (min[0] + max[0]) * 0.5,
@@ -1134,11 +1214,6 @@ unsafe fn run() -> ! {
                         meshdraw::MODEL_SCALE,
                     );
                     let base = gpu.model_matrix();
-                    posed_len = if anim_playing {
-                        skeleton.compose(p, &obj, &mut posed)
-                    } else {
-                        0
-                    };
                     let tris = meshdraw::draw_object_posed(
                         p,
                         &obj,
@@ -1326,7 +1401,23 @@ unsafe fn run() -> ! {
         // sidesteps whatever PPSSPP-internal state causes it, rather than
         // trying to out-guess it, and a developer diagnostic overlay was
         // never part of the golden scene R0.17 wants captured anyway.
-        if cfg!(feature = "effect_audit_capture") {
+        if cfg!(feature = "effect_animation_audit_capture") {
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "EFFECT ANIM AUDIT {}/{}  source {}  file {} @0x{:X}  frame {}  tris {}",
+                    effect_animation_index,
+                    effect_animation_count,
+                    effect_index,
+                    src_file,
+                    src_offset,
+                    effect_anim_ticks,
+                    shown.0,
+                ),
+            );
+        } else if cfg!(feature = "effect_audit_capture") {
             // Keep the fitted effect unobscured while retaining enough source
             // identity and draw evidence for the host capture manifest.
             gpu.debug_text(

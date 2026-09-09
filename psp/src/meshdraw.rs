@@ -983,6 +983,27 @@ unsafe fn draw_object_posed_filtered(
 /// far enough that her head sat outside the box and got clipped off the top of
 /// the frame.
 pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], [f32; 3])> {
+    object_bounds_with_matrices(pack, object, &[])
+}
+
+/// Bounding box of a posed object. `matrices` uses the same object-local node
+/// order as [`draw_object_posed`]; missing entries fall back to packed rest
+/// matrices. This keeps audit framing attached to effects whose animation
+/// translates or scales their visible geometry away from the authored rest
+/// pose (RE-174).
+pub fn object_bounds_posed(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    matrices: &[ssb_rom::scene::Mat4],
+) -> Option<([f32; 3], [f32; 3])> {
+    object_bounds_with_matrices(pack, object, matrices)
+}
+
+fn object_bounds_with_matrices(
+    pack: &Pack<'_>,
+    object: &ObjectDesc,
+    matrices: &[ssb_rom::scene::Mat4],
+) -> Option<([f32; 3], [f32; 3])> {
     let mut min = [f32::MAX; 3];
     let mut max = [f32::MIN; 3];
     let mut any = false;
@@ -1002,7 +1023,8 @@ pub fn object_bounds(pack: &Pack<'_>, object: &ObjectDesc) -> Option<([f32; 3], 
         };
         any = true;
 
-        let m = &node.world;
+        let posed = matrices.get(i as usize);
+        let m = posed.map_or(&node.world, |matrix| &matrix.0);
         for corner in 0..8 {
             let p = [
                 if corner & 1 == 0 { lo[0] } else { hi[0] } / VERTEX_16BIT_DIVISOR,
