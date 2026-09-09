@@ -54,14 +54,17 @@ the agent has permission to continue autonomously.
 The agent MUST:
 
 1. Read `AGENTS.md`.
-2. Read `PLAN.md`.
+2. Read `PLAN.md`'s section for the current task; use `rg` to locate it. Read
+   the full plan only when task selection or a dependency requires it.
 3. Read `STATUS.md`.
-4. Read the relevant sections of `docs/porting-status.md`.
+4. Read the relevant row of `docs/porting-status.md` and referenced
+   `RE-*` evidence entries.
 5. Inspect `git status`.
 6. Inspect recent commits.
 7. Identify the current task from `STATUS.md`.
 8. If the current task is `IN_PROGRESS`, resume it.
-9. Otherwise select the first eligible `TODO` task from `PLAN.md`.
+9. Otherwise inspect `PLAN.md` task headings/statuses and select first eligible
+   `TODO` task.
 10. Check task dependencies.
 11. Investigate the relevant original decompilation/ROM data before making behavioral assumptions.
 12. Implement the smallest appropriate change.
