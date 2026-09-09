@@ -1211,6 +1211,101 @@ pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQua
     );
 }
 
+/// Draws one live `LBParticle` as a camera-facing quad (RE-183).
+///
+/// `lbParticleDrawTextures` (`refs/ssb-decomp-re/src/lb/lbparticle.c:
+/// 1450-2118`) has no GE-style 3D transform available: the RDP can only
+/// draw screen-space rectangles, so the original manually projects the
+/// particle's world position through the camera and issues a textured
+/// rectangle sized from the composed projection columns' magnitude
+/// (`pc->size * mx`/`pc->size * my`, `lbparticle.c:1771-1775`) -- the same
+/// "half-extent scales with the composed matrix column length" shape
+/// `billboard_place` already uses for `DObj` billboard kinds 44/46/48/50.
+/// The GE has a real 3D pipeline the RDP lacked, so the non-approximating
+/// port is an ordinary screen-aligned quad of world half-size `size`
+/// through the GE's existing camera/projection, with the caller
+/// positioning the model matrix at the particle's own world position
+/// first (mirroring `draw_texture_quad`'s fixed-local-quad-plus-moved-
+/// camera technique, not `billboard_place`'s camera-basis vectors, since
+/// this debug view's own camera is otherwise identity).
+///
+/// Colour (`lbparticle.c:2055-2077`): without `LBPARTICLE_FLAG_ENVCOLOR`
+/// the real combine mode is `G_CC_MODULATEIA_PRIM` -- texture modulated by
+/// `PRIM` alone, mapped here to the GE's default `Modulate` with `PRIM` as
+/// the vertex colour. With the flag set the real formula is
+/// `(PRIM-ENV)*TEXEL+ENV` in both cycles -- exactly `TEXTURE_BLEND`'s shape
+/// (RE-073), mapped the same way: vertex colour carries `ENV`,
+/// `sceGuTexEnvColor` carries `PRIM`. `LBPARTICLE_FLAG_NOISE`'s dither
+/// combine and the real alpha-compare threshold/dither state are not
+/// reproduced here -- left declined rather than guessed, matching this
+/// project's own standing rule for combiner shapes it cannot resolve.
+///
+/// # Safety
+///
+/// The pack buffer must outlive the frame.
+pub unsafe fn draw_particle(
+    pack: &Pack<'_>,
+    texture_index: u32,
+    size: f32,
+    primcolor: [u8; 4],
+    envcolor: Option<[u8; 4]>,
+    verts: &mut [TexQuadVertex; 6],
+) {
+    let Some(t) = pack.texture(texture_index) else {
+        return;
+    };
+    bind_texture(pack, &t, None);
+
+    let color = match envcolor {
+        Some(env) => {
+            sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
+            sys::sceGuTexEnvColor(ssb_rom::psp_texture::pack_abgr(primcolor));
+            ssb_rom::psp_texture::pack_abgr(env)
+        }
+        None => {
+            sys::sceGuTexFunc(
+                sys::TextureEffect::Modulate,
+                sys::TextureColorComponent::Rgba,
+            );
+            ssb_rom::psp_texture::pack_abgr(primcolor)
+        }
+    };
+
+    // Two triangles covering a `size`-radius square centred on the model
+    // origin -- the caller has already translated the model matrix to the
+    // particle's own world position.
+    let quad = [
+        (0.0f32, 0.0f32, -size, size),
+        (1.0, 0.0, size, size),
+        (1.0, 1.0, size, -size),
+        (0.0, 0.0, -size, size),
+        (1.0, 1.0, size, -size),
+        (0.0, 1.0, -size, -size),
+    ];
+    for (i, (u, v, x, y)) in quad.into_iter().enumerate() {
+        verts[i] = TexQuadVertex {
+            u,
+            v,
+            color,
+            x,
+            y,
+            z: 0.0,
+        };
+    }
+
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_3D,
+        6,
+        core::ptr::null(),
+        verts.as_ptr() as *const c_void,
+    );
+}
+
 /// Vertex layout for [`draw_texture_quad`].
 #[repr(C, align(4))]
 #[derive(Clone, Copy, Default)]
