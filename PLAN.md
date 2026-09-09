@@ -2701,13 +2701,20 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   dims/wrap from the primitive's own static `G_SETTILE`/mask state (RE-044's
   relationship) without needing a pixel address, letting `pack_mesh` convert
   each sprite variant against it; `romtool effects` now resolves 23/26
-  tables. The remaining 3 (ImpactWave, PikachuUnk, MBallThrown) are diagnosed
-  but not fixed: a `matanim.rs` track-decode gap and two node-count/table-
-  alignment mismatches, each needing its own per-file tracing session.
+  tables. RE-178 closes the remaining 3 (ImpactWave, PikachuUnk, MBallThrown):
+  PikachuUnk was a real table-address bug in `crates/ssb-rom/src/effect.rs`
+  (`0x0890` named the wrong table; the source's own inline script confirms
+  `0x0900` word-for-word), now fixed, bringing `romtool effects` to 24/26.
+  ImpactWave and MBallThrown are each confirmed — not merely left alone — to
+  correctly attach nothing at all: ImpactWave's one real script only ever
+  writes the identity UV transform, never a palette/texture-id/colour track;
+  MBallThrown's real 4-node DObj tree's own generic `gcAddMatAnimJointAll`
+  walk never dereferences the one table slot (of 5) that holds a real script,
+  by the source's own `DOBJ_ARRAY_MAX` terminator/cursor-advance semantics.
   Live colour-track GE state (resolved and unit-tested, not yet consumed by
-  the renderer), the remaining 3-table gap, facing-dependent alternate
-  streams, and the separate `LBParticle` script/texture-bank renderer all
-  remain before this row can close
+  the renderer), facing-dependent alternate streams, and the separate
+  `LBParticle` script/texture-bank renderer all remain before this row can
+  close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

@@ -137,7 +137,11 @@ pub const MANAGER_EFFECT_MAT_ANIM_JOINTS: &[Option<u32>] = &[
     None,
     None,
     None,
-    Some(0x0890),
+    // PikachuUnk: RE-178 corrects a former 0x0890 here, which is actually
+    // `dPikachuSpecial2_UnkAnimJoint_AnimJoint` — the *transform* joint table
+    // `MANAGER_EFFECT_ANIM_JOINTS` already names correctly above. The real
+    // `UnkMatAnimJoint` table is 0x70 bytes further, at 0x900.
+    Some(0x0900),
     Some(0x1A80),
     None,
     Some(0x2350),
@@ -175,11 +179,38 @@ pub const MANAGER_EFFECT_MAT_ANIM_JOINTS: &[Option<u32>] = &[
 pub const MANAGER_EFFECT_REST_INVISIBLE_KEYS: &[(u32, u32)] =
     &[(84, 0x6D00), (349, 0x0B90), (353, 0x11C0)];
 
+/// Effects whose `o_matanim_joint` in [`MANAGER_EFFECT_MAT_ANIM_JOINTS`] is
+/// real and non-`NULL`, but whose only script(s) never attach to a live
+/// primitive because the *source* `gcAddMatAnimJointAll` walk itself never
+/// reaches them — not a converter gap. RE-178/RE-179 traced each directly:
+///
+/// * ImpactWave (file 83 @ 0x7C28): the one real script
+///   (`aobjEvent32SetVal0RateBlock`, file 83 @ 0x7DA4) only ever writes the
+///   identity UV transform (`TraU`/`TraV`/`ScaU`/`ScaV` = 0, 0, 1.0, 1.0) —
+///   it drives none of `PaletteID`/`TextureIDCurrent`/`TextureIDNext`/colour,
+///   the only tracks a sprite/palette resolver reads, and even a UV-transform
+///   consumer (which nothing in this renderer implements) would render it
+///   identically to not running the script at all.
+/// * MBallThrown (file 86 @ 0x9430): its own `DObjDesc` array
+///   (`dITCommonObject_MBall_Item_data_DObjDesc[5]`) has exactly 4 real nodes
+///   before the `DOBJ_ARRAY_MAX` (18) terminator sentinel. The real
+///   `gcAddMatAnimJointAll` walk (`objanim.c`) advances its `p_matanim_joints`
+///   cursor once per real `DObj` and only dereferences it *before* each
+///   advance, so a 4-node tree only ever reads table slots 0-3 — all `NULL`
+///   here (confirmed against the ROM: `dITCommonObject_MBall_Item_data_
+///   remainder_gap_0x950C[5] = { NULL, NULL, NULL, NULL, <script> }`). Slot 4,
+///   the only populated one, sits one past what this specific tree ever
+///   visits; nothing in the traced source calls this table by raw index
+///   either, so its content — plausibly authored for a different item
+///   sharing this same common `ITCommonObject` file — is genuinely
+///   unreachable for this effect, not a missed attachment.
+pub const MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS: &[(u32, u32)] = &[(83, 0x7C28), (86, 0x9430)];
+
 #[cfg(test)]
 mod tests {
     use super::{
         MANAGER_EFFECT_ANIM_JOINTS, MANAGER_EFFECT_KEYS, MANAGER_EFFECT_MAT_ANIM_JOINTS,
-        MANAGER_EFFECT_REST_INVISIBLE_KEYS,
+        MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS, MANAGER_EFFECT_REST_INVISIBLE_KEYS,
     };
     use alloc::collections::BTreeSet;
 
@@ -210,5 +241,24 @@ mod tests {
         assert!(MANAGER_EFFECT_REST_INVISIBLE_KEYS
             .iter()
             .all(|key| unique.contains(key)));
+
+        let has_mat_anim: BTreeSet<_> = MANAGER_EFFECT_KEYS
+            .iter()
+            .zip(MANAGER_EFFECT_MAT_ANIM_JOINTS)
+            .filter_map(|(key, mat)| mat.is_some().then_some(*key))
+            .collect();
+        let unreachable: BTreeSet<_> = MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS.len(), 2);
+        assert_eq!(
+            unreachable.len(),
+            MANAGER_EFFECT_MAT_ANIM_UNREACHABLE_KEYS.len()
+        );
+        // Each is a real, non-`NULL` `o_matanim_joint` (otherwise it would
+        // already be excluded from `mat_animated` for an unrelated reason,
+        // and this list would be documenting nothing).
+        assert!(unreachable.is_subset(&has_mat_anim));
     }
 }
