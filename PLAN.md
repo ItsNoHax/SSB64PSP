@@ -2673,9 +2673,17 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   descriptor-selected transform `AObjEvent32` tables (65 bound nodes), then
   captures every deterministic frame-4 pose in PPSSPP: 35/35 unique identities,
   34 with measurable content and Link Spin Attack correctly material-hidden.
-  Effect material `AObjEvent32` playback, facing-dependent alternate streams,
-  and the separate `LBParticle` script/texture-bank renderer remain before this
-  row can close
+  RE-175 packs and host-replays the material `AObjEvent32` tables (pack
+  format v24, `PrimDesc.mat_anim`, `MaterialJoint::track_color` for
+  `Kind::Linear` colour ramps, `EffectMaterialAnimator` for per-effect
+  restart): `romtool effects` resolves 17/26 tables and confirms Link Spin
+  Attack's primitive alpha measurably ramps up by frame 4 against the real
+  ROM. The other 9 tables decode cleanly but resolve no texture on their own
+  primitive at pack time (an open per-file tracing gap), and
+  `psp/src/meshdraw.rs` does not yet consume any of this -- no PPSSPP
+  capture exists for the material step. Facing-dependent alternate streams
+  and the separate `LBParticle` script/texture-bank renderer also remain
+  before this row can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

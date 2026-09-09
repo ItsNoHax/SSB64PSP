@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–174). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–175). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -64,12 +64,45 @@ manifest SHA-256 is
 All 440 workspace tests, strict Clippy, formatting, shell syntax and the PSP
 release audit build pass. Implementation commit: `c845a5e`.
 
-The next bounded step within this same task is packing and playing the manager
-effects' material `AObjEvent32` tables, including Link Spin Attack visibility.
-The independent `LBParticle` decoder/runtime remains unimplemented and keeps
-the R1 row open. Facing-dependent alternate Poké Ball/Kirby Entry Star streams
-also remain gameplay integration; RE-174 packs the descriptor-selected variant
-rather than claiming both runtime branches.
+RE-175 packs and host-replays the manager effects' material `AObjEvent32`
+tables. Pack format v24 adds `PrimDesc.mat_anim` (a primitive-level animation
+attachment independent of `TextureDesc.mat_anim`'s texture-only palette
+cycling) and grows `MatAnimDesc` with up to eight resolved sprite (texture-id)
+variants. `MaterialJoint::track_color` now interpolates `Kind::Linear` colour
+tracks channel-wise (matching `gcPlayMObjMatAnim`'s real formula), not only
+the `Kind::Step` case RE-089–091 needed. `resolve_layer_mat_anims` generalizes
+to resolve both stage layers and the 26 non-NULL manager `o_matanim_joint`
+tables, detecting palette-, texture-id-, and colour-track scripts (previously
+palette-only). A new `EffectMaterialAnimator` restarts and ticks only a
+spawned effect's own `MatAnimDesc` entries, mirroring `StageAnimator`'s
+per-object restart boundary instead of `MaterialAnimator`'s pack-lifetime
+clock. `romtool effects` now replays every table to frame 4 and asserts Link
+Spin Attack's authored frame-zero primitive alpha of zero has measurably
+ramped up: **17/26 tables currently resolve a primitive attachment** (Link
+Spin Attack among them — its alpha ramp is confirmed nonzero by frame 4
+against the real ROM); the other 9 (ImpactWave, CommonSpark, DamageFlyMDust,
+ShockSmall, PikachuUnk, FalconKick, FalconPunch, MBallThrown, YoshiEntryEgg)
+decode cleanly but their material-animation-carrying `MObj` resolves no
+texture on its own primitive at pack time, an unresolved gap needing
+per-file source tracing rather than a heuristic fix. **The PSP renderer
+(`psp/src/meshdraw.rs`, `psp/src/main.rs`) is not yet wired to consume
+`PrimDesc.mat_anim`/`EffectMaterialAnimator`** — this is host-side/pack-format
+work only, verified by `romtool effects` and the ROM-free test suite, not by
+a PPSSPP capture. All 295 `ssb-rom`/`romtool` tests, strict Clippy, formatting,
+the `no_std` target build, and the pinned-nightly PSP release build
+(`EBOOT.PBP`, valid PBP magic) pass. Rebuilt pack SHA-256
+`7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`. Not yet
+committed.
+
+The next bounded step within this same task is closing the remaining 9-table
+gap and wiring `psp/src/meshdraw.rs` to actually apply the resolved sprite/
+palette/colour state (texture swap first, since it reuses the already-proven
+`TextureDesc.mat_anim` binding path; live colour-track GE state is a separate,
+harder design question — vertex-baked colour has no per-primitive override
+point today). The independent `LBParticle` decoder/runtime remains
+unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
+Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
+the descriptor-selected variant rather than claiming both runtime branches.
 
 The preceding animation task is `COMPLETE` (RE-171).
 `tools/run-ppsspp.sh --audit-animations 532` rendered and captured every
@@ -4046,6 +4079,60 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: manager-effect material animation packing (RE-175)
+
+* Pack format bumped to v24: `PrimDesc` grows to 48 bytes with `mat_anim`
+  (independent of `TextureDesc.mat_anim`), `MatAnimDesc` grows to 64 bytes
+  with `texture_count`/`textures[8]`. `add_mat_anim` panics rather than
+  truncating if a script ever needs more than 8 texture slots (none of the
+  26 real tables do).
+* `MaterialJoint::track_color` added: `Kind::Step` reinterprets the raw word
+  as before, `Kind::Linear` now blends each RGBA byte independently, matching
+  `gcPlayMObjMatAnim`'s packed-multiply formula. Numeric test against Link
+  Spin Attack's real script (`353_LinkSpecial2.c`, `0xFFFF6000 ->
+  0xFFFF60CC`): alpha is already nonzero after one tick, reaches the authored
+  target exactly at its 12-frame duration.
+* `resolve_layer_mat_anims` (romtool) generalized into a shared
+  `resolve_mat_anims` core: stage layers keep their existing `p_mobjsub`
+  chain-table lookup, the 26 manager tables use `Loaded::materials`'s already
+  -resolved `MObjSub.at`/`palette_entries` directly. Detects palette-,
+  texture-id-, and colour-track scripts (previously palette-only); a
+  texture-id track is not required to be a `_After` step the way `PaletteID`
+  is (`gcPlayMObjMatAnim` assigns `texture_id_curr` for any live kind --
+  CommonSpark's own stream uses a plain `Kind::Linear` ramp).
+* `EffectMaterialAnimator` added (`ssb-rom::skeleton`): restarts and ticks
+  only a spawned effect's own `MatAnimDesc` entries at frame 0, mirroring
+  `StageAnimator`'s per-object restart rather than `MaterialAnimator`'s
+  pack-lifetime clock. Exposes `resolved_palette`/`resolved_texture`/
+  `resolved_colors`.
+* `romtool effects` extended: replays every table's bound primitive scripts
+  to frame 4 (same budget as RE-174's transform tick) and asserts Link Spin
+  Attack's primitive alpha is measurably nonzero by then. Against the real
+  ROM: **17/26 tables resolve a primitive attachment, 34 bound primitive
+  script(s)**, Link Spin Attack passes. The other 9 (ImpactWave, CommonSpark,
+  DamageFlyMDust, ShockSmall, PikachuUnk, FalconKick, FalconPunch,
+  MBallThrown, YoshiEntryEgg) decode their script cleanly but the `MObj`
+  carrying it resolves no texture on its own primitive at pack time --
+  logged as an explicit failure (`no bound material animation`) rather than
+  silently skipped, an open gap for a future session with per-file source
+  tracing.
+* Rebuilt `assets/generated/ssb64.pak`; SHA-256
+  `7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`. `mat
+  anims` line: 84 script(s), 321 palette variant(s), 76 texture(s) animated.
+* `cargo test --workspace` — 295 `ssb-rom`/`romtool` tests (up from RE-174's
+  count; includes new pack round-trip, `matanim::track_color`,
+  `EffectMaterialAnimator`, and untextured-`mat_anim` mesh tests), plus the
+  unaffected engine/game suites. Strict workspace Clippy and `cargo fmt --all
+  --check` pass. `cargo build --target thumbv7em-none-eabi` passes for
+  `ssb-engine`/`ssb-game`/`ssb-rom`. Pinned-nightly PSP release build
+  produces a valid `EBOOT.PBP` (correct PBP magic) with the pre-existing six
+  linker warnings only.
+* **Not yet done**: `psp/src/meshdraw.rs`/`psp/src/main.rs` are unchanged --
+  the PSP renderer does not yet consume `PrimDesc.mat_anim` or
+  `EffectMaterialAnimator` at all, so there is no PPSSPP capture for this
+  step (one would show no visible difference from RE-174's). No physical PSP
+  was available; R0.5/R2 remain unsatisfied. Not yet committed.
 
 ## 2026-09-09 — R1: manager-effect transform animations (RE-174)
 
