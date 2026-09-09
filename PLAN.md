@@ -2767,11 +2767,28 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   `MAKESCRIPT`/`MAKEGENERATOR` and never draw themselves (real, pending the
   unported `LBGenerator` subsystem), and 1 real particle whose own pulsing
   `SETSIZELERP` animation is legitimately at zero size on exactly the sampled
-  tick (traced from its bytecode, not guessed). An on-device screenshot
-  sweep (RE-173's own method), the `NOISE`/dither/alpha-threshold combine
-  cases, `LBGenerator` itself, and a real spawn event (rather than the debug
-  viewer) all remain. Facing-dependent alternate manager streams also remain
-  before this row can close
+  tick (traced from its bytecode, not guessed). RE-185 does the on-device
+  screenshot sweep RE-184 left open (`tools/run-ppsspp.sh --audit-particles
+  N`, mirroring `--audit-effect-materials`) and, in the course of running it,
+  found and fixed a real bug: the particle-view camera baked in
+  `-particle.state.pos`, a translation that only cancels an absolute position
+  already present in a mesh's own vertices (as in `billboard_view`) --
+  `draw_particle`'s quad vertices carry no absolute position at all, so the
+  term added a phantom offset instead of removing one. Every script sampled
+  through RE-183/184 happened to still be at `pos == (0,0,0)`, masking the
+  bug until the exhaustive sweep reached the first two (of 160) real scripts
+  whose bytecode had moved them by frame 4, which the viewer's narrow FOV
+  then clipped entirely despite a real, correctly bound, correctly coloured
+  draw call. Fixed by dropping the position term (a fixed camera distance is
+  correct for this isolated single-particle inspection view, the same way
+  `draw_texture_quad` always frames its own fixed quad). All 160 real
+  scripts now capture with 0 audit warnings, matching RE-184's 148
+  visible/12 invisible host-side census exactly, with all 160 identity
+  headers unique. An on-device screenshot sweep is therefore now done;
+  multi-particle spawn-tree execution, the `NOISE`/dither/alpha-threshold
+  combine cases, `LBGenerator` itself, and a real spawn event (rather than
+  the debug viewer) all remain. Facing-dependent alternate manager streams
+  also remain before this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
