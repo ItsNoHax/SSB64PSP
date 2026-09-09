@@ -2358,6 +2358,7 @@ fn effects(path: &Path) -> Res {
         MANAGER_EFFECT_ASSETS.len()
     );
     println!("shared descriptors: CommonSpark, YoshiShield, NessPKThunderTrail, KirbyStar");
+    println!("authored rest-invisible: NessPKFlash, SamusEntryPoint, LinkSpinAttack (AObjEvent32)");
     println!("controller-only descriptors: DamageSpawnOrbs, DamageSpawnSparks, DamageSpawnMDust");
     println!("LBParticle scripts: not packed or rendered (separate R1 effect path)");
 
@@ -5772,10 +5773,17 @@ mod tests {
 
     #[test]
     fn manager_effect_inventory_has_46_unique_graphs() {
-        let keys: BTreeSet<_> = MANAGER_EFFECT_ASSETS
+        let ordered_keys: Vec<_> = MANAGER_EFFECT_ASSETS
             .iter()
             .map(|asset| (asset.file, asset.graph))
             .collect();
+        assert_eq!(ordered_keys, ssb_rom::effect::MANAGER_EFFECT_KEYS);
+        assert_eq!(
+            ssb_rom::effect::MANAGER_EFFECT_REST_INVISIBLE_KEYS,
+            &[(84, 0x6D00), (349, 0x0B90), (353, 0x11C0)]
+        );
+
+        let keys: BTreeSet<_> = ordered_keys.iter().copied().collect();
         assert_eq!(MANAGER_EFFECT_ASSETS.len(), 46);
         assert_eq!(keys.len(), MANAGER_EFFECT_ASSETS.len());
 

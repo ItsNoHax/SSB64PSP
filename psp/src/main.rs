@@ -325,6 +325,32 @@ unsafe fn run() -> ! {
             best.0
         })
         .unwrap_or(0);
+    // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
+    // display-bearing objects after excluding three controller-only entries
+    // and coalescing four shared graphs. Resolve that source-backed inventory
+    // to pack indices once at boot; both the host verifier and this build use
+    // the same ordered key table, so the visual audit cannot silently browse
+    // an unrelated object after pack ordering changes.
+    let effect_objects: alloc::vec::Vec<u32> = pack
+        .as_ref()
+        .map(|p| {
+            ssb_rom::effect::MANAGER_EFFECT_KEYS
+                .iter()
+                .filter_map(|&(file, offset)| {
+                    (0..p.object_count()).find(|&i| {
+                        p.object(i).is_some_and(|o| {
+                            o.source_file == file && o.source_offset == offset
+                        })
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let effect_count = effect_objects.len() as u32;
+    let mut effect_index = 0u32;
+    if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
+        object_index = effect_objects[0];
+    }
     // RE-098: no real costume-selection game system exists yet, so the only
     // way to see whether a fighter's alternate costumes actually render is
     // the same debug-viewer-cycle precedent `RE-095`'s `MaterialAnimator`
@@ -342,7 +368,11 @@ unsafe fn run() -> ! {
     // spawns land; nothing but looking at it proves they land in the right
     // spot on screen.
     let stage_count = pack.as_ref().map_or(0, |p| p.stage_count());
-    let mut stage_view = stage_count > 0 && !cfg!(feature = "animation_audit_capture");
+    let mut stage_view = stage_count > 0
+        && !cfg!(any(
+            feature = "animation_audit_capture",
+            feature = "effect_audit_capture"
+        ));
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.
@@ -601,6 +631,17 @@ unsafe fn run() -> ! {
                         }
                     }
                 }
+            } else if object_view
+                && cfg!(feature = "effect_audit_capture")
+                && effect_count > 0
+            {
+                if pressed.contains(N64Buttons::D_RIGHT) {
+                    effect_index = (effect_index + 1) % effect_count;
+                }
+                if pressed.contains(N64Buttons::D_LEFT) {
+                    effect_index = (effect_index + effect_count - 1) % effect_count;
+                }
+                object_index = effect_objects[effect_index as usize];
             } else if object_view && object_count > 0 && anim_playing {
                 // While an animation is playing the d-pad browses animations
                 // rather than objects: the object is whichever one the
@@ -1285,7 +1326,19 @@ unsafe fn run() -> ! {
         // sidesteps whatever PPSSPP-internal state causes it, rather than
         // trying to out-guess it, and a developer diagnostic overlay was
         // never part of the golden scene R0.17 wants captured anyway.
-        if cfg!(feature = "animation_audit_capture") {
+        if cfg!(feature = "effect_audit_capture") {
+            // Keep the fitted effect unobscured while retaining enough source
+            // identity and draw evidence for the host capture manifest.
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "EFFECT AUDIT {}/{}  file {} @0x{:X}  tris {}",
+                    effect_index, effect_count, src_file, src_offset, shown.0,
+                ),
+            );
+        } else if cfg!(feature = "animation_audit_capture") {
             // Keep the model unobscured so the host harness can measure the
             // centre of each capture for real rendered content. Identity,
             // source and draw count remain on screen as audit evidence.

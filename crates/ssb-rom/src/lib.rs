@@ -15,6 +15,7 @@ pub mod anim;
 pub mod archive;
 pub mod collision;
 pub mod dl;
+pub mod effect;
 pub mod figatree;
 pub mod fighter;
 pub mod matanim;
