@@ -1235,6 +1235,60 @@ mod tests {
         }
         assert_eq!((visible_count, total), (148, 160));
     }
+
+    /// RE-186: locks in the archive-wide combine-mode census `romtool
+    /// particles` reports for `lbparticle.c:2057-2099`'s three-way branch.
+    /// Among the 148 visible scripts, 90 set `ENVCOLOR` (the already-shipped
+    /// `(PRIM-ENV)*TEXEL+ENV` path, `psp/src/meshdraw.rs::draw_particle`) and
+    /// zero set `NOISE`, `DITHER` or `ALPHABLEND` — this project's own
+    /// declined combine/alpha-compare paths (RE-183's doc comment) are
+    /// confirmed unreachable by any real script at its own frame-4 settle
+    /// point, not merely unimplemented. A nonzero count here without a
+    /// matching RE update means a real script now reaches a declined path.
+    #[test]
+    fn real_rom_frame_4_combine_mode_census_is_envcolor_90_noise_dither_alphablend_0() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let mut envcolor = 0usize;
+        let mut noise = 0usize;
+        let mut dither = 0usize;
+        let mut alphablend = 0usize;
+        let mut visible_count = 0usize;
+        for &bank in BANKS {
+            let (scripts, textures) = decode_bank(&rom, bank).unwrap();
+            for script in &scripts {
+                let mut particle = Particle::spawn(script);
+                let mut rng = Rng::new(1);
+                for _ in 0..4 {
+                    let _ = particle.tick(&mut rng);
+                }
+                let frame_count = textures
+                    .get(particle.state.texture_id as usize)
+                    .map_or(0, |t| t.images.len() as u32);
+                if !particle.state.visible(frame_count) {
+                    continue;
+                }
+                visible_count += 1;
+                let flags = particle.state.flags;
+                if flags & flag::ENVCOLOR != 0 {
+                    envcolor += 1;
+                }
+                if flags & flag::NOISE != 0 {
+                    noise += 1;
+                }
+                if flags & flag::DITHER != 0 {
+                    dither += 1;
+                }
+                if flags & flag::ALPHABLEND != 0 {
+                    alphablend += 1;
+                }
+            }
+        }
+        assert_eq!(visible_count, 148);
+        assert_eq!((envcolor, noise, dither, alphablend), (90, 0, 0, 0));
+    }
 }
 
 #[cfg(test)]

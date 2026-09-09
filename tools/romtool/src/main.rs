@@ -2958,6 +2958,16 @@ fn particles(path: &Path) -> Res {
     let mut bytecode_total = 0usize;
     let mut visible_total = 0usize;
     let mut invisible: Vec<String> = Vec::new();
+    // RE-186: the frame-4 settle point is also draw_particle's own combine-
+    // mode decision point (lbparticle.c:2057-2099) -- ENVCOLOR selects the
+    // already-shipped (PRIM-ENV)*TEXEL+ENV blend, NOISE and DITHER select
+    // combine/alpha-compare paths this project has declined (RE-183's own
+    // doc comment), so census which of those a *visible* script actually
+    // reaches rather than guessing from the flag opcodes' bare existence.
+    let mut envcolor_count = 0usize;
+    let mut noise_count = 0usize;
+    let mut dither_count = 0usize;
+    let mut alphablend_count = 0usize;
 
     println!("LBParticle banks");
     for &spec in ssb_rom::particle::BANKS {
@@ -2981,6 +2991,19 @@ fn particles(path: &Path) -> Res {
                 .map_or(0, |t| t.images.len() as u32);
             if particle.state.visible(frame_count) {
                 visible_total += 1;
+                let flags = particle.state.flags;
+                if flags & ssb_rom::particle::flag::ENVCOLOR != 0 {
+                    envcolor_count += 1;
+                }
+                if flags & ssb_rom::particle::flag::NOISE != 0 {
+                    noise_count += 1;
+                }
+                if flags & ssb_rom::particle::flag::DITHER != 0 {
+                    dither_count += 1;
+                }
+                if flags & ssb_rom::particle::flag::ALPHABLEND != 0 {
+                    alphablend_count += 1;
+                }
             } else {
                 // RE-184 traced every one of these by hand across 60 ticks
                 // with a fixed seed to tell three real cases apart rather
@@ -3060,6 +3083,11 @@ fn particles(path: &Path) -> Res {
     for line in &invisible {
         println!("  invisible: {line}");
     }
+    println!(
+        "combine-mode census among visible scripts (lbparticle.c:2057-2099): \
+         ENVCOLOR {envcolor_count}/{visible_total}, NOISE {noise_count}/{visible_total}, \
+         DITHER {dither_count}/{visible_total}, ALPHABLEND {alphablend_count}/{visible_total}"
+    );
     Ok(())
 }
 
