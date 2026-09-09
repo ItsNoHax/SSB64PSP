@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 LBParticle pack serialization, RE-181)
+**Last updated:** 2026-09-09 (R1 LBParticle deterministic script playback, RE-182)
 
 ---
 
@@ -18,7 +18,39 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–181). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–182).
+
+RE-182 adds a deterministic, host-side, single-particle `LBParticle`
+bytecode interpreter (`ssb_rom::particle::Particle`/`ParticleState`),
+RE-181's own stated next step after decode (RE-180) and pack serialization
+(RE-181). It reproduces `lbParticleUpdateStruct`'s wait/opcode dispatch and
+its unconditional size/colour-lerp + gravity/friction/position + lifetime
+tail exactly: position/velocity set/add, size lerp, primitive/environment
+colour lerp (including the original's integer truncation), gravity/friction
+toggling, `SETLIFERAND`/`TRYDEADRAND`, `SETVELANGLE`'s rotation (via a
+ported `syUtilsArcTan2`), loop/return control flow, and wait/frame-id
+timing. A temporary, reverted archive-wide census (all 160 real scripts)
+justified three deliberate declines rather than guesses: `LBPARTICLE_FLAG_
+VORTEX` (0 real uses; needs an `LBGenerator` vortex table this module
+doesn't model, so it fails loudly instead of approximating),
+`SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID`'s write-back (0 real uses; need
+a live `DObj`), and `MAKESCRIPT`/`MAKERAND`/`MAKEID`/`MAKEGENERATOR`
+(25/0/2/103 real uses; decoded as `SpawnRequest`s rather than executed,
+since faithful execution also means reproducing a real node-splice
+double-tick quirk in `lbParticleStructFuncRun` not yet investigated
+further). 11 new focused tests hand-trace exact bytecode against
+hand-computed expected state; the gravity/friction integration order test
+was confirmed capable of failing (temporarily swapped the two steps,
+watched it trip, reverted). All 316 `ssb-rom` tests (was 305) and the full
+472-test workspace suite pass, plus strict Clippy (including
+`--no-default-features`), `cargo fmt --check`, the `no_std` library build,
+and the pinned-nightly PSP release build. EBOOT SHA-256
+`d5281ee057e121b9a02607fa22581976df9cb2e83f981f13a6b6b6357053266c`; no
+pack-format change. Multi-particle spawn-tree execution, the `LBGenerator`
+subsystem, PSP billboard drawing, and a PPSSPP particle audit all remain.
+Evidence: RE-182.
+
+Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only

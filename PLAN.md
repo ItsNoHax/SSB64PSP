@@ -2731,7 +2731,20 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   series, and all 246 PSP-converted frames survive rebuild and readback.
   `romtool effects` rejects count, bytecode, descriptor, frame, or texel-range
   loss. An 8-second PPSSPP software smoke run loads the rebuilt 8,218,128-byte
-  pack at 60 FPS with a clean application log. Runtime simulation, PSP
+  pack at 60 FPS with a clean application log. RE-182 adds a deterministic,
+  host-side, single-particle bytecode interpreter reproducing
+  `lbParticleUpdateStruct`'s dispatch loop and its unconditional size/colour
+  lerp + gravity/friction/position + lifetime tail exactly, including
+  `SETVELANGLE`'s rotation via a ported `syUtilsArcTan2`. A reverted
+  archive-wide census of all 160 real scripts justified declining three
+  mechanisms rather than guessing at them: `LBPARTICLE_FLAG_VORTEX` and
+  `SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID`'s write-back (0 real uses each,
+  and each needs a subsystem — `LBGenerator`'s vortex table, or a live
+  `DObj` — this module doesn't model), and `MAKESCRIPT`/`MAKERAND`/
+  `MAKEID`/`MAKEGENERATOR` (25/0/2/103 real uses; decoded as requests rather
+  than spawning a child, since faithful execution also means reproducing a
+  real node-splice double-tick quirk in `lbParticleStructFuncRun`).
+  Multi-particle spawn-tree execution, the `LBGenerator` subsystem, PSP
   rectangle rendering, and focused PPSSPP particle audit still remain.
   Facing-dependent alternate manager streams also remain before this row can
   close
