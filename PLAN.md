@@ -2669,9 +2669,13 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   source-ordered PPSSPP audit captures all 46: 43/43 authored-visible rest
   objects have measurable centred content, while Ness PK Flash, Samus Entry
   Point and Link Spin Attack correctly remain invisible at their source-authored
-  `1e-5` scale/zero-alpha rest poses. Effect `AObjEvent32` playback and the
-  separate `LBParticle` script/texture-bank renderer remain before this row
-  can close
+  `1e-5` scale/zero-alpha rest poses. RE-174 packs and host-replays all 35
+  descriptor-selected transform `AObjEvent32` tables (65 bound nodes), then
+  captures every deterministic frame-4 pose in PPSSPP: 35/35 unique identities,
+  34 with measurable content and Link Spin Attack correctly material-hidden.
+  Effect material `AObjEvent32` playback, facing-dependent alternate streams,
+  and the separate `LBParticle` script/texture-bank renderer remain before this
+  row can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

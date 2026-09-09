@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 exhaustive manager-effect rest-pose audit)
+**Last updated:** 2026-09-09 (R1 manager-effect transform animation playback)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172/173). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–174). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -49,9 +49,27 @@ captures remain outside Git at
 strict Clippy and the PSP release audit build pass. Implementation commit:
 `e6bfc23`.
 
+RE-174 completes the transform half of manager-effect `AObjEvent32` playback.
+The shared inventory identifies the 35/46 effects whose `EFDesc.o_anim_joint`
+is non-NULL; the rebuilt pack carries all 35 streams and 65 bound nodes, and
+`romtool effects` replays every stream without a decode error. The PSP audit
+restarts each source-associated `StageAnimator`, advances deterministically to
+frame 4, frames the posed hierarchy, and captures all 35 identities under the
+PPSSPP software backend. All headers are unique; 34 samples contain measurable
+render content and Link Spin Attack remains source-correctly hidden because
+its independent material stream still owns primitive alpha. Captures remain
+outside Git at `/home/alberto/ppsspp-test/re174/effect-animation-audit/`;
+manifest SHA-256 is
+`ac5e7019cff1191f7dcdd3ad5840514cb6e3e6e254e2bd8829fcf9d77fabb83b`.
+All 440 workspace tests, strict Clippy, formatting, shell syntax and the PSP
+release audit build pass. Implementation commit: `c845a5e`.
+
 The next bounded step within this same task is packing and playing the manager
-effects' `AObjEvent32` transform/material scripts. The independent `LBParticle`
-decoder/runtime remains unimplemented and keeps the R1 row open.
+effects' material `AObjEvent32` tables, including Link Spin Attack visibility.
+The independent `LBParticle` decoder/runtime remains unimplemented and keeps
+the R1 row open. Facing-dependent alternate Poké Ball/Kirby Entry Star streams
+also remain gameplay integration; RE-174 packs the descriptor-selected variant
+rather than claiming both runtime branches.
 
 The preceding animation task is `COMPLETE` (RE-171).
 `tools/run-ppsspp.sh --audit-animations 532` rendered and captured every
@@ -80,9 +98,9 @@ smoke run renders Dream Land at 60 FPS with no relevant log lines; normal
 EBOOT SHA-256 is
 `53f25a9b97965c9db12493cd16811cc25dca6d667edb2cee2711571c220fed53`.
 
-The next eligible software-only task is R1 manager-effect `AObjEvent32`
-playback. Physical hardware remains unavailable; R0.5 stays `VERIFYING`, R1 as a
-whole stays `IN_PROGRESS`, and R2/R3/combat remain locked.
+The next eligible software-only task is R1 manager-effect material
+`AObjEvent32` playback. Physical hardware remains unavailable; R0.5 stays
+`VERIFYING`, R1 as a whole stays `IN_PROGRESS`, and R2/R3/combat remain locked.
 
 The preceding fighter/costume reconciliation is `COMPLETE`.
 R0.11/RE-098 already individually rendered all 12 playable
@@ -112,10 +130,10 @@ The captures remain outside Git under
 R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
 The user's temporary hardware deferral permits independent software-only R1
 work; it does not mark R0 complete or unlock R3/combat. The next eligible task
-is manager-effect `AObjEvent32` playback. Relevant R1 commits: `d68f199`
+is manager-effect material `AObjEvent32` playback. Relevant R1 commits: `d68f199`
 (stages), `4964a97` (fighters/costumes), `e85aa19` (animations), `826c02a`
 (sparse animation lookup), `dc8043b` (effect packing), and `e6bfc23` (effect
-rest-pose audit).
+rest-pose audit), and `c845a5e` (effect transform playback/audit).
 
 RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
@@ -3663,11 +3681,12 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**Resume `R1 — all required effects render`.** RE-172/173 complete the
+**Resume `R1 — all required effects render`.** RE-172–174 complete the
 source-backed static-manager inventory, packing, and exhaustive PPSSPP
-rest-pose capture for all 46 display-bearing assets. Next, pack and play their
-`AObjEvent32` transform/material animation tables, then investigate the separate
-`LBParticle` script and texture-bank format. The user explicitly
+rest-pose capture for all 46 display-bearing assets, plus packing, host replay,
+and PPSSPP frame-4 capture of all 35 descriptor-selected transform animations.
+Next, pack and play their material `AObjEvent32` tables, then investigate the
+separate `LBParticle` script and texture-bank format. The user explicitly
 deferred unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
 `VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
 complete, begin R3, or unlock combat.
@@ -4027,6 +4046,25 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: manager-effect transform animations (RE-174)
+
+* Decomp/ROM inventory — 35 non-NULL descriptor-selected transform tables,
+  65 bound joint scripts; Link Entry Beam correctly uses table `0xB60` rather
+  than first-script address `0xB68`.
+* Rebuilt `assets/generated/ssb64.pak`; SHA-256
+  `c0f22ea3deb6caf79d5d440ce9aa80a34a40893f8e9146c4608017dde649a88e`.
+* `romtool effects assets/generated/ssb64.pak` — 46/46 renderable manager
+  objects, 668 triangles, 35/35 transform animations replayable, 65 nodes.
+* `tools/run-ppsspp.sh --no-build --audit-effect-animations 35 --seconds 2`
+  — pass under PPSSPP 1.20.4 software rendering: 35/35 unique frame-4 source
+  identities, 34 measurable posed effects, Link Spin Attack exactly blank
+  pending material-alpha playback, 60 FPS, clean relevant log. Manifest
+  SHA-256 `ac5e7019cff1191f7dcdd3ad5840514cb6e3e6e254e2bd8829fcf9d77fabb83b`.
+* Full contact sheet inspected. `cargo fmt --all --check`, all 440 workspace
+  tests, strict workspace Clippy, `bash -n`, and the PSP release audit build
+  pass; the PSP build retains the existing six warnings.
+* Implementation commit: `c845a5e`.
 
 ## 2026-09-09 — R1: exhaustive manager-effect rest-pose audit (RE-173)
 
