@@ -2665,9 +2665,13 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   results-wipe animation path. Physical hardware remains R2
 * [ ] all required effects render — RE-172 inventories all 53 static manager
   descriptors and packs all 46 unique display-bearing DObj/direct-list assets;
-  `romtool effects` verifies 46/46 objects and 668 triangles. Exhaustive visual
-  capture, effect `AObjEvent32` playback, and the separate `LBParticle`
-  script/texture-bank renderer remain before this row can close
+  `romtool effects` verifies 46/46 objects and 668 triangles. RE-173's
+  source-ordered PPSSPP audit captures all 46: 43/43 authored-visible rest
+  objects have measurable centred content, while Ness PK Flash, Samus Entry
+  Point and Link Spin Attack correctly remain invisible at their source-authored
+  `1e-5` scale/zero-alpha rest poses. Effect `AObjEvent32` playback and the
+  separate `LBParticle` script/texture-bank renderer remain before this row
+  can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain

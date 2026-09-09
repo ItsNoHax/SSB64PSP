@@ -10,6 +10,60 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-173 — Exhaustive manager-effect rest-pose audit identifies three authored invisible states (`PLAN.md` R1)
+
+**Problem.** RE-172 proved that all 46 unique display-bearing manager assets
+survive the pack, but a triangle count is not visual evidence. The ordinary
+object browser also follows pack order rather than `efmanager.c` order, so a
+manual sweep could silently omit or duplicate an effect after a pack change.
+
+**Original evidence.** The decompilation and ROM-authored descriptors explain
+three otherwise suspicious blank rest poses. File 84's Ness PK Flash child
+starts at scale `(1e-5, 1e-5, 1)` and its AObjEvent32 script expands X/Y.
+File 349's Samus Entry Point child starts at scale `(1, 1e-5, 1)` and its
+script expands Y. File 353's Link Spin Attack material animation begins with
+primitive alpha zero and later raises it. These are not missing draws: all
+three have nonzero packed geometry and are designed to become visible only
+after animation playback starts.
+
+**Implementation.** `ssb-rom::effect` now owns the ordered 46-key inventory
+shared by the host verifier and PSP audit build. A regression requires
+`romtool`'s source-named inventory to match it exactly and records the three
+rest-invisible keys. The `effect_audit_capture` PSP feature boots directly into
+the matching packed objects and advances through them with the normal D-pad.
+`tools/run-ppsspp.sh --audit-effects N` captures each identity, checks a
+centred crop for real model pixels, requires the three source-backed exceptions
+to remain blank, verifies all HUD identity strips are unique, and writes a
+hash manifest.
+
+**Verification.** The full PPSSPP-software run captured all 46 source-ordered
+objects. All 43 authored-visible rest poses exceeded the `0.003` centred-crop
+standard-deviation threshold (minimum `0.0455858`); the three authored
+rest-invisible poses measured exactly zero. All 46 identity headers were
+unique, each HUD reported nonzero triangle submission, the full contact sheet
+was inspected, every capture displayed 60 FPS, and the log had no relevant
+error/failure/panic/rejection line. EBOOT / pack / manifest SHA-256:
+`5fde5e70fc223a5b9008d257439b0f035ae56540bf848266598b69bacd2e92b7` /
+`019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87` /
+`742b4b758c10ef90291a45358453513606d8a11021f9cea05bb454e6e3cc314a`.
+Captures remain outside Git at
+`/home/alberto/ppsspp-test/re173/effect-audit/`. All 439 workspace tests,
+strict workspace Clippy, `bash -n`, and the PSP release audit build pass; the
+PSP build retains the existing six warnings. Implementation commit: `e6bfc23`.
+
+This completes static/rest-pose visual coverage for the manager-DObj path, not
+the R1 effect row. The next subtask is to pack and play the effect-specific
+AObjEvent32 transform/material tables, which must make the three exceptions
+visible at the original frames. The independent LBParticle bytecode and
+texture-bank runtime remains a second explicit gap. No physical-PSP claim is
+made.
+
+**Confidence: high for exhaustive static manager-object coverage and the
+three invisible-state explanations; no claim yet for animated or LBParticle
+effects.**
+
+---
+
 ## RE-172 — Manager-effect inventory recovers direct objects and corrects shifted file-84 materials (`PLAN.md` R1)
 
 **Problem.** R1's "all required effects render" row had no bounded inventory.
@@ -70,10 +124,11 @@ log lines. Pack / EBOOT / screenshot SHA-256:
 `d99beacf5717bc15548c81b26648cb862052b9cb748eb42618615dc1db65c39a`.
 
 This completes the pack/discovery half of the manager-DObj path, not R1's
-effect row. Effect `AObjEvent32` playback and exhaustive visual capture remain.
-The independent `LBParticle` bytecode and texture-bank renderer is still
-absent and is now an explicit, measured subtask rather than hidden under a
-generic "particles" label. No physical-PSP claim is made.
+effect row. RE-173 subsequently completes its exhaustive rest-pose visual
+capture; effect `AObjEvent32` playback remains. The independent `LBParticle`
+bytecode and texture-bank renderer is still absent and is now an explicit,
+measured subtask rather than hidden under a generic "particles" label. No
+physical-PSP claim is made.
 
 **Confidence: high for the manager inventory, corrected associations, and
 pack coverage; no claim yet for animated or LBParticle rendering.**
