@@ -973,15 +973,19 @@ impl State {
     /// `MObj` only supplies a palette leaves the `G_LOADTLUT` to its own
     /// display list, which is the common fighter case.
     fn apply_mobj(&mut self, m: &crate::mobj::MObjMaterial, mat_anim: Option<MatAnimRef>) {
+        // Every `MObj` call fully describes its own material animation, not
+        // merely "set when present": a later call naming no script must
+        // clear a previous one rather than leave it attached. Unconditional
+        // on `m.palette` -- an effect script can animate untextured
+        // primitive/environment/blend colour with no palette involved at
+        // all (`crate::matanim::MaterialJoint`'s colour window), so this is
+        // no longer tied to the palette branch below the way a
+        // palette-cycling script (RE-089/RE-090/RE-091) always was.
+        self.material.mat_anim = mat_anim;
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette.offset);
             self.timg_file = palette.file;
             self.framebuffer_capture = false;
-            // Tied to the same condition as the palette itself, not merely
-            // "set when present": a later palette-bearing `MObj` with no
-            // script must clear a previous one rather than leave it
-            // attached to whatever texture ends up bound next.
-            self.material.mat_anim = mat_anim;
             if m.loads_tlut {
                 self.palette_offset = Some(palette.offset);
                 self.palette_file = palette.file;
@@ -1108,10 +1112,13 @@ impl State {
                 .combiner
                 .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle)),
             texture_blend,
-            // Same reasoning as `alpha_test`/`translucent`'s gate: an
-            // animated palette with no texture to apply it to is orphaned
-            // state, not a primitive worth carrying it on.
-            mat_anim: self.material.mat_anim.filter(|_| texture.is_some()),
+            // Unlike `alpha_test`/`translucent`, not gated on `texture`: an
+            // effect script can drive untextured primitive/environment/blend
+            // colour with no palette or texel involved at all (`crate::
+            // matanim::MaterialJoint`'s colour window), so a stray script
+            // here is not orphaned state the way an animated palette with no
+            // texture to apply it to would be.
+            mat_anim: self.material.mat_anim,
             ..self.material
         }
     }
@@ -2052,6 +2059,43 @@ mod tests {
             .pop()
             .unwrap()
             .unwrap();
+        assert_eq!(mesh.primitives[0].material.mat_anim, Some(animated));
+    }
+
+    /// A manager-effect material script can drive untextured primitive/
+    /// environment/blend colour with no palette or sprite at all (Link Spin
+    /// Attack: a `SetExtValBlock(PRIMCOLOR, ...)` ramp, `crate::matanim::
+    /// MaterialJoint`'s colour window). Unlike RE-089/090/091's
+    /// palette-cycling case, this must reach the primitive with *no* bound
+    /// texture -- `material_now` no longer gates `mat_anim` on `texture`.
+    #[test]
+    fn an_animated_colour_reaches_an_untextured_primitive() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let mobjs = [MObjMaterial::default()];
+        let animated = MatAnimRef {
+            source_file: 353,
+            script: 0x12F0,
+        };
+        let mat_anims = [Some(animated)];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &mat_anims,
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file))
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert_eq!(mesh.primitives[0].material.texture, None, "untextured");
         assert_eq!(mesh.primitives[0].material.mat_anim, Some(animated));
     }
 

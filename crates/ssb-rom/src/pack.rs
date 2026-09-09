@@ -137,7 +137,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    update; a previous pack could not distinguish the two. The bits also
 ///    make the PSP state cache reapply a changed colour when the rest of a
 ///    primitive's material flags are identical.
-pub const VERSION: u32 = 23;
+pub const VERSION: u32 = 24;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -312,10 +312,14 @@ pub struct PrimDesc {
     /// packed ABGR. Consult [`flags::LIGHT2_COLOR`] for whether it is present:
     /// zero is valid.
     pub light2_color: u32,
+    /// Object/material animation driving this primitive, or
+    /// [`TextureDesc::NO_ANIM`]. This lives on the primitive because effect
+    /// scripts also animate untextured colour state.
+    pub mat_anim: u32,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 44;
+    pub const SIZE: usize = 48;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -612,10 +616,15 @@ pub struct MatAnimDesc {
     /// Archive file/offset of the driving `MObjSub`, for debugging.
     pub source_file: u32,
     pub source_offset: u32,
+    /// Runtime-selectable sprites indexed by `TextureIDCurrent`.
+    pub texture_count: u32,
+    pub textures: [u32; Self::MAX_TEXTURES],
 }
 
 impl MatAnimDesc {
-    pub const SIZE: usize = 28;
+    /// Measured maximum across manager-effect material streams.
+    pub const MAX_TEXTURES: usize = 8;
+    pub const SIZE: usize = 64;
 }
 
 /// One resolved palette variant of an animated texture — the same shape as
@@ -1216,6 +1225,7 @@ impl PackWriter {
         script: u32,
         source_offset: u32,
         palettes: &[Vec<u32>],
+        textures: &[u32],
     ) -> u32 {
         let (file_offset, file_len) = match self.mat_anim_files.get(&source_file) {
             Some(&at) => at,
@@ -1234,6 +1244,23 @@ impl PackWriter {
                 palette_len: p.len() as u32,
             });
         }
+        // `MAX_TEXTURES` is the measured maximum across every manager-effect
+        // material stream this format has actually been built against
+        // (RE-175). Truncating a script that reaches further would silently
+        // ship a cycle missing frames rather than failing loudly, the same
+        // "decline rather than guess" standard the ROM-side decoder already
+        // holds itself to (`matanim::MatAnimError`) -- so a caller that ever
+        // exceeds it must be fixed (grow `MAX_TEXTURES`), not swallowed
+        // here.
+        assert!(
+            textures.len() <= MatAnimDesc::MAX_TEXTURES,
+            "material animation (file {source_file}, script 0x{script:X}) reaches {} texture ids, more than the packed format's {} slots",
+            textures.len(),
+            MatAnimDesc::MAX_TEXTURES
+        );
+        let mut packed_textures = [TextureDesc::NO_ANIM; MatAnimDesc::MAX_TEXTURES];
+        let texture_count = textures.len();
+        packed_textures[..texture_count].copy_from_slice(textures);
         self.mat_anims.push(MatAnimDesc {
             file_offset,
             file_len,
@@ -1242,6 +1269,8 @@ impl PackWriter {
             palette_count: palettes.len() as u32,
             source_file,
             source_offset,
+            texture_count: texture_count as u32,
+            textures: packed_textures,
         });
         (self.mat_anims.len() - 1) as u32
     }
@@ -1255,13 +1284,18 @@ impl PackWriter {
     }
 
     /// Adds a converted mesh. `texture_for` maps a primitive index to a texture
-    /// index already added via [`PackWriter::add_texture`].
+    /// index already added via [`PackWriter::add_texture`]. `mat_anim_for`
+    /// does the same for a primitive's own material animation (untextured
+    /// effect colour/UV scripts, added via [`PackWriter::add_mat_anim`]) --
+    /// independent of `texture_for` since a primitive can animate without a
+    /// texture at all.
     pub fn add_mesh(
         &mut self,
         mesh: &crate::mesh::Mesh,
         source_file: u32,
         source_offset: u32,
         texture_for: impl Fn(usize) -> Option<u32>,
+        mat_anim_for: impl Fn(usize) -> Option<u32>,
     ) -> u32 {
         // Which vertices are shaded from a normal rather than drawn as a
         // literal colour. The IR keeps the raw bytes (it is deliberately
@@ -1431,6 +1465,7 @@ impl PackWriter {
                 flat_color: m.flat_color.map_or(0, crate::psp_texture::pack_abgr),
                 light1_color: m.light1_color.map_or(0, crate::psp_texture::pack_abgr),
                 light2_color: m.light2_color.map_or(0, crate::psp_texture::pack_abgr),
+                mat_anim: mat_anim_for(i).unwrap_or(TextureDesc::NO_ANIM),
             });
         }
 
@@ -1855,6 +1890,7 @@ impl PackWriter {
                 p.flat_color,
                 p.light1_color,
                 p.light2_color,
+                p.mat_anim,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
@@ -1975,8 +2011,12 @@ impl PackWriter {
                 a.palette_count,
                 a.source_file,
                 a.source_offset,
+                a.texture_count,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
+            }
+            for texture in a.textures {
+                out.extend_from_slice(&texture.to_le_bytes());
             }
         }
         for p in &self.mat_anim_palettes {
@@ -2378,6 +2418,10 @@ impl<'a> Pack<'a> {
             return None;
         }
         let at = self.mat_anim_table() + i as usize * MatAnimDesc::SIZE;
+        let mut textures = [TextureDesc::NO_ANIM; MatAnimDesc::MAX_TEXTURES];
+        for (j, texture) in textures.iter_mut().enumerate() {
+            *texture = u32_at(self.data, at + 32 + j * 4);
+        }
         Some(MatAnimDesc {
             file_offset: u32_at(self.data, at),
             file_len: u32_at(self.data, at + 4),
@@ -2386,6 +2430,8 @@ impl<'a> Pack<'a> {
             palette_count: u32_at(self.data, at + 16),
             source_file: u32_at(self.data, at + 20),
             source_offset: u32_at(self.data, at + 24),
+            texture_count: u32_at(self.data, at + 28),
+            textures,
         })
     }
 
@@ -2569,6 +2615,7 @@ impl<'a> Pack<'a> {
             flat_color: u32_at(self.data, at + 32),
             light1_color: u32_at(self.data, at + 36),
             light2_color: u32_at(self.data, at + 40),
+            mat_anim: u32_at(self.data, at + 44),
         })
     }
 
@@ -2757,7 +2804,7 @@ mod tests {
     #[test]
     fn round_trips_a_mesh() {
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
+        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None, |_| None);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -2786,7 +2833,7 @@ mod tests {
         mesh.primitives[0].material.light1_color = Some([0, 0, 0, 0]);
         mesh.primitives[0].material.light2_color = Some([0x4C, 0x4C, 0x4C, 0]);
         let mut w = PackWriter::new();
-        w.add_mesh(&mesh, 0, 0, |_| None);
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let p = pack.prim(0).unwrap();
@@ -2814,7 +2861,7 @@ mod tests {
         // vertex here too, defeating this test's own point.
         m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let m = pack.mesh(0).unwrap();
@@ -2862,7 +2909,7 @@ mod tests {
             levels: 1,
         };
         w.add_texture(&tex, false, false);
-        w.add_mesh(&sample_mesh(), 0, 0, |_| Some(0));
+        w.add_mesh(&sample_mesh(), 0, 0, |_| Some(0), |_| None);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -2903,7 +2950,7 @@ mod tests {
         for n in 0..4 {
             w.add_texture(&tex(n), false, false);
         }
-        w.add_mesh(&sample_mesh(), 1, 2, |_| Some(3));
+        w.add_mesh(&sample_mesh(), 1, 2, |_| Some(3), |_| None);
         w.add_object(&chain_graph(3), 11, |_| None, &[]);
         let (ground, map) = sample_stage();
         w.add_stage(&ground, Some(&map), |_, _| None);
@@ -3218,7 +3265,7 @@ mod tests {
         // survive untouched" vertex below too.
         m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3229,7 +3276,7 @@ mod tests {
         m.primitives[0].material.lit = true;
         m.primitives[0].material.prim_color = None;
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3260,7 +3307,7 @@ mod tests {
         }
 
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3281,7 +3328,7 @@ mod tests {
             v.rgba = [255, 255, 255, 255]; // clearly a colour
         }
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3304,7 +3351,7 @@ mod tests {
         m.primitives[0].indices = alloc::vec![0, 1, 0]; // both in one primitive
 
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3341,7 +3388,7 @@ mod tests {
         }
 
         let mut w = PackWriter::new();
-        w.add_mesh(&m, 0, 0, |_| None);
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
@@ -3370,7 +3417,7 @@ mod tests {
     #[test]
     fn untextured_primitive_has_no_palette() {
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.texture_count(), 0);
@@ -3386,7 +3433,7 @@ mod tests {
     #[test]
     fn rejects_bad_magic_and_version() {
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
         let mut bytes = w.finish();
 
         let good = bytes.clone();
@@ -3403,7 +3450,7 @@ mod tests {
     #[test]
     fn rejects_truncated_file() {
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let truncated = &bytes[..bytes.len() - 8];
         assert!(matches!(Pack::open(truncated), Err(PackError::OutOfBounds)));
@@ -3413,7 +3460,7 @@ mod tests {
     fn many_meshes_keep_their_own_vertex_buffers() {
         let mut w = PackWriter::new();
         for i in 0..5u32 {
-            w.add_mesh(&sample_mesh(), i, i * 16, |_| None);
+            w.add_mesh(&sample_mesh(), i, i * 16, |_| None, |_| None);
         }
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
@@ -3634,7 +3681,7 @@ mod tests {
         // move the blob and corrupt vertices rather than fail to load.
         let (ground, map) = sample_stage();
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
+        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None, |_| None);
         w.add_object(&chain_graph(3), 11, |n| Some(n as u32), &[]);
         w.add_stage(&ground, Some(&map), |_, _| None);
 
@@ -3652,7 +3699,7 @@ mod tests {
     #[test]
     fn a_pack_with_no_stages_still_loads() {
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 0, 0, |_| None);
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.stage_count(), 0);
@@ -3790,7 +3837,7 @@ mod tests {
     fn fighters_do_not_disturb_the_tables_before_them() {
         let (ground, map) = sample_stage();
         let mut w = PackWriter::new();
-        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None);
+        w.add_mesh(&sample_mesh(), 42, 0x1000, |_| None, |_| None);
         w.add_stage(&ground, Some(&map), |_, _| None);
         w.add_fighter(&sample_fighter(0), &sample_anims());
 
@@ -3906,7 +3953,7 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(117, &file_bytes, 0x30, 0x2AA8, &palettes);
+        let mat_anim = w.add_mat_anim(117, &file_bytes, 0x30, 0x2AA8, &palettes, &[]);
         w.set_texture_mat_anim(texture, mat_anim);
         let bytes = w.finish();
 
@@ -3965,8 +4012,8 @@ mod tests {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x22u8; 512];
         let one = alloc::vec![alloc::vec![0xAAAA_AAAAu32; 16]];
-        w.add_mat_anim(114, &file_bytes, 0x100, 0x4F54, &one);
-        w.add_mat_anim(114, &file_bytes, 0x200, 0x5098, &one);
+        w.add_mat_anim(114, &file_bytes, 0x100, 0x4F54, &one, &[]);
+        w.add_mat_anim(114, &file_bytes, 0x200, 0x5098, &one, &[]);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -3976,6 +4023,83 @@ mod tests {
         assert_eq!(pack.mat_anim_file(&a), pack.mat_anim_file(&b));
         assert_eq!(a.script, 0x100);
         assert_eq!(b.script, 0x200);
+    }
+
+    /// RE-175: a material animation's sprite (texture-id) variants -- up to
+    /// [`MatAnimDesc::MAX_TEXTURES`], the measured maximum across every real
+    /// manager-effect stream -- round-trip in full, not truncated.
+    #[test]
+    fn a_mat_anim_with_eight_textures_round_trips() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0x33u8; 64];
+        let textures: alloc::vec::Vec<u32> = (10..18).collect();
+        let mat_anim = w.add_mat_anim(120, &file_bytes, 0x10, 0x2000, &[], &textures);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+        assert_eq!(a.texture_count, 8);
+        assert_eq!(&a.textures[..], &textures[..]);
+    }
+
+    /// A script that never names a texture id (colour- or palette-only)
+    /// must read back a zero count and every slot `NO_ANIM`, not garbage
+    /// left over from another entry.
+    #[test]
+    fn a_mat_anim_with_no_textures_round_trips_as_zero_count() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0x44u8; 32];
+        let mat_anim = w.add_mat_anim(121, &file_bytes, 0x10, 0x2000, &[], &[]);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+        assert_eq!(a.texture_count, 0);
+        assert!(a.textures.iter().all(|&t| t == TextureDesc::NO_ANIM));
+    }
+
+    /// `MatAnimDesc::MAX_TEXTURES` is a real bound taken from the archive,
+    /// not an arbitrary cap -- a script that needs more must fail loudly at
+    /// pack time rather than silently lose frames the way the old
+    /// `min(MAX_TEXTURES)` truncation would have.
+    #[test]
+    #[should_panic(expected = "more than the packed format's 8 slots")]
+    fn add_mat_anim_rejects_more_than_eight_textures() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0x55u8; 32];
+        let textures: alloc::vec::Vec<u32> = (0..9).collect();
+        w.add_mat_anim(122, &file_bytes, 0x10, 0x2000, &[], &textures);
+    }
+
+    /// RE-175: a primitive's own `mat_anim` (untextured effect colour/UV
+    /// scripts, distinct from `TextureDesc::mat_anim`'s texture-cycling use)
+    /// round-trips through `add_mesh`'s `mat_anim_for` closure.
+    #[test]
+    fn a_primitive_mat_anim_round_trips_independent_of_its_texture() {
+        let mut w = PackWriter::new();
+        let file_bytes = alloc::vec![0x66u8; 32];
+        let mat_anim = w.add_mat_anim(123, &file_bytes, 0x10, 0x2000, &[], &[]);
+        let m = sample_mesh();
+        assert!(m.primitives[0].material.texture.is_none(), "untextured");
+        w.add_mesh(&m, 0, 0, |_| None, |_| Some(mat_anim));
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.prim(0).unwrap().mat_anim, mat_anim);
+        assert_eq!(pack.prim(0).unwrap().texture, PrimDesc::NO_TEXTURE);
+    }
+
+    /// A primitive `mat_anim_for` never names must read back `NO_ANIM`, the
+    /// same "absent, not accidentally valid" shape every other optional
+    /// index in this format already guards.
+    #[test]
+    fn a_primitive_with_no_mat_anim_reads_back_no_anim() {
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.prim(0).unwrap().mat_anim, TextureDesc::NO_ANIM);
     }
 
     /// Fighter motion tables are sparse, and stage animations share the table.

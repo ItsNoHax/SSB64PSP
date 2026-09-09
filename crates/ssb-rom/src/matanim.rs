@@ -381,12 +381,14 @@ pub fn costume_colors(
 /// raw word *is* an `f32` (`nGCAnimTrackTraU`'s rate really is a small float
 /// like `-0.012`, confirmed against a real ROM script), while a colour
 /// track's raw word is four RGBA bytes reinterpreted, never arithmetic. This
-/// is safe to store in the same `f32` slots as long as a colour track only
-/// ever uses `Kind::Step` (never `Linear`/`Cubic`, which would perform real
-/// arithmetic on the bit-transmuted value and corrupt it) — [`colors_at`]'s
-/// own `read` closure already declines a colour track under any other kind,
-/// so this matches an existing, accepted limitation rather than introducing
-/// a new one.
+/// is safe to store in the same `f32` slots because a colour track is never
+/// read through [`Self::track_value`] (which would perform real arithmetic
+/// on the bit-transmuted value under `Kind::Linear` and corrupt it) — a
+/// caller reads a colour track through [`Self::track_color`] instead, which
+/// switches on `Kind` the same way `gcPlayMObjMatAnim`'s own colour-window
+/// branch does. [`colors_at`]'s own `read` closure predates `track_color`
+/// and still only trusts `Kind::Step`, which remains correct for a costume
+/// list (colour never ramps there).
 #[derive(Clone, Copy)]
 pub struct MaterialJoint {
     tracks: [Aobj; TICK_TRACK_COUNT],
@@ -485,6 +487,47 @@ impl MaterialJoint {
     /// genuinely interpolating quantity.
     pub fn track_is_stepped(&self, track: usize) -> bool {
         self.tracks.get(track).is_some_and(|t| t.kind == Kind::Step)
+    }
+
+    /// A colour track's (`10..15`) current RGBA bytes, matching
+    /// `gcPlayMObjMatAnim`'s own colour-window switch: `Kind::Step` steps
+    /// between the raw base/target words wholesale, `Kind::Linear` blends
+    /// each of the four RGBA bytes independently. Link Spin Attack's primitive
+    /// alpha (`SetExtValBlock(PRIMCOLOR, ...)`) is `Kind::Linear`, so unlike
+    /// [`Self::track_value`]/[`Self::track_is_stepped`] this does not decline
+    /// it — a costume list never ramps colour, but a general effect script
+    /// does. Any other kind (`None`, or `Cubic`, which the colour window's
+    /// four opcodes can never produce — see [`Self::apply`]) is `None`.
+    pub fn track_color(&self, track: usize) -> Option<[u8; 4]> {
+        let t = self.tracks.get(track)?;
+        match t.kind {
+            Kind::Step => {
+                let raw = if t.length_invert <= t.length {
+                    t.value_target
+                } else {
+                    t.value_base
+                };
+                Some(raw.to_bits().to_be_bytes())
+            }
+            Kind::Linear => {
+                // `interp = length * length_invert * 256`, clamped to
+                // `[0, 256]`, then each byte is a standard `>> 8` alpha
+                // blend -- see the module-level derivation of this from
+                // `gcPlayMObjMatAnim`'s packed-multiply trick.
+                let interp = (t.length * t.length_invert * 256.0) as i32;
+                let interp = interp.clamp(0, 256) as u32;
+                let base = t.value_base.to_bits().to_be_bytes();
+                let target = t.value_target.to_bits().to_be_bytes();
+                let mut out = [0u8; 4];
+                for i in 0..4 {
+                    let b = base[i] as u32;
+                    let g = target[i] as u32;
+                    out[i] = (((256 - interp) * b + interp * g) >> 8) as u8;
+                }
+                Some(out)
+            }
+            _ => None,
+        }
     }
 
     /// Advances one tick, parsing new commands only if the clock allows it.
@@ -992,6 +1035,50 @@ mod tick_tests {
         assert!(j.track_is_stepped(TRACK_PRIM_COLOR));
         let got = j.track_value(TRACK_PRIM_COLOR).unwrap().to_bits();
         assert_eq!(got, rgba);
+    }
+
+    #[test]
+    fn link_spin_attack_primitive_alpha_ramps_up_from_zero() {
+        // Verbatim from `353_LinkSpecial2.c`'s
+        // `SpinAttackMatAnimJoint_MatAnimJoint_data` at file offset 0x12F0:
+        // a `SetExtValBlock(PRIMCOLOR, ...)` ramp, RGB constant at
+        // (255, 255, 96), alpha authored at frame zero as fully transparent
+        // (0) and ramping to visible (204) over 12 frames. This is
+        // `Kind::Linear`, not `Kind::Step` -- `colors_at`/`track_value`
+        // cannot read it; only `track_color` can.
+        let d = script(&[
+            cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 0),
+            0xFFFF_6000,
+            cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 12),
+            0xFFFF_60CC,
+            cmd(OP_WAIT, 0, 97),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+
+        j.tick(&d, 1.0).expect("ticks");
+        assert!(!j.track_is_stepped(TRACK_PRIM_COLOR), "a ramp, not a step");
+        let [r, g, b, a] = j.track_color(TRACK_PRIM_COLOR).unwrap();
+        assert_eq!((r, g, b), (255, 255, 96), "RGB is constant across the ramp");
+        assert!(a > 0, "already measurably visible after one tick, was {a}");
+
+        for _ in 0..5 {
+            j.tick(&d, 1.0).expect("ticks");
+        }
+        let halfway = j.track_color(TRACK_PRIM_COLOR).unwrap()[3];
+        assert!(
+            a < halfway && halfway < 204,
+            "still ramping up: {a} < {halfway} < 204"
+        );
+
+        for _ in 0..6 {
+            j.tick(&d, 1.0).expect("ticks");
+        }
+        assert_eq!(
+            j.track_color(TRACK_PRIM_COLOR).unwrap()[3],
+            204,
+            "reaches the authored target exactly at its duration"
+        );
     }
 
     #[test]
