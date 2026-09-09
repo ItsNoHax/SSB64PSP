@@ -10,6 +10,85 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-182 — Deterministic single-particle `LBParticle` script playback (`PLAN.md` R1)
+
+**Problem.** RE-180/181 proved every bank decodes and round-trips through the
+pack, but nothing executed a script's bytecode. "Runtime simulation" (RE-181's
+own next step) needed a host-side interpreter whose state evolution matches
+`lbParticleUpdateStruct` exactly, not an approximation.
+
+**Source evidence.** Read the whole of `lbParticleUpdateStruct`
+(`refs/ssb-decomp-re/src/lb/lbparticle.c:707-1415`): the wait/opcode dispatch
+loop, every opcode case, and the unconditional size/color-lerp +
+gravity/friction/position + lifetime tail that runs after it every frame.
+Cross-checked the real `LBParticle` field layout (`lb/lbtypes.h:200-230`),
+`LBPARTICLE_OPCODE_*`/`LBPARTICLE_FLAG_*` (`lb/lbdef.h`), the exact
+`syUtilsRandFloat` LCG and the closed-form `syUtilsArcTan`/`syUtilsArcTan2`
+rational-polynomial approximation `SETVELANGLE` depends on
+(`sys/utils.c:79-177`) — the latter is an exact formula, not a table lookup,
+so it ports without approximation.
+
+A temporary, reverted `SSB64_ROM`-gated census (byte-accurate cursor walk
+over all 160 real scripts' bytecode, same operand-width table
+`inspect_bytecode` already uses) measured real opcode usage archive-wide
+before deciding what to implement versus decline:
+`LBPARTICLE_FLAG_VORTEX` — 0 script headers, 0 `SETFLAG` operands;
+`SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID` — 0 each; `PRIMBLENDRAND`/
+`ENVBLENDRAND` — 0 each; `SETVELMAG`/`MULVELAXIS` — 0 each; `MAKERAND` — 0;
+`MAKESCRIPT` — 25; `MAKEID` — 2; `MAKEGENERATOR` — 103; `SETVELANGLE` — 13.
+
+**Implementation.** New `ssb_rom::particle::Particle`/`ParticleState` (same
+module as RE-180's decoder) reproduces, exactly: position/velocity
+set/add, size lerp, primitive/environment colour lerp (including the
+integer fixed-point truncation the original's `u8` narrowing assignment
+performs), `SETFLAG`/gravity/friction toggling, `SETLIFERAND`/
+`TRYDEADRAND`, `ADDVELRAND`'s misnamed position write, `SETVELANGLE`'s
+rotation (via ported `arctan2`/`sqrt`/reused `crate::scene::sin_cos`),
+`MULVELUFORM`, loop/return control flow, wait/frame-id timing, and the
+gravity-then-friction-then-position physics tail. `Rng` ports
+`syUtilsRandFloat`'s LCG bit-for-bit from a caller-supplied seed — the real
+seed is one global shared by the whole frame loop, so no seed value can
+claim to replay a specific real playthrough's draws; this proves the
+interpreter itself is deterministic, not that it recovers history.
+
+Three real-but-out-of-scope mechanisms are decoded (cursor stays in sync)
+but not executed, each backed by the census above rather than a guess:
+`LBPARTICLE_FLAG_VORTEX`'s physics branch needs an `LBGenerator`'s own
+vortex table (fails loudly via `SimError::VortexUnsupported` rather than
+approximating, though no measured script would ever trigger it);
+`SETDISTVEL`/`ADDDISTVELMAG`/`SETATTACHID`'s write-back need a live `DObj`
+(zero real uses); `MAKESCRIPT`/`MAKERAND`/`MAKEID`/`MAKEGENERATOR` are
+reported as `SpawnRequest`s instead of spawning a child, because faithfully
+executing them also means reproducing `lbParticleStructFuncRun`'s node-splice
+walk, which visits a newly spawned child a second time within its own
+spawning frame on top of the opcode's own immediate recursive tick — a real
+double-tick quirk this step does not yet reproduce. `SETATTACHID`'s flag-set
+half (no `DObj` needed) is still applied.
+
+**Verification.** 11 new focused tests hand-trace exact byte sequences
+against hand-computed expected state (position/velocity axis masks, an
+exact 4-frame size-lerp convergence, gravity-then-friction integration
+order, `SETLOOP`/`LOOP` iteration counts, `SETRETURN`/`RETURN` jumps,
+`SETVELANGLE`'s speed-preservation property, the RNG's first draw from
+seed 1, and that `MAKESCRIPT`/`MAKEID`/`MAKEGENERATOR` decode as requests
+without mutating any child state). Confirmed the gravity/friction ordering
+test can fail: temporarily swapped the two integration steps, watched the
+assertion trip on the exact expected value, reverted. All 316 `ssb-rom`
+tests (was 305) and the full 472-test workspace suite pass; strict
+workspace Clippy (including `--no-default-features`), `cargo fmt --check`,
+the `no_std` library build, and the pinned-nightly PSP release build all
+pass. EBOOT SHA-256
+`d5281ee057e121b9a02607fa22581976df9cb2e83f981f13a6b6b6357053266c`; no
+pack-format change (still RE-181's v25).
+
+**Remaining scope.** This is host-side, ROM-free, single-particle state
+evolution only. Multi-particle spawn-tree execution (the double-tick quirk
+above), the `LBGenerator` subsystem (103 real `MAKEGENERATOR` call sites),
+PSP-side billboard rectangle drawing, and a focused PPSSPP particle audit
+all remain. No physical-PSP claim; `R0.5` is unaffected.
+
+---
+
 ## RE-181 — LBParticle banks survive PSP pack conversion (`PLAN.md` R1)
 
 **Problem.** RE-180 proved all nine original banks decode, but none of their
