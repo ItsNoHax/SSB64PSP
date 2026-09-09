@@ -65,7 +65,6 @@ file changed; no new PPSSPP run was required.
 - Detailed investigations: `docs/reverse-engineering.md` RE-172–188.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
-- Archived status journal: `docs/status-history.md`.
 
 ## Blockers and caveats
 
@@ -81,7 +80,7 @@ Keep this file as current snapshot, not append-only journal. Update only
 current task/status, last completed task, next task, blockers, changes,
 verification, evidence, documentation and commit. Put detailed investigations
 in `docs/reverse-engineering.md`; keep PLAN acceptance entries as short
-evidence links. Older session detail is preserved in `docs/status-history.md`.
+evidence links. Older session detail remains available through git history.
 
 ## Continuation command
 
