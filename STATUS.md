@@ -53,8 +53,12 @@ The next bounded step within this same task is the remaining, larger item
 RE-175 already flagged: consuming live colour-track GE state (`EffectColors`'s
 prim/env/blend/light1/light2 tracks are resolved and unit-tested but nothing
 on the device side reads them yet — vertex-baked colour has no per-primitive
-override point today). The independent `LBParticle` decoder/runtime remains
-unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
+override point today). In parallel, the broader runtime `MObj` display-state
+parity gap is now explicitly tracked in `PLAN.md` R1, `docs/rendering.md`, and
+`TODO.md`: the decomp's `gcDrawMObjForDObj` default/texture-enable/UV-scale/
+translation/scroll/current-next/fractional-alpha state is not yet represented
+as one end-to-end runtime model. The independent `LBParticle` decoder/runtime
+remains unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
 Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
 the descriptor-selected variant rather than claiming both runtime branches.
 

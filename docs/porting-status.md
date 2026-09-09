@@ -41,7 +41,7 @@ Last updated: 2026-09-09.
 | Engine traits (Layer B) | 🟢 70% | Renderer / Audio / Input / Timing / Clock defined |
 | Timing / fixed clock | ✅ COMPLETE | Catch-up cap, backwards-clock, 60-ticks-per-second all unit-tested |
 | Input mapping | 🟢 75% | Mapping + nub scaling unit-tested; deadzone and C-buttons unresolved (RE-008, RE-009) |
-| PSP GU backend | 🟡 40% | Init, frame lifecycle, matrices, untextured triangles. No textures, no mesh path |
+| PSP GU backend | 🟢 89% | Init/frame lifecycle, matrices, indexed textured mesh draws, CI4/CI8 CLUT upload, mip-level upload, filtering, repeat/clamp addressing, alpha test/blend, depth/culling, billboard transforms, and runtime fighter lighting are implemented in `psp/src/gu.rs` and `psp/src/meshdraw.rs`; PPSSPP software audits cover stage/fighter/effect paths |
 | PSP input backend | 🟢 70% | `sceCtrl` analog read wired to the shared mapping |
 | PSP audio backend | 🔴 0% | |
 | Physics | 🟢 60% | 16 functions ported with original addresses cited, and *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick. Running on all 27 characters' **real** constants, extracted from the ROM and verified field-by-field against the decompilation; the invented defaults they replaced were 26x off and had hidden a stick-scaling bug in air drift (RE-032) |

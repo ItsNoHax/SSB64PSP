@@ -2716,6 +2716,14 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   `LBParticle` script/texture-bank renderer all remain before this row can
   close
 * [ ] all required framebuffer paths render
+* [ ] runtime `MObj` display-state parity — reproduce the decompilation's
+  `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
+  `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`
+  texture scale, `trau`/`trav` translation, `scrollu`/`scrollv`, and the
+  `MOBJ_FLAG_FRAC` current/next-texture fractional blend. The narrower
+  fractional and UV-scroll symptoms are also listed in `TODO.md`; this item
+  owns their end-to-end state model and prevents treating isolated symptoms as
+  a complete `MObj` implementation.
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain
 * [ ] no unexplained material failures remain
