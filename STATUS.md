@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 exhaustive frame-4 LBParticle visibility census, RE-184)
+**Last updated:** 2026-09-09 (R1 exhaustive on-device LBParticle frame-4 screenshot sweep, and a camera-transform bug fix it found, RE-185)
 
 ---
 
@@ -18,7 +18,42 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–184).
+`IN_PROGRESS` (RE-172–185).
+
+RE-185 does the on-device screenshot sweep RE-184 left open
+(`tools/run-ppsspp.sh --audit-particles N`, added mirroring the existing
+`--audit-effect-materials` pattern) and, while running it, found and fixed a
+real bug rather than merely confirming the host-side census. The particle
+debug view's camera translated the model matrix by `-particle.state.pos`,
+on the theory (RE-183's own doc comment) that this "moves the camera to the
+particle" the way `billboard_view`'s `-centre` does -- but a billboard's own
+drawn vertices already carry their real absolute `node.world` position, so
+subtracting `centre` there cancels it back toward the origin, while `draw_
+particle`'s quad vertices are plain `-size..size` around local origin with
+no absolute position baked in at all. Subtracting `pos` therefore added a
+phantom offset instead of removing one. Every script RE-183/184 had sampled
+still had `pos == (0,0,0)` at the frame-4 settle point, masking the bug
+until the exhaustive sweep reached the first two (of 160) real scripts
+whose own bytecode had moved them by frame 4 -- confirmed by two reversible
+on-device experiments (forcing `ENVCOLOR` off, then an untextured solid-
+colour override) that isolated the defect to geometry placement before any
+fix was written, ruling out the colour/combiner path RE-183 had reused from
+mesh `TEXTURE_BLEND`. Fixed by dropping the position term entirely
+(`gpu.model_transform([0.0, 0.0, -dist], ...)`): this debug view has no live
+emitter or scene to place a particle against (RE-182 already declined
+`SETATTACHID`/live-`DObj` positioning for the same reason), so a fixed
+camera distance is correct, not merely convenient, mirroring `draw_texture_
+quad`'s own fixed-quad precedent. All 160 real scripts now capture with 0
+audit warnings, matching RE-184's 148-visible/12-invisible census exactly,
+with all 160 identity headers unique. `cargo test --workspace` (318
+`ssb-rom` tests, unchanged -- no library crate touched), strict Clippy
+(default and `ssb-rom --no-default-features`), `cargo fmt --check`, both
+`cargo psp --release` builds (default and `particle_render_audit_capture`),
+an 8-second default-build PPSSPP run (Dream Land unchanged, 60 FPS, clean
+log), and the new 160-script `--audit-particles 160` sweep itself all pass.
+Multi-particle spawn-tree execution, the `LBGenerator` subsystem, an
+`ENVCOLOR`/`NOISE` census, and a real spawn event all still remain. Evidence:
+RE-185.
 
 RE-184 does the exhaustive per-script sweep RE-183 explicitly left open. A
 new shared `ParticleState::visible(frame_count)` predicate
@@ -4307,6 +4342,52 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: exhaustive on-device LBParticle frame-4 screenshot sweep, camera-transform bug fix (RE-185)
+
+* `tools/run-ppsspp.sh`: new `--audit-particles N` flag, mirroring
+  `--audit-effect-materials` -- builds with `particle_render_audit_capture`,
+  walks the pack's flat `particle_scripts` table via the PSP D-pad, captures
+  a frame-4 screenshot per script, and checks each against RE-184's own
+  12-index invisible classification (flat pack indices 14, 26, 34, 38, 80,
+  105, 112, 131, 132, 139, 143, 144).
+* `psp/src/main.rs`: added a dedicated single-line `particle_render_audit_
+  capture` overlay (the existing multi-line viewer text was taller than any
+  header crop and was found bleeding into the centre-content check for
+  every capture).
+* First run found scripts 12/13 captured completely blank despite a real,
+  correctly bound, correctly coloured draw call (`tris 2`). Two reversible
+  on-device experiments (forcing `ENVCOLOR` off; an untextured solid-colour
+  override) isolated the defect to geometry placement, not colour/texture.
+  Root cause: the particle-view camera translated by `-particle.state.pos`,
+  which only cancels an absolute position already present in a mesh's own
+  vertices (as in `billboard_view`) -- `draw_particle`'s quad vertices carry
+  no absolute position at all, so the term added a phantom offset instead
+  of removing one. Scripts 0-11 all still had `pos == (0,0,0)` at frame 4,
+  masking the bug; scripts 12/13 are the first two (of 160) whose bytecode
+  had moved them by then (`pos` dumped as `(-249.7, 533.7, -80.7)` and
+  `(-249.7, 499.1, -80.7)`), clipped by the viewer's narrow 38-degree
+  vertical FOV.
+* Fix: `psp/src/main.rs`'s particle-view branch now uses
+  `gpu.model_transform([0.0, 0.0, -dist], [0.0, 0.0, 0.0], 1.0)`, dropping
+  the position term -- correct for this isolated single-particle inspection
+  view (no live emitter/scene to place a particle against, matching RE-182's
+  own declined `SETATTACHID`/live-`DObj` scope), not merely convenient.
+* Result: `tools/run-ppsspp.sh --audit-particles 160`: 160/160 captured, 0
+  warnings. `visible_particle_samples=148`, `invisible_particle_samples=12`,
+  `unique_identity_headers=160` -- matches RE-184's host-side census exactly.
+* `cargo test --workspace`: 318 `ssb-rom` tests, unchanged (no library crate
+  touched). Strict Clippy (`cargo clippy --workspace -- -D warnings` and
+  `cargo clippy -p ssb-rom --no-default-features -- -D warnings`) and
+  `cargo fmt --check` pass. `cargo psp --release` and `cargo psp --release
+  --features particle_render_audit_capture` both build clean (same seven
+  pre-existing warnings as RE-183/184, no new ones).
+  `tools/run-ppsspp.sh --no-build --seconds 8` against the default build:
+  Dream Land unchanged, 60 FPS, clean log -- the fix is scoped to
+  `particle_view` alone.
+* Not done: multi-particle spawn-tree execution, the `LBGenerator`
+  subsystem, an `ENVCOLOR`/`NOISE` census, and a real spawn event all still
+  remain. No physical-PSP claim; `R0.5` unaffected. Evidence: RE-185.
 
 ## 2026-09-09 — R1: exhaustive frame-4 LBParticle visibility census (RE-184)
 

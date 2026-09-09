@@ -176,6 +176,108 @@ no claim about `LBGenerator`, `ENVCOLOR`/`NOISE`, or on-device appearance.
 
 ---
 
+## RE-185 — Exhaustive on-device `LBParticle` frame-4 screenshot sweep, and a real camera-transform bug it found (`PLAN.md` R1)
+
+**Problem.** RE-184 left "an on-device screenshot sweep (RE-173's own
+method)" explicitly undone -- the host-side census can only prove the
+decoder resolves a texture frame, not that the PSP GE actually puts pixels
+on screen for it. Added `tools/run-ppsspp.sh --audit-particles N`, mirroring
+`--audit-effect-materials`: builds with the existing
+`particle_render_audit_capture` feature, walks the pack's flat
+`particle_scripts` table via the PSP D-pad, captures a frame-4 screenshot
+per script, and checks each against RE-184's own 12-index invisible
+classification (flat pack indices 14, 26, 34, 38, 80, 105, 112, 131, 132,
+139, 143, 144 -- computed from RE-184's per-bank indices plus each bank's
+`first_script`, since `add_particle_bank` appends banks to `particle_scripts`
+in the same `BANKS` order `romtool particles` already iterates).
+
+**A first run found a real bug, not just confirmation.** Scripts 12 and 13
+(both real, both resolving a texture) captured completely blank -- no
+sprite, not even the header-crop text bleeding in, which a first attempt
+at the audit's own single-line overlay (added alongside the sweep, since
+the existing multi-line debug text is taller than any header crop and was
+initially found contaminating the centre-content check for every capture,
+not just these two) had already ruled out. Two reversible on-device
+experiments narrowed it before any fix was written: forcing `envcolor` to
+`None` (bypassing the `ENVCOLOR` blend path both scripts happen to use) did
+not change the result, and a version of `draw_particle` that additionally
+disabled `GuState::Texture2D` and forced a solid opaque vertex colour --
+i.e. a plain untextured quad, independent of any texture/combiner state --
+*also* rendered nothing. That isolates the defect to geometry placement,
+not colour, texture data, or the `ENVCOLOR` combiner RE-183 had reused from
+mesh `TEXTURE_BLEND` (which remained correctly implicated as fine).
+
+`psp/src/main.rs`'s particle-view camera code translated the model matrix
+by `[-particle.state.pos[0], -particle.state.pos[1], -particle.state.pos[2]
+- dist]` on the theory (recorded in RE-183's own doc comment) that this
+"moves the camera to the particle" the way `billboard_view`'s `-centre`
+translation does. That comparison does not hold: a billboard's drawn
+vertices already carry their real `node.world`-composed absolute position,
+so subtracting `centre` there cancels it back toward the origin. `draw_
+particle`'s own quad vertices (`TexQuadVertex`, built fresh each call) are
+plain `-size..size` around local origin with no absolute position baked in
+at all -- subtracting `pos` therefore added a phantom offset instead of
+removing one. Scripts 0-11 all still had `pos == (0, 0, 0)` at the frame-4
+settle point (no position-affecting bytecode had run yet), so the bug was
+invisible in RE-183's own single-script (script 0) check and RE-184's
+host-side census (which never renders anything). Scripts 12 and 13 are
+simply the first two, in pack order, whose bytecode moves them by frame 4 --
+confirmed by dumping `particle.state.pos` after the same 4-tick spawn/tick
+sequence: `(-249.7, 533.7, -80.7)` and `(-249.7, 499.1, -80.7)`. At the
+viewer's 38-degree vertical FOV, a ~530-unit lateral offset at a ~600-680-
+unit camera distance is well outside the frustum, so the quad was
+genuinely submitted (the overlay's `tris 2` was correct) and genuinely
+clipped -- real motion from real bytecode, not a decode defect, exposing a
+viewer-only framing bug.
+
+**Fix.** This debug view exists to inspect one particle's own authored
+sprite/colour in isolation, the same way `draw_texture_quad` always frames
+its fixed quad regardless of any texture's own addressing -- it has no live
+emitter or scene to place a particle against, and RE-182 already declined
+`SETATTACHID`/live-`DObj` positioning for exactly that reason. A fixed
+camera distance with no position term is therefore correct here, not
+merely convenient: `psp/src/main.rs`'s particle-view branch now calls
+`gpu.model_transform([0.0, 0.0, -dist], [0.0, 0.0, 0.0], 1.0)`, dropping the
+`particle.state.pos` terms entirely rather than trying to re-derive a
+correct sign.
+
+**Result.** All 160 real scripts captured, 0 audit warnings: 148 show
+measurable frame-4 content (including 12 and 13, now correctly visible)
+and the same 12 RE-184 already named stay blank, matching the host-side
+census exactly. All 160 identity-header crops are unique (the audit's own
+`unique_identity_headers` check, confirming the D-pad genuinely advanced
+every step rather than sticking).
+
+**Verification.** `cargo test --workspace` (318 `ssb-rom` tests, unchanged
+-- no library crate touched), strict Clippy (`cargo clippy --workspace --
+-D warnings` and `cargo clippy -p ssb-rom --no-default-features -- -D
+warnings`), and `cargo fmt --check` all pass. `cargo psp --release` (default)
+and `cargo psp --release --features particle_render_audit_capture` both
+build clean (the same seven pre-existing linker/lint warnings as RE-183/184,
+no new ones). `tools/run-ppsspp.sh --no-build --seconds 8` against the
+default build: Dream Land unchanged, 60 FPS, clean log -- the fixed camera
+transform is scoped to `particle_view` alone and touches no other draw
+path. `tools/run-ppsspp.sh --audit-particles 160` (the new exhaustive
+sweep, against the audit-capture build): 160/160 captured, 0 warnings,
+manifest records `visible_particle_samples=148`,
+`invisible_particle_samples=12`, `unique_identity_headers=160`, and a
+per-capture SHA-256 for every screenshot. Implementation commit:
+`e393d51ac270d43c28c2d4b9ea83672232ef9b45`.
+
+**Remaining scope.** Multi-particle spawn-tree execution, the `LBGenerator`
+subsystem, an `ENVCOLOR`/`NOISE`/dither/alpha-threshold archive-wide census,
+and wiring a real spawn event (rather than this debug viewer) all remain,
+per RE-182/183/184's own lists. No physical-PSP claim; `R0.5` is unaffected.
+
+**Confidence:** high for the camera-transform bug and its fix (isolated by
+two independent reversible on-device experiments before any code change,
+then confirmed by the full 160-script sweep matching the host-side census
+exactly); no claim about `LBGenerator`, `ENVCOLOR`/`NOISE`, or whether other,
+not-yet-position-drifted scripts have their own unrelated defects this
+sweep's frame-4 sample point cannot expose.
+
+---
+
 ## RE-182 — Deterministic single-particle `LBParticle` script playback (`PLAN.md` R1)
 
 **Problem.** RE-180/181 proved every bank decodes and round-trips through the
