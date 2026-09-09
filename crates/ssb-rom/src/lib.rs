@@ -23,6 +23,7 @@ pub mod mesh;
 pub mod mobj;
 pub mod objanim;
 pub mod pack;
+pub mod particle;
 pub mod psp_texture;
 pub mod rom;
 pub mod scan;
