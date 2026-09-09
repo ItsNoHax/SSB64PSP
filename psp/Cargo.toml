@@ -33,6 +33,13 @@ camera_audit_capture = []
 # the normal D-pad navigation and on-screen source identity. Off by default.
 billboard_audit_capture = []
 
+# Boots directly into the fighter figatree browser with animation zero
+# already playing. The PPSSPP harness advances the normal D-pad control and
+# captures every packed fighter motion in stable table order (R1). Stage and
+# results animations use the separate AObjEvent32 runtime paths and are not
+# decoded by this mode.
+animation_audit_capture = []
+
 # Automatically enters the first original results wipe after four seconds.
 # Used to validate that the captured pixels come from the completed battle
 # frame before the overlay begins. Off by default.

@@ -342,7 +342,7 @@ unsafe fn run() -> ! {
     // spawns land; nothing but looking at it proves they land in the right
     // spot on screen.
     let stage_count = pack.as_ref().map_or(0, |p| p.stage_count());
-    let mut stage_view = stage_count > 0;
+    let mut stage_view = stage_count > 0 && !cfg!(feature = "animation_audit_capture");
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.
@@ -388,12 +388,31 @@ unsafe fn run() -> ! {
     // the only way to see whether a pose is right -- a host test can say the
     // numbers match the ROM, which they do, and still not say the fighter
     // looks like it is running.
-    let anim_count = pack.as_ref().map_or(0, |p| p.anim_count());
+    // Only fighter figatrees belong in this browser. Stage scenery and
+    // results wipes are appended to the same pack table, but use the 32-bit
+    // AObjEvent32 stream and have their own StageAnimator/ResultsTransition
+    // runtime paths. Feeding either through Skeleton is a decoder mismatch,
+    // not an animation audit (R1/RE-171).
+    let anim_count = pack.as_ref().map_or(0, |p| {
+        (0..p.anim_count())
+            .take_while(|&i| {
+                p.anim(i)
+                    .is_some_and(|a| a.fighter != ssb_rom::pack::AnimDesc::STAGE
+                        && a.fighter != ssb_rom::pack::AnimDesc::TRANSITION)
+            })
+            .count() as u32
+    });
     let mut anim_index: u32 = 0;
     let mut anim_playing = false;
     let mut skeleton = ssb_rom::skeleton::Skeleton::new();
     let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
     let mut posed_len = 0usize;
+    if cfg!(feature = "animation_audit_capture") && anim_count > 0 {
+        anim_playing = true;
+        if let Some(p) = &pack {
+            object_index = start_anim(p, anim_index, &mut skeleton).unwrap_or(object_index);
+        }
+    }
 
     let mut sim = FixedClock::new(clock.now_us());
 
@@ -1266,7 +1285,26 @@ unsafe fn run() -> ! {
         // sidesteps whatever PPSSPP-internal state causes it, rather than
         // trying to out-guess it, and a developer diagnostic overlay was
         // never part of the golden scene R0.17 wants captured anyway.
-        if !cfg!(any(
+        if cfg!(feature = "animation_audit_capture") {
+            // Keep the model unobscured so the host harness can measure the
+            // centre of each capture for real rendered content. Identity,
+            // source and draw count remain on screen as audit evidence.
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "ANIMATION AUDIT {}/{}  fighter {} slot {}  file {}  frame {}  tris {}",
+                    anim_index,
+                    anim_count,
+                    anim_fighter,
+                    anim_slot,
+                    src_file,
+                    skeleton.frame() as i32,
+                    shown.0,
+                ),
+            );
+        } else if !cfg!(any(
             feature = "regression_capture",
             feature = "camera_audit_capture"
         )) {
