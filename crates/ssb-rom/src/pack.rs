@@ -36,6 +36,9 @@
 //! MatAnimDesc[mat_anim_count]
 //! MatAnimPalette[mat_anim_palette_count]
 //! CostumeOverride[costume_override_count]
+//! ParticleBankDesc[particle_bank_count]
+//! ParticleScriptDesc[particle_script_count]
+//! ParticleTextureDesc[particle_texture_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -137,7 +140,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    update; a previous pack could not distinguish the two. The bits also
 ///    make the PSP state cache reapply a changed colour when the rest of a
 ///    primitive's material flags are identical.
-pub const VERSION: u32 = 24;
+/// 24 adds manager-effect material-animation texture and colour state.
+/// 25 adds build-time-decoded LBParticle bank/script/texture-series tables.
+pub const VERSION: u32 = 25;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -150,10 +155,10 @@ pub const VERTEX_SIZE: usize = 20;
 
 /// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
 /// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
-/// `costume_override_count` (`VERSION` 13) to 76 — the original 64 was a
-/// coincidence of having exactly 16 `u32` fields, not a hard alignment
-/// requirement (only the blob region, computed separately via `blob_offset`,
-/// needs 16-byte alignment for the GE's DMA).
+/// `costume_override_count` (`VERSION` 13) to 76, and three particle counts
+/// (`VERSION` 25) to 88. The original 64 was a coincidence of having exactly
+/// 16 `u32` fields, not a hard alignment requirement (only the blob region,
+/// computed separately via `blob_offset`, needs 16-byte alignment for GE DMA).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Header {
@@ -185,10 +190,13 @@ pub struct Header {
     pub mat_anim_palette_count: u32,
     /// Per-(node, costume) mesh substitutions (RE-098).
     pub costume_override_count: u32,
+    pub particle_bank_count: u32,
+    pub particle_script_count: u32,
+    pub particle_texture_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 76;
+    pub const SIZE: usize = 88;
 }
 
 /// A vertex in the GE's expected layout.
@@ -667,6 +675,60 @@ impl CostumeOverride {
     pub const SIZE: usize = 12;
 }
 
+/// One original LBParticle bank. Script and texture IDs are bank-local.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParticleBankDesc {
+    pub first_script: u32,
+    pub script_count: u32,
+    pub first_texture: u32,
+    pub texture_count: u32,
+}
+
+impl ParticleBankDesc {
+    pub const SIZE: usize = 16;
+}
+
+/// Fixed LBScript state plus bytecode copied into pack blob.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ParticleScriptDesc {
+    pub kind: u16,
+    pub texture_id: u16,
+    pub generator_lifetime: u16,
+    pub particle_lifetime: u16,
+    pub flags: u32,
+    pub gravity: f32,
+    pub friction: f32,
+    pub velocity: [f32; 3],
+    pub unknown_20: f32,
+    pub unknown_24: f32,
+    pub update_rate: f32,
+    pub size: f32,
+    pub bytecode_offset: u32,
+    pub bytecode_len: u32,
+}
+
+impl ParticleScriptDesc {
+    pub const SIZE: usize = 56;
+}
+
+/// One LBTexture series. Frames are consecutive global TextureDesc entries.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ParticleTextureDesc {
+    pub first_frame: u32,
+    pub frame_count: u32,
+    pub width: u16,
+    pub height: u16,
+    pub flags: u32,
+}
+
+impl ParticleTextureDesc {
+    pub const SIZE: usize = 16;
+    pub const NO_FRAME: u32 = u32::MAX;
+}
+
 /// A rectangular extent in game units, as `MPGroundData` stores it.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1125,6 +1187,9 @@ pub struct PackWriter {
     /// dedup shape as `anim_files`.
     mat_anim_files: alloc::collections::BTreeMap<u32, (u32, u32)>,
     costume_overrides: Vec<CostumeOverride>,
+    particle_banks: Vec<ParticleBankDesc>,
+    particle_scripts: Vec<ParticleScriptDesc>,
+    particle_textures: Vec<ParticleTextureDesc>,
     blob: Vec<u8>,
 }
 
@@ -1205,6 +1270,64 @@ impl PackWriter {
             wrap: 0,
         });
         (self.textures.len() - 1) as u32
+    }
+
+    /// Adds one decoded LBParticle bank and its already-converted frame textures.
+    pub fn add_particle_bank(
+        &mut self,
+        scripts: &[crate::particle::Script<'_>],
+        textures: &[crate::particle::Texture<'_>],
+        frames: &[Vec<crate::psp_texture::PspTexture>],
+    ) -> u32 {
+        assert_eq!(textures.len(), frames.len());
+        let first_script = self.particle_scripts.len() as u32;
+        let first_texture = self.particle_textures.len() as u32;
+
+        for script in scripts {
+            let bytecode_offset = self.push_blob(script.bytecode);
+            self.particle_scripts.push(ParticleScriptDesc {
+                kind: script.kind,
+                texture_id: script.texture_id,
+                generator_lifetime: script.generator_lifetime,
+                particle_lifetime: script.particle_lifetime,
+                flags: script.flags,
+                gravity: script.gravity,
+                friction: script.friction,
+                velocity: script.velocity,
+                unknown_20: script.unknown_20,
+                unknown_24: script.unknown_24,
+                update_rate: script.update_rate,
+                size: script.size,
+                bytecode_offset,
+                bytecode_len: script.bytecode.len() as u32,
+            });
+        }
+        for (texture, texture_frames) in textures.iter().zip(frames) {
+            assert_eq!(texture.images.len(), texture_frames.len());
+            let first_frame = if texture_frames.is_empty() {
+                ParticleTextureDesc::NO_FRAME
+            } else {
+                self.textures.len() as u32
+            };
+            for frame in texture_frames {
+                self.add_texture(frame, false, false);
+            }
+            self.particle_textures.push(ParticleTextureDesc {
+                first_frame,
+                frame_count: texture_frames.len() as u32,
+                width: texture.width as u16,
+                height: texture.height as u16,
+                flags: texture.flags,
+            });
+        }
+
+        self.particle_banks.push(ParticleBankDesc {
+            first_script,
+            script_count: scripts.len() as u32,
+            first_texture,
+            texture_count: textures.len() as u32,
+        });
+        (self.particle_banks.len() - 1) as u32
     }
 
     /// Adds one animated palette table: the driving script plus every
@@ -1832,7 +1955,10 @@ impl PackWriter {
             + self.anim_joints.len() * AnimJoint::SIZE
             + self.mat_anims.len() * MatAnimDesc::SIZE
             + self.mat_anim_palettes.len() * MatAnimPalette::SIZE
-            + self.costume_overrides.len() * CostumeOverride::SIZE;
+            + self.costume_overrides.len() * CostumeOverride::SIZE
+            + self.particle_banks.len() * ParticleBankDesc::SIZE
+            + self.particle_scripts.len() * ParticleScriptDesc::SIZE
+            + self.particle_textures.len() * ParticleTextureDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         // Sorted by (node, costume) so the reader can binary-search rather
@@ -1863,6 +1989,9 @@ impl PackWriter {
         out.extend_from_slice(&(self.mat_anims.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.mat_anim_palettes.len() as u32).to_le_bytes());
         out.extend_from_slice(&(costume_overrides.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.particle_banks.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.particle_scripts.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.particle_textures.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -2028,6 +2157,48 @@ impl PackWriter {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        for bank in &self.particle_banks {
+            for v in [
+                bank.first_script,
+                bank.script_count,
+                bank.first_texture,
+                bank.texture_count,
+            ] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for script in &self.particle_scripts {
+            for v in [
+                script.kind,
+                script.texture_id,
+                script.generator_lifetime,
+                script.particle_lifetime,
+            ] {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            out.extend_from_slice(&script.flags.to_le_bytes());
+            for value in [script.gravity, script.friction]
+                .into_iter()
+                .chain(script.velocity)
+                .chain([
+                    script.unknown_20,
+                    script.unknown_24,
+                    script.update_rate,
+                    script.size,
+                ])
+            {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&script.bytecode_offset.to_le_bytes());
+            out.extend_from_slice(&script.bytecode_len.to_le_bytes());
+        }
+        for texture in &self.particle_textures {
+            out.extend_from_slice(&texture.first_frame.to_le_bytes());
+            out.extend_from_slice(&texture.frame_count.to_le_bytes());
+            out.extend_from_slice(&texture.width.to_le_bytes());
+            out.extend_from_slice(&texture.height.to_le_bytes());
+            out.extend_from_slice(&texture.flags.to_le_bytes());
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -2086,6 +2257,9 @@ pub struct Pack<'a> {
     mat_anim_count: u32,
     mat_anim_palette_count: u32,
     costume_override_count: u32,
+    particle_bank_count: u32,
+    particle_script_count: u32,
+    particle_texture_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -2143,6 +2317,9 @@ impl<'a> Pack<'a> {
         let mat_anim_count = u32_at(data, 64);
         let mat_anim_palette_count = u32_at(data, 68);
         let costume_override_count = u32_at(data, 72);
+        let particle_bank_count = u32_at(data, 76);
+        let particle_script_count = u32_at(data, 80);
+        let particle_texture_count = u32_at(data, 84);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -2159,7 +2336,10 @@ impl<'a> Pack<'a> {
             + anim_joint_count as usize * AnimJoint::SIZE
             + mat_anim_count as usize * MatAnimDesc::SIZE
             + mat_anim_palette_count as usize * MatAnimPalette::SIZE
-            + costume_override_count as usize * CostumeOverride::SIZE;
+            + costume_override_count as usize * CostumeOverride::SIZE
+            + particle_bank_count as usize * ParticleBankDesc::SIZE
+            + particle_script_count as usize * ParticleScriptDesc::SIZE
+            + particle_texture_count as usize * ParticleTextureDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -2182,6 +2362,9 @@ impl<'a> Pack<'a> {
             mat_anim_count,
             mat_anim_palette_count,
             costume_override_count,
+            particle_bank_count,
+            particle_script_count,
+            particle_texture_count,
             blob_offset,
             blob_len,
         })
@@ -2235,6 +2418,15 @@ impl<'a> Pack<'a> {
     pub fn costume_override_count(&self) -> u32 {
         self.costume_override_count
     }
+    pub fn particle_bank_count(&self) -> u32 {
+        self.particle_bank_count
+    }
+    pub fn particle_script_count(&self) -> u32 {
+        self.particle_script_count
+    }
+    pub fn particle_texture_count(&self) -> u32 {
+        self.particle_texture_count
+    }
     /// Total primitives: one GE draw call each, so this is the pack's draw-call
     /// budget if every mesh were on screen at once.
     pub fn prim_count(&self) -> u32 {
@@ -2273,6 +2465,16 @@ impl<'a> Pack<'a> {
     }
     fn costume_override_table(&self) -> usize {
         self.mat_anim_palette_table() + self.mat_anim_palette_count as usize * MatAnimPalette::SIZE
+    }
+    fn particle_bank_table(&self) -> usize {
+        self.costume_override_table() + self.costume_override_count as usize * CostumeOverride::SIZE
+    }
+    fn particle_script_table(&self) -> usize {
+        self.particle_bank_table() + self.particle_bank_count as usize * ParticleBankDesc::SIZE
+    }
+    fn particle_texture_table(&self) -> usize {
+        self.particle_script_table()
+            + self.particle_script_count as usize * ParticleScriptDesc::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -2725,6 +2927,64 @@ impl<'a> Pack<'a> {
     pub fn stage_points(&self, s: &StageDesc) -> impl Iterator<Item = MapPoint> + '_ {
         let range = s.first_point..s.first_point + s.point_count;
         range.filter_map(move |i| self.map_point(i))
+    }
+
+    pub fn particle_bank(&self, i: u32) -> Option<ParticleBankDesc> {
+        if i >= self.particle_bank_count {
+            return None;
+        }
+        let at = self.particle_bank_table() + i as usize * ParticleBankDesc::SIZE;
+        Some(ParticleBankDesc {
+            first_script: u32_at(self.data, at),
+            script_count: u32_at(self.data, at + 4),
+            first_texture: u32_at(self.data, at + 8),
+            texture_count: u32_at(self.data, at + 12),
+        })
+    }
+
+    pub fn particle_script(&self, i: u32) -> Option<ParticleScriptDesc> {
+        if i >= self.particle_script_count {
+            return None;
+        }
+        let at = self.particle_script_table() + i as usize * ParticleScriptDesc::SIZE;
+        Some(ParticleScriptDesc {
+            kind: u16_at(self.data, at),
+            texture_id: u16_at(self.data, at + 2),
+            generator_lifetime: u16_at(self.data, at + 4),
+            particle_lifetime: u16_at(self.data, at + 6),
+            flags: u32_at(self.data, at + 8),
+            gravity: f32_at(self.data, at + 12),
+            friction: f32_at(self.data, at + 16),
+            velocity: [
+                f32_at(self.data, at + 20),
+                f32_at(self.data, at + 24),
+                f32_at(self.data, at + 28),
+            ],
+            unknown_20: f32_at(self.data, at + 32),
+            unknown_24: f32_at(self.data, at + 36),
+            update_rate: f32_at(self.data, at + 40),
+            size: f32_at(self.data, at + 44),
+            bytecode_offset: u32_at(self.data, at + 48),
+            bytecode_len: u32_at(self.data, at + 52),
+        })
+    }
+
+    pub fn particle_texture(&self, i: u32) -> Option<ParticleTextureDesc> {
+        if i >= self.particle_texture_count {
+            return None;
+        }
+        let at = self.particle_texture_table() + i as usize * ParticleTextureDesc::SIZE;
+        Some(ParticleTextureDesc {
+            first_frame: u32_at(self.data, at),
+            frame_count: u32_at(self.data, at + 4),
+            width: u16_at(self.data, at + 8),
+            height: u16_at(self.data, at + 10),
+            flags: u32_at(self.data, at + 12),
+        })
+    }
+
+    pub fn particle_bytecode(&self, script: &ParticleScriptDesc) -> Option<&'a [u8]> {
+        self.blob(script.bytecode_offset, script.bytecode_len as usize)
     }
 
     /// Where player `n` starts. `MPMapObjKind` 0..=3 are the four spawns.
@@ -3185,6 +3445,73 @@ mod tests {
         let pal = pack.palette_data(&t).unwrap();
         assert_eq!(pal.len(), 64);
         assert_eq!(u32_at(pal, 0), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn particle_bank_round_trips_scripts_series_and_frames() {
+        let code = [0x00, 0xFF, 0, 0];
+        let image = [0x12, 0x34];
+        let script = crate::particle::Script {
+            kind: 2,
+            texture_id: 0,
+            generator_lifetime: 7,
+            particle_lifetime: 11,
+            flags: 0x1234,
+            gravity: -0.5,
+            friction: 0.75,
+            velocity: [1.0, 2.0, 3.0],
+            unknown_20: 4.0,
+            unknown_24: 5.0,
+            update_rate: -1.0,
+            size: 16.0,
+            bytecode: &code,
+        };
+        let source_texture = crate::particle::Texture {
+            format: crate::texture::Format::I,
+            size: crate::texture::BitSize::Bits4,
+            width: 2,
+            height: 2,
+            flags: 1,
+            images: alloc::vec![&image],
+            palettes: alloc::vec![],
+        };
+        let frame = PspTexture {
+            width: 2,
+            height: 2,
+            stride: 2,
+            format: Psm::PsmT4,
+            data: alloc::vec![0x12, 0x34],
+            swizzled: false,
+            palette: crate::psp_texture::intensity_palette(crate::texture::BitSize::Bits4),
+            levels: 1,
+        };
+
+        let mut writer = PackWriter::new();
+        writer.add_particle_bank(&[script], &[source_texture], &[alloc::vec![frame]]);
+        let bytes = writer.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(
+            (pack.particle_bank_count(), pack.particle_script_count()),
+            (1, 1)
+        );
+        let bank = pack.particle_bank(0).unwrap();
+        assert_eq!((bank.script_count, bank.texture_count), (1, 1));
+        let packed_script = pack.particle_script(bank.first_script).unwrap();
+        assert_eq!(
+            (packed_script.kind, packed_script.particle_lifetime),
+            (2, 11)
+        );
+        assert_eq!(
+            pack.particle_bytecode(&packed_script),
+            Some(code.as_slice())
+        );
+        let series = pack.particle_texture(bank.first_texture).unwrap();
+        assert_eq!((series.frame_count, series.width, series.height), (1, 2, 2));
+        assert_eq!(
+            pack.texture(series.first_frame).unwrap().psm,
+            Psm::PsmT4 as u8
+        );
     }
 
     #[test]
