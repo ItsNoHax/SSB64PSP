@@ -597,7 +597,7 @@ of a primitive-colour or lighting failure.
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, RE-128, RE-152 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, RE-128, RE-152, RE-169 in `docs/reverse-engineering.md`.
 
 ---
 

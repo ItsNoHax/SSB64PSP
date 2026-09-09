@@ -10,6 +10,39 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-169 — Deterministic physical-PSP staging closes the stale-build hole (`PLAN.md` R0.5)
+
+**Problem.** R0.5's final canopy check requires physical PSP evidence, but the
+documented procedure only said to copy an EBOOT and pack into `PSP/GAME/`.
+RE-070 already demonstrated that a stale EBOOT can invalidate a visual result,
+and the later black-screen investigation demonstrated the same risk for the
+gitignored pack. The loose hardware instructions neither guaranteed a rebuild
+nor recorded which two artifacts were actually tested.
+
+**Implementation.** `tools/stage-psp-regression.sh` now accepts an explicit
+mounted PSP root and refuses it unless `PSP/GAME` exists. It regenerates
+`ssb64.pak` from the user's local verified ROM, removes the previous EBOOT,
+builds `ssb64-psp` with `regression_capture`, and stages both under the runtime
+path `PSP/GAME/ssb64/`. A colocated manifest records the Git commit, build
+mode, UTC timestamp, and SHA-256 of both artifacts. `docs/visual-regression.md`
+now gives the exact staging/capture procedure and distinguishes a qualitative
+LCD photograph from a direct 480x272 capture suitable for documented numeric
+comparison.
+
+**Verification.** `bash -n tools/stage-psp-regression.sh` passes. The exact
+pack and regression EBOOT were rebuilt and the script was exercised against a
+temporary PSP-shaped directory; the staged files matched their sources
+byte-for-byte and their manifest hashes verified with `sha256sum -c`.
+Regression EBOOT / pack SHA-256:
+`9678f50695bea1911d8a86086e5f261fda5c89aff3c3d56c1252721b02f29801` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+No PSP was connected (`lsusb` showed no Sony device), so this closes
+preparation and provenance only. The canopy acceptance item remains
+`VERIFYING` pending the actual physical capture; no rendering parameter or
+completion claim changed.
+
+---
+
 ## RE-168 — Post-table-resolution combiner census closes the stale colour attribution (`PLAN.md` R0.6)
 
 **Question.** After RE-163 resolved all 127 discovered material graphs, does

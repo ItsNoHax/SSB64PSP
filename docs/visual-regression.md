@@ -100,12 +100,33 @@ deterministic scene" acceptance item.
 
 ### 3. Physical PSP hardware (documented, not yet executed)
 
-Copy the same EBOOT (`psp/target/mipsel-sony-psp/release/EBOOT.PBP`, built
-with `--features regression_capture`) and the asset pack
-(`assets/generated/ssb64.pak`) to a PSP's `PSP/GAME/` directory, run it,
-wait past 4 seconds, and photograph or capture the screen. Not yet executed
-in this task; this project's existing device-verification precedent (e.g.
-RE-098, RE-114) is the model to follow when it is.
+Connect the PSP in USB mode and mount its Memory Stick. Stage a freshly rebuilt
+pack and deterministic EBOOT with:
+
+```
+tools/stage-psp-regression.sh /path/to/psp-mount
+```
+
+The script refuses a target without `PSP/GAME`, rebuilds the pack from the
+local verified ROM, deletes the prior EBOOT before building with
+`regression_capture`, and installs both files under
+`PSP/GAME/ssb64/`. It also writes `regression-manifest.txt` with the Git
+commit, build mode, UTC time, and SHA-256 hashes, preventing a stale binary or
+pack from being mistaken for current evidence. An alternate legally obtained
+ROM path may be supplied as the second argument.
+
+Safely eject the PSP, launch SSB64PSP, wait at least 5 seconds (the scene
+freezes at tick 240), and photograph or directly capture the screen. Frame the
+entire LCD square-on with focus and exposure locked if using a camera; retain
+the uncropped original. Record the PSP model, firmware or CFW, Memory Stick,
+commit and the two hashes from the manifest, capture method, and observed FPS
+or failures. A camera photograph is qualitative hardware evidence and must not
+be passed to the exact PPSSPP pixel comparator; a direct 480x272 digital
+capture may be compared only after documenting any capture-device scaling or
+colour conversion.
+
+This step has not yet been executed; this project's existing
+device-verification precedent (e.g. RE-098, RE-114) is the model to follow.
 
 ### 4. Original SSB64 (repeatable camera comparison executed)
 

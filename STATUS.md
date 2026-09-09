@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (RE-168)
+**Last updated:** 2026-09-09 (RE-169)
 
 ---
 
@@ -34,6 +34,17 @@ validation as necessary to distinguish PPSSPP software-renderer behaviour.
 No further parameter tuning is evidence-supported. Relevant commits:
 `9b44173 render: preserve lit combiner color scale`; RE-168 documentation in
 this work's `docs: close material color census` commit.
+
+RE-169 makes the remaining physical test reproducible: the new
+`tools/stage-psp-regression.sh` rebuilds both ROM-derived pack and deterministic
+capture EBOOT, validates the PSP mount shape, stages them at
+`PSP/GAME/ssb64/`, and records commit/build/time plus both SHA-256 hashes in a
+manifest. The matching capture checklist is in `docs/visual-regression.md`.
+The workflow was verified against a temporary PSP-shaped directory, but no
+Sony device was connected, so R0.5 correctly remains `VERIFYING`. The verified
+regression EBOOT / pack SHA-256 are
+`9678f50695bea1911d8a86086e5f261fda5c89aff3c3d56c1252721b02f29801` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
 
 RE-166 corrects a source-state loss in RE-165's runtime-lighting
 path: `G_MW_LIGHTCOL` is independent of material flags and an authored zero is
@@ -3740,7 +3751,10 @@ untyped set. `R0.8 — Transform Correctness` is `COMPLETE`.
 
 R0.5's final canopy acceptance criterion requires a physical PSP capture. No
 physical PSP was available in this session, and PPSSPP cannot establish the
-real GE sampling result. The historical PPSSPP black screen below is resolved.
+real GE sampling result. RE-169 removes stale-build/provenance ambiguity from
+the future hardware run; invoke `tools/stage-psp-regression.sh
+<psp-mount-root>` once the PSP is connected. The historical PPSSPP black screen
+below is resolved.
 
 ### Resolved: PPSSPP black screen
 
