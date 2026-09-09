@@ -10,6 +10,72 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-186 — Archive-wide `LBParticle` combine-mode census: `NOISE`/`DITHER`/`ALPHABLEND` are real but unreachable at frame 4 (`PLAN.md` R1)
+
+**Problem.** RE-183's `draw_particle` implements only `lbparticle.c:2057-
+2099`'s `ENVCOLOR` branch (`(PRIM-ENV)*TEXEL+ENV`, reusing RE-073/074's mesh
+`TEXTURE_BLEND` wiring) and declines the `NOISE` combine
+(`NOISE,TEXEL0,TEXEL0,PRIMITIVE` LERP) and the `DITHER`/`ALPHABLEND`-gated
+alpha-compare/blend-colour state, per its own doc comment, without having
+measured how often real scripts actually reach either declined path. RE-185
+left this exact census as open "remaining scope."
+
+**Evidence.** Extended `romtool particles`' existing frame-4 settle-point
+walk (RE-184's own convention: spawn, tick 4 times, `Rng::new(1)`, the same
+instant `draw_particle`'s combine-mode branch reads) to also record each
+*visible* script's `ParticleState::flags` at that instant, rather than
+scanning script bytecode for the opcodes in isolation — a script can set and
+clear `NOISE` (opcodes `0xB5`/`0xB6`) multiple times before it draws, so only
+the flag's live value at the draw instant answers the question. Ran against
+the real US ROM (`rom/Super Smash Bros. (USA).z64`):
+
+```
+combine-mode census among visible scripts (lbparticle.c:2057-2099): ENVCOLOR 90/148, NOISE 0/148, DITHER 0/148, ALPHABLEND 0/148
+```
+
+`ENVCOLOR` (90/148, 60.8%) is already shipped and matches the already-high
+usage RE-183 anecdotally found. `NOISE`, `DITHER` and `ALPHABLEND` are each
+0/148 — no real script reaches any of the three declined paths at its own
+frame-4 settle point, the identical "real opcode, zero real reachable use"
+shape RE-127 already found for RDP LOD/mip fields and RE-182 found for
+`VORTEX`.
+
+**Implementation.** `crates/ssb-rom/src/particle.rs::flag::{NOISE,DITHER,
+ALPHABLEND}` remain decoded (needed to reproduce `ParticleState` faithfully
+and to keep this census re-runnable) but `psp/src/meshdraw.rs::draw_particle`
+is correctly left as-is — implementing GE combine/alpha-compare paths for
+flags nothing in the ROM reaches would be speculative work with nothing to
+verify it against, the same standing rule RE-182 already applied to
+`VORTEX`. Added `romtool particles`' new summary line (`tools/romtool/src/
+main.rs::particles`) and a pinned regression test,
+`real_rom_frame_4_combine_mode_census_is_envcolor_90_noise_dither_alphablend_0`
+(`crates/ssb-rom/src/particle.rs`, `SSB64_ROM`-gated, same pattern as RE-184's
+148/160 visibility pin) — a nonzero `NOISE`/`DITHER`/`ALPHABLEND` count in a
+future run means a real script now reaches a declined path and needs a
+matching RE update, not a silent pass.
+
+**Verification.** `cargo test --workspace` (320 `ssb-rom` tests, was 318),
+and the same suite again with `SSB64_ROM` set to the real ROM path (new
+census test passes: `visible_count == 148`, `(envcolor, noise, dither,
+alphablend) == (90, 0, 0, 0)`), strict Clippy (`cargo clippy --workspace --
+-D warnings` and `cargo clippy -p ssb-rom --no-default-features -- -D
+warnings`), and `cargo fmt --check` all pass. No `psp/` crate file changed,
+so no new `cargo psp`/PPSSPP run was needed this pass — RE-185's own
+on-device sweep already covers `draw_particle`'s unchanged behaviour.
+
+**Remaining scope.** Multi-particle spawn-tree execution, the `LBGenerator`
+subsystem, and wiring a real spawn event (rather than the debug viewer) all
+remain, per RE-182/183/184/185's own lists. No physical-PSP claim; `R0.5` is
+unaffected.
+
+**Confidence:** high that no real script reaches `NOISE`/`DITHER`/
+`ALPHABLEND` at its own frame-4 settle point (measured archive-wide, not
+sampled, and pinned by a regression test against the real ROM); no claim
+about whether a script's own later ticks (past frame 4) ever sets these
+flags — the same settle-point-only scope RE-183/184/185 already carry.
+
+---
+
 ## RE-183 — PSP-side `LBParticle` billboard drawing, single-script proof of concept (`PLAN.md` R1)
 
 **Problem.** RE-180-182 decode, pack and simulate `LBParticle` state end to

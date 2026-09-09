@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 exhaustive on-device LBParticle frame-4 screenshot sweep, and a camera-transform bug fix it found, RE-185)
+**Last updated:** 2026-09-09 (R1 archive-wide LBParticle combine-mode census — NOISE/DITHER/ALPHABLEND confirmed unreachable, RE-186)
 
 ---
 
@@ -18,7 +18,35 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–185).
+`IN_PROGRESS` (RE-172–186).
+
+RE-186 closes the combine-mode census RE-185 left as open "remaining
+scope." Extended `romtool particles`' existing frame-4 settle-point walk
+(spawn, tick 4 times, `Rng::new(1)`, the same instant `draw_particle`'s
+combine-mode branch reads) to also record each *visible* script's live
+`ParticleState::flags` at that instant, rather than scanning bytecode
+opcodes in isolation -- a script can set/clear `NOISE` more than once
+before drawing, so only the flag's value at the draw instant answers the
+question. Ran archive-wide against the real US ROM: `ENVCOLOR` 90/148
+(60.8%, already shipped since RE-183); `NOISE`, `DITHER` and `ALPHABLEND`
+each 0/148 -- no real script reaches any of the three declined combine/
+alpha-compare paths (`lbparticle.c:2057-2099`) at its own frame-4 settle
+point, the same "real opcode, zero real reachable use" shape RE-127 found
+for RDP LOD/mip fields and RE-182 found for `VORTEX`. `psp/src/
+meshdraw.rs::draw_particle` is correctly left unchanged -- implementing
+GE paths for flags nothing in the ROM reaches would be speculative with
+nothing to verify against. Added a pinned `SSB64_ROM`-gated regression
+test (`real_rom_frame_4_combine_mode_census_is_envcolor_90_noise_dither_
+alphablend_0`, `crates/ssb-rom/src/particle.rs`) alongside RE-184's own
+148/160 visibility pin, plus a new `romtool particles` summary line.
+`cargo test --workspace` (320 `ssb-rom` tests, was 318, both with and
+without `SSB64_ROM` set), strict Clippy (default and `--no-default-
+features`), and `cargo fmt --check` all pass. No `psp/` file changed, so
+no new `cargo psp`/PPSSPP run was needed -- RE-185's own on-device sweep
+already covers `draw_particle`'s unchanged behaviour. Multi-particle
+spawn-tree execution, the `LBGenerator` subsystem, and a real spawn event
+(rather than the debug viewer) all still remain. No physical-PSP claim;
+`R0.5` unaffected. Evidence: RE-186.
 
 RE-185 does the on-device screenshot sweep RE-184 left open
 (`tools/run-ppsspp.sh --audit-particles N`, added mirroring the existing
@@ -4342,6 +4370,45 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: archive-wide LBParticle combine-mode census, NOISE/DITHER/ALPHABLEND confirmed unreachable (RE-186)
+
+* Extended `tools/romtool/src/main.rs`'s `particles` command: at the
+  existing frame-4 settle-point sample (RE-184's own convention), also
+  records each *visible* script's live `ParticleState::flags` (the same
+  instant `draw_particle`'s combine-mode branch reads), not just whether
+  it resolves a texture frame.
+* `cargo run --release -p romtool -- particles "rom/Super Smash Bros. (USA).z64"`
+  — `combine-mode census among visible scripts (lbparticle.c:2057-2099):
+  ENVCOLOR 90/148, NOISE 0/148, DITHER 0/148, ALPHABLEND 0/148`.
+* Added `crates/ssb-rom/src/particle.rs::tests::
+  real_rom_frame_4_combine_mode_census_is_envcolor_90_noise_dither_alphablend_0`
+  (`SSB64_ROM`-gated), pinning `(envcolor, noise, dither, alphablend) ==
+  (90, 0, 0, 0)` among 148 visible scripts, alongside RE-184's existing
+  148/160 visibility pin.
+* `cargo test --workspace` — 320 passing (was 318), both with and without
+  `SSB64_ROM` set (`SSB64_ROM="$(pwd)/rom/Super Smash Bros. (USA).z64"
+  cargo test --workspace -p ssb-rom particle::` — 20/20 `particle::` tests
+  pass including the two ROM-gated ones).
+* `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+* `cargo clippy -p ssb-rom --no-default-features -- -D warnings` — clean.
+* `cargo fmt --check` — clean.
+* No `psp/` crate file changed (only `tools/romtool/src/main.rs` and
+  `crates/ssb-rom/src/particle.rs`'s test module) — no new `cargo psp`/
+  PPSSPP run needed; RE-185's on-device sweep already covers
+  `draw_particle`'s unchanged behaviour.
+* Result: `NOISE`, `DITHER` and `ALPHABLEND` are real, decoded flags with
+  zero real reachable uses at any script's own frame-4 settle point —
+  `psp/src/meshdraw.rs::draw_particle` is correctly left as-is rather than
+  implementing speculative combine/alpha-compare paths. Multi-particle
+  spawn-tree execution, the `LBGenerator` subsystem, and a real spawn
+  event still remain.
+* Result: RE-186 recorded in `docs/reverse-engineering.md`; `PLAN.md` R1
+  and this file updated to match.
+* Affected subsystem: `tools/romtool/src/main.rs` (`particles`),
+  `crates/ssb-rom/src/particle.rs` (new pinned test) — plus documentation.
+* PPSSPP: not run this pass (no `psp/` change; RE-185's sweep stands).
+* Physical PSP: not tested this pass — see §8 below.
 
 ## 2026-09-09 — R1: exhaustive on-device LBParticle frame-4 screenshot sweep, camera-transform bug fix (RE-185)
 

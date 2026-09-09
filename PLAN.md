@@ -2787,8 +2787,21 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   headers unique. An on-device screenshot sweep is therefore now done;
   multi-particle spawn-tree execution, the `NOISE`/dither/alpha-threshold
   combine cases, `LBGenerator` itself, and a real spawn event (rather than
-  the debug viewer) all remain. Facing-dependent alternate manager streams
-  also remain before this row can close
+  the debug viewer) all remain. RE-186 closes the combine-mode census that
+  last item needed before it can be judged: extended `romtool particles`'
+  frame-4 settle-point walk to record each visible script's live flags at
+  the draw instant, archive-wide against the real ROM. `ENVCOLOR` is
+  90/148 (already shipped); `NOISE`, `DITHER` and `ALPHABLEND` are each
+  0/148 — no real script reaches any of the three declined combine/
+  alpha-compare paths at its own frame-4 settle point, the same "real
+  opcode, zero real reachable use" shape RE-127 found for RDP LOD and
+  RE-182 found for `VORTEX`. Pinned by a new `SSB64_ROM`-gated regression
+  test alongside RE-184's own 148/160 visibility pin; no `psp/` file
+  changed, so `draw_particle` is correctly left as-is rather than
+  implementing paths nothing in the ROM reaches. Multi-particle
+  spawn-tree execution, `LBGenerator` itself, and a real spawn event still
+  remain. Facing-dependent alternate manager streams also remain before
+  this row can close
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
