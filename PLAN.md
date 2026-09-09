@@ -2679,10 +2679,19 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   restart): `romtool effects` resolves 17/26 tables and confirms Link Spin
   Attack's primitive alpha measurably ramps up by frame 4 against the real
   ROM. The other 9 tables decode cleanly but resolve no texture on their own
-  primitive at pack time (an open per-file tracing gap), and
-  `psp/src/meshdraw.rs` does not yet consume any of this -- no PPSSPP
-  capture exists for the material step. Facing-dependent alternate streams
-  and the separate `LBParticle` script/texture-bank renderer also remain
+  primitive at pack time (an open per-file tracing gap). RE-176 wires the
+  texture-swap half of consumption into `psp/src/meshdraw.rs`
+  (`EffectMaterialAnimator::resolved_texture` overrides the bound texture
+  before `apply_material`'s existing bind path) and a matching
+  `--audit-effect-materials` PPSSPP capture: 24/26 objects show measurable
+  frame-4 content, and the same 2 (NessPKFlash, LinkSpinAttack) remain
+  correctly rest-invisible as RE-173 already established. Verification also
+  caught and fixed an unrelated camera-determinism bug (a free-drifting debug
+  spin could edge-on a single-sided card), confirmed via a reversible
+  on-device experiment to be independent of the texture-swap logic itself.
+  Live colour-track GE state (resolved and unit-tested, not yet consumed by
+  the renderer), the 9-table tracing gap, facing-dependent alternate streams,
+  and the separate `LBParticle` script/texture-bank renderer all remain
   before this row can close
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain

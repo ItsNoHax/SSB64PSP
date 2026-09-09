@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 manager-effect transform animation playback)
+**Last updated:** 2026-09-09 (R1 manager-effect material animation texture-swap playback)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172–175). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172–176). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -91,15 +91,52 @@ work only, verified by `romtool effects` and the ROM-free test suite, not by
 a PPSSPP capture. All 295 `ssb-rom`/`romtool` tests, strict Clippy, formatting,
 the `no_std` target build, and the pinned-nightly PSP release build
 (`EBOOT.PBP`, valid PBP magic) pass. Rebuilt pack SHA-256
-`7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`. Not yet
-committed.
+`7c9f07d939f162db927c9a8b9430f2f608a77802c870e1b0766222b6191e6182`.
+Implementation commit: `2456eea`.
+
+RE-176 wires the texture-swap half of that consumption gap into the PSP
+renderer. `apply_material` (`psp/src/meshdraw.rs`) now resolves an effective
+texture index through a new `effect_mat_anim: Option<&EffectMaterialAnimator>`
+parameter — `resolved_texture(pack, p.mat_anim)`, falling back to `p.texture`
+when unresolved — threaded alongside the existing pack-lifetime `mat_anim`
+parameter through the whole `draw_object`/`draw_mesh` call chain, reusing
+`bind_texture`'s already-proven UV/wrap/mip path unchanged. A new
+`effect_material_audit_capture` feature and `--audit-effect-materials N`
+harness flag mirror RE-174's transform-audit structure: restart
+`EffectMaterialAnimator` against an object's own bound `PrimDesc.mat_anim`
+indices on selection, tick to the same deterministic frame 4, and capture.
+Verification caught a real bug that turned out to be a **camera-determinism
+regression, not a texture-swap defect**: one of the 26 objects
+(NessPKThunderWave) captured blank despite RE-173's own plain rest-pose audit
+already showing it visible. A reversible on-device experiment (temporarily
+forcing the effective texture back to `p.texture`, leaving `effect_mat_anim`
+otherwise fully wired) reproduced the identical blank result, proving the
+swap itself was not the cause — RE-174's fixed 0.45-radian oblique spin angle
+(added specifically so a free-drifting debug camera can't land a
+`CULL_BACK`, non-billboard card edge-on) had never been extended to the new
+feature. Fixed by adding `effect_material_audit_capture` to both of RE-174's
+existing spin-control `cfg!` gates. With that fix, `tools/run-ppsspp.sh
+--audit-effect-materials 26` captures 24/26 with measurable frame-4 content
+and the same 2 (NessPKFlash, LinkSpinAttack) correctly rest-invisible,
+matching RE-173's own established exceptions. RE-174's own transform audit
+and the default non-audit build were re-verified unaffected by the same
+change. All 451 workspace tests, strict Clippy, `cargo fmt --check` (root and
+`psp/`), `bash -n`, and the default PSP release build pass; PPSSPP process
+cleanup was confirmed after every run. EBOOT SHA-256
+`bfb47896576e2c3c1d7a8f430d6ef8d300fb87550709102b739bc44747293d10`; pack
+SHA-256 unchanged from RE-175 (no pack-format change).
+Captures remain outside Git at
+`/home/alberto/ppsspp-test/effect-material-audit/`. Implementation commit:
+pending (see below).
 
 The next bounded step within this same task is closing the remaining 9-table
-gap and wiring `psp/src/meshdraw.rs` to actually apply the resolved sprite/
-palette/colour state (texture swap first, since it reuses the already-proven
-`TextureDesc.mat_anim` binding path; live colour-track GE state is a separate,
-harder design question — vertex-baked colour has no per-primitive override
-point today). The independent `LBParticle` decoder/runtime remains
+gap (ImpactWave, CommonSpark, DamageFlyMDust, ShockSmall, PikachuUnk,
+FalconKick, FalconPunch, MBallThrown, YoshiEntryEgg — RE-175's own per-file
+source-tracing gap) and consuming live colour-track GE state
+(`EffectColors`'s prim/env/blend/light1/light2 tracks are resolved and
+unit-tested but nothing on the device side reads them yet — vertex-baked
+colour has no per-primitive override point today, the harder design question
+RE-175 flagged). The independent `LBParticle` decoder/runtime remains
 unimplemented and keeps the R1 row open. Facing-dependent alternate Poké
 Ball/Kirby Entry Star streams also remain gameplay integration; RE-174 packs
 the descriptor-selected variant rather than claiming both runtime branches.
