@@ -4342,6 +4342,7 @@ not more `romtool` investigation.
   (`tools/run-ppsspp.sh --audit-particles N`, RE-173's own method, not yet
   added), multi-particle spawn-tree execution, the `LBGenerator` subsystem,
   and an `ENVCOLOR`/`NOISE` census. No physical-PSP claim; `R0.5` unaffected.
+  Implementation commit: `189455b`.
 
 ## 2026-09-09 — R1: LBParticle PSP billboard-drawing proof of concept (RE-183)
 
