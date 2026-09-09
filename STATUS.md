@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-09 (R1 effect-render inventory)
+**Last updated:** 2026-09-09 (R1 exhaustive manager-effect rest-pose audit)
 
 ---
 
@@ -18,7 +18,7 @@ software rendering coverage.
 
 ## Task Status
 
-`IN_PROGRESS` (RE-172). Original-source inspection establishes two distinct
+`IN_PROGRESS` (RE-172/173). Original-source inspection establishes two distinct
 required paths: 53 static `EFDesc` records in `ef/efmanager.c`, plus the
 separate `LBParticle` script/texture-bank runtime used by dust, flame,
 sparkle, hit and several stage effects. Three descriptors are controller-only
@@ -35,12 +35,23 @@ archive-wide material verification now covers 468 nodes with zero mismatches.
 The rebuilt pack SHA-256 is
 `019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87`.
 
-All 438 workspace tests and strict Clippy pass; the PSP release build passes
-with the existing six warnings. A three-second PPSSPP-software smoke run loads
-the pack and renders Dream Land at 60 FPS with a clean log. The next bounded
-step within this same task is exhaustive PPSSPP capture of the 46 manager
-objects and packing/playing their `AObjEvent32` scripts. The independent
-`LBParticle` decoder/runtime remains unimplemented and keeps the R1 row open.
+RE-173 adds the completed exhaustive PPSSPP-software rest-pose audit. Its
+source-ordered capture covers all 46 assets: all 43 authored-visible objects
+contain measurable centred pixels (minimum standard deviation `0.0455858`),
+all identity headers are unique, and all frames display 60 FPS. Ness PK Flash,
+Samus Entry Point and Link Spin Attack are deliberately blank at rest; their
+original descriptors/scripts prove `1e-5` scale or zero primitive alpha, and
+the audit requires those exact three to remain blank rather than misclassifying
+them as failed draws. Manifest SHA-256 is
+`742b4b758c10ef90291a45358453513606d8a11021f9cea05bb454e6e3cc314a`;
+captures remain outside Git at
+`/home/alberto/ppsspp-test/re173/effect-audit/`. All 439 workspace tests,
+strict Clippy and the PSP release audit build pass. Implementation commit:
+`e6bfc23`.
+
+The next bounded step within this same task is packing and playing the manager
+effects' `AObjEvent32` transform/material scripts. The independent `LBParticle`
+decoder/runtime remains unimplemented and keeps the R1 row open.
 
 The preceding animation task is `COMPLETE` (RE-171).
 `tools/run-ppsspp.sh --audit-animations 532` rendered and captured every
@@ -69,8 +80,8 @@ smoke run renders Dream Land at 60 FPS with no relevant log lines; normal
 EBOOT SHA-256 is
 `53f25a9b97965c9db12493cd16811cc25dca6d667edb2cee2711571c220fed53`.
 
-The next eligible software-only task is R1's `all required effects render`
-audit. Physical hardware remains unavailable; R0.5 stays `VERIFYING`, R1 as a
+The next eligible software-only task is R1 manager-effect `AObjEvent32`
+playback. Physical hardware remains unavailable; R0.5 stays `VERIFYING`, R1 as a
 whole stays `IN_PROGRESS`, and R2/R3/combat remain locked.
 
 The preceding fighter/costume reconciliation is `COMPLETE`.
@@ -101,9 +112,10 @@ The captures remain outside Git under
 R0.5 remains `VERIFYING`, and physical PSP/R2 acceptance remains unsatisfied.
 The user's temporary hardware deferral permits independent software-only R1
 work; it does not mark R0 complete or unlock R3/combat. The next eligible task
-is R1's `all required effects render` audit. Relevant R1 commits: `d68f199`
-(stages), `4964a97` (fighters/costumes), `e85aa19` (animations), and
-`826c02a` (sparse animation lookup).
+is manager-effect `AObjEvent32` playback. Relevant R1 commits: `d68f199`
+(stages), `4964a97` (fighters/costumes), `e85aa19` (animations), `826c02a`
+(sparse animation lookup), `dc8043b` (effect packing), and `e6bfc23` (effect
+rest-pose audit).
 
 RE-168 completes R0.6's queued post-RE-163 combiner census.
 The source-attributed current-pack sample accepts 65,000/65,199 emitted
@@ -3651,11 +3663,11 @@ Reconciliation` and `R0.9 — Stage Animation` are also `COMPLETE` — see
 
 ## Next Eligible Task
 
-**Resume `R1 — all required effects render`.** RE-172 completes the
-source-backed static-manager inventory and packs all 46 display-bearing
-assets. Next, expose those exact objects through an exhaustive PPSSPP capture
-mode and pack/play their `AObjEvent32` animation tables; then investigate the
-separate `LBParticle` script and texture-bank format. The user explicitly
+**Resume `R1 — all required effects render`.** RE-172/173 complete the
+source-backed static-manager inventory, packing, and exhaustive PPSSPP
+rest-pose capture for all 46 display-bearing assets. Next, pack and play their
+`AObjEvent32` transform/material animation tables, then investigate the separate
+`LBParticle` script and texture-bank format. The user explicitly
 deferred unavailable physical-PSP work on 2026-09-09. R0.5 therefore remains
 `VERIFYING`; do not tune the canopy from PPSSPP appearance, mark R0/R1
 complete, begin R3, or unlock combat.
@@ -4015,6 +4027,27 @@ not more `romtool` investigation.
 ---
 
 # 7. Last Verification
+
+## 2026-09-09 — R1: exhaustive manager-effect rest-pose audit (RE-173)
+
+* Shared ordered inventory regression — 46 unique source keys; `romtool` and
+  the PSP build consume the same sequence; three rest-invisible keys are an
+  explicit subset.
+* `romtool effects assets/generated/ssb64.pak` — 46/46 objects, 668 triangles;
+  reports the three AObjEvent32-dependent invisible rest states.
+* `tools/run-ppsspp.sh --no-build --audit-effects 46 --seconds 2` — pass under
+  PPSSPP 1.20.4 software rendering: 46/46 unique source-identifying headers,
+  43/43 visible centre crops above threshold, three source-required blank
+  crops exactly zero, 60 FPS throughout, clean log.
+* EBOOT / pack / manifest SHA-256:
+  `5fde5e70fc223a5b9008d257439b0f035ae56540bf848266598b69bacd2e92b7` /
+  `019460876e5efc476adfd1274a0f32dbfd55199f2beb1b5d16efd5b22b559e87` /
+  `742b4b758c10ef90291a45358453513606d8a11021f9cea05bb454e6e3cc314a`.
+* `cargo test --workspace --all-targets` — 439 passing; strict workspace
+  Clippy, `bash -n tools/run-ppsspp.sh`, and `git diff --check` pass.
+* Pinned-nightly PSP `effect_audit_capture` release build — pass with the
+  existing six warnings.
+* No physical PSP was available; R0.5/R2 remain unsatisfied.
 
 ## 2026-09-09 — R1: manager-effect inventory and direct-object packing (RE-172)
 
