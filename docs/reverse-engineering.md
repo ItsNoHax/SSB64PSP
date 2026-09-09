@@ -10,6 +10,66 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-179 — Manager-effect live colour tracks reach PSP draw state (`PLAN.md` R1)
+
+**Problem.** RE-175 decoded and replayed all five material colour-track slots,
+but RE-176 consumed only texture selection. `PrimDesc` vertices still contained
+their pack-time colour. Catch Swirl, Item Get Swirl, Link Spin Attack and other
+manager effects therefore ignored live PRIM state even though
+`EffectMaterialAnimator::resolved_colors` produced the correct values.
+
+**Source scope.** A temporary, reverted `romtool effects` trace sampled every
+bound manager-effect material script at deterministic frame 4. There are 27
+colour-bearing primitive scripts. Every one drives PRIM; Damage Slash, Reflect
+Break, Link Entry Wave and Link Entry Beam additionally drive LIGHT_1 and/or
+LIGHT_2. No manager script drives ENV or BLEND. This bounds required current
+behaviour and avoids inventing a BLEND mapping with no exercised source path.
+`gcDrawMObjForDObj` in `refs/ssb-decomp-re/src/sys/objdisplay.c` confirms these
+tracks write the corresponding N64 PRIM and light registers at draw time.
+
+**Implementation.** `EffectColors` now resolves live values into packed PSP
+colour sources using mappings already proved by RE-073/080: flat-colour vertex
+RGB comes from PRIM, texture-blend base RGB comes from ENV, and the GE texture
+environment target comes from PRIM. PRIM alpha replaces vertex alpha as an
+independent channel. LIGHT_1/LIGHT_2 override the static values when the
+existing runtime-lit scope is active. Because pack vertices are immutable and
+shared between primitives, only colour-animated draws expand indexed corners
+into `sceGuGetMemory` storage and submit them with an otherwise identical
+unindexed vertex format. Static draws retain the zero-copy indexed path.
+
+**Regression proof.** New host test
+`effect_colors_map_onto_the_two_packed_combiner_sources` pins flat PRIM,
+texture-blend ENV/PRIM-alpha, ordinary PRIM-alpha and ABGR packing. All 454
+workspace tests and strict workspace Clippy pass. `cargo fmt --check` passes
+for both workspaces. Pinned-nightly PSP audit build succeeds.
+
+`tools/run-ppsspp.sh --audit-effect-materials 26` under PPSSPP software keeps
+all 26 unique identity headers, 24 visible samples, the two established
+authored-invisible samples, 60 FPS, and a clean log. Compared with the
+pre-change frame-4 baseline, Catch Swirl (`effect-material-06.png`) changes
+from SHA-256 `9440b09534cb455d2ca1880f40ccfca596c6f99e9388c887dc5b4c658b985c38`
+to `5792d9b217cf3ea8cb9d32e93e8d2c2482bddaaf0cecc0b91ac0112a0a7753fe`;
+Item Get Swirl (`effect-material-11.png`) changes to
+`ef15241b7a71cb4bfcef7422688b6d3044023b9f6d149143420e4be07d6c94fe`.
+Those are the two flat-colour effects whose frame-4 PRIM RGB differs from the
+baked rest value. Other source paths either retain the same frame-4 resolved
+colour or update a GE source that does not change this audit's pixels.
+Manifest SHA-256 is
+`9b22719b331a963e2ddb1a636e25f4ec8da72f50906a3a300fd58b252b3cd503`;
+EBOOT SHA-256 is
+`14c87889506f53c1fcb8aca7e1860faa97bc112622129d798943d7453e1a045f`;
+pack SHA-256 remains
+`71b48dda897523d1f1e7596eb8149f15ca0822ee227923f2244426b50ef1b5dd`.
+Implementation commit: `b249051`.
+Captures remain outside Git under
+`/home/alberto/ppsspp-test/effect-material-audit/`.
+
+**Remaining scope.** This closes live colour consumption for manager effects,
+not full runtime `MObj` parity. UV scale/translation/scroll, fractional texture
+blend, facing-selected alternate streams and the independent `LBParticle`
+runtime remain tracked in `PLAN.md`/`TODO.md`. Physical PSP validation remains
+R2.
+
 ## RE-178 — Closes RE-177's remaining 3-table manager-effect material gap (`PLAN.md` R1)
 
 **Problem.** RE-177 left three manager-effect material-animation tables
