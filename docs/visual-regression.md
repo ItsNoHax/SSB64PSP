@@ -204,6 +204,43 @@ lines. EBOOT / pack SHA-256:
 This closes the software-side R1 stage row only; it is not physical PSP
 evidence and does not resolve R0.5.
 
+## R1 exhaustive fighter-animation audit
+
+R1's fighter-motion coverage uses a dedicated build that boots directly into
+the existing object/figatree viewer with animation zero playing. Run:
+
+```
+tools/run-ppsspp.sh --seconds 2 --audit-animations 532
+```
+
+The audit intentionally stops before the pack's appended stage and results
+entries: those use the 32-bit `AObjEvent32` format and run through
+`StageAnimator` / `ResultsTransition`, not the fighter `Skeleton`. Each right
+D-pad input advances one sparse fighter animation entry and waits roughly 15
+simulation ticks before capture. The audit HUD shows table index/count,
+fighter, slot, source file, animation frame and submitted triangle count while
+leaving the model unobscured.
+
+The harness rejects a capture when the centred 60% x 76% crop has standard
+deviation below `0.003`, which prevents the small identity HUD alone from
+satisfying the check. It separately hashes the top identity strip and requires
+all `N` headers to be unique, catching ignored navigation input without
+requiring animation pictures themselves to differ (the original deliberately
+shares motions). Captures and their SHA-256 manifest remain outside Git under
+`$PPSSPP_TEST_DIR/animation-audit/`.
+
+RE-171 executed all 532 entries under PPSSPP software. All centred crops
+passed (minimum standard deviation `0.0454806`), all 532 identity strips were
+unique, representative captures across the table showed 60 FPS, and the log
+contained no error/failure/panic/rejection/desynchronisation lines. EBOOT /
+pack SHA-256:
+`8a4fc9ffea30a47fdafdb426af2b700e0720d791863432217e587ee4141ddc6f` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c`.
+The external manifest SHA-256 is
+`9afee0e9614816f33d748609700258661e4af8499c99c127a24d976ed4371b8e`.
+This is software render coverage, not original-pixel equivalence or physical
+PSP evidence.
+
 ## Evidence
 
 Executed once end-to-end for capture source 1 (PPSSPP software rendering).

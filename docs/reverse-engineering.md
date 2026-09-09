@@ -10,6 +10,67 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-171 — Exhaustive fighter-animation rendering exposes a sparse lookup bug (`PLAN.md` R1)
+
+**Problem.** ROM/pack replay already proved fighter poses numerically, but
+R1's visual criterion had only selected screenshots. The pack's 578-animation
+table also mixes three incompatible runtime formats: 532 fighter figatrees,
+35 stage `AObjEvent32` streams and 11 results-wipe `AObjEvent32` streams. The
+generic viewer offered all 578 to the fighter `Skeleton`, so browsing past the
+fighter block was a decoder mismatch rather than meaningful coverage.
+
+**Implementation.** The generic animation browser now stops at the first
+stage/results marker. An off-by-default `animation_audit_capture` feature boots
+straight into object view with fighter animation zero playing and emits a
+small source-identifying HUD. `tools/run-ppsspp.sh --audit-animations N`
+builds that mode, advances the normal D-pad control, captures each posed model,
+requires measurable content in an unobscured centre crop, requires every HUD
+identity strip to hash uniquely, and records artifact/capture hashes outside
+Git.
+
+The run exposed a separate real contract error. `Pack::fighter_anim` claimed
+the fighter block was dense and indexed it as `fighter * SLOT_COUNT + slot`,
+but the original motion tables contain eight null placeholders for motions a
+character lacks and the pack deliberately omits them. Later lookup could
+therefore select the wrong fighter/slot or return none. Lookup now scans for
+the exact pair; a regression test crosses both a missing fighter row and an
+interleaved stage row.
+
+**Verification.** The full PPSSPP-software run captured 532/532 fighter
+entries. All 532 identity headers were unique, every centred crop passed the
+`0.003` content threshold (minimum `0.0454806`), representative captures from
+indices 0/100/200/300/400/500/531 visibly cover distinct fighter kinds at 60
+FPS, and the emulator log contains no error/failure/panic/rejection or
+desynchronisation line. A fresh `romtool figatree --pack` comparison replays
+9,692 joints with every pose identical to the ROM and preserves 567,662 bone
+lengths across all 532 entries. Existing evidence completes the other animation
+classes: R0.9 verifies all 35 stage animations and 206 joints against the ROM,
+R0.10 verifies all 33 packed material scripts, and R0.13 verifies the separate
+results-wipe path. All 436 workspace tests and strict Clippy pass; the audit
+PSP release build succeeds with the existing six warnings.
+
+The post-fix normal PSP release build also succeeds with the same six warnings;
+a three-second PPSSPP software smoke run renders Dream Land at 60 FPS with a
+clean log. Normal EBOOT SHA-256:
+`53f25a9b97965c9db12493cd16811cc25dca6d667edb2cee2711571c220fed53`.
+
+Audit implementation commit / EBOOT / pack / external manifest SHA-256:
+`e85aa19` /
+`8a4fc9ffea30a47fdafdb426af2b700e0720d791863432217e587ee4141ddc6f` /
+`0477c7d3fb86378e08685545209f52d560d0d8a0a695135e9633eb46e5bde72c` /
+`9afee0e9614816f33d748609700258661e4af8499c99c127a24d976ed4371b8e`.
+Sparse-lookup fix: `826c02a`. Captures remain outside Git at
+`/home/alberto/ppsspp-test/re171/animation-audit/`.
+
+This closes R1's software `all required animations render` row. It does not
+establish original-pixel equivalence, count as physical PSP validation,
+resolve R0.5, complete R1 as a whole, or unlock combat.
+
+**Confidence: high for software coverage and exact lookup; no physical-PSP
+claim.**
+
+---
+
 ## RE-170 — Exhaustive PPSSPP stage audit makes R1's first row reproducible (`PLAN.md` R1)
 
 **Problem.** The pack and viewer could enumerate all 41 stages, but R1's "all

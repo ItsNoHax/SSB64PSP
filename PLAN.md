@@ -2662,7 +2662,13 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   node/costume override, verifies colour and palette paths against the ROM,
   and visually checks every fighter at a nonzero costume. A real match costume
   selector remains gameplay integration, not a missing renderer path
-* [ ] all required animations render
+* [x] all required animations render — RE-171: the 532 sparse fighter
+  figatree entries were each rendered and captured in stable pack order under
+  PPSSPP software at 60 FPS; all 532 identity headers are unique, every
+  centred model crop contains measurable content, and the log is clean.
+  R0.9 already verifies all 35 stage `AObjEvent32` animations, R0.10 verifies
+  all 33 packed material-animation scripts, and R0.13 verifies the separate
+  results-wipe animation path. Physical hardware remains R2
 * [ ] all required effects render
 * [ ] all required framebuffer paths render
 * [ ] no unexplained rendering commands remain
