@@ -375,12 +375,26 @@ pub fn read_table(file: &File, offset: u32, node_count: usize) -> Option<MObjTab
 /// real mismatch worth surfacing, not something to paper over with a
 /// shorter result.
 pub fn read_palettes(file: &File, sub_at: u32, count: usize) -> Option<Vec<Ptr>> {
+    read_pointer_array(file, sub_at + F_PALETTES, count)
+}
+
+/// Reads the first `count` entries of `MObjSub.sprites[]`.
+///
+/// As with [`read_palettes`], the `MObjSub` carries no array length. The
+/// caller must derive `count` from the material animation's maximum
+/// `TextureIDCurrent`/`TextureIDNext`; this is the only source-backed bound
+/// on the runtime-indexed sprite table.
+pub fn read_sprites(file: &File, sub_at: u32, count: usize) -> Option<Vec<Ptr>> {
+    read_pointer_array(file, sub_at + F_SPRITES, count)
+}
+
+fn read_pointer_array(file: &File, field_at: u32, count: usize) -> Option<Vec<Ptr>> {
     let slots = pointer_slots(file);
     let is_ptr = |at: u32| slots.binary_search(&at).is_ok();
     let data = &file.data;
 
-    let array = read_u32(data, sub_at + F_PALETTES)?;
-    if array == 0 || !is_ptr(sub_at + F_PALETTES) {
+    let array = read_u32(data, field_at)?;
+    if array == 0 || !is_ptr(field_at) {
         return None;
     }
     let leaves_file = |slot: u32| -> Option<Ptr> {

@@ -110,6 +110,64 @@ pub const MANAGER_EFFECT_ANIM_JOINTS: &[Option<u32>] = &[
     None,
 ];
 
+/// `o_matanim_joint` from the same source descriptors, aligned with
+/// [`MANAGER_EFFECT_KEYS`]. These are `AObjEvent32 ***` tables: one outer
+/// entry per DObj and one inner script pointer per MObj in that node.
+///
+/// The manager selects player 0's `DeadExplode1` table at runtime and the
+/// left-facing Poké Ball table for the descriptor-selected audit variant.
+/// The alternate player/facing tables remain gameplay selection work, just
+/// like the transform variants documented beside
+/// [`MANAGER_EFFECT_ANIM_JOINTS`].
+pub const MANAGER_EFFECT_MAT_ANIM_JOINTS: &[Option<u32>] = &[
+    Some(0x7860),
+    None,
+    Some(0x7DA0),
+    Some(0x90C0),
+    Some(0xCB40),
+    Some(0x1570),
+    Some(0x2170),
+    Some(0x2AB0),
+    Some(0x35A0),
+    Some(0x58E0),
+    Some(0x6E20),
+    Some(0x0860),
+    None,
+    Some(0x3490),
+    None,
+    None,
+    None,
+    Some(0x0890),
+    Some(0x1A80),
+    None,
+    Some(0x2350),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    Some(0x0480),
+    None,
+    Some(0x0C00),
+    None,
+    Some(0x0830),
+    Some(0x2D70),
+    Some(0x0AD0),
+    None,
+    Some(0x9BB0),
+    Some(0x0B90),
+    Some(0x0BF0),
+    Some(0x12F0),
+    Some(0x950C),
+    None,
+    Some(0x0780),
+    None,
+    None,
+    None,
+    None,
+];
+
 /// Effects whose authored rest pose is intentionally invisible until their
 /// AObjEvent32 runtime starts. The ROM gives Ness PK Flash scales X/Y of
 /// `1e-5`, Samus's entry point scale Y of `1e-5`, and Link's spin-attack
@@ -120,7 +178,8 @@ pub const MANAGER_EFFECT_REST_INVISIBLE_KEYS: &[(u32, u32)] =
 #[cfg(test)]
 mod tests {
     use super::{
-        MANAGER_EFFECT_ANIM_JOINTS, MANAGER_EFFECT_KEYS, MANAGER_EFFECT_REST_INVISIBLE_KEYS,
+        MANAGER_EFFECT_ANIM_JOINTS, MANAGER_EFFECT_KEYS, MANAGER_EFFECT_MAT_ANIM_JOINTS,
+        MANAGER_EFFECT_REST_INVISIBLE_KEYS,
     };
     use alloc::collections::BTreeSet;
 
@@ -131,11 +190,22 @@ mod tests {
         assert_eq!(unique.len(), MANAGER_EFFECT_KEYS.len());
         assert_eq!(MANAGER_EFFECT_ANIM_JOINTS.len(), MANAGER_EFFECT_KEYS.len());
         assert_eq!(
+            MANAGER_EFFECT_MAT_ANIM_JOINTS.len(),
+            MANAGER_EFFECT_KEYS.len()
+        );
+        assert_eq!(
             MANAGER_EFFECT_ANIM_JOINTS
                 .iter()
                 .filter(|anim| anim.is_some())
                 .count(),
             35
+        );
+        assert_eq!(
+            MANAGER_EFFECT_MAT_ANIM_JOINTS
+                .iter()
+                .filter(|anim| anim.is_some())
+                .count(),
+            26
         );
         assert!(MANAGER_EFFECT_REST_INVISIBLE_KEYS
             .iter()

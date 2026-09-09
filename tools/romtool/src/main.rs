@@ -868,6 +868,14 @@ impl<'a> Texels<'a> {
 /// real `cms`/`cmt`.
 type TexKey = (u32, u32, u32, u32, bool, bool, bool, bool);
 
+#[derive(Default)]
+struct MatAnimData {
+    source_offset: u32,
+    palette_entries: u16,
+    palettes: Vec<ssb_rom::mobj::Ptr>,
+    sprites: Vec<ssb_rom::mobj::Ptr>,
+}
+
 fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
     (
         t.data_file.map_or(id, u32::from),
@@ -886,7 +894,7 @@ fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
     tex_index: &mut BTreeMap<TexKey, u32>,
     mat_anim_index: &mut BTreeMap<(u32, u32), u32>,
-    mat_anim_data: &BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
+    mat_anim_data: &BTreeMap<(u32, u32), MatAnimData>,
     src: Texels<'_>,
     id: u32,
     offset: u32,
@@ -894,6 +902,7 @@ fn pack_mesh(
     swizzle: bool,
 ) -> u32 {
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
+    let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     for prim in &m.primitives {
         let texture_index = match prim.material.texture {
             None => None,
@@ -934,46 +943,81 @@ fn pack_mesh(
                 }
             }
         };
-        if let (Some(texture), Some(anim)) = (texture_index, prim.material.mat_anim) {
+        // Unlike `texture_index`, not gated on the primitive having a bound
+        // texture at all: an effect script can drive untextured primitive/
+        // environment/blend colour with no palette or sprite involved
+        // (RE-175, `mesh.rs`'s `apply_mobj`/`material_now`).
+        let mat_anim_index_resolved = prim.material.mat_anim.and_then(|anim| {
             let key = (anim.source_file, anim.script);
-            let resolved = match mat_anim_index.get(&key) {
+            match mat_anim_index.get(&key) {
                 Some(&i) => Some(i),
-                None => mat_anim_data
-                    .get(&key)
-                    .and_then(|(source_offset, entries, ptrs)| {
-                        let file_bytes = src.bytes(if anim.source_file == id {
-                            None
-                        } else {
-                            Some(anim.source_file as u16)
-                        })?;
-                        let palettes: Vec<Vec<u32>> = ptrs
+                None => mat_anim_data.get(&key).and_then(|anim_data| {
+                    let file_bytes = src.bytes(if anim.source_file == id {
+                        None
+                    } else {
+                        Some(anim.source_file as u16)
+                    })?;
+                    let palettes: Vec<Vec<u32>> = anim_data
+                        .palettes
+                        .iter()
+                        .filter_map(|p| {
+                            convert_mat_anim_palette(src, *p, anim_data.palette_entries)
+                        })
+                        .collect();
+                    // A partial conversion is a real problem worth declining
+                    // outright, not shipping a script that cycles through
+                    // fewer palettes than it actually names.
+                    if palettes.len() != anim_data.palettes.len() {
+                        return None;
+                    }
+                    // A texture-id track needs the primitive's own bound
+                    // texture to know the sprite's format/dimensions/wrap
+                    // (`convert_mat_anim_sprite`) -- an effect script whose
+                    // primitive resolved no texture at all cannot be
+                    // converted this way, same "decline rather than guess"
+                    // shape as the palette check above.
+                    let sprites: Vec<u32> = if anim_data.sprites.is_empty() {
+                        Vec::new()
+                    } else {
+                        let base = prim.material.texture?;
+                        let converted: Vec<u32> = anim_data
+                            .sprites
                             .iter()
-                            .filter_map(|p| convert_mat_anim_palette(src, *p, *entries))
+                            .filter_map(|p| {
+                                convert_mat_anim_sprite(src, *p, &base, swizzle)
+                                    .map(|tex| writer.add_texture(&tex, base.clamp_s, base.clamp_t))
+                            })
                             .collect();
-                        // A partial conversion is a real problem worth declining
-                        // outright, not shipping a script that cycles through
-                        // fewer palettes than it actually names.
-                        if palettes.len() != ptrs.len() {
+                        if converted.len() != anim_data.sprites.len() {
                             return None;
                         }
-                        let i = writer.add_mat_anim(
-                            anim.source_file,
-                            file_bytes,
-                            anim.script,
-                            *source_offset,
-                            &palettes,
-                        );
-                        mat_anim_index.insert(key, i);
-                        Some(i)
-                    }),
-            };
-            if let Some(mat_anim) = resolved {
-                writer.set_texture_mat_anim(texture, mat_anim);
+                        converted
+                    };
+                    let i = writer.add_mat_anim(
+                        anim.source_file,
+                        file_bytes,
+                        anim.script,
+                        anim_data.source_offset,
+                        &palettes,
+                        &sprites,
+                    );
+                    mat_anim_index.insert(key, i);
+                    Some(i)
+                }),
             }
+        });
+        if let (Some(texture), Some(mat_anim)) = (texture_index, mat_anim_index_resolved) {
+            // Kept alongside `PrimDesc.mat_anim` for the texture-only
+            // palette-cycling case (RE-089/RE-090/RE-091): `bind_texture`
+            // (`psp/src/meshdraw.rs`) still reads a texture's own resolved
+            // palette off `TextureDesc.mat_anim`, independent of which
+            // primitive happens to be drawing it.
+            writer.set_texture_mat_anim(texture, mat_anim);
         }
         per_prim.push(texture_index);
+        per_prim_mat_anim.push(mat_anim_index_resolved);
     }
-    writer.add_mesh(m, id, offset, |i| per_prim[i])
+    writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i])
 }
 
 /// Converts one resolved palette variant to the GE's ABGR8888 CLUT format,
@@ -999,6 +1043,26 @@ fn convert_mat_anim_palette(
     )
 }
 
+/// Converts one resolved sprite (texture-id) variant, reusing a primitive's
+/// own authored format/dimensions/wrap (`base`) -- a material animation's
+/// `TextureIDCurrent`/`TextureIDNext` track only ever swaps *which* texel
+/// block loads, never the tile's shape, the same convention
+/// [`convert_mat_anim_palette`] already follows for a palette variant's
+/// entry count.
+fn convert_mat_anim_sprite(
+    src: Texels<'_>,
+    p: ssb_rom::mobj::Ptr,
+    base: &ssb_rom::mesh::TextureRef,
+    swizzle: bool,
+) -> Option<ssb_rom::psp_texture::PspTexture> {
+    let variant = ssb_rom::mesh::TextureRef {
+        data_file: p.file,
+        data_offset: p.offset,
+        ..*base
+    };
+    convert_texture(src, &variant, swizzle)
+}
+
 /// Converts one graph's whole plan under a given per-node materials array
 /// (RE-098): the same shape [`pack`]'s own main loop builds inline for
 /// costume 0, factored out so a fighter's alternate costumes can call it
@@ -1017,7 +1081,7 @@ fn convert_graph_at(
     graph_offset: u32,
     plan: &[PlannedList],
     materials: &[ssb_rom::mobj::NodeMaterials],
-    mat_anim_data: &mut BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
+    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
 ) -> Vec<Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError>> {
     use ssb_rom::mesh;
 
@@ -1044,25 +1108,210 @@ fn convert_graph_at(
     mesh::convert_sequence(&items, mesh::Source::of(file))
 }
 
-/// For a stage layer's own scene graph, resolves which `(node,
-/// MObj-chain-position)` entries carry a real `PaletteID`-cycling material
-/// animation (RE-089/RE-090), and stashes each one's script identity plus
-/// resolved palettes into `mat_anim_data` for [`pack_mesh`] to consume.
+/// Long enough that a looping script proves it loops (RE-089's own budget
+/// for the same replay).
+const MAT_ANIM_REPLAY_FRAMES: u32 = 600;
+
+/// Runs one material animation script to see whether it drives anything a
+/// packed primitive can attach: a real `PaletteID` cycle (RE-089/RE-090/
+/// RE-091), a texture-id cycle (the manager-effect sprite frame lists --
+/// CommonSpark and Poké Ball's eight/seven-frame tables), or a colour track
+/// (`crate::matanim::MaterialJoint::track_color`, e.g. Link Spin Attack's
+/// primitive-alpha ramp). `sub_at(node, m)` resolves a `(node,
+/// MObj-chain-position)` to its `MObjSub`'s own file offset and CLUT entry
+/// width -- the only source-backed bound on `palettes[]`/`sprites[]`;
+/// `None` declines rather than guessing a table length.
+fn resolve_one_mat_anim(
+    file: &ssb_rom::archive::File,
+    node: usize,
+    m: usize,
+    script: u32,
+    sub_at: &impl Fn(usize, usize) -> Option<(u32, u16)>,
+) -> Option<(ssb_rom::mesh::MatAnimRef, MatAnimData)> {
+    let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
+    let mut max_palette = 0.0f32;
+    let mut max_texture = 0.0f32;
+    let mut frames = 0u32;
+    loop {
+        // A decoder error means this script is not something this resolver
+        // can trust the replay of -- decline it outright rather than attach
+        // a partial read.
+        j.tick(&file.data, 1.0).ok()?;
+        frames += 1;
+        if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
+            max_palette = max_palette.max(v);
+        }
+        if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT) {
+            max_texture = max_texture.max(v);
+        }
+        if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT) {
+            max_texture = max_texture.max(v);
+        }
+        if j.ended() || j.looped() || frames >= MAT_ANIM_REPLAY_FRAMES {
+            break;
+        }
+    }
+
+    // `has_palette` mirrors RE-089's original gate: only a *stepped*
+    // `PaletteID` names a discrete index worth sizing an array around, kept
+    // as-is to avoid changing already-verified stage-layer behaviour.
+    // `has_texture` does not require a step: `gcPlayMObjMatAnim` assigns
+    // `mobj->texture_id_curr = value` for *any* live kind (RE-175 measured
+    // real manager scripts using a plain `Kind::Linear` ramp for this --
+    // CommonSpark's own UV/texture-id stream among them, not a `_After`
+    // step list the way DamageSlash's is), so requiring a step here would
+    // wrongly decline a real, in-source frame selection. A colour track has
+    // no such requirement either -- `track_color` already handles a smooth
+    // `Kind::Linear` ramp correctly, unlike `track_value`.
+    let has_palette = j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID);
+    let has_texture = j
+        .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
+        .is_some()
+        || j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT)
+            .is_some();
+    let has_color = (0..5).any(|i| {
+        j.track_color(ssb_rom::matanim::TICK_EXT_START + i)
+            .is_some()
+    });
+    if !has_palette && !has_texture && !has_color {
+        return None;
+    }
+
+    let (sub_offset, palette_entries) = sub_at(node, m)?;
+    let palette_count = if has_palette {
+        max_palette.round() as u32 + 1
+    } else {
+        0
+    };
+    let palettes = if palette_count > 1 {
+        ssb_rom::mobj::read_palettes(file, sub_offset, palette_count as usize)?
+    } else {
+        Vec::new()
+    };
+    let texture_count = if has_texture {
+        max_texture.round() as u32 + 1
+    } else {
+        0
+    };
+    let sprites = if texture_count > 0 {
+        ssb_rom::mobj::read_sprites(file, sub_offset, texture_count as usize)?
+    } else {
+        Vec::new()
+    };
+    // A track that is live but never actually reaches a second index (e.g.
+    // `PaletteID` stepped once to 0 and never touched again) resolved no
+    // array and is not real cycling on its own -- decline unless something
+    // else on this script is worth attaching.
+    if palettes.is_empty() && sprites.is_empty() && !has_color {
+        return None;
+    }
+
+    Some((
+        ssb_rom::mesh::MatAnimRef {
+            source_file: file.id,
+            script,
+        },
+        MatAnimData {
+            source_offset: sub_offset,
+            palette_entries,
+            palettes,
+            sprites,
+        },
+    ))
+}
+
+/// Resolves an `AObjEvent32 ***` joint table (RE-089's `p_matanim_joints`
+/// shape) into one [`ssb_rom::mesh::MatAnimRef`] per `(node,
+/// MObj-chain-position)`, stashing each resolved script's [`MatAnimData`]
+/// into `mat_anim_data` for [`pack_mesh`] to consume. Generic over how a
+/// caller locates each chain position's own `MObjSub` (`sub_at`): a stage
+/// layer's external `p_mobjsub` table and a manager effect's `o_mobjsub`
+/// table are two different pointers naming the same shape (RE-175), and
+/// `materials` (already resolved through whichever one applies) already
+/// carries the same offsets a third way for anything with a registered
+/// [`Loaded::materials`] table -- see the two call sites below for which
+/// each caller uses.
+fn resolve_mat_anims(
+    file: &ssb_rom::archive::File,
+    matanim_table: u32,
+    materials: &[ssb_rom::mobj::NodeMaterials],
+    sub_at: impl Fn(usize, usize) -> Option<(u32, u16)>,
+    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
+) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
+    let scripts = ssb_rom::matanim::resolve_scripts(file, matanim_table, materials.len(), |n| {
+        materials[n].len()
+    });
+    let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
+        scripts.iter().map(|c| vec![None; c.len()]).collect();
+    for (node, chain) in scripts.iter().enumerate() {
+        for (m, script) in chain.iter().enumerate() {
+            let Some(script) = *script else { continue };
+            let key = (file.id, script);
+            if mat_anim_data.contains_key(&key) {
+                refs[node][m] = Some(ssb_rom::mesh::MatAnimRef {
+                    source_file: file.id,
+                    script,
+                });
+                continue;
+            }
+            let Some((r, data)) = resolve_one_mat_anim(file, node, m, script, &sub_at) else {
+                continue;
+            };
+            refs[node][m] = Some(r);
+            mat_anim_data.insert(key, data);
+        }
+    }
+    refs
+}
+
+/// For a scene graph's own material animation (a stage layer's
+/// `MPGroundDesc::p_matanim_joints`, or one of the 26 manager-effect
+/// `EFDesc::o_matanim_joint` tables with a non-NULL entry -- RE-175), resolves
+/// which `(node, MObj-chain-position)` entries carry a script worth
+/// attaching and stashes each one's data into `mat_anim_data`. Returns
+/// all-`None` for any other graph, which is the overwhelming majority, so
+/// this is cheap to call unconditionally per graph rather than precomputing
+/// archive-wide.
 ///
 /// Same-file only, matching RE-089's own scope limit: a layer whose
 /// `p_matanim_joints`/`p_mobjsubs` cross into another archive file is left
-/// alone rather than guessed at. Returns all-`None` for any graph that is
-/// not a stage layer at all, or has nothing this method can resolve --
-/// which is the overwhelming majority of graphs, so this is cheap to call
-/// unconditionally per graph rather than precomputing archive-wide.
+/// alone rather than guessed at. Manager effects are the same way (RE-089's
+/// own scan already resolves `o_matanim_joint` same-file only).
 fn resolve_layer_mat_anims(
     loaded: &Loaded,
     file: &ssb_rom::archive::File,
     graph_offset: u32,
     materials: &[ssb_rom::mobj::NodeMaterials],
-    mat_anim_data: &mut BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)>,
+    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
 ) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let empty = || materials.iter().map(|c| vec![None; c.len()]).collect();
+
+    // Manager effects: `materials` is already resolved through whichever
+    // `o_mobjsub` table applies (`Loaded::materials`, fed by `PartTables`/
+    // the hand-entered pairs this file's `load()` builds), so a chain
+    // position's own `MObjSub` offset is just `materials[node][m].at` --
+    // no second, table lookup needed the way a stage layer's external
+    // `p_mobjsub` array requires below.
+    if let Some(idx) = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .position(|&k| k == (file.id, graph_offset))
+    {
+        let Some(mat) = ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_JOINTS[idx] else {
+            return empty();
+        };
+        return resolve_mat_anims(
+            file,
+            mat,
+            materials,
+            |node, m| {
+                materials
+                    .get(node)?
+                    .get(m)
+                    .map(|s| (s.at, s.palette_entries))
+            },
+            mat_anim_data,
+        );
+    }
 
     let Some(layer) = loaded
         .stages
@@ -1081,54 +1330,19 @@ fn resolve_layer_mat_anims(
     let Some(chain_table) = ssb_rom::mobj::read_table(file, at, materials.len()) else {
         return empty();
     };
-
-    let scripts =
-        ssb_rom::matanim::resolve_scripts(file, mat, materials.len(), |n| materials[n].len());
-    let mut refs: Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> =
-        scripts.iter().map(|c| vec![None; c.len()]).collect();
-
-    /// Long enough that a looping script proves it loops (RE-089's own
-    /// budget for the same replay).
-    const REPLAY_FRAMES: u32 = 600;
-    for (node, chain) in scripts.iter().enumerate() {
-        for (m, script) in chain.iter().enumerate() {
-            let Some(script) = *script else { continue };
-            let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
-            let mut max_palette = 0.0f32;
-            let mut frames = 0u32;
-            loop {
-                if j.tick(&file.data, 1.0).is_err() {
-                    break;
-                }
-                frames += 1;
-                if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
-                    max_palette = max_palette.max(v);
-                }
-                if j.ended() || j.looped() || frames >= REPLAY_FRAMES {
-                    break;
-                }
-            }
-            if !j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID) {
-                continue;
-            }
-            let entries = max_palette.round() as u32 + 1;
-            if entries <= 1 {
-                continue;
-            }
-            let Some(sub) = chain_table.nodes[node].get(m) else {
-                continue;
-            };
-            let Some(ptrs) = ssb_rom::mobj::read_palettes(file, sub.at, entries as usize) else {
-                continue;
-            };
-            refs[node][m] = Some(ssb_rom::mesh::MatAnimRef {
-                source_file: file.id,
-                script,
-            });
-            mat_anim_data.insert((file.id, script), (sub.at, sub.palette_entries, ptrs));
-        }
-    }
-    refs
+    resolve_mat_anims(
+        file,
+        mat,
+        materials,
+        |node, m| {
+            chain_table
+                .nodes
+                .get(node)?
+                .get(m)
+                .map(|s| (s.at, s.palette_entries))
+        },
+        mat_anim_data,
+    )
 }
 
 /// Builds the runtime asset pack: converted geometry and textures in the
@@ -1168,8 +1382,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     // the same `(source_file, script)` identity `mesh::MatAnimRef` carries
     // -- populated per stage layer as its graph is reached, consumed by
     // `pack_mesh` the moment a primitive names one (RE-089/090/091).
-    let mut mat_anim_data: BTreeMap<(u32, u32), (u32, u16, Vec<ssb_rom::mobj::Ptr>)> =
-        BTreeMap::new();
+    let mut mat_anim_data: BTreeMap<(u32, u32), MatAnimData> = BTreeMap::new();
     let mut meshes = 0usize;
     let mut triangles = 0usize;
     let mut objects = 0usize;
@@ -2357,6 +2570,24 @@ const DIRECT_MANAGER_EFFECT_MOBJ_PAIRS: &[(u32, u32, u32)] = &[
     (354, 0x0530, 0x0460), // YoshiEntryEgg
 ];
 
+/// Every distinct `PrimDesc.mat_anim` index reachable from an object's own
+/// nodes -- RE-175's per-primitive attachment, as opposed to the
+/// texture-keyed `TextureDesc.mat_anim` RE-089/090/091 used. A `BTreeSet`
+/// because several primitives (or, for Link Spin Attack, several distinct
+/// scripts on the same object) commonly share or duplicate an index.
+fn object_mat_anims(
+    pack: &ssb_rom::pack::Pack<'_>,
+    object: &ssb_rom::pack::ObjectDesc,
+) -> BTreeSet<u32> {
+    (0..object.node_count)
+        .filter_map(|n| pack.node(object.first_node + n))
+        .filter_map(|n| (n.mesh != ssb_rom::pack::NodeDesc::NO_MESH).then_some(n.mesh))
+        .filter_map(|m| pack.mesh(m))
+        .flat_map(|m| (0..m.prim_count).filter_map(move |p| pack.prim(m.first_prim + p)))
+        .filter_map(|p| (p.mat_anim != ssb_rom::pack::TextureDesc::NO_ANIM).then_some(p.mat_anim))
+        .collect()
+}
+
 /// Verifies the original manager's display-bearing effect graphs survived the
 /// ROM-to-pack pipeline and reports their stable object indices for the PSP
 /// visual audit. This deliberately does not count LBParticle scripts: those
@@ -2369,6 +2600,9 @@ fn effects(path: &Path) -> Res {
     let mut animated = 0usize;
     let mut animated_nodes = 0usize;
     let mut total_tris = 0u32;
+    let mut mat_animated = 0usize;
+    let mut mat_animated_prims = 0usize;
+    let mut mat_anim_errors = Vec::new();
 
     for (effect_index, asset) in MANAGER_EFFECT_ASSETS.iter().enumerate() {
         let found = (0..pack.object_count()).find_map(|i| {
@@ -2438,6 +2672,48 @@ fn effects(path: &Path) -> Res {
         } else if pack.effect_anim(effect_index as u32).is_some() {
             anim_errors.push(format!("{}: unexpected transform animation", asset.name));
         }
+
+        // RE-175: replay every primitive's material animation the same way,
+        // frame-4-deterministic alongside the transform tick above (the
+        // shortest source stream there ends after frame 5, so the same
+        // budget samples every effect while still active). `PrimDesc.
+        // mat_anim` is per-primitive, so several distinct scripts can be
+        // live on one object at once (Link Spin Attack's own colour script
+        // is separate from its sprite/palette-bearing geometry).
+        if ssb_rom::effect::MANAGER_EFFECT_MAT_ANIM_JOINTS[effect_index].is_some() {
+            let mat_anims = object_mat_anims(&pack, &object);
+            if mat_anims.is_empty() {
+                mat_anim_errors.push(format!("{}: no bound material animation", asset.name));
+            } else {
+                let mut player = ssb_rom::skeleton::EffectMaterialAnimator::new();
+                player.start(&pack, mat_anims.iter().copied());
+                for _ in 0..4 {
+                    player.tick(&pack);
+                }
+                mat_animated += 1;
+                mat_animated_prims += mat_anims.len();
+                // The concrete case this whole audit exists to prove: Link
+                // Spin Attack's authored frame-zero primitive alpha of zero
+                // (`refs/ssb-decomp-re/src/relocData/353_LinkSpecial2.c`'s
+                // `0xFFFF6000` -> `0xFFFF60CC` ramp) must have measurably
+                // ramped up by frame 4, not stayed blank.
+                if asset.name == "LinkSpinAttack" {
+                    let visible = mat_anims.iter().any(|&i| {
+                        player
+                            .resolved_colors(i)
+                            .and_then(|c| c.prim)
+                            .is_some_and(|rgba| rgba[3] > 0)
+                    });
+                    if !visible {
+                        mat_anim_errors.push(
+                            "LinkSpinAttack: primitive alpha still zero at frame 4".to_string(),
+                        );
+                    }
+                }
+            }
+        } else if !object_mat_anims(&pack, &object).is_empty() {
+            mat_anim_errors.push(format!("{}: unexpected material animation", asset.name));
+        }
     }
 
     println!(
@@ -2448,6 +2724,13 @@ fn effects(path: &Path) -> Res {
     println!("shared descriptors: CommonSpark, YoshiShield, NessPKThunderTrail, KirbyStar");
     println!("authored rest-invisible: NessPKFlash, SamusEntryPoint, LinkSpinAttack (AObjEvent32)");
     println!("transform animations: {animated}/35 replayable, {animated_nodes} bound node(s)");
+    println!(
+        "material animations: {mat_animated}/26 replayable, {mat_animated_prims} bound primitive script(s)"
+    );
+    println!(
+        "material variant selection: DeadExplode player 0 (DeadExplode1), \
+         MBallThrown left-facing table (RE-175)"
+    );
     println!("controller-only descriptors: DamageSpawnOrbs, DamageSpawnSparks, DamageSpawnMDust");
     println!("LBParticle scripts: not packed or rendered (separate R1 effect path)");
 
@@ -2456,13 +2739,20 @@ fn effects(path: &Path) -> Res {
             eprintln!("animation error: {error}");
         }
     }
-    if missing.is_empty() && anim_errors.is_empty() {
+    if !mat_anim_errors.is_empty() {
+        for error in &mat_anim_errors {
+            eprintln!("material animation error: {error}");
+        }
+    }
+    if missing.is_empty() && anim_errors.is_empty() && mat_anim_errors.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "{} manager effect object(s) missing or empty, {} animation error(s)",
+            "{} manager effect object(s) missing or empty, {} animation error(s), \
+             {} material animation error(s)",
             missing.len(),
-            anim_errors.len()
+            anim_errors.len(),
+            mat_anim_errors.len()
         )
         .into())
     }

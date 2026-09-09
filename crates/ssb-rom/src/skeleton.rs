@@ -505,6 +505,159 @@ impl MaterialAnimator {
     }
 }
 
+/// Distinct `MatAnimDesc` scripts one spawned effect's own primitives can
+/// reference at once. Many primitives on one effect commonly share a script
+/// (RE-175: Link Spin Attack's inner `AObjEvent32 *[5]` table names the same
+/// script from every non-null slot), so this is sized by distinct scripts,
+/// not primitives -- eight covers every manager-effect asset measured so
+/// far with headroom, the same relationship [`crate::pack::MatAnimDesc::
+/// MAX_TEXTURES`] has to its own measured maximum.
+pub const MAX_EFFECT_MAT_ANIMS: usize = 8;
+
+/// Restarts and ticks only the `MatAnimDesc` entries one spawned effect's
+/// own primitives reference, instead of [`MaterialAnimator`]'s pack-lifetime
+/// clock.
+///
+/// [`MaterialAnimator`]'s own doc comment explains why a *texture's* palette
+/// cycle never needed a restart boundary: there is no per-object "start" for
+/// a property fixed to a texture. A manager-effect material script is
+/// different -- its real lifetime starts at spawn/selection
+/// (`gcAddMObjMatAnimJoint`/`gcParseMObjMatAnimJoint`, replayed fresh every
+/// time the effect is selected), not once when the pack loads (RE-175).
+/// [`Self::start`] is that boundary; a caller restarts a fresh
+/// `EffectMaterialAnimator` (or calls [`Self::start`] again) whenever the
+/// effect itself restarts.
+pub struct EffectMaterialAnimator {
+    slots: [(u32, crate::matanim::MaterialJoint); MAX_EFFECT_MAT_ANIMS],
+    count: usize,
+}
+
+impl Default for EffectMaterialAnimator {
+    fn default() -> Self {
+        EffectMaterialAnimator::new()
+    }
+}
+
+/// The five colour tracks [`EffectMaterialAnimator::resolved_colors`]
+/// reads, one slot per track exactly like [`crate::matanim::Colors`] but
+/// covering all five rather than the three a fighter costume list ever used.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EffectColors {
+    pub prim: Option<[u8; 4]>,
+    pub env: Option<[u8; 4]>,
+    pub blend: Option<[u8; 4]>,
+    pub light1: Option<[u8; 4]>,
+    pub light2: Option<[u8; 4]>,
+}
+
+impl EffectMaterialAnimator {
+    pub fn new() -> Self {
+        EffectMaterialAnimator {
+            slots: [(
+                crate::pack::TextureDesc::NO_ANIM,
+                crate::matanim::MaterialJoint::start(0, 0.0),
+            ); MAX_EFFECT_MAT_ANIMS],
+            count: 0,
+        }
+    }
+
+    /// Restarts fresh joints, one per distinct `mat_anim` index `indices`
+    /// names, each at frame 0. Duplicates collapse to one slot -- ticking
+    /// the same script twice would waste a slot and could disagree with
+    /// itself by a frame of drift -- and an index past
+    /// [`MAX_EFFECT_MAT_ANIMS`] is dropped rather than wrapping onto
+    /// another slot.
+    pub fn start(&mut self, pack: &Pack<'_>, indices: impl Iterator<Item = u32>) {
+        self.count = 0;
+        for i in indices {
+            if i == crate::pack::TextureDesc::NO_ANIM {
+                continue;
+            }
+            if self.slots[..self.count].iter().any(|&(s, _)| s == i) {
+                continue;
+            }
+            if self.count >= MAX_EFFECT_MAT_ANIMS {
+                break;
+            }
+            let script = pack.mat_anim(i).map_or(0, |a| a.script);
+            self.slots[self.count] = (i, crate::matanim::MaterialJoint::start(script, 0.0));
+            self.count += 1;
+        }
+    }
+
+    /// Advances every tracked script one tick, each against its own source
+    /// file's bytes (mirrors [`MaterialAnimator::tick`]).
+    pub fn tick(&mut self, pack: &Pack<'_>) {
+        for (i, j) in &mut self.slots[..self.count] {
+            let Some(a) = pack.mat_anim(*i) else { continue };
+            let Some(data) = pack.mat_anim_file(&a) else {
+                continue;
+            };
+            let _ = j.tick(data, 1.0);
+        }
+    }
+
+    fn joint(&self, mat_anim: u32) -> Option<&crate::matanim::MaterialJoint> {
+        self.slots[..self.count]
+            .iter()
+            .find(|&&(i, _)| i == mat_anim)
+            .map(|(_, j)| j)
+    }
+
+    /// The currently-resolved palette variant -- the same resolution rule as
+    /// [`MaterialAnimator::resolved_palette`], just against this player's
+    /// own restarted joints.
+    pub fn resolved_palette(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
+        let j = self.joint(mat_anim)?;
+        if !j.track_is_stepped(crate::matanim::TRACK_PALETTE_ID) {
+            return None;
+        }
+        let v = j.track_value(crate::matanim::TRACK_PALETTE_ID)?;
+        let a = pack.mat_anim(mat_anim)?;
+        if a.palette_count == 0 {
+            return None;
+        }
+        let index = ((v.max(0.0) + 0.5) as u32).min(a.palette_count - 1);
+        Some(a.first_palette + index)
+    }
+
+    /// The currently-resolved sprite variant, as an absolute pack texture
+    /// index ready for [`crate::pack::Pack::texture`] -- `TextureIDCurrent`
+    /// resolved into `MatAnimDesc::textures[]`, the sprite-table analogue of
+    /// [`Self::resolved_palette`].
+    pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
+        // Not gated on `track_is_stepped` the way `resolved_palette` is:
+        // `gcPlayMObjMatAnim` assigns `mobj->texture_id_curr` for any live
+        // kind, and RE-175 measured real manager scripts (CommonSpark's own
+        // UV/texture-id stream) driving it with a plain `Kind::Linear` ramp
+        // rather than a `_After` step list.
+        let j = self.joint(mat_anim)?;
+        let v = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
+        let a = pack.mat_anim(mat_anim)?;
+        if a.texture_count == 0 {
+            return None;
+        }
+        let index = ((v.max(0.0) + 0.5) as u32).min(a.texture_count - 1);
+        let texture = a.textures[index as usize];
+        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
+    }
+
+    /// The five colour tracks' current RGBA bytes -- `None` for any this
+    /// script never set, or set only by a kind
+    /// [`crate::matanim::MaterialJoint::track_color`] does not trust (see
+    /// its own doc comment).
+    pub fn resolved_colors(&self, mat_anim: u32) -> Option<EffectColors> {
+        let j = self.joint(mat_anim)?;
+        Some(EffectColors {
+            prim: j.track_color(crate::matanim::TRACK_PRIM_COLOR),
+            env: j.track_color(crate::matanim::TRACK_ENV_COLOR),
+            blend: j.track_color(crate::matanim::TRACK_BLEND_COLOR),
+            light1: j.track_color(crate::matanim::TRACK_LIGHT1_COLOR),
+            light2: j.track_color(crate::matanim::TRACK_LIGHT2_COLOR),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,7 +921,7 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes);
+        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
         w.set_texture_mat_anim(texture, mat_anim);
         (w.finish(), mat_anim)
     }
@@ -842,7 +995,7 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16]
         ];
-        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes);
+        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
         w.set_texture_mat_anim(texture, mat_anim);
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
@@ -855,6 +1008,171 @@ mod tests {
             m.resolved_palette(&pack, mat_anim),
             Some(a.first_palette + 1),
             "clamped to the last real variant, not read past it"
+        );
+    }
+
+    #[test]
+    fn effect_material_animator_restarts_at_frame_zero_on_start() {
+        // The whole point of a per-effect player over `MaterialAnimator`'s
+        // pack-lifetime clock (RE-175): calling `start` again must replay
+        // the script from its own beginning, not continue from wherever a
+        // prior run had ticked to. Duration 5 on the second step (not
+        // `palette_cycle_script`'s 2) leaves enough margin that one tick
+        // provably has not switched yet -- see
+        // `matanim::tick_tests::a_palette_step_switches_after_its_payload_frames`
+        // for the same margin choice and why a too-small duration can
+        // already resolve the second step within the very first tick.
+        // A plain `Wait`/`End` rather than `palette_cycle_script`'s looping
+        // `SET_ANIM`, so seven ticks cannot land back on variant 0 by
+        // having already wrapped around.
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_WAIT: u32 = 2;
+        const OP_END: u32 = 0;
+        const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        let mut w = PackWriter::new();
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 5),
+            1.0f32.to_bits(),
+            mat_cmd(OP_WAIT, 0, 97),
+            mat_cmd(OP_END, 0, 0),
+        ]);
+        let palettes = alloc::vec![
+            alloc::vec![0x1111_1111u32; 16],
+            alloc::vec![0x2222_2222u32; 16],
+        ];
+        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+
+        let mut m = EffectMaterialAnimator::new();
+        m.start(&pack, core::iter::once(mat_anim));
+        for _ in 0..7 {
+            m.tick(&pack);
+        }
+        assert_ne!(
+            m.resolved_palette(&pack, mat_anim),
+            Some(a.first_palette),
+            "seven ticks in, this should have moved off variant 0"
+        );
+
+        m.start(&pack, core::iter::once(mat_anim));
+        assert_eq!(
+            m.resolved_palette(&pack, mat_anim),
+            None,
+            "freshly restarted, not yet ticked at all"
+        );
+        m.tick(&pack);
+        assert_eq!(
+            m.resolved_palette(&pack, mat_anim),
+            Some(a.first_palette),
+            "restarted at frame zero, the same as a brand new script"
+        );
+    }
+
+    #[test]
+    fn effect_material_animator_resolves_a_sprite_frame_list() {
+        // CommonSpark/Poké Ball's own shape (RE-175): `TextureIDCurrent`
+        // stepping through a list of sprite frames, resolved into
+        // `MatAnimDesc::textures[]` the same way `resolved_palette` resolves
+        // `PaletteID` into the palette table. Duration 5 on the second step
+        // for the same "provably not switched after one tick" margin as
+        // `effect_material_animator_restarts_at_frame_zero_on_start`.
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_END: u32 = 0;
+        const TRACK_TEXTURE_ID_CURRENT: u32 = crate::matanim::TRACK_TEXTURE_ID_CURRENT as u32;
+        let mut w = PackWriter::new();
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_TEXTURE_ID_CURRENT, 0),
+            0.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_TEXTURE_ID_CURRENT, 5),
+            1.0f32.to_bits(),
+            mat_cmd(OP_END, 0, 0),
+        ]);
+        let textures = alloc::vec![7u32, 9u32];
+        let mat_anim = w.add_mat_anim(83, &file_bytes, 0, 0x90C0, &[], &textures);
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+
+        let mut m = EffectMaterialAnimator::new();
+        m.start(&pack, core::iter::once(mat_anim));
+        m.tick(&pack);
+        assert_eq!(
+            m.resolved_texture(&pack, mat_anim),
+            Some(7),
+            "not yet switched"
+        );
+        for _ in 0..5 {
+            m.tick(&pack);
+        }
+        assert_eq!(m.resolved_texture(&pack, mat_anim), Some(9));
+    }
+
+    #[test]
+    fn effect_material_animator_resolves_link_spin_attacks_colour_ramp() {
+        // Verbatim shape from `353_LinkSpecial2.c`'s
+        // `SpinAttackMatAnimJoint_MatAnimJoint_data`: authored frame-zero
+        // primitive alpha of zero, ramping to visible -- the same script
+        // `matanim::tick_tests::link_spin_attack_primitive_alpha_ramps_up_from_zero`
+        // pins numerically, exercised here through the object-scoped player
+        // an audit/renderer actually calls.
+        const OP_EXT_VAL_BLOCK: u32 = 20;
+        const OP_WAIT: u32 = 2;
+        const OP_END: u32 = 0;
+        const TRACK_PRIM: u32 = crate::matanim::TRACK_PRIM as u32;
+        let mut w = PackWriter::new();
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 0),
+            0xFFFF_6000,
+            mat_cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 12),
+            0xFFFF_60CC,
+            mat_cmd(OP_WAIT, 0, 97),
+            mat_cmd(OP_END, 0, 0),
+        ]);
+        let mat_anim = w.add_mat_anim(353, &file_bytes, 0, 0x12F0, &[], &[]);
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+
+        let mut m = EffectMaterialAnimator::new();
+        m.start(&pack, core::iter::once(mat_anim));
+        assert_eq!(
+            m.resolved_colors(mat_anim),
+            Some(EffectColors::default()),
+            "not yet ticked: nothing resolved"
+        );
+        m.tick(&pack);
+        let prim = m
+            .resolved_colors(mat_anim)
+            .and_then(|c| c.prim)
+            .expect("a live ramp");
+        assert!(prim[3] > 0, "measurably visible after one tick: {prim:?}");
+    }
+
+    #[test]
+    fn effect_material_animator_deduplicates_and_caps_its_slots() {
+        let mut w = PackWriter::new();
+        let mut indices = alloc::vec::Vec::new();
+        for i in 0..MAX_EFFECT_MAT_ANIMS as u32 + 3 {
+            let file_bytes = mat_script(&[0]);
+            indices.push(w.add_mat_anim(200 + i, &file_bytes, 0, 0, &[], &[]));
+        }
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+
+        let mut m = EffectMaterialAnimator::new();
+        // Every index twice: duplicates must collapse to one slot each
+        // rather than starving the real cap.
+        let doubled = indices.iter().copied().chain(indices.iter().copied());
+        m.start(&pack, doubled);
+        assert_eq!(m.count, MAX_EFFECT_MAT_ANIMS, "capped, not wrapped");
+        let distinct: alloc::collections::BTreeSet<_> =
+            m.slots[..m.count].iter().map(|&(i, _)| i).collect();
+        assert_eq!(
+            distinct.len(),
+            MAX_EFFECT_MAT_ANIMS,
+            "every slot is a distinct script, duplicates did not waste one"
         );
     }
 }
