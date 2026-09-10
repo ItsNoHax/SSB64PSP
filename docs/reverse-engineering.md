@@ -10,6 +10,87 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-192 — Wallpaper-capture mechanism implemented and device-verified; still no real caller (`PLAN.md` R1)
+
+**Problem.** RE-191 explained every remaining copy-order detail of
+`sc1PStageClearCopyFramebufToWallpaper` and concluded the PSP port needs no
+swizzle or tile padding — just a plain 300×220 linear capture — but left the
+mechanism itself unbuilt, and posed an explicit choice for "next session":
+(a) add minimal `Sprite` asset support to `romtool`/pack format, or (b) build
+a dev-harness-only capture-and-display path mirroring RE-099/100's own
+bootstrap of the LB transition capture.
+
+**Decision.** Chose a variant of (b), but narrower than either option as
+literally posed. RE-191's own porting implication already establishes that
+the PSP-side destination does not need `Sprite`/`Bitmap` tiling at all — it
+needs exactly the same shape `TextureDesc::ROLE_FRAMEBUFFER` already models
+for the LB transition capture (RE-099/100), just larger (300×220 instead of
+300×6). Building a `Sprite` asset class would only matter for byte-level
+comparison against the ROM's own destination asset, not for the PSP
+mechanism itself, and there is still nothing to bind it to (no 1P-mode/
+results-screen state, matching RE-149's "renderer owns mechanism, G2 owns
+trigger" split). So this session built only the capture mechanism, proven
+with the project's now-established `*_audit_capture` feature pattern
+(`transition_audit_capture`, `effect_spawn_audit_capture`, etc.) rather than
+a temporary reverted patch — that pattern didn't exist yet when RE-099/100
+set the precedent RE-191 cited, and using it here means the audit code
+stays in the tree instead of being written and discarded every session.
+
+**Implementation.** `psp/src/gu.rs`: `WALLPAPER_PHOTO_WIDTH` (300),
+`WALLPAPER_PHOTO_HEIGHT` (220, the whole active picture — no periodic
+wrap-fill like `TRANSITION_PHOTO_HEIGHT`'s 6→8 pad, since RE-191 found no
+tiling requirement), a `WALLPAPER_PHOTO` static buffer,
+`Gpu::request_wallpaper_capture`/`capture_wallpaper_photo` (same
+pillarbox-offset, draw-buffer-selection and safety contract as
+`capture_transition_photo`, minus the wrap-fill loop), and
+`wallpaper_photo_data()`. No `TextureDesc::role` or pack change — deliberately,
+per the decision above. `psp/src/main.rs` + `psp/Cargo.toml`: new
+`wallpaper_audit_capture` feature requests the capture at sim tick 240
+(mirroring `transition_audit_capture`'s own tick-240 trigger) and calls a
+new debug-only `Gpu::blit_wallpaper_debug` every later frame, which writes
+the last capture directly into the absolute top-left corner of the buffer
+about to be swapped — a raw CPU block copy, the same direct-VRAM-write shape
+the existing `sceGuDebugFlush` glyph overlay already uses, chosen specifically
+because it needs no GE texture/projection state and so cannot hide a bug in
+the capture behind a texture-binding bug instead.
+
+**Verified, not just built.** `cargo psp --release --features
+wallpaper_audit_capture` built clean; `cargo psp --release` (default,
+unaffected) also still builds clean; `cargo test --workspace` (337 tests,
+psp/ is outside the workspace) and `cargo fmt --check` in `psp/` both clean.
+Device evidence: `tools/run-ppsspp.sh --no-build --seconds 10` against each
+build, screenshots cropped at the real (300px-scaled) capture boundary.
+Baseline (`cargo psp --release`) shows clean, undoubled debug text and a
+single stage silhouette. The audit build's left 300 columns show visibly
+doubled/ghosted debug text (different digits overlapping, e.g. a garbled
+"cpu 8085us") and a second, smaller triangle silhouette layered over the
+real stage — an earlier frame's real rendered content bleeding through,
+which is only possible if `capture_wallpaper_photo` grabbed genuine varying
+pixel data (not zeros or a static pattern) and `blit_wallpaper_debug` wrote
+it back at the correct offset/stride. The right 180 columns (300–480, past
+the capture width) are pixel-clean and match the baseline exactly, proving
+the write is bounded to exactly the intended region, not smeared across the
+whole frame. This is the same class of evidence RE-100's own transition
+capture used (a visible, bounded ghost of prior real content), not a golden
+pixel-diff, because there is still no real caller to compare against.
+
+**Remaining scope**, narrower than RE-191 left it: the capture mechanism
+itself is now built and device-proven. Still open, unchanged from RE-191:
+no 1P-mode/results-screen game state exists to call
+`request_wallpaper_capture` from for real, and no packed asset exists for a
+results-screen quad to sample the capture through (would need a
+`TextureDesc::ROLE_FRAMEBUFFER`-shaped pack entry sized 300×220, not a
+`Sprite`/`Bitmap` asset class — RE-191's own porting implication already
+rules that out as unnecessary). Both are G2/asset-pipeline scope, blocked
+the same way RE-149 already documents for the LB transition's own trigger.
+
+**Confidence: high** for the mechanism (direct device evidence, bounded and
+repeatable); the "no `Sprite` asset needed" scoping call is a judgement
+call, not a measurement, but is grounded directly in RE-191's own
+already-confirmed porting implication rather than a new assumption.
+
+---
+
 ## RE-191 — Wallpaper-capture copy-order fully explained by the destination `Sprite`'s own header; no PSP swizzle needed (`PLAN.md` R1)
 
 **Problem.** RE-190 found `sc1PStageClearCopyFramebufToWallpaper` as R1's

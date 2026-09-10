@@ -615,6 +615,10 @@ unsafe fn run() -> ! {
                     results_transition.begin(p, 0);
                 }
             }
+            #[cfg(feature = "wallpaper_audit_capture")]
+            if sim_frame_index == 240 {
+                gpu.request_wallpaper_capture();
+            }
             #[cfg(feature = "transition_audit_capture")]
             let transition_frozen = sim_frame_index >= 272;
             #[cfg(not(feature = "transition_audit_capture"))]
@@ -2023,6 +2027,12 @@ unsafe fn run() -> ! {
             );
         }
 
+        #[cfg(feature = "wallpaper_audit_capture")]
+        if sim_frame_index > 240 {
+            unsafe {
+                gpu.blit_wallpaper_debug();
+            }
+        }
         gpu.end_frame();
         results_transition.capture_completed();
         last_frame_us = frame.elapsed_us();
