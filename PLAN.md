@@ -2686,7 +2686,14 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   unimplemented: `sc1PStageClearCopyFramebufToWallpaper`
   (1P Mode Stage Clear results wallpaper), which copies the same 300×220
   active-picture rectangle RE-099/100 established into a real ROM sprite
-  buffer with two still-unexplained copy-order details. Not yet implemented
+  buffer. RE-191 resolved both of RE-190's open copy-order questions with a
+  direct ROM header probe (destination `Sprite`/`Bitmap` tiling: 37 tiles of
+  6 rows each, exact byte-for-byte match) and the decompiled `spDraw` source
+  (odd/even swap is a standard N64 `LoadBlock` 16-bit texture swizzle,
+  unneeded on PSP GE). Still not implemented — no 1P-mode/results-screen
+  state exists yet to call it from, and no packed `Sprite`/`Bitmap` asset
+  representation exists in `romtool`/pack format to render into; next step
+  needs one of those before there is anything to verify on device
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
   `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`
