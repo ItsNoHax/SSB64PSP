@@ -89,8 +89,12 @@ regression_capture_scene9 = []
 # as scenes 2-4 and 6-9. Off by default.
 regression_capture_scene10 = []
 
-# Fidelity probe: StageMetalFile2's first two-node graph. Exercises real
-# G_TEXTURE_GEN / G_TEXTURE_GEN_LINEAR material state without item gameplay.
+# Fidelity probe: StageMetalFile2's first two-node graph (file 117, graph
+# 0x1B10). Exercises real ordinary `G_TEXTURE_GEN` material state without item
+# gameplay. Despite RE-214's original description, this graph's primitives
+# (3530-3534, 3547-3550) are all ordinary texgen -- the archive's one
+# `G_TEXTURE_GEN_LINEAR` primitive (3542) lives in a sibling graph, exercised
+# by scene 13 instead (see that scene's own comment).
 regression_capture_scene11 = []
 
 # The same StageMetalFile2 graph as scene 11, frozen a quarter turn further
@@ -98,6 +102,15 @@ regression_capture_scene11 = []
 # basis from a stuck or constant one; a second deterministic capture of the
 # same geometry under the same camera at a known different rotation can.
 regression_capture_scene12 = []
+
+# StageMetalFile2's *second* two-node graph (file 117, graph 0x2EE0) -- the
+# only graph in the archive whose pack content actually carries
+# `G_TEXTURE_GEN_LINEAR` (prim 3542, tex 499, 12 triangles). Scenes 11/12
+# target 0x1B10, which despite an earlier RE-214 note turned out to be
+# ordinary texgen only (found while implementing the exact `acos` curve:
+# scene 11's golden was unchanged by the new code, which a reachability probe
+# traced to this). Off by default.
+regression_capture_scene13 = []
 
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).

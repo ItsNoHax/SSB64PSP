@@ -498,3 +498,14 @@ read by anything.
 **Implemented:** `crates/ssb-rom/src/mesh.rs` (`State::geometry_mode`, `TextureGen::from_geometry_mode`, `MeshMaterial::texgen_scale`), `tools/romtool/src/main.rs` (`texgen`)
 
 **Reference:** `docs/reverse-engineering.md` RE-214
+
+---
+
+### D-040: Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
+**Decision:** `G_TEXTURE_GEN_LINEAR` is reproduced by generating its `acos(-dot)/(2*pi)` curve per vertex on the CPU, using the RSP's own dot product (`normal / 127`, not a true renormalisation), and writing the result into the pack's existing raw S10.5 authored-UV unit so the primitive draws through the ordinary authored-UV `TextureMapMode` rather than a second GE coordinate-generation mode or a duplicated texture. A lookup table for the curve was considered and rejected.
+
+**Reasoning:** No GE generator mode can reproduce this curve — the hardware's texture-matrix and environment-map generators are both affine in the dot product, and `acos` is not. Reusing the authored-UV pipeline (rather than inventing a second CPU-generated coordinate mode) was possible because the generated coordinate, worked through algebraically, lands in exactly the same raw S10.5 unit and the same clamped-axis origin-shift rule (`* 8`) `mesh::Builder::push_vertex` already uses (RE-152) — the uploaded texture's dimension cancels out of the derivation entirely. A LUT was rejected because it is only exact over a finite input domain: the vertex normal is quantised (`i8`), but the look-at basis it is dotted against is a continuous per-frame float (the camera can rotate arbitrarily), so a LUT keyed on the normal alone would still have to interpolate or accept error, for no accuracy gain over a direct polynomial `acos`, while adding a build-time table and a runtime gather. The archive-wide population (257 triangles, 12 packed primitives) is small enough that this was not worth measuring as a bottleneck before rejecting it.
+
+**Implemented:** `crates/ssb-rom/src/psp_texture.rs` (`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`, `acos`), `psp/src/meshdraw.rs` (`draw_mesh`'s dynamic-vertex branch, `apply_texture_mapping`'s `environment` flag)
+
+**Reference:** `docs/reverse-engineering.md` RE-215, D-038 (the ordinary-curve GE-generator decision this one deliberately does not extend)

@@ -162,6 +162,132 @@ pub fn env_map_tex_scale(gsp_texture_scale: u16, uploaded_dim: u32) -> f32 {
     gsp_texture_scale as f32 / (64.0 * uploaded_dim.max(1) as f32)
 }
 
+/// `1 / (2*pi)`, the constant `G_TEXTURE_GEN_LINEAR`'s curve scales `acos` by.
+const INV_TWO_PI: f32 = 0.5 / core::f32::consts::PI;
+
+/// `acos`, routed through `std` on the host and a minimax polynomial on the
+/// device -- same convention as `ssb-engine::math::sqrt`/`sin_cos`: no `libm`
+/// dependency for game code. The polynomial is a widely used minimax
+/// approximation (NVIDIA's Cg `acos`); measured against `std`'s `acos`
+/// across the full `[-1, 1]` domain in
+/// `acos_matches_std_within_measured_error` below, max error ~6.6e-5 rad.
+///
+/// Not a lookup table: a LUT is only exact if its *input* domain is finite,
+/// and [`texgen_dot`]'s input is not -- only the vertex normal is quantised
+/// (`i8`), but the look-at basis it is dotted against is a continuous float
+/// that changes with camera orientation every frame. A LUT keyed on the
+/// normal alone would therefore have to interpolate or accept error just
+/// like this polynomial does, for no accuracy gain, while adding a build-time
+/// table and a runtime gather. 257 triangles archive-wide (`RE-214`'s census)
+/// also means the call count this replaces is small enough that a polynomial
+/// evaluation is very unlikely to be measurable against everything else one
+/// frame does.
+#[cfg(feature = "std")]
+fn acos(x: f32) -> f32 {
+    x.acos()
+}
+
+#[cfg(not(feature = "std"))]
+fn acos(x: f32) -> f32 {
+    acos_poly(x)
+}
+
+/// The polynomial itself, kept compiled under `std` too (behind `cfg(test)`)
+/// so `acos_matches_std_within_measured_error` can check it against `std`'s
+/// `acos` directly rather than trusting the approximation blind.
+#[cfg(any(not(feature = "std"), test))]
+fn acos_poly(x: f32) -> f32 {
+    let negate = if x < 0.0 { 1.0 } else { 0.0 };
+    let x = if x < 0.0 { -x } else { x };
+    let mut ret = -0.0187293f32;
+    ret = ret * x + 0.0742610;
+    ret = ret * x - 0.2121144;
+    ret = ret * x + 1.5707288;
+    ret *= sqrt_approx(1.0 - x);
+    ret -= 2.0 * negate * ret;
+    negate * core::f32::consts::PI + ret
+}
+
+/// Newton-Raphson square root for [`acos_poly`]. Not exported --
+/// `ssb-engine::math::sqrt` is the public equivalent, but this crate has no
+/// dependency on `ssb-engine` and the domain here (`[0, 2]`) is narrow enough
+/// not to need one.
+#[cfg(any(not(feature = "std"), test))]
+fn sqrt_approx(v: f32) -> f32 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let mut x = f32::from_bits((v.to_bits() >> 1) + 0x1FC0_0000);
+    for _ in 0..4 {
+        x = 0.5 * (x + v / x);
+    }
+    x
+}
+
+/// `G_TEXTURE_GEN_LINEAR`'s curve, mapping `dot` in `[-1, 1]` onto `u` in
+/// `[0, 0.5]` -- the same output range as the ordinary `(dot + 1) / 4` curve
+/// [`env_map_tex_scale`] documents, differing only in shape. Cross-checked
+/// against two independent implementations that agree exactly:
+/// `refs/BattleShip`'s `GfxSpVertex` (`acosf(-dotx) * 0.159155f`, its own
+/// comment noting that constant is `1/(2*pi)`) and `refs/n64psp`'s
+/// `n64psp_texgen_snorm8_batch_scalar` (`acosf(-dot_s) * inverse_two_pi`).
+pub fn linear_texgen_curve(dot: f32) -> f32 {
+    let dot = dot.clamp(-1.0, 1.0);
+    acos(-dot) * INV_TWO_PI
+}
+
+/// The RSP's own dot product feeding [`linear_texgen_curve`] (and the
+/// ordinary curve): the raw, **un-renormalised** `i8` vertex normal against a
+/// unit look-at basis vector, divided by 127. Not a square-root
+/// renormalisation -- `refs/BattleShip`'s `GfxSpVertex` and `refs/n64psp`'s
+/// `n64psp_texgen_snorm8_batch_scalar` both divide by the constant 127
+/// rather than the normal's real length, and this project's GE-hardware
+/// ordinary-texgen path already accepts that hardware normalises instead
+/// (D-038) as a *separate* deviation from this one.
+pub fn texgen_dot(normal: [i8; 3], basis: [f32; 3]) -> f32 {
+    let dot =
+        normal[0] as f32 * basis[0] + normal[1] as f32 * basis[1] + normal[2] as f32 * basis[2];
+    dot / 127.0
+}
+
+/// One axis of [`linear_texgen_curve`] converted into the pack's raw S10.5
+/// fixed-point unit (`PackedVertex::u`/`v`, 32 units per texel) -- the same
+/// unit `S10.5 = u * gSPTexture_scale` the ordinary curve's derivation uses
+/// (`env_map_tex_scale`'s doc comment), so a linear-texgen vertex can be
+/// drawn through the ordinary authored-UV pipeline.
+fn linear_texgen_s10_5(dot: f32, gsp_texture_scale: u16) -> i32 {
+    (linear_texgen_curve(dot) * gsp_texture_scale as f32 + 0.5) as i32
+}
+
+/// Generates one linear-texgen vertex's `(u, v)` in the pack's raw S10.5
+/// unit, including the render tile's origin shift on a clamped axis --
+/// exactly parallel to `mesh::Builder::push_vertex`'s authored-UV bake
+/// (`v.uv[0] -= origin_s * 8`), which is what lets a linear-texgen primitive
+/// share the authored-UV draw path instead of needing a second one. The `* 8`
+/// there and the `* 8` here are the same S10.2-to-S10.5 scale alignment; see
+/// `push_vertex`'s own comment for the quarter-texel origin unit.
+#[allow(clippy::too_many_arguments)]
+pub fn linear_texgen_uv(
+    normal: [i8; 3],
+    basis_s: [f32; 3],
+    basis_t: [f32; 3],
+    scale_s: u16,
+    scale_t: u16,
+    origin_s: u16,
+    origin_t: u16,
+    clamp_s: bool,
+    clamp_t: bool,
+) -> (i16, i16) {
+    let dot_s = texgen_dot(normal, basis_s);
+    let dot_t = texgen_dot(normal, basis_t);
+    let raw_s = linear_texgen_s10_5(dot_s, scale_s) - if clamp_s { origin_s as i32 * 8 } else { 0 };
+    let raw_t = linear_texgen_s10_5(dot_t, scale_t) - if clamp_t { origin_t as i32 * 8 } else { 0 };
+    (
+        raw_s.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        raw_t.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+    )
+}
+
 /// Swizzles texel data for the GE's texture cache.
 ///
 /// Operates on raw bytes: the GE swizzles in units of **16 bytes by 8 rows**
@@ -602,6 +728,129 @@ mod tests {
         let authored = authored_uv_tex_scale(32);
         let env = env_map_tex_scale(0x07C0, 32);
         assert!((authored / env - 33.03).abs() < 0.05, "{authored} {env}");
+    }
+
+    #[test]
+    fn linear_curve_hits_its_endpoints_and_shared_midpoint() {
+        // Both curves map [-1, 1] onto [0, 0.5]; dot = -1 -> u = 0,
+        // dot = +1 -> u = 0.5, and both curves happen to agree at dot = 0
+        // too (acos(0)/(2*pi) == (0+1)/4 == 0.25) -- the difference is only
+        // in the interior shape, checked below.
+        assert!((linear_texgen_curve(-1.0) - 0.0).abs() < 1e-6);
+        assert!((linear_texgen_curve(1.0) - 0.5).abs() < 1e-6);
+        assert!((linear_texgen_curve(0.0) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn linear_curve_is_complementary_about_its_midpoint() {
+        // acos(x) + acos(-x) == pi for every x, so u(dot) + u(-dot) == 0.5
+        // for every dot -- the curve's actual symmetry, distinct from being
+        // an odd/even function.
+        for dot in [-0.9, -0.5, -0.1, 0.3, 0.7, 0.95] {
+            let sum = linear_texgen_curve(dot) + linear_texgen_curve(-dot);
+            assert!((sum - 0.5).abs() < 1e-5, "dot {dot}: sum {sum}");
+        }
+    }
+
+    /// A check that cannot fail is not evidence: this must fail if the
+    /// linear branch is deleted and both modes fall back to the ordinary
+    /// curve. Endpoints and dot = 0 coincide (see the test above), so the
+    /// comparison has to use an interior point.
+    #[test]
+    fn linear_curve_differs_from_the_ordinary_curve_away_from_shared_points() {
+        let dot = 0.5;
+        let linear = linear_texgen_curve(dot);
+        let ordinary = (dot + 1.0) / 4.0;
+        assert!(
+            (linear - ordinary).abs() > 0.03,
+            "linear {linear} too close to ordinary {ordinary}"
+        );
+    }
+
+    #[test]
+    fn acos_matches_std_within_measured_error() {
+        // Sweeps the full domain at fine resolution and asserts a bound
+        // rather than trusting the approximation blind (`AGENTS.md` #9).
+        let mut max_error = 0.0f32;
+        let mut x = -1.0f32;
+        while x <= 1.0 {
+            let error = (acos_poly(x) - x.acos()).abs();
+            if error > max_error {
+                max_error = error;
+            }
+            x += 1.0 / 4096.0;
+        }
+        assert!(max_error < 1.0e-4, "measured max error {max_error} rad");
+    }
+
+    #[test]
+    fn texgen_dot_divides_by_the_constant_127_not_the_normals_real_length() {
+        // [90, 90, 0] has real length ~127.28, not 127 -- if this divided by
+        // the real length the two results below would match; the RSP (and
+        // both reference implementations) divide by the constant instead, so
+        // they must not.
+        let by_constant = texgen_dot([90, 90, 0], [1.0, 0.0, 0.0]);
+        assert!((by_constant - 90.0 / 127.0).abs() < 1e-6, "{by_constant}");
+        let by_real_length = 90.0 / (90.0f32 * 90.0 + 90.0 * 90.0).sqrt();
+        assert!((by_constant - by_real_length).abs() > 1e-4);
+    }
+
+    #[test]
+    fn linear_texgen_s10_5_matches_the_ordinary_curves_endpoint_for_every_real_rom_scale() {
+        // At dot = 1 both curves reach the same S10.5 maximum
+        // (`scale / 2`), which is the fixed point the whole derivation in
+        // `env_map_tex_scale` rests on -- same five real scales that test
+        // checks, this time through the linear path.
+        for &scale in &[0x07C0u16, 0x0BC0, 0x0A40, 0x0FC0, 0x01C0, 0x0400, 0x0200] {
+            let got = linear_texgen_s10_5(1.0, scale);
+            let want = (scale as f32 / 2.0).round() as i32;
+            assert!(
+                (got - want).abs() <= 1,
+                "scale {scale:#06x}: got {got}, want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn linear_texgen_uv_reproduces_file_117_prim_3542() {
+        // RE-214's census: file 117, 16x8 tile, scale 0x0400/0x0200, tile
+        // origin 6/3, both axes clamped (the only axis kind the census's
+        // `env_map_scale_sweeps_one_tile_period_for_every_real_rom_pairing`
+        // shift formula applies to).
+        let (scale_s, scale_t) = (0x0400u16, 0x0200u16);
+        let (origin_s, origin_t) = (6u16, 3u16);
+
+        // A normal aligned with the S basis and perpendicular to T: dot_s = 1,
+        // dot_t = 0.
+        let (u, v) = linear_texgen_uv(
+            [127, 0, 0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            scale_s,
+            scale_t,
+            origin_s,
+            origin_t,
+            true,
+            true,
+        );
+        let want_u = (scale_s as f32 / 2.0).round() as i32 - origin_s as i32 * 8;
+        let want_v = (scale_t as f32 / 4.0).round() as i32 - origin_t as i32 * 8;
+        assert_eq!(u as i32, want_u);
+        assert_eq!(v as i32, want_v);
+
+        // Unclamped: the origin shift must not apply.
+        let (u_unclamped, _) = linear_texgen_uv(
+            [127, 0, 0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            scale_s,
+            scale_t,
+            origin_s,
+            origin_t,
+            false,
+            true,
+        );
+        assert_eq!(u_unclamped as i32, (scale_s as f32 / 2.0).round() as i32);
     }
 
     #[test]

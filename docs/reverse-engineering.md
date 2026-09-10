@@ -10,6 +10,157 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-215 — Exact `G_TEXTURE_GEN_LINEAR`, and scenes 11/12 never actually exercised it (`PLAN.md` R2)
+
+**Question.** RE-214 left `G_TEXTURE_GEN_LINEAR` drawing through the ordinary
+mapping as a documented deviation: the GE's texture-matrix generator is affine
+in the dot product, and the linear form's `acos` curve is not, so no GE
+generator mode can reproduce it. Two candidates were on the table (RE-214
+§10): CPU/VFPU per-vertex generation into a scratch buffer (B-1), or a
+pack-time per-axis inverse-curve texture pre-warp (B-2).
+
+### 1. The curve, cross-checked against two independent implementations
+
+`refs/BattleShip`'s F3DEX interpreter (`interpreter.cpp`, `GfxSpVertex`) and
+`refs/n64psp`'s scalar TNL path (`tnl_scalar.c`,
+`n64psp_texgen_snorm8_batch_scalar`) compute `G_TEXTURE_GEN_LINEAR`
+identically, and neither renormalises the vertex normal:
+
+```text
+dot = clamp((normal · basis) / 127, -1, 1)   -- basis is unit, normal is raw i8
+u   = acos(-dot) / (2*pi)                     -- range [0, 0.5], same as the ordinary curve
+```
+
+Both reference implementations divide by the constant `127`, not the normal's
+real length — a deliberate RSP shortcut this project's own GE-hardware
+ordinary-texgen path cannot reproduce (D-038 already accepts that hardware
+normalises instead, as a *separate* deviation). Implementing the linear curve
+on the CPU is the one place this project can be more exact than the ordinary
+path, so it uses the RSP's real formula rather than borrowing the hardware
+approximation.
+
+### 2. Why not a LUT
+
+A lookup table is only exact if its *input* domain is finite. Only the vertex
+normal is quantised (`i8`); the look-at basis it is dotted against is a
+continuous float that changes with camera orientation every frame. A LUT keyed
+on the normal alone would still have to interpolate or accept error, for no
+accuracy gain over a direct polynomial, while adding a build-time table and a
+runtime gather. The archive-wide population is 257 triangles (12 packed
+primitives, RE-214 §10), small enough that a polynomial `acos` evaluation is
+very unlikely to be measurable against everything else one frame does. B-1
+was implemented; B-2 was not measured because B-1's cost is negligible on this
+population and B-2's own downside (a second variant of texture 661, shared
+with 157 *ordinary* texgen primitives) was already known going in.
+
+`acos` itself avoids a `libm` dependency the same way
+`ssb-engine::math::sqrt`/`sin_cos` already do: `std::f32::acos` on the host,
+a minimax polynomial (NVIDIA's Cg `acos`, max error ~6.6e-5 rad, measured
+against `std` across the full `[-1, 1]` domain by
+`acos_matches_std_within_measured_error`) on the device.
+
+### 3. Reusing the authored-UV pipeline instead of a second one
+
+The generated coordinate, worked through algebraically, lands in exactly the
+pack's existing raw S10.5 authored-UV unit
+(`crates/ssb-rom/src/psp_texture.rs`'s `env_map_tex_scale` doc comment
+already derives `S10.5 = u * gSPTexture_scale`), and the render-tile origin
+shift a clamped axis needs is the same `-origin * 8` `mesh::Builder::push_vertex`
+already bakes into authored UVs (RE-152) — the `/4`-to-`*8` scale alignment
+cancels the uploaded texture's dimension entirely, so no dimension parameter
+is needed at all. A linear-texgen vertex is therefore generated into a
+transient scratch buffer (`draw_mesh`'s existing dynamic-vertex pattern,
+previously only used for runtime material-colour animation) and submitted
+through the *ordinary* authored-UV `TextureMapMode`/`sceGuTexScale` path —
+no second coordinate-mapping mode, no texture duplication.
+`apply_texture_mapping`'s `environment` flag is therefore `false` for a
+`G_TEXTURE_GEN_LINEAR` primitive even though its geometry mode has
+`G_TEXTURE_GEN` set.
+
+New host-testable primitives, `crates/ssb-rom/src/psp_texture.rs`:
+`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`. Seven new host tests
+cover the curve's endpoints and shared midpoint with the ordinary curve, its
+complementary symmetry (`u(dot) + u(-dot) == 0.5`, since `acos(x) + acos(-x)
+== pi`), that it differs from the ordinary curve away from those shared
+points (a check that fails if the linear branch is deleted), the measured
+`acos` polynomial error bound, that `texgen_dot` divides by the constant `127`
+rather than the normal's real length, the S10.5 endpoint for all seven real
+ROM `G_TEXTURE` scales, and a real-ROM reproduction of file 117's own linear
+primitive (prim 3542, scale `0x0400`/`0x0200`, tile origin `6/3`).
+
+### 4. Scene 11/12 never exercised this primitive
+
+Verifying the fix on device, the very first capture of `regression_capture_scene11`
+came back **byte-identical** to its pre-fix golden — not a subtle miss, a
+plain zero-pixel diff. A reachability probe (a debug colour marker written
+into the linear-texgen branch, rebuilt, recaptured) confirmed the branch
+never fired at all for that scene. Inspecting the pack directly (a throwaway
+reader against `assets/generated/ssb64.pak`) found why: file 117 has **four**
+`StageMetalFile2` graphs (`0x1B10`, `0x2EE0`, `0x3468`, `0x3DD8`), and the
+archive's one packed `G_TEXTURE_GEN_LINEAR` primitive (3542, texture 499, 12
+triangles) belongs to the object at `0x2EE0` — not `0x1B10`, which is what
+scenes 11/12 actually render. `0x1B10`'s own five texgen primitives (3530-3534)
+are all ordinary.
+
+This corrects a stale claim carried in `STATUS.md`'s "remaining deviations"
+note ("269 triangles archive-wide, 24 of them in scene 11") and in
+`psp/Cargo.toml`'s scene 11 comment, both written from the archive-wide
+`(GEN, LINEAR)` geometry-mode census rather than from which *packed graph*
+scenes 11/12 actually select — the census counts commands reached anywhere in
+the file, not primitives placed under one specific object. Neither was
+checked against the pack directly until this fix needed a device diff to
+actually move.
+
+**New scene:** `regression_capture_scene13` selects the `0x2EE0` graph, same
+object-viewer pattern as scenes 11/12 (`psp/src/main.rs`, `psp/Cargo.toml`).
+Golden `tests/golden/r2-metal-texgen-linear.png`, SHA-256
+`0622e2a306454a0b888636c05914d2622ac359f0a597468564a47fd418b2f03a`.
+
+### 5. Verification
+
+Host: `cargo test --workspace` 531 pass (was 524), `cargo fmt --check` clean
+in both the workspace and `psp/`.
+
+PPSSPP 1.20.4, software rasteriser, deterministic frozen tick, pack SHA-256
+`295b62dc349c609dcd1443722861feca122e9441569e0f17f515d6aad74b8c7c` (unchanged
+from RE-214 — this fix touches draw-time code only, not the pack format):
+
+* `regression_capture_scene13` (the `0x2EE0` graph): the pre-fix build (old
+  ordinary-mapping code, restored via `git stash` around only
+  `psp/src/meshdraw.rs`/`crates/ssb-rom/src/psp_texture.rs` so the new scene's
+  wiring stayed in place) and the fixed build differ by 10,766 pixels on this
+  scene — the change is real, not inert. Two captures of the fixed build are
+  byte-identical (deterministic).
+* `regression_capture_scene11`/`regression_capture_scene12` (the `0x1B10`
+  graph, ordinary-only): both byte-identical to their existing RE-214
+  goldens, as expected now that the actual graph is known not to carry any
+  linear content.
+* `regression_capture` (Dream Land): byte-identical to `r0-dream-land-default.png`.
+* `regression_capture_scene6` (Fox, the only fighter golden checked here):
+  byte-identical to `r2-fox-fighter.png` — no fighter golden carries texgen,
+  so this is the "did the authored-UV path leak" check RE-214 also ran.
+
+Physical PSP (Slim, 6.61 ARK/Infinity, PSPLink 3.2.1 over USBHostFS), same
+pack hash as above:
+
+* scene 13, PRX SHA-256
+  `c77c04cc74e1e83503fea4b6a9232399e09d01cd027b65cf28595e927761dcf3`,
+  `exlist` empty, `main_thread` alive, native capture
+  `~/ppsspp-test/re214-linear-hw/psp-hw-scene13.bmp` SHA-256
+  `9f187e53157d2f8fa81ecc70e888070f8849d96f93454b25116eb9e777156578`, visually
+  matching the PPSSPP capture (pink/tan reflective facet, yellow flag panel,
+  gold crystal band).
+* `pspsh -e reset` run before `ldstart` (nothing was loaded this session, so
+  no prior `kill` was needed) and again after `kill`ing the module, per
+  RE-212's standing rule.
+
+**Confidence: certain.** Both the curve and the dot product are cross-checked
+against two independent existing implementations; the reachability finding is
+demonstrated by a debug marker and a direct pack read, not inferred; the pixel
+difference is measured against the actual pre-fix code, not assumed.
+
+---
+
 ## RE-214 — Texgen correctness recovery: raw geometry bits, vertex-load census, and the GE texture-matrix generator (`PLAN.md` R2)
 
 **Question.** RE-213 shipped a first `G_TEXTURE_GEN` implementation and proved
@@ -286,10 +437,19 @@ whose content carries no extra mip levels.
   and RE-151's scripted original-ROM harness (a temporary out-of-Git input
   plugin plus a Python Core API driver) no longer exists on disk; only its
   screenshots under `~/ppsspp-test/re151/` remain. Rebuilding it and scripting
-  a route to stage 8 is the prerequisite. Until then ordinary texgen is
-  `VERIFYING`, not `COMPLETE`: it is source-derived, ROM-corroborated,
-  PPSSPP-verified and hardware-verified, but not compared against the
-  original's own output.
+  a route to stage 8 is the prerequisite. A shorter route to the same
+  `G_TEXTURE_GEN` material exists and should be tried first: the Metal Box
+  item applies the identical texgen material to a fighter (files 300/301/303,
+  `MMarioModel`/`NMarioModel`/`NFoxModel`), and VS Mode with items on can reach
+  it far faster than a scripted 1P playthrough to stage 8. The census shows
+  those fighter models carry the archive's single largest texgen population
+  (157 packed primitives on texture 661, all ordinary), so this route changes
+  which content is compared but not what is being tested; if it works, extend
+  the PSP side with a scene showing the same `MMarioModel` graph rather than
+  forcing Meta Crystal on both sides. Until either route lands, texgen
+  (ordinary and, per RE-215, linear) is `VERIFYING`, not `COMPLETE`: it is
+  source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified, but
+  not compared against the original's own output.
 
 **Confidence: high for the geometry-state, census, scale and basis findings
 (each is either measured archive-wide or read directly from the decomp);

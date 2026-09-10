@@ -6936,8 +6936,8 @@ fn report_packed_texgen(path: &Path) -> Res {
     let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
     println!("packed texgen primitives ({})", path.display());
     println!(
-        "  {:>6}  {:>5}  {:>5}  {:>6}  {:>7}  {:>9}  {:>9}",
-        "prim", "file", "tris", "linear", "texture", "scale S/T", "origin"
+        "  {:>6}  {:>5}  {:>5}  {:>6}  {:>4}  {:>7}  {:>9}  {:>9}",
+        "prim", "file", "tris", "linear", "tex", "uploaded", "scale S/T", "origin"
     );
     // Which archive file each primitive's own mesh came from, so a scene can
     // be checked for texgen content without guessing.
@@ -6965,11 +6965,12 @@ fn report_packed_texgen(path: &Path) -> Res {
             )
         });
         println!(
-            "  {:>6}  {:>5}  {:>5}  {:>6}  {:>7}  {:#06x}/{:#06x}  {:>4}/{:<4}",
+            "  {:>6}  {:>5}  {:>5}  {:>6}  {:>4}  {:>7}  {:#06x}/{:#06x}  {:>4}/{:<4}",
             i,
             prim_file.get(&i).copied().unwrap_or(u32::MAX),
             p.index_count / 3,
             linear,
+            p.texture,
             dims,
             p.texgen_scale_s,
             p.texgen_scale_t,

@@ -1,99 +1,90 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-214 texgen correctness recovery)
+**Last updated:** 2026-09-10 (RE-215 exact `G_TEXTURE_GEN_LINEAR`)
 
 ## Continuation packet
 
 **Milestone:** `R2 — Physical PSP Rendering Validation`
 
-**Current task:** `R2 — broaden physical-PSP golden coverage` (the texgen
-fidelity follow-up is finished; see "Last completed task")
+**Current task:** `R2 — broaden physical-PSP golden coverage` (both texgen
+fidelity follow-ups from RE-214 are now resolved or correctly scoped; see
+"Last completed task")
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-214 — texgen correctness recovery. RE-213's first
-`G_TEXTURE_GEN` implementation proved only that GE environment mapping
-*executes* safely on hardware; it did not establish coordinate fidelity, and
-four things were wrong or unproven. All four are now resolved and measured.
-Full account: `docs/reverse-engineering.md` RE-214.
+**Last completed:** RE-215 — exact `G_TEXTURE_GEN_LINEAR`, and a correction to
+an RE-214 claim about which scene carries it. Full account:
+`docs/reverse-engineering.md` RE-215.
 
-1. **Raw geometry bits.** `G_TEXTURE_GEN` and `G_TEXTURE_GEN_LINEAR` were
-   collapsed into one enum, and the linear bit could enable generation by
-   itself. The walker now keeps the raw geometry-mode word and derives the
-   mode from it; `TextureGen::Sphere` is renamed `Regular`. Measured impact on
-   this ROM: none — the raw pair `(GEN=0, LINEAR=1)` never occurs.
-2. **Vertex-load census.** New `romtool texgen` walks every graph's planned
-   draw order and every discovered root list with an independent walker,
-   replaying `MObj` state. 3,012 texgen triangles across 16 files; **zero**
-   load a vertex under a different mode or `G_TEXTURE` scale than the draw.
-   Primitive-level state is a measured invariant (D-039).
-3. **Scale and tile origin.** `PrimDesc` now carries `texgen_scale_s`/`_t` and
-   `texgen_origin_s`/`_t` (pack `VERSION` 27, `PrimDesc` 52 -> 60 bytes). All
-   five real `G_TEXTURE` scales make the generated span exactly one period of
-   their own tile, which independently corroborates the formula.
-4. **The generator.** GE `EnvironmentMap` ignores `sceGuTexScale`/
-   `sceGuTexOffset` — measured, by installing a 64x-larger factor and getting a
-   byte-identical capture — so it cannot carry the source scale. Coordinates
-   are generated through the GE's texture-**matrix** generator instead, from
-   the normalised vertex normal, against the camera's world right/up basis
-   (which is exactly what `syMatrixLookAtReflectF` writes into the RSP's
-   look-at, in world space because SSB64 puts the view matrix in the
-   *projection* matrix). No GE light is involved any more (D-038).
+1. **The fix.** `G_TEXTURE_GEN_LINEAR`'s `acos(-dot)/(2*pi)` curve is now
+   generated exactly, per vertex, on the CPU (`ssb_rom::psp_texture::
+   linear_texgen_uv`), using the RSP's own dot product (`normal / 127`, not a
+   true renormalisation) — cross-checked against two independent reference
+   implementations (`refs/BattleShip`, `refs/n64psp`) that agree exactly. The
+   result is written into the pack's existing raw S10.5 authored-UV unit, so
+   the primitive draws through the *ordinary* authored-UV pipeline
+   (`draw_mesh`'s dynamic-vertex branch, previously only used for runtime
+   material-colour animation) rather than a second GE coordinate-generation
+   mode. A lookup table was considered and rejected: the vertex normal is
+   quantised but the look-at basis it is dotted against is a continuous
+   per-frame float, so a LUT keyed on the normal alone cannot be exact either
+   (D-040).
+2. **The scene-11 correction.** Verifying the fix, `regression_capture_scene11`
+   came back byte-identical pre- and post-fix. A debug-marker reachability
+   probe plus a direct read of the pack found why: file 117 has four
+   `StageMetalFile2` graphs, and the archive's one packed linear primitive
+   belongs to the graph at `0x2EE0`, not `0x1B10` (scenes 11/12's graph, which
+   turns out to carry only ordinary texgen). This corrects RE-214's own "24 of
+   them in scene 11" claim, which was written from an archive-wide geometry-mode
+   census rather than checked against the packed graph scenes 11/12 actually
+   select. New `regression_capture_scene13` targets the correct graph.
 
-Also: both RDP alpha gates now resolve onto the GE's one alpha-test unit in
-`pack::alpha_gate` with host regressions for every combination including the
-two overlap cases; mip behaviour revalidated (level zero only, constant LOD);
-and the nine golden scenes RE-213's mip change had left stale were refreshed.
+**Verification.** `cargo test --workspace` 531 pass (was 524), `cargo fmt
+--check` clean in workspace and `psp/`. Pack unchanged (draw-time-only fix),
+SHA-256 `295b62dc...`. PPSSPP: scene 13 differs from a pre-fix A/B build by
+10,766 pixels (fix is not inert), two captures of the fixed build are
+byte-identical; scenes 11/12, Dream Land, and the Fox fighter golden are all
+still byte-identical to their existing goldens. Physical PSP (Slim, 6.61
+ARK/Infinity, PSPLink 3.2.1): scene 13 renders with `exlist` empty,
+`main_thread` alive, native capture
+`~/ppsspp-test/re214-linear-hw/psp-hw-scene13.bmp`
+(`9f187e53...`) visually matching the PPSSPP capture.
 
-**Verification.** `cargo test -p ssb-rom` 366 pass, `cargo test --workspace`
-524 pass, `cargo fmt --check` clean in workspace and `psp/`. Pack rebuilt,
-SHA-256 `295b62dc...`. PPSSPP: scene 11 two captures byte-identical; new
-scene 12 (same graph, quarter turn) differs by RMSE 0.058, so the reflection
-demonstrably responds to rotation; Dream Land byte-identical to RE-213's own
-level-zero capture `08cc25cc...`. Physical PSP (Slim, 6.61 ARK/Infinity,
-PSPLink 3.2.1): both texgen scenes render with `exlist` empty, captures
-`~/ppsspp-test/re214/psp-hw-scene11.bmp` (`5cccb937...`) and
-`psp-hw-scene12.bmp` (`4f66d8cc...`); they agree with their PPSSPP goldens
-*better* than the long-accepted non-texgen Dream Land baseline does (2,652
-and 8,443 strong-diff pixels versus 11,668).
+**Commits:** see `git log` for RE-215's commit (implementation + docs, made
+after this update).
 
-**Commits:** `0248375` (raw geometry state, census, pack scale/origin, GE
-basis, alpha gates), `502f760` (texture-matrix generator, scene 12),
-`57ee696` (golden refresh, `romtool texgen --pack`).
+**Documentation updated:** `docs/reverse-engineering.md` (RE-215),
+`docs/rendering.md` (texgen section and status row), `docs/porting-status.md`,
+`docs/visual-regression.md` (thirteenth scene section), `PLAN.md` R2,
+`DECISIONS.md` (D-040), `psp/Cargo.toml` (scene 11's comment corrected), this
+file.
 
-**Documentation updated:** `docs/reverse-engineering.md` (RE-214),
-`docs/rendering.md` (texgen section rewritten, new status row, alpha and mip
-rows corrected), `docs/porting-status.md`, `PLAN.md` R2, `DECISIONS.md`
-(D-038, D-039), this file.
+**Remaining deviation (recorded in `PLAN.md` R2's acceptance list):**
 
-**Remaining deviations (both recorded in `PLAN.md` R2's acceptance list):**
-
-* **No original-N64 comparison for texgen output.** The only Metal content
-  this port can show is `StageMetalFile2` (Meta Crystal), reachable in SSB64
-  only through 1P mode stage 8 — VS Mode cannot select it. RE-151's scripted
-  original-ROM harness (a temporary out-of-Git Mupen64Plus input plugin plus a
-  Python Core API driver) no longer exists on disk; only its screenshots under
-  `~/ppsspp-test/re151/` remain. Rebuilding it and scripting a route to stage
-  8 is the prerequisite. Ordinary texgen is therefore `VERIFYING`, not
-  `COMPLETE`.
-* **`G_TEXTURE_GEN_LINEAR` still draws through the ordinary mapping.** 269
-  triangles archive-wide, 24 of them in scene 11. The GE's generated
-  coordinate is affine in the dot product; `acos(-dot)/(2*pi)` is not. Two
-  candidate implementations are written up in RE-214 §10 (CPU/VFPU per-vertex
-  generation into a scratch buffer, or a pack-time per-axis inverse-curve
-  texture pre-warp). Measure both before choosing; do not start one blind.
+* **No original-N64 comparison for texgen output** (both ordinary and linear
+  curves). The only Metal content this port can show is `StageMetalFile2`
+  (Meta Crystal), reachable in SSB64 only through 1P mode stage 8 — VS Mode
+  cannot select it. RE-151's scripted original-ROM harness (a temporary
+  out-of-Git Mupen64Plus input plugin plus a Python Core API driver) no longer
+  exists on disk; only its screenshots under `~/ppsspp-test/re151/` remain.
+  Rebuilding it and scripting a route to stage 8 is the prerequisite. Metal
+  Box on a fighter in VS Mode, reachable through files 300/301/303, is a
+  shorter route to the *same* material and is the recommended first attempt —
+  see RE-214 §10 for the route options and the reasoning. Texgen (both
+  curves) is therefore `VERIFYING`, not `COMPLETE`.
 
 **Dependencies:** R0.5 and R1 complete. R2's remaining hardware checklist rows
 are live analog-stick input (needs a human operator), exhaustive
-no-failures-remain coverage, and the two texgen rows above.
+no-failures-remain coverage, and the texgen original-comparison row above.
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–214;
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–215;
 `docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
 `tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/src/meshdraw.rs`
-(`apply_texture_mapping`, `texgen_object_basis`, `note_model_matrix`);
-`psp/Cargo.toml`; `crates/ssb-rom/src/mesh.rs` (`State::geometry_mode`,
-`TextureGen`); `crates/ssb-rom/src/pack.rs` (`PrimDesc`, `alpha_gate`);
-`crates/ssb-rom/src/psp_texture.rs` (mapping math);
+(`apply_texture_mapping`, `draw_mesh`, `texgen_object_basis`,
+`note_model_matrix`); `psp/Cargo.toml`; `crates/ssb-rom/src/mesh.rs`
+(`State::geometry_mode`, `TextureGen`); `crates/ssb-rom/src/pack.rs`
+(`PrimDesc`, `alpha_gate`); `crates/ssb-rom/src/psp_texture.rs` (mapping math,
+`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`);
 `tools/romtool/src/main.rs` (`texgen`, and `FIGHTER_COSTUME_COUNTS` for
 fighter name to model-graph file id).
 
@@ -105,11 +96,12 @@ before the next `ldstart`, even when `exlist`/`thlist` look clean.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** the roadmap's own next item is the **Yoshi's Island `G_SHADE`
-original-output investigation** (RE-120's two live primitives). It needs the
-same rebuilt original-ROM harness the texgen comparison above does, so doing
-that harness work once unblocks both — build it first, then use it for
-`G_SHADE` and for the texgen comparison in the same session. If the harness
+**Next:** the roadmap's own next item is the **original-N64 comparison
+harness** (rebuild RE-151's Mupen64Plus driver; the Metal Box VS-Mode route is
+the recommended first attempt — see RE-214 §10) — it now covers *both* texgen
+rows in one pass (ordinary and linear both need it) and also unblocks the
+**Yoshi's Island `G_SHADE` original-output investigation** (RE-120's two live
+primitives), which needs the same harness and nothing else. If the harness
 turns out to be infeasible, the next eligible work is more
 `regression_capture_sceneN` coverage: 6 of 12 playable fighters (Samus 320,
 Luigi 323, Link 324, Jigglypuff 330, Yoshi 338, Pikachu 341 — model file ids
@@ -136,22 +128,24 @@ references. See RE-211.
   canopy comparison.
 - R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
   R0.5 prerequisite is now satisfied.
-- R2: `IN_PROGRESS`; twelve golden regression scenes (Dream Land/Mario,
+- R2: `IN_PROGRESS`; thirteen golden regression scenes (Dream Land/Mario,
   `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City stage
-  animation, Fox, Captain Falcon, Kirby, Ness, Donkey Kong, and RE-214's two
-  `StageMetalFile2` texgen rotations) boot, pack loads, stage/fighter/
-  material/texture content matches PPSSPP goldens, and no hardware exception
-  remains across any of them (RE-203, RE-205, RE-207, RE-208, RE-209, RE-210,
-  RE-212, RE-214). The real framebuffer-effect `SObj` sprite path, VRAM usage,
-  and stage animation are hardware-verified too (RE-204, RE-205). Six fighters
-  besides Mario are hardware-verified. RE-212 found that a bare `kill` of a
-  prior PSPLink module can silently break the next module's asset-pack load
-  with no symptom `exlist`/`thlist` catch — `docs/psplink.md` now recommends
-  `reset` after every `kill`. RE-214 refreshed the nine goldens RE-213's mip
-  change had left stale. Exhaustive no-failures-remain coverage (6 of 12
-  fighters, 39 of 41 stages still untested), live analog-stick input, the
-  texgen original-output comparison and exact `G_TEXTURE_GEN_LINEAR` remain
-  open.
+  animation, Fox, Captain Falcon, Kirby, Ness, Donkey Kong, RE-214's two
+  `StageMetalFile2` ordinary-texgen rotations, and RE-215's linear-texgen
+  graph) boot, pack loads, stage/fighter/material/texture content matches
+  PPSSPP goldens, and no hardware exception remains across any of them
+  (RE-203, RE-205, RE-207, RE-208, RE-209, RE-210, RE-212, RE-214, RE-215).
+  The real framebuffer-effect `SObj` sprite path, VRAM usage, and stage
+  animation are hardware-verified too (RE-204, RE-205). Six fighters besides
+  Mario are hardware-verified. RE-212 found that a bare `kill` of a prior
+  PSPLink module can silently break the next module's asset-pack load with no
+  symptom `exlist`/`thlist` catch — `docs/psplink.md` now recommends `reset`
+  after every `kill`. RE-214 refreshed the nine goldens RE-213's mip change
+  had left stale. RE-215 made `G_TEXTURE_GEN_LINEAR` exact and found scenes
+  11/12 do not carry it (RE-214 had claimed otherwise). Exhaustive
+  no-failures-remain coverage (6 of 12 fighters, 39 of 41 stages still
+  untested), live analog-stick input, and the texgen original-output
+  comparison (both curves) remain open.
 - Movement core: dash and run velocities now follow fighter facing, including
   after a left turn; regression coverage added for left-facing run/dash state.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
@@ -175,58 +169,55 @@ references. See RE-211.
 
 ## Last completed task
 
-**RE-214 — Texgen correctness recovery: raw geometry bits, vertex-load
-census, and the GE texture-matrix generator**
+**RE-215 — Exact `G_TEXTURE_GEN_LINEAR`, and scenes 11/12 never actually
+exercised it**
 
-- Preserved the raw F3DEX geometry-mode word in the display-list walker and
-  derived `TextureGen::{None, Regular, Linear}` from it, so
-  `G_TEXTURE_GEN_LINEAR` is a modifier rather than an enabler and a retained
-  linear bit survives `G_TEXTURE_GEN` being cleared. Exhaustive transition
-  tests, including every partial clear/set.
-- Added `romtool texgen`, an archive-wide census of the state every texgen
-  vertex is loaded under versus drawn under, written independently of the
-  converter. Result: 3,012 texgen triangles, zero load/draw mismatches, so
-  primitive-level state is proven rather than assumed (D-039).
-- Carried the `gSPTexture` scale and render-tile origin into `PrimDesc`
-  (pack `VERSION` 27) — under `G_TEXTURE_GEN` the RSP never reads the
-  authored UVs those were already baked into.
-- Replaced the GE environment-map path with the texture-matrix generator
-  (D-038), after measuring that `sceGuTexScale`/`sceGuTexOffset` have no
-  effect in environment-map mode. The look-at basis is the camera's world
-  right/up, from `syMatrixLookAtReflectF`, folded into object space per node
-  exactly as the RSP's own `CalculateNormalDir` does.
-- Resolved both RDP alpha gates onto the GE's single alpha-test unit in
-  `pack::alpha_gate`, with host regressions covering the zero-reference and
-  nonzero-reference overlaps documentation previously called unresolved.
-- Added `regression_capture_scene12` (scene 11's graph, quarter turn) so the
-  reflection's response to rotation is measurable rather than inferred from a
-  single frozen frame.
-- Refreshed the nine goldens RE-213's mip change had left stale, after
-  proving with a scratch worktree build of `c8e7f13` that none of the delta
-  is this branch's work.
-- Evidence: `docs/reverse-engineering.md` RE-214.
+- Generated `G_TEXTURE_GEN_LINEAR`'s `acos(-dot)/(2*pi)` curve exactly, per
+  vertex, on the CPU (`ssb_rom::psp_texture::linear_texgen_curve`/
+  `texgen_dot`/`linear_texgen_uv`), using the RSP's own `normal / 127` dot
+  product — cross-checked against `refs/BattleShip` and `refs/n64psp`, which
+  agree exactly and both skip true renormalisation.
+- Reused the authored-UV pipeline instead of building a second GE
+  coordinate-generation mode: the generated coordinate lands in the pack's
+  existing raw S10.5 unit, and the render-tile origin shift reuses
+  `push_vertex`'s own `* 8` rule, so a linear-texgen primitive draws through
+  `draw_mesh`'s existing dynamic-vertex branch (previously only used for
+  runtime material-colour animation).
+- Rejected a lookup table: the vertex normal is quantised but the look-at
+  basis is a continuous per-frame float, so a LUT keyed on the normal alone
+  cannot be exact either (D-040).
+- Found, while verifying, that `regression_capture_scene11`'s graph
+  (`0x1B10`) carries no linear-texgen content at all — the archive's one
+  packed linear primitive lives in a sibling graph (`0x2EE0`). Added
+  `regression_capture_scene13` to target it, and corrected the stale "24 of
+  them in scene 11" claim RE-214 had left in `STATUS.md` and
+  `psp/Cargo.toml`.
+- Evidence: `docs/reverse-engineering.md` RE-215.
 
 ## Verification
 
-RE-214 ran the full escalation: targeted texgen tests, `cargo test -p ssb-rom`
-(366 pass), `cargo test --workspace` (524 pass), `cargo fmt --check` in both
-the workspace and `psp/`, the archive-wide `romtool texgen` census, a pack
-rebuild, PPSSPP determinism on scene 11 (two captures byte-identical), the
-scene 11/12 rotation pair, a Dream Land no-regression check that came out
-byte-identical to RE-213's recorded level-zero capture, an A/B against a
-`c8e7f13` worktree build to attribute the golden deltas, and physical-PSP
-captures of both texgen scenes with `exlist` clean.
+RE-215 ran the full escalation: seven new host tests (curve endpoints and
+midpoint, complementary symmetry, differentiation from the ordinary curve,
+measured `acos` polynomial error bound, the `/127` dot product, the S10.5
+endpoint for all seven real ROM scales, a real-ROM reproduction of file 117's
+own linear primitive), `cargo test --workspace` (531 pass), `cargo fmt --check`
+in both the workspace and `psp/`, a pack rebuild (hash unchanged — draw-time
+fix only), PPSSPP determinism on the new scene 13 (two captures
+byte-identical), an A/B against the pre-fix code on that same scene (10,766
+differing pixels — not inert), no-regression checks on scenes 11/12, Dream
+Land, and the Fox fighter golden, and a physical-PSP capture of scene 13 with
+`exlist` clean, visually matching the PPSSPP capture.
 
-Two deliberate control experiments were run rather than assumed: installing
-the authored-UV scale factor under environment mapping (byte-identical
-capture, proving the scale was ignored) and rotating the basis vector
-(every reflective facet changed, proving the basis was not).
+A deliberate control experiment was run rather than assumed: a debug colour
+marker written into the linear-texgen branch produced no visible change on
+scene 11 at all, which is what led to inspecting the pack directly and finding
+the primitive lives in a different graph.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–214.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–215.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
