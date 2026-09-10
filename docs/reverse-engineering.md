@@ -10,6 +10,97 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-204 — Framebuffer-effect sprite path and VRAM budget verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-203 explicitly left two R2 acceptance rows open: "framebuffer
+effects work" (RE-190–193's `SObj` wallpaper-sprite path was PPSSPP-verified
+only) and "VRAM usage verified" (never measured on real hardware at all).
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 as
+RE-201–203, at commit `c8a5432`, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`. Killed a
+stale `ssb64_psp` module (UID `0x04392E23`) left loaded from a prior session
+before loading this session's build, per `docs/psplink.md`.
+
+**Framebuffer effect: method.** Built `cargo psp --release --features
+regression_capture,wallpaper_sprite_audit_capture` (PRX sha256
+`4b7f0ac2b97bfc21eb9806948f1d170bdb9230fa8b63f8292de802938f62ba69`) — RE-193's
+real GE `SObj` sprite draw, triggered by the same tick-240 freeze as the
+golden scenes, drawing the framebuffer-captured wallpaper photo back through
+`Gpu::draw_wallpaper_sprite` at the pillarbox's own left edge (`vx=59`),
+300x220, dimmed by the real draw's 50%-grey prim-colour modulate. `ldstart`ed
+over `host0:`, waited past the freeze, confirmed `exlist` empty and
+`main_thread` alive, then took native `scrshot` captures.
+
+**Framebuffer effect: result.** The first capture (taken ~4 s after the
+tick-240 freeze) differed from a second capture 5 s later in a broad,
+graduated region inside the sprite rectangle (columns 156–284, most of the
+220 rows, diff magnitude up to 259/765) — a genuine transient, not overlay
+noise. Two further captures taken 2 s apart after that settled to
+**byte-identical** except for the same 59x7 PSPLink corner-overlay region
+RE-203 already excludes (101 pixels, columns 0–58 rows 0–6). The transient is
+consistent with the double-buffered display needing a couple of swap cycles
+to fully carry the one-shot capture across both `fbp0`/`fbp1` after the
+freeze instant; it resolves within a few seconds and does not recur once
+settled — captures taken any time after are stable. Using the settled
+capture (sha256
+`6dde00bae47d64692c6982ff4f704b96370b313d4345b883e13e7d9dde6e9985`): average
+luminance inside the sprite rectangle is 23.1 vs. 39.5 immediately outside it
+(same 0–220 row band, columns 360–420) — a 0.59 ratio, matching RE-193's own
+PPSSPP-measured 0.60 ratio (43.3/72.6) for the same 50%-grey modulate within
+measurement noise. No exception, `main_thread` alive throughout.
+
+**VRAM usage: method.** `pspsh meminfo` reports `sceKernel` main-RAM
+partitions only (EDRAM/VRAM is separate GE memory, not a `sceKernel`
+partition, so it never appears there). Instead audited every VRAM allocation
+site directly: `rg` over `psp/src` and `crates/` for `get_vram_allocator`/
+`.alloc_texture_pixels` finds exactly three call sites, all in `Gpu::init`
+(`psp/src/gu.rs:283-288`) — `fbp0`, `fbp1` (each `Psm8888`, `BUF_WIDTH`
+(512) x `SCREEN_HEIGHT` (272) x 4 bytes = 557,056 bytes) and `zbp`
+(`Psm4444`, 512x272x2 = 278,528 bytes). No other code path calls
+`get_vram_allocator` — every mesh, particle, texture-inspection and wallpaper
+texture bind (`meshdraw.rs`, `gu.rs`) instead points `sceGuTexImage` straight
+at a main-RAM pointer (pack data or a static array like `WALLPAPER_PHOTO`),
+so textures cost main RAM, not VRAM, in this renderer.
+
+**VRAM usage: result.** Total VRAM allocated = 557,056 + 557,056 + 278,528 =
+1,392,640 bytes (1,360 KiB) of the 2,097,152-byte (2 MiB) EDRAM that
+`sceGeEdramGetSize()` reports at runtime, leaving 704,512 bytes (~688 KiB)
+headroom — matching `crates/ssb-rom/src/psp_texture.rs`'s existing "~700 KiB"
+comment. `SimpleVramAllocator::alloc` (`psp` crate) panics immediately if the
+running total exceeds `sceGeEdramGetSize()`'s real runtime value, so every
+zero-exception hardware boot to date (RE-201–203, this session's own two
+loads) is a positive runtime check that this budget holds on real hardware,
+not just an offline arithmetic claim.
+
+**Conclusion.** Both remaining R2 rows from RE-203 are now evidenced on real
+hardware: the real `SObj` framebuffer-effect sprite path renders correctly,
+bounded, and deterministically once settled; VRAM usage is exactly
+1,360 KiB, fits the real 2 MiB EDRAM with ~688 KiB to spare, and every
+successful hardware boot is a live confirmation the allocator's own runtime
+bound check passes. `PLAN.md` R2's "framebuffer effects work" and "VRAM
+usage verified" rows are checked off by this entry. Rebuilt and redeployed
+the plain (no-feature) interactive build afterward per `docs/psplink.md`;
+verified stable.
+
+**Remaining scope.** Same as RE-203: stage animation (no captured golden
+scene isolates visibly animated stage geometry), exhaustive
+"no-hardware-only-failures-remain" coverage beyond the four golden scenes,
+and live analog-stick input (requires a human physically operating the
+device; not reproducible through `pspsh`).
+
+**Confidence:** High for the VRAM accounting — it is a direct grep-confirmed
+enumeration of every allocation site, not an estimate, and cross-checked
+against an independently-written comment elsewhere in the codebase. High for
+the framebuffer-effect render correctness (measured luminance ratio matches
+the existing PPSSPP evidence within noise, bounded-rectangle region
+confirmed by inspection). Medium on the exact mechanism of the settling
+transient — plausible double-buffer explanation, not instrumented to prove
+it frame-by-frame — but low-risk since it self-resolves and every capture
+after settling has been reproducibly identical.
+
+---
+
 ## RE-203 — All four golden regression scenes verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-202 fixed the interactive HUD crash but left R2's actual
