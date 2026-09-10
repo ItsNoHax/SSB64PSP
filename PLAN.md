@@ -2765,7 +2765,13 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   combiner/alpha-formula edge cases per RE-139) still describes the current
   pack path exactly — a direct diff confirms no commit since RE-168 touched
   `mesh.rs`'s combiner/alpha-blend/shade-scale classification functions
-* [ ] rendering regression suite passes
+* [x] rendering regression suite passes — RE-197: rebuilt the deterministic
+  capture EBOOT and reran the golden Dream Land comparison after RE-190–196's
+  code changes; `differing pixels: 0`, captured screenshot byte-identical
+  (same SHA-256) to the committed golden. Workspace verification
+  (`fmt`/`clippy`/`cargo test --workspace`, 347 passing) also reran clean.
+  RE-170's stage audit and RE-171's animation audit remain valid, separate
+  smoke coverage
 * [ ] golden/reference renders are established: methodology and one golden
   scene done under R0.17 (`docs/visual-regression.md`); the remaining
   test-matrix rows there still need coverage before this item can close

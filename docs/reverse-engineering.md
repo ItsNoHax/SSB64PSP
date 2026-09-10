@@ -10,6 +10,62 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-197 — Full regression stack rerun closes `PLAN.md` R1's "rendering regression suite passes" bullet
+
+**Problem.** RE-196 closed R1's asset/material bullets; the next unchecked
+R1 bullet is "rendering regression suite passes". Real code changed since
+the golden image was last refreshed at RE-167 (commit `9b44173`): RE-170/171
+(stage/animation audits, already executed separately), RE-172–189 (effects),
+RE-190–193 (framebuffer/wallpaper, feature-gated), RE-194 (`MObj`
+display-state parity, a real, unconditional pack/render change), and RE-195
+(`G_MDSFT_ALPHACOMPARE`, a real, unconditional new discard path,
+`pack::VERSION` 26). None of those sessions re-ran the deterministic
+Dream Land golden comparison end-to-end after landing; this task is that
+rerun, not new coverage.
+
+**Method.** No source change. Rebuilt the deterministic capture EBOOT,
+captured under PPSSPP software rendering, and diffed against the committed
+golden, following `docs/visual-regression.md`'s existing procedure exactly:
+
+```
+cd psp && cargo psp --release --features regression_capture
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r0-dream-land-default.png ~/ppsspp-test/screenshot.png
+```
+
+**Result.** `differing pixels: 0 (threshold: 0)` — `PASS`. The captured
+screenshot's SHA-256
+(`4d4ca4628c46884f1a50b8669a146c90d383e3d7ddda6f6e97a629bdd9fdf93b`) is
+byte-identical to the committed golden's own hash, not merely pixel-equal.
+The asset pack used
+(`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`) matches
+RE-196's own recorded hash exactly, confirming no asset-pipeline drift
+between that session and this one. This corroborates, with an independent
+end-to-end run rather than by re-reading prior claims, RE-194's "pixel-
+identical" and RE-195's "additive, no discard currently applies" framings:
+whatever those two sessions changed does not reach Dream Land's default
+golden framing at all.
+
+Also reran the broader verification `AGENTS.md` §14 calls for before
+treating a milestone item as satisfied: `cargo fmt --check` clean;
+`cargo clippy --workspace --all-targets` clean; `cargo test --workspace`
+(`SSB64_ROM` set) 347 passed, 0 failed — unchanged from RE-196's own count.
+Rebuilt the plain (non-`regression_capture`) EBOOT afterward per
+`docs/visual-regression.md`'s own rule against leaving that feature enabled.
+
+**Scope note.** This closes the golden-scene regression check specifically.
+RE-170's 41-stage audit and RE-171's 532-animation audit are separate,
+already-executed smoke audits (not rerun here, since nothing in RE-190–196
+touched stage selection or animation playback); R1's other unchecked
+bullet, "golden/reference renders are established" (the test matrix's
+"needs identification"/"needs a dedicated scene" rows), remains open and is
+unaffected by this entry.
+
+**Confidence:** High — direct byte-identical artifact comparison, not
+inference from documentation.
+
+---
+
 ## RE-196 — Reconciling `PLAN.md` R1's asset/material bullets against existing evidence (no code change)
 
 **Problem.** After RE-195 closed "no unexplained rendering commands remain",
