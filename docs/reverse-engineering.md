@@ -10,6 +10,91 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-206 — Swept the crate for other unguarded/speculatable divisions like RE-201/202/205's FPU traps (`PLAN.md` R2)
+
+**Problem.** RE-205 fixed a third instance of the same fault class RE-201/202
+already found (an IEEE-754 division whose denominator the ROM/animation data
+can make exactly zero, which PSPLink's trapping FPU turns into a hardware
+exception instead of the silent NaN/Infinity real N64 hardware and a
+non-trapping host CPU both produce). `STATUS.md` flagged a systematic
+`grep -n '/ payload'`-style sweep across the crate as reasonable next work
+before another such site surfaces one at a time on hardware.
+
+**Literal pattern: fully covered.** Every raw `1.0 / payload`-shaped division
+in the crate is already routed through the three existing `reciprocal_or_one`
+helpers (`figatree.rs`, `matanim.rs`, `objanim.rs`); no fourth unguarded
+instance of the exact reported shape exists.
+
+**Broader shape, on-device code only.** The same fault class only matters for
+code that actually executes on the PSP at runtime, not `romtool`'s host-side
+pack conversion (`mesh.rs`, `mobj.rs`, `pack.rs`, `psp_texture.rs` all run on
+the build host, where a non-trapping x86/ARM FPU never raises this
+exception). Checked every division in the on-device set — `ssb-rom`'s
+`scene`/`skeleton`/`figatree`/`matanim`/`objanim`/`particle`/`effect`/`pack`
+(reader side), `ssb-engine`, `ssb-game`, and `psp/src` — against the same
+"guard checks a value against zero, a division by that value follows" shape
+that made the three existing bugs invisible to ordinary code review:
+
+* `ssb-engine::math::Vec3::normalized`, `ssb-engine::timing::FrameTimings::fps`
+  — same *shape* (`if x <= 0 { default } else { 1.0 / x }`), but `fps()` only
+  feeds the debug overlay (off by default since `759cda8`) and `normalized()`
+  has no confirmed real-data caller whose input vector can be exactly zero.
+  No fix without a demonstrated reachable zero input; recorded here as a
+  candidate for a future session that finds one.
+* `ssb-game::camera::original_tan` divides by a sine-table lookup that is
+  exactly zero at a 90°/270° table index — real *if* `fovy_degrees` ever
+  reached 180° (half-angle 90°), but `Camera::tick` only eases it toward a
+  fixed `DEFAULT_FOVY_DEGREES` (38°) via `+= (default - current) * 0.1`, which
+  can only approach 38° asymptotically. No realistic path to the zero.
+* `ssb-game::status::update_walk` divides by `walk_anim_length(...)`, guarded
+  by `if old > 0.0`, but every real `PhysicsAttributes` value it can read is a
+  fighter's own walk-animation frame count — never zero for a real animation.
+  No demonstrated zero input; not changed.
+* `ssb-game::collision::check_tilt` divides by `scale` three times with **no**
+  guard at all (unlike the above, and unlike the original decompiled
+  `mpCollisionCheckFloorSurfaceTilt`, which also has none) — `scale` is
+  exactly zero whenever the swept movement is parallel to the sloped segment
+  being tested, the closest match to the three already-fixed bugs' shape.
+  Investigated this one in depth since it looked like the strongest
+  candidate: built a scratch probe (outside the crate, not committed) that
+  swept thousands of `(segment, from, to)` combinations, including exact
+  integer ratios (no rounding at all) and i16-range magnitudes chosen to
+  maximise float rounding noise, searching for any case where `scale == 0.0`
+  *and* `check_tilt`'s own preceding "started clearly above the surface,
+  ended clearly below it" gate (lines checked before the `scale`-based
+  solver) both hold. None were found. This matches the algebra: a segment's
+  height is a linear function of `x`, so a movement exactly parallel to it
+  keeps an invariant offset from that line at every point along it — if the
+  gate says "started above", the identical arithmetic says "still above" at
+  the end too, so the two conditions this bug would need are mutually
+  exclusive by construction, not merely unlikely. Wrote a defensive
+  `if scale == 0.0 { return None; }` guard and a direct unit test on the
+  private `check_tilt` first, then applied this project's own "test the test
+  by breaking the code" check (`decoder-output-is-not-rom-evidence`-style
+  verification): temporarily disabled the new guard and the added test still
+  passed, proving it was exercising the *existing* gate, not the new code.
+  Reverted both the guard and the test — an unreachable branch's guard is not
+  evidence-driven work, and a test that cannot fail is not a test.
+
+**Conclusion.** The literal sweep `STATUS.md` asked for is complete and
+clean: no fourth instance of the exact `reciprocal_or_one` shape exists. The
+broader "same class of bug" search found one structurally similar site
+(`check_tilt`) that a rigorous reachability check *ruled out* rather than
+confirmed, and three more (`normalized`, `fps`, `original_tan`,
+`update_walk`) with no demonstrated real-data path to a zero denominator.
+Per this project's own rule against unsupported heuristics, none were changed
+without a demonstrated reachable zero. A future session that finds a fighter,
+stage, or animation with a genuinely zero-length normal, a zero walk-anim
+length, or an FPU trap logged at one of these three sites should revisit this
+entry rather than treat it as closed.
+
+**Confidence: certain for the literal-pattern sweep (exhaustive grep); high
+for `check_tilt`'s specific unreachability (exhaustive analytical + brute-force
+argument, not merely untested); open for whether `normalized`/`fps`/
+`original_tan`/`update_walk` ever see a real zero-denominator input.**
+
+---
+
 ## RE-205 — Stage animation verified on physical PSP hardware; a third FPU-trap site found and fixed (`PLAN.md` R2)
 
 **Problem.** RE-203 confirmed all four golden scenes render correctly on
