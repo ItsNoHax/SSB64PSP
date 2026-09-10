@@ -1,23 +1,20 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-200 session)
+**Last updated:** 2026-09-10 (RE-201 physical-PSP session)
 
 ## Continuation packet
 
-**Milestone:** `R0 — Rendering Correctness`
+**Milestone:** `R2 — Physical PSP Rendering Validation`
 
-**Current task:** `R0.5 — Texture Filtering / LOD / Mipmapping`, physical-PSP
-Dream Land canopy comparison.
+**Current task:** `R2 — Physical PSP Rendering Validation`
 
-**Status:** `VERIFYING`
+**Status:** `IN_PROGRESS`
 
-**Remaining for this item:** compare Dream Land canopy on physical PSP against
-the documented PPSSPP/reference evidence. Physical hardware remains
-unavailable and this verification is deferred by explicit user direction.
+**Last completed:** `R0.5 — Texture Filtering / LOD / Mipmapping` (RE-201).
+PSPLink direct framebuffer capture on PSP Slim reproduces the Dream Land
+canopy composition; prior hardware FPU faults are fixed.
 
-**Dependencies:** software investigation complete through RE-200. R1's full
-acceptance checklist is checked, but R1 cannot be declared complete before
-R0.5 resolves.
+**Dependencies:** R0.5 and R1 complete. R2 hardware checklist remains.
 
 **Relevant files:** `PLAN.md` R0.5; `docs/reverse-engineering.md` RE-053,
 RE-070, RE-124, RE-127, RE-128; `docs/visual-regression.md`; Dream Land
@@ -27,16 +24,19 @@ golden and physical capture procedure.
 no further software-only rendering task is eligible: R2 is blocked by R1 and
 R3/combat remain blocked behind R2.
 
-**Acceptance:** `PLAN.md` R0.5's remaining physical-PSP comparison.
+**Acceptance:** `PLAN.md` R2.
 
-**Stop condition:** physical hardware unavailable; do not substitute PPSSPP.
+**Next:** capture representative fighter/stage/animation/material/texture
+paths and record VRAM/environment evidence on this same PSP.
 
 ## Current state
 
-- R0.5: `VERIFYING`; physical PSP validation unavailable/deferred.
-- R1: every acceptance bullet is checked through RE-200. It remains
-  `IN_PROGRESS` only because R0.5's prerequisite physical verification is
-  deferred. Four golden scenes pass exact PPSSPP software comparisons.
+- R0.5: `COMPLETE`; RE-201's PSPLink capture resolves its physical Dream Land
+  canopy comparison.
+- R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
+  R0.5 prerequisite is now satisfied.
+- R2: `IN_PROGRESS`; Dream Land boots, pack loads, stage/material/textures
+  render, and no hardware exception remains in the captured regression path.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -58,34 +58,28 @@ R3/combat remain blocked behind R2.
 
 ## Last completed task
 
-**RE-200 — Final four golden-render rows identified and captured**
+**RE-201 — PSPLink physical validation and FPU-trap fixes**
 
-- Temporary, reverted graph-backed census measured 119 texture-blend, 12
-  flat-colour, and 252 classified translucent primitives.
-- Added `regression_capture_scene3` for file 109 graph `0x44C8` and
-  `regression_capture_scene4` for file 84 graph `0x2760`.
-- Added deterministic Stage Sector and Catch Swirl goldens. Each matched
-  byte-for-byte at 6 and 30 seconds under PPSSPP software rendering.
-- Rechecked scene 2 and Dream Land: 0 differing pixels.
-- Updated roadmap, state, visual-regression, reverse-engineering, rendering,
-  and porting-status documentation.
-- Evidence: `docs/reverse-engineering.md` RE-200.
-- Commit: this commit (`test: complete R1 golden render coverage`).
+- Installed PSPLink v3.2.1; connected PSP Slim on firmware 6.61 through
+  USBHostFS and captured its native framebuffer.
+- Fixed speculative zero-duration divisions in material and joint animation,
+  plus invalid scalar math on packed extended RGBA material tracks.
+- Dream Land runs stably, with no PSPLink exceptions; direct capture matches
+  the documented canopy composition qualitatively.
+- Evidence: `docs/reverse-engineering.md` RE-201.
 
 ## Verification
 
-Scenes 3 and 4 built clean. Each produced byte-identical PPSSPP software
-captures at 6 and 30 seconds and 0 differing pixels. Scene 2 and Dream Land
-were rebuilt and still match their goldens exactly. `cargo fmt --check`
-passed on `psp`; final plain PSP build restored normal EBOOT. No host-side
-crate or asset conversion changed, so workspace tests and pack rebuild were
-not required.
+Focused material and figatree tests: 22 passed. `cargo fmt --check` passed.
+PSP `regression_capture` build ran on PSP Slim without exceptions; direct
+framebuffer screenshot and sustained thread run-clock evidence recorded in
+RE-201. Pack was unchanged.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–200.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–201.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 

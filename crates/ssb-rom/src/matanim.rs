@@ -452,6 +452,14 @@ fn tick_values_per_track(opcode: u32) -> Option<usize> {
     })
 }
 
+/// Reciprocal for a material-command duration, with a hardware-safe zero
+/// representation. Kept out of line so LLVM cannot speculatively replace the
+/// nonzero denominator with the caller's raw payload on PSP's trapping FPU.
+#[inline(never)]
+fn reciprocal_or_one(payload: f32) -> f32 {
+    1.0 / if payload == 0.0 { 1.0 } else { payload }
+}
+
 impl MaterialJoint {
     pub fn start(script: u32, frame: f32) -> Self {
         MaterialJoint {
@@ -619,7 +627,11 @@ impl MaterialJoint {
         per: usize,
     ) -> Result<usize, MatAnimError> {
         let mut pc = self.pc;
-        let (base, count) = if is_ext(opcode) {
+        // PSPLink enables FPU divide-by-zero traps. A zero-duration command
+        // needs an immediate update, not a speculative IEEE-754 divide.
+        let payload_inverse = reciprocal_or_one(payload);
+        let color_window = is_ext(opcode);
+        let (base, count) = if color_window {
             (TICK_EXT_START, TRACK_COUNT)
         } else {
             (0, MAT_TRACK_COUNT)
@@ -646,7 +658,7 @@ impl MaterialJoint {
                 t.value_target = value;
                 t.length = -self.anim_wait;
                 if payload != 0.0 {
-                    t.length_invert = 1.0 / payload;
+                    t.length_invert = payload_inverse;
                 }
 
                 match opcode {
@@ -674,8 +686,12 @@ impl MaterialJoint {
                     }
                     _ => {
                         // `SET_VAL(_BLOCK)`/`EXT_VAL(_BLOCK)`: linear ramp.
-                        t.rate_base = if payload != 0.0 {
-                            (t.value_target - t.value_base) / payload
+                        // Extended tracks are packed RGBA words. Their byte
+                        // interpolation is performed by `track_color`, so
+                        // subtracting their float bit interpretations is both
+                        // unused and invalid for values that encode NaNs.
+                        t.rate_base = if !color_window && payload != 0.0 {
+                            (t.value_target - t.value_base) * payload_inverse
                         } else {
                             0.0
                         };
@@ -942,6 +958,35 @@ mod tick_tests {
             Some(1.0),
             "steps to the target once its payload has elapsed"
         );
+    }
+
+    #[test]
+    fn zero_duration_linear_command_keeps_finite_track_values() {
+        // Real scripts use zero-duration commands. On PSP, a speculative
+        // divide by that duration faults when PSPLink's FPU traps are active;
+        // it must remain an immediate, finite update.
+        let d = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1, 0),
+            1.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("zero-duration command parses");
+        let track = j.tracks[0];
+        assert_eq!(track.rate_base, 0.0);
+        assert!(track.length_invert.is_finite());
+    }
+
+    #[test]
+    fn linear_colour_word_never_uses_float_rate_arithmetic() {
+        // RGBA can be an IEEE-754 NaN bit pattern. Colour interpolation uses
+        // the raw bytes, so its scalar AObj rate must remain unused/zero.
+        let d = script(&[cmd(OP_EXT_VAL_BLOCK, 1, 1), 0xFFA1_29FF, cmd(OP_END, 0, 0)]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("packed colour command parses");
+        let track = j.tracks[TICK_EXT_START];
+        assert_eq!(track.rate_base, 0.0);
+        assert!(j.track_color(TICK_EXT_START).is_some());
     }
 
     #[test]
