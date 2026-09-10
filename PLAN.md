@@ -2775,9 +2775,14 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 * [ ] golden/reference renders are established: methodology and one golden
   scene done under R0.17 (`docs/visual-regression.md`); RE-198 identified
   concrete file/offset evidence for the three rows that previously had none
-  (CI8 texture, clamp texture mode, untextured/vertex-coloured geometry) —
-  all six non-covered rows now share one remaining blocker, a second
-  dedicated `regression_capture`-style frozen scene, which does not yet exist
+  (CI8 texture, clamp texture mode, untextured/vertex-coloured geometry).
+  RE-199 built the second dedicated `regression_capture_scene2` frozen scene
+  (file 52, `mvopeningroom.c`'s "MVCommon" graph) and closed two of the six
+  non-covered rows (CI8 texture, untextured/vertex-coloured geometry) against
+  a new committed golden, `tests/golden/r1-mvopeningroom.png`. Four rows
+  remain: clamp texture mode (needs file 22, not file 52, on screen),
+  `combiner_texture_blend`, `combiner_flat_color` and translucency (still
+  unidentified to a concrete file/offset)
 
 ---
 

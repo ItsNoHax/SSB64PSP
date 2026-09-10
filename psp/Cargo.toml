@@ -24,6 +24,14 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # freezing it would break that.
 regression_capture = []
 
+# R1's second deterministic scene (`docs/visual-regression.md`'s test
+# matrix): boots straight into the object viewer on file 52's `mvopeningroom`
+# graph (RE-198's CI8 and untextured/vertex-coloured examples both live in
+# it), disables the default Dream Land stage view, freezes at the same fixed
+# tick as `regression_capture`, and suppresses viewer diagnostics the same
+# way. Off by default.
+regression_capture_scene2 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
