@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-209 eighth-golden-scene session)
+**Last updated:** 2026-09-10 (RE-210 ninth-golden-scene session)
 
 ## Continuation packet
 
@@ -10,32 +10,37 @@
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-209. Added an eighth golden scene,
-`regression_capture_scene8` (`psp/Cargo.toml`, `psp/src/main.rs`), the third
-fighter-bearing golden besides Mario. Selects Kirby's own model graph (file
-328, offset `0x1448` — the lower-offset of the file's symmetric 27-node
-graph pair, matching the convention scenes 6-7 used for Fox/Falcon), chosen
-because RE-102 named Kirby, alongside Fox and Falcon, as the third and last
-fighter with a real UV-scale/clamp texture bug. Reuses scenes 2-4/6-7's
-object-viewer freeze/spin-suppression/stage-view-disable pattern exactly.
-PPSSPP: two captures byte-identical, plain `regression_capture` still
-matches `r0-dream-land-default.png` exactly (0 diff), `cargo test
---workspace` unchanged at 506 passing. New golden committed:
-`tests/golden/r2-kirby-fighter.png`. Physical PSP: no stale module was
+**Last completed:** RE-210. Added a ninth golden scene,
+`regression_capture_scene9` (`psp/Cargo.toml`, `psp/src/main.rs`), the fourth
+fighter-bearing golden besides Mario. Selects Ness's own model graph (file
+335, offset `0x26B0` — the lower-offset of the file's symmetric 27-node
+graph pair, matching the convention scenes 6-8 used), chosen because RE-103
+named Ness, alongside Fox, Captain Falcon and Kirby, as a fighter whose
+surface "melted" into rainbow noise under the old per-primitive
+majority-vote lit-vs-literal heuristic — a different bug class than scenes
+6-8's UV-scale/clamp fix, and the one fighter from that set still
+hardware-untested. Reuses scenes 2-4/6-8's object-viewer freeze/
+spin-suppression/stage-view-disable pattern exactly. PPSSPP: two captures
+byte-identical, plain `regression_capture` still matches
+`r0-dream-land-default.png` exactly (0 diff), `cargo test --workspace`
+unchanged at 506 passing. New golden committed:
+`tests/golden/r2-ness-fighter.png`. Physical PSP: no stale module was
 loaded this session, `ldstart`ed the new PRX over `host0:`, zero exceptions
 (`exlist` empty, `main_thread` alive), native capture matches the PPSSPP
 golden with only the same expected edge-antialiasing/overlay divergence
-RE-203/204/205/207/208 already documented. Full account in
-`docs/reverse-engineering.md` RE-209.
+RE-203/204/205/207/208/209 already documented. Full account in
+`docs/reverse-engineering.md` RE-210.
 
 **Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
 row is live analog-stick input (needs a human operator); "no hardware-only
-rendering failures remain" stays open pending broader coverage — 8 of 12
+rendering failures remain" stays open pending broader coverage — 7 of 12
 playable fighters and 39 of 41 stages remain hardware-untested.
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–209;
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–210;
 `docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
-`tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/Cargo.toml`.
+`tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/Cargo.toml`;
+`tools/romtool/src/main.rs`'s `FIGHTER_COSTUME_COUNTS` (fighter name to
+model-graph file id).
 
 **First checks:** physical PSP hardware is present and PSPLink-reachable
 this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
@@ -47,14 +52,15 @@ remains possible.
 **Acceptance:** `PLAN.md` R2.
 
 **Next:** the same `regression_capture_sceneN` pattern RE-199/200/205/207/
-208/209 established scales directly to the next untouched fighter or
-stage — RE-102's own named set (Fox, Falcon, Kirby) is now fully
-hardware-covered, so the next pick is any of the other 8 untested playable
-fighters or 39 untested stages, per `docs/reverse-engineering.md`/
-`docs/ssb-architecture.md`'s roster. Find its model graph via
-`romtool scene --file <id> --list`, add a `regression_capture_sceneN`
-feature following scene 8's exact structure, and repeat the
-PPSSPP-then-hardware verification. Separately, still open: whether the
+208/209/210 established scales directly to the next untouched fighter or
+stage — both RE-102's and RE-103's own named fighter sets are now fully
+hardware-covered, so the next pick is any of the other 7 untested playable
+fighters (Donkey Kong 317, Samus 320, Luigi 323, Link 324, Jigglypuff 330,
+Yoshi 338, Pikachu 341 — model file ids from `FIGHTER_COSTUME_COUNTS`) or
+39 untested stages. Find its model graph via `romtool scene --file <id>
+--list`, add a `regression_capture_sceneN` feature following scene 9's
+exact structure, and repeat the PPSSPP-then-hardware verification.
+Separately, still open: whether the
 analog nub correctly drives the fighter now that RE-202's HUD-crash fix is
 live — this requires a human physically operating the device with PSPLink
 attached; `pspsh` has no controller-injection command, so an agent session
@@ -66,18 +72,19 @@ cannot resolve it alone.
   canopy comparison.
 - R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
   R0.5 prerequisite is now satisfied.
-- R2: `IN_PROGRESS`; all eight golden regression scenes (Dream Land/Mario,
+- R2: `IN_PROGRESS`; all nine golden regression scenes (Dream Land/Mario,
   `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City stage
-  animation, Fox, Captain Falcon, Kirby) boot, pack loads, stage/fighter/
-  material/texture content matches PPSSPP goldens, and no hardware exception
-  remains across any of them (RE-203, RE-205, RE-207, RE-208, RE-209). The
-  real framebuffer-effect `SObj` sprite path, VRAM usage, and stage
-  animation are now hardware-verified too (RE-204, RE-205). Fox (RE-207),
-  Captain Falcon (RE-208) and Kirby (RE-209) are the first three
-  hardware-verified fighters besides Mario — every fighter RE-102 named for
-  the UV-scale/clamp bug is now covered. Exhaustive no-failures-remain
-  coverage (8 of 12 fighters, 39 of 41 stages still untested) and live
-  analog-stick input remain open.
+  animation, Fox, Captain Falcon, Kirby, Ness) boot, pack loads,
+  stage/fighter/material/texture content matches PPSSPP goldens, and no
+  hardware exception remains across any of them (RE-203, RE-205, RE-207,
+  RE-208, RE-209, RE-210). The real framebuffer-effect `SObj` sprite path,
+  VRAM usage, and stage animation are now hardware-verified too (RE-204,
+  RE-205). Fox (RE-207), Captain Falcon (RE-208), Kirby (RE-209) and Ness
+  (RE-210) are the first four hardware-verified fighters besides Mario —
+  every fighter RE-102/RE-103 named for their respective UV-scale/clamp and
+  lit/literal bugs is now covered. Exhaustive no-failures-remain coverage
+  (7 of 12 fighters, 39 of 41 stages still untested) and live analog-stick
+  input remain open.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -99,34 +106,38 @@ cannot resolve it alone.
 
 ## Last completed task
 
-**RE-209 — Eighth golden scene (Kirby) verified on physical PSP hardware**
+**RE-210 — Ninth golden scene (Ness) verified on physical PSP hardware**
 
-- Added `regression_capture_scene8` (`psp/Cargo.toml`, `psp/src/main.rs`),
-  following scenes 2-4/6-7's object-viewer pattern exactly: overrides
-  `object_index` to file 328 offset `0x1448` (Kirby's own model graph),
+- Added `regression_capture_scene9` (`psp/Cargo.toml`, `psp/src/main.rs`),
+  following scenes 2-4/6-8's object-viewer pattern exactly: overrides
+  `object_index` to file 335 offset `0x26B0` (Ness's own model graph),
   disables default `stage_view`, reuses the tick-240 freeze, idle-spin
   freeze and HUD suppression.
-- Chose Kirby specifically because RE-102 already named him, alongside Fox
-  and Captain Falcon, as one of three fighters with a real UV-scale/clamp
-  texture bug — completing the regression lineage RE-207/RE-208 started,
-  not an arbitrary pick.
+- Chose Ness specifically because RE-103 already named him, alongside Fox,
+  Captain Falcon and Kirby, as a fighter whose surface "melted" into
+  rainbow noise under the old per-primitive majority-vote lit-vs-literal
+  heuristic — a different bug class than scenes 6-8's UV-scale/clamp fix,
+  not an arbitrary pick. Found Ness's model file id (335) in
+  `tools/romtool/src/main.rs`'s `FIGHTER_COSTUME_COUNTS`, since RE-102's own
+  `209/236/229` file ids are a different (fighter-data, not model-graph)
+  table.
 - PPSSPP: two captures byte-identical; plain `regression_capture` (no
-  scene-8 feature) still matches `r0-dream-land-default.png` exactly (0
+  scene-9 feature) still matches `r0-dream-land-default.png` exactly (0
   diff), confirming the new wiring is inert elsewhere. `cargo test
   --workspace` unchanged at 506 passing (no crate logic touched). New golden
-  committed: `tests/golden/r2-kirby-fighter.png`.
+  committed: `tests/golden/r2-ness-fighter.png`.
 - Physical PSP: no stale module was loaded this session, `ldstart`ed the new
   PRX over `host0:`, confirmed `exlist` empty and `main_thread` alive in
   `thlist`, captured a native 480x272 `scrshot`. Diffed 2x-upscaled against
   the PPSSPP golden: only the same edge-antialiasing/overlay divergence
-  RE-203/204/205/207/208 already documented, no solid-interior content
+  RE-203/204/205/207/208/209 already documented, no solid-interior content
   difference. Killed the module and rebuilt the plain default EBOOT
   afterward.
-- Evidence: `docs/reverse-engineering.md` RE-209.
+- Evidence: `docs/reverse-engineering.md` RE-210.
 
 ## Verification
 
-RE-209 ran the full PPSSPP-then-hardware procedure: PPSSPP determinism
+RE-210 ran the full PPSSPP-then-hardware procedure: PPSSPP determinism
 (two captures byte-identical), no-regression check against the existing
 Dream Land golden, `cargo test --workspace` (506 passing, unchanged), then
 physical-PSP `exlist`/`thlist` state checks and a native framebuffer capture
@@ -136,7 +147,7 @@ diffed against the new PPSSPP golden.
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–209.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–210.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.

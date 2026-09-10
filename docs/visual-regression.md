@@ -259,6 +259,33 @@ empty, `main_thread` alive in `thlist`). Native capture matches this golden
 band, PSPLink's status text, and PPSSPP's FPS-counter overlay differing — no
 solid interior region of the model differs.
 
+## Ninth deterministic test scene (RE-210)
+
+`regression_capture_scene9` puts Ness on screen, the same object-viewer
+pattern as scenes 6-8: selects file 335 offset `0x26B0`, Ness's own model
+graph (the lower-offset of the file's symmetric 27-node graph pair, matching
+the convention scenes 6-8 used). Ness was chosen because RE-103 named him,
+alongside Fox, Captain Falcon and Kirby, as a fighter whose surface
+"melted" into rainbow noise under the old per-primitive majority-vote
+lit-vs-literal heuristic — a different bug class than scenes 6-8's
+UV-scale/clamp fix, and the one fighter from RE-103's set still
+hardware-untested.
+
+Build and compare:
+
+```
+cd psp && cargo psp --release --features regression_capture_scene9
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r2-ness-fighter.png ~/ppsspp-test/screenshot.png
+```
+
+Physical PSP hardware verification (RE-210): built and `ldstart`ed under
+PSPLink the same way as the other eight scenes. Zero exceptions (`exlist`
+empty, `main_thread` alive in `thlist`). Native capture matches this golden
+(upscaled 2x nearest-neighbour) with only the expected edge-antialiasing
+band and PPSSPP's FPS-counter overlay differing — no solid interior region
+of the model differs.
+
 ## Capture procedure
 
 ### 1. PPSSPP software rendering (executed; this is the current golden source)
