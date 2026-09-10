@@ -72,7 +72,9 @@ mod billboard_capture {
 #[inline]
 fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
     sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS
-        && (cfg!(feature = "regression_capture") || cfg!(feature = "camera_audit_capture"))
+        && (cfg!(feature = "regression_capture")
+            || cfg!(feature = "regression_capture_scene2")
+            || cfg!(feature = "camera_audit_capture"))
 }
 
 psp::module!("ssb64_psp", 1, 0);
@@ -406,6 +408,23 @@ unsafe fn run() -> ! {
             best.0
         })
         .unwrap_or(0);
+    // R1's second deterministic scene: override the depth/triangle heuristic
+    // above with RE-198's own file 52 (`mvopeningroom.c`, "MVCommon") graph,
+    // which the heuristic itself passed over for the *first* golden scene
+    // precisely because its 38 cutscene panels "look exactly like a
+    // rendering bug" (see the comment above) -- the same texture-heavy
+    // panel mosaic is what makes it the concrete carrier of RE-198's CI8
+    // (offset `0x2ee8`) and untextured/vertex-coloured (mesh index 4,
+    // primitive 0) test-matrix rows.
+    if cfg!(feature = "regression_capture_scene2") {
+        if let Some(p) = &pack {
+            if let Some(i) =
+                (0..p.object_count()).find(|&i| p.object(i).is_some_and(|o| o.source_file == 52))
+            {
+                object_index = i;
+            }
+        }
+    }
     // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
     // display-bearing objects after excluding three controller-only entries
     // and coalescing four shared graphs. Resolve that source-backed inventory
@@ -477,7 +496,8 @@ unsafe fn run() -> ! {
             feature = "animation_audit_capture",
             feature = "effect_audit_capture",
             feature = "effect_animation_audit_capture",
-            feature = "effect_material_audit_capture"
+            feature = "effect_material_audit_capture",
+            feature = "regression_capture_scene2"
         ));
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
@@ -991,7 +1011,8 @@ unsafe fn run() -> ! {
                 && !billboard_view
                 && !cfg!(any(
                     feature = "effect_animation_audit_capture",
-                    feature = "effect_material_audit_capture"
+                    feature = "effect_material_audit_capture",
+                    feature = "regression_capture_scene2"
                 ))
             {
                 spin += 0.02;
@@ -1922,6 +1943,7 @@ unsafe fn run() -> ! {
             );
         } else if !cfg!(any(
             feature = "regression_capture",
+            feature = "regression_capture_scene2",
             feature = "camera_audit_capture"
         )) {
             gpu.debug_text(

@@ -10,6 +10,90 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-199 — Second deterministic `regression_capture` scene closes two of RE-198's six test-matrix rows (`PLAN.md` R1)
+
+**Problem.** RE-198 identified concrete file/offset evidence for three
+previously-unidentified test-matrix rows but explicitly built nothing to put
+them on screen: all six non-covered rows (CI8 texture, `combiner_texture_
+blend`, `combiner_flat_color`, translucency, clamp texture mode, untextured/
+vertex-coloured geometry) shared one remaining blocker, a second dedicated
+`regression_capture`-style frozen scene that did not yet exist. `STATUS.md`
+named file 52's graph as the natural candidate, since RE-198 tied two of the
+six rows (CI8, untextured/vertex-coloured geometry) to it directly.
+
+**Method.** Added a second, off-by-default Cargo feature on the `ssb64-psp`
+crate, `regression_capture_scene2` (`psp/Cargo.toml`), reusing
+`regression_capture`'s existing tick-240 freeze and HUD-suppression
+machinery rather than duplicating it:
+
+* `psp/src/main.rs`'s `stage_view` boot default gained this feature in its
+  existing `cfg!(any(...))` disable-list (same list
+  `animation_audit_capture`/`effect_audit_capture`/etc. already use), so the
+  object viewer runs instead of Dream Land.
+* The object viewer's own "deepest hierarchy, tie-broken by triangle count"
+  boot heuristic is overridden, under this feature only, to the object whose
+  `ObjectDesc.source_file == 52` — file 52's single graph
+  (`mvopeningroom.c`'s "MVCommon" scene, RE-060/RE-198), the same graph the
+  unmodified heuristic already finds and *rejects* for the first golden
+  scene specifically because its 38 flat cutscene panels "look exactly like
+  a rendering bug" there. That property is exactly what makes it the real
+  carrier of RE-198's CI8 (offset `0x2ee8`) and untextured/vertex-coloured
+  (mesh index 4, primitive 0) examples.
+* `deterministic_capture_frozen` and the HUD-suppression `cfg!(any(...))`
+  list both gained this feature, identically to how `regression_capture`
+  already used them.
+
+**A new determinism gap, found and fixed before committing a golden.** The
+object viewer's idle model spin (`spin += 0.02` per frame) is not gated by
+`deterministic_capture_frozen` at all — every other object-view-based audit
+tolerates this because it only checks a capture is non-blank, never that two
+captures are pixel-identical, so nobody had needed to freeze it before. A
+first attempt at the golden showed two captures of the same build, 24 real
+seconds apart, differing by 126,693 pixels — the model had visibly rotated.
+Adding this feature to the same `cfg!(any(...))` list that already holds
+`spin` at `0.45` for the effect-animation/effect-material audits (here at
+its default `0.0`) fixed it: the same two capture times then produced
+byte-identical PNGs.
+
+**Result.** Built, captured under PPSSPP software rendering, and verified
+per `docs/visual-regression.md`'s methodology:
+
+```
+cd psp && cargo psp --release --features regression_capture_scene2
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r1-mvopeningroom.png ~/ppsspp-test/screenshot.png
+```
+
+Two captures 24 real seconds apart are byte-identical and 0 differing
+pixels. The image itself shows a fully furnished room (bed, dresser/TV,
+rug, wall texture, door) — a plausible render of `mvopeningroom.c`'s scene,
+not a blank or degenerate capture. The golden is committed at
+`tests/golden/r1-mvopeningroom.png`, SHA-256
+`db3fd4bce8d3dbbed4534d53fdbea1c3708d708d19298149037676f2628f9ba1`. Rebuilding
+plain `regression_capture` (no scene-2 feature) afterward still matches the
+original Dream Land golden exactly (0 differing pixels), confirming none of
+this session's code changes affect builds without the new feature.
+`cargo fmt --check` passed on the `psp` crate; the workspace's own
+`cargo test`/`clippy` are unaffected since `psp` is excluded from the
+workspace (root `Cargo.toml`) and no host-side crate changed.
+
+Test-matrix rows closed: CI8 texture, untextured/vertex-coloured geometry
+(`docs/visual-regression.md`). Rows *not* closed by this scene: clamp
+texture mode's dedicated row cites file 22's clean (non-mirrored) example,
+not file 52 — file 52 only carries the clamp+mirror combination at the same
+`0x2ee8` offset as its CI8 example, already covered by the existing "Mirror
+wrap mode" row. `combiner_texture_blend`, `combiner_flat_color` and
+translucency remain unidentified to any concrete file/offset; RE-198 did not
+tie them to file 52 either. Four rows, and the identification work behind
+three of them, remain open.
+
+**Confidence:** High for determinism (measured byte-identical across two
+capture times) and for the two rows closed (the primitives are part of the
+drawn object's hierarchy, not merely nearby). Not a claim about the other
+four rows, which this scene does not touch.
+
+---
+
 ## RE-198 — Concrete file/offset evidence for three "needs identification" test-matrix rows (`PLAN.md` R1)
 
 **Problem.** R1's last unchecked bullet, "golden/reference renders are
