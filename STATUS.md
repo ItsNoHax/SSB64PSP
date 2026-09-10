@@ -1,98 +1,122 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-212 tenth-golden-scene session)
+**Last updated:** 2026-09-10 (RE-214 texgen correctness recovery)
 
 ## Continuation packet
 
 **Milestone:** `R2 — Physical PSP Rendering Validation`
 
-**Current task:** `Rendering fidelity follow-up — texgen, mipmap selection, and combined alpha gates`
+**Current task:** `R2 — broaden physical-PSP golden coverage` (the texgen
+fidelity follow-up is finished; see "Last completed task")
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-212. Added a tenth golden scene,
-`regression_capture_scene10` (`psp/Cargo.toml`, `psp/src/main.rs`), the fifth
-fighter-bearing golden besides Mario. Selects Donkey Kong's own model graph
-(file 317, offset `0x39A8` — the lower-offset of the file's symmetric
-26-node graph pair, matching the convention scenes 6-9 used), the next
-untested fighter in `FIGHTER_COSTUME_COUNTS` order once both RE-102's and
-RE-103's named fighter sets were exhausted. Reuses scenes 2-4/6-9's
-object-viewer freeze/spin-suppression/stage-view-disable pattern exactly.
-PPSSPP: two captures byte-identical, plain `regression_capture` still
-matches `r0-dream-land-default.png` exactly (0 diff), `cargo test
---workspace` unchanged at 506 passing. New golden committed:
-`tests/golden/r2-dk-fighter.png`. Physical PSP: the first two `ldstart`
-attempts (after a plain `kill` of a prior module, then after `kill` + `cd`)
-both produced the built-in fallback tetrahedron instead of DK, despite
-`exlist` empty and `main_thread` alive — a silently failed asset-pack open
-invisible to the usual health checks. `pspsh -e reset` before the next
-`ldstart` fixed it; DK then rendered correctly with the same clean
-`exlist`/`thlist` results the two failing attempts also showed. Native
-capture matches the PPSSPP golden with only the same expected
-edge-antialiasing/overlay divergence RE-203–210 already documented. Updated
-`docs/psplink.md` to recommend `reset` after every `kill`, not only after
-an observed fault. Full account in `docs/reverse-engineering.md` RE-212.
+**Last completed:** RE-214 — texgen correctness recovery. RE-213's first
+`G_TEXTURE_GEN` implementation proved only that GE environment mapping
+*executes* safely on hardware; it did not establish coordinate fidelity, and
+four things were wrong or unproven. All four are now resolved and measured.
+Full account: `docs/reverse-engineering.md` RE-214.
 
-**Active follow-up (2026-09-10):** User explicitly authorized implementation
-of three documented fidelity gaps before further R2 coverage: preserve and
-render `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`, remove PSP automatic mip
-selection where it disagrees with SSB64's `G_TL_TILE`, and resolve the
-`alpha_test` + `G_AC_THRESHOLD` overlap. Then investigate the two live
-Yoshi's Island `G_SHADE` cases from original-output evidence. This does not
-authorize combat or item gameplay.
+1. **Raw geometry bits.** `G_TEXTURE_GEN` and `G_TEXTURE_GEN_LINEAR` were
+   collapsed into one enum, and the linear bit could enable generation by
+   itself. The walker now keeps the raw geometry-mode word and derives the
+   mode from it; `TextureGen::Sphere` is renamed `Regular`. Measured impact on
+   this ROM: none — the raw pair `(GEN=0, LINEAR=1)` never occurs.
+2. **Vertex-load census.** New `romtool texgen` walks every graph's planned
+   draw order and every discovered root list with an independent walker,
+   replaying `MObj` state. 3,012 texgen triangles across 16 files; **zero**
+   load a vertex under a different mode or `G_TEXTURE` scale than the draw.
+   Primitive-level state is a measured invariant (D-039).
+3. **Scale and tile origin.** `PrimDesc` now carries `texgen_scale_s`/`_t` and
+   `texgen_origin_s`/`_t` (pack `VERSION` 27, `PrimDesc` 52 -> 60 bytes). All
+   five real `G_TEXTURE` scales make the generated span exactly one period of
+   their own tile, which independently corroborates the formula.
+4. **The generator.** GE `EnvironmentMap` ignores `sceGuTexScale`/
+   `sceGuTexOffset` — measured, by installing a 64x-larger factor and getting a
+   byte-identical capture — so it cannot carry the source scale. Coordinates
+   are generated through the GE's texture-**matrix** generator instead, from
+   the normalised vertex normal, against the camera's world right/up basis
+   (which is exactly what `syMatrixLookAtReflectF` writes into the RSP's
+   look-at, in world space because SSB64 puts the view matrix in the
+   *projection* matrix). No GE light is involved any more (D-038).
 
-**Progress:** `MeshMaterial::texture_gen` now preserves `None`/ordinary/
-linear texgen independently through conversion; pack flags retain both source
-forms. PSP drawing uses native `sceGuTexMapMode(EnvironmentMap, 0, 1)` for
-ordinary `G_TEXTURE_GEN`, restoring ordinary UVs for all other primitives.
-The existing packed normal attribute is used directly. Exact
-`G_TEXTURE_GEN_LINEAR` is now a documented remaining gap: original formula
-is `acos(projected_normal_component) * 1024/pi`, not GE's ordinary linear
-normal mapping. PSP texture binding now binds level 0 only, constant LOD plus
-bilinear filter, matching `G_TL_TILE`; old lower levels remain in generated
-pack but inert. Alpha threshold/reference now survive overlap with
-`ALPHA_TEST`; nonzero threshold implies existing `alpha > 0` approximation,
-zero retains `Greater`. `cargo test -p ssb-rom`: 351 pass; release host check
-passes. PPSSPP captures: Metal scene and changed level-0 Dream Land; two Dream
-Land runs byte-identical. Physical PSP Slim/6.61 ARK/Infinity/PSPLink 3.2.1
-captures obtained for both. Files/hashes and exact evidence: RE-213. Remaining:
-original-output investigation for Yoshi `G_SHADE`; exact CPU linear texgen
-still requires model/view normal transform plumbing.
+Also: both RDP alpha gates now resolve onto the GE's one alpha-test unit in
+`pack::alpha_gate` with host regressions for every combination including the
+two overlap cases; mip behaviour revalidated (level zero only, constant LOD);
+and the nine golden scenes RE-213's mip change had left stale were refreshed.
 
-**Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
-row is live analog-stick input (needs a human operator); "no hardware-only
-rendering failures remain" stays open pending broader coverage — 6 of 12
-playable fighters and 39 of 41 stages remain hardware-untested.
+**Verification.** `cargo test -p ssb-rom` 366 pass, `cargo test --workspace`
+524 pass, `cargo fmt --check` clean in workspace and `psp/`. Pack rebuilt,
+SHA-256 `295b62dc...`. PPSSPP: scene 11 two captures byte-identical; new
+scene 12 (same graph, quarter turn) differs by RMSE 0.058, so the reflection
+demonstrably responds to rotation; Dream Land byte-identical to RE-213's own
+level-zero capture `08cc25cc...`. Physical PSP (Slim, 6.61 ARK/Infinity,
+PSPLink 3.2.1): both texgen scenes render with `exlist` empty, captures
+`~/ppsspp-test/re214/psp-hw-scene11.bmp` (`5cccb937...`) and
+`psp-hw-scene12.bmp` (`4f66d8cc...`); they agree with their PPSSPP goldens
+*better* than the long-accepted non-texgen Dream Land baseline does (2,652
+and 8,443 strong-diff pixels versus 11,668).
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–212;
+**Commits:** `0248375` (raw geometry state, census, pack scale/origin, GE
+basis, alpha gates), `502f760` (texture-matrix generator, scene 12),
+`57ee696` (golden refresh, `romtool texgen --pack`).
+
+**Documentation updated:** `docs/reverse-engineering.md` (RE-214),
+`docs/rendering.md` (texgen section rewritten, new status row, alpha and mip
+rows corrected), `docs/porting-status.md`, `PLAN.md` R2, `DECISIONS.md`
+(D-038, D-039), this file.
+
+**Remaining deviations (both recorded in `PLAN.md` R2's acceptance list):**
+
+* **No original-N64 comparison for texgen output.** The only Metal content
+  this port can show is `StageMetalFile2` (Meta Crystal), reachable in SSB64
+  only through 1P mode stage 8 — VS Mode cannot select it. RE-151's scripted
+  original-ROM harness (a temporary out-of-Git Mupen64Plus input plugin plus a
+  Python Core API driver) no longer exists on disk; only its screenshots under
+  `~/ppsspp-test/re151/` remain. Rebuilding it and scripting a route to stage
+  8 is the prerequisite. Ordinary texgen is therefore `VERIFYING`, not
+  `COMPLETE`.
+* **`G_TEXTURE_GEN_LINEAR` still draws through the ordinary mapping.** 269
+  triangles archive-wide, 24 of them in scene 11. The GE's generated
+  coordinate is affine in the dot product; `acos(-dot)/(2*pi)` is not. Two
+  candidate implementations are written up in RE-214 §10 (CPU/VFPU per-vertex
+  generation into a scratch buffer, or a pack-time per-axis inverse-curve
+  texture pre-warp). Measure both before choosing; do not start one blind.
+
+**Dependencies:** R0.5 and R1 complete. R2's remaining hardware checklist rows
+are live analog-stick input (needs a human operator), exhaustive
+no-failures-remain coverage, and the two texgen rows above.
+
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–214;
 `docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
-`tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/Cargo.toml`;
-`tools/romtool/src/main.rs`'s `FIGHTER_COSTUME_COUNTS` (fighter name to
-model-graph file id).
+`tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/src/meshdraw.rs`
+(`apply_texture_mapping`, `texgen_object_basis`, `note_model_matrix`);
+`psp/Cargo.toml`; `crates/ssb-rom/src/mesh.rs` (`State::geometry_mode`,
+`TextureGen`); `crates/ssb-rom/src/pack.rs` (`PrimDesc`, `alpha_gate`);
+`crates/ssb-rom/src/psp_texture.rs` (mapping math);
+`tools/romtool/src/main.rs` (`texgen`, and `FIGHTER_COSTUME_COUNTS` for
+fighter name to model-graph file id).
 
-**First checks:** physical PSP hardware is present and PSPLink-reachable
-this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
-once `usbhostfs_pc -v "$PWD"` is running). Re-check this at the start of the
-next session; if hardware is no longer attached, R2 has no further eligible
-hardware task, but a new PPSSPP-only golden scene (still useful groundwork)
-remains possible.
+**First checks:** physical PSP hardware was present and PSPLink-reachable this
+session (`lsusb` shows `054c:01c9`; `pspsh -e ver` reports `PSPLink v3.2.1`
+once `usbhostfs_pc -v "$PWD"` runs). Re-check at the start of the next
+session. Remember RE-212's finding: `pspsh -e reset` after **any** `kill`,
+before the next `ldstart`, even when `exlist`/`thlist` look clean.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** the same `regression_capture_sceneN` pattern RE-199/200/205/207/
-208/209/210/212 established scales directly to the next untouched fighter
-or stage — the next pick is any of the other 6 untested playable fighters
-(Samus 320, Luigi 323, Link 324, Jigglypuff 330, Yoshi 338, Pikachu 341 —
-model file ids from `FIGHTER_COSTUME_COUNTS`) or 39 untested stages. Find
-its model graph via `romtool scene --file <id> --list`, add a
-`regression_capture_sceneN` feature following scene 10's exact structure,
-and repeat the PPSSPP-then-hardware verification — remembering RE-212's
-finding: `reset` PSPLink after any `kill`, before the next `ldstart`, even
-when `exlist`/`thlist` look clean. Separately, still open: whether the
-analog nub correctly drives the fighter now that RE-202's HUD-crash fix is
-live — this requires a human physically operating the device with PSPLink
-attached; `pspsh` has no controller-injection command, so an agent session
-cannot resolve it alone.
+**Next:** the roadmap's own next item is the **Yoshi's Island `G_SHADE`
+original-output investigation** (RE-120's two live primitives). It needs the
+same rebuilt original-ROM harness the texgen comparison above does, so doing
+that harness work once unblocks both — build it first, then use it for
+`G_SHADE` and for the texgen comparison in the same session. If the harness
+turns out to be infeasible, the next eligible work is more
+`regression_capture_sceneN` coverage: 6 of 12 playable fighters (Samus 320,
+Luigi 323, Link 324, Jigglypuff 330, Yoshi 338, Pikachu 341 — model file ids
+from `FIGHTER_COSTUME_COUNTS`) and 39 of 41 stages are still
+hardware-untested. Find a model graph with `romtool scene --file <id> --list`,
+add a feature following scene 10's structure, and repeat the
+PPSSPP-then-hardware procedure.
 
 **RE-211 rendering-gap audit:** current decomp/runtime comparison found that
 R0.10's `COMPLETE` claim is premature. Runtime supports the 33 packed
@@ -100,10 +124,11 @@ palette-cycling material scripts, but not the decomp's stage `TextureIDCurrent`
 and UV material tracks; 200/441 fighter costume scripts also carry an ignored
 `PaletteID` track. The decomp-confirmed renderer gaps are fighter shadows,
 general SObj/UI rendering, and original GObj/display-link scheduling for
-multi-pass content. Combined alpha gates and rare/two-cycle combiner formulas
-remain bounded fidelity gaps. Current ROM census corrected stale docs: 134/134
-material graphs paired, 475 matching nodes, zero mismatches; texture failures
-are only the 26 runtime framebuffer references. See RE-211.
+multi-pass content. Rare/two-cycle combiner formulas remain a bounded fidelity
+gap; the combined alpha gates listed there are now closed by RE-214. Current
+ROM census corrected stale docs: 134/134 material graphs paired, 475 matching
+nodes, zero mismatches; texture failures are only the 26 runtime framebuffer
+references. See RE-211.
 
 ## Current state
 
@@ -111,23 +136,22 @@ are only the 26 runtime framebuffer references. See RE-211.
   canopy comparison.
 - R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
   R0.5 prerequisite is now satisfied.
-- R2: `IN_PROGRESS`; all ten golden regression scenes (Dream Land/Mario,
+- R2: `IN_PROGRESS`; twelve golden regression scenes (Dream Land/Mario,
   `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City stage
-  animation, Fox, Captain Falcon, Kirby, Ness, Donkey Kong) boot, pack loads,
-  stage/fighter/material/texture content matches PPSSPP goldens, and no
-  hardware exception remains across any of them (RE-203, RE-205, RE-207,
-  RE-208, RE-209, RE-210, RE-212). The real framebuffer-effect `SObj` sprite
-  path, VRAM usage, and stage animation are now hardware-verified too
-  (RE-204, RE-205). Fox (RE-207), Captain Falcon (RE-208), Kirby (RE-209),
-  Ness (RE-210) and Donkey Kong (RE-212) are the first five hardware-verified
-  fighters besides Mario — every fighter RE-102/RE-103 named for their
-  respective UV-scale/clamp and lit/literal bugs is covered, and DK extends
-  coverage past both named sets. RE-212 also found that a bare `kill` of a
+  animation, Fox, Captain Falcon, Kirby, Ness, Donkey Kong, and RE-214's two
+  `StageMetalFile2` texgen rotations) boot, pack loads, stage/fighter/
+  material/texture content matches PPSSPP goldens, and no hardware exception
+  remains across any of them (RE-203, RE-205, RE-207, RE-208, RE-209, RE-210,
+  RE-212, RE-214). The real framebuffer-effect `SObj` sprite path, VRAM usage,
+  and stage animation are hardware-verified too (RE-204, RE-205). Six fighters
+  besides Mario are hardware-verified. RE-212 found that a bare `kill` of a
   prior PSPLink module can silently break the next module's asset-pack load
   with no symptom `exlist`/`thlist` catch — `docs/psplink.md` now recommends
-  `reset` after every `kill`, not only after an observed fault. Exhaustive
-  no-failures-remain coverage (6 of 12 fighters, 39 of 41 stages still
-  untested) and live analog-stick input remain open.
+  `reset` after every `kill`. RE-214 refreshed the nine goldens RE-213's mip
+  change had left stale. Exhaustive no-failures-remain coverage (6 of 12
+  fighters, 39 of 41 stages still untested), live analog-stick input, the
+  texgen original-output comparison and exact `G_TEXTURE_GEN_LINEAR` remain
+  open.
 - Movement core: dash and run velocities now follow fighter facing, including
   after a left turn; regression coverage added for left-facing run/dash state.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
@@ -151,56 +175,58 @@ are only the 26 runtime framebuffer references. See RE-211.
 
 ## Last completed task
 
-**RE-212 — Tenth golden scene (Donkey Kong) verified on physical PSP
-hardware; stale PSPLink module-manager state found to silently break the
-next module's asset-pack load**
+**RE-214 — Texgen correctness recovery: raw geometry bits, vertex-load
+census, and the GE texture-matrix generator**
 
-- Added `regression_capture_scene10` (`psp/Cargo.toml`, `psp/src/main.rs`),
-  following scenes 2-4/6-9's object-viewer pattern exactly: overrides
-  `object_index` to file 317 offset `0x39A8` (DK's own model graph),
-  disables default `stage_view`, reuses the tick-240 freeze, idle-spin
-  freeze and HUD suppression.
-- Chose DK as the next untested fighter in `FIGHTER_COSTUME_COUNTS` order
-  once both RE-102's and RE-103's own named fighter sets were exhausted by
-  RE-207–210.
-- PPSSPP: two captures byte-identical; plain `regression_capture` (no
-  scene-10 feature) still matches `r0-dream-land-default.png` exactly (0
-  diff), confirming the new wiring is inert elsewhere. `cargo test
-  --workspace` unchanged at 506 passing (no crate logic touched). New golden
-  committed: `tests/golden/r2-dk-fighter.png`.
-- Physical PSP: the first two `ldstart` attempts (a plain `kill` of a prior
-  module, then `kill` + `cd` into the EBOOT's directory) both produced the
-  built-in fallback tetrahedron instead of DK, despite `exlist` empty and
-  `main_thread` alive in `thlist` — the pack open had silently failed with
-  no symptom this project's usual health checks catch. `pspsh -e reset`
-  before the next `ldstart` fixed it; DK then rendered correctly with the
-  same clean `exlist`/`thlist` results. Diffed 2x-upscaled against the
-  PPSSPP golden: only the same edge-antialiasing/overlay divergence
-  RE-203–210 already documented, no solid-interior content difference.
-  Killed the module and rebuilt the plain default EBOOT afterward.
-- Updated `docs/psplink.md` to recommend `reset` after every `kill`, not
-  only after an observed fault.
-- Evidence: `docs/reverse-engineering.md` RE-212.
+- Preserved the raw F3DEX geometry-mode word in the display-list walker and
+  derived `TextureGen::{None, Regular, Linear}` from it, so
+  `G_TEXTURE_GEN_LINEAR` is a modifier rather than an enabler and a retained
+  linear bit survives `G_TEXTURE_GEN` being cleared. Exhaustive transition
+  tests, including every partial clear/set.
+- Added `romtool texgen`, an archive-wide census of the state every texgen
+  vertex is loaded under versus drawn under, written independently of the
+  converter. Result: 3,012 texgen triangles, zero load/draw mismatches, so
+  primitive-level state is proven rather than assumed (D-039).
+- Carried the `gSPTexture` scale and render-tile origin into `PrimDesc`
+  (pack `VERSION` 27) — under `G_TEXTURE_GEN` the RSP never reads the
+  authored UVs those were already baked into.
+- Replaced the GE environment-map path with the texture-matrix generator
+  (D-038), after measuring that `sceGuTexScale`/`sceGuTexOffset` have no
+  effect in environment-map mode. The look-at basis is the camera's world
+  right/up, from `syMatrixLookAtReflectF`, folded into object space per node
+  exactly as the RSP's own `CalculateNormalDir` does.
+- Resolved both RDP alpha gates onto the GE's single alpha-test unit in
+  `pack::alpha_gate`, with host regressions covering the zero-reference and
+  nonzero-reference overlaps documentation previously called unresolved.
+- Added `regression_capture_scene12` (scene 11's graph, quarter turn) so the
+  reflection's response to rotation is measurable rather than inferred from a
+  single frozen frame.
+- Refreshed the nine goldens RE-213's mip change had left stale, after
+  proving with a scratch worktree build of `c8e7f13` that none of the delta
+  is this branch's work.
+- Evidence: `docs/reverse-engineering.md` RE-214.
 
 ## Verification
 
-RE-212 ran the full PPSSPP-then-hardware procedure: PPSSPP determinism
-(two captures byte-identical), no-regression check against the existing
-Dream Land golden, `cargo test --workspace` (506 passing, unchanged), then
-physical-PSP `exlist`/`thlist` state checks and a native framebuffer capture
-diffed against the new PPSSPP golden — plus, after the first two attempts
-silently failed, a `pspsh -e reset` recovery step re-verified twice to
-confirm it reliably fixes the fault before it was documented as the new
-default step.
+RE-214 ran the full escalation: targeted texgen tests, `cargo test -p ssb-rom`
+(366 pass), `cargo test --workspace` (524 pass), `cargo fmt --check` in both
+the workspace and `psp/`, the archive-wide `romtool texgen` census, a pack
+rebuild, PPSSPP determinism on scene 11 (two captures byte-identical), the
+scene 11/12 rotation pair, a Dream Land no-regression check that came out
+byte-identical to RE-213's recorded level-zero capture, an A/B against a
+`c8e7f13` worktree build to attribute the golden deltas, and physical-PSP
+captures of both texgen scenes with `exlist` clean.
 
-Post-RE-212 movement fix: `ssb-game` and full workspace tests pass; left-facing
-dash/run velocity regression passes. No pack or rendering code changed.
+Two deliberate control experiments were run rather than assumed: installing
+the authored-UV scale factor under environment mapping (byte-identical
+capture, proving the scale was ignored) and rotating the basis vector
+(every reflective facet changed, proving the basis was not).
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–212.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–214.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.

@@ -2319,7 +2319,11 @@ zero handling in `mesh.rs`:**
   deferred — it is an item-pickup visual effect, downstream of the
   combat/item systems `AGENTS.md` §5 gates behind rendering correctness.
   Not an `ACCEPTED_DEVIATION` (it is technically reproducible on the PSP
-  GE), just out of scope until items exist.
+  GE), just out of scope until items exist. **Superseded:** RE-213
+  implemented it and RE-214 corrected it — the reflective content is
+  reachable without items through `StageMetalFile2`, so it was validated
+  under R2 rather than waiting on the item system. See R2's own acceptance
+  list for what remains (original-output comparison, and the linear form).
 
 Neither gap was fixed this session — both need either a per-primitive
 cross-reference (`G_SHADE`) or a real feature (environment-mapped UV
@@ -2816,7 +2820,16 @@ RE-103's named sets were exhausted, hardware-verified with zero exceptions
 — and found that a bare `kill` of a prior PSPLink module can silently
 break the next module's asset-pack load with no symptom `exlist`/`thlist`
 catch, now documented in `docs/psplink.md` as a `reset`-before-`ldstart`
-default. Exhaustive no-failures-remain coverage and live analog-stick input
+default. RE-213 then implemented three documented fidelity gaps (texgen,
+mip selection, the combined alpha gates), and RE-214 corrected the texgen
+half of that work: the two geometry-mode bits are now preserved
+independently, an archive-wide `romtool texgen` census proves texgen may
+stay primitive-level state, the `gSPTexture` scale and render-tile origin
+reach the GE, and coordinates are generated through the GE's
+texture-matrix generator against the camera's world right/up basis — the
+same basis `syMatrixLookAtReflectF` writes into the RSP's own look-at.
+RE-214 also refreshed the nine golden scenes RE-213's mip change had left
+stale. Exhaustive no-failures-remain coverage and live analog-stick input
 remain open — the last requires a human physically operating the device,
 not reproducible through `pspsh`.
 
@@ -2838,7 +2851,9 @@ PPSSPP is not sufficient.
 * [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
-* [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
+* [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong), an eleventh and twelfth (`StageMetalFile2` texgen at two rotations, RE-214) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
+* [ ] `G_TEXTURE_GEN` compared against original output — RE-214: ordinary texgen is source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified at two model rotations, but no original-N64 capture exists. Meta Crystal is reachable only through 1P mode stage 8 and RE-151's scripted original-ROM harness no longer exists on disk; rebuilding it is the prerequisite. `VERIFYING`, not `COMPLETE`
+* [ ] `G_TEXTURE_GEN_LINEAR` implemented exactly — RE-214: 269 triangles archive-wide still draw through the ordinary mapping, because the GE's generated coordinate is affine in the dot product and `acos(-dot)/(2*pi)` is not. Two candidate implementations are described in RE-214 §10; measure both before choosing. Documented deviation, not silent
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)
 

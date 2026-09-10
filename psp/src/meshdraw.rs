@@ -303,10 +303,30 @@ impl DrawState {
     /// texgen path never has to reconstruct it.
     pub unsafe fn note_model_matrix(&mut self) {
         let mut m = ScePspFMatrix4 {
-            x: ScePspFVector4 { x: 1.0, y: 0.0, z: 0.0, w: 0.0 },
-            y: ScePspFVector4 { x: 0.0, y: 1.0, z: 0.0, w: 0.0 },
-            z: ScePspFVector4 { x: 0.0, y: 0.0, z: 1.0, w: 0.0 },
-            w: ScePspFVector4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
+            x: ScePspFVector4 {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+                w: 0.0,
+            },
+            y: ScePspFVector4 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+                w: 0.0,
+            },
+            z: ScePspFVector4 {
+                x: 0.0,
+                y: 0.0,
+                z: 1.0,
+                w: 0.0,
+            },
+            w: ScePspFVector4 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                w: 1.0,
+            },
         };
         sys::sceGumStoreMatrix(&mut m);
         self.texgen_model = Some(m);

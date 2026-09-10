@@ -10,6 +10,294 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-214 — Texgen correctness recovery: raw geometry bits, vertex-load census, and the GE texture-matrix generator (`PLAN.md` R2)
+
+**Question.** RE-213 shipped a first `G_TEXTURE_GEN` implementation and proved
+on physical hardware that GE environment mapping *executes* safely. It did not
+establish that the generated coordinates were right. Four things were
+unverified: whether the two geometry-mode bits were represented faithfully,
+whether texgen may live on the primitive at all given that F3DEX generates
+coordinates during vertex processing, whether the `gSPTexture` scale reached
+the GE, and which basis vectors the generator was actually using.
+
+All four turned out to be wrong or unproven. This entry supersedes RE-213's
+texgen conclusions; RE-213's own mip finding and its hardware capture stand.
+
+### 1. The two geometry-mode bits are not one enum
+
+`MeshMaterial::texture_gen` collapsed `G_TEXTURE_GEN` and
+`G_TEXTURE_GEN_LINEAR` into `{None, Sphere, Linear}`, and let the linear bit
+enable generation on its own. Two problems:
+
+* `refs/BattleShip`'s F3DEX interpreter branches on `G_TEXTURE_GEN` first and
+  treats the linear bit as a *modifier* (`interpreter.cpp`, `GfxSpVertex`'s
+  `if (geometry_mode & G_TEXTURE_GEN) { ... if (geometry_mode &
+  G_TEXTURE_GEN_LINEAR) ... }`). The linear bit alone generates nothing.
+* A three-state enum cannot represent `G_TEXTURE_GEN=0, LINEAR=1`, so a list
+  that clears only `G_TEXTURE_GEN` and later re-sets it would resume in
+  *ordinary* mode where the RSP resumes in *linear* mode.
+
+The walker now keeps the raw geometry-mode word, applies `G_GEOMETRYMODE`'s
+clear/set masks to it directly, and derives the mode
+(`TextureGen::from_geometry_mode`). `Sphere` is renamed `Regular`: the RSP's
+ordinary form is a scaled projected-normal mapping, not OpenGL's
+`GL_SPHERE_MAP`, which divides by a reflection-vector norm the RSP never
+computes.
+
+Measured impact on this ROM: **none**. The raw combination
+`(G_TEXTURE_GEN=0, G_TEXTURE_GEN_LINEAR=1)` never occurs, at a draw or
+transiently, in any of 2,447 geometry-mode commands. The fix is correctness
+insurance, and saying so is the point of measuring it.
+
+### 2. Archive-wide vertex-load census (`romtool texgen`)
+
+F3DEX generates texture coordinates during `G_VTX` processing, so keeping
+texgen as primitive-level material state is only valid if no list loads a
+vertex under one state and draws it under another. New `romtool texgen` walks
+every scene graph's planned draw order (state threaded across nodes, as
+`convert_sequence` does) and every discovered root list no graph claims, with
+a walker written independently of `mesh.rs` so it does not share the code
+under test. It replays `MObj` material state too, since an `MObj` can override
+the tile rectangle and the `G_TEXTURE` scale exactly as an in-list command
+would.
+
+```text
+triangles                43145
+texgen triangles          3012   (2743 ordinary, 269 linear)
+files drawing texgen        16
+texgen draw sites          194
+
+raw (GEN, LINEAR) at a draw:  (0,0) 40133   (1,0) 2743   (1,1) 269   (0,1) 0
+raw (GEN, LINEAR) ever set:   (0,0)  2241   (1,0)  192   (1,1)  14   (0,1) 0
+
+vertices loaded under mixed modes      0
+load mode differs from draw mode       0
+vertices loaded under mixed scales     0
+load scale differs from draw scale     0
+uses a vertex from an earlier step    203
+uses a vertex from another list       203
+```
+
+**Primitive-level texgen state is therefore a measured invariant, not an
+assumption.** The 203 triangles that reuse a vertex across a node or list
+boundary are real, but every one of them was loaded under the same effective
+mode and the same `G_TEXTURE` scale it draws under, so nothing about them
+breaks the invariant. No vertex-cache-granularity representation is needed.
+
+### 3. `gSPTexture` scale and tile origin
+
+Under `G_TEXTURE_GEN` the RSP discards authored UVs entirely and applies
+`G_TEXTURE`'s scale to the coordinate it generates
+(`U = dotx * texture_scaling_factor.s`), then the RDP addresses TMEM relative
+to the render tile's origin. Neither survived into the pack: the packed `u`/`v`
+are the authored ones, already scaled and already rebased, which the RSP never
+reads on such a primitive. `PrimDesc` now carries `texgen_scale_s`/`_t` and
+`texgen_origin_s`/`_t` (pack `VERSION` 27, `PrimDesc` 52 -> 60 bytes).
+
+Five distinct `G_TEXTURE` scales occur at a texgen draw, and each makes the
+generated span exactly one period of that draw's own tile — an independent
+corroboration of the formula below, from data rather than from the derivation:
+
+```text
+scale    tile      span (scale/64 texels)
+0x01C0    8x8        7
+0x0200/0x0400 16x8    8 / 16
+0x07C0   32x32      31
+0x0A40/0x0BC0 48x42  41 / 47
+0x0FC0   64x32      63
+```
+
+Tile origins: 57 of 3012 texgen triangles bind a tile with a nonzero origin,
+all in `StageMetalFile2`, all on a **clamped** axis, ranging 0.5 to 3 texels.
+The origin is therefore applied at draw time under exactly the rule
+`mesh::Builder::push_vertex` already uses when baking the same shift into
+authored UVs (RE-152): clamped axes only, because a repeat axis's mask phase is
+already meaningful. Mirror needs nothing extra — RE-067's pre-baked mirrored
+double doubles the uploaded dimension, and the generated span then covers the
+base copy exactly, which is what the RDP samples.
+
+### 4. The exact source formula
+
+`refs/BattleShip`'s interpreter, cross-checked against the geometry-mode
+semantics in `refs/ssb-decomp-re/include/PR/gbi.h`:
+
+```text
+dot  = clamp((n · l) / 127, -1, 1)          l = look-at basis, n = object normal
+ordinary:  u = (dot + 1) / 4
+linear:    u = acos(-dot) / (2*pi)
+S10.5      = u * gSPTexture_scale           texels = S10.5 / 32
+```
+
+Both forms map `[-1, 1]` onto `[0, 0.5]`; the linear one differs only by the
+inverse-cosine curve. The RSP obtains `l` in object space as
+`normalize(M^T · lookat)` (`CalculateNormalDir`), which is `dot(world_normal,
+lookat)` written so it can be done per vertex without transforming normals.
+
+### 5. Normal space, and which basis SSB64 actually uses
+
+SSB64 sets its own look-at, per camera:
+`refs/ssb-decomp-re/src/sys/matrix.c`'s `syMatrixLookAtReflectF` computes
+`look = normalize(eye - at)`, `right = up x look`, `up = look x right`, and
+writes **`right` into `l[0]`** (which drives S) and **`up` into `l[1]`** (T).
+`gmCameraPrepLookAtFuncMatrix` (`src/gm/gmcamera.c`) emits them as
+`gSPLookAtX`/`gSPLookAtY`.
+
+The space is **world**, and the reason is three lines further up the same
+function: SSB64 concatenates the view matrix into the *projection* matrix
+(`guMtxCatF(view, persp, gGMCameraMatrix)` followed by `gSPMatrix(...,
+G_MTX_PROJECTION)`), leaving the modelview stack model-only. So the RSP's
+`dot(object_normal, M^T · l)` is `dot(world_normal, l)` with `l` in world
+space, not eye space — the opposite of the usual N64 arrangement.
+
+This port already computes exactly that basis for billboards
+(`forward x Y`, `right x forward`, which is the same pair written with the
+opposite forward sign), so `DrawState::texgen_basis` reuses it rather than
+introducing a second convention. Under an identity view it falls back to world
+X/Y, which under an identity view *are* the screen axes.
+
+No real texgen model uses a non-uniform node scale, and the implementation
+does not need to care either way: normalising `M^T · l` makes a uniform scale
+drop out on its own, which is also exactly what the reference does.
+
+### 6. The GE environment-map generator cannot carry the scale
+
+RE-213 used `sceGuTexMapMode(EnvironmentMap, 0, 1)`. Two faults:
+
+* Those last two arguments are **light indices**, not texture axes
+  (`sceGuTexMapMode` writes `TexShadeLs = (a2 << 8) | (a1 & 3)`). Light 0 is
+  SSB64's own per-fighter directional light (RE-164), so the reflection's S
+  axis was coupled to the stage light angle, and light 1 was never set at all.
+* `sceGuTexScale` and `sceGuTexOffset` have **no effect** in environment-map
+  mode, so it can only ever sweep the full uploaded texture.
+
+The second was measured, not reasoned: installing the 64x-larger authored-UV
+scale factor under environment mapping produced a **byte-identical** PPSSPP
+capture of `regression_capture_scene11`, while changing only the basis vector
+in the same build changed every reflective facet (RMSE 0.025). The scale was
+being ignored; the basis was not.
+
+That matters for real content. Of the six textures a texgen draw binds,
+`StageMetalFile2`'s 32x8 one sweeps 16 of its 32 uploaded texels, and the
+48x42 tile padded to 64x64 sweeps 47x41 — the rest is padding the RDP never
+samples.
+
+### 7. The texture-matrix generator, which can
+
+`apply_texture_mapping` now selects the GE's texture-**matrix** generator with
+the projection source set to the normalised vertex normal
+(`sceGuTexProjMapMode(NormalizedNormal)`). It computes the same dot product,
+and the matrix carries the exact affine term:
+
+```text
+u = dot * a + (a + origin_shift),   a = gSPTexture_scale / (128 * uploaded_dim)
+```
+
+with `q` pinned to 1 so the generator's perspective divide is a no-op. The
+generator is fed the **object-space** normal, so the node's own world
+transform is folded into the matrix rows through
+`DrawState::texgen_object_basis`, which is the RSP's `normalize(M^T · lookat)`
+reproduced directly. The model matrix is captured once per node straight off
+the GU stack (`sceGumStoreMatrix`), so the ordinary and billboard branches
+cannot drift apart.
+
+Texture-coordinate mapping is now separated from texture *binding*:
+`bind_texture` no longer installs a scale at all. `TextureMapping` records the
+mode, the binding, the scale and the origin together, so any of them changing
+reinstalls the mapping, and a node change invalidates it only when the
+generated mapping is the one in force.
+
+No GE light is involved in coordinate generation any more, so no slots need
+reserving and the fighter's own light 0 cannot reach the reflection.
+
+### 8. Verification
+
+Host: `cargo test -p ssb-rom` 366 pass (was 351), `cargo test --workspace` 524
+pass, `cargo fmt --check` clean in both the workspace and `psp/`. New coverage:
+exhaustive geometry-bit transition tests including every partial clear/set,
+the mapping math (`env_map_tex_scale`/`authored_uv_tex_scale`) against all five
+real ROM scale/tile pairings, `PrimDesc` size and round-trip, tile-origin
+carriage, a real-ROM `StageMetalFile2` conversion, and both combined
+alpha-gate overlap cases.
+
+PPSSPP 1.20.4, software rasteriser, deterministic frozen tick:
+
+* `regression_capture_scene11` (`StageMetalFile2` graph `0x1B10`) renders the
+  reflective geometry; two captures byte-identical. Golden
+  `tests/golden/r2-metal-texgen.png`, SHA-256 `588a412e...`.
+* New `regression_capture_scene12` is the same graph frozen a quarter turn
+  further round. A single frozen reflection cannot distinguish a correct basis
+  from a stuck or constant one; the pair can. They differ by RMSE 0.058 under
+  the same camera and geometry. Golden
+  `tests/golden/r2-metal-texgen-rotated.png`, SHA-256 `cf724a1b...`.
+* Dream Land (`regression_capture`) is byte-identical to the level-zero
+  capture RE-213 itself recorded, SHA-256 `08cc25cc...`, so nothing on the
+  authored-UV path moved.
+
+Physical PSP (Slim, 6.61 ARK/Infinity, PSPLink 3.2.1 over USBHostFS), pack
+SHA-256 `295b62dc...`:
+
+* scene 11, PRX SHA-256 `314b11e4...`, capture
+  `~/ppsspp-test/re214/psp-hw-scene11.bmp` SHA-256 `5cccb937...`
+* scene 12, PRX SHA-256 `dea78db0...`, capture
+  `~/ppsspp-test/re214/psp-hw-scene12.bmp` SHA-256 `4f66d8cc...`
+
+`exlist` empty and `main_thread` alive for both. Diffed 2x-upscaled against
+their PPSSPP goldens: 25,977 and 28,866 differing pixels, of which 2,652 and
+8,443 differ by more than 6%. For scale, the same measurement on the
+*non*-texgen Dream Land scene — long-accepted as edge-antialiasing divergence —
+is 61,362 and 11,668. The texgen scenes agree with PPSSPP better than the
+established baseline does. The two hardware captures differ from each other by
+57,076 pixels, so the reflection responds to model rotation on real hardware
+too, not only in the emulator.
+
+### 9. Golden refresh
+
+RE-213 stopped exposing mip levels above zero and recorded that Dream Land
+moved by 31,980 pixels, but did not refresh the committed goldens; every scene
+using a mipmapped texture had been failing ever since for an accepted reason.
+All nine were recaptured (`r1-mvopeningroom` 2991, `r1-stage-sector` 4485,
+`r1-catch-swirl-flat-color` 0, `r2-saffron-city-gate` 812, `r2-fox-fighter`
+748, `r2-falcon-fighter` 3829, `r2-kirby-fighter` 0, `r2-ness-fighter` 911,
+`r2-dk-fighter` 6836).
+
+None of that is this work. `mvopeningroom` is the only refreshed scene drawn
+from a file that contains a texgen primitive at all, so it was recaptured from
+a build of `c8e7f13` in a scratch worktree with its own pack: **byte-identical**
+to the capture from this branch. The two scenes that did not move are the two
+whose content carries no extra mip levels.
+
+### 10. Remaining deviations
+
+* **`G_TEXTURE_GEN_LINEAR` is still drawn through the ordinary mapping.** The
+  generated coordinate is affine in the dot product either way, and
+  `acos(-dot)/(2*pi)` is not. 269 triangles archive-wide, 24 of them in scene
+  11. Two implementations were considered and neither is started: generating
+  the coordinate on the CPU/VFPU per submitted vertex (exact, needs a scratch
+  vertex buffer because pack vertex data is shared and immutable), or
+  pre-warping the affected textures along each axis at pack time by the
+  inverse curve (the curve is separable per axis and the affected textures are
+  paletted, so an index remap is lossless per output texel, but it loses
+  resolution where the curve compresses and needs a second variant for any
+  texture also used by an ordinary texgen primitive). Measure both before
+  choosing.
+* **No original-N64 comparison exists for texgen output.** The only Metal
+  content this port can currently show is `StageMetalFile2`, Meta Crystal,
+  which SSB64 reaches only through 1P mode stage 8 — VS Mode cannot select it,
+  and RE-151's scripted original-ROM harness (a temporary out-of-Git input
+  plugin plus a Python Core API driver) no longer exists on disk; only its
+  screenshots under `~/ppsspp-test/re151/` remain. Rebuilding it and scripting
+  a route to stage 8 is the prerequisite. Until then ordinary texgen is
+  `VERIFYING`, not `COMPLETE`: it is source-derived, ROM-corroborated,
+  PPSSPP-verified and hardware-verified, but not compared against the
+  original's own output.
+
+**Confidence: high for the geometry-state, census, scale and basis findings
+(each is either measured archive-wide or read directly from the decomp);
+medium for the rendered result, which no original-output comparison has yet
+checked.**
+
+---
+
 ## RE-211 — Rendering-gap audit against current decomp/runtime state (`PLAN.md` R0.10/R0.11/R1/R2)
 
 **Question.** Which documented rendering gaps are still real after RE-210,
