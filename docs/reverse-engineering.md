@@ -10,6 +10,122 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-193 — Minimal `SObj` 2D-sprite port renders the wallpaper capture through a real GE draw, closing R1's framebuffer-paths bullet
+
+**Problem.** RE-192 built and device-verified the wallpaper-capture mechanism
+but left it with no real render-path caller, and STATUS.md's own scoping
+text assumed the missing piece was "a packed `ROLE_FRAMEBUFFER`-shaped
+300×220 pack entry ... to render the capture into ... through the normal
+mesh pipeline" -- i.e. a `DObj`/`MObj` quad like the LB-transition's own
+`ROLE_FRAMEBUFFER` texture bind (RE-099/100, `results_transition.rs`).
+
+**That assumption was wrong.** Reading the real draw call chain
+(`sc1PStageClearMakeWallpaper`/`sc1PStageClearWallpaperProcDisplay`,
+`sc/sc1pmode/sc1pstageclear.c:1542-1579`) shows the wallpaper is drawn as an
+`SObj` -- the decompilation's separate 2D screen-space sprite system
+(`GObj::obj_kind` alternative to `DObj`/`CObj`, `objtypes.h:483-496`,
+`lb/lbcommon.c`'s `lbCommonDrawSObjNoAttr`/`lbCommonPrepSObjDraw`/
+`lbCommonDrawSObjBitmap`). A real `SObj` draw bottoms out in RDP
+`gSPTextureRectangle`: a screen-space blit with no MVP transform at all, not
+a textured triangle through the 3D pipeline. This project has never
+implemented any `SObj` support (only `DObj`/`MObj` 3D mesh rendering exist),
+and the wallpaper has no ROM display list to decode in the first place --
+RE-190 already found it is a raw `Sprite*` pointer, invisible to `romtool`'s
+mesh/texture pipeline. So there is no "pack entry" of the kind STATUS.md
+described to build; the missing piece is a (minimal) `SObj` 2D-sprite draw
+path, a different subsystem entirely. `PLAN.md` and `STATUS.md` are
+corrected by this entry rather than silently worked around, per `AGENTS.md`
+§2.
+
+**Decision.** Per explicit user direction, built the real minimal `SObj`
+port rather than a synthetic 3D-quad shortcut through the existing mesh
+pipeline. "Minimal" here means: reproduce exactly this one real draw call's
+own fixed parameters (single bitmap, `pos = (10, 10)`, implicit scale 1.0,
+opaque `G_RM_OPA_SURF`, `G_CC_MODULATEI_PRIM` with
+`gDPSetPrimColor(0, 0, 0x80, 0x80, 0x80, 0xFF)` -- a 50% grey dim), not a
+general `Sprite`/`Bitmap`/multi-bitmap-tiling decoder. RE-190/191 already
+ruled that out as unnecessary for this mechanism; `romtool` still has no
+`Sprite` decoder and does not need one here.
+
+**Implementation.** `psp/src/gu.rs`:
+* `SpriteVertex`: a `GU_TRANSFORM_2D` vertex (raw screen pixels, no MVP) --
+  the PSP GE's own native equivalent of `gSPTextureRectangle`, via
+  `GuPrimitive::Sprites` (2 vertices expand to an axis-aligned quad).
+* `Gpu::draw_wallpaper_sprite`: binds [`WALLPAPER_PHOTO`] as a real GE
+  texture (`Psm8888`, `TextureEffect::Modulate`/`Rgba`) and draws it back at
+  the *identical* pixel rectangle [`Gpu::capture_wallpaper_photo`] read from
+  (pillarbox left edge, row 0) -- since the capture already holds pixels at
+  the PSP's own display scale, no separate N64-to-PSP scale conversion is
+  needed, only a same-position photocopy. Vertex colour `0xFF808080`
+  (ABGR) reproduces the real draw's prim-colour dim.
+* `WALLPAPER_PHOTO`'s backing array grew from exactly 220 rows to a padded
+  256: the GE's texture-height register is an exponent field, so
+  `sceGuTexImage` requires a power-of-two height the same way it already
+  required a power-of-two `bufferwidth` -- a constraint the buffer never had
+  to satisfy before this session added its first real GE bind (the CPU-only
+  capture/blit paths never cared). `WALLPAPER_PHOTO_HEIGHT` (220, real
+  content) is unchanged; only the allocation grew.
+* A real, on-device bug fixed along the way: `TEXTURE_32BITF` UV with an
+  identity `sceGuTexScale`/`Offset` is a **raw texel address**, not a
+  normalized 0..1 fraction. The first attempt used fractional UV corners
+  (`300/512`, `220/256`) assuming normalization, which sampled almost only
+  the single top-left texel (the dark background pixel at the capture's own
+  origin) smeared across the whole 300×220 quad -- visually, the entire
+  stage silhouette disappeared behind a near-solid dark rectangle every
+  frame after the capture trigger. Fixed by using texel-unit UV corners
+  (`(0,0)` to `(300,220)`) directly.
+* `psp/Cargo.toml`/`psp/src/main.rs`: new `wallpaper_sprite_audit_capture`
+  feature, sharing `wallpaper_audit_capture`'s tick-240 capture trigger but
+  displaying it through `Gpu::draw_wallpaper_sprite` instead of the raw CPU
+  `blit_wallpaper_debug`. Kept as a separate feature (not a replacement)
+  since it is independent evidence of a different mechanism -- the real GE
+  texture-bind/2D-draw path, not the CPU photocopy RE-192 already verified.
+
+**Verified, not just built.** All three PSP configurations (`cargo psp
+--release` default, `--features wallpaper_audit_capture`, `--features
+wallpaper_sprite_audit_capture`) build clean; `cargo fmt --check` in `psp/`
+clean; `cargo clippy --workspace --all-targets` and `cargo test --workspace`
+(337 tests, unaffected) both clean. On-device (`tools/run-ppsspp.sh
+--no-build`, PPSSPP software backend):
+* The broken fractional-UV build reproduced the near-solid-black symptom
+  described above (screenshotted before the fix, tick 276), confirming the
+  bug's cause before changing it.
+* The fixed build's `wallpaper_sprite_audit_capture` screenshot (tick 272)
+  measures average luminance 43.3 inside the exact 300×220 draw rectangle
+  vs. 72.6 for the same rectangle in a same-duration default-build
+  screenshot -- a real, substantial dim consistent with the 50% grey
+  modulate, not a rendering failure. The region strictly outside the
+  rectangle (real screen columns ≥ 359) measures 23.24 vs. 23.26 --
+  functionally identical, proving the draw is exactly bounded to the
+  intended rectangle with no bleed, the same "bounded write" proof RE-192's
+  own CPU blit used.
+* `wallpaper_audit_capture`'s original CPU-blit evidence was re-verified
+  after `WALLPAPER_PHOTO`'s resize (regression check): screenshot still
+  shows the same doubled/ghosted debug text and a second stage-silhouette
+  triangle RE-192 originally found, confirming the padded buffer did not
+  disturb the existing capture/blit path.
+
+**Remaining scope.** Same as RE-192, one layer narrower: the renderer now
+owns both the wallpaper-capture mechanism (RE-190-192) and a real minimal
+`SObj`-sprite render path for it (this entry), both device-verified. What
+remains is exactly the trigger -- no 1P-mode/results-screen game state exists
+to call `request_wallpaper_capture`/`draw_wallpaper_sprite` from during real
+gameplay. This is the identical "renderer owns the mechanism, G2 owns the
+real trigger" split RE-149 already used to close R0.13: R0.13's own LB-
+transition draw path (`results_transition.rs`) is likewise only ever called
+from `transition_audit_capture` today, with no real G2 caller either, and
+that did not block R0.13's closure. On that precedent, `PLAN.md` R1's "all
+required framebuffer paths render" bullet is checked off by this entry.
+
+**Confidence: high.** Both the capture and the render path are directly
+measured on device (luminance figures above, and the bounded-write region
+check), not inferred. The "no general `Sprite` decoder needed" and "`SObj`
+is the right minimal shape to port" calls are grounded directly in the real
+decompiled draw call chain (`sc1pstageclear.c`, `lbcommon.c`, `objtypes.h`),
+not guessed.
+
+---
+
 ## RE-192 — Wallpaper-capture mechanism implemented and device-verified; still no real caller (`PLAN.md` R1)
 
 **Problem.** RE-191 explained every remaining copy-order detail of
