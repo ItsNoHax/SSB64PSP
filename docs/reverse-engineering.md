@@ -10,6 +10,89 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-203 — All four golden regression scenes verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-202 fixed the interactive HUD crash but left R2's actual
+acceptance items ("representative fighters render", "stages render",
+"materials render correctly", "textures render correctly", etc.) unevidenced
+on real hardware — RE-201 only ever ran `regression_capture`'s single Dream
+Land scene, and RE-202's own verification only confirmed the fixed build
+stays alive, not that its content is correct.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201/RE-202, at commit `759cda8`, pack
+hash `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
+
+**Method.** Built and `ldstart`ed each of the four deterministic golden-scene
+Cargo features in turn (`regression_capture`, `_scene2`, `_scene3`,
+`_scene4` — RE-199/RE-200's Dream Land/Mario, `MVOpeningRoom` CI8/untextured,
+`StageSectorFile2` texture-blend/translucency/clamp, and `CatchSwirl`
+flat-colour scenes respectively), waited past each build's tick-240 freeze,
+checked `exlist`/`thlist` for a live `main_thread` with no exception, then
+took a native 480x272 `scrshot`. All four ran with **zero exceptions**.
+`regression_capture`'s own determinism claim was independently re-checked on
+real hardware, not just PPSSPP: two captures taken 5 s apart differ only
+inside PSPLink's own top-left diagnostic overlay (`docs/psplink.md`'s
+documented exclusion) — 101 pixels in a 59x7 corner region, byte-identical
+everywhere else.
+
+Each hardware capture was then compared against its existing PPSSPP golden
+(`tests/golden/r0-dream-land-default.png`, `r1-mvopeningroom.png`,
+`r1-stage-sector.png`, `r1-catch-swirl-flat-color.png`, each 960x544, a
+clean 2x of the native 480x272 the hardware actually produces) by upscaling
+the hardware capture 2x nearest-neighbour and diffing. All four show the
+same shape of result: large solid interior regions are pixel-identical
+(zero diff), and the only structured difference is a thin one-pixel-wide
+band tracing every polygon silhouette edge (rasterizer/antialiasing rounding
+between real GE hardware and PPSSPP's renderer, an expected divergence
+class, not a content bug) plus two unrelated, already-documented overlay
+regions (PSPLink's own corner text and PPSSPP's own on-screen FPS counter,
+neither of which is this project's rendering output). No colour, texture,
+combiner-shape, or geometry difference was found in any of the four scenes'
+interior content.
+
+**Conclusion.** Confirms on real hardware, not just PPSSPP, that: Mario (the
+project's representative fighter) renders and completes 240 ticks of real
+physics/animation simulation without a hardware fault, producing output
+matching the PPSSPP golden; Dream Land, `StageSectorFile2`, and
+`MVOpeningRoom` all render correctly; `combiner_texture_blend`,
+`combiner_flat_color`, `AlphaBlend`/translucency, and clamp-mode texturing
+(R0.6's classified combiner shapes) all produce correct real-hardware output;
+CI8 and untextured/vertex-coloured geometry (R0.3/R0.4) render correctly.
+This directly answers RE-202's own open question about whether the HUD fix
+"explains" the original bug report for everything except the analog-stick
+input path: rendering itself is confirmed correct on hardware across all
+four golden scenes, independent of any live-input question. The analog-stick
+question RE-202 left open is a live-input/controller question, not a
+rendering one, and still requires a human physically operating the device
+with PSPLink attached — not reproducible through `pspsh`, which has no
+controller-injection command.
+
+Not covered by this session: framebuffer-effect real-hardware verification
+(RE-190–193's `SObj` sprite path was PPSSPP-verified only), VRAM usage
+measurement on real hardware, and any fighter/stage/scene outside these four
+golden scenes. `PLAN.md` R2 remains `IN_PROGRESS`.
+
+**Evidence.** Native BMP captures and their PNG conversions were reviewed
+and discarded per `docs/psplink.md` (never committed); SHA-256 hashes of the
+six captures taken this session recorded here for reproducibility:
+
+```
+psp-hw-r2-dreamland.bmp  23e5ebfd28190433d250085b71843f74bd0562900a01d4a6d34c3480fefe1be9
+psp-hw-r2-scene1.bmp     340993a6a2aadca2089c0bb2c6d718f41b0fec639fcb090a993e8c235ab006af
+psp-hw-r2-scene1b.bmp    7e900f4612de8c1d9b9e00e7bedb54d81d5dfe1c4fa1244d92ecff9f5489604b
+psp-hw-r2-scene2.bmp     c3284fa033c667bc7908d161de32c5f24abc75a5bb51ca93e714e56583879cc7
+psp-hw-r2-scene3.bmp     7fd5ec5fded0e7b266dc921454644ce88523c7c91ee0b58ee164a863fc0eafb9
+psp-hw-r2-scene4.bmp     5ea0ff458813b093cdde60231ca550666825e2f157cd3bb082d703bdabdce521
+```
+
+**Confidence:** High for all four scenes rendering correctly on real
+hardware with no crash and no content-level discrepancy against their
+PPSSPP goldens. The edge-antialiasing divergence is expected and was
+inspected directly (diff masks), not assumed away.
+
+---
+
 ## RE-202 — Interactive viewer's debug HUD crashes real PSP hardware, content-independent (`PLAN.md` R2)
 
 **Problem.** User report: on physical PSP the interactive viewer boots, the
