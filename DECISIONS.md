@@ -509,3 +509,38 @@ read by anything.
 **Implemented:** `crates/ssb-rom/src/psp_texture.rs` (`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`, `acos`), `psp/src/meshdraw.rs` (`draw_mesh`'s dynamic-vertex branch, `apply_texture_mapping`'s `environment` flag)
 
 **Reference:** `docs/reverse-engineering.md` RE-215, D-038 (the ordinary-curve GE-generator decision this one deliberately does not extend)
+
+### D-041: PPSSPPHeadless Is the Automated Visual-Verification Runner
+**Decision:** Deterministic visual verification uses the locally built
+`PPSSPPHeadless` target and `tools/run-ppsspp-headless.sh`. The windowed
+`tools/run-ppsspp.sh` helper remains available for interactive inspection and
+hardware-backend experiments, but is not the automated golden-capture path.
+
+**Reasoning:** Headless capture removes X11/window/compositor timing from the
+evidence path. The PSP capture build requests one screenshot after its fixed
+deterministic tick through PPSSPP's emulator-only `emulator:` devctl, while
+real PSPs simply ignore that request. Software rendering remains the default
+for deterministic pixel comparisons; PPSSPP still does not prove physical PSP
+behaviour.
+
+**Implemented:** `psp/Cargo.toml` (`headless_capture`), `psp/src/main.rs`,
+`tools/run-ppsspp-headless.sh`, `docs/visual-regression.md`
+
+### D-042: Renderer correctness claims stay provisional until the corrective gate passes
+**Decision:** Existing source-derived renderer implementations and regression
+captures remain usable evidence for their covered paths, but R0/R1 must not be
+declared stable while `PLAN.md` R2.1/R2.2 are open. In particular, do not treat
+primitive-level texgen as globally valid until load-space/normal-transform
+provenance is audited, or treat `G_ZBUFFER` as the complete N64 depth model
+until compare and write state are separated.
+
+**Reasoning:** The 2026-09-10 reconciliation found concrete gaps between the
+current implementation and the stronger completion claims: `CacheEntry` does
+not retain load-time lighting or matrix provenance, `merge_by_material` uses
+global grouping, `MeshMaterial` has one depth bit, and raw GU paths remain
+outside the cache-controlled material path. These are correctness questions,
+not performance work.
+
+**Implementation:** Pending `PLAN.md` R2.1/T1–T10 and R2.2/C1–C7.
+
+**Reference:** RE-217, `docs/reverse-engineering.md`, `AGENTS.md`

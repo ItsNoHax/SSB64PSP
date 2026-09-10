@@ -190,8 +190,10 @@ Remaining renderer work is governed by the rendering milestones below.
 
 # 6. R0 — Rendering Correctness
 
-Status: `COMPLETE` — RE-201 completed R0.5's physical-PSP Dream Land canopy
-comparison. R2 remains required before R3/combat unlock.
+Status: `VERIFYING` — RE-217 found renderer-model correctness work that
+reopens parts of R0.6, R0.15 and R0.16. R2.1 is the active texgen audit;
+R2.2 must close the corrective gate before R0/R1 can be treated as stable.
+R2 remains required before R3/combat unlock.
 
 This is the current development gate.
 
@@ -210,12 +212,12 @@ so nothing is duplicated and nothing is missing an owner.
 | Correctness category | Owning task(s) | Status |
 | --- | --- | --- |
 | Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | `COMPLETE` |
-| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `COMPLETE` |
+| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | `COMPLETE`; RE-201 physical PSP evidence |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `COMPLETE` for R0 (RE-164–167); physical PSP remains R2 |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` — load-time provenance and `PRIM` ownership remain open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
-| Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 (state), R0.14 (depth mapping) | `COMPLETE` for both owned items |
+| Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `VERIFYING` — compare/write separation remains open |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
 | Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** | `COMPLETE` |
 | Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** | `COMPLETE` |
@@ -249,8 +251,8 @@ Reconcile the documented renderer state with the actual implementation.
 * [x] renderer architecture documented — `docs/rendering.md`, README "Architecture"; the stale duplicate `ARCHITECTURE.md` was removed
 * [x] stale documentation identified — see 2026-09-02 documentation audit (below)
 * [x] known rendering gaps enumerated — `TODO.md` Phases B–H, `docs/porting-status.md` "Known gaps"
-* [x] unsupported rendering paths identified — texture wrap modes (hardcoded `Repeat`), mipmap/LOD (generated but does not fix Dream Land canopy, RE-053), material animation (decoded, not played), majority-vote lighting heuristic
-* [x] current verification baseline recorded — `cargo test --workspace`: 338 passing (`ssb-rom` 195, `ssb-engine` 36, `ssb-game` 107); `romtool textures`: 647 bound / 617 packed / 30 failed
+* [x] unsupported rendering paths identified — texture wrap modes (hardcoded `Repeat`), mipmap/LOD (generated but independently measured; its Dream Land canopy acceptance was later closed by RE-201), material animation (decoded, not played), majority-vote lighting heuristic
+* [x] current verification baseline recorded — `cargo test --workspace`: **531 passing**; archive census and pack metrics are recorded with their corresponding evidence entries
 
 ### Verification
 
@@ -604,7 +606,9 @@ RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, 
 
 ## R0.6 — Material System Correctness
 
-Status: `COMPLETE`
+Status: `VERIFYING` — prior combiner, lighting and depth evidence remains
+valid for the paths it covered, but RE-217 identifies unverified ownership and
+state-model requirements tracked by R2.2/C1–C3.
 
 ### Current evidence
 
@@ -842,13 +846,13 @@ Reproduce original SSB64 material behavior.
   chains matching their display-list demand, and zero unnamed or mismatched
   graphs.
 * [x] combiner behavior verified — RE-039/043 establish the general two-cycle evaluator; RE-073/074 implement and visually verify the dominant `(PRIM-ENV)*TEXEL+ENV` texture blend; RE-080 handles flat constants; RE-106 consumes shade scales. RE-168 remeasures the current pack path and catalogues every remaining decline without finding a new static classification bug.
-* [x] primitive color verified — RE-079/080 classify shade-scale, texture-blend and flat-constant shapes; RE-106 consumes the resolved scale. RE-168's post-RE-163 census finds no unresolved table attribution: the remaining constant-absence cases are source-confirmed runtime shield colours or non-authoritative orphan graphs. RE-152's Fox black-face lead was unrelated (a nonzero clamp-window coordinate bug).
+* [ ] primitive color verified — RE-079/080 classify shade-scale, texture-blend and flat-constant shapes and RE-106 consumes the resolved scale, but R2.2/C1 must prove that `PRIM * SHADE` has one authoritative application and that runtime-lit and non-lit paths do not apply it twice. RE-168's material-table census remains valid evidence for source attribution.
 * [x] environment color verified — RE-168 source-indexes the remaining cases: ordinary shields set `ENV` in `efManagerShieldProcDisplay`, Yoshi's shield computes it from shield health in `efManagerYoshiShieldProcDisplay`, and no missing material-table case remains.
-* [x] lighting verified — RE-103/RE-105 fixed the input this depends on (per-vertex, not per-primitive-majority, lit/literal decisions, driven by a real `G_MW_LIGHTCOL` ROM signal rather than a guess). RE-164 retained stage X/Y angles and signed normals; RE-165 additionally retains the real directional/ambient LIGHT_1/LIGHT_2 values, scopes GE lighting to fighter draws, and disables it for literal primitives; RE-166 makes each light-colour write zero-valid and independent of otherwise identical material flags. RE-167 performs the equivalent original-game Dream Land/Wait comparison and catches the remaining combiner boundary: GE lighting ignored the vertex colour containing Mario's resolved `PRIMITIVE * SHADE` costume scale. Applying that source-derived scale as the GE ambient/diffuse material restores red clothing and blue overalls without a brightness approximation. Physical PSP remains R2. RE-152 confirms RE-128's Fox black patch was unrelated: it was caused by nonzero clamp-window coordinates
+* [ ] lighting verified — RE-103/RE-105 and RE-164–167 establish the current per-vertex/runtime-light path, but R2.2/C2 must tie vertex interpretation to `G_VTX` load-time lighting state and quantify/eliminate the remaining `looks_like_unit_normal` fallback. The prior Dream Land comparison remains valid for its covered path; it does not close load-time provenance.
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [x] blending verified — RE-069 detected `translucent` (14.4%) correctly but left it unwired after an enabled-blend experiment produced a checkerboard; RE-070/071 eliminated dither coarseness and alpha premultiplication as the cause without finding the real one; RE-124 (R0.18) confirmed both `sf64-psp` and `oot-PSP` ship standard blending fine on the same hardware, ruling out a platform limitation. **RE-129 found the real cause**: this project never decoded `G_SETCOMBINE`'s *alpha* formula at all (only the colour one) — decoded it directly from the ROM for Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found naively wiring that up universally broke a different `TRANSLUCENT` primitive (Dream Land's flowers) whose own alpha formula is different. **RE-130 measured every real alpha formula archive-wide** (9 distinct combiner values across ~8,800 real, textured, single-cycle `TRANSLUCENT` primitives): the majority (~5,950) is `TEXEL0_ALPHA` alone (the flowers' own shape), a smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA` (the canopy highlight), and a rare (~43) `TEXEL0_ALPHA * PRIM_ALPHA` plus two-cycle mode (~93, <1%) are declined rather than guessed at (real, measured, but not confidently understood or never on-device-verified). Implemented as a new classification axis (`mesh.rs`'s `AlphaBlend`/`combiner_alpha_blend`, independent of the existing RGB classification), baked the correct vertex alpha per shape (`push_vertex`), and gated real blending on a new pack flag (`flags::ALPHA_BLEND`, `VERSION` 15→16) that only sets when both `TRANSLUCENT` and a classified alpha formula agree — a `TRANSLUCENT` primitive without it keeps the pre-existing safe default. Verified on-device: the flowers survive, two previously-fully-invisible decorative props now render correctly, confirmed via a clean pixel diff against the `regression_capture` golden capture (updated) and re-verified deterministic across a 9-second timing spread
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
-* [x] depth state verified — RE-068: real default is on (`sSYRdpResetDisplayList`), not off; fixed and wired to `sceGuEnable/Disable(DepthTest)` per primitive
+* [ ] depth state verified — RE-068 establishes the RDP default and current PSP depth-test mapping, but R2.2/C3 must independently preserve RDP `Z_CMP`, `Z_UPD` and `ZMODE`; the current single `z_buffer` flag is not sufficient to claim depth correctness.
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
 * [x] unsupported material behavior identified — RE-139 compiled the enumeration this item asks for: (1) combiner shapes outside shade-scale/texture-blend/flat-constant, now 186 of 65,199 source-attributed emitted-triangle visits in RE-168; (2) alpha formulas outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`) — the rare `PRIM_ALPHA` multiply and two-cycle mode (RE-130); (3) `G_SHADE` cleared while a combiner still reads `SHADE` (RE-120); and (4) runtime-injected primitive/environment colours for shields, source-identified by RE-168 and owned by future effect/gameplay integration. RE-164–167 closed RE-139's former baked-light item; it is no longer unsupported.
 
@@ -906,8 +910,10 @@ mismatches on every newly-paired graph. `romtool textures`: file 353 1→0
 failures, file 52 several→0 failures (58/58 packed). Archive-wide
 `romtool textures`: 617→638 packed (665 unique bound, up from 647 — several
 primitives that previously drew with no texture at all now correctly
-resolve one), `MissingPalette` 4→1. `cargo test --workspace`: 338 passing,
-unaffected throughout (both fixes live in `romtool`, not the library crate).
+resolve one), `MissingPalette` 4→1. At that historical R0.7 step,
+`cargo test --workspace` reported 338 passing; the current workspace baseline
+is 531 passing, unaffected throughout (both fixes live in `romtool`, not the
+library crate).
 
 File 86's one remaining graph (an "NBumper" item) uses a **fifth**
 mechanism — a compile-time byte-offset delta from a runtime base pointer
@@ -2149,7 +2155,9 @@ RE-034, RE-082, RE-084, RE-085, RE-131, RE-150, RE-151 in `docs/reverse-engineer
 
 ## R0.15 — Render-State Isolation
 
-Status: `COMPLETE`
+Status: `VERIFYING` — RE-118 closed the known texture-cache bypass, but
+RE-217 found that the broader direct-GU inventory required by R2.2/C5 has not
+been completed.
 
 ### Current evidence
 
@@ -2259,7 +2267,7 @@ Ensure render state cannot incorrectly leak between display-list/material/node d
 * [x] culling tracked — same test
 * [x] geometry state tracked — same test (lighting/shading-smooth bits)
 * [x] texture addressing tracked — RE-064's existing test already covers this via whole-`TextureRef` equality (RE-117 documents it explicitly)
-* [x] state leakage tests added — `mesh.rs`'s decode-time state threading has direct unit tests (RE-117, 4 new + RE-064's existing one) for all 10 categories. `psp/src/meshdraw.rs::DrawState`'s device-side GE cache layer was systematically audited by code reading (RE-118, since raw `sceGu*` calls have no host-side mocking harness to unit-test against) — every category checked, one real gap found (the collision/fighter overlay bypassing the texture cache) and fixed, verified by an on-device screenshot showing the fix is inert for the current non-triggering scene
+* [ ] state leakage tests added — the decode-time state-threading tests remain valid (RE-117), and RE-118 fixed the known collision/fighter overlay texture-cache bypass. The broader direct-GU inventory and invalidate-all regression required for the PSP-side cache remains open under R2.2/C5.
 
 ### Evidence
 
@@ -2269,7 +2277,10 @@ RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
 
 ## R0.16 — N64 Render-State Model Fidelity
 
-Status: `COMPLETE`
+Status: `VERIFYING` — RE-122's texture-key fix remains valid, but RE-217
+confirmed that `merge_by_material` still globally reorders non-adjacent
+primitive runs. R2.2/C4 must preserve submission order before this task can
+close.
 
 ### Current evidence
 
@@ -2444,7 +2455,7 @@ established (D-036).
   every count had drifted) and the geometry-mode-set line (`G_SHADE`/
   `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` added, each with its own real ROM
   file references and current handling status)
-* [x] D-036's ordering rule (state fidelity before batching/state-sorting/
+* [ ] D-036's ordering rule (state fidelity before batching/state-sorting/
   draw-call reduction) is checked against every existing optimization already
   shipped (vertex dedup, material merge, `TexKey`/`texture_cache` dedup) and
   each one is confirmed not to have discarded state this audit found required
@@ -2452,7 +2463,9 @@ established (D-036).
   keys on its entire relevant struct); `TexKey` had a real violation
   (wrap/mirror/clamp mode omitted from the cache key, 126 archive-wide
   occurrences of two different-wrap bindings silently sharing one entry),
-  now fixed by widening the key to include it
+  now fixed by widening the key to include it. RE-217 separately found that
+  `merge_by_material` uses a global `BTreeMap`, so non-adjacent equal-material
+  runs can still be reordered; adjacent-run preservation is R2.2/C4.
 * [x] any state this audit finds genuinely unrecoverable on PSP is recorded as
   an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent — checked
   every category this audit found (`G_SHADE`, `G_TEXTURE_GEN`, `blend_color`):
@@ -2636,13 +2649,12 @@ lead for `R3` once it unblocks.
 
 # 7. R1 — Rendering Completeness
 
-Status: `COMPLETE` — RE-200 closes every R1 acceptance item; RE-201 satisfies
-the formerly deferred R0.5 prerequisite.
+Status: `VERIFYING` — RE-200 established the R1 scene/completeness evidence,
+but RE-217's corrective queue requires the integrated C6 regression pass before
+the rendering gate can treat those goldens as stable.
 
-Normally R1 cannot begin until R0 is complete. The remaining R0 item now
-requires unavailable physical hardware, so the user explicitly authorized
-continuing independent software work rather than idling the project. No R1
-completion claim may bypass R0.5.
+R1's existing scene evidence remains useful, but no completion claim may
+bypass the reopened R0.6/R0.15/R0.16 work or R2.2/C6.
 
 ### Objective
 
@@ -2796,8 +2808,9 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 
 # 8. R2 — Physical PSP Rendering Validation
 
-Status: `IN_PROGRESS` — R1 and R0.5 are complete; RE-201 begins hardware
-validation. RE-202 found and fixed a hardware-only crash in the interactive
+Status: `IN_PROGRESS` — representative physical-PSP captures exist, but the
+formal texgen fidelity and renderer-corrective gates below remain open.
+RE-202 found and fixed a hardware-only crash in the interactive
 viewer's debug HUD (`sceGuDebugFlush`) that RE-201's `regression_capture`
 run never exercised. RE-203 then ran all four golden regression scenes on
 the same physical PSP with zero exceptions and confirmed their content
@@ -2858,11 +2871,214 @@ PPSSPP is not sufficient.
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
 * [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong), an eleventh and twelfth (`StageMetalFile2` ordinary texgen at two rotations, RE-214) and a thirteenth (`StageMetalFile2`'s linear-texgen graph, RE-215) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
 * [ ] `G_TEXTURE_GEN` compared against original output — RE-214: ordinary texgen is source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified at two model rotations, but no original-N64 capture exists. Meta Crystal (and `MMarioModel`/`NMarioModel`/`NFoxModel`) is reachable only through 1P mode stage 8 — RE-216 rebuilt RE-151's scripted original-ROM harness (verified working, including real scripted menu navigation) and found the VS-Mode "Metal Box item" shortcut RE-214 §10 recommended does not exist in the decomp; scripting the real stage-8 route (or a faithful RAM-level warp) is the prerequisite. `VERIFYING`, not `COMPLETE`
-* [x] `G_TEXTURE_GEN_LINEAR` implemented exactly — RE-215: generated exactly per vertex on the CPU (the RSP's own `acos(-dot)/(2*pi)` curve, cross-checked against two independent reference implementations) and drawn through the authored-UV pipeline. PPSSPP- and hardware-verified against `regression_capture_scene13`, the graph that actually carries the archive's one packed linear primitive — RE-215 found scenes 11/12 do not, correcting an earlier RE-214 note. No original-N64 comparison exists yet (same prerequisite as the row above), so this row is exact-relative-to-the-ROM-derived-formula, not original-hardware-compared
+* [ ] `G_TEXTURE_GEN_LINEAR` implemented exactly — RE-215 provides a source-formula implementation and PPSSPP/physical-PSP evidence for `regression_capture_scene13`, but T2–T7 still need to establish shared raw-normal, quantized-LookAt, integer-conversion and tile-addressing semantics, and T8 still requires an original-N64 comparison. Do not call this bit-exact until the T1–T10 gate passes.
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)
 
 ---
+
+## R2.1 — Final Texgen Fidelity (T1–T10)
+
+Status: `IN_PROGRESS` — T1 is the single active implementation task.
+
+This queue is authoritative for closing `G_TEXTURE_GEN` and
+`G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
+it: raw GEN/LINEAR bits remain independent, LINEAR never enables generation by
+itself, pack version 27 retains texgen scale and tile origin, regular texgen
+uses the GE texture-matrix path, and linear texgen remains CPU-generated
+through authored UVs until shared equivalence is proven.
+
+Execute T1 through T10 in order. A source-formula or reference-port match is
+not an original-hardware match.
+
+### T1 — `G_VTX` model-space invariance
+
+Extend `romtool texgen` and its independent audit walker so each cached vertex
+records load node/space, stable load model-matrix identity, display-list
+offset, draw step, texgen mode and `gSPTexture` scale. Classify same-node,
+cross-list same-node, cross-node equivalent-normal-transform and cross-node
+differing-normal-transform reuse, comparing the normal-relevant 3×3 transform
+and ignoring translation. For uniform-scale rigid transforms compare a
+normalized equivalent, not raw 4×4 bytes.
+
+Acceptance: report texgen triangles, cross-list reuse, cross-node reuse,
+equivalent-transform reuse and differing-transform reuse. If differing reuse
+is zero, record that invariant in `DECISIONS.md`; otherwise preserve load
+provenance or split/precompute only affected vertices. Add same-node,
+cross-list, translation-only, identical-rotation, different-rotation,
+uniform-scale and non-uniform-scale tests.
+
+### T2 — Raw signed-byte normal semantics
+
+Use PPSSPP source plus a diagnostic PPSSPP/physical-PSP scene to determine how
+`GU_NORMAL_8BIT` feeds `TextureProjectionMapMode::Normal` (`/127`, `/128` or
+another mapping). Make regular texgen implement `(normal · LookAt) / 127`
+without normalizing the quantized normal, compensating the matrix only from
+measured GE behavior. Test `[127,0,0]`, `[64,0,0]`, `[-128,0,0]`, `[90,90,0]`
+and `[73,-41,99]` against several bases; `[64,0,0]` must detect the old
+normalized-normal behavior. Record the hardware measurement.
+
+### T3 — Original LookAt quantization
+
+Implement host-testable `FTOFRAC8`-equivalent helpers with positive saturation
+at 127, negative cast/range behavior, zero and values around ±1/128 and ±1.
+Quantize before model transformation, reconstruct the basis, preserve source
+transform order, and feed the same basis to regular and linear paths. Add
+arbitrary normalized-basis tests and a realistic angle where old full-float
+and quantized paths differ.
+
+### T4 — Shared regular/linear reference math
+
+Create readable host-testable helpers for quantized LookAt, transformed basis,
+raw signed-byte dot and S10.5 conversion. The only curve difference is
+`(1 + dot) / 4` versus `acos(-dot) / (2*pi)`, followed by common scale and
+addressing. Prove the regular GE lowering matches the reference. Compare
+thousands of random normals, bases, rotations and scales; require exact S10.5
+equality where possible, otherwise document maximum error and whether CPU
+generation is preferable.
+
+### T5 — Linear integer conversion
+
+Determine truncate/round/other from microcode, faithful HLE implementations
+and controlled original-ROM output, in that order. Add `N+0.49`, `N+0.50` and
+`N+0.51` boundary tests at real scales. Use “source-formula exact” until
+original output proves “bit-exact to N64”.
+
+### T6 — Tile-state and lighting audit
+
+Add `shift_s`/`shift_t` to `TileState` and report render tile, masks, shifts,
+`cms`/`cmt`, origins, dimensions and `gSPTexture` scale per texgen mode. At
+each texgen `G_VTX`, report raw `G_LIGHTING` on/off. If all shifts are zero,
+pin that ROM-backed invariant; otherwise implement N64 shifting before
+completion.
+
+### T7 — Texgen addressing phase
+
+Add host/reference cases for zero/nonzero origins on each axis, repeat+mask,
+mirror+repeat, mirror+clamp, padded PSP dimensions and partial uploaded-texture
+scale. Compare `RSP coordinate → scale → shift → origin → mask → mirror/clamp`
+with the PSP-lowered path for every real texgen material.
+
+### T8 — Original-ROM Metal comparison
+
+Use the rebuilt Mupen64Plus harness to reach legitimate stage-8 Metal content.
+Prefer a faithful RAM-level warp that still executes original fighter
+construction, camera, display-list, lighting and material setup; otherwise
+script the real 1P route. Never fake registers/material state. Compare original
+N64/emulator, PPSSPP software and physical PSP at equivalent states and at
+least two object rotations. Check model/camera reflection response,
+diffuse-light independence, ordinary-versus-linear behavior, tile-origin phase
+and generated span using a texgen-focused ROI rather than requiring identical
+full-screen rasterization.
+
+### T9 — Physical PSP matrix
+
+After semantics are fixed, capture regular rotations A/B, linear texgen, a raw
+normal diagnostic and a camera-rotation case. Record PSP model, firmware,
+commit, pack hash, EBOOT identity, scene and capture hash. Rebuild and explain
+goldens after semantic changes; do not reuse them silently.
+
+### T10 — Texgen documentation cleanup
+
+After T1–T9 reconcile `STATUS.md`, `PLAN.md`, `DECISIONS.md`,
+`docs/rendering.md`, `docs/reverse-engineering.md`,
+`docs/visual-regression.md` and `docs/porting-status.md`, including pack
+version, test counts, the actual linear scene, original-output status, normal
+semantics, LookAt quantization, tile shifts and accepted PSP deviations.
+
+Texgen test minimum: all raw GEN/LINEAR combinations and partial transitions;
+same-node/cross-list/cross-node provenance; unit/non-unit/negative/zero
+normals; LookAt saturation/near-zero; regular and linear endpoints plus
+`u(dot)+u(-dot)=0.5`; every real scale; origin/clamp/repeat/mirror/mask/shift/
+padded dimensions; and mapping transitions authored→regular→authored,
+regular→linear→authored, linear→regular, and textured→untextured→texgen.
+`romtool texgen ROM --verify` must fail on correctness-critical violations.
+Run host fmt/tests, PSP checks, the texgen audit, PPSSPP scenes and physical
+captures after T2/T3/T5/T6; rebuild the generated pack after pack/converter
+changes. Completion requires source semantics, addressing, host, PPSSPP,
+physical and original-Metal gates. Any unavoidable PSP difference needs an
+`ACCEPTED_DEVIATION` record with measured error and affected content.
+
+## R2.2 — Second Renderer Corrective Gate (C1–C7)
+
+Status: `TODO` — depends on R2.1/T1–T10. It must close before R3 or a stable
+rendering-gate claim. Do not optimize while it is open.
+
+### C1 — Single-source `prim_color`
+
+Trace raw vertex RGBA/normal bytes through `CacheEntry`, `push_vertex`,
+`MeshVertex`, `PackWriter`, `PackedVertex` and `meshdraw`, including flat
+colour, texture blend, alpha baking, normal extraction, pack-time lighting and
+runtime lighting. Prove `SHADE * PRIM` occurs once, normals are never changed
+as RGB, and shared vertices remain correct. Add unlit
+`[128,128,128] * [128,128,128] → [64,64,64]`, lit `[127,0,0]` with 50% red
+PRIM preserving the normal, SHADE-only, PRIM*SHADE, TEXEL*SHADE, flat,
+texture-blend and mixed lit/literal tests. Census lit/unlit/texture-blend/
+flat-color+PRIM and recheck affected fighters.
+
+### C2 — Load-time lighting provenance
+
+Preserve only state that changes vertex meaning at `G_VTX`: lighting enabled,
+geometry mode, relevant light state and source normal-vs-colour semantics.
+Trace fighter caller state through `ftDisplayMainProcDisplay`,
+`ftDisplayLightsDrawReflect`, GObj/DObj entry and list execution; make initial
+state explicit if lighting is external. Make `looks_like_unit_normal` fallback
+only and quantify every remaining heuristic. Test OFF→G_VTX A→ON→G_VTX B and
+the reverse, consumption after geometry changes, and real Fox/Falcon/Kirby/Ness
+mixed-material cases.
+
+### C3 — Independent depth compare/write state
+
+Census `Z_CMP`, `Z_UPD`, `ZMODE_OPA/INTER/XLU/DEC`. Represent independent
+`depth_test`, `depth_write` and `depth_mode`; keep `G_ZBUFFER` as geometry/RSP
+state. Map writes through `sceGuDepthMask` (true disables PSP writes). Add a
+depth-test/no-write translucent-front/opaque-behind scene and ON→OFF→ON
+switch regression, with PPSSPP or physical-PSP evidence. Until this closes,
+depth is not complete.
+
+### C4 — Preserve submission order
+
+Audit `merge_by_material` and callers; measure primitive runs before/after,
+non-adjacent merges, and translucency/depth-write/alpha-test/framebuffer
+involvement. Replace global grouping with adjacent identical-state runs only:
+`A A B B A → AA BB A`, preserving triangle order and never crossing
+translucency, depth-write, framebuffer, multi-pass, decal, alpha/coverage or
+render-target boundaries without proof. Add an `A B A` test, rerun goldens,
+and record draw-call growth as an R3 lead.
+
+### C5 — Systematic PSP GE cache isolation
+
+Inventory every raw GU mutation outside `apply_material`, including mesh,
+collision/debug markers, particles, wallpaper/framebuffer, UI/debug and
+fighter-light paths. Record function, changed state, cache field,
+invalidation and whether a draw follows. Cover texture/binding/CLUT,
+texture-function/env, map mode/scale/offset/wrap, filter/mip/LOD,
+culling/shading/lighting/light/material, blend, alpha-test, depth test/
+function/write and texgen. Add `DrawState::invalidate_all()` or centralize
+mutations. Regress A→raw draw→A, A→fighter-light setup→A→teardown→A and
+A→2D sprite→A.
+
+### C6 — Integrated regression
+
+Run the full host suite after C1–C5, rebuild the real pack and record pack
+size, mesh/primitive/draw-run/texture counts, affected vertices and materials.
+Rerun every deterministic golden and explain every change. Recheck Mario, Fox,
+Kirby, Ness, Captain Falcon and Link plus lighting, texture blend, flat colour,
+translucency, alpha, billboard, framebuffer and effects. Repeat representative
+physical-PSP captures; never overwrite goldens blindly.
+
+### C7 — Reconcile documentation
+
+After C6 update `STATUS.md`, `PLAN.md`, `TODO.md`, rendering/porting/
+reverse-engineering/visual-regression docs and `DECISIONS.md`. Correct claims
+about depth completion, render-state fidelity, primitive sorting, load-time and
+pack/runtime lighting, PRIM ownership and DrawState isolation. Add separate
+evidence entries for independently demonstrated findings.
+
+Execute C1 → C2 → C3 → C4 → C5 → C6 → C7. Stop progression if normals are
+modified before lighting, PRIM is applied twice, vertex meaning depends on
+triangle-time state, translucent paths write Z incorrectly, non-adjacent
+primitives remain reordered, or raw GU calls bypass cache invalidation.
 
 # 9. R3 — Rendering Performance
 
@@ -2887,7 +3103,8 @@ sampler state and shader-mode lookups in a 256-entry hash table
 Concrete, working precedent for the state-sorting `DECISIONS.md` D-036
 already anticipates this project needing eventually, once state fidelity
 (`R0.15`/`R0.16`, both `COMPLETE`) is no longer the open question it was
-when D-036 was written. Not implemented here; R3 is `BLOCKED_BY_R2`.
+when D-036 was written. R0.15/R0.16 remain VERIFYING while R2.1/R2.2 are
+open. Not implemented here; R3 is `BLOCKED_BY_R2`.
 
 ### Acceptance
 

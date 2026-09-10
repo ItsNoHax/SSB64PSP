@@ -112,6 +112,12 @@ regression_capture_scene12 = []
 # traced to this). Off by default.
 regression_capture_scene13 = []
 
+# Requests one framebuffer capture from PPSSPPHeadless after the deterministic
+# scene has reached its frozen tick. The devctl is ignored by real PSPs, so it
+# is safe to combine with any regression scene and has no effect on normal
+# interactive or hardware builds.
+headless_capture = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
