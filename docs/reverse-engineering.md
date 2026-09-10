@@ -10,6 +10,96 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-191 — Wallpaper-capture copy-order fully explained by the destination `Sprite`'s own header; no PSP swizzle needed (`PLAN.md` R1)
+
+**Problem.** RE-190 found `sc1PStageClearCopyFramebufToWallpaper` as R1's
+last open framebuffer path but left two copy-order details unexplained (the
+odd/even `u32` chunk swap per row; the 2-word destination skip every 6th
+row) and recorded a stop condition: resolve them via a ROM probe of
+relocData file 26's `Sprite`/`Bitmap` header before writing any PSP code.
+
+**Evidence.** `romtool dump "rom/Super Smash Bros. (USA).z64" 26` writes the
+file's 132,960 decompressed bytes to `assets/generated/dump/26.bin`
+(gitignored, not committed). `llGRWallpaperTrainingBlackSprite` is an
+extern `intptr_t` symbol whose value `lbRelocGetFileData`'s macro adds
+directly to the file base pointer (`src/lb/library.h:7-8`) — i.e. its
+*address* is the byte offset of the `Sprite` struct within the file. The
+file's own `.spritelist` names that offset directly: `sprite_0x20718`
+(`src/relocData/26_GRWallpaperTrainingBlack.spritelist:4`). Decoding the 72
+bytes at that offset per `struct sprite` (`include/PR/sp.h:57-99`) gives:
+
+* `width=300 height=220` — the same active-picture rectangle RE-099/100/190
+  already established.
+* `bmheight=6 bmHreal=6` — **each `Bitmap` tile is exactly 6 texel rows
+  tall.** This is precisely the row count RE-190's copy loop treats
+  specially (`if (((i + 1) % 6) == 0) wallpaper_pixels += 2;`).
+* `nbitmaps=37` — `ceil(220 / 6) = 37`, confirming the destination is tiled
+  into 37 separate `Bitmap`s covering all 220 rows, not one contiguous
+  image.
+* `bmsiz=2` (`G_IM_SIZ_16b`), `bmfmt=0` (`G_IM_FMT_RGBA`) — matches the
+  copy loop's `u16`-pixel, RGBA5551 assumption.
+* `bitmap` pointer resolves (same offset convention) to file offset
+  `0x204c8`, an array of `Bitmap` structs. Decoding the first three
+  (`include/PR/sp.h:33-53`): `width=width_img=300`, `actualHeight=6` for
+  all three, and `buf` advances `0xe20-0x8 = 0xe18 = 3608` bytes between
+  tile 0 and tile 1. `300 texels × 6 rows × 2 bytes/texel = 3600` bytes of
+  real pixel data, leaving exactly `3608-3600 = 8` bytes = **2 `u32`
+  words** of inter-tile gap — an exact byte-for-byte match to the copy
+  loop's `wallpaper_pixels += 2` every 6th row. Hypothesis (a) from RE-190
+  is confirmed, not merely plausible: the gap is literal padding between
+  consecutive `Bitmap` tiles' pixel buffers.
+* The odd/even chunk swap is explained by `spDraw` itself
+  (`src/libultra/sp/sprite.c`), the function that later displays this exact
+  `Sprite`. For a 16-bit-format bitmap it calls `gDPLoadTextureBlock(gl++,
+  b->buf, s->bmfmt, G_IM_SIZ_16b, tex_width, tex_height, ...)`
+  (`sprite.c:292`), with `tex_width = b->width_img` and
+  `tex_height = s->bmHreal` (`sprite.c:94-95`) — i.e. each 300×6 tile is
+  loaded into TMEM with a real hardware `LoadBlock` DMA, not `LoadTile`.
+  RDP `LoadBlock` streams texel rows into TMEM's two word-interleaved
+  banks; for any 16-bit-per-texel source consumed this way, the standard
+  N64 texture-conversion requirement is that adjacent texel rows have their
+  two source `u32` words pre-swapped in ROM/RAM so the linear DMA lands
+  correctly. `sc1PStageClearCopyFramebufToWallpaper` is therefore not doing
+  anything wallpaper-specific — it is building an ordinary
+  `LoadBlock`-ready 16-bit texture image on the fly from a framebuffer
+  snapshot, using the same row-swizzle every N64 16-bit texture requires
+  before `LoadBlock` can read it, and `spDraw`'s own call site is the
+  reason that swizzle exists.
+
+**Porting implication.** The PSP GE has no TMEM and no `LoadBlock`
+row-interleaving constraint; a PSP port of this mechanism needs none of
+this routine's swizzle or per-tile padding. It only needs to copy the same
+300×220 active-picture rectangle (already implemented for R0.13's LB
+transition, RE-099/100) into a plain linear RGBA5551 (or PSP-native)
+buffer and upload it as one ordinary texture — simpler than the original,
+not equivalent to it byte-for-byte.
+
+**Remaining scope.** Still not implemented — this session resolved RE-190's
+stop condition (documentation/probe only, `git diff --stat` covers `docs/`
+only) but implementing the PSP-side capture has no real caller yet: no
+1P-mode/results-screen state exists in this project (same "renderer owns
+mechanism, G2 owns trigger" split as RE-149), and there is no packed asset
+representation for the destination `GRWallpaperTrainingBlack` sprite for a
+capture to render into or a test harness to display — `romtool textures`
+does not model tiled `Sprite`/`Bitmap` assets at all today, only `MObj`
+textures. Implementing this mechanism for real needs, at minimum, a new
+pack-time representation for this asset class before there's anything on
+the PSP side to verify against, which is more than a probe-and-resolve
+task. Next implementation session should decide whether to (a) add minimal
+`Sprite` asset support to `romtool`/pack format just for this one use, or
+(b) build a dev-harness-only capture-and-display path (mirroring RE-099's
+own bootstrapping of the LB transition mechanism) without waiting for a
+real `Sprite` packer.
+
+**Confidence: high.** Every field read is a direct byte decode of the ROM's
+own `Sprite`/`Bitmap` header and cross-checked twice (tile height from the
+`Sprite` header agrees with the tile count from `nbitmaps`, and the tile
+buffer stride agrees with the copy loop's own padding arithmetic); the
+swizzle explanation is grounded in this same ROM's decompiled `spDraw`
+source, not external assumption.
+
+---
+
 ## RE-190 — Framebuffer-path census: exactly one content-bearing mechanism remains outside R0.13; everything else is N64-only VI/memory plumbing (`PLAN.md` R1)
 
 **Problem.** RE-189 closed R1's "all required effects render" bullet; the
