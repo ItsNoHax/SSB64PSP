@@ -2256,7 +2256,15 @@ fn convert_texture(
             tlut,
         )
         .ok()?;
-        Some(texture::mirror_extend(&img, t.mirror_s, t.mirror_t))
+        Some(texture::mirror_extend(
+            &img,
+            t.mirror_s,
+            t.mirror_t,
+            t.clamp_s,
+            t.clamp_t,
+            t.drawn_width as u32,
+            t.drawn_height as u32,
+        ))
     };
 
     if NEEDS_DITHER_BLUR
@@ -2291,7 +2299,15 @@ fn convert_texture(
         )
         .ok()?;
         let blurred = texture::box_blur_wrapped(&img);
-        let mirrored = texture::mirror_extend(&blurred, t.mirror_s, t.mirror_t);
+        let mirrored = texture::mirror_extend(
+            &blurred,
+            t.mirror_s,
+            t.mirror_t,
+            t.clamp_s,
+            t.clamp_t,
+            t.drawn_width as u32,
+            t.drawn_height as u32,
+        );
         return Some(psp::pack_mipped(&mirrored, psp::Psm::Psm8888, &[], swizzle));
     }
 
@@ -7367,17 +7383,21 @@ mod tests {
         assert!(textures_censused > 0, "archive-wide walk found no textures");
     }
 
-    /// `PLAN.md` R2.0/P0b: measures two of the three addressing questions
-    /// against every real primitive archive-wide, using
+    /// `PLAN.md` R2.0/P0b/P0c: measures two of the three addressing
+    /// questions against every real primitive archive-wide, using
     /// `ssb_rom::n64_addressing`'s hardware reference model (transcribed
     /// from `angrylion-rdp-plus`, not a reference port) and its paired
-    /// `psp_lowering_axis` model of the current PSP conversion.
+    /// `psp_lowering_axis` model of the PSP conversion.
     ///
     /// Bullet 1 (mirror+clamp beyond the first period): for every real
     /// `mirror + clamp` (`cms`/`cmt == 3`) render-tile axis with a nonzero
     /// mask, classifies how many mask periods each real primitive's UV range
     /// actually reaches, and compares the hardware model's addressed texel
-    /// against the current PSP lowering's at both UV extremes.
+    /// against the PSP lowering's at both UV extremes. RE-220 measured this
+    /// diverging (99/810 axis instances, 12.22%) against the *old* two-period
+    /// bake; RE-221 (`R2.0`/P0c) fixed `texture::mirror_extend`/
+    /// `psp_lowering_axis` to bake every period the drawn rect spans, and
+    /// this census now asserts the divergence count is zero.
     ///
     /// Bullet 2 (`mask == 0`): for every real axis with `mask == 0` and the
     /// `cm` clamp bit clear (where current PSP code applies `Repeat`, but
@@ -7502,8 +7522,11 @@ mod tests {
                             }
                             let hw_min = ssb_rom::n64_addressing::address_axis(&model, min_c);
                             let hw_max = ssb_rom::n64_addressing::address_axis(&model, max_c);
-                            let psp_min = ssb_rom::n64_addressing::psp_lowering_axis(min_c, period, mirror, clamp_bit);
-                            let psp_max = ssb_rom::n64_addressing::psp_lowering_axis(max_c, period, mirror, clamp_bit);
+                            let drawn_u32 = drawn as u32;
+                            let psp_min =
+                                ssb_rom::n64_addressing::psp_lowering_axis(min_c, period, drawn_u32, mirror, clamp_bit);
+                            let psp_max =
+                                ssb_rom::n64_addressing::psp_lowering_axis(max_c, period, drawn_u32, mirror, clamp_bit);
                             if hw_min != psp_min || hw_max != psp_max {
                                 mc.hw_psp_diverge += 1;
                             }
@@ -7611,6 +7634,14 @@ mod tests {
         );
 
         assert!(primitives_examined > 0, "archive-wide walk found no textured primitives");
+        // RE-221 (`R2.0`/P0c): `texture::mirror_extend`/`psp_lowering_axis`
+        // now bake every mask period a mirror+clamp axis's drawn rect spans,
+        // not just the first mirrored pair (RE-220's measured gap) -- this
+        // must stay zero, or the fix has regressed.
+        assert_eq!(
+            mc.hw_psp_diverge, 0,
+            "hardware and PSP lowering diverge on a real mirror+clamp axis (PLAN.md R2.0/P0c regressed)"
+        );
         // RE-220: measured zero `mask == 0` render-tile axes on any real
         // drawn primitive, archive-wide -- `angrylion-rdp-plus`'s forced
         // clamp for `mask == 0` (`clampens = cs || !mask_s`) never actually

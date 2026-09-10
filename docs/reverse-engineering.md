@@ -10,6 +10,92 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-221 — Fix mirror+clamp addressing beyond the first mirrored period (`PLAN.md` R2.0/P0c)
+
+**Question.** RE-220 measured a real, material gap: on a mirror+clamp
+(`cms`/`cmt == 3`, mask > 0) render-tile axis, the PSP conversion pre-bakes
+only one mirrored pair (`texture::mirror_extend` doubling) and clamps past
+that; real hardware keeps mirroring at every mask-period boundary up to the
+tile's own drawn-rect far edge (`sh`/`th`) before it clamps. 176 of 810 real
+axis instances reach a third or later period, and 99 (12.22%) measurably
+diverged from the `n64_addressing` reference model at the primitive's own
+real UV extremes. Can this be fixed exactly, using the same
+`n64_addressing::address_axis` reference model RE-220 built, with the
+divergence count driven to zero on real content?
+
+**Fix.** `texture::mirror_extend` (`crates/ssb-rom/src/texture.rs`) now
+takes each axis's `clamp` bit and `drawn_width`/`drawn_height`
+(`TextureRef`'s own fields, RE-220) alongside `mirror`. Three cases per
+axis, `mirror_axis_len`:
+
+* Not mirrored: untouched (period-only image); `Repeat` already reproduces
+  a plain periodic wrap exactly (RE-066).
+* Mirrored, no clamp: unchanged from before — exactly one mirrored pair
+  baked (`period * 2`), which a plain `Repeat` wrap then mirrors forever,
+  exactly, since wrapping back to the image's start resumes the same
+  (unflipped) phase the doubled image began with.
+* Mirrored **and** clamped: bakes every period up to `drawn` (the tile's
+  real drawn-rect extent on this axis) instead of always exactly two —
+  `mirror_fold` computes, for each output texel index, which source texel
+  (unflipped on an even period index, reversed on an odd one) it reads,
+  the same fold `n64_addressing::address_axis`'s `tcmask_coupled`
+  bit-twiddling performs, transcribed into closed (non-bit-twiddled) form.
+  `sceGuTexWrap(Clamp)` then holds exactly the real far-edge texel forever,
+  matching `address_axis`'s own clamp target (the drawn rect's far edge,
+  folded through the same mask/mirror stage) for every coordinate a real
+  drawn primitive can reach — not just the first mirrored pair.
+
+`n64_addressing::psp_lowering_axis` gained the matching `drawn` parameter
+and the same three-case fold (`fold_period_mirror`, the closed-form
+counterpart used by both the reference-model comparison and
+`mirror_extend`'s actual pixel bake), so the census comparing it against
+`address_axis` now measures the *fixed* lowering. `tools/romtool`'s
+`convert_texture` passes `t.clamp_s`/`clamp_t`/`drawn_width`/`drawn_height`
+through at both of its `mirror_extend` call sites (the ordinary path and
+RE-070/RE-075's dither-blur path). No change to `mesh.rs`'s UV-baking
+(`push_vertex`'s per-clamped-axis origin rebase, RE-152) or
+`crates/psp/src/meshdraw.rs`'s wrap-mode selection — both already read as
+correct for this fix; `sceGuTexWrap(Clamp)`'s target index changes because
+the *baked image* underneath it now reaches further, not because either
+consumer needed new logic. `sceGuTexScale`'s normalization already reads
+the packed texture's own actual stride/height (`meshdraw.rs:619-627`), so a
+wider baked image needs no separate scale-factor change.
+
+**Measured, archive-wide, real ROM (same
+`tile_addressing_census_against_real_archive_textures` census RE-220 used,
+`SSB64_ROM`-gated, 2,484 real textured primitives, 810 mirror+clamp axis
+instances): divergence between the hardware reference model and the fixed
+PSP lowering is now 0/810 (0.0000%)**, down from RE-220's 99/810 (12.22%).
+The census test now asserts `mc.hw_psp_diverge == 0` so a regression fails
+the build rather than needing a human to notice. Recheck of RE-102's named
+overflow content (Fox, Captain Falcon, Kirby face/body textures, the real
+content that motivated `clamp_s`/`clamp_t` in the first place) is implicit
+in the archive-wide census: those primitives are exactly the ones whose UV
+range reaches a third or later period (RE-220's own 176-instance bucket),
+now included in the 810 measured with zero divergence.
+
+**Verification.** `cargo test -p ssb-rom n64_addressing` (8 tests, 2
+rewritten from RE-220's divergence-demonstrating pair to convergence
+checks) and `cargo test -p ssb-rom texture::` (49 tests, 2 new covering the
+multi-period bake and the drawn-rect-narrower-than-one-period case), all
+passing. `cargo test -p romtool tile_addressing_census_against_real_archive_textures -- --nocapture`
+against the real ROM (numbers above, including the new zero-divergence
+assertion). Full `cargo test --workspace`: 548 passing, 0 failed, no other
+crate affected.
+
+**Confidence: high.** The fix is a direct, mechanical generalization of the
+existing mirror-bake mechanism (RE-067) using the same reference model
+RE-220 already validated field-for-field against `angrylion-rdp-plus`; the
+archive-wide census is the same measurement instrument RE-220 used, run
+against the same 810 real axis instances, now showing exact agreement
+rather than an estimate. Visible on-screen impact was not re-verified with
+a screenshot comparison here — the addressing-level fix is complete and
+measured exact, but a pixel-level before/after on Fox/Captain
+Falcon/Kirby is a natural follow-up if `R2.2`'s renderer corrective gate
+wants one.
+
+---
+
 ## RE-220 — General N64 tile-addressing reference model: two real gaps, one closed invariant (`PLAN.md` R2.0/P0b)
 
 **Question.** RE-218 reopened R0.5's mirror/clamp/mask completion claims:
