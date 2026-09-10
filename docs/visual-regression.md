@@ -5,7 +5,26 @@ R0.17 requires, superseding `TODO.md` Phase H's "Reference renderer" /
 "Screenshot regression" items. Screenshots taken ad hoc during individual
 `RE-` investigations remain valid evidence for the specific claims they were
 taken for, but they are not a substitute for this: a fixed scene that can be
-re-captured and diffed automatically as the renderer changes.
+re-captured and diffed automatically as the renderer changes. The automated
+capture runner is PPSSPPHeadless; the windowed `tools/run-ppsspp.sh` helper is
+reserved for interactive inspection and hardware-backend experiments.
+
+## PPSSPPHeadless setup
+
+Build the headless target from the local PPSSPP checkout:
+
+```
+cd ~/.local/src/ppsspp
+cmake -DHEADLESS=ON -DCMAKE_BUILD_TYPE=Release -B build-headless
+cmake --build build-headless --target PPSSPPHeadless
+```
+
+If the checkout or build directory is elsewhere, set `PPSSPP_HEADLESS_BIN` to
+the resulting executable. The project wrapper defaults to
+`~/.local/src/ppsspp/build-headless/PPSSPPHeadless` and uses the software GPU
+backend for deterministic output. It captures through PPSSPP's emulator
+`sceIoDevctl` hook after the PSP scene reaches its frozen tick; real PSPs
+ignore that emulator-only request.
 
 ## The deterministic test scene
 
@@ -392,22 +411,43 @@ Physical PSP hardware verification (RE-215): `ldstart`ed under PSPLink with
 PPSSPP golden (pink/tan reflective facet, yellow flag panel, gold crystal
 band). Hashes recorded in RE-215.
 
+## Pending texgen and renderer-corrective matrix
+
+Scenes 11–13 prove the current PSP lowering is deterministic and responsive;
+they do not prove original-N64 equivalence. `PLAN.md` R2.1/T1–T10 owns the
+remaining texgen evidence: a raw-normal diagnostic (including non-unit
+`[64,0,0]`), quantized LookAt basis, cross-node `G_VTX` provenance, tile-shift
+and origin/mirror/clamp phase cases, regular rotations A/B, a camera-rotation
+case, and a legitimate original-ROM stage-8 Metal comparison. Record PSP
+model, firmware, commit, pack hash, EBOOT identity, scene and capture hash for
+each hardware run; regenerate any golden after a semantic change.
+
+`PLAN.md` R2.2/C1–C6 then requires deterministic regressions for primitive
+colour ownership, load-time lighting provenance, independent depth writes,
+adjacent-only primitive merging and PSP GE cache invalidation. The existing
+goldens remain useful baselines, but a changed pixel must be explained by the
+correction before it is accepted.
+
 ## Capture procedure
 
-### 1. PPSSPP software rendering (executed; this is the current golden source)
+### 1. PPSSPPHeadless software rendering (current golden source)
 
 ```
-cd psp && cargo psp --release --features regression_capture
-tools/run-ppsspp.sh --no-build --seconds 6   # any --seconds past ~5 works; see below
+tools/run-ppsspp-headless.sh --feature regression_capture
 ```
 
-The screenshot lands at `$PPSSPP_TEST_DIR/screenshot.png` (default
-`~/ppsspp-test/screenshot.png`). `--seconds` no longer has to be tuned
-precisely: because the scene freezes at tick 240 (4 real seconds in), any
-value at or past ~5 seconds captures the identical frame. Compare it with:
+The wrapper builds the EBOOT, stages the pack, runs PPSSPPHeadless, and writes
+`$PPSSPP_HEADLESS_TEST_DIR/screenshot.png` (default
+`~/ppsspp-headless-test/screenshot.png`). `--seconds` is only a safety timeout;
+the capture itself is requested at the frozen tick, so it is not tied to host
+window timing. New headless captures are the visual reference from this point
+forward. The committed 960x544 images predate this switch and contain the
+windowed PPSSPP FPS overlay, so an exact pixel comparison against those legacy
+images includes that expected presentation difference. Compare when working
+against a matching headless golden with:
 
 ```
-tools/compare-screenshot.sh tests/golden/r0-dream-land-default.png ~/ppsspp-test/screenshot.png
+tools/compare-screenshot.sh tests/golden/r0-dream-land-default.png ~/ppsspp-headless-test/screenshot.png
 ```
 
 Exits 0 and prints `PASS` on a match; nonzero and the differing-pixel count
@@ -417,10 +457,9 @@ measured byte-identical run to run — see Evidence.
 **Rebuilding without the feature.** `regression_capture` is off by default
 and must not be left enabled for normal interactive debug-viewer use (it
 would freeze the fighter and hide the live perf counters after 4 seconds of
-any session). Always follow a regression-capture run with a plain `cargo
-psp --release` before resuming normal work; `tools/run-ppsspp.sh --seconds
-N` on its own (`--build`, the default) already does this since it never
-passes `--features`.
+any session). Always follow a regression-capture run with a plain `cargo psp
+--release` before resuming normal work. The wrapper deliberately leaves the
+deterministic feature out of ordinary builds.
 
 ### 2. PPSSPP hardware rendering (documented, not yet executed)
 
@@ -486,9 +525,9 @@ pixel oracle.
 | CI4 texture | Dream Land's ground texture, file 103 `+0x1BE0`, 32×32 CI4 (`docs/reverse-engineering.md`, RE-046) | Yes |
 | Palette / CLUT | Same CI4 ground texture's palette load | Yes |
 | Mirror wrap mode | Dream Land's canopy, `G_TX_MIRROR` on both axes, file 104 offset `0xE20` (`mirror_s=true, mirror_t=true`) and offset `0x5F0` (`mirror_s=true, mirror_t=false`) (RE-067) | Yes |
-| Lighting | Dream Land's platform/canopy shading (`G_LIGHTING`, key light baked at pack time, RE-065) | Yes |
+| Lighting | Dream Land's platform/canopy shading (`G_LIGHTING`, runtime GE light/material path, RE-164–167) | Yes, covered path; C1/C2 revalidation pending |
 | `combiner_shade_scale` shape | Dream Land's lit, unlit-texture primitives (RE-073); exact per-primitive attribution not isolated in this task | Likely, unconfirmed |
-| Depth testing | Dream Land's canopy occluding the platform behind it | Yes |
+| Depth testing | Dream Land's canopy occluding the platform behind it | Yes, compare/write split pending (C3) |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
 | Fighter model + skeleton | Mario, idle pose, spawn 0; Fox, file 313 graph `0x2938` (RE-152/RE-207); Captain Falcon, file 332 graph `0x3BE0` (RE-208) | Yes — scene 1, `tests/golden/r0-dream-land-default.png`; scene 6, `tests/golden/r2-fox-fighter.png`; scene 7, `tests/golden/r2-falcon-fighter.png` |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |

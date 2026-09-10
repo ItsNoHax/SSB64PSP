@@ -26,6 +26,8 @@ mod timing;
 
 use core::f32::consts::PI;
 
+#[cfg(feature = "headless_capture")]
+use psp::sys;
 use psp::Align16;
 
 use ssb_engine::coord;
@@ -86,6 +88,25 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene12")
             || cfg!(feature = "regression_capture_scene13")
             || cfg!(feature = "camera_audit_capture"))
+}
+
+/// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
+/// not implement the emulator-only devctl, so the same build remains safe to
+/// load on hardware (where the call simply returns an error).
+#[cfg(feature = "headless_capture")]
+fn emit_headless_screenshot() {
+    const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
+
+    unsafe {
+        sys::sceIoDevctl(
+            b"emulator:\0".as_ptr(),
+            EMULATOR_DEVCTL_EMIT_SCREENSHOT,
+            core::ptr::null_mut(),
+            0,
+            core::ptr::null_mut(),
+            0,
+        );
+    }
 }
 
 psp::module!("ssb64_psp", 1, 0);
@@ -767,6 +788,8 @@ unsafe fn run() -> ! {
     // pacing. Only consulted by `deterministic_capture_frozen`; harmless to
     // maintain unconditionally.
     let mut sim_frame_index = 0u64;
+    #[cfg(feature = "headless_capture")]
+    let mut headless_capture_sent = false;
 
     loop {
         let frame = Stopwatch::start();
@@ -2248,6 +2271,11 @@ unsafe fn run() -> ! {
             }
         }
         gpu.end_frame();
+        #[cfg(feature = "headless_capture")]
+        if !headless_capture_sent && deterministic_capture_frozen(sim_frame_index) {
+            emit_headless_screenshot();
+            headless_capture_sent = true;
+        }
         results_transition.capture_completed();
         last_frame_us = frame.elapsed_us();
     }

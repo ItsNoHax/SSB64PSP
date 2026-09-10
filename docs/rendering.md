@@ -32,19 +32,21 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | --- | --- | --- | --- |
 | Geometry | COMPLETE | `PLAN.md` R0.8 and R0.12 `COMPLETE` (transform kinds 44/46/48/50, RE-062/RE-063); RE-143 reproduces signed animated billboard scale; RE-144 corrects billboard Z to the original X/Y/X scale rule; RE-145 individually reviews all 109 billboard ordinals; `romtool mesh` converts every root display list, 0 failures archive-wide | Physical PSP validation remains part of the later rendering gate |
 | Projection | COMPLETE | `PLAN.md` R0.14: FOV, viewport/aspect and depth sourced and checked (RE-034/082/084/085); RE-131/150 port and correct the default battle camera; RE-151 traces the original ROM's live two-fighter camera state and pins distance/look-at/eye/FOV numerically, with byte-stable PPSSPP captures | Special entry/dead/pause modes remain future gameplay-system work; physical PSP validation remains part of R2 |
-| Texture decode | 🟢 85% | `PLAN.md` R0.3 `COMPLETE`: RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded, unit-tested; 681/707 bound textures packed (RE-172) | 26 unconverted runtime-framebuffer references, each owned by R0.13 |
+| Texture decode | 🟢 85% | `PLAN.md` R0.3 `COMPLETE`: RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; archive census and pack metrics are recorded in the relevant RE entries | Unconverted runtime-framebuffer references remain owned by R0.13 |
 | CI4 | COMPLETE | `PLAN.md` R0.4: unit-tested decode; dominant format (1192/3483 `G_SETTILE`) | None |
 | CI8 | COMPLETE | `PLAN.md` R0.4: unit-tested decode | None |
 | TLUT | COMPLETE for ROM-backed assets | `PLAN.md` R0.4: loading verified; cross-node palette inheritance pinned by a unit test confirmed capable of failing (RE-064); palette pointers resolved through extern relocations (RE-037); RE-162 resolves the final N-Bumper material-table palette gap | Only the 26 runtime-framebuffer references remain; they do not name a ROM TLUT and belong to R0.13 |
 | Texture filtering | COMPLETE | RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`; the PSP path's `Linear` filtering matches | None |
-| Texture addressing | COMPLETE for implemented content | `PLAN.md` R0.5/R0.2: repeat (RE-044/RE-066), mirror (RE-067, pre-baked at pack time), clamp (RE-102, native `sceGuTexWrap(Clamp, ...)` per axis), masks/shifts (RE-044) all measured archive-wide and reproduced. RE-152 rebases nonzero `G_SETTILESIZE` origins on clamped axes while preserving repeat-axis mask phase, fixing Fox's isolated lower-face primitive in PPSSPP | Physical PSP validation remains part of R2 |
-| LOD/mipmaps | COMPLETE (original behavior identified and reproduced) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. RE-213 stopped exposing levels above zero (`sceGuTexMode` max-mip 0, `sceGuTexLevelMode(Const, 0.0)`, bilinear); RE-214 revalidated that after the texgen refactor — `bind_texture` still binds level zero only, and Dream Land is byte-identical to RE-213's own level-zero capture, SHA-256 `08cc25cc...` | Generated lower levels stay in the pack but inert; removing them is a separate pack-format decision. Dream Land's canopy discrepancy remains the separate open R0.5 item |
-| Texture coordinate generation | VERIFYING (ordinary), VERIFYING (linear, exact) | RE-214: raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` bits preserved independently; archive-wide census proves primitive-level state is invariant; `gSPTexture` scale and tile origin carried to the GE and applied through the texture-matrix generator against the camera's world right/up basis; PPSSPP and physical-PSP captures of `StageMetalFile2` at two rotations. RE-215: `G_TEXTURE_GEN_LINEAR` now generates the exact `acos` curve per vertex on the CPU (cross-checked against two independent reference implementations) and draws through the authored-UV pipeline; PPSSPP and physical-PSP captures of the graph that actually carries it (`regression_capture_scene13`, RE-215 found scenes 11/12 do not) | No original-N64 comparison exists for either curve (Meta Crystal and the metal fighter models are 1P-stage-8-only content; RE-216 rebuilt RE-151's scripted harness and verified it works, but found the VS-Mode "Metal Box item" shortcut RE-214 §10 proposed does not exist — the real stage-8 route remains unscripted) |
+| Texture addressing | COMPLETE for implemented non-texgen content | `PLAN.md` R0.5/R0.2: repeat (RE-044/RE-066), mirror (RE-067, pre-baked at pack time), clamp (RE-102, native `sceGuTexWrap(Clamp, ...)` per axis), masks/shifts (RE-044) all measured archive-wide and reproduced. RE-152 rebases nonzero `G_SETTILESIZE` origins on clamped axes while preserving repeat-axis mask phase, fixing Fox's isolated lower-face primitive in PPSSPP | Texgen-origin/shift fidelity remains in R2.1/T6; physical PSP validation remains part of R2 |
+| LOD/mipmaps | COMPLETE (original behavior identified and reproduced) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. RE-213 stopped exposing levels above zero (`sceGuTexMode` max-mip 0, `sceGuTexLevelMode(Const, 0.0)`, bilinear); RE-214 revalidated that after the texgen refactor — `bind_texture` still binds level zero only, and Dream Land is byte-identical to RE-213's own level-zero capture, SHA-256 `08cc25cc...` | Generated lower levels stay in the pack but inert; removing them is a separate pack-format decision |
+| Texture coordinate generation | VERIFYING (ordinary and linear) | RE-214/215 establish raw-bit handling, the ROM census and PPSSPP/physical-PSP captures. The final T1–T10 queue in `PLAN.md` still requires load-space/normal-transform proof, raw signed-byte normal semantics, LookAt quantization, linear integer conversion, tile shifts/addressing and an original-N64 Metal comparison. Linear is source-formula exact, not yet proven bit-exact to original hardware | RE-216 corrected the nonexistent VS-Mode “Metal Box item” route; the real stage-8 route or a faithful RAM-level warp remains open |
 | Combiner | COMPLETE for classified static paths | `PLAN.md` R0.6: general `(A-B)*C+D` evaluator (RE-039/043), texture blend (RE-073/074), flat colour (RE-080), and shade-scale consumption (RE-106). RE-168's post-RE-163 census accepts 65,000/65,199 source-attributed emitted-triangle visits (99.695%) and source-identifies every missing-constant case | The 186 unsupported-equation visits are catalogued; runtime shield colours belong to future effect/gameplay integration, not static material conversion |
-| Lighting | COMPLETE for R0 | `PLAN.md` R0.6: data-driven lit/literal split (RE-103/105); stage angles, normals and zero-valid LIGHT_1/LIGHT_2 state reach the GE (RE-164–166); RE-167 restores `PRIMITIVE * SHADE` as GE material colour | Matched original-ROM/PPSSPP Dream Land Wait comparison restores Mario's red/blue costume semantics; exact cross-renderer pixels are not claimed and physical PSP remains R2 |
+| Lighting | VERIFYING | RE-103/105 and RE-164–167 establish the current path and Dream Land comparison, but R2.2/C1–C2 must prove single-source PRIM ownership and `G_VTX` load-time normal/colour provenance; `looks_like_unit_normal` remains a fallback to quantify |
 | Alpha | COMPLETE for both classified gates, including their overlap | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide). RE-214 resolves both onto the GE's one alpha-test unit in `pack::alpha_gate`, with host regressions for every combination | The cutout gate remains an approximation of multisampled coverage (`alpha > 0`), as it always has been; the overlap itself is no longer a gap |
 | Blending | COMPLETE for classified single-cycle formulas | RE-129/130 decoded alpha combiners, classified nine archive-wide shapes, and enable real blending for `TEXEL0_ALPHA` and `TEXEL0_ALPHA * SHADE_ALPHA`; PPSSPP-verified on Dream Land | Rare `PRIM_ALPHA` multiply (~43) and two-cycle (~93) primitives are measured and deliberately declined under R0.6 |
-| Depth | COMPLETE | `PLAN.md` R0.6/R0.14: RDP per-frame default (`Z_BUFFER` on) fixed and wired per-primitive (RE-068); PSP depth convention (`sceGuDepthRange(65535, 0)` + `GreaterOrEqual`) confirmed against the `psp` crate's own documented convention (RE-085) | None |
+| Depth | VERIFYING | RE-068/085 establish the RDP default, depth-test mapping and inverted PSP range, but R2.2/C3 must separate RDP `Z_CMP` from `Z_UPD`/`ZMODE` and map independent depth writes |
+| Primitive submission order | VERIFYING | RE-122 fixed texture-cache key state loss, but RE-217 found `merge_by_material` still globally groups primitives; R2.2/C4 must preserve adjacent runs and measure draw-call impact |
+| PSP GE state cache | VERIFYING | RE-118 fixed the known overlay texture invalidation; RE-217 identifies a broader direct-GU inventory and `invalidate_all` regression still required by R2.2/C5 |
 | Culling | COMPLETE | `PLAN.md` R0.6: RDP per-frame default (`CULL_BACK` on) fixed, measured 86.3% of packed primitives post-fix (RE-068) | None |
 | Transparency | COMPLETE for classified formulas | RE-135 measured 25/35 translucent billboard primitives already carry RE-130's real `ALPHA_BLEND` path | The remaining 10 are the same documented `PRIM_ALPHA`/two-cycle long tail, not a billboard-specific gap |
 | Runtime MObj display state | COMPLETE for measured static content | RE-194 measures all 665 real `MObjMaterial`s and implements default substitution, texture scale, and tile-0 window state. `MOBJ_FLAG_FRAC` has 0 real static occurrences; tile-1 scroll is inert because all 12 inputs equal tile 0 and no `TEXEL1` consumer exists | Future runtime gameplay can revisit dynamic-only state if a real caller requires it; no R1 renderer gap remains |
@@ -52,7 +54,7 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | Shadows | NOT STARTED | Only `shadow_size` — a fighter attribute constant extracted from `FTAttributes` — exists; nothing renders a shadow | No design exists; not yet a numbered R0.x task |
 | Framebuffer effects | COMPLETE for R1 renderer scope | R0.13/RE-146–149 cover LB-transition capture and all 11 wipes. RE-190–193 census all remaining framebuffer references, implement 1P wallpaper capture plus its real `SObj` 2D-sprite draw, and device-verify bounded output | Real results-screen and match-transition triggers belong to G2 gameplay integration |
 | UI | NOT STARTED | Debug overlay only, via `sceGuDebugFlush` (software-rasterizer-dependent, RE-014) — not real GE geometry | "Renderer 3" below is explicitly not started |
-| Physical PSP | BLOCKED (not validated) | `PLAN.md` R2 is `BLOCKED_BY_R1`; historical smoke-testing occurred but predates the current renderer and was not captured against R2's acceptance criteria (`STATUS.md` §8) | The entire R2 milestone |
+| Physical PSP | IN_PROGRESS | RE-201–215 provide representative Slim/6.61 captures for stages, fighters, materials, framebuffer effects and texgen; the formal matrix still lacks exhaustive coverage and the original-N64 texgen comparison | R2.1/T1–T10 and R2.2/C1–C6 |
 
 ## Pipeline
 
@@ -494,22 +496,15 @@ small in VRAM.
 `ssb-rom::psp_texture` packs from there to the PSM chosen above — including
 the swizzle. Both are unit-tested and confirmed on device (RE-022).
 
-### Not yet handled
+### Remaining rendering work
 
 * Mipmap chains are generated at build time for 151+ textures
-  (`psp_texture::pack_mipped`), but generating them did **not** fully resolve
-  the Dream Land canopy discrepancy (RE-053) — a diagonal pattern survived
-  and sharpened at higher resolution, which points at texture
-  *magnification* behaviour rather than minification/LOD selection. RE-067
-  found and fixed one real, contributing cause (a missing `G_TX_MIRROR`
-  reproduction, see below); RE-070 tested RE-053's own two suggested fixes
-  for the dither directly and found filtering alone insufficient (measured
-  on-device) but pre-blurring the two canopy textures and packing them
-  unquantized (`Psm8888`) measurably softens the dither (~40% less
-  adjacent-pixel noise on the treated textures) without fully resolving it
-  — `PLAN.md` R0.5's open acceptance criterion stays open, now with real
-  progress and numbers behind it rather than an untried lead.
-* `G_TX_MIRROR` is now reproduced exactly rather than approximated (RE-067):
+  (`psp_texture::pack_mipped`), but SSB64 never enables traditional RDP LOD /
+  mip blending: RE-127 measured `G_TL_TILE` and `G_TD_CLAMP` throughout the
+  real commands. RE-201's direct PSP capture closes the Dream Land canopy
+  acceptance item; generated lower levels remain an intentional
+  anti-aliasing resource and are inert in the N64-equivalent level-zero draw.
+* `G_TX_MIRROR` is reproduced exactly rather than approximated (RE-067):
   since the PSP GE has no native mirror wrap mode (`sceGuTexWrap` is
   `Repeat`/`Clamp` only), `romtool`'s texture conversion pre-bakes a
   mirrored copy of the decoded image on each mirrored axis before packing
@@ -522,11 +517,20 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
   visibly wrong. Costs real VRAM: 187 of 638 packed textures (29%) carry
   the flag on at least one axis, raising packed texture VRAM from 763.2 KiB
   to 1059.0 KiB (+39%). `G_TX_CLAMP`, by contrast, is *not* a gap:
-  `psp/src/meshdraw.rs` hardcodes `sceGuTexWrap(Repeat, Repeat)` for every
-  draw, and RE-066 measured that every clamp-flagged tile-0 axis
-  archive-wide is also a masked (periodic) one, so the existing
-  mask-narrowed-width `Repeat` (RE-044) already reproduces real hardware's
-  addressing exactly.
+  RE-102 corrected the earlier mask-only conclusion: ordinary clamped axes
+  now use native `sceGuTexWrap(Clamp, ...)` after per-axis tile-origin
+  rebasing.
+
+* Texgen is implemented and self-validated, but not closed: the ordered
+  T1–T10 queue in `PLAN.md` still requires raw normal semantics, LookAt
+  quantization, load-space provenance, tile-shift/addressing proof and an
+  original-N64 Metal comparison. The current `G_TEXTURE_GEN_LINEAR` path is
+  source-formula exact, not claimed bit-exact to N64.
+
+* Renderer model corrections remain open under `PLAN.md` R2.2/C1–C7:
+  single-source primitive-colour ownership, load-time lighting provenance,
+  independent RDP depth compare/write state, adjacent-only primitive merging,
+  and systematic PSP GE cache invalidation.
 
 ## Coordinate handling
 
@@ -570,11 +574,10 @@ Per plan §32:
   why it needs the software rasteriser (RE-014).
 * **Renderer 4** — batching, state sorting, caching. **Not before the game is
   visibly running**, and not before the state being merged/sorted/cached has
-  passed its own correctness gate (D-036, `PLAN.md` R0.16). Primitives are
-  already merged by material at build time, which is the build-time half of
-  the same idea — that merge only combines primitives whose full material
-  state already agrees, so it does not discard state R0.16's audit would
-  need to find later.
+  passed its own correctness gate (D-036, `PLAN.md` R0.16/R2.2). The current
+  build-time `merge_by_material` globally groups primitives, so submission
+  order is not yet a safe correctness baseline; adjacent-run merging is owned
+  by R2.2/C4. Further batching/state sorting remains an R3 optimization.
 
 `PLAN.md` R0.18 tracks a systematic comparison against `sf64-psp` and
 `oot-PSP` (both PSP targets, so their `sceGu` usage is directly comparable)

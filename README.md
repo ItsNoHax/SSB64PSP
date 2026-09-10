@@ -72,13 +72,12 @@ See [`PLAN.md`](PLAN.md) for the authoritative development roadmap and [`STATUS.
 
 ### Physical PSP hardware
 
-The project has been booted and smoke-tested on physical PSP hardware earlier
-in development. That testing predates the current rendering work above and
-was not captured with the evidence (hardware model, build, asset-pack
-version, observed behavior) the project now requires — see `AGENTS.md` §16.
-Treat physical-hardware behavior as **unverified for the current renderer**
-until PLAN.md's R2 milestone is completed and recorded in `STATUS.md`. PPSSPP
-is the environment all claims above were validated against.
+The current renderer has representative PSP Slim/6.61 captures recorded in
+RE-201–215, including fighters, stages, materials, framebuffer effects and
+texgen. Formal R2 coverage is still in progress: exhaustive failure coverage,
+the original-N64 Metal comparison and the R2.2 renderer-corrective regressions
+remain open. PPSSPP is still the primary day-to-day validation environment;
+see `STATUS.md` and `PLAN.md` R2.1/R2.2.
 
 ### Current rendering work
 
@@ -104,6 +103,7 @@ The remaining work is focused on reproducing the original N64 renderer more comp
 * N64 render-state model fidelity (the intermediate representation must not collapse to `mesh + texture + basic colour` before correctness is established)
 * deterministic visual-regression methodology (reference vs. PPSSPP software vs. PPSSPP hardware vs. physical PSP)
 * comparative audit against `sf64-psp` and `oot-PSP`
+* final texgen semantics and renderer-corrective validation (R2.1/R2.2)
 * rendering regression coverage
 * PSP VRAM usage
 * rendering performance
@@ -222,7 +222,25 @@ The resulting executable is:
 psp/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
-### 7. Run under PPSSPP
+### 7. Run under PPSSPPHeadless (visual verification)
+
+Build PPSSPP's headless target once, then use the deterministic capture
+wrapper for visual verification:
+
+```bash
+cd ~/.local/src/ppsspp
+cmake -DHEADLESS=ON -DCMAKE_BUILD_TYPE=Release -B build-headless
+cmake --build build-headless --target PPSSPPHeadless
+
+cd /path/to/SSB64PSP
+tools/run-ppsspp-headless.sh --feature regression_capture
+```
+
+The screenshot and log are written to `~/ppsspp-headless-test/`. See
+[`docs/visual-regression.md`](docs/visual-regression.md) for scene selection,
+golden comparison, and alternate checkout paths.
+
+### 8. Run the interactive viewer
 
 ```bash
 tools/run-ppsspp.sh
@@ -230,9 +248,10 @@ tools/run-ppsspp.sh
 
 The script stages the generated asset pack next to the executable before launching.
 
-> `tools/run-ppsspp.sh` currently uses PPSSPP's software rasteriser because the debug overlay relies on CPU writes to emulated VRAM. This does not represent the physical PSP rendering path.
+> `tools/run-ppsspp.sh` is retained for interactive inspection. Automated
+> visual verification uses `tools/run-ppsspp-headless.sh` instead.
 
-### 8. Debug physical PSP crashes
+### 9. Debug physical PSP crashes
 
 See [PSPLink hardware-crash debugging](docs/psplink.md) for installation,
 `host0:` live loading, exception mapping, native captures, and evidence.

@@ -10,6 +10,46 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-217 — Renderer-plan reconciliation reopens four correctness claims (`PLAN.md` R0/R2)
+
+**Question.** Do the two corrective plans identify work that is already covered
+by the implementation, or do current completion claims need to be reverted?
+
+**Evidence.** The texgen plan's stronger completion gate is not yet met:
+`crates/ssb-rom/src/mesh.rs::CacheEntry` retains only `vertex` and `space`, so
+the converter cannot yet report the load-time model/normal transform or
+lighting provenance required by T1/T6. `psp/src/meshdraw.rs` selects
+`TextureProjectionMapMode::NormalizedNormal`; raw signed-byte `/127` behavior,
+LookAt quantization and the linear S10.5 conversion have not been independently
+measured against original output. The current `romtool texgen` evidence covers
+mode/scale invariance, not the full transform invariant.
+
+The second plan's risks are also present in the current tree. `mesh.rs`'
+`merge_by_material` accumulates primitives in a `BTreeMap`, which globally
+groups equal materials and can move an `A B A` submission into `A A B`.
+`MeshMaterial`/`PrimDesc` expose one `z_buffer`/`Z_BUFFER` bit; no independent
+RDP `Z_CMP`/`Z_UPD`/`ZMODE` or PSP depth-write state is represented. The
+`looks_like_unit_normal` fallback remains in `pack.rs`. Finally,
+`meshdraw.rs` has raw GU mutations in diagnostics, particle/framebuffer and
+overlay paths outside `apply_material`; RE-118 fixed the known overlay texture
+invalidation, but the full direct-call inventory and all-state invalidation
+regression have not been done.
+
+**Conclusion.** RE-214/215's existing texgen captures, RE-167's covered
+lighting comparison and RE-118's known cache fix remain valid evidence for the
+paths they actually test, but they do not satisfy the stronger T1–T10 or C1–C7
+acceptance gates. Reverted R0/R1/R0.6/R0.15/R0.16 claims that depended on those
+gates, made R2.1/T1 the single active task, and added R2.2 as the ordered
+follow-up. No implementation code was changed by this review.
+
+**Verification.** `cargo test --workspace`: 531 passing (373 `ssb-rom`, 120
+`ssb-game`, 36 `ssb-engine`, 2 `romtool`).
+
+**Confidence: high for the code-structure findings; semantic outcomes remain
+open until the planned ROM, PPSSPP and physical-PSP measurements are run.**
+
+---
+
 ## RE-216 — RE-151's harness rebuilt, and the "Metal Box item" route corrected (`PLAN.md` R2)
 
 **Question.** RE-151's scripted original-ROM Mupen64Plus harness no longer
