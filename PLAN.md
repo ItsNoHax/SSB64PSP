@@ -215,7 +215,7 @@ so nothing is duplicated and nothing is missing an owner.
 | --- | --- | --- |
 | Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | `COMPLETE` |
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
-| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopens R0.5's filtering and mirror/clamp/mask/POT-padding claims; R2.0/P0a–P1 own the reopened investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
+| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
 | Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` — load-time provenance and `PRIM` ownership remain open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
@@ -585,7 +585,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 ### Acceptance
 
 * [x] filter *mode* identified from original data — RE-124: measured archive-wide via the real `romtool pack` build, 151/151 real `G_MDSFT_TEXTFILT` commands request `G_TF_BILERP` (zero `G_TF_POINT`/`G_TF_AVERAGE`), matching the RDP's own per-frame reset default
-* [ ] PSP `Linear` filtering proven equivalent to N64 3-point `G_TF_BILERP` reconstruction, or an `ACCEPTED_DEVIATION` recorded with measured error — **reopened by RE-218**: RE-124 only measured that the mode selector matches, never that the RDP's 3-point reconstruction formula matches PSP's four-tap bilinear filter (they are not the same operation); owned by `R2.0`/P0a
+* [x] PSP `Linear` filtering proven equivalent to N64 3-point `G_TF_BILERP` reconstruction, or an `ACCEPTED_DEVIATION` recorded with measured error — RE-219 (`R2.0`/P0a): built a host-side 3-point reference sampler transcribed from `angrylion-rdp-plus`, measured it against PSP's bilinear archive-wide (684 real textures; 5.73% of interior samples differ by ≥8/255; the Dream Land canopy highlight texture reaches 128/255 max diff), and recorded `ACCEPTED_DEVIATION` — the PSP GE has no third filter mode and no programmable shader stage to reproduce the RDP's formula exactly
 * [x] magnification behavior identified — RE-081: Dream Land's canopy "highlight" texture is magnified on its V axis (`0.88` repeats); RE-053's "sharpens with resolution" symptom is explained by this, not by the "gradient" texture (which is genuinely minified)
 * [x] minification behavior identified — RE-053's `3.70×1.36` figure is correct for the canopy "gradient" texture specifically (RE-081 disambiguated which of the two canopy textures each figure actually describes)
 * [x] LOD behavior identified — RE-127: measured archive-wide via the real `romtool pack` build, 131/131 real `G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (zero `G_TL_LOD`), matching the RDP's own per-frame reset default — real hardware never engages RDP LOD blending for any content in this ROM
@@ -2908,6 +2908,8 @@ matching this project's own established practice (RE-066, RE-072, RE-127).
 
 ### P0a — N64 3-point filtering vs PSP bilinear
 
+Status: `COMPLETE` — RE-219.
+
 RE-124 established that all 151/151 real `G_MDSFT_TEXTFILT` commands request
 `G_TF_BILERP` and concluded PSP's unconditional
 `sceGuTexFilter(Linear, Linear)` (`psp/src/meshdraw.rs:431,505`) "is already
@@ -2933,6 +2935,18 @@ Acceptance: reference sampler implemented and host-tested; PSP-vs-reference
 comparison run on real archive textures with recorded quantitative error;
 R0.5's filtering acceptance item and `docs/rendering.md`'s "Texture
 filtering" row updated to whatever the measurement actually supports.
+
+**Closed by RE-219.** Reference samplers in `crates/ssb-rom/src/n64_filter.rs`
+(`sample_3point` transcribed from `angrylion-rdp-plus`, `sample_bilinear`
+matching PSP's `Linear`), host-tested. Archive-wide census
+(`tools/romtool`'s `filter_reconstruction_census_against_real_archive_textures`,
+`SSB64_ROM`-gated): 684 real textures, 5.73% of interior sample points
+differ by ≥8/255, 1.19% by ≥32/255; the Dream Land canopy highlight texture
+(file 103 offset `0x5F0`) reaches the maximum 128/255 diff with a 6.4/255
+mean — real, material, not theoretical. Exact reproduction is impractical:
+the PSP GE has only `Nearest`/`Linear` and no programmable shader stage to
+implement a third, custom filter. `ACCEPTED_DEVIATION` recorded; no fix
+implemented or planned.
 
 ### P0b — General N64 tile-addressing reference model
 
