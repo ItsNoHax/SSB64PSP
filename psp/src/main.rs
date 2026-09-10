@@ -78,6 +78,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene4")
             || cfg!(feature = "regression_capture_scene5")
             || cfg!(feature = "regression_capture_scene6")
+            || cfg!(feature = "regression_capture_scene7")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -470,6 +471,21 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // RE-208: Captain Falcon's own file-332 graph at 0x3BE0 -- the second
+    // non-Mario fighter golden, following RE-207's Fox pattern exactly.
+    // Chosen for the same reason RE-102 measured it alongside Fox and Kirby
+    // as one of the three fighters with a real UV-scale/clamp bug on its
+    // face/torso/head textures.
+    if cfg!(feature = "regression_capture_scene7") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 332 && o.source_offset == 0x3BE0)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
     // display-bearing objects after excluding three controller-only entries
     // and coalescing four shared graphs. Resolve that source-backed inventory
@@ -545,7 +561,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene2",
             feature = "regression_capture_scene3",
             feature = "regression_capture_scene4",
-            feature = "regression_capture_scene6"
+            feature = "regression_capture_scene6",
+            feature = "regression_capture_scene7"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -1070,7 +1087,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene2",
                     feature = "regression_capture_scene3",
                     feature = "regression_capture_scene4",
-                    feature = "regression_capture_scene6"
+                    feature = "regression_capture_scene6",
+                    feature = "regression_capture_scene7"
                 ))
             {
                 spin += 0.02;

@@ -10,6 +10,70 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-208 — Seventh golden scene (Captain Falcon) verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-207 hardware-verified a second fighter (Fox) but left 10 of
+12 playable fighters and 39 of 41 stages hardware-untested; `STATUS.md`'s own
+"Next" note named the next untouched fighter or stage, via the same
+`regression_capture_sceneN` pattern, as the concrete next increment.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201–207, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
+
+**Method.** Added `regression_capture_scene7` (`psp/Cargo.toml`,
+`psp/src/main.rs`), following scenes 2–4/6's exact object-viewer pattern.
+Picked Captain Falcon over the other untested fighters because RE-102 (R0.5)
+already named him, alongside Fox and Kirby specifically, as one of three
+fighters with a real UV-scale/clamp bug on face/torso/head textures — Fox's
+own instance of that bug class was RE-152's fix, already hardware-verified
+by RE-207, so Falcon extends the same regression lineage to a second fighter
+rather than picking arbitrarily. `romtool scene --file 332 --list` reports
+two symmetric 26-node graphs at `0x3BE0` and `0x7900`; selected the
+lower-offset one (`0x3BE0`), matching the convention RE-207 already used for
+Fox (`0x2938`, also the lower-offset of that file's two graphs).
+
+PPSSPP software: built, captured twice back-to-back, `sha256sum` identical
+(`e21f5851879e375a9d56dc1b9005680577b9605de2671e488f5f614e258bdf0c`),
+confirming the freeze/spin-suppression wiring is correct. Rebuilding plain
+`regression_capture` (no scene-7 feature) still matches
+`tests/golden/r0-dream-land-default.png` exactly (0 differing pixels),
+confirming scene 7's changes are inert on other builds. `cargo test
+--workspace`: 506 passing, unchanged (no crate logic changed, only
+`psp/src/main.rs` view-selection wiring and a new Cargo feature). New golden
+committed at `tests/golden/r2-falcon-fighter.png`, SHA-256
+`e21f5851879e375a9d56dc1b9005680577b9605de2671e488f5f614e258bdf0c`, against
+EBOOT SHA-256
+`3ff51a69e2f84b2806eccb45b37728ab0c08bbc85fc5beeff82d4eae331a13d4`.
+
+Physical PSP: `modlist` showed no stale game module before this session's
+load. `ldstart`ed the scene-7 PRX over `host0:`, waited past the tick-240
+freeze, checked state before capturing: `exlist` empty (zero exceptions),
+`thlist` showed a live `main_thread`. Captured a native 480x272 `scrshot`
+(not committed per repository policy, SHA-256
+`a839bcc4dcdb718183d5c021b9b7d8fe388e5f19533c90ecb2673eace9503b13` before
+upscaling). Upscaled 2x nearest-neighbour and diffed against the PPSSPP
+golden: 48,618 raw differing pixels out of 522,240, but the visual diff
+image shows the same shape RE-203/204/205/207 already documented and
+excluded — a thin edge-antialiasing band around every polygon boundary plus
+PSPLink's own top-left status text and PPSSPP's on-screen FPS-counter region
+(top right), neither of which is this project's rendering output. No solid
+interior region of the model differs from the golden. Killed the loaded
+module afterward and rebuilt the plain default EBOOT before ending the
+session.
+
+**Conclusion.** Captain Falcon renders correctly on real PSP hardware with
+zero exceptions. `PLAN.md` R2's "representative fighters render" row now
+cites three fighters (Mario, Fox, Captain Falcon). The "no hardware-only
+rendering failures remain" row stays open: 9 of 12 playable fighters and 39
+of 41 stages remain untested on hardware. The next same-shaped increment is
+another untouched fighter or stage using this same `regression_capture_sceneN`
+pattern — Kirby is a natural next pick, being the third fighter RE-102 named
+alongside Fox and Falcon. Live analog-stick input still requires a human
+operator and cannot be resolved by an agent session alone.
+
+---
+
 ## RE-207 — Sixth golden scene (Fox) verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-203/204/205 hardware-verified five golden scenes, but every
