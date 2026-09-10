@@ -117,16 +117,39 @@ pub struct TextureRef {
 
 /// RSP texture-coordinate generation mode selected by geometry state.
 ///
-/// `G_TEXTURE_GEN_LINEAR` is not a synonym for ordinary environment mapping:
-/// it applies an `acos` curve to the projected normal components.  Preserve
-/// this source distinction even though the PSP GE has native support only for
-/// the ordinary environment-map form.
+/// This is the *derived* view of two independent geometry-mode bits, not the
+/// state itself — the walker keeps the raw word (`State::geometry_mode`) and
+/// computes this from it. `G_TEXTURE_GEN` alone enables generation;
+/// `G_TEXTURE_GEN_LINEAR` is a *modifier* selecting the `acos` curve, and
+/// cannot enable generation on its own (`gbi.h`'s `gSPTextureGen`/
+/// `gSPTextureGenLinear` set the linear bit *together with* the ordinary one;
+/// the RSP microcode branches on `G_TEXTURE_GEN` first). Deriving rather than
+/// storing matters because a list may clear `G_TEXTURE_GEN` while leaving the
+/// linear bit set, and a later command setting only `G_TEXTURE_GEN` must then
+/// resume in *linear* mode — a three-state enum cannot represent that.
+///
+/// `Regular` deliberately avoids the name "sphere": the RSP's ordinary form is
+/// a plain scaled projected-normal mapping, not OpenGL's `GL_SPHERE_MAP`
+/// (which divides by a reflection-vector norm the RSP never computes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum TextureGen {
     #[default]
     None,
-    Sphere,
+    Regular,
     Linear,
+}
+
+impl TextureGen {
+    /// The effective mode implied by a raw F3DEX geometry-mode word.
+    pub fn from_geometry_mode(geometry_mode: u32) -> Self {
+        if geometry_mode & G_TEXTURE_GEN == 0 {
+            TextureGen::None
+        } else if geometry_mode & G_TEXTURE_GEN_LINEAR != 0 {
+            TextureGen::Linear
+        } else {
+            TextureGen::Regular
+        }
+    }
 }
 
 /// Render state a primitive is drawn under.
@@ -142,6 +165,23 @@ pub struct MeshMaterial {
     pub smooth: bool,
     /// `G_TEXTURE_GEN` texture-coordinate generation mode.
     pub texture_gen: TextureGen,
+    /// `G_TEXTURE`'s raw `scale_s`/`scale_t` in force where this primitive's
+    /// texgen coordinates are produced; `None` when [`Self::texture_gen`] is
+    /// `None`.
+    ///
+    /// Generated coordinates are *not* the authored `u`/`v` the walker already
+    /// pre-scales at `G_VTX` time — the RSP discards those entirely and builds
+    /// new ones from the normal, then applies this same `G_TEXTURE` scale to
+    /// them (`refs/BattleShip`'s F3DEX interpreter: `U = dotx *
+    /// texture_scaling_factor.s`). The scale is therefore live render state a
+    /// texgen primitive needs carried through to the target GPU, not something
+    /// recoverable from the already-scaled `uv` fields.
+    ///
+    /// Primitive granularity is measured, not assumed: `romtool texgen`'s
+    /// archive-wide census finds zero texgen triangles whose three vertices
+    /// were loaded under a different `G_TEXTURE` scale (or a different texgen
+    /// mode) than the one in force at the draw.
+    pub texgen_scale: Option<(u16, u16)>,
     pub z_buffer: bool,
     /// `G_SETPRIMCOLOR`, when the list or an `MObj` set one.
     ///
@@ -890,6 +930,19 @@ struct State {
     spaces: Vec<crate::scene::Mat4>,
     inv_current: crate::scene::Mat4,
     material: MeshMaterial,
+    /// The raw F3DEX geometry-mode word, exactly as `G_GEOMETRYMODE`'s
+    /// clear/set masks leave it.
+    ///
+    /// Kept alongside the derived booleans in `material` because two of its
+    /// bits are *not* independent: `G_TEXTURE_GEN_LINEAR` only means anything
+    /// while `G_TEXTURE_GEN` is also set, yet it survives that bit being
+    /// cleared and applies again the moment it comes back. Collapsing both
+    /// into a three-state enum loses that, so the enum is derived from here
+    /// (`TextureGen::from_geometry_mode`) rather than stored.
+    ///
+    /// Starts from `sSYRdpResetDisplayList`'s per-frame baseline, the same one
+    /// [`MeshMaterial::rdp_default`] documents.
+    geometry_mode: u32,
     /// Address of the current texture image, from `G_SETTIMG`.
     ///
     /// Deliberately separate from the format below. `G_SETTIMG`'s own format
@@ -962,6 +1015,7 @@ impl State {
             spaces: Vec::new(),
             inv_current: crate::scene::Mat4::IDENTITY,
             material: MeshMaterial::rdp_default(),
+            geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,
             timg_addr: None,
             timg_file: None,
             real_timg: None,
@@ -1182,6 +1236,11 @@ impl State {
             // texture to apply it to would be.
             mat_anim: self.material.mat_anim,
             texture_shape: self.current_texture_shape(),
+            // Live `G_TEXTURE` state, kept only where it is consumed. Storing
+            // it unconditionally would split otherwise-identical primitives
+            // on a scale no non-texgen draw reads, since the walker already
+            // baked the authored UVs at load time.
+            texgen_scale: (self.material.texture_gen != TextureGen::None).then_some(self.tex_scale),
             ..self.material
         }
     }
@@ -1770,30 +1829,24 @@ fn walk(
             }
 
             Cmd::GeometryMode { clear, set } => {
-                let apply = |cur: bool, bit: u32| (cur && clear & bit == 0) || set & bit != 0;
-                state.material.cull_back = apply(state.material.cull_back, G_CULL_BACK);
-                state.material.cull_front = apply(state.material.cull_front, G_CULL_FRONT);
-                state.material.lit = apply(state.material.lit, G_LIGHTING);
-                state.material.smooth = apply(state.material.smooth, G_SHADING_SMOOTH);
-                let sphere = apply(
-                    state.material.texture_gen != TextureGen::None,
-                    G_TEXTURE_GEN,
-                );
-                let linear = apply(
-                    state.material.texture_gen == TextureGen::Linear,
-                    G_TEXTURE_GEN_LINEAR,
-                );
-                // `G_TEXTURE_GEN_LINEAR` selects and enables the linear
-                // form itself; lists commonly set it without also setting
-                // the ordinary bit (the RSP test above is intentional).
-                state.material.texture_gen = if linear {
-                    TextureGen::Linear
-                } else if sphere {
-                    TextureGen::Sphere
-                } else {
-                    TextureGen::None
-                };
-                state.material.z_buffer = apply(state.material.z_buffer, G_ZBUFFER);
+                // The RSP's own operation, verbatim: clear then set, on the
+                // whole word. Every derived flag below reads back out of it,
+                // so a bit this list never mentions keeps whatever it had.
+                state.geometry_mode &= !clear;
+                state.geometry_mode |= set;
+                let gm = state.geometry_mode;
+                state.material.cull_back = gm & G_CULL_BACK != 0;
+                state.material.cull_front = gm & G_CULL_FRONT != 0;
+                state.material.smooth = gm & G_SHADING_SMOOTH != 0;
+                state.material.z_buffer = gm & G_ZBUFFER != 0;
+                state.material.texture_gen = TextureGen::from_geometry_mode(gm);
+                // `lit` is deliberately *not* derived: `G_MW_LIGHTCOL` below
+                // sets it without any geometry-mode command, because real
+                // hardware sets `G_LIGHTING` per-object outside the node's
+                // own list (RE-021/RE-105). Only an explicit clear may take
+                // it away.
+                state.material.lit =
+                    (state.material.lit && clear & G_LIGHTING == 0) || set & G_LIGHTING != 0;
             }
 
             // `G_MW_LIGHTCOL` (RE-105): updating a light's colour has no
@@ -1922,10 +1975,16 @@ const RENDER_TILE: u8 = 0;
 const G_ZBUFFER: u32 = 0x0000_0001;
 const G_CULL_FRONT: u32 = 0x0000_0200;
 const G_CULL_BACK: u32 = 0x0000_0400;
+const G_SHADE: u32 = 0x0000_0004;
 const G_LIGHTING: u32 = 0x0002_0000;
 const G_TEXTURE_GEN: u32 = 0x0004_0000;
 const G_TEXTURE_GEN_LINEAR: u32 = 0x0008_0000;
 const G_SHADING_SMOOTH: u32 = 0x0020_0000;
+
+/// The geometry-mode word every object starts each frame from — the raw form
+/// of the state [`MeshMaterial::rdp_default`] documents, set by
+/// `refs/ssb-decomp-re/src/sys/rdp.c`'s `sSYRdpResetDisplayList`.
+const RDP_DEFAULT_GEOMETRY_MODE: u32 = G_ZBUFFER | G_SHADE | G_CULL_BACK | G_SHADING_SMOOTH;
 
 /// `G_MOVEWORD`'s `index` for a light colour update (`gbi.h`'s
 /// `G_MW_LIGHTCOL`, RE-105).
@@ -3420,33 +3479,206 @@ mod tests {
         assert!(!mesh.primitives[0].material.cull_back);
     }
 
-    #[test]
-    fn texture_gen_survives_geometry_mode_state_changes() {
+    /// Effective texgen mode of a draw issued after applying `steps` as
+    /// successive `G_GEOMETRYMODE` clear/set pairs.
+    fn texgen_after(steps: &[(u32, u32)]) -> TextureGen {
         let file = vertex_data(3);
+        let mut cmds = vec![vtx(3)];
+        for &(clear, set) in steps {
+            cmds.push(Cmd::GeometryMode { clear, set });
+        }
+        cmds.push(Cmd::Tri1([0, 1, 2]));
+        cmds.push(Cmd::End);
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.primitives.len(), 1);
+        mesh.primitives[0].material.texture_gen
+    }
+
+    /// The two texgen geometry-mode bits are independent state, and only
+    /// `G_TEXTURE_GEN` gates generation. Every clear/set transition between
+    /// the four raw combinations is covered, including the partial ones that
+    /// a three-state enum cannot represent (a retained `G_TEXTURE_GEN_LINEAR`
+    /// under a cleared `G_TEXTURE_GEN`).
+    #[test]
+    fn texture_gen_follows_raw_geometry_mode_bits() {
+        const GEN: u32 = G_TEXTURE_GEN;
+        const LIN: u32 = G_TEXTURE_GEN_LINEAR;
+        let set = |bits| (0, bits);
+        let clear = |bits| (bits, 0);
+
+        // From the reset default (neither bit set).
+        assert_eq!(texgen_after(&[]), TextureGen::None);
+        assert_eq!(texgen_after(&[set(GEN)]), TextureGen::Regular);
+        // The linear bit alone must NOT enable generation.
+        assert_eq!(texgen_after(&[set(LIN)]), TextureGen::None);
+        assert_eq!(texgen_after(&[set(GEN | LIN)]), TextureGen::Linear);
+
+        // Regular -> Linear and back.
+        assert_eq!(texgen_after(&[set(GEN), set(LIN)]), TextureGen::Linear);
+        assert_eq!(
+            texgen_after(&[set(GEN | LIN), clear(LIN)]),
+            TextureGen::Regular
+        );
+
+        // Clearing only `G_TEXTURE_GEN` disables generation but retains the
+        // linear bit: setting `G_TEXTURE_GEN` again resumes in *linear* mode,
+        // which is the observable proof the raw bit survived.
+        assert_eq!(
+            texgen_after(&[set(GEN | LIN), clear(GEN)]),
+            TextureGen::None
+        );
+        assert_eq!(
+            texgen_after(&[set(GEN | LIN), clear(GEN), set(GEN)]),
+            TextureGen::Linear
+        );
+        assert_eq!(texgen_after(&[set(LIN), set(GEN)]), TextureGen::Linear);
+
+        // Clearing both, and clearing the ordinary bit from ordinary mode.
+        assert_eq!(
+            texgen_after(&[set(GEN | LIN), clear(GEN | LIN)]),
+            TextureGen::None
+        );
+        assert_eq!(texgen_after(&[set(GEN), clear(GEN)]), TextureGen::None);
+        assert_eq!(
+            texgen_after(&[set(GEN), clear(GEN), set(GEN)]),
+            TextureGen::Regular
+        );
+
+        // A clear and a set of the same bit in one command: the RSP clears
+        // first, so the set wins.
+        assert_eq!(texgen_after(&[(GEN, GEN | LIN)]), TextureGen::Linear);
+    }
+
+    /// `G_TEXTURE`'s scale is live state a texgen primitive consumes, so it
+    /// must be retained on the material — and must *not* split otherwise
+    /// identical non-texgen primitives, whose authored UVs were already
+    /// scaled at `G_VTX` time.
+    #[test]
+    fn texgen_retains_the_gsp_texture_scale_in_force() {
+        let file = vertex_data(3);
+        let scaled = |on: bool, s: u16, t: u16| Cmd::Texture {
+            level: 0,
+            tile: 0,
+            on,
+            scale_s: s,
+            scale_t: t,
+        };
         let cmds = [
+            scaled(true, 0x07C0, 0x0300),
             vtx(3),
             Cmd::GeometryMode {
                 clear: 0,
-                set: G_TEXTURE_GEN_LINEAR,
+                set: G_TEXTURE_GEN,
             },
             Cmd::Tri1([0, 1, 2]),
             Cmd::GeometryMode {
-                clear: G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR,
+                clear: G_TEXTURE_GEN,
                 set: 0,
             },
             Cmd::Tri1([0, 1, 2]),
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
-        assert_eq!(mesh.primitives.len(), 2);
-        assert!(mesh
+        let texgen = mesh
             .primitives
             .iter()
-            .any(|p| p.material.texture_gen == TextureGen::Linear));
-        assert!(mesh
+            .find(|p| p.material.texture_gen == TextureGen::Regular)
+            .expect("texgen primitive");
+        assert_eq!(texgen.material.texgen_scale, Some((0x07C0, 0x0300)));
+        let plain = mesh
             .primitives
             .iter()
-            .any(|p| p.material.texture_gen == TextureGen::None));
+            .find(|p| p.material.texture_gen == TextureGen::None)
+            .expect("ordinary primitive");
+        assert_eq!(
+            plain.material.texgen_scale, None,
+            "an authored-UV primitive must not carry a scale it never reads"
+        );
+    }
+
+    /// `StageMetalFile2`'s own reflective geometry, end to end from the real
+    /// ROM rather than from a fixture: `romtool texgen` measures this file's
+    /// texgen draws at `G_TEXTURE` scale `(0x0400, 0x0200)`, with both the
+    /// ordinary and the linear form present.
+    #[test]
+    fn real_rom_metal_stage_retains_texgen_mode_and_scale() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let file = archive.load(117).unwrap();
+        // The four node lists `romtool texgen` reports texgen draws on, one
+        // per `StageMetalFile2` graph.
+        let mut modes: std::collections::BTreeSet<TextureGen> = Default::default();
+        for at in [0x1708usize, 0x2950, 0x3368, 0x3B50] {
+            let cmds = crate::dl::decode_list_at(&file.data[at..], at as u32).unwrap();
+            let mesh = convert(&cmds, Source::of(&file)).unwrap();
+            for p in &mesh.primitives {
+                modes.insert(p.material.texture_gen);
+                match p.material.texture_gen {
+                    TextureGen::None => assert_eq!(p.material.texgen_scale, None),
+                    _ => assert_eq!(
+                        p.material.texgen_scale,
+                        Some((0x0400, 0x0200)),
+                        "list {at:#x}"
+                    ),
+                }
+            }
+        }
+        assert!(modes.contains(&TextureGen::Regular));
+        assert!(
+            modes.contains(&TextureGen::Linear),
+            "file 117 draws real `G_TEXTURE_GEN_LINEAR` geometry"
+        );
+    }
+
+    /// The derived view, checked directly against every raw combination.
+    #[test]
+    fn texture_gen_derives_from_every_raw_bit_combination() {
+        let base = RDP_DEFAULT_GEOMETRY_MODE;
+        assert_eq!(TextureGen::from_geometry_mode(base), TextureGen::None);
+        assert_eq!(
+            TextureGen::from_geometry_mode(base | G_TEXTURE_GEN_LINEAR),
+            TextureGen::None,
+            "the linear modifier alone never enables generation"
+        );
+        assert_eq!(
+            TextureGen::from_geometry_mode(base | G_TEXTURE_GEN),
+            TextureGen::Regular
+        );
+        assert_eq!(
+            TextureGen::from_geometry_mode(base | G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR),
+            TextureGen::Linear
+        );
+    }
+
+    /// Unrelated geometry-mode bits must not be disturbed by a command that
+    /// only touches the texgen ones, and vice versa.
+    #[test]
+    fn texture_gen_changes_leave_other_geometry_bits_alone() {
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            Cmd::GeometryMode {
+                clear: G_CULL_BACK,
+                set: G_CULL_FRONT | G_LIGHTING,
+            },
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert_eq!(m.texture_gen, TextureGen::Linear);
+        assert!(!m.cull_back);
+        assert!(m.cull_front);
+        assert!(m.lit);
+        assert!(m.smooth, "untouched reset-default bit must survive");
+        assert!(m.z_buffer, "untouched reset-default bit must survive");
     }
 
     #[test]

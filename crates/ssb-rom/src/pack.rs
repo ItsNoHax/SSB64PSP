@@ -144,7 +144,15 @@ pub const MAGIC: u32 = 0x5342_5350;
 /// 25 adds build-time-decoded LBParticle bank/script/texture-series tables.
 /// 26 adds `PrimDesc::alpha_compare_ref` for `flags::ALPHA_COMPARE_THRESHOLD`
 ///    (RE-195).
-pub const VERSION: u32 = 26;
+/// 27 adds `PrimDesc::texgen_scale_s`/`_t` and `texgen_origin_s`/`_t`,
+///    growing `PrimDesc` from 52 to 60 (RE-214). `G_TEXTURE_GEN` discards
+///    authored UVs and applies the `gSPTexture` scale to the coordinate the
+///    RSP generates instead, then addresses TMEM relative to the render
+///    tile's own origin. A v26 pack retains neither: it has only the
+///    already-scaled, already-rebased authored UVs the RSP never reads on
+///    such a primitive, so it cannot reproduce the reflection's texture
+///    period or phase.
+pub const VERSION: u32 = 27;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -292,7 +300,62 @@ pub mod flags {
     pub const TEXTURE_GEN: u32 = 1 << 13;
     /// `G_TEXTURE_GEN_LINEAR`. This has a distinct `acos` curve from
     /// [`TEXTURE_GEN`], retained in the pack for an exact CPU-side path.
+    /// Never set on its own: the RSP's linear form is a *modifier* on
+    /// `G_TEXTURE_GEN`, so [`TEXTURE_GEN`] is always set alongside it.
     pub const TEXTURE_GEN_LINEAR: u32 = 1 << 14;
+}
+
+/// The one GE alpha comparison that reproduces a primitive's RDP alpha
+/// discard gates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlphaGate {
+    /// No alpha discard at all.
+    Off,
+    /// `alpha > reference`.
+    Greater(u8),
+    /// `alpha >= reference`.
+    GreaterOrEqual(u8),
+}
+
+/// Resolves a primitive's two independent RDP alpha gates onto the GE's single
+/// alpha-test unit.
+///
+/// The two gates are genuinely different hardware (RE-195):
+///
+/// * [`flags::ALPHA_TEST`] is the `CVG_X_ALPHA | ALPHA_CVG_SEL` cutout, whose
+///   real multisampled-coverage behaviour the GE cannot reproduce; this port
+///   approximates it as `alpha > 0`, following `sf64-psp`.
+/// * [`flags::ALPHA_COMPARE_THRESHOLD`] is `G_AC_THRESHOLD`, a real
+///   comparison of final pixel alpha against `G_SETBLENDCOLOR`'s alpha.
+///
+/// They compose without a priority decision because the cutout approximation
+/// is exactly `>= 1`:
+///
+/// * threshold alone, or threshold with a **nonzero** reference, is
+///   `alpha >= reference` — which already implies `alpha > 0`, so both gates
+///   are satisfied by the one comparison;
+/// * threshold at reference **zero** alongside the cutout must stay
+///   `alpha > 0`, because `alpha >= 0` passes everything and would silently
+///   drop the cutout;
+/// * threshold at reference zero *without* the cutout is a real no-op gate
+///   and is expressed as such rather than being strengthened into one.
+///
+/// Extracted from the draw path so it can be tested on the host; the PSP side
+/// only maps the result onto `sceGuAlphaFunc`.
+pub fn alpha_gate(prim_flags: u32, alpha_compare_ref: u32) -> AlphaGate {
+    let cutout = prim_flags & flags::ALPHA_TEST != 0;
+    if prim_flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
+        // Only the alpha channel of the packed ABGR reference is meaningful.
+        let reference = ((alpha_compare_ref >> 24) & 0xFF) as u8;
+        if cutout && reference == 0 {
+            return AlphaGate::Greater(0);
+        }
+        return AlphaGate::GreaterOrEqual(reference);
+    }
+    if cutout {
+        return AlphaGate::Greater(0);
+    }
+    AlphaGate::Off
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -341,10 +404,34 @@ pub struct PrimDesc {
     /// [`TextureDesc::NO_ANIM`]. This lives on the primitive because effect
     /// scripts also animate untextured colour state.
     pub mat_anim: u32,
+    /// `G_TEXTURE`'s raw `scale_s` where this primitive's texgen coordinates
+    /// are generated; `0` when [`flags::TEXTURE_GEN`] is clear.
+    ///
+    /// The RSP replaces authored UVs entirely under `G_TEXTURE_GEN` and then
+    /// applies this scale to the *generated* coordinate, so it cannot be
+    /// recovered from the pre-scaled `u`/`v` a packed vertex carries. See
+    /// [`crate::mesh::MeshMaterial::texgen_scale`].
+    pub texgen_scale_s: u16,
+    /// `G_TEXTURE`'s raw `scale_t`; see [`Self::texgen_scale_s`].
+    pub texgen_scale_t: u16,
+    /// The render tile's own `uls` origin, raw S10.2 (quarter-texel), for a
+    /// texgen primitive; `0` when [`flags::TEXTURE_GEN`] is clear.
+    ///
+    /// The RDP subtracts the tile origin from *any* texture coordinate before
+    /// addressing TMEM, generated ones included. `mesh::Builder::push_vertex`
+    /// bakes that subtraction into authored UVs at pack time (on a clamped
+    /// axis, RE-152) — a generated coordinate has no pack-time value to bake
+    /// it into, so the same shift has to be applied at draw time through
+    /// `sceGuTexOffset`. Measured (`romtool texgen`): 57 of 3012 texgen
+    /// triangles bind a tile with a nonzero origin, all in `StageMetalFile2`
+    /// and all on a clamped axis, ranging from 0.5 to 3 texels.
+    pub texgen_origin_s: u16,
+    /// The render tile's own `ult` origin; see [`Self::texgen_origin_s`].
+    pub texgen_origin_t: u16,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 52;
+    pub const SIZE: usize = 60;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -1561,7 +1648,7 @@ impl PackWriter {
             }
             match m.texture_gen {
                 crate::mesh::TextureGen::None => {}
-                crate::mesh::TextureGen::Sphere => f |= flags::TEXTURE_GEN,
+                crate::mesh::TextureGen::Regular => f |= flags::TEXTURE_GEN,
                 crate::mesh::TextureGen::Linear => {
                     f |= flags::TEXTURE_GEN | flags::TEXTURE_GEN_LINEAR;
                 }
@@ -1605,6 +1692,10 @@ impl PackWriter {
             if alpha_compare_ref.is_some() {
                 f |= flags::ALPHA_COMPARE_THRESHOLD;
             }
+            let texgen_origin = m
+                .texgen_scale
+                .and(m.texture.as_ref())
+                .filter(|t| t.origin_s != 0 || t.origin_t != 0);
             let (blend_base, blend_target) = m.texture_blend.map_or((0, 0), |(base, target)| {
                 (
                     crate::psp_texture::pack_abgr(base),
@@ -1626,6 +1717,16 @@ impl PackWriter {
                 light2_color: m.light2_color.map_or(0, crate::psp_texture::pack_abgr),
                 alpha_compare_ref: alpha_compare_ref.unwrap_or(0),
                 mat_anim: mat_anim_for(i).unwrap_or(TextureDesc::NO_ANIM),
+                // Only meaningful alongside `flags::TEXTURE_GEN`; zero
+                // otherwise, which no reader consults.
+                texgen_scale_s: m.texgen_scale.map_or(0, |(s, _)| s),
+                texgen_scale_t: m.texgen_scale.map_or(0, |(_, t)| t),
+                // Same gate: the tile origin is already folded into authored
+                // UVs by `push_vertex`, so it is only carried here for the
+                // generated coordinates that path never sees. Each axis keeps
+                // that function's own clamp rule, applied at draw time.
+                texgen_origin_s: texgen_origin.map_or(0, |t| t.origin_s),
+                texgen_origin_t: texgen_origin.map_or(0, |t| t.origin_t),
             });
         }
 
@@ -2061,6 +2162,10 @@ impl PackWriter {
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            out.extend_from_slice(&p.texgen_scale_s.to_le_bytes());
+            out.extend_from_slice(&p.texgen_scale_t.to_le_bytes());
+            out.extend_from_slice(&p.texgen_origin_s.to_le_bytes());
+            out.extend_from_slice(&p.texgen_origin_t.to_le_bytes());
         }
         for t in &self.textures {
             out.extend_from_slice(&t.width.to_le_bytes());
@@ -2857,6 +2962,10 @@ impl<'a> Pack<'a> {
             light2_color: u32_at(self.data, at + 40),
             alpha_compare_ref: u32_at(self.data, at + 44),
             mat_anim: u32_at(self.data, at + 48),
+            texgen_scale_s: u16_at(self.data, at + 52),
+            texgen_scale_t: u16_at(self.data, at + 54),
+            texgen_origin_s: u16_at(self.data, at + 56),
+            texgen_origin_t: u16_at(self.data, at + 58),
         })
     }
 
@@ -3141,6 +3250,191 @@ mod tests {
         assert_ne!(p.flags & flags::LIGHT2_COLOR, 0);
         assert_eq!(p.light1_color, 0, "black is a real LIGHT_1 write");
         assert_eq!(p.light2_color, 0x004C_4C4C);
+    }
+
+    /// The serialised stride must match what `prim()` indexes with, or every
+    /// primitive after the first reads shifted fields.
+    #[test]
+    fn prim_desc_size_matches_the_serialised_layout() {
+        let mut w = PackWriter::new();
+        let mut mesh = sample_mesh();
+        mesh.primitives.push(mesh.primitives[0].clone());
+        mesh.primitives[1].material.texture_gen = crate::mesh::TextureGen::Regular;
+        mesh.primitives[1].material.texgen_scale = Some((0x0400, 0x0200));
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.prim_count, 2);
+        // The second primitive's fields must still be readable, which is only
+        // true when SIZE matches the writer's own per-primitive byte count.
+        let p1 = pack.prim(1).unwrap();
+        assert_ne!(p1.flags & flags::TEXTURE_GEN, 0);
+        assert_eq!((p1.texgen_scale_s, p1.texgen_scale_t), (0x0400, 0x0200));
+        assert_eq!(PrimDesc::SIZE, 60);
+    }
+
+    #[test]
+    fn texgen_scale_round_trips_for_both_generation_modes() {
+        for (mode, want_linear) in [
+            (crate::mesh::TextureGen::Regular, false),
+            (crate::mesh::TextureGen::Linear, true),
+        ] {
+            let mut mesh = sample_mesh();
+            mesh.primitives[0].material.texture_gen = mode;
+            mesh.primitives[0].material.texgen_scale = Some((0x07C0, 0x0BC0));
+            let mut w = PackWriter::new();
+            w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+            let bytes = w.finish();
+            let p = Pack::open(&bytes).unwrap().prim(0).unwrap();
+
+            assert_ne!(p.flags & flags::TEXTURE_GEN, 0);
+            assert_eq!(p.flags & flags::TEXTURE_GEN_LINEAR != 0, want_linear);
+            assert_eq!(p.texgen_scale_s, 0x07C0);
+            assert_eq!(p.texgen_scale_t, 0x0BC0);
+        }
+    }
+
+    /// A texgen primitive has no pack-time coordinate to bake the render
+    /// tile's origin out of, so it must carry the raw origin through instead.
+    #[test]
+    fn texgen_carries_the_render_tile_origin_it_cannot_bake_out() {
+        let texture = crate::mesh::TextureRef {
+            data_file: None,
+            data_offset: 0x100,
+            format: crate::texture::Format::Rgba,
+            size: crate::texture::BitSize::Bits16,
+            width: 16,
+            height: 8,
+            palette_file: None,
+            palette_offset: None,
+            palette_entries: 0,
+            mirror_s: false,
+            mirror_t: false,
+            clamp_s: true,
+            clamp_t: false,
+            framebuffer: false,
+            // S10.2 quarter-texels: 3 texels across, none down. The largest
+            // real value `romtool texgen` measures.
+            origin_s: 12,
+            origin_t: 0,
+        };
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.texture = Some(texture);
+        mesh.primitives[0].material.texture_gen = crate::mesh::TextureGen::Regular;
+        mesh.primitives[0].material.texgen_scale = Some((0x0400, 0x0200));
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| Some(7), |_| None);
+        let bytes = w.finish();
+        let p = Pack::open(&bytes).unwrap().prim(0).unwrap();
+
+        assert_eq!(p.texgen_origin_s, 12);
+        assert_eq!(p.texgen_origin_t, 0);
+
+        // The same texture on a primitive that is *not* generating
+        // coordinates keeps zero here: `push_vertex` already folded the
+        // origin into its authored UVs.
+        let mut plain = sample_mesh();
+        plain.primitives[0].material.texture = Some(texture);
+        let mut w = PackWriter::new();
+        w.add_mesh(&plain, 0, 0, |_| Some(7), |_| None);
+        let bytes = w.finish();
+        let p = Pack::open(&bytes).unwrap().prim(0).unwrap();
+        assert_eq!((p.texgen_origin_s, p.texgen_origin_t), (0, 0));
+    }
+
+    #[test]
+    fn a_non_texgen_primitive_packs_no_texgen_scale() {
+        let mesh = sample_mesh();
+        assert_eq!(mesh.primitives[0].material.texture_gen, Default::default());
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let p = Pack::open(&bytes).unwrap().prim(0).unwrap();
+        assert_eq!(p.flags & flags::TEXTURE_GEN, 0);
+        assert_eq!((p.texgen_scale_s, p.texgen_scale_t), (0, 0));
+    }
+
+    /// RE-195/RE-214: the two RDP alpha gates share one GE comparison. Each
+    /// combination is pinned, including the two overlap cases documentation
+    /// previously described as unresolved.
+    #[test]
+    fn both_alpha_gates_resolve_onto_one_ge_comparison() {
+        let reference = |a: u8| (a as u32) << 24;
+
+        // Neither gate.
+        assert_eq!(alpha_gate(0, reference(0x80)), AlphaGate::Off);
+
+        // Cutout alone: the `alpha > 0` approximation.
+        assert_eq!(
+            alpha_gate(flags::ALPHA_TEST, 0),
+            AlphaGate::Greater(0),
+            "the cutout approximation rejects only fully transparent texels"
+        );
+
+        // Threshold alone.
+        assert_eq!(
+            alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, reference(0x80)),
+            AlphaGate::GreaterOrEqual(0x80)
+        );
+        assert_eq!(
+            alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, 0),
+            AlphaGate::GreaterOrEqual(0),
+            "a threshold of zero on its own is a real no-op gate"
+        );
+
+        // Overlap, zero reference: `alpha >= 0` would pass everything and
+        // silently discard the cutout, so the comparison must stay `> 0`.
+        assert_eq!(
+            alpha_gate(flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD, 0),
+            AlphaGate::Greater(0)
+        );
+
+        // Overlap, nonzero reference: `alpha >= reference` already implies
+        // `alpha > 0`, so one comparison satisfies both gates.
+        assert_eq!(
+            alpha_gate(
+                flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD,
+                reference(0x80)
+            ),
+            AlphaGate::GreaterOrEqual(0x80)
+        );
+        assert_eq!(
+            alpha_gate(
+                flags::ALPHA_TEST | flags::ALPHA_COMPARE_THRESHOLD,
+                reference(1)
+            ),
+            AlphaGate::GreaterOrEqual(1),
+            "a reference of 1 is the tightest value still implying the cutout"
+        );
+
+        // Only the alpha channel of the packed reference is read.
+        assert_eq!(
+            alpha_gate(flags::ALPHA_COMPARE_THRESHOLD, 0x8011_2233),
+            AlphaGate::GreaterOrEqual(0x80)
+        );
+    }
+
+    /// The overlap must survive *packing* too, not just the draw-time
+    /// decision: an implementation that dropped the threshold whenever the
+    /// cutout was also set would make the test above unreachable.
+    #[test]
+    fn overlapping_alpha_gates_survive_packing_at_zero_reference() {
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.alpha_test = true;
+        mesh.primitives[0].material.alpha_compare_threshold = true;
+        mesh.primitives[0].material.blend_color = Some([0x11, 0x22, 0x33, 0x00]);
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let p = Pack::open(&bytes).unwrap().prim(0).unwrap();
+
+        assert_ne!(p.flags & flags::ALPHA_TEST, 0);
+        assert_ne!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
+        assert_eq!((p.alpha_compare_ref >> 24) & 0xFF, 0);
+        assert_eq!(
+            alpha_gate(p.flags, p.alpha_compare_ref),
+            AlphaGate::Greater(0)
+        );
     }
 
     #[test]

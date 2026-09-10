@@ -146,7 +146,53 @@ pub struct DrawState {
     /// caller is bit-for-bit unchanged; a caller that has set up a real view
     /// matrix must also set this so `Kind46`'s billboards keep facing it.
     pub billboard_camera: Option<BillboardCamera>,
+    /// World-space `(right, up)` the RSP's texture-coordinate generator uses
+    /// as its two look-at basis vectors, or `None` for the identity-view
+    /// default (world X and Y).
+    ///
+    /// SSB64 sets these itself, per camera, in `syMatrixLookAtReflectF`
+    /// (`refs/ssb-decomp-re/src/sys/matrix.c`): `l[0].dir` is the camera's
+    /// right vector and `l[1].dir` its up vector, both in **world** space,
+    /// emitted as `gSPLookAtX`/`gSPLookAtY` by `gmCameraPrepLookAtFuncMatrix`.
+    /// World space is the right space because SSB64 puts the *view* matrix in
+    /// the N64 projection matrix (`guMtxCatF(view, persp)` +
+    /// `G_MTX_PROJECTION`), leaving the modelview stack model-only — so the
+    /// RSP's `dot(object_normal, M^T · l)` is `dot(world_normal, l)`.
+    ///
+    /// Set this whenever the camera orientation changes. It is deliberately
+    /// *not* folded into `last_flags`: a rotating camera changes the basis
+    /// while every primitive's flags and texture stay identical.
+    pub texgen_basis: Option<([f32; 3], [f32; 3])>,
+    /// Basis last written to GE lights [`TEXGEN_LIGHT_S`]/[`TEXGEN_LIGHT_T`].
+    last_texgen_basis: Option<([f32; 3], [f32; 3])>,
+    /// Coordinate mapping last installed.
+    ///
+    /// Separate from `last_texture` because the scale depends on *both* the
+    /// mapping mode and the bound texture's uploaded dimensions, and separate
+    /// from `last_flags` because two primitives with identical flags can carry
+    /// different `G_TEXTURE` scales or tile origins.
+    last_texture_mapping: Option<TextureMapping>,
 }
+
+/// GE light slot supplying the environment-map generator's **S** basis
+/// vector, reserved for that use alone.
+///
+/// `sceGuTexMapMode(EnvironmentMap, u, v)`'s last two arguments are *light
+/// indices*, not texture axes: the GE derives `u` from `dot(light[u].dir,
+/// world_normal)` and `v` likewise. Light 0 carries SSB64's own per-fighter
+/// directional illumination (`ftDisplayLightsDrawReflect`, RE-164), so using
+/// it here would couple the reflection's horizontal axis to the stage's light
+/// angle. Lights 2 and 3 are reserved instead and are never used for
+/// illumination; light 1 is left alone so a future second illumination source
+/// has somewhere to go.
+const TEXGEN_LIGHT_S: i32 = 2;
+/// GE light slot supplying the environment-map generator's **T** basis
+/// vector. See [`TEXGEN_LIGHT_S`].
+const TEXGEN_LIGHT_T: i32 = 3;
+
+/// The basis a camera-less (identity view) caller generates against: world X
+/// and Y, which under an identity view are also the screen's axes.
+const IDENTITY_TEXGEN_BASIS: ([f32; 3], [f32; 3]) = ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
 
 /// The real camera's basis, resolved once per frame into the two shapes
 /// this project's billboard code can reproduce (RE-132).
@@ -171,6 +217,8 @@ impl DrawState {
         self.last_texture_blend = None;
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
+        self.last_texture_mapping = None;
+        self.last_texgen_basis = None;
         self.runtime_fighter_light = false;
         self.draws = 0;
         self.triangles = 0;
@@ -253,6 +301,49 @@ impl DrawState {
     /// invalidated.
     pub fn forget_texture(&mut self) {
         self.last_texture = None;
+        // The coordinate-mapping scale is installed per (mapping, texture)
+        // pair and is exactly as vulnerable to a side channel: the same
+        // overlay paths that bypass the texture cache also call
+        // `sceGuTexScale` directly.
+        self.last_texture_mapping = None;
+    }
+
+    /// Installs the reserved texgen basis lights when the camera basis has
+    /// changed since the last install.
+    ///
+    /// Called from the texgen path only: a frame that draws no `G_TEXTURE_GEN`
+    /// primitive never touches lights 2/3 at all.
+    unsafe fn apply_texgen_basis(&mut self) {
+        let basis = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
+        if self.last_texgen_basis == Some(basis) {
+            return;
+        }
+        self.last_texgen_basis = Some(basis);
+        self.state_changes += 1;
+        let vector = |v: [f32; 3]| ScePspFVector3 {
+            x: v[0],
+            y: v[1],
+            z: v[2],
+        };
+        // `LightType::Directional` makes the GE read the vector as a
+        // direction rather than a position, which is what the environment-map
+        // generator dots against the world normal. The component argument is
+        // irrelevant to coordinate generation and these lights are never
+        // enabled for illumination, so nothing they carry can reach a colour.
+        let s = vector(basis.0);
+        let t = vector(basis.1);
+        sys::sceGuLight(
+            TEXGEN_LIGHT_S,
+            LightType::Directional,
+            LightComponent::DIFFUSE,
+            &s,
+        );
+        sys::sceGuLight(
+            TEXGEN_LIGHT_T,
+            LightType::Directional,
+            LightComponent::DIFFUSE,
+            &t,
+        );
     }
 }
 
@@ -314,10 +405,9 @@ unsafe fn bind_texture(
         let h = (t.height as u32).next_power_of_two() as i32;
         sys::sceGuTexImage(mip_level(0), w, h, w, data.as_ptr() as *const c_void);
         sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
-        const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0;
-        sys::sceGuTexScale(UV_SCALE / w as f32, UV_SCALE / h as f32);
+        // Coordinate scaling and offset are *not* set here; see
+        // `apply_texture_mapping`.
         sys::sceGuTexWrap(sys::GuTexWrapMode::Repeat, sys::GuTexWrapMode::Repeat);
-        sys::sceGuTexOffset(0.0, 0.0);
         return;
     }
 
@@ -389,16 +479,10 @@ unsafe fn bind_texture(
     // outside that path (`draw_texture_quad`) set their own.
     sys::sceGuTexLevelMode(sys::TextureLevelMode::Const, 0.0);
     sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
-    // Texture coordinates need the same normalisation undone, then the N64's
-    // S10.5 fixed point (32 units per texel) converted to 0..1 across the
-    // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,
-    // so scale = 32768 / (32 * dim) = 1024 / dim.
-    const UV_SCALE: f32 = VERTEX_16BIT_DIVISOR / 32.0; // 1024
-                                                       // Both axes normalise against the dimensions actually handed to
-                                                       // sceGuTexImage -- the padded ones. Using the logical height here stretches
-                                                       // V on any texture whose height is not already a power of two.
-    let padded_h = (t.height as u32).next_power_of_two().max(1) as f32;
-    sys::sceGuTexScale(UV_SCALE / t.stride as f32, UV_SCALE / padded_h);
+    // Coordinate scaling depends on the *mapping mode*, not just the binding,
+    // so it lives in `apply_texture_mapping` -- an authored-UV factor left
+    // active under environment mapping multiplies an already-normalised
+    // generated coordinate by ~1024/dim and repeats the reflection.
 
     // Mesh UVs routinely run outside 0..1 (measured -55..119 texels on a
     // 64-wide texture), so most textures must tile rather than clamp -- RE-066
@@ -432,7 +516,121 @@ unsafe fn bind_texture(
         wrap_of(t.wrap & TextureDesc::CLAMP_S != 0),
         wrap_of(t.wrap & TextureDesc::CLAMP_T != 0),
     );
-    sys::sceGuTexOffset(0.0, 0.0);
+}
+
+/// Installs how the GE turns vertex data into texture coordinates.
+///
+/// Two genuinely different mappings share one set of GE registers, and the
+/// difference is not only which mode is selected but what
+/// `sceGuTexScale` must be:
+///
+/// * **Authored UVs.** The packed `u`/`v` are the N64's S10.5 fixed point,
+///   already multiplied by `G_TEXTURE`'s scale at `G_VTX` time (the RSP does
+///   the same), carried in a `GU_TEXTURE_16BIT` field. Scale is
+///   `1024 / uploaded_dim`.
+/// * **`G_TEXTURE_GEN`.** The RSP discards authored UVs entirely and builds
+///   coordinates from the vertex normal and the two look-at basis vectors,
+///   then applies `G_TEXTURE`'s scale to *those*. The GE's own environment-map
+///   generator produces the same dot product already normalised, so the scale
+///   is `gsp_scale / (64 * uploaded_dim)` -- see
+///   `ssb_rom::psp_texture::env_map_tex_scale` for the derivation and its
+///   host-side tests.
+///
+/// Before RE-214 the authored factor was installed by `bind_texture` for every
+/// binding and left in place under environment mapping, which multiplied an
+/// already-normalised coordinate by roughly `1024 / dim`.
+///
+/// `G_TEXTURE_GEN_LINEAR` is a *remaining* deviation, not silently exact: the
+/// GE has no `acos` in its coordinate generator, so a linear primitive is
+/// drawn through the ordinary environment mapping here.
+unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32) {
+    let environment = p.flags & flags::TEXTURE_GEN != 0;
+    let key = TextureMapping {
+        environment,
+        texture,
+        scale_s: p.texgen_scale_s,
+        scale_t: p.texgen_scale_t,
+        origin_s: p.texgen_origin_s,
+        origin_t: p.texgen_origin_t,
+    };
+    // The basis is camera state and must be re-checked every texgen primitive
+    // even when nothing in `key` moved.
+    if environment {
+        st.apply_texgen_basis();
+    }
+    if st.last_texture_mapping == Some(key) {
+        return;
+    }
+    st.last_texture_mapping = Some(key);
+    st.state_changes += 1;
+
+    // An untextured primitive has no dimensions to scale against and samples
+    // nothing; leave the generator off and the scale neutral.
+    let Some(t) = pack.texture(texture) else {
+        sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
+        sys::sceGuTexScale(1.0, 1.0);
+        sys::sceGuTexOffset(0.0, 0.0);
+        return;
+    };
+    // Exactly the dimensions handed to `sceGuTexImage`, for both roles: the
+    // padded stride and the padded height. Using the logical height stretches
+    // whichever axis is not already a power of two.
+    let w = t.stride as u32;
+    let h = ssb_rom::psp_texture::pad_to_power_of_two(t.height as u32);
+
+    if environment {
+        sys::sceGuTexMapMode(
+            sys::TextureMapMode::EnvironmentMap,
+            TEXGEN_LIGHT_S as u32,
+            TEXGEN_LIGHT_T as u32,
+        );
+        sys::sceGuTexScale(
+            ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w),
+            ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h),
+        );
+        // The tile origin the RDP subtracts before addressing TMEM. Applied
+        // on a clamped axis only, exactly matching the rule
+        // `mesh::Builder::push_vertex` uses when it bakes the same shift into
+        // authored UVs (RE-152): a repeat axis keeps absolute coordinates
+        // because its mask phase is already meaningful.
+        let offset = |origin: u16, clamp: bool, dim: u32| {
+            if clamp {
+                // `origin` is quarter-texel S10.2; normalise against the
+                // uploaded dimension the coordinate is expressed in.
+                -(origin as f32 / 4.0) / dim as f32
+            } else {
+                0.0
+            }
+        };
+        sys::sceGuTexOffset(
+            offset(p.texgen_origin_s, t.wrap & TextureDesc::CLAMP_S != 0, w),
+            offset(p.texgen_origin_t, t.wrap & TextureDesc::CLAMP_T != 0, h),
+        );
+    } else {
+        sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
+        sys::sceGuTexScale(
+            ssb_rom::psp_texture::authored_uv_tex_scale(w),
+            ssb_rom::psp_texture::authored_uv_tex_scale(h),
+        );
+        // Authored UVs already had the origin baked out at pack time.
+        sys::sceGuTexOffset(0.0, 0.0);
+    }
+}
+
+/// How the GE is currently turning vertex data into texture coordinates.
+///
+/// Compared as a whole so a change in *any* input reinstalls the mapping —
+/// the mode, the binding whose dimensions it normalises against, and the
+/// primitive's own `G_TEXTURE` scale and tile origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextureMapping {
+    /// `true` for the environment-map generator, `false` for authored UVs.
+    environment: bool,
+    texture: u32,
+    scale_s: u16,
+    scale_t: u16,
+    origin_s: u16,
+    origin_t: u16,
 }
 
 /// Applies a primitive's material state.
@@ -471,21 +669,10 @@ unsafe fn apply_material(
             sys::ShadingModel::Flat
         });
 
-        // RE-119: ordinary RSP `G_TEXTURE_GEN` replaces authored UVs with
-        // normal-derived environment coordinates for Metal Mario content.
-        // Packed vertices retain their signed N64 normals in GE normal fields.
-        // `G_TEXTURE_GEN_LINEAR` is separately packed: its acos curve cannot
-        // be expressed by this GE mode, so it remains an explicit fidelity
-        // gap rather than being silently mistaken for exact support.
-        sys::sceGuTexMapMode(
-            if p.flags & flags::TEXTURE_GEN != 0 {
-                sys::TextureMapMode::EnvironmentMap
-            } else {
-                sys::TextureMapMode::TextureCoords
-            },
-            0,
-            1,
-        );
+        // Texture-coordinate generation is applied in `apply_texture_mapping`
+        // below, not here: it also needs the bound texture's dimensions and
+        // the primitive's own `G_TEXTURE` scale, neither of which `flags`
+        // alone determines.
 
         // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
         // pass, but not every primitive carries normals: decals and other
@@ -519,23 +706,21 @@ unsafe fn apply_material(
         // approximates it with a plain alpha test discarding
         // fully-transparent texels (RE-069); matched here rather than
         // invented.
-        if p.flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
-            let reference = (p.alpha_compare_ref >> 24) & 0xFF;
-            sys::sceGuEnable(GuState::AlphaTest);
-            // `ALPHA_TEST` approximates coverage by rejecting alpha zero.
-            // A nonzero threshold implies that condition; threshold zero does
-            // not, so retain the cutout comparison on the overlap.
-            let func = if p.flags & flags::ALPHA_TEST != 0 && reference == 0 {
-                sys::AlphaFunc::Greater
-            } else {
-                sys::AlphaFunc::GreaterOrEqual
-            };
-            sys::sceGuAlphaFunc(func, reference as i32, 0xFF);
-        } else if p.flags & flags::ALPHA_TEST != 0 {
-            sys::sceGuEnable(GuState::AlphaTest);
-            sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, 0, 0xFF);
-        } else {
-            sys::sceGuDisable(GuState::AlphaTest);
+        //
+        // Both gates -- the cutout approximation and `G_AC_THRESHOLD` --
+        // resolve onto the GE's single alpha-test unit in
+        // `ssb_rom::pack::alpha_gate`, which carries the reasoning and the
+        // host-side regressions. This end only maps the result.
+        match ssb_rom::pack::alpha_gate(p.flags, p.alpha_compare_ref) {
+            ssb_rom::pack::AlphaGate::Off => sys::sceGuDisable(GuState::AlphaTest),
+            ssb_rom::pack::AlphaGate::Greater(reference) => {
+                sys::sceGuEnable(GuState::AlphaTest);
+                sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, reference as i32, 0xFF);
+            }
+            ssb_rom::pack::AlphaGate::GreaterOrEqual(reference) => {
+                sys::sceGuEnable(GuState::AlphaTest);
+                sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, reference as i32, 0xFF);
+            }
         }
 
         // `TRANSLUCENT` alone was deliberately not wired to `GuState::Blend`
@@ -639,6 +824,8 @@ unsafe fn apply_material(
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
+
+    apply_texture_mapping(pack, p, st, effective_texture);
 
     // `TEXTURE_BLEND` (RE-073): `(PRIM-ENV)*TEXEL+ENV`, a texture-driven
     // blend from a base colour (ENV, baked into the vertex by

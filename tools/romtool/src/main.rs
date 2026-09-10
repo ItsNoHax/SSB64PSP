@@ -12,6 +12,7 @@
 //! romtool dump     <rom> <id>     dump one archive file
 //! romtool textures <rom>          extract + pack every bound texture
 //! romtool scene    <rom>          recover DObjDesc scene graphs
+//! romtool texgen   <rom>          census G_TEXTURE_GEN vertex-load state
 //! romtool stages   <rom>          recover MPGroundData headers and collision
 //! romtool collide  <pack>         run the collision query on every stage
 //! romtool simulate <pack>         drop a real fighter on every stage's spawns
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
         ["mesh", rom_path] => mesh(rom_path.as_ref()),
         ["scene", rom_path, rest @ ..] => scene(rom_path.as_ref(), rest),
         ["mobj", rom_path, rest @ ..] => mobj(rom_path.as_ref(), rest),
+        ["texgen", rom_path, rest @ ..] => texgen(rom_path.as_ref(), rest),
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
@@ -83,6 +85,7 @@ USAGE:
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
                                [--search] [--expect-tables <tables.tsv>]
+    romtool texgen   <rom.z64> [--file <id>] [--lines]
     romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
@@ -6601,6 +6604,492 @@ fn joint_table(data: &[u8]) -> Option<Vec<u32>> {
         return None;
     }
     (0..first as usize / 4).map(|i| word(i * 4)).collect()
+}
+
+// ---------------------------------------------------------------------------
+// texgen census
+// ---------------------------------------------------------------------------
+
+/// Effective RSP texture-coordinate generation implied by a raw geometry-mode
+/// word. Deliberately re-derived here rather than imported from
+/// `ssb_rom::mesh`: the census exists to *check* the converter, so it must not
+/// share the code under test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Texgen {
+    None,
+    Regular,
+    Linear,
+}
+
+const GM_TEXTURE_GEN: u32 = 0x0004_0000;
+const GM_TEXTURE_GEN_LINEAR: u32 = 0x0008_0000;
+/// `sSYRdpResetDisplayList`'s per-frame baseline: `G_ZBUFFER | G_SHADE |
+/// G_CULL_BACK | G_SHADING_SMOOTH`.
+const GM_RESET_DEFAULT: u32 = 0x0000_0001 | 0x0000_0004 | 0x0000_0400 | 0x0020_0000;
+
+impl Texgen {
+    fn of(gm: u32) -> Self {
+        if gm & GM_TEXTURE_GEN == 0 {
+            Texgen::None
+        } else if gm & GM_TEXTURE_GEN_LINEAR != 0 {
+            Texgen::Linear
+        } else {
+            Texgen::Regular
+        }
+    }
+}
+
+/// What was true when a vertex was written into the cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VtxLoadState {
+    geometry_mode: u32,
+    tex_scale: (u16, u16),
+    /// Draw-sequence step (scene-graph node index, or list ordinal for a
+    /// discovered list) the load happened in. Compared against the step the
+    /// triangle draws in to find cache reuse across node boundaries.
+    step: usize,
+    /// Display-list offset the `G_VTX` itself came from.
+    dl: u32,
+}
+
+/// The bound tile, as far as it affects generated texture coordinates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct TileState {
+    fmt: Option<(u8, u8)>,
+    dims: Option<(u16, u16)>,
+    origin: (u16, u16),
+    mask: (u8, u8),
+    cm: (u8, u8),
+}
+
+#[derive(Default)]
+struct TexgenCensus {
+    triangles: u64,
+    texgen_triangles: u64,
+    /// Effective draw-time mode of every triangle drawn under generation.
+    by_mode: BTreeMap<Texgen, u64>,
+    /// Every raw `(G_TEXTURE_GEN, G_TEXTURE_GEN_LINEAR)` bit pair observed at
+    /// a draw, however reached.
+    raw_bits: BTreeMap<(bool, bool), u64>,
+    /// Raw bit pairs observed at any point in a walk, including states no
+    /// triangle was drawn under.
+    raw_bits_transient: BTreeMap<(bool, bool), u64>,
+    /// Triangles whose three vertices were not all loaded under the same
+    /// effective mode.
+    mixed_load_mode: u64,
+    /// Triangles drawn under generation whose vertices were loaded under a
+    /// different effective mode (loaded before enable, or after disable).
+    load_draw_mode_mismatch: u64,
+    /// Triangles whose three vertices were not all loaded under the same
+    /// `G_TEXTURE` scale.
+    mixed_load_scale: u64,
+    /// Texgen triangles whose vertices' load-time `G_TEXTURE` scale differs
+    /// from the scale in force at the draw.
+    load_draw_scale_mismatch: u64,
+    /// Texgen triangles using a vertex loaded in an earlier draw step.
+    cross_step_vertices: u64,
+    /// Texgen triangles using a vertex loaded by a different display list.
+    cross_list_vertices: u64,
+    /// Distinct `G_TEXTURE` scales in force at a texgen draw.
+    texgen_scales: BTreeMap<(u16, u16), u64>,
+    /// Distinct tile setups bound by a texgen draw.
+    texgen_tiles: BTreeMap<TileState, u64>,
+    /// Files, and (file, graph, node) sites, that draw texgen at all.
+    texgen_files: BTreeSet<u32>,
+    texgen_sites: BTreeSet<(u32, u32, usize, u32)>,
+}
+
+/// Per-list walker state for the census.
+struct TexgenWalk {
+    geometry_mode: u32,
+    tex_scale: (u16, u16),
+    cache: [Option<VtxLoadState>; 32],
+    tile: TileState,
+    step: usize,
+    dl: u32,
+    /// The current node's `MObj` chain, indexed by graphics-heap entry.
+    mobjs: Vec<ssb_rom::mobj::MObjMaterial>,
+}
+
+impl TexgenWalk {
+    fn new() -> Self {
+        TexgenWalk {
+            geometry_mode: GM_RESET_DEFAULT,
+            tex_scale: (0xFFFF, 0xFFFF),
+            cache: [None; 32],
+            tile: TileState::default(),
+            step: 0,
+            dl: 0,
+            mobjs: Vec::new(),
+        }
+    }
+
+    fn walk(
+        &mut self,
+        cmds: &[ssb_rom::dl::Cmd],
+        file: &ssb_rom::archive::File,
+        graph: u32,
+        node: usize,
+        census: &mut TexgenCensus,
+        verbose: bool,
+        depth: u32,
+    ) {
+        use ssb_rom::dl::Cmd;
+
+        for cmd in cmds {
+            match *cmd {
+                Cmd::GeometryMode { clear, set } => {
+                    self.geometry_mode &= !clear;
+                    self.geometry_mode |= set;
+                    let gm = self.geometry_mode;
+                    *census
+                        .raw_bits_transient
+                        .entry((gm & GM_TEXTURE_GEN != 0, gm & GM_TEXTURE_GEN_LINEAR != 0))
+                        .or_default() += 1;
+                }
+                Cmd::Texture {
+                    scale_s, scale_t, ..
+                } => self.tex_scale = (scale_s, scale_t),
+                Cmd::SetTile {
+                    format,
+                    size,
+                    tile,
+                    mask_s,
+                    mask_t,
+                    cm_s,
+                    cm_t,
+                    ..
+                } if tile == 0 => {
+                    self.tile.fmt = Some((format, size));
+                    self.tile.mask = (mask_s, mask_t);
+                    self.tile.cm = (cm_s, cm_t);
+                }
+                Cmd::SetTileSize {
+                    tile,
+                    uls,
+                    ult,
+                    lrs,
+                    lrt,
+                } if tile == 0 => {
+                    self.tile.dims = Some((
+                        ((lrs.saturating_sub(uls)) >> 2) + 1,
+                        ((lrt.saturating_sub(ult)) >> 2) + 1,
+                    ));
+                    self.tile.origin = (uls, ult);
+                }
+                Cmd::Vtx {
+                    count, dest_index, ..
+                } => {
+                    let load = VtxLoadState {
+                        geometry_mode: self.geometry_mode,
+                        tex_scale: self.tex_scale,
+                        step: self.step,
+                        dl: self.dl,
+                    };
+                    for i in 0..count as usize {
+                        let slot = dest_index as usize + i;
+                        if slot < self.cache.len() {
+                            self.cache[slot] = Some(load);
+                        }
+                    }
+                }
+                Cmd::Tri1(t) => self.tri(t, file, graph, node, census, verbose),
+                Cmd::Tri2(a, b) => {
+                    self.tri(a, file, graph, node, census, verbose);
+                    self.tri(b, file, graph, node, census, verbose);
+                }
+                Cmd::Call(addr) | Cmd::Branch(addr) => {
+                    let tail = matches!(cmd, Cmd::Branch(_));
+                    // A call into the runtime graphics heap names one of the
+                    // node's `MObj` materials, which can override the tile
+                    // rectangle and the `G_TEXTURE` scale exactly as an
+                    // in-list command would (`mesh.rs`'s `apply_mobj`). The
+                    // census has to replay that or it under-reports both.
+                    if addr.segment() == ssb_rom::mobj::GRAPHICS_HEAP_SEGMENT {
+                        let index = (addr.offset() / 8) as usize;
+                        if let Some(m) = self.mobjs.get(index) {
+                            if let Some(scale) = m.tex_scale {
+                                self.tex_scale = scale;
+                            }
+                            if let Some((uls, ult, lrs, lrt)) = m.tile0_uv {
+                                self.tile.dims = Some((
+                                    ((lrs.saturating_sub(uls)) >> 2) + 1,
+                                    ((lrt.saturating_sub(ult)) >> 2) + 1,
+                                ));
+                                self.tile.origin = (uls, ult);
+                            }
+                        }
+                    }
+                    if depth < 8 && addr.segment() == 0 {
+                        let at = addr.0 as usize;
+                        if at < file.data.len() {
+                            if let Ok(sub) =
+                                ssb_rom::dl::decode_list_at(&file.data[at..], at as u32)
+                            {
+                                let outer = self.dl;
+                                self.dl = at as u32;
+                                self.walk(&sub, file, graph, node, census, verbose, depth + 1);
+                                self.dl = outer;
+                            }
+                        }
+                    }
+                    if tail {
+                        break;
+                    }
+                }
+                Cmd::End => break,
+                _ => {}
+            }
+        }
+    }
+
+    fn tri(
+        &self,
+        tri: [u8; 3],
+        file: &ssb_rom::archive::File,
+        graph: u32,
+        node: usize,
+        census: &mut TexgenCensus,
+        verbose: bool,
+    ) {
+        census.triangles += 1;
+        let draw = Texgen::of(self.geometry_mode);
+        *census
+            .raw_bits
+            .entry((
+                self.geometry_mode & GM_TEXTURE_GEN != 0,
+                self.geometry_mode & GM_TEXTURE_GEN_LINEAR != 0,
+            ))
+            .or_default() += 1;
+        if draw == Texgen::None {
+            return;
+        }
+
+        census.texgen_triangles += 1;
+        *census.by_mode.entry(draw).or_default() += 1;
+        *census.texgen_scales.entry(self.tex_scale).or_default() += 1;
+        *census.texgen_tiles.entry(self.tile).or_default() += 1;
+        census.texgen_files.insert(file.id);
+        census.texgen_sites.insert((file.id, graph, node, self.dl));
+
+        let loads: Vec<Option<VtxLoadState>> = tri
+            .iter()
+            .map(|&s| self.cache.get(s as usize).copied().flatten())
+            .collect();
+        let modes: Vec<Texgen> = loads
+            .iter()
+            .filter_map(|l| l.map(|l| Texgen::of(l.geometry_mode)))
+            .collect();
+        let scales: Vec<(u16, u16)> = loads
+            .iter()
+            .filter_map(|l| l.map(|l| l.tex_scale))
+            .collect();
+
+        if modes.windows(2).any(|w| w[0] != w[1]) {
+            census.mixed_load_mode += 1;
+        }
+        if modes.iter().any(|&m| m != draw) {
+            census.load_draw_mode_mismatch += 1;
+            if verbose {
+                println!(
+                    "  file {:>4} graph {:#x} node {:<3} dl {:#x}: draw {draw:?}, loads {modes:?}",
+                    file.id, graph, node, self.dl
+                );
+            }
+        }
+        if scales.windows(2).any(|w| w[0] != w[1]) {
+            census.mixed_load_scale += 1;
+        }
+        if scales.iter().any(|&s| s != self.tex_scale) {
+            census.load_draw_scale_mismatch += 1;
+            if verbose {
+                println!(
+                    "  file {:>4} graph {:#x} node {:<3} dl {:#x}: draw scale {:?}, loads {scales:?}",
+                    file.id, graph, node, self.dl, self.tex_scale
+                );
+            }
+        }
+        if loads.iter().flatten().any(|l| l.step != self.step) {
+            census.cross_step_vertices += 1;
+        }
+        if loads.iter().flatten().any(|l| l.dl != self.dl) {
+            census.cross_list_vertices += 1;
+        }
+    }
+}
+
+/// Archive-wide census of the state every texgen triangle is drawn under.
+///
+/// The question it answers is whether `G_TEXTURE_GEN` state can safely stay
+/// *primitive*-level in this port. F3DEX generates texture coordinates during
+/// `G_VTX` processing, so the state that matters is the one in force when each
+/// vertex was loaded — which only equals the state at the draw if no list ever
+/// loads a vertex under one texgen/`G_TEXTURE` state and draws it under
+/// another. This measures exactly that, walking the same two list populations
+/// `pack` converts: every scene graph's planned draw order (state threaded
+/// across nodes, as `convert_sequence` does), then the discovered root lists no
+/// graph claims.
+fn texgen(path: &Path, args: &[&str]) -> Res {
+    let mut only_file: Option<u32> = None;
+    let mut verbose = false;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match *arg {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            "--lines" => verbose = true,
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let loaded = load_all(&archive);
+
+    let mut census = TexgenCensus::default();
+    let mut graph_lists = 0usize;
+    let mut discovered_lists = 0usize;
+
+    for id in 0..archive.len() as u32 {
+        if only_file.is_some_and(|f| f != id) {
+            continue;
+        }
+        let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+            continue;
+        };
+
+        let graphs: &[ssb_rom::scene::SceneGraph] =
+            loaded.graphs.get(&id).map_or(&[], Vec::as_slice);
+        let resolver = ssb_rom::scene::DlResolver::new(file);
+        let mut authoritative: BTreeSet<u32> = BTreeSet::new();
+
+        for (gi, graph) in graphs.iter().enumerate() {
+            let plan = plan_draw_order(graph, &resolver);
+            let materials = loaded.materials(file, graph);
+            // One walker for the whole graph: the RDP/RSP state and the vertex
+            // cache persist across a graph's nodes exactly as they do on
+            // hardware, which is the only way a cross-node reuse can show up.
+            let mut walk = TexgenWalk::new();
+            for (step, p) in plan.iter().enumerate() {
+                if p.dl == NO_LIST {
+                    continue;
+                }
+                authoritative.insert(p.dl);
+                graph_lists += 1;
+                let Some(cmds) = file
+                    .data
+                    .get(p.dl as usize..)
+                    .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                else {
+                    continue;
+                };
+                walk.step = step;
+                walk.dl = p.dl;
+                walk.mobjs = materials.get(p.node).cloned().unwrap_or_default();
+                walk.walk(&cmds, file, gi as u32, p.node, &mut census, verbose, 0);
+            }
+        }
+
+        let all = ssb_rom::scan::find_root_display_lists(file);
+        let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
+        for dl in all
+            .iter()
+            .filter(|d| !called.contains(&d.offset) && !authoritative.contains(&d.offset))
+        {
+            discovered_lists += 1;
+            let mut walk = TexgenWalk::new();
+            walk.dl = dl.offset;
+            walk.walk(
+                &dl.commands,
+                file,
+                u32::MAX,
+                usize::MAX,
+                &mut census,
+                verbose,
+                0,
+            );
+        }
+    }
+
+    println!("texgen census");
+    println!("  graph-planned lists      {graph_lists}");
+    println!("  discovered root lists    {discovered_lists}");
+    println!("  triangles                {}", census.triangles);
+    println!("  texgen triangles         {}", census.texgen_triangles);
+    println!("  files drawing texgen     {}", census.texgen_files.len());
+    println!("  texgen draw sites        {}", census.texgen_sites.len());
+    println!();
+    println!("raw geometry bits at a draw (GEN, LINEAR) -> triangles");
+    for ((gen, lin), n) in &census.raw_bits {
+        println!("  ({}, {})  {n}", *gen as u8, *lin as u8);
+    }
+    println!();
+    println!("raw geometry bits ever reached (GEN, LINEAR) -> geometry-mode commands");
+    for ((gen, lin), n) in &census.raw_bits_transient {
+        println!("  ({}, {})  {n}", *gen as u8, *lin as u8);
+    }
+    println!();
+    println!("effective mode of texgen triangles");
+    for (mode, n) in &census.by_mode {
+        println!("  {mode:?}  {n}");
+    }
+    println!();
+    println!("load-vs-draw invariance (texgen triangles)");
+    println!(
+        "  vertices loaded under mixed modes   {}",
+        census.mixed_load_mode
+    );
+    println!(
+        "  load mode differs from draw mode    {}",
+        census.load_draw_mode_mismatch
+    );
+    println!(
+        "  vertices loaded under mixed scales  {}",
+        census.mixed_load_scale
+    );
+    println!(
+        "  load scale differs from draw scale  {}",
+        census.load_draw_scale_mismatch
+    );
+    println!(
+        "  uses a vertex from an earlier step  {}",
+        census.cross_step_vertices
+    );
+    println!(
+        "  uses a vertex from another list     {}",
+        census.cross_list_vertices
+    );
+    println!();
+    println!("G_TEXTURE scale in force at a texgen draw");
+    for ((s, t), n) in &census.texgen_scales {
+        println!("  ({s:#06x}, {t:#06x})  {n}");
+    }
+    println!();
+    println!("tile setup bound by a texgen draw");
+    for (tile, n) in &census.texgen_tiles {
+        println!(
+            "  fmt {:?} dims {:?} origin {:?} mask {:?} cm {:?}  {n}",
+            tile.fmt, tile.dims, tile.origin, tile.mask, tile.cm
+        );
+    }
+    if !census.texgen_sites.is_empty() {
+        println!();
+        println!("texgen draw sites (file, graph, node, dl)");
+        for (file, graph, node, dl) in &census.texgen_sites {
+            let graph = if *graph == u32::MAX {
+                "scan".to_string()
+            } else {
+                graph.to_string()
+            };
+            let node = if *node == usize::MAX {
+                "-".to_string()
+            } else {
+                node.to_string()
+            };
+            println!("  {file:>4}  {graph:>4}  {node:>4}  {dl:#x}");
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

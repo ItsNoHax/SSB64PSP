@@ -1552,12 +1552,28 @@ unsafe fn run() -> ! {
                             screen: (right.to_array(), up.to_array()),
                             pitch_locked: (pitch_right.to_array(), pitch_up.to_array()),
                         });
+                        // RE-214: the RSP's texture-coordinate generator uses
+                        // the same camera right/up basis, from the same
+                        // source formula -- `syMatrixLookAtReflectF`'s
+                        // `look = normalize(eye - at)`, `right = up x look`,
+                        // `up = look x right` is `forward x Y` / `right x
+                        // forward` written with the opposite forward sign,
+                        // which is exactly the pair computed above. Reuse it
+                        // rather than deriving a second, subtly different
+                        // convention.
+                        draw_state.texgen_basis = Some((right.to_array(), up.to_array()));
                         dbg_cam = pl.camera.eye.z;
                         [0.0, 0.0, 0.0]
                     } else {
                         // A stage is a place, not an object: spinning it
                         // would make the collision overlay impossible to
                         // read against the geometry. Face-on, always.
+                        //
+                        // The view stays identity here, so the texgen basis
+                        // must go back to the world X/Y default rather than
+                        // keep a rotating camera's basis from an earlier
+                        // frame.
+                        draw_state.texgen_basis = None;
                         [-centre[0], -centre[1], -centre[2] - dist]
                     };
                     gpu.model_transform(cam, [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);

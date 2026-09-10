@@ -108,6 +108,60 @@ pub fn pad_to_power_of_two(v: u32) -> u32 {
     v.max(1).next_power_of_two()
 }
 
+/// Divisor a packed 16-bit vertex texture coordinate is normalised by before
+/// `sceGuTexScale` is applied (`GU_TEXTURE_16BIT`).
+const VERTEX_16BIT_DIVISOR: f32 = 32768.0;
+
+/// `sceGuTexScale` factor for one axis of an **authored-UV** primitive.
+///
+/// A packed UV is the N64's S10.5 fixed point (32 units per texel) carried in
+/// a `GU_TEXTURE_16BIT` field, which the GE divides by 32768 before scaling.
+/// The wanted result is `(uv / 32) / dim`, so the factor is
+/// `32768 / (32 * dim)` = `1024 / dim`.
+///
+/// `uploaded_dim` must be the dimension actually handed to `sceGuTexImage`
+/// (the padded/strided one), not the logical tile size.
+pub fn authored_uv_tex_scale(uploaded_dim: u32) -> f32 {
+    (VERTEX_16BIT_DIVISOR / 32.0) / uploaded_dim.max(1) as f32
+}
+
+/// `sceGuTexScale` factor for one axis of a `G_TEXTURE_GEN` primitive drawn
+/// through the GE's environment-map coordinate generator.
+///
+/// The two pipelines produce coordinates on different scales, so the
+/// authored-UV factor above is simply wrong here — using it multiplies an
+/// already-normalised generated coordinate by ~1024/dim and repeats the
+/// reflection many times over.
+///
+/// F3DEX (`refs/BattleShip`'s interpreter, `GfxSpVertex`'s `G_TEXTURE_GEN`
+/// branch) generates, for a unit vertex normal `n` and unit look-at basis
+/// vector `l`:
+///
+/// ```text
+/// dot = clamp(n · l, -1, 1)
+/// S10.5 coordinate = ((dot + 1) / 4) * gSPTexture_scale
+/// texels           = S10.5 / 32 = (dot + 1) * gSPTexture_scale / 128
+/// ```
+///
+/// The PSP GE's `GU_ENVIRONMENT_MAP` generates a *normalised* coordinate from
+/// the same dot product:
+///
+/// ```text
+/// u          = (1 + n · l) / 2
+/// texels     = u * sceGuTexScale * uploaded_dim
+/// ```
+///
+/// Equating the two gives `sceGuTexScale = gSPTexture_scale / (64 * dim)`.
+///
+/// This is corroborated independently by the ROM: every one of the five
+/// distinct `G_TEXTURE` scales measured at a real texgen draw (`romtool
+/// texgen`) makes the generated span exactly one period of that draw's own
+/// tile — e.g. `0x07C0` on a 32x32 tile yields `31/32`, `0x0BC0`/`0x0A40` on
+/// 48x42 yield `47/48` and `41/42`.
+pub fn env_map_tex_scale(gsp_texture_scale: u16, uploaded_dim: u32) -> f32 {
+    gsp_texture_scale as f32 / (64.0 * uploaded_dim.max(1) as f32)
+}
+
 /// Swizzles texel data for the GE's texture cache.
 ///
 /// Operates on raw bytes: the GE swizzles in units of **16 bytes by 8 rows**
@@ -467,6 +521,87 @@ mod tests {
         // R=0x11 must land in the low byte, not the high one.
         assert_eq!(pack_abgr([0x11, 0x22, 0x33, 0x44]), 0x4433_2211);
         assert_eq!(pack_abgr([255, 0, 0, 255]), 0xFF00_00FF);
+    }
+
+    /// Texels one axis spans on the PSP for a full sweep of the dot product,
+    /// under the environment-map factor.
+    fn env_map_span_texels(scale: u16, dim: u32) -> f32 {
+        // dot = -1 -> u = 0; dot = +1 -> u = 1.
+        1.0 * env_map_tex_scale(scale, dim) * dim as f32
+    }
+
+    #[test]
+    fn authored_uv_scale_converts_s10_5_to_normalised_texture_space() {
+        // 1024 / dim, for the padded dimension actually uploaded.
+        assert_eq!(authored_uv_tex_scale(32), 32.0);
+        assert_eq!(authored_uv_tex_scale(64), 16.0);
+        assert_eq!(authored_uv_tex_scale(1024), 1.0);
+        // One texel (32 in S10.5) on a 64-wide texture must land at 1/64.
+        let u = (32.0 / VERTEX_16BIT_DIVISOR) * authored_uv_tex_scale(64);
+        assert!((u - 1.0 / 64.0).abs() < 1e-6, "{u}");
+        // Never divides by zero.
+        assert!(authored_uv_tex_scale(0).is_finite());
+    }
+
+    /// Every real `G_TEXTURE` scale/tile pairing `romtool texgen` measured in
+    /// the ROM must sweep exactly one period of its own tile — the property
+    /// that corroborates the derived formula against real data rather than
+    /// against the derivation it came from.
+    #[test]
+    fn env_map_scale_sweeps_one_tile_period_for_every_real_rom_pairing() {
+        // (scale, uploaded dim, expected texels swept)
+        for &(scale, dim, want) in &[
+            // StageMetalFile2's 32x32 reflection, 2403 triangles.
+            (0x07C0u16, 32u32, 31.0f32),
+            // 48x42 tile, 356 triangles.
+            (0x0BC0, 48, 47.0),
+            (0x0A40, 42, 41.0),
+            // 64x32 tile, 18 triangles.
+            (0x0FC0, 64, 63.0),
+            (0x07C0, 32, 31.0),
+            // 8x8 tile, 40 triangles.
+            (0x01C0, 8, 7.0),
+            // Mask-narrowed 16x8 period, 175 triangles.
+            (0x0400, 16, 16.0),
+            (0x0200, 8, 8.0),
+        ] {
+            let got = env_map_span_texels(scale, dim);
+            assert!(
+                (got - want).abs() < 1e-3,
+                "scale {scale:#06x} on dim {dim}: swept {got} texels, expected {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_map_scale_is_native_at_full_gsp_texture_scale() {
+        // `0xFFFF` is the SDK's "no scaling" value: the RSP's own generated
+        // range is 1024 texels regardless of the texture's size, so a
+        // 1024-wide upload maps 1:1 and a 32-wide one repeats 32 times.
+        assert!((env_map_span_texels(0xFFFF, 1024) - 1023.98).abs() < 0.05);
+        assert!((env_map_span_texels(0xFFFF, 32) - 1023.98).abs() < 0.05);
+        // Reduced scale shrinks the span proportionally, independent of dim.
+        assert!((env_map_span_texels(0x8000, 32) - 512.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn env_map_scale_accounts_for_padded_height_separately_from_logical() {
+        // A 48x42 tile uploads at height 64 (padded). The span in *texels*
+        // must not change, so the normalised factor must shrink to match.
+        let logical = env_map_tex_scale(0x0A40, 42);
+        let padded = env_map_tex_scale(0x0A40, pad_to_power_of_two(42));
+        assert!(padded < logical);
+        assert!((1.0 * padded * 64.0 - 41.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn env_map_and_authored_scales_differ_by_more_than_a_constant() {
+        // Guards against the pre-RE-214 bug of leaving the authored-UV factor
+        // active under environment mapping: on a 32x32 reflection texture it
+        // was 32x too large, so the reflection repeated 32 times.
+        let authored = authored_uv_tex_scale(32);
+        let env = env_map_tex_scale(0x07C0, 32);
+        assert!((authored / env - 33.03).abs() < 0.05, "{authored} {env}");
     }
 
     #[test]
