@@ -115,6 +115,20 @@ pub struct TextureRef {
     pub origin_t: u16,
 }
 
+/// RSP texture-coordinate generation mode selected by geometry state.
+///
+/// `G_TEXTURE_GEN_LINEAR` is not a synonym for ordinary environment mapping:
+/// it applies an `acos` curve to the projected normal components.  Preserve
+/// this source distinction even though the PSP GE has native support only for
+/// the ordinary environment-map form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum TextureGen {
+    #[default]
+    None,
+    Sphere,
+    Linear,
+}
+
 /// Render state a primitive is drawn under.
 ///
 /// Ordering matters: primitives are grouped by this key, so cheap-to-compare
@@ -126,6 +140,8 @@ pub struct MeshMaterial {
     pub cull_front: bool,
     pub lit: bool,
     pub smooth: bool,
+    /// `G_TEXTURE_GEN` texture-coordinate generation mode.
+    pub texture_gen: TextureGen,
     pub z_buffer: bool,
     /// `G_SETPRIMCOLOR`, when the list or an `MObj` set one.
     ///
@@ -1759,6 +1775,24 @@ fn walk(
                 state.material.cull_front = apply(state.material.cull_front, G_CULL_FRONT);
                 state.material.lit = apply(state.material.lit, G_LIGHTING);
                 state.material.smooth = apply(state.material.smooth, G_SHADING_SMOOTH);
+                let sphere = apply(
+                    state.material.texture_gen != TextureGen::None,
+                    G_TEXTURE_GEN,
+                );
+                let linear = apply(
+                    state.material.texture_gen == TextureGen::Linear,
+                    G_TEXTURE_GEN_LINEAR,
+                );
+                // `G_TEXTURE_GEN_LINEAR` selects and enables the linear
+                // form itself; lists commonly set it without also setting
+                // the ordinary bit (the RSP test above is intentional).
+                state.material.texture_gen = if linear {
+                    TextureGen::Linear
+                } else if sphere {
+                    TextureGen::Sphere
+                } else {
+                    TextureGen::None
+                };
                 state.material.z_buffer = apply(state.material.z_buffer, G_ZBUFFER);
             }
 
@@ -1889,6 +1923,8 @@ const G_ZBUFFER: u32 = 0x0000_0001;
 const G_CULL_FRONT: u32 = 0x0000_0200;
 const G_CULL_BACK: u32 = 0x0000_0400;
 const G_LIGHTING: u32 = 0x0002_0000;
+const G_TEXTURE_GEN: u32 = 0x0004_0000;
+const G_TEXTURE_GEN_LINEAR: u32 = 0x0008_0000;
 const G_SHADING_SMOOTH: u32 = 0x0020_0000;
 
 /// `G_MOVEWORD`'s `index` for a light colour update (`gbi.h`'s
@@ -3382,6 +3418,35 @@ mod tests {
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         assert!(!mesh.primitives[0].material.cull_back);
+    }
+
+    #[test]
+    fn texture_gen_survives_geometry_mode_state_changes() {
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_TEXTURE_GEN_LINEAR,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::GeometryMode {
+                clear: G_TEXTURE_GEN | G_TEXTURE_GEN_LINEAR,
+                set: 0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.primitives.len(), 2);
+        assert!(mesh
+            .primitives
+            .iter()
+            .any(|p| p.material.texture_gen == TextureGen::Linear));
+        assert!(mesh
+            .primitives
+            .iter()
+            .any(|p| p.material.texture_gen == TextureGen::None));
     }
 
     #[test]

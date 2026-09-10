@@ -281,12 +281,18 @@ pub mod flags {
     /// including an authored zero. This is distinct from its packed colour
     /// being nonzero.
     pub const LIGHT2_COLOR: u32 = 1 << 11;
-    /// RE-195: `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD`, only set when
-    /// `ALPHA_TEST` above is *not* -- see `MeshMaterial::alpha_compare_
-    /// threshold`'s own doc comment for why the two are not combined.
+    /// RE-195: `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD`. May coexist with
+    /// `ALPHA_TEST`: both reduce to one GE alpha comparison because the
+    /// existing cutout approximation only rejects alpha zero.
     /// `PrimDesc::alpha_compare_ref` carries the reference alpha
     /// (`G_SETBLENDCOLOR`'s own alpha channel) to compare against.
     pub const ALPHA_COMPARE_THRESHOLD: u32 = 1 << 12;
+    /// Ordinary `G_TEXTURE_GEN`, consumed through the GE's native
+    /// normal-based environment mapping mode.
+    pub const TEXTURE_GEN: u32 = 1 << 13;
+    /// `G_TEXTURE_GEN_LINEAR`. This has a distinct `acos` curve from
+    /// [`TEXTURE_GEN`], retained in the pack for an exact CPU-side path.
+    pub const TEXTURE_GEN_LINEAR: u32 = 1 << 14;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -1553,6 +1559,13 @@ impl PackWriter {
             if m.smooth {
                 f |= flags::SMOOTH;
             }
+            match m.texture_gen {
+                crate::mesh::TextureGen::None => {}
+                crate::mesh::TextureGen::Sphere => f |= flags::TEXTURE_GEN,
+                crate::mesh::TextureGen::Linear => {
+                    f |= flags::TEXTURE_GEN | flags::TEXTURE_GEN_LINEAR;
+                }
+            }
             if m.z_buffer {
                 f |= flags::Z_BUFFER;
             }
@@ -1580,11 +1593,11 @@ impl PackWriter {
             if m.light2_color.is_some() {
                 f |= flags::LIGHT2_COLOR;
             }
-            // RE-195: only consumed when `ALPHA_TEST` is not already doing
-            // an (approximated) discard -- see `flags::ALPHA_COMPARE_
-            // THRESHOLD`'s own doc comment for why the two are not combined
-            // when both are real.
-            let alpha_compare_ref = if !m.alpha_test && m.alpha_compare_threshold {
+            // The PSP's cutout approximation is `alpha > 0`. Therefore an
+            // alpha threshold at any nonzero reference already satisfies both
+            // gates; at zero, the draw path keeps `Greater` so alpha zero is
+            // still rejected. Preserve the threshold state even on overlap.
+            let alpha_compare_ref = if m.alpha_compare_threshold {
                 m.blend_color.map(crate::psp_texture::pack_abgr)
             } else {
                 None
@@ -3148,12 +3161,9 @@ mod tests {
     }
 
     #[test]
-    fn alpha_compare_threshold_is_not_packed_when_alpha_test_already_applies() {
-        // RE-195: `ALPHA_TEST`'s coverage-cutout approximation already
-        // discards this primitive's pixels on the PSP's one alpha-test
-        // unit -- combining both real gates was not resolved by this
-        // session's measurement, so the additive-only, `alpha_test`-absent
-        // case is the only one consumed.
+    fn alpha_compare_threshold_is_packed_alongside_alpha_test() {
+        // A nonzero threshold implies the existing `alpha > 0` cutout
+        // approximation, so both gates fit the GE's one comparison.
         let mut mesh = sample_mesh();
         mesh.primitives[0].material.alpha_test = true;
         mesh.primitives[0].material.alpha_compare_threshold = true;
@@ -3164,8 +3174,8 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         let p = pack.prim(0).unwrap();
 
-        assert_eq!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
-        assert_eq!(p.alpha_compare_ref, 0);
+        assert_ne!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
+        assert_eq!((p.alpha_compare_ref >> 24) & 0xFF, 0x80);
     }
 
     #[test]

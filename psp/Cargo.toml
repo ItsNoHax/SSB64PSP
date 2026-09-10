@@ -89,6 +89,10 @@ regression_capture_scene9 = []
 # as scenes 2-4 and 6-9. Off by default.
 regression_capture_scene10 = []
 
+# Fidelity probe: StageMetalFile2's first two-node graph. Exercises real
+# G_TEXTURE_GEN / G_TEXTURE_GEN_LINEAR material state without item gameplay.
+regression_capture_scene11 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []

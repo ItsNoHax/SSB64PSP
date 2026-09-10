@@ -256,9 +256,6 @@ impl DrawState {
     }
 }
 
-/// The GE accepts eight mip levels.
-const MAX_GE_MIP_LEVELS: usize = 8;
-
 fn mip_level(level: usize) -> sys::MipmapLevel {
     match level {
         0 => sys::MipmapLevel::None,
@@ -359,11 +356,10 @@ unsafe fn bind_texture(
         }
     }
 
-    // Mip levels sit back to back after level 0, each half the size of the one
-    // before. Uploading them is what stops a dithered N64 gradient aliasing
-    // into moire when a surface samples it at around one texel per pixel — see
-    // RE-053 and Dream Land's tree.
-    let top = (t.levels as usize).clamp(1, MAX_GE_MIP_LEVELS) - 1;
+    // RE-127: SSB64 uses G_TL_TILE for every real texture-state command,
+    // selecting tile 0 rather than RDP LOD/mipmap blending. Keep generated
+    // lower levels in old packs harmless, but never let GE auto-select them.
+    let top = 0;
     sys::sceGuTexMode(psm, top as i32, 0, t.swizzled as i32);
     let mut offset = 0usize;
     let mut w = t.stride as u32;
@@ -391,18 +387,8 @@ unsafe fn bind_texture(
     // reset back to `Modulate` by this function running in between, so it is
     // the sole place that sets it for the mesh-drawing path now. Callers
     // outside that path (`draw_texture_quad`) set their own.
-    if top > 0 {
-        // Trilinear: the level below is what carries the averaged-out dither,
-        // and blending between levels stops the switch-over being visible as a
-        // band across the surface.
-        sys::sceGuTexLevelMode(sys::TextureLevelMode::Auto, 0.0);
-        sys::sceGuTexFilter(
-            sys::TextureFilter::LinearMipmapLinear,
-            sys::TextureFilter::Linear,
-        );
-    } else {
-        sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
-    }
+    sys::sceGuTexLevelMode(sys::TextureLevelMode::Const, 0.0);
+    sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
     // Texture coordinates need the same normalisation undone, then the N64's
     // S10.5 fixed point (32 units per texel) converted to 0..1 across the
     // texture:  final = (uv / 32768) * scale  and we want  (uv / 32) / dim,
@@ -485,6 +471,22 @@ unsafe fn apply_material(
             sys::ShadingModel::Flat
         });
 
+        // RE-119: ordinary RSP `G_TEXTURE_GEN` replaces authored UVs with
+        // normal-derived environment coordinates for Metal Mario content.
+        // Packed vertices retain their signed N64 normals in GE normal fields.
+        // `G_TEXTURE_GEN_LINEAR` is separately packed: its acos curve cannot
+        // be expressed by this GE mode, so it remains an explicit fidelity
+        // gap rather than being silently mistaken for exact support.
+        sys::sceGuTexMapMode(
+            if p.flags & flags::TEXTURE_GEN != 0 {
+                sys::TextureMapMode::EnvironmentMap
+            } else {
+                sys::TextureMapMode::TextureCoords
+            },
+            0,
+            1,
+        );
+
         // `ftDisplayMainProcDisplay` enables N64 `G_LIGHTING` for the fighter
         // pass, but not every primitive carries normals: decals and other
         // authored literal-colour material draws must stay literal.  The pack
@@ -517,19 +519,21 @@ unsafe fn apply_material(
         // approximates it with a plain alpha test discarding
         // fully-transparent texels (RE-069); matched here rather than
         // invented.
-        if p.flags & flags::ALPHA_TEST != 0 {
-            sys::sceGuEnable(GuState::AlphaTest);
-            sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, 0, 0xFF);
-        } else if p.flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
-            // RE-195: `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD` -- a second,
-            // real RDP alpha-discard gate independent of `ALPHA_TEST` above
-            // (that one approximates coverage-driven cutout; this one is an
-            // exact reproduction, comparing final pixel alpha against
-            // `G_SETBLENDCOLOR`'s own alpha channel). Only packed when
-            // `ALPHA_TEST` was not already set for this primitive.
+        if p.flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
             let reference = (p.alpha_compare_ref >> 24) & 0xFF;
             sys::sceGuEnable(GuState::AlphaTest);
-            sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, reference as i32, 0xFF);
+            // `ALPHA_TEST` approximates coverage by rejecting alpha zero.
+            // A nonzero threshold implies that condition; threshold zero does
+            // not, so retain the cutout comparison on the overlap.
+            let func = if p.flags & flags::ALPHA_TEST != 0 && reference == 0 {
+                sys::AlphaFunc::Greater
+            } else {
+                sys::AlphaFunc::GreaterOrEqual
+            };
+            sys::sceGuAlphaFunc(func, reference as i32, 0xFF);
+        } else if p.flags & flags::ALPHA_TEST != 0 {
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, 0, 0xFF);
         } else {
             sys::sceGuDisable(GuState::AlphaTest);
         }

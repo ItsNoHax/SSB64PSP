@@ -57,7 +57,7 @@ Alpha compare remains a bounded fidelity gap: decomp content uses both
 `refs/ssb-decomp-re/src/ft/ftshadow.c:19-23` and
 `refs/ssb-decomp-re/src/lb/lbparticle.c:2079-2087`). Current runtime applies
 the `alpha_test` approximation when it coexists with the threshold gate;
-RE-195 measured 28,859/41,171 vertex-visits in this overlap. Rare
+RE-195 measured 28,859 vertex-visits in this overlap. Rare
 `PRIM_ALPHA` and two-cycle formulas remain deliberately declined as already
 documented, but they are not pixel-exact support.
 
@@ -3952,6 +3952,65 @@ computed address, 0 do not, and the sentinel's offset lands exactly at the end
 of the archive region.
 
 **Confidence: certain.**
+
+---
+
+## RE-213 — Texgen/mip physical capture; linear formula and Yoshi `G_SHADE` follow-up
+
+**Texgen formula.** F3DEX's ordinary form generates post-projection,
+normalized normal coordinates `s = (nx + 1) * 512`, `t = (ny + 1) * 512`.
+`G_TEXTURE_GEN_LINEAR` instead applies `s = acos(nx) * 1024/pi`,
+`t = acos(ny) * 1024/pi`. This was cross-checked against the F3DEX
+implementation path in Wii64's `gSP.cpp` and Hack64's RCP geometry-mode
+reference; both distinguish the `acos` branch from ordinary texgen. Thus PSP
+GE `EnvironmentMap` is suitable for ordinary `G_TEXTURE_GEN`, but cannot be
+called exact support for linear texgen.
+
+**Implementation.** `MeshMaterial` now preserves `TextureGen::{None,Sphere,
+Linear}` rather than merging both source bits. Pack flags preserve the linear
+case separately. `sceGuTexMapMode(EnvironmentMap, 0, 1)` consumes ordinary
+texgen using retained packed normals; linear instances still take this visual
+approximation pending CPU generation after model/view normal transformation.
+This prevents loss of source state and gives the future exact path a stable
+on-disk signal.
+
+**Metal scene.** Added deterministic `regression_capture_scene11`: file 117
+(`StageMetalFile2`) graph `0x1B10`, two nodes, real texgen material state.
+PPSSPP software capture shows textured reflective geometry. Native capture on
+PSP Slim, 6.61 ARK/Infinity, PSPLink 3.2.1 via USBHostFS succeeded with no
+exception: `/home/alberto/ppsspp-test/re213/psp-hw-metal-texgen.bmp`, SHA-256
+`61887d13f597d1c437961e07fefb8319a14bac3a30e58144735563498bece522`.
+This is implementation/hardware evidence, not an original-N64 pixel match.
+
+**Mip behavior.** `bind_texture` now exposes only level zero (`sceGuTexMode`
+max-mip 0, constant LOD, bilinear min/mag). Original SSB64's render tile is
+`G_TL_TILE`; no display-list source selects a conventional mip chain. PPSSPP
+software captures at `/home/alberto/ppsspp-test/re213/ppsspp-mip-level0.png`
+are byte-identical across two captures, SHA-256
+`08cc25cc9a0ee172c943a8cd2db38873df2cc39c1a5da2ee32992ad2745d48ca`.
+They differ from pre-change Dream Land golden at 31,980 pixels, expected from
+removing automatic trilinear selection. Native level-zero capture succeeded:
+`/home/alberto/ppsspp-test/re213/psp-hw-mip-level0.bmp`, SHA-256
+`8cacf5d547a529391a22e2216fe47bcb58a2acdff1168366b47885667e05d834`.
+Build inputs: PRX SHA-256
+`b01240a7211f38bb80c7c774d4672799a8cd16bf2bb002f5833dff542bb32c00`, pack
+SHA-256 `01f7c5261293e7073f93c6a1f8df7ab0621607ad86ef625ef24d745a72e1558d`.
+
+**Yoshi `G_SHADE`.** RE-120 remains correct: one primitive in each Yoshi's
+Island variant clears `G_SHADE` while its combiner reads `SHADE`. Existing
+M64Py screenshots prove a repeatable original-ROM VS-mode input route, but
+only cover Dream Land; no existing harness selects Yoshi's Island or isolates
+the primitive. A direct M64Py Flatpak launch with the ROM path exited without
+creating an emulator window in this session, so it cannot substitute for that
+harness. `gbi.h` documents author intent, not output for this invalid or
+unusual state combination. Do not change renderer from it. Next evidence must
+be an original-ROM scripted Yoshi stage capture (ideally toggling that draw in
+an instrumented renderer) before choosing between primitive colour, retained
+vertex shade, or another RSP behavior.
+
+**Verification.** `cargo test -p ssb-rom` passes 351 tests; `cargo check
+--release` passes. `cargo fmt --check` remains blocked by an unrelated existing
+format difference in `crates/ssb-rom/src/objanim.rs`.
 
 ---
 

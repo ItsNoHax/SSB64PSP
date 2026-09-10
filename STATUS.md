@@ -6,7 +6,7 @@
 
 **Milestone:** `R2 — Physical PSP Rendering Validation`
 
-**Current task:** `R2 — Physical PSP Rendering Validation`
+**Current task:** `Rendering fidelity follow-up — texgen, mipmap selection, and combined alpha gates`
 
 **Status:** `IN_PROGRESS`
 
@@ -32,6 +32,32 @@ capture matches the PPSSPP golden with only the same expected
 edge-antialiasing/overlay divergence RE-203–210 already documented. Updated
 `docs/psplink.md` to recommend `reset` after every `kill`, not only after
 an observed fault. Full account in `docs/reverse-engineering.md` RE-212.
+
+**Active follow-up (2026-09-10):** User explicitly authorized implementation
+of three documented fidelity gaps before further R2 coverage: preserve and
+render `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`, remove PSP automatic mip
+selection where it disagrees with SSB64's `G_TL_TILE`, and resolve the
+`alpha_test` + `G_AC_THRESHOLD` overlap. Then investigate the two live
+Yoshi's Island `G_SHADE` cases from original-output evidence. This does not
+authorize combat or item gameplay.
+
+**Progress:** `MeshMaterial::texture_gen` now preserves `None`/ordinary/
+linear texgen independently through conversion; pack flags retain both source
+forms. PSP drawing uses native `sceGuTexMapMode(EnvironmentMap, 0, 1)` for
+ordinary `G_TEXTURE_GEN`, restoring ordinary UVs for all other primitives.
+The existing packed normal attribute is used directly. Exact
+`G_TEXTURE_GEN_LINEAR` is now a documented remaining gap: original formula
+is `acos(projected_normal_component) * 1024/pi`, not GE's ordinary linear
+normal mapping. PSP texture binding now binds level 0 only, constant LOD plus
+bilinear filter, matching `G_TL_TILE`; old lower levels remain in generated
+pack but inert. Alpha threshold/reference now survive overlap with
+`ALPHA_TEST`; nonzero threshold implies existing `alpha > 0` approximation,
+zero retains `Greater`. `cargo test -p ssb-rom`: 351 pass; release host check
+passes. PPSSPP captures: Metal scene and changed level-0 Dream Land; two Dream
+Land runs byte-identical. Physical PSP Slim/6.61 ARK/Infinity/PSPLink 3.2.1
+captures obtained for both. Files/hashes and exact evidence: RE-213. Remaining:
+original-output investigation for Yoshi `G_SHADE`; exact CPU linear texgen
+still requires model/view normal transform plumbing.
 
 **Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
 row is live analog-stick input (needs a human operator); "no hardware-only
