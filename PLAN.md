@@ -2313,17 +2313,22 @@ zero handling in `mesh.rs`:**
 * `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` (156/13 occurrences) —
   RSP-computed environment-mapped UVs. Used by `StageMetalFile2` and
   `MMarioModel`/`NMarioModel`/`NFoxModel`: this is the "Metal
-  [Character]" transformation's signature shiny/reflective look (the
-  Metal Box item). Classified as SSB64 genuinely needing it
-  (`PLAN.md` R0.18's classification 1), but implementation is correctly
-  deferred — it is an item-pickup visual effect, downstream of the
-  combat/item systems `AGENTS.md` §5 gates behind rendering correctness.
-  Not an `ACCEPTED_DEVIATION` (it is technically reproducible on the PSP
-  GE), just out of scope until items exist. **Superseded:** RE-213
+  [Character]" transformation's signature shiny/reflective look. **Corrected
+  by RE-216: there is no Metal Box item.** `MMarioModel`/`NMarioModel`/
+  `NFoxModel` back a separate, permanent `FTKind` the original only
+  constructs for the 1P-mode stage-8 boss fight (`src/ft/ftdata.c`/
+  `ftmanager.c:693`) — not an item-pickup effect applied to a normal
+  fighter. Classified as SSB64 genuinely needing it (`PLAN.md` R0.18's
+  classification 1), but implementation is correctly deferred — it is
+  downstream of the combat/item systems `AGENTS.md` §5 gates behind
+  rendering correctness regardless of the correction above. Not an
+  `ACCEPTED_DEVIATION` (it is technically reproducible on the PSP GE), just
+  out of scope until items/1P-mode content exist. **Superseded:** RE-213
   implemented it and RE-214 corrected it — the reflective content is
-  reachable without items through `StageMetalFile2`, so it was validated
-  under R2 rather than waiting on the item system. See R2's own acceptance
-  list for what remains (original-output comparison, and the linear form).
+  reachable through `StageMetalFile2` without scripting a full item system,
+  so it was validated under R2 rather than waiting on it. See R2's own
+  acceptance list for what remains (original-output comparison, and the
+  linear form).
 
 Neither gap was fixed this session — both need either a per-primitive
 cross-reference (`G_SHADE`) or a real feature (environment-mapped UV
@@ -2852,7 +2857,7 @@ PPSSPP is not sufficient.
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
 * [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong), an eleventh and twelfth (`StageMetalFile2` ordinary texgen at two rotations, RE-214) and a thirteenth (`StageMetalFile2`'s linear-texgen graph, RE-215) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
-* [ ] `G_TEXTURE_GEN` compared against original output — RE-214: ordinary texgen is source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified at two model rotations, but no original-N64 capture exists. Meta Crystal is reachable only through 1P mode stage 8 and RE-151's scripted original-ROM harness no longer exists on disk; rebuilding it is the prerequisite. `VERIFYING`, not `COMPLETE`
+* [ ] `G_TEXTURE_GEN` compared against original output — RE-214: ordinary texgen is source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified at two model rotations, but no original-N64 capture exists. Meta Crystal (and `MMarioModel`/`NMarioModel`/`NFoxModel`) is reachable only through 1P mode stage 8 — RE-216 rebuilt RE-151's scripted original-ROM harness (verified working, including real scripted menu navigation) and found the VS-Mode "Metal Box item" shortcut RE-214 §10 recommended does not exist in the decomp; scripting the real stage-8 route (or a faithful RAM-level warp) is the prerequisite. `VERIFYING`, not `COMPLETE`
 * [x] `G_TEXTURE_GEN_LINEAR` implemented exactly — RE-215: generated exactly per vertex on the CPU (the RSP's own `acos(-dot)/(2*pi)` curve, cross-checked against two independent reference implementations) and drawn through the authored-UV pipeline. PPSSPP- and hardware-verified against `regression_capture_scene13`, the graph that actually carries the archive's one packed linear primitive — RE-215 found scenes 11/12 do not, correcting an earlier RE-214 note. No original-N64 comparison exists yet (same prerequisite as the row above), so this row is exact-relative-to-the-ROM-derived-formula, not original-hardware-compared
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)

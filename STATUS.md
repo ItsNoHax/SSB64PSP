@@ -1,77 +1,64 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-215 exact `G_TEXTURE_GEN_LINEAR`)
+**Last updated:** 2026-09-10 (RE-216 rebuilt RE-151's harness, corrected the
+Metal Box route claim)
 
 ## Continuation packet
 
 **Milestone:** `R2 — Physical PSP Rendering Validation`
 
-**Current task:** `R2 — broaden physical-PSP golden coverage` (both texgen
-fidelity follow-ups from RE-214 are now resolved or correctly scoped; see
-"Last completed task")
+**Current task:** `R2 — original-N64 texgen comparison` (RE-216 rebuilt the
+Mupen64Plus harness RE-151 left out of Git and proved it can drive frame-exact
+scripted menu navigation; the harness is ready, but the route to the actual
+Metal content turned out longer than believed — see below)
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-215 — exact `G_TEXTURE_GEN_LINEAR`, and a correction to
-an RE-214 claim about which scene carries it. Full account:
-`docs/reverse-engineering.md` RE-215.
+**Last completed:** RE-216 — rebuilt RE-151's scripted original-ROM Mupen64Plus
+harness (custom input plugin + Python Core API driver, verified end-to-end
+including real scripted menu navigation), and corrected RE-214 §10's "Metal
+Box item" route claim after the decomp showed no such item exists. Full
+account: `docs/reverse-engineering.md` RE-216.
 
-1. **The fix.** `G_TEXTURE_GEN_LINEAR`'s `acos(-dot)/(2*pi)` curve is now
-   generated exactly, per vertex, on the CPU (`ssb_rom::psp_texture::
-   linear_texgen_uv`), using the RSP's own dot product (`normal / 127`, not a
-   true renormalisation) — cross-checked against two independent reference
-   implementations (`refs/BattleShip`, `refs/n64psp`) that agree exactly. The
-   result is written into the pack's existing raw S10.5 authored-UV unit, so
-   the primitive draws through the *ordinary* authored-UV pipeline
-   (`draw_mesh`'s dynamic-vertex branch, previously only used for runtime
-   material-colour animation) rather than a second GE coordinate-generation
-   mode. A lookup table was considered and rejected: the vertex normal is
-   quantised but the look-at basis it is dotted against is a continuous
-   per-frame float, so a LUT keyed on the normal alone cannot be exact either
-   (D-040).
-2. **The scene-11 correction.** Verifying the fix, `regression_capture_scene11`
-   came back byte-identical pre- and post-fix. A debug-marker reachability
-   probe plus a direct read of the pack found why: file 117 has four
-   `StageMetalFile2` graphs, and the archive's one packed linear primitive
-   belongs to the graph at `0x2EE0`, not `0x1B10` (scenes 11/12's graph, which
-   turns out to carry only ordinary texgen). This corrects RE-214's own "24 of
-   them in scene 11" claim, which was written from an archive-wide geometry-mode
-   census rather than checked against the packed graph scenes 11/12 actually
-   select. New `regression_capture_scene13` targets the correct graph.
+**Verification.** No Rust source changed, so `cargo test --workspace` was not
+re-run. The harness was verified directly: ROM SHA-1 checked
+(`e2929e10fccc0aa84e5776227e798abc07cedabf`), a 5-frame deterministic
+`M64CMD_ADVANCE_FRAME` smoke test with clean shutdown, and a scripted
+menu-navigation run (title skip → Mode Select → VS Mode → VS Options)
+confirmed via `M64CMD_TAKE_NEXT_SCREENSHOT` captures at each step. The Metal
+Box correction is decomp-sourced, not inferred (`src/it/itdef.h`,
+`src/ft/ftdata.c`, `src/ft/ftmanager.c:693`, `src/ft/fttypes.h:906`).
 
-**Verification.** `cargo test --workspace` 531 pass (was 524), `cargo fmt
---check` clean in workspace and `psp/`. Pack unchanged (draw-time-only fix),
-SHA-256 `295b62dc...`. PPSSPP: scene 13 differs from a pre-fix A/B build by
-10,766 pixels (fix is not inert), two captures of the fixed build are
-byte-identical; scenes 11/12, Dream Land, and the Fox fighter golden are all
-still byte-identical to their existing goldens. Physical PSP (Slim, 6.61
-ARK/Infinity, PSPLink 3.2.1): scene 13 renders with `exlist` empty,
-`main_thread` alive, native capture
-`~/ppsspp-test/re214-linear-hw/psp-hw-scene13.bmp`
-(`9f187e53...`) visually matching the PPSSPP capture.
+**Commits:** see `git log` for RE-216's commit (docs only — the harness itself
+is out-of-Git by the same convention RE-151 used,
+`~/ppsspp-test/re151-harness/`).
 
-**Commits:** see `git log` for RE-215's commit (implementation + docs, made
-after this update).
-
-**Documentation updated:** `docs/reverse-engineering.md` (RE-215),
-`docs/rendering.md` (texgen section and status row), `docs/porting-status.md`,
-`docs/visual-regression.md` (thirteenth scene section), `PLAN.md` R2,
-`DECISIONS.md` (D-040), `psp/Cargo.toml` (scene 11's comment corrected), this
-file.
+**Documentation updated:** `docs/reverse-engineering.md` (RE-216, and RE-214
+§10's Metal Box claim struck through and corrected), this file.
 
 **Remaining deviation (recorded in `PLAN.md` R2's acceptance list):**
 
 * **No original-N64 comparison for texgen output** (both ordinary and linear
   curves). The only Metal content this port can show is `StageMetalFile2`
-  (Meta Crystal), reachable in SSB64 only through 1P mode stage 8 — VS Mode
-  cannot select it. RE-151's scripted original-ROM harness (a temporary
-  out-of-Git Mupen64Plus input plugin plus a Python Core API driver) no longer
-  exists on disk; only its screenshots under `~/ppsspp-test/re151/` remain.
-  Rebuilding it and scripting a route to stage 8 is the prerequisite. Metal
-  Box on a fighter in VS Mode, reachable through files 300/301/303, is a
-  shorter route to the *same* material and is the recommended first attempt —
-  see RE-214 §10 for the route options and the reasoning. Texgen (both
-  curves) is therefore `VERIFYING`, not `COMPLETE`.
+  (Meta Crystal) plus `MMarioModel`/`NMarioModel`/`NFoxModel` (files
+  300/301/303), all reachable in the original only through 1P mode stage 8 —
+  VS Mode cannot select any of them. RE-216 rebuilt RE-151's scripted
+  original-ROM harness (Mupen64Plus driven through its public Core API via a
+  custom input plugin, `~/ppsspp-test/re151-harness/`, out-of-Git by the same
+  convention as RE-151) and verified it end-to-end: deterministic frame
+  stepping and real scripted menu navigation (title skip, Mode Select, VS
+  Mode, VS Options) all work. RE-214 §10's recommended shortcut — a "Metal
+  Box" item applying this material to a fighter in VS Mode — turned out not to
+  exist: RE-216 found no metal-type item anywhere in `src/it/`; Metal
+  Mario/Fox are a separate, permanent `FTKind` the original only constructs
+  for the 1P-mode stage-8 boss fight, selected once at spawn via a fixed
+  per-`FTKind` table (`src/ft/ftdata.c`/`ftmanager.c:693`), not something a
+  live status-flag poke can retarget. The real remaining prerequisite is
+  therefore the full 1P-mode route to stage 8 (substantially longer than
+  previously believed — real combat through 7 preceding stages, not an item
+  pickup), or a from-scratch RAM-level stage-warp investigation (no existing
+  cheat code covers this for this ROM). Neither was attempted this session.
+  Texgen (both curves) is therefore `VERIFYING`, not `COMPLETE`.
 
 **Dependencies:** R0.5 and R1 complete. R2's remaining hardware checklist rows
 are live analog-stick input (needs a human operator), exhaustive
@@ -96,13 +83,16 @@ before the next `ldstart`, even when `exlist`/`thlist` look clean.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** the roadmap's own next item is the **original-N64 comparison
-harness** (rebuild RE-151's Mupen64Plus driver; the Metal Box VS-Mode route is
-the recommended first attempt — see RE-214 §10) — it now covers *both* texgen
-rows in one pass (ordinary and linear both need it) and also unblocks the
-**Yoshi's Island `G_SHADE` original-output investigation** (RE-120's two live
-primitives), which needs the same harness and nothing else. If the harness
-turns out to be infeasible, the next eligible work is more
+**Next:** the roadmap's own next item is finishing the **original-N64
+comparison** now that RE-216 rebuilt and verified the harness: script the real
+1P-mode route to stage 8 (or investigate a from-scratch RAM-level stage warp
+that still drives `ftManagerMakeFighter` faithfully), reach the Meta Crystal
+fight, and capture a model-rotation pair and a camera-rotation pair against
+the original. It covers *both* texgen rows in one pass (ordinary and linear
+both need it) and also unblocks the **Yoshi's Island `G_SHADE` original-output
+investigation** (RE-120's two live primitives), which needs the same harness
+and nothing else. If the stage-8 route turns out to be infeasible, the next
+eligible work is more
 `regression_capture_sceneN` coverage: 6 of 12 playable fighters (Samus 320,
 Luigi 323, Link 324, Jigglypuff 330, Yoshi 338, Pikachu 341 — model file ids
 from `FIGHTER_COSTUME_COUNTS`) and 39 of 41 stages are still
@@ -142,10 +132,12 @@ references. See RE-211.
   symptom `exlist`/`thlist` catch — `docs/psplink.md` now recommends `reset`
   after every `kill`. RE-214 refreshed the nine goldens RE-213's mip change
   had left stale. RE-215 made `G_TEXTURE_GEN_LINEAR` exact and found scenes
-  11/12 do not carry it (RE-214 had claimed otherwise). Exhaustive
-  no-failures-remain coverage (6 of 12 fighters, 39 of 41 stages still
-  untested), live analog-stick input, and the texgen original-output
-  comparison (both curves) remain open.
+  11/12 do not carry it (RE-214 had claimed otherwise). RE-216 rebuilt RE-151's
+  original-ROM harness and found RE-214's recommended "Metal Box item" route
+  to an original-output texgen comparison does not exist; the real route (1P
+  mode to stage 8) remains unscripted. Exhaustive no-failures-remain coverage
+  (6 of 12 fighters, 39 of 41 stages still untested), live analog-stick input,
+  and the texgen original-output comparison (both curves) remain open.
 - Movement core: dash and run velocities now follow fighter facing, including
   after a left turn; regression coverage added for left-facing run/dash state.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
@@ -169,55 +161,58 @@ references. See RE-211.
 
 ## Last completed task
 
-**RE-215 — Exact `G_TEXTURE_GEN_LINEAR`, and scenes 11/12 never actually
-exercised it**
+**RE-216 — Rebuilt RE-151's original-ROM harness; corrected the Metal Box
+route**
 
-- Generated `G_TEXTURE_GEN_LINEAR`'s `acos(-dot)/(2*pi)` curve exactly, per
-  vertex, on the CPU (`ssb_rom::psp_texture::linear_texgen_curve`/
-  `texgen_dot`/`linear_texgen_uv`), using the RSP's own `normal / 127` dot
-  product — cross-checked against `refs/BattleShip` and `refs/n64psp`, which
-  agree exactly and both skip true renormalisation.
-- Reused the authored-UV pipeline instead of building a second GE
-  coordinate-generation mode: the generated coordinate lands in the pack's
-  existing raw S10.5 unit, and the render-tile origin shift reuses
-  `push_vertex`'s own `* 8` rule, so a linear-texgen primitive draws through
-  `draw_mesh`'s existing dynamic-vertex branch (previously only used for
-  runtime material-colour animation).
-- Rejected a lookup table: the vertex normal is quantised but the look-at
-  basis is a continuous per-frame float, so a LUT keyed on the normal alone
-  cannot be exact either (D-040).
-- Found, while verifying, that `regression_capture_scene11`'s graph
-  (`0x1B10`) carries no linear-texgen content at all — the archive's one
-  packed linear primitive lives in a sibling graph (`0x2EE0`). Added
-  `regression_capture_scene13` to target it, and corrected the stale "24 of
-  them in scene 11" claim RE-214 had left in `STATUS.md` and
-  `psp/Cargo.toml`.
-- Evidence: `docs/reverse-engineering.md` RE-215.
+- Rebuilt RE-151's scripted Mupen64Plus harness from scratch (it no longer
+  existed on disk): a minimal custom M64+ input plugin
+  (`~/ppsspp-test/re151-harness/re151_input.c`, built against headers pulled
+  from `mupen64plus-core`'s public `src/api/*.h`) exposing a plain
+  `g_buttons[4]` array, plus a Python driver
+  (`re151_driver.py`) that runs inside M64Py's Flatpak sandbox
+  (`flatpak run --command=python3 net.sourceforge.m64py.M64Py`) and drives
+  `libmupen64plus.so.2` through the public Core API — `CoreStartup`,
+  `CoreDoCommand`, `CoreAttachPlugin` — never the M64Py GUI.
+- Found and fixed a real bug while wiring it up: `ctypes` truncates a bare
+  Python `int` to a 32-bit C `int` without explicit `argtypes`, corrupting the
+  64-bit dynlib handle passed to `PluginStartup`/`CoreAttachPlugin` and
+  segfaulting inside the video plugin. Explicit `c_void_p` argtypes on every
+  handle/pointer parameter fixed it.
+- Verified end-to-end: ROM identity checked (SHA-1
+  `e2929e10fccc0aa84e5776227e798abc07cedabf`), deterministic
+  `M64CMD_ADVANCE_FRAME` single-stepping confirmed, and a scripted button
+  route (`hold:button+button;...`, decoded to the real `BUTTONS` bitfield)
+  drove real menu navigation under full frame control: title skip, Mode
+  Select, VS Mode, VS Options — discovering along the way that `Start` is a
+  hardcoded shortcut straight into 1P Mode regardless of cursor position,
+  while `A` is the actual menu-confirm button.
+- Used the working harness to check RE-214 §10's recommended shortcut — a
+  "Metal Box" item applying the metal `G_TEXTURE_GEN` material to a fighter in
+  VS Mode — against the decomp, and found it does not exist: no metal-type
+  item exists anywhere in `src/it/`. `MMarioModel`/`NMarioModel`/`NFoxModel`
+  back a separate, permanent `FTKind` the original only constructs for the
+  1P-mode stage-8 boss fight, selected once at spawn via a fixed per-`FTKind`
+  table (`src/ft/ftdata.c`/`ftmanager.c:693`) — not something a live
+  status-flag poke can retarget. RE-214 §10's claim is now struck through and
+  corrected in place.
+- Evidence: `docs/reverse-engineering.md` RE-216.
 
 ## Verification
 
-RE-215 ran the full escalation: seven new host tests (curve endpoints and
-midpoint, complementary symmetry, differentiation from the ordinary curve,
-measured `acos` polynomial error bound, the `/127` dot product, the S10.5
-endpoint for all seven real ROM scales, a real-ROM reproduction of file 117's
-own linear primitive), `cargo test --workspace` (531 pass), `cargo fmt --check`
-in both the workspace and `psp/`, a pack rebuild (hash unchanged — draw-time
-fix only), PPSSPP determinism on the new scene 13 (two captures
-byte-identical), an A/B against the pre-fix code on that same scene (10,766
-differing pixels — not inert), no-regression checks on scenes 11/12, Dream
-Land, and the Fox fighter golden, and a physical-PSP capture of scene 13 with
-`exlist` clean, visually matching the PPSSPP capture.
-
-A deliberate control experiment was run rather than assumed: a debug colour
-marker written into the linear-texgen branch produced no visible change on
-scene 11 at all, which is what led to inspecting the pack directly and finding
-the primitive lives in a different graph.
+RE-216 verified the harness itself, not a rendering change (no workspace code
+changed): a 5-frame deterministic smoke test with clean shutdown and no leaked
+process, then a longer scripted-menu run (300+ frames) with periodic
+`M64CMD_TAKE_NEXT_SCREENSHOT` captures confirming each menu transition
+(title → Mode Select → VS Mode → VS Options) matched the intended input. The
+Metal Box correction is decomp-sourced (`src/it/itdef.h`, `src/ft/ftdata.c`,
+`src/ft/ftmanager.c:693`, `src/ft/fttypes.h:906`), not inferred. `cargo test
+--workspace` was not re-run since no Rust source changed.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–215.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–216.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
