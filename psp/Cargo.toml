@@ -82,6 +82,13 @@ regression_capture_scene8 = []
 # scenes 2-4 and 6-8. Off by default.
 regression_capture_scene9 = []
 
+# R2 broader-coverage scene: the fifth non-Mario fighter golden. Selects
+# Donkey Kong's own file-317 graph at 0x39A8 -- the lower-offset of the
+# file's symmetric 26-node graph pair, matching the convention scenes 6-9
+# used. Same deterministic object-viewer freeze and diagnostic suppression
+# as scenes 2-4 and 6-9. Off by default.
+regression_capture_scene10 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
