@@ -6707,6 +6707,7 @@ struct TexgenWalk {
     tile: TileState,
     step: usize,
     dl: u32,
+    depth: u32,
     /// The current node's `MObj` chain, indexed by graphics-heap entry.
     mobjs: Vec<ssb_rom::mobj::MObjMaterial>,
 }
@@ -6720,6 +6721,7 @@ impl TexgenWalk {
             tile: TileState::default(),
             step: 0,
             dl: 0,
+            depth: 0,
             mobjs: Vec::new(),
         }
     }
@@ -6732,7 +6734,6 @@ impl TexgenWalk {
         node: usize,
         census: &mut TexgenCensus,
         verbose: bool,
-        depth: u32,
     ) {
         use ssb_rom::dl::Cmd;
 
@@ -6753,24 +6754,24 @@ impl TexgenWalk {
                 Cmd::SetTile {
                     format,
                     size,
-                    tile,
+                    tile: 0,
                     mask_s,
                     mask_t,
                     cm_s,
                     cm_t,
                     ..
-                } if tile == 0 => {
+                } => {
                     self.tile.fmt = Some((format, size));
                     self.tile.mask = (mask_s, mask_t);
                     self.tile.cm = (cm_s, cm_t);
                 }
                 Cmd::SetTileSize {
-                    tile,
+                    tile: 0,
                     uls,
                     ult,
                     lrs,
                     lrt,
-                } if tile == 0 => {
+                } => {
                     self.tile.dims = Some((
                         ((lrs.saturating_sub(uls)) >> 2) + 1,
                         ((lrt.saturating_sub(ult)) >> 2) + 1,
@@ -6820,16 +6821,19 @@ impl TexgenWalk {
                             }
                         }
                     }
-                    if depth < 8 && addr.segment() == 0 {
+                    if self.depth < 8 && addr.segment() == 0 {
                         let at = addr.0 as usize;
                         if at < file.data.len() {
                             if let Ok(sub) =
                                 ssb_rom::dl::decode_list_at(&file.data[at..], at as u32)
                             {
                                 let outer = self.dl;
+                                let outer_depth = self.depth;
                                 self.dl = at as u32;
-                                self.walk(&sub, file, graph, node, census, verbose, depth + 1);
+                                self.depth += 1;
+                                self.walk(&sub, file, graph, node, census, verbose);
                                 self.dl = outer;
+                                self.depth = outer_depth;
                             }
                         }
                     }
@@ -7048,7 +7052,7 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
                 walk.step = step;
                 walk.dl = p.dl;
                 walk.mobjs = materials.get(p.node).cloned().unwrap_or_default();
-                walk.walk(&cmds, file, gi as u32, p.node, &mut census, verbose, 0);
+                walk.walk(&cmds, file, gi as u32, p.node, &mut census, verbose);
             }
         }
 
@@ -7068,7 +7072,6 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
                 usize::MAX,
                 &mut census,
                 verbose,
-                0,
             );
         }
     }
