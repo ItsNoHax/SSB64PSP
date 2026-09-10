@@ -414,10 +414,11 @@ RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 Status: `VERIFYING` — RE-218 reopened the filtering-equivalence and mirror/
 clamp/mask/POT-padding addressing claims below; RE-219 (`R2.0`/P0a) closed
 filtering with `ACCEPTED_DEVIATION`; RE-220 (`R2.0`/P0b) closed the `mask ==
-0` question (invariant, no fix needed) and measured two real, still-open
-addressing gaps (mirror+clamp beyond the first period, PSP POT-padding),
-each now its own task (`R2.0`/P0c, P0d); `R2.0`/P0c–P1 must close before this
-task can return to `COMPLETE`. LOD/mipmap conclusions are unaffected.
+0` question (invariant, no fix needed) and measured two real addressing
+gaps (mirror+clamp beyond the first period, PSP POT-padding), each its own
+task; RE-221 (`R2.0`/P0c) and RE-222 (`R2.0`/P0d) closed both. `R2.0`/P1
+must still close before this task can return to `COMPLETE`. LOD/mipmap
+conclusions are unaffected.
 RE-201's direct PSPLink framebuffer capture remains valid evidence that the
 Dream Land canopy matches on PSP Slim hardware for the scene it covers.
 
@@ -596,7 +597,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] `mask == 0` N64 semantics verified — RE-220 (`R2.0`/P0b): transcribed `angrylion-rdp-plus`'s forced-clamp rule (`clampens = cs || !mask_s`) and censused every real drawn primitive archive-wide; zero of 4,968 possible axis slots have `mask_s == 0`/`mask_t == 0`, so the rule never has an observable effect on this ROM's content — pinned with a test
 * [ ] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — decoded (`dl.rs`) but discarded (`mesh.rs`'s `Cmd::SetTile` match arm's own `..`) without a census; owned by `R2.0`/P1
 * [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
-* [ ] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material gaps: mirror+clamp addressing diverging from real hardware past the first mirrored period (99/810 real axis instances, 12.22%), and PSP's zero-filled power-of-two texture padding corrupting bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%; `R2.0`/P0d still open). RE-221 (`R2.0`/P0c) closed the first: `texture::mirror_extend` now bakes every mirrored period the drawn rect spans instead of always exactly two; re-measured archive-wide divergence is 0/810
+* [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material gaps: mirror+clamp addressing diverging from real hardware past the first mirrored period (99/810 real axis instances, 12.22%), and PSP's zero-filled power-of-two texture padding corrupting bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%). RE-221 (`R2.0`/P0c) closed the first: `texture::mirror_extend` now bakes every mirrored period the drawn rect spans instead of always exactly two; re-measured archive-wide divergence is 0/810. RE-222 (`R2.0`/P0d) closed the second: `pad_edge_repeat`/`pad_edge_repeat_nibbles` fill padding with the repeated edge instead of zeros, no-op on an already-POT texture and never touching a mirrored axis by construction
 * [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
 * [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
 
@@ -2897,7 +2898,7 @@ PPSSPP is not sufficient.
 
 ## R2.0 — Pre-Texgen Rendering-Fidelity Reopening (P0–P1)
 
-Status: `TODO` — P0a, P0b and P0c `COMPLETE`; P0d and P1 remain. Must close
+Status: `TODO` — P0a, P0b, P0c and P0d `COMPLETE`; P1 remains. Must close
 before `R2.1`/T1 resumes.
 
 RE-218 (2026-09-11 external audit) found that R0.5's filtering and
@@ -3012,18 +3013,24 @@ exactly RE-220's third-or-later-period bucket.
 
 ### P0d — Fix PSP POT-padding vs N64 logical clamp boundary
 
+Status: `COMPLETE` — RE-222.
+
 RE-220/P0b measured 456 real clamped-non-mirrored-non-POT axis instances,
 347 (71.4%) of which have a real UV sample reaching the last logical texel,
-where PSP's zero-filled padding corrupts `Linear`'s bilinear blend. Implement
-`PLAN.md`'s own candidate fix — fill `pack_rgba`/`pack_indexed`'s padding
-region with the repeated edge row/column instead of zeros — confirming it
-does not change output for a texture that is already power-of-two (a no-op
-there) and does not interact badly with a mirrored axis (which never reaches
-this code path per P0b's finding that mirror-doubling always lands on a
-power of two). Add a host test packing a non-power-of-two image and
-asserting the padding equals the repeated edge. Re-run
-`tile_addressing_census_against_real_archive_textures` to confirm the
-"reaches the last logical texel" primitives now sample real edge data.
+where PSP's zero-filled padding corrupts `Linear`'s bilinear blend. Fixed
+with two new helpers in `crates/ssb-rom/src/psp_texture.rs`,
+`pad_edge_repeat`/`pad_edge_repeat_nibbles`, filling the padding region with
+the repeated edge row/column instead of zeros — a no-op for an already-
+power-of-two texture, and never touching a mirrored axis by construction
+(mirror-doubling always lands on a power of two, per P0b). RE-222 found the
+actual padding site is `encode_level` (via `pack_mipped`, `convert_texture`'s
+real call path), not `pack_rgba`/`pack_indexed` as this task's text
+originally named — both were fixed, since `pack_rgba`/`pack_indexed` have
+the same defect on their own (particle-frame, out-of-census-scope) caller.
+7 new host tests, including one through `pack_mipped` end-to-end. Re-ran
+`tile_addressing_census_against_real_archive_textures`: bullet 3's counts
+are unchanged (124/456/347), as expected — it measures the structural
+condition, not the padding fix itself, which the new unit tests cover.
 
 ### P1 — Archive-wide `G_SETTILE` field census
 

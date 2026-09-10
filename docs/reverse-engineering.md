@@ -10,6 +10,79 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-222 — Fix PSP POT-padding vs the N64 logical clamp boundary (`PLAN.md` R2.0/P0d)
+
+**Question.** RE-220 measured a real, material gap: `pack_rgba`/
+`pack_indexed`-style conversion pads a non-power-of-two texture's stride/
+height with zeros, but `sceGuTexFilter(Linear, Linear)`'s bilinear blend
+near a clamped, non-POT logical edge reads one texel into that padding.
+456 real clamped-non-mirrored-non-POT axis instances, 347 (71.4%) with a
+real UV sample reaching the last logical texel. Can filling the padding
+with the repeated edge row/column fix this cleanly, as a no-op for an
+already-power-of-two texture and without interacting with a mirrored axis?
+
+**Correction to `PLAN.md`'s own text.** P0d's task text named `pack_rgba`/
+`pack_indexed` (`crates/ssb-rom/src/psp_texture.rs`) as the padding site.
+Reading the actual call graph: `tools/romtool`'s `convert_texture` (the
+function that consumes `mesh::TextureRef`'s `clamp_s`/`clamp_t` — the exact
+axes this gap concerns) never calls either of those; it calls
+`psp::pack_mipped`, whose real padding site is the internal `encode_level`
+helper. `pack_rgba`/`pack_indexed` are real functions with the same zero-
+padding defect, but their only production caller is
+`convert_particle_frame` (particle-effect sprite frames, not this ROM's
+mesh/tile-addressing path the census measures). Per `AGENTS.md`'s "fix the
+incorrect record" rule, this entry fixes the actually-measured site
+(`encode_level`) and applies the identical fix to `pack_rgba`/`pack_indexed`
+for consistency (same defect class, zero marginal risk), rather than
+silently fixing the wrong function and leaving the real one broken.
+
+**Implementation.** Two new helpers in `crates/ssb-rom/src/psp_texture.rs`:
+
+* `pad_edge_repeat` — byte-granular (8/16/32-bit texel formats): fills
+  column padding (`width..stride`) with the last real column, then row
+  padding (`height..padded_h`) with the last real row (run in that order so
+  the row copy also carries the already-filled column padding along).
+  A no-op whenever `width == stride && height == padded_h`.
+* `pad_edge_repeat_nibbles` — `PsmT4`'s two-texels-per-byte, high-nibble-
+  first packing (RE-047's own documented convention) needs per-nibble
+  `get`/`set` since a padding boundary can fall mid-byte; same two-pass
+  structure.
+
+Both are no-ops for a mirrored axis by construction (no special case
+needed): RE-220 already established mirror-doubling a mask period
+(`1 << mask`) always lands on a power of two (`1 << (mask + 1)`), so
+`width == stride` holds automatically wherever `mirror_s`/`mirror_t` baked
+the image wider.
+
+Called from `encode_level` (dispatching on `format == Psm::PsmT4` for the
+nibble variant), and identically from `pack_rgba` and `pack_indexed` for
+consistency with the particle-frame path, though that path is outside this
+census's measured scope.
+
+**Verification.** 7 new host tests: `pad_edge_repeat`/`pad_edge_repeat_nibbles`
+unit tests (column padding, row padding including already-column-padded
+data, and a power-of-two no-op for each), `pack_paletted_pads_a_non_power_of_two_texture_with_the_repeated_edge`
+(through `pack_indexed`) and `pack_mipped_pads_level_zero_with_the_repeated_edge_texel`
+(through the actual production path). All passing (`cargo test -p ssb-rom
+psp_texture::`, 40 tests). Re-ran
+`tile_addressing_census_against_real_archive_textures` against the real
+ROM: bullet 3's counts are unchanged (124 unique axes, 456 instances, 347
+reaching the last logical texel) — expected, since that census measures
+the *structural* condition (whether a real UV sample reaches the boundary),
+not whether the padding fix applied; the padding-content fix itself is
+covered by the new unit tests, not a number this census reports. Full
+`cargo test --workspace`: 555 passing, 0 failed, no other crate affected.
+Clippy clean (`cargo clippy --workspace --all-targets`, pinned 1.98.0
+toolchain, `-D warnings`).
+
+**Confidence: high** that the fix is correct and complete for its measured
+scope (mechanical, unit-tested at both the byte and nibble granularity, and
+end-to-end through the real production path). **Medium** on visible impact,
+same caveat as RE-221: this is an addressing/data-correctness fix, not a
+re-verified pixel-level before/after screenshot.
+
+---
+
 ## RE-221 — Fix mirror+clamp addressing beyond the first mirrored period (`PLAN.md` R2.0/P0c)
 
 **Question.** RE-220 measured a real, material gap: on a mirror+clamp
