@@ -6936,9 +6936,18 @@ fn report_packed_texgen(path: &Path) -> Res {
     let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
     println!("packed texgen primitives ({})", path.display());
     println!(
-        "  {:>6}  {:>5}  {:>6}  {:>9}  {:>11}  {:>9}  {:>9}",
-        "prim", "tris", "linear", "texture", "uploaded", "scale S/T", "origin"
+        "  {:>6}  {:>5}  {:>5}  {:>6}  {:>7}  {:>9}  {:>9}",
+        "prim", "file", "tris", "linear", "texture", "scale S/T", "origin"
     );
+    // Which archive file each primitive's own mesh came from, so a scene can
+    // be checked for texgen content without guessing.
+    let mut prim_file: BTreeMap<u32, u32> = BTreeMap::new();
+    for i in 0..pack.mesh_count() {
+        let Some(m) = pack.mesh(i) else { continue };
+        for p in m.first_prim..m.first_prim + m.prim_count {
+            prim_file.insert(p, m.source_file);
+        }
+    }
     let mut count = 0;
     for i in 0..pack.prim_count() {
         let Some(p) = pack.prim(i) else { continue };
@@ -6956,11 +6965,11 @@ fn report_packed_texgen(path: &Path) -> Res {
             )
         });
         println!(
-            "  {:>6}  {:>5}  {:>6}  {:>9}  {:>11}  {:#06x}/{:#06x}  {:>4}/{:<4}",
+            "  {:>6}  {:>5}  {:>5}  {:>6}  {:>7}  {:#06x}/{:#06x}  {:>4}/{:<4}",
             i,
+            prim_file.get(&i).copied().unwrap_or(u32::MAX),
             p.index_count / 3,
             linear,
-            p.texture,
             dims,
             p.texgen_scale_s,
             p.texgen_scale_t,
