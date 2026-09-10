@@ -421,7 +421,8 @@ mod tests {
             translate: [0.0; 3],
             scale: [1.0; 3],
         };
-        j.tick(&data, 1.0, &mut pose).expect("zero-duration command parses");
+        j.tick(&data, 1.0, &mut pose)
+            .expect("zero-duration command parses");
         assert_eq!(j.tracks[5].rate_base, 0.0);
         assert!(j.tracks[5].length_invert.is_finite());
     }
