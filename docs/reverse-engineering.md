@@ -10,6 +10,156 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-189 — real manager-effect spawn event wired into runtime: `efManagerRippleMakeEffect` ticks and draws a live `LBGenerator`/particle on the PSP (`PLAN.md` R1)
+
+**Problem.** RE-183–188 built the whole `LBParticle`/`LBGenerator` sim and
+PSP-side drawing, but every PSP-side use was still the debug viewer's own
+synthetic root: `particle_view` spawns the selected script fresh at
+`(0,0,0)`, ticks it to a fixed frame 4, and draws one static snapshot
+(`Particle::spawn`, never `Generator`). RE-188's own doc comment on
+`generator::Generator::spawn` already named the missing piece: "the real
+engine's caller ... fills that in" — no real gameplay/manager call site had
+ever actually driven this simulator. The R1 acceptance item's own text calls
+this out by name as the last piece of "all required effects render".
+
+**Evidence.** `efManagerRippleMakeEffect` (`efmanager.c:4230-4242`) is the
+smallest real manager call site of this shape in the whole file: it creates
+an `LBGenerator` from a real bytecode script ID via `lbParticleMakeGenerator`
+and then directly overwrites the returned generator's `pos` with a live
+game-world position — nothing else. `generator::Generator`'s own doc comment
+(`particle.rs`, the block above the `generator` module) already cited this
+exact function as the real-world shape of "a few real gameplay call sites
+... set a freshly-created generator's `pos` directly from a live game-world
+position immediately after creation". Read directly from `efcommon`'s real
+decoded script `0x61` (the argument `efManagerRippleMakeEffect` passes to
+`lbParticleMakeGenerator`) via a throwaway `SSB64_ROM`-gated probe (reverted,
+same as prior entries' own temporary census instrumentation): `kind = 0`
+(the well-visible cone case, not one of the four archive-wide vortex
+declines RE-188 catalogued), `generator_lifetime = 1`, `update_rate = -1.0`
+(deterministic). Feeding those through `generator::Generator::tick`'s own
+already-ported math: `update_rate < 0.0` means `frame -= update_rate`, i.e.
+`frame += 1.0` every tick, so this generator always reaches the `frame >=
+1.0` spawn threshold on its very first real tick; `generator_lifetime`
+decrements unconditionally afterward and hits `0` that same tick, ejecting
+it immediately. So a real trigger of this specific effect spawns **exactly
+one** particle, once, then the generator is gone — confirmed by running it
+through 240 frames and observing `(ticks, total_spawns) == (1, 1)`, not by
+assumption. That one particle's own `particle_lifetime` field is `21`, so it
+stays live and tickable for about a third of a second of real 60 Hz frames
+afterward.
+
+**Implementation.** `crates/ssb-rom/src/particle.rs`, `generator` module:
+
+* `Generator::spawn_at(script, pos)` — `Generator::spawn` (always
+  `pos = (0,0,0)`, per that function's own doc comment on why that is exact
+  for every *bytecode*-triggered generator) followed by the same direct
+  `pos` overwrite `efManagerRippleMakeEffect` performs on its own returned
+  pointer, recomputing `line_target` (kind `1`'s fixed line endpoint, unused
+  by this particular script's `kind == 0` but still owned state) from the
+  new `pos` rather than leaving it stale from the `(0,0,0)` the plain
+  `spawn` path used internally.
+
+`psp/src/main.rs`:
+
+* `pack_particle_script` — extracted from `particle_view`'s own inline pack
+  descriptor-to-`ssb_rom::particle::Script` conversion (unchanged logic, now
+  shared) so the real spawn event and the debug snapshot can never drift on
+  which fields get copied.
+* `spawn_ripple` — `efManagerRippleMakeEffect` itself: resolves `efcommon`
+  (pack particle bank `0`, the same ordering `ssb_rom::particle::BANKS`
+  fixes archive-wide) script `0x61` through `pack_particle_script` and calls
+  `Generator::spawn_at` with a live position.
+* A new debug-viewer mode, `effect_spawn_view` (`C_LEFT`, otherwise unused
+  in this viewer, alongside `particle_view`'s own `C_RIGHT`): every real
+  simulation tick (once per real frame, gated on the existing
+  `deterministic_capture_frozen` check like every other per-frame system in
+  this file) ticks the live `Generator` if one is alive, hands its one
+  spawned particle to `effect_spawn_particle`, and otherwise ticks that
+  already-spawned particle forward — `freshly_spawned` guards against
+  double-ticking a particle on the very same frame `Generator::tick`'s own
+  `make_particle` already creation-ticked it once (the same "child ticks
+  once this frame" shape RE-187/188 established for
+  `particle_tree`/`generator`). Because this specific effect provably spawns
+  at most one live particle at a time (see Evidence), drawing reuses the
+  existing single-slot `PARTICLE_QUAD` scratch buffer exactly like
+  `particle_view` — not a simplification, the exact right amount of state
+  for this target. Once both the generator and its one particle finish, the
+  same tick loop retriggers `spawn_ripple` itself — the real ROM would
+  retrigger this from a live gameplay event this project has none of yet, so
+  a debug-viewer-only, clearly-commented self-retrigger stands in, purely so
+  a screenshot taken at an arbitrary time (this project's own PPSSPP harness
+  has no way to land one on a specific simulation tick) always has something
+  live to show.
+* Drawing (a new `match &pack` arm, checked ahead of `particle_view`'s own)
+  reads the particle's live, already-ticked-forward `state.pos` and
+  re-centres the camera on it (`-state.pos` in the model transform) rather
+  than using `particle_view`'s fixed, position-blind camera. RE-185's own
+  doc comment explains why *that* mode's camera must never incorporate
+  `pos` (it exists to inspect one script's authored sprite in isolation
+  regardless of where bytecode drift takes it); this mode's `pos` is the
+  opposite case, a deliberately nonzero live world position that the camera
+  must follow or the draw clips outside the narrow 38-degree FOV exactly as
+  RE-185 found for the other case.
+* `effect_spawn_audit_capture` Cargo feature (mirrors every other
+  `*_audit_capture` feature already in `psp/Cargo.toml`): boots directly
+  into this mode so a screenshot can be captured without live controller
+  input.
+
+**Verification.** New host regression
+(`particle::tests::real_rom_ripple_manager_effect_spawns_a_visible_particle_near_its_live_position`,
+`SSB64_ROM`-gated): spawns `efcommon` script `0x61` via `Generator::spawn_at`
+at a nonzero test position, runs it for up to 240 frames, and pins
+`(ticks, total_spawns) == (1, 1)` (Evidence's exactly-one-spawn claim, not
+just asserted informally), that the spawned particle's position lands near
+the overridden `pos` (not the origin `Generator::spawn` alone would use, so
+`spawn_at`'s override is actually verified to take effect), and that it is
+visible at least once. `cargo test --workspace`: 337 `ssb-rom` tests (was
+336). Strict Clippy (`cargo clippy --workspace --lib --tests -- -D
+warnings` and `cargo clippy -p ssb-rom --no-default-features -- -D
+warnings`) and `cargo fmt --check` (both the root workspace and `psp/`, a
+separate Cargo workspace) all pass; `psp/`'s own clippy run was not run
+strict end-to-end (it has pre-existing unrelated findings, e.g. this file's
+own long-standing `static_mut_refs` warnings on `PARTICLE_QUAD`/`TEX_QUAD`,
+never part of this project's strict-clippy gate for `psp/`) but produced no
+*new* findings versus `main`. On-device: built
+`--features effect_spawn_audit_capture` and captured under
+`tools/run-ppsspp.sh --no-build`; the HUD read
+`EFFECT SPAWN AUDIT gen-alive false particle-alive true` (generator already
+ejected after its one real tick, particle still live, exactly as Evidence
+predicts) with a real, non-blank particle sprite on screen, at both 3 and 8
+real seconds after boot -- confirming the self-retrigger loop keeps the
+effect visibly alive indefinitely rather than only once at boot. Also
+re-captured plain `particle_render_audit_capture` (RE-183's own mode)
+unchanged after the `pack_particle_script` extraction, confirming that
+refactor did not regress it.
+
+**Remaining scope.** This closes the R1 acceptance item's own stated
+remaining scope ("wire one real manager-effect spawn event into runtime").
+It is deliberately narrow: one manager function, one generator kind (`0`,
+cone), a debug-viewer trigger rather than a real gameplay event (none exist
+yet pre-combat), and no exhaustive census/audit-capture harness the way
+RE-184/185 later added for `particle_view` (`tools/run-ppsspp.sh` gained no
+new `--audit-*` flag here) — a single on-device capture was judged
+sufficient evidence for "wire one real...event", the same scope RE-183 used
+for its own first on-device particle draw before RE-184/185 later widened
+it. Wiring further manager effects (the other 25+ `efManager*MakeEffect`
+call sites), a multi-particle-capable draw path (needed only once some
+future effect spawns more than one live particle at a time — this one
+provably never does), and any real gameplay trigger (combat is still
+prohibited pre-R1) are all future scope, not required by this item's own
+acceptance text.
+
+**Confidence:** high. The spawn math itself is RE-188's own already-verified
+port, unchanged here; the only new logic is a direct `pos` field overwrite
+matching `efManagerRippleMakeEffect`'s own two-line body exactly, and the
+"exactly one spawn" claim is measured (a passing regression assertion), not
+assumed. Medium on the debug-viewer self-retrigger's own timing being
+representative of anything about real gameplay pacing — it is explicitly a
+viewer-only affordance, not a claim about how often the real game re-fires
+this effect.
+
+---
+
 ## RE-188 — `LBGenerator` implemented: cone/line spawn math ported, vortex declines to the existing `VortexUnsupported` (`PLAN.md` R1)
 
 **Problem.** RE-184/185/186/187 all listed the `LBGenerator` subsystem as

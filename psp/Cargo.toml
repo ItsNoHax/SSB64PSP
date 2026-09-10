@@ -66,6 +66,15 @@ particle_render_audit_capture = []
 # frame before the overlay begins. Off by default.
 transition_audit_capture = []
 
+# Boots directly into the RE-189 real manager-effect spawn-event
+# proof-of-concept: creates a real `LBGenerator` from `efManagerRippleMakeEffect`'s
+# own `efcommon` script (`0x61`) at a live nonzero position, ticks it and its
+# one spawned particle every real frame, and draws the particle at its
+# current live position through meshdraw::draw_particle -- unlike
+# `particle_render_audit_capture`'s single frame-4 snapshot at `(0,0,0)`
+# (R1/RE-189).
+effect_spawn_audit_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true
