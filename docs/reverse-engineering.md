@@ -10,6 +10,96 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-218 — External rendering-fidelity audit reopens filtering/addressing claims (`PLAN.md` R2.0)
+
+**Question.** Does an outside audit's claim that this project's texture
+filtering and addressing equivalence conclusions are too strong hold up
+against the current code and evidence trail, or is it already covered?
+
+**Evidence.** Five claims were checked directly against the current tree
+rather than the audit's own wording:
+
+1. **`G_TF_BILERP` vs PSP `Linear`.** RE-124 (R0.5) measured that all
+   151/151 real `G_MDSFT_TEXTFILT` commands request `G_TF_BILERP` and
+   concluded `psp/src/meshdraw.rs`'s unconditional
+   `sceGuTexFilter(Linear, Linear)` (lines 431, 505) "is already correct".
+   That measurement only established the *filter-mode selector* matches;
+   it never compared the RDP's actual 3-point (triangular) reconstruction
+   formula against PSP's symmetric four-tap bilinear filter, which are not
+   the same operation. No reference sampler or error measurement exists
+   anywhere in this repository for this comparison.
+2. **`G_TX_MIRROR | G_TX_CLAMP` beyond the first mirrored period.** RE-067
+   pre-bakes a mirrored copy (`texture.rs::mirror_extend`) and RE-102 wires
+   native `sceGuTexWrap(Clamp, ...)` per axis
+   (`mesh.rs:1290-1291,1379-1380`) — both real, evidenced fixes for the
+   cases each session investigated (Dream Land's canopy; Fox/Falcon/Kirby's
+   overflowing UVs). Neither was checked against a full N64 tile-addressing
+   reference model (`coordinate → G_TEXTURE scale → tile shift → tile
+   origin → mask → mirror → clamp`) for coordinates reaching past the
+   mirrored pair, and neither covers authored UVs and texgen UVs under one
+   shared model — `R2.1`/T7 exists but is scoped to texgen only.
+3. **`mask == 0`.** `mesh.rs:1290-1291,1379-1380` computes
+   `clamp_s = cm_s & 0x2 != 0` / `clamp_t = cm_t & 0x2 != 0` unconditionally
+   — independent of `mask_s`/`mask_t`. RE-066 measured that every clamp/
+   mirror *request* archive-wide has its own axis mask nonzero, but that
+   census was about clamp-vs-mask *correlation*, not about what real N64
+   hardware does specifically when `mask == 0`, which is a documented
+   special case (unwrapped, tile-bounds-defined addressing) never
+   independently verified here.
+4. **PSP power-of-two padding vs N64 logical clamp boundary.** Confirmed by
+   direct code reading: `psp_texture.rs`'s `pack_rgba`/`pack_indexed`
+   (`pad_to_power_of_two`, `stride`/`padded_h`) allocate
+   `alloc::vec![0u8; stride_bytes * padded_h]` and copy the logical image
+   row-by-row into it — the padding region between a texture's logical
+   dimensions and its padded stride is zero-filled, not edge-repeated. A
+   clamped N64 coordinate at/after the logical edge should read the edge
+   texel; PSP `Clamp` clamps against the *padded* hardware dimensions, so a
+   coordinate in the padding region (or PSP `Linear`'s blend across that
+   boundary) can read black before the hardware clamp boundary is reached.
+   No task in `PLAN.md` currently owns this.
+5. **Discarded `G_SETTILE` fields.** `dl.rs`'s `Cmd::SetTile` decodes
+   `palette`/`line`/`tmem`/`shift_s`/`shift_t` (`dl.rs:144-153`), but
+   `mesh.rs`'s only consumer (`mesh.rs:1767-1788`) destructures
+   `{ format, size, tile, mask_s, mask_t, cm_s, cm_t, .. }` — the `..`
+   discards all five. R0.16's field-by-field audit (RE-121) covered
+   `MeshMaterial`'s own 14 fields, a layer downstream of this discard, so it
+   never actually inspected these five.
+
+None of the five is already owned by an existing task in a way that would
+make a new one duplicative: R0.5's "filtering modes identified"/"wrap/
+clamp/mirror behavior verified" acceptance items cite exactly the
+measurements above and no others; `R2.1`/T7 is explicitly texgen-scoped;
+`R2.1`/T6 reports texgen-bound tile shifts only, not an archive-wide
+`palette`/`line`/`tmem` census; R0.16's audit is scoped to `MeshMaterial`,
+not raw `Cmd::SetTile` fields.
+
+**Conclusion.** Reopened as `PLAN.md` R2.0 (`P0a` filtering, `P0b` general
+tile-addressing reference model covering mirror+clamp/mask==0/POT-padding
+for both authored-UV and texgen content, `P1` the `G_SETTILE` field census),
+sequenced ahead of `R2.1`/T1 (which was designated but never actually
+implemented — RE-217's own text says only that T1 was "made the single
+active task", not that code exists for it, so requeuing it behind R2.0 does
+not discard real progress). `R2.1`/T6 and T7 are re-pointed at R2.0/P0b's
+reference model instead of duplicating it. R0.5's filtering and wrap/clamp/
+mirror acceptance items, and R0.16's "every state category has an explicit
+field or documented reason" item, are reverted to open pending R2.0 — their
+own cited evidence (RE-066, RE-067, RE-102, RE-121, RE-124) remains valid
+history for what it actually measured; only the *equivalence*/*completeness*
+conclusion drawn from it is superseded here. No implementation code was
+changed by this review — this is a planning/documentation reconciliation
+only, per the requesting task's own scope.
+
+**Verification.** Direct code reading only (`psp/src/meshdraw.rs`,
+`crates/ssb-rom/src/mesh.rs`, `crates/ssb-rom/src/psp_texture.rs`,
+`crates/ssb-rom/src/dl.rs`); no build/test run required since no code
+changed. `git log -1`: `ec87660`.
+
+**Confidence: high that all five gaps are real (each cited line/behavior was
+read directly, not inferred); the actual magnitude/visibility of each is
+unmeasured and open, which is exactly what R2.0 exists to determine.**
+
+---
+
 ## RE-217 — Renderer-plan reconciliation reopens four correctness claims (`PLAN.md` R0/R2)
 
 **Question.** Do the two corrective plans identify work that is already covered
