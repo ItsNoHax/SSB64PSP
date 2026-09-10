@@ -546,14 +546,14 @@ pub fn set_walk(f: &mut Fighter, anim_frame_begin: f32) {
 pub fn set_dash(f: &mut Fighter) {
     let len = f.anim.dash;
     set_status(f, Status::Dash, 0.0, StatusTiming::animation(len, 1.0));
-    f.physics.vel_ground.x = f.attributes.dash_speed;
+    f.physics.vel_ground.x = f.attributes.dash_speed * f.facing.sign();
     f.stick.tap_x = STICKBUFFER_MAX;
 }
 
 /// `ftCommonRunSetStatus` @ 0x8013EEE8.
 pub fn set_run(f: &mut Fighter) {
     set_status(f, Status::Run, 0.0, StatusTiming::unknown());
-    f.physics.vel_ground.x = f.attributes.run_speed;
+    f.physics.vel_ground.x = f.attributes.run_speed * f.facing.sign();
 }
 
 /// `ftCommonRunBrakeSetStatus` @ 0x8013F05C.
@@ -1317,7 +1317,15 @@ mod tests {
         update_turn(&mut f);
         assert_eq!(f.facing, Facing::Left);
         assert_eq!(f.status.status, Status::Dash);
-        assert_eq!(f.physics.vel_ground.x, f.attributes.dash_speed);
+        assert_eq!(f.physics.vel_ground.x, -f.attributes.dash_speed);
+    }
+
+    #[test]
+    fn run_velocity_follows_facing() {
+        let mut f = mario();
+        f.facing = Facing::Left;
+        set_run(&mut f);
+        assert_eq!(f.physics.vel_ground.x, -f.attributes.run_speed);
     }
 
     #[test]
