@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-205 physical-PSP session)
+**Last updated:** 2026-09-10 (RE-206 division-sweep session)
 
 ## Continuation packet
 
@@ -10,35 +10,41 @@
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-205. Built a new persistent example,
-`crates/ssb-rom/examples/stage_animation_amplitude.rs`, to find a stage with
-visibly animated geometry (no existing golden scene had one); chose stage 9
-(Saffron City) over the single largest, uncorroborated amplitude because
-RE-142/RE-143 already independently proved its gate moves. Added
-`regression_capture_scene5` (stage 9, default `stage_view`, same tick-240
-freeze). Confirmed the animated pose differs from rest in PPSSPP (1,780px,
-temporary reverted control build) before trusting it. Loading it on physical
-PSP hardware crashed with `FPU Exception (IUZ)` in `objanim.rs`'s
-`StageJoint::apply` — a third `1.0 / payload` speculative-division trap,
-the same class `f111892` already fixed in `figatree.rs`/`matanim.rs` but
-never ported to stage animation's structurally identical interpreter. Fixed
-with the same `reciprocal_or_one` guard and a new regression test
-(`cargo test --workspace`: 506 passing). Rebuilt, redeployed: zero
-exceptions, native hardware capture matches
-`tests/golden/r2-saffron-city-gate.png` (upscaled 2x) with only the
-expected edge-antialiasing/overlay divergence RE-203 already established as
-acceptable.
-Checked off `PLAN.md` R2's "stage animation works" row (11 of 12 now
-checked). Redeployed the plain interactive build afterward, verified stable.
+**Last completed:** RE-206. Performed the systematic sweep the previous
+session flagged: confirmed by exhaustive grep that no fourth raw
+`1.0 / payload`-shaped division exists outside the three existing
+`reciprocal_or_one` guards (`figatree.rs`/`matanim.rs`/`objanim.rs`). Then
+checked every division in on-device runtime code (not `romtool`'s host-side
+pack conversion, which cannot hit this fault class) for the same
+"guard-then-divide" shape: `ssb-engine::math::Vec3::normalized`,
+`::timing::FrameTimings::fps`, `ssb-game::camera::original_tan`,
+`ssb-game::status::update_walk` and `ssb-game::collision::check_tilt`.
+`check_tilt`'s unguarded `/scale` looked like the strongest candidate (no
+guard at all, unlike the others), so investigated it in depth: added, then
+reverted, a defensive guard and direct unit test after proving — first
+analytically (a segment's height is linear in `x`, so an exactly-parallel
+movement keeps an invariant surface offset and can never also satisfy the
+function's own "started above, ended below" gate), then empirically (a
+scratch probe swept thousands of `(segment, from, to)` combinations,
+including i16-range magnitudes chosen to maximise float rounding) — that
+`scale == 0.0` is unreachable through this function's own preceding checks.
+Confirmed the guard was inert by disabling it and observing the added test
+still passed (exercising the pre-existing gate, not the new code), then
+reverted both per this project's own evidence-driven rule. No source change
+this session; `cargo test --workspace` unchanged at 506 passing. Full
+findings and the specific candidates left open (no demonstrated
+zero-denominator input yet, so not fixed) are in
+`docs/reverse-engineering.md` RE-206.
 
 **Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
 row is live analog-stick input (needs a human operator); "no hardware-only
 rendering failures remain" stays open pending broader coverage.
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–205;
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–206;
 `docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
-`tools/compare-screenshot.sh`; `crates/ssb-rom/src/objanim.rs`;
-`crates/ssb-rom/examples/stage_animation_amplitude.rs`.
+`tools/compare-screenshot.sh`; `crates/ssb-game/src/collision.rs`;
+`crates/ssb-game/src/camera.rs`; `crates/ssb-game/src/status.rs`;
+`crates/ssb-engine/src/math.rs`; `crates/ssb-engine/src/timing.rs`.
 
 **First checks:** physical PSP hardware is present and PSPLink-reachable
 this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
@@ -48,12 +54,13 @@ software-only task.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** broaden hardware coverage beyond the five golden scenes toward "no
-hardware-only rendering failures remain" — every fighter, stage and effect
-this scene-finding method has not yet touched is still an unaudited risk for
-the same class of FPU-trap bug RE-205 just found a third instance of; a
-systematic `grep -n '/ payload'`-style sweep across the crate for the same
-unguarded-division shape is reasonable next work, not yet done. Separately,
+**Next:** the crate-wide division sweep RE-206 asked for is now done and
+clean. The remaining path toward "no hardware-only rendering failures
+remain" is broader *scene* coverage, not more static code sweeping: every
+fighter, stage and effect the existing scene-finding examples
+(`stage_animation_amplitude.rs` and similar) have not yet touched is still
+an unaudited risk on real hardware — building and PSPLink-testing new golden
+scenes for untouched fighters/stages is the concrete next step. Separately,
 still open: whether the analog nub correctly drives the fighter now that
 RE-202's HUD-crash fix is live — this requires a human physically operating
 the device with PSPLink attached; `pspsh` has no controller-injection
@@ -94,54 +101,46 @@ command, so an agent session cannot resolve it alone.
 
 ## Last completed task
 
-**RE-205 — Stage animation verified on physical PSP hardware; a third FPU-trap site found and fixed**
+**RE-206 — Swept the crate for other unguarded/speculatable divisions like RE-201/202/205's FPU traps**
 
-- Added `crates/ssb-rom/examples/stage_animation_amplitude.rs` to rank
-  animated stage nodes by amplitude; chose stage 9 (Saffron City) over the
-  single largest, uncorroborated amplitude because RE-142/RE-143 already
-  independently proved its gate moves.
-- Added `regression_capture_scene5` (stage 9, default `stage_view`, tick-240
-  freeze). Confirmed the animated pose differs from rest (1,780px PPSSPP
-  diff, temporary reverted control build) before trusting it.
-- Physical PSP hardware load crashed: `FPU Exception (IUZ)` in
-  `objanim.rs::StageJoint::apply`, a third `1.0 / payload` speculative-
-  division trap — the same class `f111892` already fixed in
-  `figatree.rs`/`matanim.rs`, never ported to stage animation's own,
-  structurally identical interpreter. Fixed with the same
-  `reciprocal_or_one` guard; added a regression test
-  (`cargo test --workspace`: 506 passing).
-- Rebuilt, redeployed: zero exceptions, `main_thread` alive; native capture
-  matches `tests/golden/r2-saffron-city-gate.png` (upscaled 2x) with only
-  the expected edge-antialiasing/overlay divergence RE-203 already
-  established as acceptable.
-- Checked off `PLAN.md` R2's "stage animation works" row (11 of 12 now
-  checked).
-- Rebuilt and redeployed the plain (no-feature) interactive build afterward
-  per `docs/psplink.md`, verified stable (no exception, `main_thread` alive).
-- Evidence: `docs/reverse-engineering.md` RE-205.
+- Grepped the whole crate for the literal `1.0 / payload` shape: only the
+  three already-guarded call sites exist (`figatree.rs`, `matanim.rs`,
+  `objanim.rs`); no fourth instance.
+- Audited every division in on-device runtime code (excluding `romtool`'s
+  host-side pack conversion, which cannot hit this fault class) for the
+  same "guard checks zero, then divides" shape: `Vec3::normalized`,
+  `FrameTimings::fps`, `camera::original_tan`, `status::update_walk`,
+  `collision::check_tilt`.
+- `check_tilt`'s unguarded `/scale` (no zero check at all, unlike the
+  others) looked like the strongest candidate. Investigated it directly:
+  proved analytically that its own preceding "started above, ended below"
+  gate cannot coexist with `scale == 0.0` (a segment's height is linear in
+  `x`, so an exactly-parallel movement keeps an invariant surface offset),
+  then confirmed empirically with a scratch brute-force probe across
+  thousands of `(segment, from, to)` combinations, including i16-range
+  magnitudes chosen to maximise float rounding. No counterexample found.
+- Added a defensive guard plus a direct unit test on the private
+  `check_tilt`, then disabled the guard and re-ran the test: it still
+  passed, proving the test exercised the pre-existing gate, not the new
+  code. Reverted both — an inert guard and an unfalsifiable test are not
+  evidence-driven work.
+- No source change. `cargo test --workspace` unchanged at 506 passing.
+- Evidence: `docs/reverse-engineering.md` RE-206.
 
 ## Verification
 
-The `regression_capture_scene5` build ran on PSP Slim (firmware 6.61,
-ARK/Infinity, PSPLink v3.2.1) with `exlist` empty and `main_thread` alive
-throughout, after the FPU-trap fix. Two native `scrshot` captures 3 s apart
-differ by 101 pixels, entirely inside PSPLink's own documented corner
-overlay — otherwise byte-identical. The capture (upscaled 2x
-nearest-neighbour) was diffed against `tests/golden/r2-saffron-city-gate.png`
-(itself confirmed byte-identical run-to-run in PPSSPP before use): large
-interior regions pixel-identical, only the expected antialiasing/overlay
-divergence RE-203 already established as acceptable for the other four
-scenes. `cargo test --workspace`: 506 passing (2 romtool, 36 engine, 118
-game, 350 ROM). Native BMP captures reviewed and discarded per
-`docs/psplink.md` (never committed); pack unchanged (hash
-`7647db75...650b2f0`). See RE-204 for the prior session's settling-transient
-finding and measurement methodology.
+RE-206 was a code-and-analysis investigation, not a hardware session:
+`cargo test --workspace` (506 passing, unchanged) confirms no regression
+from the revert. The `check_tilt` reachability claim was verified two ways
+(analytical proof + brute-force numeric search over representative and
+extreme-magnitude inputs, both described in RE-206) rather than asserted.
+No PPSSPP or physical-PSP capture was needed since no source changed.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–205.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–206.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
