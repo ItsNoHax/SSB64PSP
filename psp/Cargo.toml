@@ -75,6 +75,13 @@ transition_audit_capture = []
 # (R1/RE-189).
 effect_spawn_audit_capture = []
 
+# Automatically requests the RE-191 wallpaper-capture snapshot at tick 240,
+# then blits it into the corner of every later frame via
+# `Gpu::blit_wallpaper_debug`. Proves the capture holds real pixel data;
+# there is still no real render-path caller (no 1P-mode/results-screen game
+# state, no packed asset to bind it to). Off by default.
+wallpaper_audit_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true

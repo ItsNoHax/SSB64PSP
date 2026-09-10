@@ -166,6 +166,42 @@ pub unsafe fn transition_photo_data() -> &'static [u8] {
     core::slice::from_raw_parts(ptr, TRANSITION_PHOTO_STRIDE * TRANSITION_PHOTO_HEIGHT * 4)
 }
 
+/// Real content width of the 1P Stage Clear wallpaper-capture snapshot
+/// (`sc1PStageClearCopyFramebufToWallpaper`, RE-190/191): the same 300-texel
+/// active-picture rectangle `TRANSITION_PHOTO_WIDTH` already captures, since
+/// both mechanisms read the same pillarboxed draw area.
+pub const WALLPAPER_PHOTO_WIDTH: usize = 300;
+
+/// Real content height: the whole 220-row active picture, not a padded
+/// tile strip. Unlike [`TRANSITION_PHOTO_HEIGHT`], RE-191 read the ROM's own
+/// destination `Sprite` header and `spDraw` source and found the N64's tile
+/// padding and odd/even row swizzle both exist only to satisfy `LoadBlock`'s
+/// TMEM addressing -- a PSP-side capture needs neither, so this is one plain
+/// rectangular copy with no periodic wrap-fill.
+pub const WALLPAPER_PHOTO_HEIGHT: usize = 220;
+
+/// Row stride in texels, matching [`TRANSITION_PHOTO_STRIDE`]'s own
+/// `WALLPAPER_PHOTO_WIDTH.next_power_of_two()` convention.
+const WALLPAPER_PHOTO_STRIDE: usize = 512;
+
+/// Captured by [`Gpu::request_wallpaper_capture`], read by
+/// [`wallpaper_photo_data`]. No `TextureDesc` role binds this yet -- RE-191's
+/// "Remaining scope" still blocks a real render-path caller (no 1P-mode/
+/// results-screen game state exists to trigger it from, and no packed asset
+/// exists to render it into). Exists so the `wallpaper_audit_capture` debug
+/// build can prove the capture is real pixel data, matching the shape
+/// RE-099/100 used to bootstrap the LB transition capture before it had a
+/// real caller either.
+static mut WALLPAPER_PHOTO: Align16<[u32; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT]> =
+    Align16([0; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT]);
+
+/// Bytes captured for the wallpaper snapshot. Same aliasing/safety contract
+/// as [`transition_photo_data`].
+pub unsafe fn wallpaper_photo_data() -> &'static [u8] {
+    let ptr = core::ptr::addr_of!(WALLPAPER_PHOTO.0) as *const u8;
+    core::slice::from_raw_parts(ptr, WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT * 4)
+}
+
 /// Owns the GU context and the frame lifecycle.
 pub struct Gpu {
     frame_open: bool,
@@ -185,6 +221,9 @@ pub struct Gpu {
     /// Set by [`Gpu::request_transition_capture`]; consumed (and cleared) the
     /// next time `end_frame` finishes syncing the frame that was requested.
     capture_requested: bool,
+    /// Set by [`Gpu::request_wallpaper_capture`]; consumed (and cleared) the
+    /// next time `end_frame` finishes syncing the frame that was requested.
+    wallpaper_capture_requested: bool,
 }
 
 impl Gpu {
@@ -276,6 +315,7 @@ impl Gpu {
             // `sceGuDrawBuffer(fbp0, ...)` above is the initial draw target.
             draw_is_fbp0: true,
             capture_requested: false,
+            wallpaper_capture_requested: false,
         }
     }
 
@@ -340,6 +380,67 @@ impl Gpu {
         }
     }
 
+    /// Requests that the frame currently in flight be copied into the
+    /// wallpaper-capture buffer once it finishes rendering: the PSP-side
+    /// equivalent of `sc1PStageClearCopyFramebufToWallpaper` (RE-191).
+    pub fn request_wallpaper_capture(&mut self) {
+        self.wallpaper_capture_requested = true;
+    }
+
+    /// Copies the top-left 300x220 corner of whichever buffer just finished
+    /// rendering into [`WALLPAPER_PHOTO`]. Same safety contract, pillarbox
+    /// offset reasoning and draw-buffer selection as
+    /// [`Gpu::capture_transition_photo`]; unlike that capture, RE-191 found
+    /// no periodic wrap-fill is needed here, so this is a single plain copy.
+    ///
+    /// # Safety
+    ///
+    /// Same as [`Gpu::capture_transition_photo`]: only between
+    /// `sceGuSync(Finish, Wait)` completing and the next `sceGuSwapBuffers`.
+    unsafe fn capture_wallpaper_photo(&self) {
+        let src = if self.draw_is_fbp0 {
+            self.fbp0_direct
+        } else {
+            self.fbp1_direct
+        } as *const u32;
+        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
+        let dst = core::ptr::addr_of_mut!(WALLPAPER_PHOTO.0) as *mut u32;
+        for y in 0..WALLPAPER_PHOTO_HEIGHT {
+            let src_row = src.add(y * BUF_WIDTH as usize + vx as usize);
+            let dst_row = dst.add(y * WALLPAPER_PHOTO_STRIDE);
+            core::ptr::copy_nonoverlapping(src_row, dst_row, WALLPAPER_PHOTO_WIDTH);
+        }
+    }
+
+    /// Debug-only proof that [`WALLPAPER_PHOTO`] holds real pixel data:
+    /// overwrites the absolute top-left corner of the buffer currently being
+    /// drawn into (inside the pillarbox bar and slightly beyond it, not
+    /// scissored, so it is never touched by ordinary scene rendering) with
+    /// the last capture, via a plain CPU block copy -- the same direct-VRAM-
+    /// write approach `sceGuDebugFlush`'s own glyph overlay already uses.
+    /// Only called by the `wallpaper_audit_capture` build (`main.rs`);
+    /// RE-191's "Remaining scope" still blocks a real render-path caller.
+    ///
+    /// # Safety
+    ///
+    /// Must be called while `self` owns the buffer currently being drawn
+    /// into, before that frame's `sceGuSwapBuffers` (i.e. between
+    /// `begin_frame` and `end_frame`), the same window ordinary draw calls
+    /// use.
+    pub unsafe fn blit_wallpaper_debug(&self) {
+        let dst = if self.draw_is_fbp0 {
+            self.fbp0_direct
+        } else {
+            self.fbp1_direct
+        } as *mut u32;
+        let src = core::ptr::addr_of!(WALLPAPER_PHOTO.0) as *const u32;
+        for y in 0..WALLPAPER_PHOTO_HEIGHT {
+            let dst_row = dst.add(y * BUF_WIDTH as usize);
+            let src_row = src.add(y * WALLPAPER_PHOTO_STRIDE);
+            core::ptr::copy_nonoverlapping(src_row, dst_row, WALLPAPER_PHOTO_WIDTH);
+        }
+    }
+
     /// # Safety
     ///
     /// The returned buffer is handed to the GE, which writes to it
@@ -379,6 +480,10 @@ impl Gpu {
             if self.capture_requested {
                 self.capture_requested = false;
                 self.capture_transition_photo();
+            }
+            if self.wallpaper_capture_requested {
+                self.wallpaper_capture_requested = false;
+                self.capture_wallpaper_photo();
             }
             sys::sceDisplayWaitVblankStart();
             sys::sceGuSwapBuffers();

@@ -2690,10 +2690,15 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   direct ROM header probe (destination `Sprite`/`Bitmap` tiling: 37 tiles of
   6 rows each, exact byte-for-byte match) and the decompiled `spDraw` source
   (odd/even swap is a standard N64 `LoadBlock` 16-bit texture swizzle,
-  unneeded on PSP GE). Still not implemented — no 1P-mode/results-screen
-  state exists yet to call it from, and no packed `Sprite`/`Bitmap` asset
-  representation exists in `romtool`/pack format to render into; next step
-  needs one of those before there is anything to verify on device
+  unneeded on PSP GE). RE-192 implemented and device-verified the PSP-side
+  capture mechanism itself (`Gpu::request_wallpaper_capture`, a plain
+  300×220 block copy with none of the N64 swizzle/tile padding) behind the
+  `wallpaper_audit_capture` build, matching the `TextureDesc::ROLE_FRAMEBUFFER`
+  precedent's own bootstrap shape. Still not wired to real content: no
+  1P-mode/results-screen state exists yet to call it from, and no packed
+  `Sprite`/`Bitmap` asset representation exists in `romtool`/pack format to
+  render the capture into; next step needs one of those before this can bind
+  through the normal mesh pipeline
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
   `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`
