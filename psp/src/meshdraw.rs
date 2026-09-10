@@ -520,6 +520,16 @@ unsafe fn apply_material(
         if p.flags & flags::ALPHA_TEST != 0 {
             sys::sceGuEnable(GuState::AlphaTest);
             sys::sceGuAlphaFunc(sys::AlphaFunc::Greater, 0, 0xFF);
+        } else if p.flags & flags::ALPHA_COMPARE_THRESHOLD != 0 {
+            // RE-195: `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD` -- a second,
+            // real RDP alpha-discard gate independent of `ALPHA_TEST` above
+            // (that one approximates coverage-driven cutout; this one is an
+            // exact reproduction, comparing final pixel alpha against
+            // `G_SETBLENDCOLOR`'s own alpha channel). Only packed when
+            // `ALPHA_TEST` was not already set for this primitive.
+            let reference = (p.alpha_compare_ref >> 24) & 0xFF;
+            sys::sceGuEnable(GuState::AlphaTest);
+            sys::sceGuAlphaFunc(sys::AlphaFunc::GreaterOrEqual, reference as i32, 0xFF);
         } else {
             sys::sceGuDisable(GuState::AlphaTest);
         }

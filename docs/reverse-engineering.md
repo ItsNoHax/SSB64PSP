@@ -10,6 +10,172 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-195 — `G_SETOTHERMODE_H`/`L`'s remaining undecoded fields measured archive-wide; `G_MDSFT_ALPHACOMPARE` found real and partially wired (`PLAN.md` R1)
+
+**Problem.** `PLAN.md` R1's "no unexplained rendering commands remain"
+bullet is the first open item after RE-194. `docs/rendering.md`'s "Measured
+usage" table already accounts for every top-level GBI opcode (RE-119/R0.2),
+but two multi-field commands, `G_SETOTHERMODE_H` and `G_SETOTHERMODE_L`,
+each carry several independent sub-fields at different bit offsets within
+the same opcode. RE-124/RE-127 already measured three of `G_SETOTHERMODE_H`'s
+fields (`G_MDSFT_TEXTFILT`/`TEXTLOD`/`TEXTDETAIL`). `crates/ssb-rom/src/
+mesh.rs`'s `walk` only ever matched two specific `(shift, len)` pairs
+(cycle type, render mode); every other real command fell into the catch-all
+`_ => continue` — decoded by `dl.rs`, never inspected, and never cross-checked
+against what real display lists actually request.
+
+**Measured, not assumed**, using RE-124/127's own method: a temporary
+`#[cfg(feature = "std")]` census in `mesh.rs`'s `walk`, run through the real
+archive-wide `romtool pack` build (not a blind file scan), reverted before
+committing. Six previously-unread `G_SETOTHERMODE_H` fields and two
+`G_SETOTHERMODE_L` fields, cross-checked against `refs/ssb-decomp-re/
+include/PR/gbi.h`'s shift/value constants and the RDP's own per-frame reset
+default (`sSYRdpResetDisplayList`, `refs/ssb-decomp-re/src/sys/rdp.c:26-51`):
+
+| Field | Shift/len | Real values (excluding file 73, see below) | Reset default | Verdict |
+| --- | --- | --- | --- | --- |
+| `G_MDSFT_ALPHADITHER` | 4/2 | 100% `G_AD_DISABLE` (3) | not set explicitly | matches "do nothing" (no PSP dither emulation exists either way) |
+| `G_MDSFT_RGBDITHER` | 6/2 | 100% `G_CD_MAGICSQ` (0) | `G_CD_MAGICSQ` | matches default |
+| `G_MDSFT_COMBKEY` | 8/1 | 100% `G_CK_NONE` (0) | `G_CK_NONE` | matches default |
+| `G_MDSFT_TEXTCONV` | 9/3 | 100% `G_TC_FILT` (6) | `G_TC_FILT` | matches default |
+| `G_MDSFT_TEXTLUT` | 14/2 | `G_TT_NONE`/`G_TT_RGBA16` only, tracks `G_SETTILE`'s own CI/non-CI format | n/a (RDP-internal palette-format bookkeeping) | redundant with format data already read from `G_SETTILE` |
+| `G_MDSFT_TEXTPERSP` | 19/1 | 100% `G_TP_PERSP` (1) | `G_TP_PERSP` | matches default |
+| `G_MDSFT_PIPELINE` | 23/1 | 100% `G_PM_1PRIMITIVE` (1) | `G_PM_NPRIMITIVE` (0) | deviates from default, but is an RDP scheduling hint with no visible effect on any pixel — see below |
+| `G_MDSFT_ZSRCSEL` | 2/1 (L) | 100% `G_ZS_PIXEL` (0) | `G_ZS_PIXEL` | matches default |
+| `G_MDSFT_ALPHACOMPARE` | 0/2 (L) | 70.2% `G_AC_NONE` (0), 29.8% `G_AC_THRESHOLD` (1), never `G_AC_DITHER` | `G_AC_NONE` | **real, non-default, previously undecoded — see below** |
+
+**One file is a measurement artifact, correctly excluded.** File 73
+(`MVOpeningSector`, the opening movie — the same file RE-120 already found
+has orphaned combiner content this project does not render) reported
+415,245 `G_MDSFT_TEXTLUT` events alone, ~230x every other field's total.
+`MAX_DL_DEPTH` is 18; the opening movie's own display-list call tree
+branches enough that a shared texture-setup subroutine gets replayed a
+combinatorial number of times by this project's straightforward recursive
+`walk`, the same call-graph structure real N64 hardware would also replay
+if this content were ever actually drawn — which it is not, since no
+cutscene-playback system exists yet (RE-120). Every other field's file-73
+contribution is unremarkable (10-30 occurrences, in line with its other
+real commands); only `TEXTLUT` alone hits this file's particular
+subroutine-sharing shape. Excluded from the table above as unrepresentative
+of any content this project renders; not a decode bug.
+
+**`TEXTLUT`'s own high frequency (thousands, even excluding file 73) is
+real, not an artifact — and still not a gap.** Unlike the filter/LOD/detail
+fields (typically set once per display list), `TEXTLUT` is coupled to each
+individual texture bind, so it scales with `G_LOADTLUT`/`G_SETTILE`
+frequency instead. Its two real values track the texture format
+(`G_SETTILE`'s own `fmt`/`siz`) this project already reads directly to pick
+a PSP pixel format; `TEXTLUT` never carries any independent behavior beyond
+what that existing read already captures, and zero real `G_TT_IA16` request
+exists to miss.
+
+**`G_MDSFT_PIPELINE` deviating from its own reset default is real but
+inert.** All 81 real requests (excluding file 73) ask for
+`G_PM_1PRIMITIVE`, not the reset list's `G_PM_NPRIMITIVE`. This field only
+controls whether the RDP pipelines texture loads across consecutive
+primitives for throughput — a real N64 hardware scheduling optimization
+with no PSP GE equivalent and, more importantly, no effect on any pixel's
+final color. Measured and explained, not implemented; nothing to reproduce.
+
+**`G_MDSFT_ALPHACOMPARE` is real, genuinely new, and only partially safe to
+consume.** Unlike every other field above, this one is *not* explained by
+matching the reset default — 29.8% of real commands ask for `G_AC_THRESHOLD`,
+which makes the RDP discard a pixel whose final alpha is below
+`G_SETBLENDCOLOR`'s own alpha channel. This is a distinct real mechanism
+from `MeshMaterial::alpha_test` (RE-069's `CVG_X_ALPHA | ALPHA_CVG_SEL`
+coverage-cutout approximation, read from the *render mode* field, a
+different bit range of the same `G_SETOTHERMODE_L` command) — the two are
+independently configurable on real hardware.
+
+A second temporary census, correlating `alpha_test` against
+`G_MDSFT_ALPHACOMPARE`'s live value at every real triangle emission
+(`emit_tri`), found the two do not coincide:
+
+| `alpha_test` | `G_AC_THRESHOLD` live | Real vertex-visits |
+| --- | --- | --- |
+| false | false | 1,639,649 |
+| false | **true** | **10,334** |
+| true | false | 1,389 |
+| true | true | 28,859 |
+
+The `alpha_test=false, G_AC_THRESHOLD=true` row is a genuine, previously
+completely unmeasured gap: primitives where this project applies *no*
+alpha discard today, but real hardware would. The `alpha_test=true`
+rows are not a new problem — `alpha_test` approximates a different,
+already-documented real mechanism (RE-069) regardless of `ALPHACOMPARE`'s
+own state, so its own already-accepted approximation is unaffected either
+way. Combining both gates when they coexist (the `true, true` row) would
+need a priority decision this measurement does not resolve, since the PSP
+GE has only one alpha-test unit to approximate either mechanism with.
+
+**Implementation, scoped to the safe, additive case only.**
+`MeshMaterial::alpha_compare_threshold: bool` (`crates/ssb-rom/src/
+mesh.rs`) decodes `G_SETOTHERMODE_L { shift: 0, len: 2, .. }` directly,
+independent of the existing render-mode arm. `pack.rs`'s `flags::
+ALPHA_COMPARE_THRESHOLD` (`PrimDesc::alpha_compare_ref` carries the
+reference alpha, `G_SETBLENDCOLOR`'s own colour, `PrimDesc::SIZE` 48 → 52,
+`pack::VERSION` 25 → 26) is only set when `!m.alpha_test &&
+m.alpha_compare_threshold && m.blend_color.is_some()` — exactly the
+disjoint, already-safe 10,334-visit case, never touching a primitive
+`alpha_test` already handles. `psp/src/meshdraw.rs`'s `apply_material`
+enables `GuState::AlphaTest` with `sceGuAlphaFunc(GreaterOrEqual,
+reference, 0xFF)` in that case, an `else if` after the existing
+`ALPHA_TEST` arm so the two can never both apply to one primitive.
+The `true, true` (28,859-visit) case is left exactly as it already
+was — a known, documented limit of this fix, not silently dropped.
+
+**Verification.** Two new `mesh.rs` unit tests
+(`g_ac_threshold_sets_alpha_compare_threshold_independently_of_alpha_test`,
+`g_ac_none_leaves_alpha_compare_threshold_off`) lock the decode against a
+synthetic command sequence with no render-mode command at all, confirming
+the two flags are genuinely independent. Three new `pack.rs` unit tests
+lock the packing guard: the flag/reference are packed together, are *not*
+packed when `alpha_test` already applies, and are *not* packed without a
+real `blend_color`. `cargo test --workspace` (`SSB64_ROM` set): 347 passing
+(was 342). `cargo fmt --check` and `cargo clippy --workspace --all-targets`
+both clean; `cargo clippy --release` inside `psp/` shows no new warnings
+(the two pre-existing `static_mut_refs`/`chunks_exact` warnings it reports
+are at unrelated lines, both predating this session).
+
+Rebuilt the pack: 1345 textures bound (unchanged, this fix touches no
+texture path), size 8060.0 → 8089.5 KiB (`PrimDesc` growing 48 → 52 bytes
+across ~7,500 real primitives). `cargo psp --release` +
+`tools/run-ppsspp.sh --seconds 8`: clean boot, 60 FPS, no error/panic in
+the log. Pixel-diffed the resulting screenshot against an equivalent
+pre-fix build (built from a `git stash` of this session's changes): of the
+whole 960×544 frame, 257 pixels differ (threshold 10/255 per channel), all
+of them inside the on-screen debug HUD's own frame-timing digits (`tick`/
+`cpu`, which vary run-to-run regardless of any code change) — zero pixels
+differ anywhere in the rendered 3D geometry. The debug viewer's default
+boot scene (Dream Land + one fighter) does not happen to contain any of
+the 10,334 newly-affected vertex-visits, so this is a clean-build
+regression check, not a positive visual confirmation of the fix itself;
+no other file in this session's affected set was individually screenshotted.
+
+**What this closes.** Every `G_SETOTHERMODE_H`/`L` field now has a
+demonstrated explanation: matches the RDP reset default (6 fields),
+redundant with an already-read signal (`TEXTLUT`), measured-but-visually-
+inert (`PIPELINE`), or measured-and-now-partially-consumed
+(`ALPHACOMPARE`). Combined with R0.2's existing full top-level-opcode
+inventory (0 real `Cmd::Other` archive-wide, `G_MTX`/`G_POPMTX` confirmed
+zero real occurrences matching RE-054's CPU-transform finding, the
+"never emitted" opcode list re-confirmed by this session's fresh
+`romtool scan`) and RE-120's existing `G_SHADE`/shade-reading-combiner
+cross-reference, no rendering command in this ROM's real content remains
+unexplained. `PLAN.md` R1's "no unexplained rendering commands remain"
+bullet is checked off on that basis — it does not claim every command's
+*effect* is pixel-exact (the `alpha_test`+`ALPHACOMPARE` combined case and
+`G_SHADE`'s 2 live Yoshi's Island primitives remain open, documented
+approximation limits, not mysteries).
+
+**Confidence: certain** for every field's measured value and the decode/
+pack/consume wiring (unit-tested, on-device clean-build verified).
+**Unconfirmed** whether the newly-consumed `ALPHACOMPARE` threshold is
+visible anywhere in this ROM's real content, since the boot scene used for
+on-device verification does not contain an affected primitive.
+
+---
+
 ## RE-194 — `gcDrawMObjForDObj`'s runtime tile/texture-scale state, measured and reproduced; `MOBJ_FLAG_FRAC` confirmed dead (`PLAN.md` R1)
 
 **Problem.** `PLAN.md` R1's "runtime `MObj` display-state parity" bullet asks

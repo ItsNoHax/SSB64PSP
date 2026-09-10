@@ -2733,7 +2733,24 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   — Dream Land's own affected `MObjSub`s (file 104) render pixel-identical
   geometry, the same "not visible at this camera distance" outcome RE-075/081
   already recorded for other verified fixes to this scene.
-* [ ] no unexplained rendering commands remain
+* [x] no unexplained rendering commands remain — RE-195 closes the last gap:
+  `G_SETOTHERMODE_H`/`L`'s six/two remaining undecoded sub-fields, measured
+  archive-wide via the real `romtool pack` build. Six match the RDP's own
+  reset default exactly, `G_MDSFT_TEXTLUT` is redundant with `G_SETTILE`
+  format data already read, `G_MDSFT_PIPELINE` deviates from its default
+  but has no visible effect (an RDP scheduling hint). `G_MDSFT_ALPHACOMPARE`
+  is a genuine, previously undecoded field: 29.8% of real commands request
+  `G_AC_THRESHOLD`, a real discard gate independent of the existing
+  `alpha_test` approximation. Wired the safe, additive 10,334-vertex-visit
+  case where no discard currently applies at all (`MeshMaterial::
+  alpha_compare_threshold`, `flags::ALPHA_COMPARE_THRESHOLD`,
+  `pack::VERSION` 26); the case where both gates already coexist is a
+  documented, unresolved combination limit, not silently dropped. Combined
+  with R0.2's existing full opcode inventory (0 real `Cmd::Other`
+  archive-wide) and RE-120's `G_SHADE` cross-reference, every rendering
+  command in this ROM's real content now has a demonstrated explanation —
+  this does not claim every command's effect is pixel-exact, only that
+  none remains a mystery
 * [ ] no unexplained missing assets remain
 * [ ] no unexplained material failures remain
 * [ ] rendering regression suite passes

@@ -155,6 +155,16 @@ pub struct MeshMaterial {
     /// (`sceGuAlphaFunc(Greater, 0, 0xFF)`), which is what this flag drives
     /// on the PSP side.
     pub alpha_test: bool,
+    /// `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD` (RE-195): a second, real,
+    /// independent RDP alpha-discard gate from `alpha_test` above -- the
+    /// RDP compares final pixel alpha against `G_SETBLENDCOLOR`'s own alpha
+    /// channel (`blend_color`), not a multisampled coverage approximation.
+    /// Archive-wide, measured only alongside an *already-false* `alpha_test`
+    /// in the majority of its real occurrences; consumed only in that case
+    /// (`pack.rs`), since combining both gates when they coexist would need
+    /// a priority decision this measurement did not resolve, and the PSP GE
+    /// has only one alpha-test unit to approximate either with.
+    pub alpha_compare_threshold: bool,
     /// `G_SETRENDERMODE`'s cycle-1/cycle-2 blend equation actually reads
     /// back the framebuffer weighted by `1 - alpha` (`G_BL_CLR_MEM`,
     /// `G_BL_1MA`) -- real translucency, not just "the blender unit is
@@ -1795,6 +1805,21 @@ fn walk(
             } => {
                 state.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
                 state.material.translucent = render_mode_is_translucent(data);
+            }
+
+            // `G_MDSFT_ALPHACOMPARE`, 2 bits at shift 0 (RE-195): a second,
+            // independent real alpha-discard gate from `alpha_test` above
+            // (that one approximates `CVG_X_ALPHA | ALPHA_CVG_SEL`'s
+            // multisampled-coverage cutout; this one is the RDP comparing
+            // final pixel alpha against `G_SETBLENDCOLOR`'s own alpha
+            // channel). Archive-wide, measured only `G_AC_NONE` (0) and
+            // `G_AC_THRESHOLD` (1) occur, never `G_AC_DITHER` (3).
+            Cmd::SetOtherModeL {
+                shift: 0,
+                len: 2,
+                data,
+            } => {
+                state.material.alpha_compare_threshold = data & 0x3 == 1;
             }
 
             Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = Some(rgba),
@@ -3548,6 +3573,46 @@ mod tests {
         let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
         assert!(m.alpha_test);
         assert!(!m.translucent);
+    }
+
+    #[test]
+    fn g_ac_threshold_sets_alpha_compare_threshold_independently_of_alpha_test() {
+        // RE-195: `G_MDSFT_ALPHACOMPARE` (`G_SETOTHERMODE_L`, shift 0, len
+        // 2) is a real, separate RDP gate from the render-mode-driven
+        // `alpha_test` above -- an ordinary opaque render mode (no
+        // `CVG_X_ALPHA`/`ALPHA_CVG_SEL`) leaves `alpha_test` off while
+        // `G_AC_THRESHOLD` still turns this flag on.
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            Cmd::SetOtherModeL {
+                shift: 0,
+                len: 2,
+                data: 1, // G_AC_THRESHOLD
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(m.alpha_compare_threshold);
+        assert!(!m.alpha_test, "no render mode was ever set here");
+    }
+
+    #[test]
+    fn g_ac_none_leaves_alpha_compare_threshold_off() {
+        let file = vertex_data(3);
+        let cmds = [
+            vtx(3),
+            Cmd::SetOtherModeL {
+                shift: 0,
+                len: 2,
+                data: 0, // G_AC_NONE
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let m = convert(&cmds, Source::bare(&file)).unwrap().primitives[0].material;
+        assert!(!m.alpha_compare_threshold);
     }
 
     #[test]
