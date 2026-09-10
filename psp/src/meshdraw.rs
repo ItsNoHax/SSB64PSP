@@ -163,8 +163,13 @@ pub struct DrawState {
     /// *not* folded into `last_flags`: a rotating camera changes the basis
     /// while every primitive's flags and texture stay identical.
     pub texgen_basis: Option<([f32; 3], [f32; 3])>,
-    /// Basis last written to GE lights [`TEXGEN_LIGHT_S`]/[`TEXGEN_LIGHT_T`].
-    last_texgen_basis: Option<([f32; 3], [f32; 3])>,
+    /// The model matrix currently on the GU stack, captured per node.
+    ///
+    /// The GE's texture-matrix generator reads the vertex's **object-space**
+    /// normal, so the node's own world transform has to be folded into the
+    /// texture matrix. `None` means no node has been placed yet, in which
+    /// case object and world space coincide.
+    texgen_model: Option<ScePspFMatrix4>,
     /// Coordinate mapping last installed.
     ///
     /// Separate from `last_texture` because the scale depends on *both* the
@@ -173,22 +178,6 @@ pub struct DrawState {
     /// different `G_TEXTURE` scales or tile origins.
     last_texture_mapping: Option<TextureMapping>,
 }
-
-/// GE light slot supplying the environment-map generator's **S** basis
-/// vector, reserved for that use alone.
-///
-/// `sceGuTexMapMode(EnvironmentMap, u, v)`'s last two arguments are *light
-/// indices*, not texture axes: the GE derives `u` from `dot(light[u].dir,
-/// world_normal)` and `v` likewise. Light 0 carries SSB64's own per-fighter
-/// directional illumination (`ftDisplayLightsDrawReflect`, RE-164), so using
-/// it here would couple the reflection's horizontal axis to the stage's light
-/// angle. Lights 2 and 3 are reserved instead and are never used for
-/// illumination; light 1 is left alone so a future second illumination source
-/// has somewhere to go.
-const TEXGEN_LIGHT_S: i32 = 2;
-/// GE light slot supplying the environment-map generator's **T** basis
-/// vector. See [`TEXGEN_LIGHT_S`].
-const TEXGEN_LIGHT_T: i32 = 3;
 
 /// The basis a camera-less (identity view) caller generates against: world X
 /// and Y, which under an identity view are also the screen's axes.
@@ -218,7 +207,7 @@ impl DrawState {
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
         self.last_texture_mapping = None;
-        self.last_texgen_basis = None;
+        self.texgen_model = None;
         self.runtime_fighter_light = false;
         self.draws = 0;
         self.triangles = 0;
@@ -308,42 +297,57 @@ impl DrawState {
         self.last_texture_mapping = None;
     }
 
-    /// Installs the reserved texgen basis lights when the camera basis has
-    /// changed since the last install.
+    /// Records the model matrix a node is about to draw under.
     ///
-    /// Called from the texgen path only: a frame that draws no `G_TEXTURE_GEN`
-    /// primitive never touches lights 2/3 at all.
-    unsafe fn apply_texgen_basis(&mut self) {
-        let basis = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
-        if self.last_texgen_basis == Some(basis) {
-            return;
-        }
-        self.last_texgen_basis = Some(basis);
-        self.state_changes += 1;
-        let vector = |v: [f32; 3]| ScePspFVector3 {
-            x: v[0],
-            y: v[1],
-            z: v[2],
+    /// Called once per node, from the same place the matrix is pushed, so the
+    /// texgen path never has to reconstruct it.
+    pub unsafe fn note_model_matrix(&mut self) {
+        let mut m = ScePspFMatrix4 {
+            x: ScePspFVector4 { x: 1.0, y: 0.0, z: 0.0, w: 0.0 },
+            y: ScePspFVector4 { x: 0.0, y: 1.0, z: 0.0, w: 0.0 },
+            z: ScePspFVector4 { x: 0.0, y: 0.0, z: 1.0, w: 0.0 },
+            w: ScePspFVector4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 },
         };
-        // `LightType::Directional` makes the GE read the vector as a
-        // direction rather than a position, which is what the environment-map
-        // generator dots against the world normal. The component argument is
-        // irrelevant to coordinate generation and these lights are never
-        // enabled for illumination, so nothing they carry can reach a colour.
-        let s = vector(basis.0);
-        let t = vector(basis.1);
-        sys::sceGuLight(
-            TEXGEN_LIGHT_S,
-            LightType::Directional,
-            LightComponent::DIFFUSE,
-            &s,
-        );
-        sys::sceGuLight(
-            TEXGEN_LIGHT_T,
-            LightType::Directional,
-            LightComponent::DIFFUSE,
-            &t,
-        );
+        sys::sceGumStoreMatrix(&mut m);
+        self.texgen_model = Some(m);
+        // The matrix is part of the generated-coordinate mapping, so a node
+        // change has to reinstall it even when nothing else about the
+        // primitive moved. Only the generated mapping depends on it: an
+        // authored-UV mapping would otherwise be reissued once per node for
+        // nothing.
+        if self.last_texture_mapping.is_some_and(|m| m.environment) {
+            self.last_texture_mapping = None;
+        }
+    }
+
+    /// The look-at basis expressed in the current node's **object** space, the
+    /// two rows the RSP itself derives.
+    ///
+    /// `refs/BattleShip`'s `CalculateNormalDir` is the reference: it takes the
+    /// look-at direction, multiplies by the transposed modelview, and
+    /// normalises. Reproduced here exactly, including the normalisation --
+    /// which is also what makes a uniform model scale drop out, since the
+    /// transpose of a scaled rotation scales every row by the same factor.
+    fn texgen_object_basis(&self) -> ([f32; 3], [f32; 3]) {
+        let (right, up) = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
+        let Some(m) = self.texgen_model else {
+            return (right, up);
+        };
+        // `M^T v`: each component is one of the matrix's basis columns dotted
+        // with `v`, which is the object-space direction that maps onto `v`.
+        let transposed = |v: [f32; 3]| {
+            let dot = |c: &ScePspFVector4| c.x * v[0] + c.y * v[1] + c.z * v[2];
+            let r = [dot(&m.x), dot(&m.y), dot(&m.z)];
+            let len = ssb_engine::math::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+            if len > 1.0e-6 {
+                [r[0] / len, r[1] / len, r[2] / len]
+            } else {
+                // A singular node matrix has no direction to express; leave
+                // the coordinate constant rather than producing infinities.
+                [0.0; 3]
+            }
+        };
+        (transposed(right), transposed(up))
     }
 }
 
@@ -530,19 +534,37 @@ unsafe fn bind_texture(
 ///   `1024 / uploaded_dim`.
 /// * **`G_TEXTURE_GEN`.** The RSP discards authored UVs entirely and builds
 ///   coordinates from the vertex normal and the two look-at basis vectors,
-///   then applies `G_TEXTURE`'s scale to *those*. The GE's own environment-map
-///   generator produces the same dot product already normalised, so the scale
-///   is `gsp_scale / (64 * uploaded_dim)` -- see
-///   `ssb_rom::psp_texture::env_map_tex_scale` for the derivation and its
-///   host-side tests.
+///   then applies `G_TEXTURE`'s scale to *those* and addresses TMEM relative
+///   to the render tile's origin.
 ///
-/// Before RE-214 the authored factor was installed by `bind_texture` for every
-/// binding and left in place under environment mapping, which multiplied an
-/// already-normalised coordinate by roughly `1024 / dim`.
+/// The GE's own `EnvironmentMap` generator computes the same dot product, but
+/// it is **not** usable here: `sceGuTexScale` and `sceGuTexOffset` have no
+/// effect in that mode, so it can only ever sweep the full uploaded texture.
+/// That was measured, not assumed -- installing the 64x-larger authored-UV
+/// factor under environment mapping produced a byte-identical PPSSPP capture
+/// of `regression_capture_scene11` (RE-214). Real content needs the scale: of
+/// the six textures a texgen draw binds archive-wide, `StageMetalFile2`'s own
+/// 32x8 one sweeps 16 of its 32 uploaded texels, and the 48x42 tile padded to
+/// 64x64 sweeps 47x41 -- the rest is padding the RDP never samples.
+///
+/// So the generator used is the texture-**matrix** one, with the projection
+/// source set to the normalised vertex normal. That takes the same dot
+/// product and lets the matrix carry the exact affine term the RSP applies:
+///
+/// ```text
+/// F3DEX:  S10.5 = ((dot + 1) / 4) * gsp_scale      (texels = S10.5 / 32)
+/// here:   u     = dot * a + (a + origin_shift),  a = gsp_scale / (128 * dim)
+/// ```
+///
+/// The GE feeds this generator the vertex's **object-space** normal, so the
+/// node's world transform is folded into the matrix rows through
+/// `DrawState::texgen_object_basis` -- which is the RSP's own `M^T · lookat`,
+/// normalised, exactly as `refs/BattleShip`'s `CalculateNormalDir` does it.
 ///
 /// `G_TEXTURE_GEN_LINEAR` is a *remaining* deviation, not silently exact: the
-/// GE has no `acos` in its coordinate generator, so a linear primitive is
-/// drawn through the ordinary environment mapping here.
+/// generated coordinate is affine in the dot product either way, and the
+/// linear form's `acos` curve is not, so a linear primitive still draws
+/// through the ordinary mapping here.
 unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32) {
     let environment = p.flags & flags::TEXTURE_GEN != 0;
     let key = TextureMapping {
@@ -553,11 +575,6 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
         origin_s: p.texgen_origin_s,
         origin_t: p.texgen_origin_t,
     };
-    // The basis is camera state and must be re-checked every texgen primitive
-    // even when nothing in `key` moved.
-    if environment {
-        st.apply_texgen_basis();
-    }
     if st.last_texture_mapping == Some(key) {
         return;
     }
@@ -578,43 +595,63 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     let w = t.stride as u32;
     let h = ssb_rom::psp_texture::pad_to_power_of_two(t.height as u32);
 
-    if environment {
-        sys::sceGuTexMapMode(
-            sys::TextureMapMode::EnvironmentMap,
-            TEXGEN_LIGHT_S as u32,
-            TEXGEN_LIGHT_T as u32,
-        );
-        sys::sceGuTexScale(
-            ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w),
-            ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h),
-        );
-        // The tile origin the RDP subtracts before addressing TMEM. Applied
-        // on a clamped axis only, exactly matching the rule
-        // `mesh::Builder::push_vertex` uses when it bakes the same shift into
-        // authored UVs (RE-152): a repeat axis keeps absolute coordinates
-        // because its mask phase is already meaningful.
-        let offset = |origin: u16, clamp: bool, dim: u32| {
-            if clamp {
-                // `origin` is quarter-texel S10.2; normalise against the
-                // uploaded dimension the coordinate is expressed in.
-                -(origin as f32 / 4.0) / dim as f32
-            } else {
-                0.0
-            }
-        };
-        sys::sceGuTexOffset(
-            offset(p.texgen_origin_s, t.wrap & TextureDesc::CLAMP_S != 0, w),
-            offset(p.texgen_origin_t, t.wrap & TextureDesc::CLAMP_T != 0, h),
-        );
-    } else {
+    if !environment {
         sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
         sys::sceGuTexScale(
             ssb_rom::psp_texture::authored_uv_tex_scale(w),
             ssb_rom::psp_texture::authored_uv_tex_scale(h),
         );
-        // Authored UVs already had the origin baked out at pack time.
+        // Authored UVs already had the tile origin baked out at pack time.
         sys::sceGuTexOffset(0.0, 0.0);
+        return;
     }
+
+    let (basis_s, basis_t) = st.texgen_object_basis();
+    // Half the normalised span, because the dot product covers [-1, 1].
+    let a_s = 0.5 * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w);
+    let a_t = 0.5 * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h);
+    // The tile origin the RDP subtracts before addressing TMEM. Applied on a
+    // clamped axis only, exactly matching the rule
+    // `mesh::Builder::push_vertex` uses when it bakes the same shift into
+    // authored UVs (RE-152): a repeat axis keeps absolute coordinates because
+    // its mask phase is already meaningful.
+    let shift = |origin: u16, clamp: bool, dim: u32| {
+        if clamp {
+            // `origin` is quarter-texel S10.2; normalise against the uploaded
+            // dimension the coordinate is expressed in.
+            -(origin as f32 / 4.0) / dim as f32
+        } else {
+            0.0
+        }
+    };
+    let b_s = a_s + shift(p.texgen_origin_s, t.wrap & TextureDesc::CLAMP_S != 0, w);
+    let b_t = a_t + shift(p.texgen_origin_t, t.wrap & TextureDesc::CLAMP_T != 0, h);
+
+    // Column `i` holds what object-space axis `i` contributes to `(s, t, q)`.
+    // `q` is pinned to 1 so the generator's perspective divide is a no-op and
+    // the mapping stays exactly affine.
+    let column = |i: usize| ScePspFVector4 {
+        x: a_s * basis_s[i],
+        y: a_t * basis_t[i],
+        z: 0.0,
+        w: 0.0,
+    };
+    sys::sceGuSetMatrix(
+        sys::MatrixMode::Texture,
+        &ScePspFMatrix4 {
+            x: column(0),
+            y: column(1),
+            z: column(2),
+            w: ScePspFVector4 {
+                x: b_s,
+                y: b_t,
+                z: 1.0,
+                w: 1.0,
+            },
+        },
+    );
+    sys::sceGuTexMapMode(sys::TextureMapMode::TextureMatrix, 0, 0);
+    sys::sceGuTexProjMapMode(sys::TextureProjectionMapMode::NormalizedNormal);
 }
 
 /// How the GE is currently turning vertex data into texture coordinates.
@@ -1246,6 +1283,10 @@ unsafe fn draw_object_posed_filtered(
             sys::sceGumMultMatrix(&local);
         }
 
+        // The texgen path folds this node's own transform into the texture
+        // matrix, so it has to be captured after the branch above -- both
+        // arms leave a different matrix on the stack.
+        st.note_model_matrix();
         tris += draw_mesh(pack, &mesh, st, mat_anim, effect_mat_anim);
     }
     tris

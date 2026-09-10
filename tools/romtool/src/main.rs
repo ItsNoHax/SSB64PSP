@@ -85,7 +85,7 @@ USAGE:
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
                                [--search] [--expect-tables <tables.tsv>]
-    romtool texgen   <rom.z64> [--file <id>] [--lines]
+    romtool texgen   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
@@ -6929,16 +6929,69 @@ impl TexgenWalk {
 /// `pack` converts: every scene graph's planned draw order (state threaded
 /// across nodes, as `convert_sequence` does), then the discovered root lists no
 /// graph claims.
+/// Reports every texgen primitive a built pack carries, with the texture
+/// dimensions the GE will normalise its generated coordinates against.
+fn report_packed_texgen(path: &Path) -> Res {
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+    println!("packed texgen primitives ({})", path.display());
+    println!(
+        "  {:>6}  {:>5}  {:>6}  {:>9}  {:>11}  {:>9}  {:>9}",
+        "prim", "tris", "linear", "texture", "uploaded", "scale S/T", "origin"
+    );
+    let mut count = 0;
+    for i in 0..pack.prim_count() {
+        let Some(p) = pack.prim(i) else { continue };
+        if p.flags & ssb_rom::pack::flags::TEXTURE_GEN == 0 {
+            continue;
+        }
+        count += 1;
+        let linear = p.flags & ssb_rom::pack::flags::TEXTURE_GEN_LINEAR != 0;
+        let t = pack.texture(p.texture);
+        let dims = t.as_ref().map_or("none".to_string(), |t| {
+            format!(
+                "{}x{}",
+                t.stride,
+                ssb_rom::psp_texture::pad_to_power_of_two(t.height as u32)
+            )
+        });
+        println!(
+            "  {:>6}  {:>5}  {:>6}  {:>9}  {:>11}  {:#06x}/{:#06x}  {:>4}/{:<4}",
+            i,
+            p.index_count / 3,
+            linear,
+            p.texture,
+            dims,
+            p.texgen_scale_s,
+            p.texgen_scale_t,
+            p.texgen_origin_s,
+            p.texgen_origin_t
+        );
+    }
+    println!("  {count} texgen primitive(s)");
+    println!();
+    Ok(())
+}
+
 fn texgen(path: &Path, args: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
     let mut verbose = false;
+    let mut pack_path: Option<PathBuf> = None;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match *arg {
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
             "--lines" => verbose = true,
+            "--pack" => pack_path = it.next().map(PathBuf::from),
             other => return Err(format!("unknown option {other}").into()),
         }
+    }
+
+    // The other half of the census: what a built pack actually carries for
+    // the same primitives, so the ROM measurement above can be checked
+    // against the state the renderer will really see.
+    if let Some(pack_path) = &pack_path {
+        report_packed_texgen(pack_path)?;
     }
 
     let (data, info) = load_rom(path)?;

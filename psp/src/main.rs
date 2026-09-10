@@ -83,6 +83,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene9")
             || cfg!(feature = "regression_capture_scene10")
             || cfg!(feature = "regression_capture_scene11")
+            || cfg!(feature = "regression_capture_scene12")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -533,7 +534,10 @@ unsafe fn run() -> ! {
             }
         }
     }
-    if cfg!(feature = "regression_capture_scene11") {
+    if cfg!(any(
+        feature = "regression_capture_scene11",
+        feature = "regression_capture_scene12"
+    )) {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
                 p.object(i)
@@ -623,7 +627,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene8",
             feature = "regression_capture_scene9",
             feature = "regression_capture_scene10",
-            feature = "regression_capture_scene11"
+            feature = "regression_capture_scene11",
+            feature = "regression_capture_scene12"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -730,6 +735,14 @@ unsafe fn run() -> ! {
         feature = "effect_material_audit_capture"
     )) {
         0.45f32
+    } else if cfg!(feature = "regression_capture_scene12") {
+        // Scene 12 is scene 11's object at a quarter turn (RE-214). A frozen
+        // reflection is not evidence that the coordinate generator works: a
+        // constant, a stuck basis and a correct basis all produce the same
+        // single frame. Two deterministic captures of the same geometry under
+        // the same camera at two known rotations make the response to
+        // rotation measurable instead.
+        core::f32::consts::FRAC_PI_2
     } else {
         0.0f32
     };
@@ -1153,7 +1166,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene8",
                     feature = "regression_capture_scene9",
                     feature = "regression_capture_scene10",
-                    feature = "regression_capture_scene11"
+                    feature = "regression_capture_scene11",
+                    feature = "regression_capture_scene12"
                 ))
             {
                 spin += 0.02;

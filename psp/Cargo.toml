@@ -93,6 +93,12 @@ regression_capture_scene10 = []
 # G_TEXTURE_GEN / G_TEXTURE_GEN_LINEAR material state without item gameplay.
 regression_capture_scene11 = []
 
+# The same StageMetalFile2 graph as scene 11, frozen a quarter turn further
+# round (RE-214). One frozen reflection cannot distinguish a correct texgen
+# basis from a stuck or constant one; a second deterministic capture of the
+# same geometry under the same camera at a known different rotation can.
+regression_capture_scene12 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
