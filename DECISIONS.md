@@ -356,7 +356,7 @@ read by anything.
 
 **Reasoning:** Clean separation. Without pack, viewer falls back to built-in tetrahedron.
 
-**Reference:** AGENTS.md §15 (Asset Pack Discipline), README Quick Start
+**Reference:** `docs/agent-protocol.md` (asset-pack discipline), README Quick Start
 
 ---
 
@@ -425,7 +425,7 @@ read by anything.
 
 **Reasoning:** Legal requirement. User supplies own ROM. Build generates assets locally.
 
-**Reference:** AGENTS.md §15 (Asset Pack Discipline), README Legal
+**Reference:** `docs/agent-protocol.md` (asset-pack discipline), README Legal
 
 ---
 
@@ -475,7 +475,7 @@ read by anything.
 
 **Reference:** `AGENTS.md` §6, §10, `PLAN.md` R0.18, `README.md` "References"
 
-**Reference:** AGENTS.md §13 (Task Completion Semantics), `docs/porting-status.md` header
+**Reference:** `docs/agent-protocol.md` (task completion semantics), `docs/porting-status.md` header
 
 ---
 
