@@ -39,7 +39,7 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | Texture filtering | COMPLETE | RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`; the PSP path's `Linear` filtering matches | None |
 | Texture addressing | COMPLETE for implemented content | `PLAN.md` R0.5/R0.2: repeat (RE-044/RE-066), mirror (RE-067, pre-baked at pack time), clamp (RE-102, native `sceGuTexWrap(Clamp, ...)` per axis), masks/shifts (RE-044) all measured archive-wide and reproduced. RE-152 rebases nonzero `G_SETTILESIZE` origins on clamped axes while preserving repeat-axis mask phase, fixing Fox's isolated lower-face primitive in PPSSPP | Physical PSP validation remains part of R2 |
 | LOD/mipmaps | COMPLETE (original behavior identified and reproduced) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. RE-213 stopped exposing levels above zero (`sceGuTexMode` max-mip 0, `sceGuTexLevelMode(Const, 0.0)`, bilinear); RE-214 revalidated that after the texgen refactor — `bind_texture` still binds level zero only, and Dream Land is byte-identical to RE-213's own level-zero capture, SHA-256 `08cc25cc...` | Generated lower levels stay in the pack but inert; removing them is a separate pack-format decision. Dream Land's canopy discrepancy remains the separate open R0.5 item |
-| Texture coordinate generation | VERIFYING (ordinary), deviation (linear) | RE-214: raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` bits preserved independently; archive-wide census proves primitive-level state is invariant; `gSPTexture` scale and tile origin carried to the GE and applied through the texture-matrix generator against the camera's world right/up basis; PPSSPP and physical-PSP captures of `StageMetalFile2` at two rotations | No original-N64 comparison exists (Meta Crystal is 1P-stage-8 only, and RE-151's scripted harness no longer exists). `G_TEXTURE_GEN_LINEAR`'s 269 triangles still use the ordinary mapping |
+| Texture coordinate generation | VERIFYING (ordinary), COMPLETE (linear, exact) | RE-214: raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` bits preserved independently; archive-wide census proves primitive-level state is invariant; `gSPTexture` scale and tile origin carried to the GE and applied through the texture-matrix generator against the camera's world right/up basis; PPSSPP and physical-PSP captures of `StageMetalFile2` at two rotations. RE-215: `G_TEXTURE_GEN_LINEAR` now generates the exact `acos` curve per vertex on the CPU (cross-checked against two independent reference implementations) and draws through the authored-UV pipeline; PPSSPP and physical-PSP captures of the graph that actually carries it (`regression_capture_scene13`, RE-215 found scenes 11/12 do not) | No original-N64 comparison exists for the ordinary curve (Meta Crystal is 1P-stage-8 only, and RE-151's scripted harness no longer exists) |
 | Combiner | COMPLETE for classified static paths | `PLAN.md` R0.6: general `(A-B)*C+D` evaluator (RE-039/043), texture blend (RE-073/074), flat colour (RE-080), and shade-scale consumption (RE-106). RE-168's post-RE-163 census accepts 65,000/65,199 source-attributed emitted-triangle visits (99.695%) and source-identifies every missing-constant case | The 186 unsupported-equation visits are catalogued; runtime shield colours belong to future effect/gameplay integration, not static material conversion |
 | Lighting | COMPLETE for R0 | `PLAN.md` R0.6: data-driven lit/literal split (RE-103/105); stage angles, normals and zero-valid LIGHT_1/LIGHT_2 state reach the GE (RE-164–166); RE-167 restores `PRIMITIVE * SHADE` as GE material colour | Matched original-ROM/PPSSPP Dream Land Wait comparison restores Mario's red/blue costume semantics; exact cross-renderer pixels are not claimed and physical PSP remains R2 |
 | Alpha | COMPLETE for both classified gates, including their overlap | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide). RE-214 resolves both onto the GE's one alpha-test unit in `pack::alpha_gate`, with host regressions for every combination | The cutout gate remains an approximation of multisampled coverage (`alpha > 0`), as it always has been; the overlap itself is no longer a gap |
@@ -250,10 +250,19 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   applied on clamped axes only, matching `push_vertex`'s own rule (RE-152);
   57 texgen triangles bind a nonzero origin, all clamped, up to 3 texels.
 
-  `G_TEXTURE_GEN_LINEAR`'s 269 triangles are still drawn through the ordinary
-  mapping and remain an explicit, bounded deviation — the generated coordinate
-  is affine in the dot product either way and `acos` is not. See RE-214 for the
-  two candidate implementations.
+  `G_TEXTURE_GEN_LINEAR` cannot go through the generator above at all: the
+  generated coordinate is affine in the dot product either way and `acos` is
+  not. RE-215 generates it exactly instead, per vertex on the CPU
+  (`ssb_rom::psp_texture::linear_texgen_uv`, cross-checked against
+  `refs/BattleShip` and `refs/n64psp`, neither of which renormalises the
+  vertex normal — both divide by the constant `127`), into the pack's
+  existing raw S10.5 authored-UV unit, and submits it through the ordinary
+  authored-UV draw path rather than a second GE mode. A lookup table was
+  considered and rejected: only the vertex normal is quantised, and the
+  look-at basis it is dotted against is a continuous per-frame float, so a LUT
+  keyed on the normal alone cannot be exact either. 257 triangles archive-wide
+  (12 packed primitives) makes the direct polynomial cheap enough that this
+  was not measured as a bottleneck.
 
 **`G_SETOTHERMODE_H`/`L` carry several independent sub-fields per command,
 not just the cycle-type/render-mode ones `mesh.rs` originally read.** RE-124/

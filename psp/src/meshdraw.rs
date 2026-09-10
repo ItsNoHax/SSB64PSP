@@ -581,12 +581,16 @@ unsafe fn bind_texture(
 /// `DrawState::texgen_object_basis` -- which is the RSP's own `M^T · lookat`,
 /// normalised, exactly as `refs/BattleShip`'s `CalculateNormalDir` does it.
 ///
-/// `G_TEXTURE_GEN_LINEAR` is a *remaining* deviation, not silently exact: the
-/// generated coordinate is affine in the dot product either way, and the
-/// linear form's `acos` curve is not, so a linear primitive still draws
-/// through the ordinary mapping here.
+/// `G_TEXTURE_GEN_LINEAR` cannot go through this generator: the GE's
+/// texture-matrix path is affine in the dot product, and the linear form's
+/// `acos` curve is not. It is generated exactly instead, per vertex on the
+/// CPU (`ssb_rom::psp_texture::linear_texgen_uv`) into the pack's ordinary
+/// S10.5 authored-UV unit, and submitted through the same authored-UV mode
+/// this function installs for `environment == false` -- see [`draw_mesh`]'s
+/// dynamic-vertex branch. So a linear-texgen primitive is *not* `environment`
+/// here even though its geometry mode has `G_TEXTURE_GEN` set.
 unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32) {
-    let environment = p.flags & flags::TEXTURE_GEN != 0;
+    let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
     let key = TextureMapping {
         environment,
         texture,
@@ -958,29 +962,64 @@ pub unsafe fn draw_mesh(
 
         let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
             .then(|| effect_mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
-            .flatten();
-        if let Some(colors) = effect_colors.filter(|c| c.prim.is_some() || c.env.is_some()) {
+            .flatten()
+            .filter(|c| c.prim.is_some() || c.env.is_some());
+        let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
+
+        if effect_colors.is_some() || linear_texgen {
             // `sceGuGetMemory` allocates from the current display-list arena,
             // whose lifetime already matches this asynchronous GE submission.
             // Expanding the indexed corners avoids mutating shared pack data
-            // or recolouring another primitive that reuses one vertex.
+            // or recolouring/regenerating another primitive that reuses one
+            // vertex.
+            //
+            // `texgen_object_basis` and the bound texture's clamp flags are
+            // per-primitive, not per-corner, so both are resolved once here
+            // rather than inside the loop below.
+            let texgen_basis = linear_texgen.then(|| st.texgen_object_basis());
+            let clamp = linear_texgen
+                .then(|| pack.texture(p.texture))
+                .flatten()
+                .map(|t| {
+                    (
+                        t.wrap & TextureDesc::CLAMP_S != 0,
+                        t.wrap & TextureDesc::CLAMP_T != 0,
+                    )
+                })
+                .unwrap_or((false, false));
+
             let bytes = p.index_count as usize * core::mem::size_of::<PackedVertex>();
             let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut PackedVertex;
             for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
                 let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
                 let source_offset = index * core::mem::size_of::<PackedVertex>();
-                let source = verts
+                let mut v = verts
                     .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
                     .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
                     .unwrap_or_default();
-                dynamic.add(corner).write(PackedVertex {
-                    color: colors.vertex_color(
-                        source.color,
+                if let Some(colors) = effect_colors {
+                    v.color = colors.vertex_color(
+                        v.color,
                         p.flags & flags::FLAT_COLOR != 0,
                         p.flags & flags::TEXTURE_BLEND != 0,
-                    ),
-                    ..source
-                });
+                    );
+                }
+                if let Some((basis_s, basis_t)) = texgen_basis {
+                    let (u, uv) = ssb_rom::psp_texture::linear_texgen_uv(
+                        [v.nx, v.ny, v.nz],
+                        basis_s,
+                        basis_t,
+                        p.texgen_scale_s,
+                        p.texgen_scale_t,
+                        p.texgen_origin_s,
+                        p.texgen_origin_t,
+                        clamp.0,
+                        clamp.1,
+                    );
+                    v.u = u;
+                    v.v = uv;
+                }
+                dynamic.add(corner).write(v);
             }
             sys::sceGumDrawArray(
                 GuPrimitive::Triangles,

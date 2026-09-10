@@ -84,6 +84,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene10")
             || cfg!(feature = "regression_capture_scene11")
             || cfg!(feature = "regression_capture_scene12")
+            || cfg!(feature = "regression_capture_scene13")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -547,6 +548,19 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // The sibling `StageMetalFile2` graph that actually carries the pack's
+    // one `G_TEXTURE_GEN_LINEAR` primitive (RE-214 §10/B; see this feature's
+    // own comment in `psp/Cargo.toml`).
+    if cfg!(feature = "regression_capture_scene13") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 117 && o.source_offset == 0x2EE0)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
     // display-bearing objects after excluding three controller-only entries
     // and coalescing four shared graphs. Resolve that source-backed inventory
@@ -628,7 +642,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene9",
             feature = "regression_capture_scene10",
             feature = "regression_capture_scene11",
-            feature = "regression_capture_scene12"
+            feature = "regression_capture_scene12",
+            feature = "regression_capture_scene13"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -1167,7 +1182,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene9",
                     feature = "regression_capture_scene10",
                     feature = "regression_capture_scene11",
-                    feature = "regression_capture_scene12"
+                    feature = "regression_capture_scene12",
+                    feature = "regression_capture_scene13"
                 ))
             {
                 spin += 0.02;
