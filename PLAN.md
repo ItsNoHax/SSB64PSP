@@ -2676,7 +2676,17 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   `docs/reverse-engineering.md` RE-172–189. Only one manager effect is wired
   (the other 25+ `efManager*MakeEffect` call sites and any real gameplay
   trigger remain future scope, not required by this item's own text).
-* [ ] all required framebuffer paths render
+* [ ] all required framebuffer paths render — RE-190 exhaustively censuses
+  every `framebuf`-adjacent decomp reference: N64 VI swap-chain scheduling
+  (`sys/scheduler.c`/`taskman.c`/`video.c`, `libultra/io/vi*.c`,
+  `mvOpeningRoomCheckSetFramebuffer`), the crash-screen debug overlay
+  (`sys/debug.c`), and nine files' fixed-VRAM-address heap-arithmetic are
+  all N64-only plumbing with no PSP counterpart to build. `lb/lbtransition.c`
+  is R0.13, already complete. Exactly one content-bearing mechanism remains
+  unimplemented: `sc1PStageClearCopyFramebufToWallpaper`
+  (1P Mode Stage Clear results wallpaper), which copies the same 300×220
+  active-picture rectangle RE-099/100 established into a real ROM sprite
+  buffer with two still-unexplained copy-order details. Not yet implemented
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
   `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`

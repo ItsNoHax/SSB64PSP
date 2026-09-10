@@ -10,6 +10,104 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-190 — Framebuffer-path census: exactly one content-bearing mechanism remains outside R0.13; everything else is N64-only VI/memory plumbing (`PLAN.md` R1)
+
+**Problem.** RE-189 closed R1's "all required effects render" bullet; the
+next unchecked bullet is "all required framebuffer paths render". `R0.13`
+already implements and verifies the LB-transition photocopy (RE-099–116,
+RE-146–149), but R0.13 and this R1 bullet are not the same scope — R0.13's
+own acceptance text is scoped to LB transitions specifically. Unscoped
+question: does the decompilation use a live framebuffer for anything else
+the renderer would need to reproduce?
+
+**Evidence.** Exhaustive `grep -rniI "setcimg|copyfb|framebuf"` across
+`refs/ssb-decomp-re/src` and `include` (399 raw hits, collapsed by file):
+
+* `sys/scheduler.c`, `sys/taskman.c`, `sys/video.c`/`.h`,
+  `libultra/io/vi{swapbuf,getnextframebuf,getcurrframebuf}.c`,
+  `libultra/vimodes/*.c`, and `mv/mvopening/mvopeningroom.c`'s
+  `mvOpeningRoomCheckSetFramebuffer` — all pick which of N raw VI buffers
+  to draw into next (double/triple-buffer swap-chain bookkeeping). No pixel
+  content is ever read back or copied; this is N64 VI-specific scheduling
+  that PSP's own GU double-buffering already replaces wholesale (the same
+  architectural split D-001 already records for render-command
+  interpretation). Not a rendering path.
+* `sys/debug.c`'s `syDebugFramebuffer{DrawBlackRectangle,WriteGlyph,Printf,
+  PrintFloatReg,PrintFCSR,PrintThreadStatus}` (113 of the 399 hits) — the
+  crash/exception debug overlay, drawing raw text glyphs directly into the
+  live VI buffer via `osViGetCurrentFramebuffer()`. Dev-only, never
+  shipped-facing. Out of scope.
+* `mn/mncommon/mncongra.c`, `mn/mncommon/mntitle.c`,
+  `sc/sccommon/scstaffroll.c` (the last runs its whole scene at a custom
+  640×480 `SYVideoSetup` instead of the default 320×230) and nine further
+  files (`scvsbattle.c`, `scexplain.c`, `scautodemo.c`,
+  `sc1pmode/{sc1ptrainingmode,sc1pgame,sc1pbonusstage}.c`,
+  `mncommon/{mnunusedfighters,mnnocontroller}.c`, `db/dbfalls.c`) whose only
+  reference is `arena_size = &gSYFramebufferSets - &ovl*_BSS_END` — N64
+  fixed-address memory-layout arithmetic (where the heap ends before the
+  hard-coded VI buffer region begins). PSP has a completely different
+  heap/VRAM model with no equivalent fixed-address constraint; nothing to
+  port.
+* `lb/lbtransition.c` — R0.13, already implemented and device-verified.
+* **`sc/sc1pmode/sc1pstageclear.c:2119`,
+  `sc1PStageClearCopyFramebufToWallpaper`** — the one genuinely new,
+  content-bearing mechanism. Called once from `sc1PStageClearFuncStart`,
+  before any of that screen's own scene setup. Reads
+  `gSYSchedulerCurrentFramebuffer` starting at the same
+  `SYVIDEO_BORDER_SIZE`-based offset R0.13's own `lbTransitionSetupTransition`
+  uses (RE-099), and copies **220 rows × 150 `u32` (300 `u16` pixels) per
+  row** — the identical 300×220 "active picture" rectangle RE-099/100
+  already established for the LB-transition photo heap, reinforcing that
+  dimension as this ROM's one shared active-picture convention rather than
+  a one-off. The destination is `lbRelocGetFileData(Sprite*,
+  sSC1PStageClearFiles[6], &llGRWallpaperTrainingBlackSprite)->bitmap->buf`
+  — a real ROM sprite asset (relocData file 26, `GRWallpaperTrainingBlack`),
+  not a synthetic segment-`0x1` reference the way the LB transition's
+  texture binds are. Because it is an ordinary sprite pointer, `romtool
+  textures` would never flag it: this mechanism is invisible to the
+  texture-conversion report and is a *runtime fidelity* gap for the future
+  1P-mode Stage Clear screen, not a texture-pipeline defect today.
+* Two copy details are **not yet explained**: the loop swaps the two `u32`
+  chunks it writes on odd rows (`i & 1`) versus even rows, and inserts a
+  2-word gap in the destination every 6th row
+  (`if (((i + 1) % 6) == 0) wallpaper_pixels += 2;`). Two live hypotheses,
+  neither confirmed: (a) the destination `Sprite`'s `Bitmap` is tiled into
+  several ≤6-row-tall sub-images for TMEM budget reasons (`Sprite` carries
+  exactly this shape of field — `bmheight`, `nbitmaps`, per-bitmap
+  `actualHeight` — in `refs/ssb-decomp-re/include/PR/sp.h`), and the 2-word
+  gap is inter-tile padding while the odd/even swap corrects for an
+  odd-pixel column start; (b) some other row-order quirk not yet ruled out.
+  Confirming either requires reading relocData file 26's real `Sprite`/
+  `Bitmap` header fields from the ROM; this project's `romtool` has no
+  generic `Sprite` decoder (only mesh/`MObj`/texture readers), and no
+  second decomp call site uses this exact
+  `lbRelocGetFileData(Sprite*, ...)` wallpaper-capture idiom to
+  cross-validate against.
+
+**Remaining scope.** Not implemented this session — matches RE-099's own
+precedent (identification/scoping pass, no code changed;
+`git diff --stat` is documentation-only). `sc1PStageClearCopyFramebufToWallpaper`
+belongs to the 1P Mode Stage Clear results screen, a game mode this project
+has not implemented at all yet (no 1P-mode/results-screen state exists,
+same "renderer owns the mechanism, G2 owns the real trigger" split RE-149
+already recorded for the LB-transition wipes). The next implementation
+session should either (a) add a throwaway `SSB64_ROM`-gated probe that
+reads file 26's `Sprite`/`Bitmap` header fields directly to confirm or
+refute the tiling hypothesis before writing PSP code, or (b) find a second
+decomp call site using the identical idiom to cross-validate. Every other
+`framebuf` hit in the decomp is now accounted for and does not need a PSP
+counterpart, so this is the *only* remaining item under R1's "all required
+framebuffer paths render" bullet.
+
+**Confidence:** high on the census being exhaustive (every one of the 399
+raw grep hits across `src`/`include` is accounted for in one of the
+categories above) and on the 300×220 active-picture match to RE-099/100
+(directly counted from the loop bounds: 220 iterations, 150 `u32` per row
+= 300 `u16`). Low on the odd/even chunk-swap and 6-row-skip explanation —
+recorded as an open question, not guessed.
+
+---
+
 ## RE-189 — real manager-effect spawn event wired into runtime: `efManagerRippleMakeEffect` ticks and draws a live `LBGenerator`/particle on the PSP (`PLAN.md` R1)
 
 **Problem.** RE-183–188 built the whole `LBParticle`/`LBGenerator` sim and
