@@ -107,6 +107,40 @@ tools/compare-screenshot.sh tests/golden/r1-mvopeningroom.png ~/ppsspp-test/scre
 Follow with a plain `cargo psp --release` before resuming normal work, for
 the same reason `regression_capture` requires it.
 
+## Third and fourth deterministic test scenes (RE-200)
+
+RE-200's graph-backed archive census found that no one scene graph covers all
+four remaining matrix rows. Two exact object keys cover them with the smallest
+additional suite:
+
+* `regression_capture_scene3` selects file 109 (`StageSectorFile2`) graph
+  `0x44C8`. Its converted graph contains 7 `combiner_texture_blend`
+  primitives, 5 classified translucent primitives, and 8 clean clamped
+  textures with neither mirror axis set.
+* `regression_capture_scene4` selects file 84 (`EFCommonEffects2`) graph
+  `0x2760`, the decomp-named `CatchSwirlDObjDesc`. Its four rendered quads
+  use the classified flat-constant-colour path.
+
+Both features reuse scene 2's tick-240 freeze, idle-spin freeze, object-view
+boot, and HUD suppression. Selection matches both `source_file` and
+`source_offset`; files 84 and 109 each contain several unrelated graphs.
+
+Build and compare each scene with:
+
+```
+cd psp && cargo psp --release --features regression_capture_scene3
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r1-stage-sector.png ~/ppsspp-test/screenshot.png
+
+cd psp && cargo psp --release --features regression_capture_scene4
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r1-catch-swirl-flat-color.png ~/ppsspp-test/screenshot.png
+```
+
+These images are deterministic port-regression baselines. Source-classified
+primitive membership proves each path is exercised; the images do not claim
+pixel equivalence to an original N64 capture.
+
 ## Capture procedure
 
 ### 1. PPSSPP software rendering (executed; this is the current golden source)
@@ -189,10 +223,11 @@ copyrighted screenshots remain outside Git under
 
 ## Test matrix
 
-Each row names a concrete asset or display list, not a hypothetical
-example. "Covered by golden scene" means the current single Dream Land
-capture actually exercises it; other rows need a dedicated scene (a second
-`regression_capture`-style frozen state) that this task does not yet add.
+Each row names a concrete asset or display list, not a hypothetical example.
+"Covered by golden scene" means one committed deterministic capture exercises
+it. Source-classified primitive inventories identify the exact graph behind
+scenes 3 and 4; this does not turn current PSP output into an original-N64
+pixel oracle.
 
 | Category | Concrete asset | Covered by golden scene? |
 |---|---|---|
@@ -206,21 +241,18 @@ capture actually exercises it; other rows need a dedicated scene (a second
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
 | Fighter model + skeleton | Mario, idle pose, spawn 0 | Yes |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
-| `combiner_texture_blend` shape | RE-074's PRIM/ENV-blended primitives; not present in Dream Land's default camera framing | No — needs a dedicated scene |
-| `combiner_flat_color` shape | RE-080's flat-constant-colour primitives; not confirmed present in this scene | No — needs a dedicated scene |
-| Transparency / translucency | RE-083's billboards are the known concrete case, not on-screen in this framing | No — needs a dedicated scene |
-| Clamp texture mode | RE-198: file 22, offset `0x8`, 32×32, `clamp_s=clamp_t=true`, no mirror — one of 2,201 clamp-bound primitives archive-wide. File 52 (now on screen via RE-199) only carries the clamp+mirror combination at the same offset as its CI8 example, already covered by the "Mirror wrap mode" row above, not this row's clean citation | No — needs a dedicated scene (file 22, not file 52) |
+| `combiner_texture_blend` shape | RE-200: file 109 (`StageSectorFile2`) graph `0x44C8`, 7 converted primitives | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
+| `combiner_flat_color` shape | RE-200: file 84 (`EFCommonEffects2`) graph `0x2760` (`CatchSwirlDObjDesc`), 4 converted primitives | Yes — scene 4, `tests/golden/r1-catch-swirl-flat-color.png` |
+| Transparency / translucency | RE-200: file 109 graph `0x44C8`, 5 primitives carrying both `TRANSLUCENT` and a classified alpha formula | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
+| Clamp texture mode | RE-200: file 109 graph `0x44C8`, 8 clamp-bound primitives with neither mirror axis set. This replaces file 22 as the clean on-screen citation while retaining RE-198's archive-wide evidence | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | Untextured / vertex-coloured geometry | RE-198: file 52, mesh index 4, primitive 0 (14 triangles, unlit, opaque non-degenerate vertex colour `[145,213,213,255]`) | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
-| Particles | No confirmed particle system exists yet; file 48's "particle-like" node layout (per `docs/reverse-engineering.md`) is unconfirmed, not a named system | Blocked — system not confirmed to exist |
+| Particles | RE-180–189: all 160 real `LBParticle` scripts plus one live manager-effect `LBGenerator` spawn event | Audited separately on device; dynamic particle coverage is not one of the static golden scenes |
 | Shadows | `FighterDesc`'s shadow fields are parsed but "no subsystem reads them yet" (`docs/reverse-engineering.md`) | Blocked — not yet implemented |
 | UI / HUD | No in-game menu/HUD system exists yet (Layer C's debug viewer is a developer tool, not the game's own UI) | Blocked — not yet implemented |
 
-Rows marked "needs identification" or "needs a dedicated scene" are real,
-named gaps for follow-up work, not silently dropped: extending this matrix
-is scoped as ongoing work under this same document rather than a new
-`PLAN.md` task, since the methodology (frozen `regression_capture` scene +
-`compare-screenshot.sh`) already generalises to any of them once a
-suitable frame is identified.
+Rows blocked on not-yet-implemented gameplay systems remain explicit future
+coverage. Every currently implemented rendering category now has a committed
+deterministic scene or cited coverage.
 
 ## R1 exhaustive stage-render audit
 
@@ -325,12 +357,24 @@ against EBOOT SHA-256
 SHA-256
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
 
+RE-200 executed scenes 3 and 4 under the same PPSSPP software renderer.
+Captures at 6 and 30 seconds were byte-identical for each scene, and the
+pixel comparator reported 0 differing pixels. Goldens and SHA-256 values:
+
+* `tests/golden/r1-stage-sector.png`:
+  `5aac523fd46ec969e96314d8f22c1b6da54251ce4fae061cc3fc8a04dbc5f4f8`
+* `tests/golden/r1-catch-swirl-flat-color.png`:
+  `3a7b7df27d18b7369abc785bd4fe9cc07e592017aaf110e313af243d5defac76`
+
+After adding both feature-only paths, scene 2 and Dream Land were rebuilt and
+still matched their committed goldens with 0 differing pixels.
+
 This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured
 reference images are compared automatically" acceptance items. The 4-source
 capture procedure is fully documented; source 1 has an exact golden and source
 4 now has RE-151's same-input numerical camera trace and normalized
-representative comparison.
-The test matrix exists with named, concrete rows; a minority are confirmed
-covered by the single golden scene, the remainder are honestly tracked as
-not yet covered rather than assumed.
+representative comparison. RE-200 extends deterministic PPSSPP coverage to
+every specifically targeted open static row. Dynamic particles retain their
+separate RE-180–189 device audits. Shadows and real UI remain blocked on later
+subsystems rather than being treated as covered.

@@ -32,6 +32,16 @@ regression_capture = []
 # way. Off by default.
 regression_capture_scene2 = []
 
+# R1 test-matrix scene for texture blending, translucency, and clean clamp:
+# Stage Sector's file 109 graph at 0x44C8. Same deterministic object-viewer
+# freeze and diagnostic suppression as scene 2. Off by default.
+regression_capture_scene3 = []
+
+# R1 test-matrix scene for flat constant colour: EFCommonEffects2's file 84
+# graph at 0x2760. Same deterministic object-viewer freeze and diagnostic
+# suppression as scenes 2 and 3. Off by default.
+regression_capture_scene4 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []

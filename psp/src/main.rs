@@ -74,6 +74,8 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
     sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS
         && (cfg!(feature = "regression_capture")
             || cfg!(feature = "regression_capture_scene2")
+            || cfg!(feature = "regression_capture_scene3")
+            || cfg!(feature = "regression_capture_scene4")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -425,6 +427,32 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // RE-200: one Stage Sector graph covers three remaining matrix rows with
+    // measured real primitives: texture blend, classified translucency, and
+    // non-mirrored clamp. Select the exact graph, not another file-109 object.
+    if cfg!(feature = "regression_capture_scene3") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 109 && o.source_offset == 0x44C8)
+            }) {
+                object_index = i;
+            }
+        }
+    }
+    // RE-200: EFCommonEffects2's CatchSwirl graph supplies four flat-colour
+    // primitives. It is separate because no converted graph carries both a
+    // flat-colour primitive and any of scene 3's other categories.
+    if cfg!(feature = "regression_capture_scene4") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 84 && o.source_offset == 0x2760)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
     // display-bearing objects after excluding three controller-only entries
     // and coalescing four shared graphs. Resolve that source-backed inventory
@@ -497,7 +525,9 @@ unsafe fn run() -> ! {
             feature = "effect_audit_capture",
             feature = "effect_animation_audit_capture",
             feature = "effect_material_audit_capture",
-            feature = "regression_capture_scene2"
+            feature = "regression_capture_scene2",
+            feature = "regression_capture_scene3",
+            feature = "regression_capture_scene4"
         ));
     let mut stage_index: u32 = 0;
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
@@ -1012,7 +1042,9 @@ unsafe fn run() -> ! {
                 && !cfg!(any(
                     feature = "effect_animation_audit_capture",
                     feature = "effect_material_audit_capture",
-                    feature = "regression_capture_scene2"
+                    feature = "regression_capture_scene2",
+                    feature = "regression_capture_scene3",
+                    feature = "regression_capture_scene4"
                 ))
             {
                 spin += 0.02;
@@ -1944,6 +1976,8 @@ unsafe fn run() -> ! {
         } else if !cfg!(any(
             feature = "regression_capture",
             feature = "regression_capture_scene2",
+            feature = "regression_capture_scene3",
+            feature = "regression_capture_scene4",
             feature = "camera_audit_capture"
         )) {
             gpu.debug_text(
