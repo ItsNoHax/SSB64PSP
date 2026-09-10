@@ -2786,7 +2786,12 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 
 # 8. R2 — Physical PSP Rendering Validation
 
-Status: `IN_PROGRESS` — R1 and R0.5 are complete; RE-201 begins hardware validation.
+Status: `IN_PROGRESS` — R1 and R0.5 are complete; RE-201 begins hardware
+validation. RE-202 found and fixed a hardware-only crash in the interactive
+viewer's debug HUD (`sceGuDebugFlush`) that RE-201's `regression_capture`
+run never exercised; acceptance items below are not yet checked off pending
+further on-device interactive verification (fighter movement via the analog
+nub, stage/material/texture variety) now that the crash is fixed.
 
 ### Objective
 

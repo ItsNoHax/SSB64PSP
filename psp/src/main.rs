@@ -1973,13 +1973,7 @@ unsafe fn run() -> ! {
                     shown.0,
                 ),
             );
-        } else if !cfg!(any(
-            feature = "regression_capture",
-            feature = "regression_capture_scene2",
-            feature = "regression_capture_scene3",
-            feature = "regression_capture_scene4",
-            feature = "camera_audit_capture"
-        )) {
+        } else if cfg!(feature = "debug_overlay") {
             gpu.debug_text(
                 8,
                 8,

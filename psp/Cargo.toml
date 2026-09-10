@@ -46,6 +46,17 @@ regression_capture_scene4 = []
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
 
+# The interactive viewer's on-screen HUD (position, status, timing, controls
+# legend). Built on `sceGuDebugPrint`/`sceGuDebugFlush`, which RE-202 found
+# reliably crashes real PSP hardware with an unaligned instruction-fetch
+# fault a few seconds into any build that calls it every frame -- content-
+# independent (a one-word overlay reproduces it as fast as the full HUD) and
+# invisible under PPSSPP, which does not enforce the same alignment. Off by
+# default so a plain `cargo psp --release` -- what a developer runs to flash
+# real hardware -- boots safely; `tools/run-ppsspp.sh`'s default (non-audit)
+# build passes this on so the interactive PPSSPP workflow keeps its HUD.
+debug_overlay = []
+
 # Boots directly into R0.12's isolated billboard browser. This removes the
 # host-specific PPSSPP key mapping needed to enter the audit, while retaining
 # the normal D-pad navigation and on-screen source identity. Off by default.
