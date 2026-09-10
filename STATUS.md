@@ -52,7 +52,7 @@
   caveat as RE-221 — a pixel-level before/after is a natural follow-up, not
   required for P0d's acceptance criteria (padding-content fix covered by
   the new unit tests, structural census counts unaffected by design).
-- Commit: pending.
+- Commit: `71a4859`.
 
 ## Continuation
 
