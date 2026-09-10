@@ -10,6 +10,65 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-198 — Concrete file/offset evidence for three "needs identification" test-matrix rows (`PLAN.md` R1)
+
+**Problem.** R1's last unchecked bullet, "golden/reference renders are
+established", depends on `docs/visual-regression.md`'s test matrix. Three
+rows — CI8 texture, clamp texture mode, untextured/vertex-coloured geometry
+— were marked "No — needs identification": not tied to any concrete
+file/offset, unlike every other row. `STATUS.md`'s own suggested first step
+was to reuse existing archive-wide census tools before writing new code.
+
+**Method.** Added a temporary, reverted `romtool census-matrix <rom>`
+subcommand, built on the same `load_all`/`file_meshes` pipeline `textures`
+and RE-100's own archive-wide checks already use (so results describe what
+the real pack build sees, not a parallel guess). It walks every converted
+primitive archive-wide and records: the first primitive whose bound texture
+is `Format::Ci` + `BitSize::Bits8` (CI8); every primitive whose texture sets
+`clamp_s`/`clamp_t` (capped at 12, plus any hit in Fox/Captain Falcon/Kirby's
+own model files 209/236/229 specifically, since RE-102's own writeup named
+those fighters); and untextured (`texture: None`), non-lit primitives whose
+first vertex colour is opaque and non-degenerate (excludes the
+already-documented LB-transition backing primitive's transparent white,
+files 39–51, RE-100/RE-101).
+
+**Result** (`rom/Super Smash Bros. (USA).z64`, full archive):
+
+* **CI8 texture:** 75 CI8-bound primitives archive-wide, not a single rare
+  case. Concrete example: file 52 (`mvopeningroom.c`'s opening-movie room
+  scene — RE-060's "MVCommon" file, fully paired, 0 chain/demand mismatches
+  per `romtool mobj --file 52`), texel data at offset `0x2ee8`, 16×32.
+* **Clamp texture mode:** 2,201 clamp-bound primitives archive-wide. A clean
+  (non-mirrored) example: file 22, offset `0x8`, `clamp_s=true clamp_t=true`,
+  32×32, graph fully paired (`romtool mobj --file 22`: 1/1 paired, 0
+  mismatches). File 52 also carries several clamp+mirror combinations (e.g.
+  offset `0x2ee8`, `clamp_s=clamp_t=true, mirror_s=true`), the combination
+  RE-102's own writeup described without citing a location. No hit landed in
+  files 209/236/229 through this raw per-file walk — RE-102's named
+  fighters most likely reach their clamp state through `MObj`
+  runtime-tile-state application (`apply_mobj`, RE-194) rather than a
+  static per-file `G_SETTILE`, which this census does not additionally
+  resolve; the file-22/file-52 examples stand on their own regardless.
+* **Untextured/vertex-coloured geometry:** file 52, mesh index 4, primitive
+  0 (14 triangles, `lit=false`, first vertex `rgba=[145,213,213,255]`,
+  fully opaque, non-black/white) — same fully-paired file as the CI8
+  example. Several other candidates exist in files 84/85/109/111/118/144/147.
+
+**Scope.** This identifies concrete assets; it does not add a second
+`regression_capture` scene. Per `docs/visual-regression.md`'s own rule,
+these three rows move from "needs identification" to "needs a dedicated
+scene" — the same bucket `combiner_texture_blend`/`combiner_flat_color`/
+translucency already occupy, since none of these five is on-screen in Dream
+Land's default framing. Building that second frozen scene remains separate,
+not-yet-done work.
+
+**Confidence:** High for the counts and cited offsets — measured directly
+from the real conversion pipeline, not sampled or inferred. The census tool
+itself was reverted after this run (not shipped as a subcommand); the
+counts are recorded here as the evidence of record.
+
+---
+
 ## RE-197 — Full regression stack rerun closes `PLAN.md` R1's "rendering regression suite passes" bullet
 
 **Problem.** RE-196 closed R1's asset/material bullets; the next unchecked
