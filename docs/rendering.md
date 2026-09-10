@@ -38,10 +38,11 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | TLUT | COMPLETE for ROM-backed assets | `PLAN.md` R0.4: loading verified; cross-node palette inheritance pinned by a unit test confirmed capable of failing (RE-064); palette pointers resolved through extern relocations (RE-037); RE-162 resolves the final N-Bumper material-table palette gap | Only the 26 runtime-framebuffer references remain; they do not name a ROM TLUT and belong to R0.13 |
 | Texture filtering | COMPLETE | RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`; the PSP path's `Linear` filtering matches | None |
 | Texture addressing | COMPLETE for implemented content | `PLAN.md` R0.5/R0.2: repeat (RE-044/RE-066), mirror (RE-067, pre-baked at pack time), clamp (RE-102, native `sceGuTexWrap(Clamp, ...)` per axis), masks/shifts (RE-044) all measured archive-wide and reproduced. RE-152 rebases nonzero `G_SETTILESIZE` origins on clamped axes while preserving repeat-axis mask phase, fixing Fox's isolated lower-face primitive in PPSSPP | Physical PSP validation remains part of R2 |
-| LOD/mipmaps | COMPLETE (original behavior identified) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. PSP mip chains remain a separately documented anti-aliasing technique (RE-053/070) | Dream Land's canopy discrepancy remains the separate open R0.5 item |
+| LOD/mipmaps | COMPLETE (original behavior identified and reproduced) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. RE-213 stopped exposing levels above zero (`sceGuTexMode` max-mip 0, `sceGuTexLevelMode(Const, 0.0)`, bilinear); RE-214 revalidated that after the texgen refactor — `bind_texture` still binds level zero only, and Dream Land is byte-identical to RE-213's own level-zero capture, SHA-256 `08cc25cc...` | Generated lower levels stay in the pack but inert; removing them is a separate pack-format decision. Dream Land's canopy discrepancy remains the separate open R0.5 item |
+| Texture coordinate generation | VERIFYING (ordinary), deviation (linear) | RE-214: raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` bits preserved independently; archive-wide census proves primitive-level state is invariant; `gSPTexture` scale and tile origin carried to the GE and applied through the texture-matrix generator against the camera's world right/up basis; PPSSPP and physical-PSP captures of `StageMetalFile2` at two rotations | No original-N64 comparison exists (Meta Crystal is 1P-stage-8 only, and RE-151's scripted harness no longer exists). `G_TEXTURE_GEN_LINEAR`'s 269 triangles still use the ordinary mapping |
 | Combiner | COMPLETE for classified static paths | `PLAN.md` R0.6: general `(A-B)*C+D` evaluator (RE-039/043), texture blend (RE-073/074), flat colour (RE-080), and shade-scale consumption (RE-106). RE-168's post-RE-163 census accepts 65,000/65,199 source-attributed emitted-triangle visits (99.695%) and source-identifies every missing-constant case | The 186 unsupported-equation visits are catalogued; runtime shield colours belong to future effect/gameplay integration, not static material conversion |
 | Lighting | COMPLETE for R0 | `PLAN.md` R0.6: data-driven lit/literal split (RE-103/105); stage angles, normals and zero-valid LIGHT_1/LIGHT_2 state reach the GE (RE-164–166); RE-167 restores `PRIMITIVE * SHADE` as GE material colour | Matched original-ROM/PPSSPP Dream Land Wait comparison restores Mario's red/blue costume semantics; exact cross-renderer pixels are not claimed and physical PSP remains R2 |
-| Alpha | COMPLETE for both classified gates | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide) and wires the disjoint case where it fires without `alpha_test` already applying | The case where `alpha_test` and `G_AC_THRESHOLD` coexist on the same primitive (28,859 real vertex-visits, RE-195) still uses only the `alpha_test` approximation — combining both on the PSP's single alpha-test unit is an unresolved priority decision, not attempted |
+| Alpha | COMPLETE for both classified gates, including their overlap | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide). RE-214 resolves both onto the GE's one alpha-test unit in `pack::alpha_gate`, with host regressions for every combination | The cutout gate remains an approximation of multisampled coverage (`alpha > 0`), as it always has been; the overlap itself is no longer a gap |
 | Blending | COMPLETE for classified single-cycle formulas | RE-129/130 decoded alpha combiners, classified nine archive-wide shapes, and enable real blending for `TEXEL0_ALPHA` and `TEXEL0_ALPHA * SHADE_ALPHA`; PPSSPP-verified on Dream Land | Rare `PRIM_ALPHA` multiply (~43) and two-cycle (~93) primitives are measured and deliberately declined under R0.6 |
 | Depth | COMPLETE | `PLAN.md` R0.6/R0.14: RDP per-frame default (`Z_BUFFER` on) fixed and wired per-primitive (RE-068); PSP depth convention (`sceGuDepthRange(65535, 0)` + `GreaterOrEqual`) confirmed against the `psp` crate's own documented convention (RE-085) | None |
 | Culling | COMPLETE | `PLAN.md` R0.6: RDP per-frame default (`CULL_BACK` on) fixed, measured 86.3% of packed primitives post-fix (RE-068) | None |
@@ -187,17 +188,72 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   gap left undecided rather than guessed at, since real hardware's actual
   output for this combination is not documented.
 * **`G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`** (RSP-computed
-  environment-mapped UVs, not the display list's own baked UVs) is used
-  by file 117 (`StageMetalFile2`, i.e. Metal Mario's stage) and files
-  300/301/303 (`MMarioModel`/`NMarioModel`/`NFoxModel`) — this is the
-  well-known "Metal [Character]" transformation's signature shiny,
-  reflective look from the Metal Box item (RE-119). `G_TEXTURE_GEN` now
-  maps to GE `EnvironmentMap`, using retained vertex normals; file 117 has
-  PPSSPP and physical-PSP captures (RE-213). `G_TEXTURE_GEN_LINEAR` stays
-  separately represented: original formula is `s=acos(nx)*1024/pi`,
-  `t=acos(ny)*1024/pi` after normal projection/normalization, while GE
-  environment mode supplies only `(n+1)*512`. Its 13 uses therefore remain
-  an explicit, bounded CPU-texgen follow-up, not silently claimed exact.
+  reflection-mapped UVs, not the display list's own baked UVs) is used by
+  file 117 (`StageMetalFile2`, Meta Crystal) and files 300/301/303
+  (`MMarioModel`/`NMarioModel`/`NFoxModel`) among 16 files in total — the
+  well-known "Metal [Character]" transformation's signature reflective look
+  from the Metal Box item (RE-119). Archive-wide there are 3,012 texgen
+  triangles, 2,743 ordinary and 269 linear (RE-214's `romtool texgen`
+  census).
+
+  The two bits are **independent state, and only `G_TEXTURE_GEN` enables
+  generation**. `G_TEXTURE_GEN_LINEAR` is a *modifier* selecting the `acos`
+  curve; it generates nothing on its own. The walker keeps the raw
+  geometry-mode word and derives the effective mode from it, so a list that
+  clears only `G_TEXTURE_GEN` and later re-sets it correctly resumes in linear
+  mode. (An earlier three-state enum could not represent that, and let the
+  linear bit enable generation by itself. On this ROM the difference is
+  unobservable — the raw pair `(GEN=0, LINEAR=1)` never occurs — but it is
+  measured rather than assumed.)
+
+  Source semantics, from `refs/BattleShip`'s F3DEX interpreter:
+
+  ```text
+  dot = clamp((n · l) / 127, -1, 1)     l = look-at basis, n = object normal
+  ordinary:  u = (dot + 1) / 4
+  linear:    u = acos(-dot) / (2*pi)
+  S10.5      = u * gSPTexture_scale     texels = S10.5 / 32
+  ```
+
+  **Vertex-load semantics.** F3DEX generates these coordinates during `G_VTX`
+  processing, not at draw time, so primitive-level state is only equivalent if
+  no list loads a vertex under one state and draws it under another. Measured
+  archive-wide (RE-214): zero texgen triangles have vertices loaded under a
+  different effective mode or a different `G_TEXTURE` scale than the draw.
+  Primitive granularity is therefore a proven optimisation, not an assumption.
+  203 texgen triangles do reuse a vertex across a node or list boundary, and
+  every one of them agrees on both.
+
+  **The look-at basis is the camera's world-space right and up.**
+  `syMatrixLookAtReflectF` writes `right` into `l[0]` (drives S) and `up` into
+  `l[1]` (T); `gmCameraPrepLookAtFuncMatrix` emits them as
+  `gSPLookAtX`/`gSPLookAtY`. World space, not eye space, because SSB64
+  concatenates the view matrix into the *projection* matrix and leaves the
+  modelview stack model-only.
+
+  **PSP translation.** The GE's `EnvironmentMap` generator computes the right
+  dot product but ignores `sceGuTexScale`/`sceGuTexOffset` (measured, RE-214),
+  so it can only sweep the whole uploaded texture — wrong for the 32x8 tile
+  that sweeps 16 of its 32 texels and for the 48x42 tile padded to 64x64.
+  Coordinates are generated through the GE's texture-**matrix** generator
+  instead, with the projection source set to the normalised vertex normal and
+  the matrix carrying the exact affine term
+  `u = dot * a + (a + origin_shift)`, `a = gSPTexture_scale / (128 *
+  uploaded_dim)`. The generator reads the object-space normal, so each node's
+  world transform is folded into the matrix rows as `normalize(M^T · lookat)`
+  — the RSP's own `CalculateNormalDir`. No GE light is involved, so the
+  fighter's light 0 cannot reach the reflection.
+
+  `PrimDesc` carries the `gSPTexture` scale and the render tile's origin for
+  exactly this path (pack `VERSION` 27): under `G_TEXTURE_GEN` the RSP never
+  reads the authored UVs those values were already baked into. The origin is
+  applied on clamped axes only, matching `push_vertex`'s own rule (RE-152);
+  57 texgen triangles bind a nonzero origin, all clamped, up to 3 texels.
+
+  `G_TEXTURE_GEN_LINEAR`'s 269 triangles are still drawn through the ordinary
+  mapping and remain an explicit, bounded deviation — the generated coordinate
+  is affine in the dot product either way and `acos` is not. See RE-214 for the
+  two candidate implementations.
 
 **`G_SETOTHERMODE_H`/`L` carry several independent sub-fields per command,
 not just the cycle-type/render-mode ones `mesh.rs` originally read.** RE-124/
@@ -209,12 +265,16 @@ match the RDP's own reset default exactly (`ALPHADITHER`, `RGBDITHER`,
 default but is an RDP scheduling hint with no visible effect. `G_MDSFT_
 ALPHACOMPARE` is the one genuinely new, non-default field: 29.8% of real
 commands request `G_AC_THRESHOLD`, a second, independent alpha-discard gate
-from the existing `alpha_test` approximation. Now decoded
-(`MeshMaterial::alpha_compare_threshold`) and consumed on the PSP side for
-the disjoint case where no discard currently applies at all
-(`flags::ALPHA_COMPARE_THRESHOLD`); the case where both gates already
-coexist on one primitive keeps the existing `alpha_test` approximation,
-a documented limit rather than a silent drop. See RE-195.
+from the existing `alpha_test` approximation. Decoded
+(`MeshMaterial::alpha_compare_threshold`, `flags::ALPHA_COMPARE_THRESHOLD`)
+and resolved onto the GE's single alpha-test unit by `pack::alpha_gate`
+(RE-214). The two gates compose without a priority decision because the
+cutout approximation is exactly `>= 1`: a threshold at a nonzero reference
+already implies it, so `alpha >= reference` satisfies both; a threshold of
+zero alongside the cutout stays `alpha > 0`, since `alpha >= 0` would pass
+everything and silently drop the cutout; and a threshold of zero on its own
+is a real no-op gate, expressed as one rather than strengthened. See RE-195
+and RE-214.
 
 Two hardware invariants are used as validity tests, and both earn their keep:
 the vertex cache holds at most 32 entries, and triangle indices must fall

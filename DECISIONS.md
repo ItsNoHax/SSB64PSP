@@ -476,3 +476,25 @@ read by anything.
 **Reference:** `AGENTS.md` §6, §10, `PLAN.md` R0.18, `README.md` "References"
 
 **Reference:** AGENTS.md §13 (Task Completion Semantics), `docs/porting-status.md` header
+
+---
+
+### D-038: Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
+**Decision:** `G_TEXTURE_GEN` is reproduced through the PSP GE's texture-**matrix** coordinate generator (`sceGuTexMapMode(TextureMatrix, ...)` plus `sceGuTexProjMapMode(NormalizedNormal)`), never through `TextureMapMode::EnvironmentMap`. The node's world transform, the source `gSPTexture` scale and the render tile's origin are all carried in that matrix. Texture-coordinate *mapping* state is kept separate from texture *binding* state: `bind_texture` must not install a coordinate scale, because the correct scale depends on the mapping mode as well as the binding.
+
+**Reasoning:** The environment-map generator computes the right dot product but ignores `sceGuTexScale` and `sceGuTexOffset`, so it can only ever sweep the full uploaded texture. That was measured, not assumed — installing a 64x-larger scale factor under environment mapping produced a byte-identical PPSSPP capture (RE-214). Real SSB64 content needs the scale: one `StageMetalFile2` tile sweeps 16 of its 32 uploaded texels, a 48x42 tile padded to 64x64 sweeps 47x41, and 57 texgen triangles bind a tile with a nonzero origin. The texture-matrix generator carries all of it exactly, and as a side effect removes the environment path's coupling of the reflection's S axis to whichever GE light slot was named — light 0 being SSB64's own fighter light.
+
+**Implemented:** `psp/src/meshdraw.rs` (`apply_texture_mapping`, `TextureMapping`, `DrawState::texgen_object_basis`), `crates/ssb-rom/src/psp_texture.rs` (`env_map_tex_scale`, `authored_uv_tex_scale`)
+
+**Reference:** `docs/reverse-engineering.md` RE-214, `docs/rendering.md` "Geometry modes set"
+
+---
+
+### D-039: Texgen State Is Primitive-Level Because the Archive Says So
+**Decision:** `G_TEXTURE_GEN` mode and its `gSPTexture` scale are stored on the primitive (`MeshMaterial`, `PrimDesc`), not at vertex-cache/load granularity — and the raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` geometry-mode bits are preserved independently rather than collapsed into a single mode enum.
+
+**Reasoning:** F3DEX generates texture coordinates during `G_VTX` processing, so primitive-level state is only equivalent under an invariance this project does not get to assume. `romtool texgen` measures it archive-wide: of 3,012 texgen triangles, zero load a vertex under a different effective mode or a different `G_TEXTURE` scale than the draw, including the 203 that reuse a vertex across a node or display-list boundary. Primitive granularity is therefore a proven optimisation. The raw bits are kept separate because `G_TEXTURE_GEN_LINEAR` is a modifier, not an enabler: a list may clear `G_TEXTURE_GEN` while retaining it, and re-setting `G_TEXTURE_GEN` must resume in linear mode — which a three-state enum cannot express. If future evidence (another region's ROM, or content this port does not yet reach) violates the invariance, move the state to the vertex-load level rather than reaching for "last material wins".
+
+**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State::geometry_mode`, `TextureGen::from_geometry_mode`, `MeshMaterial::texgen_scale`), `tools/romtool/src/main.rs` (`texgen`)
+
+**Reference:** `docs/reverse-engineering.md` RE-214
