@@ -80,6 +80,109 @@ is scoped by the existing R0/R1/R2 ownership rules.**
 
 ---
 
+## RE-212 — Tenth golden scene (Donkey Kong) verified on physical PSP hardware; a stale PSPLink module-manager state silently breaks the next module's relative asset-pack open (`PLAN.md` R2)
+
+**Problem.** RE-210 hardware-verified the fourth of RE-103's named fighters
+(Fox, Captain Falcon, Kirby, Ness), exhausting both RE-102's and RE-103's
+own sets. The next pick has no specific bug lineage to follow, so this
+session picked the next untested fighter in `FIGHTER_COSTUME_COUNTS`
+(`tools/romtool/src/main.rs`) order: Donkey Kong, file 317.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201–210, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`
+(unchanged from RE-210 — no asset-pipeline code touched this session).
+
+**Method.** Added `regression_capture_scene10` (`psp/Cargo.toml`,
+`psp/src/main.rs`), following scenes 2–4/6–9's exact object-viewer pattern
+at all four call sites (`deterministic_capture_frozen`, object selection,
+`stage_view` suppression, idle-spin suppression). `romtool scene --file 317
+--list` reports a symmetric 26-node graph pair at `0x39A8` and `0x6EC0`;
+selected the lower-offset one (`0x39A8`), matching the convention scenes
+6–9 already used.
+
+PPSSPP software: built, captured twice back-to-back, byte-identical
+(`md5sum` match), confirming deterministic freeze/spin-suppression wiring.
+DK renders with correct, distinct colours (brown fur, tan chest/face,
+red/black tie) — no melting or black-clamp artefacts. Rebuilding plain
+`regression_capture` (no scene-10 feature) still matches
+`tests/golden/r0-dream-land-default.png` exactly (`tools/compare-screenshot.sh`:
+0 differing pixels), confirming scene 10's changes are inert elsewhere.
+`cargo test --workspace`: 506 passing, unchanged (no crate logic touched,
+only `psp/src/main.rs` view-selection wiring and a new Cargo feature). New
+golden committed at `tests/golden/r2-dk-fighter.png`, SHA-256
+`962c99e4a1481d3bc9ab12c52b06e2941a6fc007b6c6b71785e7f8979371a81f`, against
+EBOOT SHA-256 `b6c2e1a0a119ce20d59caf6f27d2fd81f46176807ed96a98d6452b5184d52529`.
+
+Physical PSP, first attempt: `modlist` showed no stale game module before
+load; `ldstart`ed the scene-10 PRX over `host0:`. Waited past the tick-240
+freeze, checked state before capturing: `exlist` empty, `thlist` showed a
+live `main_thread` — by every check this project's own protocol defines, a
+clean run. The captured frame was the built-in fallback tetrahedron, not
+DK: `psp_main`'s `assets::load_pack()` had silently failed (any
+`LoadError` variant renders identically — the built-in placeholder — so the
+screenshot alone cannot distinguish "not found" from "out of memory" from
+"short read"). Re-tried twice more: killing the stale module by UID and
+`cd`-ing the PSPLink shell into the EBOOT's own directory before
+`ldstart`ing again reproduced the exact same fallback frame, byte-for-byte
+— ruling out both a one-off timing fluke and a working-directory-relative
+`sceIoOpen("ssb64.pak")` theory, since the shell's own `pwd` confirmed the
+`cd` had taken effect and persisted across the following `ldstart`.
+Escalated to `pspsh -e reset` (`docs/psplink.md`'s documented recovery for
+"renderer, thread, or FPU state unreliable" — not obviously applicable
+here, since `exlist`/`thlist` showed nothing wrong) before the next
+`ldstart`: DK rendered correctly on the very next capture, with `exlist`
+still empty and `main_thread` still alive — identical health-check results
+to the two failing attempts. The fault was invisible to every check this
+project's own hardware protocol runs before trusting a capture.
+
+Re-verified the fix is not a fluke: reset, `cd`, `ldstart`, wait, capture
+again for the hash-bearing final run below — succeeded identically on the
+first try post-reset, both times.
+
+Diffed the successful capture (not committed per repository policy,
+SHA-256 `7eb5a8f4a1bf6e13743b4f44055280be1323394062f0fae2d3710dd8d1f03011`)
+upscaled 2x nearest-neighbour against the PPSSPP golden: the visual diff
+shows the same shape RE-203–210 already documented and excluded — a thin
+edge-antialiasing band around every polygon boundary, PSPLink's status
+text (top left) and PPSSPP's FPS-counter region (top right) — no solid
+interior region of the model differs. Killed the loaded module afterward,
+closed the `pspsh` session, stopped `usbhostfs_pc`, and rebuilt the plain
+default EBOOT (SHA-256
+`d55ef2811bb118c27971555a127dc14a64067c10f2156590c98faf0084882d0a`) before
+ending the session.
+
+**Conclusion.** DK renders correctly on real PSP hardware with zero
+exceptions once the stale module-manager state is cleared. `PLAN.md` R2's
+"representative fighters render" row now cites six fighters (Mario, Fox,
+Captain Falcon, Kirby, Ness, Donkey Kong). The "no hardware-only rendering
+failures remain" row stays open: 6 of 12 playable fighters and 39 of 41
+stages remain untested on hardware.
+
+The real, reusable finding is methodological, not a rendering bug: **a
+plain `kill <uid>` of a previous PSPLink-loaded module is not always
+sufficient to guarantee the next module's own relative-path `sceIoOpen`
+succeeds, and `exlist`/`thlist` do not detect this** — both stayed
+completely clean across both the two failing attempts and the one
+succeeding attempt. `docs/psplink.md`'s existing "Before reload inspect
+`modlist`... Use `reset` after faults" guidance already names `reset` as
+the recovery step, but scoped it to renderer/thread/FPU-state faults with
+visible symptoms; this session found a case with no visible symptom at all
+(clean `exlist`, clean `thlist`, a plausible-looking rendered frame — the
+built-in placeholder, not a black or locked screen) that still needed the
+same recovery. Updated `docs/psplink.md` to recommend `reset` before
+`ldstart` whenever the previous module was stopped by `kill` rather than
+exiting on its own, not only after an observed fault.
+
+The next same-shaped increment is another untouched fighter or stage using
+the same `regression_capture_sceneN` pattern; `FIGHTER_COSTUME_COUNTS`
+(`tools/romtool/src/main.rs`) gives the model file id for any of the
+remaining fighters (Samus 320, Luigi 323, Link 324, Jigglypuff 330, Yoshi
+338, Pikachu 341). Live analog-stick input still requires a human operator
+and cannot be resolved by an agent session alone.
+
+---
+
 ## RE-210 — Ninth golden scene (Ness) verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-209 hardware-verified all three fighters RE-102 named for

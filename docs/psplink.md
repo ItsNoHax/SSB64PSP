@@ -87,8 +87,16 @@ pspsh -e 'ldstart host0:/psp/target/mipsel-sony-psp/release/ssb64-psp.prx'
 For Memory Stick runs use `tools/stage-psp-regression.sh`; it does not provide
 live host-file loading.
 
-Before reload inspect `modlist`. Kill exact game UID if it remains. Use `reset`
-after faults that leave renderer, thread, or FPU state unreliable:
+Before reload inspect `modlist`. Kill exact game UID if it remains, then
+`reset` before the next `ldstart` — not only after an observed fault.
+RE-212 found a case with no visible symptom at all (`exlist` empty,
+`thlist` showed a live `main_thread`, a plausible-looking rendered frame)
+where a bare `kill` still left PSPLink's own module-manager state stale
+enough that the next module's relative `sceIoOpen("ssb64.pak")` silently
+failed and fell back to the built-in placeholder mesh. `exlist`/`thlist`
+did not catch it; only comparing the actual rendered content against the
+expected model did. Treat `reset` as the default step after any `kill`,
+not a conditional one:
 
 ```bash
 pspsh -e modlist

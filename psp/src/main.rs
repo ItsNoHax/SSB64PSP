@@ -81,6 +81,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene7")
             || cfg!(feature = "regression_capture_scene8")
             || cfg!(feature = "regression_capture_scene9")
+            || cfg!(feature = "regression_capture_scene10")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -518,6 +519,19 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // Donkey Kong's own file-317 graph at 0x39A8 -- the fifth non-Mario
+    // fighter golden. Extends coverage past RE-207/208/209/210's four
+    // fighters into the remaining seven still hardware-untested.
+    if cfg!(feature = "regression_capture_scene10") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 317 && o.source_offset == 0x39A8)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-173: the original manager's 53 EFDesc records reduce to 46 unique
     // display-bearing objects after excluding three controller-only entries
     // and coalescing four shared graphs. Resolve that source-backed inventory
@@ -596,7 +610,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene6",
             feature = "regression_capture_scene7",
             feature = "regression_capture_scene8",
-            feature = "regression_capture_scene9"
+            feature = "regression_capture_scene9",
+            feature = "regression_capture_scene10"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -1124,7 +1139,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene6",
                     feature = "regression_capture_scene7",
                     feature = "regression_capture_scene8",
-                    feature = "regression_capture_scene9"
+                    feature = "regression_capture_scene9",
+                    feature = "regression_capture_scene10"
                 ))
             {
                 spin += 0.02;
