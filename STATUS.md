@@ -66,6 +66,17 @@ live — this requires a human physically operating the device with PSPLink
 attached; `pspsh` has no controller-injection command, so an agent session
 cannot resolve it alone.
 
+**RE-211 rendering-gap audit:** current decomp/runtime comparison found that
+R0.10's `COMPLETE` claim is premature. Runtime supports the 33 packed
+palette-cycling material scripts, but not the decomp's stage `TextureIDCurrent`
+and UV material tracks; 200/441 fighter costume scripts also carry an ignored
+`PaletteID` track. The decomp-confirmed renderer gaps are fighter shadows,
+general SObj/UI rendering, and original GObj/display-link scheduling for
+multi-pass content. Combined alpha gates and rare/two-cycle combiner formulas
+remain bounded fidelity gaps. Current ROM census corrected stale docs: 134/134
+material graphs paired, 475 matching nodes, zero mismatches; texture failures
+are only the 26 runtime framebuffer references. See RE-211.
+
 ## Current state
 
 - R0.5: `COMPLETE`; RE-201's PSPLink capture resolves its physical Dream Land

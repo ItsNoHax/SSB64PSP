@@ -1151,15 +1151,16 @@ hardware — that gap belongs to R2, not this task.
 
 ## R0.10 — Material Animation
 
-Status: `COMPLETE`
+Status: `VERIFYING` — RE-211 found that current runtime support covers the
+33 resolved palette-cycling scripts, but not the decomp's full stage
+`TextureIDCurrent`/UV material-track set or fighter costume `PaletteID` tracks.
 
 ### Current evidence
 
-The 12-layer material animation script is decoded but not played
-(`docs/porting-status.md` "Stage animation": "read but not played"). Frame 0
-happens to match the baked colours already shipped, so nothing currently
-renders visibly wrong — but that is coincidence, not implementation. Genuinely
-not started; `TODO.md` Phase F.
+The material animation decoder, pack representation and device palette path
+exist, but RE-211 audits them as partial rather than complete. Frame 0 can
+match baked content while the unimplemented texture-frame/UV tracks remain
+invisible in static captures.
 
 RE-086 measured what those 12 layers' 172 material-animation scripts
 actually animate, archive-wide, before any implementation was designed —
