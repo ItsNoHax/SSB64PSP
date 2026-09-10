@@ -1034,6 +1034,24 @@ impl State {
             self.material.light2_color = Some(c);
             self.material.lit = true;
         }
+        // `MOBJ_FLAG_TILE0`/`MOBJ_FLAG_TEXTURE` (RE-194): the same
+        // `gDPSetTileSize(0, ...)`/`gSPTexture(..., G_ON)` commands a
+        // display list would emit directly, just computed by
+        // `gcDrawMObjForDObj` at the point it calls into this `MObj`
+        // instead of written out as bytes — so they update the same state a
+        // real `Cmd::SetTileSize`/`Cmd::Texture` do, in the `mobj.rs`
+        // comment above each field's own words.
+        if let Some((uls, ult, lrs, lrt)) = m.tile0_uv {
+            self.tile_dims = Some((
+                ((lrs.saturating_sub(uls)) >> 2) + 1,
+                ((lrt.saturating_sub(ult)) >> 2) + 1,
+            ));
+            self.tile0_origin = Some((uls, ult));
+        }
+        if let Some((s, t)) = m.tex_scale {
+            self.texture_enabled = true;
+            self.tex_scale = (s, t);
+        }
     }
 
     /// Drops the texture binding a call we cannot follow would have replaced.

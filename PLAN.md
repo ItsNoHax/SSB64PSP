@@ -2709,14 +2709,30 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   G2 owns the trigger" gap RE-149 already accepted to close R0.13 (whose own
   LB-transition draw path is likewise only ever called from its own audit
   feature today)
-* [ ] runtime `MObj` display-state parity — reproduce the decompilation's
-  `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
-  `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`
-  texture scale, `trau`/`trav` translation, `scrollu`/`scrollv`, and the
-  `MOBJ_FLAG_FRAC` current/next-texture fractional blend. The narrower
-  fractional and UV-scroll symptoms are also listed in `TODO.md`; this item
-  owns their end-to-end state model and prevents treating isolated symptoms as
-  a complete `MObj` implementation.
+* [x] runtime `MObj` display-state parity — RE-194 measured every input
+  `gcDrawMObjForDObj` (`refs/ssb-decomp-re/src/sys/objdisplay.c`) uses archive-
+  wide (665 real `MObjMaterial`s) before implementing anything, and found the
+  prior "runtime-only, cannot read statically" framing (`mesh.rs`'s own doc
+  comment) was wrong: `flags`, `scau`/`scav`, `trau`/`trav`, `scrollu`/
+  `scrollv` and the tile/scale-formula fields are ordinary static `MObjSub`
+  data, never mutated anywhere outside `objdisplay.c`. Implemented and
+  unit-tested against real ROM values: the `MOBJ_FLAG_NONE` default
+  substitution (3 real occurrences), `MOBJ_FLAG_TEXTURE`'s `gSPTexture` scale
+  (10 occurrences, `MObjMaterial::tex_scale`), and the tile-0 `gDPSetTileSize`
+  window (35 occurrences, `MObjMaterial::tile0_uv`). `MOBJ_FLAG_FRAC` is
+  confirmed dead code for this game's content (0/665 real occurrences, never
+  set at runtime either) — the same "measured, not guessed" treatment RE-127
+  gave RDP LOD blending, not an unimplemented gap. The tile-1/scroll bit is
+  real (12 occurrences) but every occurrence's inputs are identical to its own
+  tile-0 window and this project's renderer has no `TEXEL1` consumer to feed
+  (RE-130), so it is documented as confirmed-inert rather than given a pack
+  field nothing would read. On-device: rebuilt pack (+15 textures bound,
+  previously-unresolved `MOBJ_FLAG_NONE`/`TEXTURE` sprites), clean PPSSPP boot
+  at 60 FPS, and a pixel diff against the pre-fix build showing the only
+  difference anywhere in the frame is the on-screen texture-count HUD digits
+  — Dream Land's own affected `MObjSub`s (file 104) render pixel-identical
+  geometry, the same "not visible at this camera distance" outcome RE-075/081
+  already recorded for other verified fixes to this scene.
 * [ ] no unexplained rendering commands remain
 * [ ] no unexplained missing assets remain
 * [ ] no unexplained material failures remain
