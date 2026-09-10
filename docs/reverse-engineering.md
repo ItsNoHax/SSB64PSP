@@ -10,6 +10,135 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-194 — `gcDrawMObjForDObj`'s runtime tile/texture-scale state, measured and reproduced; `MOBJ_FLAG_FRAC` confirmed dead (`PLAN.md` R1)
+
+**Problem.** `PLAN.md` R1's "runtime `MObj` display-state parity" bullet asks
+this project to reproduce `gcDrawMObjForDObj`'s full emission path
+(`refs/ssb-decomp-re/src/sys/objdisplay.c:1150-1424`): `MOBJ_FLAG_NONE`
+defaults, runtime texture enable/disable, `scau`/`scav` texture scale,
+`trau`/`trav` translation, `scrollu`/`scrollv`, and the `MOBJ_FLAG_FRAC`
+current/next-texture blend. `crates/ssb-rom/src/mesh.rs`'s own doc comment on
+`current_texture_shape` already flagged this as a known gap, but described it
+as unreadable: "yet another runtime-only flag bit, alongside FRAC/SPLIT/
+ALPHA, this converter cannot read statically."
+
+**That description was wrong.** Every input these branches use —
+`flags`, `scau`, `scav`, `trau`, `trav`, `scrollu`, `scrollv`, and the
+`unk08`/`unk0A`/`unk0C`/`unk0E`/`unk10`/`unk38`/`unk3A` fields the tile-size
+and texture-scale formulas read — is an ordinary static `MObjSub` field.
+Grepping the whole decompilation for writes to any of them
+(`grep -rn '\.sub\.scau\|\.sub\.trau\|...' src/`) found none outside
+`objdisplay.c` itself. Only `texture_id_curr`/`texture_id_next`/`palette_id`/
+`lfrac` — the fields `gcAddMObjForDObj` zeroes and `MOBJ_FLAG_FRAC`
+advances — are genuinely runtime state. Confusing "the *result* is computed
+by CPU code at runtime, via float division" with "the *inputs* are unknown
+at pack time" is what stalled this: the inputs are exactly as readable as
+`flags` already is.
+
+**Measured before implementing anything**, using a temporary instrumented
+scan through `romtool mobj`'s existing `read_table` walk (reverted before
+committing), over the whole archive's 665 real `MObjMaterial`s the project
+currently resolves:
+
+| Flag | Real occurrences |
+| --- | --- |
+| `flags == MOBJ_FLAG_NONE` (raw `0`) | 3 |
+| `MOBJ_FLAG_TEXTURE` (`0x80`) | 10 |
+| the tile-0 `gDPSetTileSize` bit (`0x20`) | 35 |
+| the tile-1/scroll `gDPSetTileSize` bit (`0x40`) | 12 |
+| `MOBJ_FLAG_FRAC` (`0x10`) | **0** |
+
+Every real `MOBJ_FLAG_TEXTURE` occurrence also sets the tile-0 bit (10/10).
+Every real tile-1 occurrence has `scrollu == trau`, `scrollv == trav`, and
+`unk38/unk3A == unk0C/unk0E` — byte-identical inputs to its own `MOBJ_FLAG_
+TILE0` window, not merely similar outputs. `unk10` (the `s32` selector
+gating a second scale formula) is only ever `0` or `2` archive-wide; the
+decompiled `unk10 == 1` branch (a `scau *= 0.5` halving applied before
+either tile-size formula runs) is translated for fidelity but unreached by
+any real `MObjSub`.
+
+**`MOBJ_FLAG_FRAC` is dead code for this game's content**, the same
+conclusion RE-127 already reached for RDP LOD blending: real hardware never
+sets it (0/665), and nothing at runtime ever ORs it in either (the only
+runtime `sub.flags |=` in the whole decompilation, `efmanager.c`'s two
+shield-colour writes, only ever sets `MOBJ_FLAG_ENVCOLOR`). Not implemented,
+for the same reason RE-127's `G_TL_LOD`/`G_TD_SHARPEN` paths were not: there
+is no real content to reproduce it against.
+
+**The tile-1/scroll bit is real but has no consumer.** `mesh.rs` only ever
+samples render tile 0 (`RENDER_TILE`/`Cmd::SetTileSize`'s own `tile ==
+RENDER_TILE` guard); no packed combiner shape reads `TEXEL1` (RE-130). Given
+every real occurrence's own inputs are identical to tile 0's, decoding it
+into a distinct pack field would carry state nothing reads. Documented as a
+confirmed-inert real flag (`mobj.rs`'s `MOBJ_FLAG_TILE1` constant and its own
+doc comment) rather than implemented, the same treatment `MOBJ_FLAG_FRAC`
+gets.
+
+**Implementation.** `crates/ssb-rom/src/mobj.rs`:
+
+* `read_material` now substitutes `flags = TEXTURE | 0x20 | ALPHA` when the
+  raw field is `0`, exactly matching `gcDrawMObjForDObj`'s own substitution,
+  applied *before* every other flag-gated read in the function (previously
+  the sprite/tile/scale reads all saw the raw `0` and resolved nothing for
+  these 3 real `MObjSub`s).
+* `MObjMaterial::tex_scale: Option<(u16, u16)>` — `MOBJ_FLAG_TEXTURE`'s
+  `gSPTexture(s, t, 0, 0, G_ON)`, translated faithfully from
+  `objdisplay.c:1399-1420` (both the `unk10 == 2` and default formulas),
+  in the same Q0.16 representation `Cmd::Texture`'s `scale_s`/`scale_t`
+  already use (RE-101).
+* `MObjMaterial::tile0_uv: Option<(u16, u16, u16, u16)>` (`uls, ult, lrs,
+  lrt`) — the tile-0 bit's `gDPSetTileSize(0, ...)`, translated from
+  `objdisplay.c:1353-1383`, in the same raw S10.2 fixed-point representation
+  `Cmd::SetTileSize` already decodes. Matches the decomp's own truncation
+  order: `uls`/`ult` are computed as `s32` and *then* reused (already
+  truncated) for the `lrs`/`lrt` expression, not truncated only at the end.
+
+`crates/ssb-rom/src/mesh.rs`'s `apply_mobj` applies both exactly like the
+equivalent real `Cmd::SetTileSize`/`Cmd::Texture` handlers already do:
+`tile0_uv` updates `tile_dims`/`tile0_origin`, `tex_scale` sets
+`texture_enabled = true` and `tex_scale`. No new pack fields were needed —
+both feed existing `TextureRef`/pack-time machinery unchanged.
+
+**Verification.** Five new unit tests in `mobj.rs`: two lock the tile-0 math
+(`unk10 == 0` and `unk10 == 2` branches) against hand-computed expected
+values from Dream Land's own real `MObjSub` (file 104, `0x1F78`) and file
+117's (`StageMetalFile2`, `0xC38`); one locks `MOBJ_FLAG_TEXTURE`'s scale
+against file 86's real values; one confirms the `MOBJ_FLAG_NONE`
+substitution resolves a sprite that previously resolved to nothing; one
+(`SSB64_ROM`-gated) reads all three real `MObjSub`s straight out of the ROM
+through `read_material` itself and re-asserts the same numbers, not just
+against the synthetic fixtures. `cargo test --workspace`: 342 passing (was
+337). `cargo fmt --check` and `cargo clippy --workspace --all-targets` both
+clean.
+
+Rebuilt the pack (`romtool pack`): textures bound `1330 → 1345` (+15, the
+newly-resolved `MOBJ_FLAG_NONE`/`MOBJ_FLAG_TEXTURE` sprites), size `8025.5 →
+8060.0` KiB. `cargo psp --release` + `tools/run-ppsspp.sh --seconds 8`: clean
+boot, 60 FPS, no error/panic in the log. Diffed the resulting screenshot
+against an equivalent run of the pre-fix build pixel-for-pixel: of the whole
+960×544 frame, exactly 258 pixels differ (threshold 10/255 per channel), all
+of them inside the on-screen texture-count HUD digits (`1330` → `1345`) —
+zero pixels differ anywhere in the actually-rendered 3D geometry, including
+Dream Land's own canopy (the two affected real `MObjSub`s at file 104
+`0x1F78`/`0x1FF0` are on this stage). The same "not visible at the tested
+camera distance" outcome RE-075/RE-081 already recorded for other real,
+verified changes to this exact scene — the fix is real and numerically
+verified against the decompilation and the real ROM, not merely "compiles."
+The other affected files (69, 83, 84, 112, 114, 117, 333, 347, 350, 353, 354)
+are fighter/effect/stage assets not reachable from the debug viewer's default
+boot scene; their own on-device visual confirmation is unresolved future work
+if it becomes relevant to any other task.
+
+**Confidence: certain** for the math (unit-tested against real ROM values,
+translated field-by-field from the decompilation) and the `MOBJ_FLAG_FRAC`/
+tile-1 declines (archive-wide, zero real occurrences / zero-consumer,
+matching RE-127's own precedent). **Unconfirmed** whether the tile-0/
+texture-scale fix is visually observable anywhere in this ROM's real content,
+since the only on-device-verified case (Dream Land) shows no visible
+difference from its default camera framing.
+
+---
+
 ## RE-193 — Minimal `SObj` 2D-sprite port renders the wallpaper capture through a real GE draw, closing R1's framebuffer-paths bullet
 
 **Problem.** RE-192 built and device-verified the wallpaper-capture mechanism

@@ -1,36 +1,35 @@
 # Project Status
 
-**Last updated:** 2026-09-10
+**Last updated:** 2026-09-10 (RE-194 session)
 
 ## Continuation packet
 
 **Milestone:** `R1 — Rendering Completeness`
 
-**Current task:** Runtime `MObj` display-state parity — `PLAN.md` R1's next
-unchecked acceptance item. RE-193 (this session) closed the previous
-bullet ("all required framebuffer paths render"), so this is now the first
+**Current task:** "No unexplained rendering commands remain" — `PLAN.md` R1's
+next unchecked acceptance item. RE-194 (this session) closed the previous
+bullet ("runtime `MObj` display-state parity"), so this is now the first
 open item. Not started yet this session.
 
 **Status:** `TODO` (not started)
 
-**Dependencies:** RE-172–193 complete. R0.5 physical PSP comparison remains
+**Dependencies:** RE-172–194 complete. R0.5 physical PSP comparison remains
 `VERIFYING` and is temporarily deferred by explicit user direction.
 
-**Relevant files:** `PLAN.md` R1's `MObj` display-state bullet;
-`refs/ssb-decomp-re/src/sys/objdisplay.c` (`gcDrawMObjForDObj`);
-`crates/ssb-rom/src/mobj.rs`; `psp/src/meshdraw.rs` (`apply_material` and
-related); `TODO.md` (fractional/UV-scroll symptoms this item owns).
+**Relevant files:** `PLAN.md` R1's remaining bullets ("no unexplained
+rendering commands/missing assets/material failures remain", "rendering
+regression suite passes", "golden/reference renders are established");
+`docs/rendering.md` "Measured usage"/"Not yet handled" tables;
+`docs/visual-regression.md` (existing test-matrix rows).
 
-**First checks:** `git status --short`; `git log -5 --oneline`; read
-`gcDrawMObjForDObj` in full before touching code — this item explicitly
-owns the end-to-end state model (`MOBJ_FLAG_NONE` defaults, texture
-enable/disable, `scau`/`scav`, `trau`/`trav`, `scrollu`/`scrollv`,
-`MOBJ_FLAG_FRAC`), not just the isolated symptoms already listed in
-`TODO.md`.
+**First checks:** `git status --short`; `git log -5 --oneline`; re-run
+`romtool scan` to get a current opcode census and diff it against
+`docs/rendering.md`'s existing table before assuming anything is still
+accurate — several of these bullets may already be substantially covered by
+work recorded elsewhere in `PLAN.md`/`docs/reverse-engineering.md` and just
+need the acceptance text reconciled, per `AGENTS.md` §2.
 
-**Acceptance:** `PLAN.md` R1's "runtime `MObj` display-state parity" bullet
-— reproduce `gcDrawMObjForDObj`'s emission path completely enough that no
-symptom in this state model is treated as fixed in isolation.
+**Acceptance:** `PLAN.md` R1's four remaining unchecked bullets (§7).
 
 **Stop condition:** None yet — task not started.
 
@@ -52,80 +51,78 @@ symptom in this state model is treated as fixed in isolation.
   acceptance item is checked off. Only the real 1P-mode/results-screen G2
   trigger remains unbuilt — accepted as out of R1 scope, the same split
   RE-149 already used to close R0.13.
-- Next R1 work: runtime `MObj` display-state parity (this session's
-  selected next task), unexplained rendering commands/assets/material
-  failures, and remaining regression rows.
+- Next R1 work: no unexplained rendering commands/assets/material failures
+  remain, rendering regression suite passes, remaining golden-render matrix
+  rows. `MObj` display-state parity is now closed (RE-194).
 - R2/R3/combat: blocked behind R1 and the physical rendering gate.
 
 ## Last completed task
 
-**RE-193 — minimal `SObj` 2D-sprite port renders the wallpaper capture through a real GE draw**
+**RE-194 — `gcDrawMObjForDObj`'s runtime tile/texture-scale state, measured and reproduced; `MOBJ_FLAG_FRAC` confirmed dead**
 
-- Found and corrected a wrong assumption in the prior session's own
-  scoping: the wallpaper is drawn in the decompilation as an `SObj` 2D
-  screen-space sprite (RDP `gSPTextureRectangle`, no 3D transform, no
-  display list), not a `DObj`/`MObj` textured quad like the LB-transition
-  precedent. This project had never ported any `SObj` support. Corrected
-  `PLAN.md`'s bullet text accordingly (`AGENTS.md` §2: investigate and fix
-  disagreeing documentation rather than silently working around it).
-- Per explicit user direction, built the real minimal `SObj` slice this one
-  caller needs rather than a synthetic 3D-quad shortcut: `SpriteVertex`
-  (`GU_TRANSFORM_2D`) and `Gpu::draw_wallpaper_sprite` in `psp/src/gu.rs`,
-  reproducing the one real draw call's own fixed parameters (single bitmap,
-  `pos = (10,10)`, scale 1.0, opaque, `G_CC_MODULATEI_PRIM`'s 50%-grey prim
-  dim) — not a general `Sprite`/`Bitmap` decoder, which RE-190/191 already
-  ruled out as unnecessary here.
-- `WALLPAPER_PHOTO`'s backing array grew from 220 to a padded 256 rows: the
-  GE's texture-height register is a power-of-two exponent field, a
-  constraint the buffer never had to satisfy before this session's GE bind
-  (the CPU-only capture/blit paths never cared).
-- Found and fixed a real on-device bug: `TEXTURE_32BITF` UV with identity
-  `sceGuTexScale`/`Offset` is a raw texel address, not a normalized 0..1
-  fraction. The first attempt's fractional UVs sampled almost only the
-  single top-left (background) texel, smearing it across the whole
-  300×220 quad and blacking out the stage every frame past the capture
-  trigger — screenshotted before the fix (tick 276) as part of the record.
-  Fixed with texel-unit UV corners.
-- Added `wallpaper_sprite_audit_capture` (`psp/Cargo.toml`/`main.rs`):
-  same tick-240 capture trigger as `wallpaper_audit_capture`, displayed
-  through the new real GE draw instead of the raw CPU blit — independent
-  evidence of a different mechanism, kept alongside (not replacing) the
-  existing feature.
-- Verified on device: fixed build measures average luminance 43.3 inside
-  the exact 300×220 draw rectangle vs. 72.6 for the same rectangle in a
-  same-duration default-build screenshot (consistent with the 50% grey
-  modulate), and 23.24 vs. 23.26 strictly outside it (unchanged, proving
-  the write is exactly bounded). Re-verified `wallpaper_audit_capture`'s
-  original CPU-blit ghosting evidence still reproduces after the buffer
-  resize (no regression).
-- All three PSP configs (default, `wallpaper_audit_capture`,
-  `wallpaper_sprite_audit_capture`) build clean; `cargo fmt --check` in
-  `psp/` clean; `cargo clippy --workspace --all-targets` and `cargo test
-  --workspace` (337, unaffected) both clean.
-- Checked off `PLAN.md` R1's "all required framebuffer paths render"
-  acceptance item, on the same "renderer owns mechanism, G2 owns trigger"
-  precedent RE-149 used for R0.13 (whose own LB-transition draw path is
-  likewise only ever called from its own audit feature today).
-- Evidence: `docs/reverse-engineering.md` RE-193.
+- Corrected a wrong assumption standing in `mesh.rs`'s own doc comment
+  (`current_texture_shape`), which called `MOBJ_FLAG_TEXTURE` and friends
+  "runtime-only, cannot read statically": every input these branches use
+  (`flags`, `scau`/`scav`, `trau`/`trav`, `scrollu`/`scrollv`, and the
+  tile/scale-formula fields) is an ordinary static `MObjSub` field, never
+  mutated anywhere outside `objdisplay.c` in the whole decompilation
+  (confirmed by grep). Only `texture_id_curr`/`texture_id_next`/
+  `palette_id`/`lfrac` are genuinely runtime state.
+- Measured every flag archive-wide (665 real `MObjMaterial`s, via a
+  temporary instrumented `romtool mobj` scan, reverted before committing)
+  before implementing anything: `flags == NONE` 3, `TEXTURE` 10, tile-0
+  `0x20` 35, tile-1/scroll `0x40` 12, `FRAC` **0**.
+- Implemented and unit-tested against real ROM values: the `MOBJ_FLAG_NONE`
+  default substitution, `MOBJ_FLAG_TEXTURE`'s `gSPTexture` scale
+  (`MObjMaterial::tex_scale`), and the tile-0 `gDPSetTileSize` window
+  (`MObjMaterial::tile0_uv`), both in `crates/ssb-rom/src/mobj.rs`, wired
+  into `crates/ssb-rom/src/mesh.rs`'s `apply_mobj` the same way the
+  equivalent real `Cmd::SetTileSize`/`Cmd::Texture` handlers already work.
+- `MOBJ_FLAG_FRAC` confirmed dead code for this game's content (0/665 real
+  occurrences; never OR'd in at runtime either — the only runtime
+  `sub.flags |=` anywhere sets `MOBJ_FLAG_ENVCOLOR`, for shields) — the same
+  "measured, not guessed" treatment RE-127 gave RDP LOD blending. Not
+  implemented.
+- Tile-1/scroll confirmed real but inert: every occurrence's inputs are
+  identical to its own tile-0 window, and no packed combiner shape reads
+  `TEXEL1` (RE-130) — documented (`mobj.rs`'s `MOBJ_FLAG_TILE1`), not given
+  a pack field nothing would read.
+- 5 new unit tests in `mobj.rs` (2 lock the tile-0 math against real Dream
+  Land/`StageMetalFile2` `MObjSub` values, 1 locks the texture-scale math,
+  1 covers the `MOBJ_FLAG_NONE` substitution, 1 is `SSB64_ROM`-gated and
+  re-reads all three real `MObjSub`s straight through `read_material`).
+  `cargo test --workspace`: 342 passing (was 337). `cargo fmt --check` and
+  `cargo clippy --workspace --all-targets` both clean.
+- Rebuilt the pack: textures bound `1330 → 1345` (+15, the newly-resolved
+  sprites). `cargo psp --release` + `tools/run-ppsspp.sh --seconds 8`: clean
+  boot, 60 FPS, no log errors. Pixel-diffed the resulting screenshot against
+  an equivalent pre-fix build: of 960×544 pixels, exactly 258 differ, all of
+  them inside the on-screen texture-count HUD digits (`1330`→`1345`) — zero
+  pixels differ in the rendered 3D geometry, including Dream Land's own
+  affected `MObjSub`s. Same "not visible at this camera distance" outcome
+  RE-075/RE-081 already recorded for this exact scene.
+- Checked off `PLAN.md` R1's "runtime `MObj` display-state parity"
+  acceptance item; updated `TODO.md`'s "UV Scroll"/"Implement
+  `MOBJ_FLAG_FRAC`" items to reflect the same measured conclusions.
+- Evidence: `docs/reverse-engineering.md` RE-194.
 - Commit: pending (this session).
 
 ## Verification
 
-`git diff --stat` for this session covers `psp/src/gu.rs`, `psp/src/main.rs`,
-`psp/Cargo.toml`, `PLAN.md`, `STATUS.md`, and `docs/reverse-engineering.md`.
-All three PSP configs build clean; `cargo fmt --check` in `psp/` clean;
-`cargo clippy --workspace --all-targets` and `cargo test --workspace` (337,
-psp/ is outside the workspace, unaffected) both clean. On-device:
-`tools/run-ppsspp.sh --no-build --seconds 5` against the broken and fixed
-`wallpaper_sprite_audit_capture` builds and against `wallpaper_audit_capture`
-post-resize, screenshots measured/compared — see RE-193. Prior sessions'
-verification (RE-189, RE-192) is unaffected and remains valid.
+`git diff --stat` for this session covers `crates/ssb-rom/src/mobj.rs`,
+`crates/ssb-rom/src/mesh.rs`, `PLAN.md`, `TODO.md`, `STATUS.md`, and
+`docs/reverse-engineering.md`. `cargo fmt --check`, `cargo clippy
+--workspace --all-targets`, and `cargo test --workspace` (342, `SSB64_ROM`
+set) all clean. Pack rebuilt and reloads cleanly (+15 textures bound, see
+above). On-device: `tools/run-ppsspp.sh --seconds 8`, clean log, 60 FPS,
+pixel-diffed against an equivalent pre-fix build — see RE-194. Prior
+sessions' verification (RE-190–193) is unaffected and remains valid.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–193.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–194.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 

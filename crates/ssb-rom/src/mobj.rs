@@ -54,6 +54,22 @@ const ENTRY_SIZE: u32 = 8;
 // Field offsets within `MObjSub`.
 const F_SIZ: u32 = 0x03;
 const F_SPRITES: u32 = 0x04;
+// `gcDrawMObjForDObj`'s `scau`/`scav`/`trau`/`trav`/`unk0C`/`unk0E`/`unk10`
+// inputs (`objdisplay.c:1353-1420`, RE-194). None of these is ever mutated
+// anywhere outside `objdisplay.c` in the decompilation, so — unlike
+// `texture_id_curr`/`texture_id_next`/`palette_id`/`lfrac`, which are
+// zeroed by `gcAddMObjForDObj` and only ever advanced at run time — these
+// are ordinary static `MObjSub` fields, exactly as readable at pack time as
+// `flags` itself.
+const F_UNK08: u32 = 0x08;
+const F_UNK0A: u32 = 0x0A;
+const F_UNK0C: u32 = 0x0C;
+const F_UNK0E: u32 = 0x0E;
+const F_UNK10: u32 = 0x10;
+const F_TRAU: u32 = 0x14;
+const F_TRAV: u32 = 0x18;
+const F_SCAU: u32 = 0x1C;
+const F_SCAV: u32 = 0x20;
 const F_PALETTES: u32 = 0x2C;
 const F_FLAGS: u32 = 0x30;
 const F_PRIMCOLOR: u32 = 0x50;
@@ -69,11 +85,29 @@ const MOBJ_FLAG_ALPHA: u16 = 1 << 0;
 const MOBJ_FLAG_SPLIT: u16 = 1 << 1;
 const MOBJ_FLAG_PALETTE: u16 = 1 << 2;
 const MOBJ_FLAG_FRAC: u16 = 1 << 4;
+/// `objdisplay.c`'s bare `0x20` literal: a runtime-computed
+/// `gDPSetTileSize(0, ...)`, sizing/positioning the render tile (RE-194).
+/// `objtypes.h` never names it.
+const MOBJ_FLAG_TILE0: u16 = 1 << 5;
+const MOBJ_FLAG_TEXTURE: u16 = 1 << 7;
 const MOBJ_FLAG_PRIMCOLOR: u16 = 1 << 9;
 const MOBJ_FLAG_ENVCOLOR: u16 = 1 << 10;
 const MOBJ_FLAG_BLENDCOLOR: u16 = 1 << 11;
 const MOBJ_FLAG_LIGHT1: u16 = 1 << 12;
 const MOBJ_FLAG_LIGHT2: u16 = 1 << 13;
+/// `gDPSetTileSize(1, ...)`, `MObjSub::scrollu`/`scrollv` — RE-194 confirms
+/// this is real (12 occurrences archive-wide) but never observably
+/// different from the same `MObj`'s own [`MOBJ_FLAG_TILE0`] window: every
+/// real occurrence has `scrollu == trau`, `scrollv == trav` and
+/// `unk38/unk3A == unk0C/unk0E` (byte-identical inputs, not merely similar
+/// outputs). This project's renderer only ever samples render tile 0
+/// (`mesh.rs`'s `RENDER_TILE`/`Cmd::SetTileSize` handling; no packed
+/// combiner shape reads `TEXEL1`, RE-130), so tile 1 has no consumer to
+/// feed. Not decoded into [`MObjMaterial`] for the same reason
+/// [`MOBJ_FLAG_FRAC`] is not: real, present in the ROM, and confirmed to
+/// have no distinct observable effect on anything this project renders.
+#[allow(dead_code)]
+const MOBJ_FLAG_TILE1: u16 = 1 << 6;
 
 /// Where one entry of an `MObjSub` pointer table leads.
 ///
@@ -122,6 +156,17 @@ pub struct MObjMaterial {
     /// `gSPLightColor(..., LIGHT_2, ...)`, emitted when the MObj requests
     /// the always-present ambient source colour.
     pub light2_color: Option<[u8; 4]>,
+    /// `gSPTexture(s, t, 0, 0, G_ON)`, emitted when [`MOBJ_FLAG_TEXTURE`]
+    /// is set. Same Q0.16 representation `Cmd::Texture`'s `scale_s`/
+    /// `scale_t` already use (RE-101), so it overrides `State::tex_scale`
+    /// the same way a real display-list `G_TEXTURE` command would.
+    pub tex_scale: Option<(u16, u16)>,
+    /// `gDPSetTileSize(0, uls, ult, lrs, lrt)`, emitted when
+    /// [`MOBJ_FLAG_TILE0`] is set. Same raw S10.2 fixed-point
+    /// representation `Cmd::SetTileSize` already decodes, so it overrides
+    /// `State::tile0_origin`/`tile_dims` the same way a real display-list
+    /// `G_SETTILESIZE(0, ...)` would.
+    pub tile0_uv: Option<(u16, u16, u16, u16)>,
 }
 
 impl MObjMaterial {
@@ -132,6 +177,8 @@ impl MObjMaterial {
             || self.prim_color.is_some()
             || self.env_color.is_some()
             || self.blend_color.is_some()
+            || self.tex_scale.is_some()
+            || self.tile0_uv.is_some()
             || self.light1_color.is_some()
             || self.light2_color.is_some()
     }
@@ -162,6 +209,15 @@ fn read_u16(data: &[u8], at: u32) -> Option<u16> {
 fn read_rgba(data: &[u8], at: u32) -> Option<[u8; 4]> {
     let at = at as usize;
     data.get(at..at + 4)?.try_into().ok()
+}
+
+fn read_f32(data: &[u8], at: u32) -> Option<f32> {
+    let at = at as usize;
+    Some(f32::from_be_bytes(data.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn read_i32(data: &[u8], at: u32) -> Option<i32> {
+    read_u32(data, at).map(|v| v as i32)
 }
 
 /// How many `MObj`s a display list expects, i.e. one past the highest
@@ -227,13 +283,26 @@ fn fits(data: &[u8], r: Range<u32>) -> bool {
     r.end as usize <= data.len() && r.start <= r.end
 }
 
+/// Threshold below which `gcDrawMObjForDObj` treats a scale as zero rather
+/// than dividing by it (`ABSF(scau) > (1.0F / 65535.0F)`).
+const SCALE_EPS: f32 = 1.0 / 65535.0;
+
 /// Reads one `MObjSub` into the material its `MObj` would emit.
 fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<MObjMaterial> {
     let data = &file.data;
-    let flags = read_u16(data, at + F_FLAGS)?;
-    // `MOBJ_FLAG_NONE` is not "no material": the drawing code substitutes a
-    // default that enables texturing but no palette, so it contributes nothing
-    // we can recover here.
+    let raw_flags = read_u16(data, at + F_FLAGS)?;
+    // `MOBJ_FLAG_NONE` is not "no material": `gcDrawMObjForDObj` substitutes
+    // `TEXTURE | 0x20 | ALPHA` before doing anything else with `flags`, so a
+    // node whose `MObjSub` sets literally nothing still binds a texture, a
+    // tile-0 UV window and (via `ALPHA`) `sprites[0]`. RE-194 measured this
+    // real archive-wide: rare (3 of 665 real `MObjSub`s) but real, and every
+    // downstream read in this function must see the substituted value, not
+    // the raw zero, to match.
+    let flags = if raw_flags == 0 {
+        MOBJ_FLAG_TEXTURE | MOBJ_FLAG_TILE0 | MOBJ_FLAG_ALPHA
+    } else {
+        raw_flags
+    };
     let leaves_file = |slot: u32| -> Option<Ptr> {
         file.extern_relocs
             .iter()
@@ -285,6 +354,94 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         .flatten();
     let flagged = |bit: u16, field: u32| (flags & bit != 0).then(|| read_rgba(data, at + field))?;
 
+    // `scau`/`scav`/`trau`/`trav`/`unk08`/`unk0A`/`unk0C`/`unk0E`/`unk10` are
+    // ordinary static fields (see the comment on `F_UNK08` above), needed by
+    // both `MOBJ_FLAG_TILE0` and `MOBJ_FLAG_TEXTURE` below. Read them
+    // unconditionally, once: cheap, and every real occurrence of either flag
+    // needs the same values (RE-194).
+    let scau = read_f32(data, at + F_SCAU)?;
+    let scav = read_f32(data, at + F_SCAV)?;
+    let trau = read_f32(data, at + F_TRAU)?;
+    let trav = read_f32(data, at + F_TRAV)?;
+    let unk08 = read_u16(data, at + F_UNK08)? as f32;
+    let unk0a = read_u16(data, at + F_UNK0A)? as f32;
+    let unk0c = read_u16(data, at + F_UNK0C)?;
+    let unk0e = read_u16(data, at + F_UNK0E)?;
+    // `s32` in the decomp, but only ever observed as 0 or 2 archive-wide
+    // (RE-194); the `== 1` branch is translated below for fidelity even
+    // though no real `MObjSub` reaches it.
+    let unk10 = read_i32(data, at + F_UNK10)?;
+
+    // `objdisplay.c:1353-1382`. `uls`/`ult` are declared `s32` and reused
+    // *after* truncation for `lrs`/`lrt` below, so this truncates the same
+    // point the original does, not at the very end.
+    let tile0_uv = (flags & MOBJ_FLAG_TILE0 != 0).then(|| {
+        let (uls, ult) = if unk10 == 2 {
+            let uls = if scau.abs() > SCALE_EPS {
+                ((unk0c as f32 * trau) / scau) * 4.0
+            } else {
+                0.0
+            };
+            let ult = if scav.abs() > SCALE_EPS {
+                ((unk0e as f32 * trav) / scav) * 4.0
+            } else {
+                0.0
+            };
+            (uls.max(0.0), ult.max(0.0))
+        } else {
+            let uls = if scau.abs() > SCALE_EPS {
+                (((unk0c as f32 * trau) + unk0a) / scau) * 4.0
+            } else {
+                0.0
+            };
+            let ult = if scav.abs() > SCALE_EPS {
+                (((((1.0 - scav) - trav) * unk0e as f32) + unk0a) / scav) * 4.0
+            } else {
+                0.0
+            };
+            (uls, ult)
+        };
+        let (uls, ult) = (uls as i32, ult as i32);
+        let lrs = ((unk0c as i32 - 1) << 2) + uls;
+        let lrt = ((unk0e as i32 - 1) << 2) + ult;
+        (
+            uls.clamp(0, 0xFFFF) as u16,
+            ult.clamp(0, 0xFFFF) as u16,
+            lrs.clamp(0, 0xFFFF) as u16,
+            lrt.clamp(0, 0xFFFF) as u16,
+        )
+    });
+
+    // `objdisplay.c:1399-1420`.
+    let tex_scale = (flags & MOBJ_FLAG_TEXTURE != 0).then(|| {
+        let (s, t) = if unk10 == 2 {
+            let s = if scau.abs() > SCALE_EPS {
+                (unk0c as f32 * 64.0) / scau
+            } else {
+                0.0
+            };
+            let t = if scav.abs() > SCALE_EPS {
+                (unk0e as f32 * 64.0) / scav
+            } else {
+                0.0
+            };
+            (s, t)
+        } else {
+            let s = if scau.abs() > SCALE_EPS {
+                (2097152.0 / unk08) / scau
+            } else {
+                0.0
+            };
+            let t = if scav.abs() > SCALE_EPS {
+                (2097152.0 / unk08) / scav
+            } else {
+                0.0
+            };
+            (s, t)
+        };
+        (s.clamp(0.0, 65535.0) as u16, t.clamp(0.0, 65535.0) as u16)
+    });
+
     Some(MObjMaterial {
         at,
         palette,
@@ -301,6 +458,8 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         blend_color: flagged(MOBJ_FLAG_BLENDCOLOR, F_BLENDCOLOR),
         light1_color: flagged(MOBJ_FLAG_LIGHT1, F_LIGHT1COLOR),
         light2_color: flagged(MOBJ_FLAG_LIGHT2, F_LIGHT2COLOR),
+        tex_scale,
+        tile0_uv,
     })
 }
 
@@ -884,5 +1043,145 @@ mod tests {
         ];
         assert_eq!(demand(&cmds, &[]), 3);
         assert_eq!(demand(&[Cmd::End], &[]), 0);
+    }
+
+    /// A bare `MObjSub` with the given static fields, no palette/sprite
+    /// pointers. `read_material` never indirects through `F_PALETTES`/
+    /// `F_SPRITES` unless `PALETTE`/`FRAC`/`SPLIT`/`ALPHA` is set, so tests
+    /// that only exercise the tile0/texture-scale math can use `|_| false`
+    /// for `is_ptr`.
+    #[allow(clippy::too_many_arguments)] // mirrors MObjSub's own field count
+    fn sub_with(
+        flags: u16,
+        unk08: u16,
+        unk0a: u16,
+        unk0c: u16,
+        unk0e: u16,
+        unk10: i32,
+        trau: f32,
+        trav: f32,
+        scau: f32,
+        scav: f32,
+    ) -> File {
+        let mut data = vec![0u8; MOBJSUB_SIZE as usize];
+        fn put16(data: &mut [u8], at: u32, v: u16) {
+            data[at as usize..at as usize + 2].copy_from_slice(&v.to_be_bytes());
+        }
+        fn put32(data: &mut [u8], at: u32, v: f32) {
+            data[at as usize..at as usize + 4].copy_from_slice(&v.to_be_bytes());
+        }
+        put16(&mut data, F_FLAGS, flags);
+        put16(&mut data, F_UNK08, unk08);
+        put16(&mut data, F_UNK0A, unk0a);
+        put16(&mut data, F_UNK0C, unk0c);
+        put16(&mut data, F_UNK0E, unk0e);
+        data[F_UNK10 as usize..F_UNK10 as usize + 4].copy_from_slice(&unk10.to_be_bytes());
+        put32(&mut data, F_TRAU, trau);
+        put32(&mut data, F_TRAV, trav);
+        put32(&mut data, F_SCAU, scau);
+        put32(&mut data, F_SCAV, scav);
+        File {
+            id: 0,
+            data,
+            extern_relocs: Vec::new(),
+            intern_relocs: Vec::new(),
+        }
+    }
+
+    /// RE-194: locks in `gcDrawMObjForDObj`'s `MOBJ_FLAG_TILE0`
+    /// (`objdisplay.c`'s bare `0x20`) tile-size math against the real
+    /// values measured at Dream Land's own file 104, `MObjSub` 0x1F78 —
+    /// this project's primary regression scene.
+    #[test]
+    fn tile0_uv_matches_dream_lands_real_mobjsub() {
+        let file = sub_with(MOBJ_FLAG_TILE0, 32, 384, 128, 128, 0, 0.0066, 0.0, 2.0, 4.0);
+        let m = read_material(&file, &|_| false, 0).expect("resolves");
+        assert_eq!(m.tile0_uv, Some((769, 0, 1277, 508)));
+        assert_eq!(m.tex_scale, None);
+    }
+
+    /// Same command, the `unk10 == 2` branch, against file 117's real
+    /// values (`StageMetalFile2`, `MObjSub` 0xC38).
+    #[test]
+    fn tile0_uv_unk10_2_branch_matches_file_117s_real_mobjsub() {
+        let file = sub_with(
+            MOBJ_FLAG_TILE0,
+            32,
+            0,
+            159,
+            79,
+            2,
+            0.000809,
+            0.008563,
+            1.0,
+            1.0,
+        );
+        let m = read_material(&file, &|_| false, 0).expect("resolves");
+        assert_eq!(m.tile0_uv, Some((0, 2, 632, 314)));
+    }
+
+    /// RE-194: `MOBJ_FLAG_TEXTURE`'s `gSPTexture` scale, against file 86's
+    /// real values (`MObjSub` 0xD420) — `scau`/`scav` of 1.0 saturates to
+    /// the Q0.16 maximum, the natural-scale case every real `TEXTURE`-
+    /// flagged `MObjSub` in the archive hits (RE-194: `scau == scav == 1.0`
+    /// in all 10 real occurrences whose `unk10 != 2`).
+    #[test]
+    fn tex_scale_matches_file_86s_real_mobjsub() {
+        let file = sub_with(MOBJ_FLAG_TEXTURE, 32, 0, 64, 56, 0, 0.0, 0.0, 1.0, 1.0);
+        let m = read_material(&file, &|_| false, 0).expect("resolves");
+        assert_eq!(m.tex_scale, Some((0xFFFF, 0xFFFF)));
+        assert_eq!(m.tile0_uv, None);
+    }
+
+    /// `MOBJ_FLAG_NONE` (raw `flags == 0`) is not "no material":
+    /// `gcDrawMObjForDObj` substitutes `TEXTURE | 0x20 | ALPHA` before
+    /// reading anything else, so a real zero-flags `MObjSub` (RE-194: 3 of
+    /// 665 real occurrences, e.g. file 83 `MObjSub` 0x8EE0) still binds
+    /// `sprites[0]`, a tile-0 UV window and a texture scale.
+    #[test]
+    fn zero_flags_substitutes_the_real_default_and_resolves_a_sprite() {
+        const SPRITES: u32 = 0x80;
+        const SPRITE_TARGET: u32 = 0x90;
+        let mut file = sub_with(0, 32, 0, 32, 32, 0, 0.0, 0.0, 1.0, 1.0);
+        file.data.resize(0xA0, 0);
+        file.data[F_SPRITES as usize..F_SPRITES as usize + 4]
+            .copy_from_slice(&SPRITES.to_be_bytes());
+        file.data[SPRITES as usize..SPRITES as usize + 4]
+            .copy_from_slice(&SPRITE_TARGET.to_be_bytes());
+        let is_ptr = |at: u32| at == F_SPRITES || at == SPRITES;
+
+        let m = read_material(&file, &is_ptr, 0).expect("resolves");
+        assert_eq!(
+            m.sprite,
+            Some(Ptr {
+                file: None,
+                offset: SPRITE_TARGET
+            })
+        );
+        assert!(m.tex_scale.is_some());
+        assert!(m.tile0_uv.is_some());
+        assert_eq!(m.palette, None);
+    }
+
+    /// RE-194: cross-checks the synthetic-fixture math above against the
+    /// real ROM at the same three `MObjSub`s, end to end through
+    /// `read_material` itself (not hand-copied constants).
+    #[test]
+    fn real_rom_tile0_and_texture_scale_match_measured_values() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = crate::archive::Archive::open(&data, info.region).unwrap();
+        let read_at = |id: u32, at: u32| {
+            let file = archive.load(id).unwrap();
+            let is_ptr = |at: u32| pointer_slots(&file).binary_search(&at).is_ok();
+            read_material(&file, &is_ptr, at).expect("resolves")
+        };
+
+        assert_eq!(read_at(104, 0x1F78).tile0_uv, Some((769, 0, 1277, 508)));
+        assert_eq!(read_at(117, 0xC38).tile0_uv, Some((0, 2, 632, 314)));
+        assert_eq!(read_at(86, 0xD420).tex_scale, Some((0xFFFF, 0xFFFF)));
     }
 }
