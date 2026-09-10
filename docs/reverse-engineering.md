@@ -10,6 +10,115 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-205 — Stage animation verified on physical PSP hardware; a third FPU-trap site found and fixed (`PLAN.md` R2)
+
+**Problem.** RE-203 confirmed all four golden scenes render correctly on
+physical hardware, but none of them shows visibly animated stage geometry
+within its frozen tick-240 window — `PLAN.md` R2's "stage animation works"
+row remained unchecked.
+
+**Finding a candidate.** Added a new persistent example,
+`crates/ssb-rom/examples/stage_animation_amplitude.rs`, which replays every
+packed stage's `StageAnimator` for 240 frames and ranks animated,
+mesh-bearing, non-billboard nodes by translation/rotation amplitude. The
+single largest amplitude (stage 7, node 703, file 109) is an order of
+magnitude above everything else and was not independently corroborated, so
+it was set aside rather than built into a scene on an unverified number
+alone. Stage 9 (Saffron City, file 112) was chosen instead: RE-142/RE-143
+already independently proved its gate moves under real joint animation (a
+concrete 836-pixel PPSSPP before/after diff, exact node/local indices
+sourced from `Layer0Anim_AnimJoint`/layer-1 tables), so building a scene
+around it did not require establishing new evidence, only exercising
+already-trusted evidence on hardware.
+
+**New scene.** `regression_capture_scene5` (`psp/Cargo.toml`,
+`psp/src/main.rs`) overrides `stage_index` to 9 and otherwise stays in the
+default `stage_view` (unlike scenes 2-4, which switch to the object
+viewer) — the whole-stage face-on framing already used by scene 1 fits
+Saffron City's full geometry, gate included, at the debug viewer's default
+zoom. Added to `deterministic_capture_frozen`'s feature list for the same
+tick-240 freeze as the other scenes. Confirmed the animated pose actually
+differs from rest before trusting the scene: a temporary local build with
+`StageAnimator::tick` skipped for the stage layer (reverted before
+committing) produced 1,780 differing pixels against the normal build in
+PPSSPP software rendering, concentrated in the gate region — the same kind
+of animation-on/off control RE-051 and RE-142 used.
+
+**A third FPU-trap site.** Loading this scene on physical PSP hardware via
+PSPLink crashed:
+
+```
+Exception 0 : EPC 0x0882EC88, Cause FPU Exception (IUZ)
+```
+
+mapping (via `psp-addr2line`, `~/.cache/pspdev/pspdev/bin`) to
+`<ssb_rom::objanim::StageJoint>::tick` → `StageJoint::apply`
+(`crates/ssb-rom/src/objanim.rs`). This is the exact fault class `f111892`
+already found and fixed twice this session — PSPLink traps FPU exceptions,
+and LLVM may speculatively execute a `1.0 / payload` division even inside
+an `if payload != 0.0` guard, faulting on real hardware's trapping FPU when
+a real ROM script uses a zero-duration command (an immediate key, not a
+ramp) even though the division's result is provably unused in that case.
+`f111892` fixed this in `figatree.rs` (fighter animation) and `matanim.rs`
+(material animation) but not `objanim.rs` (stage animation) — a third,
+structurally identical 32-bit interpreter that shares `figatree`'s `Aobj`/
+`Kind` state machine (`objanim.rs`'s own module doc: "the state machine here
+is shared with figatree") but was never audited for the same pattern.
+Confirmed both call sites (`t.length_invert = 1.0 / payload` and
+`t.rate_base = (t.value_target - t.value_base) / payload`) match
+`figatree`/`matanim`'s exact shape. Fixed with the same `#[inline(never)]
+reciprocal_or_one` helper, computed once per track before the `if` guards
+so LLVM has no unguarded division left to speculate. Added
+`zero_duration_command_keeps_finite_track_values`, mirroring `matanim`'s own
+regression test, asserting `rate_base == 0.0` and `length_invert.is_finite()`
+for a zero-payload `SetValBlock`.
+
+**Hardware verification.** After the fix: rebuilt, `ldstart`ed the same way,
+`exlist` empty, `main_thread` alive through a 6+ second run past the
+tick-240 freeze. Two native `scrshot` captures 3 s apart differ by 101
+pixels, entirely inside PSPLink's own already-documented top-left corner
+overlay (`docs/psplink.md`) — otherwise byte-identical, matching RE-203's
+own steady-state determinism check. The capture was upscaled 2x
+nearest-neighbour and diffed against `tests/golden/r2-saffron-city-gate.png`
+(a PPSSPP software capture of the same scene, itself confirmed
+byte-identical run-to-run before use): large interior regions are
+pixel-identical; the only structured difference is a one-pixel silhouette/
+collision-line antialiasing band plus PPSSPP's own on-screen FPS counter —
+the same expected divergence class RE-203 already found and inspected for
+all four other golden scenes, not a content difference. The animated gate
+geometry itself — the reason this scene exists — matches the PPSSPP golden
+exactly.
+
+**Conclusion.** `PLAN.md` R2's "stage animation works" row is checked off:
+a real, previously-proven joint-animated stage node renders identically to
+its PPSSPP golden on physical PSP hardware, with zero exceptions. This also
+raises the confidence of every earlier physical-PSP session (RE-201/203/204)
+slightly further after the fact — a live FPU-trap bug existed in stage
+animation the whole time, simply never exercised by any scene those
+sessions happened to capture; Dream Land (stage 0) has no `anim_joints` at
+all (RE-051), so `regression_capture`'s own default scene could never have
+found this. `PLAN.md` R2's remaining open row, "no hardware-only rendering
+failures remain," is explicitly *not* closed by this — this was one gap
+found by deliberately seeking out an unexercised code path, and the same
+method (find content no existing golden scene exercises, run it on
+hardware) is the general remaining risk that row names.
+
+**Confidence:** High for the fix's correctness (same pattern, same fix,
+same verification shape as `f111892`'s two prior sites) and for the
+hardware capture matching its golden. Medium on whether every other
+`1.0 / payload`-shaped division in the codebase has now been found — this
+was found by chasing one concrete crash, not a systematic audit; a
+`grep -n '/ payload'`-style sweep across the whole crate is reasonable
+future work but was not performed here.
+
+**Evidence.** `crates/ssb-rom/examples/stage_animation_amplitude.rs`;
+`tests/golden/r2-saffron-city-gate.png`; `cargo test --workspace`: 506
+passing (2 romtool, 36 engine, 118 game, 350 ROM — up one in ROM for the new
+`objanim` regression test); native BMP captures reviewed and discarded per
+`docs/psplink.md` (never committed).
+
+---
+
 ## RE-204 — Framebuffer-effect sprite path and VRAM budget verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-203 explicitly left two R2 acceptance rows open: "framebuffer

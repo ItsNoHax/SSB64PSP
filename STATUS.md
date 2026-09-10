@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-204 physical-PSP session)
+**Last updated:** 2026-09-10 (RE-205 physical-PSP session)
 
 ## Continuation packet
 
@@ -10,26 +10,35 @@
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-204. Hardware-tested RE-193's real `SObj`
-framebuffer-effect sprite path (`regression_capture` +
-`wallpaper_sprite_audit_capture`) on the same physical PSP: zero exceptions,
-measured luminance ratio (0.59) matches RE-193's PPSSPP evidence (0.60)
-within noise, deterministic once settled (a several-second double-buffer
-settling transient right after the tick-240 freeze was observed and
-excluded). Verified VRAM usage by grep-enumerating every `get_vram_allocator`
-call site (exactly three, all in `Gpu::init`): 1,360 KiB of the runtime-
-reported 2 MiB EDRAM, ~688 KiB headroom, matching an existing independent
-code comment; every zero-exception hardware boot to date is a live runtime
-check this budget holds (the allocator panics on overflow). Checked off the
-two remaining software-testable `PLAN.md` R2 acceptance items (10 of 12 now
+**Last completed:** RE-205. Built a new persistent example,
+`crates/ssb-rom/examples/stage_animation_amplitude.rs`, to find a stage with
+visibly animated geometry (no existing golden scene had one); chose stage 9
+(Saffron City) over the single largest, uncorroborated amplitude because
+RE-142/RE-143 already independently proved its gate moves. Added
+`regression_capture_scene5` (stage 9, default `stage_view`, same tick-240
+freeze). Confirmed the animated pose differs from rest in PPSSPP (1,780px,
+temporary reverted control build) before trusting it. Loading it on physical
+PSP hardware crashed with `FPU Exception (IUZ)` in `objanim.rs`'s
+`StageJoint::apply` — a third `1.0 / payload` speculative-division trap,
+the same class `f111892` already fixed in `figatree.rs`/`matanim.rs` but
+never ported to stage animation's structurally identical interpreter. Fixed
+with the same `reciprocal_or_one` guard and a new regression test
+(`cargo test --workspace`: 506 passing). Rebuilt, redeployed: zero
+exceptions, native hardware capture matches
+`tests/golden/r2-saffron-city-gate.png` (upscaled 2x) with only the
+expected edge-antialiasing/overlay divergence RE-203 already established as
+acceptable.
+Checked off `PLAN.md` R2's "stage animation works" row (11 of 12 now
 checked). Redeployed the plain interactive build afterward, verified stable.
 
-**Dependencies:** R0.5 and R1 complete. R2 hardware checklist remains (stage
-animation coverage, exhaustive no-failures-remain coverage, live
-analog-stick input).
+**Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
+row is live analog-stick input (needs a human operator); "no hardware-only
+rendering failures remain" stays open pending broader coverage.
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–204;
-`docs/psplink.md`; `tests/golden/*.png`; `tools/compare-screenshot.sh`.
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–205;
+`docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
+`tools/compare-screenshot.sh`; `crates/ssb-rom/src/objanim.rs`;
+`crates/ssb-rom/examples/stage_animation_amplitude.rs`.
 
 **First checks:** physical PSP hardware is present and PSPLink-reachable
 this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
@@ -39,14 +48,16 @@ software-only task.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** broaden hardware coverage beyond the four golden scenes toward "no
-hardware-only rendering failures remain," and find or build a scene that
-isolates visibly animated stage geometry for the "stage animation works" row
-(no current golden scene's camera view shows moving stage geometry within
-its frozen window). Separately, still open: whether the analog nub correctly
-drives the fighter now that RE-202's HUD-crash fix is live — this requires a
-human physically operating the device with PSPLink attached; `pspsh` has no
-controller-injection command, so an agent session cannot resolve it alone.
+**Next:** broaden hardware coverage beyond the five golden scenes toward "no
+hardware-only rendering failures remain" — every fighter, stage and effect
+this scene-finding method has not yet touched is still an unaudited risk for
+the same class of FPU-trap bug RE-205 just found a third instance of; a
+systematic `grep -n '/ payload'`-style sweep across the crate for the same
+unguarded-division shape is reasonable next work, not yet done. Separately,
+still open: whether the analog nub correctly drives the fighter now that
+RE-202's HUD-crash fix is live — this requires a human physically operating
+the device with PSPLink attached; `pspsh` has no controller-injection
+command, so an agent session cannot resolve it alone.
 
 ## Current state
 
@@ -54,13 +65,14 @@ controller-injection command, so an agent session cannot resolve it alone.
   canopy comparison.
 - R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
   R0.5 prerequisite is now satisfied.
-- R2: `IN_PROGRESS`; all four golden regression scenes (Dream Land/Mario,
-  `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`) boot, pack loads,
-  stage/fighter/material/texture content matches PPSSPP goldens, and no
-  hardware exception remains across any of them (RE-203). The real
-  framebuffer-effect `SObj` sprite path and VRAM usage are now hardware-
-  verified too (RE-204). Stage animation coverage, exhaustive no-failures-
-  remain coverage, and live analog-stick input remain untested on hardware.
+- R2: `IN_PROGRESS`; all five golden regression scenes (Dream Land/Mario,
+  `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City stage
+  animation) boot, pack loads, stage/fighter/material/texture content
+  matches PPSSPP goldens, and no hardware exception remains across any of
+  them (RE-203, RE-205). The real framebuffer-effect `SObj` sprite path,
+  VRAM usage, and stage animation are now hardware-verified too (RE-204,
+  RE-205). Exhaustive no-failures-remain coverage and live analog-stick
+  input remain untested on hardware.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -82,48 +94,54 @@ controller-injection command, so an agent session cannot resolve it alone.
 
 ## Last completed task
 
-**RE-204 — Framebuffer-effect sprite path and VRAM budget verified on physical PSP hardware**
+**RE-205 — Stage animation verified on physical PSP hardware; a third FPU-trap site found and fixed**
 
-- Built and `ldstart`ed `regression_capture,wallpaper_sprite_audit_capture`
-  (RE-193's real `SObj` wallpaper-sprite draw) on the same PSPLink session as
-  RE-201–203. Zero exceptions; `main_thread` alive throughout.
-- Found and characterised a several-second post-freeze settling transient
-  (double-buffer catch-up), then confirmed steady-state captures 2 s apart
-  are byte-identical except the same known PSPLink corner overlay RE-203
-  already excludes.
-- Measured luminance ratio 0.59 (sprite rectangle vs. just outside it),
-  matching RE-193's own PPSSPP-measured 0.60 ratio for the same 50%-grey
-  modulate, within noise.
-- Verified VRAM usage by grep-enumerating every `get_vram_allocator` call
-  site (exactly three, all framebuffers/depth in `Gpu::init`): 1,360 KiB of
-  the runtime-reported 2 MiB EDRAM, ~688 KiB headroom, matching an existing
-  independent code comment. Every zero-exception hardware boot to date is a
-  live runtime confirmation this budget holds (the allocator panics on
-  overflow).
-- Checked off the two remaining software-testable `PLAN.md` R2 acceptance
-  items: framebuffer effects work, VRAM usage verified (10 of 12 now
+- Added `crates/ssb-rom/examples/stage_animation_amplitude.rs` to rank
+  animated stage nodes by amplitude; chose stage 9 (Saffron City) over the
+  single largest, uncorroborated amplitude because RE-142/RE-143 already
+  independently proved its gate moves.
+- Added `regression_capture_scene5` (stage 9, default `stage_view`, tick-240
+  freeze). Confirmed the animated pose differs from rest (1,780px PPSSPP
+  diff, temporary reverted control build) before trusting it.
+- Physical PSP hardware load crashed: `FPU Exception (IUZ)` in
+  `objanim.rs::StageJoint::apply`, a third `1.0 / payload` speculative-
+  division trap — the same class `f111892` already fixed in
+  `figatree.rs`/`matanim.rs`, never ported to stage animation's own,
+  structurally identical interpreter. Fixed with the same
+  `reciprocal_or_one` guard; added a regression test
+  (`cargo test --workspace`: 506 passing).
+- Rebuilt, redeployed: zero exceptions, `main_thread` alive; native capture
+  matches `tests/golden/r2-saffron-city-gate.png` (upscaled 2x) with only
+  the expected edge-antialiasing/overlay divergence RE-203 already
+  established as acceptable.
+- Checked off `PLAN.md` R2's "stage animation works" row (11 of 12 now
   checked).
 - Rebuilt and redeployed the plain (no-feature) interactive build afterward
   per `docs/psplink.md`, verified stable (no exception, `main_thread` alive).
-- Evidence: `docs/reverse-engineering.md` RE-204.
+- Evidence: `docs/reverse-engineering.md` RE-205.
 
 ## Verification
 
-The `regression_capture,wallpaper_sprite_audit_capture` build ran on PSP
-Slim (firmware 6.61, ARK/Infinity, PSPLink v3.2.1) with `exlist` empty and
-`main_thread` alive throughout. Native `scrshot` captures measured for
-in-rectangle vs. outside-rectangle luminance and cross-diffed against each
-other for determinism — see RE-204 for the exact settling-transient finding
-and measurement methodology. Native captures taken, inspected, and discarded
-per `docs/psplink.md` (never committed); SHA-256 hashes recorded in RE-204.
-Pack unchanged (hash `7647db75...650b2f0`); no Rust source changed this
-session, so `cargo test --workspace` was not required.
+The `regression_capture_scene5` build ran on PSP Slim (firmware 6.61,
+ARK/Infinity, PSPLink v3.2.1) with `exlist` empty and `main_thread` alive
+throughout, after the FPU-trap fix. Two native `scrshot` captures 3 s apart
+differ by 101 pixels, entirely inside PSPLink's own documented corner
+overlay — otherwise byte-identical. The capture (upscaled 2x
+nearest-neighbour) was diffed against `tests/golden/r2-saffron-city-gate.png`
+(itself confirmed byte-identical run-to-run in PPSSPP before use): large
+interior regions pixel-identical, only the expected antialiasing/overlay
+divergence RE-203 already established as acceptable for the other four
+scenes. `cargo test --workspace`: 506 passing (2 romtool, 36 engine, 118
+game, 350 ROM). Native BMP captures reviewed and discarded per
+`docs/psplink.md` (never committed); pack unchanged (hash
+`7647db75...650b2f0`). See RE-204 for the prior session's settling-transient
+finding and measurement methodology.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–204.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–205.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
