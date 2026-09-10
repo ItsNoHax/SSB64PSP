@@ -10,6 +10,124 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-216 — RE-151's harness rebuilt, and the "Metal Box item" route corrected (`PLAN.md` R2)
+
+**Question.** RE-151's scripted original-ROM Mupen64Plus harness no longer
+existed on disk (only its screenshots under `~/ppsspp-test/re151/` remained).
+Rebuild it, then use it to try RE-214 §10's recommended shorter route to a
+`G_TEXTURE_GEN` original-output comparison: a Metal Box item applied to a
+fighter in VS Mode, reachable through files 300/301/303
+(`MMarioModel`/`NMarioModel`/`NFoxModel`).
+
+**Evidence — the harness.** Two user-scoped N64 front ends are installed:
+M64Py 0.3.0 (`net.sourceforge.m64py.M64Py`) and Rosalie's Mupen GUI 0.9.0.
+M64Py bundles a plain `libmupen64plus.so.2` core plus `mupen64plus-video-rice`/
+`-audio-sdl`/`-rsp-hle`/`-input-sdl` under `/app/lib(/mupen64plus)` inside its
+Flatpak sandbox, and `flatpak run --command=python3` runs an arbitrary script
+inside that sandbox (Python 3.12, `ctypes` available) instead of the Qt GUI —
+this is the mechanism RE-151 used and it still works unmodified.
+
+The rebuilt harness (`~/ppsspp-test/re151-harness/`, out-of-Git by the same
+convention RE-151 used) is two pieces:
+
+1. **`re151_input.c`** — a minimal M64+ controller plugin, compiled against
+   headers pulled directly from `mupen64plus-core`'s public `src/api/*.h`
+   (`m64p_types.h`, `m64p_plugin.h`, `m64p_common.h`, `m64p_frontend.h`,
+   `m64p_debugger.h`). It exports a plain `volatile uint32_t g_buttons[4]`
+   that `GetKeys` reads directly — no timing logic lives in C. It is built
+   with no libc dependency beyond the trivial CRT (`ldd` shows only
+   `libc.so.6`), which sidesteps any ABI mismatch between the host toolchain
+   and the Flatpak runtime's glibc.
+2. **`re151_driver.py`** — drives `libmupen64plus.so.2` through
+   `CoreStartup`/`CoreDoCommand`/`CoreAttachPlugin` (the public Core API, not
+   the M64Py GUI), attaches the four plugins in the same order
+   `mupen64plus-ui-console` uses (GFX, AUDIO, INPUT, RSP,
+   `src/plugin.c:47-50`), runs `M64CMD_EXECUTE` on a background thread, pauses
+   immediately, then drives `M64CMD_ADVANCE_FRAME` one frame at a time from
+   the main thread — each call pokes the input plugin's `g_buttons` array via
+   `ctypes` immediately beforehand and blocks on a `threading.Event` set from
+   inside a real `m64p_frame_callback`
+   (`M64CMD_SET_FRAME_CALLBACK`), giving frame-exact scripted input with no
+   GUI automation. `M64CMD_TAKE_NEXT_SCREENSHOT` and a `DebugMemGetPointer
+   (M64P_DBG_PTR_RDRAM)`-backed RDRAM read/write round out the driver.
+
+**A real, working-code bug found and fixed while building it:** calling
+`PluginStartup`/`CoreAttachPlugin` through `ctypes` without explicit
+`argtypes` segfaulted inside the video plugin (`PluginStartup(gfx)` — exit
+139). Root cause: `ctypes` truncates a bare Python `int` argument to a 32-bit
+C `int` when no `argtypes` is declared, corrupting the 64-bit dynlib handle
+passed as `CoreLibHandle`. Declaring `argtypes` with `c_void_p` for every
+handle/pointer parameter (and explicitly `ctypes.cast`-ing the frame-callback
+function pointer to `c_void_p`) fixed it. This is now a comment in
+`re151_driver.py` rather than a one-off fix, since the same mistake is easy to
+reintroduce when adding new Core API calls to the driver.
+
+**Verified end-to-end:** ROM identity checked (`sha1sum` on
+`rom/Super Smash Bros. (USA).z64` = `e2929e10fccc0aa84e5776227e798abc07cedabf`,
+matching `PLAN.md`/RE-151's asserted identity). The driver boots the ROM,
+attaches all four plugins, reaches `M64EMU_RUNNING` then pauses cleanly, and
+single-steps frames deterministically (smoke-tested: 5 frames advance and the
+core shuts down with no leaked process). A scripted button route (encoded as
+`hold:button+button;...` steps, decoded to the `BUTTONS` bitfield from
+`m64p_plugin.h`) was then used to navigate real menus under full frame
+control: title skip, Mode Select (confirmed `Start` is a hardcoded shortcut
+straight into 1P Mode regardless of cursor position — `A` is the actual
+confirm button, discovered by observing `Start` return to 1P Mode from VS
+Options after a cursor move), into VS Mode, into VS Options. Screenshots
+proving each step are saved under
+`/home/alberto/.var/app/net.sourceforge.m64py.M64Py/data/mupen64plus/screenshot/`.
+This reproduces RE-151's capability and extends it: RE-151 only needed to
+reach a settled VS Mode Dream Land match, which did not require distinguishing
+`Start` from `A`.
+
+**Evidence — the Metal Box route does not exist.** A decomp search
+(`src/it/itdef.h:88-166`, `ITKind`) found no metal/mushroom-type item at all;
+`grep -r metal src/it/` is empty. "Metal Mario" is not an item-applied fighter
+status — it is a separate, permanent `FTKind`
+(`nFTKindMMario`, `src/ft/ftdef.h:1108`) used only as a 1P-mode stage-8
+boss/enemy (`src/sc/sc1pmode/sc1pgame.c:446-459`). The only per-character
+`is_metallic` field (`src/ft/fttypes.h:906`, in the *static* `FTAttributes`,
+not the live `FTStruct`) only switches hit-spark particle color
+(`src/ft/ftmain.c:2742`) — it does not gate the render path and is also `TRUE`
+for ordinary/Poly Samus, confirming it is unrelated to the metal material.
+The metal `DObj`/material is selected once, at fighter construction, via a
+fixed per-`FTKind` table:
+
+```c
+// src/ft/ftdata.c:127-135  (index 13/14/15 = MMario/NMario/NFox)
+FTData *dFTManagerDataFiles[nFTKindEnumCount + 1] = { ... };
+// src/ft/ftmanager.c:693
+fp->data = dFTManagerDataFiles[fp->fkind];
+```
+
+`fp->fkind` is set once from the spawn descriptor and never reassigned. A live
+RDRAM poke of a normal Fox's/Mario's status bits therefore cannot reach this
+render path — the fighter has to be *constructed* as one of these three
+`FTKind`s, which the original only does for the 1P-mode stage-8 fight.
+`docs/reverse-engineering.md` RE-214 §10's "Metal Box item" claim was an
+unverified assumption written without checking `src/it/`; it is struck through
+above rather than deleted, with this entry as the correction.
+
+**Conclusion.** The harness is rebuilt and verified capable of frame-exact
+scripted play, including real menu navigation. The texgen original-comparison
+prerequisite is not met yet: the only legitimate route is 1P Mode to stage 8
+(Meta Crystal vs. Metal Mario), which is a substantially longer scripted route
+than previously believed (real combat against 7 preceding stages, not a VS
+Mode item pickup) and was not attempted this session. A RAM-level stage warp
+that still drives the original's own `ftManagerMakeFighter` (rather than
+faking the render state) may shorten this and is the next thing to
+investigate — no existing GameShark/cheat code for this ROM's ID
+(`F7C52568A31AADF26E14DC2B6416B2ED`) exists in M64Py's bundled
+`mupen64plus.ini`, so any such warp needs its own from-scratch RAM-address
+investigation before it can be trusted as faithful.
+
+**Confidence: high for the harness (measured — it runs, and the segfault fix
+is a reproducible before/after) and for the Metal Box correction (direct
+decomp evidence, not inference); the stage-8 route's actual difficulty is
+still unmeasured.**
+
+---
+
 ## RE-215 — Exact `G_TEXTURE_GEN_LINEAR`, and scenes 11/12 never actually exercised it (`PLAN.md` R2)
 
 **Question.** RE-214 left `G_TEXTURE_GEN_LINEAR` drawing through the ordinary
@@ -437,19 +555,31 @@ whose content carries no extra mip levels.
   and RE-151's scripted original-ROM harness (a temporary out-of-Git input
   plugin plus a Python Core API driver) no longer exists on disk; only its
   screenshots under `~/ppsspp-test/re151/` remain. Rebuilding it and scripting
-  a route to stage 8 is the prerequisite. A shorter route to the same
-  `G_TEXTURE_GEN` material exists and should be tried first: the Metal Box
-  item applies the identical texgen material to a fighter (files 300/301/303,
-  `MMarioModel`/`NMarioModel`/`NFoxModel`), and VS Mode with items on can reach
-  it far faster than a scripted 1P playthrough to stage 8. The census shows
-  those fighter models carry the archive's single largest texgen population
-  (157 packed primitives on texture 661, all ordinary), so this route changes
-  which content is compared but not what is being tested; if it works, extend
-  the PSP side with a scene showing the same `MMarioModel` graph rather than
-  forcing Meta Crystal on both sides. Until either route lands, texgen
+  a route to stage 8 is the prerequisite. **Corrected by RE-216: the "Metal
+  Box item" shorter route this entry recommended below does not exist in the
+  decomp.** There is no item-driven metal effect at all — `MMarioModel`/
+  `NMarioModel`/`NFoxModel` (files 300/301/303) back a separate, permanent
+  `FTKind` (`nFTKindMMario`/`nFTKindNMario`/`nFTKindNFox`), a boss/enemy
+  character slot the original spawns only in 1P mode stage 8, never
+  selectable and never applied to a normal fighter at runtime. Reaching this
+  material therefore requires the real 1P-mode route (or an equivalent
+  RAM-level stage warp that still runs the original's own
+  `ftManagerMakeFighter` spawn), not a VS Mode shortcut. See RE-216 for the
+  decomp evidence and current harness status. Until this lands, texgen
   (ordinary and, per RE-215, linear) is `VERIFYING`, not `COMPLETE`: it is
   source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified, but
   not compared against the original's own output.
+  ~~A shorter route to the same `G_TEXTURE_GEN` material exists and should be
+  tried first: the Metal Box item applies the identical texgen material to a
+  fighter (files 300/301/303, `MMarioModel`/`NMarioModel`/`NFoxModel`), and VS
+  Mode with items on can reach it far faster than a scripted 1P playthrough to
+  stage 8. The census shows those fighter models carry the archive's single
+  largest texgen population (157 packed primitives on texture 661, all
+  ordinary), so this route changes which content is compared but not what is
+  being tested; if it works, extend the PSP side with a scene showing the same
+  `MMarioModel` graph rather than forcing Meta Crystal on both sides.~~
+  (struck: RE-216 found this route does not exist — kept visible rather than
+  deleted so the correction is traceable.)
 
 **Confidence: high for the geometry-state, census, scale and basis findings
 (each is either measured archive-wide or read directly from the decomp);
