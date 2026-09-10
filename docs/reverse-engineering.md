@@ -10,6 +10,76 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-211 — Rendering-gap audit against current decomp/runtime state (`PLAN.md` R0.10/R0.11/R1/R2)
+
+**Question.** Which documented rendering gaps are still real after RE-210,
+and which claims are stale?
+
+**Evidence.** The decomp's general material path is not palette-only:
+`gcParseMObjMatAnimJoint`/`gcPlayMObjMatAnim` in
+`refs/ssb-decomp-re/src/sys/objanim.c:830-1244` process ten material and five
+colour tracks. Stage callers walk every `MObj` in
+`refs/ssb-decomp-re/src/mp/mpcollision.c:3732-3739`; fighter animation does the
+same in `refs/ssb-decomp-re/src/ft/ftanim.c:407-415` and costume updates in
+`ftparam.c:394-428`. RE-086 measured 172 stage scripts: 122 `PaletteID`, 38
+`TextureIDCurrent`, with additional UV and colour tracks. Current Rust packs
+and plays the 33 resolved palette scripts (`MaterialAnimator`), and
+`meshdraw.rs:287-359` applies animated CLUTs. The stage path does not yet apply
+the other stage texture-frame/UV tracks. Fighter costume selection still uses
+the colour-oriented path; RE-096 measured 200/441 costume scripts carrying an
+ignored `PaletteID` track.
+
+The decomp has a complete fighter-shadow renderer in
+`refs/ssb-decomp-re/src/ft/ftshadow.c:55-439`, created by
+`ftShadowMakeShadow` at `:442-474`. It projects the fighter shadow across the
+current collision floor, uses the 16x16 intensity texture, and emits a
+variable 4/6/8-vertex strip. Current Rust has only `shadow_size` in
+`crates/ssb-rom/src/fighter.rs`; no shadow object, floor projection, texture
+binding, or draw call exists.
+
+The decomp's global ordering is also broader than the current fixed stage
+array: `GObj` display lists are linked by `dl_link_id` and priority through
+`refs/ssb-decomp-re/src/sys/objman.c:502-568,1888-2018`. Current stage drawing
+iterates four packed layer slots in order (`psp/src/meshdraw.rs:1433-1459`),
+then draws one fighter; effects and future UI do not participate in that
+schedule. This is a real ordering/ownership gap for multi-pass content, not a
+texture-material gap.
+
+UI remains materially incomplete. The decomp creates and updates many `SObj`
+sprites through `ifCommon*` (for example `refs/ssb-decomp-re/src/if/ifcommon.h:
+20-113`), while current PSP code has only the one-purpose wallpaper sprite
+implementation in `psp/src/gu.rs:485-583`. The wallpaper mechanism is proven;
+general HUD, menus, pause, magnify, stock/damage digits, and sprite lifecycle
+are not.
+
+Alpha compare remains a bounded fidelity gap: decomp content uses both
+`G_AC_THRESHOLD` and independent render/combiner alpha behavior (for example
+`refs/ssb-decomp-re/src/ft/ftshadow.c:19-23` and
+`refs/ssb-decomp-re/src/lb/lbparticle.c:2079-2087`). Current runtime applies
+the `alpha_test` approximation when it coexists with the threshold gate;
+RE-195 measured 28,859/41,171 vertex-visits in this overlap. Rare
+`PRIM_ALPHA` and two-cycle formulas remain deliberately declined as already
+documented, but they are not pixel-exact support.
+
+**Census correction.** Current `romtool mobj rom/...` reports 134/134 graphs
+paired, 475 matching nodes, and zero mismatches; the old “one unpaired Link
+graph” text is stale. Current `romtool textures` reports only 26 runtime
+framebuffer references, all explained by RE-055/R0.13. No static material-table
+gap remains in the current tree.
+
+**Conclusion / ranked gaps.** P0: complete stage material tracks and fighter
+costume palette tracks. P1: implement fighter shadows and general SObj/UI
+rendering; restore original GObj/display-link scheduling for multi-pass scenes.
+P2: resolve combined alpha-gate behavior and the declined combiner tail when
+their gameplay/effect callers become in scope. Stage selection, gameplay
+effect call sites, and normal results-screen triggers are integration gaps,
+not missing static renderer evidence.
+
+**Confidence: certain for the decomp/runtime inventory; implementation priority
+is scoped by the existing R0/R1/R2 ownership rules.**
+
+---
+
 ## RE-210 — Ninth golden scene (Ness) verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-209 hardware-verified all three fighters RE-102 named for
