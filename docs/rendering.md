@@ -41,7 +41,7 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | LOD/mipmaps | COMPLETE (original behavior identified) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. PSP mip chains remain a separately documented anti-aliasing technique (RE-053/070) | Dream Land's canopy discrepancy remains the separate open R0.5 item |
 | Combiner | COMPLETE for classified static paths | `PLAN.md` R0.6: general `(A-B)*C+D` evaluator (RE-039/043), texture blend (RE-073/074), flat colour (RE-080), and shade-scale consumption (RE-106). RE-168's post-RE-163 census accepts 65,000/65,199 source-attributed emitted-triangle visits (99.695%) and source-identifies every missing-constant case | The 186 unsupported-equation visits are catalogued; runtime shield colours belong to future effect/gameplay integration, not static material conversion |
 | Lighting | COMPLETE for R0 | `PLAN.md` R0.6: data-driven lit/literal split (RE-103/105); stage angles, normals and zero-valid LIGHT_1/LIGHT_2 state reach the GE (RE-164–166); RE-167 restores `PRIMITIVE * SHADE` as GE material colour | Matched original-ROM/PPSSPP Dream Land Wait comparison restores Mario's red/blue costume semantics; exact cross-renderer pixels are not claimed and physical PSP remains R2 |
-| Alpha | COMPLETE for both classified gates | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide) and wires the disjoint case where it fires without `alpha_test` already applying | The case where `alpha_test` and `G_AC_THRESHOLD` coexist on the same primitive (28,859/41,171 real vertex-visits, RE-195) still uses only the `alpha_test` approximation — combining both on the PSP's single alpha-test unit is an unresolved priority decision, not attempted |
+| Alpha | COMPLETE for both classified gates | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide) and wires the disjoint case where it fires without `alpha_test` already applying | The case where `alpha_test` and `G_AC_THRESHOLD` coexist on the same primitive (28,859 real vertex-visits, RE-195) still uses only the `alpha_test` approximation — combining both on the PSP's single alpha-test unit is an unresolved priority decision, not attempted |
 | Blending | COMPLETE for classified single-cycle formulas | RE-129/130 decoded alpha combiners, classified nine archive-wide shapes, and enable real blending for `TEXEL0_ALPHA` and `TEXEL0_ALPHA * SHADE_ALPHA`; PPSSPP-verified on Dream Land | Rare `PRIM_ALPHA` multiply (~43) and two-cycle (~93) primitives are measured and deliberately declined under R0.6 |
 | Depth | COMPLETE | `PLAN.md` R0.6/R0.14: RDP per-frame default (`Z_BUFFER` on) fixed and wired per-primitive (RE-068); PSP depth convention (`sceGuDepthRange(65535, 0)` + `GreaterOrEqual`) confirmed against the `psp` crate's own documented convention (RE-085) | None |
 | Culling | COMPLETE | `PLAN.md` R0.6: RDP per-frame default (`CULL_BACK` on) fixed, measured 86.3% of packed primitives post-fix (RE-068) | None |
@@ -191,14 +191,13 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   by file 117 (`StageMetalFile2`, i.e. Metal Mario's stage) and files
   300/301/303 (`MMarioModel`/`NMarioModel`/`NFoxModel`) — this is the
   well-known "Metal [Character]" transformation's signature shiny,
-  reflective look from the Metal Box item (RE-119). Genuinely needed by
-  SSB64 (classification 1 of `PLAN.md` R0.18's four-way scheme), but its
-  implementation is correctly out of scope right now: it is an item-pickup
-  visual effect, downstream of the combat/item systems `AGENTS.md` §5
-  gates behind rendering correctness. Recorded here as a confirmed,
-  scoped, deferred lead, not an `ACCEPTED_DEVIATION` — reproducing it on
-  the PSP GE (environment-mapped texture coordinates from vertex normals)
-  is technically feasible, just not yet in scope.
+  reflective look from the Metal Box item (RE-119). `G_TEXTURE_GEN` now
+  maps to GE `EnvironmentMap`, using retained vertex normals; file 117 has
+  PPSSPP and physical-PSP captures (RE-213). `G_TEXTURE_GEN_LINEAR` stays
+  separately represented: original formula is `s=acos(nx)*1024/pi`,
+  `t=acos(ny)*1024/pi` after normal projection/normalization, while GE
+  environment mode supplies only `(n+1)*512`. Its 13 uses therefore remain
+  an explicit, bounded CPU-texgen follow-up, not silently claimed exact.
 
 **`G_SETOTHERMODE_H`/`L` carry several independent sub-fields per command,
 not just the cycle-type/render-mode ones `mesh.rs` originally read.** RE-124/
