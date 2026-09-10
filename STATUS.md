@@ -34,7 +34,7 @@
   snapshot.
 - Visual verification: PPSSPPHeadless via `tools/run-ppsspp-headless.sh`;
   windowed PPSSPP is interactive-only.
-- Commit: pending.
+- Commit: `942b744`.
 
 ## Continuation
 
