@@ -41,6 +41,20 @@
 
 use crate::figatree::{Aobj, JointPose, Kind, TRACK_COUNT};
 
+/// See `figatree`/`matanim`'s equivalent helpers: PSPLink enables trapping
+/// FPU exceptions, while LLVM may speculate an IEEE-754 division past its
+/// source zero-duration guard. Keep the hardware denominator nonzero.
+///
+/// Confirmed by hardware: stage 9's (Saffron City) animation triggered an
+/// `FPU Exception (IUZ)` at this exact pattern (`StageJoint::apply`) under
+/// PSPLink, the same fault class RE-201 already fixed in `figatree`/
+/// `matanim`, just not yet ported to this third, structurally identical
+/// interpreter.
+#[inline(never)]
+fn reciprocal_or_one(payload: f32) -> f32 {
+    1.0 / if payload == 0.0 { 1.0 } else { payload }
+}
+
 /// Opcodes, `AObjEvent32Kind`. Shared with [`matanim`](crate::matanim), which
 /// reads the material half of the same instruction set.
 const OP_END: u32 = 0;
@@ -263,12 +277,13 @@ impl StageJoint {
                 None
             };
 
+            let payload_inverse = reciprocal_or_one(payload);
             let t = &mut self.tracks[i];
             t.value_base = t.value_target;
             t.value_target = value;
             t.length = -self.anim_wait - speed;
             if payload != 0.0 {
-                t.length_invert = 1.0 / payload;
+                t.length_invert = payload_inverse;
             }
 
             match opcode {
@@ -300,7 +315,7 @@ impl StageJoint {
                 // Linear ramp over `payload` frames.
                 _ => {
                     t.rate_base = if payload != 0.0 {
-                        (t.value_target - t.value_base) / payload
+                        (t.value_target - t.value_base) * payload_inverse
                     } else {
                         0.0
                     };
@@ -386,6 +401,29 @@ mod tests {
             "got {}",
             pose.translate[1]
         );
+    }
+
+    /// Real scripts use zero-duration commands (an immediate key, not a
+    /// ramp). On PSP, PSPLink's trapping FPU faults on a speculated divide
+    /// by that duration even though the `payload != 0.0` guard means the
+    /// division's *result* is never used — reproduced on physical hardware
+    /// for stage 9 (Saffron City)'s real animation before this fix.
+    #[test]
+    fn zero_duration_command_keeps_finite_track_values() {
+        let data = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << 5, 0),
+            100.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = StageJoint::start(0, 0.0);
+        let mut pose = JointPose {
+            rotate: [0.0; 3],
+            translate: [0.0; 3],
+            scale: [1.0; 3],
+        };
+        j.tick(&data, 1.0, &mut pose).expect("zero-duration command parses");
+        assert_eq!(j.tracks[5].rate_base, 0.0);
+        assert!(j.tracks[5].length_invert.is_finite());
     }
 
     /// The 32-bit stream stores real floats. Reading them through figatree's

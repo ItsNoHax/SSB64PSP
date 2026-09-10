@@ -76,6 +76,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene2")
             || cfg!(feature = "regression_capture_scene3")
             || cfg!(feature = "regression_capture_scene4")
+            || cfg!(feature = "regression_capture_scene5")
             || cfg!(feature = "camera_audit_capture"))
 }
 
@@ -530,6 +531,13 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene4"
         ));
     let mut stage_index: u32 = 0;
+    // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
+    // gate RE-142/RE-143 already proved moves under real joint animation.
+    // Stays in the default `stage_view` (unlike scenes 2-4's object viewer)
+    // so the whole-stage framing below shows the gate in its posed position.
+    if cfg!(feature = "regression_capture_scene5") {
+        stage_index = 9;
+    }
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();

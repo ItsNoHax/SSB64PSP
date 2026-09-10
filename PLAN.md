@@ -2794,9 +2794,14 @@ the same physical PSP with zero exceptions and confirmed their content
 matches the PPSSPP goldens (modulo expected edge antialiasing), checking off
 most acceptance items below. RE-204 then hardware-tested the framebuffer-
 effect sprite path and verified VRAM usage, checking off both remaining
-software-testable rows. Stage animation coverage, exhaustive no-failures-
-remain coverage, and live analog-stick input remain open — the last requires
-a human physically operating the device, not reproducible through `pspsh`.
+software-testable rows. RE-205 added a fifth golden scene (Saffron City,
+stage 9) isolating RE-142/RE-143's already-proven animated gate, found and
+fixed a third FPU-trap site in stage-animation code (`objanim.rs`, the same
+class RE-201/`f111892` already fixed twice elsewhere), and verified it
+matches its PPSSPP golden on physical hardware with zero exceptions,
+checking off "stage animation works". Exhaustive no-failures-remain coverage
+and live analog-stick input remain open — the last requires a human
+physically operating the device, not reproducible through `pspsh`.
 
 ### Objective
 
@@ -2811,7 +2816,7 @@ PPSSPP is not sufficient.
 * [x] representative fighters render — RE-203: Mario matches PPSSPP golden
 * [x] representative stages render — RE-203: Dream Land, `StageSectorFile2`, `MVOpeningRoom`
 * [x] fighter animation works — RE-203: Mario's 240-tick fall/physics simulation completes on hardware and matches the PPSSPP golden
-* [ ] stage animation works — `StageAnimator::tick` ran 240 hardware ticks without fault (RE-203) but no scene captured this session isolates visibly animated stage geometry
+* [x] stage animation works — RE-205: `regression_capture_scene5` (stage 9, Saffron City) isolates RE-142/RE-143's already-proven animated gate; found and fixed a third FPU-trap site in `objanim.rs`'s `StageJoint::apply`; hardware capture matches the PPSSPP golden with zero exceptions
 * [x] materials render correctly — RE-203: texture-blend, flat-colour and alpha-blend/translucency combiner shapes all match their goldens
 * [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled

@@ -42,6 +42,14 @@ regression_capture_scene3 = []
 # suppression as scenes 2 and 3. Off by default.
 regression_capture_scene4 = []
 
+# R2's "stage animation works" scene: boots the default whole-stage viewer
+# (unlike scenes 2-4, this stays in stage_view, not the object viewer) on
+# stage 9, Saffron City (file 112), whose gate RE-142/RE-143 already proved
+# moves under joint animation -- a real, already-verified translation/
+# rotation, not a rest-pose object. Same deterministic freeze at tick 240 as
+# `regression_capture`. Off by default.
+regression_capture_scene5 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
