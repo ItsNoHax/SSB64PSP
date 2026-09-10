@@ -10,6 +10,72 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-200 — Final four golden-render matrix rows identified and captured (`PLAN.md` R1)
+
+**Problem.** RE-199 left four rows open in `docs/visual-regression.md`:
+`combiner_texture_blend`, `combiner_flat_color`, classified translucency,
+and clean clamp addressing. Three had no concrete graph key, and RE-198's
+file-22 clamp example was identified but not on screen. The next step in
+`STATUS.md` was to repeat RE-198's graph census before choosing capture
+scenes.
+
+**Method.** Temporarily added and then reverted a `romtool` census using the
+same `load_all`, graph draw-order plan, material-table pairing, and
+`mesh::convert_sequence` path as the packer. Unlike a blind root-list scan,
+this pass retained each `SceneGraph.offset`, so a PSP feature could select an
+exact `ObjectDesc` by `(source_file, source_offset)`. It counted graph-backed
+primitives with `texture_blend`, `flat_color`, or both `translucent` and a
+classified `alpha_blend`; clean clamp required at least one clamp axis and
+neither mirror axis.
+
+**Archive result.** The graph-backed inventory contains 119 texture-blend
+primitives, 12 flat-colour primitives, and 252 classified translucent
+primitives. No one graph covers all four rows. Two exact graph keys are a
+minimal cover:
+
+* file 109, `StageSectorFile2`, graph `0x44C8`: 7 texture-blend primitives,
+  5 classified translucent primitives, and 8 clean-clamp primitives;
+* file 84, `EFCommonEffects2`, graph `0x2760`, decomp-named
+  `CatchSwirlDObjDesc`: 4 flat-colour primitives.
+
+The decomp independently identifies file 109's `Layer0DObj` at `0x44C8` and
+file 84's seven-entry `CatchSwirlDObjDesc` at `0x2760`. The latter contains
+four display-bearing children and four matching material colour scripts,
+consistent with the converter's four primitive result.
+
+**Implementation.** Added off-by-default `regression_capture_scene3` and
+`regression_capture_scene4` Cargo features. They reuse RE-199's object-view
+boot, tick-240 freeze, idle-spin freeze, and HUD suppression. Scene 3 selects
+file 109 graph `0x44C8`; scene 4 selects file 84 graph `0x2760`. Exact offset
+matching matters because both files contain multiple scene graphs. Added
+committed goldens `tests/golden/r1-stage-sector.png` and
+`tests/golden/r1-catch-swirl-flat-color.png`.
+
+**Verification.** Both features built with `cargo psp --release`. For each,
+PPSSPP software captures at 6 and 30 seconds were byte-identical and
+`tools/compare-screenshot.sh` reported 0 differing pixels. SHA-256:
+
+* Stage Sector: `5aac523fd46ec969e96314d8f22c1b6da54251ce4fae061cc3fc8a04dbc5f4f8`;
+* Catch Swirl: `3a7b7df27d18b7369abc785bd4fe9cc07e592017aaf110e313af243d5defac76`.
+
+Rebuilt scene 2 and Dream Land afterward; both still matched their existing
+goldens with 0 differing pixels. `cargo fmt --check` passed. A final plain
+PSP build restored the normal EBOOT. No asset conversion changed, so the pack
+was not rebuilt. Temporary census code was fully reverted.
+
+**Conclusion.** Every matrix row for a currently implemented rendering path
+now has deterministic committed coverage. Particle, shadow, and real UI rows
+remain explicitly blocked on their later gameplay/rendering subsystems; they
+are not missing coverage for an already-implemented path. This closes R1's
+last unchecked acceptance item, but R1 cannot be declared complete until
+R0.5's deferred physical-PSP verification is resolved.
+
+**Confidence:** High for graph membership, deterministic capture, and matrix
+coverage. These are regression baselines, not claims of pixel identity with
+an original N64 capture or physical-PSP validation.
+
+---
+
 ## RE-199 — Second deterministic `regression_capture` scene closes two of RE-198's six test-matrix rows (`PLAN.md` R1)
 
 **Problem.** RE-198 identified concrete file/offset evidence for three

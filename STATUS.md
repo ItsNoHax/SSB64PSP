@@ -1,65 +1,42 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-199 session)
+**Last updated:** 2026-09-10 (RE-200 session)
 
 ## Continuation packet
 
-**Milestone:** `R1 — Rendering Completeness`
+**Milestone:** `R0 — Rendering Correctness`
 
-**Current task:** "Golden/reference renders are established" — `PLAN.md`
-R1's last remaining unchecked acceptance item. RE-198 identified concrete
-file/offset evidence for three previously-unidentified test-matrix rows.
-RE-199 (this session) built the second dedicated `regression_capture_scene2`
-frozen scene (file 52, `mvopeningroom.c`'s "MVCommon" graph) and closed two
-of the six non-covered rows against a new committed golden,
-`tests/golden/r1-mvopeningroom.png`.
+**Current task:** `R0.5 — Texture Filtering / LOD / Mipmapping`, physical-PSP
+Dream Land canopy comparison.
 
-**Status:** `IN_PROGRESS`
+**Status:** `VERIFYING`
 
-**Remaining for this item:** four test-matrix rows still uncovered:
+**Remaining for this item:** compare Dream Land canopy on physical PSP against
+the documented PPSSPP/reference evidence. Physical hardware remains
+unavailable and this verification is deferred by explicit user direction.
 
-- Clamp texture mode — RE-198's clean (non-mirrored) example is file 22, not
-  file 52, so RE-199's scene does not cover it. File 52's own clamp
-  primitive is a clamp+mirror combination already covered by the "Mirror
-  wrap mode" row. Needs a scene (or an extension of `regression_capture_
-  scene2`) that puts file 22 on screen.
-- `combiner_texture_blend`, `combiner_flat_color`, translucency — RE-198 did
-  not tie any of these to a concrete file/offset. They need the same
-  identification step RE-198 did for the other three rows (a census-style
-  walk over `load_all`/`file_meshes`, filtering on the relevant combiner/
-  alpha classification) before a scene can be built for them.
+**Dependencies:** software investigation complete through RE-200. R1's full
+acceptance checklist is checked, but R1 cannot be declared complete before
+R0.5 resolves.
 
-A reasonable next step is identification first (repeat RE-198's approach for
-these three), then decide whether one more scene can carry all four
-remaining rows or whether file 22's clamp example needs its own.
+**Relevant files:** `PLAN.md` R0.5; `docs/reverse-engineering.md` RE-053,
+RE-070, RE-124, RE-127, RE-128; `docs/visual-regression.md`; Dream Land
+golden and physical capture procedure.
 
-**Dependencies:** RE-172–199 complete. R0.5 physical PSP comparison remains
-`VERIFYING` and is temporarily deferred by explicit user direction.
+**First checks:** confirm whether physical PSP hardware is available. If not,
+no further software-only rendering task is eligible: R2 is blocked by R1 and
+R3/combat remain blocked behind R2.
 
-**Relevant files:** `docs/visual-regression.md` ("Test matrix", "The second
-deterministic test scene", "Capture procedure"); `psp/src/main.rs`
-(`deterministic_capture_frozen`, `stage_view`/`object_index`/`spin` overrides
-under `regression_capture_scene2`); `psp/Cargo.toml` (`regression_capture`,
-`regression_capture_scene2` features); `tests/golden/r1-mvopeningroom.png`;
-`PLAN.md` R1's remaining bullet.
+**Acceptance:** `PLAN.md` R0.5's remaining physical-PSP comparison.
 
-**First checks:** `git status --short`; `git log -5 --oneline`; read
-`docs/reverse-engineering.md` RE-198/RE-199 for what is and is not covered;
-if extending RE-198's census approach for the remaining three unidentified
-rows, the same temporary/reverted `romtool` pattern RE-198 used is the
-precedent to follow.
-
-**Acceptance:** `PLAN.md` R1's one remaining unchecked bullet (§7).
-
-**Stop condition:** None yet — four rows remain uncovered.
+**Stop condition:** physical hardware unavailable; do not substitute PPSSPP.
 
 ## Current state
 
 - R0.5: `VERIFYING`; physical PSP validation unavailable/deferred.
-- R1: `IN_PROGRESS`; stages, fighters, costumes, animations, effects,
-  framebuffer paths and rendering-command coverage now have software audits.
-  Both golden regression scenes (Dream Land and `mvopeningroom`) pass exact
-  pixel comparison.
+- R1: every acceptance bullet is checked through RE-200. It remains
+  `IN_PROGRESS` only because R0.5's prerequisite physical verification is
+  deferred. Four golden scenes pass exact PPSSPP software comparisons.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -73,67 +50,42 @@ precedent to follow.
   checked off. Only the real 1P-mode/results-screen G2 trigger remains
   unbuilt — accepted as out of R1 scope, the same split RE-149 already used
   to close R0.13.
-- Next R1 work: identify concrete file/offset evidence for
-  `combiner_texture_blend`, `combiner_flat_color` and translucency (RE-198's
-  approach, not yet repeated for these three), then build whatever scene(s)
-  those plus the still-open clamp-texture-mode row (file 22) need. `MObj`
-  display-state parity (RE-194), rendering-command coverage (RE-195),
-  missing-assets/material-failures reconciliation (RE-196), the golden
-  regression rerun (RE-197), and the second scene's two rows (RE-199) are
-  closed.
+- Golden coverage: RE-200's graph census identifies 119 texture-blend, 12
+  flat-colour, and 252 classified translucent graph-backed primitives.
+  Scene 3 (file 109 graph `0x44C8`) covers texture blend, translucency, and
+  clean clamp; scene 4 (file 84 graph `0x2760`) covers flat colour.
 - R2/R3/combat: blocked behind R1 and the physical rendering gate.
 
 ## Last completed task
 
-**RE-199 — Second deterministic scene closes two of RE-198's six test-matrix rows**
+**RE-200 — Final four golden-render rows identified and captured**
 
-- Added `regression_capture_scene2`, a second off-by-default Cargo feature
-  on `ssb64-psp` (`psp/Cargo.toml`), reusing `regression_capture`'s existing
-  tick-240 freeze and HUD-suppression `cfg!(any(...))` lists rather than
-  duplicating them.
-- `psp/src/main.rs`: disabled the default Dream Land `stage_view` boot under
-  this feature; overrode the object viewer's boot heuristic to file 52's
-  graph (`ObjectDesc.source_file == 52`, `mvopeningroom.c`'s "MVCommon"
-  scene) — the same graph the unmodified heuristic already finds and
-  rejects for the *first* golden scene.
-- Found and fixed a real determinism gap: the object viewer's idle model
-  spin (`spin += 0.02`/frame) was not gated by `deterministic_capture_
-  frozen` at all (no prior object-view audit needed exact-match capture, so
-  nobody had frozen it). Without the fix, two captures 24 seconds apart
-  differed by 126,693 pixels; with it, byte-identical.
-- Captured under PPSSPP software rendering; verified byte-identical and 0
-  differing pixels across two capture times. Committed
-  `tests/golden/r1-mvopeningroom.png`, SHA-256 `db3fd4bce8d3dbbed4534d53fdbea1c3708d708d19298149037676f2628f9ba1`.
-- Rebuilt plain `regression_capture` afterward and reconfirmed the original
-  Dream Land golden still matches exactly (0 differing pixels) — this
-  session's code changes have no effect without the new feature.
-- Updated `docs/visual-regression.md` (new "second deterministic test scene"
-  section, test-matrix rows for CI8 texture and untextured/vertex-coloured
-  geometry now "Yes", clamp-texture-mode row's caveat), `docs/reverse-
-  engineering.md` (new RE-199), `PLAN.md` and `STATUS.md`.
-- `cargo fmt --check` passed on `psp`. Workspace `cargo test`/`clippy` not
-  rerun: `psp` is excluded from the workspace (root `Cargo.toml`) and no
-  host-side crate changed.
-- Evidence: `docs/reverse-engineering.md` RE-199.
-- Commit: pending (this session).
+- Temporary, reverted graph-backed census measured 119 texture-blend, 12
+  flat-colour, and 252 classified translucent primitives.
+- Added `regression_capture_scene3` for file 109 graph `0x44C8` and
+  `regression_capture_scene4` for file 84 graph `0x2760`.
+- Added deterministic Stage Sector and Catch Swirl goldens. Each matched
+  byte-for-byte at 6 and 30 seconds under PPSSPP software rendering.
+- Rechecked scene 2 and Dream Land: 0 differing pixels.
+- Updated roadmap, state, visual-regression, reverse-engineering, rendering,
+  and porting-status documentation.
+- Evidence: `docs/reverse-engineering.md` RE-200.
+- Commit: this commit (`test: complete R1 golden render coverage`).
 
 ## Verification
 
-`cargo psp --release --features regression_capture_scene2` built clean.
-Two PPSSPP captures (`--seconds 6` and `--seconds 30`) were byte-identical
-(`cmp`) and 0 differing pixels (`tools/compare-screenshot.sh`). Rebuilt
-`cargo psp --release --features regression_capture` and reran the original
-Dream Land golden comparison: 0 differing pixels, unchanged. Rebuilt plain
-`cargo psp --release` afterward per the documented "always follow a
-regression-capture run with a plain build" rule. `cargo fmt --check` passed
-on `psp`. No host-side crate changed, so workspace `cargo test`/`clippy`
-were not rerun.
+Scenes 3 and 4 built clean. Each produced byte-identical PPSSPP software
+captures at 6 and 30 seconds and 0 differing pixels. Scene 2 and Dream Land
+were rebuilt and still match their goldens exactly. `cargo fmt --check`
+passed on `psp`; final plain PSP build restored normal EBOOT. No host-side
+crate or asset conversion changed, so workspace tests and pack rebuild were
+not required.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–199.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–200.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 

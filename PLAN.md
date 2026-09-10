@@ -2772,17 +2772,18 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   (`fmt`/`clippy`/`cargo test --workspace`, 347 passing) also reran clean.
   RE-170's stage audit and RE-171's animation audit remain valid, separate
   smoke coverage
-* [ ] golden/reference renders are established: methodology and one golden
+* [x] golden/reference renders are established: methodology and one golden
   scene done under R0.17 (`docs/visual-regression.md`); RE-198 identified
   concrete file/offset evidence for the three rows that previously had none
   (CI8 texture, clamp texture mode, untextured/vertex-coloured geometry).
   RE-199 built the second dedicated `regression_capture_scene2` frozen scene
   (file 52, `mvopeningroom.c`'s "MVCommon" graph) and closed two of the six
   non-covered rows (CI8 texture, untextured/vertex-coloured geometry) against
-  a new committed golden, `tests/golden/r1-mvopeningroom.png`. Four rows
-  remain: clamp texture mode (needs file 22, not file 52, on screen),
-  `combiner_texture_blend`, `combiner_flat_color` and translucency (still
-  unidentified to a concrete file/offset)
+  a new committed golden, `tests/golden/r1-mvopeningroom.png`. RE-200 closes
+  the final four rows with a graph-backed census and two deterministic
+  goldens: file 109 graph `0x44C8` covers texture blend, classified
+  translucency, and clean clamp; file 84 graph `0x2760` covers flat colour.
+  Both exact-match at 6 and 30 seconds under PPSSPP software rendering
 
 ---
 
