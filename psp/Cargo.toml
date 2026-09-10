@@ -82,6 +82,14 @@ effect_spawn_audit_capture = []
 # state, no packed asset to bind it to). Off by default.
 wallpaper_audit_capture = []
 
+# Same tick-240 capture trigger as `wallpaper_audit_capture`, but displays it
+# through `Gpu::draw_wallpaper_sprite` -- a real GE 2D sprite draw (texture
+# bind, `GU_TRANSFORM_2D`, prim-colour modulate), not a raw CPU blit. Proves
+# RE-193's minimal `SObj` sprite port renders the capture correctly through
+# the actual GE texture pipeline, distinct evidence from
+# `wallpaper_audit_capture`'s own CPU-blit proof. Off by default.
+wallpaper_sprite_audit_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true

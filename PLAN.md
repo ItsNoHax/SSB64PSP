@@ -2676,7 +2676,7 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   `docs/reverse-engineering.md` RE-172–189. Only one manager effect is wired
   (the other 25+ `efManager*MakeEffect` call sites and any real gameplay
   trigger remain future scope, not required by this item's own text).
-* [ ] all required framebuffer paths render — RE-190 exhaustively censuses
+* [x] all required framebuffer paths render — RE-190 exhaustively censuses
   every `framebuf`-adjacent decomp reference: N64 VI swap-chain scheduling
   (`sys/scheduler.c`/`taskman.c`/`video.c`, `libultra/io/vi*.c`,
   `mvOpeningRoomCheckSetFramebuffer`), the crash-screen debug overlay
@@ -2694,11 +2694,21 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   capture mechanism itself (`Gpu::request_wallpaper_capture`, a plain
   300×220 block copy with none of the N64 swizzle/tile padding) behind the
   `wallpaper_audit_capture` build, matching the `TextureDesc::ROLE_FRAMEBUFFER`
-  precedent's own bootstrap shape. Still not wired to real content: no
-  1P-mode/results-screen state exists yet to call it from, and no packed
-  `Sprite`/`Bitmap` asset representation exists in `romtool`/pack format to
-  render the capture into; next step needs one of those before this can bind
-  through the normal mesh pipeline
+  precedent's own bootstrap shape. RE-193 found the earlier framing of the
+  remaining gap ("a packed pack entry ... through the normal mesh pipeline")
+  was wrong: the real ROM draws the wallpaper as an `SObj` 2D sprite (RDP
+  `gSPTextureRectangle`, no 3D transform, no display list), a subsystem this
+  project had never ported. RE-193 built the minimal `SObj` slice this one
+  caller needs (`Gpu::draw_wallpaper_sprite`, a real GE `GU_TRANSFORM_2D`
+  sprite draw) and device-verified it renders the capture correctly and
+  boundedly (measured luminance dim inside the exact draw rectangle, zero
+  change outside it) behind the new `wallpaper_sprite_audit_capture` build.
+  Both the capture (RE-190–192) and its render path (RE-193) are now
+  renderer-complete and device-verified; only the real 1P-mode/results-
+  screen G2 trigger remains unbuilt, the same "renderer owns the mechanism,
+  G2 owns the trigger" gap RE-149 already accepted to close R0.13 (whose own
+  LB-transition draw path is likewise only ever called from its own audit
+  feature today)
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
   `MOBJ_FLAG_NONE` defaults, runtime texture enable/disable, `scau`/`scav`

@@ -61,6 +61,35 @@ impl GuVertex {
     }
 }
 
+/// Screen-space 2D vertex (`GU_TRANSFORM_2D`): raw pixel coordinates, no
+/// MVP transform. This is the PSP GE's native equivalent of the RDP's
+/// `gSPTextureRectangle`, the primitive a real `SObj` sprite draw bottoms
+/// out in (RE-193) -- unlike every other draw in this renderer, `SObj`
+/// rendering bypasses the 3D transform pipeline entirely.
+#[repr(C, align(4))]
+#[derive(Clone, Copy)]
+struct SpriteVertex {
+    pub u: f32,
+    pub v: f32,
+    /// Packed ABGR, matching [`GuVertex::color`]'s own convention.
+    pub color: u32,
+    pub x: i16,
+    pub y: i16,
+    pub z: i16,
+    _pad: i16,
+}
+
+impl SpriteVertex {
+    /// Field order (texture, then colour, then position) is dictated by
+    /// hardware, the same rule [`GuVertex::FORMAT`] documents.
+    const FORMAT: VertexType = VertexType::from_bits_truncate(
+        VertexType::TEXTURE_32BITF.bits()
+            | VertexType::COLOR_8888.bits()
+            | VertexType::VERTEX_16BIT.bits()
+            | VertexType::TRANSFORM_2D.bits(),
+    );
+}
+
 /// A stack-allocated, NUL-terminated string builder.
 ///
 /// `sceGuDebugPrint` wants a C string, and formatting into the heap every frame
@@ -184,22 +213,34 @@ pub const WALLPAPER_PHOTO_HEIGHT: usize = 220;
 /// `WALLPAPER_PHOTO_WIDTH.next_power_of_two()` convention.
 const WALLPAPER_PHOTO_STRIDE: usize = 512;
 
-/// Captured by [`Gpu::request_wallpaper_capture`], read by
-/// [`wallpaper_photo_data`]. No `TextureDesc` role binds this yet -- RE-191's
-/// "Remaining scope" still blocks a real render-path caller (no 1P-mode/
-/// results-screen game state exists to trigger it from, and no packed asset
-/// exists to render it into). Exists so the `wallpaper_audit_capture` debug
-/// build can prove the capture is real pixel data, matching the shape
-/// RE-099/100 used to bootstrap the LB transition capture before it had a
-/// real caller either.
-static mut WALLPAPER_PHOTO: Align16<[u32; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT]> =
-    Align16([0; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT]);
+/// Rows the buffer actually allocates: the PSP GE's texture-height register
+/// stores an exponent, so `sceGuTexImage` requires a power-of-two height the
+/// same way it requires a power-of-two `bufferwidth` (RE-193,
+/// [`draw_wallpaper_sprite`][Gpu::draw_wallpaper_sprite]). `WALLPAPER_PHOTO_HEIGHT`
+/// (220) is real content, not a GE-legal texture height, so the backing
+/// array is padded here rather than at the type used by the CPU-only
+/// capture/blit paths, which never cared about this constraint before this
+/// session added the first real GE bind of this buffer.
+const WALLPAPER_PHOTO_PADDED_HEIGHT: usize = 256;
 
-/// Bytes captured for the wallpaper snapshot. Same aliasing/safety contract
-/// as [`transition_photo_data`].
+/// Captured by [`Gpu::request_wallpaper_capture`], read by
+/// [`wallpaper_photo_data`] and drawn by
+/// [`Gpu::draw_wallpaper_sprite`][Gpu::draw_wallpaper_sprite] (RE-193).
+/// Rows [`WALLPAPER_PHOTO_HEIGHT`]..[`WALLPAPER_PHOTO_PADDED_HEIGHT`] are
+/// never written and stay zero for the process's whole life -- harmless,
+/// since [`Gpu::draw_wallpaper_sprite`] never samples past the real content.
+static mut WALLPAPER_PHOTO: Align16<[u32; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT]> =
+    Align16([0; WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT]);
+
+/// Bytes captured for the wallpaper snapshot, padded height included (the
+/// shape [`Gpu::draw_wallpaper_sprite`]'s `sceGuTexImage` call needs). Same
+/// aliasing/safety contract as [`transition_photo_data`].
 pub unsafe fn wallpaper_photo_data() -> &'static [u8] {
     let ptr = core::ptr::addr_of!(WALLPAPER_PHOTO.0) as *const u8;
-    core::slice::from_raw_parts(ptr, WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_HEIGHT * 4)
+    core::slice::from_raw_parts(
+        ptr,
+        WALLPAPER_PHOTO_STRIDE * WALLPAPER_PHOTO_PADDED_HEIGHT * 4,
+    )
 }
 
 /// Owns the GU context and the frame lifecycle.
@@ -439,6 +480,113 @@ impl Gpu {
             let src_row = src.add(y * WALLPAPER_PHOTO_STRIDE);
             core::ptr::copy_nonoverlapping(src_row, dst_row, WALLPAPER_PHOTO_WIDTH);
         }
+    }
+
+    /// Draws the last wallpaper capture back onto the screen as a real GE
+    /// sprite: the PSP-side equivalent of
+    /// `sc1PStageClearWallpaperProcDisplay`/`sc1PStageClearMakeWallpaper`
+    /// (`sc/sc1pmode/sc1pstageclear.c:1542-1579`, RE-193). Unlike every other
+    /// draw in this renderer, a real `SObj` sprite draw bypasses the 3D
+    /// transform pipeline entirely -- the RDP's `gSPTextureRectangle` reads
+    /// literal screen pixels, not world/view/projection-transformed
+    /// vertices. [`GuPrimitive::Sprites`] plus [`VertexType::TRANSFORM_2D`]
+    /// is the PSP GE's own native equivalent of that same shape, so this
+    /// deliberately does not reuse `crate::meshdraw`'s 3D quad-through-a-
+    /// camera technique the way [`results_transition::ResultsTransition`]'s
+    /// LB-transition quad does -- that mechanism has a real ROM display list
+    /// binding a `ROLE_FRAMEBUFFER` `MObj` texture, but the wallpaper has no
+    /// such display list at all; the real ROM draws it as a 2D sprite, never
+    /// through `MObj`/`DObj`.
+    ///
+    /// Reproduces exactly the one real draw call's own fixed parameters,
+    /// not a general `SObj`/`Sprite` decoder (RE-190 already found no
+    /// `romtool` `Sprite` decoder exists or is needed here): single
+    /// bitmap, `scalex`/`scaley` == 1.0 (`sobj->pos.x/y = 10.0`, no scale
+    /// field ever set), opaque (`G_RM_OPA_SURF`), and colour-modulated by
+    /// the real draw's own `gDPSetPrimColor(0, 0, 0x80, 0x80, 0x80, 0xFF)`
+    /// -- a 50% grey dim, not full brightness (`sc1pstageclear.c:1546`).
+    ///
+    /// Draws back at the identical pixel rectangle
+    /// [`Gpu::capture_wallpaper_photo`] read from (the pillarbox's own left
+    /// edge, row 0), not a separately re-derived N64-to-PSP scale: the
+    /// capture already holds pixels at the PSP's own display scale, so
+    /// redrawing them at their own source coordinates reproduces the
+    /// original same-position photocopy with no additional conversion.
+    ///
+    /// # Safety
+    ///
+    /// Must be called between `begin_frame` and `end_frame`, the same window
+    /// every other GE draw call uses.
+    pub unsafe fn draw_wallpaper_sprite(&self) {
+        let (vx, _, _, _) = ssb_engine::coord::pillarboxed_viewport();
+        let data = wallpaper_photo_data();
+
+        sys::sceGuEnable(GuState::Texture2D);
+        sys::sceGuDisable(GuState::Lighting);
+        sys::sceGuDisable(GuState::DepthTest);
+        sys::sceGuDisable(GuState::Blend);
+
+        sys::sceGuTexMode(TexturePixelFormat::Psm8888, 0, 0, 0);
+        sys::sceGuTexImage(
+            sys::MipmapLevel::None,
+            WALLPAPER_PHOTO_STRIDE as i32,
+            WALLPAPER_PHOTO_PADDED_HEIGHT as i32,
+            WALLPAPER_PHOTO_STRIDE as i32,
+            data.as_ptr() as *const c_void,
+        );
+        sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
+        sys::sceGuTexWrap(sys::GuTexWrapMode::Clamp, sys::GuTexWrapMode::Clamp);
+        // With an identity scale/offset, `TEXTURE_32BITF` UV is a raw texel
+        // address, not a 0..1 fraction (confirmed on device: a fractional
+        // corner here samples almost only the top-left texel, smearing one
+        // dark background pixel across the whole quad). These corners stop
+        // at the real 300x220 content, not the padded 512x256 buffer.
+        sys::sceGuTexScale(1.0, 1.0);
+        sys::sceGuTexOffset(0.0, 0.0);
+        sys::sceGuTexFunc(
+            sys::TextureEffect::Modulate,
+            sys::TextureColorComponent::Rgba,
+        );
+
+        // ABGR-packed 0x80 red/green/blue, 0xFF alpha -- matches the real
+        // draw's own `gDPSetPrimColor(0, 0, 0x80, 0x80, 0x80, 0xFF)`.
+        const PRIM_COLOR: u32 = 0xFF80_8080;
+        let u1 = WALLPAPER_PHOTO_WIDTH as f32;
+        let v1 = WALLPAPER_PHOTO_HEIGHT as f32;
+        let x0 = vx as i16;
+        let y0 = 0i16;
+        let x1 = (vx as usize + WALLPAPER_PHOTO_WIDTH) as i16;
+        let y1 = WALLPAPER_PHOTO_HEIGHT as i16;
+
+        let verts = [
+            SpriteVertex {
+                u: 0.0,
+                v: 0.0,
+                color: PRIM_COLOR,
+                x: x0,
+                y: y0,
+                z: 0,
+                _pad: 0,
+            },
+            SpriteVertex {
+                u: u1,
+                v: v1,
+                color: PRIM_COLOR,
+                x: x1,
+                y: y1,
+                z: 0,
+                _pad: 0,
+            },
+        ];
+        sys::sceGuDrawArray(
+            GuPrimitive::Sprites,
+            SpriteVertex::FORMAT,
+            2,
+            core::ptr::null(),
+            verts.as_ptr() as *const c_void,
+        );
+
+        sys::sceGuEnable(GuState::DepthTest);
     }
 
     /// # Safety

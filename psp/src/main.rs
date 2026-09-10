@@ -615,7 +615,10 @@ unsafe fn run() -> ! {
                     results_transition.begin(p, 0);
                 }
             }
-            #[cfg(feature = "wallpaper_audit_capture")]
+            #[cfg(any(
+                feature = "wallpaper_audit_capture",
+                feature = "wallpaper_sprite_audit_capture"
+            ))]
             if sim_frame_index == 240 {
                 gpu.request_wallpaper_capture();
             }
@@ -2031,6 +2034,12 @@ unsafe fn run() -> ! {
         if sim_frame_index > 240 {
             unsafe {
                 gpu.blit_wallpaper_debug();
+            }
+        }
+        #[cfg(feature = "wallpaper_sprite_audit_capture")]
+        if sim_frame_index > 240 {
+            unsafe {
+                gpu.draw_wallpaper_sprite();
             }
         }
         gpu.end_frame();
