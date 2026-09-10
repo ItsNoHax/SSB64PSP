@@ -3317,6 +3317,10 @@ mod tests {
             // real value `romtool texgen` measures.
             origin_s: 12,
             origin_t: 0,
+            mask_s: 0,
+            mask_t: 0,
+            drawn_width: 16,
+            drawn_height: 8,
         };
         let mut mesh = sample_mesh();
         mesh.primitives[0].material.texture = Some(texture);

@@ -7366,4 +7366,260 @@ mod tests {
 
         assert!(textures_censused > 0, "archive-wide walk found no textures");
     }
+
+    /// `PLAN.md` R2.0/P0b: measures two of the three addressing questions
+    /// against every real primitive archive-wide, using
+    /// `ssb_rom::n64_addressing`'s hardware reference model (transcribed
+    /// from `angrylion-rdp-plus`, not a reference port) and its paired
+    /// `psp_lowering_axis` model of the current PSP conversion.
+    ///
+    /// Bullet 1 (mirror+clamp beyond the first period): for every real
+    /// `mirror + clamp` (`cms`/`cmt == 3`) render-tile axis with a nonzero
+    /// mask, classifies how many mask periods each real primitive's UV range
+    /// actually reaches, and compares the hardware model's addressed texel
+    /// against the current PSP lowering's at both UV extremes.
+    ///
+    /// Bullet 2 (`mask == 0`): for every real axis with `mask == 0` and the
+    /// `cm` clamp bit clear (where current PSP code applies `Repeat`, but
+    /// `angrylion-rdp-plus`'s `clampens = cs || !mask_s` says real hardware
+    /// always clamps), measures whether any real primitive's UV range
+    /// actually leaves the tile's logical bounds -- the only condition under
+    /// which the forced-clamp rule changes anything observable.
+    #[test]
+    fn tile_addressing_census_against_real_archive_textures() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+
+        #[derive(Default)]
+        struct MirrorClampStats {
+            axis_instances: u64,
+            within_first_period: u64,
+            within_mirrored_period: u64,
+            immediately_beyond: u64,
+            multiple_periods_beyond: u64,
+            negative: u64,
+            hw_psp_diverge: u64,
+        }
+        #[derive(Default)]
+        struct Mask0Stats {
+            axis_instances: u64,
+            clamp_bit_clear: u64,
+            clamp_bit_clear_out_of_bounds_instances: u64,
+        }
+        #[derive(Default)]
+        struct PotPaddingStats {
+            non_pot_clamp_axis_instances: u64,
+            near_or_beyond_last_logical_texel: u64,
+        }
+        let mut mc = MirrorClampStats::default();
+        let mut m0 = Mask0Stats::default();
+        let mut pp = PotPaddingStats::default();
+        let mut unique_mirror_clamp_tiles: BTreeSet<(u32, u32, u8, u8, bool, bool)> = BTreeSet::new();
+        let mut unique_mask0_clear_tiles: BTreeSet<(u32, u32, bool, bool)> = BTreeSet::new();
+        let mut unique_non_pot_clamp_tiles: BTreeSet<(u32, u32, usize, u32)> = BTreeSet::new();
+        let mut primitives_examined = 0u64;
+
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for m in super::file_meshes(&loaded, file) {
+                for prim in &m.primitives {
+                    let Some(t) = prim.material.texture else {
+                        continue;
+                    };
+                    // Texgen primitives (regular or linear) don't read
+                    // `MeshVertex::uv` as an authored coordinate at all --
+                    // regular texgen is generated live by the GE from the
+                    // vertex normal, and linear texgen's CPU-generated
+                    // replacement is computed at pack time, not here. This
+                    // census is authored-UV-scoped (`PLAN.md` R2.0/P0b);
+                    // texgen addressing is `R2.1`/T7's job, consuming this
+                    // same reference model with its own scale/origin wiring.
+                    if t.framebuffer || prim.indices.is_empty() || prim.material.texture_gen != ssb_rom::mesh::TextureGen::None
+                    {
+                        continue;
+                    }
+                    primitives_examined += 1;
+                    let home = t.data_file.map_or(id, u32::from);
+
+                    for (mask, mirror, clamp_bit, origin_q2, drawn, axis_idx) in [
+                        (t.mask_s, t.mirror_s, t.clamp_s, t.origin_s as i32, t.drawn_width, 0usize),
+                        (t.mask_t, t.mirror_t, t.clamp_t, t.origin_t as i32, t.drawn_height, 1usize),
+                    ] {
+                        let coords: Vec<i32> = prim
+                            .indices
+                            .iter()
+                            .map(|&i| m.vertices[i as usize].uv[axis_idx] as i32)
+                            .collect();
+                        let (Some(&min_c), Some(&max_c)) =
+                            (coords.iter().min(), coords.iter().max())
+                        else {
+                            continue;
+                        };
+
+                        if mirror && clamp_bit && mask > 0 {
+                            unique_mirror_clamp_tiles.insert((
+                                home,
+                                t.data_offset,
+                                mask,
+                                drawn as u8,
+                                mirror,
+                                clamp_bit,
+                            ));
+                            mc.axis_instances += 1;
+                            let period = 1u32 << mask;
+                            // `clamp_bit` is set, so `mesh.rs` already
+                            // subtracted the tile origin at load time
+                            // (RE-152) -- feed the reference model an
+                            // already-relative origin of 0 to avoid
+                            // double-subtracting.
+                            let far_edge_q2 = (drawn as i32 - 1) << 2;
+                            let model = ssb_rom::n64_addressing::TileAxis {
+                                shift: 0,
+                                origin_q2: 0,
+                                far_edge_q2,
+                                mask,
+                                mirror,
+                                clamp_bit,
+                            };
+                            let min_tex = min_c.div_euclid(32).div_euclid(period as i32);
+                            let max_tex = max_c.div_euclid(32).div_euclid(period as i32);
+                            if min_tex < 0 {
+                                mc.negative += 1;
+                            } else if max_tex >= 3 {
+                                mc.multiple_periods_beyond += 1;
+                            } else if max_tex >= 2 {
+                                mc.immediately_beyond += 1;
+                            } else if max_tex >= 1 {
+                                mc.within_mirrored_period += 1;
+                            } else {
+                                mc.within_first_period += 1;
+                            }
+                            let hw_min = ssb_rom::n64_addressing::address_axis(&model, min_c);
+                            let hw_max = ssb_rom::n64_addressing::address_axis(&model, max_c);
+                            let psp_min = ssb_rom::n64_addressing::psp_lowering_axis(min_c, period, mirror, clamp_bit);
+                            let psp_max = ssb_rom::n64_addressing::psp_lowering_axis(max_c, period, mirror, clamp_bit);
+                            if hw_min != psp_min || hw_max != psp_max {
+                                mc.hw_psp_diverge += 1;
+                            }
+                        }
+
+                        if mask == 0 {
+                            m0.axis_instances += 1;
+                            if !clamp_bit {
+                                unique_mask0_clear_tiles.insert((home, t.data_offset, mirror, clamp_bit));
+                                m0.clamp_bit_clear += 1;
+                                // `clamp_bit` is clear here, so `mesh.rs`
+                                // only subtracted the origin if this was a
+                                // framebuffer binding (excluded above) --
+                                // the coordinate is still absolute.
+                                let out_of_bounds = [min_c, max_c].into_iter().any(|c| {
+                                    let rel = c - (origin_q2 << 3);
+                                    let idx = rel.div_euclid(32);
+                                    idx < 0 || idx > drawn as i32 - 1
+                                });
+                                if out_of_bounds {
+                                    m0.clamp_bit_clear_out_of_bounds_instances += 1;
+                                }
+                            }
+                        }
+
+                        // Bullet 3: PSP POT-padding vs the N64 logical clamp
+                        // boundary. Mirror doubles the packed image to
+                        // `2 * (1 << mask)` texels, always already a power of
+                        // two -- padding is a real no-op there, so this only
+                        // applies to a clamped, *unmirrored* axis whose
+                        // logical width the pack step still zero-pads.
+                        if clamp_bit && !mirror {
+                            // The packed image's own dimension (RE-044
+                            // mask-narrowed), not the drawn rect `drawn`
+                            // above -- this is what `pack_rgba`/
+                            // `pack_indexed` actually pads to a power of two.
+                            let axis_dim = if axis_idx == 0 { t.width } else { t.height }.max(1) as u32;
+                            let padded = ssb_rom::psp_texture::pad_to_power_of_two(axis_dim);
+                            if padded != axis_dim {
+                                unique_non_pot_clamp_tiles.insert((home, t.data_offset, axis_idx, axis_dim));
+                                pp.non_pot_clamp_axis_instances += 1;
+                                // Origin already subtracted (clamp_bit is
+                                // set): the last logical texel starts at
+                                // `(axis_dim - 1) * 32` in this relative
+                                // S10.5 basis. Any real sample at or past
+                                // that point has a bilinear neighbour that
+                                // reads into the zero-filled padding.
+                                let last_texel_floor = (axis_dim as i32 - 1) * 32;
+                                if max_c >= last_texel_floor {
+                                    pp.near_or_beyond_last_logical_texel += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("primitives examined: {primitives_examined}");
+        println!();
+        println!("bullet 1 -- mirror+clamp (cms/cmt == 3, mask > 0):");
+        println!(
+            "  unique (file, offset, mask, drawn width, mirror, clamp) tiles: {}",
+            unique_mirror_clamp_tiles.len()
+        );
+        println!("  axis instances (primitive x axis): {}", mc.axis_instances);
+        println!("  UV range within first period:       {}", mc.within_first_period);
+        println!("  UV range reaches mirrored period:   {}", mc.within_mirrored_period);
+        println!("  UV range reaches 1 period beyond that: {}", mc.immediately_beyond);
+        println!("  UV range reaches >=2 periods beyond that: {}", mc.multiple_periods_beyond);
+        println!("  UV range goes negative:             {}", mc.negative);
+        println!(
+            "  hardware model vs current PSP lowering diverge: {} ({:.4}%)",
+            mc.hw_psp_diverge,
+            mc.hw_psp_diverge as f64 * 100.0 / mc.axis_instances.max(1) as f64
+        );
+        println!();
+        println!("bullet 2 -- mask == 0:");
+        println!("  axis instances: {}", m0.axis_instances);
+        println!(
+            "  with clamp bit clear (angrylion: still forced-clamped): {}",
+            m0.clamp_bit_clear
+        );
+        println!(
+            "  unique (file, offset, mirror, clamp) tiles with clamp bit clear: {}",
+            unique_mask0_clear_tiles.len()
+        );
+        println!(
+            "  of those, primitive instances whose UV leaves logical bounds: {}",
+            m0.clamp_bit_clear_out_of_bounds_instances
+        );
+        println!();
+        println!("bullet 3 -- PSP POT padding vs N64 logical clamp boundary:");
+        println!(
+            "  unique (file, offset, axis, logical dim) clamped non-POT axes: {}",
+            unique_non_pot_clamp_tiles.len()
+        );
+        println!(
+            "  axis instances (primitive x axis): {}",
+            pp.non_pot_clamp_axis_instances
+        );
+        println!(
+            "  of those, samples reaching the last logical texel (bilinear neighbour reads padding): {}",
+            pp.near_or_beyond_last_logical_texel
+        );
+
+        assert!(primitives_examined > 0, "archive-wide walk found no textured primitives");
+        // RE-220: measured zero `mask == 0` render-tile axes on any real
+        // drawn primitive, archive-wide -- `angrylion-rdp-plus`'s forced
+        // clamp for `mask == 0` (`clampens = cs || !mask_s`) never actually
+        // diverges from the current unconditional `cm`-bit-only PSP lowering
+        // on real content, so bullet 2 closes with no fix needed. If this
+        // regresses, the forced-clamp rule genuinely needs implementing.
+        assert_eq!(
+            m0.axis_instances, 0,
+            "a real mask == 0 axis now exists: implement forced clamp (PLAN.md R2.0/P0b bullet 2)"
+        );
+    }
 }

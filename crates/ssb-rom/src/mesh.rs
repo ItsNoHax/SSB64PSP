@@ -113,6 +113,23 @@ pub struct TextureRef {
     /// made the PSP hold one black edge texel over the entire primitive.
     pub origin_s: u16,
     pub origin_t: u16,
+    /// `G_SETTILE`'s raw `mask_s`/`mask_t`, 0..15 (`PLAN.md` R2.0/P0b). Unlike
+    /// [`Self::mirror_s`]/[`Self::mirror_t`], not folded into a derived bool:
+    /// distinguishing an axis with no repeat period at all (`mask == 0`, which
+    /// real hardware always clamps regardless of the `cm` clamp bit --
+    /// `clampens = cs || !mask_s` in `angrylion-rdp-plus`) from one whose mask
+    /// is simply larger than the drawn rect (RE-102's mask-32/drawn-24 case)
+    /// needs the raw value, not just whether mirroring is active.
+    pub mask_s: u8,
+    pub mask_t: u8,
+    /// The render tile's drawn rect, in texels, *before* [`Self::width`]/
+    /// [`Self::height`]'s RE-044 mask-period narrowing -- i.e. `G_SETTILESIZE`
+    /// `((lrs - uls) >> 2) + 1`. Together with [`Self::origin_s`]/
+    /// [`Self::origin_t`] this reconstructs the tile's far edge (`sh`/`th`),
+    /// which real hardware clamps against independently of the mask period
+    /// (`PLAN.md` R2.0/P0b's mirror+clamp-beyond-the-first-period question).
+    pub drawn_width: u16,
+    pub drawn_height: u16,
 }
 
 /// RSP texture-coordinate generation mode selected by geometry state.
@@ -1251,7 +1268,7 @@ impl State {
             return None;
         }
         let (fmt, siz) = self.tile0_fmt?;
-        let (w, h) = self.tile_dims?;
+        let (drawn_width, drawn_height) = self.tile_dims?;
         // `G_SETTILESIZE` gives the rectangle being *drawn*, which for a
         // wrapping texture is larger than the texture: Dream Land renders a
         // 64x32 tile across a 256x128 span. `masks`/`maskt` are what say how
@@ -1260,12 +1277,11 @@ impl State {
         // 12 KiB file (RE-044). A mask of zero means no wrapping, so the drawn
         // rect is the texture.
         let (mask_s, mask_t) = self.tile0_mask.unwrap_or((0, 0));
-        let (nw, nh) = (
-            if mask_s > 0 { w.min(1 << mask_s) } else { w },
-            if mask_t > 0 { h.min(1 << mask_t) } else { h },
+        let (w, h) = (
+            if mask_s > 0 { drawn_width.min(1 << mask_s) } else { drawn_width },
+            if mask_t > 0 { drawn_height.min(1 << mask_t) } else { drawn_height },
         );
         let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
-        let (w, h) = (nw, nh);
         // `G_TX_MIRROR` is bit 0 of `cms`/`cmt`. Only meaningful with an
         // actual repeat period (RE-066: every real occurrence in this ROM
         // already has one), so gate on the mask too rather than trusting the
@@ -1315,6 +1331,10 @@ impl State {
                 framebuffer: true,
                 origin_s,
                 origin_t,
+                mask_s,
+                mask_t,
+                drawn_width,
+                drawn_height,
             });
         }
 
@@ -1336,6 +1356,10 @@ impl State {
             framebuffer: false,
             origin_s: self.tile0_origin.map_or(0, |o| o.0),
             origin_t: self.tile0_origin.map_or(0, |o| o.1),
+            mask_s,
+            mask_t,
+            drawn_width,
+            drawn_height,
         })
     }
 
@@ -1365,6 +1389,7 @@ impl State {
     fn current_texture_shape(&self) -> Option<TextureRef> {
         let (fmt, siz) = self.tile0_fmt?;
         let (mask_s, mask_t) = self.tile0_mask?;
+        let (drawn_width, drawn_height) = self.tile_dims.unwrap_or((1u16 << mask_s, 1u16 << mask_t));
         let (w, h) = match self.tile_dims {
             Some((w, h)) => (
                 if mask_s > 0 { w.min(1 << mask_s) } else { w },
@@ -1395,6 +1420,10 @@ impl State {
             framebuffer: false,
             origin_s: self.tile0_origin.map_or(0, |o| o.0),
             origin_t: self.tile0_origin.map_or(0, |o| o.1),
+            mask_s,
+            mask_t,
+            drawn_width,
+            drawn_height,
         })
     }
 }

@@ -10,6 +10,134 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-220 — General N64 tile-addressing reference model: two real gaps, one closed invariant (`PLAN.md` R2.0/P0b)
+
+**Question.** RE-218 reopened R0.5's mirror/clamp/mask completion claims:
+were they ever checked against a real N64 tile-addressing model, or only
+against reference ports? Three specific sub-questions: (1) does real
+hardware clamp only at the tile's drawn-rect far edge, or after the first
+mirrored period as the current PSP comment assumes; (2) does `mask == 0`
+force a clamp regardless of the `cm` clamp bit; (3) does the PSP's
+power-of-two texture padding corrupt bilinear sampling near a clamped,
+non-power-of-two logical edge?
+
+**Reference source.** Same standard as RE-219 (`AGENTS.md` §6/D-037): not a
+reference port, but `angrylion-rdp-plus` (`github.com/ata4/angrylion-rdp-plus`),
+transcribed field-for-field —
+
+* `src/core/n64video.c`: `#define SIGN16(x) ((int16_t)(x))`,
+  `#define TRELATIVE(x, y) ((x) - ((y) << 3))`.
+* `src/core/n64video/rdp/tcoord.c`: `tcshift_cycle` (per-axis `G_SETTILE`
+  shift).
+* `src/core/n64video/rdp/tex.c`: `calculate_tile_derivs`
+  (`clampens = cs || !mask_s`), `calculate_clamp_diffs`, `tcclamp_cycle`,
+  `tcmask_coupled`.
+
+The real pipeline, per axis: `tcshift_cycle` (apply `G_SETTILE` shift) →
+`TRELATIVE` (subtract tile origin `sl`/`tl`, unconditionally, whether or not
+the axis clamps) → `tcclamp_cycle` (bound against the tile's drawn-rect far
+edge `sh`/`th`, forced whenever `mask == 0` even without the `cm` clamp bit)
+→ `tcmask_coupled` (mask + mirror, which still runs **after** clamp, on
+whatever value clamp produced — clamping does not skip masking).
+
+**Implementation.** `crates/ssb-rom/src/n64_addressing.rs`: `TileAxis` +
+`address_axis` (the hardware reference model above) and `psp_lowering_axis`
+(a model of the current PSP conversion: `texture::mirror_extend`'s pre-baked
+mirror doubling plus `sceGuTexWrap`'s `Clamp`/`Repeat`, for direct
+comparison). 10 host tests (`cargo test -p ssb-rom n64_addressing`),
+including a same-formula regression case reproducing RE-102's "mirror once
+then clamp" assumption side by side with what the reference model actually
+does at the same coordinate.
+
+`TextureRef` (`crates/ssb-rom/src/mesh.rs`) gained `mask_s`/`mask_t` (the raw
+`G_SETTILE` mask, previously only folded into the derived `mirror_s`/
+`mirror_t` bools) and `drawn_width`/`drawn_height` (the tile's drawn rect
+before RE-044's mask-period narrowing) — both needed to reconstruct the
+tile's far edge (`sh`/`th`) for the reference model; no rendering behavior
+changed.
+
+**Measured, archive-wide, real ROM
+(`tools/romtool`'s `tile_addressing_census_against_real_archive_textures`,
+`SSB64_ROM`-gated, 2,484 real textured primitives examined):**
+
+**(1) Mirror+clamp beyond the first period — real, material gap, open.**
+810 real `mirror + clamp` (`cms`/`cmt == 3`, mask > 0) axis instances across
+280 unique render tiles:
+
+| UV range reaches | axis instances |
+| --- | --- |
+| within the first period | 82 |
+| the mirrored (second) period | 356 |
+| one period beyond that | 23 |
+| two or more periods beyond that | 176 |
+| negative | 173 |
+
+**99/810 (12.22%) instances measurably diverge** between the hardware
+reference model and the current PSP lowering (`psp_lowering_axis`) at the
+primitive's own real UV extremes — not a synthetic worst case. The current
+`mesh.rs`/`crates/psp/src/meshdraw.rs` comments assume real hardware
+"mirrors once, then clamps"; the reference model shows it keeps mirroring
+at every period boundary all the way to the tile's drawn-rect far edge, and
+176 real axis instances actually reach a third or later period, exactly
+where the two models disagree (confirmed directly by the host test
+`psp_lowering_diverges_from_hardware_past_the_first_mirrored_period`). This
+is the same real content (Fox/Captain Falcon/Kirby face and body textures)
+RE-102 already found overflowing a mirrored pair by 2x or more. **Opens a
+new scoped correctness task** (`PLAN.md` R2.0/P0c) rather than being fixed
+here, per this queue's own "measure, don't fix speculatively" rule.
+
+**(2) `mask == 0` — invariant pinned, no fix needed.** Zero of the 4,968
+possible axis slots (2,484 primitives × 2 axes) have `mask_s == 0` or
+`mask_t == 0` on any real drawn primitive, archive-wide. `angrylion-rdp-plus`'s
+forced-clamp rule (`clampens = cs || !mask_s`) is real, but it never has an
+observable effect on this ROM's content because the triggering condition
+(`mask == 0`) never occurs on a primitive that actually gets drawn —
+apparently every real render tile's mask is set to at least cover its own
+drawn rect, even when no visible wrapping is intended (consistent with
+RE-102's own mask-larger-than-drawn-rect example). Pinned with an assertion
+in the census test itself (`assert_eq!(m0.axis_instances, 0, ...)`); if a
+future ROM revision or unreached content ever trips it, the forced-clamp
+rule needs implementing, not before.
+
+**(3) PSP POT-padding vs the N64 logical clamp boundary — real, material
+gap, open.** `authored_uv_tex_scale` (`crates/ssb-rom/src/psp_texture.rs`)
+normalizes `sceGuTexScale` against `t.stride` (the padded power-of-two
+dimension actually handed to `sceGuTexImage`), not the logical width —
+confirmed by direct code reading, not inference. Mirror doubling always
+lands on a power of two already (a mask period `1 << mask` doubled is still
+`1 << (mask + 1)`), so this only bites a **clamped, unmirrored** axis whose
+logical (mask-narrowed) dimension is not itself a power of two. Archive-wide:
+124 unique such (file, offset, axis) tiles, 456 real axis instances, of
+which **347 (71.4%) have a real primitive UV sample reaching the last
+logical texel** — exactly where `sceGuTexFilter(Linear, Linear)`'s bilinear
+blend reads one texel past the real data, into `pack_rgba`/`pack_indexed`'s
+zero-filled padding, producing a spurious blend-to-black/transparent edge
+that real hardware (which clamps to the *logical* edge, not a padded one)
+never produces. **Opens a new scoped correctness task** (`PLAN.md` R2.0/P0d);
+`PLAN.md`'s own candidate fix (fill padding with repeated edge texels rather
+than zeros) was not implemented here, per the same "measure, don't fix
+speculatively" rule.
+
+**Verification.** `cargo test -p ssb-rom n64_addressing` (8 new tests, all
+passing); `cargo test -p romtool tile_addressing_census_against_real_archive_textures -- --nocapture`
+against the real ROM (numbers above); full `cargo test --workspace` re-run
+to confirm no regression (386 passing in `ssb-rom`, no other crate
+affected).
+
+**Confidence: high** that the transcribed algorithm is correct (it is a
+direct, mechanical transcription with unit tests reproducing each documented
+behavior — plain repeat, mirror-flip parity, mask-forced clamp, negative-
+coordinate clamp, nonzero-origin shift — independently, before ever touching
+real archive data). **High** that the two open gaps are real and material
+(measured on the primitives' own actual UV ranges, not synthetic worst
+cases) and that the `mask == 0` closure is real (a literal zero count, not
+an estimate). **Medium** on the exact size of any *visible* impact from
+gaps (1) and (3) until a corrective task actually renders and compares the
+affected primitives — this entry measures the addressing divergence itself,
+not the resulting pixel-visible severity.
+
+---
+
 ## RE-219 — N64 3-point filtering vs PSP bilinear: real, material, unfixable difference; `ACCEPTED_DEVIATION` (`PLAN.md` R2.0/P0a)
 
 **Question.** RE-218 found that RE-124's "PSP `Linear` is already correct"
