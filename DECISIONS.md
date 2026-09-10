@@ -544,3 +544,36 @@ not performance work.
 **Implementation:** Pending `PLAN.md` R2.1/T1–T10 and R2.2/C1–C7.
 
 **Reference:** RE-217, `docs/reverse-engineering.md`, `AGENTS.md`
+
+---
+
+### D-043: Filtering and Tile-Addressing Equivalence Claims Remain Provisional Pending R2.0
+**Decision:** Do not treat any of the following as established: `G_TF_BILERP
+== PSP Linear` filtering; the current mirror+clamp lowering is exact for
+coordinates beyond the first mirrored period, for authored UVs as well as
+texgen; `mask == 0` clamp handling (`clamp_s = cm_s & 0x2 != 0` independent of
+mask) is sufficient; PSP power-of-two texture padding cannot affect N64 clamp
+addressing. Each is reopened by RE-218 and owned by `PLAN.md` R2.0
+(`P0a`/`P0b`/`P1`) until that task's own reference-model measurement closes
+it, one way or the other — including the possibility that some of them turn
+out to already be correct.
+
+**Reasoning:** RE-124 measured only that SSB64 selects the `G_TF_BILERP`
+filter mode, not that the RDP's real 3-point reconstruction matches PSP's
+four-tap bilinear filter — those are different operations sharing a name.
+RE-067/RE-102/RE-066 are real, evidenced fixes for the specific cases each
+investigated, but none built or checked against a full N64 tile-addressing
+reference model for the region each of R2.0's three addressing questions
+actually needs. `mesh.rs:1290-1291,1379-1380` applies `clamp_s`/`clamp_t`
+unconditionally on `mask_s`/`mask_t`, and `psp_texture.rs`'s packers
+zero-fill the padding between a texture's logical dimensions and its padded
+power-of-two allocation — both confirmed by direct code reading, neither
+previously checked against N64 semantics for the specific case each claim
+needs.
+
+**Implementation status:** Pending `PLAN.md` R2.0/P0a–P1.
+
+**Reference:** RE-218, `docs/reverse-engineering.md`. Supersedes the
+unqualified equivalence/completeness conclusions drawn from RE-066, RE-102
+and RE-124 for the specific claims above only — those entries' own
+measurements remain valid history for what they actually tested.
