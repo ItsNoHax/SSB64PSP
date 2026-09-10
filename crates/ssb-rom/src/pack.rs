@@ -142,7 +142,9 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    primitive's material flags are identical.
 /// 24 adds manager-effect material-animation texture and colour state.
 /// 25 adds build-time-decoded LBParticle bank/script/texture-series tables.
-pub const VERSION: u32 = 25;
+/// 26 adds `PrimDesc::alpha_compare_ref` for `flags::ALPHA_COMPARE_THRESHOLD`
+///    (RE-195).
+pub const VERSION: u32 = 26;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -279,6 +281,12 @@ pub mod flags {
     /// including an authored zero. This is distinct from its packed colour
     /// being nonzero.
     pub const LIGHT2_COLOR: u32 = 1 << 11;
+    /// RE-195: `G_MDSFT_ALPHACOMPARE == G_AC_THRESHOLD`, only set when
+    /// `ALPHA_TEST` above is *not* -- see `MeshMaterial::alpha_compare_
+    /// threshold`'s own doc comment for why the two are not combined.
+    /// `PrimDesc::alpha_compare_ref` carries the reference alpha
+    /// (`G_SETBLENDCOLOR`'s own alpha channel) to compare against.
+    pub const ALPHA_COMPARE_THRESHOLD: u32 = 1 << 12;
 }
 
 /// One draw: a range of indices plus the state to draw them under.
@@ -320,6 +328,9 @@ pub struct PrimDesc {
     /// packed ABGR. Consult [`flags::LIGHT2_COLOR`] for whether it is present:
     /// zero is valid.
     pub light2_color: u32,
+    /// `flags::ALPHA_COMPARE_THRESHOLD`'s reference alpha (packed ABGR;
+    /// only the alpha byte is meaningful), zero otherwise (RE-195).
+    pub alpha_compare_ref: u32,
     /// Object/material animation driving this primitive, or
     /// [`TextureDesc::NO_ANIM`]. This lives on the primitive because effect
     /// scripts also animate untextured colour state.
@@ -327,7 +338,7 @@ pub struct PrimDesc {
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 48;
+    pub const SIZE: usize = 52;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -1569,6 +1580,18 @@ impl PackWriter {
             if m.light2_color.is_some() {
                 f |= flags::LIGHT2_COLOR;
             }
+            // RE-195: only consumed when `ALPHA_TEST` is not already doing
+            // an (approximated) discard -- see `flags::ALPHA_COMPARE_
+            // THRESHOLD`'s own doc comment for why the two are not combined
+            // when both are real.
+            let alpha_compare_ref = if !m.alpha_test && m.alpha_compare_threshold {
+                m.blend_color.map(crate::psp_texture::pack_abgr)
+            } else {
+                None
+            };
+            if alpha_compare_ref.is_some() {
+                f |= flags::ALPHA_COMPARE_THRESHOLD;
+            }
             let (blend_base, blend_target) = m.texture_blend.map_or((0, 0), |(base, target)| {
                 (
                     crate::psp_texture::pack_abgr(base),
@@ -1588,6 +1611,7 @@ impl PackWriter {
                 flat_color: m.flat_color.map_or(0, crate::psp_texture::pack_abgr),
                 light1_color: m.light1_color.map_or(0, crate::psp_texture::pack_abgr),
                 light2_color: m.light2_color.map_or(0, crate::psp_texture::pack_abgr),
+                alpha_compare_ref: alpha_compare_ref.unwrap_or(0),
                 mat_anim: mat_anim_for(i).unwrap_or(TextureDesc::NO_ANIM),
             });
         }
@@ -2019,6 +2043,7 @@ impl PackWriter {
                 p.flat_color,
                 p.light1_color,
                 p.light2_color,
+                p.alpha_compare_ref,
                 p.mat_anim,
             ] {
                 out.extend_from_slice(&v.to_le_bytes());
@@ -2817,7 +2842,8 @@ impl<'a> Pack<'a> {
             flat_color: u32_at(self.data, at + 32),
             light1_color: u32_at(self.data, at + 36),
             light2_color: u32_at(self.data, at + 40),
-            mat_anim: u32_at(self.data, at + 44),
+            alpha_compare_ref: u32_at(self.data, at + 44),
+            mat_anim: u32_at(self.data, at + 48),
         })
     }
 
@@ -3102,6 +3128,61 @@ mod tests {
         assert_ne!(p.flags & flags::LIGHT2_COLOR, 0);
         assert_eq!(p.light1_color, 0, "black is a real LIGHT_1 write");
         assert_eq!(p.light2_color, 0x004C_4C4C);
+    }
+
+    #[test]
+    fn alpha_compare_threshold_is_packed_with_its_reference_alpha() {
+        // RE-195: only meaningful once a real `G_SETBLENDCOLOR` gave it a
+        // reference value.
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.alpha_compare_threshold = true;
+        mesh.primitives[0].material.blend_color = Some([0x11, 0x22, 0x33, 0x80]);
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let p = pack.prim(0).unwrap();
+
+        assert_ne!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
+        assert_eq!((p.alpha_compare_ref >> 24) & 0xFF, 0x80);
+    }
+
+    #[test]
+    fn alpha_compare_threshold_is_not_packed_when_alpha_test_already_applies() {
+        // RE-195: `ALPHA_TEST`'s coverage-cutout approximation already
+        // discards this primitive's pixels on the PSP's one alpha-test
+        // unit -- combining both real gates was not resolved by this
+        // session's measurement, so the additive-only, `alpha_test`-absent
+        // case is the only one consumed.
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.alpha_test = true;
+        mesh.primitives[0].material.alpha_compare_threshold = true;
+        mesh.primitives[0].material.blend_color = Some([0x11, 0x22, 0x33, 0x80]);
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let p = pack.prim(0).unwrap();
+
+        assert_eq!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
+        assert_eq!(p.alpha_compare_ref, 0);
+    }
+
+    #[test]
+    fn alpha_compare_threshold_needs_a_real_blend_color() {
+        // A list that never set `G_SETBLENDCOLOR` has no real reference
+        // value to compare against; packing it anyway would invent a
+        // threshold of zero that always passes, silently different from
+        // "no compare at all" only by chance.
+        let mut mesh = sample_mesh();
+        mesh.primitives[0].material.alpha_compare_threshold = true;
+        let mut w = PackWriter::new();
+        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let p = pack.prim(0).unwrap();
+
+        assert_eq!(p.flags & flags::ALPHA_COMPARE_THRESHOLD, 0);
     }
 
     /// The declared stride must match the struct the GE is told to read.

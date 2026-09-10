@@ -41,7 +41,7 @@ in the same work cycle as any change to the areas below (`AGENTS.md` §11).
 | LOD/mipmaps | COMPLETE (original behavior identified) | RE-127 measured 131/131 `TEXTLOD` commands as `G_TL_TILE` and 121/121 `TEXTDETAIL` commands as `G_TD_CLAMP`; SSB64 never enables traditional RDP LOD/mipmap blending. PSP mip chains remain a separately documented anti-aliasing technique (RE-053/070) | Dream Land's canopy discrepancy remains the separate open R0.5 item |
 | Combiner | COMPLETE for classified static paths | `PLAN.md` R0.6: general `(A-B)*C+D` evaluator (RE-039/043), texture blend (RE-073/074), flat colour (RE-080), and shade-scale consumption (RE-106). RE-168's post-RE-163 census accepts 65,000/65,199 source-attributed emitted-triangle visits (99.695%) and source-identifies every missing-constant case | The 186 unsupported-equation visits are catalogued; runtime shield colours belong to future effect/gameplay integration, not static material conversion |
 | Lighting | COMPLETE for R0 | `PLAN.md` R0.6: data-driven lit/literal split (RE-103/105); stage angles, normals and zero-valid LIGHT_1/LIGHT_2 state reach the GE (RE-164–166); RE-167 restores `PRIMITIVE * SHADE` as GE material colour | Matched original-ROM/PPSSPP Dream Land Wait comparison restores Mario's red/blue costume semantics; exact cross-renderer pixels are not claimed and physical PSP remains R2 |
-| Alpha | COMPLETE | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation | None |
+| Alpha | COMPLETE for both classified gates | `PLAN.md` R0.6: `CVG_X_ALPHA \| ALPHA_CVG_SEL` decoded and wired to `sceGuAlphaFunc` (RE-069), matching `sf64-psp`'s own validated real-hardware approximation. RE-195 additionally decodes `G_MDSFT_ALPHACOMPARE` (a second, independent real discard gate, 29.8% `G_AC_THRESHOLD` archive-wide) and wires the disjoint case where it fires without `alpha_test` already applying | The case where `alpha_test` and `G_AC_THRESHOLD` coexist on the same primitive (28,859/41,171 real vertex-visits, RE-195) still uses only the `alpha_test` approximation — combining both on the PSP's single alpha-test unit is an unresolved priority decision, not attempted |
 | Blending | COMPLETE for classified single-cycle formulas | RE-129/130 decoded alpha combiners, classified nine archive-wide shapes, and enable real blending for `TEXEL0_ALPHA` and `TEXEL0_ALPHA * SHADE_ALPHA`; PPSSPP-verified on Dream Land | Rare `PRIM_ALPHA` multiply (~43) and two-cycle (~93) primitives are measured and deliberately declined under R0.6 |
 | Depth | COMPLETE | `PLAN.md` R0.6/R0.14: RDP per-frame default (`Z_BUFFER` on) fixed and wired per-primitive (RE-068); PSP depth convention (`sceGuDepthRange(65535, 0)` + `GreaterOrEqual`) confirmed against the `psp` crate's own documented convention (RE-085) | None |
 | Culling | COMPLETE | `PLAN.md` R0.6: RDP per-frame default (`CULL_BACK` on) fixed, measured 86.3% of packed primitives post-fix (RE-068) | None |
@@ -178,13 +178,14 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   unlit, `PRIMITIVE`-driven rendering that this project's existing
   combiner-shape detection (`combiner_flat_color`/`combiner_texture_blend`,
   R0.6) likely already reproduces correctly for most cases, since those
-  shapes don't read `SHADE` regardless of `G_SHADE`'s own state. Not yet
-  cross-referenced per-primitive against which specific primitives clear
-  `G_SHADE` *and* have a combiner that still reads `SHADE` — the one
-  scenario that would actually render wrong today. Affects stage files
-  (Zebes, Sector Z, Yoshi's Island, Jungle Japes-era stages), `MNTitle`,
-  `SCStaffroll`, and `FoxSpecial3` (`romtool` file IDs 73/84–86/105/
-  109/111/118/158/160/161/167/195/325/335/336/341/349–353, RE-119).
+  shapes don't read `SHADE` regardless of `G_SHADE`'s own state.
+  Cross-referenced per-primitive against which specific primitives clear
+  `G_SHADE` *and* have a combiner that still reads `SHADE` (RE-120): 31
+  real occurrences archive-wide, 29 in content this project does not
+  render yet (items, special-move effects, the opening movie), 2 live in
+  Yoshi's Island's two stage variants — a narrow, single-primitive-per-stage
+  gap left undecided rather than guessed at, since real hardware's actual
+  output for this combination is not documented.
 * **`G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR`** (RSP-computed
   environment-mapped UVs, not the display list's own baked UVs) is used
   by file 117 (`StageMetalFile2`, i.e. Metal Mario's stage) and files
@@ -198,6 +199,23 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   scoped, deferred lead, not an `ACCEPTED_DEVIATION` — reproducing it on
   the PSP GE (environment-mapped texture coordinates from vertex normals)
   is technically feasible, just not yet in scope.
+
+**`G_SETOTHERMODE_H`/`L` carry several independent sub-fields per command,
+not just the cycle-type/render-mode ones `mesh.rs` originally read.** RE-124/
+127 measured three (`TEXTFILT`/`TEXTLOD`/`TEXTDETAIL`); RE-195 measured the
+remaining six `H` fields and both remaining `L` fields archive-wide. Six
+match the RDP's own reset default exactly (`ALPHADITHER`, `RGBDITHER`,
+`COMBKEY`, `TEXTCONV`, `TEXTPERSP`, `ZSRCSEL`); `TEXTLUT` is redundant with
+`G_SETTILE`'s own format data already read; `PIPELINE` deviates from its
+default but is an RDP scheduling hint with no visible effect. `G_MDSFT_
+ALPHACOMPARE` is the one genuinely new, non-default field: 29.8% of real
+commands request `G_AC_THRESHOLD`, a second, independent alpha-discard gate
+from the existing `alpha_test` approximation. Now decoded
+(`MeshMaterial::alpha_compare_threshold`) and consumed on the PSP side for
+the disjoint case where no discard currently applies at all
+(`flags::ALPHA_COMPARE_THRESHOLD`); the case where both gates already
+coexist on one primitive keeps the existing `alpha_test` approximation,
+a documented limit rather than a silent drop. See RE-195.
 
 Two hardware invariants are used as validity tests, and both earn their keep:
 the vertex cache holds at most 32 entries, and triangle indices must fall

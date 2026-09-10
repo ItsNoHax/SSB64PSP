@@ -1,43 +1,45 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-194 session)
+**Last updated:** 2026-09-10 (RE-195 session)
 
 ## Continuation packet
 
 **Milestone:** `R1 — Rendering Completeness`
 
-**Current task:** "No unexplained rendering commands remain" — `PLAN.md` R1's
-next unchecked acceptance item. RE-194 (this session) closed the previous
-bullet ("runtime `MObj` display-state parity"), so this is now the first
-open item. Not started yet this session.
+**Current task:** "No unexplained missing assets remain" — `PLAN.md` R1's
+next unchecked acceptance item. RE-195 (this session) closed "no unexplained
+rendering commands remain", so this is now the first open item. Not started
+yet this session.
 
 **Status:** `TODO` (not started)
 
-**Dependencies:** RE-172–194 complete. R0.5 physical PSP comparison remains
+**Dependencies:** RE-172–195 complete. R0.5 physical PSP comparison remains
 `VERIFYING` and is temporarily deferred by explicit user direction.
 
-**Relevant files:** `PLAN.md` R1's remaining bullets ("no unexplained
-rendering commands/missing assets/material failures remain", "rendering
-regression suite passes", "golden/reference renders are established");
-`docs/rendering.md` "Measured usage"/"Not yet handled" tables;
-`docs/visual-regression.md` (existing test-matrix rows).
+**Relevant files:** `PLAN.md` R1's remaining bullets ("no unexplained missing
+assets/material failures remain", "rendering regression suite passes",
+"golden/reference renders are established"); `docs/rendering.md` "Texture
+conversion results"/"Not yet handled" tables; `docs/porting-status.md`
+"Known gaps"; `docs/visual-regression.md` (existing test-matrix rows).
 
 **First checks:** `git status --short`; `git log -5 --oneline`; re-run
-`romtool scan` to get a current opcode census and diff it against
-`docs/rendering.md`'s existing table before assuming anything is still
-accurate — several of these bullets may already be substantially covered by
-work recorded elsewhere in `PLAN.md`/`docs/reverse-engineering.md` and just
-need the acceptance text reconciled, per `AGENTS.md` §2.
+`romtool textures`/`romtool mobj` to get a current failure census before
+assuming anything is still accurate — R0.3/R0.4/R0.7 already resolved every
+texture/palette/material-table failure this project's own converter can
+explain (see their own `PLAN.md` evidence), so this bullet's actual
+remaining scope may be narrower than it looks; reconcile acceptance text
+against that existing evidence per `AGENTS.md` §2 before assuming new work
+is needed.
 
-**Acceptance:** `PLAN.md` R1's four remaining unchecked bullets (§7).
+**Acceptance:** `PLAN.md` R1's three remaining unchecked bullets (§7).
 
 **Stop condition:** None yet — task not started.
 
 ## Current state
 
 - R0.5: `VERIFYING`; physical PSP validation unavailable/deferred.
-- R1: `IN_PROGRESS`; stages, fighters, costumes, animations, effects and
-  framebuffer paths now have software audits.
+- R1: `IN_PROGRESS`; stages, fighters, costumes, animations, effects,
+  framebuffer paths and rendering-command coverage now have software audits.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -51,78 +53,83 @@ need the acceptance text reconciled, per `AGENTS.md` §2.
   acceptance item is checked off. Only the real 1P-mode/results-screen G2
   trigger remains unbuilt — accepted as out of R1 scope, the same split
   RE-149 already used to close R0.13.
-- Next R1 work: no unexplained rendering commands/assets/material failures
-  remain, rendering regression suite passes, remaining golden-render matrix
-  rows. `MObj` display-state parity is now closed (RE-194).
+- Next R1 work: no unexplained missing assets/material failures remain,
+  rendering regression suite passes, remaining golden-render matrix rows.
+  `MObj` display-state parity (RE-194) and rendering-command coverage
+  (RE-195) are now closed.
 - R2/R3/combat: blocked behind R1 and the physical rendering gate.
 
 ## Last completed task
 
-**RE-194 — `gcDrawMObjForDObj`'s runtime tile/texture-scale state, measured and reproduced; `MOBJ_FLAG_FRAC` confirmed dead**
+**RE-195 — `G_SETOTHERMODE_H`/`L`'s remaining undecoded fields measured archive-wide; `G_MDSFT_ALPHACOMPARE` found real and partially wired**
 
-- Corrected a wrong assumption standing in `mesh.rs`'s own doc comment
-  (`current_texture_shape`), which called `MOBJ_FLAG_TEXTURE` and friends
-  "runtime-only, cannot read statically": every input these branches use
-  (`flags`, `scau`/`scav`, `trau`/`trav`, `scrollu`/`scrollv`, and the
-  tile/scale-formula fields) is an ordinary static `MObjSub` field, never
-  mutated anywhere outside `objdisplay.c` in the whole decompilation
-  (confirmed by grep). Only `texture_id_curr`/`texture_id_next`/
-  `palette_id`/`lfrac` are genuinely runtime state.
-- Measured every flag archive-wide (665 real `MObjMaterial`s, via a
-  temporary instrumented `romtool mobj` scan, reverted before committing)
-  before implementing anything: `flags == NONE` 3, `TEXTURE` 10, tile-0
-  `0x20` 35, tile-1/scroll `0x40` 12, `FRAC` **0**.
-- Implemented and unit-tested against real ROM values: the `MOBJ_FLAG_NONE`
-  default substitution, `MOBJ_FLAG_TEXTURE`'s `gSPTexture` scale
-  (`MObjMaterial::tex_scale`), and the tile-0 `gDPSetTileSize` window
-  (`MObjMaterial::tile0_uv`), both in `crates/ssb-rom/src/mobj.rs`, wired
-  into `crates/ssb-rom/src/mesh.rs`'s `apply_mobj` the same way the
-  equivalent real `Cmd::SetTileSize`/`Cmd::Texture` handlers already work.
-- `MOBJ_FLAG_FRAC` confirmed dead code for this game's content (0/665 real
-  occurrences; never OR'd in at runtime either — the only runtime
-  `sub.flags |=` anywhere sets `MOBJ_FLAG_ENVCOLOR`, for shields) — the same
-  "measured, not guessed" treatment RE-127 gave RDP LOD blending. Not
-  implemented.
-- Tile-1/scroll confirmed real but inert: every occurrence's inputs are
-  identical to its own tile-0 window, and no packed combiner shape reads
-  `TEXEL1` (RE-130) — documented (`mobj.rs`'s `MOBJ_FLAG_TILE1`), not given
-  a pack field nothing would read.
-- 5 new unit tests in `mobj.rs` (2 lock the tile-0 math against real Dream
-  Land/`StageMetalFile2` `MObjSub` values, 1 locks the texture-scale math,
-  1 covers the `MOBJ_FLAG_NONE` substitution, 1 is `SSB64_ROM`-gated and
-  re-reads all three real `MObjSub`s straight through `read_material`).
-  `cargo test --workspace`: 342 passing (was 337). `cargo fmt --check` and
-  `cargo clippy --workspace --all-targets` both clean.
-- Rebuilt the pack: textures bound `1330 → 1345` (+15, the newly-resolved
-  sprites). `cargo psp --release` + `tools/run-ppsspp.sh --seconds 8`: clean
-  boot, 60 FPS, no log errors. Pixel-diffed the resulting screenshot against
-  an equivalent pre-fix build: of 960×544 pixels, exactly 258 differ, all of
-  them inside the on-screen texture-count HUD digits (`1330`→`1345`) — zero
-  pixels differ in the rendered 3D geometry, including Dream Land's own
-  affected `MObjSub`s. Same "not visible at this camera distance" outcome
-  RE-075/RE-081 already recorded for this exact scene.
-- Checked off `PLAN.md` R1's "runtime `MObj` display-state parity"
-  acceptance item; updated `TODO.md`'s "UV Scroll"/"Implement
-  `MOBJ_FLAG_FRAC`" items to reflect the same measured conclusions.
-- Evidence: `docs/reverse-engineering.md` RE-194.
+- Measured (via RE-124/127's own temporary-census-through-the-real-`romtool
+  pack`-build method, reverted before committing) the six `G_SETOTHERMODE_H`
+  fields and two `G_SETOTHERMODE_L` fields `mesh.rs` had never decoded:
+  `ALPHADITHER`/`RGBDITHER`/`COMBKEY`/`TEXTCONV`/`TEXTLUT`/`TEXTPERSP`/
+  `PIPELINE` and `ZSRCSEL`/`ALPHACOMPARE`.
+- Six fields match the RDP's own per-frame reset default exactly. `TEXTLUT`
+  is real but redundant with `G_SETTILE` format data already read.
+  `PIPELINE` deviates from its default (`G_PM_1PRIMITIVE` vs. the reset's
+  `G_PM_NPRIMITIVE`) but is a scheduling hint with no visible pixel effect.
+  File 73 (`MVOpeningSector`, the opening movie, already known
+  not-yet-rendered per RE-120) produced a 415,245-occurrence `TEXTLUT`
+  outlier from real display-list call-graph replay, correctly excluded as
+  unrepresentative rather than trusted.
+- `G_MDSFT_ALPHACOMPARE` is genuinely new and non-default: 29.8% of real
+  commands request `G_AC_THRESHOLD`. A second census correlating it against
+  the existing `alpha_test` approximation at every real triangle found
+  10,334 real vertex-visits with no alpha discard applied today where real
+  hardware would apply one — a genuine, previously unmeasured gap, disjoint
+  from the 28,859 visits where `alpha_test` already (approximately) covers
+  it.
+- Implemented and unit-tested the safe, additive case only:
+  `MeshMaterial::alpha_compare_threshold` (`mesh.rs`), `flags::
+  ALPHA_COMPARE_THRESHOLD`/`PrimDesc::alpha_compare_ref` (`pack.rs`,
+  `PrimDesc::SIZE` 48→52, `pack::VERSION` 25→26), consumed by `meshdraw.rs`
+  via `sceGuAlphaFunc(GreaterOrEqual, reference, 0xFF)` — only packed when
+  `alpha_test` is not already set for that primitive, so the two real gates
+  are never combined without a priority decision this session did not
+  resolve.
+- Also fixed a stale `docs/rendering.md` claim (RE-120 had already
+  cross-referenced `G_SHADE`-cleared-with-shade-reading-combiner, but the
+  doc still said "not yet cross-referenced").
+- 5 new unit tests (2 in `mesh.rs` locking the decode independent of
+  `alpha_test`, 3 in `pack.rs` locking the packing guard). `cargo test
+  --workspace` (`SSB64_ROM` set): 347 passing (was 342). `cargo fmt --check`
+  and `cargo clippy --workspace --all-targets` both clean; `cargo clippy
+  --release` inside `psp/` shows no new warnings.
+- Rebuilt the pack (1345 textures, unchanged; size 8060.0 → 8089.5 KiB from
+  `PrimDesc` growing 4 bytes). `cargo psp --release` +
+  `tools/run-ppsspp.sh --seconds 8`: clean boot, 60 FPS, no log errors.
+  Pixel-diffed against an equivalent pre-fix build (`git stash`): 257/522240
+  pixels differ, all inside the HUD's own frame-timing digits (expected
+  run-to-run noise) — zero pixels differ in rendered geometry. The boot
+  scene does not contain an affected primitive, so this confirms no
+  regression, not a positive visual proof of the fix.
+- Checked off `PLAN.md` R1's "no unexplained rendering commands remain"
+  acceptance item.
+- Evidence: `docs/reverse-engineering.md` RE-195.
 - Commit: pending (this session).
 
 ## Verification
 
-`git diff --stat` for this session covers `crates/ssb-rom/src/mobj.rs`,
-`crates/ssb-rom/src/mesh.rs`, `PLAN.md`, `TODO.md`, `STATUS.md`, and
-`docs/reverse-engineering.md`. `cargo fmt --check`, `cargo clippy
---workspace --all-targets`, and `cargo test --workspace` (342, `SSB64_ROM`
-set) all clean. Pack rebuilt and reloads cleanly (+15 textures bound, see
-above). On-device: `tools/run-ppsspp.sh --seconds 8`, clean log, 60 FPS,
-pixel-diffed against an equivalent pre-fix build — see RE-194. Prior
-sessions' verification (RE-190–193) is unaffected and remains valid.
+`git diff --stat` for this session covers `crates/ssb-rom/src/mesh.rs`,
+`crates/ssb-rom/src/pack.rs`, `psp/src/meshdraw.rs`, `PLAN.md`,
+`docs/rendering.md`, `STATUS.md`, and `docs/reverse-engineering.md`.
+`cargo fmt --check`, `cargo clippy --workspace --all-targets`, and `cargo
+test --workspace` (347, `SSB64_ROM` set) all clean; `cargo clippy --release`
+inside `psp/` shows no new warnings. Pack rebuilt and reloads cleanly (1345
+textures unchanged, size +29.5 KiB from the wider `PrimDesc`, see above).
+On-device: `tools/run-ppsspp.sh --seconds 8`, clean log, 60 FPS,
+pixel-diffed against an equivalent pre-fix build — see RE-195. Prior
+sessions' verification (RE-190–194) is unaffected and remains valid.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–194.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–195.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 
