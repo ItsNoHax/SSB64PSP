@@ -232,6 +232,11 @@ The script stages the generated asset pack next to the executable before launchi
 
 > `tools/run-ppsspp.sh` currently uses PPSSPP's software rasteriser because the debug overlay relies on CPU writes to emulated VRAM. This does not represent the physical PSP rendering path.
 
+### 8. Debug physical PSP crashes
+
+See [PSPLink hardware-crash debugging](docs/psplink.md) for installation,
+`host0:` live loading, exception mapping, native captures, and evidence.
+
 ---
 
 ## Architecture
