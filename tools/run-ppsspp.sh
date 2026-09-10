@@ -206,7 +206,10 @@ if [ "$BUILD" = 1 ]; then
   elif [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
     ( cd "$REPO/psp" && cargo psp --release --features animation_audit_capture )
   else
-    ( cd "$REPO/psp" && cargo psp --release )
+    # `debug_overlay` is off by default (RE-202: crashes real hardware) but
+    # this interactive PPSSPP workflow relies on the on-screen HUD, and
+    # PPSSPP itself never reproduces the hardware fault.
+    ( cd "$REPO/psp" && cargo psp --release --features debug_overlay )
   fi
 fi
 

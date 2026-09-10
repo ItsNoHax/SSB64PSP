@@ -10,6 +10,102 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-202 — Interactive viewer's debug HUD crashes real PSP hardware, content-independent (`PLAN.md` R2)
+
+**Problem.** User report: on physical PSP the interactive viewer boots, the
+stage renders, and the D-pad still cycles stages, but the fighter never
+responds to stick input and its animation never advances, with no visible
+crash. PPSSPP never shows this. RE-201 had only ever run the
+`regression_capture` family on hardware, which freezes ticks and, separately,
+never draws the on-screen HUD; the plain interactive build (`cargo psp
+--release`, no features) — the build the user was running, and the one
+`docs/psplink.md`'s own fast-crash-loop describes producing — had never been
+run under PSPLink before.
+
+**Reproduction.** PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:`, same setup as RE-201. Built plain `cargo psp
+--release` at commit `8d5d3b3` and `ldstart`ed it over `host0:`. It crashed
+within seconds:
+
+```
+Exception - Address load/inst fetch
+Thread ID - 0x04411911   Th Name - main_thread
+Module ID - 0x0441A005   Mod Name - ssb64_psp
+EPC       - 0x0882B96C   Cause - 0x10000010 (AdEL)   BadVAddr - 0x08840DD9
+```
+
+`modinfo`'s `TextAddr` (`0x08804000`) maps `EPC` to file offset `0x2796C`,
+inside `sceGuDebugFlush` (confirmed with `llvm-addr2line`/`llvm-objdump`
+built from the repo's own `llvm-project` checkout, standing in for the
+unavailable `psp-addr2line`). The return address maps to
+`Gpu::end_frame` (`psp/src/gu.rs:628`), called unconditionally from
+`ssb64_psp::run` (`psp/src/main.rs`, the frame loop). `BadVAddr` —
+identically present in `t7` and `gp` — is not 4-byte aligned, i.e. a wild,
+misaligned jump target reached through `sceGuDebugFlush`'s own font-glyph
+read (`lw $25, 0($15)`), not a fault in caller code.
+
+**Isolating the cause.** `sceGuDebugPrint`/`sceGuDebugFlush`
+(`psp` crate 0.3.13, `src/sys/gu.rs`) are not real firmware syscalls; they
+are a software glyph renderer compiled directly into the PRX, sharing
+mutable statics (`CHAR_BUFFER`, `CHAR_BUFFER_USED`, `FONT`) across calls.
+This project's own prior notes (RE-123, RE-125, and the doc comments at
+`psp/src/main.rs` around the `regression_capture` HUD suppression) already
+flagged it as "a PPSSPP-only debug overlay, not real GE drawing" that
+"does not fully clear between calls" — but no one had confirmed a hardware
+*crash*, only PPSSPP-side rendering artifacts.
+
+Disabling only the interactive viewer's per-frame `gpu.debug_text(...)` call
+(the ~19-line HUD in `psp/src/main.rs`'s final, non-capture-feature branch)
+and rebuilding made the crash disappear entirely: two separate runs, 35 s and
+60+ s, `exlist` empty, `main_thread` alive throughout, native `scrshot`
+captures showing Dream Land rendering normally. Replacing the HUD's real
+content with a single two-character `debug_text(8, 8, WHITE,
+format_args!("hi"))` reproduced the same crash at a similar EPC just as
+fast — proving the fault is **content-independent**: it is not a string-
+length overflow or a stray non-ASCII byte, but something in
+`sceGuDebugPrint`/`sceGuDebugFlush`'s own state that breaks under real
+hardware's strict (non-PPSSPP) address-alignment enforcement given *any*
+sustained per-frame use. This is the same asymmetry RE-201 hit with PSP's
+trapping FPU: PPSSPP is more permissive than real silicon, and the
+permissiveness had been hiding a real defect.
+
+**Fix.** Gated the interactive HUD behind a new `debug_overlay` Cargo
+feature, off by default (`psp/Cargo.toml`, `psp/src/main.rs`). A plain
+`cargo psp --release` — what a developer runs to flash real hardware, and
+what `docs/psplink.md` documents — now never calls
+`sceGuDebugPrint`/`sceGuDebugFlush`. `tools/run-ppsspp.sh`'s default
+(non-audit) build path now passes `--features debug_overlay` explicitly, so
+the interactive PPSSPP development workflow keeps its on-screen HUD exactly
+as before; PPSSPP does not reproduce the fault, so this is safe.
+
+**Verification.** Rebuilt plain `cargo psp --release` (`debug_overlay` off)
+and `ldstart`ed it over the same PSPLink session: 60+ s sustained run, `exlist`
+empty, `main_thread` alive, native `scrshot` capture shows Dream Land
+rendering identically to before. Every other capture feature
+(`regression_capture*`, `camera_audit_capture`, the audit-capture family) was
+already unaffected, since none of them reach the branch that was gated.
+
+**Conclusion.** The reported "Mario doesn't move, animation stuck, no visible
+crash, scene switching still works" was `main_thread` dying inside
+`sceGuDebugFlush` shortly after boot: the D-pad's stage-switch input (RE
+category: unrelated to movement — the viewer wires D-pad to stage cycling,
+not the fighter, `psp/src/main.rs` around line 782) lands before the fatal
+frame renders, so it appears to "work" once, and everything afterward reads
+as a frozen frame with no crash screen because PSPLink was not attached
+during the user's own session. This does not explain the analog-stick
+question raised earlier in the same investigation (D-pad vs. nub still
+applies once the HUD stops crashing the thread), but it is the reason no
+input at all was reaching the simulation.
+
+**Confidence:** High for the crash site, its content-independence, and the
+fix's hardware verification (two independent sustained on-device runs, one
+before and one after). Medium for the exact byte-level defect inside the
+vendored `sceGuDebugPrint`/`sceGuDebugFlush` implementation — not fully
+reverse-engineered; the fix removes the only known trigger rather than
+patching third-party crate internals.
+
+---
+
 ## RE-201 — PSPLink hardware run resolves R0.5's deferred Dream Land check (`PLAN.md` R0.5/R2)
 
 **Problem.** R0.5's final criterion was a real-PSP Dream Land canopy check;
