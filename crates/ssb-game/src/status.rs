@@ -647,6 +647,9 @@ pub fn set_jump(f: &mut Fighter) {
     let attr = f.attributes;
     f.physics.vel_air.y = vel_y * attr.jump_height_mul + attr.jump_height_base;
     f.physics.vel_air.x = vel_x * attr.jump_vel_x;
+    // `jumps_used` counts the ground jump too. The original sets it to 1 at
+    // takeoff, leaving only `jumps_max - 1` aerial jumps available.
+    f.physics.jumps_used = 1;
     f.stick.tap_y = STICKBUFFER_MAX;
 }
 
@@ -1504,6 +1507,25 @@ mod tests {
         let expected = (STICK_MAX as f32 * attr.jump_height_mul + attr.jump_height_base)
             * attr.jumpaerial_height;
         assert_eq!(f.physics.vel_air.y, expected);
+    }
+
+    #[test]
+    fn ground_jump_consumes_one_of_marios_two_jumps() {
+        let mut f = mario();
+        hold(&mut f, 0, 80);
+        assert!(check_kneebend(&mut f));
+        update(&mut f);
+        update(&mut f);
+        update(&mut f);
+
+        assert_eq!(f.status.status, Status::JumpF);
+        assert_eq!(f.physics.jumps_used, 1);
+
+        hold(&mut f, 0, 0);
+        hold(&mut f, 0, 80);
+        assert!(check_jump_aerial(&mut f));
+        assert_eq!(f.physics.jumps_used, 2);
+        assert!(!check_jump_aerial(&mut f));
     }
 
     #[test]
