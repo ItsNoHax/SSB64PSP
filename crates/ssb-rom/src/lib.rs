@@ -21,6 +21,7 @@ pub mod fighter;
 pub mod matanim;
 pub mod mesh;
 pub mod mobj;
+pub mod n64_addressing;
 pub mod n64_filter;
 pub mod objanim;
 pub mod pack;

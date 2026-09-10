@@ -411,12 +411,15 @@ RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 
 ## R0.5 — Texture Filtering / LOD / Mipmapping
 
-Status: `VERIFYING` — RE-218 reopens the filtering-equivalence and mirror/
-clamp/mask/POT-padding addressing claims below; `R2.0`/P0a–P1 own the
-reopened investigation and must close before this task can return to
-`COMPLETE`. LOD/mipmap conclusions are unaffected. RE-201's direct PSPLink
-framebuffer capture remains valid evidence that the Dream Land canopy matches
-on PSP Slim hardware for the scene it covers.
+Status: `VERIFYING` — RE-218 reopened the filtering-equivalence and mirror/
+clamp/mask/POT-padding addressing claims below; RE-219 (`R2.0`/P0a) closed
+filtering with `ACCEPTED_DEVIATION`; RE-220 (`R2.0`/P0b) closed the `mask ==
+0` question (invariant, no fix needed) and measured two real, still-open
+addressing gaps (mirror+clamp beyond the first period, PSP POT-padding),
+each now its own task (`R2.0`/P0c, P0d); `R2.0`/P0c–P1 must close before this
+task can return to `COMPLETE`. LOD/mipmap conclusions are unaffected.
+RE-201's direct PSPLink framebuffer capture remains valid evidence that the
+Dream Land canopy matches on PSP Slim hardware for the scene it covers.
 
 ### Current evidence
 
@@ -590,9 +593,10 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] minification behavior identified — RE-053's `3.70×1.36` figure is correct for the canopy "gradient" texture specifically (RE-081 disambiguated which of the two canopy textures each figure actually describes)
 * [x] LOD behavior identified — RE-127: measured archive-wide via the real `romtool pack` build, 131/131 real `G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (zero `G_TL_LOD`), matching the RDP's own per-frame reset default — real hardware never engages RDP LOD blending for any content in this ROM
 * [x] mipmapping behavior identified — RE-127: same measurement; `G_MDSFT_TEXTDETAIL` is 121/121 `G_TD_CLAMP` (zero `G_TD_SHARPEN`/`G_TD_DETAIL`), the mode that would make mip-tile blending meaningful even if `G_TL_LOD` were active — traditional N64 mipmapping is never used by this game's content
-* [ ] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide) remain valid for what they measured, but **reopened by RE-218**: `mask == 0`'s own N64 semantics were never independently verified (only clamp/mask *correlation*, not the `mask == 0` special case itself), and `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields are decoded (`dl.rs`) but discarded (`mesh.rs`'s `Cmd::SetTile` match arm's own `..`) without a census; owned by `R2.0`/P0b (mask==0) and P1 (field census)
+* [x] `mask == 0` N64 semantics verified — RE-220 (`R2.0`/P0b): transcribed `angrylion-rdp-plus`'s forced-clamp rule (`clampens = cs || !mask_s`) and censused every real drawn primitive archive-wide; zero of 4,968 possible axis slots have `mask_s == 0`/`mask_t == 0`, so the rule never has an observable effect on this ROM's content — pinned with a test
+* [ ] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — decoded (`dl.rs`) but discarded (`mesh.rs`'s `Cmd::SetTile` match arm's own `..`) without a census; owned by `R2.0`/P1
 * [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
-* [ ] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. **Reopened by RE-218**: neither fix was checked against a full N64 tile-addressing reference model for coordinates beyond the first mirrored period, for authored UVs as well as texgen, or against PSP's zero-filled power-of-two padding; owned by `R2.0`/P0b
+* [ ] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material, still-open gaps: mirror+clamp addressing diverges from real hardware past the first mirrored period (99/810 real axis instances, 12.22%; `R2.0`/P0c fixes it), and PSP's zero-filled power-of-two texture padding corrupts bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%; `R2.0`/P0d fixes it)
 * [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
 * [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
 
@@ -2893,7 +2897,8 @@ PPSSPP is not sufficient.
 
 ## R2.0 — Pre-Texgen Rendering-Fidelity Reopening (P0–P1)
 
-Status: `TODO` — the current first task. Must close before `R2.1`/T1 resumes.
+Status: `TODO` — P0a and P0b `COMPLETE`; P0c, P0d and P1 remain. Must close
+before `R2.1`/T1 resumes.
 
 RE-218 (2026-09-11 external audit) found that R0.5's filtering and
 mirror/clamp/mask/addressing completion claims measured less than they were
@@ -2950,53 +2955,72 @@ implemented or planned.
 
 ### P0b — General N64 tile-addressing reference model
 
-Build one host-side N64 tile-addressing reference function modeling the full
-real pipeline — `texture coordinate → G_TEXTURE scale (where applicable) →
-tile shift → tile origin → mask → mirror → clamp` — covering **both authored
-UVs and texgen UVs**, not texgen alone. `R2.1`/T7 ("Texgen addressing phase")
-stays texgen-scoped and must consume this task's reference model rather than
-building a second one.
+Status: `COMPLETE` — RE-220.
 
-* **Mirror+clamp beyond the first mirrored period.** RE-067's pre-baked
-  mirror (`texture.rs::mirror_extend`) and RE-102's native
-  `sceGuTexWrap(Clamp, ...)` (`mesh.rs:1290-1291,1379-1380`) are real,
-  evidenced fixes, not fabricated — but neither was checked against the
-  reference model for coordinates reaching past the mirrored pair, and
-  previously-found UV overflow on Fox, Captain Falcon and Kirby (RE-102) is
-  exactly the region most likely to exercise it. Census every real
-  `mirror+clamp` render-tile axis and every primitive (authored UV, not only
-  texgen) whose UV range actually reaches inside the first period, inside
-  the mirrored period, immediately beyond it, multiple periods beyond it,
-  and negative coordinates if any exist in real content. Compare current PSP
-  lowering against the reference model for each.
-* **`mask == 0`.** `mesh.rs:1290-1291,1379-1380` applies
-  `clamp_s = cm_s & 0x2 != 0` unconditionally on `mask_s`/`mask_t`. Verify
-  N64's actual `mask == 0` addressing rule (the tile bounds define the
-  clamped region directly, not a masked wrap) against an authoritative
-  reference. Census every real SSB64 render-tile axis with `mask == 0` and
-  measure whether any real primitive's UV range leaves the logical tile
-  bounds under that rule. If none does, pin the invariant with a test and
-  close with evidence; if some do, open a scoped correctness fix.
-* **PSP power-of-two padding vs N64 logical clamp boundary.**
-  `psp_texture.rs`'s `pack_rgba`/`pack_indexed` zero-fill the padding region
-  between a texture's logical dimensions and its padded power-of-two stride
-  (confirmed by direct code reading: `alloc::vec![0u8; ...]` then a
-  row-by-row logical-image copy). A clamped N64 coordinate at/after the
-  logical edge should hold the logical edge texel; on PSP, a coordinate in
-  the zero-filled padding — and PSP `Linear`'s blend across that boundary —
-  can instead sample black before the padded hardware clamp boundary is
-  reached. Census clamped textures with non-power-of-two logical dimensions,
-  measure whether real primitives sample near/beyond the logical edge (both
-  the nearest-conceptual-texel case and PSP `Linear`), and evaluate filling
-  padding with repeated edge texels as a candidate fix, confirming it does
-  not break mirroring. Cover both S and T axes, for authored-UV and texgen
-  content alike.
+Host-side N64 tile-addressing reference (`crates/ssb-rom/src/n64_addressing.rs`:
+`TileAxis`/`address_axis`, transcribed from `angrylion-rdp-plus`'s
+`tcshift_cycle`/`TRELATIVE`/`tcclamp_cycle`/`tcmask_coupled`, plus
+`psp_lowering_axis` modeling the current PSP conversion for direct
+comparison), 8 host tests. `TextureRef` gained raw `mask_s`/`mask_t` and
+`drawn_width`/`drawn_height` to support it; no rendering behavior changed.
+Archive-wide census (`tools/romtool`'s
+`tile_addressing_census_against_real_archive_textures`, `SSB64_ROM`-gated,
+2,484 real authored-UV textured primitives; texgen primitives excluded, since
+`R2.1`/T7 owns their scale/origin wiring separately) measured all three
+questions:
 
-Acceptance: reference model implemented and host-tested; each of the three
-addressing questions independently measured against real archive content;
+* **Mirror+clamp beyond the first mirrored period: real, material gap.** 810
+  real `mirror+clamp` axis instances across 280 unique tiles; 176 reach a
+  third or later mask period, where real hardware (per the reference model)
+  keeps mirroring but the current PSP lowering has already clamped.
+  99/810 (12.22%) instances measurably diverge. **Opens `P0c`.**
+* **`mask == 0`: invariant pinned, no fix needed.** Zero of 4,968 possible
+  axis slots have `mask_s == 0`/`mask_t == 0` on any real drawn primitive,
+  archive-wide — `angrylion-rdp-plus`'s forced-clamp rule
+  (`clampens = cs || !mask_s`) never has an observable effect on this ROM's
+  content. Pinned with `assert_eq!(m0.axis_instances, 0, ...)` in the census
+  test itself.
+* **PSP power-of-two padding vs N64 logical clamp boundary: real, material
+  gap.** 124 unique clamped, non-power-of-two, unmirrored tiles; 456 real
+  axis instances, 347 (71.4%) with a real UV sample reaching the last
+  logical texel, where `sceGuTexFilter(Linear, Linear)`'s bilinear blend
+  reads one texel into `pack_rgba`/`pack_indexed`'s zero-filled padding.
+  **Opens `P0d`.**
+
 `docs/rendering.md`'s "Texture addressing" row and R0.5's corresponding
-acceptance items updated to match what was actually found, with any real
-content-affecting gap becoming its own scoped correctness task.
+acceptance items are updated to match. See RE-220 for full detail.
+
+### P0c — Fix mirror+clamp beyond the first mirrored period
+
+RE-220/P0b measured 810 real `mirror+clamp` axis instances, 176 of which
+reach a third or later mask period and 99 (12.22%) of which measurably
+diverge from the `n64_addressing` reference model. Implement addressing
+that keeps mirroring at every period boundary up to the tile's drawn-rect
+far edge (`sh`/`th`), clamping only beyond it, rather than the current
+"mirror once via `texture::mirror_extend`, then `sceGuTexWrap(Clamp)`"
+approximation — most likely by pre-baking as many mirrored periods as the
+real drawn rect requires (bounded, since `drawn_width`/`drawn_height` is
+known at pack time) rather than always exactly two. Reuse
+`ssb_rom::n64_addressing::address_axis`/`psp_lowering_axis` and the existing
+census as the correctness/regression check; re-run
+`tile_addressing_census_against_real_archive_textures` and require the
+divergence count to reach zero (or document any remainder with evidence).
+Recheck Fox, Captain Falcon and Kirby (RE-102's named overflow content).
+
+### P0d — Fix PSP POT-padding vs N64 logical clamp boundary
+
+RE-220/P0b measured 456 real clamped-non-mirrored-non-POT axis instances,
+347 (71.4%) of which have a real UV sample reaching the last logical texel,
+where PSP's zero-filled padding corrupts `Linear`'s bilinear blend. Implement
+`PLAN.md`'s own candidate fix — fill `pack_rgba`/`pack_indexed`'s padding
+region with the repeated edge row/column instead of zeros — confirming it
+does not change output for a texture that is already power-of-two (a no-op
+there) and does not interact badly with a mirrored axis (which never reaches
+this code path per P0b's finding that mirror-doubling always lands on a
+power of two). Add a host test packing a non-power-of-two image and
+asserting the padding equals the repeated edge. Re-run
+`tile_addressing_census_against_real_archive_textures` to confirm the
+"reaches the last logical texel" primitives now sample real edge data.
 
 ### P1 — Archive-wide `G_SETTILE` field census
 
