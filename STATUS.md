@@ -51,7 +51,7 @@
   confidence note flags a pixel-level before/after on Fox/Captain
   Falcon/Kirby as a natural follow-up, not required for P0c's acceptance
   criteria (archive-wide zero divergence, measured above).
-- Commit: pending.
+- Commit: `6efe88e`.
 
 ## Continuation
 
