@@ -1,57 +1,58 @@
 # Current State
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
-- Task: `R2.0/P0d — Fix PSP POT-padding vs N64 logical clamp boundary`
+- Task: `R2.0/P1 — Archive-wide G_SETTILE field census`
 - Status: `TODO`
-- Last complete: `RE-221` (2026-09-11) closed `R2.0/P0c`: fixed mirror+clamp
-  tile addressing beyond the first mirrored period.
-  `texture::mirror_extend` (`crates/ssb-rom/src/texture.rs`) now takes each
-  axis's clamp bit and `drawn_width`/`drawn_height` and, only for a
-  mirror+clamp axis, pre-bakes every mask period the tile's real drawn rect
-  spans instead of always exactly two — a mirrored axis with no clamp bit
-  is unchanged (a doubled bake plus `Repeat` already mirrors forever
-  exactly, since wrapping back to the start resumes the same phase).
-  `n64_addressing::psp_lowering_axis` gained the matching `drawn` parameter
-  so the comparison model tracks the fix. Re-ran
-  `tile_addressing_census_against_real_archive_textures` archive-wide
-  against the real ROM: divergence between the hardware reference model
-  and the PSP lowering dropped from 99/810 (12.22%, RE-220) to **0/810**,
-  now asserted in the test itself so a regression fails the build.
-- Next: `R2.0`/P0d — implement `PLAN.md`'s own candidate fix for the one
-  remaining open gap RE-220 measured: fill `pack_rgba`/`pack_indexed`'s
-  padding region with the repeated edge row/column instead of zeros (456
-  real clamped-non-mirrored-non-POT axis instances, 347 reaching the last
-  logical texel where `Linear` blends into zero-filled padding, 71.4%).
-  Confirm the fix is a no-op for an already-power-of-two texture and does
-  not interact with a mirrored axis (mirror-doubling always lands on a
-  power of two, per RE-220). Add a host test packing a non-power-of-two
-  image and asserting the padding equals the repeated edge. Re-run
-  `tile_addressing_census_against_real_archive_textures` to confirm the
-  affected primitives now sample real edge data. `R2.0`/P1
-  (`G_SETTILE` field census) remains queued after it.
-- Blockers: R2.0/P0d–P1 (POT-padding fix; `G_SETTILE` palette/line/tmem/
-  shift census) must close before R2.1/T1–T10 resumes; R2.1 was designated
-  but never implemented, so resuming there loses no progress. R2.2/C1–C7
-  renderer corrective gate remains behind R2.1. Combat remains gated.
+- Last complete: `RE-222` (2026-09-11) closed `R2.0/P0d`: fixed PSP
+  power-of-two texture padding vs the N64 logical clamp boundary. Two new
+  helpers in `crates/ssb-rom/src/psp_texture.rs`, `pad_edge_repeat`
+  (byte-granular) and `pad_edge_repeat_nibbles` (`PsmT4`'s two-texels-per-
+  byte packing), fill a non-power-of-two texture's padding region with the
+  repeated edge row/column instead of zeros — a no-op for an already-POT
+  texture, and never touching a mirrored axis by construction (mirror-
+  doubling always lands on a power of two, RE-220). Found `PLAN.md`'s task
+  text named the wrong functions (`pack_rgba`/`pack_indexed`): the real
+  production padding site is `encode_level` (via `pack_mipped`,
+  `convert_texture`'s actual call path); fixed both that and `pack_rgba`/
+  `pack_indexed` (the particle-frame path) for consistency. 7 new host
+  tests, including one through `pack_mipped` end-to-end. Re-ran
+  `tile_addressing_census_against_real_archive_textures`: bullet 3's counts
+  are unchanged (124/456/347) as expected, since it measures the
+  structural condition, not the padding fix itself.
+- Next: `R2.0`/P1 — census every real render-tile-0 `G_SETTILE` archive-wide
+  for the `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields `dl.rs`'s
+  `Cmd::SetTile` already decodes but `mesh.rs`'s only consumer discards
+  behind a `..` wildcard (`mesh.rs:1767-1788`). In particular verify
+  whether any CI4 render tile uses a non-zero `palette` bank. For each
+  field: if every real value is canonical/irrelevant to the current static
+  conversion, pin the invariant with a test; if a non-default value changes
+  observable sampling semantics for real content, open a scoped correctness
+  task rather than implementing unused complexity speculatively. This is
+  the last task before `R2.0` can return to `COMPLETE` and `R2.1`/T1–T10
+  resumes.
+- Blockers: R2.0/P1 (`G_SETTILE` field census) must close before R2.1/T1–T10
+  resumes; R2.1 was designated but never implemented, so resuming there
+  loses no progress. R2.2/C1–C7 renderer corrective gate remains behind
+  R2.1. Combat remains gated.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
 - Evidence: `docs/reverse-engineering.md` — RE-217, RE-218, RE-219, RE-220,
-  RE-221.
-- Plan: `PLAN.md` — R2.0/P0d.
+  RE-221, RE-222.
+- Plan: `PLAN.md` — R2.0/P1.
 - Subsystem: `docs/porting-status.md` — PSP mesh drawing; `docs/rendering.md`
   — "Texture addressing" row.
-- Verification: `cargo test -p ssb-rom n64_addressing` (8 tests) and
-  `cargo test -p ssb-rom texture::` (49 tests, 2 new) and
+- Verification: `cargo test -p ssb-rom psp_texture::` (40 tests, 7 new) and
   `cargo test -p romtool tile_addressing_census_against_real_archive_textures -- --nocapture`
-  against the real ROM — divergence now 0/810; `cargo test --workspace` —
-  548 passing, 0 failed.
-- Documentation: RE-221, `docs/rendering.md`, `PLAN.md` R2.0/P0c, this
+  against the real ROM — bullet 3 counts unchanged, as expected;
+  `cargo test --workspace --all-targets` (pinned 1.98.0 toolchain) — 555
+  passing, 0 failed; `cargo clippy --workspace --all-targets` clean.
+- Documentation: RE-222, `docs/rendering.md`, `PLAN.md` R2.0/P0d, this
   snapshot.
 - Visual verification: PPSSPPHeadless via `tools/run-ppsspp-headless.sh`;
-  windowed PPSSPP is interactive-only. Not re-run for this fix: RE-221's
-  confidence note flags a pixel-level before/after on Fox/Captain
-  Falcon/Kirby as a natural follow-up, not required for P0c's acceptance
-  criteria (archive-wide zero divergence, measured above).
-- Commit: `6efe88e`.
+  windowed PPSSPP is interactive-only. Not re-run for this fix: same
+  caveat as RE-221 — a pixel-level before/after is a natural follow-up, not
+  required for P0d's acceptance criteria (padding-content fix covered by
+  the new unit tests, structural census counts unaffected by design).
+- Commit: pending.
 
 ## Continuation
 

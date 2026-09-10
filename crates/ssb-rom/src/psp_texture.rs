@@ -406,6 +406,8 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
         // Other 16-bit formats are not produced by `choose_psm` today.
         _ => alloc::vec![0u8; (stride * padded_h * format.bits() as u32 / 8) as usize],
     };
+    // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
+    pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, format.bits() / 8);
 
     let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
     let swizzled = swizzle_it && can_swizzle(stride_bytes, padded_h as usize);
@@ -432,6 +434,98 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
 /// keeps tiny textures small.
 pub fn can_swizzle(stride_bytes: usize, height: usize) -> bool {
     stride_bytes >= 16 && stride_bytes.is_multiple_of(16) && height.is_multiple_of(8)
+}
+
+/// Fills a packed texture's power-of-two padding region (columns
+/// `width..stride`, rows `height..padded_h`) with the repeated real edge
+/// row/column, in place of the zero fill every caller starts from
+/// (`PLAN.md` R2.0/P0d, RE-220/RE-222): real hardware clamps addressing to
+/// the *logical* edge, so `sceGuTexFilter(Linear, Linear)`'s bilinear blend
+/// near a clamped, non-power-of-two edge should read real edge data, not a
+/// synthetic zero the RDP never produces.
+///
+/// A no-op when `width == stride` and `height == padded_h` (already
+/// power-of-two) — true for every mirrored axis, since a mask period
+/// doubled by [`crate::texture::mirror_extend`] is always itself a power of
+/// two (RE-220), so this never touches mirrored-axis data. Must run
+/// *before* swizzling: it addresses the still-linear row-major buffer every
+/// caller builds first.
+///
+/// `bytes_per_texel` must be a whole number of bytes; `PsmT4`'s 4-bit texels
+/// use [`pad_edge_repeat_nibbles`] instead, since a padding boundary can
+/// fall mid-byte.
+fn pad_edge_repeat(
+    data: &mut [u8],
+    stride: u32,
+    padded_h: u32,
+    width: u32,
+    height: u32,
+    bytes_per_texel: usize,
+) {
+    let (stride, width, height, padded_h) = (stride as usize, width as usize, height as usize, padded_h as usize);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let row_bytes = stride * bytes_per_texel;
+    if width < stride {
+        for y in 0..height {
+            let row = y * row_bytes;
+            let edge_start = row + (width - 1) * bytes_per_texel;
+            let edge: Vec<u8> = data[edge_start..edge_start + bytes_per_texel].to_vec();
+            for x in width..stride {
+                let o = row + x * bytes_per_texel;
+                data[o..o + bytes_per_texel].copy_from_slice(&edge);
+            }
+        }
+    }
+    if height < padded_h {
+        let last_row = (height - 1) * row_bytes;
+        let edge_row: Vec<u8> = data[last_row..last_row + row_bytes].to_vec();
+        for y in height..padded_h {
+            let o = y * row_bytes;
+            data[o..o + row_bytes].copy_from_slice(&edge_row);
+        }
+    }
+}
+
+/// [`pad_edge_repeat`]'s counterpart for `PsmT4`'s two texels per byte, high
+/// nibble first (this crate's own convention -- see [`pack_indexed`]'s doc
+/// comment) -- a padding boundary can fall mid-byte, so the byte-level copy
+/// above cannot address a single padding texel there.
+fn pad_edge_repeat_nibbles(data: &mut [u8], stride: u32, padded_h: u32, width: u32, height: u32) {
+    let (stride, width, height, padded_h) = (stride as usize, width as usize, height as usize, padded_h as usize);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let stride_bytes = stride.div_ceil(2);
+    let get = |data: &[u8], x: usize, y: usize| -> u8 {
+        let byte = data[y * stride_bytes + x / 2];
+        if x.is_multiple_of(2) { byte >> 4 } else { byte & 0x0F }
+    };
+    let set = |data: &mut [u8], x: usize, y: usize, v: u8| {
+        let idx = y * stride_bytes + x / 2;
+        if x.is_multiple_of(2) {
+            data[idx] = (data[idx] & 0x0F) | (v << 4);
+        } else {
+            data[idx] = (data[idx] & 0xF0) | (v & 0x0F);
+        }
+    };
+    if width < stride {
+        for y in 0..height {
+            let edge = get(data, width - 1, y);
+            for x in width..stride {
+                set(data, x, y, edge);
+            }
+        }
+    }
+    if height < padded_h {
+        for x in 0..stride {
+            let edge = get(data, x, height - 1);
+            for y in height..padded_h {
+                set(data, x, y, edge);
+            }
+        }
+    }
 }
 
 /// Converts a paletted N64 texture, keeping it paletted.
@@ -515,6 +609,13 @@ pub fn pack_indexed(
     // the PSP expects for PsmT4, so 4-bit data copies through unchanged.
     let palette = palette.to_vec();
 
+    // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
+    if format == Psm::PsmT4 {
+        pad_edge_repeat_nibbles(&mut data, stride, padded_h, width, height);
+    } else {
+        pad_edge_repeat(&mut data, stride, padded_h, width, height, format.bits() / 8);
+    }
+
     let swizzled = swizzle_it && can_swizzle(stride_bytes, padded_h as usize);
     if swizzled {
         data = swizzle(&data, stride_bytes, padded_h as usize);
@@ -591,6 +692,30 @@ mod mip_tests {
         // Unswizzled, nothing constrains it and the chain runs to 1x1.
         let full = pack_mipped(&img, Psm::PsmT4, &pal, false);
         assert!(full.levels > 2);
+    }
+
+    /// `PLAN.md` R2.0/P0d, end-to-end through the actual production path
+    /// (`convert_texture`'s `mipped` closure calls `pack_mipped`, not
+    /// `pack_rgba`/`pack_indexed` directly): a non-power-of-two CI4 level 0
+    /// pads its padding column with the repeated edge texel, not index 0.
+    #[test]
+    fn pack_mipped_pads_level_zero_with_the_repeated_edge_texel() {
+        let pal = ramp_palette();
+        // 3 wide, 1 tall: texels decode to entries 0, 5, 10 (unambiguous
+        // under `nearest_entry`, spaced well apart on the 16-entry ramp).
+        let mut img = Rgba8::new(3, 1);
+        for (i, entry) in [0u8, 5, 10].into_iter().enumerate() {
+            let v = entry * 17;
+            img.put(i, [v, v, v, 255]);
+        }
+        let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
+        assert_eq!(tex.stride, 4, "3 pads to a 4-texel stride");
+        // Level 0: byte 0 = texels (0,5), byte 1 = texels (10, padding).
+        assert_eq!(tex.data[0], 0x05, "texels 0 and 1 unchanged");
+        assert_eq!(
+            tex.data[1], 0xAA,
+            "padding texel (low nibble) repeats the edge texel (entry 10 = 0xA), not index 0"
+        );
     }
 }
 
@@ -877,6 +1002,72 @@ mod tests {
         assert_eq!(pad_to_power_of_two(8), 8);
         assert_eq!(pad_to_power_of_two(9), 16);
         assert_eq!(pad_to_power_of_two(33), 64);
+    }
+
+    /// `PLAN.md` R2.0/P0d: a non-power-of-two 3-wide, 1-tall single-byte-texel
+    /// image pads out to a 4-wide stride with the last real column (`2`)
+    /// repeated, not left zero.
+    #[test]
+    fn pad_edge_repeat_fills_column_padding_with_the_last_real_column() {
+        let mut data = alloc::vec![9u8, 8, 7, 0]; // stride=4, texels 0..3 real, col 3 is padding
+        pad_edge_repeat(&mut data, 4, 1, 3, 1, 1);
+        assert_eq!(data, [9, 8, 7, 7], "padding column repeats the edge column (7)");
+    }
+
+    /// The row-padding counterpart: a 2-wide, 3-tall image padded to 4 rows
+    /// repeats the last real row, and does so *after* that row's own column
+    /// padding has already been filled in.
+    #[test]
+    fn pad_edge_repeat_fills_row_padding_with_the_last_real_row_including_its_own_column_padding() {
+        // stride=2 (already power-of-two on this axis), so only row padding
+        // applies: rows 0/1/2 real, row 3 padding.
+        let mut data = alloc::vec![1u8, 2, 3, 4, 5, 6, 0, 0];
+        pad_edge_repeat(&mut data, 2, 4, 2, 3, 1);
+        assert_eq!(data, [1, 2, 3, 4, 5, 6, 5, 6], "row padding repeats the last real row (5, 6)");
+    }
+
+    /// A power-of-two image needs no padding on either axis: a no-op.
+    #[test]
+    fn pad_edge_repeat_is_a_no_op_for_an_already_power_of_two_image() {
+        let mut data: Vec<u8> = (0u8..16).collect();
+        let before = data.clone();
+        pad_edge_repeat(&mut data, 4, 4, 4, 4, 1);
+        assert_eq!(data, before);
+    }
+
+    /// The 4-bit counterpart: a 3-wide, 1-tall CI4 row (two texels per byte,
+    /// high nibble first) padded to a 4-texel stride repeats the last real
+    /// texel's nibble into the padding nibble, not the neighbouring byte's
+    /// unrelated data.
+    #[test]
+    fn pad_edge_repeat_nibbles_fills_column_padding_with_the_last_real_texel() {
+        // Texel 0=0x9 (byte0 high), 1=0x8 (byte0 low), 2=0x7 (byte1 high);
+        // byte1 low nibble (texel 3) is padding, currently zero.
+        let mut data = alloc::vec![0x98u8, 0x70];
+        pad_edge_repeat_nibbles(&mut data, 4, 1, 3, 1);
+        assert_eq!(data, [0x98, 0x77], "padding texel 3 repeats texel 2's value (0x7)");
+    }
+
+    /// A power-of-two CI4 image needs no padding: a no-op.
+    #[test]
+    fn pad_edge_repeat_nibbles_is_a_no_op_for_an_already_power_of_two_image() {
+        let mut data = alloc::vec![0x12u8, 0x34];
+        let before = data.clone();
+        pad_edge_repeat_nibbles(&mut data, 4, 1, 4, 1);
+        assert_eq!(data, before);
+    }
+
+    /// End-to-end through `pack_paletted` (`PLAN.md` R2.0/P0d): a
+    /// non-power-of-two CI8 texture's padded columns sample the same
+    /// palette index as the real edge column, not index 0.
+    #[test]
+    fn pack_paletted_pads_a_non_power_of_two_texture_with_the_repeated_edge() {
+        // 3 wide, 1 tall, CI8: indices 10, 20, 30.
+        let indices = [10u8, 20, 30];
+        let tlut: Vec<u16> = alloc::vec![0; 256];
+        let tex = pack_paletted(&indices, 3, 1, BitSize::Bits8, &tlut, false).unwrap();
+        assert_eq!(tex.stride, 4);
+        assert_eq!(&tex.data[..], [10, 20, 30, 30], "padding texel repeats the edge index (30)");
     }
 
     #[test]
@@ -1193,6 +1384,14 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
                 }
             }
         }
+    }
+    // `PLAN.md` R2.0/P0d: real hardware clamps to the logical edge, so a
+    // bilinear sample near a clamped, non-power-of-two edge should read
+    // real edge data rather than the zero fill above.
+    if format == Psm::PsmT4 {
+        pad_edge_repeat_nibbles(&mut data, stride, padded_h, img.width, img.height);
+    } else {
+        pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, format.bits() / 8);
     }
     (data, stride)
 }
