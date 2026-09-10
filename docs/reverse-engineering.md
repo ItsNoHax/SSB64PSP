@@ -10,6 +10,71 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-209 — Eighth golden scene (Kirby) verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-208 hardware-verified a third fighter (Captain Falcon) but
+left 9 of 12 playable fighters and 39 of 41 stages hardware-untested;
+`STATUS.md`'s own "Next" note named Kirby specifically, being the third
+fighter RE-102 named alongside Fox and Falcon as a fighter with the same
+real UV-scale/clamp texture bug.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201–208, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
+
+**Method.** Added `regression_capture_scene8` (`psp/Cargo.toml`,
+`psp/src/main.rs`), following scenes 2–4/6/7's exact object-viewer pattern.
+`romtool scene --file 328 --list` reports 8 graphs total in file 328, but
+two of them — at `0x1448` and `0x2CD0` — are the symmetric 27-node pair
+matching the shape of Fox's and Falcon's own-model graph pairs (the other
+six are small 2-node reference/attachment graphs). Selected the
+lower-offset one (`0x1448`), matching the convention RE-207/RE-208 already
+used for Fox (`0x2938`) and Falcon (`0x3BE0`).
+
+PPSSPP software: built, captured twice back-to-back, `cmp` byte-identical,
+confirming the freeze/spin-suppression wiring is correct. Kirby's face
+renders correctly (pink head, no black patch, no UV-tiling artefact on the
+eye/mouth textures — the exact class of bug RE-102 named him for).
+Rebuilding plain `regression_capture` (no scene-8 feature) still matches
+`tests/golden/r0-dream-land-default.png` exactly (0 differing pixels),
+confirming scene 8's changes are inert on other builds. `cargo test
+--workspace`: 506 passing, unchanged (no crate logic changed, only
+`psp/src/main.rs` view-selection wiring and a new Cargo feature). New
+golden committed at `tests/golden/r2-kirby-fighter.png`, SHA-256
+`25716f83efe4d803c59b02a840bfeaed14da2d405a5400aa5acda3bfef2f2df8`, against
+EBOOT SHA-256
+`21dedc35a594eed60821cc5d283e30c5cfffb307e0a85256f97c0795487249b3`.
+
+Physical PSP: `modlist` showed no stale game module before this session's
+load. `ldstart`ed the scene-8 PRX over `host0:`, waited past the tick-240
+freeze, checked state before capturing: `exlist` empty (zero exceptions),
+`thlist` showed a live `main_thread`. Captured a native 480x272 `scrshot`
+(not committed per repository policy, SHA-256
+`ec3a4752ad20ad8f56b8c10f660bcc1808999e7fa3cca4cd29de987cdf93b3d8` before
+upscaling). Upscaled 2x nearest-neighbour and diffed against the PPSSPP
+golden: 61,241 raw differing pixels out of 522,240, but the visual diff
+image shows the same shape RE-203/204/205/207/208 already documented and
+excluded — a thin edge-antialiasing band around every polygon boundary,
+faint dither on the face texture, plus PSPLink's own top-left status text
+and PPSSPP's on-screen FPS-counter region (top right), neither of which is
+this project's rendering output. No solid interior region of the model
+differs from the golden. Killed the loaded module afterward and rebuilt
+the plain default EBOOT before ending the session.
+
+**Conclusion.** Kirby renders correctly on real PSP hardware with zero
+exceptions, and its face texture shows no UV-tiling artefact — the same
+`G_TX_CLAMP` class of bug RE-102/RE-152 fixed. `PLAN.md` R2's
+"representative fighters render" row now cites four fighters (Mario, Fox,
+Captain Falcon, Kirby) — all three fighters RE-102 originally named for the
+clamp+mirror bug are now hardware-verified. The "no hardware-only rendering
+failures remain" row stays open: 8 of 12 playable fighters and 39 of 41
+stages remain untested on hardware. The next same-shaped increment is
+another untouched fighter or stage using this same
+`regression_capture_sceneN` pattern. Live analog-stick input still requires
+a human operator and cannot be resolved by an agent session alone.
+
+---
+
 ## RE-208 — Seventh golden scene (Captain Falcon) verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-207 hardware-verified a second fighter (Fox) but left 10 of

@@ -66,6 +66,13 @@ regression_capture_scene6 = []
 # 2-4 and 6. Off by default.
 regression_capture_scene7 = []
 
+# R2 broader-coverage scene: the third non-Mario fighter golden. Selects
+# Kirby's own file-328 graph at 0x1448 -- the third of the three fighters
+# (with Fox and Captain Falcon) RE-102 measured a real UV-scale/clamp bug
+# on. Same deterministic object-viewer freeze and diagnostic suppression as
+# scenes 2-4, 6 and 7. Off by default.
+regression_capture_scene8 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []
