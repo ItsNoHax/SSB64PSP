@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-206 division-sweep session)
+**Last updated:** 2026-09-10 (RE-207 sixth-golden-scene session)
 
 ## Continuation packet
 
@@ -10,61 +10,51 @@
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-206. Performed the systematic sweep the previous
-session flagged: confirmed by exhaustive grep that no fourth raw
-`1.0 / payload`-shaped division exists outside the three existing
-`reciprocal_or_one` guards (`figatree.rs`/`matanim.rs`/`objanim.rs`). Then
-checked every division in on-device runtime code (not `romtool`'s host-side
-pack conversion, which cannot hit this fault class) for the same
-"guard-then-divide" shape: `ssb-engine::math::Vec3::normalized`,
-`::timing::FrameTimings::fps`, `ssb-game::camera::original_tan`,
-`ssb-game::status::update_walk` and `ssb-game::collision::check_tilt`.
-`check_tilt`'s unguarded `/scale` looked like the strongest candidate (no
-guard at all, unlike the others), so investigated it in depth: added, then
-reverted, a defensive guard and direct unit test after proving — first
-analytically (a segment's height is linear in `x`, so an exactly-parallel
-movement keeps an invariant surface offset and can never also satisfy the
-function's own "started above, ended below" gate), then empirically (a
-scratch probe swept thousands of `(segment, from, to)` combinations,
-including i16-range magnitudes chosen to maximise float rounding) — that
-`scale == 0.0` is unreachable through this function's own preceding checks.
-Confirmed the guard was inert by disabling it and observing the added test
-still passed (exercising the pre-existing gate, not the new code), then
-reverted both per this project's own evidence-driven rule. No source change
-this session; `cargo test --workspace` unchanged at 506 passing. Full
-findings and the specific candidates left open (no demonstrated
-zero-denominator input yet, so not fixed) are in
-`docs/reverse-engineering.md` RE-206.
+**Last completed:** RE-207. Added a sixth golden scene,
+`regression_capture_scene6` (`psp/Cargo.toml`, `psp/src/main.rs`), the first
+fighter-bearing golden besides Mario. Selects Fox's own model graph (file
+313, offset `0x2938` — the exact graph RE-152 previously found and fixed a
+real clamp-window black-face bug on), reusing scenes 2-4's object-viewer
+freeze/spin-suppression/HUD-suppression pattern exactly. PPSSPP: two
+captures 24s apart byte-identical, plain `regression_capture` still matches
+`r0-dream-land-default.png` exactly (0 diff), `cargo test --workspace`
+unchanged at 506 passing. New golden committed:
+`tests/golden/r2-fox-fighter.png`. Physical PSP: killed a stale loaded
+module from a prior session, `ldstart`ed the new PRX over `host0:`, zero
+exceptions (`exlist` empty, `main_thread` alive), native capture matches the
+PPSSPP golden with only the same expected edge-antialiasing/overlay
+divergence RE-203/204/205 already documented. Full account in
+`docs/reverse-engineering.md` RE-207.
 
 **Dependencies:** R0.5 and R1 complete. R2's one remaining hardware checklist
 row is live analog-stick input (needs a human operator); "no hardware-only
-rendering failures remain" stays open pending broader coverage.
+rendering failures remain" stays open pending broader coverage — 10 of 12
+playable fighters and 39 of 41 stages remain hardware-untested.
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–206;
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–207;
 `docs/psplink.md`; `docs/visual-regression.md`; `tests/golden/*.png`;
-`tools/compare-screenshot.sh`; `crates/ssb-game/src/collision.rs`;
-`crates/ssb-game/src/camera.rs`; `crates/ssb-game/src/status.rs`;
-`crates/ssb-engine/src/math.rs`; `crates/ssb-engine/src/timing.rs`.
+`tools/compare-screenshot.sh`; `psp/src/main.rs`; `psp/Cargo.toml`.
 
 **First checks:** physical PSP hardware is present and PSPLink-reachable
 this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
 once `usbhostfs_pc -v "$PWD"` is running). Re-check this at the start of the
 next session; if hardware is no longer attached, R2 has no further eligible
-software-only task.
+hardware task, but a new PPSSPP-only golden scene (still useful groundwork)
+remains possible.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** the crate-wide division sweep RE-206 asked for is now done and
-clean. The remaining path toward "no hardware-only rendering failures
-remain" is broader *scene* coverage, not more static code sweeping: every
-fighter, stage and effect the existing scene-finding examples
-(`stage_animation_amplitude.rs` and similar) have not yet touched is still
-an unaudited risk on real hardware — building and PSPLink-testing new golden
-scenes for untouched fighters/stages is the concrete next step. Separately,
-still open: whether the analog nub correctly drives the fighter now that
-RE-202's HUD-crash fix is live — this requires a human physically operating
-the device with PSPLink attached; `pspsh` has no controller-injection
-command, so an agent session cannot resolve it alone.
+**Next:** the same `regression_capture_sceneN` pattern RE-199/200/205/207
+established scales directly to the next untouched fighter or stage — pick
+one (e.g. Captain Falcon, Kirby, or another fighter RE-101/102 already found
+a real UV-scale/clamp bug on, per `docs/reverse-engineering.md`), find its
+model graph via `romtool scene --file <id> --list`, add a
+`regression_capture_sceneN` feature following scene 6's exact structure, and
+repeat the PPSSPP-then-hardware verification. Separately, still open:
+whether the analog nub correctly drives the fighter now that RE-202's
+HUD-crash fix is live — this requires a human physically operating the
+device with PSPLink attached; `pspsh` has no controller-injection command,
+so an agent session cannot resolve it alone.
 
 ## Current state
 
@@ -72,14 +62,15 @@ command, so an agent session cannot resolve it alone.
   canopy comparison.
 - R1: `COMPLETE`; every acceptance bullet is checked through RE-200 and its
   R0.5 prerequisite is now satisfied.
-- R2: `IN_PROGRESS`; all five golden regression scenes (Dream Land/Mario,
+- R2: `IN_PROGRESS`; all six golden regression scenes (Dream Land/Mario,
   `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City stage
-  animation) boot, pack loads, stage/fighter/material/texture content
+  animation, Fox) boot, pack loads, stage/fighter/material/texture content
   matches PPSSPP goldens, and no hardware exception remains across any of
-  them (RE-203, RE-205). The real framebuffer-effect `SObj` sprite path,
-  VRAM usage, and stage animation are now hardware-verified too (RE-204,
-  RE-205). Exhaustive no-failures-remain coverage and live analog-stick
-  input remain untested on hardware.
+  them (RE-203, RE-205, RE-207). The real framebuffer-effect `SObj` sprite
+  path, VRAM usage, and stage animation are now hardware-verified too
+  (RE-204, RE-205). Fox (RE-207) is the first hardware-verified fighter
+  besides Mario. Exhaustive no-failures-remain coverage (10 of 12 fighters,
+  39 of 41 stages still untested) and live analog-stick input remain open.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -101,46 +92,44 @@ command, so an agent session cannot resolve it alone.
 
 ## Last completed task
 
-**RE-206 — Swept the crate for other unguarded/speculatable divisions like RE-201/202/205's FPU traps**
+**RE-207 — Sixth golden scene (Fox) verified on physical PSP hardware**
 
-- Grepped the whole crate for the literal `1.0 / payload` shape: only the
-  three already-guarded call sites exist (`figatree.rs`, `matanim.rs`,
-  `objanim.rs`); no fourth instance.
-- Audited every division in on-device runtime code (excluding `romtool`'s
-  host-side pack conversion, which cannot hit this fault class) for the
-  same "guard checks zero, then divides" shape: `Vec3::normalized`,
-  `FrameTimings::fps`, `camera::original_tan`, `status::update_walk`,
-  `collision::check_tilt`.
-- `check_tilt`'s unguarded `/scale` (no zero check at all, unlike the
-  others) looked like the strongest candidate. Investigated it directly:
-  proved analytically that its own preceding "started above, ended below"
-  gate cannot coexist with `scale == 0.0` (a segment's height is linear in
-  `x`, so an exactly-parallel movement keeps an invariant surface offset),
-  then confirmed empirically with a scratch brute-force probe across
-  thousands of `(segment, from, to)` combinations, including i16-range
-  magnitudes chosen to maximise float rounding. No counterexample found.
-- Added a defensive guard plus a direct unit test on the private
-  `check_tilt`, then disabled the guard and re-ran the test: it still
-  passed, proving the test exercised the pre-existing gate, not the new
-  code. Reverted both — an inert guard and an unfalsifiable test are not
-  evidence-driven work.
-- No source change. `cargo test --workspace` unchanged at 506 passing.
-- Evidence: `docs/reverse-engineering.md` RE-206.
+- Added `regression_capture_scene6` (`psp/Cargo.toml`, `psp/src/main.rs`),
+  following scenes 2-4's object-viewer pattern exactly: overrides
+  `object_index` to file 313 offset `0x2938` (Fox's own model graph),
+  disables default `stage_view`, reuses the tick-240 freeze, idle-spin
+  freeze and HUD suppression.
+- Chose Fox specifically because it is the exact graph RE-152 previously
+  found and fixed a real bug on (a clamp-window coordinate bug painting the
+  lower face solid black) — a meaningful regression target, not an
+  arbitrary pick.
+- PPSSPP: two captures 24s apart byte-identical; plain `regression_capture`
+  (no scene-6 feature) still matches `r0-dream-land-default.png` exactly (0
+  diff), confirming the new wiring is inert elsewhere. `cargo test
+  --workspace` unchanged at 506 passing (no crate logic touched). New golden
+  committed: `tests/golden/r2-fox-fighter.png`.
+- Physical PSP: killed a stale loaded module from a prior session,
+  `ldstart`ed the new PRX over `host0:`, confirmed `exlist` empty and
+  `main_thread` alive in `thlist`, captured a native 480x272 `scrshot`.
+  Diffed 2x-upscaled against the PPSSPP golden: only the same
+  edge-antialiasing/overlay divergence RE-203/204/205 already documented,
+  no solid-interior content difference. Killed the module and rebuilt the
+  plain default EBOOT afterward.
+- Evidence: `docs/reverse-engineering.md` RE-207.
 
 ## Verification
 
-RE-206 was a code-and-analysis investigation, not a hardware session:
-`cargo test --workspace` (506 passing, unchanged) confirms no regression
-from the revert. The `check_tilt` reachability claim was verified two ways
-(analytical proof + brute-force numeric search over representative and
-extreme-magnitude inputs, both described in RE-206) rather than asserted.
-No PPSSPP or physical-PSP capture was needed since no source changed.
+RE-207 ran the full PPSSPP-then-hardware procedure: PPSSPP determinism
+(two captures byte-identical), no-regression check against the existing
+Dream Land golden, `cargo test --workspace` (506 passing, unchanged), then
+physical-PSP `exlist`/`thlist` state checks and a native framebuffer capture
+diffed against the new PPSSPP golden.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–206.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–207.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.

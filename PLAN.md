@@ -2799,9 +2799,13 @@ stage 9) isolating RE-142/RE-143's already-proven animated gate, found and
 fixed a third FPU-trap site in stage-animation code (`objanim.rs`, the same
 class RE-201/`f111892` already fixed twice elsewhere), and verified it
 matches its PPSSPP golden on physical hardware with zero exceptions,
-checking off "stage animation works". Exhaustive no-failures-remain coverage
-and live analog-stick input remain open — the last requires a human
-physically operating the device, not reproducible through `pspsh`.
+checking off "stage animation works". RE-206 swept the crate for other
+unguarded divisions and found no new fix required. RE-207 added a sixth
+golden scene covering Fox — the first fighter besides Mario hardware-tested
+— confirming RE-152's clamp-window fix holds on real hardware. Exhaustive
+no-failures-remain coverage and live analog-stick input remain open — the
+last requires a human physically operating the device, not reproducible
+through `pspsh`.
 
 ### Objective
 
@@ -2813,7 +2817,7 @@ PPSSPP is not sufficient.
 
 * [x] EBOOT boots on physical PSP — RE-201, RE-202, RE-203
 * [x] runtime asset pack loads — RE-203 (pack hash `7647db75...650b2f0`, all four scenes render pack content correctly)
-* [x] representative fighters render — RE-203: Mario matches PPSSPP golden
+* [x] representative fighters render — RE-203: Mario matches PPSSPP golden; RE-207: Fox (`regression_capture_scene6`, file 313 graph `0x2938`) matches its PPSSPP golden with zero exceptions, confirming RE-152's clamp-window face fix on real hardware
 * [x] representative stages render — RE-203: Dream Land, `StageSectorFile2`, `MVOpeningRoom`
 * [x] fighter animation works — RE-203: Mario's 240-tick fall/physics simulation completes on hardware and matches the PPSSPP golden
 * [x] stage animation works — RE-205: `regression_capture_scene5` (stage 9, Saffron City) isolates RE-142/RE-143's already-proven animated gate; found and fixed a third FPU-trap site in `objanim.rs`'s `StageJoint::apply`; hardware capture matches the PPSSPP golden with zero exceptions
@@ -2821,7 +2825,7 @@ PPSSPP is not sufficient.
 * [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
-* [ ] no hardware-only rendering failures remain — four golden scenes plus the plain interactive build are now clean, but coverage is not exhaustive across all fighters/stages/effects
+* [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)
 
