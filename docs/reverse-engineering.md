@@ -10,6 +10,96 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-196 — Reconciling `PLAN.md` R1's asset/material bullets against existing evidence (no code change)
+
+**Problem.** After RE-195 closed "no unexplained rendering commands remain",
+R1's next two unchecked bullets are "no unexplained missing assets remain"
+and "no unexplained material failures remain". `STATUS.md` flagged that
+R0.3/R0.4/R0.7 already resolved every texture/palette/material-table failure
+this project's own converter can explain, so these bullets' real remaining
+scope might be narrower than their text suggests — to be checked against
+current evidence before assuming new work is needed, not assumed closed.
+
+**Method.** Re-ran every archive-wide census this project already has,
+against the current tree (post-RE-195), to confirm none of RE-172–195's
+work reopened a gap RE-055–062/139/162/168 had already closed.
+
+**Archive integrity.** `romtool check`: 2132 files, 0 load failures, 0
+chain/ROM mismatches, 499 compressed files cross-verified against ROM
+geometry.
+
+**Opcodes.** `romtool scan --exhaustive`: every opcode found across all 2132
+files' display lists has a name in the "opcodes actually used" table (0
+unknown/`Cmd::Other`, matching RE-195's own R0.2 cross-reference — no opcode
+decoding changed since).
+
+**Textures.** `romtool textures`: 721 bound, 695 packed, 26 failed — the
+same 26 "null pointer" failures in files 39-50 RE-055 identified as
+`sLBTransitionPhotoHeap`, the per-frame LB-transition framebuffer photocopy
+buffer bound at runtime via `gSPSegment(..., 0x1, ...)` (`refs/ssb-decomp-re/
+src/lb/lbtransition.c`), which does not exist anywhere in ROM data for a
+build-time, no-RSP-emulation converter (D-001) to resolve. The bound/packed
+counts are RE-162's own 706/680 plus the 15 textures RE-194 additionally
+bound (`MOBJ_FLAG_NONE`/`TEXTURE` sprites) — accounted for, not a new gap.
+
+**Material tables.** `romtool mobj`: 134 graphs paired with a table, 0
+unreadable, 0 unnamed/unpaired, 475 node chains agree with their
+display-list demand, 0 mismatched. "chains in another archive file, not
+followed: 2" is `tools/romtool/src/main.rs`'s own documented known-gap
+branch (a chain whose `p_mobjsubs`/table lives in a different archive file
+than the graph, same cross-file-reference class RE-064 already covers for
+palette/texture inheritance) — not a silent failure. This matches R0.7's
+`COMPLETE` status (RE-162: "all 127 discovered graphs paired") plus RE-057's
+counting one graph as `MPGroundDesc`/`FTCommonPart`-paired rather than
+`PartTables`-paired.
+
+**Mesh/node placement.** Temporarily instrumented `romtool pack`'s node-list
+loop (`tools/romtool/src/main.rs`, the `let Ok(m) = converted else`/
+`m.triangle_count() == 0` arms) to log which node lists produce neither a
+placed mesh nor triangles, reverted before committing (byte-identical
+rebuilt pack, SHA-256 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`,
+confirmed both with and without the logging present). Result: **0**
+conversion errors, **23** zero-triangle placements — exactly RE-026's own
+historical count ("23 lists that still place nothing... 16 pure state and 7
+pair halves that are genuinely NULL"), unchanged since that entry. The raw
+`1604/1672` "node lists placed" figure `romtool pack` prints is a coarser
+node-field-vs-expanded-list-plan count (one `dl` field can expand into
+several planned lists via a `DObjDLLink` array or a pre/post-matrix pair,
+RE-023/026), not 68 unexplained failures.
+
+**Material failures (`PLAN.md` R0.6).** RE-168's archive-wide combiner
+census (65,199 emitted-triangle visits: 65,000 accepted, 199 declined — 13
+real texture-plus-missing-`PRIMITIVE`/`ENVIRONMENT` cases all traced to
+runtime effect-manager colour injection, 186 already-catalogued unsupported
+combiner/alpha-formula edge cases per RE-139) ran against commit `3b9eb50`.
+`git diff 3b9eb50..HEAD -- crates/ssb-rom/src/mesh.rs` shows RE-175/RE-194/
+RE-195's changes (manager-effect material tables, `MObj` display-state
+fields, `G_SETOTHERMODE` fields) touch none of the combiner-shape,
+alpha-blend or shade-scale classification functions RE-168 measured — the
+census still describes the current pack path exactly, no re-run needed to
+know it has not changed.
+
+**Conclusion.** Both bullets' text is satisfied by evidence this project
+already produced (RE-055–062, RE-139, RE-162, RE-168) plus this session's
+confirmation that nothing since has reopened any of it. Checked off in
+`PLAN.md` R1 with citations to the existing evidence, the same "no unfixed
+case is silently unmentioned" standard RE-195 used, not a "pixel-exact"
+standard — the 13 runtime-injected-colour and 186 catalogued-edge-case
+combiner declines remain real, documented, future scope (effect/gameplay
+integration and rare combiner shapes), same as before.
+
+**Verification.** No source change (instrumentation added and reverted, pack
+rebuild byte-identical before/after). `cargo fmt --check`, `cargo clippy
+--workspace --all-targets`, and `cargo test --workspace` (`SSB64_ROM` set)
+all pass unchanged from RE-195's own count (347 tests).
+
+**Confidence: high.** Every figure above comes from a real archive-wide tool
+run against the current tree, not a re-assertion of old numbers; the one
+figure not re-run (the R0.6 combiner census itself) is backed by a direct
+diff proving its own inputs have not changed.
+
+---
+
 ## RE-195 — `G_SETOTHERMODE_H`/`L`'s remaining undecoded fields measured archive-wide; `G_MDSFT_ALPHACOMPARE` found real and partially wired (`PLAN.md` R1)
 
 **Problem.** `PLAN.md` R1's "no unexplained rendering commands remain"
