@@ -2751,8 +2751,20 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   command in this ROM's real content now has a demonstrated explanation —
   this does not claim every command's effect is pixel-exact, only that
   none remains a mystery
-* [ ] no unexplained missing assets remain
-* [ ] no unexplained material failures remain
+* [x] no unexplained missing assets remain — RE-196 re-ran every archive-wide
+  census (`romtool check`/`scan`/`textures`/`mobj`/`pack`) against the
+  current tree: 0 archive load/chain failures, 0 unknown opcodes, the same
+  26 texture failures RE-055 already traced to the runtime-only LB-transition
+  framebuffer photocopy buffer (no ROM data exists to resolve, D-001), 0
+  unreadable/unpaired/mismatched material-table graphs (R0.7), and 0 mesh
+  conversion errors with exactly RE-026's own historical 23 zero-triangle
+  node placements. Nothing since RE-168/RE-162 reopened any of it
+* [x] no unexplained material failures remain — RE-196: RE-168's R0.6
+  combiner census (199 of 65,199 triangle visits declined: 13 real
+  runtime-injected shield colours, 186 already-catalogued unsupported
+  combiner/alpha-formula edge cases per RE-139) still describes the current
+  pack path exactly — a direct diff confirms no commit since RE-168 touched
+  `mesh.rs`'s combiner/alpha-blend/shade-scale classification functions
 * [ ] rendering regression suite passes
 * [ ] golden/reference renders are established: methodology and one golden
   scene done under R0.17 (`docs/visual-regression.md`); the remaining
