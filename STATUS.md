@@ -81,6 +81,7 @@ RE-201. Pack was unchanged.
 - Subsystem status: `docs/porting-status.md`.
 - Detailed investigations: `docs/reverse-engineering.md` RE-172–201.
 - Rendering methodology: `docs/visual-regression.md`.
+- Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
 
 ## Blockers and caveats
