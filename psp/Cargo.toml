@@ -73,6 +73,15 @@ regression_capture_scene7 = []
 # scenes 2-4, 6 and 7. Off by default.
 regression_capture_scene8 = []
 
+# R2 broader-coverage scene: the fourth non-Mario fighter golden. Selects
+# Ness's own file-335 graph at 0x26B0. RE-103 named Ness, alongside Fox,
+# Captain Falcon and Kirby, as a fighter whose surface "melted" into
+# rainbow noise under the old per-primitive majority-vote lit-vs-literal
+# heuristic -- a different bug class than scenes 6-8's UV-scale/clamp fix.
+# Same deterministic object-viewer freeze and diagnostic suppression as
+# scenes 2-4 and 6-8. Off by default.
+regression_capture_scene9 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []

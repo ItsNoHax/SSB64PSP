@@ -10,6 +10,75 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-210 — Ninth golden scene (Ness) verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-209 hardware-verified all three fighters RE-102 named for
+the UV-scale/clamp bug (Fox, Falcon, Kirby). RE-102's own set is now
+exhausted, so this session looked for the next evidence-backed pick rather
+than an arbitrary one, and found RE-103: it named Fox, Captain Falcon,
+Kirby *and Ness* as fighters whose surface "melted" into rainbow noise
+under the old per-primitive majority-vote lit-vs-literal heuristic — a
+different, already-fixed bug class, and Ness is the one fighter from that
+set still hardware-untested.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201–209, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
+
+**Method.** Added `regression_capture_scene9` (`psp/Cargo.toml`,
+`psp/src/main.rs`), following scenes 2–4/6–8's exact object-viewer pattern.
+Ness's model file id is not one of RE-102's `209/236/229` fighter-*data*
+file ids (a different table from the model-*graph* file); found it instead
+in `tools/romtool/src/main.rs`'s `FIGHTER_COSTUME_COUNTS`, keyed by each
+fighter's own model file: Ness is file 335. `romtool scene --file 335
+--list` reports a symmetric 27-node graph pair at `0x26B0` and `0x4FE8`
+(plus two small reference graphs); selected the lower-offset one (`0x26B0`),
+matching the convention scenes 6–8 already used for Fox/Falcon/Kirby.
+
+PPSSPP software: built, captured twice back-to-back, `cmp` byte-identical,
+confirming the freeze/spin-suppression wiring is correct. Ness renders with
+clean, distinct colours (red cap, yellow/purple striped shirt, purple
+shorts) — no rainbow-noise melting, confirming RE-103's per-vertex fix
+holds. Rebuilding plain `regression_capture` (no scene-9 feature) still
+matches `tests/golden/r0-dream-land-default.png` exactly (0 differing
+pixels), confirming scene 9's changes are inert on other builds. `cargo
+test --workspace`: 506 passing, unchanged (no crate logic changed, only
+`psp/src/main.rs` view-selection wiring and a new Cargo feature). New
+golden committed at `tests/golden/r2-ness-fighter.png`, SHA-256
+`21996e29839aa0fb4dc4141b3fc232b302cdab9b1aa66b09ef398e878002d4fd`, against
+EBOOT SHA-256
+`8f090dda6c298131e179088bdcc1bb93ae51b041ca29cb0b448eb8ec5cc6e47c`.
+
+Physical PSP: `modlist` showed no stale game module before this session's
+load. `ldstart`ed the scene-9 PRX over `host0:`, waited past the tick-240
+freeze, checked state before capturing: `exlist` empty (zero exceptions),
+`thlist` showed a live `main_thread`. Captured a native 480x272 `scrshot`
+(not committed per repository policy, SHA-256
+`d93bd5a033cc51c74b865c51c6041db7962a8b916e3ab4f46a6013d45c4df45c` before
+upscaling). Upscaled 2x nearest-neighbour and diffed against the PPSSPP
+golden: 50,323 raw differing pixels out of 522,240, but the visual diff
+image shows the same shape RE-203/204/205/207/208/209 already documented
+and excluded — a thin edge-antialiasing band around every polygon boundary
+plus PPSSPP's on-screen FPS-counter region (top right, not this project's
+rendering output). No solid interior region of the model differs from the
+golden. Killed the loaded module afterward (`exlist` still empty post-kill)
+and rebuilt the plain default EBOOT before ending the session.
+
+**Conclusion.** Ness renders correctly on real PSP hardware with zero
+exceptions, and its per-vertex lit/literal fix (RE-103) holds under real GE
+rasterization, not just PPSSPP. `PLAN.md` R2's "representative fighters
+render" row now cites five fighters (Mario, Fox, Captain Falcon, Kirby,
+Ness). The "no hardware-only rendering failures remain" row stays open: 7
+of 12 playable fighters and 39 of 41 stages remain untested on hardware.
+The next same-shaped increment is another untouched fighter or stage using
+this same `regression_capture_sceneN` pattern; `FIGHTER_COSTUME_COUNTS`
+(`tools/romtool/src/main.rs`) gives the model file id for any of the
+remaining fighters (Donkey Kong 317, Samus 320, Luigi 323, Link 324,
+Jigglypuff 330, Yoshi 338, Pikachu 341). Live analog-stick input still
+requires a human operator and cannot be resolved by an agent session alone.
+
+---
+
 ## RE-209 — Eighth golden scene (Kirby) verified on physical PSP hardware (`PLAN.md` R2)
 
 **Problem.** RE-208 hardware-verified a third fighter (Captain Falcon) but
