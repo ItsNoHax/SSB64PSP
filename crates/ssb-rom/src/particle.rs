@@ -1548,6 +1548,23 @@ pub mod generator {
             }
         }
 
+        /// `efManagerRippleMakeEffect` (`efmanager.c:4230-4242`) and every
+        /// other manager call site of this shape: create a generator from a
+        /// real bytecode script ID via [`Generator::spawn`] (`pos` still
+        /// `(0,0,0)` at that instant, per the module doc comment), then
+        /// overwrite `pos` directly with a live game-world position, exactly
+        /// as `efManagerRippleMakeEffect` does to its returned `LBGenerator*`
+        /// before ever returning it to its own caller. `vel` is left alone --
+        /// no real call site of this shape touches it -- so `line_target`
+        /// (kind `1`'s fixed endpoint, computed from `pos + vel`) is
+        /// recomputed here rather than inherited stale from `pos = (0,0,0)`.
+        pub fn spawn_at(script: &Script<'a>, pos: [f32; 3]) -> Self {
+            let mut gn = Self::spawn(script);
+            gn.pos = pos;
+            gn.line_target = [pos[0] + gn.vel[0], pos[1] + gn.vel[1], pos[2] + gn.vel[2]];
+            gn
+        }
+
         /// One real game frame: `lbParticleGeneratorFuncRun`'s per-generator
         /// body (`lbparticle.c:2296-2577`), minus the `gobj->flags`
         /// visibility mask and `LBPARTICLE_FLAG_PAUSE` check at its very top
@@ -2011,6 +2028,79 @@ mod tests {
         // comment). A different seed would very plausibly flip this one
         // generator's own outcome without indicating a bug either way.
         assert_eq!((ever_spawned, ever_visible), (60, 60));
+    }
+
+    /// RE-189: the runtime's real spawn event, `efManagerRippleMakeEffect`
+    /// (`efmanager.c:4230-4242`) -- `efcommon` script `0x61` (kind `0`, the
+    /// well-visible cone case, not one of the four vortex declines) created
+    /// via [`generator::Generator::spawn_at`] at a live, nonzero world
+    /// position rather than the always-`(0,0,0)` bytecode-triggered case
+    /// [`generator::Generator::spawn`] itself covers. Runs the same up-to-
+    /// 240-frame loop the archive-wide census above uses for one concrete
+    /// target and pins that it (a) never declines, (b) spawns at least one
+    /// particle whose position sits near the overridden `pos`, not the
+    /// origin `Generator::spawn` alone would have used, and (c) that
+    /// particle is visible at least once. A regression here means either
+    /// this script's own decode changed or `spawn_at`'s override stopped
+    /// taking effect.
+    #[test]
+    fn real_rom_ripple_manager_effect_spawns_a_visible_particle_near_its_live_position() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let rom = std::fs::read(path).unwrap();
+        let (scripts, textures) = decode_bank(&rom, BANKS[0]).unwrap();
+        assert_eq!(BANKS[0].name, "efcommon");
+        let script = &scripts[0x61];
+        assert_eq!(script.kind, 0);
+
+        let pos = [10.0, 20.0, -30.0];
+        let mut gen = generator::Generator::spawn_at(script, pos);
+        let mut rng = Rng::new(1);
+        let mut total_spawns = 0usize;
+        let mut visible_any = false;
+        let mut near_pos_any = false;
+        let mut ticks = 0usize;
+        for _ in 0..240 {
+            if !gen.alive {
+                break;
+            }
+            ticks += 1;
+            let particles = gen.tick(&mut rng).unwrap();
+            for p in particles {
+                total_spawns += 1;
+                let dist_sq = (0..3)
+                    .map(|i| (p.state.pos[i] - pos[i]).powi(2))
+                    .sum::<f32>();
+                // `var_f20`'s spread radius is at most `unk_0x38`'s
+                // magnitude; well under a thousand units for any real
+                // script, so a nearby particle and one still stuck at the
+                // origin are never ambiguous.
+                if dist_sq < 1_000.0 * 1_000.0 {
+                    near_pos_any = true;
+                }
+                let frame_count = textures
+                    .get(p.state.texture_id as usize)
+                    .map_or(0, |t| t.images.len() as u32);
+                if p.state.visible(frame_count) {
+                    visible_any = true;
+                }
+            }
+        }
+        // `generator_lifetime` is `1` and `update_rate` is `-1.0`
+        // (deterministic `frame -= update_rate`, i.e. `+= 1.0` every tick),
+        // so this generator always spawns exactly once, on its first real
+        // tick, then immediately ejects -- a runtime driving it needs at
+        // most one live spawned particle at a time, never a growing pool.
+        // A change here means the runtime's single-scratch-buffer draw
+        // assumption (`psp/src/main.rs`'s `effect_spawn_particle`) needs
+        // revisiting, not just this test.
+        assert_eq!((ticks, total_spawns), (1, 1));
+        assert!(
+            near_pos_any,
+            "no spawned particle landed near the overridden pos"
+        );
+        assert!(visible_any, "no spawned particle was ever visible");
     }
 }
 

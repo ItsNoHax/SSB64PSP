@@ -148,6 +148,50 @@ fn start_anim(
     })
 }
 
+/// Converts a pack-local particle script descriptor plus its bytecode slice
+/// into the `ssb-rom` simulator's own `Script`, the shape both
+/// [`ssb_rom::particle::Particle::spawn`] and
+/// [`ssb_rom::particle::generator::Generator::spawn`] need. Shared by
+/// `particle_view`'s single-frame inspector and RE-189's real spawn event so
+/// the two never drift on which fields get copied.
+fn pack_particle_script<'a>(
+    pack: &ssb_rom::pack::Pack<'a>,
+    index: u32,
+) -> Option<ssb_rom::particle::Script<'a>> {
+    let script = pack.particle_script(index)?;
+    let bytecode = pack.particle_bytecode(&script).unwrap_or(&[]);
+    Some(ssb_rom::particle::Script {
+        kind: script.kind,
+        texture_id: script.texture_id,
+        generator_lifetime: script.generator_lifetime,
+        particle_lifetime: script.particle_lifetime,
+        flags: script.flags,
+        gravity: script.gravity,
+        friction: script.friction,
+        velocity: script.velocity,
+        unknown_20: script.unknown_20,
+        unknown_24: script.unknown_24,
+        update_rate: script.update_rate,
+        size: script.size,
+        bytecode,
+    })
+}
+
+/// `efManagerRippleMakeEffect` (`efmanager.c:4230-4242`): creates a real
+/// `LBGenerator` from `efcommon` script `0x61` at a live position. RE-189's
+/// real manager-effect spawn-event proof-of-concept.
+fn spawn_ripple<'a>(
+    pack: Option<&ssb_rom::pack::Pack<'a>>,
+    pos: [f32; 3],
+) -> Option<ssb_rom::particle::generator::Generator<'a>> {
+    let p = pack?;
+    let bank = p.particle_bank(0)?;
+    let script = pack_particle_script(p, bank.first_script + 0x61)?;
+    Some(ssb_rom::particle::generator::Generator::spawn_at(
+        &script, pos,
+    ))
+}
+
 fn object_owning_node(
     pack: &ssb_rom::pack::Pack<'_>,
     node: u32,
@@ -285,6 +329,23 @@ unsafe fn run() -> ! {
     let mut particle_view = cfg!(feature = "particle_render_audit_capture");
     let mut particle_script_index: u32 = 0;
     let particle_script_count = pack.as_ref().map_or(0, |p| p.particle_script_count());
+
+    // RE-189: the real manager-effect spawn event -- a live `LBGenerator`
+    // (`efManagerRippleMakeEffect`'s `efcommon` script `0x61`) actually
+    // ticking and spawning a real particle every real frame at a live
+    // position, rather than `particle_view`'s single frame-4 snapshot at
+    // `(0,0,0)`. `effect_spawn_gen` and `effect_spawn_particle` both borrow
+    // bytecode straight out of `pack`, so they live exactly as long as it
+    // does. Both start `None`; the per-frame tick loop below creates (and,
+    // once both this generator and its one spawned particle finish,
+    // re-creates) them the same way whether `effect_spawn_view` started
+    // `true` from the audit-capture feature or was entered later by
+    // `C_LEFT`, so there is exactly one spawn-creation call site.
+    let mut effect_spawn_view = cfg!(feature = "effect_spawn_audit_capture");
+    let mut effect_spawn_gen: Option<ssb_rom::particle::generator::Generator> = None;
+    let mut effect_spawn_particle: Option<ssb_rom::particle::Particle> = None;
+    let mut effect_spawn_rng = ssb_rom::particle::Rng::new(1);
+    let effect_spawn_pos = [0.0f32, 0.0, 0.0];
 
     // Object view: a whole DObjDesc hierarchy assembled from its baked node
     // transforms, rather than one mesh floating at the origin. This is the
@@ -585,6 +646,26 @@ unsafe fn run() -> ! {
                 particle_view = !particle_view;
                 cam_distance = CAM_FIT;
                 spin = 0.0;
+            }
+            // RE-189: entering/leaving the real manager-effect spawn-event
+            // proof-of-concept -- `efManagerRippleMakeEffect`
+            // (`efmanager.c:4230-4242`), which creates a real `LBGenerator`
+            // from `efcommon` script `0x61` and hands it a live world
+            // position, rather than `particle_view`'s always-`(0,0,0)`
+            // single frame-4 snapshot. `C_LEFT` has no N64 counterpart and
+            // was otherwise unused anywhere in this viewer. Guarded the same
+            // way as `particle_view`'s own `C_RIGHT` toggle above (only
+            // `!stage_view`); the render arm below checks `effect_spawn_view`
+            // first, ahead of `particle_view`, so the two never both draw.
+            if !stage_view && pressed.contains(N64Buttons::C_LEFT) && particle_script_count > 0 {
+                effect_spawn_view = !effect_spawn_view;
+                cam_distance = CAM_FIT;
+                spin = 0.0;
+                // Cleared, not (re)spawned, here -- the per-frame tick loop
+                // below is the one place that creates a generator, and does
+                // so itself on the very next tick once it sees both `None`.
+                effect_spawn_gen = None;
+                effect_spawn_particle = None;
             }
             if !billboard_view && pressed.contains(N64Buttons::START) && stage_count > 0 {
                 stage_view = !stage_view;
@@ -960,6 +1041,52 @@ unsafe fn run() -> ! {
                 material_anim.tick(p);
             }
         }
+        // RE-189: one real simulation tick of the manager-effect spawn-event
+        // proof-of-concept. `generator_lifetime` is `1` and `update_rate` is
+        // deterministic (host regression pins this), so the generator
+        // spawns its one real particle on the very first tick after it is
+        // created, then immediately ejects; every following tick only
+        // advances that already-spawned particle. `freshly_spawned` exists
+        // so that particle is never ticked twice on its own spawn frame --
+        // `Generator::tick`'s own `make_particle` already creation-ticks it
+        // once, the same "child ticks once this frame" shape RE-187/188
+        // already established for `ParticleTree`/`Generator` -- an extra
+        // tick here would double-advance it.
+        if effect_spawn_view && !deterministic_capture_frozen(sim_frame_index) {
+            let gen_dead = effect_spawn_gen.as_ref().is_none_or(|g| !g.alive);
+            let particle_dead = effect_spawn_particle
+                .as_ref()
+                .is_none_or(|p| !p.state.alive);
+            if gen_dead && particle_dead {
+                // The real ROM retriggers `efManagerRippleMakeEffect` from a
+                // live gameplay event; this viewer has no such event yet, so
+                // it retriggers itself once both the generator and its one
+                // spawned particle have fully finished, purely so this mode
+                // is never caught with nothing live on screen no matter when
+                // a screenshot happens to land (`tools/run-ppsspp.sh` has no
+                // way to time one to a specific simulation tick).
+                effect_spawn_gen = spawn_ripple(pack, effect_spawn_pos);
+                effect_spawn_particle = None;
+            }
+            let mut freshly_spawned = false;
+            if let Some(gen) = &mut effect_spawn_gen {
+                if gen.alive {
+                    if let Ok(spawned) = gen.tick(&mut effect_spawn_rng) {
+                        if let Some(first) = spawned.into_iter().next() {
+                            effect_spawn_particle = Some(first);
+                            freshly_spawned = true;
+                        }
+                    }
+                }
+            }
+            if !freshly_spawned {
+                if let Some(particle) = &mut effect_spawn_particle {
+                    if particle.state.alive {
+                        let _ = particle.tick(&mut effect_spawn_rng);
+                    }
+                }
+            }
+        }
         results_transition.queue_capture(&mut gpu);
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
@@ -968,29 +1095,77 @@ unsafe fn run() -> ! {
 
         let mut dbg_radius = 0.0f32;
         match &pack {
+            // RE-189: draw the real spawn event's currently-live particle at
+            // its own current, real (already-ticked-forward) state -- not a
+            // fresh frame-4 snapshot the way `particle_view` below draws.
+            // Checked ahead of `particle_view` so the two views never race
+            // for the same frame's draw call.
+            Some(p) if effect_spawn_view => {
+                if let Some(particle) = &effect_spawn_particle {
+                    if particle.state.alive {
+                        let bank = p.particle_bank(0);
+                        let texture = bank.and_then(|b| {
+                            p.particle_texture(b.first_texture + particle.state.texture_id as u32)
+                        });
+                        let tex_global = texture
+                            .filter(|t| particle.state.visible(t.frame_count))
+                            .map(|t| {
+                                t.first_frame
+                                    + (particle.state.frame_id as u32).min(t.frame_count - 1)
+                            });
+                        if let Some(frame) = tex_global {
+                            let envcolor =
+                                (particle.state.flags & ssb_rom::particle::flag::ENVCOLOR != 0)
+                                    .then_some(particle.state.envcolor);
+                            let dist = (particle.state.size * 6.0).max(50.0);
+                            dbg_cam = dist;
+                            dbg_radius = particle.state.size;
+                            // Unlike `particle_view` below (see RE-185's own
+                            // doc comment on that draw call for why *that*
+                            // mode's camera never incorporates `pos`), this
+                            // particle's `pos` is a real, deliberately
+                            // nonzero live world position (RE-189), not
+                            // authored-script drift around a nominal origin
+                            // -- so the camera must re-centre on it, the same
+                            // `-centre` shape `billboard_view` already uses,
+                            // or a spawn placed away from the origin would
+                            // clip outside this viewer's narrow 38-degree
+                            // FOV exactly as RE-185 found for the other case.
+                            gpu.model_transform(
+                                [
+                                    -particle.state.pos[0],
+                                    -particle.state.pos[1],
+                                    -particle.state.pos[2] - dist,
+                                ],
+                                [0.0, 0.0, 0.0],
+                                1.0,
+                            );
+                            meshdraw::draw_particle(
+                                p,
+                                frame,
+                                particle.state.size,
+                                particle.state.primcolor,
+                                envcolor,
+                                &mut PARTICLE_QUAD.0,
+                            );
+                            dbg_tex = frame;
+                            shown = (
+                                u32::from(tex_global.is_some()) * 2,
+                                0,
+                                bank.map(|b| b.first_texture + particle.state.texture_id as u32)
+                                    .unwrap_or(0),
+                            );
+                        }
+                    }
+                }
+            }
             // RE-183: spawn the selected script fresh, tick it to frame 4
             // (the same deterministic-settle point RE-172/173/174's own
             // manager-effect audits use), then draw its resulting billboard.
             // Host-side, ROM-free single-particle simulation only (RE-182);
             // no generator/spawn-tree execution.
             Some(p) if particle_view => {
-                if let Some(script) = p.particle_script(particle_script_index) {
-                    let bytecode = p.particle_bytecode(&script).unwrap_or(&[]);
-                    let source = ssb_rom::particle::Script {
-                        kind: script.kind,
-                        texture_id: script.texture_id,
-                        generator_lifetime: script.generator_lifetime,
-                        particle_lifetime: script.particle_lifetime,
-                        flags: script.flags,
-                        gravity: script.gravity,
-                        friction: script.friction,
-                        velocity: script.velocity,
-                        unknown_20: script.unknown_20,
-                        unknown_24: script.unknown_24,
-                        update_rate: script.update_rate,
-                        size: script.size,
-                        bytecode,
-                    };
+                if let Some(source) = pack_particle_script(p, particle_script_index) {
                     let mut particle = ssb_rom::particle::Particle::spawn(&source);
                     let mut rng = ssb_rom::particle::Rng::new(1);
                     for _ in 0..4 {
@@ -1516,7 +1691,9 @@ unsafe fn run() -> ! {
 
         // Which browser is driving, so the readout describes what is on screen
         // rather than whichever index happens to be highest.
-        let (mode, index, count) = if particle_view {
+        let (mode, index, count) = if effect_spawn_view {
+            ("spawn", 0x61, 1)
+        } else if particle_view {
             ("ptcl ", particle_script_index, particle_script_count)
         } else if billboard_view {
             ("billb", billboard_index, billboard_count)
@@ -1533,7 +1710,9 @@ unsafe fn run() -> ! {
         let (src_file, src_offset) = pack
             .as_ref()
             .and_then(|p| {
-                if particle_view {
+                if effect_spawn_view {
+                    Some((0, 0))
+                } else if particle_view {
                     (0..p.particle_bank_count())
                         .filter_map(|i| p.particle_bank(i).map(|b| (i, b)))
                         .find(|(_, b)| {
@@ -1613,7 +1792,9 @@ unsafe fn run() -> ! {
             .unwrap_or(1);
 
         const WHITE: u32 = 0xFFFF_FFFF;
-        let viewer_title = if particle_view {
+        let viewer_title = if effect_spawn_view {
+            "REAL SPAWN EVENT PROOF-OF-CONCEPT (RE-189)  C-left: exit"
+        } else if particle_view {
             "PARTICLE PROOF-OF-CONCEPT (RE-183)  dpad: browse  C-right: exit"
         } else if billboard_view {
             "BILLBOARD AUDIT  dpad: browse  L: exit"
@@ -1711,6 +1892,25 @@ unsafe fn run() -> ! {
                 format_args!(
                     "PARTICLE AUDIT {}/{}  bank {} @0x{:X}  tris {}",
                     particle_script_index, particle_script_count, src_file, src_offset, shown.0,
+                ),
+            );
+        } else if cfg!(feature = "effect_spawn_audit_capture") {
+            // Same single-line-overlay reasoning as the other exhaustive
+            // audits above; shows whether the real spawn event's generator
+            // and particle are still alive so a capture can be told apart
+            // from one taken before the spawn or after the particle's own
+            // `particle_lifetime` expired.
+            gpu.debug_text(
+                8,
+                8,
+                WHITE,
+                format_args!(
+                    "EFFECT SPAWN AUDIT gen-alive {} particle-alive {}  tris {}",
+                    effect_spawn_gen.as_ref().is_some_and(|g| g.alive),
+                    effect_spawn_particle
+                        .as_ref()
+                        .is_some_and(|p| p.state.alive),
+                    shown.0,
                 ),
             );
         } else if !cfg!(any(

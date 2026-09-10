@@ -6,63 +6,80 @@
 
 **Milestone:** `R1 — Rendering Completeness`
 
-**Current task:** Wire one real manager-effect spawn event into runtime. This
-is the remaining scope after RE-188's `LBGenerator` implementation.
+**Current task:** Framebuffer paths — `PLAN.md` R1's next unchecked
+acceptance item ("all required framebuffer paths render"), first eligible
+`TODO` now that RE-189 closes the effects item.
 
-**Status:** `IN_PROGRESS`
+**Status:** `TODO`
 
-**Dependencies:** RE-172–188 complete. R0.5 physical PSP comparison remains
+**Dependencies:** RE-172–189 complete. R0.5 physical PSP comparison remains
 `VERIFYING` and is temporarily deferred by explicit user direction.
 
-**Relevant files:** `crates/ssb-rom/src/particle.rs`, `psp/src/main.rs`,
-`psp/src/meshdraw.rs`, `crates/ssb-rom/src/effect.rs`, `PLAN.md` R1,
-`docs/porting-status.md`, and `docs/reverse-engineering.md` RE-172–188.
+**Relevant files:** `PLAN.md` R1 (framebuffer/`MObj`/unexplained-commands
+bullets), `docs/porting-status.md`, `docs/rendering.md`, `TODO.md`.
 
 **First checks:** `git status --short`; `git log -5 --oneline`;
-`rg -n "spawn|ParticleTree|Generator|MAKEGENERATOR|EFDesc" crates psp`.
+`rg -n "framebuffer|FBObj|G_SETCIMG|copyfb" crates psp docs`.
 
-**Acceptance:** A source-backed real effect path creates and draws its
-particle/spawn tree in runtime; host regression and PPSSPP audit cover it; no
-physical-PSP claim is made.
+**Acceptance:** See `PLAN.md` R1's own "all required framebuffer paths
+render" bullet; not yet scoped in detail this session.
 
-**Stop condition:** Stop after one real spawn path is implemented and
-verified, or record an evidence-backed blocker. Do not begin combat.
+**Stop condition:** Not yet started.
 
 ## Current state
 
 - R0.5: `VERIFYING`; physical PSP validation unavailable/deferred.
-- R1: `IN_PROGRESS`; stages, fighters, costumes and animations have software
-  audits. Effects remain open.
-- Effects: RE-172–188 cover manager descriptors, transforms, material/texture/
-  colour animation, LBParticle decoding/packing, drawing, exhaustive audits,
-  spawn-tree execution and `LBGenerator`.
-- Remaining effects scope: real spawn-event wiring. See RE-188.
+- R1: `IN_PROGRESS`; stages, fighters, costumes, animations and effects now
+  have software audits.
+- Effects: RE-172–189 cover manager descriptors, transforms, material/
+  texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
+  audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
+  spawn event wired into the PSP runtime and PPSSPP-verified. `PLAN.md`
+  R1's "all required effects render" acceptance item is now checked off.
 - Next R1 work: framebuffer paths, runtime `MObj` display state, unexplained
   rendering commands/assets/material failures, and remaining regression rows.
 - R2/R3/combat: blocked behind R1 and the physical rendering gate.
 
 ## Last completed task
 
-**RE-188 — LBGenerator spawn subsystem**
+**RE-189 — real manager-effect spawn event wired into runtime**
 
-- Cone/line generator math and frame/lifetime handling implemented.
-- Vortex declines to existing `VortexUnsupported`; unknown kinds decline.
-- Archive census: 65 targets; 60 visible spawns, 4 vortex declines, 0 unknown.
-- Evidence: `docs/reverse-engineering.md` RE-188.
-- Commit: `c801cde`.
+- `efManagerRippleMakeEffect` (`efcommon` script `0x61`) ported as
+  `generator::Generator::spawn_at` (host, `crates/ssb-rom`) and `spawn_ripple`
+  (PSP runtime, `psp/src/main.rs`).
+- New debug-viewer mode `effect_spawn_view` (`C_LEFT`): ticks a live
+  `LBGenerator` and its one spawned particle every real frame and draws the
+  particle at its own live, re-centred position — not a static frame-4
+  snapshot.
+- Confirmed this specific target always spawns exactly one particle, once,
+  then ejects (`generator_lifetime == 1`, deterministic `update_rate`); the
+  debug viewer self-retriggers once both finish so any screenshot shows a
+  live effect.
+- Refactored `particle_view`'s inline script-conversion into a shared
+  `pack_particle_script` helper; no behaviour change (re-verified on-device).
+- Evidence: `docs/reverse-engineering.md` RE-189.
+- Commit: pending (this session).
 
 ## Verification
 
-RE-188 passed `cargo test --workspace` (336 `ssb-rom` tests, with and without
-`SSB64_ROM`), strict Clippy including `--no-default-features`, and
-`cargo fmt --check`. `romtool particles` matches regression results. No PSP
-file changed; no new PPSSPP run was required.
+RE-189 passed `cargo test --workspace` (337 `ssb-rom` tests, was 336, with
+and without `SSB64_ROM`), strict Clippy (`cargo clippy --workspace --lib
+--tests -- -D warnings`, `cargo clippy -p ssb-rom --no-default-features --
+-D warnings`), and `cargo fmt --check` (root workspace and `psp/`
+separately). `psp/`'s own strict clippy run was not required (not part of
+this project's clippy gate; introduced no new findings versus `main`).
+On-device: `cargo psp --release --features effect_spawn_audit_capture` +
+`tools/run-ppsspp.sh --no-build` captured a real, non-blank particle sprite
+with `gen-alive false particle-alive true` at both 3s and 8s after boot,
+confirming the self-retrigger keeps the effect visibly alive indefinitely.
+Re-captured `particle_render_audit_capture` unchanged, confirming the
+`pack_particle_script` refactor did not regress RE-183's mode.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–188.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–189.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 

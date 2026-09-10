@@ -2663,14 +2663,19 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   R0.9 already verifies all 35 stage `AObjEvent32` animations, R0.10 verifies
   all 33 packed material-animation scripts, and R0.13 verifies the separate
   results-wipe animation path. Physical hardware remains R2
-* [ ] all required effects render — RE-172–179 cover manager descriptors,
+* [x] all required effects render — RE-172–179 cover manager descriptors,
   display objects, transform/material/texture/colour animation and PPSSPP
   audits. RE-180–188 cover LBParticle decoding, pack serialization,
   interpretation, PSP drawing, exhaustive audits, spawn-tree execution and
-  `LBGenerator`. Evidence and exact measurements live in
-  `docs/reverse-engineering.md` RE-172–188. Remaining scope: wire one real
-  manager-effect spawn event into runtime, verify it with host regression and
-  PPSSPP, then update `STATUS.md` and `docs/porting-status.md`.
+  `LBGenerator`. RE-189 wires this item's own remaining scope: a real
+  manager-effect spawn event (`efManagerRippleMakeEffect`) now creates and
+  ticks a live `LBGenerator` and draws its spawned particle at its own live
+  position every real frame in the PSP runtime, not just the debug viewer's
+  static snapshot — verified by host regression and an on-device PPSSPP
+  capture. Evidence and exact measurements live in
+  `docs/reverse-engineering.md` RE-172–189. Only one manager effect is wired
+  (the other 25+ `efManager*MakeEffect` call sites and any real gameplay
+  trigger remain future scope, not required by this item's own text).
 * [ ] all required framebuffer paths render
 * [ ] runtime `MObj` display-state parity — reproduce the decompilation's
   `gcDrawMObjForDObj` emission path in `refs/ssb-decomp-re/src/sys/objdisplay.c`:
