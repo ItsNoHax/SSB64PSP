@@ -128,6 +128,8 @@ are only the 26 runtime framebuffer references. See RE-211.
   `reset` after every `kill`, not only after an observed fault. Exhaustive
   no-failures-remain coverage (6 of 12 fighters, 39 of 41 stages still
   untested) and live analog-stick input remain open.
+- Movement core: dash and run velocities now follow fighter facing, including
+  after a left turn; regression coverage added for left-facing run/dash state.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -190,6 +192,9 @@ diffed against the new PPSSPP golden — plus, after the first two attempts
 silently failed, a `pspsh -e reset` recovery step re-verified twice to
 confirm it reliably fixes the fault before it was documented as the new
 default step.
+
+Post-RE-212 movement fix: `ssb-game` and full workspace tests pass; left-facing
+dash/run velocity regression passes. No pack or rendering code changed.
 
 ## Documentation and evidence map
 
