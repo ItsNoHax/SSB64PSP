@@ -2789,9 +2789,12 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 Status: `IN_PROGRESS` — R1 and R0.5 are complete; RE-201 begins hardware
 validation. RE-202 found and fixed a hardware-only crash in the interactive
 viewer's debug HUD (`sceGuDebugFlush`) that RE-201's `regression_capture`
-run never exercised; acceptance items below are not yet checked off pending
-further on-device interactive verification (fighter movement via the analog
-nub, stage/material/texture variety) now that the crash is fixed.
+run never exercised. RE-203 then ran all four golden regression scenes on
+the same physical PSP with zero exceptions and confirmed their content
+matches the PPSSPP goldens (modulo expected edge antialiasing), checking off
+most acceptance items below. Framebuffer effects, VRAM measurement, and
+live analog-stick input remain open — the last requires a human physically
+operating the device, not reproducible through `pspsh`.
 
 ### Objective
 
@@ -2801,19 +2804,19 @@ PPSSPP is not sufficient.
 
 ### Acceptance
 
-* [ ] EBOOT boots on physical PSP
-* [ ] runtime asset pack loads
-* [ ] representative fighters render
-* [ ] representative stages render
-* [ ] fighter animation works
-* [ ] stage animation works
-* [ ] materials render correctly
-* [ ] textures render correctly
-* [ ] framebuffer effects work
+* [x] EBOOT boots on physical PSP — RE-201, RE-202, RE-203
+* [x] runtime asset pack loads — RE-203 (pack hash `7647db75...650b2f0`, all four scenes render pack content correctly)
+* [x] representative fighters render — RE-203: Mario matches PPSSPP golden
+* [x] representative stages render — RE-203: Dream Land, `StageSectorFile2`, `MVOpeningRoom`
+* [x] fighter animation works — RE-203: Mario's 240-tick fall/physics simulation completes on hardware and matches the PPSSPP golden
+* [ ] stage animation works — `StageAnimator::tick` ran 240 hardware ticks without fault (RE-203) but no scene captured this session isolates visibly animated stage geometry
+* [x] materials render correctly — RE-203: texture-blend, flat-colour and alpha-blend/translucency combiner shapes all match their goldens
+* [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
+* [ ] framebuffer effects work — not hardware-tested; RE-190–193's `SObj` sprite path is PPSSPP-verified only
 * [ ] VRAM usage verified
-* [ ] no hardware-only rendering failures remain
-* [ ] hardware model recorded
-* [ ] build/environment recorded
+* [ ] no hardware-only rendering failures remain — four golden scenes plus the plain interactive build are now clean, but coverage is not exhaustive across all fighters/stages/effects
+* [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
+* [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)
 
 ---
 
