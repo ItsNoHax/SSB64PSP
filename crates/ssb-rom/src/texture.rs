@@ -90,33 +90,85 @@ impl Rgba8 {
     }
 }
 
-/// Pre-bakes `G_TX_MIRROR` into the pixel data by doubling the affected
-/// axes, so a plain hardware `Repeat` wrap reproduces a real mirror-repeat
-/// exactly (RE-067): `sceGuTexScale` already renormalises UVs against
-/// whatever width/height a texture actually reports, so a caller that just
-/// swaps in this wider/taller image needs no other change.
+/// Pre-bakes `G_TX_MIRROR` into the pixel data, so a plain hardware wrap
+/// mode reproduces real mirror addressing exactly without a programmable
+/// texture stage: `sceGuTexScale` already renormalises UVs against whatever
+/// width/height a texture actually reports, so a caller that just swaps in
+/// this wider/taller image needs no other change.
 ///
 /// `img` must already be exactly one repeat period on each mirrored axis
 /// (`crates/ssb-rom/src/mesh.rs`'s `current_texture()` narrows a `TextureRef`
 /// to `1 << mask` for this reason) -- mirroring anything else would bake in
 /// whatever partial pattern happened to be visible, not the real period.
-pub fn mirror_extend(img: &Rgba8, mirror_s: bool, mirror_t: bool) -> Rgba8 {
-    if !mirror_s && !mirror_t {
+///
+/// A mirrored axis with no clamp bit bakes exactly one mirrored pair (two
+/// periods): a plain `Repeat` wrap over that doubled image already mirrors
+/// forever, exactly, since wrapping back to the start resumes the same
+/// (unflipped) phase the doubled image began with. A mirrored axis *with*
+/// the clamp bit is different (`PLAN.md` R2.0/P0c, RE-220/RE-221): real
+/// hardware keeps mirroring at every period boundary up to the tile's own
+/// drawn-rect far edge before it clamps, not just through the first
+/// mirrored pair, so this bakes every period the drawn rect spans --
+/// `drawn_width`/`drawn_height`, `TextureRef`'s own fields -- instead of
+/// always exactly two; a plain `sceGuTexWrap(Clamp)` on the result then
+/// holds exactly the real far-edge texel forever, matching
+/// `n64_addressing::address_axis`'s clamp target for every coordinate a
+/// real drawn primitive can reach (see `n64_addressing::psp_lowering_axis`,
+/// which models this same fold for direct comparison).
+pub fn mirror_extend(
+    img: &Rgba8,
+    mirror_s: bool,
+    mirror_t: bool,
+    clamp_s: bool,
+    clamp_t: bool,
+    drawn_width: u32,
+    drawn_height: u32,
+) -> Rgba8 {
+    let (w, h) = (img.width, img.height);
+    let out_w = mirror_axis_len(w, mirror_s, clamp_s, drawn_width);
+    let out_h = mirror_axis_len(h, mirror_t, clamp_t, drawn_height);
+    if out_w == w && out_h == h {
         return img.clone();
     }
-    let (w, h) = (img.width, img.height);
-    let out_w = if mirror_s { w * 2 } else { w };
-    let out_h = if mirror_t { h * 2 } else { h };
     let mut out = Rgba8::new(out_w, out_h);
     for y in 0..out_h {
-        let sy = if y < h { y } else { 2 * h - 1 - y };
+        let sy = mirror_fold(y, h, mirror_t);
         for x in 0..out_w {
-            let sx = if x < w { x } else { 2 * w - 1 - x };
+            let sx = mirror_fold(x, w, mirror_s);
             let px = img.get((sy * w + sx) as usize);
             out.put((y * out_w + x) as usize, px);
         }
     }
     out
+}
+
+/// One axis's baked output length -- see [`mirror_extend`]'s doc comment
+/// for the three cases this distinguishes.
+fn mirror_axis_len(period: u32, mirror: bool, clamp: bool, drawn: u32) -> u32 {
+    if !mirror {
+        period
+    } else if clamp {
+        drawn.max(1)
+    } else {
+        period * 2
+    }
+}
+
+/// Which source texel (0..period) a baked output index `i` reads from: the
+/// identity for an unmirrored axis, otherwise the mask-period mirror fold
+/// (unflipped on an even period index, reversed on an odd one) --
+/// `n64_addressing`'s `fold_period_mirror` transcribes the same fold from
+/// the real hardware's bit-twiddled form for direct comparison.
+fn mirror_fold(i: u32, period: u32, mirror: bool) -> u32 {
+    if !mirror {
+        return i;
+    }
+    let phase = i % period;
+    if (i / period) % 2 == 1 {
+        period - 1 - phase
+    } else {
+        phase
+    }
 }
 
 /// Softens a texture by averaging each texel with its 8 neighbours,
@@ -344,13 +396,13 @@ mod tests {
     #[test]
     fn mirror_extend_with_neither_axis_is_a_plain_copy() {
         let img = ab_2x1();
-        let out = mirror_extend(&img, false, false);
+        let out = mirror_extend(&img, false, false, false, false, 0, 0);
         assert_eq!(out, img);
     }
 
     #[test]
     fn mirror_extend_s_only_flips_the_second_half_horizontally() {
-        let out = mirror_extend(&ab_2x1(), true, false);
+        let out = mirror_extend(&ab_2x1(), true, false, false, false, 0, 0);
         assert_eq!((out.width, out.height), (4, 1));
         // A B | B A -- the second copy is the first one reversed, so the
         // pattern bounces smoothly across the seam at x=2 instead of
@@ -371,7 +423,7 @@ mod tests {
         let mut img = Rgba8::new(1, 2);
         img.put(0, [1, 0, 0, 255]);
         img.put(1, [2, 0, 0, 255]);
-        let out = mirror_extend(&img, false, true);
+        let out = mirror_extend(&img, false, true, false, false, 0, 0);
         assert_eq!((out.width, out.height), (1, 4));
         assert_eq!(
             [out.get(0), out.get(1), out.get(2), out.get(3)],
@@ -395,7 +447,7 @@ mod tests {
         img.put(2, [3, 0, 0, 255]); // (0,1) bottom-left
         img.put(3, [4, 0, 0, 255]); // (1,1) bottom-right
 
-        let out = mirror_extend(&img, true, true);
+        let out = mirror_extend(&img, true, true, false, false, 0, 0);
         assert_eq!((out.width, out.height), (4, 4));
         let px = |x: u32, y: u32| out.get((y * out.width + x) as usize);
 
@@ -411,6 +463,34 @@ mod tests {
         // Bottom-right quadrant: mirrored on both axes (180 degree turn).
         assert_eq!(px(2, 2), [4, 0, 0, 255]);
         assert_eq!(px(3, 3), [1, 0, 0, 255]);
+    }
+
+    /// `PLAN.md` R2.0/P0c: a mirror+clamp axis bakes every period the
+    /// drawn rect spans, not just the first mirrored pair. A 2-texel
+    /// period spanning a 7-texel drawn rect covers periods 0,1,2 in full
+    /// plus one texel of period 3 -- unflipped, flipped, unflipped, then
+    /// the start of another flipped period.
+    #[test]
+    fn mirror_extend_with_clamp_bakes_every_period_the_drawn_rect_spans() {
+        let out = mirror_extend(&ab_2x1(), true, false, true, false, 7, 0);
+        assert_eq!((out.width, out.height), (7, 1));
+        let a = [1, 0, 0, 255];
+        let b = [2, 0, 0, 255];
+        assert_eq!(
+            (0..7).map(|x| out.get(x)).collect::<alloc::vec::Vec<_>>(),
+            [a, b, b, a, a, b, b],
+            "AB|BA|AB|B: periods 0 and 2 unflipped, period 1 flipped, period 3 begins flipped"
+        );
+    }
+
+    /// A drawn rect narrower than one mask period never reaches a second
+    /// period, so the baked output is just the leading slice of the first
+    /// (unflipped) period -- no mirroring visible at all.
+    #[test]
+    fn mirror_extend_with_clamp_and_drawn_rect_inside_first_period_is_unflipped() {
+        let out = mirror_extend(&ab_2x1(), true, false, true, false, 1, 0);
+        assert_eq!((out.width, out.height), (1, 1));
+        assert_eq!(out.get(0), [1, 0, 0, 255]);
     }
 
     #[test]

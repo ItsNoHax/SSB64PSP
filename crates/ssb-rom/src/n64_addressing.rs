@@ -125,36 +125,66 @@ pub fn address_axis(axis: &TileAxis, coord_s10_5: i32) -> i32 {
     s
 }
 
-/// Models the *current PSP lowering* for one axis, for direct comparison
-/// against [`address_axis`]: `texture::mirror_extend` pre-bakes a mirrored
-/// double when `mirror` is set, then `sceGuTexWrap`'s `Clamp` or `Repeat`
-/// addresses that (possibly doubled) image directly -- no mask-period
-/// folding beyond the single bake, and no distinction between "beyond the
-/// first mirrored period" and "beyond the tile's real drawn-rect far edge"
-/// (`mesh.rs::current_texture`, `crates/psp/src/meshdraw.rs::bind_texture`).
+/// The mask+mirror fold for a non-negative, already-clamped-or-in-range raw
+/// texel offset, in closed (non-bit-twiddled) form: unflipped on an even
+/// period index, reversed on an odd one. Equivalent to [`address_axis`]'s
+/// own `tcmask_coupled` bit-twiddling for every non-negative `s` real
+/// content produces (real archive periods never approach the 10-bit
+/// register width `address_axis`'s `shift_amount = axis.mask.min(10)`
+/// guards against) -- kept as a separate closed form here because
+/// [`texture::mirror_extend`](crate::texture::mirror_extend) needs the same
+/// fold to actually bake pixels, not just compute one index.
+fn fold_period_mirror(s: i32, period: i32, mirror: bool) -> i32 {
+    if period <= 0 {
+        return 0;
+    }
+    let phase = s.rem_euclid(period);
+    if mirror && s.div_euclid(period) % 2 != 0 {
+        period - 1 - phase
+    } else {
+        phase
+    }
+}
+
+/// Models the *PSP lowering* for one mirrored axis, for direct comparison
+/// against [`address_axis`]: [`texture::mirror_extend`](crate::texture::mirror_extend)
+/// pre-bakes a mirrored image and `sceGuTexWrap` addresses it directly.
 ///
-/// Returns an index into the *original* (pre-mirror-doubling) image, so it
-/// is directly comparable to [`address_axis`]'s result: both name which
-/// texel of the real decoded texture ends up sampled.
+/// A mirrored axis with no clamp bakes exactly one mirrored pair, which a
+/// plain `Repeat` wrap then mirrors forever, exactly. A mirrored *and*
+/// clamped axis (`PLAN.md` R2.0/P0c, RE-220/RE-221) bakes every period up
+/// to `drawn` (the tile's own drawn-rect extent on this axis,
+/// `TextureRef::drawn_width`/`drawn_height`) instead of just the first
+/// mirrored pair, so `sceGuTexWrap(Clamp)` then holds exactly the real
+/// far-edge texel forever -- matching [`address_axis`]'s own clamp target
+/// (the drawn rect's far edge, folded through the same mask/mirror stage)
+/// for every coordinate a real drawn primitive can reach.
+///
+/// Returns an index into the *original* (pre-mirror-baking) image, so it is
+/// directly comparable to [`address_axis`]'s result: both name which texel
+/// of the real decoded texture ends up sampled.
 ///
 /// `coord_rel_s10_5` must already be relative to the tile origin, matching
 /// what `mesh::Builder::push_vertex` bakes into `MeshVertex::uv` for a
 /// clamped axis (RE-152) -- the same basis [`address_axis`] uses when called
 /// with `origin_q2: 0`.
-pub fn psp_lowering_axis(coord_rel_s10_5: i32, width: u32, mirror: bool, clamp: bool) -> i32 {
-    let width = width as i32;
-    let image_width = if mirror { width * 2 } else { width };
+pub fn psp_lowering_axis(coord_rel_s10_5: i32, period: u32, drawn: u32, mirror: bool, clamp: bool) -> i32 {
+    let period = period as i32;
     let raw_index = coord_rel_s10_5.div_euclid(32);
-    let idx = if clamp {
-        raw_index.clamp(0, image_width - 1)
-    } else {
-        raw_index.rem_euclid(image_width)
-    };
-    if mirror && idx >= width {
-        2 * width - 1 - idx
-    } else {
-        idx
+    if !mirror {
+        return if clamp {
+            raw_index.clamp(0, period - 1)
+        } else {
+            raw_index.rem_euclid(period)
+        };
     }
+    if !clamp {
+        let image_width = period * 2;
+        let idx = raw_index.rem_euclid(image_width);
+        return if idx >= period { 2 * period - 1 - idx } else { idx };
+    }
+    let last = (drawn.max(1) as i32) - 1;
+    fold_period_mirror(raw_index.clamp(0, last), period, true)
 }
 
 #[cfg(test)]
@@ -239,43 +269,46 @@ mod tests {
         assert_eq!(clamped, address_axis(&a, 500 << 5), "clamp holds one fixed index");
     }
 
-    /// Direct measurement of the divergence bullet 1 asks about: at the
-    /// *third* mask period (past the first mirrored pair, still short of the
-    /// drawn-rect far edge), the real hardware model and the current PSP
-    /// lowering model (mirror-double + `sceGuTexWrap(Clamp)`) disagree,
-    /// because the PSP model has already clamped by then.
+    /// `PLAN.md` R2.0/P0c (RE-221): at the *third* mask period (past the
+    /// first mirrored pair, still short of the drawn-rect far edge), the
+    /// fixed PSP lowering model now agrees with real hardware -- pre-fix, a
+    /// mirror-double + `sceGuTexWrap(Clamp)` model would have already
+    /// clamped here (RE-220's measured divergence), because it only ever
+    /// baked two periods regardless of how far the drawn rect actually
+    /// extends. This axis's drawn rect is 128 texels wide (`sh = 127`, one
+    /// past the fourth 32-texel period boundary), so the fixed model bakes
+    /// four periods, not two.
     #[test]
-    fn psp_lowering_diverges_from_hardware_past_the_first_mirrored_period() {
+    fn psp_lowering_no_longer_diverges_from_hardware_past_the_first_mirrored_period() {
         let a = axis(5, true, true, 0, 127 << 2);
         let coord = (2 * 32 + 5) << 5; // third period, real hardware: still mirroring
         let hw = address_axis(&a, coord);
-        let psp = psp_lowering_axis(coord, 1 << 5, true, true);
+        let psp = psp_lowering_axis(coord, 1 << 5, 128, true, true);
         assert_eq!(hw, 5, "hardware: third period unflipped");
-        // The PSP model has already clamped, to the doubled image's last
-        // texel (index 63 of 64), which its mirrored second half folds back
-        // to original-image texel 0 -- not texel 5.
-        assert_eq!(psp, 0, "PSP model: clamped to the doubled image's far edge");
-        assert_ne!(hw, psp, "measured divergence, not merely theoretical");
+        assert_eq!(psp, 5, "fixed PSP model: also still mirroring, not yet clamped");
     }
 
-    /// Within the first two periods (the part the current PSP model's
-    /// mirror-double actually covers), the two models agree.
+    /// The fixed PSP lowering model matches real hardware at every period a
+    /// 128-texel drawn rect spans over a 32-texel mask -- not just the
+    /// first mirrored pair the old two-period bake covered.
     #[test]
-    fn psp_lowering_matches_hardware_within_the_first_mirrored_pair() {
+    fn psp_lowering_matches_hardware_through_every_period_the_drawn_rect_spans() {
         let a = axis(5, true, true, 0, 127 << 2);
-        for texel in [0i32, 5, 31] {
+        for texel in [0i32, 5, 31, 32 + 5, 2 * 32 + 5, 3 * 32 + 5, 3 * 32 + 31] {
             let coord = texel << 5;
             assert_eq!(
                 address_axis(&a, coord),
-                psp_lowering_axis(coord, 1 << 5, true, true),
-                "texel {texel} in the first period"
+                psp_lowering_axis(coord, 1 << 5, 128, true, true),
+                "texel {texel}"
             );
         }
-        let coord = (32 + 5) << 5;
+        // Past the drawn-rect far edge: both models now clamp to the same
+        // held index.
+        let coord = 500 << 5;
         assert_eq!(
             address_axis(&a, coord),
-            psp_lowering_axis(coord, 1 << 5, true, true),
-            "second (mirrored) period"
+            psp_lowering_axis(coord, 1 << 5, 128, true, true),
+            "past the far edge"
         );
     }
 

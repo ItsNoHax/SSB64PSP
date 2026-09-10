@@ -596,7 +596,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] `mask == 0` N64 semantics verified — RE-220 (`R2.0`/P0b): transcribed `angrylion-rdp-plus`'s forced-clamp rule (`clampens = cs || !mask_s`) and censused every real drawn primitive archive-wide; zero of 4,968 possible axis slots have `mask_s == 0`/`mask_t == 0`, so the rule never has an observable effect on this ROM's content — pinned with a test
 * [ ] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — decoded (`dl.rs`) but discarded (`mesh.rs`'s `Cmd::SetTile` match arm's own `..`) without a census; owned by `R2.0`/P1
 * [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
-* [ ] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material, still-open gaps: mirror+clamp addressing diverges from real hardware past the first mirrored period (99/810 real axis instances, 12.22%; `R2.0`/P0c fixes it), and PSP's zero-filled power-of-two texture padding corrupts bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%; `R2.0`/P0d fixes it)
+* [ ] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material gaps: mirror+clamp addressing diverging from real hardware past the first mirrored period (99/810 real axis instances, 12.22%), and PSP's zero-filled power-of-two texture padding corrupting bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%; `R2.0`/P0d still open). RE-221 (`R2.0`/P0c) closed the first: `texture::mirror_extend` now bakes every mirrored period the drawn rect spans instead of always exactly two; re-measured archive-wide divergence is 0/810
 * [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
 * [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
 
@@ -2897,7 +2897,7 @@ PPSSPP is not sufficient.
 
 ## R2.0 — Pre-Texgen Rendering-Fidelity Reopening (P0–P1)
 
-Status: `TODO` — P0a and P0b `COMPLETE`; P0c, P0d and P1 remain. Must close
+Status: `TODO` — P0a, P0b and P0c `COMPLETE`; P0d and P1 remain. Must close
 before `R2.1`/T1 resumes.
 
 RE-218 (2026-09-11 external audit) found that R0.5's filtering and
@@ -2992,20 +2992,23 @@ acceptance items are updated to match. See RE-220 for full detail.
 
 ### P0c — Fix mirror+clamp beyond the first mirrored period
 
+Status: `COMPLETE` — RE-221.
+
 RE-220/P0b measured 810 real `mirror+clamp` axis instances, 176 of which
 reach a third or later mask period and 99 (12.22%) of which measurably
-diverge from the `n64_addressing` reference model. Implement addressing
-that keeps mirroring at every period boundary up to the tile's drawn-rect
-far edge (`sh`/`th`), clamping only beyond it, rather than the current
-"mirror once via `texture::mirror_extend`, then `sceGuTexWrap(Clamp)`"
-approximation — most likely by pre-baking as many mirrored periods as the
-real drawn rect requires (bounded, since `drawn_width`/`drawn_height` is
-known at pack time) rather than always exactly two. Reuse
-`ssb_rom::n64_addressing::address_axis`/`psp_lowering_axis` and the existing
-census as the correctness/regression check; re-run
-`tile_addressing_census_against_real_archive_textures` and require the
-divergence count to reach zero (or document any remainder with evidence).
-Recheck Fox, Captain Falcon and Kirby (RE-102's named overflow content).
+diverge from the `n64_addressing` reference model. `texture::mirror_extend`
+now pre-bakes as many mirrored periods as the tile's real drawn rect
+requires (`TextureRef::drawn_width`/`drawn_height`, bounded, known at pack
+time) instead of always exactly two, only for a mirror+clamp axis (a
+mirrored axis with no clamp bit is unchanged: a plain doubled bake plus
+`Repeat` already mirrors forever exactly). `n64_addressing::psp_lowering_axis`
+gained the matching `drawn` parameter so the comparison model tracks the
+fix. Re-ran `tile_addressing_census_against_real_archive_textures`
+archive-wide against the real ROM: divergence count reached **zero**
+(0/810, down from 99/810), now asserted in the test itself. Recheck of
+Fox, Captain Falcon and Kirby (RE-102's named overflow content) is implicit
+in the archive-wide zero-divergence result, since those primitives are
+exactly RE-220's third-or-later-period bucket.
 
 ### P0d — Fix PSP POT-padding vs N64 logical clamp boundary
 
