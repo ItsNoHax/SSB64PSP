@@ -7206,4 +7206,164 @@ mod tests {
             .iter()
             .all(|&(file, graph, _)| direct.contains(&(file, graph))));
     }
+
+    /// `PLAN.md` R2.0/P0a: measures `n64_filter::sample_3point` (the RDP's
+    /// real 3-point reconstruction) against `n64_filter::sample_bilinear`
+    /// (PSP `Linear`'s symmetric four-tap reconstruction) densely across
+    /// every unique real bound texture archive-wide, not a synthetic case.
+    /// Dedup and decode logic mirrors `texdump` exactly, since that is the
+    /// project's own established "measure through the real pipeline, not a
+    /// separate heuristic scan" precedent (RE-112).
+    #[test]
+    fn filter_reconstruction_census_against_real_archive_textures() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+
+        let mut seen: BTreeSet<(u32, u32)> = BTreeSet::new();
+        let mut textures_censused = 0usize;
+        let mut samples_total = 0u64;
+        let mut at_least_8 = 0u64;
+        let mut at_least_16 = 0u64;
+        let mut at_least_32 = 0u64;
+        // (max_diff, file, offset, width, height)
+        let mut worst: Vec<(u8, u32, u32, u32, u32)> = Vec::new();
+        let mut named: std::collections::BTreeMap<(u32, u32), (u8, f64)> = Default::default();
+
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for m in super::file_meshes(&loaded, file) {
+                for prim in &m.primitives {
+                    let Some(t) = prim.material.texture else {
+                        continue;
+                    };
+                    let texels = super::Texels {
+                        home: file,
+                        all: &loaded.files,
+                    };
+                    let home = t.data_file.map_or(id, u32::from);
+                    if !seen.insert((home, t.data_offset)) {
+                        continue;
+                    }
+                    if (t.data_offset >> 24) != 0 || t.data_offset == 0 {
+                        continue;
+                    }
+
+                    let need = ssb_rom::texture::data_len(t.width as u32, t.height as u32, t.size);
+                    let Some(src) = texels
+                        .bytes(t.data_file)
+                        .and_then(|d| d.get(t.data_offset as usize..t.data_offset as usize + need))
+                    else {
+                        continue;
+                    };
+                    let tlut: Vec<u16> = match t.palette_offset {
+                        Some(off) => {
+                            let n = t.palette_entries.max(1) as usize;
+                            texels
+                                .bytes(t.palette_file)
+                                .and_then(|d| d.get(off as usize..off as usize + n * 2))
+                                .map(ssb_rom::texture::parse_tlut)
+                                .unwrap_or_default()
+                        }
+                        None => Vec::new(),
+                    };
+                    let Ok(img) = ssb_rom::texture::decode(
+                        src,
+                        t.width as u32,
+                        t.height as u32,
+                        t.format,
+                        t.size,
+                        (!tlut.is_empty()).then_some(tlut.as_slice()),
+                    ) else {
+                        continue;
+                    };
+                    if img.width < 2 || img.height < 2 {
+                        // No interior 2x2 texel quad to filter.
+                        continue;
+                    }
+
+                    textures_censused += 1;
+                    let mut tex_max = 0u8;
+                    let mut tex_sum = 0u64;
+                    let mut tex_count = 0u64;
+                    // 4 samples per texel per axis (1/32-texel step 8).
+                    let s_max = img.width as i32 * 32;
+                    let t_max = img.height as i32 * 32;
+                    let mut sq = 0;
+                    while sq < s_max {
+                        let mut tq = 0;
+                        while tq < t_max {
+                            let a = ssb_rom::n64_filter::sample_3point(&img, sq, tq);
+                            let b = ssb_rom::n64_filter::sample_bilinear(&img, sq, tq);
+                            let d = ssb_rom::n64_filter::max_abs_diff(a, b);
+                            tex_max = tex_max.max(d);
+                            tex_sum += d as u64;
+                            tex_count += 1;
+                            samples_total += 1;
+                            if d >= 8 {
+                                at_least_8 += 1;
+                            }
+                            if d >= 16 {
+                                at_least_16 += 1;
+                            }
+                            if d >= 32 {
+                                at_least_32 += 1;
+                            }
+                            tq += 8;
+                        }
+                        sq += 8;
+                    }
+                    let tex_mean = tex_sum as f64 / tex_count as f64;
+                    named.insert((home, t.data_offset), (tex_max, tex_mean));
+                    worst.push((
+                        tex_max,
+                        home,
+                        t.data_offset,
+                        t.width as u32,
+                        t.height as u32,
+                    ));
+                }
+            }
+        }
+
+        worst.sort_by_key(|a| std::cmp::Reverse(a.0));
+        println!(
+            "censused {textures_censused} unique real textures, {samples_total} interior sample points"
+        );
+        println!(
+            "samples with max-channel diff >=8/255:  {at_least_8} ({:.4}%)",
+            at_least_8 as f64 * 100.0 / samples_total as f64
+        );
+        println!(
+            "samples with max-channel diff >=16/255: {at_least_16} ({:.4}%)",
+            at_least_16 as f64 * 100.0 / samples_total as f64
+        );
+        println!(
+            "samples with max-channel diff >=32/255: {at_least_32} ({:.4}%)",
+            at_least_32 as f64 * 100.0 / samples_total as f64
+        );
+        println!("worst 10 textures by max diff:");
+        for (max_diff, file, offset, w, h) in worst.iter().take(10) {
+            println!("  file {file} offset {offset:#X} {w}x{h}: max diff {max_diff}");
+        }
+        // RE-081's two named, on-device-relevant Dream Land canopy
+        // textures: "highlight" (magnified) and "gradient" (minified).
+        if let Some((max_diff, mean)) = named.get(&(103, 0x5F0)) {
+            println!(
+                "Dream Land canopy highlight (file 103 offset 0x5F0): max diff {max_diff}, mean diff {mean:.3}"
+            );
+        }
+        if let Some((max_diff, mean)) = named.get(&(103, 0xE20)) {
+            println!(
+                "Dream Land canopy gradient (file 103 offset 0xE20): max diff {max_diff}, mean diff {mean:.3}"
+            );
+        }
+
+        assert!(textures_censused > 0, "archive-wide walk found no textures");
+    }
 }

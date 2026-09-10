@@ -10,6 +10,130 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-219 — N64 3-point filtering vs PSP bilinear: real, material, unfixable difference; `ACCEPTED_DEVIATION` (`PLAN.md` R2.0/P0a)
+
+**Question.** RE-218 found that RE-124's "PSP `Linear` is already correct"
+conclusion only ever compared the `G_MDSFT_TEXTFILT` *mode selector*, never
+the RDP's actual 3-point (triangular) reconstruction formula against PSP's
+symmetric four-tap bilinear filter. Do the two formulas actually produce
+different pixels on real SSB64 content, and if so, is an exact PSP
+reproduction practical?
+
+**Reference source.** Nintendo's own N64 Programming Manual (ch. 14)
+describes the RDP's behavior ("the texture filter selects which three
+points to use depending on where the sample point lies inside the 2x2 grid
+of texels") but not the exact blend weights. Per `AGENTS.md` §6/D-037's
+instruction not to rely on `BattleShip`/`sf64-psp`/`oot-PSP`/`n64psp` for
+this, the exact bit-accurate formula was instead transcribed from
+`angrylion-rdp-plus`'s `texture_pipeline_cycle`
+(`src/core/n64video/rdp/tex.c`, fetched from
+`github.com/ata4/angrylion-rdp-plus`) — a cycle-accurate, low-level RDP
+reimplementation validated against real hardware and used as the accuracy
+reference throughout the N64 emulation community (mupen64plus, RetroArch,
+etc.), i.e. a genuine hardware-behavior authority rather than another
+reference port with its own possibly-approximate texturing path.
+
+**Formula (non-YUV, non-`convert`, non-`mid_texel` path — the one that
+applies to every real SSB64 render tile; see Scope below).** Both texel
+coordinates are quantized to the RDP's own native 5-bit (1/32-texel) `TC`
+fraction. Let `sfrac`/`tfrac` be that fraction and `t0`/`t1`/`t2`/`t3` be
+the texels at `(s,t)`/`(s+1,t)`/`(s,t+1)`/`(s+1,t+1)`:
+
+* if `sfrac + tfrac < 32` (upper-left triangle): `c = t0 + (sfrac*(t1-t0) + tfrac*(t2-t0) + 16) >> 5`
+* else (lower-right triangle): `c = t3 + ((32-sfrac)*(t2-t3) + (32-tfrac)*(t1-t3) + 16) >> 5`
+
+This is a genuine 3-point blend — only three of the four texels ever
+contribute to a given pixel. PSP's `sceGuTexFilter(Linear, Linear)` instead
+computes the standard symmetric four-tap `c = t0*(1-s)*(1-t) + t1*s*(1-t) +
+t2*(1-s)*t + t3*s*t`, which always blends all four. These are different
+functions, most visibly at/near the diagonal where the RDP's chosen
+triangle flips.
+
+**Implementation.** `crates/ssb-rom/src/n64_filter.rs`: `sample_3point`
+(transcribed from the formula above) and `sample_bilinear` (PSP's
+symmetric four-tap, same 1/32-texel precision so the comparison isolates
+the reconstruction-formula difference from any UV-precision difference).
+Both host-tested (`cargo test -p ssb-rom n64_filter`): a flat texture and a
+pure single-axis gradient agree exactly between the two formulas (sanity
+checks — both degrade to the same 1D interpolation when there is nothing
+to disagree about); a 2x2 diagonal "saddle" pattern (opposite corners
+share a color) diverges by 127/255 at the exact center, reproducing the
+textbook N64 "triangulation bias" documented in the wider N64-emulation
+community; the triangle-selection boundary switches exactly at
+`sfrac+tfrac == 32` as the formula specifies.
+
+**Measured, not assumed, on real archive content.**
+`tools/romtool/src/main.rs`'s `filter_reconstruction_census_against_real_archive_textures`
+(`SSB64_ROM`-gated, run through the same dedup/decode walk `texdump` uses,
+not a separate heuristic scan, per RE-112's own precedent) samples both
+filters at 4 points per texel per axis across every unique real bound
+texture archive-wide:
+
+| metric | value |
+| --- | --- |
+| unique real textures censused | 684 |
+| interior sample points | 11,281,680 |
+| samples differing by ≥8/255 (any channel) | 646,450 (5.73%) |
+| samples differing by ≥16/255 | 296,520 (2.63%) |
+| samples differing by ≥32/255 | 133,851 (1.19%) |
+| textures reaching the maximum possible diff (128/255) | 10, including file 103 offset `0x5F0` |
+
+File 103 offset `0x5F0` is RE-081's own named "Dream Land canopy highlight"
+texture — the exact texture RE-053/070/081 already spent three prior
+sessions on for a different (dithering/blur) reason. It reaches the
+maximum 128/255 diff at its worst sampled point and a **6.4/255 mean diff
+across every one of its own interior sample points**, i.e. this is not a
+rare one-pixel outlier but a texture-wide effect on real, already-flagged
+content. Its sibling "gradient" texture (offset `0xE20`) shows a smaller
+but still real 68/255 max / 3.4/255 mean. This confirms the difference is
+material on real SSB64 content, not merely "differs in theory".
+
+**Is exact reproduction practical? No.** The PSP GE's fixed-function
+texture unit exposes exactly two filter modes via `sceGuTexFilter`:
+`Nearest` (point) and `Linear` (symmetric four-tap bilinear) — there is no
+third hardware mode and no programmable pixel-shader stage on this
+fixed-function GPU to implement a custom 3-point blend in its place. The
+only way to reproduce the RDP's formula exactly would be a full per-pixel
+software texture-sampling path (bypassing the GE's hardware texture unit
+entirely for every textured triangle in the game), which would eliminate
+the hardware texturing this project's entire rendering architecture
+depends on for real-time performance on PSP hardware — disproportionately
+expensive for what RE-124's own prior point-vs-linear A/B already showed
+is a strict visual improvement over the untextured alternative (`Nearest`).
+
+**Decision: `ACCEPTED_DEVIATION`.** PSP `Linear` remains the closest
+available hardware approximation of `G_TF_BILERP`; no fix is implemented
+or planned. `PLAN.md` R0.5's "PSP `Linear` filtering proven equivalent ...
+or an `ACCEPTED_DEVIATION` recorded" acceptance item is closed with this
+measured error, not with an unverified equivalence claim.
+`docs/rendering.md`'s "Texture filtering" row is updated to match.
+
+**Scope note.** `sample_3point`/`sample_bilinear` model the RDP's ordinary
+bilerp path only, not `mid_texel` (an additional exact-center-average mode)
+or the YUV/`convert_one` combiner-coupled path — neither is known to be set
+by any real SSB64 render state; a full `other_modes` census of `mid_texel`
+specifically was not run and would be needed before claiming it is
+provably unused. Address clamping in both samplers is a simple edge clamp,
+not the real N64 mirror/mask/clamp tile-addressing model — that model is
+`R2.0`/P0b's job; this measurement is only about interior (non-boundary)
+reconstruction error, which is what P0a scopes.
+
+**Verification.** `cargo test -p ssb-rom n64_filter` (5 new tests, all
+passing); `cargo test -p romtool filter_reconstruction_census_against_real_archive_textures -- --nocapture`
+against the real ROM (684 textures, numbers above); full
+`cargo test --workspace` re-run to confirm no regression.
+
+**Confidence: high** that the formula transcription is correct (matches
+Nintendo's own qualitative description and the wider N64-emulation
+community's independently-documented "triangulation bias" artifact) and
+that the measured archive-wide numbers are real (measured through the same
+decode path the shipped pack build uses). **Medium-high** that
+`ACCEPTED_DEVIATION` is the right call specifically because PSP's GE
+hardware has no third filter mode to select instead — this is a hardware
+capability gap, not a missed implementation choice.
+
+---
+
 ## RE-218 — External rendering-fidelity audit reopens filtering/addressing claims (`PLAN.md` R2.0)
 
 **Question.** Does an outside audit's claim that this project's texture
