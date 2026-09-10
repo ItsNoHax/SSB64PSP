@@ -1,44 +1,57 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-197 session)
+**Last updated:** 2026-09-10 (RE-198 session)
 
 ## Continuation packet
 
 **Milestone:** `R1 — Rendering Completeness`
 
 **Current task:** "Golden/reference renders are established" — `PLAN.md`
-R1's last remaining unchecked acceptance item. RE-197 (this session) closed
-"rendering regression suite passes": rebuilt the deterministic capture
-EBOOT, reran the golden Dream Land comparison after RE-190–196's code
-changes (0 differing pixels, captured screenshot byte-identical to the
-committed golden), and reran `fmt`/`clippy`/`cargo test --workspace` (347
-passing) clean. Not started yet this session.
+R1's last remaining unchecked acceptance item. RE-198 (this session)
+identified concrete file/offset evidence for the three test-matrix rows
+that had none (CI8 texture: file 52 offset `0x2ee8`; clamp texture mode:
+file 22 offset `0x8`; untextured/vertex-coloured geometry: file 52 mesh 4
+primitive 0) via a temporary, reverted `romtool census-matrix` walk over
+the real `load_all`/`file_meshes` pipeline. No source changed — the census
+tool was reverted after use; the counts/offsets are recorded in
+`docs/reverse-engineering.md` RE-198 as the evidence of record.
 
-**Status:** `TODO` (not started)
+**Status:** `IN_PROGRESS`
 
-**Dependencies:** RE-172–197 complete. R0.5 physical PSP comparison remains
+**Remaining for this item:** all six non-"Yes" test-matrix rows (CI8
+texture, `combiner_texture_blend`, `combiner_flat_color`, translucency,
+clamp texture mode, untextured/vertex-coloured geometry) now share one
+blocker: a second dedicated `regression_capture`-style frozen scene,
+which does not yet exist. Building it requires (a) picking a camera/object
+state that puts one or more of these concrete assets on screen — file 52's
+graphs are attractive since three of the six examples already live there
+— (b) extending `psp/src/main.rs`'s deterministic-freeze mechanism
+(`DETERMINISTIC_CAPTURE_TICKS`, currently wired to `Play`/`StageAnimator`/
+`MaterialAnimator` specifically) to a non-`Play` object/scene view, (c) an
+actual PPSSPP capture + a committed second golden PNG + a
+`compare-screenshot.sh` invocation, and (d) updating the test-matrix rows
+this touches from "needs a dedicated scene" to "Yes". This is a real
+feature addition, not another census — do not treat it as finished by
+identification alone.
+
+**Dependencies:** RE-172–198 complete. R0.5 physical PSP comparison remains
 `VERIFYING` and is temporarily deferred by explicit user direction.
 
-**Relevant files:** `docs/visual-regression.md` ("Test matrix" — most rows
-say "Yes" against the single Dream Land golden scene, but CI8 texture,
-`combiner_texture_blend`/`combiner_flat_color` shapes, translucency, clamp
-mode and untextured/vertex-coloured geometry are marked "needs
-identification"/"needs a dedicated scene"); `PLAN.md` R1's remaining bullet
-("golden/reference renders are established").
+**Relevant files:** `docs/visual-regression.md` ("Test matrix", "The
+deterministic test scene", "Capture procedure"); `psp/src/main.rs` (freeze
+logic, ~line 56 `DETERMINISTIC_CAPTURE_TICKS` and ~line 1811 HUD
+suppression); `psp/Cargo.toml` (`regression_capture` feature); `PLAN.md`
+R1's remaining bullet.
 
 **First checks:** `git status --short`; `git log -5 --oneline`; read
-`docs/visual-regression.md`'s "Test matrix" and "Capture procedure" sections
-in full before adding a new scene — the methodology (frozen
-`regression_capture` feature + `compare-screenshot.sh`) already generalises,
-so this is about identifying a concrete file/offset for each "needs
-identification" row and, where none of Dream Land's own camera framing
-covers a shape, building one additional dedicated frozen scene, reusing
-existing archive-wide census tools before writing new code (RE-196's own
-approach).
+`docs/reverse-engineering.md` RE-198 for the concrete assets already
+identified; read `psp/src/main.rs`'s existing object/animation-viewer
+boot path (used by `--audit-animations`/`--audit-stages`) to see whether it
+can be pointed at file 52 directly rather than building new navigation.
 
 **Acceptance:** `PLAN.md` R1's one remaining unchecked bullet (§7).
 
-**Stop condition:** None yet — task not started.
+**Stop condition:** None yet — second scene not started.
 
 ## Current state
 
@@ -60,57 +73,61 @@ approach).
   checked off. Only the real 1P-mode/results-screen G2 trigger remains
   unbuilt — accepted as out of R1 scope, the same split RE-149 already used
   to close R0.13.
-- Next R1 work: remaining golden-render matrix rows (CI8 texture,
-  `combiner_texture_blend`/`combiner_flat_color`, translucency, clamp mode,
-  untextured/vertex-coloured geometry — each "needs identification" or
-  "needs a dedicated scene" in `docs/visual-regression.md`'s test matrix).
-  `MObj` display-state parity (RE-194), rendering-command coverage
-  (RE-195), missing-assets/material-failures reconciliation (RE-196), and
-  the golden regression rerun (RE-197) are now closed.
+- Next R1 work: build the second dedicated `regression_capture`-style
+  scene the golden-render matrix's six remaining rows all need (CI8
+  texture, `combiner_texture_blend`/`combiner_flat_color`, translucency,
+  clamp mode, untextured/vertex-coloured geometry). RE-198 identified
+  concrete file/offset evidence for three of them; none has an actual
+  frozen capture yet. `MObj` display-state parity (RE-194), rendering-
+  command coverage (RE-195), missing-assets/material-failures
+  reconciliation (RE-196), and the golden regression rerun (RE-197) are
+  closed.
 - R2/R3/combat: blocked behind R1 and the physical rendering gate.
 
 ## Last completed task
 
-**RE-197 — Full regression stack rerun closes `PLAN.md` R1's "rendering regression suite passes" bullet**
+**RE-198 — Concrete file/offset evidence for three "needs identification" test-matrix rows**
 
-- No source change. Rebuilt the deterministic-capture EBOOT
-  (`cargo psp --release --features regression_capture`), ran
-  `tools/run-ppsspp.sh --no-build --seconds 6`, and diffed against the
-  committed golden with `tools/compare-screenshot.sh`: `differing pixels: 0`,
-  `PASS`. The captured screenshot's SHA-256 is byte-identical to the
-  committed golden's own hash.
-- Confirmed the asset pack used
-  (`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`)
-  matches RE-196's own recorded hash — no asset-pipeline drift between
-  sessions.
-- Reran `cargo fmt --check` (clean), `cargo clippy --workspace --all-targets`
-  (clean), `cargo test --workspace` with `SSB64_ROM` set (347 passed, 0
-  failed — unchanged from RE-196).
-- Rebuilt the plain (non-`regression_capture`) EBOOT afterward per
-  `docs/visual-regression.md`'s own rule against leaving that feature
-  enabled for normal use.
-- Checked off `PLAN.md` R1's "rendering regression suite passes" acceptance
-  item. RE-170's 41-stage audit and RE-171's 532-animation audit remain
-  valid, separate smoke coverage, not rerun here (nothing in RE-190–196
-  touched stage selection or animation playback).
-- Evidence: `docs/reverse-engineering.md` RE-197.
+- Added a temporary `romtool census-matrix <rom>` subcommand (reverted
+  after use, not shipped) built on the same `load_all`/`file_meshes`
+  pipeline `textures`/RE-100 already use, walking every converted
+  primitive archive-wide.
+- CI8 texture: 75 CI8-bound primitives archive-wide; concrete example file
+  52 (`mvopeningroom.c`'s opening-movie scene, RE-060's "MVCommon", fully
+  paired) offset `0x2ee8`, 16×32.
+- Clamp texture mode: 2,201 clamp-bound primitives archive-wide; clean
+  (non-mirrored) example file 22 offset `0x8`, 32×32, fully paired.
+- Untextured/vertex-coloured geometry: file 52 mesh 4 primitive 0, 14
+  triangles, unlit, opaque vertex colour `[145,213,213,255]`.
+- No hit for RE-102's named fighters (Fox/Falcon/Kirby, files 209/236/229)
+  through this raw per-file walk — likely reached via `MObj` runtime-tile
+  state (`apply_mobj`, RE-194) rather than a static per-file `G_SETTILE`;
+  the file-22/file-52 examples stand on their own regardless.
+- Updated `docs/visual-regression.md`'s test matrix: these three rows move
+  from "needs identification" to "needs a dedicated scene" — the same
+  bucket the other three non-covered rows already occupy. All six now
+  share one remaining blocker (see Continuation packet above); none is
+  resolved by this entry alone.
+- No source code changed; only `docs/reverse-engineering.md` (new RE-198),
+  `docs/visual-regression.md` (test matrix), `PLAN.md` and `STATUS.md`.
+- Evidence: `docs/reverse-engineering.md` RE-198.
 - Commit: pending (this session).
 
 ## Verification
 
-`git diff --stat` for this session covers `PLAN.md`, `STATUS.md`, and
-`docs/reverse-engineering.md` only — no source changed. `cargo fmt --check`,
-`cargo clippy --workspace --all-targets`, and `cargo test --workspace` (347,
-`SSB64_ROM` set) all clean, unchanged from RE-196. PPSSPP software-render
-golden comparison: 0 differing pixels, byte-identical captured screenshot.
-Plain (non-`regression_capture`) EBOOT rebuilt afterward. Prior sessions'
-verification (RE-190–196) is unaffected and remains valid.
+`git diff --stat` for this session covers `PLAN.md`, `STATUS.md`,
+`docs/reverse-engineering.md` and `docs/visual-regression.md` only — no
+source changed (the temporary `romtool` instrumentation was built, run, and
+reverted; `git status --short` after revert shows only the four docs
+files). `cargo build --release -p romtool` confirmed clean after the
+revert. Workspace tests/fmt/clippy were not rerun since no source changed
+from RE-197's own clean run.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–197.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–198.
 - Rendering methodology: `docs/visual-regression.md`.
 - Permanent decisions: `DECISIONS.md`.
 

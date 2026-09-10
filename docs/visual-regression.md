@@ -158,12 +158,12 @@ capture actually exercises it; other rows need a dedicated scene (a second
 | Depth testing | Dream Land's canopy occluding the platform behind it | Yes |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
 | Fighter model + skeleton | Mario, idle pose, spawn 0 | Yes |
-| CI8 texture | Not yet identified to a specific file/offset in this task | No — needs identification |
+| CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | No — needs a dedicated scene |
 | `combiner_texture_blend` shape | RE-074's PRIM/ENV-blended primitives; not present in Dream Land's default camera framing | No — needs a dedicated scene |
 | `combiner_flat_color` shape | RE-080's flat-constant-colour primitives; not confirmed present in this scene | No — needs a dedicated scene |
 | Transparency / translucency | RE-083's billboards are the known concrete case, not on-screen in this framing | No — needs a dedicated scene |
-| Clamp texture mode | Not yet identified to a specific file/offset in this task | No — needs identification |
-| Untextured / vertex-coloured geometry | The fallback tetrahedron (`TRIANGLE` in `psp/src/main.rs`) when no pack loads; no known textured-pack example identified | No — needs identification |
+| Clamp texture mode | RE-198: file 22, offset `0x8`, 32×32, `clamp_s=clamp_t=true`, no mirror — one of 2,201 clamp-bound primitives archive-wide | No — needs a dedicated scene |
+| Untextured / vertex-coloured geometry | RE-198: file 52, mesh index 4, primitive 0 (14 triangles, unlit, opaque non-degenerate vertex colour `[145,213,213,255]`) | No — needs a dedicated scene |
 | Particles | No confirmed particle system exists yet; file 48's "particle-like" node layout (per `docs/reverse-engineering.md`) is unconfirmed, not a named system | Blocked — system not confirmed to exist |
 | Shadows | `FighterDesc`'s shadow fields are parsed but "no subsystem reads them yet" (`docs/reverse-engineering.md`) | Blocked — not yet implemented |
 | UI / HUD | No in-game menu/HUD system exists yet (Layer C's debug viewer is a developer tool, not the game's own UI) | Blocked — not yet implemented |

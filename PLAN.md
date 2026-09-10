@@ -2773,8 +2773,11 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
   RE-170's stage audit and RE-171's animation audit remain valid, separate
   smoke coverage
 * [ ] golden/reference renders are established: methodology and one golden
-  scene done under R0.17 (`docs/visual-regression.md`); the remaining
-  test-matrix rows there still need coverage before this item can close
+  scene done under R0.17 (`docs/visual-regression.md`); RE-198 identified
+  concrete file/offset evidence for the three rows that previously had none
+  (CI8 texture, clamp texture mode, untextured/vertex-coloured geometry) —
+  all six non-covered rows now share one remaining blocker, a second
+  dedicated `regression_capture`-style frozen scene, which does not yet exist
 
 ---
 
