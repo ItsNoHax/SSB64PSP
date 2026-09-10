@@ -10,6 +10,73 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-207 — Sixth golden scene (Fox) verified on physical PSP hardware (`PLAN.md` R2)
+
+**Problem.** RE-203/204/205 hardware-verified five golden scenes, but every
+fighter-bearing one used Mario. `STATUS.md`'s own "Next" note after RE-206
+named broader fighter/stage coverage — not more static code sweeping — as
+the concrete remaining path toward R2's "no hardware-only rendering failures
+remain" row.
+
+**Setup.** Same PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1,
+`usbhostfs_pc`/`host0:` session as RE-201–206, pack hash
+`7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
+
+**Method.** Added `regression_capture_scene6` (`psp/Cargo.toml`,
+`psp/src/main.rs`), following scenes 2–4's exact object-viewer pattern
+(disable default `stage_view`, override the depth/triangle heuristic's
+`object_index`, freeze at tick 240, suppress the idle model spin, reuse
+`deterministic_capture_frozen`). It selects file 313 offset `0x2938` — Fox's
+own model graph, chosen deliberately because it is the exact graph RE-152
+found and fixed a real bug on (a clamp-window coordinate bug that painted
+Fox's lower face solid black), making it a meaningful regression target
+rather than an arbitrary pick.
+
+PPSSPP software: built, captured, and diffed two captures taken 24 real
+seconds apart (`--seconds 6` vs `--seconds 30`) — byte-identical (`cmp`),
+confirming the freeze/spin-suppression wiring is correct the same way
+RE-199 verified scene 2. Fox's face renders correctly, no black patch.
+Rebuilding plain `regression_capture` (no scene-6 feature) still matches
+`tests/golden/r0-dream-land-default.png` exactly (0 differing pixels),
+confirming scene 6's changes are inert on other builds. `cargo test
+--workspace`: 506 passing, unchanged (no crate logic changed, only
+`psp/src/main.rs` view-selection wiring and a new Cargo feature). New golden
+committed at `tests/golden/r2-fox-fighter.png`, SHA-256
+`70ce9df553177ea28f71f60d4512f6d14b859198d31614acae91e518416b824c`, against
+EBOOT SHA-256
+`7182fc266a027acb08717c606d291562b6b137616e1212beeed3774751441187`.
+
+Physical PSP: killed a stale `ssb64_psp` module left loaded from a prior
+session (`modlist` UID `0x04392905`), `ldstart`ed the scene-6 PRX over
+`host0:`, waited past the tick-240 freeze, and checked state before
+capturing: `exlist` empty (zero exceptions), `thlist` showed a live
+`main_thread`. Captured a native 480x272 `scrshot`
+(`psp-hw-capture-fox.bmp`, SHA-256
+`1f3fd8fc936dbbea8722fae601d784ece483d5a8f44c7edd98d11d2c6ccfc5a4`, not
+committed per repository policy). Upscaled 2x nearest-neighbour and diffed
+against the PPSSPP golden: 43,049 raw differing pixels, but a visual diff
+image shows the same shape RE-203/204/205 already documented and excluded —
+a thin one-pixel silhouette/edge-antialiasing band around every polygon
+boundary (rasterizer rounding between real GE hardware and PPSSPP's
+renderer) plus PPSSPP's own on-screen FPS-counter overlay region (top
+right, not this project's rendering output). No solid interior region of
+the model differs. Killed the loaded module afterward (`modlist` UID
+`0x04378753`) and rebuilt the plain default EBOOT before ending the
+session, per this project's own PSPLink-workflow discipline.
+
+**Conclusion.** Fox — the first fighter besides Mario to be hardware-tested
+— renders correctly on real PSP hardware with zero exceptions, and RE-152's
+clamp-window face fix holds under real GE rasterization, not just PPSSPP.
+`PLAN.md` R2's "representative fighters render" row now cites two fighters.
+The "no hardware-only rendering failures remain" row stays open: 10 of 12
+playable fighters and the other 39 stages remain untested on hardware. The
+next same-shaped increment is another untouched fighter or stage using this
+same `regression_capture_sceneN` pattern; the live analog-stick input
+question still requires a human operator and cannot be resolved by an
+agent session alone.
+
+---
+
 ## RE-206 — Swept the crate for other unguarded/speculatable divisions like RE-201/202/205's FPU traps (`PLAN.md` R2)
 
 **Problem.** RE-205 fixed a third instance of the same fault class RE-201/202

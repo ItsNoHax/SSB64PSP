@@ -50,6 +50,15 @@ regression_capture_scene4 = []
 # `regression_capture`. Off by default.
 regression_capture_scene5 = []
 
+# R2 broader-coverage scene: the first golden scene to put a fighter other
+# than Mario's own skeleton on screen. Selects Fox's own file-313 graph at
+# 0x2938 (RE-152's exact identification -- the graph whose head primitive
+# 4/texture 551 previously rendered a solid black clamp-window bug, fixed by
+# preserving the render tile's uls/ult origin). Same deterministic
+# object-viewer freeze and diagnostic suppression as scenes 2-4. Off by
+# default.
+regression_capture_scene6 = []
+
 # Boots Dream Land through the real battle camera, freezes at the same fixed
 # tick as the regression scene, and suppresses viewer diagnostics (R0.14).
 camera_audit_capture = []

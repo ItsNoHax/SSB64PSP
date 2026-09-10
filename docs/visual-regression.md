@@ -181,6 +181,32 @@ matches this golden (upscaled 2x nearest-neighbour) with only the expected
 edge-antialiasing band and known overlay regions differing, the same result
 shape RE-203 found for the other four scenes.
 
+## Sixth deterministic test scene (RE-207)
+
+Every prior fighter-bearing scene used Mario. `regression_capture_scene6`
+puts Fox on screen instead, reusing scenes 2–4's object-viewer pattern:
+selects file 313 offset `0x2938`, Fox's own model graph, and the same tick-240
+freeze, idle-spin freeze, `stage_view` disable and HUD suppression. The graph
+was chosen deliberately, not arbitrarily: it is the exact one RE-152 found
+and fixed a real bug on (a clamp-window coordinate bug that painted Fox's
+lower face solid black), so this scene doubles as a regression check for
+that fix rather than an untested pick.
+
+Build and compare:
+
+```
+cd psp && cargo psp --release --features regression_capture_scene6
+tools/run-ppsspp.sh --no-build --seconds 6
+tools/compare-screenshot.sh tests/golden/r2-fox-fighter.png ~/ppsspp-test/screenshot.png
+```
+
+Physical PSP hardware verification (RE-207): built and `ldstart`ed under
+PSPLink the same way as the other five scenes. Zero exceptions (`exlist`
+empty, `main_thread` alive in `thlist`). Native capture matches this golden
+(upscaled 2x nearest-neighbour) with only the expected edge-antialiasing
+band and PPSSPP's own FPS-counter overlay differing — no solid interior
+region of the model differs, confirming RE-152's fix holds on real hardware.
+
 ## Capture procedure
 
 ### 1. PPSSPP software rendering (executed; this is the current golden source)
@@ -279,7 +305,7 @@ pixel oracle.
 | `combiner_shade_scale` shape | Dream Land's lit, unlit-texture primitives (RE-073); exact per-primitive attribution not isolated in this task | Likely, unconfirmed |
 | Depth testing | Dream Land's canopy occluding the platform behind it | Yes |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
-| Fighter model + skeleton | Mario, idle pose, spawn 0 | Yes |
+| Fighter model + skeleton | Mario, idle pose, spawn 0; Fox, file 313 graph `0x2938` (RE-152/RE-207) | Yes — scene 1, `tests/golden/r0-dream-land-default.png`; scene 6, `tests/golden/r2-fox-fighter.png` |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | `combiner_texture_blend` shape | RE-200: file 109 (`StageSectorFile2`) graph `0x44C8`, 7 converted primitives | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | `combiner_flat_color` shape | RE-200: file 84 (`EFCommonEffects2`) graph `0x2760` (`CatchSwirlDObjDesc`), 4 converted primitives | Yes — scene 4, `tests/golden/r1-catch-swirl-flat-color.png` |
