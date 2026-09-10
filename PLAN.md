@@ -190,10 +190,8 @@ Remaining renderer work is governed by the rendering milestones below.
 
 # 6. R0 — Rendering Correctness
 
-Status: `IN_PROGRESS` — R0.5 remains `VERIFYING` on physical hardware. By the
-user's 2026-09-09 direction, software-only R1 completeness work may proceed
-while that check is temporarily deferred; this does not complete R0, satisfy
-R2, unlock R3/combat, or weaken any hardware acceptance criterion.
+Status: `COMPLETE` — RE-201 completed R0.5's physical-PSP Dream Land canopy
+comparison. R2 remains required before R3/combat unlock.
 
 This is the current development gate.
 
@@ -213,7 +211,7 @@ so nothing is duplicated and nothing is missing an owner.
 | --- | --- | --- |
 | Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | `COMPLETE` |
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `COMPLETE` |
-| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | R0.3/R0.4 `COMPLETE`; R0.5 `VERIFYING` on physical PSP |
+| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5 | `COMPLETE`; RE-201 physical PSP evidence |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
 | Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 | `COMPLETE` for R0 (RE-164–167); physical PSP remains R2 |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
@@ -409,8 +407,8 @@ RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 
 ## R0.5 — Texture Filtering / LOD / Mipmapping
 
-Status: `VERIFYING` — only the physical-PSP Dream Land canopy comparison
-remains; source-side hypotheses are exhausted (RE-053/067/070/075/081/124/127).
+Status: `COMPLETE` — RE-201's direct PSPLink framebuffer capture verifies the
+Dream Land canopy on PSP Slim hardware.
 
 ### Current evidence
 
@@ -586,7 +584,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] texture tile parameters verified — RE-044 (mask-based tile sizing), RE-066 (clamp/mask correlation, archive-wide)
 * [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
 * [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis
-* [ ] Dream Land canopy discrepancy resolved — RE-067 fixed the mirror wrap boundary; RE-070 measurably softened the dither (~40% less local noise on the treated texture) by pre-blurring and packing unquantized, but it is not fully smooth; RE-075 fixed a small blur/mirror boundary-condition bug (confirmed via packed-byte diff) but confirmed it is not visible at the tested camera distance; RE-081 disambiguated the magnification/minification confusion and tested a further blur pass (measurably less texture noise, not visibly different on screen) — none of the four is "resolved"; real hardware validation (`R2`) is looking necessary, not just sufficient, to close this
+* [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
 * [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
 
 **RE-152 resolves and reclassifies RE-128's Fox defect.** Direct texture
@@ -2628,9 +2626,8 @@ lead for `R3` once it unblocks.
 
 # 7. R1 — Rendering Completeness
 
-Status: `IN_PROGRESS` — software-only completeness work is proceeding under
-the narrow hardware-deferral exception recorded above. R1 itself cannot be
-completed until R0.5 is resolved.
+Status: `COMPLETE` — RE-200 closes every R1 acceptance item; RE-201 satisfies
+the formerly deferred R0.5 prerequisite.
 
 Normally R1 cannot begin until R0 is complete. The remaining R0 item now
 requires unavailable physical hardware, so the user explicitly authorized
@@ -2789,7 +2786,7 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 
 # 8. R2 — Physical PSP Rendering Validation
 
-Status: `BLOCKED_BY_R1`
+Status: `IN_PROGRESS` — R1 and R0.5 are complete; RE-201 begins hardware validation.
 
 ### Objective
 

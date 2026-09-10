@@ -10,6 +10,40 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-201 — PSPLink hardware run resolves R0.5's deferred Dream Land check (`PLAN.md` R0.5/R2)
+
+**Problem.** R0.5's final criterion was a real-PSP Dream Land canopy check;
+PPSSPP captures could not establish hardware behaviour. The first PSPLink run
+revealed trapping-FPU faults in zero-duration material and joint animation
+commands before the stable scene could be captured.
+
+**Evidence and fix.** PSP Slim (USB `054c:01c9`), firmware 6.61, ARK/Infinity
+environment, ran PSPLink v3.2.1 with `usbhostfs_pc`. Its exception records
+mapped the first fault to `MaterialJoint::apply`: LLVM hoisted `1.0/payload`
+ahead of the source guard for a zero-duration command. A second fault was
+scalar subtraction of an extended packed-RGBA word (`0xFFA129FF`), and a third
+was the identical zero-duration division in `JointAnim::set_tracks`. Both
+animation players now use an out-of-line nonzero reciprocal helper; colour
+tracks retain byte interpolation and never perform unused float arithmetic on
+their raw RGBA words. PSP disassembly proves the helper's zero branch returns
+`1.0` before its `div.s`.
+
+**Verification.** All 22 focused `matanim`/`figatree` tests pass. A freshly
+built `regression_capture` PRX and pack (`f8d4ebc0...4587858` /
+`7647db75...650b2f0`) ran over PSPLink without exceptions; the main thread's
+run clocks rose from 6,395,242 to 8,150,573 while waiting for vblank. PSPLink
+captured direct 480x272 framebuffer `psp-hw-re200.bmp`
+(`340993a6...ab006af`). Downscaling the deterministic 960x544 golden to the
+native PSP raster gives a coherent matching Dream Land/canopy composition;
+the only visible capture difference is PSPLink's small upper-left overlay.
+The direct comparison RMSE is `0.0456324`, not an exact comparator claim.
+
+**Conclusion.** Physical PSP reproduces the documented Dream Land canopy
+behaviour; R0.5's deferred physical acceptance is satisfied. This evidence
+also opens R2, but does not complete its wider hardware checklist.
+
+---
+
 ## RE-200 — Final four golden-render matrix rows identified and captured (`PLAN.md` R1)
 
 **Problem.** RE-199 left four rows open in `docs/visual-regression.md`:

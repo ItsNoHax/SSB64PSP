@@ -100,6 +100,14 @@ pub(crate) const fn values_per_track(opcode: u16) -> usize {
     }
 }
 
+/// See material animation's equivalent helper: PSPLink enables trapping FPU
+/// exceptions, while LLVM may speculate an IEEE-754 division past its source
+/// zero-duration guard. Keep the hardware denominator nonzero.
+#[inline(never)]
+fn reciprocal_or_one(payload: f32) -> f32 {
+    1.0 / if payload == 0.0 { 1.0 } else { payload }
+}
+
 /// A script ran off the end of its file, which means the command stream
 /// desynchronised — a command's word count was read wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,6 +487,7 @@ impl JointAnim {
     /// Applies one value-setting command to the tracks it names.
     fn set_tracks(&mut self, data: &[u8], cmd: &Command, speed: f32) {
         let payload = cmd.payload as f32;
+        let payload_inverse = reciprocal_or_one(payload);
         // The value words are consecutive across the set tracks, not indexed
         // by track number: the nth set bit reads the nth group of words.
         let mut word = 0;
@@ -496,7 +505,7 @@ impl JointAnim {
                     aobj.rate_target = 0.0;
                     aobj.kind = Kind::Cubic;
                     if payload != 0.0 {
-                        aobj.length_invert = 1.0 / payload;
+                        aobj.length_invert = payload_inverse;
                     }
                     aobj.length = length;
                     word += 1;
@@ -506,7 +515,7 @@ impl JointAnim {
                     aobj.value_target = target_value(cmd.value(data, word), track, false);
                     aobj.kind = Kind::Linear;
                     if payload != 0.0 {
-                        aobj.rate_base = (aobj.value_target - aobj.value_base) / payload;
+                        aobj.rate_base = (aobj.value_target - aobj.value_base) * payload_inverse;
                     }
                     aobj.length = length;
                     aobj.rate_target = 0.0;
@@ -519,7 +528,7 @@ impl JointAnim {
                     aobj.rate_target = target_value(cmd.value(data, word + 1), track, true);
                     aobj.kind = Kind::Cubic;
                     if payload != 0.0 {
-                        aobj.length_invert = 1.0 / payload;
+                        aobj.length_invert = payload_inverse;
                     }
                     aobj.length = length;
                     word += 2;
