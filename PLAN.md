@@ -2792,9 +2792,11 @@ viewer's debug HUD (`sceGuDebugFlush`) that RE-201's `regression_capture`
 run never exercised. RE-203 then ran all four golden regression scenes on
 the same physical PSP with zero exceptions and confirmed their content
 matches the PPSSPP goldens (modulo expected edge antialiasing), checking off
-most acceptance items below. Framebuffer effects, VRAM measurement, and
-live analog-stick input remain open — the last requires a human physically
-operating the device, not reproducible through `pspsh`.
+most acceptance items below. RE-204 then hardware-tested the framebuffer-
+effect sprite path and verified VRAM usage, checking off both remaining
+software-testable rows. Stage animation coverage, exhaustive no-failures-
+remain coverage, and live analog-stick input remain open — the last requires
+a human physically operating the device, not reproducible through `pspsh`.
 
 ### Objective
 
@@ -2812,8 +2814,8 @@ PPSSPP is not sufficient.
 * [ ] stage animation works — `StageAnimator::tick` ran 240 hardware ticks without fault (RE-203) but no scene captured this session isolates visibly animated stage geometry
 * [x] materials render correctly — RE-203: texture-blend, flat-colour and alpha-blend/translucency combiner shapes all match their goldens
 * [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
-* [ ] framebuffer effects work — not hardware-tested; RE-190–193's `SObj` sprite path is PPSSPP-verified only
-* [ ] VRAM usage verified
+* [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
+* [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
 * [ ] no hardware-only rendering failures remain — four golden scenes plus the plain interactive build are now clean, but coverage is not exhaustive across all fighters/stages/effects
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)

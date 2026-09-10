@@ -1,6 +1,6 @@
 # Project Status
 
-**Last updated:** 2026-09-10 (RE-203 physical-PSP session)
+**Last updated:** 2026-09-10 (RE-204 physical-PSP session)
 
 ## Continuation packet
 
@@ -10,39 +10,43 @@
 
 **Status:** `IN_PROGRESS`
 
-**Last completed:** RE-203. Ran all four golden regression-capture scenes
-(`regression_capture`, `_scene2`, `_scene3`, `_scene4`) on the same physical
-PSP used by RE-201/RE-202: zero exceptions across all four, `main_thread`
-alive throughout. Compared each hardware capture (2x nearest-upscaled)
-against its existing PPSSPP golden in `tests/golden/`: interiors pixel-
-identical, differences confined to expected polygon-edge antialiasing plus
-two unrelated known overlays (PSPLink's own corner text, PPSSPP's FPS
-counter). Checked off 8 of 12 `PLAN.md` R2 acceptance items on this basis.
+**Last completed:** RE-204. Hardware-tested RE-193's real `SObj`
+framebuffer-effect sprite path (`regression_capture` +
+`wallpaper_sprite_audit_capture`) on the same physical PSP: zero exceptions,
+measured luminance ratio (0.59) matches RE-193's PPSSPP evidence (0.60)
+within noise, deterministic once settled (a several-second double-buffer
+settling transient right after the tick-240 freeze was observed and
+excluded). Verified VRAM usage by grep-enumerating every `get_vram_allocator`
+call site (exactly three, all in `Gpu::init`): 1,360 KiB of the runtime-
+reported 2 MiB EDRAM, ~688 KiB headroom, matching an existing independent
+code comment; every zero-exception hardware boot to date is a live runtime
+check this budget holds (the allocator panics on overflow). Checked off the
+two remaining software-testable `PLAN.md` R2 acceptance items (10 of 12 now
+checked). Redeployed the plain interactive build afterward, verified stable.
 
-**Dependencies:** R0.5 and R1 complete. R2 hardware checklist remains
-(framebuffer effects, VRAM measurement, exhaustive no-failures-remain
-coverage, stage animation, live analog-stick input).
+**Dependencies:** R0.5 and R1 complete. R2 hardware checklist remains (stage
+animation coverage, exhaustive no-failures-remain coverage, live
+analog-stick input).
 
-**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201,
-RE-202, RE-203; `docs/psplink.md`; `tests/golden/*.png`;
-`tools/compare-screenshot.sh`.
+**Relevant files:** `PLAN.md` R2; `docs/reverse-engineering.md` RE-201–204;
+`docs/psplink.md`; `tests/golden/*.png`; `tools/compare-screenshot.sh`.
 
 **First checks:** physical PSP hardware is present and PSPLink-reachable
-this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`).
-Re-check this at the start of the next session; if hardware is no longer
-attached, R2 has no further eligible software-only task.
+this session (`lsusb` shows `054c:01c9`, `pspsh -e ver` → `PSPLink v3.2.1`
+once `usbhostfs_pc -v "$PWD"` is running). Re-check this at the start of the
+next session; if hardware is no longer attached, R2 has no further eligible
+software-only task.
 
 **Acceptance:** `PLAN.md` R2.
 
-**Next:** capture framebuffer-effect content and VRAM usage on this same
-PSP (no golden-scene feature currently isolates a framebuffer-effect-heavy
-graph — one may need to be added, following RE-199/RE-200's pattern).
-Broaden hardware coverage beyond the four golden scenes toward "no
-hardware-only rendering failures remain." Separately, still open: whether
-the analog nub correctly drives the fighter now that RE-202's HUD-crash fix
-is live — this requires a human physically operating the device with
-PSPLink attached; `pspsh` has no controller-injection command, so an agent
-session cannot resolve it alone.
+**Next:** broaden hardware coverage beyond the four golden scenes toward "no
+hardware-only rendering failures remain," and find or build a scene that
+isolates visibly animated stage geometry for the "stage animation works" row
+(no current golden scene's camera view shows moving stage geometry within
+its frozen window). Separately, still open: whether the analog nub correctly
+drives the fighter now that RE-202's HUD-crash fix is live — this requires a
+human physically operating the device with PSPLink attached; `pspsh` has no
+controller-injection command, so an agent session cannot resolve it alone.
 
 ## Current state
 
@@ -53,9 +57,10 @@ session cannot resolve it alone.
 - R2: `IN_PROGRESS`; all four golden regression scenes (Dream Land/Mario,
   `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`) boot, pack loads,
   stage/fighter/material/texture content matches PPSSPP goldens, and no
-  hardware exception remains across any of them (RE-203). Framebuffer
-  effects, VRAM measurement, and live analog-stick input remain untested
-  on hardware.
+  hardware exception remains across any of them (RE-203). The real
+  framebuffer-effect `SObj` sprite path and VRAM usage are now hardware-
+  verified too (RE-204). Stage animation coverage, exhaustive no-failures-
+  remain coverage, and live analog-stick input remain untested on hardware.
 - Effects: RE-172–189 cover manager descriptors, transforms, material/
   texture/colour animation, LBParticle decoding/packing, drawing, exhaustive
   audits, spawn-tree execution, `LBGenerator`, and a real manager-effect
@@ -77,42 +82,48 @@ session cannot resolve it alone.
 
 ## Last completed task
 
-**RE-203 — All four golden regression scenes verified on physical PSP hardware**
+**RE-204 — Framebuffer-effect sprite path and VRAM budget verified on physical PSP hardware**
 
-- Built and `ldstart`ed `regression_capture`, `_scene2`, `_scene3`, and
-  `_scene4` in turn on the same PSPLink session as RE-201/RE-202. Zero
-  exceptions across all four; `main_thread` alive in every case.
-- Independently re-verified `regression_capture`'s determinism claim on real
-  hardware (not just PPSSPP): two captures 5 s apart differ only inside
-  PSPLink's own documented corner overlay.
-- Compared each hardware capture (2x nearest-upscaled) against its existing
-  PPSSPP golden in `tests/golden/`: interiors pixel-identical; only
-  difference is expected polygon-edge antialiasing plus two unrelated known
-  overlays (PSPLink corner text, PPSSPP's own FPS counter).
-- Checked off 8 of 12 `PLAN.md` R2 acceptance items on this evidence:
-  boot, pack load, representative fighter/stage render, fighter animation,
-  materials, textures, hardware model, build/environment.
+- Built and `ldstart`ed `regression_capture,wallpaper_sprite_audit_capture`
+  (RE-193's real `SObj` wallpaper-sprite draw) on the same PSPLink session as
+  RE-201–203. Zero exceptions; `main_thread` alive throughout.
+- Found and characterised a several-second post-freeze settling transient
+  (double-buffer catch-up), then confirmed steady-state captures 2 s apart
+  are byte-identical except the same known PSPLink corner overlay RE-203
+  already excludes.
+- Measured luminance ratio 0.59 (sprite rectangle vs. just outside it),
+  matching RE-193's own PPSSPP-measured 0.60 ratio for the same 50%-grey
+  modulate, within noise.
+- Verified VRAM usage by grep-enumerating every `get_vram_allocator` call
+  site (exactly three, all framebuffers/depth in `Gpu::init`): 1,360 KiB of
+  the runtime-reported 2 MiB EDRAM, ~688 KiB headroom, matching an existing
+  independent code comment. Every zero-exception hardware boot to date is a
+  live runtime confirmation this budget holds (the allocator panics on
+  overflow).
+- Checked off the two remaining software-testable `PLAN.md` R2 acceptance
+  items: framebuffer effects work, VRAM usage verified (10 of 12 now
+  checked).
 - Rebuilt and redeployed the plain (no-feature) interactive build afterward
   per `docs/psplink.md`, verified stable (no exception, `main_thread` alive).
-- Evidence: `docs/reverse-engineering.md` RE-203.
+- Evidence: `docs/reverse-engineering.md` RE-204.
 
 ## Verification
 
-All four `regression_capture*` builds ran on PSP Slim (firmware 6.61,
-ARK/Infinity, PSPLink v3.2.1) with `exlist` empty and `main_thread` alive
-throughout. Native `scrshot` captures compared against `tests/golden/*.png`
-via a 2x nearest upscale + pixel diff (not just eyeballed) — see RE-203 for
-the exact diff-mask methodology and its conclusion. Native captures taken,
-inspected, and discarded per `docs/psplink.md` (never committed); SHA-256
-hashes recorded in RE-203. Pack unchanged (hash
-`7647db75...650b2f0`); no Rust source changed this session, so
-`cargo test --workspace` was not required.
+The `regression_capture,wallpaper_sprite_audit_capture` build ran on PSP
+Slim (firmware 6.61, ARK/Infinity, PSPLink v3.2.1) with `exlist` empty and
+`main_thread` alive throughout. Native `scrshot` captures measured for
+in-rectangle vs. outside-rectangle luminance and cross-diffed against each
+other for determinism — see RE-204 for the exact settling-transient finding
+and measurement methodology. Native captures taken, inspected, and discarded
+per `docs/psplink.md` (never committed); SHA-256 hashes recorded in RE-204.
+Pack unchanged (hash `7647db75...650b2f0`); no Rust source changed this
+session, so `cargo test --workspace` was not required.
 
 ## Documentation and evidence map
 
 - Roadmap and acceptance: `PLAN.md`.
 - Subsystem status: `docs/porting-status.md`.
-- Detailed investigations: `docs/reverse-engineering.md` RE-172–203.
+- Detailed investigations: `docs/reverse-engineering.md` RE-172–204.
 - Rendering methodology: `docs/visual-regression.md`.
 - Hardware crash workflow: `docs/psplink.md`.
 - Permanent decisions: `DECISIONS.md`.
