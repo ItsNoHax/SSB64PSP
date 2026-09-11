@@ -10,6 +10,77 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-250 — `PlannedList` now keeps `list_id`; stage render-layer 1's 21 list-1 `DObjDLLink` entries seed depth-test-without-write instead of the uniform opaque write-on seed (`PLAN.md` R2.2/C3, part 7, in progress)
+
+**Question.** RE-245/RE-249 both left one item open: `grDisplayLayer1{Pri,
+Sec}ProcDisplay` sets render mode on **two** separate task-list command
+heads before walking a stage's render-layer-1 geometry — `Z_CMP | Z_UPD |
+ZMODE_OPA` on list 0, `Z_CMP | !Z_UPD | ZMODE_XLU` on list 1 (`gr`'s
+translucent pass) — but `InitialMaterial::GROUND_LAYER1_EXTERNAL` applies the
+list-0 values to every layer-1 node uniformly, overstating `depth_write` for
+whichever primitives are really on list 1. `scene::DlLink::list_id` already
+parses which task list a `DObjDLLink` entry targets; `plan_draw_order`
+(`tools/romtool`) read it but `PlannedList` discarded it before conversion.
+`PLAN.md`'s C3 remaining-work item 1 asked to fix exactly this.
+
+**Evidence.** `refs/ssb-decomp-re/src/gr/grdisplay.c`'s
+`grDisplayLayer1PriProcDisplay`/`SecProcDisplay` open two independent
+`gSYTaskmanDLHeads[N]` command streams (`N` = 0, 1) and set each one's render
+mode *before* either is walked — `gcDrawDObjTreeForGObj`/`gcDrawDObjTree
+DLLinksForGObj` then route each `DObjDLLink`'s own `list_id` to the matching
+head. Because the two heads are separate physical command buffers, a list-1
+primitive's real depth state comes from its own head's reset, never from
+whatever list-0 primitive happened to precede it in `plan_draw_order`'s
+flattened draw order — the same "wrap-and-walk" shape RE-245 already found
+for the whole graph, just per task list instead of per graph.
+
+**Implementation.** Added `list_id: Option<u32>` to `PlannedList`, populated
+by `plan_draw_order` from each `DlLink`'s own `list_id` (`None` for
+`Direct`/`Pair`, which have no task-list concept — `gcDrawDObjTreeForGObj`'s
+tree walk always runs on list 0). Added `SequenceItem::depth_seed: Option<
+(bool, bool, ZMode)>` (`ssb-rom`'s `mesh.rs`) and wired `convert_sequence` to
+force `depth_test`/`depth_write`/`depth_mode` from it immediately before an
+item's own commands run, overriding whatever the previous item left behind —
+a per-item reset, unlike every other piece of state in a sequence, which
+genuinely does carry across (the function's own doc comment explains why).
+`tools/romtool`'s new `ground_layer1_list1_depth_seed(initial, list_id)`
+returns `Some((true, false, ZMode::Translucent))` exactly when a graph is
+seeded `GROUND_LAYER1_EXTERNAL` and the entry's `list_id == Some(1)`, `None`
+otherwise; wired into all three production/diagnostic `SequenceItem` builders
+(`pack`, `scene`, `file_meshes`) and `convert_graph_at`.
+
+**Verification.** New unit test `convert_sequence_depth_seed_overrides_
+state_inherited_from_a_prior_item` (`mesh.rs`) proves the override wins over
+inherited state, not merges with it. Re-ran `census_ground_layer_depth_
+state_vs_z_buffer` against the real ROM: layer 1 still reads `depth_test`
+true for all 776 primitives, but `depth_write` true for only **668** now
+(was 776) — the other **108**, from 21 of 163 `DObjDLLink` entries
+targeting list 1, correctly read `depth_write` false. Layers 0/2/3 and
+`links_list0`/`links_list1` counts (121/31, 142/21, 0/0, 1/1) are unchanged,
+confirming the fix is scoped to exactly the list-1 population RE-245/RE-249
+already measured. `romtool pack` against the real ROM: mesh/triangle/draw/
+texture/object counts unchanged (2044/36772/8056/1345/374), transitions
+unchanged (77 animated nodes), size unchanged (10935.5 KiB) — this only
+corrects `depth_write`/`depth_mode` values already captured by the existing
+`pack.rs` flags, not the pack's structure. `cargo test --workspace
+--all-targets` (`SSB64_ROM` set): `ssb-rom` 420 passed (419 + the new test),
+`romtool` 22, `ssb-engine` 48, `ssb-game` 120, 0 failed. `cargo fmt --check`
+clean. `cargo clippy --workspace --all-targets` clean (same pre-existing,
+unrelated warnings as prior sessions).
+
+**Remaining for C3.** `psp/src/meshdraw.rs` still keys `GuState::DepthTest`
+off `z_buffer`, not the now-fully-corrected `depth_test`/`depth_write` —
+deciding that wiring, and adding the depth-test/no-write translucent-front/
+opaque-behind scene plus ON→OFF→ON regression with device evidence, are
+still open (`PLAN.md`).
+
+**Confidence: high.** The two-task-list, two-render-mode-call shape is read
+directly from `grdisplay.c`; the census re-run shows exactly the 108-
+primitive shift the decomp source predicts, with every unrelated layer/list
+count unchanged.
+
+---
+
 ## RE-249 — No further external depth-state wrapper exists archive-wide; the remaining gap is real per-node RDP divergence, not an omission (`PLAN.md` R2.2/C3, part 6, in progress)
 
 **Question.** RE-248 closed file 39, leaving 1623 of the archive-wide 1808-
