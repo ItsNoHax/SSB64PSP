@@ -350,14 +350,17 @@ impl DrawState {
     ///
     /// `refs/BattleShip`'s `CalculateNormalDir` is the reference: it
     /// dequantizes the look-at direction (stored as signed bytes, RE-227),
-    /// multiplies by the transposed modelview, and normalises. Reproduced
-    /// here exactly, including the normalisation -- which is also what makes
-    /// a uniform model scale drop out, since the transpose of a scaled
-    /// rotation scales every row by the same factor. Quantizing here, once,
-    /// before the model transform, feeds the identical quantized-then-
-    /// transformed basis to both the regular (GE texture-matrix) and linear
-    /// (CPU-generated) texgen paths, since both call this one method
-    /// (`apply_texture_mapping` and `draw_mesh`'s linear-UV branch).
+    /// multiplies by the transposed modelview, and normalises --
+    /// `ssb_engine::math::transform_lookat_basis` (`PLAN.md` R2.1/T4)
+    /// reproduces exactly that, host-tested, so this method has no private
+    /// copy of the matrix math to drift from it. The normalisation is also
+    /// what makes a uniform model scale drop out, since the transpose of a
+    /// scaled rotation scales every row by the same factor. Quantizing here,
+    /// once, before the model transform, feeds the identical
+    /// quantized-then-transformed basis to both the regular (GE
+    /// texture-matrix) and linear (CPU-generated) texgen paths, since both
+    /// call this one method (`apply_texture_mapping` and `draw_mesh`'s
+    /// linear-UV branch).
     fn texgen_object_basis(&self) -> ([f32; 3], [f32; 3]) {
         let (right, up) = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
         let right = ssb_engine::math::quantize_lookat_basis(right);
@@ -365,21 +368,15 @@ impl DrawState {
         let Some(m) = self.texgen_model else {
             return (right, up);
         };
-        // `M^T v`: each component is one of the matrix's basis columns dotted
-        // with `v`, which is the object-space direction that maps onto `v`.
-        let transposed = |v: [f32; 3]| {
-            let dot = |c: &ScePspFVector4| c.x * v[0] + c.y * v[1] + c.z * v[2];
-            let r = [dot(&m.x), dot(&m.y), dot(&m.z)];
-            let len = ssb_engine::math::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
-            if len > 1.0e-6 {
-                [r[0] / len, r[1] / len, r[2] / len]
-            } else {
-                // A singular node matrix has no direction to express; leave
-                // the coordinate constant rather than producing infinities.
-                [0.0; 3]
-            }
-        };
-        (transposed(right), transposed(up))
+        let columns = [
+            [m.x.x, m.x.y, m.x.z],
+            [m.y.x, m.y.y, m.y.z],
+            [m.z.x, m.z.y, m.z.z],
+        ];
+        (
+            ssb_engine::math::transform_lookat_basis(columns, right),
+            ssb_engine::math::transform_lookat_basis(columns, up),
+        )
     }
 }
 
@@ -652,34 +649,28 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     // divides each `GU_NORMAL_8BIT` component by 128 before this matrix ever
     // sees it, measured against this project's own real `sceGu` draw calls,
     // not just read from PPSSPP source. The original hardware's own
-    // `G_TEXTURE_GEN` formula divides by 127 instead. `(raw / 128) *
-    // NORMAL_SCALE_COMPENSATION == raw / 127`, so scaling the dot-product
-    // term here reproduces the original exactly -- "compensating the matrix
-    // only from measured GE behavior", T2's own acceptance text.
-    const NORMAL_SCALE_COMPENSATION: f32 = 128.0 / 127.0;
-    // Half the normalised span, because the dot product covers [-1, 1].
-    let a_s = 0.5
-        * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w)
-        * NORMAL_SCALE_COMPENSATION;
-    let a_t = 0.5
-        * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h)
-        * NORMAL_SCALE_COMPENSATION;
-    // The tile origin the RDP subtracts before addressing TMEM. Applied on a
-    // clamped axis only, exactly matching the rule
-    // `mesh::Builder::push_vertex` uses when it bakes the same shift into
-    // authored UVs (RE-152): a repeat axis keeps absolute coordinates because
-    // its mask phase is already meaningful.
-    let shift = |origin: u16, clamp: bool, dim: u32| {
-        if clamp {
-            // `origin` is quarter-texel S10.2; normalise against the uploaded
-            // dimension the coordinate is expressed in.
-            -(origin as f32 / 4.0) / dim as f32
-        } else {
-            0.0
-        }
-    };
-    let b_s = a_s + shift(p.texgen_origin_s, t.wrap & TextureDesc::CLAMP_S != 0, w);
-    let b_t = a_t + shift(p.texgen_origin_t, t.wrap & TextureDesc::CLAMP_T != 0, h);
+    // `G_TEXTURE_GEN` formula divides by 127 instead. RE-228 (`PLAN.md`
+    // R2.1/T4) found that compensating *both* `a` (the dot-product
+    // coefficient, which is read through the GE's `/128` divisor) and `b`
+    // (the curve's zero-crossing constant plus the tile-origin shift, which
+    // is not) by the same `128/127` factor overcorrects `b` -- a real, if
+    // sub-texel, systematic offset a host property test against
+    // `ssb_rom::psp_texture::regular_texgen_uv`'s independent reference
+    // caught. `regular_texgen_matrix_coeffs` is the fixed, host-tested
+    // derivation; this function installs its output rather than keeping a
+    // second, drifted copy of the arithmetic.
+    let (a_s, b_s) = ssb_rom::psp_texture::regular_texgen_matrix_coeffs(
+        p.texgen_scale_s,
+        p.texgen_origin_s,
+        t.wrap & TextureDesc::CLAMP_S != 0,
+        w,
+    );
+    let (a_t, b_t) = ssb_rom::psp_texture::regular_texgen_matrix_coeffs(
+        p.texgen_scale_t,
+        p.texgen_origin_t,
+        t.wrap & TextureDesc::CLAMP_T != 0,
+        h,
+    );
 
     // Column `i` holds what object-space axis `i` contributes to `(s, t, q)`.
     // `q` is pinned to 1 so the generator's perspective divide is a no-op and

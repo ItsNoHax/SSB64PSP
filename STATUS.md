@@ -1,55 +1,52 @@
 # Current State
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
-- Task: `R2.1/T4 — Shared regular/linear reference math` (next up; not started)
+- Task: `R2.1/T5 — Linear integer conversion` (next up; not started)
 - Status: `TODO`
-- Last complete: `RE-227` (2026-09-11), `R2.1/T3 -- original LookAt
-  quantization`. The decomp's `syMatrixLookAtReflectF`
-  (`refs/ssb-decomp-re/src/sys/matrix.c:337-342`) quantizes the camera's
-  `right`/`up` basis to signed bytes via `FTOFRAC8`
-  (`refs/ssb-decomp-re/include/PR/gu.h:37`) once per camera, strictly before
-  any per-object model transform runs -- not the continuous per-frame float
-  this project's texgen path previously fed `DrawState::texgen_object_basis`.
-  `refs/BattleShip`'s `Interpreter::CalculateNormalDir` confirmed the
-  consuming order: dequantize by `/127` first, then transform, then
-  normalize.
-  **Added host-testable helpers** to `crates/ssb-engine/src/math.rs`:
-  `ftofrac8` (bit-exact macro port -- positive saturation at 127, asymmetric
-  negative range down to -128, documented negative-overflow wraparound
-  beyond any real basis component), `quantize_lookat_component` (quantize
-  then `/127` reconstruct -- exact for `0.0`/`+1.0`, inexact for `-1.0`:
-  `-128/127 ~= -1.00787`), `quantize_lookat_basis`. 8 new host tests cover
-  zero, saturation, the asymmetric range, the ±1/128 quantum boundary
-  (truncation not rounding), exact/inexact round-trips, and a realistic 45
-  degree basis angle where quantized and full-float measurably diverge.
-  **Fixed `meshdraw::DrawState::texgen_object_basis`**: now calls
-  `quantize_lookat_basis` on `right`/`up` before the existing `M^T v`
-  model-transform step, matching source order. Both texgen paths (regular
-  GE texture-matrix in `apply_texture_mapping`, linear CPU-generated in
-  `draw_mesh`) call this one method, so both receive the identical
-  quantized-then-transformed basis automatically -- no separate wiring.
-  Revises D-040 (its LUT-rejection premise named the basis "continuous
-  float"; the rejection's conclusion is unaffected).
-  **No goldens needed rebuilding**: every current texgen regression scene
-  (`regression_capture_scene11/12/13`) uses the identity (camera-less)
-  basis `([1,0,0], [0,1,0])`, whose only components (`0.0`, `+1.0`) round-trip
-  exactly, so quantizing it is a no-op. Measured, not assumed: re-captured
-  scenes 11 and 12 through `tools/run-ppsspp-headless.sh` and diffed against
-  their existing goldens -- 0 differing pixels both. The fix is currently
-  dormant pixel-wise; it activates once a rotated real-camera basis reaches
-  a texgen primitive, which no current scene exercises.
-- Next: `R2.1`/T4 -- shared regular/linear reference math. Create readable
-  host-testable helpers for quantized LookAt, transformed basis, raw
-  signed-byte dot and S10.5 conversion. Prove the regular GE lowering
-  matches the reference across thousands of random normals/bases/
-  rotations/scales; require exact S10.5 equality where possible, else
-  document max error. Read `PLAN.md`'s full `R2.1` section (T1-T10) before
-  starting; T5-T10 remain queued behind it in order.
-- Blockers: none for starting T4. `R2.1`/T1's own finding (164 cross-node
+- Last complete: `RE-228` (2026-09-11), `R2.1/T4 -- shared regular/linear
+  reference math`. Built host-testable helpers proving the regular-texgen
+  GE lowering matches an independent source-formula reference, and in doing
+  so found a real bug.
+  **Added** `ssb_rom::psp_texture::regular_texgen_curve` (`(dot+1)/4`) and
+  `regular_texgen_uv`, sharing `texgen_dot` and a new
+  `texgen_s10_5_addressed` scale-and-addressing step with the existing
+  `linear_texgen_uv` -- "the only curve difference... common scale and
+  addressing," `PLAN.md`'s own wording. Added `regular_texgen_matrix_coeffs`
+  (pulled out of `apply_texture_mapping`'s inline arithmetic) and
+  `ssb_engine::math::transform_lookat_basis` (pulled out of
+  `texgen_object_basis`'s inline closure), both host-testable; the real
+  rendering path now calls this same shared code rather than a private copy.
+  **Found and fixed a real bug** via a 20,000-case random property test
+  (`regular_texgen_matrix_lowering_matches_the_reference_curve`): the
+  shipped texture-matrix translation constant `b` wrongly carried the same
+  `128/127` `NORMAL_SCALE_COMPENSATION` the dot-term coefficient `a` needs
+  (`a` *is* read through the GE's measured `/128` normal divisor, RE-226;
+  `b` -- the curve's zero-crossing constant plus the tile-origin shift --
+  is not), overcorrecting by up to `scale/127 - scale/128` S10.5 units
+  (hundreds to thousands of units across random cases, pinned by a
+  dedicated regression test, `uncorrected_b_coefficient_measurably_
+  overcorrects`). Fixed in `regular_texgen_matrix_coeffs`; residual error
+  after the fix measures ~1.78 S10.5 units max (< 0.06 texels), traced to
+  a separate, documented, *unfixed* effect: an i8-quantized normal is only
+  approximately unit length, which can push `dot` a hair past +-1 that the
+  reference formula clamps but the GE's real affine matrix does not.
+  **Changed real rendered output**: rebuilt and updated two of three texgen
+  goldens (`tests/golden/r2-metal-texgen{,-rotated}.png`, 28,240 / 23,624
+  differing pixels against the pre-fix goldens, reconfirmed deterministic).
+  `regression_capture_scene13` (the one linear-texgen primitive, drawn
+  through the untouched CPU path) measured 0 differing pixels, correctly
+  unaffected since this fix is scoped to the regular/environment matrix path
+  only.
+- Next: `R2.1`/T5 -- linear integer conversion. Determine truncate/round/
+  other from microcode, faithful HLE implementations and controlled
+  original-ROM output, in that order. Add `N+0.49`, `N+0.50` and `N+0.51`
+  boundary tests at real scales. Use "source-formula exact" until original
+  output proves "bit-exact to N64". Read `PLAN.md`'s full `R2.1` section
+  (T1-T10) before starting; T6-T10 remain queued behind it in order.
+- Blockers: none for starting T5. `R2.1`/T1's own finding (164 cross-node
   differing-transform vertex reuses) is an open, tracked, *known* gap --
-  not a blocker for T4, which is a prerequisite for fixing it, not blocked
-  by it. `R2.2`/C1-C7 renderer corrective gate remains behind all of
-  `R2.1`. Combat remains gated behind `R2.2`.
+  not a blocker for T5. `R2.2`/C1-C7 renderer corrective gate remains behind
+  all of `R2.1`. Combat remains gated behind `R2.2`.
   Separately (not blocking): a real bug was found and flagged (not fixed)
   in the `debug_overlay` PSP viewer -- object-view HUD text renders
   corrupted/double-exposed in every capture. See the spawned follow-up task
@@ -57,28 +54,32 @@
   screenshot confirming RE-224's CI4 palette-bank fix (global texture
   indices 187/194/195, object indices 60-102 in file 86) was never obtained
   -- manual follow-up for whoever next has hands on the interactive build.
+  Also open, non-blocking, low-confidence: RE-228's residual ~1.78-S10.5-unit
+  clamp-boundary deviation is measured but not checked against real `sceGu`
+  calls the way RE-226's normal-semantics question was -- minor lead for a
+  future task, not currently assigned.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-227.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-228.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`IN PROGRESS`, T1 measured,
-  T2/T3 complete, T4 next).
-- Decisions: `DECISIONS.md` D-040 revised by RE-227's measurement (LookAt
-  basis is signed-byte quantized, not continuous float; LUT-rejection
-  conclusion unaffected).
+  T2/T3/T4 complete, T5 next).
+- Decisions: `DECISIONS.md` -- no new revision this task (D-038/D-040 already
+  cover the semantics RE-228 builds on).
 - Subsystem: `docs/porting-status.md` -- PSP mesh drawing; `docs/rendering.md`
-  -- texgen rows unchanged in substance (identity-basis scenes measured
-  bit-identical; no renderer-visible change yet for any current scene).
-- Verification: 8 new host tests in `crates/ssb-engine/src/math.rs`; full
-  `cargo test --workspace --all-targets` (pinned 1.98.0 toolchain,
-  `SSB64_ROM` set) -- 568 passing, 0 failed (560 prior + 8 new); `cargo fmt
-  --check` clean on touched files in both the host workspace and `psp/`;
-  `cargo psp --release` (default features) builds clean; re-captured
-  `regression_capture_scene11`/`_12` via `tools/run-ppsspp-headless.sh`,
-  diffed against existing goldens -- 0 differing pixels both, no golden
-  rebuild needed; `psp/`'s own `clippy` is not part of this project's gate
-  (native clippy cannot cross-compile to `mipsel-sony-psp`).
-- Documentation: RE-227, `PLAN.md` `R2.1`/T3, `DECISIONS.md` D-040, this
-  snapshot.
-- Commit: `e22cb86`.
+  -- texgen rows now reflect the corrected regular-texgen matrix constant
+  (renderer behavior changed: `regression_capture_scene11/12` goldens
+  updated, `_13` confirmed unaffected).
+- Verification: 6 new host tests (`crates/ssb-rom/src/psp_texture.rs`,
+  `crates/ssb-engine/src/math.rs`); full `cargo test --workspace
+  --all-targets` (pinned 1.98.0 toolchain, `SSB64_ROM` set) -- 574 passing,
+  0 failed (568 prior + 6 new); `cargo fmt --check` clean on touched files
+  (pre-existing drift in untouched files, e.g. `n64_addressing.rs`, left
+  alone -- out of scope); `cargo psp --release` (default features) builds
+  clean; goldens rebuilt and re-measured for scenes 11/12, confirmed
+  unaffected for scene 13, not assumed either way; `psp/`'s own `clippy` is
+  not part of this project's gate (native clippy cannot cross-compile to
+  `mipsel-sony-psp`).
+- Documentation: RE-228, `PLAN.md` `R2.1`/T4, this snapshot.
+- Commit: (pending).
 
 ## Continuation
 
