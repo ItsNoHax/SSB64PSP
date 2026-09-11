@@ -10,6 +10,123 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-245 — Ground render-layer 1 has the same external depth-state wrapper fighters do; 577 of RE-244's 4468-primitive gap explained (`PLAN.md` R2.2/C3, part 2, in progress)
+
+**Question.** RE-244 left `R2.2`/C3's ~4468-primitive `z_buffer`-vs-`depth_test`
+gap unexplained, naming stage/effect/other object categories as the likely
+source of an external `G_SETRENDERMODE` wrapper this project had not yet
+found, the same open shape RE-241's lighting fallback had before RE-242/243
+closed it. Does stage geometry actually have one?
+
+**Evidence.** Reading `refs/ssb-decomp-re/src/gr/grdisplay.c` directly found
+every `grDisplayLayerNPriProcDisplay`/`grDisplayLayerNSecProcDisplay`
+(`N` = 0..4, the four render layers `MPGroundDesc`/`GroundLayer` already
+name) sets `G_ZBUFFER` and `gDPSetRenderMode` unconditionally, right before
+walking the layer's own `DObj` tree (`gcDrawDObjTreeForGObj`, task list 0
+only) or its `DObjDLLink` entries (`gcDrawDObjTreeDLLinksForGObj`, routed per
+entry to whichever task list its own `list_id` names) — the same external
+"wrap-and-walk" shape `ftDisplayMainProcDisplay` has for fighters
+(RE-241/RE-244), but **varying by layer index**:
+
+```c
+// Layer 0/2/3 (e.g. grDisplayLayer0PriProcDisplay):
+gSPClearGeometryMode(gSYTaskmanDLHeads[0]++, G_ZBUFFER);
+gDPSetRenderMode(gSYTaskmanDLHeads[0]++, G_RM_AA_OPA_SURF, G_RM_AA_OPA_SURF2);
+// Layer 1 (grDisplayLayer1PriProcDisplay):
+gSPSetGeometryMode(gSYTaskmanDLHeads[0]++, G_ZBUFFER);
+gDPSetRenderMode(gSYTaskmanDLHeads[0]++, G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2);
+gDPSetRenderMode(gSYTaskmanDLHeads[1]++, G_RM_AA_ZB_XLU_SURF, G_RM_AA_ZB_XLU_SURF2);
+```
+
+`G_RM_AA_ZB_OPA_SURF2` ORs to `Z_CMP | Z_UPD | ZMODE_OPA`, identical to
+`FIGHTER_EXTERNAL`'s depth fields (RE-244); layers 0/2/3's non-`ZB` render
+modes carry neither bit, which is already `InitialMaterial::default()`. So
+only layer 1 needed a new named seed — layers 0/2/3 need none.
+
+A census confirmed this archive-wide before wiring anything
+(`census_ground_layer_depth_state_vs_z_buffer`, initial run against
+`InitialMaterial::default()` for every layer): 1213 ground-layer primitives
+total (339/776/18/80 across layers 0/1/2/3); layer 1's `z_buffer`=776/776 but
+`depth_test`/`depth_write`=199/199 before any seed — the same shape of
+divergence RE-244 found for fighters. Layers 0/2/3 already read `depth_test`/
+`depth_write` false throughout despite `z_buffer` true for some of them
+(297/339, 18/18, 80/80) — a handful of their own nodes re-enable `G_ZBUFFER`
+(RSP capability) without repeating `G_SETRENDERMODE`, a real, legitimate
+divergence matching the external wrapper's own no-`Z_CMP`/`Z_UPD` baseline,
+not a bug.
+
+The census also found the project's own node model already parses which task
+`list_id` a `DObjDLLink` entry targets (`scene::DlLink::list_id`) but
+discards it when flattening to a `PlannedList` (`NodeDl::lists()`,
+`plan_draw_order`'s `NodeDl::Links` arm) — so layer 1's 21 list-1
+(translucent, `G_RM_AA_ZB_XLU_SURF`: `Z_CMP` on, `Z_UPD` off) `DObjDLLink`
+entries, out of 163 total, cannot yet be seeded differently from its 142
+list-0 (opaque, write-on) entries.
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs` gained
+`InitialMaterial::GROUND_LAYER1_EXTERNAL` (`lit: false` — `gr`'s wrapper
+never touches `G_LIGHTING`, unlike `ft`'s; `depth_test`/`depth_write: true`,
+`depth_mode: ZMode::Opaque`, matching `FIGHTER_EXTERNAL`'s depth fields).
+`tools/romtool/src/main.rs` gained `ground_layer1_graphs()` (every stage's
+`GroundLayer` with `index == 1`, mirroring `fighter_skeleton_graphs`) and
+`initial_material_for` now checks it after the fighter-skeleton set, keeping
+every other graph (layers 0/2/3, items, effects) on `InitialMaterial::default`.
+All four production call sites (`pack`'s main loop, its costume-substitute
+path, `file_meshes`, and the `nodes` diagnostic subcommand) and the two
+permanent depth censuses were updated to build and pass this set alongside
+`skeleton_graphs`. Tested with `mesh.rs`'s
+`convert_sequence_ground_layer1_external_seeds_depth_but_not_lit`.
+
+**Measurement.** Unlike layers 0/2/3, this seed is *not* redundant.
+`census_ground_layer1_seed_measured_impact` (kept permanently): of 776
+layer-1 primitives archive-wide, the seed flips **577 (74%)** from
+`depth_test`/`depth_write` false to true, across 41 distinct layer-1 graphs —
+most of these graphs' own node lists never repeat `G_SETRENDERMODE` either,
+exactly like the fighter-skeleton case. Re-running
+`census_independent_depth_state_vs_z_buffer_geometry_bit` archive-wide after
+wiring: `depth_test`/`depth_write` rise from 1324/1308 to **1901/1885**;
+`depth_test != depth_write` stays exactly 16 (the fighter-side translucent
+primitives RE-244 already found — this entry does not add or remove any,
+since the 21 list-1 layer-1 entries were seeded as opaque, not translucent,
+per the still-open remainder below); `z_buffer != depth_test` falls from
+4468 to **3891** (12.9% of the archive-wide gap explained by this one
+layer). `assets/generated/ssb64.pak` rebuilt: mesh/triangle/draw-call counts
+(2044/36772/8056) are identical to a pre-change rebuild of the same ROM
+(diffed both builds' `pack` summaries), but the pack's own checksum differs
+(confirmed via `md5sum` against both builds) — real primitive material state
+changed, no primitive merge group was fragmented or lost.
+
+**Confidence.** High for the wrapper's existence, its per-layer render-mode
+values (cross-checked directly against `grdisplay.c` and `gbi.h`'s
+`G_RM_AA_ZB_OPA_SURF2`/`G_RM_AA_ZB_XLU_SURF2` macros, not assumed), and the
+measured, non-null, non-fighter impact. Still open: layer 1's 21 list-1
+`DObjDLLink` entries are seeded as opaque write-on rather than the real
+depth-test-without-write translucency their task list implies, because
+`PlannedList` does not carry `list_id` — this seed therefore *overstates*
+`depth_write` for however many of those 21 node-level entries produce real
+primitives (a small, bounded remainder, not the dominant behaviour). The
+remaining archive-wide gap (3891 primitives) is layers 0/2/3, items, and
+effects — `it`/`ef` were read directly too (`refs/ssb-decomp-re/src/it/
+itdisplay.c`, `src/ef/efmanager.c`/`efdisplay.c`): their normal in-game
+`ProcDisplay`s call `gcDrawDObjTreeForGObj`/`DLLinksForGObj` with **no**
+external geometry-mode or render-mode wrapper at all (only a few color-
+animated item variants and effect-manager special cases set render mode,
+never geometry mode, right before their own draw) — so items/effects are not
+expected to carry an external depth seed the way `ft`/`gr` do, and the
+remaining gap is not yet attributed to a specific cause. No PSP-side
+rendering behaviour changed in this entry; `psp/src/meshdraw.rs`'s
+`sceGuDepthMask` wiring stays deferred, same as RE-244.
+
+**Verification.** `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+`ssb-rom` 418 passed (417 prior + 1 new unit test), `romtool` 21 passed (19
+prior + 2 new census tests), `ssb-engine` 48, `ssb-game` 120, 0 failed
+overall. `cargo fmt --check` clean. `cargo clippy --workspace --all-targets`
+clean (same pre-existing, unrelated warnings as prior sessions). Pack
+rebuilt (`romtool pack`): mesh/triangle/draw-call counts verified identical
+to a pre-change rebuild of the same ROM; checksums differ as expected.
+
+---
+
 ## RE-244 — Independent depth compare/write state: a real 90% divergence from `G_ZBUFFER`, and the same external seed C2 found — but for a different, non-redundant reason (`PLAN.md` R2.2/C3, part 1, in progress)
 
 **Question.** `PLAN.md`'s `R2.2`/C3 requires censusing `G_SETRENDERMODE`'s

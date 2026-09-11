@@ -219,7 +219,7 @@ so nothing is duplicated and nothing is missing an owner.
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
 | Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership) and C2 (RE-241–243, load-time provenance) are both `COMPLETE` — C3–C7 remain open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
-| Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `VERIFYING` — RE-244 (`R2.2`/C3, part 1) added independent `depth_test`/`depth_write`/`depth_mode` fields and measured a real 90% archive-wide divergence from the single `z_buffer` flag PSP rendering still uses; PSP-side wiring, the non-fighter-skeleton remainder, and device evidence remain open |
+| Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `VERIFYING` — RE-244 (`R2.2`/C3, part 1) added independent `depth_test`/`depth_write`/`depth_mode` fields and measured a real 90% archive-wide divergence from the single `z_buffer` flag PSP rendering still uses; RE-245 (part 2) found and wired the same external per-object depth seed for stage render-layer 1, closing 577 of the 4468-primitive gap (now 3891); PSP-side wiring, the remaining non-fighter/non-layer-1 gap, and device evidence remain open |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
 | Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** | `COMPLETE` |
 | Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** | `COMPLETE` |
@@ -865,7 +865,7 @@ Reproduce original SSB64 material behavior.
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [x] blending verified — RE-069 detected `translucent` (14.4%) correctly but left it unwired after an enabled-blend experiment produced a checkerboard; RE-070/071 eliminated dither coarseness and alpha premultiplication as the cause without finding the real one; RE-124 (R0.18) confirmed both `sf64-psp` and `oot-PSP` ship standard blending fine on the same hardware, ruling out a platform limitation. **RE-129 found the real cause**: this project never decoded `G_SETCOMBINE`'s *alpha* formula at all (only the colour one) — decoded it directly from the ROM for Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found naively wiring that up universally broke a different `TRANSLUCENT` primitive (Dream Land's flowers) whose own alpha formula is different. **RE-130 measured every real alpha formula archive-wide** (9 distinct combiner values across ~8,800 real, textured, single-cycle `TRANSLUCENT` primitives): the majority (~5,950) is `TEXEL0_ALPHA` alone (the flowers' own shape), a smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA` (the canopy highlight), and a rare (~43) `TEXEL0_ALPHA * PRIM_ALPHA` plus two-cycle mode (~93, <1%) are declined rather than guessed at (real, measured, but not confidently understood or never on-device-verified). Implemented as a new classification axis (`mesh.rs`'s `AlphaBlend`/`combiner_alpha_blend`, independent of the existing RGB classification), baked the correct vertex alpha per shape (`push_vertex`), and gated real blending on a new pack flag (`flags::ALPHA_BLEND`, `VERSION` 15→16) that only sets when both `TRANSLUCENT` and a classified alpha formula agree — a `TRANSLUCENT` primitive without it keeps the pre-existing safe default. Verified on-device: the flowers survive, two previously-fully-invisible decorative props now render correctly, confirmed via a clean pixel diff against the `regression_capture` golden capture (updated) and re-verified deterministic across a 9-second timing spread
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
-* [ ] depth state verified — RE-068 establishes the RDP default and current PSP depth-test mapping, but R2.2/C3 must independently preserve RDP `Z_CMP`, `Z_UPD` and `ZMODE`; the current single `z_buffer` flag is not sufficient to claim depth correctness. RE-244 (`R2.2`/C3, part 1) added `MeshMaterial::{depth_test, depth_write, depth_mode}` derived independently from `G_SETRENDERMODE`, found a real 90% archive-wide divergence from `z_buffer` (592/576 of 5872 primitives before any seed), traced and wired the same `ftDisplayMainProcDisplay` external-per-object seed C2 used (now `InitialMaterial::FIGHTER_EXTERNAL`, covering both `G_LIGHTING` and `G_SETRENDERMODE`) — measurably not redundant this time (732/771 fighter-skeleton primitives flip, `census_depth_seed_measured_impact_on_skeleton_graphs`). PSP-side `sceGuDepthMask` wiring is deliberately not yet changed: ~4468 primitives archive-wide are still unexplained (likely a non-fighter external wrapper), and switching the runtime signal before finding it would regress today's device-validated `z_buffer` behaviour. Still open.
+* [ ] depth state verified — RE-068 establishes the RDP default and current PSP depth-test mapping, but R2.2/C3 must independently preserve RDP `Z_CMP`, `Z_UPD` and `ZMODE`; the current single `z_buffer` flag is not sufficient to claim depth correctness. RE-244 (`R2.2`/C3, part 1) added `MeshMaterial::{depth_test, depth_write, depth_mode}` derived independently from `G_SETRENDERMODE`, found a real 90% archive-wide divergence from `z_buffer` (592/576 of 5872 primitives before any seed), traced and wired the same `ftDisplayMainProcDisplay` external-per-object seed C2 used (now `InitialMaterial::FIGHTER_EXTERNAL`, covering both `G_LIGHTING` and `G_SETRENDERMODE`) — measurably not redundant this time (732/771 fighter-skeleton primitives flip, `census_depth_seed_measured_impact_on_skeleton_graphs`). RE-245 (`R2.2`/C3, part 2) found the same external wrapper for stage geometry (`grDisplayLayerNPriProcDisplay`/`SecProcDisplay`, varying by render-layer index) and wired `InitialMaterial::GROUND_LAYER1_EXTERNAL` for every stage's layer 1, flipping 577/776 (74%) of its primitives (`census_ground_layer1_seed_measured_impact`) and shrinking the archive-wide gap to 3891. PSP-side `sceGuDepthMask` wiring is deliberately not yet changed: items/effects carry no such external wrapper (checked directly), so the remaining gap is unattributed, and switching the runtime signal before it is would regress today's device-validated `z_buffer` behaviour. Still open.
 * [x] culling verified — RE-068: same reset list defaults `G_CULL_BACK` on; fixed, measured 86.3% of packed primitives cull back faces post-fix
 * [x] unsupported material behavior identified — RE-139 compiled the enumeration this item asks for: (1) combiner shapes outside shade-scale/texture-blend/flat-constant, now 186 of 65,199 source-attributed emitted-triangle visits in RE-168; (2) alpha formulas outside `TEXEL0_ALPHA` (alone or × `SHADE_ALPHA`) — the rare `PRIM_ALPHA` multiply and two-cycle mode (RE-130); (3) `G_SHADE` cleared while a combiner still reads `SHADE` (RE-120); and (4) runtime-injected primitive/environment colours for shields, source-identified by RE-168 and owned by future effect/gameplay integration. RE-164–167 closed RE-139's former baked-light item; it is no longer unsupported.
 
@@ -3452,7 +3452,7 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 ## R2.2 — Second Renderer Corrective Gate (C1–C7)
 
 Status: `IN_PROGRESS` — C1 complete (RE-240); C2 complete (RE-241, RE-242,
-RE-243); C3 in progress (RE-244); C4–C7 remain, depend on R2.1/T1–T10
+RE-243); C3 in progress (RE-244, RE-245); C4–C7 remain, depend on R2.1/T1–T10
 (`COMPLETE`). Must close before R3 or a stable rendering-gate claim. Do not
 optimize while it is open.
 
@@ -3538,7 +3538,7 @@ existing per-vertex tests, unaffected by this change.
 
 ### C3 — Independent depth compare/write state
 
-Status: `IN_PROGRESS` (RE-244, part 1). Census `Z_CMP`, `Z_UPD`,
+Status: `IN_PROGRESS` (RE-244 part 1, RE-245 part 2). Census `Z_CMP`, `Z_UPD`,
 `ZMODE_OPA/INTER/XLU/DEC`. Represent independent `depth_test`, `depth_write`
 and `depth_mode`; keep `G_ZBUFFER` as geometry/RSP state. Map writes through
 `sceGuDepthMask` (true disables PSP writes). Add a depth-test/no-write
@@ -3584,12 +3584,41 @@ triangle/draw-call counts are unchanged from the pre-RE-244 build (verified by
 rebuilding both and diffing the `pack` summary), so the new fields did not
 fragment any existing primitive merge group.
 
-Remaining for C3: find (or rule out) other object categories' own external
-render-mode wrapper, decide the actual PSP-side `sceGuDepthMask` wiring once
-that gap is understood, and add the depth-test/no-write translucent-front/
-opaque-behind scene plus ON→OFF→ON regression with device evidence. Until this
-closes,
-depth is not complete.
+RE-245 (part 2) found and wired the same external wrapper for stage geometry.
+Reading `refs/ssb-decomp-re/src/gr/grdisplay.c` directly found every
+`grDisplayLayerNPriProcDisplay`/`SecProcDisplay` (`N` = 0..4, the four render
+layers `GroundLayer` already names) sets `G_ZBUFFER` and `gDPSetRenderMode`
+unconditionally before walking the layer's own node lists — the same
+"wrap-and-walk" shape as `ft`, but varying by layer: layers 0/2/3 clear
+`G_ZBUFFER` and set a non-`ZB` render mode (already `InitialMaterial::
+default`), while layer 1 sets `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF` —
+`Z_CMP | Z_UPD | ZMODE_OPA`, identical to `FIGHTER_EXTERNAL`'s depth fields.
+`InitialMaterial::GROUND_LAYER1_EXTERNAL` (`lit: false` — `gr`'s wrapper
+never sets `G_LIGHTING`) now seeds every stage's render-layer-1 graph
+(`tools/romtool`'s `ground_layer1_graphs`, mirroring `fighter_skeleton_
+graphs`). Measured (`census_ground_layer1_seed_measured_impact`, kept
+permanently): of 776 layer-1 primitives archive-wide, the seed flips **577
+(74%)** from false to true. Archive-wide `depth_test`/`depth_write` rise from
+1324/1308 to **1901/1885**; the `z_buffer`-vs-`depth_test` gap falls from
+4468 to **3891** (12.9% explained). `it`/`ef` (items/effects) were read
+directly too: their normal in-game `ProcDisplay`s call `gcDrawDObjTreeForGObj`/
+`DLLinksForGObj` with **no** external geometry-mode or render-mode wrapper at
+all, unlike `ft`/`gr` — so they are not expected to carry an external depth
+seed, and the remaining 3891-primitive gap (layers 0/2/3, items, effects) is
+still unattributed. Also found and left open: the project's own node model
+parses which task `list_id` a `DObjDLLink` entry targets
+(`scene::DlLink::list_id`) but discards it when flattening to a
+`PlannedList` — so layer 1's 21 list-1 (translucent, depth-test-without-write)
+entries out of 163 are seeded as opaque write-on rather than their real state,
+a small bounded overstatement, not yet fixed.
+
+Remaining for C3: find (or rule out) any other object category's own external
+render-mode wrapper (layers 0/2/3, items, effects — none found so far), give
+`PlannedList` its own `list_id` field so layer 1's list-1 entries can be
+seeded correctly, decide the actual PSP-side `sceGuDepthMask` wiring once the
+gap is understood, and add the depth-test/no-write translucent-front/
+opaque-behind scene plus ON→OFF→ON regression with device evidence. Until
+this closes, depth is not complete.
 
 ### C4 — Preserve submission order
 

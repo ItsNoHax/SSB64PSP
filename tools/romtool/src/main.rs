@@ -462,6 +462,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     // Materials change what converts, so resolve them the way the packer does.
     let loaded = load_all(&archive);
     let skeleton_graphs = fighter_skeleton_graphs(&loaded);
+    let ground_graphs = ground_layer1_graphs(&loaded);
     for id in &ids {
         let Some(file) = loaded.files.get(*id as usize).and_then(Option::as_ref) else {
             continue;
@@ -504,7 +505,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
 
-            let initial = initial_material_for(&skeleton_graphs, *id, g.offset);
+            let initial = initial_material_for(&skeleton_graphs, &ground_graphs, *id, g.offset);
             for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
                 &items,
                 ssb_rom::mesh::Source::of(file),
@@ -1104,15 +1105,38 @@ fn fighter_skeleton_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, 
         .collect()
 }
 
+/// Every stage's render-layer-1 `(file, graph_offset)` (RE-245).
+///
+/// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` set `G_ZBUFFER` and
+/// `gDPSetRenderMode(G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2)` unconditionally
+/// before walking a stage's own layer-1 node lists -- see
+/// [`ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL`] for the full
+/// citation. Layers 0/2/3 need no entry here: their own external wrapper
+/// clears `G_ZBUFFER` and sets a non-`ZB` render mode, which is already
+/// [`ssb_rom::mesh::InitialMaterial::default`].
+fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, u32)> {
+    loaded
+        .stages
+        .iter()
+        .flat_map(|stage| &stage.layers)
+        .filter(|layer| layer.index == 1)
+        .map(|layer| layer.graph)
+        .collect()
+}
+
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
-/// graph_offset)` must use -- see [`fighter_skeleton_graphs`].
+/// graph_offset)` must use -- see [`fighter_skeleton_graphs`] and
+/// [`ground_layer1_graphs`].
 fn initial_material_for(
     skeleton_graphs: &std::collections::BTreeSet<(u32, u32)>,
+    ground_layer1_graphs: &std::collections::BTreeSet<(u32, u32)>,
     file: u32,
     graph_offset: u32,
 ) -> ssb_rom::mesh::InitialMaterial {
     if skeleton_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
+    } else if ground_layer1_graphs.contains(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL
     } else {
         ssb_rom::mesh::InitialMaterial::default()
     }
@@ -1453,6 +1477,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
 
     let loaded = load_all(&archive);
     let skeleton_graphs = fighter_skeleton_graphs(&loaded);
+    let ground_graphs = ground_layer1_graphs(&loaded);
 
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
@@ -1543,7 +1568,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 })
                 .collect();
 
-            let initial = initial_material_for(&skeleton_graphs, id, graphs[gi].offset);
+            let initial =
+                initial_material_for(&skeleton_graphs, &ground_graphs, id, graphs[gi].offset);
             for (p, converted) in plan.iter().zip(mesh::convert_sequence(
                 &items,
                 mesh::Source::of(file),
@@ -1646,7 +1672,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 let base_materials = loaded.materials(file, graph);
                 let first_node = writer.object(object).unwrap().first_node;
                 let plan = &plans[gi];
-                let initial = initial_material_for(&skeleton_graphs, id, graph.offset);
+                let initial =
+                    initial_material_for(&skeleton_graphs, &ground_graphs, id, graph.offset);
                 let base_converted = convert_graph_at(
                     &loaded,
                     file,
@@ -3897,6 +3924,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     let graphs: &[ssb_rom::scene::SceneGraph] =
         loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
     let skeleton_graphs = fighter_skeleton_graphs(loaded);
+    let ground_graphs = ground_layer1_graphs(loaded);
     let mut out = Vec::new();
     let mut claimed = BTreeSet::new();
 
@@ -3923,7 +3951,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 mat_anims: &[],
             })
             .collect();
-        let initial = initial_material_for(&skeleton_graphs, file.id, graph.offset);
+        let initial = initial_material_for(&skeleton_graphs, &ground_graphs, file.id, graph.offset);
         out.extend(
             mesh::convert_sequence(&items, mesh::Source::of(file), initial)
                 .into_iter()
@@ -8220,6 +8248,245 @@ mod tests {
             "R2.2/C3 depth seed measured impact: {depth_test_changed}/{prims_checked} \
              primitives changed depth_test, {depth_write_changed}/{prims_checked} changed \
              depth_write, across {} distinct skeleton graphs",
+            graphs_checked.len()
+        );
+        assert!(prims_checked > 0);
+    }
+
+    /// `R2.2`/C3 (RE-245): does stage/ground geometry explain the ~4468-
+    /// primitive `z_buffer`-vs-`depth_test` gap `census_independent_depth_
+    /// state_vs_z_buffer_geometry_bit` leaves after the fighter-skeleton seed?
+    ///
+    /// Reading `refs/ssb-decomp-re/src/gr/grdisplay.c` directly found every
+    /// `grDisplayLayerNPriProcDisplay`/`SecProcDisplay` sets `G_ZBUFFER` and
+    /// `gDPSetRenderMode` unconditionally right before walking the layer's own
+    /// `DObj` tree -- the same external "wrap-and-walk" shape
+    /// `ftDisplayMainProcDisplay` has for fighters (RE-241/RE-244), but here
+    /// it varies **by layer index**: layers 0/2/3 clear `G_ZBUFFER` and set a
+    /// non-`ZB` render mode (no depth test or write at all), while layer 1
+    /// sets `G_ZBUFFER` and `G_RM_AA_ZB_OPA_SURF`/`G_RM_AA_ZB_XLU_SURF` (depth
+    /// test on; write on for task head 0, off for head 1 -- real depth-test-
+    /// without-write translucency).
+    ///
+    /// This census decodes each layer's graph the same way `pack`/`file_meshes`
+    /// now do -- through `initial_material_for`, which seeds layer 1 with
+    /// [`ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL`] (RE-245) --
+    /// and tallies `z_buffer`/`depth_test`/`depth_write` per layer index, plus
+    /// how many of a graph's nodes resolve to `NodeDl::Links` (routed to a
+    /// specific task `list_id` by the node's own `DObjDLLink` entries -- the
+    /// field `plan_draw_order` already reads but `PlannedList` does not keep)
+    /// versus `Direct`/`Pair` (always task list 0).
+    ///
+    /// **Result**: layers 0/2/3 (`z_buffer_true` 297/18/80) still read
+    /// `depth_test`/`depth_write` false throughout -- correct, since their own
+    /// external wrapper clears `G_ZBUFFER` and sets a non-`ZB` render mode,
+    /// already [`ssb_rom::mesh::InitialMaterial::default`]; a handful of their
+    /// own nodes re-enable `G_ZBUFFER` (RSP capability) without repeating
+    /// `G_SETRENDERMODE`, so `z_buffer` and `depth_test` legitimately diverge
+    /// for them, not a bug. Layer 1 (776 primitives) now reads `depth_test`/
+    /// `depth_write` true for all 776, matching `z_buffer` exactly -- but 21
+    /// of its 163 `DObjDLLink` entries target task list 1 (`gr`'s translucent
+    /// pass, `G_RM_AA_ZB_XLU_SURF`: `depth_write` should be false there), and
+    /// `PlannedList` cannot yet distinguish them from the 142 list-0 entries,
+    /// so this seed overstates `depth_write` for however many of those 21
+    /// node-level entries produce real primitives -- a known, still-open
+    /// remainder (see `InitialMaterial::GROUND_LAYER1_EXTERNAL`'s doc comment).
+    #[test]
+    fn census_ground_layer_depth_state_vs_z_buffer() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let skeleton_graphs = super::fighter_skeleton_graphs(&loaded);
+        let ground_graphs = super::ground_layer1_graphs(&loaded);
+
+        #[derive(Default, Debug)]
+        struct LayerStats {
+            prims: usize,
+            z_buffer_true: usize,
+            depth_test_true: usize,
+            depth_write_true: usize,
+            direct_or_pair_nodes: usize,
+            links_nodes: usize,
+            links_list0: usize,
+            links_list1: usize,
+            links_other: usize,
+        }
+
+        let mut by_layer: std::collections::BTreeMap<u32, LayerStats> =
+            std::collections::BTreeMap::new();
+        for stage in &loaded.stages {
+            for layer in &stage.layers {
+                let (file_id, graph_offset) = layer.graph;
+                let Some(file) = loaded.files.get(file_id as usize).and_then(Option::as_ref) else {
+                    continue;
+                };
+                let Some(g) = loaded
+                    .graphs
+                    .get(&file_id)
+                    .and_then(|gs| gs.iter().find(|g| g.offset == graph_offset))
+                else {
+                    continue;
+                };
+                let stats = by_layer.entry(layer.index).or_default();
+
+                let resolver = ssb_rom::scene::DlResolver::new(file);
+                for node in &g.nodes {
+                    let Some(dl) = node.desc.dl else { continue };
+                    match resolver.resolve(dl) {
+                        ssb_rom::scene::NodeDl::Links(links) => {
+                            stats.links_nodes += 1;
+                            for link in &links {
+                                match link.list_id {
+                                    0 => stats.links_list0 += 1,
+                                    1 => stats.links_list1 += 1,
+                                    _ => stats.links_other += 1,
+                                }
+                            }
+                        }
+                        _ => stats.direct_or_pair_nodes += 1,
+                    }
+                }
+
+                let plan = super::plan_draw_order(g, &resolver);
+                let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                    .iter()
+                    .map(|p| {
+                        file.data
+                            .get(p.dl as usize..)
+                            .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                let materials = loaded.materials(file, g);
+                let items: Vec<ssb_rom::mesh::SequenceItem> = plan
+                    .iter()
+                    .zip(&decoded)
+                    .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
+                        cmds,
+                        world: p.world,
+                        mobjs: &materials[p.node],
+                        mat_anims: &[],
+                    })
+                    .collect();
+                let initial = super::initial_material_for(
+                    &skeleton_graphs,
+                    &ground_graphs,
+                    file_id,
+                    graph_offset,
+                );
+                let meshes = ssb_rom::mesh::convert_sequence(
+                    &items,
+                    ssb_rom::mesh::Source::of(file),
+                    initial,
+                );
+                for mesh in meshes.into_iter().flatten() {
+                    for p in &mesh.primitives {
+                        stats.prims += 1;
+                        stats.z_buffer_true += p.material.z_buffer as usize;
+                        stats.depth_test_true += p.material.depth_test as usize;
+                        stats.depth_write_true += p.material.depth_write as usize;
+                    }
+                }
+            }
+        }
+        for (index, stats) in &by_layer {
+            println!("R2.2/C3 ground layer {index} depth census: {stats:?}");
+        }
+        assert!(!by_layer.is_empty());
+    }
+
+    /// `R2.2`/C3 (RE-245): measures `InitialMaterial::GROUND_LAYER1_EXTERNAL`'s
+    /// real impact, the same shape as `census_depth_seed_measured_impact_on_
+    /// skeleton_graphs`. **Result**: of 776 render-layer-1 primitives
+    /// archive-wide, the seed flips **577 (74%)** from `depth_test`/
+    /// `depth_write` false to true -- most of layer 1's own node lists never
+    /// repeat `G_SETRENDERMODE`, exactly like the fighter-skeleton case. This
+    /// single seed accounts for 577 of RE-244's 4468-primitive archive-wide
+    /// gap (12.9%), shrinking it to 3891
+    /// (`census_independent_depth_state_vs_z_buffer_geometry_bit`, re-run
+    /// after this seed).
+    #[test]
+    fn census_ground_layer1_seed_measured_impact() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut graphs_checked: BTreeSet<(u32, u32)> = BTreeSet::new();
+        let mut prims_checked = 0usize;
+        let mut depth_test_changed = 0usize;
+        let mut depth_write_changed = 0usize;
+        for stage in &loaded.stages {
+            for layer in stage.layers.iter().filter(|l| l.index == 1) {
+                let (file_id, graph_offset) = layer.graph;
+                if !graphs_checked.insert(layer.graph) {
+                    continue; // several stages can share one layer-1 graph
+                }
+                let Some(file) = loaded.files.get(file_id as usize).and_then(Option::as_ref) else {
+                    continue;
+                };
+                let Some(g) = loaded
+                    .graphs
+                    .get(&file_id)
+                    .and_then(|gs| gs.iter().find(|g| g.offset == graph_offset))
+                else {
+                    continue;
+                };
+                let resolver = ssb_rom::scene::DlResolver::new(file);
+                let plan = super::plan_draw_order(g, &resolver);
+                let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                    .iter()
+                    .map(|p| {
+                        file.data
+                            .get(p.dl as usize..)
+                            .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                let materials = loaded.materials(file, g);
+                let items: Vec<ssb_rom::mesh::SequenceItem> = plan
+                    .iter()
+                    .zip(&decoded)
+                    .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
+                        cmds,
+                        world: p.world,
+                        mobjs: &materials[p.node],
+                        mat_anims: &[],
+                    })
+                    .collect();
+                let seeded = ssb_rom::mesh::convert_sequence(
+                    &items,
+                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL,
+                );
+                let unseeded = ssb_rom::mesh::convert_sequence(
+                    &items,
+                    ssb_rom::mesh::Source::of(file),
+                    ssb_rom::mesh::InitialMaterial::default(),
+                );
+                for (a, b) in seeded.iter().zip(&unseeded) {
+                    let (Ok(a), Ok(b)) = (a, b) else { continue };
+                    for (pa, pb) in a.primitives.iter().zip(&b.primitives) {
+                        prims_checked += 1;
+                        if pa.material.depth_test != pb.material.depth_test {
+                            depth_test_changed += 1;
+                        }
+                        if pa.material.depth_write != pb.material.depth_write {
+                            depth_write_changed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C3 ground layer1 depth seed measured impact: \
+             {depth_test_changed}/{prims_checked} primitives changed depth_test, \
+             {depth_write_changed}/{prims_checked} changed depth_write, across {} \
+             distinct layer-1 graphs",
             graphs_checked.len()
         );
         assert!(prims_checked > 0);

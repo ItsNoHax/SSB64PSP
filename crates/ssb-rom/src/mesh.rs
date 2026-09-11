@@ -252,6 +252,37 @@ impl InitialMaterial {
         depth_write: true,
         depth_mode: ZMode::Opaque,
     };
+
+    /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` (`refs/ssb-decomp-re/
+    /// src/gr/grdisplay.c`, RE-245) set `G_ZBUFFER` and `gDPSetRenderMode(
+    /// G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2)` on task list 0
+    /// unconditionally, right before walking a stage's render-layer-1 `DObj`
+    /// tree (`gcDrawDObjTreeForGObj`) or its list-0-routed `DObjDLLink`
+    /// entries (`gcDrawDObjTreeDLLinksForGObj`) -- the same external
+    /// "wrap-and-walk" shape [`Self::FIGHTER_EXTERNAL`] has for fighters, but
+    /// without `G_LIGHTING` (`gr`'s wrapper never touches the lighting bit;
+    /// each node's own commands decide it). `G_RM_AA_ZB_OPA_SURF2` ORs to
+    /// `Z_CMP | Z_UPD | ZMODE_OPA`, matching `FIGHTER_EXTERNAL`'s depth
+    /// fields exactly.
+    ///
+    /// Layers 0/2/3 clear `G_ZBUFFER` and set a non-`ZB` render mode instead
+    /// (no depth test or write), which is already [`Self::default`] -- so
+    /// only layer 1 needs a named seed. Task list 1 (a `DObjDLLink` entry
+    /// with `list_id == 1`, `gr`'s translucent pass) gets
+    /// `G_RM_AA_ZB_XLU_SURF` instead -- `Z_CMP` on, `Z_UPD` off, `ZMODE_XLU`
+    /// -- but `PlannedList` does not yet keep which task list a link entry
+    /// targeted (RE-245), so that corrective is not wired: applying this
+    /// constant to every render-layer-1 graph node overstates `depth_write`
+    /// for whichever primitives are really on list 1. Measured archive-wide
+    /// as a small remainder (`census_ground_layer_depth_state_vs_z_buffer`):
+    /// 21 of 163 layer-1 `DObjDLLink` entries target list 1, out of 776
+    /// layer-1 primitives total.
+    pub const GROUND_LAYER1_EXTERNAL: InitialMaterial = InitialMaterial {
+        lit: false,
+        depth_test: true,
+        depth_write: true,
+        depth_mode: ZMode::Opaque,
+    };
 }
 
 /// Render state a primitive is drawn under.
@@ -5266,6 +5297,42 @@ mod tests {
         assert!(m.depth_test, "Z_CMP must be seeded on");
         assert!(m.depth_write, "Z_UPD must be seeded on");
         assert_eq!(m.depth_mode, ZMode::Opaque);
+    }
+
+    #[test]
+    fn convert_sequence_ground_layer1_external_seeds_depth_but_not_lit() {
+        // R2.2/C3 (RE-245): `grDisplayLayer1PriProcDisplay`/`SecProcDisplay`
+        // set `G_ZBUFFER` and `gDPSetRenderMode(G_RM_AA_ZB_OPA_SURF,
+        // G_RM_AA_ZB_OPA_SURF2)` unconditionally before walking a stage's
+        // render-layer-1 node lists -- the same depth fields
+        // `FIGHTER_EXTERNAL` seeds, but `gr`'s wrapper never touches
+        // `G_LIGHTING`, so `lit` must stay off.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(
+            &items,
+            Source::bare(&file),
+            InitialMaterial::GROUND_LAYER1_EXTERNAL,
+        )
+        .pop()
+        .unwrap()
+        .unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.depth_test, "Z_CMP must be seeded on");
+        assert!(m.depth_write, "Z_UPD must be seeded on");
+        assert_eq!(m.depth_mode, ZMode::Opaque);
+        assert!(
+            !mesh.vertices[0].lit,
+            "gr's wrapper does not set G_LIGHTING"
+        );
     }
 
     #[test]
