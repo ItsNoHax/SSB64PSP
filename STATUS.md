@@ -81,7 +81,7 @@
   `tools/fighter-model-ground-truth.py` (new).
 - Documentation: RE-242, `PLAN.md` (`R2.2`/C2 status + remainder text +
   lighting checklist row), this snapshot.
-- Commit: pending (RE-242, `R2.2`/C2 mapping-verification).
+- Commit: `fec6d24` (RE-242, `R2.2`/C2 mapping-verification).
 
 ## Continuation
 
