@@ -49,9 +49,9 @@ pub struct MeshVertex {
     /// normal-vs-colour when the RSP's vertex pipeline runs, which is
     /// `G_VTX` itself; triangle commands only reference the already-resolved
     /// cache. A node whose own list never mentions `G_LIGHTING` gets
-    /// whatever [`State::new`]'s `initial_lit` seeded (RE-021/RE-242's
-    /// external-per-object case, wired through [`convert_sequence`]'s own
-    /// parameter): `false` for everything except a fighter's two
+    /// whatever [`State::new`]'s [`InitialMaterial::lit`] seeded (RE-021/
+    /// RE-242's external-per-object case, wired through [`convert_sequence`]'s
+    /// own parameter): `false` for everything except a fighter's two
     /// `common_parts` skeleton graphs.
     pub lit: bool,
 }
@@ -192,6 +192,68 @@ impl TextureGen {
     }
 }
 
+/// `G_SETRENDERMODE`'s `ZMODE` field, RE-244 (`refs/ssb-decomp-re/include/
+/// PR/gbi.h`'s `ZMODE_OPA`/`ZMODE_INTER`/`ZMODE_XLU`/`ZMODE_DEC`, 2 bits at
+/// render-mode shift 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ZMode {
+    #[default]
+    Opaque,
+    Interpenetrating,
+    Translucent,
+    Decal,
+}
+
+impl ZMode {
+    /// Decodes the 2-bit `ZMODE` field from a raw `G_SETRENDERMODE` word
+    /// (already shifted to its absolute bit position, matching every other
+    /// render-mode constant this module reads -- RE-069).
+    fn from_render_mode(data: u32) -> Self {
+        match (data >> 10) & 0x3 {
+            0 => ZMode::Opaque,
+            1 => ZMode::Interpenetrating,
+            2 => ZMode::Translucent,
+            _ => ZMode::Decal,
+        }
+    }
+}
+
+/// The render state `ftDisplayMainProcDisplay` (or an equivalent external
+/// wrapper) establishes *before* a node sequence's own commands run at all,
+/// seeded into [`State::new`]/[`convert_sequence`] rather than left at
+/// `rdp_default`'s baseline.
+///
+/// `rdp_default()`/`Self::default()` (all `false`/[`ZMode::Opaque`]) is the
+/// real RDP per-frame reset (`sSYRdpResetDisplayList`'s `G_RM_OPA_SURF`,
+/// which sets neither `Z_CMP` nor `Z_UPD`) and stays correct for any list
+/// that is not one of these externally-wrapped graphs. [`Self::FIGHTER_EXTERNAL`]
+/// is the one measured external wrapper found so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InitialMaterial {
+    pub lit: bool,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub depth_mode: ZMode,
+}
+
+impl InitialMaterial {
+    /// `ftDisplayMainProcDisplay` sets `G_LIGHTING` (RE-021, RE-242) and
+    /// `gDPSetRenderMode(G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2)` -- which ORs
+    /// to `Z_CMP | Z_UPD | ZMODE_OPA` among its shared bits (RE-244) --
+    /// unconditionally before `ftDisplayMainDrawAll` walks a fighter's own
+    /// joint node lists. A fighter skeleton graph's first command is already
+    /// running under both, even though nothing in its own list said so.
+    /// [`convert_sequence`]'s callers pass this only for one of a fighter's
+    /// two `common_parts` skeleton graphs (`fighter_skeleton_graphs` in
+    /// `tools/romtool`); every other caller uses [`Self::default`].
+    pub const FIGHTER_EXTERNAL: InitialMaterial = InitialMaterial {
+        lit: true,
+        depth_test: true,
+        depth_write: true,
+        depth_mode: ZMode::Opaque,
+    };
+}
+
 /// Render state a primitive is drawn under.
 ///
 /// Ordering matters: primitives are grouped by this key, so cheap-to-compare
@@ -222,7 +284,30 @@ pub struct MeshMaterial {
     /// were loaded under a different `G_TEXTURE` scale (or a different texgen
     /// mode) than the one in force at the draw.
     pub texgen_scale: Option<(u16, u16)>,
+    /// `G_ZBUFFER` geometry-mode bit: whether the RSP computes/passes a
+    /// per-vertex depth value at all (RE-068). This is RSP capability, not
+    /// the RDP's own per-pixel depth compare/write decision -- see
+    /// [`Self::depth_test`]/[`Self::depth_write`] for that (RE-244).
     pub z_buffer: bool,
+    /// `G_SETRENDERMODE`'s `Z_CMP` bit: the RDP compares this pixel's depth
+    /// against the depth buffer before drawing it (RE-244). Independent of
+    /// [`Self::z_buffer`] (RSP geometry mode) and [`Self::depth_write`]
+    /// (`Z_UPD`) -- `refs/ssb-decomp-re/include/PR/gbi.h`'s render-mode
+    /// macros set these three bits independently, and real translucent
+    /// surfaces (`G_RM_ZB_XLU_SURF`) test depth without writing it.
+    pub depth_test: bool,
+    /// `G_SETRENDERMODE`'s `Z_UPD` bit: this pixel's depth is written back to
+    /// the depth buffer after the compare (RE-244). Maps to `sceGuDepthMask`
+    /// on the PSP side (`true` there disables writes, so this field is
+    /// negated at the call site).
+    pub depth_write: bool,
+    /// `G_SETRENDERMODE`'s `ZMODE` field (RE-244): a depth-bias hint the RDP
+    /// hardware itself applies (decals sit exactly at their target surface's
+    /// depth; interpenetrating surfaces get a softer compare). The PSP GE has
+    /// no equivalent hardware feature; kept as measured render state pending
+    /// a mapping decision (`PLAN.md` `R2.2`/C3), not yet consumed on the
+    /// device side.
+    pub depth_mode: ZMode,
     /// `G_SETPRIMCOLOR`, when the list or an `MObj` set one.
     ///
     /// `None` is not the same as black: most of Mario's model is flat-shaded,
@@ -1055,23 +1140,19 @@ struct State {
 }
 
 impl State {
-    /// `initial_lit` seeds `material.lit` before any command runs.
-    ///
-    /// `ftDisplayMainProcDisplay` sets `G_LIGHTING` for every fighter draw
-    /// *before* the fighter's own node lists run at all (RE-021, RE-242), so
-    /// a fighter skeleton graph's first `G_VTX` is already lit even though
-    /// nothing in its own list said so. `rdp_default`'s unlit default is
-    /// still correct for everything else — only [`convert_sequence`]'s
-    /// callers that know they are decoding one of those two graphs pass
-    /// `true`.
-    fn new(initial_lit: bool) -> Self {
+    /// `initial` seeds `material` before any command runs — see
+    /// [`InitialMaterial`].
+    fn new(initial: InitialMaterial) -> Self {
         State {
             cache: [None; VTX_CACHE_SIZE as usize],
             space: 0,
             spaces: Vec::new(),
             inv_current: crate::scene::Mat4::IDENTITY,
             material: MeshMaterial {
-                lit: initial_lit,
+                lit: initial.lit,
+                depth_test: initial.depth_test,
+                depth_write: initial.depth_write,
+                depth_mode: initial.depth_mode,
                 ..MeshMaterial::rdp_default()
             },
             geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,
@@ -1634,7 +1715,7 @@ const MAX_DL_DEPTH: u32 = 18;
 /// their *caller* filled, so converting such a list standalone fails with
 /// [`MeshError::EmptyCacheSlot`].
 pub fn convert(cmds: &[Cmd], src: Source<'_>) -> Result<Mesh, MeshError> {
-    let mut state = State::new(false);
+    let mut state = State::new(InitialMaterial::default());
     let mut builder = Builder::default();
     let mut out: Vec<Primitive> = Vec::new();
 
@@ -1695,17 +1776,14 @@ pub struct SequenceItem<'a> {
 /// Returns one result per item, in the order given; a failing item does not
 /// stop the rest, since its state contribution has still been applied.
 ///
-/// `initial_lit` seeds `State`'s material before the first item runs (see
-/// [`State::new`]): pass `true` only when `items` is one of a fighter's two
-/// `common_parts` skeleton graphs, matching `ftDisplayMainProcDisplay`'s
-/// unconditional external `G_LIGHTING` (RE-021, RE-242). Every other caller
-/// passes `false`, matching the RDP reset default.
+/// `initial` seeds `State`'s material before the first item runs -- see
+/// [`InitialMaterial`].
 pub fn convert_sequence(
     items: &[SequenceItem],
     src: Source<'_>,
-    initial_lit: bool,
+    initial: InitialMaterial,
 ) -> Vec<Result<Mesh, MeshError>> {
-    let mut state = State::new(initial_lit);
+    let mut state = State::new(initial);
     state.spaces = items.iter().map(|i| i.world).collect();
 
     let mut out = Vec::with_capacity(items.len());
@@ -2017,6 +2095,12 @@ fn walk(
             } => {
                 state.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
                 state.material.translucent = render_mode_is_translucent(data);
+                // RE-244: `Z_CMP`/`Z_UPD`/`ZMODE` are independent RDP bits,
+                // not derived from `G_ZBUFFER` (`state.material.z_buffer`,
+                // set only by `Cmd::GeometryMode` above).
+                state.material.depth_test = data & Z_CMP != 0;
+                state.material.depth_write = data & Z_UPD != 0;
+                state.material.depth_mode = ZMode::from_render_mode(data);
             }
 
             // `G_MDSFT_ALPHACOMPARE`, 2 bits at shift 0 (RE-195): a second,
@@ -2122,6 +2206,9 @@ const G_MW_LIGHTCOL: u8 = 0x0a;
 // needed to read them back.
 const CVG_X_ALPHA: u32 = 0x0000_1000;
 const ALPHA_CVG_SEL: u32 = 0x0000_2000;
+/// `Z_CMP`/`Z_UPD` (RE-244), `refs/ssb-decomp-re/include/PR/gbi.h`.
+const Z_CMP: u32 = 0x0000_0010;
+const Z_UPD: u32 = 0x0000_0020;
 /// A cutout surface: coverage is driven by the texture's own alpha
 /// (`RM_..._TEX_EDGE` family). The RDP resolves this through multisampled
 /// edge coverage the PSP has no equivalent for; approximated as a plain
@@ -2238,7 +2325,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
 
         assert_eq!(out[0].as_ref().unwrap().triangle_count(), 0);
         let mesh = out[1].as_ref().unwrap();
@@ -2327,7 +2414,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2448,7 +2535,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2490,7 +2577,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2532,7 +2619,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2568,7 +2655,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2668,7 +2755,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2776,7 +2863,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2820,7 +2907,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -2910,7 +2997,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let first = out[0].as_ref().unwrap().primitives[0]
             .material
             .texture
@@ -3018,7 +3105,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let first = out[0].as_ref().unwrap().primitives[0]
             .material
             .texture
@@ -3093,7 +3180,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(
@@ -3155,7 +3242,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(
@@ -3209,7 +3296,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file), false);
+        let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(first.cull_back && first.lit && first.smooth && first.z_buffer);
@@ -4571,10 +4658,11 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let meshes: Vec<_> = convert_sequence(&items, Source::bare(&file), false)
-            .into_iter()
-            .map(Result::unwrap)
-            .collect();
+        let meshes: Vec<_> =
+            convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+                .into_iter()
+                .map(Result::unwrap)
+                .collect();
         assert!(
             meshes[0].primitives[0].material.texture.is_none(),
             "node A's own explicit disable must still hold"
@@ -5091,7 +5179,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), false)
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
             .unwrap()
             .unwrap();
@@ -5133,7 +5221,11 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file), true)
+        let initial = InitialMaterial {
+            lit: true,
+            ..InitialMaterial::default()
+        };
+        let mesh = convert_sequence(&items, Source::bare(&file), initial)
             .pop()
             .unwrap()
             .unwrap();
@@ -5142,6 +5234,74 @@ mod tests {
             mesh.vertices[0].rgba, normal,
             "the raw normal must survive, not be baked as a shade"
         );
+    }
+
+    #[test]
+    fn convert_sequence_fighter_external_seeds_depth_test_and_write_with_no_in_list_render_mode() {
+        // R2.2/C3 (RE-244): `ftDisplayMainProcDisplay` also issues
+        // `gDPSetRenderMode(G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2)` --
+        // `Z_CMP | Z_UPD | ZMODE_OPA` among its shared bits -- at the same
+        // call site RE-241/RE-242 found for `G_LIGHTING`. A fighter skeleton
+        // graph's own node list need not repeat `G_SETRENDERMODE` itself for
+        // depth testing and writing to both be on.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(
+            &items,
+            Source::bare(&file),
+            InitialMaterial::FIGHTER_EXTERNAL,
+        )
+        .pop()
+        .unwrap()
+        .unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.depth_test, "Z_CMP must be seeded on");
+        assert!(m.depth_write, "Z_UPD must be seeded on");
+        assert_eq!(m.depth_mode, ZMode::Opaque);
+    }
+
+    #[test]
+    fn convert_sequence_default_leaves_depth_test_and_write_off() {
+        // The real RDP per-frame reset (`sSYRdpResetDisplayList`'s
+        // `G_RM_OPA_SURF`) sets neither `Z_CMP` nor `Z_UPD` -- unlike
+        // `G_ZBUFFER`, on by default in the geometry mode. A plain graph
+        // with no in-list `G_SETRENDERMODE` and no external seed must not
+        // depth-test or depth-write.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+            .pop()
+            .unwrap()
+            .unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(!m.depth_test);
+        assert!(!m.depth_write);
+        assert_eq!(m.depth_mode, ZMode::Opaque);
+    }
+
+    #[test]
+    fn zmode_from_render_mode_decodes_all_four_values() {
+        // RE-244: 2 bits at shift 10 of the render-mode word.
+        assert_eq!(ZMode::from_render_mode(0), ZMode::Opaque);
+        assert_eq!(ZMode::from_render_mode(0x400), ZMode::Interpenetrating);
+        assert_eq!(ZMode::from_render_mode(0x800), ZMode::Translucent);
+        assert_eq!(ZMode::from_render_mode(0xC00), ZMode::Decal);
     }
 
     #[test]
