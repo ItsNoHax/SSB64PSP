@@ -112,6 +112,18 @@ regression_capture_scene12 = []
 # traced to this). Off by default.
 regression_capture_scene13 = []
 
+# R2.1/T9 camera-rotation case: the same ordinary-texgen graph as scenes
+# 11/12 (file 117, graph 0x1B10), but framed with a real, non-identity view
+# matrix (35 degrees yaw, 20 degrees pitch around the object) instead of the
+# object viewer's usual identity-view/push-the-object-back trick, mirroring
+# `stage_view`'s own real-camera branch (RE-131/RE-214) so `texgen_basis` is
+# a genuine camera right/up rather than world X/Y. Scenes 11/12 already prove
+# response to *object* rotation under a fixed camera; this proves response to
+# *camera* rotation under a fixed object, the case T3 (RE-227) named as
+# dormant (no scene fed a non-identity basis into `quantize_lookat_basis`).
+# Off by default.
+regression_capture_scene14 = []
+
 # R2.1/T2 measurement rig (RE-226): replaces the whole scene with one
 # full-screen quad whose vertices share a single hand-picked `GU_NORMAL_8BIT`
 # value, drawn through `sceGuTexProjMapMode` with a synthetic 256x256 ramp

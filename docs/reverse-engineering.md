@@ -10,6 +10,103 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-237 — Physical-PSP raw normal diagnostic and camera-rotation case close the `R2.1`/T9 matrix
+
+**Question.** RE-236 closed `R2.1`/T8 and covered two of `R2.1`/T9's five
+named items on real hardware as a side effect (regular rotations A/B via
+scenes 11/12, linear texgen via scene 13). Still open: a raw normal
+diagnostic and a camera-rotation case, both on physical PSP, per `PLAN.md`
+T9's text and `STATUS.md`'s own note that T9 "should confirm what remains...
+and consolidate the record rather than re-deriving what RE-236 already has."
+
+**Evidence — raw normal diagnostic on physical hardware.** RE-226 (`R2.1`/T2)
+measured all seven `texgen_normal_diagnostic_*` cases against PPSSPP headless
+only; T9's acceptance specifically wants this on real silicon. Re-ran case 6
+(`[73,-41,99]`, raw `Normal` mode — the fully general multi-axis, negative-
+component case, and the one furthest from an axis-aligned or boundary value)
+on the same PSP Slim, 6.61, ARK/Infinity, PSPLink v3.2.1 hardware RE-214/
+RE-215/RE-233/RE-236 used:
+
+* Reconfirmed the PPSSPP-headless baseline first: `tools/run-ppsspp-headless.sh
+  --feature texgen_normal_diagnostic_6`, sampled at screen `(480, 272)` (the
+  module's own convention) — `(179, 99)`, exactly RE-226's recorded
+  prediction and measurement.
+* `modlist` checked clean, `ldstart host0:/psp/target/mipsel-sony-psp/
+  release/ssb64-psp.prx`, `exlist` empty, `main_thread` alive.
+  `scrshot host0:/psp-hw-normal-diag6.bmp` — sha256
+  `8c8b16550316bd73bb3a5718dd6cff21cb59ba97c60b59f10e40be4d4dc7e2c3`. The
+  native capture is 480x272 (half the headless rig's 960x544, same aspect,
+  no letterbox difference between the two capture modes), so the equivalent
+  sample point is `(240, 136)`: decoded to `(179, 99, 0)` — an exact match to
+  both the prediction and the headless measurement, not just the same order
+  of magnitude. `kill` + `reset` followed before the next `ldstart`, per
+  `docs/psplink.md`.
+
+This is the first time any `texgen_normal_diagnostic_*` case has been run
+against real hardware rather than only PPSSPP's software rasterizer or its
+source; the GE's `/128` raw-normal divisor this project's `meshdraw::
+apply_texture_mapping` compensates for (RE-226) now has a real-silicon,
+not just emulated, confirmation.
+
+**Evidence — camera-rotation case.** RE-227 (`R2.1`/T3) named this the
+dormant case: `quantize_lookat_basis` had never received a real, non-identity
+camera basis from any existing scene, since the object viewer (scenes 2-13)
+always renders under an identity view matrix and only ever rotates the
+*object* (scenes 11/12's own comparison), while `stage_view`'s real-camera
+branch (RE-131/RE-214) is a different code path never fed a texgen-bound
+object. Added `regression_capture_scene14` (`psp/Cargo.toml`,
+`psp/src/main.rs`): the same ordinary-texgen graph scenes 11/12 use (file
+117, offset `0x1B10`), but instead of the object viewer's usual identity-
+view/push-the-object-back placement, it loads a real `sceGumMatrixMode(View)`
+`look_at` orbiting the object at 35 degrees yaw and 20 degrees pitch (fixed,
+deterministic — no free-drifting `spin`) and sets `draw_state.texgen_basis`
+from that same camera's `right`/`up`, mirroring `stage_view`'s own real-
+camera branch exactly rather than deriving a second convention. This is a
+genuine non-`(0, +-1)`-component basis reaching `quantize_lookat_basis` for
+the first time.
+
+* PPSSPP headless: deterministic across two rebuilds (identical sha256
+  `25939428decf89307fe76c8dcfa8d1597c178acaf86bef2a327c5feef872ae61`).
+  Visually distinct from scene 11's own golden (74,848 differing pixels
+  against it — a materially different framing and reflected-facet colour
+  pattern, not a near-duplicate), confirming the camera actually moved and
+  the texgen output actually responded. Saved as
+  `tests/golden/r2-metal-texgen-camera-rotated.png`.
+* Physical PSP (same hardware as above): `kill` + `reset`, `ldstart`, `exlist`
+  empty, `main_thread` alive, `scrshot host0:/psp-hw-scene14.bmp` — sha256
+  `dba643675756e0f28d64894ba7a301290b1b2788b711a8f5842c0d4f207bc08b`. 2x
+  nearest-neighbour upscaled and diffed against the new golden: 19,304
+  differing pixels — the same noise-floor order RE-214/RE-236 established
+  (25,977-36,607 across the existing scenes), actually the smallest of the
+  four texgen scenes measured this way so far. Visual inspection confirms
+  the same crystal cluster at the same oblique angle, with the same
+  reflected-facet colour shift, on real hardware.
+
+Pack hash unchanged from RE-233/RE-235/RE-236 (no asset-pipeline code
+touched):
+`ef8e58f9ca360f08c593ff3297c0ba31350f4f84c8aaae82eab8c80f89e8f2a0`
+(`assets/generated/ssb64.pak`). Both hardware captures built from this
+entry's own commit (`psp/Cargo.toml`'s new `regression_capture_scene14`
+feature and `psp/src/main.rs`'s camera-orbit branch did not exist before
+it). Captures saved out-of-Git under `~/ppsspp-test/re237/`, per
+`docs/psplink.md`.
+
+**Conclusion.** `PLAN.md` R2.1/T9's five named acceptance items are now all
+captured on physical PSP: regular rotations A/B and linear texgen (RE-236,
+scenes 11-13), raw normal diagnostic (this entry, case 6), and camera-
+rotation case (this entry, scene 14) — each with PSP model, firmware, commit,
+pack hash and capture hash recorded (RE-236 and this entry together). T9 is
+`COMPLETE`; `R2.1`/T10 (texgen documentation cleanup) is next.
+
+**Confidence: high** — the normal diagnostic matched its prediction exactly
+on real hardware (not just the same order of magnitude), the camera-rotation
+case's PPSSPP golden is deterministic across two rebuilds, and its hardware
+capture matches at a noise-floor order smaller than every prior texgen scene
+measured the same way. `exlist` empty throughout; no other golden touched
+(only `tests/golden/r2-metal-texgen-camera-rotated.png` added, new file).
+
+---
+
 ## RE-236 — Physical-PSP leg of T8 captured against the refreshed goldens; closes `R2.1`/T8
 
 **Question.** RE-235 refreshed the PPSSPP legs of T8 (scenes 11-13) but was

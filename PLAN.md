@@ -3129,6 +3129,11 @@ PPSSPP goldens (scenes 11-13), stale since T7a (RE-232), refreshed and
 qualitatively cross-checked against the original-ROM captures (RE-235); and
 a physical-PSP re-capture of the same three scenes against the refreshed
 goldens (RE-236), matching at the same noise-floor order RE-214 established.
+T9 complete (RE-236/RE-237): all five physical-PSP matrix items captured —
+regular rotations A/B and linear texgen via T8's own scenes 11-13 (RE-236),
+plus a real-hardware raw normal diagnostic and a new camera-rotation scene
+(`regression_capture_scene14`) exercising T3's previously-dormant non-
+identity LookAt basis (RE-237).
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3378,6 +3383,21 @@ and generated span using a texgen-focused ROI rather than requiring identical
 full-screen rasterization.
 
 ### T9 — Physical PSP matrix
+
+Status: `COMPLETE` — RE-236/RE-237. Regular rotations A/B and linear texgen
+captured on physical PSP as part of `T8`'s own physical-PSP leg (RE-236,
+scenes 11/12/13). RE-237 closed the remaining two items: a raw normal
+diagnostic (`texgen_normal_diagnostic_6`, `[73,-41,99]` raw `Normal` mode)
+run on real hardware for the first time, matching its predicted `(179, 99)`
+texel exactly; and a new `regression_capture_scene14` (same file-117
+`0x1B10` graph as scenes 11/12, framed with a real, rotated view matrix
+instead of the object viewer's usual identity view) exercising the
+non-identity camera basis `R2.1`/T3 (RE-227) left dormant, captured both on
+PPSSPP headless (`tests/golden/r2-metal-texgen-camera-rotated.png`,
+deterministic across two rebuilds) and on the same physical PSP, matching at
+a noise-floor order smaller than every other texgen scene measured this way.
+PSP model, firmware, commit, pack hash and capture hash recorded in RE-236/
+RE-237.
 
 After semantics are fixed, capture regular rotations A/B, linear texgen, a raw
 normal diagnostic and a camera-rotation case. Record PSP model, firmware,
