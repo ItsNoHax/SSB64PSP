@@ -130,7 +130,7 @@
   No asset-pipeline code changed, so `assets/generated/ssb64.pak` did not
   need rebuilding.
 - Documentation: RE-233, `docs/porting-status.md`, this snapshot.
-- Commit: `5895bc5`.
+- Commit: `5895bc5` (RE-233); `af04b05` (RE-234, docs-only, T8 in progress).
 
 ## Continuation
 
