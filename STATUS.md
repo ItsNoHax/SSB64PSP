@@ -1,58 +1,59 @@
 # Current State
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
-- Task: `R2.0/P1 — Archive-wide G_SETTILE field census`
+- Task: `R2.0/P2 — Fix ignored CI4 palette bank (G_SETTILE.palette)`
 - Status: `TODO`
-- Last complete: `RE-222` (2026-09-11) closed `R2.0/P0d`: fixed PSP
-  power-of-two texture padding vs the N64 logical clamp boundary. Two new
-  helpers in `crates/ssb-rom/src/psp_texture.rs`, `pad_edge_repeat`
-  (byte-granular) and `pad_edge_repeat_nibbles` (`PsmT4`'s two-texels-per-
-  byte packing), fill a non-power-of-two texture's padding region with the
-  repeated edge row/column instead of zeros — a no-op for an already-POT
-  texture, and never touching a mirrored axis by construction (mirror-
-  doubling always lands on a power of two, RE-220). Found `PLAN.md`'s task
-  text named the wrong functions (`pack_rgba`/`pack_indexed`): the real
-  production padding site is `encode_level` (via `pack_mipped`,
-  `convert_texture`'s actual call path); fixed both that and `pack_rgba`/
-  `pack_indexed` (the particle-frame path) for consistency. 7 new host
-  tests, including one through `pack_mipped` end-to-end. Re-ran
-  `tile_addressing_census_against_real_archive_textures`: bullet 3's counts
-  are unchanged (124/456/347) as expected, since it measures the
-  structural condition, not the padding fix itself.
-- Next: `R2.0`/P1 — census every real render-tile-0 `G_SETTILE` archive-wide
-  for the `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields `dl.rs`'s
-  `Cmd::SetTile` already decodes but `mesh.rs`'s only consumer discards
-  behind a `..` wildcard (`mesh.rs:1767-1788`). In particular verify
-  whether any CI4 render tile uses a non-zero `palette` bank. For each
-  field: if every real value is canonical/irrelevant to the current static
-  conversion, pin the invariant with a test; if a non-default value changes
-  observable sampling semantics for real content, open a scoped correctness
-  task rather than implementing unused complexity speculatively. This is
-  the last task before `R2.0` can return to `COMPLETE` and `R2.1`/T1–T10
-  resumes.
-- Blockers: R2.0/P1 (`G_SETTILE` field census) must close before R2.1/T1–T10
+- Last complete: `RE-223` (2026-09-11) closed `R2.0/P1`: censused every real
+  render-tile-0 `G_SETTILE` archive-wide (2,238 instances, 1,948 CI4) for
+  the `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields `dl.rs` decodes but
+  `mesh.rs`'s only consumer discards. Wrote a standalone raw-`Cmd` walker in
+  `tools/romtool` (`settile_field_census_against_real_archive_textures`,
+  following `Cmd::Call`/`Cmd::Branch` itself, matching `texgen`'s own
+  `TexgenWalk` pattern) rather than adding permanent instrumentation fields
+  to `TextureRef`. `shift_s`/`shift_t`/`tmem` measure zero archive-wide,
+  pinned with assertions; `tmem`/`line` are also structurally unconsumed
+  (texels are read straight from the ROM file, never through TMEM
+  addressing). **`palette` is a real, material, still-open gap**: 7/1,948
+  CI4 instances (0.36%), all in file 86 (`ITCommonObject`, real shipped
+  item content), request bank 1 of a 48-entry loaded TLUT that `mesh.rs`
+  currently always resolves as bank 0 — a real wrong-colour bug. Opened
+  `R2.0`/P2 rather than fixing speculatively, per this queue's own rule.
+  No production code changed; only the new romtool test.
+- Next: `R2.0`/P2 — thread `Cmd::SetTile.palette` through `mesh.rs`'s
+  `State`/`TextureRef` (RE-220's own precedent for adding a raw
+  `G_SETTILE` field once it's known to matter) and offset
+  `palette_offset` by `palette * 16` entries at pack time
+  (`tools/romtool`'s `convert_texture`). Confirm no-op when `palette == 0`
+  (the overwhelming common case) or when the loaded TLUT is smaller than
+  `(palette + 1) * 16` entries (guard rather than panic/index out of
+  bounds; should not occur on real content per RE-223's own measurement).
+  Add a host test constructing a multi-bank `LoadTlut` + non-zero-`palette`
+  `SetTile` and asserting the resolved `palette_offset` lands at the
+  correct bank. Confirm visually, e.g. a PPSSPP screenshot of file 86's
+  affected item(s) before/after. This is the last task before `R2.0` can
+  return to `COMPLETE` and `R2.1`/T1–T10 resumes.
+- Blockers: R2.0/P2 (ignored CI4 palette bank) must close before R2.1/T1–T10
   resumes; R2.1 was designated but never implemented, so resuming there
   loses no progress. R2.2/C1–C7 renderer corrective gate remains behind
   R2.1. Combat remains gated.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
 - Evidence: `docs/reverse-engineering.md` — RE-217, RE-218, RE-219, RE-220,
-  RE-221, RE-222.
-- Plan: `PLAN.md` — R2.0/P1.
+  RE-221, RE-222, RE-223.
+- Plan: `PLAN.md` — R2.0/P2.
 - Subsystem: `docs/porting-status.md` — PSP mesh drawing; `docs/rendering.md`
   — "Texture addressing" row.
-- Verification: `cargo test -p ssb-rom psp_texture::` (40 tests, 7 new) and
-  `cargo test -p romtool tile_addressing_census_against_real_archive_textures -- --nocapture`
-  against the real ROM — bullet 3 counts unchanged, as expected;
-  `cargo test --workspace --all-targets` (pinned 1.98.0 toolchain) — 555
-  passing, 0 failed; `cargo clippy --workspace --all-targets` clean.
-- Documentation: RE-222, `docs/rendering.md`, `PLAN.md` R2.0/P0d, this
+- Verification: `cargo test -p romtool settile_field_census_against_real_archive_textures -- --nocapture`
+  against the real ROM — see numbers above; `cargo test --workspace
+  --all-targets` (pinned 1.98.0 toolchain) — 556 passing, 0 failed;
+  `cargo clippy --workspace --all-targets` clean.
+- Documentation: RE-223, `docs/rendering.md`, `PLAN.md` R2.0/P1, this
   snapshot.
 - Visual verification: PPSSPPHeadless via `tools/run-ppsspp-headless.sh`;
-  windowed PPSSPP is interactive-only. Not re-run for this fix: same
-  caveat as RE-221 — a pixel-level before/after is a natural follow-up, not
-  required for P0d's acceptance criteria (padding-content fix covered by
-  the new unit tests, structural census counts unaffected by design).
-- Commit: `71a4859`.
+  windowed PPSSPP is interactive-only. Not run for this task (measurement
+  only, no rendering-affecting code changed); P2's own acceptance criteria
+  calls for a before/after screenshot of file 86's affected item(s) once
+  the fix lands.
+- Commit: pending.
 
 ## Continuation
 

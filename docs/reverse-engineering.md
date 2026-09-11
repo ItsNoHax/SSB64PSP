@@ -10,6 +10,85 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-223 — Archive-wide `G_SETTILE` field census: `palette` is a real, material, still-open gap; `line`/`tmem`/`shift_s`/`shift_t` are not (`PLAN.md` R2.0/P1)
+
+**Question.** `dl.rs`'s `Cmd::SetTile` decodes `palette`/`line`/`tmem`/
+`shift_s`/`shift_t`, but `mesh.rs`'s only consumer discards all five behind
+a `..` wildcard (`mesh.rs:1796-1817`). Is that discard correct — every real
+value canonical/irrelevant to this project's static, non-TMEM-simulating
+conversion — or does a non-default value change observable sampling
+semantics for real content? In particular: does any real CI4 render tile
+request a non-zero palette bank?
+
+**Method.** Rather than adding five permanent instrumentation fields to
+`TextureRef`/`mesh::State` for a census that might find nothing worth
+keeping, wrote a standalone walker in `tools/romtool/src/main.rs`
+(`settile_field_census_against_real_archive_textures`) that decodes raw
+`Cmd::SetTile` directly — the same "temporary, reverted census" standard
+RE-121/RE-122 used, except kept as a permanent `SSB64_ROM`-gated test
+since (like the R2.0/P0b-d censuses) it is cheap to keep as a regression
+guard. It walks the exact same display-list universe `file_meshes` covers
+(the graph-driven `plan_draw_order` roots plus
+`scan::find_root_display_lists`'s unclaimed orphans) and follows
+`Cmd::Call`/`Cmd::Branch` itself, bounded by the same `MAX_DL_DEPTH` (18)
+`mesh.rs`'s own walker uses — the same pattern `texgen`'s `TexgenWalk`
+already established in this file for raw-command censuses.
+
+**Measured, archive-wide, real ROM (2,132 files examined, 2,238 real
+render-tile-0 `G_SETTILE` instances, 1,948 of them CI4):**
+
+* **`shift_s`/`shift_t` — invariant confirmed, no fix needed.** Zero of
+  2,238 instances set either field. This retroactively justifies
+  `n64_addressing::TileAxis::shift`/`tcshift`'s "always 0 in practice"
+  construction throughout the P0b–P0d work: it was measured now, not
+  merely assumed then. Pinned with an assertion in the census test.
+* **`tmem` — irrelevant by construction, no fix needed.** Also measures
+  zero archive-wide, but the real reason is structural, not just an
+  empirical count: `convert_texture` reads texel bytes straight from the
+  ROM file at `G_SETTIMG`'s own address (`data_offset`), never through
+  TMEM-staged addressing at all — a converter that does not simulate TMEM
+  has nothing for a TMEM stride register to mean. Pinned with an assertion.
+* **`line` — irrelevant by construction, no fix needed.** Same structural
+  argument as `tmem` (it is the other half of the same TMEM-staging
+  register pair). 15 distinct real values observed (1 through 75,
+  including the RE-044-narrowed widths this project already reads via
+  `mask_s`/`mask_t`/`drawn_width` instead) — expected diversity, not a
+  divergence. Not pinned to a single value since diversity itself is
+  correct; pinned instead as "never consumed," matching `tmem`.
+* **`palette` — real, material, still-open gap.** 7 of 1,948 CI4 instances
+  (0.36%) request bank 1 (`palette == 1`), every one in file 86
+  (`ITCommonObject`, a real, shipped item-model file, not dead or
+  unreached content — RE-060/RE-061). Four of the seven have a directly
+  observable preceding `G_LOADTLUT` loading 48 entries (three 16-entry
+  banks) in the same traversal; real hardware indexes CI4 texel values
+  against entries 16-31 (bank 1) of that loaded TLUT for these tiles, but
+  `mesh.rs` currently always resolves the palette as if bank 0 were
+  requested (`Cmd::LoadTlut`'s handler sets `state.palette_offset`/
+  `palette_entries` from the whole loaded chunk starting at entry 0;
+  nothing anywhere reads `SetTile.palette` to offset into it) — a genuine
+  wrong-colour bug on real, in-game item textures, not a theoretical one.
+  Deliberately **not** fixed here, and the census's own assertions
+  deliberately do **not** pin `palette_nonzero` to zero (it isn't).
+  **Opens `PLAN.md` R2.0/P2** as a scoped correctness task, per this
+  queue's own "measure, don't fix speculatively" rule (RE-066/RE-072/
+  RE-121's precedent, followed again by P0b opening P0c/P0d).
+
+**Verification.** `cargo test -p romtool settile_field_census_against_real_archive_textures -- --nocapture`
+against the real ROM (numbers above). Full `cargo test --workspace
+--all-targets` (pinned 1.98.0 toolchain): 556 passing, 0 failed, no other
+crate affected (this task added one new test, touched no production code).
+Clippy clean (`cargo clippy --workspace --all-targets`, `-D warnings`).
+
+**Confidence: high** that `shift_s`/`shift_t`/`tmem`/`line` are correctly
+unconsumed (two are measured invariants, two are structural arguments
+independent of any particular ROM's content) and that the `palette` gap is
+real (a directly observed `G_LOADTLUT{count: 48}` immediately preceding a
+`palette == 1` render tile is definitive, not inferential). **Medium** on
+visible severity of the `palette` gap until R2.0/P2 actually compares the
+seven affected item textures' rendered colours against reference.
+
+---
+
 ## RE-222 — Fix PSP POT-padding vs the N64 logical clamp boundary (`PLAN.md` R2.0/P0d)
 
 **Question.** RE-220 measured a real, material gap: `pack_rgba`/
