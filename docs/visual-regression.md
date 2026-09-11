@@ -378,9 +378,10 @@ see RE-214 §10 for why no such comparison exists yet.
 
 RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen{,-rotated}.png` after
 `R2.1`/T7a (RE-232) changed this exact content's addressing; the diff numbers
-above are against the pre-T7a golden and are historical, not current. The
-physical-PSP diff against the *current* golden is still pending — RE-235 hit
-a USB permission blocker and did not obtain it.
+above are against the pre-T7a golden and are historical, not current. RE-236
+re-captured both scenes on physical PSP against the refreshed goldens
+(36,607 / 27,076 differing pixels 2x-upscaled — the same noise-floor order
+as RE-214's own baseline) and closed `R2.1`/T8.
 
 ## Thirteenth deterministic test scene (RE-215)
 
@@ -419,8 +420,10 @@ band). Hashes recorded in RE-215.
 
 RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen-linear.png` for the
 same post-T7a reason as scenes 11/12 above; RE-215's physical-PSP match was
-against the pre-T7a golden and needs re-confirming against the current one,
-also blocked this session by the same USB permission issue.
+against the pre-T7a golden. RE-236 re-captured this scene on physical PSP
+against the refreshed golden (30,345 differing pixels 2x-upscaled, same
+noise-floor order as the other two) — the corrected linear-texgen gradient
+matches on real hardware too, closing `R2.1`/T8.
 
 ## Pending texgen and renderer-corrective matrix
 
