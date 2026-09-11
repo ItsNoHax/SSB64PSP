@@ -78,7 +78,7 @@
   (native clippy cannot cross-compile to `mipsel-sony-psp`).
 - Documentation: RE-227, `PLAN.md` `R2.1`/T3, `DECISIONS.md` D-040, this
   snapshot.
-- Commit: (pending).
+- Commit: `e22cb86`.
 
 ## Continuation
 
