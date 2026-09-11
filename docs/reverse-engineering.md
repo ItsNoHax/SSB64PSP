@@ -10,6 +10,73 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-242 — The mesh/costume-file-to-fighter mapping RE-241 called missing already existed (`PLAN.md` R2.2/C2, in progress)
+
+**Question.** RE-241 left `R2.2`/C2's external-lighting gap open, stating
+`fighter::FIGHTER_FILES` only names each fighter's `FTAttributes` file, not
+its mesh/costume files, and that recovering that mapping needed its own
+explicit-pairing recovery, out of scope for that session. Is that true — and
+if not, what already provides it, and does it hold up?
+
+**Evidence.** `crates/ssb-rom/src/fighter.rs` already has `common_parts()`,
+added in commit `bea4829` ("Read the figatree's tracks, not just its
+length"), well before RE-240/RE-241. It reads a fighter's model file with a
+genuine two-hop archive relocation read: an intern relocation from
+`FTAttributes.commonparts_container` to an `FTCommonPartContainer`, then
+extern relocations from each of its two `FTCommonPart` entries into the
+model file (`dobjdesc`). This is exactly the "a struct that names both
+sides" pairing RE-027 established as the reliable method — a fits-the-shape
+search agrees with the truth only about half the time. It was already wired
+into `romtool figatree`'s skeleton/animation-replay pipeline, but had never
+been cross-checked against ground truth for its own sake, and RE-241
+evidently never found it.
+
+**Cross-check.** `tools/fighter-model-ground-truth.py` (new) reads the
+archive-file id straight out of the decompilation's own `<id>_<Name>Model.c`
+relocData source filenames: 26 files, one per fighter with a separate model,
+using the exact same `<Name>` prefix `FighterFile::name` already does (Fox's
+`209_FoxMain.c`'s `dFoxMain_commonparts_container` names
+`313_FoxModel.c`). Run against the real ROM for all 27 `FIGHTER_FILES`
+entries (`crates/ssb-rom/src/fighter.rs`'s new
+`real_rom_common_parts_match_every_named_model_file` test, `SSB64_ROM`-gated,
+kept permanently): both `FTCommonPart` detail levels of all 27 fighters
+match. 25 of 27 have a `*Model.c` of their own and match it exactly; the
+other two (Giant DK, NLuigi) have none, and the ROM confirms they share
+their base character's file (317, Donkey Kong's; 301, NMario's) rather than
+having a separate one — a real finding this cross-check produced, not an
+assumption fed into it.
+
+**Hypothesis.** `common_parts()[0]`/`[1]` name the exact `DObjDesc` graph
+`ftDisplayMainDrawAll` (called from `ftDisplayMainProcDisplay`, RE-241's own
+caller trace) draws under the unconditional external `G_LIGHTING` for
+`nDBDisplayModeMaster`/`MapCollision` — so this is the "mesh/costume file(s)"
+C2's remainder needs, already available with no new extraction code.
+
+**Implementation.** No runtime code changed. Added
+`tools/fighter-model-ground-truth.py` (same shape as the existing
+mobjsub/dobjdesc/mobjtable ground-truth scripts) and
+`crates/ssb-rom/src/fighter.rs`'s `real_rom_common_parts_match_every_named_
+model_file` test (27 fighters × 2 detail levels, kept permanently). Verified
+the test actually discriminates ("test the test by breaking the code"): fed
+it a wrong expected file id, confirmed it failed with the wrong-vs-right
+values, then reverted.
+
+**Confidence: certain** for the mapping itself — two independent
+relocation-derived facts recovered from real archive data agree with an
+independently authored filename convention for 25 of 27 fighters and
+correctly predict the other 2's shared file. RE-241's "does not exist yet"
+claim was wrong; `PLAN.md`/`STATUS.md` corrected accordingly.
+
+**Remaining.** Wiring this into the mesh-conversion pipeline (seeding
+`State::material.lit = true` when building `common_parts()`'s two graphs,
+instead of the current unconditional unlit default) and requantifying
+`looks_like_unit_normal`'s remaining coverage is not done this session — it
+touches `mesh.rs`'s `State` threading and `pack.rs`'s per-graph decode loop,
+and deserves its own regression tests and full pack rebuild rather than
+being folded into a mapping-verification entry. Left as C2's own next step.
+
+---
+
 ## RE-241 — vertex normal-vs-colour meaning was decided at triangle-draw time, not `G_VTX` load time (`PLAN.md` R2.2/C2, in progress)
 
 **Question.** R2.2/C2 asks which state actually changes a vertex's meaning at

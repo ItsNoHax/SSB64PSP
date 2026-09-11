@@ -673,4 +673,55 @@ mod tests {
             })
         );
     }
+
+    /// Cross-checks `common_parts`'s recovered model-file id against the
+    /// decompilation's own relocData naming, for every fighter (RE-242,
+    /// `PLAN.md` R2.2/C2's mesh/costume-file-to-fighter recovery). Ground
+    /// truth is `tools/fighter-model-ground-truth.py`, which reads the
+    /// archive-file id straight out of each `<id>_<Name>Model.c` relocData
+    /// source filename -- an independent record naming the same file, not a
+    /// value this crate invented.
+    ///
+    /// Two fighters have no `*Model.c` of their own and are checked against
+    /// the base character whose file they really share: Giant DK (317,
+    /// Donkey Kong's) and NLuigi (301, NMario's) are scaled/recoloured
+    /// variants of another fighter's model, both real ROM findings from this
+    /// same cross-check, not guesses.
+    #[test]
+    fn real_rom_common_parts_match_every_named_model_file() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let data = std::fs::read(path).unwrap();
+        let info = crate::rom::identify(&data).unwrap();
+        let archive = Archive::open(&data, info.region).unwrap();
+
+        #[rustfmt::skip]
+        const EXPECTED: &[(&str, u32)] = &[
+            ("Mario", 296), ("MMario", 300), ("NMario", 301), ("NFox", 303),
+            ("NYoshi", 304), ("NKirby", 305), ("NPurin", 306), ("NPikachu", 307),
+            ("NDonkey", 308), ("NSamus", 309), ("NLink", 310), ("NCaptain", 311),
+            ("NNess", 312), ("Fox", 313), ("Donkey", 317), ("Samus", 320),
+            ("Luigi", 323), ("Link", 324), ("Kirby", 328), ("Purin", 330),
+            ("Captain", 332), ("Ness", 335), ("Yoshi", 338), ("Pikachu", 341),
+            ("Boss", 344),
+            ("GDonkey", 317), ("NLuigi", 301),
+        ];
+        assert_eq!(EXPECTED.len(), FIGHTER_FILES.len());
+
+        for &entry in &FIGHTER_FILES {
+            let want = EXPECTED
+                .iter()
+                .find(|&&(n, _)| n == entry.name)
+                .map(|&(_, f)| f)
+                .unwrap_or_else(|| panic!("{}: no ground-truth row", entry.name));
+            let main = archive.load(entry.file).unwrap();
+            let parts = common_parts(&main, entry);
+            for (detail, part) in parts.iter().enumerate() {
+                let part = part
+                    .unwrap_or_else(|| panic!("{}: no detail-{detail} FTCommonPart", entry.name));
+                assert_eq!(part.model_file, want, "{} detail {detail}", entry.name);
+            }
+        }
+    }
 }
