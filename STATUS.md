@@ -164,7 +164,7 @@
   module doc comment).
 - Documentation: RE-247, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-247, `R2.2`/C3 part 4: fix `transition::ASSETS`'s
+- Commit: `1513745` (RE-247, `R2.2`/C3 part 4: fix `transition::ASSETS`'s
   wrong `"camera"` file/graph).
 
 ## Continuation
