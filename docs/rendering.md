@@ -278,7 +278,13 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   `refs/BattleShip` and `refs/n64psp`, neither of which renormalises the
   vertex normal — both divide by the constant `127`), into the pack's
   existing raw S10.5 authored-UV unit, and submits it through the ordinary
-  authored-UV draw path rather than a second GE mode. A lookup table was
+  authored-UV draw path rather than a second GE mode. The final float-to-S10.5
+  conversion this shares with the reference-only ordinary curve
+  (`texgen_s10_5_addressed`) **truncates**, it does not round (RE-229, `PLAN.md`
+  R2.1/T5) — both `refs/BattleShip` and `refs/n64psp` cast straight to an
+  integer with no `+ 0.5`; an earlier version of this project added `0.5`
+  before casting, a dormant rounding bug fixed by T5 and pinned by boundary
+  tests at `N+0.49`/`N+0.50`/`N+0.51` for every real ROM scale. A lookup table was
   considered and rejected: the vertex normal is quantised, and the look-at
   basis it is dotted against varies every frame a camera rotates — also
   quantised to a signed byte (RE-227), but still not a fixed input domain the
@@ -545,13 +551,14 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
 
 * Texgen is implemented and self-validated, but not closed: the ordered
   T1–T10 queue in `PLAN.md` has raw normal semantics (T2, RE-226), LookAt
-  quantization (T3, RE-227) and shared regular/linear reference math (T4,
+  quantization (T3, RE-227), shared regular/linear reference math (T4,
   RE-228 — which also found and fixed a real overcorrected matrix constant)
+  and linear integer conversion (T5, RE-229 — truncation, not rounding,
+  against two independent HLE references, fixing a dormant rounding bug)
   measured and fixed; load-space provenance (T1's own cross-node gap),
-  linear integer conversion, tile-shift/addressing proof and an
-  original-N64 Metal comparison remain open (T5–T9). The current
-  `G_TEXTURE_GEN_LINEAR` path is source-formula exact, not claimed bit-exact
-  to N64.
+  tile-shift/addressing proof and an original-N64 Metal comparison remain
+  open (T6–T9). The current `G_TEXTURE_GEN_LINEAR` path is source-formula
+  exact, not claimed bit-exact to N64.
 
 * Renderer model corrections remain open under `PLAN.md` R2.2/C1–C7:
   single-source primitive-colour ownership, load-time lighting provenance,

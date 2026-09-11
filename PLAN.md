@@ -3109,7 +3109,10 @@ semantics measured and fixed (D-038 revised). T3 complete (RE-227): original
 LookAt basis quantization measured and fixed (D-040 revised). T4 complete
 (RE-228): shared regular/linear reference math built and proven against the
 real GE lowering, finding and fixing a real overcorrected matrix constant.
-T1's remedy carries forward through T5 next.
+T5 complete (RE-229): linear texgen's S10.5 conversion confirmed to truncate,
+not round, against two independent HLE references, fixing a dormant rounding
+bug in the real linear-texgen rendering path. T1's remedy carries forward
+through T6 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3237,10 +3240,23 @@ Evidence: RE-228 in `docs/reverse-engineering.md`.
 
 ### T5 — Linear integer conversion
 
-Determine truncate/round/other from microcode, faithful HLE implementations
-and controlled original-ROM output, in that order. Add `N+0.49`, `N+0.50` and
-`N+0.51` boundary tests at real scales. Use “source-formula exact” until
-original output proves “bit-exact to N64”.
+Status: `COMPLETE` — RE-229. No RSP microcode source exists in
+`refs/ssb-decomp-re` (binary ucode, not decompiled), so this fell to the
+faithful-HLE tier: `refs/n64psp`'s `n64psp_texgen_to_s10_5` and
+`refs/BattleShip`'s RSP-interpreter texgen path both cast straight to an
+integer with no `+ 0.5` — truncation, not rounding. The shared
+`texgen_s10_5_addressed` previously added `0.5` before casting (round-half-up);
+removed it to match both references. Added
+`texgen_s10_5_addressed_truncates_rather_than_rounds_at_half_unit_boundaries`
+(`N+0.49`/`N+0.50`/`N+0.51` at every real ROM texgen scale). Changes real
+rendered output only for the linear-texgen path (`linear_texgen_uv` drives
+real pack UVs; the ordinary path renders through the GE hardware matrix and
+never calls this function at runtime) — `regression_capture_scene13`'s golden
+rebuilt (4,696 differing pixels), `_11`/`_12` reconfirmed at 0 differing
+pixels. "Source-formula exact" stands; no original-ROM output yet to promote
+to "bit-exact to N64".
+
+Evidence: RE-229 in `docs/reverse-engineering.md`.
 
 ### T6 — Tile-state and lighting audit
 

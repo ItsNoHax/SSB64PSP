@@ -271,8 +271,17 @@ pub fn regular_texgen_curve(dot: f32) -> f32 {
 /// quarter-texel origin unit. Shared by both curves: "the only curve
 /// difference... followed by common scale and addressing" (`PLAN.md`
 /// R2.1/T4).
+///
+/// Truncates, does not round (`PLAN.md` R2.1/T5, RE-229): two independent
+/// reference implementations of this exact conversion both cast straight to
+/// an integer with no `+ 0.5` -- `refs/n64psp`'s `n64psp_texgen_to_s10_5`
+/// (`tnl_scalar.c`, `(int16_t)scaled`) and `refs/BattleShip`'s
+/// `Interpreter::GfxSpTexture`-fed conversion (`interpreter.cpp`,
+/// `(int32_t)(dotx * texture_scaling_factor.s)`). An earlier version of this
+/// function added `0.5` before casting (round-half-up); T5's boundary tests
+/// below pin the corrected truncating behavior.
 fn texgen_s10_5_addressed(curve: f32, gsp_texture_scale: u16, origin: u16, clamp: bool) -> i16 {
-    let s10_5 = (curve * gsp_texture_scale as f32 + 0.5) as i32;
+    let s10_5 = (curve * gsp_texture_scale as f32) as i32;
     let addressed = s10_5 - if clamp { origin as i32 * 8 } else { 0 };
     addressed.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
@@ -1054,6 +1063,28 @@ mod tests {
                 (got - want).abs() <= 1,
                 "scale {scale:#06x}: got {got}, want {want}"
             );
+        }
+    }
+
+    #[test]
+    fn texgen_s10_5_addressed_truncates_rather_than_rounds_at_half_unit_boundaries() {
+        // `PLAN.md` R2.1/T5: N+0.49/0.50/0.51 boundary cases at every real
+        // ROM texgen scale (RE-214's census). Truncation means all three
+        // land on `n` -- a round-to-nearest implementation (this function's
+        // prior, incorrect behavior) would instead land N+0.50/N+0.51 on
+        // `n + 1`.
+        for &scale in &[0x07C0u16, 0x0BC0, 0x0A40, 0x0FC0, 0x01C0, 0x0400, 0x0200] {
+            for &n in &[0i32, 1, 10, 100] {
+                for &frac in &[0.49f32, 0.50, 0.51] {
+                    let target = n as f32 + frac;
+                    let curve = target / scale as f32;
+                    let got = texgen_s10_5_addressed(curve, scale, 0, false);
+                    assert_eq!(
+                        got as i32, n,
+                        "scale {scale:#06x} n {n} frac {frac}: got {got}, want {n}"
+                    );
+                }
+            }
         }
     }
 
