@@ -53,7 +53,7 @@
   only, no rendering-affecting code changed); P2's own acceptance criteria
   calls for a before/after screenshot of file 86's affected item(s) once
   the fix lands.
-- Commit: pending.
+- Commit: `671a23b`.
 
 ## Continuation
 
