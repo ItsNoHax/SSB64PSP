@@ -3114,8 +3114,13 @@ not round, against two independent HLE references, fixing a dormant rounding
 bug in the real linear-texgen rendering path. T6 complete (RE-230):
 `shift_s`/`shift_t` confirmed zero on the texgen-bound tile subset
 specifically (not just RE-223's broader archive-wide census), per-mode
-`G_TEXTURE` scale/tile/`G_LIGHTING` state recorded for T7/T8. T1's remedy
-carries forward through T7 next.
+`G_TEXTURE` scale/tile/`G_LIGHTING` state recorded for T7/T8. T7 measured
+(RE-231): `R2.0`/P0b's hardware/PSP-lowering addressing comparison, run
+against every real texgen material, agrees on 25 of 34 real axis instances
+and finds a narrow, single-texel divergence on the rest — a mask-narrowed
+clamp-without-mirror axis holds one period short of real hardware exactly at
+the sweep's `dot = +1` extreme. Opens `T7a` to fix it. T1's remedy carries
+forward through T8 next, alongside `T7a`.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3275,14 +3280,57 @@ in `texgen_tile_state_and_lighting_audit` — N64 shifting is not needed.
 
 ### T7 — Texgen addressing phase
 
-Consumes `R2.0`/P0b's general N64 tile-addressing reference model rather than
-building a second one; this task's own scope narrows to verifying the
-texgen-specific vertex-load/scale wiring against that shared model.
+Status: `MEASURED` — RE-231. Consumed `R2.0`/P0b's general N64
+tile-addressing reference model (`ssb_rom::n64_addressing::address_axis`/
+`psp_lowering_axis`) rather than building a second one, narrowing to
+verifying the texgen-specific vertex-load/scale wiring against that shared
+model. Added `tools/romtool`'s `texgen_materials_by_mode` census (the real
+`(mode, scale, tile)` triple as it co-occurs at a draw, joining what T6 kept
+as two separate maps) and two new host tests:
+`texgen_addressing_census_against_real_archive_materials` sweeps every
+`i8`-quantized dot product through `regular_texgen_uv`/`linear_texgen_uv` for
+every real texgen tile and compares the addressed texel against
+`address_axis`;
+`texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`
+adds the requested zero/nonzero-origin, repeat+mask, mirror+repeat,
+mirror+clamp, padded-PSP-dimension and partial-uploaded-scale reference cases
+synthetically, since real texgen content never combines mask with a clear
+clamp bit.
 
-Add host/reference cases for zero/nonzero origins on each axis, repeat+mask,
-mirror+repeat, mirror+clamp, padded PSP dimensions and partial uploaded-texture
-scale. Compare `RSP coordinate → scale → shift → origin → mask → mirror/clamp`
-with the PSP-lowered path for every real texgen material.
+**Measured, archive-wide, real ROM** (17 real `(mode, scale, tile)` pairings,
+34 axis instances, every one clamped on both axes per RE-230): 25 of 34 agree
+with the hardware model across the full quantized dot sweep. 9 of 34 diverge,
+always at exactly the sweep's `dot = +1` extreme and nowhere else — a
+mask-narrowed (`period << drawn`, real `RE-044` narrowing) clamp-without-
+mirror `Regular`-mode axis wraps to the next period's start on real hardware
+at that boundary, but the current PSP-lowering model (and very likely the
+real GE `Clamp` wrap mode `meshdraw::bind_texture` installs for it) instead
+holds at the narrowed period's own last texel. Pinned as a regression
+baseline (`9`, not `0`) rather than fixed here, per this project's
+"measure, then open a follow-up" convention (`R2.0`/P0b → P0c/P0d) — the fix
+needs its own scoped design (see `T7a`), and rushing one now risks the 25
+already-agreeing axis instances for a fix this project cannot yet prove
+exact.
+
+### T7a — Fix mask-narrowed clamp-without-mirror texgen addressing divergence
+
+Status: `TODO` — opened by RE-231 (T7). Real hardware wraps a
+clamp-without-mirror axis periodically (via mask) all the way to the tile's
+drawn-rect far edge, only clamping once that far edge is reached — not at the
+narrowed mask period's own edge. Fix needs to reach the actual rendering path
+(`meshdraw::bind_texture`'s wrap-mode selection and/or a pack-time texture
+bake that tiles the mask period across the drawn rect before binding), not
+only `n64_addressing::psp_lowering_axis`'s host-side comparison model — RE-231
+found this divergence is very likely also a real PSP output difference, not
+only a model gap. Applies to both `Regular` (GE texture-matrix, live
+per-frame coordinate — cannot be pre-baked the way authored UVs are) and
+`Linear` (CPU per-vertex, shares the authored-UV binding path) texgen, since
+both bind through the same `t.wrap`/tile machinery. Re-run
+`texgen_addressing_census_against_real_archive_materials` after the fix and
+drop its baseline back to `0`; confirm no other real texgen tile shape
+regresses. Consider whether a PPSSPP/physical capture of the affected
+`StageMetalFile2`-family materials at a reflection-aligned camera angle is
+needed to see the one-texel difference in practice before or after fixing it.
 
 ### T8 — Original-ROM Metal comparison
 
