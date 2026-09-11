@@ -138,7 +138,7 @@
   sites, 1 new permanent census test).
 - Documentation: RE-246, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-246, `R2.2`/C3 part 3: camera-level depth seed for
+- Commit: `d84cbf8` (RE-246, `R2.2`/C3 part 3: camera-level depth seed for
   loading-break transitions).
 
 ## Continuation
