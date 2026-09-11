@@ -10,6 +10,92 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-224 — Fix ignored CI4 palette bank, `G_SETTILE.palette` (`PLAN.md` R2.0/P2)
+
+**Question.** RE-223 found 7 real CI4 render-tile instances (file 86,
+`ITCommonObject`) requesting palette bank 1 of a 48-entry (three-bank)
+loaded TLUT, which `mesh.rs` always resolved as bank 0. Fix it without
+touching the 1,941 unaffected CI4 instances (`palette == 0`, a no-op by
+construction) or any non-CI4 texture.
+
+**Implementation.** Threaded `Cmd::SetTile.palette` through `mesh.rs`:
+added `State::tile0_palette` (captured in the `Cmd::SetTile` render-tile-0
+arm, alongside the existing `tile0_mask`/`tile0_cm`), and a new
+`TextureRef::palette: u8` field populated by both `current_texture` and
+`current_texture_shape`. `mesh.rs` itself does **not** shift
+`palette_offset`/`palette_entries` — those stay the whole loaded chunk
+unshifted, matching `Cmd::LoadTlut`'s existing handler — the raw bank index
+is carried through as data instead.
+
+The shift happens at pack time: `tools/romtool/src/main.rs`'s new
+`palette_bank_offset(palette_offset, palette_entries, palette)` computes
+`(palette_offset + palette * 16 entries, palette_entries - palette * 16)`,
+guarding the case a requested bank exceeds the loaded chunk (should not
+occur on real content per RE-223's own measurement) by falling back to
+bank 0 unshifted rather than panicking or indexing out of bounds. Applied
+at all four sites in that file reading a TLUT slice from
+`TextureRef::palette_offset`: `convert_texture` (the real pack path, used
+by both the static and material-animation palette-variant conversions),
+plus three CLI-only debug/report commands (`texdump`, `textures`,
+`texgen`) for consistency — same defect class, same fix, low risk, kept
+truthful debug output rather than leaving it silently wrong.
+
+**Verification.** Two new host tests, both deterministic (no PSPLink/PPSSPP
+needed): `ssb-rom`'s `tile0_palette_bank_is_carried_onto_the_texture_reference`
+confirms a `Cmd::SetTile{palette: 1, ..}` after a 48-entry `Cmd::LoadTlut`
+resolves onto `TextureRef::palette == 1` with `palette_entries == 48`
+unshifted. `romtool`'s `convert_texture_resolves_the_requested_palette_bank`
+builds a real three-bank 16-entry-each TLUT (distinct colours per bank,
+matching RE-223's own measured shape) and confirms end-to-end that
+`palette == 1` resolves bank 1's colour into the packed `PspTexture`'s
+CLUT, `palette == 0` still resolves bank 0's colour unchanged (the no-op
+case), and an out-of-range bank guards to bank 0 rather than panicking.
+Re-ran `settile_field_census_against_real_archive_textures` against the
+real ROM: numbers unchanged (7/1,948, all file 86) as expected — it
+measures the raw command stream, not this fix. Full `cargo test --workspace
+--all-targets` (pinned 1.98.0 toolchain): 558 passing, 0 failed. Clippy
+clean.
+
+**Visual verification attempted, not obtained.** This project's PPSSPP
+debug viewer navigates to a specific file/texture (TEXVIEW mode,
+RE-128/RE-152's precedent) by interactive dpad input; there is no
+build-time or env-var index-jump the way the various `*_audit_capture`
+headless features provide for other subsystems. A temporary (reverted, not
+committed) instrumentation pass located the exact coordinates for a manual
+check: the affected texture is global `tex_index` 187, 194 and 195 in the
+packed asset table (TEXVIEW mode), and file 86's own objects are
+object-view indices 60-102. Driving the interactive build unattended in
+this environment (no `xdotool`, no `xset`, no sudo to install either, so
+falling back to raw X11 `XTest` key injection) hit three real obstacles:
+a synthetic key press that did not cleanly release, causing several
+seconds of uncontrolled object-index drift with no further input sent; no
+tested keyboard candidate reached the Triangle/TEXVIEW binding despite
+matching PPSSPP's own `controls.ini` Android-keycode numbering for every
+other button tested (D-pad, R); and the on-screen debug overlay's text
+renders visibly corrupted/double-exposed in every object-view capture
+(digits overlapping between two frames, e.g. an object index reading as
+impossible values exceeding the real object count) -- a real, separate bug
+in the viewer's own text rendering, flagged for its own follow-up, not
+caused by this task.
+
+Closed anyway, on the strength of the two host tests: both are built from
+RE-223's own directly-measured real TLUT shape (three 16-entry banks, bank
+1 requested), not a synthetic one, and the `palette == 0` no-op / guard
+cases are proven by construction, not just tested. A before/after PPSSPP
+TEXVIEW screenshot of file 86's affected item(s), at the coordinates
+above, remains a manual follow-up for whoever next has hands on the
+interactive build.
+
+**Confidence: high** that the fix is correct for the measured real shape
+(host test constructs the exact bank count/entry count RE-223 observed)
+and that it is a no-op for the 1,941 unaffected CI4 instances
+(`palette == 0`, proven by construction: `bank = 0` makes
+`palette_bank_offset` an identity). **Not visually confirmed** on
+PPSSPP/real hardware -- closed on host-test evidence per this session's
+explicit decision, not on an oversight.
+
+---
+
 ## RE-223 — Archive-wide `G_SETTILE` field census: `palette` is a real, material, still-open gap; `line`/`tmem`/`shift_s`/`shift_t` are not (`PLAN.md` R2.0/P1)
 
 **Question.** `dl.rs`'s `Cmd::SetTile` decodes `palette`/`line`/`tmem`/

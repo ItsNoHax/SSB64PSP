@@ -2202,6 +2202,24 @@ fn convert_particle_frame(
     ))
 }
 
+/// Resolves `G_SETTILE.palette`'s raw bank index (RE-223/`R2.0`/P2) into a
+/// byte offset/entry-count to read a loaded TLUT from: bank `n` starts
+/// `n * 16` entries into the chunk `G_LOADTLUT` loaded. A bank beyond the
+/// loaded chunk should not occur on real content (RE-223's own archive-wide
+/// measurement), but is guarded here rather than panicking or silently
+/// returning an empty palette: falls back to bank 0 (`palette_offset`/
+/// `palette_entries` unshifted). A `palette` of 0 (the overwhelming common
+/// case) is always a no-op by construction.
+fn palette_bank_offset(palette_offset: u32, palette_entries: u16, palette: u8) -> (u32, usize) {
+    let bank = palette as usize * 16;
+    let entries = palette_entries.max(1) as usize;
+    if bank < entries {
+        (palette_offset + (bank * 2) as u32, entries - bank)
+    } else {
+        (palette_offset, entries)
+    }
+}
+
 /// Decodes and packs one texture referenced by a primitive.
 ///
 /// The texels and the palette are looked up independently, because they need
@@ -2226,7 +2244,7 @@ fn convert_texture(
 
     let tlut: Vec<u16> = match t.palette_offset {
         Some(off) => {
-            let n = t.palette_entries.max(1) as usize;
+            let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
             src.bytes(t.palette_file)
                 .and_then(|f| f.get(off as usize..off as usize + n * 2))
                 .map(texture::parse_tlut)
@@ -5476,7 +5494,7 @@ fn texdump(path: &Path, opts: &[&str]) -> Res {
                 };
                 let tlut: Vec<u16> = match t.palette_offset {
                     Some(off) => {
-                        let n = t.palette_entries.max(1) as usize;
+                        let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
                         texels
                             .bytes(t.palette_file)
                             .and_then(|d| d.get(off as usize..off as usize + n * 2))
@@ -5751,7 +5769,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 // Palette, if this is a CLUT format.
                 let tlut: Vec<u16> = match t.palette_offset {
                     Some(off) => {
-                        let entries = t.palette_entries.max(1) as usize;
+                        let (off, entries) = palette_bank_offset(off, t.palette_entries, t.palette);
                         let pal = match t.palette_file {
                             None => Some(&file.data[..]),
                             Some(id) => loaded
@@ -7177,7 +7195,7 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 #[cfg(test)]
 mod tests {
     use super::{
-        DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
+        palette_bank_offset, DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
         EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
     };
     use std::collections::BTreeSet;
@@ -7279,7 +7297,7 @@ mod tests {
                     };
                     let tlut: Vec<u16> = match t.palette_offset {
                         Some(off) => {
-                            let n = t.palette_entries.max(1) as usize;
+                            let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
                             texels
                                 .bytes(t.palette_file)
                                 .and_then(|d| d.get(off as usize..off as usize + n * 2))
@@ -7883,8 +7901,94 @@ mod tests {
         );
         // `palette` is deliberately NOT pinned to zero here: RE-223 found 7
         // real CI4 instances (file 86, `ITCommonObject`) requesting bank 1
-        // of a 48-entry loaded TLUT, which `mesh.rs` currently ignores,
-        // reading bank 0's colours instead -- a real, material, still-open
-        // gap (`PLAN.md` R2.0/P2), not an invariant to guard.
+        // of a 48-entry loaded TLUT. This walker measures the raw command
+        // stream, not `convert_texture`'s resolution of it (RE-223/P2 fixed
+        // that separately, `tile0_palette_bank_is_carried_onto_the_texture_reference`
+        // in `ssb-rom` and `convert_texture_resolves_the_requested_palette_bank`
+        // below) -- a nonzero count here is still expected and correct, not
+        // a regression to guard against.
+    }
+
+    /// RE-223/`R2.0`/P2: `G_SETTILE.palette` selects a 16-entry bank within
+    /// a multi-bank loaded TLUT. Three distinct-coloured 16-entry banks,
+    /// matching the real file 86 `ITCommonObject` shape RE-223 measured
+    /// (three banks, real instances requesting bank 1) -- picking the wrong
+    /// bank cannot pass this by accident.
+    #[test]
+    fn convert_texture_resolves_the_requested_palette_bank() {
+        use ssb_rom::mesh::TextureRef;
+        use ssb_rom::texture::{BitSize, Format};
+
+        let mut data = vec![0u8; 5];
+        data[4] = 0x00; // CI4 texel: high nibble -> palette index 0.
+        for bank in 0..3u16 {
+            let v: u16 = match bank {
+                0 => 0x0001,
+                1 => 0xFFFF,
+                _ => 0x8000,
+            };
+            for _ in 0..16 {
+                data.extend_from_slice(&v.to_be_bytes());
+            }
+        }
+        let file = ssb_rom::archive::File {
+            id: 0,
+            data,
+            extern_relocs: Vec::new(),
+            intern_relocs: Vec::new(),
+        };
+        let texels = super::Texels {
+            home: &file,
+            all: &[],
+        };
+
+        let base = TextureRef {
+            data_file: None,
+            data_offset: 4,
+            format: Format::Ci,
+            size: BitSize::Bits4,
+            width: 1,
+            height: 1,
+            palette_file: None,
+            palette_offset: Some(5),
+            palette_entries: 48,
+            palette: 1,
+            mirror_s: false,
+            mirror_t: false,
+            clamp_s: false,
+            clamp_t: false,
+            framebuffer: false,
+            origin_s: 0,
+            origin_t: 0,
+            mask_s: 0,
+            mask_t: 0,
+            drawn_width: 1,
+            drawn_height: 1,
+        };
+        let expect_abgr = |v: u16| ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(v));
+
+        let packed = super::convert_texture(texels, &base, false).expect("CI4 texture converts");
+        assert_eq!(
+            packed.palette[0],
+            expect_abgr(0xFFFF),
+            "palette == 1 must read bank 1's colours, not bank 0's"
+        );
+
+        let bank0 = TextureRef { palette: 0, ..base };
+        let packed0 = super::convert_texture(texels, &bank0, false).expect("CI4 texture converts");
+        assert_eq!(
+            packed0.palette[0],
+            expect_abgr(0x0001),
+            "palette == 0 (the overwhelming common case) must stay bank 0 -- a no-op"
+        );
+
+        // Guard: a bank beyond the loaded TLUT should not occur on real
+        // content (RE-223's own measurement), but must not panic or index
+        // out of bounds -- falls back to bank 0 rather than losing the
+        // palette entirely.
+        let out_of_range = TextureRef { palette: 5, ..base };
+        let packed_guard = super::convert_texture(texels, &out_of_range, false)
+            .expect("an out-of-range bank must not panic");
+        assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
     }
 }
