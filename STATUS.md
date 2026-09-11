@@ -89,7 +89,7 @@
   (no renderer/pack code changed this task).
 - Documentation: RE-231, `PLAN.md` `R2.1`/T7 and new T7a section,
   `docs/porting-status.md`, this snapshot.
-- Commit: pending.
+- Commit: `a83aa07`.
 
 ## Continuation
 
