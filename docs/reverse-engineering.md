@@ -10,6 +10,101 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-247 — `ssb_rom::transition::ASSETS`'s "camera" entry pointed at the wrong file: a real pack-content bug, not just a C3 attribution gap (`PLAN.md` R2.2/C3, part 4, in progress)
+
+**Question.** `R2.2`/C3's remaining work (RE-246) named two files RE-099
+flagged outside `dLBTransitionDescs` — 39 and 51 — as unattributed. Tracing
+file 51 (`refs/ssb-decomp-re/src/relocData/51_LBTransitionCamera.c`) is the
+natural next step. What draws it, and does it belong under the same
+camera-level depth default RE-246 found?
+
+**Evidence.** `refs/ssb-decomp-re/src/lb/lbtransition.c`'s
+`dLBTransitionDescs` names 11 entries; the eighth, `"Camera Shutter"`,
+references `llLBTransitionCameraFileID`/`llLBTransitionCameraDObjDesc`/
+`llLBTransitionCameraAnimJoint`. `refs/ssb-decomp-re/symbols/
+reloc_data_symbols.us.txt` gives their real values: `llLBTransitionCamera
+FileID = 0x33` (**51**, not 47), `llLBTransitionCameraDObjDesc = 0x3f90`,
+`llLBTransitionCameraAnimJoint = 0x4148` — both offsets matching file 51's
+own `dLBTransitionCamera_DObjDesc_0x3F90`/`dLBTransitionCamera_AnimJoint_
+0x4148` declarations exactly (an explicit named pairing record, not a
+fingerprint match). Every other `dLBTransitionDescs` entry's `llLBTransition
+<Name>FileID` *is* the contiguous `40 + index` run
+`ssb_rom::transition::ASSETS` assumed (checked all 11 against the symbol
+table) — only `"camera"` (index 7) breaks it. File 47
+(`llLBTransitionPaperAirplaneFileID`) is a real, structurally valid scene
+(`dLBTransitionPaperAirplane_DObjDesc_0x0F98`, one DL, one anim joint) but
+is named by no other symbol anywhere in `refs/ssb-decomp-re/src` — a
+`grep -rn "PaperAirplane"` finds only its own declarations. It is the
+"twelfth file" RE-099 already flagged as unregistered and unused, not the
+camera.
+
+`ASSETS`'s `"camera"` entry had `file: 47, graph: 0x0F98, anim_joints:
+0x101C` — file 47's own paper-airplane graph, not file 51's camera-booth
+one. `transition_inventory` (the example that's supposed to check `ASSETS`
+against the ROM) never caught this: 0x0F98 happens to be a structurally
+valid, self-consistent 2-node/1-script/64-frame graph in file 47 too (mirrors
+`gakubuthi`/`rot_scale`'s own coincidental reuse of the same small offset in
+different files), so the validation that only checks internal
+self-consistency passed while pointing at the wrong file's data. Confirmed
+against the real ROM (`rom/Super Smash Bros. (USA).z64`) with a scratch probe
+before changing any code: file 51, graph `0x3F90`, has 9 nodes and 8 active
+`AObjEvent32` scripts, replaying to exactly 64 frames — matching file 51's
+own 9-entry `DObjDesc` (a null root, 8 wall/panel `DL`-bearing children
+arranged in an octagon, one 18-flagged terminator) and 9-entry `AnimJoint`
+table (`NULL` + 8 real scripts) byte-for-byte.
+
+**This is not merely a C3 attribution gap — `ASSETS` is consumed by
+`romtool pack`'s live results-screen-wipe packing path**
+(`tools/romtool/src/main.rs`'s `transitions` loop, feeding `psp/src/
+results_transition.rs`'s already-shipped `pack.transition_object`/
+`transition_anim` lookups, RE-146/147). Before this fix, the "Camera
+Shutter" wipe (transition index 7) packed and would have drawn the paper
+airplane's single-DL, single-joint scene instead of the real 8-panel
+camera-booth geometry and its 8 animated joints — a genuine content-
+correctness bug in a shipped feature, not just a depth-state measurement
+gap.
+
+**Implementation.** Fixed `crates/ssb-rom/src/transition.rs`'s `"camera"`
+entry: `file: 47 -> 51`, `graph: 0x0F98 -> 0x3F90`, `anim_joints: 0x101C ->
+0x4148`. Replaced the unit test's blanket `asset.file == 40 + index`
+assertion with an explicit `EXPECTED_FILES` array (`[40, 41, 42, 43, 44, 45,
+46, 51, 48, 49, 50]`) taken from the symbol table, so a future regression to
+the wrong contiguous assumption fails loudly instead of silently validating
+against the wrong file again. Documented the non-contiguous file numbering
+and the file-47-is-unregistered finding in `transition.rs`'s module doc
+comment.
+
+**Measured impact.** `romtool pack` against the real ROM: `meshes`/
+`triangles`/`draws`/`textures`/`objects` counts are all unchanged (2044/
+36772/8056/1345/374) — this only changes which data one already-packed
+transition slot points at, not the general mesh pipeline. `transitions`
+animated-node count rises from 70 to **77** (file 51's real 8 scripts
+replacing file 47's 1), `animations`' total joints-bound-to-a-node rises from
+9963 to **9970** (same +7), and pack `size` grows 10922.8 -> **10935.5 KiB**
+(file 51's larger geometry/anim data now actually included). `R2.2`/C3's own
+depth-seed census also improves as a side effect:
+`census_lb_transition_seed_measured_impact` rises from 1951/1951 (100%) to
+**2083/2083 (100%)** primitives flipped (file 51's larger scene has more
+primitives than file 47's), and the archive-wide `z_buffer`-vs-`depth_test`
+gap `census_independent_depth_state_vs_z_buffer_geometry_bit` reports falls
+from 1940 to **1808** (`z_buffer=5792`, `depth_test=3984`, `depth_write=
+3968`, both up from 3852/3836).
+
+File 39 (`IFCommonObject`, interface module — not `lb`-prefixed) remains
+genuinely unattributed: it shares file 47/51's segment-`0x1` two-texture-bind
+signature (RE-099) but is not named by any `dLBTransitionDescs`-style table
+this session found; `refs/ssb-decomp-re/src/if/ifcommon.c`/`ifscreenflash.c`
+were not yet read closely enough to confirm its draw path. Left open for the
+next `R2.2`/C3 session.
+
+**Confidence.** High for the file-51/camera pairing (explicit named linker
+symbols matching the relocData file's own declared offsets exactly, plus
+independent ROM verification of a structurally sane 9-node/8-script/64-frame
+scene) and for file 47 being unregistered (`grep` found zero other
+references). Low/unconfirmed for file 39's actual draw path — still open.
+
+---
+
 ## RE-246 — The dominant remainder of RE-244/245's depth-state gap was not an object-category wrapper at all, but a camera-level default; the 11 loading-break transitions account for half of it (`PLAN.md` R2.2/C3, part 3, in progress)
 
 **Question.** RE-245 closed layer 1 but left `z_buffer != depth_test`
