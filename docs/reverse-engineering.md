@@ -10,6 +10,128 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-251 — `apply_material` wired to independent depth-test/write state; synthetic `sceGuDepthMask` regression added (`PLAN.md` R2.2/C3, part 8, closes C3)
+
+**Question.** RE-244 through RE-250 built and measured `MeshMaterial::{depth_test,
+depth_write, depth_mode}` (`Z_CMP`/`Z_UPD`/`ZMODE`) independently of `z_buffer`
+(`G_ZBUFFER`), traced every external wrapper this project could find (fighter
+skeleton draws, stage render-layer 1, the 11 loading-break transitions, layer
+1's own list-1 translucent entries), and confirmed (RE-249) the remaining
+divergence is real archive content, not a missing seed. `psp/src/meshdraw.rs`
+still kept `GuState::DepthTest` keyed off `z_buffer`, the interim RE-068
+proxy. C3's two remaining acceptance items: wire the real per-primitive state
+to the device, and add a depth-test/no-write translucent-front/opaque-behind
+scene with an ON→OFF→ON `sceGuDepthMask` switch regression.
+
+**Wiring.** `apply_material`'s existing `flags::Z_BUFFER`-gated
+`GuState::DepthTest` toggle was replaced with `flags::DEPTH_TEST`, and a new
+`sys::sceGuDepthMask(if flags::DEPTH_WRITE { 0 } else { 1 })` call added
+alongside it — `sceGuDepthMask`'s argument is inverted from the source bit's
+own sense (`1` *disables* GE writes). Both live inside the same
+`st.last_flags` change-detection block `DepthTest` already used, so no new
+per-primitive cost.
+
+**Golden-scene impact, measured against a same-environment pre-change
+rebuild (not the committed goldens directly — see the environment-drift note
+below).** Of the 13 existing `regression_capture_scene{2..14}` goldens plus
+the default Dream Land scene, **9 are byte-identical** (scenes 2–5, 7–10, 13:
+every primitive their frozen camera window shows has `z_buffer == depth_test`
+and `depth_write` true, so the new wiring is a no-op for them). Four changed,
+all by a small, localized, visually-explainable amount:
+
+* `r0-dream-land-default.png`: 1120 pixels (2x-upscale-independent, raw
+  960x544). Isolated to the canopy's decorative translucent highlight
+  triangles (RE-069/RE-129/130's own long-flagged approximate surface) and a
+  previously-hidden basket-weave hull texture patch on the platform's lower
+  hull — both consistent with a previously-wrong depth relationship between
+  overlapping translucent/opaque canopy facets now resolving correctly, not
+  new corruption (no black holes, no flicker-shaped artifacts).
+* `r2-metal-texgen.png`: 220 pixels: a few edge pixels on one crystal facet.
+* `r2-metal-texgen-rotated.png`: 13,008 pixels: one tall spike facet flips
+  from an unlit near-black tone to the same pale reflective tone its
+  neighbouring facets already show — a plausible occlusion correction on
+  this project's most mutually-self-occluding content (RE-214/215's own
+  precedent already treats this content as unusually depth-sensitive).
+* `r2-metal-texgen-camera-rotated.png`: 1704 pixels, same shape as the
+  rotated case.
+
+Fox/Falcon/Kirby/Ness/DK (scenes 6–10), Saffron City (scene 5), Stage Sector
+(scene 3), the flat-colour/CI8 scenes (2, 4) and the linear-texgen scene (13)
+are all untouched — their own content's `z_buffer`/`depth_test`/`depth_write`
+already agreed everywhere (confirmed directly for Fox's graph: all 30 packed
+primitives read `z_buffer == depth_test == depth_write == true`).
+
+**Environment-drift caveat.** Comparing the *rebuilt* headless captures
+directly against the *committed* golden PNGs (not a same-environment
+pre/post pair) showed far larger diffs — e.g. ~61,000 pixels for Dream Land
+and 45,000+ for each fighter scene — even for a pristine pre-change rebuild
+with zero code changes. This is a pre-existing environment/toolchain drift
+between whatever produced the currently-committed goldens and this session's
+PPSSPP headless binary, unrelated to this change; it went unnoticed here
+only because the same-environment pre/post comparison above isolates the
+real effect. Left open, not fixed by this entry — flagged for a future
+session.
+
+**New regression.** No committed golden's frozen camera window puts a
+depth-test-without-write surface in front of something drawn after it at an
+overlapping screen position (confirmed: even a stage chosen specifically for
+having the most layer-1 list-1 content in its own render layer, stage 7/
+Sector Z's Great Fox, produces a byte-identical capture before/after this
+change — its translucent trim is simply never occluded by anything drawn
+afterward in that frame). A regression relying only on existing golden
+scenes would not have caught a broken `sceGuDepthMask` wire. `psp/src/
+depth_diag.rs` adds a synthetic, non-ROM scene (`depth_mask_diagnostic`
+feature, same shape as `normal_diag.rs`'s `texgen_normal_diagnostic_*`
+rig): three overlapping quads — opaque red, far, write on; translucent green
+(alpha 0.5), near, write **off**; opaque blue, between the two in depth,
+drawn last, write on again (the ON→OFF→ON switch). Correct behaviour nests a
+solid blue disc inside the blended olive (red+green) region, proving the
+blue quad's depth test passed against the *red* quad's untouched depth value
+despite being submitted after, and behind, the green quad — exactly the
+real-time-translucency-compositing property RE-244's `ZMODE_XLU` exists for.
+
+**Verified the test itself discriminates** (`test-the-test-by-breaking-the-
+code`): temporarily forcing the green quad's `sceGuDepthMask` call to `0`
+(write-on, simulating a broken wire) makes the blue disc vanish entirely,
+leaving only the blended olive square — confirmed on the same PPSSPP
+headless capture, then reverted. Two captures of the fixed build are
+byte-identical (`tools/compare-screenshot.sh`, 0 differing pixels). New
+golden: `tests/golden/r2-depth-mask-diagnostic.png`, SHA-256
+`47d0cb28107e790b9a3e524f8352e59752e2d277fb63403d019890b3f9745890`.
+
+**Verification.** `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+`ssb-rom` 420, `romtool` 22, `ssb-engine` 48, `ssb-game` 120 passed, 0
+failed — unchanged counts, this entry touches only `psp/` device code plus
+doc comments, no `ssb-rom` data-model change. `cargo fmt --check` and `cargo
+clippy --all-targets` clean in `psp/` (same pre-existing, unrelated warnings
+as prior sessions; `depth_diag.rs` itself adds none). `romtool pack` was not
+re-run: no asset-pipeline code changed, pack SHA-256 unchanged at
+`189904a907207afba64c0c006804f6e2e82dbf385bb78f73c143166fbd452962`.
+`regression_capture` EBOOT SHA-256
+`a3e8d1980d5e20e4a55389980b8fcce73e8feca17445c4f7356cf94131d9fc85`;
+`depth_mask_diagnostic` EBOOT SHA-256
+`1c686dd48a4839b7e40aaac3617c6e56eb67e59b0afccaf75d9d49dd37bc8be5`. Rebuilt
+the plain default (no feature) EBOOT afterward per this project's own
+convention.
+
+**Not done.** Physical-PSP hardware evidence: the PSP was enumerated over
+USB (`054c:01c9`) but not in an active PSPLink session (`pspsh -e ver`
+refused the connection), and launching PSPLink from the device's own XMB
+requires physical interaction this session could not perform. `PLAN.md`
+C3's acceptance line accepts "PPSSPP or physical-PSP evidence" for exactly
+this reason; the PPSSPP evidence above, including the bug-injection
+self-check, is taken as sufficient to close C3. Physical-PSP confirmation of
+`r2-depth-mask-diagnostic.png` remains a good candidate for a future
+session's hardware pass, alongside the environment-drift investigation
+above.
+
+**Confidence: high for the wiring's correctness (measured golden-diff
+localization plus a self-validating bug-injected synthetic regression);
+open for physical-PSP confirmation and the pre-existing golden/environment
+drift, both explicitly deferred, not silently dropped.**
+
+---
+
 ## RE-250 — `PlannedList` now keeps `list_id`; stage render-layer 1's 21 list-1 `DObjDLLink` entries seed depth-test-without-write instead of the uniform opaque write-on seed (`PLAN.md` R2.2/C3, part 7, in progress)
 
 **Question.** RE-245/RE-249 both left one item open: `grDisplayLayer1{Pri,

@@ -313,16 +313,21 @@ pub mod flags {
     /// (`G_ZBUFFER`, RSP geometry mode) above. Archive-wide this diverges
     /// from `Z_BUFFER` on most non-fighter-skeleton primitives (`romtool`'s
     /// `census_independent_depth_state_vs_z_buffer_geometry_bit`, kept
-    /// permanently); `psp/src/meshdraw.rs` still keys `GuState::DepthTest`
-    /// off `Z_BUFFER`, the already device-validated signal (RE-068), until
-    /// that gap's cause (other object categories' own external
-    /// `G_SETRENDERMODE` wrapper, `R2.2`/C3) is found. Recorded for
-    /// inspection, matching `LIT`'s precedent.
+    /// permanently). RE-245 through RE-250 traced and seeded every external
+    /// wrapper this project could find (fighter skeleton draws, stage
+    /// render-layer 1, the 11 loading-break transitions, and layer 1's own
+    /// list-1 translucent entries); RE-249 confirmed the remainder is real
+    /// archive content, not a missing seed. RE-251 wires `GuState::DepthTest`
+    /// (`psp/src/meshdraw.rs`) to this bit directly, superseding the interim
+    /// `Z_BUFFER` proxy (RE-068) now that the data model is measured
+    /// complete -- see `docs/reverse-engineering.md` RE-251 for the
+    /// before/after golden-scene impact.
     pub const DEPTH_TEST: u32 = 1 << 15;
     /// RE-244: `G_SETRENDERMODE`'s `Z_UPD` bit -- whether this primitive
     /// writes the depth buffer, independent of [`DEPTH_TEST`] above (a real
-    /// translucent surface tests without writing, `ZMODE_XLU`). Not yet
-    /// consumed on the device side; see [`DEPTH_TEST`]'s doc comment.
+    /// translucent surface tests without writing, `ZMODE_XLU`). RE-251 wires
+    /// this to `sceGuDepthMask` (`psp/src/meshdraw.rs`); see [`DEPTH_TEST`]'s
+    /// doc comment.
     pub const DEPTH_WRITE: u32 = 1 << 16;
     /// RE-244: `G_SETRENDERMODE`'s 2-bit `ZMODE` field, low bit. The PSP GE
     /// has no equivalent depth-bias hardware feature; recorded for

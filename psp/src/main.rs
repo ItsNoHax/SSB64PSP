@@ -17,6 +17,8 @@
 extern crate alloc;
 
 mod assets;
+#[cfg(feature = "depth_mask_diagnostic")]
+mod depth_diag;
 mod gu;
 mod input;
 mod meshdraw;
@@ -99,6 +101,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene13")
             || cfg!(feature = "regression_capture_scene14")
             || cfg!(feature = "camera_audit_capture")
+            || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "texgen_normal_diagnostic_0")
             || cfg!(feature = "texgen_normal_diagnostic_1")
             || cfg!(feature = "texgen_normal_diagnostic_2")
@@ -2344,6 +2347,10 @@ unsafe fn run() -> ! {
         ))]
         unsafe {
             normal_diag::draw(&mut gpu, aspect);
+        }
+        #[cfg(feature = "depth_mask_diagnostic")]
+        unsafe {
+            depth_diag::draw(&mut gpu, aspect);
         }
         gpu.end_frame();
         #[cfg(feature = "headless_capture")]
