@@ -3104,7 +3104,9 @@ RE-218, RE-223, RE-224 in `docs/reverse-engineering.md`.
 
 Status: `IN PROGRESS` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
 space invariance does **not** hold (164 cross-node differing-transform vertex
-reuses, D-042 revised). Its remedy carries forward through T2 next.
+reuses, D-042 revised). T2 complete (RE-226): raw signed-byte normal
+semantics measured and fixed (D-038 revised). T1's remedy carries forward
+through T3 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3157,13 +3159,24 @@ Evidence: RE-225 in `docs/reverse-engineering.md`; D-042 in `DECISIONS.md`.
 
 ### T2 — Raw signed-byte normal semantics
 
-Use PPSSPP source plus a diagnostic PPSSPP/physical-PSP scene to determine how
-`GU_NORMAL_8BIT` feeds `TextureProjectionMapMode::Normal` (`/127`, `/128` or
-another mapping). Make regular texgen implement `(normal · LookAt) / 127`
-without normalizing the quantized normal, compensating the matrix only from
-measured GE behavior. Test `[127,0,0]`, `[64,0,0]`, `[-128,0,0]`, `[90,90,0]`
-and `[73,-41,99]` against several bases; `[64,0,0]` must detect the old
-normalized-normal behavior. Record the hardware measurement.
+Status: `COMPLETE` — RE-226. Measured both PPSSPP source
+(`GPU/Common/VertexReader.h`'s `ReadNrm`: unconditional `/128`, no
+normalization for `GE_PROJMAP_NORMAL`) and this project's own real `sceGu`
+draw calls via a headless measurement rig (`psp/src/normal_diag.rs`,
+`texgen_normal_diagnostic_0`-`_6`): all seven cases (`[127,0,0]`, `[64,0,0]`
+under both `NormalizedNormal` and raw `Normal`, `[-128,0,0]`, `[90,90,0]`,
+`[73,-41,99]`) matched `/128`-divisor predictions exactly. `[64,0,0]` vs.
+`[127,0,0]` under the old `NormalizedNormal` mode confirmed the collapse the
+acceptance text named (identical output, magnitude discarded); under raw
+`Normal` mode the same pair produced different, magnitude-proportional
+output. `meshdraw::apply_texture_mapping` now uses raw `Normal` mode with the
+dot-product term scaled by `128.0/127.0` to compensate the GE's measured
+`/128` against the original hardware's `/127`, matching `(normal · LookAt) /
+127` exactly. `regression_capture_scene11/12/13`'s goldens rebuilt and
+updated (45,484 / 29,874 / 27,570 differing pixels vs. the pre-fix goldens;
+new captures reconfirmed deterministic). D-038 revised.
+
+Evidence: RE-226 in `docs/reverse-engineering.md`; D-038 in `DECISIONS.md`.
 
 ### T3 — Original LookAt quantization
 

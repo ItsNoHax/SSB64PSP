@@ -10,6 +10,134 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-226 — `GU_NORMAL_8BIT` raw texgen semantics measured, `NormalizedNormal` bug fixed (`PLAN.md` R2.1/T2)
+
+**Question.** T2 needed two numbers before `meshdraw::apply_texture_mapping`
+could stop normalizing the quantized vertex normal before feeding it to the
+GE's texture-matrix generator: does `sceGuTexProjMapMode`'s raw `Normal` mode
+actually skip normalization (the RSP's own `G_TEXTURE_GEN` never normalizes,
+only scales), and what divisor turns a signed `GU_NORMAL_8BIT` byte into the
+generator's `[-1, 1]`-ish range — `/127` (the original hardware's own
+`G_TEXTURE_GEN` formula) or `/128`? The previously-shipped code used
+`NormalizedNormal` throughout, an assumption never measured against either
+PPSSPP or this project's own real `sceGu` calls.
+
+**Evidence — PPSSPP source.** `GPU/Common/VertexReader.h`'s `ReadNrm` (the
+decoder PPSSPP's software backend — the backend `tools/run-ppsspp-headless.sh`
+uses — always routes through, independent of `GE_PROJMAP_NORMALIZED_NORMAL`
+vs `GE_PROJMAP_NORMAL`) divides every `DEC_S8_3` axis by `128.0`
+unconditionally: `nrm[i] = b[i] * (1.f / 128.f)`. `GPU/Software/
+TransformUnit.cpp`'s texgen switch then uses that decoded value directly for
+`GE_PROJMAP_NORMAL` (`source = normal;`, no further scaling) and re-normalizes
+it only for `GE_PROJMAP_NORMALIZED_NORMAL` — confirming the raw mode really is
+un-normalized at the source level. (Aside, not used here: PPSSPP's GLES/Vulkan
+hardware-transform backends instead upload the raw byte as a GPU `SNORM`
+attribute, an OpenGL/Vulkan-spec `/127` convention with edge clamping,
+diverging from the software backend PPSSPP's own D3D11 backend explicitly
+opts out of via `expand8BitNormalsToFloat = true` — i.e. PPSSPP's own graphics
+backends already disagree with each other on this exact question, backing up
+why this needed a direct measurement rather than reading one source file and
+trusting it.)
+
+**Evidence — real `sceGu` draw calls, not just source reading.** Per
+`AGENTS.md`'s "PPSSPP is not physical PSP proof," and because a source
+reading cannot catch anything specific to how *this project's own* renderer
+drives the GE (matrix layout, units, state ordering), built a headless
+measurement rig (`psp/src/normal_diag.rs`, `texgen_normal_diagnostic_0`
+through `_6` in `psp/Cargo.toml`, all default-off): one full-viewport quad per
+build, every vertex sharing one hand-picked `GU_NORMAL_8BIT` value, projected
+through a real `sceGuTexProjMapMode` call and a "coordinate ramp" texture
+(`R(x, y) = x`, `G(x, y) = y`, point-sampled) that turns whatever texel the
+GE actually addresses into a screenshot pixel decodable back to the exact
+`(s, t)` the hardware computed. Driven through `tools/run-ppsspp-headless.sh`,
+confirming that harness (already wired since commit `ec87660`, predating this
+session) drives real `sceGu` state through the actual `cargo psp` build, not
+a simulated one.
+
+Cases and results (`A = 90/256`, `B = 128/256`, predicted vs. measured texel,
+sampled at screen `(480, 272)`):
+
+```
+case  normal          mode              predicted   measured
+0     [127,  0,  0]   NormalizedNormal  (218, 128)  (217, 128)
+1     [127,  0,  0]   Normal (raw)      (217, 128)  (217, 128)
+2     [ 64,  0,  0]   NormalizedNormal  (218, 128)  (217, 128)
+3     [ 64,  0,  0]   Normal (raw)      (173, 128)  (173, 128)
+4     [-128, 0,  0]   Normal (raw)      ( 38, 128)  ( 38, 128)
+5     [ 90, 90,  0]   Normal (raw)      (191, 191)  (191, 191)
+6     [ 73,-41, 99]   Normal (raw)      (179,  99)  (179,  99)
+```
+
+Every measured value matches its `/128`-divisor prediction to within 1 unit
+of `f32`-to-`u8` rounding. Case 0 vs. 2 is the decisive pair the plan's own
+acceptance text named: under the previously-shipped `NormalizedNormal` mode,
+`[64,0,0]` and `[127,0,0]` produce the **same** output (217, 128) — the mode
+discards magnitude entirely, keeping only direction. Under raw `Normal` mode
+(case 1 vs. 3), the same two normals produce different, magnitude-proportional
+output (217 vs. 173), exactly the RSP's own un-normalized behavior. Case 4
+confirms the two's-complement extreme (`-128 / 128 = -1.0` exactly, no clamp
+artifact — consistent with `/128`, since `/127` would need one). Cases 5/6
+confirm multi-axis, magnitude-greater-than-one (`[90,90,0]`'s length is
+`≈127.3`), and negative-component handling all fall out of the same simple
+per-component `/128` division with no special-casing.
+
+**Four bugs surfaced building the rig itself** (documented at length in
+`normal_diag.rs`'s module doc, since nothing else in this crate had exercised
+the combination before): stack-local vertex data does not survive to the
+caller's `sceGuSync` (the GE only reads it then, not at `sceGuDrawArray`
+time); `alloc::Vec<u8>` does not carry the 16-byte DMA alignment the GE
+needs (`assets.rs` already names this hazard for the asset pack); the GE's
+guard-band clip silently discards a whole primitive once its unclipped extent
+is far enough outside the frustum, rather than clipping it down (a "wildly
+oversized" quad vanished completely); and the texture-matrix generator's
+`(s, t)` output is `[0, 1]`-normalized on the `TRANSFORM_3D` pipeline, not a
+raw texel address (contrary to `draw_wallpaper_sprite`'s `TRANSFORM_2D`
+through-mode convention, which does not carry over). Each was caught and
+pinned down with its own control measurement before trusting the next one —
+see `decoder-output-is-not-rom-evidence`-style discipline applied to an
+emulator instead of a ROM.
+
+**Implementation.** `meshdraw::apply_texture_mapping` now calls
+`sceGuTexProjMapMode(Normal)` instead of `NormalizedNormal`, and scales the
+dot-product term (`a_s`/`a_t`) by a new `NORMAL_SCALE_COMPENSATION = 128.0 /
+127.0` constant: since the GE's raw mode divides by 128 but the original
+hardware's own `G_TEXTURE_GEN` formula divides by 127, `(raw / 128) *
+(128/127) == raw / 127` reproduces the original exactly — "compensating the
+matrix only from measured GE behavior," T2's own acceptance text. `b_s`/`b_t`
+inherit the same compensation automatically (they are defined in terms of
+`a_s`/`a_t`, not re-derived).
+
+This changes real rendered output for every texgen-affected pixel: rebuilt
+and re-captured `regression_capture_scene11/12/13` through
+`tools/run-ppsspp-headless.sh` and updated their three goldens
+(`tests/golden/r2-metal-texgen{,-rotated,-linear}.png`) — 45,484 / 29,874 /
+27,570 differing pixels against the pre-fix goldens respectively, consistent
+with a mode that previously discarded normal magnitude now using it. New
+captures reconfirmed deterministic (two headless runs of the same build,
+0 differing pixels).
+
+**Verification.** `cargo test --workspace --all-targets` (pinned 1.98.0
+toolchain, `SSB64_ROM` set): 560 passing, 0 failed — unaffected, since `psp/`
+(where this change lives) is a separate Cargo workspace with no host-testable
+logic touched here. `cargo psp --release` (default features, no diagnostic
+feature) builds clean. `cargo fmt --check` clean in `psp/` on touched files.
+`psp/`'s own `clippy` is not part of this project's gate (native clippy
+cannot cross-compile to `mipsel-sony-psp`).
+
+**Confidence: high.** Both the PPSSPP-source reading and the independent,
+real-`sceGu`-driven headless measurement agree exactly, across seven cases
+spanning axis-aligned, multi-axis, negative, extreme, and magnitude-greater-
+than-one normals. Not yet confirmed against physical PSP hardware — the
+existing PSPLink harness (`docs/psplink.md`) would be the next step if this
+specific mechanism (rather than the whole-scene golden captures already
+re-baselined) needs hardware confirmation, but nothing here depends on a
+PPSSPP behavior known to diverge from real hardware. `T1`'s RE-225 finding
+(164 cross-node differing-transform vertex reuses) remains open, tracked, and
+carried forward to `T3`/`T4` as planned — this task's raw-normal fix is a
+prerequisite for that remedy, not the remedy itself.
+
+---
+
 ## RE-225 — `G_VTX` model-space invariance census: not invariant, systematic joint-boundary gap found, remedy deferred to `T4` (`PLAN.md` R2.1/T1)
 
 **Question.** F3DEX generates texgen coordinates at `G_VTX` load time, using

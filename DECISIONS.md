@@ -480,13 +480,15 @@ read by anything.
 ---
 
 ### D-038: Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
-**Decision:** `G_TEXTURE_GEN` is reproduced through the PSP GE's texture-**matrix** coordinate generator (`sceGuTexMapMode(TextureMatrix, ...)` plus `sceGuTexProjMapMode(NormalizedNormal)`), never through `TextureMapMode::EnvironmentMap`. The node's world transform, the source `gSPTexture` scale and the render tile's origin are all carried in that matrix. Texture-coordinate *mapping* state is kept separate from texture *binding* state: `bind_texture` must not install a coordinate scale, because the correct scale depends on the mapping mode as well as the binding.
+**Decision:** `G_TEXTURE_GEN` is reproduced through the PSP GE's texture-**matrix** coordinate generator (`sceGuTexMapMode(TextureMatrix, ...)` plus `sceGuTexProjMapMode(Normal)`), never through `TextureMapMode::EnvironmentMap`. The node's world transform, the source `gSPTexture` scale and the render tile's origin are all carried in that matrix. Texture-coordinate *mapping* state is kept separate from texture *binding* state: `bind_texture` must not install a coordinate scale, because the correct scale depends on the mapping mode as well as the binding.
 
 **Reasoning:** The environment-map generator computes the right dot product but ignores `sceGuTexScale` and `sceGuTexOffset`, so it can only ever sweep the full uploaded texture. That was measured, not assumed — installing a 64x-larger scale factor under environment mapping produced a byte-identical PPSSPP capture (RE-214). Real SSB64 content needs the scale: one `StageMetalFile2` tile sweeps 16 of its 32 uploaded texels, a 48x42 tile padded to 64x64 sweeps 47x41, and 57 texgen triangles bind a tile with a nonzero origin. The texture-matrix generator carries all of it exactly, and as a side effect removes the environment path's coupling of the reflection's S axis to whichever GE light slot was named — light 0 being SSB64's own fighter light.
 
+**Revised by RE-226 (`PLAN.md` R2.1/T2):** the projection mode was originally `NormalizedNormal`, an unmeasured assumption. Measured against both PPSSPP source and this project's own real `sceGu` draw calls: the RSP's own `G_TEXTURE_GEN` never normalizes the quantized vertex normal, only scales it (`/127`), and `NormalizedNormal` was found to discard normal magnitude entirely — `[64,0,0]` and `[127,0,0]` produced identical output. Switched to raw `Normal` mode, with the dot-product term scaled by `128.0/127.0` to compensate for the GE's own `/128` internal divisor (measured, not the `/127` the original hardware uses) and reproduce the original formula exactly.
+
 **Implemented:** `psp/src/meshdraw.rs` (`apply_texture_mapping`, `TextureMapping`, `DrawState::texgen_object_basis`), `crates/ssb-rom/src/psp_texture.rs` (`env_map_tex_scale`, `authored_uv_tex_scale`)
 
-**Reference:** `docs/reverse-engineering.md` RE-214, `docs/rendering.md` "Geometry modes set"
+**Reference:** `docs/reverse-engineering.md` RE-214, RE-226, `docs/rendering.md` "Geometry modes set"
 
 ---
 

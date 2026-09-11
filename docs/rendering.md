@@ -240,13 +240,20 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   so it can only sweep the whole uploaded texture — wrong for the 32x8 tile
   that sweeps 16 of its 32 texels and for the 48x42 tile padded to 64x64.
   Coordinates are generated through the GE's texture-**matrix** generator
-  instead, with the projection source set to the normalised vertex normal and
-  the matrix carrying the exact affine term
-  `u = dot * a + (a + origin_shift)`, `a = gSPTexture_scale / (128 *
-  uploaded_dim)`. The generator reads the object-space normal, so each node's
-  world transform is folded into the matrix rows as `normalize(M^T · lookat)`
-  — the RSP's own `CalculateNormalDir`. No GE light is involved, so the
-  fighter's light 0 cannot reach the reflection.
+  instead, with the projection source set to the raw, un-normalised vertex
+  normal (RE-226: the RSP's own `G_TEXTURE_GEN` never normalises the
+  quantised normal either, only scales it, and the previously-shipped
+  `NormalizedNormal` mode was measured collapsing every normal to the same
+  output regardless of magnitude) and the matrix carrying the exact affine
+  term `u = dot * a + (a + origin_shift)`, `a = gSPTexture_scale / (128 *
+  uploaded_dim) * (128/127)`. The trailing `128/127` factor compensates for
+  the GE's own measured internal divisor (`/128`) against the original
+  hardware's `/127` (RE-226), reproducing `dot = (n · l) / 127` exactly. The
+  generator reads the object-space normal, so each node's world transform is
+  folded into the matrix rows as `normalize(M^T · lookat)` — the RSP's own
+  `CalculateNormalDir` — while the vertex normal itself is fed in unscaled.
+  No GE light is involved, so the fighter's light 0 cannot reach the
+  reflection.
 
   `PrimDesc` carries the `gSPTexture` scale and the render tile's origin for
   exactly this path (pack `VERSION` 27): under `G_TEXTURE_GEN` the RSP never

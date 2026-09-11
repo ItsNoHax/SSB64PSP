@@ -20,6 +20,16 @@ mod assets;
 mod gu;
 mod input;
 mod meshdraw;
+#[cfg(any(
+    feature = "texgen_normal_diagnostic_0",
+    feature = "texgen_normal_diagnostic_1",
+    feature = "texgen_normal_diagnostic_2",
+    feature = "texgen_normal_diagnostic_3",
+    feature = "texgen_normal_diagnostic_4",
+    feature = "texgen_normal_diagnostic_5",
+    feature = "texgen_normal_diagnostic_6"
+))]
+mod normal_diag;
 mod play;
 mod results_transition;
 mod timing;
@@ -87,7 +97,14 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene11")
             || cfg!(feature = "regression_capture_scene12")
             || cfg!(feature = "regression_capture_scene13")
-            || cfg!(feature = "camera_audit_capture"))
+            || cfg!(feature = "camera_audit_capture")
+            || cfg!(feature = "texgen_normal_diagnostic_0")
+            || cfg!(feature = "texgen_normal_diagnostic_1")
+            || cfg!(feature = "texgen_normal_diagnostic_2")
+            || cfg!(feature = "texgen_normal_diagnostic_3")
+            || cfg!(feature = "texgen_normal_diagnostic_4")
+            || cfg!(feature = "texgen_normal_diagnostic_5")
+            || cfg!(feature = "texgen_normal_diagnostic_6"))
 }
 
 /// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
@@ -2269,6 +2286,18 @@ unsafe fn run() -> ! {
             unsafe {
                 gpu.draw_wallpaper_sprite();
             }
+        }
+        #[cfg(any(
+            feature = "texgen_normal_diagnostic_0",
+            feature = "texgen_normal_diagnostic_1",
+            feature = "texgen_normal_diagnostic_2",
+            feature = "texgen_normal_diagnostic_3",
+            feature = "texgen_normal_diagnostic_4",
+            feature = "texgen_normal_diagnostic_5",
+            feature = "texgen_normal_diagnostic_6"
+        ))]
+        unsafe {
+            normal_diag::draw(&mut gpu, aspect);
         }
         gpu.end_frame();
         #[cfg(feature = "headless_capture")]
