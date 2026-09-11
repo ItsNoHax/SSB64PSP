@@ -10,6 +10,79 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-234 — Original-ROM stage-8 "VS Metal Mario" capture obtained via real 1P Mode play (`PLAN.md` R2.1/T8, in progress)
+
+**Question.** T8 needs an original-N64 screenshot of the stage-8 1P Mode
+fight (Meta Crystal stage, VS Metal Mario) to compare Metal Mario's/the
+stage's own metal-material texgen rendering against PPSSPP and physical PSP.
+RE-216 rebuilt a frame-exact scripted Mupen64Plus harness but found the only
+legitimate route is real 1P Mode play through 7 preceding stages (no item or
+RAM shortcut exists in the original — RE-216's "Metal Box item" idea was
+already struck through as unsupported by the decomp).
+
+**Evidence — a RAM stage-select warp was investigated but not used.** Before
+the user opted to just play the route manually, this session located and
+derived (from `refs/ssb-decomp-re/src/sc/sctypes.h`, `scdef.h`, `grdef.h`,
+`sc1pgame.c`, and `refs/ssb-decomp-re/symbols/symbols_us.txt`, cross-checked
+with an `offsetof` probe reproducing `SCCommonData`'s field layout) the
+one-byte warp that would have let the harness skip straight to stage 8
+without faking any render/material state, for future use if a scripted
+capture is ever needed instead of manual play:
+
+- `gSCManagerSceneData` (`SCCommonData`, `sctypes.h:378`) is at RAM
+  `0x800a4ad0`. `.scene_curr` (u8) is at offset `0x00`; relevant `enum
+  SCKind` values (`scdef.h` ~line 134, 0-based): `nSCKindTitle=1`,
+  `nSCKindModeSelect=7`, `nSCKind1PMode=8`, `nSCKind1PGamePlayers=17`,
+  `nSCKind1PIntro=14`, `nSCKind1PGame=52`. `.spgame_stage` (u8, which of the
+  13 sequential 1P Mode stages) is at offset `0x17` → RAM `0x800a4ae7`;
+  `enum SC1PGameStageKind` (`scdef.h` ~line 291) gives `nSC1PGameStageMMario
+  = 10`.
+- `gSCManagerBattleState` (a `SCBattleState *` pointer, symbol at RAM
+  `0x800a50e8`) has `.gkind` at offset `0x01` from the pointed-to struct;
+  `nGRKindMetal = 20` (`grdef.h`) confirms the Meta Crystal stage actually
+  loaded.
+- `sc1PGameSetupStageAll` (`sc1pgame.c:977`, ROM `0x8018D60C`) reads
+  `spgame_stage` exactly once per stage transition and drives the real
+  `dSC1PGameStageDesc[]` table into fighter/stage/AI construction — writing
+  `10` to `0x800a4ae7` before that read is a legitimate stage-select poke
+  (same category as a debug menu), not a faked register or material state.
+  `spgame_stage` defaults to `0` and only increments on a real stage-clear
+  (`sc1pmanager.c:473`), so nothing else needs to be touched.
+
+This was not exercised against the live emulator (no confirmation the
+offsets are correct in practice) since the user chose the more faithful
+option below instead.
+
+**Evidence — the actual capture.** The user played the real ROM
+(`Super Smash Bros. (USA).z64`, same identity RE-151/RE-216 used; sha1 not
+independently re-verified this session, user-attested) through M64Py,
+fighting the real 1P Mode route to stage 8, and captured three desktop
+screenshots spanning match start through mid-fight:
+`~/ppsspp-test/re151/stage8-metal/original-t0-spawn.png` (05:00, fighter
+still falling in), `-t1-go.png` (04:59, "GO" flash, both at 0%), and
+`-t2-midfight.png` (04:51, Link at 19%, Metal Mario at 0%, different fighter
+positions/poses than the first two). Stage identity (crystal-spike
+background, matches Meta Crystal) and fighter identity (uniformly
+chrome/silver model, matches Metal Mario) are both visually consistent with
+`dSC1PGameStageDesc`'s stage-8 entry (`nGRKindMetal` stage, `nFTKindMMario`
+enemy, `sc1pgame.c:447-460`). The three captures give more than the two
+required fighter rotations/poses for a texgen-focused comparison.
+
+**Conclusion.** The original-ROM leg of T8 is captured — via real play, which
+is more faithful than any scripted/warped route and needs no correctness
+argument for how the render state was reached. Not yet done: the equivalent
+PPSSPP capture, the equivalent physical-PSP capture, and the actual
+texgen-focused ROI comparison (model/camera reflection response, diffuse-
+light independence, ordinary-vs-linear behavior, tile-origin phase, generated
+span) across all three that T8 requires to close.
+
+**Confidence: high for stage/fighter identity (visual match plus independent
+decomp-table confirmation); the RAM warp facts above are derived, not
+measured against a live emulator, and should be treated as a hypothesis if
+ever used; the cross-platform comparison itself has not been performed.**
+
+---
+
 ## RE-233 — Fixed real-hardware-only collision/fighter debug-overlay corruption: `LINE_BUF` reused before the GE finished reading it
 
 **Question.** A routine physical-PSP run via PSPLink (`docs/psplink.md`) of

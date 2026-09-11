@@ -3123,6 +3123,9 @@ the sweep's `dot = +1` extreme. Opens `T7a` to fix it. T7a complete
 (RE-232): fixed the divergence at its real cause (both the host comparison
 model and the pack-time texture bake `meshdraw::bind_texture` addresses),
 re-measured at a strict `0`/34. T1's remedy carries forward through T8 next.
+T8 in progress (RE-234): original-ROM stage-8 VS Metal Mario capture obtained
+via real 1P Mode play (M64Py); PPSSPP and physical-PSP legs plus the actual
+cross-platform texgen comparison remain open.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
