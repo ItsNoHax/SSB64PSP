@@ -235,8 +235,8 @@
   pre-change pack.
 - Documentation: RE-250, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-250, `R2.2`/C3 part 7: `PlannedList`'s `list_id` field
-  and per-item depth-seed override for stage render-layer 1's list-1
+- Commit: `2250edc` (RE-250, `R2.2`/C3 part 7: `PlannedList`'s `list_id`
+  field and per-item depth-seed override for stage render-layer 1's list-1
   entries).
 
 ## Continuation
