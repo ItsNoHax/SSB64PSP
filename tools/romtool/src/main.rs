@@ -461,6 +461,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let mut members: BTreeMap<&'static str, usize> = BTreeMap::new();
     // Materials change what converts, so resolve them the way the packer does.
     let loaded = load_all(&archive);
+    let skeleton_graphs = fighter_skeleton_graphs(&loaded);
     for id in &ids {
         let Some(file) = loaded.files.get(*id as usize).and_then(Option::as_ref) else {
             continue;
@@ -503,9 +504,11 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
 
+            let initial_lit = skeleton_graphs.contains(&(*id, g.offset));
             for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
                 &items,
                 ssb_rom::mesh::Source::of(file),
+                initial_lit,
             )) {
                 let key: String = match converted {
                     _ if p.dl == NO_LIST => "no list on this side of the matrix".into(),
@@ -1077,6 +1080,28 @@ fn convert_mat_anim_sprite(
     convert_texture(src, &variant, swizzle)
 }
 
+/// Every `(model_file, graph_offset)` pair either of a fighter's two
+/// `FTCommonPart` detail levels names (RE-242).
+///
+/// `ftDisplayMainProcDisplay` sets `G_LIGHTING` unconditionally before either
+/// graph's own node lists run (RE-021), so any [`ssb_rom::mesh::convert_sequence`]
+/// call decoding one of these graphs must seed `initial_lit: true` to match —
+/// every other graph in the archive keeps the RDP reset default of unlit.
+fn fighter_skeleton_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, u32)> {
+    ssb_rom::fighter::FIGHTER_FILES
+        .iter()
+        .flat_map(|entry| {
+            let main = loaded.files[entry.file as usize].as_ref();
+            main.into_iter().flat_map(|main| {
+                ssb_rom::fighter::common_parts(main, *entry)
+                    .into_iter()
+                    .flatten()
+                    .map(|part| (part.model_file, part.graph))
+            })
+        })
+        .collect()
+}
+
 /// Converts one graph's whole plan under a given per-node materials array
 /// (RE-098): the same shape [`pack`]'s own main loop builds inline for
 /// costume 0, factored out so a fighter's alternate costumes can call it
@@ -1096,6 +1121,7 @@ fn convert_graph_at(
     plan: &[PlannedList],
     materials: &[ssb_rom::mobj::NodeMaterials],
     mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
+    initial_lit: bool,
 ) -> Vec<Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError>> {
     use ssb_rom::mesh;
 
@@ -1119,7 +1145,7 @@ fn convert_graph_at(
             mat_anims: &mat_anims[p.node],
         })
         .collect();
-    mesh::convert_sequence(&items, mesh::Source::of(file))
+    mesh::convert_sequence(&items, mesh::Source::of(file), initial_lit)
 }
 
 /// Long enough that a looping script proves it loops (RE-089's own budget
@@ -1410,6 +1436,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut object_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
 
     let loaded = load_all(&archive);
+    let skeleton_graphs = fighter_skeleton_graphs(&loaded);
 
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
@@ -1500,10 +1527,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 })
                 .collect();
 
-            for (p, converted) in plan
-                .iter()
-                .zip(mesh::convert_sequence(&items, mesh::Source::of(file)))
-            {
+            let initial_lit = skeleton_graphs.contains(&(id, graphs[gi].offset));
+            for (p, converted) in plan.iter().zip(mesh::convert_sequence(
+                &items,
+                mesh::Source::of(file),
+                initial_lit,
+            )) {
                 let Ok(m) = converted else { continue };
                 if m.triangle_count() == 0 {
                     continue;
@@ -1601,6 +1630,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 let base_materials = loaded.materials(file, graph);
                 let first_node = writer.object(object).unwrap().first_node;
                 let plan = &plans[gi];
+                let initial_lit = skeleton_graphs.contains(&(id, graph.offset));
                 let base_converted = convert_graph_at(
                     &loaded,
                     file,
@@ -1608,6 +1638,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     plan,
                     &base_materials,
                     &mut mat_anim_data,
+                    initial_lit,
                 );
                 for costume in 1..costumes {
                     let materials_k = loaded.materials_at(file, graph, costume as f32);
@@ -1618,6 +1649,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         plan,
                         &materials_k,
                         &mut mat_anim_data,
+                        initial_lit,
                     );
                     for (p, m_k) in plan.iter().zip(&converted_k) {
                         if !p.own_space() {
@@ -3848,6 +3880,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
     let resolver = ssb_rom::scene::DlResolver::new(file);
     let graphs: &[ssb_rom::scene::SceneGraph] =
         loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
+    let skeleton_graphs = fighter_skeleton_graphs(loaded);
     let mut out = Vec::new();
     let mut claimed = BTreeSet::new();
 
@@ -3874,8 +3907,9 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 mat_anims: &[],
             })
             .collect();
+        let initial_lit = skeleton_graphs.contains(&(file.id, graph.offset));
         out.extend(
-            mesh::convert_sequence(&items, mesh::Source::of(file))
+            mesh::convert_sequence(&items, mesh::Source::of(file), initial_lit)
                 .into_iter()
                 .flatten(),
         );
@@ -7824,6 +7858,169 @@ mod tests {
         );
         let ids: Vec<String> = affected_files.iter().map(u32::to_string).collect();
         println!("R2.2/C2 affected archive files: {}", ids.join(", "));
+    }
+
+    /// `R2.2`/C2 (RE-243): measures how many real vertices `mesh::
+    /// convert_sequence`'s `initial_lit` parameter actually changes, by
+    /// converting every one of the 27 fighters' two `common_parts` skeleton
+    /// graphs twice -- once with `initial_lit: true` (what `pack`/
+    /// `file_meshes` now do) and once with `false` (the pre-fix behaviour)
+    /// -- and counting `MeshVertex::lit` disagreements.
+    ///
+    /// **Result: 0 of 0 graphs measured any difference.** RE-105 already
+    /// found that a real `G_MW_LIGHTCOL` (`gSPLightColor`) command is an
+    /// unambiguous, ROM-verified signal that a segment is about to draw lit
+    /// geometry, and every one of these graphs' node lists that draws any
+    /// vertex at all turns out to carry its own `G_MW_LIGHTCOL` ahead of its
+    /// first `G_VTX` -- so `mesh.rs`'s existing `Cmd::MoveWord` handler
+    /// (`state.material.lit = true`, RE-105) already resolves every one of
+    /// these vertices correctly with no external seed needed. The
+    /// `ftDisplayMainProcDisplay` external `G_LIGHTING` RE-241 traced is real
+    /// hardware behaviour and the seed is the correct, evidenced way to
+    /// model it (still exercised by `mesh.rs`'s own unit tests,
+    /// `convert_sequence_initial_lit_true_resolves_lit_with_no_in_list_g_lighting`),
+    /// but it is redundant for every fighter this archive actually ships --
+    /// this is a genuine measured null result, not a wiring bug, and it is
+    /// kept as a permanent census so a future change to either signal has a
+    /// concrete number to check against.
+    #[test]
+    fn census_initial_lit_seed_measured_impact_on_skeleton_graphs() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut graphs_checked: BTreeSet<(u32, u32)> = BTreeSet::new();
+        let mut vertices_checked = 0usize;
+        let mut changed = 0usize;
+        for entry in ssb_rom::fighter::FIGHTER_FILES.iter() {
+            let Some(main) = loaded.files[entry.file as usize].as_ref() else {
+                continue;
+            };
+            for part in ssb_rom::fighter::common_parts(main, *entry)
+                .into_iter()
+                .flatten()
+            {
+                if !graphs_checked.insert((part.model_file, part.graph)) {
+                    continue; // several fighters share one model file/graph
+                }
+                let Some(file) = loaded.files[part.model_file as usize].as_ref() else {
+                    continue;
+                };
+                let Some(g) = loaded
+                    .graphs
+                    .get(&part.model_file)
+                    .and_then(|gs| gs.iter().find(|g| g.offset == part.graph))
+                else {
+                    continue;
+                };
+                let resolver = ssb_rom::scene::DlResolver::new(file);
+                let plan = super::plan_draw_order(g, &resolver);
+                let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                    .iter()
+                    .map(|p| {
+                        file.data
+                            .get(p.dl as usize..)
+                            .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                let materials = loaded.materials(file, g);
+                let items: Vec<ssb_rom::mesh::SequenceItem> = plan
+                    .iter()
+                    .zip(&decoded)
+                    .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
+                        cmds,
+                        world: p.world,
+                        mobjs: &materials[p.node],
+                        mat_anims: &[],
+                    })
+                    .collect();
+                let seeded =
+                    ssb_rom::mesh::convert_sequence(&items, ssb_rom::mesh::Source::of(file), true);
+                let unseeded =
+                    ssb_rom::mesh::convert_sequence(&items, ssb_rom::mesh::Source::of(file), false);
+                for (a, b) in seeded.iter().zip(&unseeded) {
+                    let (Ok(a), Ok(b)) = (a, b) else { continue };
+                    for (va, vb) in a.vertices.iter().zip(&b.vertices) {
+                        vertices_checked += 1;
+                        if va.lit != vb.lit {
+                            changed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C2 initial_lit seed measured impact: {changed}/{vertices_checked} vertices \
+             changed lit state across {} distinct skeleton graphs",
+            graphs_checked.len()
+        );
+        assert!(
+            vertices_checked > 0,
+            "no skeleton-graph vertices were checked at all -- fighter_skeleton_graphs or \
+             common_parts likely regressed"
+        );
+    }
+
+    /// `R2.2`/C2 (RE-243): the same "external, per-object `G_LIGHTING`" gap
+    /// RE-021 named (`looks_like_unit_normal` covering 36,356 of ~37,000
+    /// unlit vertices archive-wide), requantified through the packer's own
+    /// real conversion path (`file_meshes`) now that fighter skeleton graphs
+    /// seed `initial_lit`. Split by whether the vertex came from one of
+    /// those seeded graphs, so a future change to the seeding logic has a
+    /// concrete regression to compare against. See the sibling
+    /// `census_initial_lit_seed_measured_impact_on_skeleton_graphs` for why
+    /// the skeleton-graph number here is unchanged by the seed itself
+    /// (RE-105's `G_MW_LIGHTCOL` already covers it) -- this fallback usage
+    /// comes from elsewhere: vertices legitimately shared between a lit and
+    /// an unlit primitive (RE-240's own dedup precedent), or non-fighter
+    /// geometry that never carries `G_LIGHTING` at all (RE-241).
+    #[test]
+    fn census_looks_like_unit_normal_fallback_after_skeleton_lighting_seed() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let skeleton_graphs = super::fighter_skeleton_graphs(&loaded);
+        let mut skeleton_unlit_verts = 0usize;
+        let mut skeleton_still_normal_like = 0usize;
+        let mut other_unlit_verts = 0usize;
+        let mut other_still_normal_like = 0usize;
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            let graphs: &[ssb_rom::scene::SceneGraph] =
+                loaded.graphs.get(&id).map_or(&[], Vec::as_slice);
+            let on_a_skeleton = graphs
+                .iter()
+                .any(|g| skeleton_graphs.contains(&(id, g.offset)));
+            for mesh in super::file_meshes(&loaded, file) {
+                for v in &mesh.vertices {
+                    if v.lit {
+                        continue;
+                    }
+                    let normal_like = ssb_rom::pack::looks_like_unit_normal(v.rgba);
+                    if on_a_skeleton {
+                        skeleton_unlit_verts += 1;
+                        skeleton_still_normal_like += normal_like as usize;
+                    } else {
+                        other_unlit_verts += 1;
+                        other_still_normal_like += normal_like as usize;
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C2 looks_like_unit_normal fallback after skeleton-lighting seed: \
+             skeleton graphs {skeleton_still_normal_like}/{skeleton_unlit_verts} unlit \
+             vertices still look like a normal; other graphs \
+             {other_still_normal_like}/{other_unlit_verts}"
+        );
     }
 
     /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is

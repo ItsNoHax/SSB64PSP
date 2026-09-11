@@ -48,9 +48,11 @@ pub struct MeshVertex {
     /// later `G_TRI1`/`G_TRI2` draws this slot. Real hardware decides
     /// normal-vs-colour when the RSP's vertex pipeline runs, which is
     /// `G_VTX` itself; triangle commands only reference the already-resolved
-    /// cache. A node whose own list never mentions `G_LIGHTING` still gets
-    /// `false` here (RE-021's external-per-object case): this field is exact
-    /// when the in-list signal exists, not a substitute for recovering it.
+    /// cache. A node whose own list never mentions `G_LIGHTING` gets
+    /// whatever [`State::new`]'s `initial_lit` seeded (RE-021/RE-242's
+    /// external-per-object case, wired through [`convert_sequence`]'s own
+    /// parameter): `false` for everything except a fighter's two
+    /// `common_parts` skeleton graphs.
     pub lit: bool,
 }
 
@@ -1053,13 +1055,25 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    /// `initial_lit` seeds `material.lit` before any command runs.
+    ///
+    /// `ftDisplayMainProcDisplay` sets `G_LIGHTING` for every fighter draw
+    /// *before* the fighter's own node lists run at all (RE-021, RE-242), so
+    /// a fighter skeleton graph's first `G_VTX` is already lit even though
+    /// nothing in its own list said so. `rdp_default`'s unlit default is
+    /// still correct for everything else — only [`convert_sequence`]'s
+    /// callers that know they are decoding one of those two graphs pass
+    /// `true`.
+    fn new(initial_lit: bool) -> Self {
         State {
             cache: [None; VTX_CACHE_SIZE as usize],
             space: 0,
             spaces: Vec::new(),
             inv_current: crate::scene::Mat4::IDENTITY,
-            material: MeshMaterial::rdp_default(),
+            material: MeshMaterial {
+                lit: initial_lit,
+                ..MeshMaterial::rdp_default()
+            },
             geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,
             timg_addr: None,
             timg_file: None,
@@ -1620,7 +1634,7 @@ const MAX_DL_DEPTH: u32 = 18;
 /// their *caller* filled, so converting such a list standalone fails with
 /// [`MeshError::EmptyCacheSlot`].
 pub fn convert(cmds: &[Cmd], src: Source<'_>) -> Result<Mesh, MeshError> {
-    let mut state = State::new();
+    let mut state = State::new(false);
     let mut builder = Builder::default();
     let mut out: Vec<Primitive> = Vec::new();
 
@@ -1680,8 +1694,18 @@ pub struct SequenceItem<'a> {
 ///
 /// Returns one result per item, in the order given; a failing item does not
 /// stop the rest, since its state contribution has still been applied.
-pub fn convert_sequence(items: &[SequenceItem], src: Source<'_>) -> Vec<Result<Mesh, MeshError>> {
-    let mut state = State::new();
+///
+/// `initial_lit` seeds `State`'s material before the first item runs (see
+/// [`State::new`]): pass `true` only when `items` is one of a fighter's two
+/// `common_parts` skeleton graphs, matching `ftDisplayMainProcDisplay`'s
+/// unconditional external `G_LIGHTING` (RE-021, RE-242). Every other caller
+/// passes `false`, matching the RDP reset default.
+pub fn convert_sequence(
+    items: &[SequenceItem],
+    src: Source<'_>,
+    initial_lit: bool,
+) -> Vec<Result<Mesh, MeshError>> {
+    let mut state = State::new(initial_lit);
     state.spaces = items.iter().map(|i| i.world).collect();
 
     let mut out = Vec::with_capacity(items.len());
@@ -2214,7 +2238,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
 
         assert_eq!(out[0].as_ref().unwrap().triangle_count(), 0);
         let mesh = out[1].as_ref().unwrap();
@@ -2303,7 +2327,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2424,7 +2448,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2466,7 +2490,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2508,7 +2532,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2544,7 +2568,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2644,7 +2668,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2752,7 +2776,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2796,7 +2820,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
         }];
-        let mesh = convert_sequence(&items, Source::bare(&file))
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
             .pop()
             .unwrap()
             .unwrap();
@@ -2886,7 +2910,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
         let first = out[0].as_ref().unwrap().primitives[0]
             .material
             .texture
@@ -2994,7 +3018,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
         let first = out[0].as_ref().unwrap().primitives[0]
             .material
             .texture
@@ -3069,7 +3093,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(
@@ -3131,7 +3155,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(
@@ -3185,7 +3209,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let out = convert_sequence(&items, Source::bare(&file));
+        let out = convert_sequence(&items, Source::bare(&file), false);
         let first = out[0].as_ref().unwrap().primitives[0].material;
         let second = out[1].as_ref().unwrap().primitives[0].material;
         assert!(first.cull_back && first.lit && first.smooth && first.z_buffer);
@@ -4547,7 +4571,7 @@ mod tests {
                 mat_anims: &[],
             },
         ];
-        let meshes: Vec<_> = convert_sequence(&items, Source::bare(&file))
+        let meshes: Vec<_> = convert_sequence(&items, Source::bare(&file), false)
             .into_iter()
             .map(Result::unwrap)
             .collect();
@@ -5035,6 +5059,88 @@ mod tests {
             mesh.vertices[3].rgba,
             [64, 64, 64, 255],
             "loaded after G_LIGHTING cleared must be baked as a shade"
+        );
+    }
+
+    #[test]
+    fn convert_sequence_initial_lit_false_leaves_a_non_fighter_graph_unlit() {
+        // R2.2/C2's remainder (RE-021/RE-242): a plain, non-fighter graph
+        // never gets the external `ftDisplayMainProcDisplay` `G_LIGHTING`, so
+        // `initial_lit: false` must reproduce the pre-existing behaviour
+        // exactly -- a list that never mentions `G_LIGHTING` itself bakes its
+        // vertex bytes as a shade, not a normal, even though the raw bytes
+        // here look like a plausible unit normal.
+        use crate::scene::Mat4;
+
+        let looks_like_a_normal = [127i8 as u8, 0, 0, 255];
+        let file = vertex_data_rgba(3, looks_like_a_normal);
+        let cmds = [
+            vtx(3),
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255], // 50% scale
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file), false)
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert!(!mesh.vertices[0].lit);
+        assert_eq!(
+            mesh.vertices[0].rgba,
+            [63, 0, 0, 255],
+            "baked as a shade at exactly half of each raw byte, integer division"
+        );
+    }
+
+    #[test]
+    fn convert_sequence_initial_lit_true_resolves_lit_with_no_in_list_g_lighting() {
+        // R2.2/C2's remainder (RE-021/RE-242): `ftDisplayMainProcDisplay`
+        // sets `G_LIGHTING` unconditionally before either of a fighter's own
+        // `common_parts` skeleton graphs draws a single node list. A caller
+        // that knows it is decoding one of those two graphs passes
+        // `initial_lit: true`, and the very first `G_VTX` -- despite the
+        // list itself never mentioning `G_LIGHTING` at all -- must resolve
+        // lit and keep its raw normal rather than bake a shade.
+        use crate::scene::Mat4;
+
+        let normal = [127i8 as u8, 0, 0, 255]; // a unit normal along x
+        let file = vertex_data_rgba(3, normal);
+        let cmds = [
+            vtx(3),
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255], // 50% scale
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file), true)
+            .pop()
+            .unwrap()
+            .unwrap();
+        assert!(mesh.vertices[0].lit);
+        assert_eq!(
+            mesh.vertices[0].rgba, normal,
+            "the raw normal must survive, not be baked as a shade"
         );
     }
 
