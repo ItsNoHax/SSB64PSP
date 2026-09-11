@@ -97,6 +97,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene11")
             || cfg!(feature = "regression_capture_scene12")
             || cfg!(feature = "regression_capture_scene13")
+            || cfg!(feature = "regression_capture_scene14")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "texgen_normal_diagnostic_0")
             || cfg!(feature = "texgen_normal_diagnostic_1")
@@ -575,7 +576,8 @@ unsafe fn run() -> ! {
     }
     if cfg!(any(
         feature = "regression_capture_scene11",
-        feature = "regression_capture_scene12"
+        feature = "regression_capture_scene12",
+        feature = "regression_capture_scene14"
     )) {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
@@ -681,7 +683,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene10",
             feature = "regression_capture_scene11",
             feature = "regression_capture_scene12",
-            feature = "regression_capture_scene13"
+            feature = "regression_capture_scene13",
+            feature = "regression_capture_scene14"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -1223,7 +1226,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene10",
                     feature = "regression_capture_scene11",
                     feature = "regression_capture_scene12",
-                    feature = "regression_capture_scene13"
+                    feature = "regression_capture_scene13",
+                    feature = "regression_capture_scene14"
                 ))
             {
                 spin += 0.02;
@@ -1856,12 +1860,54 @@ unsafe fn run() -> ! {
                     dbg_radius = radius;
                     dbg_cam = centre[2] + dist;
 
-                    gpu.model_transform(
-                        [-centre[0], -centre[1], -centre[2] - dist],
-                        [0.0, spin, 0.0],
-                        meshdraw::MODEL_SCALE,
-                    );
-                    let base = gpu.model_matrix();
+                    // R2.1/T9 (RE-227's dormant case): a real, rotated camera
+                    // instead of the object viewer's usual identity-view/
+                    // push-the-object-back trick, so `texgen_basis` carries a
+                    // genuine non-world-aligned right/up into
+                    // `quantize_lookat_basis` -- mirroring `stage_view`'s own
+                    // real-camera branch above (RE-131/RE-214) rather than
+                    // deriving a second convention. The object stays at its
+                    // own real position (no recentring translate baked into
+                    // the model matrix); the camera orbits it instead.
+                    let base = if cfg!(feature = "regression_capture_scene14") {
+                        let at = ssb_engine::math::Vec3::new(centre[0], centre[1], centre[2]);
+                        const YAW: f32 = 0.610_865_2; // 35 degrees
+                        const PITCH: f32 = 0.349_065_85; // 20 degrees
+                        let (sy, cy) = ssb_engine::math::sin_cos(YAW);
+                        let (sp, cp) = ssb_engine::math::sin_cos(PITCH);
+                        let eye = at
+                            + ssb_engine::math::Vec3::new(
+                                dist * cp * sy,
+                                dist * sp,
+                                dist * cp * cy,
+                            );
+                        gpu.set_view(&ssb_engine::math::Mat4::look_at(
+                            eye,
+                            at,
+                            ssb_engine::math::Vec3::Y,
+                        ));
+                        // `billboard_camera` stays `None` (its frame-start
+                        // default): this graph has no billboard nodes, so
+                        // there is nothing for it to affect, and this scene
+                        // exists to measure `texgen_basis` alone.
+                        let forward = (at - eye).normalized();
+                        let right = forward.cross(ssb_engine::math::Vec3::Y).normalized();
+                        let up = right.cross(forward);
+                        draw_state.texgen_basis = Some((right.to_array(), up.to_array()));
+                        gpu.model_transform(
+                            [0.0, 0.0, 0.0],
+                            [0.0, 0.0, 0.0],
+                            meshdraw::MODEL_SCALE,
+                        );
+                        gpu.model_matrix()
+                    } else {
+                        gpu.model_transform(
+                            [-centre[0], -centre[1], -centre[2] - dist],
+                            [0.0, spin, 0.0],
+                            meshdraw::MODEL_SCALE,
+                        );
+                        gpu.model_matrix()
+                    };
                     let tris = meshdraw::draw_object_posed(
                         p,
                         &obj,
