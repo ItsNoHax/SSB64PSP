@@ -173,7 +173,7 @@
   needed (no asset-pipeline code changed).
 - Documentation: RE-248, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-248, `R2.2`/C3 part 5: confirm file 39 is orphaned,
+- Commit: `5001899` (RE-248, `R2.2`/C3 part 5: confirm file 39 is orphaned,
   never drawn, needs no depth seed).
 
 ## Continuation
