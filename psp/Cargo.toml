@@ -112,6 +112,25 @@ regression_capture_scene12 = []
 # traced to this). Off by default.
 regression_capture_scene13 = []
 
+# R2.1/T2 measurement rig (RE-226): replaces the whole scene with one
+# full-screen quad whose vertices share a single hand-picked `GU_NORMAL_8BIT`
+# value, drawn through `sceGuTexProjMapMode` with a synthetic 256x256 ramp
+# texture (`R = generated s texel`, `G = generated t texel`) so the captured
+# screenshot's top-left pixel *is* the GE's own computed texture-matrix
+# source vector, back-solvable exactly. Each feature selects one (normal,
+# projection mode) case; exactly one may be enabled at a time. Cases 0/2 use
+# the previously-shipped `NormalizedNormal` mode as a control -- RE-226 needs
+# to show *that* mode collapsing [64,0,0] and [127,0,0] to the same output
+# before the `Normal` (raw, unnormalized) cases can be trusted as the fix.
+# Off by default; never combined with a real scene.
+texgen_normal_diagnostic_0 = [] # [127,0,0], NormalizedNormal (control)
+texgen_normal_diagnostic_1 = [] # [127,0,0], Normal (raw)
+texgen_normal_diagnostic_2 = [] # [64,0,0],  NormalizedNormal (control)
+texgen_normal_diagnostic_3 = [] # [64,0,0],  Normal (raw)
+texgen_normal_diagnostic_4 = [] # [-128,0,0], Normal (raw)
+texgen_normal_diagnostic_5 = [] # [90,90,0], Normal (raw)
+texgen_normal_diagnostic_6 = [] # [73,-41,99], Normal (raw)
+
 # Requests one framebuffer capture from PPSSPPHeadless after the deterministic
 # scene has reached its frozen tick. The devctl is ignored by real PSPs, so it
 # is safe to combine with any regression scene and has no effect on normal

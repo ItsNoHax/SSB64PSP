@@ -568,8 +568,13 @@ unsafe fn bind_texture(
 /// 64x64 sweeps 47x41 -- the rest is padding the RDP never samples.
 ///
 /// So the generator used is the texture-**matrix** one, with the projection
-/// source set to the normalised vertex normal. That takes the same dot
-/// product and lets the matrix carry the exact affine term the RSP applies:
+/// source set to the raw, un-normalised vertex normal (RE-226, `PLAN.md`
+/// R2.1/T2) -- the RSP's own `G_TEXTURE_GEN` never normalises the quantised
+/// normal either, only scales it, and measurement found the previous
+/// `NormalizedNormal` mode collapsing every normal to the same output
+/// regardless of magnitude (`[64,0,0]` and `[127,0,0]` produced identical
+/// texture coordinates). This takes the same dot product and lets the matrix
+/// carry the exact affine term the RSP applies:
 ///
 /// ```text
 /// F3DEX:  S10.5 = ((dot + 1) / 4) * gsp_scale      (texels = S10.5 / 32)
@@ -631,9 +636,22 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     }
 
     let (basis_s, basis_t) = st.texgen_object_basis();
+    // RE-226 (`PLAN.md` R2.1/T2): the GE's raw `Normal` projection mode
+    // divides each `GU_NORMAL_8BIT` component by 128 before this matrix ever
+    // sees it, measured against this project's own real `sceGu` draw calls,
+    // not just read from PPSSPP source. The original hardware's own
+    // `G_TEXTURE_GEN` formula divides by 127 instead. `(raw / 128) *
+    // NORMAL_SCALE_COMPENSATION == raw / 127`, so scaling the dot-product
+    // term here reproduces the original exactly -- "compensating the matrix
+    // only from measured GE behavior", T2's own acceptance text.
+    const NORMAL_SCALE_COMPENSATION: f32 = 128.0 / 127.0;
     // Half the normalised span, because the dot product covers [-1, 1].
-    let a_s = 0.5 * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w);
-    let a_t = 0.5 * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h);
+    let a_s = 0.5
+        * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_s, w)
+        * NORMAL_SCALE_COMPENSATION;
+    let a_t = 0.5
+        * ssb_rom::psp_texture::env_map_tex_scale(p.texgen_scale_t, h)
+        * NORMAL_SCALE_COMPENSATION;
     // The tile origin the RDP subtracts before addressing TMEM. Applied on a
     // clamped axis only, exactly matching the rule
     // `mesh::Builder::push_vertex` uses when it bakes the same shift into
@@ -675,7 +693,7 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
         },
     );
     sys::sceGuTexMapMode(sys::TextureMapMode::TextureMatrix, 0, 0);
-    sys::sceGuTexProjMapMode(sys::TextureProjectionMapMode::NormalizedNormal);
+    sys::sceGuTexProjMapMode(sys::TextureProjectionMapMode::Normal);
 }
 
 /// How the GE is currently turning vertex data into texture coordinates.
