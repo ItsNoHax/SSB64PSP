@@ -2,108 +2,97 @@
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
-- Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2-C7 remain
-- Last complete: `RE-240` (2026-09-11) -- closed `R2.2`/C1 ("Single-source
-  `prim_color`"). Traced raw vertex RGBA/normal bytes through `CacheEntry`,
-  `push_vertex`, `MeshVertex`, `PackWriter`, `PackedVertex` and `meshdraw` per
-  the task's own instructions, and found two real defects, not zero:
-  1. **`SHADE * PRIM` was applied twice.** `mesh.rs`'s `push_vertex` folds
-     `material.prim_color`'s resolved scale into an *unlit* vertex's bytes
-     (needed so a shared cache vertex used by two differently-coloured unlit
-     primitives dedups correctly); `pack.rs`'s `add_mesh` (RE-106) then
-     unconditionally folded the same scale in a second time, squaring any
-     non-identity scale (e.g. a 50% grey scale on a 50% grey shade produced
-     `32`, not the correct `64`). RE-106's own doc comment ("nothing
-     downstream ever multiplied it back in") predates `push_vertex`'s bake
-     (present since before RE-106's own commit), so the double application
-     was never noticed.
-  2. **Normals were being changed as RGB.** `push_vertex`'s three
-     colour-baking branches (`prim_color` scale, `texture_blend`, `flat_color`)
-     had no `material.lit` gate at all, even though `MeshVertex::rgba` is a
-     packed *normal*, not a colour, whenever a primitive is lit. Measured
+- Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`IN_PROGRESS`); C3-C7 remain
+- Last complete: `RE-241` (2026-09-11) -- `R2.2`/C2 ("Load-time lighting
+  provenance"), part 1 of 2. Two findings:
+  1. **A real timing bug.** `mesh.rs`'s `push_vertex` decided whether a
+     vertex's bytes were a normal or a colour from `self.material.lit` --
+     the *current* material as of whatever command most recently ran -- not
+     from the state active when that vertex's own `G_VTX` loaded it.
+     `pack.rs`'s `add_mesh` had the same bug one layer down, reading the
+     enclosing primitive's triangle-time `material.lit` instead of a
+     per-vertex load-time fact. This is `PLAN.md`'s own named R2.2 stop
+     condition ("vertex meaning depends on triangle-time state"). Fixed by
+     adding `MeshVertex::lit`, captured at the exact `Cmd::Vtx` command
+     (mirroring the existing `space` field's own load-time capture), and
+     reading it instead of the triangle-time material in both `push_vertex`
+     and `add_mesh`'s per-vertex `lit[]` derivation (which also dropped the
+     RE-103 "first primitive touching a shared vertex wins" approximation --
+     no longer needed once `lit` is an intrinsic per-vertex fact). Measured
      archive-wide (`tools/romtool`'s new
-     `census_lit_primitives_with_a_colour_baking_branch`): 243 real
-     primitives carry `lit` + `prim_color`, 34 carry `lit` + `texture_blend`,
-     2 carry `lit` + `flat_color` -- 279 real primitives whose normals
-     `push_vertex` was silently overwriting before `pack.rs`'s own
-     `shade_normal`/runtime GE lighting ever saw them.
-
-  Fixed by gating `push_vertex`'s three branches on `!self.material.lit`
-  (unlit path unchanged) and moving the lit-path equivalent into `pack.rs`'s
-  `add_mesh`: new `flat_override`/`blend_override` per-vertex maps alongside
-  the existing `prim_scale` one, all applied *after* `shade_normal` computes
-  a real shade from the now-intact normal, and `prim_scale` itself now gated
-  on `lit[i]` so it no longer re-scales an already-`push_vertex`-baked unlit
-  vertex. Added all of C1's named test cases (`crates/ssb-rom/src/mesh.rs`:
-  the exact `128*128/255=64` integer-scale case, a SHADE-only case, two
-  lit-vertex-keeps-its-raw-normal cases for `prim_color` and `texture_blend`;
-  `crates/ssb-rom/src/pack.rs`: replaced the one test that had (unknowingly)
-  encoded the old double-scale behaviour with a pair proving no second scale
-  for unlit and a correct post-shading scale for lit, including that
-  `nx`/`ny`/`nz` still carry the exact original normal). Verified the new
-  archive-wide census actually catches the regression it targets (test the
-  test by breaking the code): temporarily restoring the unconditional bake
-  made the with-branch not-normal-looking rate jump from 60/10,446 to
-  6,666/10,446 while an unrelated without-branch baseline stayed fixed at
-  808/57,612, then reverted cleanly. The 23 real archive files affected are
-  measured and listed in RE-240; per-fighter visual (PPSSPP/physical-PSP)
-  recheck is not done this session -- see Blockers below.
+     `census_g_vtx_vs_triangle_time_lighting_state`, kept permanently):
+     **0/110,316** real triangle-corner vertex references actually disagree
+     between load time and draw time -- the bug was real (and two of
+     RE-240's own tests had unknowingly encoded it, confirmed by
+     "test the test by breaking the code": fixing it made both fail for the
+     right reason until their command order was corrected to match their
+     actual intent) but is not currently observable in any rendered frame.
+     `assets/generated/ssb64.pak` rebuilt byte-identical.
+  2. **Caller-trace evidence for RE-021's external-lighting gap.**
+     `ftDisplayMainProcDisplay` (decompilation) unconditionally sets
+     `G_LIGHTING` for every fighter draw before its own node lists run,
+     regardless of `colanim.is_use_light`; `grep -rl G_LIGHTING
+     refs/ssb-decomp-re/src/` matches only fighter/character-model code
+     (`ft`, `mv`, `mn`, `sc`, `db`), never stages (`gr`) or items (`it`).
+     This corroborates and narrows RE-021's "external, per-object
+     `G_LIGHTING`" finding, but closing it needs an archive mesh/costume-file
+     -to-fighter identification this project does not yet have
+     (`fighter::FIGHTER_FILES` only names each fighter's `FTAttributes`
+     file, not its separate mesh/costume files -- see RE-240's own
+     unmapped-file-list note). Not implemented this session; recovering that
+     mapping with an explicit-pairing record is `R2.2`/C2's own next step.
+- Previously complete: `RE-240` (2026-09-11) -- closed `R2.2`/C1
+  ("Single-source `prim_color`"): `SHADE * PRIM` was applied twice, and lit
+  vertices' normals were being overwritten as if they were colour. See
+  `docs/reverse-engineering.md` for the full entry.
 - Previously complete: `RE-239` (2026-09-11) -- closed `R2.1`/T10's one
   remaining item (texgen-without-texture census; `R2.1` closed complete).
-- Previously complete: `RE-238` (2026-09-11) -- `R2.1`/T10 texgen
-  documentation/test cleanup.
-- Next: `R2.2`/C2 -- "Load-time lighting provenance". `PLAN.md`'s own
-  execution order is `C1 -> C2 -> C3 -> C4 -> C5 -> C6 -> C7`; C1 is now
-  `COMPLETE`, so C2 is the first eligible item.
-- Blockers: none for `R2.2`/C1 itself. Non-blocking follow-ups: (1) RE-240's
-  fix is host-side/measurement-verified only -- a visual before/after
-  (PPSSPP or physical PSP) for one of the 23 newly-identified affected
-  archive files (`52, 67, 68, 69, 73, 86, 109, 149, 161, 296, 313, 317, 320,
-  323, 324, 328, 330, 332, 335, 336, 338, 341, 350`) is a reasonable next
-  step for whoever next has hands on the interactive build, not a blocker
-  for C2. (2) A real bug was found and flagged (not fixed) in the
-  `debug_overlay` PSP viewer -- object-view HUD text renders
-  corrupted/double-exposed in every capture. See the spawned follow-up task
-  (`task_1bf9bc35`). (3) A before/after PPSSPP TEXVIEW screenshot confirming
-  RE-224's CI4 palette-bank fix (global texture indices 187/194/195, object
-  indices 60-102 in file 86) was never obtained -- manual follow-up. (4)
-  RE-228's residual ~1.78-S10.5-unit clamp-boundary deviation is measured but
-  not checked against real `sceGu` calls -- minor lead, not currently
-  assigned; not recorded as `ACCEPTED_DEVIATION` yet. (5) A fresh
-  PPSSPP-headless rebuild of scene 11 on this machine diffs from the exact
-  committed `r2-metal-texgen.png` bytes by 31,737 pixels (self-consistent
-  across rebuilds), the same noise-floor-order pattern already treated as
-  expected cross-build/cross-environment variance (RE-214/RE-236 precedent).
-  `R2.1`/T1's own finding (164 cross-node differing-transform vertex reuses)
-  also remains an open, tracked, known gap, not a blocker.
+- Next: `R2.2`/C2's remainder -- recover a real, ROM-verified mapping from
+  archive mesh/costume file to the fighter whose caller sets `G_LIGHTING`
+  externally (the same rigor as `DObjDesc`/RE-023 and `MObjSub`/RE-027), then
+  make fighter-sequence initial lighting state explicit instead of defaulting
+  unlit, then requantify `looks_like_unit_normal`'s remaining archive-wide
+  coverage now that it should be a true last resort. If that recovery proves
+  out of reach this session, the next eligible fallback is starting C3
+  ("Independent depth compare/write state") while C2's remainder stays
+  tracked, since `PLAN.md`'s C1->C7 order is a target sequence, not a hard
+  gate on IN_PROGRESS items blocking all later ones from starting.
+- Blockers: none for what RE-241 closed. Same non-blocking follow-ups RE-240
+  already recorded remain open (visual before/after for RE-240's 23 affected
+  files; the `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
+  screenshot; RE-228's clamp-boundary deviation; RE-214/RE-236's known
+  screenshot noise floor; R2.1/T1's 164 cross-node differing-transform vertex
+  reuses) -- none are new, see prior snapshot history for detail.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-240.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-241.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
-  terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 next).
-- Decisions: `DECISIONS.md` -- no new revision for RE-240 (D-042 already
+  terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `IN_PROGRESS`).
+- Decisions: `DECISIONS.md` -- no new revision for RE-241 (D-042 already
   covers "renderer correctness claims stay provisional until R2.2 closes";
   this fix is progress within that, not a change to the decision itself).
-- Subsystem: `docs/porting-status.md` -- no change needed for RE-240 (an
-  internal pack/mesh-pipeline correctness fix, not a subsystem capability
+- Subsystem: `docs/porting-status.md` -- no change needed for RE-241 (an
+  internal mesh/pack-pipeline correctness fix, not a subsystem capability
   change).
-- Verification (RE-240): `cargo test --workspace` (`SSB64_ROM` set):
-  `ssb-rom` 409 passed (up from 404), `romtool` 14 passed (up from 13), 0
+- Verification (RE-241): `cargo test --workspace` (`SSB64_ROM` set):
+  `ssb-rom` 411 passed (up from 409, two new tests), `romtool` 14 passed, 0
   failed overall. `cargo fmt --check` clean. `cargo clippy --workspace
-  --all-targets` clean (two pre-existing, unrelated warnings only). Rebuilt
-  `assets/generated/ssb64.pak` (`romtool pack`): mesh/primitive/texture/
-  triangle counts unchanged (this fix corrects vertex *colour* bytes only),
-  loads back cleanly. Code changed: `crates/ssb-rom/src/mesh.rs`
-  (`push_vertex`'s lit gate + 4 new tests), `crates/ssb-rom/src/pack.rs`
-  (`add_mesh`'s `flat_override`/`blend_override` maps + gated `prim_scale`,
-  1 test replaced with 2), `tools/romtool/src/main.rs`
-  (`census_lit_primitives_with_a_colour_baking_branch`).
-- Documentation: RE-240, `PLAN.md` (`R2.2` header + C1 status), this
-  snapshot.
-- Commit: `39c544f` (RE-240, `R2.2`/C1 close -- single-source `prim_color` +
-  lit-normal corruption fix).
+  --all-targets` clean (the same two pre-existing, unrelated warnings as
+  RE-240). Rebuilt `assets/generated/ssb64.pak` (`romtool pack`):
+  byte-identical to the pre-fix build (`git diff`/`git status` both clean),
+  matching the 0/110,316 census result. Code changed:
+  `crates/ssb-rom/src/mesh.rs` (`MeshVertex::lit` + load-time capture in
+  `Cmd::Vtx` + `push_vertex`'s gate + 2 new tests + 2 RE-240 tests reordered
+  to match their actual intent), `crates/ssb-rom/src/pack.rs` (`add_mesh`'s
+  `lit[]` derivation now per-vertex-only + `sample_mesh` fixture/2 test sites
+  updated), `tools/romtool/src/main.rs`
+  (`census_g_vtx_vs_triangle_time_lighting_state`).
+- Documentation: RE-241, `PLAN.md` (`R2.2` header + C1/C2 status + two
+  related checklist rows), this snapshot.
+- Commit: pending (RE-241, `R2.2`/C2 partial -- load-time lighting
+  provenance fix + caller-trace evidence).
 
 ## Continuation
 

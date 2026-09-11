@@ -859,9 +859,9 @@ Reproduce original SSB64 material behavior.
   chains matching their display-list demand, and zero unnamed or mismatched
   graphs.
 * [x] combiner behavior verified — RE-039/043 establish the general two-cycle evaluator; RE-073/074 implement and visually verify the dominant `(PRIM-ENV)*TEXEL+ENV` texture blend; RE-080 handles flat constants; RE-106 consumes shade scales. RE-168 remeasures the current pack path and catalogues every remaining decline without finding a new static classification bug.
-* [ ] primitive color verified — RE-079/080 classify shade-scale, texture-blend and flat-constant shapes and RE-106 consumes the resolved scale, but R2.2/C1 must prove that `PRIM * SHADE` has one authoritative application and that runtime-lit and non-lit paths do not apply it twice. RE-168's material-table census remains valid evidence for source attribution.
+* [x] primitive color verified — RE-079/080 classify shade-scale, texture-blend and flat-constant shapes and RE-106 consumes the resolved scale; RE-240 (`R2.2`/C1, complete) proved `PRIM * SHADE` has exactly one authoritative application (the prior double-application bug is fixed) and that lit vertices' normals are never touched by any of the three colour-baking branches. RE-168's material-table census remains valid evidence for source attribution.
 * [x] environment color verified — RE-168 source-indexes the remaining cases: ordinary shields set `ENV` in `efManagerShieldProcDisplay`, Yoshi's shield computes it from shield health in `efManagerYoshiShieldProcDisplay`, and no missing material-table case remains.
-* [ ] lighting verified — RE-103/RE-105 and RE-164–167 establish the current per-vertex/runtime-light path, but R2.2/C2 must tie vertex interpretation to `G_VTX` load-time lighting state and quantify/eliminate the remaining `looks_like_unit_normal` fallback. The prior Dream Land comparison remains valid for its covered path; it does not close load-time provenance.
+* [ ] lighting verified — RE-103/RE-105 and RE-164–167 establish the current per-vertex/runtime-light path; RE-241 (`R2.2`/C2, in progress) ties vertex interpretation to `G_VTX` load-time lighting state (`MeshVertex::lit`, measured 0/110,316 real disagreements against the prior triangle-time reading) but has not yet closed the external-per-object initial-state gap or requantified `looks_like_unit_normal`'s remaining coverage. The prior Dream Land comparison remains valid for its covered path; it does not close load-time provenance.
 * [x] alpha behavior verified — RE-069: `CVG_X_ALPHA | ALPHA_CVG_SEL` (cutout surfaces, 36.1% of non-default render modes) decoded and wired to `sceGuAlphaFunc`, matching `refs/sf64-psp`'s validated approach; gated on a real texture being bound after a found-and-fixed bug that discarded untextured lit primitives outright
 * [x] blending verified — RE-069 detected `translucent` (14.4%) correctly but left it unwired after an enabled-blend experiment produced a checkerboard; RE-070/071 eliminated dither coarseness and alpha premultiplication as the cause without finding the real one; RE-124 (R0.18) confirmed both `sf64-psp` and `oot-PSP` ship standard blending fine on the same hardware, ruling out a platform limitation. **RE-129 found the real cause**: this project never decoded `G_SETCOMBINE`'s *alpha* formula at all (only the colour one) — decoded it directly from the ROM for Dream Land's canopy highlight (`TEXEL0_ALPHA * SHADE_ALPHA`) and found naively wiring that up universally broke a different `TRANSLUCENT` primitive (Dream Land's flowers) whose own alpha formula is different. **RE-130 measured every real alpha formula archive-wide** (9 distinct combiner values across ~8,800 real, textured, single-cycle `TRANSLUCENT` primitives): the majority (~5,950) is `TEXEL0_ALPHA` alone (the flowers' own shape), a smaller set (1,820) is `TEXEL0_ALPHA * SHADE_ALPHA` (the canopy highlight), and a rare (~43) `TEXEL0_ALPHA * PRIM_ALPHA` plus two-cycle mode (~93, <1%) are declined rather than guessed at (real, measured, but not confidently understood or never on-device-verified). Implemented as a new classification axis (`mesh.rs`'s `AlphaBlend`/`combiner_alpha_blend`, independent of the existing RGB classification), baked the correct vertex alpha per shape (`push_vertex`), and gated real blending on a new pack flag (`flags::ALPHA_BLEND`, `VERSION` 15→16) that only sets when both `TRANSLUCENT` and a classified alpha formula agree — a `TRANSLUCENT` primitive without it keeps the pre-existing safe default. Verified on-device: the flowers survive, two previously-fully-invisible decorative props now render correctly, confirmed via a clean pixel diff against the `regression_capture` golden capture (updated) and re-verified deterministic across a 9-second timing spread
 * [x] fog verified — RE-072: `DECISIONS.md` D-025's "twice" figure confirmed correct via reliable reloc-anchored discovery (an `Exhaustive`-mode re-scan found 7/4, which turned out to be false positives); both real occurrences are functionally inert — no `gSPFogPosition` call exists anywhere in the decompilation to configure a fog range, and the one real stage that sets a fog colour (file 118) never references `G_BL_CLR_FOG` in its own render mode
@@ -3451,9 +3451,9 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 
 ## R2.2 — Second Renderer Corrective Gate (C1–C7)
 
-Status: `IN_PROGRESS` — C1 complete (RE-240); C2–C7 remain, depend on R2.1/
-T1–T10 (`COMPLETE`). Must close before R3 or a stable rendering-gate claim.
-Do not optimize while it is open.
+Status: `IN_PROGRESS` — C1 complete (RE-240); C2 in progress (RE-241);
+C3–C7 remain, depend on R2.1/T1–T10 (`COMPLETE`). Must close before R3 or a
+stable rendering-gate claim. Do not optimize while it is open.
 
 ### C1 — Single-source `prim_color`
 
@@ -3486,14 +3486,32 @@ blocker for C1 or C2.
 
 ### C2 — Load-time lighting provenance
 
-Preserve only state that changes vertex meaning at `G_VTX`: lighting enabled,
-geometry mode, relevant light state and source normal-vs-colour semantics.
-Trace fighter caller state through `ftDisplayMainProcDisplay`,
-`ftDisplayLightsDrawReflect`, GObj/DObj entry and list execution; make initial
-state explicit if lighting is external. Make `looks_like_unit_normal` fallback
-only and quantify every remaining heuristic. Test OFF→G_VTX A→ON→G_VTX B and
-the reverse, consumption after geometry changes, and real Fox/Falcon/Kirby/Ness
-mixed-material cases.
+Status: `IN_PROGRESS` (RE-241). Vertex normal-vs-colour meaning is now fixed
+at `G_VTX` load time, not triangle-draw time — `MeshVertex::lit` (mesh.rs) is
+captured at the exact `Cmd::Vtx` command, mirroring the existing `space`
+field's own load-time capture, and `pack.rs`'s `add_mesh` trusts it directly
+instead of the enclosing primitive's (triangle-time) `material.lit`. Tested
+with `vertex_meaning_is_fixed_at_g_vtx_load_time_off_then_on`/`..._on_then_off`
+(OFF→G_VTX A→ON→G_VTX B and the reverse, consumption after geometry changes).
+`tools/romtool`'s `census_g_vtx_vs_triangle_time_lighting_state` (kept
+permanently) measured this against the real archive: 0/110,316 triangle-corner
+vertex references actually disagree between load time and draw time, so the
+bug (a named R2.2 stop condition) was real but not currently observable in any
+rendered frame; `assets/generated/ssb64.pak` rebuilt byte-identical.
+
+Remaining: the caller trace (`ftDisplayMainProcDisplay` unconditionally sets
+`G_LIGHTING` for every fighter draw before its own node lists run, confirmed
+against the decompilation and corroborating RE-021's "external, per-object"
+finding) is evidenced but not wired in — doing so needs an archive mesh/
+costume-file-to-fighter identification this project does not yet have
+(`fighter::FIGHTER_FILES` only names each fighter's `FTAttributes` file, not
+its separate mesh/costume files; see RE-240's own file-list note). Recovering
+that mapping with an explicit-pairing record (not a guessed fingerprint) is
+this task's own next step, after which the initial lighting state for fighter
+sequences can be made explicit instead of defaulting unlit, and
+`looks_like_unit_normal`'s remaining archive-wide coverage can be
+re-quantified. Real Fox/Falcon/Kirby/Ness mixed-material cases remain covered
+by RE-103's existing per-vertex tests, unaffected by this change.
 
 ### C3 — Independent depth compare/write state
 
