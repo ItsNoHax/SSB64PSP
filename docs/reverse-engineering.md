@@ -10,6 +10,65 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-229 — Linear texgen's S10.5 conversion truncates, it does not round (`PLAN.md` R2.1/T5)
+
+**Question.** T5 needed to determine whether the final float-curve-to-S10.5
+integer conversion shared by [`linear_texgen_uv`]/[`regular_texgen_uv`]
+(`texgen_s10_5_addressed`) truncates, rounds, or does something else — "from
+microcode, faithful HLE implementations and controlled original-ROM output,
+in that order" (`PLAN.md`'s own wording). No RSP microcode source is
+available in `refs/ssb-decomp-re` (the RSP ucode itself is a binary blob, not
+part of the decompilation), so this fell to the two faithful HLE tier.
+
+**Evidence.** Two independent reference implementations of this exact
+conversion step both cast straight to an integer with no rounding added:
+`refs/n64psp`'s `n64psp_texgen_to_s10_5` (`src/math/tnl_scalar.c:279-289`,
+`return (int16_t)scaled;` after `value * 65536.0f`) and `refs/BattleShip`'s
+RSP-interpreter texgen path (`libultraship/src/fast/interpreter.cpp:2868-2869`,
+`U = (int32_t)(dotx * mRsp->texture_scaling_factor.s);`, no `+ 0.5`). This
+project's own `texgen_s10_5_addressed` previously added `0.5` before casting
+(`(curve * gsp_texture_scale as f32 + 0.5) as i32`) — round-half-up, not
+truncation — and had never been checked against either reference for this
+specific step.
+
+**Implementation.** Removed the `+ 0.5`: `texgen_s10_5_addressed` now reads
+`(curve * gsp_texture_scale as f32) as i32`, matching both references. Added
+`texgen_s10_5_addressed_truncates_rather_than_rounds_at_half_unit_boundaries`,
+covering `N+0.49`/`N+0.50`/`N+0.51` at every real ROM texgen scale (RE-214's
+census) and several integer bases — truncation lands all three on `n`; the
+prior round-half-up behavior would have moved `N+0.50`/`N+0.51` to `n + 1`.
+The two existing real-ROM-data regression tests
+(`linear_texgen_s10_5_matches_the_ordinary_curves_endpoint_for_every_real_rom_
+scale`, `linear_texgen_uv_reproduces_file_117_prim_3542`) were unaffected:
+both exercise `dot = ±1`/`0` cases whose curve values land on exact
+scale-fraction boundaries (`scale/2`, `scale/4`), so truncation and rounding
+agree there by construction — the bug was real but dormant against this
+project's existing real-archive regression coverage, which is why T5 needed
+purpose-built boundary cases rather than relying on those tests alone.
+
+**This changes real rendered output for the linear-texgen path only**:
+`linear_texgen_uv` drives actual pack UVs for `G_TEXTURE_GEN_LINEAR`
+primitives drawn through the ordinary authored-UV pipeline (D-040); the
+ordinary (non-`LINEAR`) path renders through the GE's own hardware texture
+matrix (`regular_texgen_matrix_coeffs`) and never calls
+`texgen_s10_5_addressed` at runtime — `regular_texgen_uv` is reference-only,
+used by RE-228's property test. Rebuilt and re-captured
+`regression_capture_scene11`/`_12`/`_13` via `tools/run-ppsspp-headless.sh`:
+scene11/scene12 (regular/GE path) measured **0 differing pixels**, confirming
+this fix is correctly scoped away from them; scene13 (the one linear-texgen
+primitive) measured 4,696 differing pixels against its pre-fix golden,
+reconfirmed deterministic (fresh re-capture of the same build, 0 differing
+pixels against the updated golden). `tests/golden/r2-metal-texgen-linear.png`
+updated.
+
+**Confidence.** High for the conversion step itself — two independent
+reference implementations agree exactly, and the fix is a one-line removal
+with no remaining ambiguity. "Source-formula exact" status stands per T5's
+own acceptance criteria; no original-ROM hardware output exists yet to
+promote this to "bit-exact to N64."
+
+---
+
 ## RE-228 — Shared regular/linear texgen reference math; found and fixed an overcorrected matrix constant (`PLAN.md` R2.1/T4)
 
 **Question.** T4 needed host-testable helpers proving the GE's regular
