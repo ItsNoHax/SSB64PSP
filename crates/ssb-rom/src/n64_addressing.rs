@@ -168,7 +168,13 @@ fn fold_period_mirror(s: i32, period: i32, mirror: bool) -> i32 {
 /// what `mesh::Builder::push_vertex` bakes into `MeshVertex::uv` for a
 /// clamped axis (RE-152) -- the same basis [`address_axis`] uses when called
 /// with `origin_q2: 0`.
-pub fn psp_lowering_axis(coord_rel_s10_5: i32, period: u32, drawn: u32, mirror: bool, clamp: bool) -> i32 {
+pub fn psp_lowering_axis(
+    coord_rel_s10_5: i32,
+    period: u32,
+    drawn: u32,
+    mirror: bool,
+    clamp: bool,
+) -> i32 {
     let period = period as i32;
     let raw_index = coord_rel_s10_5.div_euclid(32);
     if !mirror {
@@ -181,7 +187,11 @@ pub fn psp_lowering_axis(coord_rel_s10_5: i32, period: u32, drawn: u32, mirror: 
     if !clamp {
         let image_width = period * 2;
         let idx = raw_index.rem_euclid(image_width);
-        return if idx >= period { 2 * period - 1 - idx } else { idx };
+        return if idx >= period {
+            2 * period - 1 - idx
+        } else {
+            idx
+        };
     }
     let last = (drawn.max(1) as i32) - 1;
     fold_period_mirror(raw_index.clamp(0, last), period, true)
@@ -211,7 +221,11 @@ mod tests {
         let a = axis(5, false, false, 0, 31 << 2);
         assert_eq!(address_axis(&a, 0), 0);
         assert_eq!(address_axis(&a, 5 << 5), 5);
-        assert_eq!(address_axis(&a, (32 + 5) << 5), 5, "one period past: same phase");
+        assert_eq!(
+            address_axis(&a, (32 + 5) << 5),
+            5,
+            "one period past: same phase"
+        );
         assert_eq!(
             address_axis(&a, (3 * 32 + 5) << 5),
             5,
@@ -266,7 +280,11 @@ mod tests {
         // Past the drawn-rect far edge: now it clamps, to the drawn width
         // itself (127), which mask+mirror still folds.
         let clamped = address_axis(&a, 200 << 5);
-        assert_eq!(clamped, address_axis(&a, 500 << 5), "clamp holds one fixed index");
+        assert_eq!(
+            clamped,
+            address_axis(&a, 500 << 5),
+            "clamp holds one fixed index"
+        );
     }
 
     /// `PLAN.md` R2.0/P0c (RE-221): at the *third* mask period (past the
@@ -285,7 +303,10 @@ mod tests {
         let hw = address_axis(&a, coord);
         let psp = psp_lowering_axis(coord, 1 << 5, 128, true, true);
         assert_eq!(hw, 5, "hardware: third period unflipped");
-        assert_eq!(psp, 5, "fixed PSP model: also still mirroring, not yet clamped");
+        assert_eq!(
+            psp, 5,
+            "fixed PSP model: also still mirroring, not yet clamped"
+        );
     }
 
     /// The fixed PSP lowering model matches real hardware at every period a
@@ -341,6 +362,10 @@ mod tests {
         // Origin at texel 4 (`origin_q2 = 4 << 2`), 16-wide clamped tile.
         let a = axis(0, false, true, 4 << 2, (4 + 15) << 2);
         assert_eq!(address_axis(&a, (4 + 6) << 5), 6);
-        assert_eq!(address_axis(&a, 0), 0, "before the origin clamps to the near edge");
+        assert_eq!(
+            address_axis(&a, 0),
+            0,
+            "before the origin clamps to the near edge"
+        );
     }
 }
