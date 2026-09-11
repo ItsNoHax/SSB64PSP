@@ -197,7 +197,7 @@
   needed (no asset-pipeline code changed).
 - Documentation: RE-249, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-249, `R2.2`/C3 part 6: rule out any further external
+- Commit: `53a928d` (RE-249, `R2.2`/C3 part 6: rule out any further external
   depth-state wrapper archive-wide).
 
 ## Continuation
