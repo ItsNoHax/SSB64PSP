@@ -376,6 +376,12 @@ pixels, so the reflection responds to model rotation on real hardware too.
 These goldens do **not** establish agreement with the original N64 output;
 see RE-214 §10 for why no such comparison exists yet.
 
+RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen{,-rotated}.png` after
+`R2.1`/T7a (RE-232) changed this exact content's addressing; the diff numbers
+above are against the pre-T7a golden and are historical, not current. The
+physical-PSP diff against the *current* golden is still pending — RE-235 hit
+a USB permission blocker and did not obtain it.
+
 ## Thirteenth deterministic test scene (RE-215)
 
 `regression_capture_scene13` selects `StageMetalFile2`'s **second** graph
@@ -410,6 +416,11 @@ Physical PSP hardware verification (RE-215): `ldstart`ed under PSPLink with
 `exlist` empty and `main_thread` alive; native capture visually matches the
 PPSSPP golden (pink/tan reflective facet, yellow flag panel, gold crystal
 band). Hashes recorded in RE-215.
+
+RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen-linear.png` for the
+same post-T7a reason as scenes 11/12 above; RE-215's physical-PSP match was
+against the pre-T7a golden and needs re-confirming against the current one,
+also blocked this session by the same USB permission issue.
 
 ## Pending texgen and renderer-corrective matrix
 

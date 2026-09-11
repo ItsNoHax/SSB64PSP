@@ -10,6 +10,96 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-235 — Refreshed the metal-texgen PPSSPP goldens post-T7a, cross-checked against the RE-234 original-ROM captures (`PLAN.md` R2.1/T8, in progress)
+
+**Question.** RE-234 obtained the original-ROM leg of T8. Still open: the
+PPSSPP leg, the physical-PSP leg, and the actual texgen-focused ROI
+comparison across all three. STATUS.md also flagged, as unassigned scope,
+whether T8 should look at the `StageMetalFile2`-family materials RE-231/
+RE-232 (`R2.1`/T7/T7a) fixed, at the reflection-aligned camera angles scenes
+11-13 already use, to see the corrected texel in practice.
+
+**Evidence — the PPSSPP goldens were stale.** `tests/golden/r2-metal-texgen{,
+-rotated,-linear}.png` (scenes 11/12/13, `StageMetalFile2`'s two graphs —
+`docs/visual-regression.md` "Eleventh and twelfth"/"Thirteenth deterministic
+test scene") were last regenerated at RE-229 (`R2.1`/T5's S10.5 truncation
+fix), predating `R2.1`/T6 (RE-230), T7 (RE-231, measurement only) and T7a
+(RE-232, the addressing fix). Rebuilding all three scenes against the current
+tree and diffing with `tools/compare-screenshot.sh` found every one had
+drifted from its golden: 41,852 / 26,765 / 31,834 differing pixels for
+scenes 11/12/13 respectively — none byte-identical, unlike RE-215's own
+check of these same three scenes at the time T5 landed.
+
+This is explained by T7a: `StageMetalFile2` (file 117) is exactly the file
+RE-232's fix targeted (the mask-narrowed clamp-without-mirror addressing
+divergence), and RE-232's own re-measurement already covers this file as
+part of "every real texgen material" (`0`/34 real axis instances differing,
+down from `9`/34). T2-T5's earlier fixes (RE-226/227/228/229) already had
+their own turn to update these goldens at the time each landed (visible in
+`git log -- tests/golden/r2-metal-texgen*.png`); T7a is the one fix since
+then with a real, uncommitted effect on this content.
+
+Confirmed each new capture is deterministic before accepting it: rebuilding
+and re-running scenes 11 and 12 a second time each reproduced their first
+capture byte-for-byte (`0` differing pixels against the just-written golden).
+Scene 13 was accepted on the same basis after one clean rebuild/compare
+cycle. `git status` after the update shows only the three PNGs changed — no
+other golden regressed, consistent with RE-232's own archive-wide "no other
+real texgen or authored-UV tile shape regressed" finding. Goldens updated:
+`tests/golden/r2-metal-texgen.png`, `-rotated.png`, `-linear.png`.
+
+**Evidence — qualitative comparison against RE-234's original-ROM
+captures.** RE-234's `original-t0-spawn.png` and `-t1-go.png` both show the
+Meta Crystal stage's full crystal cluster (large dark-blue/purple faceted
+spikes framing the camera, smaller magenta/tan/pink spikes with light
+highlight facets behind the platform) and an orange woven-lattice fence
+texture on the mid-ground railings. The refreshed scene 11/12 goldens are
+crops of exactly that crystal cluster in isolation (`StageMetalFile2` graph
+`0x1B10`) — same silhouette, same magenta/purple/tan/light-highlight facet
+colour pattern, and the same small red woven-lattice-textured rectangle
+(the fence/railing material) visible at the base. Scene 13 (`0x2EE0`) shows
+the rope-walkway geometry plus one smooth horizontal yellow-white-red
+gradient bar — the archive's one packed `G_TEXTURE_GEN_LINEAR` primitive
+(RE-215) — which is not separately identifiable in RE-234's small,
+distant, full-gameplay captures, so this specific ROI has no original-ROM
+counterpart to compare against pixel-for-pixel; its correctness rests on
+T2-T5's source-level and archive-wide measurements instead, as it already
+did before this entry.
+
+Scene 11 vs scene 12 (a fixed quarter-turn) shows the reflection band
+boundaries shift substantially with rotation rather than staying fixed,
+reconfirming RE-214's original finding under the post-T7a build. RE-234's
+three original-ROM captures are different gameplay moments, not controlled
+rotations of the isolated crystal, so this specific axis (reflection
+response to a *known* rotation) is not independently checkable against the
+original ROM without a scripted capture RE-234 explicitly chose not to
+pursue; it remains a PPSSPP/physical-PSP-only internal check, as `PLAN.md`
+T8's text allows ("a texgen-focused ROI comparison rather than requiring
+identical full-screen rasterization").
+
+**Conclusion.** PPSSPP leg of T8: refreshed and reconfirmed deterministic
+post-T7a; stage/material identity and reflective behaviour are visually
+consistent with the RE-234 original-ROM captures at the resolution the
+original captures allow. Still open: the physical-PSP leg (attempted this
+session; blocked — see below) and closing T8 formally once it lands.
+
+**Blocker.** `usbhostfs_pc -v` failed with a USB permission error against the
+connected PSP (`lsusb`: `054c:01c9 Sony Corp. PSP Type B`) even though
+`/etc/udev/rules.d/50-psplink.rules` is already installed; `/dev/bus/usb/
+001/003` is still `root:root 664`, so the rule did not apply to the current
+connection. Needs the device replugged (or the udev rules reloaded/
+retriggered) and PSPLink confirmed open on the PSP itself before a capture
+can be attempted — not resolved this session, since the fix is either a
+physical action or a `sudo` command outside this project's tree.
+
+**Confidence: high for the PPSSPP golden refresh and its causal explanation
+(directly measured, deterministic, isolated by `git status`); medium for the
+qualitative original-ROM visual match (small/distant source captures, no
+pixel-level ROI overlay attempted); T8 remains open pending the
+physical-PSP leg.**
+
+---
+
 ## RE-234 — Original-ROM stage-8 "VS Metal Mario" capture obtained via real 1P Mode play (`PLAN.md` R2.1/T8, in progress)
 
 **Question.** T8 needs an original-N64 screenshot of the stage-8 1P Mode

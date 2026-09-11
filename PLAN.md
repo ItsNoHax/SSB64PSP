@@ -3125,7 +3125,11 @@ model and the pack-time texture bake `meshdraw::bind_texture` addresses),
 re-measured at a strict `0`/34. T1's remedy carries forward through T8 next.
 T8 in progress (RE-234): original-ROM stage-8 VS Metal Mario capture obtained
 via real 1P Mode play (M64Py); PPSSPP and physical-PSP legs plus the actual
-cross-platform texgen comparison remain open.
+cross-platform texgen comparison remain open. RE-235: PPSSPP leg done — the
+`StageMetalFile2` goldens (scenes 11-13) were stale since T7a (RE-232), have
+been refreshed and reconfirmed deterministic, and were qualitatively cross-
+checked against RE-234's original-ROM captures. Physical-PSP leg blocked on
+a USB permission error this session; still open.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
