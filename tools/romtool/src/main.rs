@@ -6657,6 +6657,7 @@ enum Texgen {
 
 const GM_TEXTURE_GEN: u32 = 0x0004_0000;
 const GM_TEXTURE_GEN_LINEAR: u32 = 0x0008_0000;
+const GM_LIGHTING: u32 = 0x0002_0000;
 /// `sSYRdpResetDisplayList`'s per-frame baseline: `G_ZBUFFER | G_SHADE |
 /// G_CULL_BACK | G_SHADING_SMOOTH`.
 const GM_RESET_DEFAULT: u32 = 0x0000_0001 | 0x0000_0004 | 0x0000_0400 | 0x0020_0000;
@@ -6702,6 +6703,11 @@ struct TileState {
     origin: (u16, u16),
     mask: (u8, u8),
     cm: (u8, u8),
+    /// `R2.1`/T6: `G_SETTILE`'s `shift_s`/`shift_t`. RE-223 measured these
+    /// zero for every real render-tile-0 `G_SETTILE` archive-wide; carried
+    /// here so a texgen-specific audit can confirm that invariant holds for
+    /// the texgen-bound subset too, not just assume it transfers.
+    shift: (u8, u8),
 }
 
 #[derive(Default)]
@@ -6746,6 +6752,18 @@ struct TexgenCensus {
     texgen_scales: BTreeMap<(u16, u16), u64>,
     /// Distinct tile setups bound by a texgen draw.
     texgen_tiles: BTreeMap<TileState, u64>,
+    /// `R2.1`/T6: the same tile setups, split by effective texgen mode
+    /// (`Regular` vs `Linear` generate different UVs against the same
+    /// bound tile, so the audit needs the addressing state per mode, not
+    /// only pooled across both).
+    texgen_tiles_by_mode: BTreeMap<(Texgen, TileState), u64>,
+    /// `R2.1`/T6: `G_TEXTURE` scale in force at a texgen draw, split by mode.
+    texgen_scales_by_mode: BTreeMap<(Texgen, (u16, u16)), u64>,
+    /// `R2.1`/T6: raw `G_LIGHTING` state observed at each `G_VTX` executed
+    /// while texgen is active, split by mode. F3DEX resolves lighting and
+    /// texgen together at vertex-load time, so this is the load-time signal
+    /// that decides whether a texgen-bound vertex used a lit or raw normal.
+    texgen_vtx_lighting: BTreeMap<(Texgen, bool), u64>,
     /// Files, and (file, graph, node) sites, that draw texgen at all.
     texgen_files: BTreeSet<u32>,
     texgen_sites: BTreeSet<(u32, u32, usize, u32)>,
@@ -6819,11 +6837,14 @@ impl TexgenWalk {
                     mask_t,
                     cm_s,
                     cm_t,
+                    shift_s,
+                    shift_t,
                     ..
                 } => {
                     self.tile.fmt = Some((format, size));
                     self.tile.mask = (mask_s, mask_t);
                     self.tile.cm = (cm_s, cm_t);
+                    self.tile.shift = (shift_s, shift_t);
                 }
                 Cmd::SetTileSize {
                     tile: 0,
@@ -6841,6 +6862,13 @@ impl TexgenWalk {
                 Cmd::Vtx {
                     count, dest_index, ..
                 } => {
+                    let mode = Texgen::of(self.geometry_mode);
+                    if mode != Texgen::None {
+                        *census
+                            .texgen_vtx_lighting
+                            .entry((mode, self.geometry_mode & GM_LIGHTING != 0))
+                            .or_default() += 1;
+                    }
                     let load = VtxLoadState {
                         geometry_mode: self.geometry_mode,
                         tex_scale: self.tex_scale,
@@ -6935,6 +6963,14 @@ impl TexgenWalk {
         *census.by_mode.entry(draw).or_default() += 1;
         *census.texgen_scales.entry(self.tex_scale).or_default() += 1;
         *census.texgen_tiles.entry(self.tile).or_default() += 1;
+        *census
+            .texgen_scales_by_mode
+            .entry((draw, self.tex_scale))
+            .or_default() += 1;
+        *census
+            .texgen_tiles_by_mode
+            .entry((draw, self.tile))
+            .or_default() += 1;
         census.texgen_files.insert(file.id);
         census.texgen_sites.insert((file.id, graph, node, self.dl));
 
@@ -7110,31 +7146,16 @@ fn report_packed_texgen(path: &Path) -> Res {
     Ok(())
 }
 
-fn texgen(path: &Path, args: &[&str]) -> Res {
-    let mut only_file: Option<u32> = None;
-    let mut verbose = false;
-    let mut pack_path: Option<PathBuf> = None;
-    let mut it = args.iter();
-    while let Some(arg) = it.next() {
-        match *arg {
-            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
-            "--lines" => verbose = true,
-            "--pack" => pack_path = it.next().map(PathBuf::from),
-            other => return Err(format!("unknown option {other}").into()),
-        }
-    }
-
-    // The other half of the census: what a built pack actually carries for
-    // the same primitives, so the ROM measurement above can be checked
-    // against the state the renderer will really see.
-    if let Some(pack_path) = &pack_path {
-        report_packed_texgen(pack_path)?;
-    }
-
-    let (data, info) = load_rom(path)?;
-    let archive = Archive::open(&data, info.region)?;
-    let loaded = load_all(&archive);
-
+/// Walks every graph-planned list and unclaimed discovered root list in the
+/// archive, building the `TexgenCensus` `texgen()` and its `SSB64_ROM`-gated
+/// tests both report from. Shared so a test can measure the same real
+/// archive-wide walk the CLI command prints, instead of a second heuristic.
+fn build_texgen_census(
+    archive: &Archive,
+    loaded: &Loaded,
+    only_file: Option<u32>,
+    verbose: bool,
+) -> (TexgenCensus, usize, usize) {
     let mut census = TexgenCensus::default();
     let mut graph_lists = 0usize;
     let mut discovered_lists = 0usize;
@@ -7200,6 +7221,37 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
             );
         }
     }
+
+    (census, graph_lists, discovered_lists)
+}
+
+fn texgen(path: &Path, args: &[&str]) -> Res {
+    let mut only_file: Option<u32> = None;
+    let mut verbose = false;
+    let mut pack_path: Option<PathBuf> = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match *arg {
+            "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
+            "--lines" => verbose = true,
+            "--pack" => pack_path = it.next().map(PathBuf::from),
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    // The other half of the census: what a built pack actually carries for
+    // the same primitives, so the ROM measurement above can be checked
+    // against the state the renderer will really see.
+    if let Some(pack_path) = &pack_path {
+        report_packed_texgen(pack_path)?;
+    }
+
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let loaded = load_all(&archive);
+
+    let (census, graph_lists, discovered_lists) =
+        build_texgen_census(&archive, &loaded, only_file, verbose);
 
     println!("texgen census");
     println!("  graph-planned lists      {graph_lists}");
@@ -7276,9 +7328,27 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
     println!("tile setup bound by a texgen draw");
     for (tile, n) in &census.texgen_tiles {
         println!(
-            "  fmt {:?} dims {:?} origin {:?} mask {:?} cm {:?}  {n}",
-            tile.fmt, tile.dims, tile.origin, tile.mask, tile.cm
+            "  fmt {:?} dims {:?} origin {:?} mask {:?} shift {:?} cm {:?}  {n}",
+            tile.fmt, tile.dims, tile.origin, tile.mask, tile.shift, tile.cm
         );
+    }
+    println!();
+    println!("R2.1/T6: G_TEXTURE scale in force at a texgen draw, by mode");
+    for ((mode, (s, t)), n) in &census.texgen_scales_by_mode {
+        println!("  {mode:?}  ({s:#06x}, {t:#06x})  {n}");
+    }
+    println!();
+    println!("R2.1/T6: tile setup bound by a texgen draw, by mode");
+    for ((mode, tile), n) in &census.texgen_tiles_by_mode {
+        println!(
+            "  {mode:?}  fmt {:?} dims {:?} origin {:?} mask {:?} shift {:?} cm {:?}  {n}",
+            tile.fmt, tile.dims, tile.origin, tile.mask, tile.shift, tile.cm
+        );
+    }
+    println!();
+    println!("R2.1/T6: raw G_LIGHTING at a texgen G_VTX, by mode");
+    for ((mode, lit), n) in &census.texgen_vtx_lighting {
+        println!("  {mode:?}  lit {lit}  {n}");
     }
     if !census.texgen_sites.is_empty() {
         println!();
@@ -8181,6 +8251,71 @@ mod tests {
         // in `ssb-rom` and `convert_texture_resolves_the_requested_palette_bank`
         // below) -- a nonzero count here is still expected and correct, not
         // a regression to guard against.
+    }
+
+    /// `PLAN.md` R2.1/T6: tile-state and lighting audit for texgen-bound
+    /// draws specifically. RE-223 (`R2.0`/P1) already measured `shift_s`/
+    /// `shift_t` zero across every real render-tile-0 `G_SETTILE`
+    /// archive-wide, but that census covered *all* tile-0 binds, not just
+    /// the ones a texgen draw is actually reading under. This reuses the
+    /// same `build_texgen_census` walk `texgen()` prints from (RE-225 --
+    /// RE-229's own T1-T5 infrastructure) rather than a second heuristic,
+    /// and confirms the invariant transfers to the texgen-bound subset
+    /// before relying on it. Also reports `G_TEXTURE` scale, tile masks/
+    /// shifts/`cm`/origin/dims per texgen mode, and raw `G_LIGHTING` state
+    /// at each texgen `G_VTX`, so a future task can see the full addressing
+    /// and lighting shape at a glance instead of re-deriving it.
+    #[test]
+    fn texgen_tile_state_and_lighting_audit() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+
+        let (census, graph_lists, discovered_lists) =
+            super::build_texgen_census(&archive, &loaded, None, false);
+
+        println!("R2.1/T6 tile-state and lighting audit");
+        println!("  graph-planned lists      {graph_lists}");
+        println!("  discovered root lists    {discovered_lists}");
+        println!("  texgen triangles         {}", census.texgen_triangles);
+        println!();
+        println!("G_TEXTURE scale in force at a texgen draw, by mode");
+        for ((mode, (s, t)), n) in &census.texgen_scales_by_mode {
+            println!("  {mode:?}  ({s:#06x}, {t:#06x})  {n}");
+        }
+        println!();
+        println!("tile setup bound by a texgen draw, by mode");
+        for ((mode, tile), n) in &census.texgen_tiles_by_mode {
+            println!(
+                "  {mode:?}  fmt {:?} dims {:?} origin {:?} mask {:?} shift {:?} cm {:?}  {n}",
+                tile.fmt, tile.dims, tile.origin, tile.mask, tile.shift, tile.cm
+            );
+        }
+        println!();
+        println!("raw G_LIGHTING at a texgen G_VTX, by mode");
+        for ((mode, lit), n) in &census.texgen_vtx_lighting {
+            println!("  {mode:?}  lit {lit}  {n}");
+        }
+
+        assert!(
+            census.texgen_triangles > 0,
+            "archive-wide walk found no texgen triangles"
+        );
+        // RE-223 measured this zero for every real tile-0 G_SETTILE,
+        // archive-wide. Re-checked here against only the texgen-bound
+        // subset, since that is the only subset this project's texgen path
+        // actually reads shift from. If this regresses, N64 tile shifting
+        // needs implementing before T6 can close (PLAN.md R2.1/T6).
+        assert!(
+            census
+                .texgen_tiles_by_mode
+                .keys()
+                .all(|(_, tile)| tile.shift == (0, 0)),
+            "a texgen-bound tile now has a nonzero shift_s/shift_t (PLAN.md R2.1/T6): implement N64 shifting"
+        );
     }
 
     /// RE-223/`R2.0`/P2: `G_SETTILE.palette` selects a 16-entry bank within
