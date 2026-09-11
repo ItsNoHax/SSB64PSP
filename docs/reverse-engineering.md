@@ -10,6 +10,125 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-246 — The dominant remainder of RE-244/245's depth-state gap was not an object-category wrapper at all, but a camera-level default; the 11 loading-break transitions account for half of it (`PLAN.md` R2.2/C3, part 3, in progress)
+
+**Question.** RE-245 closed layer 1 but left `z_buffer != depth_test`
+diverging on 3891 primitives archive-wide, explicitly naming "layers 0/2/3,
+items, effects" as the remaining suspects and noting items/effects' own
+`ProcDisplay`s carry no external wrapper. If items/effects really have none,
+where do the remaining 3891 primitives' depth bits actually come from?
+
+**Evidence.** Broke the gap down by archive file id (a temporary diagnostic
+census, not kept) rather than continuing to guess by object category. The
+result was not a long tail of small item/effect files — it was dominated by
+one tight cluster: files 39–51, each diverging on effectively 100% of its own
+primitives, together accounting for roughly 2500 of the 3891. `docs/
+reverse-engineering.md`'s own RE-099/RE-100 already identified these exact 13
+files as the loading-break transition scenes (paper airplane, curtain,
+sudare blinds, etc. — `lb/lbtransition.c`'s `dLBTransitionDescs`, 11 files,
+plus two extras at 39 and 51 whose exact draw path RE-099 left unconfirmed).
+
+Reading `refs/ssb-decomp-re/src/lb/lbtransition.c` directly found
+`lbTransitionProcDisplay` issues **no** `G_SETRENDERMODE` or geometry-mode
+call of its own — just `gSPSegment` (binding the framebuffer-photocopy
+texture) then `gcDrawDObjTreeForGObj`. So unlike `ft`/`gr`, there is no
+per-object wrapper here to find. But `lbTransitionMakeCamera` creates a
+**dedicated camera** for the transition (`cobj->flags |= COBJ_FLAG_DLBUFFERS
+| COBJ_FLAG_ZBUFFER`, display callback `func_80017DBC`), and every camera's
+display driver (`sys/objdisplay.c`'s `func_80017D3C`) calls `func_8001663C`
+*first*, before walking that camera's own tagged `GObj` list:
+
+```c
+// func_8001663C, buffer_id 0 or 2:
+gDPSetRenderMode(dl++, G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2);
+// buffer_id 1 or 3:
+gDPSetRenderMode(dl++, G_RM_AA_ZB_XLU_SURF, G_RM_AA_ZB_XLU_SURF2);
+```
+
+This runs **unconditionally**, regardless of `COBJ_FLAG_ZBUFFER` (that flag
+only gates a separate depth-image clear a few lines earlier — a different
+GBI object entirely). `G_RM_AA_ZB_OPA_SURF2` ORs to `Z_CMP | Z_UPD |
+ZMODE_OPA`, the same bits `FIGHTER_EXTERNAL`/`GROUND_LAYER1_EXTERNAL`
+already seed. `lbTransitionMakeCamera` registers `func_80017DBC`, which calls
+`func_80017D3C(gobj, &gSYTaskmanDLHeads[0], 0)` — buffer 0 — confirming the
+opaque-Z default applies.
+
+This is a structurally different mechanism from `ft`/`gr`'s: not an object's
+own render-mode call, but a **camera**-level default that only reaches a
+primitive uncorrupted if nothing else drawn earlier under the same camera
+already changed the render mode. In general that is not archive-attributable
+at all (which object draws first under a shared camera is a runtime,
+game-state-dependent question — the same shape `R2.2`/C4's submission-order
+concern already flags). The transition cameras are the one case where it
+*is* safe: each is a dedicated, single-purpose camera created only for that
+transition, carrying no other `GObj`, so its own node list is unambiguously
+the first and only thing drawn under it.
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs` gained
+`InitialMaterial::LB_TRANSITION_EXTERNAL` (`lit: false` —
+`lbTransitionProcDisplay` never sets `G_LIGHTING` either; `depth_test`/
+`depth_write: true`, `depth_mode: ZMode::Opaque`). `tools/romtool/src/
+main.rs` gained `lb_transition_graphs()`, built directly from
+`ssb_rom::transition::ASSETS` (the eleven `dLBTransitionDescs` entries'
+exact `(file, graph)` pairs, already recovered and ROM-checked for `R0.13`'s
+framebuffer-capture work — no new discovery needed). `initial_material_for`
+now checks it after the skeleton/ground-layer-1 sets; all five production
+call sites (`scene` and `pack`'s two `initial_material_for` calls,
+`file_meshes`, and `census_ground_layer_depth_state_vs_z_buffer`) build and
+pass it alongside the other two sets. Tested with `mesh.rs`'s
+`convert_sequence_lb_transition_external_seeds_depth_but_not_lit`.
+
+**Measurement.** `census_lb_transition_seed_measured_impact` (kept
+permanently): of 1951 primitives across the 11 named transition graphs, the
+seed flips **1951 (100%)** from `depth_test`/`depth_write` false to true —
+none of these graphs' own node lists repeat `G_SETRENDERMODE`, the same
+shape as the fighter-skeleton and ground-layer-1 seeds, just total instead
+of partial. Re-running `census_independent_depth_state_vs_z_buffer_geometry_
+bit` archive-wide: `depth_test`/`depth_write` rise from 1901/1885 to
+**3852/3836**; `z_buffer != depth_test` falls from 3891 to **1940** — more
+than half of RE-244's original 4468-primitive gap, from a single ten-line
+addition, because this cluster's own primitive count (1951) happens to be
+larger than the fighter-skeleton (732) and ground-layer-1 (577) seeds
+combined. `assets/generated/ssb64.pak` rebuilt: `romtool pack`'s mesh/
+triangle/object counts (2044 objects, 28993 in-object triangles, top-5
+object list) are byte-for-byte identical between a pre-change and
+post-change build of the same ROM (diffed both builds' full `pack` stdout);
+only the pack's own checksum differs, as expected.
+
+**Confidence.** High for the mechanism (`func_8001663C`'s unconditional
+render-mode set is read directly from `sys/objdisplay.c`, its callers traced
+through `func_80017D3C`/`func_80017DBC`, and the transition camera's
+dedicated, single-object nature confirmed from `lbTransitionMakeCamera`
+itself) and for the 11 named graphs' measured impact. Explicitly **not**
+generalized to any other camera or object category: this same camera-level
+default almost certainly also seeds the *main battle camera's* first-drawn
+object each frame, but which object draws first there is decided by runtime
+game state, not archive data, so it cannot be attributed the way this
+entry's dedicated-camera case can — attempting to would repeat the "no
+unsupported heuristics" mistake this project's rules exist to prevent. Two
+files RE-099 already flagged as outside `dLBTransitionDescs` (39 and 51)
+still carry unexplained depth-state divergence and are not covered by this
+seed; the remaining archive-wide gap (1940 primitives: layers 0/2/3, items,
+effects, files 39/51, and whatever fraction of the main-camera-default case
+happens to be statically distinguishable) is unattributed. No PSP-side
+rendering behaviour changed; `psp/src/meshdraw.rs`'s `sceGuDepthMask` wiring
+stays deferred, same as RE-244/245.
+
+**Verification.** `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+`ssb-rom` 419 passed (418 prior + 1 new unit test), `romtool` 22 passed (21
+prior + 1 new permanent census test), `ssb-engine` 48, `ssb-game` 120, 0
+failed overall. `cargo fmt --check`
+clean. `cargo clippy --workspace --all-targets` clean (same pre-existing,
+unrelated warnings as prior sessions). Pack rebuilt (`romtool pack`):
+mesh/triangle/draw-call counts verified identical to a pre-change rebuild
+of the same ROM; checksums differ as expected. Code changed: `crates/
+ssb-rom/src/mesh.rs` (`InitialMaterial::LB_TRANSITION_EXTERNAL`, 1 new unit
+test), `tools/romtool/src/main.rs` (`lb_transition_graphs`,
+`initial_material_for` signature, all five call sites, 1 new permanent
+census test).
+
+---
+
 ## RE-245 — Ground render-layer 1 has the same external depth-state wrapper fighters do; 577 of RE-244's 4468-primitive gap explained (`PLAN.md` R2.2/C3, part 2, in progress)
 
 **Question.** RE-244 left `R2.2`/C3's ~4468-primitive `z_buffer`-vs-`depth_test`

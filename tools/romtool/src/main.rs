@@ -463,6 +463,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
     let loaded = load_all(&archive);
     let skeleton_graphs = fighter_skeleton_graphs(&loaded);
     let ground_graphs = ground_layer1_graphs(&loaded);
+    let transition_graphs = lb_transition_graphs();
     for id in &ids {
         let Some(file) = loaded.files.get(*id as usize).and_then(Option::as_ref) else {
             continue;
@@ -505,7 +506,13 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
 
-            let initial = initial_material_for(&skeleton_graphs, &ground_graphs, *id, g.offset);
+            let initial = initial_material_for(
+                &skeleton_graphs,
+                &ground_graphs,
+                &transition_graphs,
+                *id,
+                g.offset,
+            );
             for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
                 &items,
                 ssb_rom::mesh::Source::of(file),
@@ -1124,12 +1131,27 @@ fn ground_layer1_graphs(loaded: &Loaded) -> std::collections::BTreeSet<(u32, u32
         .collect()
 }
 
+/// Every loading-break transition scene's `(file, graph_offset)` (RE-246).
+///
+/// `ssb_rom::transition::ASSETS` already names each of the eleven
+/// `dLBTransitionDescs` entries' exact file and graph offset (built for
+/// `R0.13`'s framebuffer-capture work); `_(file, graph)` fields need no
+/// further validation here, the same way [`ground_layer1_graphs`] trusts
+/// `loaded.stages`.
+fn lb_transition_graphs() -> std::collections::BTreeSet<(u32, u32)> {
+    ssb_rom::transition::ASSETS
+        .iter()
+        .map(|asset| (asset.file, asset.graph))
+        .collect()
+}
+
 /// The seed a [`ssb_rom::mesh::convert_sequence`] call for `(file,
-/// graph_offset)` must use -- see [`fighter_skeleton_graphs`] and
-/// [`ground_layer1_graphs`].
+/// graph_offset)` must use -- see [`fighter_skeleton_graphs`],
+/// [`ground_layer1_graphs`] and [`lb_transition_graphs`].
 fn initial_material_for(
     skeleton_graphs: &std::collections::BTreeSet<(u32, u32)>,
     ground_layer1_graphs: &std::collections::BTreeSet<(u32, u32)>,
+    lb_transition_graphs: &std::collections::BTreeSet<(u32, u32)>,
     file: u32,
     graph_offset: u32,
 ) -> ssb_rom::mesh::InitialMaterial {
@@ -1137,6 +1159,8 @@ fn initial_material_for(
         ssb_rom::mesh::InitialMaterial::FIGHTER_EXTERNAL
     } else if ground_layer1_graphs.contains(&(file, graph_offset)) {
         ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL
+    } else if lb_transition_graphs.contains(&(file, graph_offset)) {
+        ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL
     } else {
         ssb_rom::mesh::InitialMaterial::default()
     }
@@ -1478,6 +1502,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let loaded = load_all(&archive);
     let skeleton_graphs = fighter_skeleton_graphs(&loaded);
     let ground_graphs = ground_layer1_graphs(&loaded);
+    let transition_graphs = lb_transition_graphs();
 
     for id in 0..archive.len() as u32 {
         if only_file.is_some_and(|f| f != id) {
@@ -1568,8 +1593,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 })
                 .collect();
 
-            let initial =
-                initial_material_for(&skeleton_graphs, &ground_graphs, id, graphs[gi].offset);
+            let initial = initial_material_for(
+                &skeleton_graphs,
+                &ground_graphs,
+                &transition_graphs,
+                id,
+                graphs[gi].offset,
+            );
             for (p, converted) in plan.iter().zip(mesh::convert_sequence(
                 &items,
                 mesh::Source::of(file),
@@ -1672,8 +1702,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 let base_materials = loaded.materials(file, graph);
                 let first_node = writer.object(object).unwrap().first_node;
                 let plan = &plans[gi];
-                let initial =
-                    initial_material_for(&skeleton_graphs, &ground_graphs, id, graph.offset);
+                let initial = initial_material_for(
+                    &skeleton_graphs,
+                    &ground_graphs,
+                    &transition_graphs,
+                    id,
+                    graph.offset,
+                );
                 let base_converted = convert_graph_at(
                     &loaded,
                     file,
@@ -3925,6 +3960,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
         loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
     let skeleton_graphs = fighter_skeleton_graphs(loaded);
     let ground_graphs = ground_layer1_graphs(loaded);
+    let transition_graphs = lb_transition_graphs();
     let mut out = Vec::new();
     let mut claimed = BTreeSet::new();
 
@@ -3951,7 +3987,13 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 mat_anims: &[],
             })
             .collect();
-        let initial = initial_material_for(&skeleton_graphs, &ground_graphs, file.id, graph.offset);
+        let initial = initial_material_for(
+            &skeleton_graphs,
+            &ground_graphs,
+            &transition_graphs,
+            file.id,
+            graph.offset,
+        );
         out.extend(
             mesh::convert_sequence(&items, mesh::Source::of(file), initial)
                 .into_iter()
@@ -8154,6 +8196,99 @@ mod tests {
         assert!(prims_checked > 0);
     }
 
+    /// `R2.2`/C3 (RE-246): measures how many real primitives
+    /// `InitialMaterial::LB_TRANSITION_EXTERNAL`'s depth seed actually flips,
+    /// the same shape as `census_depth_seed_measured_impact_on_skeleton_
+    /// graphs` and `census_ground_layer1_seed_measured_impact`. This seed's
+    /// discovery came from breaking `census_independent_depth_state_vs_
+    /// z_buffer_geometry_bit`'s ~4468/3891-primitive gap down by archive
+    /// file id: eleven files (the `dLBTransitionDescs` transition scenes,
+    /// `ssb_rom::transition::ASSETS`) accounted for roughly 2500 of it, each
+    /// diverging on effectively every one of its own primitives -- a much
+    /// larger and cleaner cluster than the item/effect files sharing the
+    /// remainder, which is why this seed exists but no per-item-type one
+    /// does yet.
+    #[test]
+    fn census_lb_transition_seed_measured_impact() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut prims_checked = 0usize;
+        let mut depth_test_changed = 0usize;
+        let mut depth_write_changed = 0usize;
+        for asset in ssb_rom::transition::ASSETS {
+            let Some(file) = loaded
+                .files
+                .get(asset.file as usize)
+                .and_then(Option::as_ref)
+            else {
+                continue;
+            };
+            let Some(g) = loaded
+                .graphs
+                .get(&asset.file)
+                .and_then(|gs| gs.iter().find(|g| g.offset == asset.graph))
+            else {
+                continue;
+            };
+            let resolver = ssb_rom::scene::DlResolver::new(file);
+            let plan = super::plan_draw_order(g, &resolver);
+            let decoded: Vec<Vec<ssb_rom::dl::Cmd>> = plan
+                .iter()
+                .map(|p| {
+                    file.data
+                        .get(p.dl as usize..)
+                        .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let materials = loaded.materials(file, g);
+            let items: Vec<ssb_rom::mesh::SequenceItem> = plan
+                .iter()
+                .zip(&decoded)
+                .map(|(p, cmds)| ssb_rom::mesh::SequenceItem {
+                    cmds,
+                    world: p.world,
+                    mobjs: &materials[p.node],
+                    mat_anims: &[],
+                })
+                .collect();
+            let seeded = ssb_rom::mesh::convert_sequence(
+                &items,
+                ssb_rom::mesh::Source::of(file),
+                ssb_rom::mesh::InitialMaterial::LB_TRANSITION_EXTERNAL,
+            );
+            let unseeded = ssb_rom::mesh::convert_sequence(
+                &items,
+                ssb_rom::mesh::Source::of(file),
+                ssb_rom::mesh::InitialMaterial::default(),
+            );
+            for (a, b) in seeded.iter().zip(&unseeded) {
+                let (Ok(a), Ok(b)) = (a, b) else { continue };
+                for (pa, pb) in a.primitives.iter().zip(&b.primitives) {
+                    prims_checked += 1;
+                    if pa.material.depth_test != pb.material.depth_test {
+                        depth_test_changed += 1;
+                    }
+                    if pa.material.depth_write != pb.material.depth_write {
+                        depth_write_changed += 1;
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C3 lb transition depth seed measured impact: \
+             {depth_test_changed}/{prims_checked} primitives changed depth_test, \
+             {depth_write_changed}/{prims_checked} changed depth_write, across \
+             {} transition assets",
+            ssb_rom::transition::ASSETS.len()
+        );
+        assert!(prims_checked > 0);
+    }
+
     /// `R2.2`/C3 (RE-244): measures how many real primitives
     /// `InitialMaterial::FIGHTER_EXTERNAL`'s `depth_test`/`depth_write`
     /// seed actually flips, by converting every one of the 27 fighters' two
@@ -8301,6 +8436,7 @@ mod tests {
         let loaded = super::load_all(&archive);
         let skeleton_graphs = super::fighter_skeleton_graphs(&loaded);
         let ground_graphs = super::ground_layer1_graphs(&loaded);
+        let transition_graphs = super::lb_transition_graphs();
 
         #[derive(Default, Debug)]
         struct LayerStats {
@@ -8374,6 +8510,7 @@ mod tests {
                 let initial = super::initial_material_for(
                     &skeleton_graphs,
                     &ground_graphs,
+                    &transition_graphs,
                     file_id,
                     graph_offset,
                 );
