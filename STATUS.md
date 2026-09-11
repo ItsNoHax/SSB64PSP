@@ -71,7 +71,7 @@
   changed this task).
 - Documentation: RE-230, `PLAN.md` `R2.1`/T6, `docs/porting-status.md`, this
   snapshot.
-- Commit: (pending).
+- Commit: `b155fb4`.
 
 ## Continuation
 
