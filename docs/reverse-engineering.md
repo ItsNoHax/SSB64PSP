@@ -10,6 +10,87 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-233 — Fixed real-hardware-only collision/fighter debug-overlay corruption: `LINE_BUF` reused before the GE finished reading it
+
+**Question.** A routine physical-PSP run via PSPLink (`docs/psplink.md`) of
+the current build (`766cb47`) showed the interactive stage/fighter viewer's
+debug overlay badly wrong: the magenta fighter collision diamond
+(`meshdraw::draw_fighter`) had one stray edge stretching all the way from the
+fighter to the stage platform's far collision-line corner, reproducing from
+frame 0 on a fresh `ldstart`/`reset`, on every stage tried. `exlist`/`thlist`
+showed no exception and no crash — the module ran and rendered every frame,
+just with this one corrupted primitive. PPSSPP has never shown this; per
+`docs/psplink.md`, "PPSSPP is not physical PSP proof," so the divergence
+needed a real cause, not an assumption that hardware was simply "buggier."
+
+**Root cause.** `meshdraw::draw_collision` and `meshdraw::draw_fighter` both
+draw through `Gpu::draw_line_strip`, and both source their vertices from one
+shared `static mut LINE_BUF` (`meshdraw.rs`), which the CPU rewrites for
+every single line segment drawn in a frame — every stage floor/wall/ceiling
+line, then the fighter's diamond, then the fighter's foot-tick mark. Each
+`draw_line_strip` call passed `verts.as_ptr()` straight into
+`sceGumDrawArray`/`sceGuDrawArray`, which only enqueues a GE command
+referencing that pointer; the function's own doc comment already said the
+data "must ... live until the frame is submitted," but the code violated
+that immediately, overwriting `LINE_BUF` for the next segment before the
+frame (or in most cases, before even that command) was submitted. The GE
+reads vertex data asynchronously via its own DMA, lagging the CPU by an
+amount that varies with real bus/timing behavior no emulator models
+byte-for-byte; PPSSPP's GE emulation keeps pace with the CPU closely enough
+that the race never surfaces there. On real hardware the GE was still
+reading an earlier segment's vertices out of `LINE_BUF` after the CPU had
+already overwritten them with a later segment's (or the fighter diamond's)
+values, corrupting whichever draw the GE was behind on — consistent with the
+observed stray vertex landing exactly on a real stage collision-line corner
+rather than at random. `draw_object_posed`'s existing dynamic-vertex path
+(`meshdraw.rs` around the `linear_texgen`/`effect_colors` branch) already
+avoids this correctly by copying into memory returned by `sceGuGetMemory`,
+which allocates from the current display-list arena and so is guaranteed to
+live exactly as long as that GE submission needs it; `draw_line_strip` was
+the one place in the renderer that still handed the GE a CPU-owned,
+soon-to-be-overwritten pointer instead.
+
+**Fix.** `Gpu::draw_line_strip` (`psp/src/gu.rs`) now copies its `verts`
+slice into a `sceGuGetMemory`-allocated buffer before submitting, matching
+`draw_object_posed`'s established pattern, instead of trusting the caller's
+buffer to survive until the GE gets to it. Both call sites
+(`draw_collision`'s per-segment loop and `draw_fighter`'s diamond/tick
+marks) needed no change — the fix is entirely inside `draw_line_strip`,
+which is the only place vertex lifetime vs. GE submission was actually
+decided. `draw_triangles`, the renderer's other raw-pointer GE draw, was
+checked and found safe: its one call site (`main.rs`'s object-view corner
+marker) reads from a `static` (not `static mut`) compile-time constant
+array that is never rewritten at runtime, so it carries none of `LINE_BUF`'s
+reuse risk.
+
+**Verification.** Rebuilt (`cargo psp --release` from `psp/`, pinned
+nightly-2026-08-01) and reloaded via PSPLink
+(`ldstart`/`kill`/`reset` per `docs/psplink.md`) on the same PSP Slim,
+6.61, ARK/Infinity, PSPLink v3.2.1 hardware the bug was found on. Native
+`scrshot` captures taken immediately after a fresh `reset`+`ldstart`, and
+again after three more frames several seconds apart, all show a clean,
+correctly-bounded fighter collision diamond with no stray edge, on the same
+stage/state that reproduced the corruption before the fix — confirmed by
+direct pixel sampling of the exact stray-magenta color (`(255, 64, 255)`,
+`draw_fighter`'s own grounded-color constant) present before the fix and
+absent after. `exlist` stayed empty throughout (no crash before or after).
+Host-side: `cargo +1.98.0 fmt --all -- --check`, strict
+`cargo +1.98.0 clippy --workspace --all-targets -- -D warnings`, and
+`cargo +1.98.0 test --workspace --all-targets` (`SSB64_ROM` set) all pass
+(same 402-plus-examples suite as before this change; this fix touches only
+`psp/`, which is outside the host workspace). No asset-pipeline code
+changed, so `assets/generated/ssb64.pak` did not need rebuilding.
+
+**Confidence.** High. The corrupted vertex's landing point matched a real
+stage collision-line corner rather than arbitrary garbage, which is what a
+stale-read-of-an-earlier-segment race predicts and a random-corruption
+theory does not; the fix follows the renderer's own already-established and
+documented `sceGuGetMemory` idiom rather than a new assumption; and the
+overlay was re-verified clean across multiple fresh loads and multiple
+frames per load on the physical hardware that showed the original bug.
+
+---
+
 ## RE-232 — Fixed the mask-narrowed clamp-without-mirror texgen addressing divergence RE-231 found (`PLAN.md` R2.1/T7a)
 
 **Question.** RE-231 measured 9 of 34 real texgen axis instances diverging
