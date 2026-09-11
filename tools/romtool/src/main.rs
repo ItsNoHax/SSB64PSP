@@ -6674,7 +6674,7 @@ impl Texgen {
 }
 
 /// What was true when a vertex was written into the cache.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct VtxLoadState {
     geometry_mode: u32,
     tex_scale: (u16, u16),
@@ -6684,6 +6684,14 @@ struct VtxLoadState {
     step: usize,
     /// Display-list offset the `G_VTX` itself came from.
     dl: u32,
+    /// The scene-graph node whose matrix was in force (`PlannedList::space`),
+    /// or `None` for the object root/a discovered list with no graph.
+    space: Option<usize>,
+    /// That node's world transform (`PlannedList::world`), the RE-225/`R2.1`/
+    /// T1 "stable load model-matrix identity" -- F3DEX generates texture
+    /// coordinates at `G_VTX` time, so this is what the real hardware would
+    /// have transformed the vertex's normal with.
+    world: ssb_rom::scene::Mat4,
 }
 
 /// The bound tile, as far as it affects generated texture coordinates.
@@ -6724,6 +6732,16 @@ struct TexgenCensus {
     cross_step_vertices: u64,
     /// Texgen triangles using a vertex loaded by a different display list.
     cross_list_vertices: u64,
+    /// `R2.1`/T1 (RE-225): among vertices loaded in an earlier step than the
+    /// triangle they draw in, how the load's node/space compares to the
+    /// draw's. A vertex transformed at `G_VTX` time under one node's matrix
+    /// but drawn as part of a triangle whose "current" node differs is only
+    /// safe to cache/reuse across that boundary if the two matrices agree
+    /// on the normal-relevant 3x3 transform.
+    same_node_reuse: u64,
+    cross_list_same_node_reuse: u64,
+    cross_node_equivalent_transform_reuse: u64,
+    cross_node_differing_transform_reuse: u64,
     /// Distinct `G_TEXTURE` scales in force at a texgen draw.
     texgen_scales: BTreeMap<(u16, u16), u64>,
     /// Distinct tile setups bound by a texgen draw.
@@ -6742,6 +6760,12 @@ struct TexgenWalk {
     step: usize,
     dl: u32,
     depth: u32,
+    /// The scene-graph node whose matrix is in force for the whole step
+    /// (`PlannedList::space`); constant across a step's own list and any
+    /// lists it calls, since no `G_MTX` is modeled here (RE-225).
+    space: Option<usize>,
+    /// That node's world transform (`PlannedList::world`).
+    world: ssb_rom::scene::Mat4,
     /// The current node's `MObj` chain, indexed by graphics-heap entry.
     mobjs: Vec<ssb_rom::mobj::MObjMaterial>,
 }
@@ -6756,6 +6780,8 @@ impl TexgenWalk {
             step: 0,
             dl: 0,
             depth: 0,
+            space: None,
+            world: ssb_rom::scene::Mat4::IDENTITY,
             mobjs: Vec::new(),
         }
     }
@@ -6820,6 +6846,8 @@ impl TexgenWalk {
                         tex_scale: self.tex_scale,
                         step: self.step,
                         dl: self.dl,
+                        space: self.space,
+                        world: self.world,
                     };
                     for i in 0..count as usize {
                         let slot = dest_index as usize + i;
@@ -6953,7 +6981,68 @@ impl TexgenWalk {
         if loads.iter().flatten().any(|l| l.dl != self.dl) {
             census.cross_list_vertices += 1;
         }
+
+        for l in loads.iter().flatten() {
+            if l.step == self.step {
+                continue;
+            }
+            if l.space == self.space {
+                if l.dl == self.dl {
+                    census.same_node_reuse += 1;
+                } else {
+                    census.cross_list_same_node_reuse += 1;
+                }
+            } else if normal_transform_equivalent(&l.world, &self.world) {
+                census.cross_node_equivalent_transform_reuse += 1;
+            } else {
+                census.cross_node_differing_transform_reuse += 1;
+                if verbose {
+                    println!(
+                        "  file {:>4} graph {:#x} node {:<3} dl {:#x}: cross-node differing-transform reuse (load space {:?}, draw space {:?})",
+                        file.id, graph, node, self.dl, l.space, self.space
+                    );
+                }
+            }
+        }
     }
+}
+
+/// The 3x3 linear part of `m` (rotation + scale, no translation), in
+/// column-major order matching [`ssb_rom::scene::Mat4`]'s own layout.
+fn linear3x3(m: &ssb_rom::scene::Mat4) -> [f32; 9] {
+    let d = m.0;
+    [d[0], d[1], d[2], d[4], d[5], d[6], d[8], d[9], d[10]]
+}
+
+/// `R2.1`/T1 (RE-225): whether two node transforms generate the same texgen
+/// coordinates for a shared vertex normal -- a bit-identical 3x3 linear part
+/// (translation, which does not affect a normal, ignored entirely), or one
+/// that differs from the other only by a positive uniform scale (a squash/
+/// stretch keyframe changes vertex position but not normal direction). A
+/// non-uniform scale, or a genuinely different rotation, is not equivalent.
+fn normal_transform_equivalent(a: &ssb_rom::scene::Mat4, b: &ssb_rom::scene::Mat4) -> bool {
+    let ea = linear3x3(a);
+    let eb = linear3x3(b);
+    if ea == eb {
+        return true;
+    }
+    let Some((idx, _)) = eb
+        .iter()
+        .enumerate()
+        .max_by(|x, y| x.1.abs().total_cmp(&y.1.abs()))
+    else {
+        return false;
+    };
+    if eb[idx].abs() < 1e-6 {
+        return ea.iter().all(|v| v.abs() < 1e-6);
+    }
+    let scale = ea[idx] / eb[idx];
+    if scale <= 0.0 {
+        return false;
+    }
+    ea.iter()
+        .zip(eb.iter())
+        .all(|(&x, &y)| (x - scale * y).abs() <= 1e-4 * (1.0 + x.abs()))
 }
 
 /// Archive-wide census of the state every texgen triangle is drawn under.
@@ -7085,6 +7174,8 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
                 };
                 walk.step = step;
                 walk.dl = p.dl;
+                walk.space = p.space;
+                walk.world = p.world;
                 walk.mobjs = materials.get(p.node).cloned().unwrap_or_default();
                 walk.walk(&cmds, file, gi as u32, p.node, &mut census, verbose);
             }
@@ -7159,6 +7250,24 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
         census.cross_list_vertices
     );
     println!();
+    println!("model-space reuse of an earlier-step vertex (R2.1/T1, RE-225)");
+    println!(
+        "  same node, same list                {}",
+        census.same_node_reuse
+    );
+    println!(
+        "  same node, cross list                {}",
+        census.cross_list_same_node_reuse
+    );
+    println!(
+        "  cross node, equivalent transform     {}",
+        census.cross_node_equivalent_transform_reuse
+    );
+    println!(
+        "  cross node, differing transform      {}",
+        census.cross_node_differing_transform_reuse
+    );
+    println!();
     println!("G_TEXTURE scale in force at a texgen draw");
     for ((s, t), n) in &census.texgen_scales {
         println!("  ({s:#06x}, {t:#06x})  {n}");
@@ -7195,10 +7304,121 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 #[cfg(test)]
 mod tests {
     use super::{
-        palette_bank_offset, DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
-        EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
+        normal_transform_equivalent, palette_bank_offset, DIRECT_MANAGER_EFFECT_ASSETS,
+        DIRECT_MANAGER_EFFECT_MOBJ_PAIRS, EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
     };
     use std::collections::BTreeSet;
+
+    /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is
+    /// only their 3x3 linear part, and only up to a positive uniform scale.
+    #[test]
+    fn normal_transform_equivalence_ignores_translation_and_uniform_scale() {
+        use ssb_rom::scene::Mat4;
+
+        let base = Mat4::from_trs([0.0, 0.0, 0.0], [0.3, 0.5, -0.2], [1.0, 1.0, 1.0]);
+
+        let translated = Mat4::from_trs([10.0, -5.0, 2.0], [0.3, 0.5, -0.2], [1.0, 1.0, 1.0]);
+        assert!(
+            normal_transform_equivalent(&base, &translated),
+            "translation-only difference must not affect the normal-relevant transform"
+        );
+
+        let same_rotation = Mat4::from_trs([1.0, 2.0, 3.0], [0.3, 0.5, -0.2], [1.0, 1.0, 1.0]);
+        assert!(
+            normal_transform_equivalent(&base, &same_rotation),
+            "identical rotation under any translation must be equivalent"
+        );
+
+        let different_rotation = Mat4::from_trs([0.0, 0.0, 0.0], [0.3, 0.5, 0.4], [1.0, 1.0, 1.0]);
+        assert!(
+            !normal_transform_equivalent(&base, &different_rotation),
+            "a genuinely different rotation must not be equivalent"
+        );
+
+        let uniform_scale = Mat4::from_trs([0.0, 0.0, 0.0], [0.3, 0.5, -0.2], [2.5, 2.5, 2.5]);
+        assert!(
+            normal_transform_equivalent(&base, &uniform_scale),
+            "a positive uniform scale does not change the generated normal's direction"
+        );
+
+        let non_uniform_scale = Mat4::from_trs([0.0, 0.0, 0.0], [0.3, 0.5, -0.2], [2.0, 1.0, 1.0]);
+        assert!(
+            !normal_transform_equivalent(&base, &non_uniform_scale),
+            "a non-uniform scale changes normal direction and must not be treated as equivalent"
+        );
+    }
+
+    /// `R2.1`/T1 (RE-225): a texgen triangle reusing an earlier-step vertex is
+    /// classified by how the load's node/space compares to the draw's, using
+    /// the walker directly rather than a full scene graph (`plan_draw_order`
+    /// is what actually produces `space`/`world`; this exercises what `tri`
+    /// does with them once set).
+    #[test]
+    fn texgen_reuse_classifies_same_node_cross_list_and_cross_node() {
+        use ssb_rom::scene::Mat4;
+
+        let file = ssb_rom::archive::File {
+            id: 7,
+            data: vec![0u8; 4],
+            extern_relocs: Vec::new(),
+            intern_relocs: Vec::new(),
+        };
+        let identity = Mat4::IDENTITY;
+
+        let mut walk = super::TexgenWalk::new();
+        walk.geometry_mode = super::GM_TEXTURE_GEN;
+        walk.step = 3;
+        walk.dl = 0x100;
+        walk.space = Some(0);
+        walk.world = identity;
+
+        let loaded = |step, dl, space, world| {
+            Some(super::VtxLoadState {
+                geometry_mode: super::GM_TEXTURE_GEN,
+                tex_scale: (0, 0),
+                step,
+                dl,
+                space,
+                world,
+            })
+        };
+        // Loaded this step/list: not a reuse across any boundary.
+        walk.cache[0] = loaded(3, 0x100, Some(0), identity);
+        // Loaded earlier, same node, same list: same-node reuse.
+        walk.cache[1] = loaded(1, 0x100, Some(0), identity);
+        // Loaded earlier, same node, a different list (nested `Call`):
+        // cross-list same-node reuse.
+        walk.cache[2] = loaded(2, 0x080, Some(0), identity);
+
+        let mut census = super::TexgenCensus::default();
+        walk.tri([0, 1, 2], &file, 0, 0, &mut census, false);
+        assert_eq!(census.same_node_reuse, 1);
+        assert_eq!(census.cross_list_same_node_reuse, 1);
+        assert_eq!(census.cross_node_equivalent_transform_reuse, 0);
+        assert_eq!(census.cross_node_differing_transform_reuse, 0);
+
+        // Loaded under a different node whose rotation genuinely differs:
+        // cross-node, differing transform.
+        let rotated = Mat4::from_trs(
+            [0.0, 0.0, 0.0],
+            [0.0, std::f32::consts::FRAC_PI_2, 0.0],
+            [1.0, 1.0, 1.0],
+        );
+        walk.cache[1] = loaded(1, 0x100, Some(9), rotated);
+        let mut census = super::TexgenCensus::default();
+        walk.tri([0, 1, 2], &file, 0, 0, &mut census, false);
+        assert_eq!(census.cross_node_differing_transform_reuse, 1);
+        assert_eq!(census.cross_node_equivalent_transform_reuse, 0);
+
+        // Loaded under a different node that is only a uniform-scaled copy
+        // of the draw's own transform: cross-node, equivalent transform.
+        let scaled = Mat4::from_trs([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [2.0, 2.0, 2.0]);
+        walk.cache[1] = loaded(1, 0x100, Some(9), scaled);
+        let mut census = super::TexgenCensus::default();
+        walk.tri([0, 1, 2], &file, 0, 0, &mut census, false);
+        assert_eq!(census.cross_node_equivalent_transform_reuse, 1);
+        assert_eq!(census.cross_node_differing_transform_reuse, 0);
+    }
 
     #[test]
     fn common_effects2_pairs_follow_corrected_decomp_layout() {
@@ -7456,7 +7676,8 @@ mod tests {
         let mut mc = MirrorClampStats::default();
         let mut m0 = Mask0Stats::default();
         let mut pp = PotPaddingStats::default();
-        let mut unique_mirror_clamp_tiles: BTreeSet<(u32, u32, u8, u8, bool, bool)> = BTreeSet::new();
+        let mut unique_mirror_clamp_tiles: BTreeSet<(u32, u32, u8, u8, bool, bool)> =
+            BTreeSet::new();
         let mut unique_mask0_clear_tiles: BTreeSet<(u32, u32, bool, bool)> = BTreeSet::new();
         let mut unique_non_pot_clamp_tiles: BTreeSet<(u32, u32, usize, u32)> = BTreeSet::new();
         let mut primitives_examined = 0u64;
@@ -7478,7 +7699,9 @@ mod tests {
                     // census is authored-UV-scoped (`PLAN.md` R2.0/P0b);
                     // texgen addressing is `R2.1`/T7's job, consuming this
                     // same reference model with its own scale/origin wiring.
-                    if t.framebuffer || prim.indices.is_empty() || prim.material.texture_gen != ssb_rom::mesh::TextureGen::None
+                    if t.framebuffer
+                        || prim.indices.is_empty()
+                        || prim.material.texture_gen != ssb_rom::mesh::TextureGen::None
                     {
                         continue;
                     }
@@ -7486,8 +7709,22 @@ mod tests {
                     let home = t.data_file.map_or(id, u32::from);
 
                     for (mask, mirror, clamp_bit, origin_q2, drawn, axis_idx) in [
-                        (t.mask_s, t.mirror_s, t.clamp_s, t.origin_s as i32, t.drawn_width, 0usize),
-                        (t.mask_t, t.mirror_t, t.clamp_t, t.origin_t as i32, t.drawn_height, 1usize),
+                        (
+                            t.mask_s,
+                            t.mirror_s,
+                            t.clamp_s,
+                            t.origin_s as i32,
+                            t.drawn_width,
+                            0usize,
+                        ),
+                        (
+                            t.mask_t,
+                            t.mirror_t,
+                            t.clamp_t,
+                            t.origin_t as i32,
+                            t.drawn_height,
+                            1usize,
+                        ),
                     ] {
                         let coords: Vec<i32> = prim
                             .indices
@@ -7541,10 +7778,12 @@ mod tests {
                             let hw_min = ssb_rom::n64_addressing::address_axis(&model, min_c);
                             let hw_max = ssb_rom::n64_addressing::address_axis(&model, max_c);
                             let drawn_u32 = drawn as u32;
-                            let psp_min =
-                                ssb_rom::n64_addressing::psp_lowering_axis(min_c, period, drawn_u32, mirror, clamp_bit);
-                            let psp_max =
-                                ssb_rom::n64_addressing::psp_lowering_axis(max_c, period, drawn_u32, mirror, clamp_bit);
+                            let psp_min = ssb_rom::n64_addressing::psp_lowering_axis(
+                                min_c, period, drawn_u32, mirror, clamp_bit,
+                            );
+                            let psp_max = ssb_rom::n64_addressing::psp_lowering_axis(
+                                max_c, period, drawn_u32, mirror, clamp_bit,
+                            );
                             if hw_min != psp_min || hw_max != psp_max {
                                 mc.hw_psp_diverge += 1;
                             }
@@ -7553,7 +7792,12 @@ mod tests {
                         if mask == 0 {
                             m0.axis_instances += 1;
                             if !clamp_bit {
-                                unique_mask0_clear_tiles.insert((home, t.data_offset, mirror, clamp_bit));
+                                unique_mask0_clear_tiles.insert((
+                                    home,
+                                    t.data_offset,
+                                    mirror,
+                                    clamp_bit,
+                                ));
                                 m0.clamp_bit_clear += 1;
                                 // `clamp_bit` is clear here, so `mesh.rs`
                                 // only subtracted the origin if this was a
@@ -7581,10 +7825,16 @@ mod tests {
                             // mask-narrowed), not the drawn rect `drawn`
                             // above -- this is what `pack_rgba`/
                             // `pack_indexed` actually pads to a power of two.
-                            let axis_dim = if axis_idx == 0 { t.width } else { t.height }.max(1) as u32;
+                            let axis_dim =
+                                if axis_idx == 0 { t.width } else { t.height }.max(1) as u32;
                             let padded = ssb_rom::psp_texture::pad_to_power_of_two(axis_dim);
                             if padded != axis_dim {
-                                unique_non_pot_clamp_tiles.insert((home, t.data_offset, axis_idx, axis_dim));
+                                unique_non_pot_clamp_tiles.insert((
+                                    home,
+                                    t.data_offset,
+                                    axis_idx,
+                                    axis_dim,
+                                ));
                                 pp.non_pot_clamp_axis_instances += 1;
                                 // Origin already subtracted (clamp_bit is
                                 // set): the last logical texel starts at
@@ -7611,10 +7861,22 @@ mod tests {
             unique_mirror_clamp_tiles.len()
         );
         println!("  axis instances (primitive x axis): {}", mc.axis_instances);
-        println!("  UV range within first period:       {}", mc.within_first_period);
-        println!("  UV range reaches mirrored period:   {}", mc.within_mirrored_period);
-        println!("  UV range reaches 1 period beyond that: {}", mc.immediately_beyond);
-        println!("  UV range reaches >=2 periods beyond that: {}", mc.multiple_periods_beyond);
+        println!(
+            "  UV range within first period:       {}",
+            mc.within_first_period
+        );
+        println!(
+            "  UV range reaches mirrored period:   {}",
+            mc.within_mirrored_period
+        );
+        println!(
+            "  UV range reaches 1 period beyond that: {}",
+            mc.immediately_beyond
+        );
+        println!(
+            "  UV range reaches >=2 periods beyond that: {}",
+            mc.multiple_periods_beyond
+        );
         println!("  UV range goes negative:             {}", mc.negative);
         println!(
             "  hardware model vs current PSP lowering diverge: {} ({:.4}%)",
@@ -7651,7 +7913,10 @@ mod tests {
             pp.near_or_beyond_last_logical_texel
         );
 
-        assert!(primitives_examined > 0, "archive-wide walk found no textured primitives");
+        assert!(
+            primitives_examined > 0,
+            "archive-wide walk found no textured primitives"
+        );
         // RE-221 (`R2.0`/P0c): `texture::mirror_extend`/`psp_lowering_axis`
         // now bake every mask period a mirror+clamp axis's drawn rect spans,
         // not just the first mirrored pair (RE-220's measured gap) -- this
@@ -7763,7 +8028,8 @@ mod tests {
                         stats.distinct_tmem_values.insert(*tmem);
                         let is_ci4 = ssb_rom::texture::Format::from_raw(*format)
                             == Some(ssb_rom::texture::Format::Ci)
-                            && ssb_rom::texture::BitSize::from_raw(*size) == Some(ssb_rom::texture::BitSize::Bits4);
+                            && ssb_rom::texture::BitSize::from_raw(*size)
+                                == Some(ssb_rom::texture::BitSize::Bits4);
                         if is_ci4 {
                             stats.ci4_tile0_instances += 1;
                         }
@@ -7772,9 +8038,11 @@ mod tests {
                             stats.distinct_palette_values.insert(*palette);
                             if is_ci4 {
                                 stats.palette_nonzero_ci4 += 1;
-                                stats
-                                    .palette_nonzero_ci4_detail
-                                    .push((file.id, *palette, *last_tlut_count));
+                                stats.palette_nonzero_ci4_detail.push((
+                                    file.id,
+                                    *palette,
+                                    *last_tlut_count,
+                                ));
                             }
                         }
                         if *shift_s != 0 {
@@ -7845,13 +8113,19 @@ mod tests {
         }
 
         println!("files examined: {files_examined}");
-        println!("tile-0 G_SETTILE instances: {}", stats.tile0_settile_instances);
+        println!(
+            "tile-0 G_SETTILE instances: {}",
+            stats.tile0_settile_instances
+        );
         println!("  CI4 tile-0 instances: {}", stats.ci4_tile0_instances);
         println!(
             "  palette nonzero: {} (distinct values: {:?})",
             stats.palette_nonzero, stats.distinct_palette_values
         );
-        println!("  palette nonzero on a CI4 tile: {}", stats.palette_nonzero_ci4);
+        println!(
+            "  palette nonzero on a CI4 tile: {}",
+            stats.palette_nonzero_ci4
+        );
         println!(
             "  (file, bank, most recently loaded TLUT entry count): {:?}",
             stats.palette_nonzero_ci4_detail
