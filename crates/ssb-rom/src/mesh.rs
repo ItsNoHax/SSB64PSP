@@ -43,6 +43,15 @@ pub struct MeshVertex {
     pub uv: [i16; 2],
     /// Vertex colour, or a packed normal when the material is lit.
     pub rgba: [u8; 4],
+    /// Whether `rgba` is a packed normal, as `G_LIGHTING` stood *at `G_VTX`
+    /// load time* (RE-241) — not whatever the material says by the time a
+    /// later `G_TRI1`/`G_TRI2` draws this slot. Real hardware decides
+    /// normal-vs-colour when the RSP's vertex pipeline runs, which is
+    /// `G_VTX` itself; triangle commands only reference the already-resolved
+    /// cache. A node whose own list never mentions `G_LIGHTING` still gets
+    /// `false` here (RE-021's external-per-object case): this field is exact
+    /// when the in-list signal exists, not a substitute for recovering it.
+    pub lit: bool,
 }
 
 /// Which texture a primitive samples, identified by where it lives.
@@ -1497,6 +1506,14 @@ impl Builder {
     /// reinterpreted as if it were a normal on top of that. `pack.rs`'s
     /// `add_mesh` applies the equivalent transforms after shading instead,
     /// for exactly the vertices this skips.
+    ///
+    /// The gate below reads `v.lit`, not `self.material.lit` (RE-241): `v`
+    /// carries whatever `G_LIGHTING` was in effect when its own `G_VTX`
+    /// loaded it, which is when real hardware actually decided normal versus
+    /// colour. `self.material` is this call's *current*, possibly later,
+    /// state -- right when a display list toggles lighting between loading a
+    /// vertex and drawing a triangle that reuses it, the two disagree, and
+    /// only the vertex's own load-time value is correct.
     fn push_vertex(&mut self, mut v: MeshVertex) -> Result<u16, MeshError> {
         // RE-129/RE-130: captured before any of the branches below can
         // touch it, so `AlphaBlend::Shade` can restore exactly this value
@@ -1505,7 +1522,7 @@ impl Builder {
         // fired, and `SHADE_ALPHA` is this raw byte verbatim either way
         // (an N64 `Vtx_tn`'s alpha field is never itself lit).
         let raw_alpha = v.rgba[3];
-        if !self.material.lit {
+        if !v.lit {
             if let Some(c) = self.material.prim_color {
                 for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
                     *shade = ((*shade as u16 * prim as u16) / 255) as u8;
@@ -1742,6 +1759,10 @@ fn walk(
                                 pos: v.pos,
                                 uv: scaled_uv,
                                 rgba: v.rgba,
+                                // RE-241: the RSP resolves normal-vs-colour
+                                // when this command runs, not later when a
+                                // triangle references the slot.
+                                lit: state.material.lit,
                             },
                             space: state.space,
                         });
@@ -4824,11 +4845,14 @@ mod tests {
         let normal = [127i8 as u8, 0, 0, 255]; // a unit normal along x
         let file = vertex_data_rgba(3, normal);
         let cmds = [
-            vtx(3),
+            // RE-241: `G_LIGHTING` must be on *before* `G_VTX` loads this
+            // vertex, or push_vertex correctly treats it as an unlit shade
+            // (loaded before lighting turned on) and bakes the scale in.
             Cmd::GeometryMode {
                 clear: 0,
                 set: G_LIGHTING,
             },
+            vtx(3),
             prim_times_shade(),
             Cmd::SetPrimColor {
                 m: 0,
@@ -4859,11 +4883,13 @@ mod tests {
         let file = vertex_data_rgba(3, normal);
         let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
         let cmds = [
-            vtx(3),
+            // RE-241: `G_LIGHTING` must be on *before* `G_VTX` loads this
+            // vertex -- see the sibling `prim_times_shade` test just above.
             Cmd::GeometryMode {
                 clear: 0,
                 set: G_LIGHTING,
             },
+            vtx(3),
             Cmd::SetCombine { hi, lo },
             Cmd::SetPrimColor {
                 m: 0,
@@ -4916,6 +4942,100 @@ mod tests {
             "texture_blend must still resolve on the material"
         );
         assert_eq!(mesh.vertices[0].rgba, normal, "the raw normal must survive");
+    }
+
+    #[test]
+    fn vertex_meaning_is_fixed_at_g_vtx_load_time_off_then_on() {
+        // RE-241: a list that loads vertices unlit, turns `G_LIGHTING` on,
+        // loads more, then draws triangles from *both* batches must still
+        // bake the first (a real shade at load time) and protect the second
+        // (a real normal at load time) -- even though both triangles draw
+        // under the same, now-lit, current material.
+        let unlit_shade = [128, 128, 128, 255]; // plausible SHADE, not normal-looking
+        let lit_normal = [127i8 as u8, 0, 0, 255]; // unit normal along x
+
+        let mut file = vertex_data_rgba(3, unlit_shade);
+        file.extend(vertex_data_rgba(3, lit_normal));
+
+        let cmds = [
+            vtx(3), // slots 0..3, loaded before G_LIGHTING
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_LIGHTING,
+            },
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 3,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            }, // slots 3..6, loaded after G_LIGHTING
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255], // 50% scale
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::Tri1([3, 4, 5]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(
+            mesh.vertices[0].rgba,
+            [64, 64, 64, 255],
+            "loaded before G_LIGHTING must be baked as a shade"
+        );
+        assert_eq!(
+            mesh.vertices[3].rgba, lit_normal,
+            "loaded after G_LIGHTING must keep its raw normal"
+        );
+    }
+
+    #[test]
+    fn vertex_meaning_is_fixed_at_g_vtx_load_time_on_then_off() {
+        // RE-241, the reverse of the sibling test just above: vertices
+        // loaded lit, then more loaded after `G_LIGHTING` clears, then both
+        // triangles draw under the same, now-unlit, current material.
+        let lit_normal = [127i8 as u8, 0, 0, 255];
+        let unlit_shade = [128, 128, 128, 255];
+
+        let mut file = vertex_data_rgba(3, lit_normal);
+        file.extend(vertex_data_rgba(3, unlit_shade));
+
+        let cmds = [
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_LIGHTING,
+            },
+            vtx(3), // slots 0..3, loaded lit
+            Cmd::GeometryMode {
+                clear: G_LIGHTING,
+                set: 0,
+            },
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 3,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            }, // slots 3..6, loaded after G_LIGHTING cleared
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255], // 50% scale
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::Tri1([3, 4, 5]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(
+            mesh.vertices[0].rgba, lit_normal,
+            "loaded lit must keep its raw normal even after G_LIGHTING later clears"
+        );
+        assert_eq!(
+            mesh.vertices[3].rgba,
+            [64, 64, 64, 255],
+            "loaded after G_LIGHTING cleared must be baked as a shade"
+        );
     }
 
     #[test]

@@ -10,6 +10,149 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-241 — vertex normal-vs-colour meaning was decided at triangle-draw time, not `G_VTX` load time (`PLAN.md` R2.2/C2, in progress)
+
+**Question.** R2.2/C2 asks which state actually changes a vertex's meaning at
+`G_VTX`, traces fighter caller state through `ftDisplayMainProcDisplay` and
+`ftDisplayLightsDrawReflect`, and requires `looks_like_unit_normal` to become
+a genuine last-resort fallback rather than a primary mechanism. Two questions
+follow: (1) does this project's own conversion pipeline ever read the *wrong*
+lighting state when it decides whether a vertex's bytes are a colour or a
+normal, and (2) can the "external, per-object `G_LIGHTING`" gap RE-021 already
+named (`looks_like_unit_normal` covering 36,356 of ~37,000 vertices with no
+in-list signal at all) be narrowed with real caller evidence instead of pure
+data-shape guessing?
+
+**Evidence, part 1 — a real timing bug.** `crates/ssb-rom/src/mesh.rs`'s
+`Cmd::Vtx` handler already captures `space` (which node's matrix was current)
+into `CacheEntry` at load time, with its own doc comment explaining why:
+"`G_VTX` transforms vertices by the modelview matrix *as it stands at load
+time*". `push_vertex`'s normal-vs-colour bake gate had no equivalent: it read
+`self.material.lit`, the *current* material as of whatever command most
+recently ran — which, for a vertex loaded by an earlier `G_VTX` and then
+drawn by a `G_TRI1`/`G_TRI2` after an intervening `G_SETGEOMETRYMODE` toggled
+`G_LIGHTING`, is the state at *triangle* time, not load time. Real hardware's
+RSP resolves lighting once, in the vertex pipeline `G_VTX` itself runs;
+`G_TRI1`/`G_TRI2` only reference the already-resolved cache. This is exactly
+the failure mode `PLAN.md`'s own R2.2 execute-order names as a stop condition:
+"vertex meaning depends on triangle-time state". `pack.rs`'s `add_mesh` had
+the same bug one layer downstream: its per-vertex `lit[]` array (RE-103) read
+`p.material.lit`, the enclosing *primitive's* triangle-time flag, with the
+same vulnerability.
+
+Two of RE-240's own tests
+(`a_lit_vertex_with_a_prim_times_shade_combiner_keeps_its_raw_normal`,
+`a_lit_vertex_with_a_texture_blend_combiner_keeps_its_raw_normal`) had
+unknowingly encoded this exact shape — `G_VTX` first, `G_SETGEOMETRYMODE(set
+G_LIGHTING)` second, `G_TRI1` third — and continued to pass under the old,
+triangle-time-state code purely because both the load and the draw disagreed
+with real hardware in the same direction. Fixing the bug (below) made both
+fail, correctly: the vertex was loaded *before* `G_LIGHTING` was on, so real
+hardware would have treated it as a shade, and `push_vertex` must bake the
+`prim_color`/`texture_blend` scale into it, not protect it as a normal.
+Reordering the commands so `G_LIGHTING` is set before `G_VTX` (matching the
+tests' actual intent — a genuinely lit vertex) restored both.
+
+**Evidence, part 2 — the caller trace.** `ftDisplayMainProcDisplay`
+(`refs/ssb-decomp-re/src/ft/ftdisplaymain.c:1069`) unconditionally issues
+`gSPSetGeometryMode(..., G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING |
+G_SHADING_SMOOTH)` for every fighter draw under `nDBDisplayModeMaster` or
+`nDBDisplayModeMapCollision`, regardless of `colanim.is_use_light` (that flag
+only gates whether `ftDisplayLightsDrawReflect` additionally configures a
+reflected light source beforehand) — before any of the fighter's own node
+lists run. Archive-wide, `grep -rl G_LIGHTING refs/ssb-decomp-re/src/` matches
+only `ft/`, `mv/` (movie/opening, which draws fighter models), `mn/` (menu
+character portraits, same models), `sc/`, and `db/` — never `gr/` (stages) or
+`it/` (items), which never reference `G_LIGHTING` at all. This corroborates
+RE-021's own finding (`G_LIGHTING` is set "per-object by `objdisplay.c`
+before the list runs") with a concrete, named caller, and narrows it further:
+the external-lighting gap is specifically a *fighter/character-model* concern,
+never a stage or item one.
+
+**Hypothesis.** The load-time capture bug (part 1) is a correctness defect
+independent of how common it is in the real archive, and `PLAN.md` treats it
+as a stop condition rather than something to leave until measured prevalence
+justifies it. The external-initial-state gap (part 2) is real and evidenced,
+but closing it requires mapping each archive *mesh/costume* file to the
+fighter whose caller sets this state — and RE-240 already found that mapping
+does not exist yet: `fighter::FIGHTER_FILES` names only each fighter's
+`FTAttributes` file, not the separate costume/mesh files their models
+actually live in (e.g. file 296, Mario's hat, is nowhere in that table).
+Guessing that mapping from file adjacency or naming would be exactly the
+"fingerprint that merely fits" this project's own standards reject; it needs
+its own explicit-pairing recovery, the same way `DObjDesc` (RE-023) and
+`MObjSub` (RE-027) were recovered. That recovery is out of scope for this
+session and left as this entry's own follow-up.
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs`: added `MeshVertex::lit`,
+set from `state.material.lit` at the exact point `Cmd::Vtx` populates
+`CacheEntry` (mirroring the existing `space` field's load-time capture).
+`rebase()` already carries it through via `..e.vertex`. `push_vertex`'s
+colour-baking gate now reads `v.lit` (the vertex's own load-time value)
+instead of `self.material.lit` (current/triangle-time). `crates/ssb-rom/src/
+pack.rs`'s `add_mesh`: the per-vertex `lit[]` derivation now reads
+`v.lit || looks_like_unit_normal(v.rgba)` directly — dropping `p.material.lit`
+and the primitive-indices loop it required (RE-103's "first primitive to
+touch a shared vertex wins" approximation is no longer needed: `lit` is now
+an intrinsic per-vertex fact fixed at load time, not something that can
+legitimately differ by which primitive later references the same cache
+slot — and Builder's existing dedup-by-full-equality already splits two
+genuinely different load-time states of "the same" raw slot into distinct
+`MeshVertex` entries, the same mechanism RE-103 relies on for baked-colour
+distinctions). `p.material.lit` itself is untouched everywhere else (RE-021's
+`looks_like_unit_normal` fallback, `flags::LIT`/runtime GE relighting,
+primitive splitting) — those are legitimately primitive/triangle-time
+concerns, not the normal-vs-colour byte interpretation this fix targets.
+
+Added `mesh.rs` tests `vertex_meaning_is_fixed_at_g_vtx_load_time_off_then_on`
+and `..._on_then_off`: each loads one batch of vertices, toggles
+`G_LIGHTING`, loads a second batch, then draws *both* triangles under the
+same (post-toggle) current material — proving the bake decision follows each
+vertex's own load-time state, not the shared triangle-time state both
+triangles draw under. Reordered RE-240's two combiner tests (above) to match
+their actual intent. Updated `pack.rs`'s `sample_mesh()` fixture and its two
+`material.lit = true` test sites to set the matching vertices' own `lit`
+field explicitly, since `add_mesh` no longer reads the primitive flag for
+this decision; the six `material.lit = false` sites needed no change; they
+already depend on the `looks_like_unit_normal` fallback, which is unchanged.
+
+Added `tools/romtool`'s `census_g_vtx_vs_triangle_time_lighting_state`, kept
+permanently: for every real triangle-corner vertex reference archive-wide,
+compares the vertex's own load-time `lit` against the enclosing primitive's
+triangle-time `material.lit` (the value pre-fix code effectively used).
+**Result: 0/110,316 disagree.** No display list in this ROM's archive
+actually toggles `G_LIGHTING` between loading a cache slot and drawing a
+triangle that reuses it — the bug was real and matches a named `PLAN.md` stop
+condition, but is not currently observable in any rendered frame. Rebuilding
+`assets/generated/ssb64.pak` (`romtool pack`) produced a byte-identical file
+(confirmed via `git status`/`git diff`, both clean), consistent with the
+zero-disagreement census.
+
+**Status.** Part 1 (load-time capture) is complete: implemented, tested
+(including "test the test" via RE-240's two tests, which changed from
+passing-for-the-wrong-reason to failing to passing-for-the-right-reason),
+measured archive-wide, and documented. Part 2 (explicit external initial
+lighting state for fighter draws) is evidenced but not implemented — it
+needs a fighter mesh/costume-file identification this project does not yet
+have, tracked as a follow-up. `R2.2`/C2 stays `IN_PROGRESS`.
+
+**Verification.** `cargo test --workspace` (`SSB64_ROM` set): `ssb-rom` 411
+passed (up from 409, two new tests), `romtool` 14 passed, 0 failed. `cargo fmt
+--check` clean. `cargo clippy --workspace --all-targets` clean (the same two
+pre-existing, unrelated warnings as RE-240). Rebuilt `assets/generated/
+ssb64.pak` (`romtool pack`): byte-identical to the pre-fix build (`git diff`
+clean), matching the 0/110,316 census result.
+
+**Confidence.** High for the load-time-capture fix itself (RE-240's own tests
+independently exercised and confirmed the exact failure mode once fixed) and
+for its real-archive prevalence (measured 0/110,316, not assumed). High for
+the caller-trace finding (`ftDisplayMainProcDisplay`'s unconditional
+`G_LIGHTING` set is unambiguous in the decompilation) as *evidence*; the
+initial-lighting-state fix itself is not yet implemented, so this entry makes
+no completion claim for that half of C2.
+
+---
+
 ## RE-240 — `push_vertex` was baking colour into lit vertices' normals, then `pack.rs` was scaling `prim_color` twice (`PLAN.md` R2.2/C1)
 
 **Question.** R2.2/C1 asks to trace raw vertex RGBA/normal bytes end to end

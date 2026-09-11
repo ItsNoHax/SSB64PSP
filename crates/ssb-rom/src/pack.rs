@@ -1528,38 +1528,26 @@ impl PackWriter {
         // literal colour. The IR keeps the raw bytes (it is deliberately
         // lossless); interpreting them is this lowering step's job.
         //
-        // Decided per-vertex, not per-primitive (RE-103): a fighter's mixed
-        // material -- decal highlights drawn as literal colour alongside a
-        // lit body sharing the same vertex buffer -- routinely lands at a
-        // 20-80% split within one primitive, nowhere near unanimous. Voting
-        // by majority forces every vertex on the losing side to the wrong
-        // interpretation: shaded when it should have stayed a literal
-        // colour, or (what RE-103 actually found, on Fox/Falcon/Kirby/Ness)
-        // left as a raw normal read straight into RGB when it should have
-        // been shaded -- normals are small, near-zero-centred bytes, and
-        // painting them as colour directly is exactly what a "melted",
-        // rainbow-noise surface looks like. `p.material.lit` (trusted when
-        // the geometry mode says so) still applies to every vertex the
-        // primitive touches, since real hardware computes lighting for the
-        // whole draw once G_LIGHTING is on; `looks_like_unit_normal`'s
-        // per-vertex, data-driven fallback is what makes the two kinds of
-        // vertex coexist correctly within one primitive.
-        let mut lit = alloc::vec![false; mesh.vertices.len()];
-        for p in &mesh.primitives {
-            for &i in &p.indices {
-                let Some(slot) = lit.get_mut(i as usize) else {
-                    continue;
-                };
-                if *slot {
-                    continue;
-                }
-                *slot = p.material.lit
-                    || mesh
-                        .vertices
-                        .get(i as usize)
-                        .is_some_and(|v| looks_like_unit_normal(v.rgba));
-            }
-        }
+        // Decided per-vertex (RE-103), from each vertex's own `lit` (RE-241):
+        // a fighter's mixed material -- decal highlights drawn as literal
+        // colour alongside a lit body sharing the same vertex buffer --
+        // routinely lands at a 20-80% split within one primitive, nowhere
+        // near unanimous, so a primitive-level flag was always the wrong
+        // grain. `MeshVertex::lit` is ground truth captured at `G_VTX` load
+        // time, not `p.material.lit`'s triangle-time snapshot -- trusting the
+        // primitive here would reintroduce exactly the timing bug RE-241
+        // fixed in `push_vertex`, just one layer later (a display list that
+        // toggles `G_LIGHTING` between loading a slot and drawing a triangle
+        // that reuses it). `looks_like_unit_normal`'s data-driven fallback
+        // (RE-021) remains for the one case load-time state still cannot
+        // know: a node whose own list never mentions `G_LIGHTING` at all
+        // because real hardware set it externally, per-object, before the
+        // list ran.
+        let lit: alloc::vec::Vec<bool> = mesh
+            .vertices
+            .iter()
+            .map(|v| v.lit || looks_like_unit_normal(v.rgba))
+            .collect();
 
         // RE-106/RE-240: `MeshMaterial::prim_color` is not a literal colour
         // despite the name -- `material_now()` (mesh.rs) overwrites it with
@@ -3235,16 +3223,19 @@ mod tests {
                     pos: [1, 2, 3],
                     uv: [32, 64],
                     rgba: [0x11, 0x22, 0x33, 0x44],
+                    lit: false,
                 },
                 MeshVertex {
                     pos: [4, 5, 6],
                     uv: [0, 0],
                     rgba: [255, 255, 255, 255],
+                    lit: false,
                 },
                 MeshVertex {
                     pos: [7, 8, 9],
                     uv: [1, 2],
                     rgba: [0, 0, 0, 255],
+                    lit: false,
                 },
             ],
             primitives: alloc::vec![Primitive {
@@ -4042,6 +4033,13 @@ mod tests {
         let mut m = sample_mesh();
         m.primitives[0].material.lit = true;
         m.primitives[0].material.prim_color = None;
+        // RE-241: `add_mesh` now trusts each vertex's own load-time `lit`,
+        // not the primitive's -- set it explicitly, since white does not
+        // pass `looks_like_unit_normal` either and would otherwise stay
+        // unshaded despite `material.lit` above.
+        for v in &mut m.vertices {
+            v.lit = true;
+        }
         let mut w = PackWriter::new();
         w.add_mesh(&m, 0, 0, |_| None, |_| None);
         let bytes = w.finish();
@@ -4203,6 +4201,8 @@ mod tests {
         m.primitives[0].material.prim_color = Some([255, 0, 0, 255]); // pure red scale
         for v in &mut m.vertices {
             v.rgba = toward;
+            // RE-241: `add_mesh` trusts each vertex's own load-time `lit`.
+            v.lit = true;
         }
 
         let mut w = PackWriter::new();

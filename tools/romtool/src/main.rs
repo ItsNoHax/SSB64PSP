@@ -7776,6 +7776,56 @@ mod tests {
         );
     }
 
+    /// `R2.2`/C2 (RE-241): measures how often a vertex's own load-time `lit`
+    /// (`MeshVertex::lit`, captured at `G_VTX`) disagrees with the
+    /// primitive-level, triangle-time `material.lit` the pre-RE-241 pipeline
+    /// used in its place. A disagreement is exactly the "vertex meaning
+    /// depends on triangle-time state" bug RE-241 fixed: a display list that
+    /// toggles `G_LIGHTING` between loading a cache slot and drawing a
+    /// triangle that reuses it. Kept as a permanent regression census, like
+    /// RE-240's own -- a future change that goes back to reading
+    /// `self.material.lit` in `push_vertex` (mesh.rs) or `p.material.lit` in
+    /// `add_mesh` (pack.rs) would need this same measurement redone to
+    /// notice it silently reintroduced the bug.
+    #[test]
+    fn census_g_vtx_vs_triangle_time_lighting_state() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut vertex_refs_checked = 0usize;
+        let mut disagreements = 0usize;
+        let mut affected_files: BTreeSet<u32> = BTreeSet::new();
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for mesh in super::file_meshes(&loaded, file) {
+                for p in &mesh.primitives {
+                    for &i in &p.indices {
+                        let Some(v) = mesh.vertices.get(i as usize) else {
+                            continue;
+                        };
+                        vertex_refs_checked += 1;
+                        if v.lit != p.material.lit {
+                            disagreements += 1;
+                            affected_files.insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C2 load-time-vs-triangle-time lighting census: \
+             {disagreements}/{vertex_refs_checked} triangle-corner vertex references \
+             disagree between G_VTX load time and triangle draw time"
+        );
+        let ids: Vec<String> = affected_files.iter().map(u32::to_string).collect();
+        println!("R2.2/C2 affected archive files: {}", ids.join(", "));
+    }
+
     /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is
     /// only their 3x3 linear part, and only up to a positive uniform scale.
     #[test]
