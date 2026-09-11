@@ -124,6 +124,18 @@ regression_capture_scene13 = []
 # Off by default.
 regression_capture_scene14 = []
 
+# `R2.2`/C3 measurement rig (RE-251): a synthetic, non-ROM diagnostic proving
+# `apply_material`'s `sceGuDepthMask` wiring, the same `texgen_normal_
+# diagnostic_*` shape as `normal_diag.rs` (one purpose-built scene replacing
+# the whole frame, not a stage/object pick). Draws three quads: an opaque far
+# quad (depth-test on, write on), a translucent near quad overlapping it
+# (depth-test on, write OFF), then a third opaque quad at a depth between the
+# two, drawn last (depth-test on, write on again) -- proving the ON->OFF->ON
+# switch and that a depth-test/no-write translucent front surface does not
+# block a later opaque draw the way a write-enabled one would. Off by
+# default.
+depth_mask_diagnostic = []
+
 # R2.1/T2 measurement rig (RE-226): replaces the whole scene with one
 # full-screen quad whose vertices share a single hand-picked `GU_NORMAL_8BIT`
 # value, drawn through `sceGuTexProjMapMode` with a synthetic 256x256 ramp

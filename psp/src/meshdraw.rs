@@ -767,19 +767,33 @@ unsafe fn apply_material(
             sys::sceGuDisable(GuState::Lighting);
         }
 
-        // `Z_BUFFER` is the real per-primitive signal (RE-068): the RDP's
-        // per-frame reset (`refs/ssb-decomp-re/src/sys/rdp.c`'s
-        // `sSYRdpResetDisplayList`) turns depth testing on by default, so a
-        // node whose own list never mentions it is not "unknown", it is
-        // z-buffered like everything else -- 98.3% of packed primitives
-        // carry the flag. The 1.7% that clear it (an always-on-top overlay,
-        // typically) must not be depth-tested against geometry drawn under
-        // the default.
-        if p.flags & flags::Z_BUFFER != 0 {
+        // RE-244 through RE-250 (`R2.2`/C3): `DEPTH_TEST`/`DEPTH_WRITE` are
+        // `G_SETRENDERMODE`'s own `Z_CMP`/`Z_UPD` bits, seeded from the same
+        // per-frame/per-object/per-camera/per-list defaults `Z_BUFFER`
+        // (`G_ZBUFFER`, RE-068) already relies on, plus the external wrapper
+        // and `PlannedList.list_id` corrections `Z_BUFFER` alone cannot
+        // express (a real depth-test-without-write surface, e.g. a stage's
+        // translucent render-layer-1 list-1 entries). `Z_BUFFER` and
+        // `DEPTH_TEST` agree everywhere except the ~1578 primitives RE-249
+        // traced to genuine archive content -- the ROM's own display lists
+        // setting `G_ZBUFFER` without a matching `Z_CMP`/`Z_UPD` -- so
+        // `DEPTH_TEST` is strictly more correct, not merely different.
+        if p.flags & flags::DEPTH_TEST != 0 {
             sys::sceGuEnable(GuState::DepthTest);
         } else {
             sys::sceGuDisable(GuState::DepthTest);
         }
+
+        // `Z_UPD`: a depth-tested translucent surface (`ZMODE_XLU`) tests
+        // against geometry already drawn but must not itself occlude
+        // geometry drawn later in the same pass. `sceGuDepthMask`'s `mask`
+        // argument is inverted from the source bit's own sense -- `1`
+        // *disables* GE depth writes, matching `DEPTH_WRITE` clear.
+        sys::sceGuDepthMask(if p.flags & flags::DEPTH_WRITE != 0 {
+            0
+        } else {
+            1
+        });
 
         // A cutout surface (foliage, grates): the RDP resolves
         // `CVG_X_ALPHA | ALPHA_CVG_SEL` through multisampled edge coverage

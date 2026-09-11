@@ -2,10 +2,58 @@
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
-- Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`IN_PROGRESS`,
-  part 7 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248/RE-249/
-  RE-250); C4-C7 remain
-- Last complete: `RE-250` (2026-09-11) -- `R2.2`/C3 part 7: gave `PlannedList`
+- Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`COMPLETE`,
+  RE-244 through RE-251, 8 parts); C4-C7 remain
+- Last complete: `RE-251` (2026-09-11) -- `R2.2`/C3 part 8, **closes C3**:
+  wired `psp/src/meshdraw.rs`'s `apply_material` to the independent
+  `depth_test`/`depth_write` state RE-244-250 built and fully seeded,
+  superseding the interim `z_buffer`-keyed `GuState::DepthTest` proxy
+  (RE-068). Replaced the `flags::Z_BUFFER` check with `flags::DEPTH_TEST`
+  and added `sys::sceGuDepthMask(if flags::DEPTH_WRITE { 0 } else { 1 })`
+  (the argument is inverted from the source bit's own sense), both inside
+  the same `st.last_flags` change-detection block `DepthTest` already used.
+  Measured the golden-scene impact against a same-environment pre/post
+  rebuild (not the possibly-stale committed PNGs directly -- see this
+  entry's own environment-drift note): 9 of the 13 existing
+  `regression_capture_scene{2..14}` goldens are byte-identical (confirmed
+  directly for Fox's graph: all 30 packed primitives already read
+  `z_buffer == depth_test == depth_write == true`); the other 4 (Dream
+  Land, all three metal-texgen scenes) change by 220-13,008 pixels, each
+  visually localized to overlapping translucent/reflective content (a
+  canopy highlight triangle, a hull texture patch, one crystal facet's
+  occlusion) and explainable as a depth-order correction, not corruption --
+  refreshed after inspection. No existing golden's frozen camera puts a
+  depth-test-without-write surface in front of later-drawn geometry at an
+  overlapping screen position (confirmed even for stage 7/Sector Z,
+  deliberately chosen for having the most layer-1 list-1 content of any
+  stage but still byte-identical before/after), so added a synthetic,
+  non-ROM `depth_mask_diagnostic` scene (`psp/src/depth_diag.rs`, same
+  shape as `normal_diag.rs`'s `texgen_normal_diagnostic_*` rig): three
+  overlapping quads -- opaque red far (write on), translucent green near
+  (write **off**), opaque blue between the two in depth drawn last (write
+  on again, the ON->OFF->ON switch) -- proving a depth-test-without-write
+  surface does not block a later opaque draw the way a write-enabled one
+  would (real-time translucency compositing, RE-244's `ZMODE_XLU`).
+  Self-validated by temporarily forcing the green quad's write flag on
+  (simulating a broken wire): the expected nested blue disc vanished
+  entirely on a PPSSPP headless capture, confirming the regression actually
+  discriminates; reverted, and the fixed build is deterministic (0
+  differing pixels across two captures). New golden:
+  `tests/golden/r2-depth-mask-diagnostic.png`. `PLAN.md` C3's acceptance
+  line accepts PPSSPP *or* physical-PSP evidence; physical hardware was
+  enumerated over USB but not in an active PSPLink session this session
+  could establish (launching PSPLink from the device's own XMB needs
+  physical interaction), so this closes C3 on PPSSPP evidence alone,
+  leaving a hardware pass open for later. Also found and deliberately left
+  open (not fixed by this entry): comparing rebuilt headless captures
+  directly against the *committed* golden PNGs shows large diffs
+  (tens of thousands of pixels) even for a pristine pre-change rebuild with
+  zero code changes -- a pre-existing environment/toolchain drift between
+  whatever produced the currently-committed goldens and this session's
+  PPSSPP headless binary, unrelated to this change, caught only because the
+  same-environment pre/post comparison above isolates the real effect. See
+  `docs/reverse-engineering.md` RE-251 for the full entry.
+- Previously complete: `RE-250` (2026-09-11) -- `R2.2`/C3 part 7: gave `PlannedList`
   its own `list_id` field (populated from each `DlLink`'s own `list_id`,
   which `scene::DlLink` already parsed but flattening discarded) and a new
   `SequenceItem::depth_seed` per-item override in `convert_sequence`, applied
@@ -183,21 +231,19 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C3 continues. Item 1 (find/rule out another external wrapper)
-  was answered by RE-249: ruled out. Item 2 (`PlannedList`'s `list_id` gap)
-  is now closed by RE-250. One sub-problem remains:
-  1. Wire `psp/src/meshdraw.rs`'s `apply_material` to use the now-fully-
-     corrected per-primitive `depth_test`/`depth_write` state: keep
-     `GuState::DepthTest` correctness at least as good as today's `z_buffer`
-     heuristic, and map `depth_write` through `sceGuDepthMask` (`true`
-     disables PSP writes -- note the inversion at the call site). Add a
-     depth-test/no-write translucent-front/opaque-behind scene and an
-     ON->OFF->ON switch regression, with PPSSPP or physical-PSP evidence,
-     per `PLAN.md`'s C3 acceptance criteria. `depth_mode` (`ZMode`) has no
-     PSP GE equivalent hardware feature identified yet; kept as measured
-     data only.
-- Blockers: none for what RE-250 closed (it does not close C3 -- the PSP-
-  side wiring and device-evidence regression above remain). Same
+- Next: `R2.2`/C3 is closed. `R2.2`/C4 -- Preserve submission order -- is the
+  next eligible task: audit `merge_by_material` and callers; measure
+  primitive runs before/after, non-adjacent merges, and translucency/
+  depth-write/alpha-test/framebuffer interactions the merge could reorder
+  incorrectly (`PLAN.md` C4 for the full description). Not yet started.
+- Blockers: none. Two non-blocking follow-ups from this session, not yet
+  investigated: (1) a pre-existing environment/toolchain drift makes
+  rebuilt PPSSPP headless captures differ from several *committed* golden
+  PNGs by tens of thousands of pixels even with zero code changes (found
+  while isolating RE-251's own effect via same-environment pre/post
+  rebuilds instead of comparing against the committed goldens directly);
+  (2) physical-PSP confirmation of `tests/golden/r2-depth-mask-diagnostic.png`
+  (PSPLink was not in an active session this session could establish). Same
   non-blocking follow-ups RE-240/RE-241/RE-242/RE-245 already recorded
   remain open (visual before/after for RE-240's 23 affected files; the
   `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
@@ -208,36 +254,48 @@
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-250.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-251.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
-  `IN_PROGRESS`, C4-C7 remain).
-- Decisions: `DECISIONS.md` -- no new revision for RE-250 (D-042 already
-  covers "renderer correctness claims stay provisional until R2.2 closes").
+  `COMPLETE`, C4-C7 remain).
+- Decisions: `DECISIONS.md` -- no new revision for RE-251 (D-042 already
+  covers "renderer correctness claims stay provisional until R2.2 closes";
+  C3 closing does not close R2.2 itself, C4-C7 remain).
 - Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  `PlannedList`'s `list_id` gap is closed (RE-250) -- layer 1's list-1
-  entries now seed depth-test-without-write via a new per-item
-  `SequenceItem::depth_seed` override; PSP-side `sceGuDepthMask` wiring and
-  device evidence remain open.
-- Verification (RE-250): `crates/ssb-rom/src/mesh.rs` gained
-  `SequenceItem::depth_seed` and its `convert_sequence` handling, plus one
-  new unit test; `tools/romtool/src/main.rs` gained `PlannedList::list_id`
-  and `ground_layer1_list1_depth_seed`, wired into all `SequenceItem`
-  builders. `cargo test --workspace --all-targets` (`SSB64_ROM` set):
-  `ssb-rom` 420 passed (419 + 1 new), `romtool` 22 passed, `ssb-engine` 48,
-  `ssb-game` 120, 0 failed overall. `cargo fmt --check` clean. `cargo
-  clippy --workspace --all-targets` clean (same pre-existing, unrelated
-  warnings as prior sessions). `romtool pack` rebuilt against the real ROM:
-  mesh/triangle/draw/texture/object counts unchanged (2044/36772/8056/
-  1345/374), transitions unchanged (77 animated nodes), size unchanged
-  (10935.5 KiB) -- only `depth_write`/`depth_mode` values on already-
-  existing primitives changed, confirmed by a raw byte diff against the
-  pre-change pack.
-- Documentation: RE-250, `PLAN.md` (`R2.2`/C3 status, cross-reference
-  table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: `2250edc` (RE-250, `R2.2`/C3 part 7: `PlannedList`'s `list_id`
-  field and per-item depth-seed override for stage render-layer 1's list-1
-  entries).
+  `psp/src/meshdraw.rs`'s `apply_material` now reads `depth_test`/
+  `depth_write` directly instead of the `z_buffer` proxy; `PLAN.md`
+  R2.2/C3 is `COMPLETE`.
+- Verification (RE-251): `psp/src/meshdraw.rs`'s `apply_material` replaced
+  its `flags::Z_BUFFER`-gated `GuState::DepthTest` toggle with
+  `flags::DEPTH_TEST`, and added `sys::sceGuDepthMask` keyed on
+  `flags::DEPTH_WRITE`. New `psp/src/depth_diag.rs` (`depth_mask_diagnostic`
+  feature) and `psp/Cargo.toml` feature entry. `crates/ssb-rom/src/pack.rs`'s
+  `DEPTH_TEST`/`DEPTH_WRITE` doc comments updated to say they are now
+  consumed on the device side. `cargo test --workspace --all-targets`
+  (`SSB64_ROM` set): `ssb-rom` 420, `romtool` 22, `ssb-engine` 48, `ssb-game`
+  120 passed, 0 failed -- unchanged counts (no `ssb-rom` data-model change).
+  `cargo fmt --check`/`cargo clippy --all-targets` clean in `psp/` (same
+  pre-existing warnings as prior sessions; the new file adds none). Pack not
+  rebuilt (no asset-pipeline code changed; pack SHA-256 unchanged,
+  `189904a9...52962`). PPSSPP headless: measured the 14 existing golden
+  scenes against a same-environment pre/post rebuild (isolating this
+  change's real effect from the separately-flagged environment-drift
+  issue) -- 9 byte-identical, 4 changed by a small, localized, visually-
+  explainable amount and refreshed (`r0-dream-land-default.png`,
+  `r2-metal-texgen.png`, `r2-metal-texgen-rotated.png`,
+  `r2-metal-texgen-camera-rotated.png`). Added and captured
+  `tests/golden/r2-depth-mask-diagnostic.png`
+  (SHA-256 `47d0cb28...45890`), self-validated by a temporary bug injection
+  that made its expected pixel vanish, then reverted; two captures of the
+  fixed build are byte-identical. Rebuilt the plain default (no-feature)
+  EBOOT afterward per this project's own convention.
+- Documentation: RE-251, `PLAN.md` (`R2.2`/C3 status now `COMPLETE`,
+  cross-reference table, acceptance checklist), `docs/porting-status.md`,
+  `docs/visual-regression.md` (new scene section, test-matrix row,
+  C1-C7 pending-matrix note), `crates/ssb-rom/src/pack.rs` doc comments,
+  this snapshot.
+- Commit: pending (RE-251, `R2.2`/C3 part 8: wire `apply_material` to
+  independent depth-test/write state, closing C3).
 
 ## Continuation
 
