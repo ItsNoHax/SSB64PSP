@@ -10,6 +10,82 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-236 — Physical-PSP leg of T8 captured against the refreshed goldens; closes `R2.1`/T8
+
+**Question.** RE-235 refreshed the PPSSPP legs of T8 (scenes 11-13) but was
+blocked from the physical-PSP leg by a USB permission error. Once resolved,
+does the same content match on real hardware, closing T8?
+
+**Evidence.** The blocker was a stale device-file permission, not a missing
+udev rule: replugging the PSP re-enumerated it (`lsusb` bus device number
+changed `003` → `008`) and `/dev/bus/usb/001/008` came up
+`crw-rw-rw-`. `usbhostfs_pc -v` then connected immediately and `pspsh -e
+ver` returned `PSPLink v3.2.1`.
+
+Captured all three scenes on the same PSP Slim, 6.61, ARK/Infinity, PSPLink
+v3.2.1 hardware RE-214/RE-215/RE-233 used, each following
+`docs/psplink.md`'s kill/reset-before-`ldstart` methodology (`modlist`
+checked before each load; `kill` + `reset` between scenes, not only after a
+fault):
+
+* scene 11 (`regression_capture_scene11`): `ldstart` UID `0x04399105`,
+  `exlist` empty, `scrshot host0:/psp-hw-scene11.bmp` — sha256
+  `57bc9d0271a030ad5fb298c8e87c73a6e43a5535c83dd32b2ddb3d7e4d581695`.
+* scene 12 (`regression_capture_scene12`): `ldstart` UID `0x04392907`,
+  `exlist` empty, `scrshot host0:/psp-hw-scene12.bmp` — sha256
+  `224351a09c5dbcccf688bcec5ae40794cb1c1c1ef6a43e68e9e026f32e674f75`.
+* scene 13 (`regression_capture_scene13`): `ldstart` UID `0x0441A007`,
+  `exlist` empty, `scrshot host0:/psp-hw-scene13.bmp` — sha256
+  `0cd9099fb8396787a30f5d85c5a155bdc57ea9d0246b1b93af8a8ed34d639fb0`.
+
+Pack hash for all three loads:
+`ef8e58f9ca360f08c593ff3297c0ba31350f4f84c8aaae82eab8c80f89e8f2a0`
+(`assets/generated/ssb64.pak`, unchanged since RE-233 — RE-235's golden
+refresh touched no asset-pipeline code). Built at commit `6639011`.
+
+Each native 480x272 capture, upscaled 2x nearest-neighbour (matching RE-214's
+own method), was diffed against its just-refreshed PPSSPP golden: 36,607 /
+27,076 / 30,345 differing pixels for scenes 11/12/13. This is the same order
+of magnitude as RE-214's own PPSSPP/hardware baseline (25,977 / 28,866, with
+the non-texgen Dream Land scene diffing 61,362 by the same measurement) —
+expected antialiasing/rasterization noise, not a regression. Visual
+inspection of all three upscaled captures (beyond the diff count) confirms
+the actual content matches: scene 11 and 12 show the same crystal cluster at
+the same two rotations as their PPSSPP goldens (only PSPLink's own status
+text and expected edge antialiasing differ), and scene 13 shows the same
+rope-walkway geometry with the same smooth yellow-white-red linear-texgen
+gradient bar — the corrected texel from RE-232's (T7a) addressing fix
+renders identically on real hardware, not just in PPSSPP's software
+rasterizer.
+
+**Conclusion.** `PLAN.md` R2.1/T8 acceptance is met: original-N64 (RE-234,
+real 1P Mode play), PPSSPP (RE-235, refreshed post-T7a) and physical PSP
+(this entry) all captured for the same `StageMetalFile2` content, at two
+model rotations (scenes 11/12) plus the one linear-texgen primitive (scene
+13). Model/camera reflection response was directly checked (scene 11 vs 12
+differs substantially on both PPSSPP and hardware) and ordinary-versus-linear
+behaviour was directly checked (scene 11/12 vs scene 13's distinct gradient
+primitive). Diffuse-light independence, tile-origin phase and generated span
+were not re-derived from these screenshots directly — they rest on T2's
+(RE-226), T6's (RE-230) and T7/T7a's (RE-231/RE-232) own dedicated
+measurements, which this entry's matching captures are consistent with, not
+independent proof of. The original-ROM comparison itself stays qualitative
+(shape/colour/material-behaviour match, not a pixel-level ROI overlay) per
+`PLAN.md` T8's own text, which asks for a "texgen-focused ROI comparison
+rather than requiring identical full-screen rasterization" — the original
+captures' small scale and full-gameplay framing make anything stricter
+infeasible with this route (RE-216's finding: real 1P Mode play is the only
+way to legitimately reach stage 8). `R2.1`/T8 is `COMPLETE`; T9 (physical PSP
+matrix after semantics are fixed) is next.
+
+**Confidence: high** — deterministic PPSSPP goldens, real hardware captures
+with matching content and hashes recorded, `exlist` empty throughout, no
+other golden touched. The qualitative-only nature of the original-ROM leg is
+a known, explained limitation of the only legitimate capture route
+(RE-216/RE-234), not an open question.
+
+---
+
 ## RE-235 — Refreshed the metal-texgen PPSSPP goldens post-T7a, cross-checked against the RE-234 original-ROM captures (`PLAN.md` R2.1/T8, in progress)
 
 **Question.** RE-234 obtained the original-ROM leg of T8. Still open: the

@@ -3122,14 +3122,13 @@ clamp-without-mirror axis holds one period short of real hardware exactly at
 the sweep's `dot = +1` extreme. Opens `T7a` to fix it. T7a complete
 (RE-232): fixed the divergence at its real cause (both the host comparison
 model and the pack-time texture bake `meshdraw::bind_texture` addresses),
-re-measured at a strict `0`/34. T1's remedy carries forward through T8 next.
-T8 in progress (RE-234): original-ROM stage-8 VS Metal Mario capture obtained
-via real 1P Mode play (M64Py); PPSSPP and physical-PSP legs plus the actual
-cross-platform texgen comparison remain open. RE-235: PPSSPP leg done — the
-`StageMetalFile2` goldens (scenes 11-13) were stale since T7a (RE-232), have
-been refreshed and reconfirmed deterministic, and were qualitatively cross-
-checked against RE-234's original-ROM captures. Physical-PSP leg blocked on
-a USB permission error this session; still open.
+re-measured at a strict `0`/34. T1's remedy carries forward through T9 next.
+T8 complete (RE-234/RE-235/RE-236): original-ROM stage-8 VS Metal Mario
+capture obtained via real 1P Mode play (RE-234); the `StageMetalFile2`
+PPSSPP goldens (scenes 11-13), stale since T7a (RE-232), refreshed and
+qualitatively cross-checked against the original-ROM captures (RE-235); and
+a physical-PSP re-capture of the same three scenes against the refreshed
+goldens (RE-236), matching at the same noise-floor order RE-214 established.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3345,6 +3344,28 @@ archive-wide census already confirms the fix against every real texgen tile
 in this ROM, a stronger check than a single visual angle.
 
 ### T8 — Original-ROM Metal comparison
+
+Status: `COMPLETE` — RE-234/RE-235/RE-236. Original-N64 leg: real 1P Mode
+play through the legitimate stage-8 route reached VS Metal Mario / Meta
+Crystal, three screenshots captured (RE-234) — the scripted-harness RAM
+warp this task's text prefers was derived but not exercised live, since the
+user's real play is strictly more faithful and needed no correctness
+argument. PPSSPP leg: the `StageMetalFile2` goldens (scenes 11-13, the only
+content this port draws with real `G_TEXTURE_GEN`/`_LINEAR` state) were
+stale since T5, refreshed and reconfirmed deterministic post-T7a (RE-235).
+Physical-PSP leg: all three scenes re-captured on the same hardware RE-214/
+RE-215 used, matching the refreshed goldens at the same noise-floor order
+RE-214 established (RE-236). Model/camera reflection response (scene 11 vs
+12's quarter turn) and ordinary-versus-linear behavior (scenes 11/12 vs 13)
+were checked directly across all three platforms; diffuse-light
+independence, tile-origin phase and generated span rest on T2/T6/T7/T7a's
+own dedicated measurements (RE-226/RE-230/RE-231/RE-232), which these
+captures are consistent with. The original-ROM comparison itself is
+qualitative (shape/colour/material-behavior match against small, distant,
+full-gameplay captures), not a pixel-level ROI overlay — the acceptance
+text's own "texgen-focused ROI comparison rather than requiring identical
+full-screen rasterization" allowance, and the only limitation this route
+(RE-216's finding) permits.
 
 Use the rebuilt Mupen64Plus harness to reach legitimate stage-8 Metal content.
 Prefer a faithful RAM-level warp that still executes original fighter
