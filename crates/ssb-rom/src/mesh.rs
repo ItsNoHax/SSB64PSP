@@ -1484,6 +1484,19 @@ impl Builder {
     /// two entries by itself, because the folded colour is part of the key.
     /// `texture_blend` (RE-073) uses the same mechanism to bake a flat base
     /// colour in place of the shade instead of scaling it.
+    ///
+    /// None of this may touch a *lit* vertex's bytes (RE-240): those are a
+    /// packed normal, not a shade (`MeshVertex::rgba`'s own doc comment), and
+    /// this project has not computed a lit SHADE value yet at this point in
+    /// the pipeline -- that happens later, from the intact normal, in
+    /// `crate::pack`'s `shade_normal` (the baked-light path) or on-device GE
+    /// lighting (the runtime fighter-light path). Baking any of these three
+    /// branches into a lit vertex would overwrite the very normal both of
+    /// those paths need, and — because `pack.rs` trusts a primitive's `lit`
+    /// flag for every vertex it touches (RE-103) — would then get
+    /// reinterpreted as if it were a normal on top of that. `pack.rs`'s
+    /// `add_mesh` applies the equivalent transforms after shading instead,
+    /// for exactly the vertices this skips.
     fn push_vertex(&mut self, mut v: MeshVertex) -> Result<u16, MeshError> {
         // RE-129/RE-130: captured before any of the branches below can
         // touch it, so `AlphaBlend::Shade` can restore exactly this value
@@ -1492,31 +1505,34 @@ impl Builder {
         // fired, and `SHADE_ALPHA` is this raw byte verbatim either way
         // (an N64 `Vtx_tn`'s alpha field is never itself lit).
         let raw_alpha = v.rgba[3];
-        if let Some(c) = self.material.prim_color {
-            for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
-                *shade = ((*shade as u16 * prim as u16) / 255) as u8;
+        if !self.material.lit {
+            if let Some(c) = self.material.prim_color {
+                for (shade, &prim) in v.rgba.iter_mut().zip(c.iter()).take(3) {
+                    *shade = ((*shade as u16 * prim as u16) / 255) as u8;
+                }
+                // Shade alpha is not a coverage value here — Mario's vertices
+                // are all zero — so the primitive's alpha is the one that
+                // means something. Multiplying would make him invisible.
+                v.rgba[3] = c[3];
+            } else if let Some((base, _target)) = self.material.texture_blend {
+                // RE-073's shape reads no shade at all, so the vertex colour
+                // this primitive needs is simply the flat base colour, the
+                // same way `prim_color`'s scale replaces the shade above --
+                // and by the same mechanism, baking it here rather than at
+                // draw time means the dedup below cannot hand a
+                // `texture_blend` vertex's baked colour to a
+                // differently-shaded primitive that happens to load the same
+                // cache slot: the baked colour is part of the dedup key, so
+                // the two become distinct entries automatically.
+                v.rgba = base;
+            } else if let Some(c) = self.material.flat_color {
+                // Same reasoning as `texture_blend` above: RE-079's
+                // flat-colour shape reads neither shade nor texel, so the
+                // vertex colour is simply the resolved constant, baked here
+                // so the dedup key keeps a shared cache-slot vertex distinct
+                // across primitives that need different flat colours.
+                v.rgba = c;
             }
-            // Shade alpha is not a coverage value here — Mario's vertices are
-            // all zero — so the primitive's alpha is the one that means
-            // something. Multiplying would make him invisible.
-            v.rgba[3] = c[3];
-        } else if let Some((base, _target)) = self.material.texture_blend {
-            // RE-073's shape reads no shade at all, so the vertex colour this
-            // primitive needs is simply the flat base colour, the same way
-            // `prim_color`'s scale replaces the shade above -- and by the same
-            // mechanism, baking it here rather than at draw time means the
-            // dedup below cannot hand a `texture_blend` vertex's baked colour
-            // to a differently-shaded primitive that happens to load the same
-            // cache slot: the baked colour is part of the dedup key, so the
-            // two become distinct entries automatically.
-            v.rgba = base;
-        } else if let Some(c) = self.material.flat_color {
-            // Same reasoning as `texture_blend` above: RE-079's flat-colour
-            // shape reads neither shade nor texel, so the vertex colour is
-            // simply the resolved constant, baked here so the dedup key
-            // keeps a shared cache-slot vertex distinct across primitives
-            // that need different flat colours.
-            v.rgba = c;
         }
         // RE-129/RE-130: the alpha formula is classified independently of
         // whichever RGB branch above fired, so it is applied after and
@@ -4734,6 +4750,172 @@ mod tests {
     fn prim_times_shade() -> Cmd {
         let (hi, lo) = combine(PRIM, ZERO_A, SHADE, ZERO_D, 0, 0, 0, 0);
         Cmd::SetCombine { hi, lo }
+    }
+
+    /// Raw vertex bytes identical to [`vertex_data`] except for a caller-given
+    /// `rgba`, for tests that need an exact non-white shade or normal.
+    fn vertex_data_rgba(n: usize, rgba: [u8; 4]) -> Vec<u8> {
+        let mut d = vertex_data(n);
+        for i in 0..n {
+            let at = i * Vtx::SIZE + 12;
+            d[at..at + 4].copy_from_slice(&rgba);
+        }
+        d
+    }
+
+    #[test]
+    fn prim_times_shade_matches_the_exact_integer_scale() {
+        // C1's own worked example: a 50% mid-grey shade scaled by a 50%
+        // mid-grey `PRIM` must land at exactly `64`, integer `*255` division,
+        // not a rounded float approximation.
+        let file = vertex_data_rgba(3, [128, 128, 128, 255]);
+        let cmds = [
+            vtx(3),
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255],
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.vertices[0].rgba, [64, 64, 64, 255]);
+    }
+
+    /// A `G_SETCOMBINE` computing `SHADE` alone (no `PRIM`/`ENV`/`TEXEL` term).
+    fn shade_only() -> Cmd {
+        let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, SHADE, 0, 0, 0, 0);
+        Cmd::SetCombine { hi, lo }
+    }
+
+    #[test]
+    fn shade_only_combiner_leaves_the_vertex_untouched() {
+        // No `PRIM`/`ENV` term at all: `material_now` must resolve no scale,
+        // and the raw shade must reach the vertex exactly as uploaded.
+        let file = vertex_data_rgba(3, [10, 20, 30, 255]);
+        let cmds = [
+            vtx(3),
+            shade_only(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [0, 255, 0, 255], // present, but the combiner never reads it
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert_eq!(mesh.primitives[0].material.prim_color, None);
+        assert_eq!(mesh.vertices[0].rgba, [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn a_lit_vertex_with_a_prim_times_shade_combiner_keeps_its_raw_normal() {
+        // RE-240: `prim_times_shade`'s scale must not be baked into a *lit*
+        // vertex's bytes -- those bytes are a packed normal
+        // (`MeshVertex::rgba`'s own doc comment), not a shade, and this
+        // project has not computed a lit shade value at `push_vertex` time.
+        // Baking the scale in here would both corrupt the normal `pack.rs`'s
+        // `shade_normal`/runtime GE lighting need intact, and would then be
+        // multiplied a second time by `pack.rs`'s own post-shading fold,
+        // squaring the scale instead of applying it once.
+        let normal = [127i8 as u8, 0, 0, 255]; // a unit normal along x
+        let file = vertex_data_rgba(3, normal);
+        let cmds = [
+            vtx(3),
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_LIGHTING,
+            },
+            prim_times_shade(),
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [128, 128, 128, 255], // 50% scale
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert!(mesh.primitives[0].material.lit);
+        // The resolved scale is still recorded on the material -- `pack.rs`
+        // applies it later, after shading -- but the vertex bytes themselves
+        // must be exactly the uploaded normal, untouched.
+        assert_eq!(
+            mesh.primitives[0].material.prim_color,
+            Some([128, 128, 128, 255])
+        );
+        assert_eq!(mesh.vertices[0].rgba, normal);
+    }
+
+    #[test]
+    fn a_lit_vertex_with_a_texture_blend_combiner_keeps_its_raw_normal() {
+        // Same reasoning as the `prim_times_shade` case just above, for the
+        // other two `push_vertex` colour-baking branches (RE-073's
+        // `texture_blend`, gated the same way as of RE-240).
+        let normal = [0, 127i8 as u8, 0, 255]; // a unit normal along y
+        let file = vertex_data_rgba(3, normal);
+        let (hi, lo) = combine(PRIM, ENV, TEXEL0, ENV, PRIM, ENV, TEXEL0, ENV);
+        let cmds = [
+            vtx(3),
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_LIGHTING,
+            },
+            Cmd::SetCombine { hi, lo },
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [200, 100, 50, 255],
+            },
+            Cmd::SetEnvColor([10, 20, 30, 255]),
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 32,
+                addr: SegAddr(0x100),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: 0,
+                size: 2,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 31 << 2,
+                lrt: 31 << 2,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        assert!(mesh.primitives[0].material.lit);
+        assert!(
+            mesh.primitives[0].material.texture_blend.is_some(),
+            "texture_blend must still resolve on the material"
+        );
+        assert_eq!(mesh.vertices[0].rgba, normal, "the raw normal must survive");
     }
 
     #[test]

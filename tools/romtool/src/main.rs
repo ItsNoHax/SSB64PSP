@@ -7668,6 +7668,114 @@ mod tests {
         );
     }
 
+    /// `R2.2`/C1 (RE-240): measures how many real primitives are both `lit`
+    /// (vertex bytes are a packed normal, per `mesh.rs`'s `push_vertex` doc
+    /// comment) and also carry one of `push_vertex`'s three colour-baking
+    /// branches (`prim_color`, `texture_blend`, `flat_color`). Before RE-240
+    /// each of these unconditionally mutated `v.rgba` with no `material.lit`
+    /// gate, corrupting the normal for exactly the primitives counted here
+    /// (243/34/2 measured); kept as a permanent regression census, not a
+    /// temporary probe, since a future change reintroducing an unconditional
+    /// bake would otherwise need this same measurement redone to notice.
+    ///
+    /// This can't assert a flat zero "not a plausible normal" count: some
+    /// real vertices are legitimately shared between a lit primitive and an
+    /// earlier unlit one (`push_vertex`'s own dedup, RE-103's precedent for
+    /// exactly this ambiguity), which already measures a nonzero
+    /// `looks_like_unit_normal` failure rate with *no* baking branch
+    /// involved at all (808 vertices, unaffected by this fix either way --
+    /// confirmed by temporarily disabling RE-240's own `lit` gate and
+    /// re-running this census: the *with-branch* count jumped from 60 to
+    /// 6,666 while the *without-branch* baseline stayed at exactly 808).
+    /// So this compares rates instead: the with-branch rate must stay within
+    /// a generous multiple of the unrelated without-branch baseline, rather
+    /// than assuming either can be exactly zero.
+    #[test]
+    fn census_lit_primitives_with_a_colour_baking_branch() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut lit_prims = 0usize;
+        let mut lit_prim_color = 0usize;
+        let mut lit_texture_blend = 0usize;
+        let mut lit_flat_color = 0usize;
+        let mut with_branch_checked = 0usize;
+        let mut with_branch_not_normal = 0usize;
+        let mut without_branch_checked = 0usize;
+        let mut without_branch_not_normal = 0usize;
+        let mut affected_files: BTreeSet<u32> = BTreeSet::new();
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for mesh in super::file_meshes(&loaded, file) {
+                for p in &mesh.primitives {
+                    if !p.material.lit {
+                        continue;
+                    }
+                    lit_prims += 1;
+                    let has_baking_branch = p.material.prim_color.is_some()
+                        || p.material.texture_blend.is_some()
+                        || p.material.flat_color.is_some();
+                    if has_baking_branch {
+                        affected_files.insert(id);
+                    }
+                    if p.material.prim_color.is_some() {
+                        lit_prim_color += 1;
+                    }
+                    if p.material.texture_blend.is_some() {
+                        lit_texture_blend += 1;
+                    }
+                    if p.material.flat_color.is_some() {
+                        lit_flat_color += 1;
+                    }
+                    for &i in &p.indices {
+                        let Some(v) = mesh.vertices.get(i as usize) else {
+                            continue;
+                        };
+                        let normal_looking = ssb_rom::pack::looks_like_unit_normal(v.rgba);
+                        if has_baking_branch {
+                            with_branch_checked += 1;
+                            if !normal_looking {
+                                with_branch_not_normal += 1;
+                            }
+                        } else {
+                            without_branch_checked += 1;
+                            if !normal_looking {
+                                without_branch_not_normal += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.2/C1 lit+colour-bake census: {lit_prims} lit primitives; \
+             prim_color={lit_prim_color} texture_blend={lit_texture_blend} \
+             flat_color={lit_flat_color}; not-normal-looking vertices: \
+             with_branch={with_branch_not_normal}/{with_branch_checked} \
+             without_branch={without_branch_not_normal}/{without_branch_checked}"
+        );
+        // None of these match a `FIGHTER_FILES` entry directly -- those name
+        // each fighter's `FTAttributes` file, not the separate mesh/costume
+        // files their models actually live in (e.g. file 296 here is Mario's
+        // own hat, RE-106's original example, in a costume file distinct
+        // from `FIGHTER_FILES`'s `Mario` entry at file 203).
+        let ids: Vec<String> = affected_files.iter().map(u32::to_string).collect();
+        println!("R2.2/C1 affected archive files: {}", ids.join(", "));
+        let with_branch_rate = with_branch_not_normal as f64 / with_branch_checked as f64;
+        let baseline_rate = without_branch_not_normal as f64 / without_branch_checked as f64;
+        assert!(
+            with_branch_rate <= baseline_rate * 5.0 + 0.01,
+            "with-branch not-normal-looking rate ({with_branch_rate:.4}) is far above the \
+             unrelated baseline ({baseline_rate:.4}) -- a colour-baking branch is corrupting \
+             lit vertices again (RE-240 regression)"
+        );
+    }
+
     /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is
     /// only their 3x3 linear part, and only up to a positive uniform scale.
     #[test]
