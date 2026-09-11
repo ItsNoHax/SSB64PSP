@@ -93,7 +93,7 @@
   next task actually needing a rendered comparison.
 - Documentation: RE-232, `PLAN.md` `R2.1`/T7a marked `COMPLETE`,
   `docs/porting-status.md`, this snapshot.
-- Commit: (uncommitted at snapshot time).
+- Commit: `766cb47`.
 
 ## Continuation
 
