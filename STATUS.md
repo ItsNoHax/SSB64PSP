@@ -91,7 +91,8 @@
   asset-pipeline code touched; pack hash unchanged.
 - Documentation: RE-238, `docs/porting-status.md` (texture-conversion row +
   Known gaps §1), `PLAN.md` (T10 progress note), this snapshot.
-- Commit: not yet made this session.
+- Commit: `824a6f0` (RE-238, `R2.1`/T10 progress -- `romtool texgen --verify`,
+  zero-normal test, doc reconciliation).
 
 ## Continuation
 
