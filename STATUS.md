@@ -79,7 +79,7 @@
   not part of this project's gate (native clippy cannot cross-compile to
   `mipsel-sony-psp`).
 - Documentation: RE-228, `PLAN.md` `R2.1`/T4, this snapshot.
-- Commit: (pending).
+- Commit: `b262dc0`.
 
 ## Continuation
 
