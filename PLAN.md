@@ -3111,8 +3111,11 @@ LookAt basis quantization measured and fixed (D-040 revised). T4 complete
 real GE lowering, finding and fixing a real overcorrected matrix constant.
 T5 complete (RE-229): linear texgen's S10.5 conversion confirmed to truncate,
 not round, against two independent HLE references, fixing a dormant rounding
-bug in the real linear-texgen rendering path. T1's remedy carries forward
-through T6 next.
+bug in the real linear-texgen rendering path. T6 complete (RE-230):
+`shift_s`/`shift_t` confirmed zero on the texgen-bound tile subset
+specifically (not just RE-223's broader archive-wide census), per-mode
+`G_TEXTURE` scale/tile/`G_LIGHTING` state recorded for T7/T8. T1's remedy
+carries forward through T7 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3260,14 +3263,15 @@ Evidence: RE-229 in `docs/reverse-engineering.md`.
 
 ### T6 — Tile-state and lighting audit
 
-Depends on `R2.0`/P1's archive-wide `shift_s`/`shift_t` census — consume that
-result for texgen-bound tiles rather than re-deriving it here.
-
-Add `shift_s`/`shift_t` to `TileState` and report render tile, masks, shifts,
-`cms`/`cmt`, origins, dimensions and `gSPTexture` scale per texgen mode. At
-each texgen `G_VTX`, report raw `G_LIGHTING` on/off. If all shifts are zero,
-pin that ROM-backed invariant; otherwise implement N64 shifting before
-completion.
+Status: `COMPLETE` — RE-230. Consumed RE-223's (`R2.0`/P1) archive-wide
+`shift_s`/`shift_t` census rather than re-deriving it, and re-checked the
+invariant specifically against the texgen-bound tile subset. Added
+`shift_s`/`shift_t` to `tools/romtool`'s `TileState` and new per-mode census
+maps reporting render tile, masks, shifts, `cm`, origins, dimensions and
+`gSPTexture` scale per texgen mode, plus raw `G_LIGHTING` on/off at each
+texgen `G_VTX`. All measured texgen-bound tile shifts are zero
+(archive-wide, 3,012 texgen triangles); pinned with a regression assertion
+in `texgen_tile_state_and_lighting_audit` — N64 shifting is not needed.
 
 ### T7 — Texgen addressing phase
 

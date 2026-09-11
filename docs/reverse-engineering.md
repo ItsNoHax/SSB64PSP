@@ -10,6 +10,75 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-230 — Tile-state and lighting audit for texgen-bound draws: `shift_s`/`shift_t` invariant confirmed on the texgen subset, per-mode addressing and lighting state recorded (`PLAN.md` R2.1/T6)
+
+**Question.** RE-223 (`R2.0`/P1) measured `shift_s`/`shift_t` zero across
+*every* real render-tile-0 `G_SETTILE` archive-wide, but that census covered
+all tile-0 binds, not specifically the ones a texgen draw reads under. T6
+asks the narrower question directly: does the invariant transfer to the
+texgen-bound subset, and what does the full per-mode tile/scale/lighting
+shape look like for the texgen addressing work T7 needs next?
+
+**Method.** Extended `tools/romtool/src/main.rs`'s existing `TexgenWalk`/
+`TexgenCensus` (RE-225–RE-229's own `R2.1`/T1–T5 infrastructure, which
+already walks the same two list populations `pack` converts: graph-planned
+draw order plus `scan::find_root_display_lists`'s unclaimed orphans) rather
+than building a second walker. Added `shift_s`/`shift_t` to the walker's
+local `TileState` (`dl.rs`'s `Cmd::SetTile` already decodes both; only the
+census struct was missing them), and three new per-mode census maps —
+`texgen_tiles_by_mode`, `texgen_scales_by_mode`, `texgen_vtx_lighting`
+(raw `G_LIGHTING` observed at each `G_VTX` executed while texgen is active)
+— since `Regular` and `Linear` generate different UVs against the same
+bound tile and pooling them together would hide that. Extracted the
+walk-building loop into `build_texgen_census` so both the `texgen` CLI
+report and a new `SSB64_ROM`-gated test (`texgen_tile_state_and_lighting_audit`)
+measure the identical real archive-wide walk.
+
+**Measured, archive-wide, real ROM (1,640 graph-planned lists, 555
+discovered root lists, 3,012 texgen triangles):**
+
+* **`shift_s`/`shift_t` on texgen-bound tiles — invariant confirmed, no fix
+  needed.** Every texgen-bound tile setup measured `shift == (0, 0)`,
+  pinned with an assertion. This is the texgen-specific re-check T6 asked
+  for; RE-223's broader archive-wide zero count is the reason this was
+  expected, not a substitute for measuring it here.
+* **`G_TEXTURE` scale by mode:** `Regular` uses five distinct scales
+  (`(0x01c0,0x01c0)` through `(0x0fc0,0x07c0)`, dominated by
+  `(0x07c0,0x07c0)` at 2,178 of 2,743 regular-mode triangles); `Linear` uses
+  two (`(0x0400,0x0200)`, `(0x07c0,0x07c0)`), both a subset of `Regular`'s.
+* **Tile setup by mode:** 16 distinct `Regular` tile setups and 4 distinct
+  `Linear` ones, spanning `CI4`/`CI8`-family formats (`fmt (2, 0)`/`(2, 1)`),
+  masks 3–6, `cm` combinations `(2,2)`/`(3,2)`/`(2,3)`, and dimensions from
+  `8x8` up to `384x192`; several non-zero tile origins appear under
+  `Regular` (e.g. `origin (12, 0)`, `origin (0, 3)`). All 20 combined
+  setups carry `shift (0, 0)`.
+* **Raw `G_LIGHTING` at a texgen `G_VTX`, by mode:** `Regular` splits
+  336 unlit / 12 lit `G_VTX` executions; every observed `Linear` `G_VTX`
+  (34) was unlit. Recorded for T7/T8's use, not acted on here — this task
+  reports the load-time lighting signal, it does not change how lighting
+  is consumed.
+
+**Verification.** `cargo test -p romtool texgen_tile_state_and_lighting_audit -- --nocapture`
+against the real ROM (numbers above; the `shift == (0, 0)` assertion is the
+task's own regression guard — if it ever fails, N64 tile shifting needs
+implementing before T6 can be considered closed, per `PLAN.md`'s own
+"otherwise implement N64 shifting before completion" wording). Full `cargo
+test --workspace --all-targets` (pinned 1.98.0 toolchain, `SSB64_ROM` set):
+576 passing (575 prior + 1 new), 0 failed. `rustfmt --check` clean on the
+touched file. `cargo psp --release` (default features) builds clean —
+this task touched only `tools/romtool`, no renderer/pack code, so no
+PPSSPP/physical capture was needed and no golden changed.
+
+**Confidence.** High on the `shift == (0, 0)` invariant for the texgen
+subset — it is a direct archive-wide measurement with an assertion guarding
+regression, not an assumption carried over from RE-223's broader census.
+Medium on completeness of the per-mode tile/scale/lighting catalogue above
+— it reflects this ROM's current content and walker coverage (same
+`Call`/`Branch` depth bound and list-discovery rules the rest of `R2.1`
+uses), not a claim that no other combination could ever appear.
+
+---
+
 ## RE-229 — Linear texgen's S10.5 conversion truncates, it does not round (`PLAN.md` R2.1/T5)
 
 **Question.** T5 needed to determine whether the final float-curve-to-S10.5
