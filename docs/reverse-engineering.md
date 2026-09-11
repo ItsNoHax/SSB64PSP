@@ -10,6 +10,80 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-232 — Fixed the mask-narrowed clamp-without-mirror texgen addressing divergence RE-231 found (`PLAN.md` R2.1/T7a)
+
+**Question.** RE-231 measured 9 of 34 real texgen axis instances diverging
+from the hardware model at exactly the sweep's `dot = +1` extreme, always on
+a `Regular`-mode axis whose mask genuinely narrows below the tile's drawn
+rect. `T7a` asks: fix the divergence at its real cause, not only in the
+host comparison model.
+
+**Root cause.** `n64_addressing::psp_lowering_axis`'s `!mirror` clamp branch
+clamped the raw texel index to `period - 1` (the narrowed mask period's own
+last texel) before ever folding it through the mask period. `address_axis`
+(the hardware model) instead only clamps once the coordinate reaches the
+tile's real drawn-rect far edge — expressed as the drawn width itself,
+`(far_edge_q2 >> 2) - (origin_q2 >> 2)` — and *then* folds that held value
+through the mask stage same as any other. When the mask narrows below the
+drawn rect (`period < drawn`), those two targets differ: `period - 1` is
+reached one period early, before the coordinate has actually walked far
+enough to hit the real far edge. `texture::mirror_extend`'s non-mirror
+clamp bake had the matching bug: `mirror_axis_len` baked only `period`
+texels for every non-mirror axis regardless of `clamp`, so
+`sceGuTexWrap(Clamp)` on the baked (too-narrow) image clamped to the same
+wrong, one-period-early edge — this was a real PSP rendering divergence,
+not only a host-model gap, confirming RE-231's medium-confidence hypothesis.
+
+**Fix.** Mirrors the mirror+clamp fix RE-220/RE-221 already made for the
+mirrored case:
+
+* `n64_addressing::psp_lowering_axis`'s `!mirror` clamp branch now clamps
+  the raw index to `drawn - 1` (the same far-edge target `address_axis`
+  computes) *before* folding it through the mask period via
+  `fold_period_mirror(..., mirror: false)`, instead of clamping to
+  `period - 1` directly. A mask that does not narrow below the drawn rect
+  (`drawn == period`, the overwhelmingly common case) leaves this a no-op,
+  since clamping to `drawn - 1 == period - 1` and then folding by `period`
+  is the identity.
+* `texture::mirror_axis_len` now bakes to `drawn` for *any* clamped axis,
+  mirrored or not (previously only the mirrored branch did) — a
+  `!mirror`+`clamp` axis whose mask narrows below the drawn rect now bakes
+  every period the drawn rect spans instead of just one, matching the
+  hardware's own repeat-then-clamp-at-the-real-edge behaviour.
+  `mirror_fold` (the per-output-texel source lookup the bake loop uses) was
+  generalized to always fold by `% period` rather than only when mirroring,
+  so the wider non-mirror bake reads back into the source image correctly
+  rather than indexing past it.
+
+**Verification.**
+`cargo test -p ssb-rom n64_addressing:: texture::` (pinned 1.98.0 toolchain):
+new `psp_lowering_no_longer_diverges_from_hardware_for_clamp_without_mirror_past_the_first_period`
+(host model) and
+`mirror_extend_with_clamp_and_no_mirror_bakes_every_period_the_drawn_rect_spans`/
+`mirror_extend_with_clamp_and_no_mirror_and_no_narrowing_is_a_plain_copy`
+(real bake, confirming the no-narrowing case stays a no-op) all pass.
+`cargo test -p romtool texgen_addressing_census_against_real_archive_materials
+-- --nocapture` against the real ROM: **0 of 34** real axis instances now
+diverge (down from RE-231's 9), test baseline dropped from `9` back to a
+strict `0`. Full `cargo test --workspace --all-targets` (pinned 1.98.0
+toolchain, `SSB64_ROM` set): 581 passing (578 prior + 3 new), 0 failed.
+`cargo clippy --all-targets -D warnings` (pinned 1.98.0) clean.
+`rustfmt --check` clean. `cargo psp --release` (default features) builds
+clean, and `romtool pack` was re-run against the real ROM to rebuild
+`assets/generated/ssb64.pak` with the fixed bake (gitignored, not
+committed) since this task changed asset-pipeline code
+(`texture::mirror_extend`), not only the host comparison model. No
+PPSSPP/physical capture was taken this task — `T7a`'s own text left that as
+a follow-up to consider, and the archive-wide census (the more precise,
+exhaustive check) already confirms the fix against every real texgen tile
+this ROM has.
+
+**Confidence.** High. The fix is derived directly from `address_axis`'s own
+already-validated far-edge/mask-fold sequencing (not a new guess), the
+regression the archive-wide census pinned went to exactly `0`, and no other
+of the previously-agreeing 25 axis instances or any authored-UV (non-texgen)
+tile shape regressed.
+
 ## RE-231 — Texgen addressing census: real N64/PSP agreement confirmed for 25 of 34 real axis instances; a narrow, single-texel divergence found and pinned at the sweep's extreme for mask-narrowed clamp-without-mirror axes (`PLAN.md` R2.1/T7, opens T7a)
 
 **Question.** `R2.0`/P0b built `n64_addressing`'s hardware reference model
