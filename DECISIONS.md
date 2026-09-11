@@ -542,8 +542,18 @@ outside the cache-controlled material path. These are correctness questions,
 not performance work.
 
 **Implementation:** Pending `PLAN.md` R2.1/T1–T10 and R2.2/C1–C7.
+`R2.1`/T1 (RE-225) has now run the load-space/normal-transform provenance
+audit this decision called for: it is **not** invariant. 164 vertex-load
+instances (15 sites, 7 fighter files) reuse a vertex across a parent/child
+joint boundary whose model transform genuinely differs — every real GE
+draw-time texture-matrix resolution in this port on those specific vertices
+disagrees with what real load-time hardware semantics would generate. Fixing
+it needs T2/T3's raw-normal and LookAt-quantization measurements and T4's
+validated regular-texgen CPU reference first, so the finding stands recorded
+here rather than acted on early. Primitive-level texgen (D-039) is unaffected
+— that decision is about mode/scale, not model-space, and remains correct.
 
-**Reference:** RE-217, `docs/reverse-engineering.md`, `AGENTS.md`
+**Reference:** RE-217, RE-225, `docs/reverse-engineering.md`, `AGENTS.md`
 
 ---
 

@@ -3102,10 +3102,9 @@ RE-218, RE-223, RE-224 in `docs/reverse-engineering.md`.
 
 ## R2.1 — Final Texgen Fidelity (T1–T10)
 
-Status: `TODO` — blocked by `R2.0`. T1 was previously designated the single
-active task (RE-217), but no T1 implementation exists yet, so it is requeued
-behind R2.0 rather than resumed mid-flight; resuming here does not discard
-progress.
+Status: `IN PROGRESS` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
+space invariance does **not** hold (164 cross-node differing-transform vertex
+reuses, D-042 revised). Its remedy carries forward through T2 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3119,20 +3118,42 @@ not an original-hardware match.
 
 ### T1 — `G_VTX` model-space invariance
 
-Extend `romtool texgen` and its independent audit walker so each cached vertex
-records load node/space, stable load model-matrix identity, display-list
-offset, draw step, texgen mode and `gSPTexture` scale. Classify same-node,
-cross-list same-node, cross-node equivalent-normal-transform and cross-node
-differing-normal-transform reuse, comparing the normal-relevant 3×3 transform
-and ignoring translation. For uniform-scale rigid transforms compare a
-normalized equivalent, not raw 4×4 bytes.
+Status: `MEASURED, not invariant` — RE-225. `space`/`world` (already computed
+by `plan_draw_order`, previously discarded) now flow into `VtxLoadState` and
+`TexgenWalk`; `tri()` classifies every earlier-step vertex reuse as same-node,
+cross-list same-node, cross-node equivalent-transform (bit-identical 3x3
+linear part, or one differing only by a positive uniform scale) or cross-node
+differing-transform, via the new `normal_transform_equivalent`. Measured
+against the real ROM: 0 same-node, 0 cross-list same-node, 142 cross-node
+equivalent, **164 cross-node differing** — 15 sites, 7 fighter files
+(300/301/304/305/306/307/312), every instance a `Gfx *dls[2]` pre/post-matrix
+pair sharing one vertex across a parent/child joint boundary.
 
-Acceptance: report texgen triangles, cross-list reuse, cross-node reuse,
-equivalent-transform reuse and differing-transform reuse. If differing reuse
-is zero, record that invariant in `DECISIONS.md`; otherwise preserve load
-provenance or split/precompute only affected vertices. Add same-node,
-cross-list, translation-only, identical-rotation, different-rotation,
-uniform-scale and non-uniform-scale tests.
+Differing reuse is **not** zero, so the invariant this task hoped to pin does
+not hold — recorded as a revision to D-042, not a new safe assumption. The
+acceptance's remedy ("preserve load provenance or split/precompute only
+affected vertices") needs a validated regular-texgen CPU reference that does
+not exist yet — T2's raw-normal semantics, T3's LookAt quantization, and T4's
+proven shared regular/linear math. Building an un-validated CPU curve now
+would risk the 2,848 currently-correct GE-path triangles for a fix this
+project cannot yet prove exact, which is exactly what this milestone's own
+preamble says not to do. The fix is carried forward through T2 → T3 → T4 in
+order, per the plan's own explicit sequencing — not opened as a separate
+follow-up task, since T2-T4 already are that follow-up.
+
+Two host tests confirm the classifier and the equivalence comparator:
+`normal_transform_equivalence_ignores_translation_and_uniform_scale` (all
+seven named cases) and
+`texgen_reuse_classifies_same_node_cross_list_and_cross_node`.
+
+Acceptance (original text, retained): report texgen triangles, cross-list
+reuse, cross-node reuse, equivalent-transform reuse and differing-transform
+reuse. If differing reuse is zero, record that invariant in `DECISIONS.md`;
+otherwise preserve load provenance or split/precompute only affected
+vertices. Add same-node, cross-list, translation-only, identical-rotation,
+different-rotation, uniform-scale and non-uniform-scale tests.
+
+Evidence: RE-225 in `docs/reverse-engineering.md`; D-042 in `DECISIONS.md`.
 
 ### T2 — Raw signed-byte normal semantics
 

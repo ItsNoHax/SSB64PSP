@@ -10,6 +10,97 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-225 — `G_VTX` model-space invariance census: not invariant, systematic joint-boundary gap found, remedy deferred to `T4` (`PLAN.md` R2.1/T1)
+
+**Question.** F3DEX generates texgen coordinates at `G_VTX` load time, using
+whatever modelview matrix is bound then — RE-214/D-039 already proved mode
+and `G_TEXTURE` scale never mismatch between a texgen triangle's load and
+draw, including its 203 triangles that reuse an earlier-step vertex. T1 asks
+the remaining question that census left open: among those 203, does the
+*model transform* itself ever actually differ between a vertex's load and
+the triangle it draws in? D-038 has this project's regular texgen running
+entirely off the PSP GE's own draw-time texture matrix — one matrix per
+primitive — so any real divergence here is a real correctness gap in that
+approach, not just a bookkeeping curiosity.
+
+**Implementation.** `tools/romtool`'s `texgen` walker already threads
+`plan_draw_order`'s per-list `PlannedList::space`/`::world` — the scene-graph
+node whose matrix is actually in force for a list (usually the node's own,
+but a `Gfx *dls[2]` pre-matrix list runs in its *parent's* space) and that
+node's rest-pose `Mat4` — but discarded both. Added `space`/`world` to
+`VtxLoadState` (stamped at every `Cmd::Vtx`) and to `TexgenWalk` itself
+(constant for a whole step, since no `G_MTX` is modeled — nothing changes it
+mid-list). `tri()` now classifies every earlier-step vertex a triangle reuses
+into one of four buckets: same node/same list, same node/cross list (a
+nested `Call` sub-list), cross-node with an *equivalent* normal-relevant
+transform, or cross-node *differing*. Equivalence is `normal_transform_equivalent`
+(new): the 3x3 linear part (translation dropped — it cannot affect a
+normal), exact match or one differing from the other only by a positive
+uniform scale (a squash/stretch keyframe moves vertices but not normal
+direction; a non-uniform scale, or a genuinely different rotation, is not
+equivalent).
+
+**Verification.** Two new host tests:
+`normal_transform_equivalence_ignores_translation_and_uniform_scale` (all
+seven cases the acceptance criteria name: translation-only, identical
+rotation, different rotation, uniform scale, non-uniform scale, plus the
+trivial same-node/cross-list-adjacent forms) and
+`texgen_reuse_classifies_same_node_cross_list_and_cross_node` (drives `tri()`
+directly against a hand-built cache, since `plan_draw_order` — not this
+walker — is what actually produces `space`/`world`; this proves what `tri`
+does with them once set). Ran the full census against the real ROM:
+
+```
+uses a vertex from an earlier step  203
+uses a vertex from another list     203
+
+model-space reuse of an earlier-step vertex (R2.1/T1, RE-225)
+  same node, same list                0
+  same node, cross list                0
+  cross node, equivalent transform     142
+  cross node, differing transform      164
+```
+
+**Not invariant.** 164 vertex-load instances, across 15 distinct sites in 7
+files (300, 301, 304, 305, 306, 307, 312 — fighter model files, RE-104's
+`MMarioModel`/`NFoxModel` family), reuse a vertex whose load-time transform
+genuinely differs from the triangle's draw-time one. Every single instance
+has the identical shape: `load space Some(N)`, `draw space Some(N+1)`, i.e. a
+`Gfx *dls[2]` pre/post-matrix pair sharing one vertex across a parent/child
+joint boundary — a shared limb-socket vertex loaded once under the parent's
+matrix (the pre-matrix list) and drawn again as part of a triangle under the
+child's (the post-matrix list), exactly the joint construct RE-104/`scene.rs`
+already documents ("a leading translate-only matrix pushed... these are
+joints"). This is not scattered content noise; it is a structural pattern in
+every fighter's skeleton, and lands squarely on the same files T8 (Metal
+comparison) will need — regular texgen's practical use in this ROM is the
+Metal powerup's reflective look, and joints are exactly where a limb bends.
+
+**Remedy deferred, by the plan's own ordering, not by choice.** T1's
+acceptance offers two fixes: "preserve load provenance" (CPU-generate the
+affected vertices' texcoords using their own load-time transform, the way
+D-040 already does for linear texgen) or "split/precompute only affected
+vertices." Both require a validated regular-texgen CPU reference — the exact
+raw signed-byte normal semantics (T2) and LookAt quantization (T3) this
+project has not yet measured against real hardware, converging in T4's
+"shared regular/linear reference math." Building an un-validated CPU regular
+curve now, ahead of T2-T4, would risk the 2,848 currently-correct GE-path
+triangles for a fix this project cannot yet prove is bit-exact — exactly what
+`R2.1`'s own preamble warns against ("preserve current known-good texgen
+behaviour... execute T1 through T10 in order"). The census and its two host
+tests are permanent, reusable measurement infrastructure regardless of when
+the fix lands; the fix itself proceeds through T2 -> T3 -> T4 as planned.
+
+**Confidence: high** that the census is correct (built directly from
+`plan_draw_order`'s own already-computed, already-tested `space`/`world`,
+not a re-derivation) and that the gap is real (164 is reproducible,
+structurally consistent, not a measurement artifact — every instance is a
+parent/child pair with `load space` one less than `draw space`). Not yet
+fixed; not yet visually verified (no visual claim is being made — nothing
+about primitive-level regular texgen resolution changed this task).
+
+---
+
 ## RE-224 — Fix ignored CI4 palette bank, `G_SETTILE.palette` (`PLAN.md` R2.0/P2)
 
 **Question.** RE-223 found 7 real CI4 render-tile instances (file 86,
