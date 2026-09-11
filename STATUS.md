@@ -3,8 +3,40 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`IN_PROGRESS`,
-  part 5 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248); C4-C7 remain
-- Last complete: `RE-248` (2026-09-11) -- `R2.2`/C3 part 5: closed file 39
+  part 6 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248/RE-249);
+  C4-C7 remain
+- Last complete: `RE-249` (2026-09-11) -- `R2.2`/C3 part 6: ruled out any
+  further external depth-state wrapper archive-wide -- the "find (or rule
+  out)" half of C3's remaining item 1 is now answered. A per-file
+  breakdown of the 1623 primitives RE-248 left unattributed found no
+  dominant cluster (largest single file, 40/`LBTransitionAeroplane`, is
+  only 3.3% of it -- nothing like RE-246's 2500/3891-primitive find).
+  `grep`ing the breakdown against `relocFileDescriptions.us.txt`'s names
+  did surface one real pattern: 37 `Stage*File2+`/`GRBonus*File2` files
+  (each its own independent `GroundData` `find_ground_data` already
+  discovers) account for 617 primitives (34%); no primary, non-`File2+`
+  stage file appears in the divergence list at all. Traced file 112
+  (`StageYamabukiFile2`) directly: its layer 1 (already seeded
+  `GROUND_LAYER1_EXTERNAL` by RE-245, since the seed keys on layer *index*
+  not file) shows **zero** divergence, while its default-seeded layers 0/3
+  diverge **100%** -- and since `convert_sequence` only ever sets
+  `z_buffer` from a seed or a decoded `G_SETGEOMETRYMODE` command, a `true`
+  result from a `false` seed can only be the graph's *own* in-list
+  `G_SETGEOMETRYMODE(G_ZBUFFER)` call, not a missing wrapper. Spot-checked
+  six more non-cluster divergers (`KirbyModel`, `LinkModel`, `NessModel`,
+  `CaptainSpecial2`, `FoxSpecial3`, `ITCommonObject`, `MVCommon`, none
+  `fighter_skeleton_graphs()` members): same small, scattered, per-node
+  shape, no shared wrapper. File 47 (already confirmed unregistered by
+  RE-247) closes the same way RE-248 closed file 39 -- its 45 primitives
+  need no seed either. **Conclusion**: the remaining ~1578 primitives
+  (1808 minus files 39 and 47's 230) are real archive content -- the
+  original ROM's own display lists setting `G_ZBUFFER` without a matching
+  `Z_CMP`/`Z_UPD` bit -- exactly the corrective case C3 exists to capture,
+  not an unfound seed. No further wrapper search is warranted. See
+  `docs/reverse-engineering.md` RE-249 for the full entry (confidence:
+  high for the rule-out itself, medium for generalizing the per-node
+  shape to the untraced remainder).
+- Previously complete: `RE-248` (2026-09-11) -- `R2.2`/C3 part 5: closed file 39
   (`IFCommonObject`), RE-247's one remaining unattributed file. Its own
   decomp header comment (`refs/ssb-decomp-re/src/relocData/
   39_IFCommonObject.c`) states it is orphaned interface geometry with no
@@ -116,21 +148,14 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C3 continues. Remaining sub-problems, in order:
-  1. Find (or rule out) any other object category's or camera's own
-     external wrapper -- render layers 0/2/3 need none; items and effects
-     carry no wrapper of their own; file 39 is confirmed dead (RE-248); the
-     remaining ~1623-primitive archive-wide gap is not yet attributed to a
-     specific cause, and part of it may be the main battle camera's own
-     first-drawn-object default (RE-246), which is not statically
-     attributable the way the transition cameras were. Until this is
-     understood, do not change `psp/src/meshdraw.rs`'s depth-test signal
-     away from `z_buffer`.
-  2. Give `PlannedList` its own `list_id` field (`scene::DlLink::list_id`
+- Next: `R2.2`/C3 continues. Item 1 (find/rule out another external
+  wrapper) is now answered by RE-249: **ruled out**, no further wrapper
+  search is warranted. Remaining sub-problems, in order:
+  1. Give `PlannedList` its own `list_id` field (`scene::DlLink::list_id`
      is parsed but discarded today) so stage render-layer 1's 21 list-1
      (translucent) `DObjDLLink` entries can be seeded with depth-test-
      without-write instead of today's uniform opaque write-on seed.
-  3. Once the real per-primitive `depth_test`/`depth_write` state is fully
+  2. Once the real per-primitive `depth_test`/`depth_write` state is fully
      accounted for archive-wide, wire `psp/src/meshdraw.rs`'s
      `apply_material` to use it: keep `GuState::DepthTest` correctness at
      least as good as today's `z_buffer` heuristic, and map `depth_write`
@@ -140,7 +165,7 @@
      PPSSPP or physical-PSP evidence, per `PLAN.md`'s C3 acceptance
      criteria. `depth_mode` (`ZMode`) has no PSP GE equivalent hardware
      feature identified yet; kept as measured data only.
-- Blockers: none for what RE-248 closed (it does not close C3). Same
+- Blockers: none for what RE-249 closed (it does not close C3). Same
   non-blocking follow-ups RE-240/RE-241/RE-242/RE-245 already recorded
   remain open (visual before/after for RE-240's 23 affected files; the
   `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
@@ -151,30 +176,29 @@
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-248.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-249.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
   `IN_PROGRESS`, C4-C7 remain).
-- Decisions: `DECISIONS.md` -- no new revision for RE-248 (D-042 already
+- Decisions: `DECISIONS.md` -- no new revision for RE-249 (D-042 already
   covers "renderer correctness claims stay provisional until R2.2 closes").
 - Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  file 39 (`IFCommonObject`) is confirmed orphaned geometry no code path
-  draws, explaining 185 of the 1808-primitive archive-wide `z_buffer`/
-  `depth_test` gap with no seed needed; the remainder (layers 0/2/3, items,
-  effects, and any statically-visible fraction of the main-camera default)
-  and PSP-side wiring remain open.
-- Verification (RE-248): no production code changed this session (docs
-  only; a temporary probe test in `tools/romtool/src/main.rs` was added,
-  run, and reverted). `cargo test --workspace --all-targets` (`SSB64_ROM`
-  set): `ssb-rom` 419 passed, `romtool` 22 passed, `ssb-engine` 48,
-  `ssb-game` 120, 0 failed overall -- unchanged from RE-247. `cargo fmt
+  no further external depth-state wrapper exists archive-wide (RE-249); the
+  remaining ~1578-primitive gap is real in-content `G_ZBUFFER`-without-
+  `Z_CMP`/`Z_UPD` divergence, not a missing seed; `PlannedList`'s `list_id`
+  gap and PSP-side wiring remain open.
+- Verification (RE-249): no production code changed this session (docs
+  only; five temporary probe tests in `tools/romtool/src/main.rs` were
+  added, run, and reverted). `cargo test --workspace --all-targets`
+  (`SSB64_ROM` set): `ssb-rom` 419 passed, `romtool` 22 passed, `ssb-engine`
+  48, `ssb-game` 120, 0 failed overall -- unchanged from RE-248. `cargo fmt
   --check` clean. `cargo clippy --workspace --all-targets` clean (same
   pre-existing, unrelated warnings as prior sessions). No pack rebuild
   needed (no asset-pipeline code changed).
-- Documentation: RE-248, `PLAN.md` (`R2.2`/C3 status, cross-reference
+- Documentation: RE-249, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: `5001899` (RE-248, `R2.2`/C3 part 5: confirm file 39 is orphaned,
-  never drawn, needs no depth seed).
+- Commit: pending (RE-249, `R2.2`/C3 part 6: rule out any further external
+  depth-state wrapper archive-wide).
 
 ## Continuation
 
