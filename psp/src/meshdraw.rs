@@ -162,6 +162,11 @@ pub struct DrawState {
     /// Set this whenever the camera orientation changes. It is deliberately
     /// *not* folded into `last_flags`: a rotating camera changes the basis
     /// while every primitive's flags and texture stay identical.
+    ///
+    /// Stored here at full `f32` precision; [`Self::texgen_object_basis`] is
+    /// the single place that applies the original hardware's signed-byte
+    /// `FTOFRAC8` quantization (RE-227) before using it, so callers of this
+    /// field never need to quantize it themselves.
     pub texgen_basis: Option<([f32; 3], [f32; 3])>,
     /// The model matrix currently on the GU stack, captured per node.
     ///
@@ -343,13 +348,20 @@ impl DrawState {
     /// The look-at basis expressed in the current node's **object** space, the
     /// two rows the RSP itself derives.
     ///
-    /// `refs/BattleShip`'s `CalculateNormalDir` is the reference: it takes the
-    /// look-at direction, multiplies by the transposed modelview, and
-    /// normalises. Reproduced here exactly, including the normalisation --
-    /// which is also what makes a uniform model scale drop out, since the
-    /// transpose of a scaled rotation scales every row by the same factor.
+    /// `refs/BattleShip`'s `CalculateNormalDir` is the reference: it
+    /// dequantizes the look-at direction (stored as signed bytes, RE-227),
+    /// multiplies by the transposed modelview, and normalises. Reproduced
+    /// here exactly, including the normalisation -- which is also what makes
+    /// a uniform model scale drop out, since the transpose of a scaled
+    /// rotation scales every row by the same factor. Quantizing here, once,
+    /// before the model transform, feeds the identical quantized-then-
+    /// transformed basis to both the regular (GE texture-matrix) and linear
+    /// (CPU-generated) texgen paths, since both call this one method
+    /// (`apply_texture_mapping` and `draw_mesh`'s linear-UV branch).
     fn texgen_object_basis(&self) -> ([f32; 3], [f32; 3]) {
         let (right, up) = self.texgen_basis.unwrap_or(IDENTITY_TEXGEN_BASIS);
+        let right = ssb_engine::math::quantize_lookat_basis(right);
+        let up = ssb_engine::math::quantize_lookat_basis(up);
         let Some(m) = self.texgen_model else {
             return (right, up);
         };

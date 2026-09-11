@@ -269,11 +269,12 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   vertex normal — both divide by the constant `127`), into the pack's
   existing raw S10.5 authored-UV unit, and submits it through the ordinary
   authored-UV draw path rather than a second GE mode. A lookup table was
-  considered and rejected: only the vertex normal is quantised, and the
-  look-at basis it is dotted against is a continuous per-frame float, so a LUT
-  keyed on the normal alone cannot be exact either. 257 triangles archive-wide
-  (12 packed primitives) makes the direct polynomial cheap enough that this
-  was not measured as a bottleneck.
+  considered and rejected: the vertex normal is quantised, and the look-at
+  basis it is dotted against varies every frame a camera rotates — also
+  quantised to a signed byte (RE-227), but still not a fixed input domain the
+  way the normal alone is — so a LUT keyed on the normal alone cannot be exact
+  either. 257 triangles archive-wide (12 packed primitives) makes the direct
+  polynomial cheap enough that this was not measured as a bottleneck.
 
 **`G_SETOTHERMODE_H`/`L` carry several independent sub-fields per command,
 not just the cycle-type/render-mode ones `mesh.rs` originally read.** RE-124/
@@ -533,10 +534,12 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
   power-of-two texture padding — see `PLAN.md` R2.0/P0b.
 
 * Texgen is implemented and self-validated, but not closed: the ordered
-  T1–T10 queue in `PLAN.md` still requires raw normal semantics, LookAt
-  quantization, load-space provenance, tile-shift/addressing proof and an
-  original-N64 Metal comparison. The current `G_TEXTURE_GEN_LINEAR` path is
-  source-formula exact, not claimed bit-exact to N64.
+  T1–T10 queue in `PLAN.md` has raw normal semantics (T2, RE-226) and LookAt
+  quantization (T3, RE-227) measured and fixed; load-space provenance
+  (T1's own cross-node gap), shared regular/linear reference math,
+  tile-shift/addressing proof and an original-N64 Metal comparison remain
+  open (T4–T9). The current `G_TEXTURE_GEN_LINEAR` path is source-formula
+  exact, not claimed bit-exact to N64.
 
 * Renderer model corrections remain open under `PLAN.md` R2.2/C1–C7:
   single-source primitive-colour ownership, load-time lighting provenance,

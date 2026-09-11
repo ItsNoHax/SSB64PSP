@@ -510,6 +510,8 @@ read by anything.
 
 **Implemented:** `crates/ssb-rom/src/psp_texture.rs` (`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`, `acos`), `psp/src/meshdraw.rs` (`draw_mesh`'s dynamic-vertex branch, `apply_texture_mapping`'s `environment` flag)
 
+**Revised by RE-227 (`PLAN.md` R2.1/T3):** the look-at basis this reasoning called "a continuous per-frame float" is not — the original hardware quantizes it to a signed byte (`FTOFRAC8`) once per camera, before any per-vertex work. `DrawState::texgen_object_basis` now reproduces that quantization. The LUT rejection's conclusion is unaffected (a per-frame-varying basis, even quantized, still is not a fixed input domain the way the vertex normal alone is), but the premise as originally stated was imprecise.
+
 **Reference:** `docs/reverse-engineering.md` RE-215, D-038 (the ordinary-curve GE-generator decision this one deliberately does not extend)
 
 ### D-041: PPSSPPHeadless Is the Automated Visual-Verification Runner
