@@ -1002,9 +1002,14 @@ struct State {
     /// `1 << mask` texels, and zero means it does not wrap at all.
     tile0_mask: Option<(u8, u8)>,
     /// `G_SETTILE`'s `cms`/`cmt` on tile 0 (raw 2-bit fields: bit 0 mirror,
-    /// bit 1 clamp). Only the mirror bit is acted on -- RE-066 found clamp
-    /// is only ever requested alongside a nonzero mask, where the existing
-    /// mask-narrowed `Repeat` already reproduces real hardware exactly.
+    /// bit 1 clamp). Both bits are acted on. RE-066 originally read clamp as
+    /// always redundant with mask-based narrowing and used `Repeat`
+    /// unconditionally, but RE-102 found a counter-example on fighter
+    /// face/torso textures where mask-narrowing is a no-op (mask larger than
+    /// the drawn rect) and real hardware genuinely clamps -- `clamp_s`/
+    /// `clamp_t` now carry the raw clamp bit through to
+    /// [`TextureRef::clamp_s`]/`clamp_t`, which `psp::meshdraw::bind_texture`
+    /// uses to pick `sceGuTexWrap`'s mode per axis.
     tile0_cm: Option<(u8, u8)>,
     /// `G_SETTILE`'s raw `palette` on tile 0. See [`TextureRef::palette`].
     tile0_palette: Option<u8>,
