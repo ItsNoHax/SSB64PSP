@@ -85,7 +85,7 @@ USAGE:
                                [--expect <ground-truth.tsv>]
     romtool mobj     <rom.z64> [--file <id>] [--expect <ground-truth.tsv>]
                                [--search] [--expect-tables <tables.tsv>]
-    romtool texgen   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
+    romtool texgen   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>] [--verify]
     romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
@@ -7237,16 +7237,190 @@ fn build_texgen_census(
     (census, graph_lists, discovered_lists)
 }
 
+/// `PLAN.md` R2.1/T10: the addressing check `texgen_addressing_census_against_real_archive_materials`
+/// already proved against `SSB64_ROM`, factored out so `romtool texgen
+/// --verify` runs the exact same walk against any ROM, not a second copy of
+/// the logic that could drift from what the test actually checks.
+struct TexgenAddressingReport {
+    materials_examined: u64,
+    axis_instances: u64,
+    non_clamp_axis_instances: u64,
+    diverging_axis_instances: u64,
+    diverging_at_non_extreme_dot: u64,
+    diverging_combos: BTreeSet<(Texgen, u16, u16, u8)>,
+}
+
+fn verify_texgen_addressing(census: &TexgenCensus) -> TexgenAddressingReport {
+    let mut report = TexgenAddressingReport {
+        materials_examined: 0,
+        axis_instances: 0,
+        non_clamp_axis_instances: 0,
+        diverging_axis_instances: 0,
+        diverging_at_non_extreme_dot: 0,
+        diverging_combos: BTreeSet::new(),
+    };
+
+    for &(mode, scale, tile) in census.texgen_materials_by_mode.keys() {
+        let Some(dims) = tile.dims else { continue };
+        report.materials_examined += 1;
+
+        for axis in 0..2usize {
+            report.axis_instances += 1;
+            let scale_axis = if axis == 0 { scale.0 } else { scale.1 };
+            let origin_axis = if axis == 0 {
+                tile.origin.0
+            } else {
+                tile.origin.1
+            };
+            let dim_axis = if axis == 0 { dims.0 } else { dims.1 };
+            let mask_axis = if axis == 0 { tile.mask.0 } else { tile.mask.1 };
+            let cm_axis = if axis == 0 { tile.cm.0 } else { tile.cm.1 };
+            let mirror = cm_axis & 1 != 0;
+            let clamp_bit = cm_axis & 2 != 0;
+            if !clamp_bit {
+                report.non_clamp_axis_instances += 1;
+                continue;
+            }
+
+            let model = ssb_rom::n64_addressing::TileAxis {
+                shift: 0,
+                origin_q2: 0,
+                far_edge_q2: (dim_axis as i32 - 1) << 2,
+                mask: mask_axis,
+                mirror,
+                clamp_bit,
+            };
+            let period = 1u32 << mask_axis;
+
+            for n in -127i8..=127 {
+                let mut normal = [0i8; 3];
+                normal[0] = n;
+                let basis_s = if axis == 0 { [1.0, 0.0, 0.0] } else { [0.0; 3] };
+                let basis_t = if axis == 1 { [1.0, 0.0, 0.0] } else { [0.0; 3] };
+                let (u, v) = match mode {
+                    Texgen::Regular => ssb_rom::psp_texture::regular_texgen_uv(
+                        normal,
+                        basis_s,
+                        basis_t,
+                        scale_axis,
+                        scale_axis,
+                        origin_axis,
+                        origin_axis,
+                        true,
+                        true,
+                    ),
+                    Texgen::Linear => ssb_rom::psp_texture::linear_texgen_uv(
+                        normal,
+                        basis_s,
+                        basis_t,
+                        scale_axis,
+                        scale_axis,
+                        origin_axis,
+                        origin_axis,
+                        true,
+                        true,
+                    ),
+                    Texgen::None => unreachable!("texgen_materials_by_mode never keys None"),
+                };
+                let coord = (if axis == 0 { u } else { v }) as i32;
+
+                let hw = ssb_rom::n64_addressing::address_axis(&model, coord);
+                let psp = ssb_rom::n64_addressing::psp_lowering_axis(
+                    coord,
+                    period,
+                    dim_axis as u32,
+                    mirror,
+                    clamp_bit,
+                );
+                if hw != psp {
+                    report.diverging_axis_instances += 1;
+                    report
+                        .diverging_combos
+                        .insert((mode, scale_axis, dim_axis, mask_axis));
+                    if n != 127 {
+                        report.diverging_at_non_extreme_dot += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    report
+}
+
+/// `PLAN.md` R2.1/T10: the correctness-critical invariants `romtool texgen
+/// --verify` fails on -- each one is a real ROM measurement this project has
+/// already pinned as a regression baseline elsewhere (RE-225/RE-230/RE-231/
+/// RE-232), reproduced here against whatever ROM is passed so CI or a
+/// developer can catch a regression without reaching for `cargo test` and
+/// `SSB64_ROM`.
+fn verify_texgen(census: &TexgenCensus) -> Vec<String> {
+    let mut failures = Vec::new();
+
+    if census.load_draw_mode_mismatch != 0 {
+        failures.push(format!(
+            "load_draw_mode_mismatch = {} (want 0): a texgen triangle's vertices were loaded \
+             under a different effective mode than the draw itself",
+            census.load_draw_mode_mismatch
+        ));
+    }
+    if census.load_draw_scale_mismatch != 0 {
+        failures.push(format!(
+            "load_draw_scale_mismatch = {} (want 0): a texgen triangle's vertices were loaded \
+             under a different G_TEXTURE scale than the draw itself",
+            census.load_draw_scale_mismatch
+        ));
+    }
+    for (tile, n) in &census.texgen_tiles {
+        if tile.shift != (0, 0) {
+            failures.push(format!(
+                "texgen-bound tile shift {:?} used by {n} triangle(s) (want (0, 0), \
+                 PLAN.md R2.1/T6): N64 tile shifting is not implemented",
+                tile.shift
+            ));
+        }
+    }
+
+    let addressing = verify_texgen_addressing(census);
+    if addressing.non_clamp_axis_instances != 0 {
+        failures.push(format!(
+            "non_clamp_axis_instances = {} (want 0, PLAN.md R2.1/T7): a real texgen tile now \
+             has a non-clamp axis, which this addressing check does not cover",
+            addressing.non_clamp_axis_instances
+        ));
+    }
+    if addressing.diverging_axis_instances != 0 {
+        failures.push(format!(
+            "diverging_axis_instances = {} (want 0, PLAN.md R2.1/T7a, RE-232): generated \
+             texgen coordinates disagree with the hardware addressing model on {} distinct \
+             (mode, scale, dim, mask) combination(s)",
+            addressing.diverging_axis_instances,
+            addressing.diverging_combos.len()
+        ));
+    }
+    if addressing.diverging_at_non_extreme_dot != 0 {
+        failures.push(format!(
+            "diverging_at_non_extreme_dot = {} (want 0): an addressing divergence now reaches \
+             beyond the sweep's dot=+1 extreme, a materially larger gap than RE-231 measured",
+            addressing.diverging_at_non_extreme_dot
+        ));
+    }
+
+    failures
+}
+
 fn texgen(path: &Path, args: &[&str]) -> Res {
     let mut only_file: Option<u32> = None;
     let mut verbose = false;
     let mut pack_path: Option<PathBuf> = None;
+    let mut verify = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match *arg {
             "--file" => only_file = Some(parse_id(it.next().ok_or("--file needs an id")?)?),
             "--lines" => verbose = true,
             "--pack" => pack_path = it.next().map(PathBuf::from),
+            "--verify" => verify = true,
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -7380,16 +7554,69 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
         }
     }
 
+    if verify {
+        println!();
+        let failures = verify_texgen(&census);
+        if failures.is_empty() {
+            println!("verify: PASS (correctness-critical texgen invariants hold)");
+        } else {
+            println!("verify: FAIL ({} violation(s))", failures.len());
+            for f in &failures {
+                println!("  - {f}");
+            }
+            return Err(format!(
+                "{} correctness-critical texgen violation(s)",
+                failures.len()
+            )
+            .into());
+        }
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        normal_transform_equivalent, palette_bank_offset, DIRECT_MANAGER_EFFECT_ASSETS,
-        DIRECT_MANAGER_EFFECT_MOBJ_PAIRS, EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
+        normal_transform_equivalent, palette_bank_offset, verify_texgen, TexgenCensus, TileState,
+        DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
+        EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
     };
     use std::collections::BTreeSet;
+
+    /// `PLAN.md` R2.1/T10: `verify_texgen`'s failure branches, exercised
+    /// synthetically so they're host-testable without `SSB64_ROM` -- the
+    /// real-archive walk (`texgen_addressing_census_against_real_archive_materials`,
+    /// below) already proves the *current* ROM passes every one of these; this
+    /// proves the checks themselves actually fire (`AGENTS.md`'s "test the
+    /// test by breaking the code": a check that can never fail is not
+    /// evidence).
+    #[test]
+    fn verify_texgen_passes_on_a_clean_census_and_fails_on_each_named_violation() {
+        let clean = TexgenCensus::default();
+        assert!(
+            verify_texgen(&clean).is_empty(),
+            "a default (empty) census should have no correctness-critical violations"
+        );
+
+        let mut mode_mismatch = TexgenCensus::default();
+        mode_mismatch.load_draw_mode_mismatch = 1;
+        assert!(!verify_texgen(&mode_mismatch).is_empty());
+
+        let mut scale_mismatch = TexgenCensus::default();
+        scale_mismatch.load_draw_scale_mismatch = 1;
+        assert!(!verify_texgen(&scale_mismatch).is_empty());
+
+        let mut nonzero_shift = TexgenCensus::default();
+        nonzero_shift.texgen_tiles.insert(
+            TileState {
+                shift: (1, 0),
+                ..TileState::default()
+            },
+            1,
+        );
+        assert!(!verify_texgen(&nonzero_shift).is_empty());
+    }
 
     /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is
     /// only their 3x3 linear part, and only up to a positive uniform scale.
@@ -8368,6 +8595,11 @@ mod tests {
     /// to `drawn` before clamping, matching the mirror+clamp case RE-220/
     /// RE-221 already fixed the same way -- the divergence count is 0
     /// again.
+    /// `PLAN.md` R2.1/T10 factored the sweep itself out into
+    /// `super::verify_texgen_addressing`, shared with `romtool texgen
+    /// --verify`; this test supplies the assertions and diagnostics on top
+    /// of that shared walk so the CLI and the test can never silently
+    /// disagree about what "addressing agrees with hardware" means.
     #[test]
     fn texgen_addressing_census_against_real_archive_materials() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {
@@ -8378,132 +8610,40 @@ mod tests {
         let loaded = super::load_all(&archive);
 
         let (census, _, _) = super::build_texgen_census(&archive, &loaded, None, false);
-
-        let mut materials_examined = 0u64;
-        let mut axis_instances = 0u64;
-        let mut non_clamp_axis_instances = 0u64;
-        let mut diverging_axis_instances = 0u64;
-        let mut diverging_at_non_extreme_dot = 0u64;
-        let mut diverging_combos: BTreeSet<(super::Texgen, u16, u16, u8)> = BTreeSet::new();
-
-        for &(mode, scale, tile) in census.texgen_materials_by_mode.keys() {
-            let Some(dims) = tile.dims else { continue };
-            materials_examined += 1;
-
-            for axis in 0..2usize {
-                axis_instances += 1;
-                let scale_axis = if axis == 0 { scale.0 } else { scale.1 };
-                let origin_axis = if axis == 0 {
-                    tile.origin.0
-                } else {
-                    tile.origin.1
-                };
-                let dim_axis = if axis == 0 { dims.0 } else { dims.1 };
-                let mask_axis = if axis == 0 { tile.mask.0 } else { tile.mask.1 };
-                let cm_axis = if axis == 0 { tile.cm.0 } else { tile.cm.1 };
-                let mirror = cm_axis & 1 != 0;
-                let clamp_bit = cm_axis & 2 != 0;
-                if !clamp_bit {
-                    non_clamp_axis_instances += 1;
-                    continue;
-                }
-
-                let model = ssb_rom::n64_addressing::TileAxis {
-                    shift: 0,
-                    // Already-relative convention (matches
-                    // `tile_addressing_census_against_real_archive_textures`'s
-                    // own mirror+clamp bucket): `texgen_s10_5_addressed`
-                    // subtracts the real tile origin itself whenever
-                    // `clamp` is true, so feeding the *addressed* PSP
-                    // coordinate through an `origin_q2: 0` model with a
-                    // relative far edge is equivalent to feeding the real
-                    // hardware model the unaddressed coordinate and the
-                    // real origin.
-                    origin_q2: 0,
-                    far_edge_q2: (dim_axis as i32 - 1) << 2,
-                    mask: mask_axis,
-                    mirror,
-                    clamp_bit,
-                };
-                let period = 1u32 << mask_axis;
-
-                for n in -127i8..=127 {
-                    let mut normal = [0i8; 3];
-                    normal[0] = n;
-                    let basis_s = if axis == 0 { [1.0, 0.0, 0.0] } else { [0.0; 3] };
-                    let basis_t = if axis == 1 { [1.0, 0.0, 0.0] } else { [0.0; 3] };
-                    let (u, v) = match mode {
-                        super::Texgen::Regular => ssb_rom::psp_texture::regular_texgen_uv(
-                            normal,
-                            basis_s,
-                            basis_t,
-                            scale_axis,
-                            scale_axis,
-                            origin_axis,
-                            origin_axis,
-                            true,
-                            true,
-                        ),
-                        super::Texgen::Linear => ssb_rom::psp_texture::linear_texgen_uv(
-                            normal,
-                            basis_s,
-                            basis_t,
-                            scale_axis,
-                            scale_axis,
-                            origin_axis,
-                            origin_axis,
-                            true,
-                            true,
-                        ),
-                        super::Texgen::None => {
-                            unreachable!("texgen_materials_by_mode never keys None")
-                        }
-                    };
-                    let coord = (if axis == 0 { u } else { v }) as i32;
-
-                    let hw = ssb_rom::n64_addressing::address_axis(&model, coord);
-                    let psp = ssb_rom::n64_addressing::psp_lowering_axis(
-                        coord,
-                        period,
-                        dim_axis as u32,
-                        mirror,
-                        clamp_bit,
-                    );
-                    if hw != psp {
-                        diverging_axis_instances += 1;
-                        diverging_combos.insert((mode, scale_axis, dim_axis, mask_axis));
-                        if n != 127 {
-                            diverging_at_non_extreme_dot += 1;
-                            println!(
-                                "DIVERGE (not sweep extreme) mode {mode:?} axis {axis} n {n} \
-                                 coord {coord} scale {scale_axis:#06x} origin {origin_axis} \
-                                 dim {dim_axis} mask {mask_axis} mirror {mirror}: hw {hw} psp {psp}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        let report = super::verify_texgen_addressing(&census);
 
         println!("R2.1/T7 texgen addressing census");
-        println!("  real (mode, scale, tile) pairings examined: {materials_examined}");
-        println!("  axis instances (pairing x axis):            {axis_instances}");
-        println!("  non-clamp axis instances (unsupported):     {non_clamp_axis_instances}");
-        println!("  diverging axis instances:                   {diverging_axis_instances}");
         println!(
-            "  distinct diverging (mode, scale, dim, mask): {}",
-            diverging_combos.len()
+            "  real (mode, scale, tile) pairings examined: {}",
+            report.materials_examined
         );
         println!(
-            "  of those, diverging away from the sweep's dot=+1 extreme: {diverging_at_non_extreme_dot}"
+            "  axis instances (pairing x axis):            {}",
+            report.axis_instances
+        );
+        println!(
+            "  non-clamp axis instances (unsupported):     {}",
+            report.non_clamp_axis_instances
+        );
+        println!(
+            "  diverging axis instances:                   {}",
+            report.diverging_axis_instances
+        );
+        println!(
+            "  distinct diverging (mode, scale, dim, mask): {}",
+            report.diverging_combos.len()
+        );
+        println!(
+            "  of those, diverging away from the sweep's dot=+1 extreme: {}",
+            report.diverging_at_non_extreme_dot
         );
 
         assert!(
-            materials_examined > 0,
+            report.materials_examined > 0,
             "archive-wide walk found no real texgen (mode, scale, tile) pairings"
         );
         assert_eq!(
-            non_clamp_axis_instances, 0,
+            report.non_clamp_axis_instances, 0,
             "a real texgen tile now has a non-clamp axis (PLAN.md R2.1/T7): this test's coverage assumes RE-230's \
              finding that every texgen tile clamps on both axes, and needs extending before this can pass"
         );
@@ -8512,12 +8652,12 @@ mod tests {
         // dot=+1 extreme. Fixed in `n64_addressing::psp_lowering_axis` and
         // `texture::mirror_axis_len`/`mirror_fold`; back to a strict 0.
         assert_eq!(
-            diverging_axis_instances, 0,
+            report.diverging_axis_instances, 0,
             "measured texgen addressing divergence count changed (PLAN.md R2.1/T7a, RE-231): investigate before \
              re-pinning a nonzero baseline"
         );
         assert_eq!(
-            diverging_at_non_extreme_dot, 0,
+            report.diverging_at_non_extreme_dot, 0,
             "a texgen addressing divergence now reaches beyond the sweep's dot=+1 extreme (PLAN.md R2.1/T7, \
              RE-231): this is a materially different, likely larger, gap than what RE-231 measured"
         );

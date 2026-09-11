@@ -3133,7 +3133,10 @@ T9 complete (RE-236/RE-237): all five physical-PSP matrix items captured —
 regular rotations A/B and linear texgen via T8's own scenes 11-13 (RE-236),
 plus a real-hardware raw normal diagnostic and a new camera-rotation scene
 (`regression_capture_scene14`) exercising T3's previously-dormant non-
-identity LookAt basis (RE-237).
+identity LookAt basis (RE-237). T10 in progress (RE-238): stale
+`docs/porting-status.md` reconciled, `romtool texgen ROM --verify` built and
+run clean against the real ROM, zero-normal test added; textured→untextured
+mapping-transition coverage still open.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3405,6 +3408,21 @@ commit, pack hash, EBOOT identity, scene and capture hash. Rebuild and explain
 goldens after semantic changes; do not reuse them silently.
 
 ### T10 — Texgen documentation cleanup
+
+Status: `IN PROGRESS` — RE-238. `docs/porting-status.md` was the one stale
+doc found (its texture-conversion row and "Known gaps" §1 still read as if
+T1–T9 and the physical-hardware work were open); fixed. `docs/rendering.md`,
+`docs/visual-regression.md`, `DECISIONS.md` surveyed and found current, no
+edit needed. `romtool texgen ROM --verify` implemented (checks the
+addressing/mode/scale/shift invariants RE-225/RE-230/RE-232 already pinned,
+fails with a nonzero exit on any violation; ran clean against the real ROM).
+Added the missing zero-normal test
+(`texgen_dot_of_the_zero_normal_is_zero_for_any_basis`). Still open: a
+dedicated textured→untextured→texgen mapping-transition test (needs an
+archive check for whether that combination is even real first), and the rest
+of the completion gate (PPSSPP/physical/original-Metal gates already sit on
+T8/T9's own evidence; host/addressing gates now include `--verify`; source
+semantics gate carried by T2–T5).
 
 After T1–T9 reconcile `STATUS.md`, `PLAN.md`, `DECISIONS.md`,
 `docs/rendering.md`, `docs/reverse-engineering.md`,
