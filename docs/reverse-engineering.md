@@ -10,6 +10,103 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-231 — Texgen addressing census: real N64/PSP agreement confirmed for 25 of 34 real axis instances; a narrow, single-texel divergence found and pinned at the sweep's extreme for mask-narrowed clamp-without-mirror axes (`PLAN.md` R2.1/T7, opens T7a)
+
+**Question.** `R2.0`/P0b built `n64_addressing`'s hardware reference model
+(`address_axis`) and its paired PSP-lowering comparison model
+(`psp_lowering_axis`), then proved them against every real *authored-UV*
+primitive archive-wide — explicitly excluding texgen primitives, since texgen
+coordinates are generated (not authored) and T7 was named to own that
+verification separately. T7 asks: for every real texgen material, does the
+RSP's own `coordinate → scale → shift → origin → mask → mirror/clamp`
+pipeline agree with what this project's PSP-side texgen formulas
+(`regular_texgen_uv`/`linear_texgen_uv`, RE-228/RE-229) actually produce,
+once addressed through the same tile a real draw binds?
+
+**Method.** Added `texgen_materials_by_mode` to `tools/romtool`'s
+`TexgenCensus` — the real `(mode, scale, tile)` triple as it co-occurs at an
+actual texgen draw, joining what T6's `texgen_scales_by_mode`/
+`texgen_tiles_by_mode` kept as two separate maps (losing which scale belongs
+to which tile once a mode has more than one of either). For every real
+triple `texgen_addressing_census_against_real_archive_materials` measured,
+swept every `i8`-quantized dot product (`-127..=127`, `texgen_dot`'s own
+`/127` granularity — a real vertex normal cannot produce a finer-grained
+value) through `regular_texgen_uv`/`linear_texgen_uv` to get the exact PSP
+runtime coordinate, then compared its `address_axis`-addressed hardware
+texel against `psp_lowering_axis`'s PSP-lowered one, for both S and T axes.
+RE-230 (T6) already measured every real texgen tile clamped on both axes
+(`cm` only `(2,2)`/`(3,2)`/`(2,3)`), so the comparison feeds `address_axis`
+the already-origin-relative PSP coordinate with `origin_q2: 0` and a
+relative far edge — the same convention
+`tile_addressing_census_against_real_archive_textures` (P0b) uses for its
+own mirror+clamp bucket, justified by `texgen_s10_5_addressed` subtracting
+the real tile origin itself whenever `clamp` is true.
+
+A second, synthetic test
+(`texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`)
+adds the host/reference cases `PLAN.md` T7's own text asks for that the real
+archive does not exercise for texgen — repeat+mask and mirror+repeat with no
+clamp bit — confirming the formulas agree in general, not only on the shapes
+RE-230 happened to catalogue.
+
+**Measured, archive-wide, real ROM (17 real `(mode, scale, tile)` pairings,
+34 axis instances — every one clamped on both axes, matching RE-230):**
+
+* **25 of 34 axis instances agree with the hardware model across the full
+  quantized dot sweep.** No divergence anywhere except the case below.
+* **9 of 34 axis instances diverge, always at exactly one sample: `dot = +1`
+  (`n = 127`), the sweep's own extreme — never at any other of the 254
+  sampled dots.** Affects 4 distinct `(mode, scale, dim, mask)` combinations,
+  all `Regular` mode, all with mask genuinely narrowing below the tile's
+  drawn rect (`period = 1 << mask` well under `drawn`, e.g. mask 4 → 16-texel
+  period on a 159- or 384-texel drawn rect — real `RE-044` narrowing, not a
+  no-op). Real hardware keeps mask-wrapping (periodically repeating) all the
+  way to the drawn rect's true far edge and only clamps once it is reached;
+  `address_axis` returns `0` (wrapped to the next period's start) at this
+  boundary. The current PSP-lowering model instead holds at `period − 1`
+  (the *narrowed* mask period's own last texel), never reaching far enough
+  to distinguish "still within a repeating period" from "past the real
+  far edge" — `psp_lowering_axis`'s `!mirror` clamp branch clamps to
+  `period − 1` unconditionally, a target that is only correct when the mask
+  does *not* narrow below the drawn rect (`period >= drawn`, RE-102's
+  fighter-face shape), never validated against the genuinely-narrowed case
+  because no real *authored*-UV content in this ROM combines a clamp bit
+  with a mask that narrows that far below the drawn rect — only these
+  `Regular`-texgen `StageMetalFile2`-family materials do.
+* This is very likely a **real PSP rendering divergence**, not only a
+  model gap: `psp_lowering_axis` is a host-only comparison model
+  (`n64_addressing.rs`, never called from `psp/` or pack-build code), but
+  `meshdraw::bind_texture` installs the GE's `Clamp` wrap mode for exactly
+  this `t.wrap`/`CLAMP_S`/`CLAMP_T` combination, and real GE `Clamp` holds at
+  the bound (narrowed) texture's own last texel — the same behaviour this
+  model's bug happens to reproduce. Confirming this against a real capture
+  is `T7a`'s job, not this measurement's.
+* The divergence is **narrow**: one texel, only at the exact
+  reflection-aligned extreme (`dot = 1`, a normal exactly parallel to the
+  live look-at basis), never observed moving inward from that extreme.
+
+**Verification.** `cargo test -p romtool texgen_addressing_census_against_real_archive_materials
+texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive -- --nocapture`
+against the real ROM (pinned 1.98.0 toolchain): both pass; the census test's
+own assertions pin the measured `9` divergent axis instances as a regression
+baseline (not `0`) and separately assert none of them occur away from the
+`dot = +1` sweep extreme, so either regressing further or `T7a` fixing it
+both change a pinned number rather than silently passing. Full `cargo test
+--workspace --all-targets` (pinned 1.98.0 toolchain, `SSB64_ROM` set): 578
+passing (576 prior + 2 new), 0 failed. `rustfmt --check` clean on the
+touched file. `cargo psp --release` (default features) builds clean — this
+task touched only `tools/romtool` (host-only, test code), no renderer/pack
+code, so no PPSSPP/physical capture was needed and no golden changed.
+
+**Confidence.** High on the measured divergence count and its exact
+boundary condition — it is a direct sweep against the real ROM's own tile
+catalogue with a regression assertion, not an estimate. Medium on "this is
+also a real rendering bug, not only a host-model gap" — reasoned from
+`meshdraw::bind_texture`'s wrap-mode selection and `psp_lowering_axis`'s own
+lack of any other real caller, not yet confirmed against an actual PPSSPP or
+physical-PSP capture of the affected `StageMetalFile2`-family materials at
+the exact reflection-aligned camera angle that would expose it.
+
 ## RE-230 — Tile-state and lighting audit for texgen-bound draws: `shift_s`/`shift_t` invariant confirmed on the texgen subset, per-mode addressing and lighting state recorded (`PLAN.md` R2.1/T6)
 
 **Question.** RE-223 (`R2.0`/P1) measured `shift_s`/`shift_t` zero across
