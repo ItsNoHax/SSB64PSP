@@ -10,6 +10,95 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-238 — T10 texgen documentation/test cleanup: `romtool texgen --verify`, zero-normal coverage, stale `porting-status.md` reconciled (`PLAN.md` R2.1/T10, in progress)
+
+**Question.** With T1–T9 complete (RE-225–237), T10 asks for two things:
+reconcile `STATUS.md`/`PLAN.md`/`DECISIONS.md`/`docs/rendering.md`/`docs/
+reverse-engineering.md`/`docs/visual-regression.md`/`docs/porting-status.md`
+against T1–T9's findings, and close the named texgen test minimum, including
+a working `romtool texgen ROM --verify` that fails on correctness-critical
+violations.
+
+**Survey.** A read-only pass over every named doc plus a grep-level test-gap
+check against the T10 test-minimum list found: `docs/rendering.md`, `docs/
+visual-regression.md` and `DECISIONS.md` already current (each already
+threads RE-225 through RE-237 inline, including D-038/D-040's revision
+notes); `docs/porting-status.md` stale in two places — its texture-conversion
+table row still said "Texgen's T1–T10 tile-shift/addressing and raw-coordinate
+audit remains open" after T1–T9 closed, and its "Known gaps" §1 still cited
+`RE-201–215` and called physical-PSP validation "still in progress" without
+reflecting RE-234–237's later hardware work. `romtool texgen ROM --verify`
+did not exist at all — the `texgen` subcommand only ever printed a census,
+never asserted anything or set a nonzero exit code.
+
+**Fixed — `docs/porting-status.md`.** Texture-conversion row updated to state
+T1–T9 complete, only T10 open. "Known gaps" §1 updated to cite RE-201–237,
+record T8/T9's physical-hardware closure by name, and keep the still-open
+items (broader `R2.2` corrective regressions, the tracked `debug_overlay` HUD
+corruption bug) explicit rather than folded into a vague "in progress".
+
+**Fixed — `romtool texgen --verify`.** Added `verify_texgen_addressing`
+(the sweep `texgen_addressing_census_against_real_archive_materials` already
+proved, factored out of the test so the CLI and the test walk the exact same
+logic — no second copy that could silently drift) and `verify_texgen`, which
+additionally checks `load_draw_mode_mismatch == 0`, `load_draw_scale_mismatch
+== 0`, and every texgen-bound tile's `shift == (0, 0)` — three more real,
+already-pinned regression baselines (RE-225, RE-230). `romtool texgen <rom>
+--verify` prints PASS/FAIL and returns a non-zero exit on any violation. Ran
+against the real ROM: `PASS` (17 real (mode, scale, tile) pairings, 34 axis
+instances, 0 divergence — the same RE-232 numbers, now reachable without
+`cargo test`/`SSB64_ROM`). A new host test,
+`verify_texgen_passes_on_a_clean_census_and_fails_on_each_named_violation`,
+proves each failure branch actually fires (a check that cannot fail is not
+evidence) using a synthetic `TexgenCensus`, so this does not depend on a real
+violation ever existing in the ROM to be tested.
+
+**Fixed — zero-normal test.** T10's test minimum names the zero normal as
+its own case, distinct from the already-tested `dot = 0.0` curve input
+(`linear_curve_hits_its_endpoints_and_shared_midpoint`). Added
+`texgen_dot_of_the_zero_normal_is_zero_for_any_basis`
+(`crates/ssb-rom/src/psp_texture.rs`): `texgen_dot([0, 0, 0], basis) == 0.0`
+for three different bases, chained into both curves' already-proven `dot = 0`
+value.
+
+**Surveyed, not changed.** `crates/ssb-engine/src/math.rs`'s existing
+`ftofrac8`/`quantize_lookat_component` tests already cover LookAt saturation
+(`ftofrac8_positive_saturates_at_127`, the asymmetric negative range) and
+near-zero/quantum-boundary behavior (`ftofrac8_zero_is_zero`,
+`ftofrac8_quantum_boundaries`) — no gap found. `crates/ssb-rom/src/mesh.rs`'s
+`texture_gen_follows_raw_geometry_mode_bits` already exercises every named
+raw-bit mapping transition (`None`→`Regular`→`None`, `Regular`→`Linear`,
+`Linear`→`Regular` via clearing only the linear bit, and resuming in linear
+mode after a bare `G_TEXTURE_GEN` clear/set) at the state-machine level.
+`DECISIONS.md`'s D-039 (primitive-level texgen state) reads stale against
+RE-225's cross-node differing-transform finding at first glance, but is not:
+D-039's own invariant is about `(mode, scale)` matching load-vs-draw, a
+different claim from RE-225's normal-*transform* provenance finding, and
+D-042 already says so explicitly ("primitive-level texgen (D-039) is
+unaffected"). No revision needed.
+
+**Still open for T10.** The "textured→untextured→texgen" mapping transition
+(a texgen-bound primitive with no bound texture, `MeshMaterial.texture ==
+None`) is not yet covered by a dedicated test — real archive content was not
+checked for whether this combination occurs at all, so a synthetic test would
+risk asserting behavior for a case that may not be real. The RE-228 residual
+~1.78 S10.5-unit clamp-boundary effect still has no `ACCEPTED_DEVIATION`
+record, correctly — it has not yet been checked against real `sceGu` calls
+the way RE-226's normal-semantics question was, so recording it as
+"unavoidable" now would be premature. `PLAN.md`, `STATUS.md` updated this
+session; `DECISIONS.md`/`docs/rendering.md`/`docs/visual-regression.md`
+required no edits (confirmed current, not skipped).
+
+**Confidence.** High for what changed: `romtool texgen --verify` was run
+against the real ROM and passed; `cargo test --workspace` passed (`ssb-rom`
+403, up from 402 — the new zero-normal test; `romtool` 12, up from 11 — the
+new `verify_texgen` synthetic test); `cargo fmt --check` clean. Medium for
+"nothing else needs updating" in the three docs surveyed but not changed — a
+survey is not a line-by-line proof, and a future session should re-check if
+new evidence contradicts them.
+
+---
+
 ## RE-237 — Physical-PSP raw normal diagnostic and camera-rotation case close the `R2.1`/T9 matrix
 
 **Question.** RE-236 closed `R2.1`/T8 and covered two of `R2.1`/T9's five

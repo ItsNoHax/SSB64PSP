@@ -1050,6 +1050,22 @@ mod tests {
         assert!((by_constant - by_real_length).abs() > 1e-4);
     }
 
+    /// `PLAN.md` R2.1/T10's texgen test minimum names the zero normal as its
+    /// own case, distinct from `dot = 0.0` above (which feeds the curves
+    /// directly): a degenerate `[0, 0, 0]` vertex normal must produce
+    /// `dot = 0` through `texgen_dot` itself for *any* basis, not divide by
+    /// zero or otherwise diverge from the already-proven dot = 0 curve
+    /// values.
+    #[test]
+    fn texgen_dot_of_the_zero_normal_is_zero_for_any_basis() {
+        for basis in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.3, -0.6, 0.74]] {
+            let dot = texgen_dot([0, 0, 0], basis);
+            assert_eq!(dot, 0.0, "basis {basis:?}: dot {dot}");
+        }
+        assert!((regular_texgen_curve(0.0) - 0.25).abs() < 1e-6);
+        assert!((linear_texgen_curve(0.0) - 0.25).abs() < 1e-6);
+    }
+
     #[test]
     fn linear_texgen_s10_5_matches_the_ordinary_curves_endpoint_for_every_real_rom_scale() {
         // At dot = 1 both curves reach the same S10.5 maximum
