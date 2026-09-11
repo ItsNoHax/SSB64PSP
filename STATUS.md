@@ -85,7 +85,7 @@
   No PSP-target or asset-pipeline code touched; pack hash unchanged.
 - Documentation: RE-239, `PLAN.md` (`R2.1` header + T10 status +
   `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` checklist rows), this snapshot.
-- Commit: pending (RE-239, `R2.1`/T10 close -- textured/untextured/texgen
+- Commit: `e31c967` (RE-239, `R2.1`/T10 close -- textured/untextured/texgen
   mapping-transition census + synthetic test, `R2.1` complete).
 
 ## Continuation
