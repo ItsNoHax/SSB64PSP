@@ -3,9 +3,44 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`IN_PROGRESS`,
-  part 6 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248/RE-249);
-  C4-C7 remain
-- Last complete: `RE-249` (2026-09-11) -- `R2.2`/C3 part 6: ruled out any
+  part 7 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248/RE-249/
+  RE-250); C4-C7 remain
+- Last complete: `RE-250` (2026-09-11) -- `R2.2`/C3 part 7: gave `PlannedList`
+  its own `list_id` field (populated from each `DlLink`'s own `list_id`,
+  which `scene::DlLink` already parsed but flattening discarded) and a new
+  `SequenceItem::depth_seed` per-item override in `convert_sequence`, applied
+  immediately before that item's own commands run and overriding whatever
+  the previous item left behind -- unlike every other piece of `State` in a
+  sequence, which genuinely does carry across. This models `refs/ssb-decomp-
+  re/src/gr/grdisplay.c`'s `grDisplayLayer1{Pri,Sec}ProcDisplay`: it opens
+  two separate `gSYTaskmanDLHeads[N]` task-list command streams and sets
+  each one's own render mode before either is walked (`Z_CMP | Z_UPD |
+  ZMODE_OPA` on list 0, `Z_CMP | !Z_UPD | ZMODE_XLU` on list 1), so a list-1
+  `DObjDLLink` entry's real depth state never inherits from whatever list-0
+  entry preceded it in `plan_draw_order`'s flattened draw order. New
+  `tools/romtool::ground_layer1_list1_depth_seed(initial, list_id)` returns
+  the corrective seed exactly when a graph is `GROUND_LAYER1_EXTERNAL` and
+  the entry's `list_id == Some(1)`; wired into all three production/
+  diagnostic `SequenceItem` builders (`pack`, `scene`, `file_meshes`) and
+  `convert_graph_at`. New unit test `convert_sequence_depth_seed_overrides_
+  state_inherited_from_a_prior_item` (`mesh.rs`) proves the override wins
+  over inherited state rather than merging with it. Re-measured
+  (`census_ground_layer_depth_state_vs_z_buffer`, kept permanently): layer
+  1's `depth_write`-true count falls from 776/776 to **668/776** -- the
+  other 108, from 21 of 163 `DObjDLLink` entries targeting list 1, now
+  correctly read `depth_write` false; layers 0/2/3 and `links_list0`/
+  `links_list1` counts (121/31, 142/21, 0/0, 1/1) are unchanged, confirming
+  the fix is scoped to exactly the list-1 population RE-245/RE-249 already
+  measured. `romtool pack` against the real ROM: mesh/triangle/draw/
+  texture/object counts unchanged (2044/36772/8056/1345/374), transitions
+  unchanged (77 animated nodes), pack size unchanged (10935.5 KiB) -- this
+  only corrects `depth_write`/`depth_mode` values already captured by the
+  existing `pack.rs` flags, not the pack's structure. This closes `PLAN.md`
+  C3's remaining-work item 1 (the `list_id`/`PlannedList` gap); item 2
+  (PSP-side `sceGuDepthMask` wiring and the depth-test/no-write regression
+  scene with device evidence) remains open. See `docs/reverse-engineering.md`
+  RE-250 for the full entry.
+- Previously complete: `RE-249` (2026-09-11) -- `R2.2`/C3 part 6: ruled out any
   further external depth-state wrapper archive-wide -- the "find (or rule
   out)" half of C3's remaining item 1 is now answered. A per-file
   breakdown of the 1623 primitives RE-248 left unattributed found no
@@ -148,24 +183,21 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C3 continues. Item 1 (find/rule out another external
-  wrapper) is now answered by RE-249: **ruled out**, no further wrapper
-  search is warranted. Remaining sub-problems, in order:
-  1. Give `PlannedList` its own `list_id` field (`scene::DlLink::list_id`
-     is parsed but discarded today) so stage render-layer 1's 21 list-1
-     (translucent) `DObjDLLink` entries can be seeded with depth-test-
-     without-write instead of today's uniform opaque write-on seed.
-  2. Once the real per-primitive `depth_test`/`depth_write` state is fully
-     accounted for archive-wide, wire `psp/src/meshdraw.rs`'s
-     `apply_material` to use it: keep `GuState::DepthTest` correctness at
-     least as good as today's `z_buffer` heuristic, and map `depth_write`
-     through `sceGuDepthMask` (`true` disables PSP writes -- note the
-     inversion at the call site). Add a depth-test/no-write translucent-
-     front/opaque-behind scene and an ON->OFF->ON switch regression, with
-     PPSSPP or physical-PSP evidence, per `PLAN.md`'s C3 acceptance
-     criteria. `depth_mode` (`ZMode`) has no PSP GE equivalent hardware
-     feature identified yet; kept as measured data only.
-- Blockers: none for what RE-249 closed (it does not close C3). Same
+- Next: `R2.2`/C3 continues. Item 1 (find/rule out another external wrapper)
+  was answered by RE-249: ruled out. Item 2 (`PlannedList`'s `list_id` gap)
+  is now closed by RE-250. One sub-problem remains:
+  1. Wire `psp/src/meshdraw.rs`'s `apply_material` to use the now-fully-
+     corrected per-primitive `depth_test`/`depth_write` state: keep
+     `GuState::DepthTest` correctness at least as good as today's `z_buffer`
+     heuristic, and map `depth_write` through `sceGuDepthMask` (`true`
+     disables PSP writes -- note the inversion at the call site). Add a
+     depth-test/no-write translucent-front/opaque-behind scene and an
+     ON->OFF->ON switch regression, with PPSSPP or physical-PSP evidence,
+     per `PLAN.md`'s C3 acceptance criteria. `depth_mode` (`ZMode`) has no
+     PSP GE equivalent hardware feature identified yet; kept as measured
+     data only.
+- Blockers: none for what RE-250 closed (it does not close C3 -- the PSP-
+  side wiring and device-evidence regression above remain). Same
   non-blocking follow-ups RE-240/RE-241/RE-242/RE-245 already recorded
   remain open (visual before/after for RE-240's 23 affected files; the
   `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
@@ -176,29 +208,36 @@
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-249.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-250.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
   `IN_PROGRESS`, C4-C7 remain).
-- Decisions: `DECISIONS.md` -- no new revision for RE-249 (D-042 already
+- Decisions: `DECISIONS.md` -- no new revision for RE-250 (D-042 already
   covers "renderer correctness claims stay provisional until R2.2 closes").
 - Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  no further external depth-state wrapper exists archive-wide (RE-249); the
-  remaining ~1578-primitive gap is real in-content `G_ZBUFFER`-without-
-  `Z_CMP`/`Z_UPD` divergence, not a missing seed; `PlannedList`'s `list_id`
-  gap and PSP-side wiring remain open.
-- Verification (RE-249): no production code changed this session (docs
-  only; five temporary probe tests in `tools/romtool/src/main.rs` were
-  added, run, and reverted). `cargo test --workspace --all-targets`
-  (`SSB64_ROM` set): `ssb-rom` 419 passed, `romtool` 22 passed, `ssb-engine`
-  48, `ssb-game` 120, 0 failed overall -- unchanged from RE-248. `cargo fmt
-  --check` clean. `cargo clippy --workspace --all-targets` clean (same
-  pre-existing, unrelated warnings as prior sessions). No pack rebuild
-  needed (no asset-pipeline code changed).
-- Documentation: RE-249, `PLAN.md` (`R2.2`/C3 status, cross-reference
+  `PlannedList`'s `list_id` gap is closed (RE-250) -- layer 1's list-1
+  entries now seed depth-test-without-write via a new per-item
+  `SequenceItem::depth_seed` override; PSP-side `sceGuDepthMask` wiring and
+  device evidence remain open.
+- Verification (RE-250): `crates/ssb-rom/src/mesh.rs` gained
+  `SequenceItem::depth_seed` and its `convert_sequence` handling, plus one
+  new unit test; `tools/romtool/src/main.rs` gained `PlannedList::list_id`
+  and `ground_layer1_list1_depth_seed`, wired into all `SequenceItem`
+  builders. `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+  `ssb-rom` 420 passed (419 + 1 new), `romtool` 22 passed, `ssb-engine` 48,
+  `ssb-game` 120, 0 failed overall. `cargo fmt --check` clean. `cargo
+  clippy --workspace --all-targets` clean (same pre-existing, unrelated
+  warnings as prior sessions). `romtool pack` rebuilt against the real ROM:
+  mesh/triangle/draw/texture/object counts unchanged (2044/36772/8056/
+  1345/374), transitions unchanged (77 animated nodes), size unchanged
+  (10935.5 KiB) -- only `depth_write`/`depth_mode` values on already-
+  existing primitives changed, confirmed by a raw byte diff against the
+  pre-change pack.
+- Documentation: RE-250, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: `53a928d` (RE-249, `R2.2`/C3 part 6: rule out any further external
-  depth-state wrapper archive-wide).
+- Commit: pending (RE-250, `R2.2`/C3 part 7: `PlannedList`'s `list_id` field
+  and per-item depth-seed override for stage render-layer 1's list-1
+  entries).
 
 ## Continuation
 

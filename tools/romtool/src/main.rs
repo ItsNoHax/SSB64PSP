@@ -495,6 +495,13 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                 })
                 .collect();
             let materials = loaded.materials(file, g);
+            let initial = initial_material_for(
+                &skeleton_graphs,
+                &ground_graphs,
+                &transition_graphs,
+                *id,
+                g.offset,
+            );
             let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
@@ -503,16 +510,10 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                     world: p.world,
                     mobjs: &materials[p.node],
                     mat_anims: &[],
+                    depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
                 })
                 .collect();
 
-            let initial = initial_material_for(
-                &skeleton_graphs,
-                &ground_graphs,
-                &transition_graphs,
-                *id,
-                g.offset,
-            );
             for (p, converted) in plan.iter().zip(ssb_rom::mesh::convert_sequence(
                 &items,
                 ssb_rom::mesh::Source::of(file),
@@ -751,6 +752,11 @@ struct PlannedList {
     /// the node's matrix is pushed, so it runs in the parent's space instead.
     space: Option<usize>,
     world: ssb_rom::scene::Mat4,
+    /// Which task-list command head (`gSYTaskmanDLHeads[N]`) a `DObjDLLink`
+    /// entry targets (RE-245/RE-250); `None` for a `Direct`/`Pair` list, which
+    /// has no such concept -- `gcDrawDObjTreeForGObj`'s own tree walk always
+    /// runs on list 0.
+    list_id: Option<u32>,
 }
 
 impl PlannedList {
@@ -785,15 +791,20 @@ fn plan_draw_order(
         let Some(node_dl) = node.desc.dl else {
             continue;
         };
-        let own = |dl| PlannedList {
+        let own = |dl, list_id| PlannedList {
             node: i,
             dl,
             space: Some(i),
             world: worlds[i],
+            list_id,
         };
         match resolver.resolve(node_dl) {
-            NodeDl::Direct(dl) => out.push(own(dl)),
-            NodeDl::Links(links) => out.extend(links.iter().filter_map(|l| l.dl).map(own)),
+            NodeDl::Direct(dl) => out.push(own(dl, None)),
+            NodeDl::Links(links) => out.extend(
+                links
+                    .iter()
+                    .filter_map(|l| l.dl.map(|dl| own(dl, Some(l.list_id)))),
+            ),
             NodeDl::Pair { pre, post } => {
                 if let Some(dl) = pre {
                     out.push(PlannedList {
@@ -801,11 +812,12 @@ fn plan_draw_order(
                         dl,
                         space: node.parent,
                         world: node.parent.map_or(Mat4::IDENTITY, |p| worlds[p]),
+                        list_id: None,
                     });
                 }
                 // The node's matrix is pushed between the two, so even when
                 // `post` is NULL the node still occupies a step in the walk.
-                out.push(own(post.unwrap_or(NO_LIST)));
+                out.push(own(post.unwrap_or(NO_LIST), None));
             }
         }
     }
@@ -1166,6 +1178,25 @@ fn initial_material_for(
     }
 }
 
+/// A [`ssb_rom::mesh::SequenceItem::depth_seed`] for one `PlannedList` entry,
+/// when its graph's own [`initial_material_for`] result and its own
+/// `list_id` call for one (RE-250).
+///
+/// `GROUND_LAYER1_EXTERNAL` seeds every render-layer-1 node with task list
+/// 0's `Z_CMP | Z_UPD | ZMODE_OPA` -- correct for the 142 of 163 `DObjDLLink`
+/// entries that really are on list 0, but not the 21 on list 1, which
+/// `grDisplayLayer1{Pri,Sec}ProcDisplay` resets separately to `Z_CMP |
+/// !Z_UPD | ZMODE_XLU` (see [`ssb_rom::mesh::SequenceItem::depth_seed`]'s own
+/// doc comment). No other seed (`FIGHTER_EXTERNAL`, `LB_TRANSITION_EXTERNAL`)
+/// has a second task list to correct for.
+fn ground_layer1_list1_depth_seed(
+    initial: ssb_rom::mesh::InitialMaterial,
+    list_id: Option<u32>,
+) -> Option<(bool, bool, ssb_rom::mesh::ZMode)> {
+    (initial == ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL && list_id == Some(1))
+        .then_some((true, false, ssb_rom::mesh::ZMode::Translucent))
+}
+
 /// Converts one graph's whole plan under a given per-node materials array
 /// (RE-098): the same shape [`pack`]'s own main loop builds inline for
 /// costume 0, factored out so a fighter's alternate costumes can call it
@@ -1207,6 +1238,7 @@ fn convert_graph_at(
             world: p.world,
             mobjs: &materials[p.node],
             mat_anims: &mat_anims[p.node],
+            depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
         })
         .collect();
     mesh::convert_sequence(&items, mesh::Source::of(file), initial)
@@ -1582,6 +1614,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 &materials,
                 &mut mat_anim_data,
             );
+            let initial = initial_material_for(
+                &skeleton_graphs,
+                &ground_graphs,
+                &transition_graphs,
+                id,
+                graphs[gi].offset,
+            );
             let items: Vec<mesh::SequenceItem> = plan
                 .iter()
                 .zip(&decoded)
@@ -1590,16 +1629,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     world: p.world,
                     mobjs: &materials[p.node],
                     mat_anims: &mat_anims[p.node],
+                    depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
                 })
                 .collect();
 
-            let initial = initial_material_for(
-                &skeleton_graphs,
-                &ground_graphs,
-                &transition_graphs,
-                id,
-                graphs[gi].offset,
-            );
             for (p, converted) in plan.iter().zip(mesh::convert_sequence(
                 &items,
                 mesh::Source::of(file),
@@ -3977,6 +4010,13 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
             })
             .collect();
         let materials = loaded.materials(file, graph);
+        let initial = initial_material_for(
+            &skeleton_graphs,
+            &ground_graphs,
+            &transition_graphs,
+            file.id,
+            graph.offset,
+        );
         let items: Vec<mesh::SequenceItem> = plan
             .iter()
             .zip(&decoded)
@@ -3985,15 +4025,9 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 world: p.world,
                 mobjs: &materials[p.node],
                 mat_anims: &[],
+                depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
             })
             .collect();
-        let initial = initial_material_for(
-            &skeleton_graphs,
-            &ground_graphs,
-            &transition_graphs,
-            file.id,
-            graph.offset,
-        );
         out.extend(
             mesh::convert_sequence(&items, mesh::Source::of(file), initial)
                 .into_iter()
@@ -8021,6 +8055,7 @@ mod tests {
                         world: p.world,
                         mobjs: &materials[p.node],
                         mat_anims: &[],
+                        depth_seed: None,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
@@ -8254,6 +8289,7 @@ mod tests {
                     world: p.world,
                     mobjs: &materials[p.node],
                     mat_anims: &[],
+                    depth_seed: None,
                 })
                 .collect();
             let seeded = ssb_rom::mesh::convert_sequence(
@@ -8353,6 +8389,7 @@ mod tests {
                         world: p.world,
                         mobjs: &materials[p.node],
                         mat_anims: &[],
+                        depth_seed: None,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
@@ -8405,12 +8442,13 @@ mod tests {
     ///
     /// This census decodes each layer's graph the same way `pack`/`file_meshes`
     /// now do -- through `initial_material_for`, which seeds layer 1 with
-    /// [`ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL`] (RE-245) --
-    /// and tallies `z_buffer`/`depth_test`/`depth_write` per layer index, plus
-    /// how many of a graph's nodes resolve to `NodeDl::Links` (routed to a
-    /// specific task `list_id` by the node's own `DObjDLLink` entries -- the
-    /// field `plan_draw_order` already reads but `PlannedList` does not keep)
-    /// versus `Direct`/`Pair` (always task list 0).
+    /// [`ssb_rom::mesh::InitialMaterial::GROUND_LAYER1_EXTERNAL`] (RE-245),
+    /// corrected per item by `ground_layer1_list1_depth_seed` (RE-250) for
+    /// whichever of a graph's nodes resolve to `NodeDl::Links` and target
+    /// task list 1 -- and tallies `z_buffer`/`depth_test`/`depth_write` per
+    /// layer index, plus how many of a graph's nodes resolve to `Links`
+    /// (routed to a specific task `list_id` by the node's own `DObjDLLink`
+    /// entries) versus `Direct`/`Pair` (always task list 0).
     ///
     /// **Result**: layers 0/2/3 (`z_buffer_true` 297/18/80) still read
     /// `depth_test`/`depth_write` false throughout -- correct, since their own
@@ -8418,14 +8456,13 @@ mod tests {
     /// already [`ssb_rom::mesh::InitialMaterial::default`]; a handful of their
     /// own nodes re-enable `G_ZBUFFER` (RSP capability) without repeating
     /// `G_SETRENDERMODE`, so `z_buffer` and `depth_test` legitimately diverge
-    /// for them, not a bug. Layer 1 (776 primitives) now reads `depth_test`/
-    /// `depth_write` true for all 776, matching `z_buffer` exactly -- but 21
-    /// of its 163 `DObjDLLink` entries target task list 1 (`gr`'s translucent
-    /// pass, `G_RM_AA_ZB_XLU_SURF`: `depth_write` should be false there), and
-    /// `PlannedList` cannot yet distinguish them from the 142 list-0 entries,
-    /// so this seed overstates `depth_write` for however many of those 21
-    /// node-level entries produce real primitives -- a known, still-open
-    /// remainder (see `InitialMaterial::GROUND_LAYER1_EXTERNAL`'s doc comment).
+    /// for them, not a bug. Layer 1 (776 primitives) reads `depth_test` true
+    /// for all 776 (matching `z_buffer`), but `depth_write` true for only
+    /// **668** -- the other 108, from 21 of its 163 `DObjDLLink` entries
+    /// targeting task list 1 (`gr`'s translucent pass, `G_RM_AA_ZB_XLU_SURF`),
+    /// now correctly read `depth_write` false (RE-250). This closes the
+    /// `PlannedList`/`list_id` remainder [`ssb_rom::mesh::InitialMaterial::
+    /// GROUND_LAYER1_EXTERNAL`]'s own doc comment left open.
     #[test]
     fn census_ground_layer_depth_state_vs_z_buffer() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {
@@ -8497,6 +8534,13 @@ mod tests {
                     })
                     .collect();
                 let materials = loaded.materials(file, g);
+                let initial = super::initial_material_for(
+                    &skeleton_graphs,
+                    &ground_graphs,
+                    &transition_graphs,
+                    file_id,
+                    graph_offset,
+                );
                 let items: Vec<ssb_rom::mesh::SequenceItem> = plan
                     .iter()
                     .zip(&decoded)
@@ -8505,15 +8549,9 @@ mod tests {
                         world: p.world,
                         mobjs: &materials[p.node],
                         mat_anims: &[],
+                        depth_seed: super::ground_layer1_list1_depth_seed(initial, p.list_id),
                     })
                     .collect();
-                let initial = super::initial_material_for(
-                    &skeleton_graphs,
-                    &ground_graphs,
-                    &transition_graphs,
-                    file_id,
-                    graph_offset,
-                );
                 let meshes = ssb_rom::mesh::convert_sequence(
                     &items,
                     ssb_rom::mesh::Source::of(file),
@@ -8593,6 +8631,7 @@ mod tests {
                         world: p.world,
                         mobjs: &materials[p.node],
                         mat_anims: &[],
+                        depth_seed: None,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(

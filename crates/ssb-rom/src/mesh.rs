@@ -269,14 +269,13 @@ impl InitialMaterial {
     /// (no depth test or write), which is already [`Self::default`] -- so
     /// only layer 1 needs a named seed. Task list 1 (a `DObjDLLink` entry
     /// with `list_id == 1`, `gr`'s translucent pass) gets
-    /// `G_RM_AA_ZB_XLU_SURF` instead -- `Z_CMP` on, `Z_UPD` off, `ZMODE_XLU`
-    /// -- but `PlannedList` does not yet keep which task list a link entry
-    /// targeted (RE-245), so that corrective is not wired: applying this
-    /// constant to every render-layer-1 graph node overstates `depth_write`
-    /// for whichever primitives are really on list 1. Measured archive-wide
-    /// as a small remainder (`census_ground_layer_depth_state_vs_z_buffer`):
-    /// 21 of 163 layer-1 `DObjDLLink` entries target list 1, out of 776
-    /// layer-1 primitives total.
+    /// `G_RM_AA_ZB_XLU_SURF` instead -- `Z_CMP` on, `Z_UPD` off, `ZMODE_XLU`.
+    /// This constant alone would overstate `depth_write` for those entries;
+    /// `tools/romtool`'s `ground_layer1_list1_depth_seed` (RE-250) corrects it
+    /// per item via [`SequenceItem::depth_seed`], using the `list_id`
+    /// `PlannedList` now keeps. Measured (`census_ground_layer_depth_state_vs_
+    /// z_buffer`): 21 of 163 layer-1 `DObjDLLink` entries target list 1 (108
+    /// of 776 layer-1 primitives), now correctly reading `depth_write` false.
     pub const GROUND_LAYER1_EXTERNAL: InitialMaterial = InitialMaterial {
         lit: false,
         depth_test: true,
@@ -1807,6 +1806,21 @@ pub struct SequenceItem<'a> {
     /// than or the same length as `mobjs`; a missing or `None` entry means
     /// "not animated", not "unknown" — most `MObj`s never are.
     pub mat_anims: &'a [Option<MatAnimRef>],
+    /// Forces `depth_test`/`depth_write`/`depth_mode` before this item's own
+    /// commands run, overriding whatever the previous item left behind.
+    ///
+    /// Every other field on [`State`] genuinely is one shared RDP/vertex-cache
+    /// stream across a whole sequence (see this function's own doc comment),
+    /// but a stage's render-layer-1 `DObjDLLink` entries are not: `refs/ssb-
+    /// decomp-re/src/gr/grdisplay.c`'s `grDisplayLayer1{Pri,Sec}ProcDisplay`
+    /// sets render mode on two *separate* task-list command heads
+    /// (`gSYTaskmanDLHeads[0]`/`[1]`) up front, before either is walked --
+    /// `Z_CMP | Z_UPD | ZMODE_OPA` on list 0, `Z_CMP | !Z_UPD | ZMODE_XLU` on
+    /// list 1 -- so a list-1 entry's real depth state never inherits from
+    /// whatever list-0 entry happened to precede it in draw order (RE-250).
+    /// `None` for every other item -- the normal case -- leaves inheritance
+    /// exactly as before.
+    pub depth_seed: Option<(bool, bool, ZMode)>,
 }
 
 /// Converts display lists that share one RSP vertex cache, in draw order.
@@ -1863,6 +1877,16 @@ pub fn convert_sequence(
             .world
             .inverse_affine()
             .unwrap_or(crate::scene::Mat4::IDENTITY);
+
+        // A task-list-level reset (RE-250): applied before this item's own
+        // commands, exactly like `initial` is for item 0, but per item and
+        // regardless of what the previous item left behind -- see
+        // `SequenceItem::depth_seed`'s own doc comment for why.
+        if let Some((depth_test, depth_write, depth_mode)) = item.depth_seed {
+            state.material.depth_test = depth_test;
+            state.material.depth_write = depth_write;
+            state.material.depth_mode = depth_mode;
+        }
 
         // Seed the builder from the state carried in, not from the default.
         // RDP state persists across lists exactly as the vertex cache does, and
@@ -2382,12 +2406,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::from_trs([100.0, 0.0, 0.0], [0.0; 3], [1.0; 3]),
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -2478,6 +2504,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2599,6 +2626,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2641,6 +2669,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2683,6 +2712,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &mat_anims,
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2719,6 +2749,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &mat_anims,
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2819,6 +2850,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &mat_anims,
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2927,6 +2959,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &mobjs,
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2971,6 +3004,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -3054,12 +3088,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3162,12 +3198,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3237,12 +3275,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3299,12 +3339,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3353,12 +3395,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -4715,12 +4759,14 @@ mod tests {
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
             SequenceItem {
                 cmds: &node_b,
                 world: Mat4::IDENTITY,
                 mobjs: &[],
                 mat_anims: &[],
+                depth_seed: None,
             },
         ];
         let meshes: Vec<_> =
@@ -5243,6 +5289,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -5285,6 +5332,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let initial = InitialMaterial {
             lit: true,
@@ -5318,6 +5366,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5350,6 +5399,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5370,6 +5420,62 @@ mod tests {
     }
 
     #[test]
+    fn convert_sequence_depth_seed_overrides_state_inherited_from_a_prior_item() {
+        // R2.2/C3 (RE-250): a stage's render-layer-1 list-0 and list-1
+        // `DObjDLLink` entries are two separate task-list command heads, each
+        // reset by `gr`'s own wrapper before either is walked -- so a list-1
+        // item's depth state must not inherit list 0's, even though every
+        // other piece of RDP state genuinely does carry across a sequence
+        // (this function's own doc comment). `depth_seed` models that reset.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(6);
+        let list0 = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let list1 = [
+            Cmd::Vtx {
+                count: 3,
+                dest_index: 0,
+                addr: SegAddr(3 * Vtx::SIZE as u32),
+            },
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let items = [
+            SequenceItem {
+                cmds: &list0,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: None,
+            },
+            SequenceItem {
+                cmds: &list1,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: Some((true, false, ZMode::Translucent)),
+            },
+        ];
+        let meshes = convert_sequence(
+            &items,
+            Source::bare(&file),
+            InitialMaterial::GROUND_LAYER1_EXTERNAL,
+        );
+        let list0_material = meshes[0].as_ref().unwrap().primitives[0].material;
+        assert!(list0_material.depth_test);
+        assert!(list0_material.depth_write, "list 0 keeps its own OPA seed");
+        assert_eq!(list0_material.depth_mode, ZMode::Opaque);
+
+        let list1_material = meshes[1].as_ref().unwrap().primitives[0].material;
+        assert!(list1_material.depth_test);
+        assert!(
+            !list1_material.depth_write,
+            "depth_seed must override list 0's inherited depth_write, not merge with it"
+        );
+        assert_eq!(list1_material.depth_mode, ZMode::Translucent);
+    }
+
+    #[test]
     fn convert_sequence_lb_transition_external_seeds_depth_but_not_lit() {
         // R2.2/C3 (RE-246): `lbTransitionMakeCamera`'s dedicated camera
         // (buffer 0) gets `Z_CMP | Z_UPD | ZMODE_OPA` from `sys/objdisplay.c`'s
@@ -5387,6 +5493,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5422,6 +5529,7 @@ mod tests {
             world: Mat4::IDENTITY,
             mobjs: &[],
             mat_anims: &[],
+            depth_seed: None,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
