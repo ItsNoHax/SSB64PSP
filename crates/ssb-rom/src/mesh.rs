@@ -67,6 +67,18 @@ pub struct TextureRef {
     /// Byte offset of the palette, for `Ci` formats.
     pub palette_offset: Option<u32>,
     pub palette_entries: u16,
+    /// `G_SETTILE`'s raw `palette` field on the render tile (RE-223/`R2.0`/
+    /// P2): a 4-bit bank selector into the loaded TLUT, in 16-entry units.
+    /// Only meaningful for `Ci`/4-bit (CI4) textures -- a CI4 texel index is
+    /// only 0..15, so a TLUT load larger than 16 entries holds several
+    /// banks, and this says which one the render tile actually reads.
+    /// `mesh.rs` never resolves this into `palette_offset` itself (that
+    /// stays the whole loaded chunk's start, matching [`Self::palette_entries`]);
+    /// pack time (`tools/romtool`'s `convert_texture`) applies the
+    /// `palette * 16`-entry shift when it reads TLUT bytes. RE-223 measured
+    /// 7/1,948 real CI4 instances (file 86, `ITCommonObject`) with this
+    /// nonzero, all requesting bank 1 of a 48-entry (three-bank) load.
+    pub palette: u8,
     /// `G_TX_MIRROR` on the render tile, per axis -- only meaningful (and
     /// only ever set) when that axis's own `mask` is nonzero: a texture with
     /// no repeat period has nothing to mirror. RE-066 measured 208/754
@@ -994,6 +1006,8 @@ struct State {
     /// is only ever requested alongside a nonzero mask, where the existing
     /// mask-narrowed `Repeat` already reproduces real hardware exactly.
     tile0_cm: Option<(u8, u8)>,
+    /// `G_SETTILE`'s raw `palette` on tile 0. See [`TextureRef::palette`].
+    tile0_palette: Option<u8>,
     palette_offset: Option<u32>,
     palette_file: Option<u16>,
     palette_entries: u16,
@@ -1041,6 +1055,7 @@ impl State {
             tile0_origin: None,
             tile0_mask: None,
             tile0_cm: None,
+            tile0_palette: None,
             palette_offset: None,
             palette_file: None,
             palette_entries: 0,
@@ -1305,6 +1320,7 @@ impl State {
         // into a jarring rainbow repeat instead of one held edge.
         let clamp_s = cm_s & 0x2 != 0;
         let clamp_t = cm_t & 0x2 != 0;
+        let palette = self.tile0_palette.unwrap_or(0);
 
         if self.framebuffer_capture {
             // No archive location: the real content is filled in on the
@@ -1324,6 +1340,7 @@ impl State {
                 palette_file: None,
                 palette_offset: None,
                 palette_entries: 0,
+                palette,
                 mirror_s,
                 mirror_t,
                 clamp_s,
@@ -1349,6 +1366,7 @@ impl State {
             palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
+            palette,
             mirror_s,
             mirror_t,
             clamp_s,
@@ -1413,6 +1431,7 @@ impl State {
             palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
+            palette: self.tile0_palette.unwrap_or(0),
             mirror_s,
             mirror_t,
             clamp_s,
@@ -1801,6 +1820,7 @@ fn walk(
                 mask_t,
                 cm_s,
                 cm_t,
+                palette,
                 ..
             } => {
                 // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
@@ -1813,6 +1833,7 @@ fn walk(
                     state.tile0_fmt = Some((format, size));
                     state.tile0_mask = Some((mask_s, mask_t));
                     state.tile0_cm = Some((cm_s, cm_t));
+                    state.tile0_palette = Some(palette);
                 }
             }
 
@@ -2239,6 +2260,62 @@ mod tests {
         assert_eq!(texture.palette_offset, Some(0x200));
         assert_eq!(texture.data_offset, 0x400);
         assert_eq!(texture.format, Format::Ci);
+    }
+
+    /// RE-223/`R2.0`/P2: `G_SETTILE.palette` selects a 16-entry bank within a
+    /// multi-bank loaded TLUT (three 16-entry banks here, matching the real
+    /// file 86 `ITCommonObject` instances RE-223 measured). `mesh.rs` itself
+    /// must carry the raw bank index through onto the resolved
+    /// `TextureRef` -- `palette_offset`/`palette_entries` stay the whole
+    /// loaded chunk unshifted; `tools/romtool`'s `convert_texture` is what
+    /// applies the `palette * 16`-entry shift at pack time.
+    #[test]
+    fn tile0_palette_bank_is_carried_onto_the_texture_reference() {
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits4 as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 1,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::LoadTlut { tile: 5, count: 48 },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let texture = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(
+            texture.palette, 1,
+            "SetTile.palette must reach the resolved TextureRef"
+        );
+        assert_eq!(
+            texture.palette_entries, 48,
+            "the whole loaded TLUT, unshifted -- the bank shift happens at pack time"
+        );
     }
 
     /// RE-177: several manager-effect sprite-cycling primitives (CommonSpark

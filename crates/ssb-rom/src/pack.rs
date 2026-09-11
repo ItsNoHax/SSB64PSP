@@ -3308,6 +3308,7 @@ mod tests {
             palette_file: None,
             palette_offset: None,
             palette_entries: 0,
+            palette: 0,
             mirror_s: false,
             mirror_t: false,
             clamp_s: true,
