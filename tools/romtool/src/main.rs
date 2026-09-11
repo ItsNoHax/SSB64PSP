@@ -7653,4 +7653,238 @@ mod tests {
             "a real mask == 0 axis now exists: implement forced clamp (PLAN.md R2.0/P0b bullet 2)"
         );
     }
+
+    /// `PLAN.md` R2.0/P1: censuses every real render-tile-0 (`tile ==
+    /// RENDER_TILE`, `mesh.rs`'s own constant) `G_SETTILE` command
+    /// archive-wide for the five fields `dl.rs`'s `Cmd::SetTile` decodes but
+    /// `mesh.rs`'s only consumer discards behind a `..` wildcard
+    /// (`mesh.rs:1796-1817`): `palette`, `line`, `tmem`, `shift_s`,
+    /// `shift_t`.
+    ///
+    /// Walks the exact same display-list universe `file_meshes` does -- the
+    /// graph-driven `plan_draw_order` roots plus
+    /// `scan::find_root_display_lists`'s unclaimed orphans -- following
+    /// `Cmd::Call`/`Cmd::Branch` itself (mirroring `mesh.rs`'s own
+    /// `MAX_DL_DEPTH`-bounded inlining, `mesh.rs:1710-1745`), the same
+    /// pattern `texgen`'s own `TexgenWalk` already uses for this file's
+    /// other raw-command censuses, rather than adding permanent
+    /// instrumentation fields to `TextureRef`/`mesh::State` for a census
+    /// that may find nothing worth keeping (RE-121/RE-122's "temporary,
+    /// reverted census" standard).
+    #[test]
+    fn settile_field_census_against_real_archive_textures() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+
+        // Matches `mesh.rs`'s own `MAX_DL_DEPTH` and `RENDER_TILE` constants
+        // exactly, so this walker inlines callees the same number of levels
+        // deep the real converter does, and looks at the same tile the real
+        // converter reads from.
+        const CENSUS_MAX_DL_DEPTH: u32 = 18;
+        const RENDER_TILE: u8 = 0;
+
+        #[derive(Default)]
+        struct Stats {
+            tile0_settile_instances: u64,
+            ci4_tile0_instances: u64,
+            palette_nonzero: u64,
+            palette_nonzero_ci4: u64,
+            distinct_palette_values: BTreeSet<u8>,
+            distinct_line_values: BTreeSet<u16>,
+            tmem_nonzero: u64,
+            distinct_tmem_values: BTreeSet<u16>,
+            shift_s_nonzero: u64,
+            shift_t_nonzero: u64,
+            distinct_shift_s: BTreeSet<u8>,
+            distinct_shift_t: BTreeSet<u8>,
+            // (file id, palette bank, most recently loaded TLUT's entry
+            // count) for every nonzero-palette CI4 instance -- whether the
+            // requested bank actually falls inside the loaded TLUT decides
+            // whether ignoring `palette` is a real bug or an inert field.
+            palette_nonzero_ci4_detail: Vec<(u32, u8, Option<u16>)>,
+        }
+
+        fn walk(
+            cmds: &[ssb_rom::dl::Cmd],
+            file: &ssb_rom::archive::File,
+            depth: u32,
+            last_tlut_count: &mut Option<u16>,
+            stats: &mut Stats,
+        ) {
+            use ssb_rom::dl::Cmd;
+            for cmd in cmds {
+                match cmd {
+                    // `tile: 5` is this ROM's own convention for a TLUT load
+                    // (RE-instrumented test fixtures throughout `mesh.rs`
+                    // consistently use it); state persists across `Call`
+                    // boundaries the same way `mesh.rs`'s own
+                    // `state.palette_entries` does.
+                    Cmd::LoadTlut { count, .. } => {
+                        *last_tlut_count = Some(*count);
+                    }
+                    Cmd::SetTile {
+                        tile,
+                        format,
+                        size,
+                        line,
+                        tmem,
+                        palette,
+                        shift_s,
+                        shift_t,
+                        ..
+                    } if *tile == RENDER_TILE => {
+                        stats.tile0_settile_instances += 1;
+                        stats.distinct_line_values.insert(*line);
+                        if *tmem != 0 {
+                            stats.tmem_nonzero += 1;
+                        }
+                        stats.distinct_tmem_values.insert(*tmem);
+                        let is_ci4 = ssb_rom::texture::Format::from_raw(*format)
+                            == Some(ssb_rom::texture::Format::Ci)
+                            && ssb_rom::texture::BitSize::from_raw(*size) == Some(ssb_rom::texture::BitSize::Bits4);
+                        if is_ci4 {
+                            stats.ci4_tile0_instances += 1;
+                        }
+                        if *palette != 0 {
+                            stats.palette_nonzero += 1;
+                            stats.distinct_palette_values.insert(*palette);
+                            if is_ci4 {
+                                stats.palette_nonzero_ci4 += 1;
+                                stats
+                                    .palette_nonzero_ci4_detail
+                                    .push((file.id, *palette, *last_tlut_count));
+                            }
+                        }
+                        if *shift_s != 0 {
+                            stats.shift_s_nonzero += 1;
+                            stats.distinct_shift_s.insert(*shift_s);
+                        }
+                        if *shift_t != 0 {
+                            stats.shift_t_nonzero += 1;
+                            stats.distinct_shift_t.insert(*shift_t);
+                        }
+                    }
+                    Cmd::Call(addr) | Cmd::Branch(addr) => {
+                        if depth >= CENSUS_MAX_DL_DEPTH || addr.segment() != 0 {
+                            continue;
+                        }
+                        let at = addr.0 as usize;
+                        let Some(bytes) = file.data.get(at..) else {
+                            continue;
+                        };
+                        let Ok(sub) = ssb_rom::dl::decode_list_at(bytes, at as u32) else {
+                            continue;
+                        };
+                        walk(&sub, file, depth + 1, last_tlut_count, stats);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let mut stats = Stats::default();
+        let mut files_examined = 0u64;
+
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            files_examined += 1;
+
+            // Exactly `file_meshes`'s own two-source root discovery, so
+            // this walker's scope is the scope the real pack covers -- not
+            // a superset or subset.
+            let resolver = ssb_rom::scene::DlResolver::new(file);
+            let graphs: &[ssb_rom::scene::SceneGraph] =
+                loaded.graphs.get(&file.id).map_or(&[], Vec::as_slice);
+            let mut claimed = BTreeSet::new();
+            for graph in graphs {
+                let plan = super::plan_draw_order(graph, &resolver);
+                for p in &plan {
+                    if p.dl == super::NO_LIST {
+                        continue;
+                    }
+                    claimed.insert(p.dl);
+                    if let Some(bytes) = file.data.get(p.dl as usize..) {
+                        if let Ok(cmds) = ssb_rom::dl::decode_list_at(bytes, p.dl) {
+                            walk(&cmds, file, 0, &mut None, &mut stats);
+                        }
+                    }
+                }
+            }
+            let all = ssb_rom::scan::find_root_display_lists(file);
+            let called: BTreeSet<u32> = all.iter().flat_map(|d| d.referenced_lists()).collect();
+            for dl in all
+                .iter()
+                .filter(|d| !called.contains(&d.offset) && !claimed.contains(&d.offset))
+            {
+                walk(&dl.commands, file, 0, &mut None, &mut stats);
+            }
+        }
+
+        println!("files examined: {files_examined}");
+        println!("tile-0 G_SETTILE instances: {}", stats.tile0_settile_instances);
+        println!("  CI4 tile-0 instances: {}", stats.ci4_tile0_instances);
+        println!(
+            "  palette nonzero: {} (distinct values: {:?})",
+            stats.palette_nonzero, stats.distinct_palette_values
+        );
+        println!("  palette nonzero on a CI4 tile: {}", stats.palette_nonzero_ci4);
+        println!(
+            "  (file, bank, most recently loaded TLUT entry count): {:?}",
+            stats.palette_nonzero_ci4_detail
+        );
+        println!("  distinct line values: {:?}", stats.distinct_line_values);
+        println!(
+            "  tmem nonzero: {} (distinct values: {:?})",
+            stats.tmem_nonzero, stats.distinct_tmem_values
+        );
+        println!(
+            "  shift_s nonzero: {} (distinct values: {:?})",
+            stats.shift_s_nonzero, stats.distinct_shift_s
+        );
+        println!(
+            "  shift_t nonzero: {} (distinct values: {:?})",
+            stats.shift_t_nonzero, stats.distinct_shift_t
+        );
+
+        assert!(files_examined > 0, "archive-wide walk found no files");
+        assert!(
+            stats.tile0_settile_instances > 0,
+            "archive-wide walk found no tile-0 G_SETTILE commands"
+        );
+        // RE-223: `tmem` is a TMEM staging address the current converter
+        // structurally cannot need -- `convert_texture` reads texel bytes
+        // straight from the ROM file at `G_SETTIMG`'s own address, never
+        // through TMEM addressing -- and it also measures zero archive-wide.
+        // If this regresses, re-examine whether that structural argument
+        // still holds before assuming it is still irrelevant.
+        assert_eq!(
+            stats.tmem_nonzero, 0,
+            "a real nonzero tmem now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+        );
+        // RE-223: real content never sets a render tile's shift, so
+        // `n64_addressing::TileAxis::shift`'s "always 0 in practice" callers
+        // (`crates/ssb-rom/src/n64_addressing.rs`'s own tests, the P0c/P0d
+        // censuses) are measured, not assumed. If this regresses, the
+        // `tcshift_cycle` pre-scale this project has never wired from real
+        // `G_SETTILE` data becomes a real, material gap.
+        assert_eq!(
+            stats.shift_s_nonzero, 0,
+            "a real nonzero shift_s now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+        );
+        assert_eq!(
+            stats.shift_t_nonzero, 0,
+            "a real nonzero shift_t now exists on a tile-0 G_SETTILE (PLAN.md R2.0/P1)"
+        );
+        // `palette` is deliberately NOT pinned to zero here: RE-223 found 7
+        // real CI4 instances (file 86, `ITCommonObject`) requesting bank 1
+        // of a 48-entry loaded TLUT, which `mesh.rs` currently ignores,
+        // reading bank 0's colours instead -- a real, material, still-open
+        // gap (`PLAN.md` R2.0/P2), not an invariant to guard.
+    }
 }

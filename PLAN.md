@@ -416,7 +416,9 @@ clamp/mask/POT-padding addressing claims below; RE-219 (`R2.0`/P0a) closed
 filtering with `ACCEPTED_DEVIATION`; RE-220 (`R2.0`/P0b) closed the `mask ==
 0` question (invariant, no fix needed) and measured two real addressing
 gaps (mirror+clamp beyond the first period, PSP POT-padding), each its own
-task; RE-221 (`R2.0`/P0c) and RE-222 (`R2.0`/P0d) closed both. `R2.0`/P1
+task; RE-221 (`R2.0`/P0c) and RE-222 (`R2.0`/P0d) closed both. RE-223
+(`R2.0`/P1) censused `G_SETTILE`'s remaining unconsumed fields and found one
+more real gap (ignored CI4 palette bank), now `R2.0`/P2. `R2.0`/P2
 must still close before this task can return to `COMPLETE`. LOD/mipmap
 conclusions are unaffected.
 RE-201's direct PSPLink framebuffer capture remains valid evidence that the
@@ -595,7 +597,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] LOD behavior identified — RE-127: measured archive-wide via the real `romtool pack` build, 131/131 real `G_MDSFT_TEXTLOD` commands request `G_TL_TILE` (zero `G_TL_LOD`), matching the RDP's own per-frame reset default — real hardware never engages RDP LOD blending for any content in this ROM
 * [x] mipmapping behavior identified — RE-127: same measurement; `G_MDSFT_TEXTDETAIL` is 121/121 `G_TD_CLAMP` (zero `G_TD_SHARPEN`/`G_TD_DETAIL`), the mode that would make mip-tile blending meaningful even if `G_TL_LOD` were active — traditional N64 mipmapping is never used by this game's content
 * [x] `mask == 0` N64 semantics verified — RE-220 (`R2.0`/P0b): transcribed `angrylion-rdp-plus`'s forced-clamp rule (`clampens = cs || !mask_s`) and censused every real drawn primitive archive-wide; zero of 4,968 possible axis slots have `mask_s == 0`/`mask_t == 0`, so the rule never has an observable effect on this ROM's content — pinned with a test
-* [ ] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — decoded (`dl.rs`) but discarded (`mesh.rs`'s `Cmd::SetTile` match arm's own `..`) without a census; owned by `R2.0`/P1
+* [x] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — RE-223 (`R2.0`/P1): 2,238 real render-tile-0 instances archive-wide. `shift_s`/`shift_t`/`tmem` measure zero (`tmem`/`line` also structurally unconsumed, since conversion reads texels straight from ROM, never through TMEM), all pinned. `palette` is a real, material, still-open gap — 7/1,948 CI4 instances (file 86, `ITCommonObject`) request bank 1 of a 48-entry loaded TLUT that `mesh.rs` currently always resolves as bank 0; `R2.0`/P2 fixes it
 * [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
 * [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material gaps: mirror+clamp addressing diverging from real hardware past the first mirrored period (99/810 real axis instances, 12.22%), and PSP's zero-filled power-of-two texture padding corrupting bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%). RE-221 (`R2.0`/P0c) closed the first: `texture::mirror_extend` now bakes every mirrored period the drawn rect spans instead of always exactly two; re-measured archive-wide divergence is 0/810. RE-222 (`R2.0`/P0d) closed the second: `pad_edge_repeat`/`pad_edge_repeat_nibbles` fill padding with the repeated edge instead of zeros, no-op on an already-POT texture and never touching a mirrored axis by construction
 * [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
@@ -2896,9 +2898,9 @@ PPSSPP is not sufficient.
 
 ---
 
-## R2.0 — Pre-Texgen Rendering-Fidelity Reopening (P0–P1)
+## R2.0 — Pre-Texgen Rendering-Fidelity Reopening (P0–P2)
 
-Status: `TODO` — P0a, P0b, P0c and P0d `COMPLETE`; P1 remains. Must close
+Status: `TODO` — P0a, P0b, P0c, P0d and P1 `COMPLETE`; P2 remains. Must close
 before `R2.1`/T1 resumes.
 
 RE-218 (2026-09-11 external audit) found that R0.5's filtering and
@@ -3034,25 +3036,53 @@ condition, not the padding fix itself, which the new unit tests cover.
 
 ### P1 — Archive-wide `G_SETTILE` field census
 
+Status: `COMPLETE` — RE-223.
+
 `dl.rs`'s `Cmd::SetTile` decodes `palette`/`line`/`tmem`/`shift_s`/
 `shift_t` (`dl.rs:144-153`), but `mesh.rs`'s only consumer discards all five
 behind a `..` wildcard (`mesh.rs:1767-1788`, keeping only `format`/`size`/
-`mask_s`/`mask_t`/`cm_s`/`cm_t`). Do not assume this is a bug. Census every
-real render-tile-0 `G_SETTILE` archive-wide for each field. In particular
-verify whether any CI4 render tile uses a non-zero `palette` bank. For each
-field: if every real value is canonical/irrelevant to the current static
-conversion, pin the invariant with a test (matching RE-066/RE-072/RE-121's
-own standard); if a non-default value changes observable sampling semantics
-for real content, open a concrete correctness task rather than implementing
-unused complexity speculatively.
+`mask_s`/`mask_t`/`cm_s`/`cm_t`). Censused every real render-tile-0
+`G_SETTILE` archive-wide (2,238 instances, 1,948 CI4) via a standalone
+raw-`Cmd` walker in `tools/romtool` (`settile_field_census_against_real_archive_textures`).
+`shift_s`/`shift_t` — zero archive-wide, invariant pinned with a test.
+`tmem`/`line` — TMEM-staging registers a converter that reads texels
+straight from the ROM (never through TMEM) structurally cannot need;
+`tmem` also measures zero, pinned; `line`'s real diversity (15 distinct
+values) is expected and not itself wrong. `palette` — **real, material,
+still-open gap**: 7/1,948 CI4 instances (0.36%), all in file 86
+(`ITCommonObject`, real shipped content), request bank 1 of a 48-entry
+loaded TLUT that `mesh.rs` currently always resolves as bank 0 — a real
+wrong-colour bug on real item textures. Opened `R2.0`/P2 as a scoped
+correctness task rather than fixing speculatively here, per this queue's
+own rule. No production code changed; only the new romtool test.
 
-Acceptance: all five fields censused archive-wide with real counts; each is
-either a tested invariant or has a scoped follow-up task; `docs/rendering.md`
-and R0.16 updated with the finding.
+### P2 — Fix ignored CI4 palette bank (`G_SETTILE.palette`)
+
+RE-223/P1 measured 7 real CI4 render-tile instances (file 86,
+`ITCommonObject`) requesting palette bank 1 (`G_SETTILE.palette == 1`) of
+a 48-entry loaded TLUT (three 16-entry banks), which `mesh.rs` currently
+ignores: `Cmd::LoadTlut`'s handler sets `state.palette_offset`/
+`palette_entries` from the whole loaded chunk starting at entry 0, and
+nothing reads `SetTile.palette` to offset into it, so every CI4 texel value
+(0-15) always indexes bank 0's colours regardless of which bank the real
+render tile requested. Thread `SetTile.palette` through `mesh.rs`'s
+`State`/`TextureRef` (RE-220's own precedent for adding a raw `G_SETTILE`
+field once it's known to matter) and offset `palette_offset` by
+`palette * 16` entries at pack time (`tools/romtool`'s `convert_texture`),
+confirming it does not change output when `palette == 0` (the overwhelming
+common case, a no-op by construction) or when the loaded TLUT is smaller
+than `(palette + 1) * 16` entries (should not occur on real content per
+RE-223's own measurement, but guard rather than panic/index out of bounds).
+Add a host test constructing a multi-bank `LoadTlut` + non-zero-`palette`
+`SetTile` and asserting the resolved `palette_offset` lands at the correct
+bank. Re-run `settile_field_census_against_real_archive_textures`'s numbers
+are unaffected (it measures the raw command stream, not the fix); confirm
+the fix separately, e.g. a PPSSPP screenshot of file 86's affected item(s)
+before/after.
 
 ### Evidence
 
-RE-218 in `docs/reverse-engineering.md`.
+RE-218, RE-223 in `docs/reverse-engineering.md`.
 
 ---
 
