@@ -3105,8 +3105,9 @@ RE-218, RE-223, RE-224 in `docs/reverse-engineering.md`.
 Status: `IN PROGRESS` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
 space invariance does **not** hold (164 cross-node differing-transform vertex
 reuses, D-042 revised). T2 complete (RE-226): raw signed-byte normal
-semantics measured and fixed (D-038 revised). T1's remedy carries forward
-through T3 next.
+semantics measured and fixed (D-038 revised). T3 complete (RE-227): original
+LookAt basis quantization measured and fixed (D-040 revised). T1's remedy
+carries forward through T4 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3180,12 +3181,30 @@ Evidence: RE-226 in `docs/reverse-engineering.md`; D-038 in `DECISIONS.md`.
 
 ### T3 — Original LookAt quantization
 
-Implement host-testable `FTOFRAC8`-equivalent helpers with positive saturation
-at 127, negative cast/range behavior, zero and values around ±1/128 and ±1.
-Quantize before model transformation, reconstruct the basis, preserve source
-transform order, and feed the same basis to regular and linear paths. Add
-arbitrary normalized-basis tests and a realistic angle where old full-float
-and quantized paths differ.
+Status: `COMPLETE` — RE-227. The decomp's `syMatrixLookAtReflectF` quantizes
+the camera's `right`/`up` basis to signed bytes via `FTOFRAC8` once per
+camera, strictly before any per-object model transform, not the continuous
+per-frame float this project previously fed its texgen path.
+`crates/ssb-engine/src/math.rs` gained host-testable `ftofrac8` (bit-exact
+macro port: positive saturation at 127, asymmetric negative range down to
+-128, documented negative-overflow wraparound beyond any real basis
+component), `quantize_lookat_component` (quantize then `/127` reconstruct —
+exact for `0.0`/`+1.0`, inexact for `-1.0`), and `quantize_lookat_basis`.
+`meshdraw::DrawState::texgen_object_basis` now calls `quantize_lookat_basis`
+before its existing model-transform step, so both the regular (GE
+texture-matrix) and linear (CPU-generated) texgen paths — which both call
+this one method — receive the identical quantized-then-transformed basis
+with no separate wiring. 8 new host tests added (boundary, asymmetry,
+round-trip exactness/inexactness, a realistic 45° divergence case).
+`regression_capture_scene11`/`_12` re-captured and diffed against their
+existing goldens: 0 differing pixels both — every current texgen regression
+scene uses the identity (camera-less) basis, whose only components (`0.0`,
+`+1.0`) round-trip exactly, so this fix is currently dormant pixel-wise; it
+activates once a rotated real-camera basis reaches a texgen primitive (no
+current scene does). D-040 revised (its LUT-rejection premise named the
+basis "continuous float"; conclusion unaffected).
+
+Evidence: RE-227 in `docs/reverse-engineering.md`; D-040 in `DECISIONS.md`.
 
 ### T4 — Shared regular/linear reference math
 

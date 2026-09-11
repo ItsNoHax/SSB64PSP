@@ -395,6 +395,64 @@ fn sin_poly(v: f32) -> f32 {
     x * (1.0 - x2 / 6.0 * (1.0 - x2 / 20.0 * (1.0 - x2 / 42.0 * (1.0 - x2 / 72.0))))
 }
 
+// --- LookAt quantization (FTOFRAC8) ----------------------------------------
+//
+// `R2.1`/T3 (RE-227). The original RSP microcode never sees a full-precision
+// camera basis: the host CPU quantizes the camera's look-at `right`/`up`
+// vectors to signed bytes once per frame, before any per-object model
+// transform runs (`syMatrixLookAtReflectF`,
+// `refs/ssb-decomp-re/src/sys/matrix.c:337-342`, via the `FTOFRAC8` macro,
+// `refs/ssb-decomp-re/include/PR/gu.h:37`), and every object's own normal
+// dot-products against the *quantized, then transformed* basis
+// (`Interpreter::CalculateNormalDir`,
+// `refs/BattleShip/libultraship/src/fast/interpreter.cpp:2610-2616`: dequantize
+// by `/127`, then multiply by the modelview, then normalize).
+
+/// Bit-exact port of the original `FTOFRAC8` macro:
+/// `((int)MIN(((x) * (128.0f)), 127.0f) & 0xff)`.
+///
+/// Saturates positive overflow at 127 (so `+1.0` lands at 127, not the
+/// `128 & 0xff` wraparound-to-zero a naive port would produce) but applies no
+/// matching negative floor, so the quantized range is the asymmetric
+/// `-128..=127` a single byte actually holds: `-1.0` quantizes to `-128`, not
+/// `-127`. Returns the raw byte pattern the original stores; reinterpret as
+/// `i8` for the signed N64 value. Only exact for inputs within the `i32`
+/// range after the `* 128.0` scale (true for every normalized basis
+/// component this project feeds it); Rust's `as i32` float cast saturates
+/// instead of C's undefined behavior far outside that range, which this
+/// project never reaches.
+pub fn ftofrac8(x: f32) -> u8 {
+    let y = (x * 128.0_f32).min(127.0_f32);
+    (y as i32 & 0xff) as u8
+}
+
+/// Quantizes one look-at basis component through the original hardware's
+/// signed-byte round trip: [`ftofrac8`] to quantize, then divide by 127 (the
+/// raw-byte reconstruction RE-226 established, `(normal · LookAt) / 127`) to
+/// get back a float the rest of the pipeline can use.
+///
+/// The `/127` reconstruction is itself asymmetric because the quantized range
+/// is: `0.0` and `+1.0` round-trip exactly (`0/127`, `127/127`), but `-1.0`
+/// quantizes to `-128` and reconstructs to `-128.0 / 127.0 ≈ -1.00787`, not
+/// `-1.0`. This project's identity (camera-less) texgen basis only ever uses
+/// `0.0`/`+1.0` components, so it is unaffected; a real rotated camera basis
+/// with a negative component is not.
+pub fn quantize_lookat_component(x: f32) -> f32 {
+    (ftofrac8(x) as i8) as f32 / 127.0
+}
+
+/// Quantizes a full look-at basis vector component-wise. Call this *before*
+/// transforming the basis by an object's model matrix, matching the source
+/// order: the camera basis is quantized once, then each object's own
+/// transform is applied to the already-quantized value.
+pub fn quantize_lookat_basis(v: [f32; 3]) -> [f32; 3] {
+    [
+        quantize_lookat_component(v[0]),
+        quantize_lookat_component(v[1]),
+        quantize_lookat_component(v[2]),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,5 +546,89 @@ mod tests {
         let a = m.as_array();
         // Translation occupies elements 12..15 in column-major order.
         assert_eq!(&a[12..16], &[1.0, 2.0, 3.0, 1.0]);
+    }
+
+    #[test]
+    fn ftofrac8_zero_is_zero() {
+        assert_eq!(ftofrac8(0.0), 0);
+    }
+
+    #[test]
+    fn ftofrac8_positive_saturates_at_127() {
+        // Exactly +1.0 would scale to 128, which wraps to -128 through the
+        // `& 0xff` mask without the `min(127.0)` saturation -- the case the
+        // macro's `MIN` exists to prevent.
+        assert_eq!(ftofrac8(1.0), 127);
+        assert_eq!(ftofrac8(2.0), 127);
+        assert_eq!(ftofrac8(10.0), 127);
+    }
+
+    #[test]
+    fn ftofrac8_negative_range_is_asymmetric() {
+        // No matching negative floor: -1.0 reaches the full -128, one past
+        // positive's +127 ceiling -- a real signed byte's actual range.
+        assert_eq!(ftofrac8(-1.0) as i8, -128);
+    }
+
+    #[test]
+    fn ftofrac8_negative_overflow_wraps_instead_of_saturating() {
+        // The macro's `MIN` only guards positive overflow. A magnitude far
+        // outside any real normalized-basis component (never reached by this
+        // project, but the macro's own documented behavior) truncate-casts
+        // to a value whose low byte happens to mask to zero rather than
+        // saturating to -128 -- the "negative cast/range behavior" the
+        // acceptance text calls out, reproduced exactly rather than guarded
+        // against.
+        assert_eq!(ftofrac8(-2.0) as i8, 0);
+    }
+
+    #[test]
+    fn ftofrac8_quantum_boundaries() {
+        // +-1/128 is exactly one quantization step.
+        assert_eq!(ftofrac8(1.0 / 128.0), 1);
+        assert_eq!(ftofrac8(-1.0 / 128.0) as i8, -1);
+        // Half a step short of the next integer truncates toward zero, not
+        // round-to-nearest -- `(int)` cast semantics, not `round()`.
+        assert_eq!(ftofrac8(1.49 / 128.0), 1);
+        assert_eq!(ftofrac8(-1.49 / 128.0) as i8, -1);
+    }
+
+    #[test]
+    fn quantize_lookat_component_round_trips_zero_and_positive_one_exactly() {
+        // `0.0` and `+1.0` survive the round trip losslessly (`0/127`,
+        // `127/127`). This is what keeps the identity (camera-less) texgen
+        // basis -- `([1,0,0], [0,1,0])`, no negative components -- bit-
+        // identical after this fix.
+        assert_eq!(quantize_lookat_component(1.0), 1.0);
+        assert_eq!(quantize_lookat_component(0.0), 0.0);
+    }
+
+    #[test]
+    fn quantize_lookat_component_negative_one_does_not_round_trip_exactly() {
+        // The asymmetric quantized range (-128..=127) means -1.0 quantizes
+        // to -128, not -127, so reconstruction (`/127`) overshoots to
+        // slightly past -1.0. A real rotated camera basis can carry negative
+        // components and is not bit-identical through this quantization --
+        // only the identity default (never negative) is.
+        let q = quantize_lookat_component(-1.0);
+        assert_ne!(q, -1.0);
+        assert!(close(q, -128.0 / 127.0));
+    }
+
+    #[test]
+    fn quantize_lookat_basis_diverges_from_full_float_at_a_realistic_angle() {
+        // A camera basis rotated 45 degrees: components of magnitude
+        // 1/sqrt(2), a normal angle a real rotating camera reaches every
+        // frame. The quantized value visibly differs from the full-float
+        // input -- evidence the two paths are not accidentally identical --
+        // while staying within one quantization step (1/127).
+        let c = core::f32::consts::FRAC_1_SQRT_2;
+        let basis = [c, c, 0.0];
+        let quantized = quantize_lookat_basis(basis);
+        assert_ne!(quantized[0], basis[0]);
+        assert_ne!(quantized[1], basis[1]);
+        assert_eq!(quantized[2], 0.0);
+        assert!((quantized[0] - basis[0]).abs() < 1.0 / 127.0);
+        assert!((quantized[1] - basis[1]).abs() < 1.0 / 127.0);
     }
 }

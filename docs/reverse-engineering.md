@@ -10,6 +10,92 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-227 — Original LookAt basis is signed-byte quantized, not continuous float; `texgen_object_basis` now reproduces it (`PLAN.md` R2.1/T3)
+
+**Question.** T3 needed to settle whether the camera `right`/`up` basis vectors
+`DrawState::texgen_object_basis` feeds into both texgen paths should stay the
+full-precision floats this project derives them in, or whether the original
+hardware already lost precision on them before any per-vertex work runs —
+and if so, exactly how, since a naive signed-byte port can go wrong at both
+ends of the range.
+
+**Evidence — decomp.** `syMatrixLookAtReflectF`/`syMatrixModLookAtReflectF`
+(`refs/ssb-decomp-re/src/sys/matrix.c:337-342`, `:458-463`) compute the
+camera's `right`/`up` basis in full float, then immediately quantize each
+component through `FTOFRAC8` (`refs/ssb-decomp-re/include/PR/gu.h:37`:
+`((int)MIN(((x) * (128.0f)), 127.0f) & 0xff)`) into the `LookAt` structure's
+signed-byte `dir` fields — the same structure `gSPLookAtX`/`gSPLookAtY`
+install into the RSP. This quantization happens once per camera, strictly
+before any object's own model transform runs. `refs/BattleShip`'s
+`Interpreter::CalculateNormalDir` (`libultraship/src/fast/interpreter.cpp:
+2610-2616`) confirms the consuming side: it dequantizes by `/127.0f` *first*,
+then multiplies by the modelview and normalizes — quantize, then transform,
+never the other way around.
+
+`FTOFRAC8` itself is asymmetric and only half-saturating, both deliberately
+reproduced rather than "fixed":
+- Positive overflow saturates at 127 (`MIN`): `+1.0` → 127, not the
+  `128 & 0xff` wraparound-to-`-128` an unclamped port would produce.
+- Negative overflow has no matching floor: `-1.0` → the full `-128` (one past
+  positive's ceiling, the asymmetric range an actual signed byte has), but a
+  magnitude far outside any real normalized-basis component (e.g. `-2.0` →
+  `-256 & 0xff = 0`) wraps through the mask instead of saturating. Unreachable
+  by a real unit-length basis component, but the macro's own documented
+  behavior, not this project's invention.
+- The `/127` reconstruction this asymmetry implies is itself asymmetric:
+  `0.0` and `+1.0` round-trip exactly (`0/127`, `127/127`), but `-1.0`
+  reconstructs to `-128.0/127.0 ≈ -1.00787`, not `-1.0`.
+
+**Implementation.** Host-testable helpers in `crates/ssb-engine/src/math.rs`:
+`ftofrac8` (the bit-exact macro port), `quantize_lookat_component` (quantize
+then reconstruct by `/127`), `quantize_lookat_basis` (component-wise, for a
+`[f32; 3]`). `meshdraw::DrawState::texgen_object_basis`
+(`psp/src/meshdraw.rs`) now quantizes `right`/`up` through
+`quantize_lookat_basis` *before* the existing `M^T v` model-transform step —
+matching the source order — rather than using the stored full-float
+`texgen_basis` directly. Both texgen paths (`apply_texture_mapping`'s GE
+texture-matrix generator and `draw_mesh`'s CPU-generated linear-UV branch)
+call this one method, so both automatically receive the identical
+quantized-then-transformed basis without separate wiring.
+
+**Why the goldens did not need rebuilding.** Every existing texgen regression
+scene (`regression_capture_scene11/12/13`) drives the debug object-viewer,
+which leaves `DrawState::texgen_basis` at `None` — the identity default
+`([1,0,0], [0,1,0])`. Both components that default ever takes are `0.0` and
+`+1.0`, the two values `quantize_lookat_component` round-trips exactly, so
+quantizing it is a no-op. Measured, not assumed: rebuilt and re-captured
+`regression_capture_scene11` and `_12` through
+`tools/run-ppsspp-headless.sh` post-fix and diffed against their existing
+goldens — **0 differing pixels**, both scenes. This fix changes real output
+only once a rotated real-camera basis reaches a texgen primitive, which no
+current regression scene exercises (`DrawState::billboard_camera`'s own doc
+comment: the debug viewer's fighter-follow camera is currently the only
+non-identity `texgen_basis` source, and it does not yet draw `G_TEXTURE_GEN`
+content).
+
+**Verification.** 8 new host tests in `crates/ssb-engine/src/math.rs`
+covering zero, positive saturation, negative asymmetric range, the documented
+negative-overflow wraparound, the `±1/128` quantum boundary (truncation, not
+rounding), exact and inexact round-trip cases, and a realistic 45° basis
+angle where the quantized and full-float paths measurably diverge (within one
+quantization step, `1/127`). `cargo test --workspace --all-targets` (pinned
+toolchain, `SSB64_ROM` set): 568 passing, 0 failed (560 prior + 8 new).
+`cargo fmt --check` clean on touched files in both the host workspace and
+`psp/`. `cargo psp --release` builds clean (default features). Re-captured
+`regression_capture_scene11`/`_12` against their existing goldens: 0 differing
+pixels both, confirming the identity-basis no-op claim above rather than
+assuming it.
+
+**Confidence: high.** The quantize-then-transform order and the exact
+`FTOFRAC8` semantics are read directly from the decomp source, not inferred;
+the consuming order is independently confirmed by `refs/BattleShip`'s own
+interpreter. Not yet confirmed against physical PSP hardware or a real
+rotated-camera texgen scene, since none currently exists — carried forward
+as a lead for `T8`/`T9`, which add real-camera and physical-hardware texgen
+capture.
+
+---
+
 ## RE-226 — `GU_NORMAL_8BIT` raw texgen semantics measured, `NormalizedNormal` bug fixed (`PLAN.md` R2.1/T2)
 
 **Question.** T2 needed two numbers before `meshdraw::apply_texture_mapping`
