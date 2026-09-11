@@ -137,7 +137,7 @@
   sites, 2 new census tests).
 - Documentation: RE-245, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-245, `R2.2`/C3 part 2: stage render-layer-1 external
+- Commit: `dc3255e` (RE-245, `R2.2`/C3 part 2: stage render-layer-1 external
   depth seed).
 
 ## Continuation
