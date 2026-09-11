@@ -3119,8 +3119,10 @@ specifically (not just RE-223's broader archive-wide census), per-mode
 against every real texgen material, agrees on 25 of 34 real axis instances
 and finds a narrow, single-texel divergence on the rest — a mask-narrowed
 clamp-without-mirror axis holds one period short of real hardware exactly at
-the sweep's `dot = +1` extreme. Opens `T7a` to fix it. T1's remedy carries
-forward through T8 next, alongside `T7a`.
+the sweep's `dot = +1` extreme. Opens `T7a` to fix it. T7a complete
+(RE-232): fixed the divergence at its real cause (both the host comparison
+model and the pack-time texture bake `meshdraw::bind_texture` addresses),
+re-measured at a strict `0`/34. T1's remedy carries forward through T8 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3314,23 +3316,26 @@ exact.
 
 ### T7a — Fix mask-narrowed clamp-without-mirror texgen addressing divergence
 
-Status: `TODO` — opened by RE-231 (T7). Real hardware wraps a
-clamp-without-mirror axis periodically (via mask) all the way to the tile's
-drawn-rect far edge, only clamping once that far edge is reached — not at the
-narrowed mask period's own edge. Fix needs to reach the actual rendering path
-(`meshdraw::bind_texture`'s wrap-mode selection and/or a pack-time texture
-bake that tiles the mask period across the drawn rect before binding), not
-only `n64_addressing::psp_lowering_axis`'s host-side comparison model — RE-231
-found this divergence is very likely also a real PSP output difference, not
-only a model gap. Applies to both `Regular` (GE texture-matrix, live
-per-frame coordinate — cannot be pre-baked the way authored UVs are) and
-`Linear` (CPU per-vertex, shares the authored-UV binding path) texgen, since
-both bind through the same `t.wrap`/tile machinery. Re-run
-`texgen_addressing_census_against_real_archive_materials` after the fix and
-drop its baseline back to `0`; confirm no other real texgen tile shape
-regresses. Consider whether a PPSSPP/physical capture of the affected
-`StageMetalFile2`-family materials at a reflection-aligned camera angle is
-needed to see the one-texel difference in practice before or after fixing it.
+Status: `COMPLETE` — RE-232. Fixed both the host-side comparison model
+(`n64_addressing::psp_lowering_axis`'s `!mirror` clamp branch now clamps to
+the drawn rect's far edge, then folds through the mask period, instead of
+clamping to the narrowed period's own last texel directly) and the real
+pack-time bake it models (`texture::mirror_extend`'s `mirror_axis_len` now
+bakes every period up to `drawn` for *any* clamped axis, not only a mirrored
+one, so `sceGuTexWrap(Clamp)` in `meshdraw::bind_texture` holds at the real
+far edge rather than one period early; `mirror_fold` generalized to always
+wrap by `% period` so the wider bake still reads valid source texels).
+Mirrors the mirror+clamp fix RE-220/RE-221 already made for the mirrored
+case. Applies uniformly to both `Regular` and `Linear` texgen, since the fix
+lives in the bound texture/wrap state itself, not in how the UV was
+generated. `texgen_addressing_census_against_real_archive_materials`
+re-run against the real ROM: divergence dropped from RE-231's `9` to a
+strict `0` (34/34 real axis instances now agree), baseline updated
+accordingly; no other real texgen or authored-UV tile shape regressed.
+`assets/generated/ssb64.pak` rebuilt (gitignored, not committed) since this
+touched asset-pipeline code. No PPSSPP/physical capture taken — the
+archive-wide census already confirms the fix against every real texgen tile
+in this ROM, a stronger check than a single visual angle.
 
 ### T8 — Original-ROM Metal comparison
 

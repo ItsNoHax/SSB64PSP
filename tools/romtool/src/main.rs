@@ -8354,21 +8354,20 @@ mod tests {
     /// texgen (`texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`,
     /// below, covers non-clamp addressing synthetically with origin 0).
     ///
-    /// RE-231: this measured a real, narrow divergence -- 9 of 34 real
+    /// RE-231 measured a real, narrow divergence -- 9 of 34 real
     /// clamp-without-mirror axis instances whose mask genuinely narrows
-    /// below the tile's drawn rect (period << drawn, RE-044) disagree with
+    /// below the tile's drawn rect (period << drawn, RE-044) disagreed with
     /// `address_axis` at exactly one sample, `dot = +1` (the sweep's own
     /// extreme, `n = 127`), never at any other sampled dot. Real hardware
     /// keeps mask-wrapping (periodically repeating) all the way to the
-    /// drawn rect's true far edge and only clamps there; the current
-    /// PSP-lowering model (and, since it is not exercised anywhere else in
-    /// this codebase, very likely the real GE `Clamp` wrap mode
-    /// `meshdraw::bind_texture` installs for these tiles) instead holds at
-    /// the *narrowed* mask period's own last texel. `PLAN.md` opens `T7a`
-    /// to fix this; the assertion below pins the exact measured count as a
-    /// regression baseline rather than requiring zero, per this project's
-    /// "measure the gap, then open a follow-up to close it" convention
-    /// (`R2.0`/P0b -> P0c/P0d).
+    /// drawn rect's true far edge and only clamps there; the PSP-lowering
+    /// model held at the *narrowed* mask period's own last texel instead.
+    /// `T7a` fixed `n64_addressing::psp_lowering_axis`'s non-mirror clamp
+    /// branch and `texture::mirror_axis_len`/`mirror_fold` (the real bake
+    /// `meshdraw::bind_texture` addresses) to fold through every period up
+    /// to `drawn` before clamping, matching the mirror+clamp case RE-220/
+    /// RE-221 already fixed the same way -- the divergence count is 0
+    /// again.
     #[test]
     fn texgen_addressing_census_against_real_archive_materials() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {
@@ -8508,14 +8507,14 @@ mod tests {
             "a real texgen tile now has a non-clamp axis (PLAN.md R2.1/T7): this test's coverage assumes RE-230's \
              finding that every texgen tile clamps on both axes, and needs extending before this can pass"
         );
-        // RE-231 (PLAN.md R2.1/T7, opens T7a): a real, narrow divergence --
-        // a mask-narrowed clamp-without-mirror texgen axis holds one texel
-        // short of real hardware exactly at the sweep's dot=+1 extreme.
-        // Pinned as a regression baseline, not zero, until T7a fixes it.
+        // RE-231/T7a: a mask-narrowed clamp-without-mirror texgen axis used
+        // to hold one texel short of real hardware exactly at the sweep's
+        // dot=+1 extreme. Fixed in `n64_addressing::psp_lowering_axis` and
+        // `texture::mirror_axis_len`/`mirror_fold`; back to a strict 0.
         assert_eq!(
-            diverging_axis_instances, 9,
-            "measured texgen addressing divergence count changed (PLAN.md R2.1/T7, RE-231): update this baseline \
-             if T7a fixed it (expect 0), or investigate if it grew"
+            diverging_axis_instances, 0,
+            "measured texgen addressing divergence count changed (PLAN.md R2.1/T7a, RE-231): investigate before \
+             re-pinning a nonzero baseline"
         );
         assert_eq!(
             diverging_at_non_extreme_dot, 0,

@@ -158,7 +158,12 @@ fn fold_period_mirror(s: i32, period: i32, mirror: bool) -> i32 {
 /// mirrored pair, so `sceGuTexWrap(Clamp)` then holds exactly the real
 /// far-edge texel forever -- matching [`address_axis`]'s own clamp target
 /// (the drawn rect's far edge, folded through the same mask/mirror stage)
-/// for every coordinate a real drawn primitive can reach.
+/// for every coordinate a real drawn primitive can reach. A clamped axis
+/// with *no* mirror (`PLAN.md` R2.1/T7a, RE-231) needs the same `drawn`
+/// extent, for the same reason: a mask-narrowed period (`period < drawn`)
+/// still wraps every period up to the drawn rect's far edge before real
+/// hardware clamps, so baking only ever `period` texels and clamping to
+/// its last one holds one period early.
 ///
 /// Returns an index into the *original* (pre-mirror-baking) image, so it is
 /// directly comparable to [`address_axis`]'s result: both name which texel
@@ -179,7 +184,16 @@ pub fn psp_lowering_axis(
     let raw_index = coord_rel_s10_5.div_euclid(32);
     if !mirror {
         return if clamp {
-            raw_index.clamp(0, period - 1)
+            // RE-231/T7a: a mask-narrowed axis (`period < drawn`) keeps
+            // wrapping every period all the way to the drawn rect's far
+            // edge before it clamps -- clamping to `period - 1` (the
+            // narrowed period's own last texel) short-circuits that
+            // wrapping one period early, which is exactly the divergence
+            // RE-231 measured. `fold_period_mirror` with `mirror: false`
+            // is a plain `% period` fold, matching `address_axis`'s own
+            // mask stage applied to the held (or unheld) raw index.
+            let last = (drawn.max(1) as i32) - 1;
+            fold_period_mirror(raw_index.clamp(0, last), period, false)
         } else {
             raw_index.rem_euclid(period)
         };
@@ -329,6 +343,36 @@ mod tests {
         assert_eq!(
             address_axis(&a, coord),
             psp_lowering_axis(coord, 1 << 5, 128, true, true),
+            "past the far edge"
+        );
+    }
+
+    /// `PLAN.md` R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
+    /// genuinely narrows the texture below the drawn rect (`period <<
+    /// drawn`) must keep mask-wrapping every period up to the drawn rect's
+    /// far edge before real hardware clamps -- not clamp at the narrowed
+    /// period's own last texel. A 32-texel period tiled plainly across a
+    /// 128-texel drawn rect (four periods) reproduces `address_axis` at
+    /// every period, including the fourth, and both models agree once
+    /// clamping past the drawn rect's far edge finally takes over.
+    #[test]
+    fn psp_lowering_no_longer_diverges_from_hardware_for_clamp_without_mirror_past_the_first_period(
+    ) {
+        let a = axis(5, false, true, 0, 127 << 2);
+        for texel in [0i32, 5, 31, 32 + 5, 2 * 32 + 5, 3 * 32 + 5, 3 * 32 + 31] {
+            let coord = texel << 5;
+            assert_eq!(
+                address_axis(&a, coord),
+                psp_lowering_axis(coord, 1 << 5, 128, false, true),
+                "texel {texel}"
+            );
+        }
+        // Past the drawn-rect far edge: both models now clamp to the same
+        // held index.
+        let coord = 500 << 5;
+        assert_eq!(
+            address_axis(&a, coord),
+            psp_lowering_axis(coord, 1 << 5, 128, false, true),
             "past the far edge"
         );
     }

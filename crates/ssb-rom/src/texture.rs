@@ -114,7 +114,14 @@ impl Rgba8 {
 /// holds exactly the real far-edge texel forever, matching
 /// `n64_addressing::address_axis`'s clamp target for every coordinate a
 /// real drawn primitive can reach (see `n64_addressing::psp_lowering_axis`,
-/// which models this same fold for direct comparison).
+/// which models this same fold for direct comparison). An unmirrored axis
+/// with the clamp bit needs the same `drawn`-wide bake whenever the mask
+/// narrows the texture below the drawn rect (`PLAN.md` R2.1/T7a, RE-231):
+/// real hardware keeps mask-wrapping every period up to the drawn rect's
+/// far edge before it clamps there, not at the narrowed period's own last
+/// texel, so an unmirrored axis with no such narrowing (`drawn == period`,
+/// the overwhelmingly common case) bakes exactly `period` and this is a
+/// no-op.
 pub fn mirror_extend(
     img: &Rgba8,
     mirror_s: bool,
@@ -143,28 +150,29 @@ pub fn mirror_extend(
 }
 
 /// One axis's baked output length -- see [`mirror_extend`]'s doc comment
-/// for the three cases this distinguishes.
+/// for the cases this distinguishes. Clamp always bakes to `drawn` (a
+/// no-op when the mask does not narrow the texture below the drawn rect,
+/// since `drawn == period` then), mirror-without-clamp always bakes
+/// exactly one mirrored pair, and neither bakes nothing.
 fn mirror_axis_len(period: u32, mirror: bool, clamp: bool, drawn: u32) -> u32 {
-    if !mirror {
-        period
-    } else if clamp {
+    if clamp {
         drawn.max(1)
-    } else {
+    } else if mirror {
         period * 2
+    } else {
+        period
     }
 }
 
-/// Which source texel (0..period) a baked output index `i` reads from: the
-/// identity for an unmirrored axis, otherwise the mask-period mirror fold
-/// (unflipped on an even period index, reversed on an odd one) --
-/// `n64_addressing`'s `fold_period_mirror` transcribes the same fold from
-/// the real hardware's bit-twiddled form for direct comparison.
+/// Which source texel (0..period) a baked output index `i` reads from: a
+/// plain `% period` wrap for an unmirrored axis, otherwise the mask-period
+/// mirror fold on top of it (unflipped on an even period index, reversed on
+/// an odd one) -- `n64_addressing`'s `fold_period_mirror` transcribes the
+/// same fold from the real hardware's bit-twiddled form for direct
+/// comparison.
 fn mirror_fold(i: u32, period: u32, mirror: bool) -> u32 {
-    if !mirror {
-        return i;
-    }
     let phase = i % period;
-    if (i / period) % 2 == 1 {
+    if mirror && (i / period) % 2 == 1 {
         period - 1 - phase
     } else {
         phase
@@ -491,6 +499,35 @@ mod tests {
         let out = mirror_extend(&ab_2x1(), true, false, true, false, 1, 0);
         assert_eq!((out.width, out.height), (1, 1));
         assert_eq!(out.get(0), [1, 0, 0, 255]);
+    }
+
+    /// `PLAN.md` R2.1/T7a (RE-231): a clamp-without-mirror axis whose mask
+    /// narrows the texture below the drawn rect must keep repeating every
+    /// period up to the drawn rect's far edge before `sceGuTexWrap(Clamp)`
+    /// takes over -- not clamp at the narrowed period's own last texel. A
+    /// 2-texel period tiled plainly (no flip) across a 7-texel drawn rect is
+    /// exactly the source pattern repeated three and a half times.
+    #[test]
+    fn mirror_extend_with_clamp_and_no_mirror_bakes_every_period_the_drawn_rect_spans() {
+        let out = mirror_extend(&ab_2x1(), false, false, true, false, 7, 0);
+        assert_eq!((out.width, out.height), (7, 1));
+        let a = [1, 0, 0, 255];
+        let b = [2, 0, 0, 255];
+        assert_eq!(
+            (0..7).map(|x| out.get(x)).collect::<alloc::vec::Vec<_>>(),
+            [a, b, a, b, a, b, a],
+            "AB repeated plainly, never flipped, up to the drawn rect's far edge"
+        );
+    }
+
+    /// A clamp-without-mirror axis whose mask does *not* narrow the texture
+    /// (`drawn == period`, the common case RE-066/RE-102 already cover) must
+    /// stay a no-op bake, matching the pre-T7a behaviour exactly.
+    #[test]
+    fn mirror_extend_with_clamp_and_no_mirror_and_no_narrowing_is_a_plain_copy() {
+        let img = ab_2x1();
+        let out = mirror_extend(&img, false, false, true, false, 2, 0);
+        assert_eq!(out, img);
     }
 
     #[test]
