@@ -2890,8 +2890,8 @@ PPSSPP is not sufficient.
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
 * [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong), an eleventh and twelfth (`StageMetalFile2` ordinary texgen at two rotations, RE-214) and a thirteenth (`StageMetalFile2`'s linear-texgen graph, RE-215) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
-* [ ] `G_TEXTURE_GEN` compared against original output — RE-214: ordinary texgen is source-derived, ROM-corroborated, PPSSPP-verified and hardware-verified at two model rotations, but no original-N64 capture exists. Meta Crystal (and `MMarioModel`/`NMarioModel`/`NFoxModel`) is reachable only through 1P mode stage 8 — RE-216 rebuilt RE-151's scripted original-ROM harness (verified working, including real scripted menu navigation) and found the VS-Mode "Metal Box item" shortcut RE-214 §10 recommended does not exist in the decomp; scripting the real stage-8 route (or a faithful RAM-level warp) is the prerequisite. `VERIFYING`, not `COMPLETE`
-* [ ] `G_TEXTURE_GEN_LINEAR` implemented exactly — RE-215 provides a source-formula implementation and PPSSPP/physical-PSP evidence for `regression_capture_scene13`, but T2–T7 still need to establish shared raw-normal, quantized-LookAt, integer-conversion and tile-addressing semantics, and T8 still requires an original-N64 comparison. Do not call this bit-exact until the T1–T10 gate passes.
+* [x] `G_TEXTURE_GEN` compared against original output — RE-234: real 1P Mode play through the legitimate stage-8 route reached VS Metal Mario / Meta Crystal, three original-ROM screenshots captured. RE-235/RE-236 cross-checked the refreshed PPSSPP and physical-PSP `StageMetalFile2` goldens against them (qualitative shape/colour/material-behavior match, the `R2.1`/T8 acceptance's own named comparison method — not a pixel-level ROI overlay)
+* [x] `G_TEXTURE_GEN_LINEAR` implemented exactly — the `R2.1`/T1–T10 gate closed (RE-225–239): raw-normal (T2), quantized-LookAt (T3), shared regular/linear reference math (T4), integer-conversion (T5), tile/lighting audit (T6), addressing (T7/T7a), original-ROM/PPSSPP/physical-PSP comparison (T8/T9) and test/doc closure (T10) all measured and, where fixed, re-verified against the real ROM. Source-formula and reference-port exact, hardware-verified at the qualitative-comparison bar `R2.1`/T8 itself set; not a claim of pixel-exact original-N64 output (no such original capture method exists for this content, per RE-216)
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
 * [x] build/environment recorded — commit `759cda8`, pack hash `7647db75...650b2f0` (RE-203)
 
@@ -3102,7 +3102,7 @@ RE-218, RE-223, RE-224 in `docs/reverse-engineering.md`.
 
 ## R2.1 — Final Texgen Fidelity (T1–T10)
 
-Status: `IN PROGRESS` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
+Status: `COMPLETE` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
 space invariance does **not** hold (164 cross-node differing-transform vertex
 reuses, D-042 revised). T2 complete (RE-226): raw signed-byte normal
 semantics measured and fixed (D-038 revised). T3 complete (RE-227): original
@@ -3133,10 +3133,11 @@ T9 complete (RE-236/RE-237): all five physical-PSP matrix items captured —
 regular rotations A/B and linear texgen via T8's own scenes 11-13 (RE-236),
 plus a real-hardware raw normal diagnostic and a new camera-rotation scene
 (`regression_capture_scene14`) exercising T3's previously-dormant non-
-identity LookAt basis (RE-237). T10 in progress (RE-238): stale
+identity LookAt basis (RE-237). T10 complete (RE-238/RE-239): stale
 `docs/porting-status.md` reconciled, `romtool texgen ROM --verify` built and
-run clean against the real ROM, zero-normal test added; textured→untextured
-mapping-transition coverage still open.
+run clean against the real ROM, zero-normal test added, and the
+textured→untextured→texgen mapping transition measured absent from the real
+archive (0/202) and covered by a synthetic, test-the-test-proven test.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3409,20 +3410,25 @@ goldens after semantic changes; do not reuse them silently.
 
 ### T10 — Texgen documentation cleanup
 
-Status: `IN PROGRESS` — RE-238. `docs/porting-status.md` was the one stale
-doc found (its texture-conversion row and "Known gaps" §1 still read as if
-T1–T9 and the physical-hardware work were open); fixed. `docs/rendering.md`,
-`docs/visual-regression.md`, `DECISIONS.md` surveyed and found current, no
-edit needed. `romtool texgen ROM --verify` implemented (checks the
-addressing/mode/scale/shift invariants RE-225/RE-230/RE-232 already pinned,
-fails with a nonzero exit on any violation; ran clean against the real ROM).
-Added the missing zero-normal test
-(`texgen_dot_of_the_zero_normal_is_zero_for_any_basis`). Still open: a
-dedicated textured→untextured→texgen mapping-transition test (needs an
-archive check for whether that combination is even real first), and the rest
-of the completion gate (PPSSPP/physical/original-Metal gates already sit on
-T8/T9's own evidence; host/addressing gates now include `--verify`; source
-semantics gate carried by T2–T5).
+Status: `COMPLETE` — RE-238/RE-239. `docs/porting-status.md` was the one
+stale doc found (its texture-conversion row and "Known gaps" §1 still read
+as if T1–T9 and the physical-hardware work were open); fixed. `docs/
+rendering.md`, `docs/visual-regression.md`, `DECISIONS.md` surveyed and
+found current, no edit needed. `romtool texgen ROM --verify` implemented
+(checks the addressing/mode/scale/shift invariants RE-225/RE-230/RE-232
+already pinned, fails with a nonzero exit on any violation; ran clean
+against the real ROM). Added the missing zero-normal test
+(`texgen_dot_of_the_zero_normal_is_zero_for_any_basis`). RE-239 closed the
+one remaining item: measured 0 of 202 real texgen primitives lack a bound
+texture (the archive never actually reaches "textured→untextured→texgen"),
+then added a synthetic, test-the-test-proven transition test for it
+(`crates/ssb-rom/src/mesh.rs`'s
+`a_texgen_primitive_after_an_untextured_primitive_has_no_stale_texture`) and
+a permanent real-archive regression (`tools/romtool`'s
+`no_real_texgen_primitive_is_missing_a_bound_texture`) that will catch it if
+that ever stops being true. Completion gate: source semantics (T2–T5),
+addressing (`--verify`), host (`cargo test --workspace`, 404/13 passing),
+PPSSPP/physical/original-Metal (T8/T9) all closed.
 
 After T1–T9 reconcile `STATUS.md`, `PLAN.md`, `DECISIONS.md`,
 `docs/rendering.md`, `docs/reverse-engineering.md`,

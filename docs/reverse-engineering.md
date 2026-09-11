@@ -10,7 +10,69 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
-## RE-238 — T10 texgen documentation/test cleanup: `romtool texgen --verify`, zero-normal coverage, stale `porting-status.md` reconciled (`PLAN.md` R2.1/T10, in progress)
+## RE-239 — T10 closed: `textured→untextured→texgen` transition measured absent from the real archive, covered synthetically (`PLAN.md` R2.1/T10, complete)
+
+**Question.** RE-238 left T10's one remaining item open: does a real texgen-
+bound primitive with no bound texture (`MeshMaterial.texture == None`) exist
+in the archive? If it does, add the `textured→untextured→texgen` test
+minimum's mapping-transition case against real content; if not, decide
+whether a synthetic case is still warranted.
+
+**Measured.** Added `tools/romtool`'s
+`no_real_texgen_primitive_is_missing_a_bound_texture`: walks every real
+file's converted meshes via the existing `file_meshes` helper (the same path
+`pack` uses) and counts texgen-mode primitives with no bound texture.
+Real ROM: **0 of 202** real texgen primitives lack a texture — every texgen
+draw in this archive binds a static texture. The combination the test
+minimum names is real syntax (raw `G_TEXTURE_GEN` and a bound texture are
+independent state, `RE-238`/D-039) but not real content, the same
+"reference case not seen in the real archive" shape `R2.1`/T7 already hit
+for mask+clamp addressing (`texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`).
+
+**Fixed — synthetic transition test.** Per that precedent, added
+`crates/ssb-rom/src/mesh.rs`'s
+`a_texgen_primitive_after_an_untextured_primitive_has_no_stale_texture`:
+a synthetic display list binds a real texture (segment `0x1`, resolves
+without archive data — the same shape `a_lb_transition_segment_bind_produces_a_marked_framebuffer_texture`
+already uses), draws textured, disables texturing (`Cmd::Texture{on: false}`)
+and draws untextured, then enables `G_TEXTURE_GEN` with no further
+`G_SETTIMG` and draws again. Asserts three primitives split by material
+(`MeshMaterial::cmp` groups by material, not draw order, so each stage is
+found by its own distinguishing state, not by index): textured/no-texgen,
+untextured/no-texgen, and untextured/texgen carrying the live `G_TEXTURE`
+scale. Broke `current_texture`'s `texture_enabled` gate locally to confirm
+the test actually fails without it (three primitives collapse to two,
+`AGENTS.md`'s "test the test") before reverting.
+
+**Closes T10.** With this, the texgen test minimum's four named mapping
+transitions are all covered: `authored→regular→authored`, `regular→linear→
+authored`, `linear→regular` (`crates/ssb-rom/src/mesh.rs`'s
+`texture_gen_follows_raw_geometry_mode_bits`, surveyed in RE-238) and
+`textured→untextured→texgen` (this entry). Every T10 completion-gate item
+RE-238 left open is now closed: source semantics (T2–T5), addressing
+(`--verify`, RE-238), host (`cargo test --workspace`), PPSSPP/physical/
+original-Metal (T8/T9, RE-234–237). No `ACCEPTED_DEVIATION` needed — this
+change adds test coverage only, no rendering-path code changed, pack hash
+unaffected.
+
+**Verification.** `cargo test --workspace` (`SSB64_ROM` set): `ssb-rom` 404
+passed (up from 403), `romtool` 13 passed (up from 12), 0 failed overall.
+`cargo fmt --check` clean in `tools/romtool/` and `crates/ssb-rom/`.
+`romtool texgen "<rom>" --verify`: `PASS`, unchanged from RE-238. Code
+changed: `tools/romtool/src/main.rs`
+(`no_real_texgen_primitive_is_missing_a_bound_texture`),
+`crates/ssb-rom/src/mesh.rs`
+(`a_texgen_primitive_after_an_untextured_primitive_has_no_stale_texture`).
+No PSP-target or asset-pipeline code touched; pack hash unchanged.
+
+**Confidence.** High — both a real-archive measurement and a synthetic,
+test-the-test-proven regression test back this, and the archive-wide count
+(202 texgen primitives, the same order RE-231/RE-232 measured) matches prior
+sessions' figures, so the walk itself is not suspect.
+
+---
+
+## RE-238 — T10 texgen documentation/test cleanup: `romtool texgen --verify`, zero-normal coverage, stale `porting-status.md` reconciled (`PLAN.md` R2.1/T10, complete)
 
 **Question.** With T1–T9 complete (RE-225–237), T10 asks for two things:
 reconcile `STATUS.md`/`PLAN.md`/`DECISIONS.md`/`docs/rendering.md`/`docs/
@@ -77,12 +139,14 @@ different claim from RE-225's normal-*transform* provenance finding, and
 D-042 already says so explicitly ("primitive-level texgen (D-039) is
 unaffected"). No revision needed.
 
-**Still open for T10.** The "textured→untextured→texgen" mapping transition
-(a texgen-bound primitive with no bound texture, `MeshMaterial.texture ==
-None`) is not yet covered by a dedicated test — real archive content was not
-checked for whether this combination occurs at all, so a synthetic test would
-risk asserting behavior for a case that may not be real. The RE-228 residual
-~1.78 S10.5-unit clamp-boundary effect still has no `ACCEPTED_DEVIATION`
+**Still open at the time of this entry, closed by RE-239.** The "textured→
+untextured→texgen" mapping transition (a texgen-bound primitive with no
+bound texture, `MeshMaterial.texture == None`) was not yet covered by a
+dedicated test — real archive content had not been checked for whether this
+combination occurs at all. RE-239 measured it (0 of 202 real texgen
+primitives lack a texture) and added the synthetic transition test, closing
+T10. The RE-228 residual ~1.78 S10.5-unit clamp-boundary effect still has no
+`ACCEPTED_DEVIATION`
 record, correctly — it has not yet been checked against real `sceGu` calls
 the way RE-226's normal-semantics question was, so recording it as
 "unavoidable" now would be premature. `PLAN.md`, `STATUS.md` updated this

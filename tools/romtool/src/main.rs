@@ -7618,6 +7618,56 @@ mod tests {
         assert!(!verify_texgen(&nonzero_shift).is_empty());
     }
 
+    /// `PLAN.md` R2.1/T10 (RE-239): archive-wide check for the mapping-
+    /// transition test minimum's `textured→untextured→texgen` case. Walks
+    /// every real file's converted meshes (`file_meshes`, the same path
+    /// `pack` uses) and counts texgen-mode primitives with no bound texture.
+    /// Real ROM measured `0` of `202` real texgen primitives lack a texture
+    /// -- this content never actually reaches that combination, so the
+    /// dedicated transition test lives as a synthetic case in
+    /// `mesh.rs`'s `a_texgen_primitive_after_an_untextured_primitive_has_no_stale_texture`,
+    /// not a real-archive regression here (same "not seen in the real
+    /// archive" shape as T7's `texgen_addressing_reference_cases_for_material_combinations_not_seen_in_the_real_archive`).
+    #[test]
+    fn no_real_texgen_primitive_is_missing_a_bound_texture() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut texgen_prims = 0usize;
+        let mut missing_texture = 0usize;
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for mesh in super::file_meshes(&loaded, file) {
+                for p in &mesh.primitives {
+                    if p.material.texture_gen != ssb_rom::mesh::TextureGen::None {
+                        texgen_prims += 1;
+                        if p.material.texture.is_none() {
+                            missing_texture += 1;
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "R2.1/T10 texgen-without-texture census: {missing_texture} of {texgen_prims} real texgen primitives lack a bound texture"
+        );
+        assert!(
+            texgen_prims > 0,
+            "archive-wide walk found no texgen primitives"
+        );
+        assert_eq!(
+            missing_texture, 0,
+            "a real texgen primitive with no bound texture now exists: promote the synthetic \
+             transition test's assumption to a real-archive one and check the new content \
+             renders correctly untextured"
+        );
+    }
+
     /// `R2.1`/T1 (RE-225): the normal-relevant part of two node transforms is
     /// only their 3x3 linear part, and only up to a positive uniform scale.
     #[test]
