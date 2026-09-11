@@ -77,7 +77,7 @@
   project's gate (native clippy cannot cross-compile to `mipsel-sony-psp`).
 - Documentation: RE-226, `PLAN.md` `R2.1`/T2, `DECISIONS.md` D-038, this
   snapshot.
-- Commit: (pending).
+- Commit: `b6ece51`.
 
 ## Continuation
 
