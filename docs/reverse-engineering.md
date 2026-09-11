@@ -10,6 +10,83 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-249 — No further external depth-state wrapper exists archive-wide; the remaining gap is real per-node RDP divergence, not an omission (`PLAN.md` R2.2/C3, part 6, in progress)
+
+**Question.** RE-248 closed file 39, leaving 1623 of the archive-wide 1808-
+primitive `z_buffer`-vs-`depth_test` gap unattributed. `PLAN.md`'s C3
+remaining-work item asked to "find (or rule out) any other object
+category's or camera's own external wrapper" for this remainder (layers
+0/2/3, items, effects, main-camera default). This entry answers that with a
+rule-out, not a find.
+
+**Method.** A temporary probe (mirroring `census_independent_depth_state_
+vs_z_buffer_geometry_bit`, broken down per archive file id, reverted after
+use) against the real ROM found **no dominant cluster**: of 123 files
+carrying any divergence, the single largest is file 40 (`LBTransition
+Aeroplane`, 60/1808 = 3.3%), and the top ten files together cover only 21%
+of the gap — nothing like RE-246's single 2500/3891-primitive cluster.
+Grepping the per-file breakdown against `refs/ssb-decomp-re/tools/
+relocFileDescriptions.us.txt`'s names did surface one real pattern: 37
+files named `Stage*File2`/`File3`/`File4` or `GRBonus[12]*File2` (a
+"secondary" archive file `find_ground_data` already discovers as its own
+independent `GroundData`, alongside every stage's primary file) account for
+617 primitives (34%) between them. No plain, primary `StageXxx`/`GRBonus`
+file (without a `File2+` suffix) appears in the divergence list at all —
+every primary stage's geometry is already fully explained.
+
+**Why the `File2+` cluster is real content, not a missing wrapper.** Traced
+one member directly: file 112 (`StageYamabukiFile2`) decodes to its own
+`GroundData` with layers 0, 1 and 3. Layer 1's graph (`0x6A70`) already
+receives `InitialMaterial::GROUND_LAYER1_EXTERNAL` (RE-245 applies the seed
+by layer *index*, not by which file backs the geometry) and shows **zero**
+divergence — the seed works exactly as designed. Layers 0 and 3
+(`0x5058`, `0x8718`) get the correct RE-245 default (`InitialMaterial::
+default()`, `z_buffer: false`) — yet **100%** of their own primitives (22/22,
+17/17) end up with `z_buffer = true`. Since `convert_sequence` only ever
+sets `z_buffer` from a seed or a decoded `G_SETGEOMETRYMODE`/`G_CLEAR
+GEOMETRYMODE` command, and the seed here is `false`, this `true` can only
+come from an in-list `G_SETGEOMETRYMODE(G_ZBUFFER)` call inside these
+graphs' *own* node display lists, re-enabling the geometry-mode bit without
+a matching `G_SETRENDERMODE` call to also turn on `Z_CMP`/`Z_UPD`. This is
+not an unseeded wrapper — it is the original ROM's own content genuinely
+setting one RDP bit without the other, which is exactly the corrective case
+`R2.2`/C3 (RE-244) was created to detect. Cross-checked six more
+non-stage divergers directly (`KirbyModel` 328, `LinkModel` 324, `NessModel`
+335, `CaptainSpecial2` 350, `FoxSpecial3` 161, `ITCommonObject` 86,
+`MVCommon` 52 — none are `fighter_skeleton_graphs()` members): their
+divergence is scattered across many small graphs (1-27 primitives each,
+one item icon/HUD element or special-move sub-model per graph), the same
+per-node shape as the `File2+` cluster, not a shared wrapper.
+
+**Conclusion.** `PLAN.md` C3's "find another external wrapper" question is
+answered: there is none left to find. RE-244's original 90% divergence
+resolved almost entirely into three *found* external wrappers
+(`FIGHTER_EXTERNAL`, `GROUND_LAYER1_EXTERNAL`, `LB_TRANSITION_EXTERNAL`)
+plus two *dead* files needing no wrapper (39 confirmed RE-248; 47 already
+confirmed unregistered by RE-247, so its own 45 diverging primitives close
+the same way, no separate entry needed). The remaining ~1578 primitives
+(1808 minus file 39's 185 minus file 47's 45) are real, live, in-game
+content where the original ROM's own display lists set `G_ZBUFFER` without
+a matching `Z_CMP`/`Z_UPD` render-mode bit — not a seeding gap, but the
+actual divergence RE-244 set out to measure. This does not mean depth is
+"done": these primitives still need `depth_test`/`depth_write` (not
+`z_buffer`) wired into `psp/src/meshdraw.rs` before the PSP renderer treats
+them correctly, and `PlannedList`'s missing `list_id` field (layer 1's 21
+list-1 translucent entries) is still open. But no further object-category
+or camera-level wrapper search is warranted — that avenue is exhausted.
+
+**Confidence: high** for the rule-out (the file-112 trace is a direct,
+mechanical read of `convert_sequence`'s own state derivation, not
+inference) and for the `File2+` naming cluster (a plain `grep`, independently
+corroborated by primary stage files' total absence from the divergence
+list). **Medium** for generalizing "no wrapper" to the full remaining ~1578
+primitives from a 7-file spot-check plus the 37-file `File2+` cluster
+(covers roughly 40% of the ~1578 directly) — the untraced remainder is
+assumed to share the same per-node shape based on this pattern, not
+individually confirmed file-by-file.
+
+---
+
 ## RE-248 — File 39 (`IFCommonObject`) is genuinely orphaned, never drawn by any code path; its 185 primitives are dead ROM content, not a missed depth-seed wrapper (`PLAN.md` R2.2/C3, part 5, in progress)
 
 **Question.** RE-244/245/246/247 explained all but 1808 of the archive-wide
