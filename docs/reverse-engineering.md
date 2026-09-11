@@ -10,7 +10,95 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
-## RE-242 — The mesh/costume-file-to-fighter mapping RE-241 called missing already existed (`PLAN.md` R2.2/C2, in progress)
+## RE-243 — Wiring the external-lighting seed closes `R2.2`/C2, but changes zero real vertices (`PLAN.md` R2.2/C2, complete)
+
+**Question.** RE-242 recovered the archive mapping RE-241 needed but left
+undone: seed `mesh.rs`'s initial lighting state to `true` for a fighter's two
+`common_parts` skeleton graphs, matching `ftDisplayMainProcDisplay`'s
+unconditional external `G_LIGHTING` (RE-021/RE-241), and re-quantify
+`looks_like_unit_normal`'s remaining archive-wide coverage now that this
+external case is supposed to be identified rather than guessed at.
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs`: `State::new` gained an
+`initial_lit: bool` parameter that seeds `material.lit` before any command
+runs; `convert` always passes `false` (nothing about a standalone,
+non-graph-aware conversion identifies a fighter skeleton); `convert_sequence`
+gained the same parameter and threads it straight through. `tools/romtool/
+src/main.rs` gained `fighter_skeleton_graphs`, which computes every
+`(model_file, graph_offset)` pair either of a fighter's two `FTCommonPart`
+detail levels names, for all 27 `FIGHTER_FILES` entries (via
+`fighter::common_parts`, RE-242). `pack`'s main per-graph loop, its costume-
+variant path (`convert_graph_at`, now taking the same parameter), the `scene`
+diagnostic subcommand, and `file_meshes` (the shared conversion path several
+census tests build on) all check this set and pass `initial_lit: true` for
+exactly those two graphs per fighter, `false` for everything else — matching
+`file_meshes`'s own existing doc comment that a diagnostic built on it should
+see what the real pack does. Tested with `mesh.rs`'s
+`convert_sequence_initial_lit_false_leaves_a_non_fighter_graph_unlit` (a
+plausible-looking normal in a non-skeleton graph must still bake as a shade)
+and `..._true_resolves_lit_with_no_in_list_g_lighting` (a skeleton graph's
+first `G_VTX`, with no in-list `G_LIGHTING` at all, must resolve lit and keep
+its raw normal).
+
+**Measurement — a genuine null result.** `tools/romtool`'s
+`census_initial_lit_seed_measured_impact_on_skeleton_graphs` (kept
+permanently) converts every one of the 27 fighters' two skeleton graphs
+twice — once with `initial_lit: true`, once with `false` — and counts
+`MeshVertex::lit` disagreements directly, independent of any file-level
+bucketing. Result: **0 of 10,958 vertices, across all 37 distinct skeleton
+graphs, changed.** Dumping a few of these graphs' own node lists (Mario's
+first six items, all with real geometry) showed why: every one of them
+already opens with its own `Cmd::MoveWord` at `G_MW_LIGHTCOL`'s index
+(`gSPLightColor`, writing both the `aLIGHT_1`/`bLIGHT_1` and
+`aLIGHT_2`/`bLIGHT_2` copies) *ahead of* its first `G_VTX`. RE-105 already
+treats a real `G_MW_LIGHTCOL` command as an unambiguous, ROM-verified
+lit-draw signal (`mesh.rs`'s existing `Cmd::MoveWord` handler,
+`state.material.lit = true`), and that handler alone already resolves every
+one of these vertices correctly — the external `initial_lit` seed never gets
+a chance to matter, because the exported display list data redundantly
+re-asserts the same fact it needs, per joint, before this project's
+converter ever needed to infer it externally. Rebuilt
+`assets/generated/ssb64.pak` and confirmed the checksum is byte-identical to
+the pre-fix build, consistent with the zero-vertex-change measurement.
+
+`tools/romtool`'s `census_looks_like_unit_normal_fallback_after_skeleton_
+lighting_seed` (kept permanently) requantifies RE-021's original 36,356-
+vertex figure through the real packer path (`file_meshes`) now that the seed
+is wired: 383 of 2,293 unlit vertices in skeleton graphs, and 1,668 of
+20,769 in other graphs, still look like a unit normal with `lit == false`.
+Since the delta census above proves the seed changes nothing here, this
+residual usage is *not* the external-per-object case RE-021/RE-241 named —
+it is either a vertex legitimately shared between a lit and an unlit
+primitive (RE-240's own dedup precedent, `push_vertex`) or genuinely
+non-fighter geometry that never carries `G_LIGHTING` at all (RE-241's own
+`grep -rl G_LIGHTING refs/ssb-decomp-re/src/` finding: only `ft/`, `mv/`,
+`mn/`, `sc/`, `db/` reference it — never `gr/` or `it/`).
+
+**Conclusion.** The fix is correct, evidenced, and necessary in principle — a
+fighter joint list that happened to omit its own `G_MW_LIGHTCOL` would still
+need the external seed, and now gets it — but for this specific archive it
+is fully redundant with RE-105's already-shipped signal. `PLAN.md`'s
+"measure a heuristic before adopting it" standard applies in the negative
+direction here too: the measurement is what closes C2, not an assumption
+that wiring the theoretically-correct fix must have moved a number.
+
+**Confidence: certain** for the zero-delta measurement (a direct, permanent,
+`SSB64_ROM`-gated comparison test, not an inference) and for the
+`G_MW_LIGHTCOL` explanation (the commands are visible directly in the
+decoded command stream, not guessed). **Verification.** `cargo test
+--workspace --all-targets` (`SSB64_ROM` set): `ssb-rom` 414 passed (412 + 2
+new unit tests), `romtool` 17 passed (15 + 2 new census tests), 0 failed
+overall. `cargo fmt --check` clean. `cargo clippy --workspace --all-targets`
+clean (the same pre-existing, unrelated warnings as RE-240/RE-241/RE-242).
+`assets/generated/ssb64.pak` rebuilt, byte-identical checksum. Code changed:
+`crates/ssb-rom/src/mesh.rs` (`State::new`/`convert`/`convert_sequence`
+signatures, `MeshVertex::lit` doc comment, two new unit tests),
+`tools/romtool/src/main.rs` (`fighter_skeleton_graphs`, `convert_graph_at`
+signature, `pack`/`scene`/`file_meshes` wiring, two new census tests).
+
+---
+
+## RE-242 — The mesh/costume-file-to-fighter mapping RE-241 called missing already existed (`PLAN.md` R2.2/C2)
 
 **Question.** RE-241 left `R2.2`/C2's external-lighting gap open, stating
 `fighter::FIGHTER_FILES` only names each fighter's `FTAttributes` file, not
@@ -77,7 +165,7 @@ being folded into a mapping-verification entry. Left as C2's own next step.
 
 ---
 
-## RE-241 — vertex normal-vs-colour meaning was decided at triangle-draw time, not `G_VTX` load time (`PLAN.md` R2.2/C2, in progress)
+## RE-241 — vertex normal-vs-colour meaning was decided at triangle-draw time, not `G_VTX` load time (`PLAN.md` R2.2/C2)
 
 **Question.** R2.2/C2 asks which state actually changes a vertex's meaning at
 `G_VTX`, traces fighter caller state through `ftDisplayMainProcDisplay` and
