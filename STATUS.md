@@ -1,51 +1,54 @@
 # Current State
 
 - Milestone: `R2 — Physical PSP Rendering Validation`
-- Task: `R2.1/T5 — Linear integer conversion` (next up; not started)
+- Task: `R2.1/T6 — Tile-state and lighting audit` (next up; not started)
 - Status: `TODO`
-- Last complete: `RE-228` (2026-09-11), `R2.1/T4 -- shared regular/linear
-  reference math`. Built host-testable helpers proving the regular-texgen
-  GE lowering matches an independent source-formula reference, and in doing
-  so found a real bug.
-  **Added** `ssb_rom::psp_texture::regular_texgen_curve` (`(dot+1)/4`) and
-  `regular_texgen_uv`, sharing `texgen_dot` and a new
-  `texgen_s10_5_addressed` scale-and-addressing step with the existing
-  `linear_texgen_uv` -- "the only curve difference... common scale and
-  addressing," `PLAN.md`'s own wording. Added `regular_texgen_matrix_coeffs`
-  (pulled out of `apply_texture_mapping`'s inline arithmetic) and
-  `ssb_engine::math::transform_lookat_basis` (pulled out of
-  `texgen_object_basis`'s inline closure), both host-testable; the real
-  rendering path now calls this same shared code rather than a private copy.
-  **Found and fixed a real bug** via a 20,000-case random property test
-  (`regular_texgen_matrix_lowering_matches_the_reference_curve`): the
-  shipped texture-matrix translation constant `b` wrongly carried the same
-  `128/127` `NORMAL_SCALE_COMPENSATION` the dot-term coefficient `a` needs
-  (`a` *is* read through the GE's measured `/128` normal divisor, RE-226;
-  `b` -- the curve's zero-crossing constant plus the tile-origin shift --
-  is not), overcorrecting by up to `scale/127 - scale/128` S10.5 units
-  (hundreds to thousands of units across random cases, pinned by a
-  dedicated regression test, `uncorrected_b_coefficient_measurably_
-  overcorrects`). Fixed in `regular_texgen_matrix_coeffs`; residual error
-  after the fix measures ~1.78 S10.5 units max (< 0.06 texels), traced to
-  a separate, documented, *unfixed* effect: an i8-quantized normal is only
-  approximately unit length, which can push `dot` a hair past +-1 that the
-  reference formula clamps but the GE's real affine matrix does not.
-  **Changed real rendered output**: rebuilt and updated two of three texgen
-  goldens (`tests/golden/r2-metal-texgen{,-rotated}.png`, 28,240 / 23,624
-  differing pixels against the pre-fix goldens, reconfirmed deterministic).
-  `regression_capture_scene13` (the one linear-texgen primitive, drawn
-  through the untouched CPU path) measured 0 differing pixels, correctly
-  unaffected since this fix is scoped to the regular/environment matrix path
-  only.
-- Next: `R2.1`/T5 -- linear integer conversion. Determine truncate/round/
-  other from microcode, faithful HLE implementations and controlled
-  original-ROM output, in that order. Add `N+0.49`, `N+0.50` and `N+0.51`
-  boundary tests at real scales. Use "source-formula exact" until original
-  output proves "bit-exact to N64". Read `PLAN.md`'s full `R2.1` section
-  (T1-T10) before starting; T6-T10 remain queued behind it in order.
-- Blockers: none for starting T5. `R2.1`/T1's own finding (164 cross-node
+- Last complete: `RE-229` (2026-09-11), `R2.1/T5 -- linear integer
+  conversion`. Determined truncate-vs-round for the float-curve-to-S10.5
+  conversion shared by `linear_texgen_uv`/`regular_texgen_uv`
+  (`texgen_s10_5_addressed`), per T5's own priority order (microcode, then
+  faithful HLE, then original-ROM output). No RSP microcode source exists in
+  `refs/ssb-decomp-re` (binary ucode, not decompiled), so this settled on the
+  HLE tier: `refs/n64psp`'s `n64psp_texgen_to_s10_5` (`tnl_scalar.c:279-289`,
+  `(int16_t)scaled`) and `refs/BattleShip`'s RSP-interpreter texgen path
+  (`interpreter.cpp:2868-2869`, `(int32_t)(dotx * texture_scaling_factor.s)`)
+  both cast straight to an integer with **no** `+ 0.5` -- truncation, not
+  rounding. **Found a second dormant bug**: this project's own
+  `texgen_s10_5_addressed` added `0.5` before casting (round-half-up), never
+  checked against either reference for this specific step. Fixed by removing
+  the `+ 0.5`. Added
+  `texgen_s10_5_addressed_truncates_rather_than_rounds_at_half_unit_boundaries`
+  (`N+0.49`/`N+0.50`/`N+0.51` boundary cases at every real ROM texgen scale,
+  RE-214's census, several integer bases). The two existing real-ROM-data
+  regression tests were unaffected -- both exercise `dot = ±1`/`0` cases
+  whose curve values land on exact scale-fraction boundaries (`scale/2`,
+  `scale/4`), where truncation and rounding agree by construction; the bug
+  was real but dormant against existing real-archive coverage, which is why
+  T5 needed purpose-built boundary cases rather than relying on those tests.
+  **Changed real rendered output for the linear-texgen path only**:
+  `linear_texgen_uv` drives actual pack UVs for `G_TEXTURE_GEN_LINEAR`
+  primitives (D-040); the ordinary path renders through the GE's own
+  hardware texture matrix and never calls `texgen_s10_5_addressed` at
+  runtime -- `regular_texgen_uv` is reference-only (RE-228's property test).
+  Rebuilt and re-captured `regression_capture_scene11`/`_12`/`_13`:
+  scene11/scene12 (regular/GE path) measured **0 differing pixels**,
+  confirming the fix stayed scoped away from them; scene13 (the one
+  linear-texgen primitive) measured 4,696 differing pixels against its
+  pre-fix golden, reconfirmed deterministic (fresh re-capture of the same
+  build, 0 differing pixels against the updated golden).
+  `tests/golden/r2-metal-texgen-linear.png` updated.
+- Next: `R2.1`/T6 -- tile-state and lighting audit. Depends on `R2.0`/P1's
+  archive-wide `shift_s`/`shift_t` census -- consume that result for
+  texgen-bound tiles rather than re-deriving it. Add `shift_s`/`shift_t` to
+  `TileState` and report render tile, masks, shifts, `cms`/`cmt`, origins,
+  dimensions and `gSPTexture` scale per texgen mode. At each texgen `G_VTX`,
+  report raw `G_LIGHTING` on/off. If all shifts are zero, pin that ROM-backed
+  invariant; otherwise implement N64 shifting before completion. Read
+  `PLAN.md`'s full `R2.1` section (T1-T10) before starting; T7-T10 remain
+  queued behind it in order.
+- Blockers: none for starting T6. `R2.1`/T1's own finding (164 cross-node
   differing-transform vertex reuses) is an open, tracked, *known* gap --
-  not a blocker for T5. `R2.2`/C1-C7 renderer corrective gate remains behind
+  not a blocker for T6. `R2.2`/C1-C7 renderer corrective gate remains behind
   all of `R2.1`. Combat remains gated behind `R2.2`.
   Separately (not blocking): a real bug was found and flagged (not fixed)
   in the `debug_overlay` PSP viewer -- object-view HUD text renders
@@ -59,27 +62,27 @@
   calls the way RE-226's normal-semantics question was -- minor lead for a
   future task, not currently assigned.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-228.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-229.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`IN PROGRESS`, T1 measured,
-  T2/T3/T4 complete, T5 next).
-- Decisions: `DECISIONS.md` -- no new revision this task (D-038/D-040 already
-  cover the semantics RE-228 builds on).
+  T2/T3/T4/T5 complete, T6 next).
+- Decisions: `DECISIONS.md` -- no new revision this task (D-038/D-040 cover
+  the semantics; this task's bug was purely in the integer-conversion step,
+  not a decision premise).
 - Subsystem: `docs/porting-status.md` -- PSP mesh drawing; `docs/rendering.md`
-  -- texgen rows now reflect the corrected regular-texgen matrix constant
-  (renderer behavior changed: `regression_capture_scene11/12` goldens
-  updated, `_13` confirmed unaffected).
-- Verification: 6 new host tests (`crates/ssb-rom/src/psp_texture.rs`,
-  `crates/ssb-engine/src/math.rs`); full `cargo test --workspace
-  --all-targets` (pinned 1.98.0 toolchain, `SSB64_ROM` set) -- 574 passing,
-  0 failed (568 prior + 6 new); `cargo fmt --check` clean on touched files
-  (pre-existing drift in untouched files, e.g. `n64_addressing.rs`, left
-  alone -- out of scope); `cargo psp --release` (default features) builds
-  clean; goldens rebuilt and re-measured for scenes 11/12, confirmed
-  unaffected for scene 13, not assumed either way; `psp/`'s own `clippy` is
-  not part of this project's gate (native clippy cannot cross-compile to
-  `mipsel-sony-psp`).
-- Documentation: RE-228, `PLAN.md` `R2.1`/T4, this snapshot.
-- Commit: `b262dc0`.
+  -- texgen rows now reflect the corrected S10.5 truncation behavior
+  (renderer behavior changed: `regression_capture_scene13` golden updated,
+  `_11`/`_12` confirmed unaffected).
+- Verification: 1 new host test (`crates/ssb-rom/src/psp_texture.rs`); full
+  `cargo test --workspace --all-targets` (pinned 1.98.0 toolchain,
+  `SSB64_ROM` set) -- passing (574 prior + 1 new = 575, 0 failed); `rustfmt
+  --check` clean on the touched file (pre-existing drift in untouched files,
+  e.g. `mesh.rs`, `n64_addressing.rs`, left alone -- out of scope); `cargo
+  psp --release` (default features) builds clean; goldens rebuilt and
+  re-measured for scene13, confirmed unaffected for scenes 11/12, not
+  assumed either way; `psp/`'s own `clippy` is not part of this project's
+  gate (native clippy cannot cross-compile to `mipsel-sony-psp`).
+- Documentation: RE-229, `PLAN.md` `R2.1`/T5, this snapshot.
+- Commit: `1c5b583`.
 
 ## Continuation
 
