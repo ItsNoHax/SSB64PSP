@@ -91,7 +91,7 @@
   (`census_g_vtx_vs_triangle_time_lighting_state`).
 - Documentation: RE-241, `PLAN.md` (`R2.2` header + C1/C2 status + two
   related checklist rows), this snapshot.
-- Commit: pending (RE-241, `R2.2`/C2 partial -- load-time lighting
+- Commit: `fdb19ee` (RE-241, `R2.2`/C2 partial -- load-time lighting
   provenance fix + caller-trace evidence).
 
 ## Continuation
