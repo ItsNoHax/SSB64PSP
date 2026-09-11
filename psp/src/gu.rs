@@ -809,20 +809,34 @@ impl Gpu {
     /// it, which is what makes the overlay readable as "in the scene" rather
     /// than painted on top.
     ///
+    /// Copies `verts` into memory allocated from the current display-list
+    /// arena (the same `sceGuGetMemory` pattern `draw_object_posed` uses for
+    /// its dynamic vertices) before submitting. The GE reads submitted vertex
+    /// data asynchronously, and both callers reuse one small static scratch
+    /// buffer for every segment drawn in a frame; without this copy, real
+    /// hardware's GE can still be reading an earlier segment's vertices out of
+    /// that buffer after the CPU has already overwritten it with the next
+    /// one, corrupting whichever draw the GE was behind on. PPSSPP's GE
+    /// emulation keeps pace with the CPU closely enough that this never shows
+    /// up there, which is why it only reproduces on physical hardware.
+    ///
     /// # Safety
     ///
-    /// `verts` must be 16-byte aligned and live until the frame is submitted.
+    /// `verts` must be 16-byte aligned.
     pub unsafe fn draw_line_strip(&mut self, verts: &[GuVertex]) {
         if verts.len() < 2 {
             return;
         }
         sys::sceGuDisable(GuState::Texture2D);
+        let bytes = verts.len() * core::mem::size_of::<GuVertex>();
+        let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut GuVertex;
+        core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
         sys::sceGumDrawArray(
             GuPrimitive::LineStrip,
             GuVertex::FORMAT,
             verts.len() as i32,
             core::ptr::null(),
-            verts.as_ptr() as *const c_void,
+            dynamic as *const c_void,
         );
     }
 }

@@ -3,7 +3,32 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.1/T8 — Original-ROM Metal comparison` (next up; not started)
 - Status: `TODO`
-- Last complete: `RE-232` (2026-09-11), `R2.1/T7a -- fix mask-narrowed
+- Last complete: `RE-233` (2026-09-11) -- fixed a real-hardware-only
+  collision/fighter debug-overlay corruption found during a routine
+  physical-PSP PSPLink run of `766cb47`: the fighter's magenta collision
+  diamond (`meshdraw::draw_fighter`) had one stray edge reaching all the way
+  to a stage collision-line corner, reproducing from frame 0 on a fresh
+  `ldstart`, on every stage tried; `exlist` stayed empty (no crash). Root
+  cause: `Gpu::draw_line_strip` (`psp/src/gu.rs`), shared by
+  `draw_collision` and `draw_fighter`, submitted GE vertex data straight
+  from a `static mut LINE_BUF` that the CPU rewrites for every line segment
+  in a frame, instead of copying into `sceGuGetMemory`-allocated
+  display-list-arena memory the way `draw_object_posed`'s existing dynamic
+  vertex path already does; the GE reads vertex data asynchronously and on
+  real hardware was still reading an earlier segment's vertices out of
+  `LINE_BUF` after the CPU had already overwritten them with a later
+  segment's (matching the stray vertex landing exactly on a real stage
+  collision-line corner, not at random). PPSSPP's GE emulation keeps pace
+  with the CPU closely enough that this race never surfaces there. Fixed by
+  making `draw_line_strip` copy into `sceGuGetMemory` memory before
+  submitting, matching `draw_object_posed`'s established pattern; no caller
+  changes needed. `draw_triangles` (the renderer's other raw-pointer GE
+  draw) was checked and found already safe (its one caller reads a
+  never-rewritten `static`, not `static mut`, array). Re-verified clean on
+  the same physical PSP (Slim, 6.61, ARK/Infinity, PSPLink v3.2.1) across a
+  fresh reset/reload and multiple frames per load. This was not part of the
+  `R2.1` texgen queue; `R2.1/T8` (below) is still the next roadmap task.
+- Previously complete: `RE-232` (2026-09-11), `R2.1/T7a -- fix mask-narrowed
   clamp-without-mirror texgen addressing divergence` (status `COMPLETE`).
   RE-231 (T7) had measured 9 of 34 real texgen axis instances diverging from
   the hardware addressing model at exactly the sweep's `dot = +1` extreme,
@@ -68,32 +93,34 @@
   calls the way RE-226's normal-semantics question was -- minor lead for a
   future task, not currently assigned.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-232.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-233.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`IN PROGRESS`, T1
   measured, T2/T3/T4/T5/T6/T7a complete, T7 measured (T7a closed it), T8
-  next).
-- Decisions: `DECISIONS.md` -- no new revision this task (correctness fix
-  to already-decided addressing semantics, not a decision premise change).
+  next). RE-233 is not a `PLAN.md` line item -- an interleaved hardware-only
+  rendering bug found and fixed via a physical PSPLink run, orthogonal to
+  the `R2.1` texgen queue.
+- Decisions: `DECISIONS.md` -- no new revision for RE-233 (a lifetime/GE
+  submission correctness fix, not a decision premise change) or for RE-232
+  (correctness fix to already-decided addressing semantics, not a new
+  decision).
 - Subsystem: `docs/porting-status.md` -- PSP mesh drawing row updated to
-  record RE-232's fix and re-measurement.
-- Verification: 3 new host tests
-  (`crates/ssb-rom/src/n64_addressing.rs::tests::psp_lowering_no_longer_diverges_from_hardware_for_clamp_without_mirror_past_the_first_period`,
-  `crates/ssb-rom/src/texture.rs::tests::mirror_extend_with_clamp_and_no_mirror_bakes_every_period_the_drawn_rect_spans`,
-  `..::mirror_extend_with_clamp_and_no_mirror_and_no_narrowing_is_a_plain_copy`);
-  updated `tools/romtool/src/main.rs::tests::texgen_addressing_census_against_real_archive_materials`
-  baseline from `9` to `0`; full `cargo test --workspace --all-targets`
-  (pinned 1.98.0 toolchain, `SSB64_ROM` set) -- passing (578 prior + 3 new =
-  581, 0 failed); `cargo clippy --all-targets -D warnings` (pinned 1.98.0)
-  clean; `rustfmt --check` clean; `cargo psp --release` (default features)
-  builds clean; `romtool pack` re-run against the real ROM to rebuild
-  `assets/generated/ssb64.pak` (gitignored, not committed) since
-  asset-pipeline code changed. No PPSSPP/physical capture taken -- the
-  archive-wide census (exhaustive over every real texgen tile) already
-  confirms the fix, a stronger check than a single visual angle; T8 is the
-  next task actually needing a rendered comparison.
-- Documentation: RE-232, `PLAN.md` `R2.1`/T7a marked `COMPLETE`,
-  `docs/porting-status.md`, this snapshot.
-- Commit: `766cb47`.
+  record both RE-232's fix/re-measurement and RE-233's `draw_line_strip`
+  fix.
+- Verification (RE-233): rebuilt (`cargo psp --release` from `psp/`, pinned
+  nightly-2026-08-01) and reloaded via PSPLink on the same PSP Slim, 6.61,
+  ARK/Infinity, PSPLink v3.2.1 hardware the bug was found on; native
+  `scrshot` captures immediately after a fresh `reset`/`ldstart`, and again
+  across three more frames several seconds apart, all show a clean fighter
+  collision diamond with no stray edge (confirmed by pixel-sampling the
+  exact stray-magenta color present before the fix and absent after);
+  `exlist` stayed empty throughout. Host-side `cargo +1.98.0 fmt --all --
+  --check`, strict `cargo +1.98.0 clippy --workspace --all-targets -- -D
+  warnings`, and `cargo +1.98.0 test --workspace --all-targets` (`SSB64_ROM`
+  set) all pass; this fix touches only `psp/`, outside the host workspace.
+  No asset-pipeline code changed, so `assets/generated/ssb64.pak` did not
+  need rebuilding.
+- Documentation: RE-233, `docs/porting-status.md`, this snapshot.
+- Commit: pending (this task).
 
 ## Continuation
 
