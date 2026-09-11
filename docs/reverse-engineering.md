@@ -10,6 +10,123 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-240 — `push_vertex` was baking colour into lit vertices' normals, then `pack.rs` was scaling `prim_color` twice (`PLAN.md` R2.2/C1)
+
+**Question.** R2.2/C1 asks to trace raw vertex RGBA/normal bytes end to end
+(`CacheEntry` → `push_vertex` → `MeshVertex` → `PackWriter` → `PackedVertex` →
+`psp/src/meshdraw.rs`) and prove `SHADE * PRIM` occurs exactly once, that
+normals are never touched as if they were RGB, and that shared vertices stay
+correct.
+
+**Evidence.** They did not hold. `mesh.rs`'s `push_vertex` unconditionally ran
+all three of its colour-baking branches (`prim_color` scale, `texture_blend`
+base colour, `flat_color` constant) regardless of `self.material.lit` — but
+`MeshVertex::rgba`'s own doc comment says these bytes are a **packed normal**,
+not a colour, whenever the material is lit. A census
+(`tools/romtool`'s `census_lit_primitives_with_a_colour_baking_branch`) found
+this is not theoretical: **243 real primitives carry `lit` + `prim_color`, 34
+carry `lit` + `texture_blend`, and 2 carry `lit` + `flat_color`** — 279 real,
+lit primitives whose vertices `push_vertex` was overwriting before this
+project ever reaches `pack.rs`'s own shading step.
+
+Separately, `pack.rs`'s `add_mesh` (RE-106) already folds `material.prim_color`
+into the packed vertex colour a second time, unconditionally, for every
+primitive whose `prim_color` resolved — including the (far more common)
+*unlit* case, where `push_vertex` had already baked the exact same scale in.
+RE-106's own comment claimed "nothing downstream ever multiplied it back in",
+which was true of `pack.rs` alone but not of the pipeline as a whole:
+`push_vertex`'s prim_color branch predates RE-106 (present already in commit
+`27b3cd4`'s parent), so RE-106 added a second application on top of an
+existing first one without noticing it. For any unlit primitive whose
+combiner resolves a non-identity `SHADE * PRIM`/`SHADE * ENV` scale, the
+packed vertex colour was `shade * scale²`, not `shade * scale` — e.g. a 50%
+grey scale (`128/255`) on a 50% grey shade produced `32`, not the correct `64`
+(worked out by hand, then confirmed by `pack.rs`'s own
+`unlit_prim_color_scale_is_baked_by_push_vertex_not_pack_time` test before the
+fix, which failed with exactly this shape of error).
+
+**Hypothesis.** The correct single-source design keeps `push_vertex`'s
+existing unlit-path bake (needed so a shared cache vertex used by two
+differently-coloured *unlit* primitives dedups into two distinct entries,
+per its own long-standing comment) but gates all three of its branches on
+`!self.material.lit`. For a lit vertex, none of `prim_color`/`texture_blend`/
+`flat_color` may touch the raw normal — that byte-for-byte normal is what
+`pack.rs`'s `shade_normal` (the baked-light path) and the runtime GE
+fighter-light path (`psp/src/meshdraw.rs`, reading `nx`/`ny`/`nz` straight
+from these same bytes) both still need intact. The equivalent transforms move
+to `pack.rs`'s `add_mesh`, applied *after* `shade_normal` computes an actual
+shade from the intact normal: a `flat_override`/`blend_override` map
+(mirroring the existing `prim_scale` map, same "first primitive touching a
+shared vertex wins" approximation RE-103/RE-106 already accept) substitutes
+or scales the shaded result, never the raw bytes. `prim_scale`'s own
+application is now gated on `lit[i]` too, so it no longer re-scales an
+already-`push_vertex`-baked unlit vertex.
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs`'s `push_vertex`: wrapped the
+three colour-baking branches in `if !self.material.lit`. `crates/ssb-rom/src/
+pack.rs`'s `add_mesh`: added `flat_override`/`blend_override` per-vertex maps
+alongside the existing `prim_scale` one, all three populated the same
+first-touch-wins way; the packed-colour computation now branches on `lit[i]`
+— unlit vertices pass through untouched (already fully resolved by
+`push_vertex`), lit vertices compute `shade_normal(v.rgba)` first and then
+apply whichever of `flat_override`/`blend_override`/`prim_scale` is set, in
+the same priority order as `push_vertex`'s own if/else-if chain.
+
+Added `mesh.rs` tests: `prim_times_shade_matches_the_exact_integer_scale`
+(the 50%×50%→25%, i.e. 128×128/255=64, worked example), `shade_only_combiner_
+leaves_the_vertex_untouched`, `a_lit_vertex_with_a_prim_times_shade_combiner_
+keeps_its_raw_normal`, `a_lit_vertex_with_a_texture_blend_combiner_keeps_its_
+raw_normal`. Replaced `pack.rs`'s outdated `prim_color_scale_is_baked_into_
+the_vertex_at_pack_time` (it asserted the old, buggy unlit-double-scale
+behaviour) with `unlit_prim_color_scale_is_baked_by_push_vertex_not_pack_time`
+(proves no second scale) and `lit_prim_color_scale_is_applied_after_shading_
+not_onto_the_raw_normal` (proves the post-shading fold, and that `nx`/`ny`/
+`nz` still carry the exact original normal).
+
+Added `tools/romtool`'s `census_lit_primitives_with_a_colour_baking_branch`,
+kept permanently (not reverted, matching RE-239's precedent for archive-wide
+measurements worth re-checking automatically): reports the 243/34/2 counts
+above and compares the `looks_like_unit_normal` failure rate among the 279
+affected vertices against an unrelated baseline (lit vertices with no
+colour-baking branch at all, which already measures nonzero — 808 of 57,612 —
+from ordinary lit/unlit vertex sharing, RE-103's own precedent). Verified this
+census actually catches the regression it targets (`AGENTS.md`'s "test the
+test by breaking the code"): temporarily restoring the unconditional bake
+made the with-branch not-normal-looking count jump from 60/10,446 to
+6,666/10,446 while the unrelated without-branch baseline stayed fixed at
+808/57,612 — then reverted (`git diff` on `mesh.rs` was clean afterward).
+
+**Which fighters, measured rather than guessed.** The census also prints the
+23 archive files the 279 affected primitives live in: `52, 67, 68, 69, 73, 86,
+109, 149, 161, 296, 313, 317, 320, 323, 324, 328, 330, 332, 335, 336, 338,
+341, 350`. None of these match `fighter::FIGHTER_FILES`'s own file ids
+directly — that table names each fighter's `FTAttributes` file, not the
+separate mesh/costume files their models draw from (file 296 here is Mario's
+own hat, RE-106's original example, confirming the overlap is real and not
+an artifact of this measurement). Mapping these 23 file ids to fighter/
+costume names, and a visual before/after for one, is a reasonable follow-up
+for whoever next has hands on the interactive build — not done in this
+session, and not a blocker for R2.2/C1 itself (see Confidence below).
+
+**Verification.** `cargo test --workspace` (`SSB64_ROM` set): `ssb-rom` 409
+passed (up from 404), `romtool` 14 passed (up from 13), 0 failed. `cargo fmt
+--check` clean. `cargo clippy --workspace --all-targets` clean (two
+pre-existing, unrelated warnings only). Rebuilt `assets/generated/ssb64.pak`
+(`romtool pack`, RE-098/etc. counts unchanged — this fix corrects vertex
+*colour* bytes only, not mesh/primitive/texture counts): loads back cleanly.
+
+**Confidence.** High for the double-application fix (worked by hand and
+confirmed by a failing-then-passing unit test). High for the lit-corruption
+fix and its real-archive scope (243/34/2 measured directly, and the
+regression census's break-the-code check isolates the effect cleanly). Not
+yet re-verified with a physical-PSP or PPSSPP screenshot comparison — this
+entry is host-side/measurement-level correctness only; a visual before/after
+for one of the 279 affected primitives (most are fighter costume materials)
+is a reasonable follow-up for whoever next has hands on the interactive
+build, not a blocker for R2.2/C1 itself.
+
+---
+
 ## RE-239 — T10 closed: `textured→untextured→texgen` transition measured absent from the real archive, covered synthetically (`PLAN.md` R2.1/T10, complete)
 
 **Question.** RE-238 left T10's one remaining item open: does a real texgen-

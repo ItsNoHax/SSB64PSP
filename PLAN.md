@@ -3451,10 +3451,13 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 
 ## R2.2 — Second Renderer Corrective Gate (C1–C7)
 
-Status: `TODO` — depends on R2.1/T1–T10. It must close before R3 or a stable
-rendering-gate claim. Do not optimize while it is open.
+Status: `IN_PROGRESS` — C1 complete (RE-240); C2–C7 remain, depend on R2.1/
+T1–T10 (`COMPLETE`). Must close before R3 or a stable rendering-gate claim.
+Do not optimize while it is open.
 
 ### C1 — Single-source `prim_color`
+
+Status: `COMPLETE` (RE-240).
 
 Trace raw vertex RGBA/normal bytes through `CacheEntry`, `push_vertex`,
 `MeshVertex`, `PackWriter`, `PackedVertex` and `meshdraw`, including flat
@@ -3465,6 +3468,21 @@ as RGB, and shared vertices remain correct. Add unlit
 PRIM preserving the normal, SHADE-only, PRIM*SHADE, TEXEL*SHADE, flat,
 texture-blend and mixed lit/literal tests. Census lit/unlit/texture-blend/
 flat-color+PRIM and recheck affected fighters.
+
+RE-240 found both a `SHADE * PRIM` double-application (`push_vertex` folded
+the scale into unlit vertex bytes; `pack.rs`'s `add_mesh` folded it in again,
+squaring it for any non-identity scale) and normals genuinely being changed
+as RGB (`push_vertex`'s three colour-baking branches had no `material.lit`
+gate at all — measured 243 real primitives with `lit` + `prim_color`, 34 with
+`lit` + `texture_blend`, 2 with `lit` + `flat_color`, all corrupted before
+this fix). Fixed by gating `push_vertex`'s branches on `!lit` and moving the
+lit-path equivalent into `pack.rs`'s `add_mesh`, applied after `shade_normal`
+rather than in place of the raw normal. All of this task's named test cases
+are covered (`crates/ssb-rom/src/mesh.rs`, `crates/ssb-rom/src/pack.rs`); the
+census lives in `tools/romtool` and is kept permanently, not reverted. The 23
+real archive files affected are measured and listed; per-fighter visual
+recheck is not done this session (see RE-240's Confidence note) and is not a
+blocker for C1 or C2.
 
 ### C2 — Load-time lighting provenance
 

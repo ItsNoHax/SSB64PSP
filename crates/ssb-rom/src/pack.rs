@@ -1561,27 +1561,56 @@ impl PackWriter {
             }
         }
 
-        // RE-106: `MeshMaterial::prim_color` is not a literal colour despite
-        // the name -- `material_now()` (mesh.rs) overwrites it with
+        // RE-106/RE-240: `MeshMaterial::prim_color` is not a literal colour
+        // despite the name -- `material_now()` (mesh.rs) overwrites it with
         // `combiner_shade_scale`'s result whenever the combiner reads
         // `PRIMITIVE`/`ENVIRONMENT` in a `SHADE * constant` shape (RE-043).
-        // Nothing downstream ever multiplied it back in: the device has no
-        // fixed-function stage to scale an untextured vertex colour by a
-        // constant, so unlike `TEXTURE_BLEND`'s baseline colour (also baked
-        // at vertex-assembly time, but into `push_vertex`) this one is
-        // cheapest to fold in here instead. First primitive to touch a
-        // vertex wins, mirroring `lit` just above -- a vertex shared across
-        // primitives with different scales is already the rare case
-        // `merge_by_material` keeps as separate primitives to begin with.
+        // For an *unlit* vertex `push_vertex` (mesh.rs) already folds this
+        // scale into the vertex bytes directly (RE-240 gated that on
+        // `!material.lit`, so this map only ever needs to cover the lit
+        // case below); folding it in again here would multiply it in twice.
+        // For a *lit* vertex the raw bytes are a normal, so this project has
+        // no shade to scale until `shade_normal` computes one below -- the
+        // device has no fixed-function stage to scale a colour by a
+        // constant either, so, matching `flat_override`/`blend_override`
+        // just below, folding it in here right after shading is the only
+        // place left to do it. First primitive to touch a vertex wins,
+        // mirroring `lit` just above -- a vertex shared across primitives
+        // with different scales is already the rare case `merge_by_material`
+        // keeps as separate primitives to begin with.
         let mut prim_scale: alloc::vec::Vec<Option<[u8; 4]>> =
             alloc::vec![None; mesh.vertices.len()];
+        // RE-240: `texture_blend`/`flat_color` (RE-073/RE-079) read no shade
+        // at all, so a lit vertex carrying one of these needs its resolved
+        // colour substituted outright rather than scaled -- `push_vertex`
+        // does exactly that for the unlit case, but is gated off `lit` for
+        // the same reason `prim_scale` above is, so lit primitives need the
+        // same substitution done here instead, after shading rather than in
+        // place of the (still-needed-intact) normal.
+        let mut flat_override: alloc::vec::Vec<Option<[u8; 4]>> =
+            alloc::vec![None; mesh.vertices.len()];
+        let mut blend_override: alloc::vec::Vec<Option<[u8; 4]>> =
+            alloc::vec![None; mesh.vertices.len()];
         for p in &mesh.primitives {
-            let Some(s) = p.material.prim_color else {
-                continue;
-            };
-            for &i in &p.indices {
-                if let Some(slot @ None) = prim_scale.get_mut(i as usize) {
-                    *slot = Some(s);
+            if let Some(s) = p.material.prim_color {
+                for &i in &p.indices {
+                    if let Some(slot @ None) = prim_scale.get_mut(i as usize) {
+                        *slot = Some(s);
+                    }
+                }
+            }
+            if let Some((base, _target)) = p.material.texture_blend {
+                for &i in &p.indices {
+                    if let Some(slot @ None) = blend_override.get_mut(i as usize) {
+                        *slot = Some(base);
+                    }
+                }
+            }
+            if let Some(c) = p.material.flat_color {
+                for &i in &p.indices {
+                    if let Some(slot @ None) = flat_override.get_mut(i as usize) {
+                        *slot = Some(c);
+                    }
                 }
             }
         }
@@ -1589,15 +1618,36 @@ impl PackWriter {
         // Vertices, converted to the GE layout.
         let mut verts = Vec::with_capacity(mesh.vertices.len() * VERTEX_SIZE);
         for (i, v) in mesh.vertices.iter().enumerate() {
-            let rgba = if lit[i] { shade_normal(v.rgba) } else { v.rgba };
-            let rgba = match prim_scale[i] {
-                Some(s) => [
-                    ((rgba[0] as u32 * s[0] as u32) / 255) as u8,
-                    ((rgba[1] as u32 * s[1] as u32) / 255) as u8,
-                    ((rgba[2] as u32 * s[2] as u32) / 255) as u8,
-                    rgba[3],
-                ],
-                None => rgba,
+            // Unlit vertices arrive already fully resolved from
+            // `push_vertex`; none of the three lit-only maps above are ever
+            // populated from an unlit primitive, so applying them
+            // unconditionally here would either be a no-op or, for
+            // `prim_scale`, a second multiply on top of `push_vertex`'s own
+            // (RE-240) -- gate all three on `lit[i]` explicitly rather than
+            // relying on the maps happening to stay empty.
+            let rgba = if lit[i] {
+                let shaded = shade_normal(v.rgba);
+                // Same priority order as `push_vertex`'s mutually exclusive
+                // if/else-if chain: at most one of these is ever set for a
+                // single primitive, so only cross-primitive vertex sharing
+                // (already an accepted approximation, RE-103) can make more
+                // than one candidate here non-`None` at once.
+                if let Some(c) = flat_override[i] {
+                    c
+                } else if let Some(c) = blend_override[i] {
+                    c
+                } else if let Some(s) = prim_scale[i] {
+                    [
+                        ((shaded[0] as u32 * s[0] as u32) / 255) as u8,
+                        ((shaded[1] as u32 * s[1] as u32) / 255) as u8,
+                        ((shaded[2] as u32 * s[2] as u32) / 255) as u8,
+                        shaded[3],
+                    ]
+                } else {
+                    shaded
+                }
+            } else {
+                v.rgba
             };
             let packed = PackedVertex {
                 u: v.uv[0],
@@ -4087,21 +4137,27 @@ mod tests {
     }
 
     #[test]
-    fn prim_color_scale_is_baked_into_the_vertex_at_pack_time() {
-        // RE-106: `material.prim_color` is `combiner_shade_scale`'s result
-        // (RE-043) whenever the combiner is a `SHADE * PRIMITIVE` shape --
-        // e.g. Mario's own hat (file 296, offset 0x1E80). Nothing on the PSP
-        // side ever multiplied it back in (no `prim_color` reference anywhere
-        // in `psp/src/meshdraw.rs`), so a correctly-lit, grey-shaded surface
-        // that should have read red stayed plain grey. The device has no
-        // fixed-function stage to scale an untextured vertex colour by a
-        // constant, so this is folded in here instead, the same time
-        // `TEXTURE_BLEND`'s baseline colour already is.
+    fn unlit_prim_color_scale_is_baked_by_push_vertex_not_pack_time() {
+        // RE-106/RE-240: `material.prim_color` is `combiner_shade_scale`'s
+        // result (RE-043) whenever the combiner is a `SHADE * PRIMITIVE`
+        // shape -- e.g. Mario's own hat (file 296, offset 0x1E80). For an
+        // *unlit* vertex, `mesh.rs`'s `push_vertex` already folds this scale
+        // into the vertex bytes before `add_mesh` ever sees them (real
+        // `Mesh`es always arrive this way); this test feeds `add_mesh` a
+        // vertex that already looks like `push_vertex`'s output (mid-grey
+        // scaled by a pure-red constant) and checks `add_mesh` leaves it
+        // alone rather than applying the same scale a second time -- RE-240
+        // found and fixed exactly that double application.
         let mut m = sample_mesh();
         m.primitives[0].material.lit = false;
         m.primitives[0].material.prim_color = Some([255, 0, 0, 255]); // pure red scale
         for v in &mut m.vertices {
-            v.rgba = [128, 128, 128, 255]; // a mid-grey literal colour
+            // 200, not a smaller mid-tone: as a signed byte its magnitude
+            // must land outside `looks_like_unit_normal`'s band, or the
+            // per-vertex `lit` fallback (RE-103) would treat this synthetic
+            // "already scaled colour" as a normal instead, defeating the
+            // point of this test.
+            v.rgba = [200, 0, 0, 255]; // `push_vertex`'s own already-scaled output
         }
 
         let mut w = PackWriter::new();
@@ -4113,17 +4169,62 @@ mod tests {
         let c = u32_at(v, 4);
         let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
         assert_eq!(
-            r, 128,
-            "the scale's red channel is full-strength, so red passes through"
+            r, 200,
+            "already-scaled red must survive untouched, not be scaled again"
         );
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
         assert_eq!(
-            g, 0,
-            "the scale's green channel is zero, so it must be zeroed"
+            pack.prim(0).unwrap().prim_color,
+            0xFF00_00FF,
+            "runtime lighting must retain the same red SHADE scale"
         );
+    }
+
+    #[test]
+    fn lit_prim_color_scale_is_applied_after_shading_not_onto_the_raw_normal() {
+        // RE-240: for a *lit* vertex the raw bytes are a normal, not a
+        // shade, so `push_vertex` (mesh.rs) leaves them untouched -- the
+        // scale has nowhere to apply until `add_mesh` computes an actual
+        // shade from that normal via `shade_normal`. A normal pointing
+        // straight at the light shades to near-white; scaling that by a
+        // pure-red `prim_color` must zero green/blue while leaving red at
+        // the shaded (not literal 255) intensity.
+        let toward = [
+            (LIGHT_DIR[0] * 127.0) as i8 as u8,
+            (LIGHT_DIR[1] * 127.0) as i8 as u8,
+            (LIGHT_DIR[2] * 127.0) as i8 as u8,
+            255,
+        ];
+        let expected_shade = shade_normal(toward)[0];
+
+        let mut m = sample_mesh();
+        m.primitives[0].material.lit = true;
+        m.primitives[0].material.prim_color = Some([255, 0, 0, 255]); // pure red scale
+        for v in &mut m.vertices {
+            v.rgba = toward;
+        }
+
+        let mut w = PackWriter::new();
+        w.add_mesh(&m, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let v = pack.vertices(&pack.mesh(0).unwrap()).unwrap();
+
+        let c = u32_at(v, 4);
+        let (r, g, b) = (c as u8, (c >> 8) as u8, (c >> 16) as u8);
         assert_eq!(
-            b, 0,
-            "the scale's blue channel is zero, so it must be zeroed"
+            r, expected_shade,
+            "red channel keeps the shaded intensity, not a literal 255"
         );
+        assert_eq!(g, 0, "green is zeroed by the scale");
+        assert_eq!(b, 0, "blue is zeroed by the scale");
+        // The raw normal must still reach `nx`/`ny`/`nz` unscaled -- the
+        // scale only affects the baked-light colour, never the normal
+        // runtime GE lighting reads back.
+        assert_eq!(v[8] as i8, toward[0] as i8);
+        assert_eq!(v[9] as i8, toward[1] as i8);
+        assert_eq!(v[10] as i8, toward[2] as i8);
         assert_eq!(
             pack.prim(0).unwrap().prim_color,
             0xFF00_00FF,
