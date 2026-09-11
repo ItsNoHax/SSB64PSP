@@ -147,7 +147,7 @@
 - Documentation: RE-233, RE-235, `docs/visual-regression.md`,
   `docs/porting-status.md`, this snapshot.
 - Commit: `5895bc5` (RE-233); `af04b05` (RE-234, docs-only, T8 in progress);
-  RE-235 not yet committed (golden refresh + docs, T8 still in progress).
+  `8c26aa4` (RE-235, golden refresh + docs, T8 still in progress).
 
 ## Continuation
 
