@@ -104,10 +104,8 @@
   Asset pack untouched (hash unchanged).
 - Documentation: RE-237, `docs/visual-regression.md` (fourteenth deterministic
   scene section), `PLAN.md` (T9 closure), this snapshot.
-- Commit: `16b8104` (RE-236 commit-hash record, prior session); this
-  session's `R2.1`/T9 closure (RE-237) not yet committed as of this
-  snapshot -- see the next commit and its own "record commit hash"
-  follow-up.
+- Commit: `e7ff15e` (RE-237, `R2.1`/T9 closure -- raw normal diagnostic +
+  camera-rotation case, code + docs).
 
 ## Continuation
 
