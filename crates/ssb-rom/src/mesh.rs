@@ -3291,6 +3291,112 @@ mod tests {
         assert_eq!(t.data_offset, 0x40);
     }
 
+    /// `PLAN.md` R2.1/T10 mapping-transition minimum: `textured→untextured→
+    /// texgen`. RE-239 (`tools/romtool`'s
+    /// `no_real_texgen_primitive_is_missing_a_bound_texture`) measured this
+    /// combination absent from the real archive (0 of 202 real texgen
+    /// primitives lack a bound texture) -- exercised synthetically here so
+    /// `convert`'s behavior at this boundary is proven, not merely assumed
+    /// safe because no real content happens to reach it.
+    #[test]
+    fn a_texgen_primitive_after_an_untextured_primitive_has_no_stale_texture() {
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetTimg {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                width: 300,
+                addr: SegAddr(0x0100_0000), // segment 1: resolves without archive data
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: Format::Rgba as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 1196,
+                lrt: 16,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]), // textured, no texgen
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: false,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::Tri1([0, 1, 2]), // untextured, no texgen
+            Cmd::GeometryMode {
+                clear: 0,
+                set: G_TEXTURE_GEN,
+            },
+            Cmd::Tri1([0, 1, 2]), // untextured, texgen
+            Cmd::End,
+        ];
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        // `MeshMaterial::cmp` groups primitives by material, not draw order
+        // (the doc comment on `MeshMaterial` above), so each stage is found
+        // by its own distinguishing state rather than by index.
+        assert_eq!(
+            mesh.primitives.len(),
+            3,
+            "each state change must split a new primitive"
+        );
+
+        let textured = mesh
+            .primitives
+            .iter()
+            .find(|p| p.material.texture.is_some())
+            .expect("first primitive must still be textured");
+        assert_eq!(textured.material.texture_gen, TextureGen::None);
+
+        let texgen = mesh
+            .primitives
+            .iter()
+            .find(|p| p.material.texture_gen == TextureGen::Regular)
+            .expect("third primitive must be texgen");
+        assert_eq!(
+            texgen.material.texture, None,
+            "texgen engaging after an untextured primitive must not resurrect the earlier texture"
+        );
+        assert_eq!(
+            texgen.material.texgen_scale,
+            Some((0xFFFF, 0xFFFF)),
+            "a texgen primitive still carries the live G_TEXTURE scale even with no bound texture"
+        );
+
+        let untextured = mesh
+            .primitives
+            .iter()
+            .find(|p| p.material.texture.is_none() && p.material.texture_gen == TextureGen::None)
+            .expect("second primitive must be untextured with no texgen");
+        assert_eq!(
+            untextured.material.texture, None,
+            "an explicit Texture{{on: false}} must clear the bound texture"
+        );
+    }
+
     #[test]
     fn a_framebuffer_role_tile_not_at_the_origin_has_its_uv_rebased() {
         // RE-108/RE-109: file 45's real 300x5 "photo" tile sets
