@@ -102,8 +102,8 @@
   (`census_lit_primitives_with_a_colour_baking_branch`).
 - Documentation: RE-240, `PLAN.md` (`R2.2` header + C1 status), this
   snapshot.
-- Commit: pending (recorded in a follow-up commit once made, per this
-  project's own convention).
+- Commit: `39c544f` (RE-240, `R2.2`/C1 close -- single-source `prim_color` +
+  lit-normal corruption fix).
 
 ## Continuation
 
