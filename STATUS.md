@@ -294,7 +294,7 @@
   `docs/visual-regression.md` (new scene section, test-matrix row,
   C1-C7 pending-matrix note), `crates/ssb-rom/src/pack.rs` doc comments,
   this snapshot.
-- Commit: pending (RE-251, `R2.2`/C3 part 8: wire `apply_material` to
+- Commit: `81cd2f4` (RE-251, `R2.2`/C3 part 8: wire `apply_material` to
   independent depth-test/write state, closing C3).
 
 ## Continuation
