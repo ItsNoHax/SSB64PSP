@@ -152,7 +152,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    already-scaled, already-rebased authored UVs the RSP never reads on
 ///    such a primitive, so it cannot reproduce the reflection's texture
 ///    period or phase.
-pub const VERSION: u32 = 27;
+/// 28 adds `flags::{DEPTH_TEST, DEPTH_WRITE, DEPTH_MODE_BIT0,
+///    DEPTH_MODE_BIT1}` (RE-244): `G_SETRENDERMODE`'s `Z_CMP`/`Z_UPD`/
+///    `ZMODE`, independent of `Z_BUFFER` (`G_ZBUFFER`). A v27 pack has only
+///    `Z_BUFFER` and cannot distinguish real depth-test-without-write
+///    translucency from ordinary opaque depth-tested geometry.
+pub const VERSION: u32 = 28;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -303,6 +308,28 @@ pub mod flags {
     /// Never set on its own: the RSP's linear form is a *modifier* on
     /// `G_TEXTURE_GEN`, so [`TEXTURE_GEN`] is always set alongside it.
     pub const TEXTURE_GEN_LINEAR: u32 = 1 << 14;
+    /// RE-244: `G_SETRENDERMODE`'s `Z_CMP` bit -- the RDP's real, independent
+    /// per-primitive depth-compare signal, distinct from `Z_BUFFER`
+    /// (`G_ZBUFFER`, RSP geometry mode) above. Archive-wide this diverges
+    /// from `Z_BUFFER` on most non-fighter-skeleton primitives (`romtool`'s
+    /// `census_independent_depth_state_vs_z_buffer_geometry_bit`, kept
+    /// permanently); `psp/src/meshdraw.rs` still keys `GuState::DepthTest`
+    /// off `Z_BUFFER`, the already device-validated signal (RE-068), until
+    /// that gap's cause (other object categories' own external
+    /// `G_SETRENDERMODE` wrapper, `R2.2`/C3) is found. Recorded for
+    /// inspection, matching `LIT`'s precedent.
+    pub const DEPTH_TEST: u32 = 1 << 15;
+    /// RE-244: `G_SETRENDERMODE`'s `Z_UPD` bit -- whether this primitive
+    /// writes the depth buffer, independent of [`DEPTH_TEST`] above (a real
+    /// translucent surface tests without writing, `ZMODE_XLU`). Not yet
+    /// consumed on the device side; see [`DEPTH_TEST`]'s doc comment.
+    pub const DEPTH_WRITE: u32 = 1 << 16;
+    /// RE-244: `G_SETRENDERMODE`'s 2-bit `ZMODE` field, low bit. The PSP GE
+    /// has no equivalent depth-bias hardware feature; recorded for
+    /// inspection only (`crate::mesh::ZMode`).
+    pub const DEPTH_MODE_BIT0: u32 = 1 << 17;
+    /// RE-244: `ZMODE`'s high bit; see [`DEPTH_MODE_BIT0`].
+    pub const DEPTH_MODE_BIT1: u32 = 1 << 18;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -1693,6 +1720,20 @@ impl PackWriter {
             }
             if m.z_buffer {
                 f |= flags::Z_BUFFER;
+            }
+            if m.depth_test {
+                f |= flags::DEPTH_TEST;
+            }
+            if m.depth_write {
+                f |= flags::DEPTH_WRITE;
+            }
+            match m.depth_mode {
+                crate::mesh::ZMode::Opaque => {}
+                crate::mesh::ZMode::Interpenetrating => f |= flags::DEPTH_MODE_BIT0,
+                crate::mesh::ZMode::Translucent => f |= flags::DEPTH_MODE_BIT1,
+                crate::mesh::ZMode::Decal => {
+                    f |= flags::DEPTH_MODE_BIT0 | flags::DEPTH_MODE_BIT1;
+                }
             }
             if m.alpha_test {
                 f |= flags::ALPHA_TEST;

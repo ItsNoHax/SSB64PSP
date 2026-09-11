@@ -10,6 +10,112 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-244 — Independent depth compare/write state: a real 90% divergence from `G_ZBUFFER`, and the same external seed C2 found — but for a different, non-redundant reason (`PLAN.md` R2.2/C3, part 1, in progress)
+
+**Question.** `PLAN.md`'s `R2.2`/C3 requires censusing `G_SETRENDERMODE`'s
+`Z_CMP`/`Z_UPD`/`ZMODE` bits and representing independent `depth_test`,
+`depth_write` and `depth_mode` instead of the single `z_buffer` flag
+(`G_ZBUFFER`, RSP geometry mode) the PSP renderer currently uses alone as its
+depth-test signal (RE-068). Does the archive actually need this separation,
+or does `z_buffer` already track the real RDP depth bits closely enough that
+C3 is mostly bookkeeping, the way C2's lighting seed turned out to be?
+
+**Implementation.** `crates/ssb-rom/src/mesh.rs`: added `MeshMaterial::{
+depth_test, depth_write, depth_mode: ZMode}`, derived at the same
+`Cmd::SetOtherModeL { shift: 3, len: 29, .. }` render-mode site
+`alpha_test`/`translucent` already read (`Z_CMP = 0x10`, `Z_UPD = 0x20`,
+`ZMODE` at bits 10-11 — confirmed against `refs/ssb-decomp-re/include/PR/
+gbi.h`'s own `Z_CMP`/`Z_UPD`/`ZMODE_OPA/INTER/XLU/DEC` definitions, not
+assumed). `z_buffer` is untouched — still `G_ZBUFFER`, still derived at
+`Cmd::GeometryMode`, now understood as RSP capability rather than the RDP's
+own per-pixel test/write decision.
+
+Archive-wide, before any seed (`tools/romtool`'s
+`census_independent_depth_state_vs_z_buffer_geometry_bit`, kept permanently):
+of 5872 primitives, `z_buffer` is true for 5792 (98.6%, matching RE-068's
+98.3% figure) but `depth_test`/`depth_write` are true for only 592/576 (10%)
+— a real 90% divergence, the opposite of C2's null result. `ZMODE` is `OPA`
+for all but 16 primitives, which are `XLU` and are exactly the 16 where
+`depth_test != depth_write` (real depth-test-without-write translucency).
+
+That divergence needed an explanation before deciding anything. Reading
+`refs/ssb-decomp-re/src/ft/ftdisplaymain.c` directly (not guessing) found
+`ftDisplayMainProcDisplay` — the exact function RE-241 already identified as
+setting `G_LIGHTING` externally — also issues, at the same call site, right
+before `ftDisplayMainDrawAll`:
+
+```c
+gSPSetGeometryMode(gSYTaskmanDLHeads[0]++, G_ZBUFFER | G_SHADE | G_CULL_BACK | G_LIGHTING | G_SHADING_SMOOTH);
+gDPSetRenderMode(gSYTaskmanDLHeads[0]++, G_RM_FOG_PRIM_A, G_RM_AA_ZB_OPA_SURF2);
+```
+
+`gDPSetRenderMode`'s two arguments OR together into one render-mode word.
+`G_RM_FOG_PRIM_A` supplies only cycle-1 blend bits; `G_RM_AA_ZB_OPA_SURF2` is
+`RM_AA_ZB_OPA_SURF(2)` = `AA_EN | Z_CMP | Z_UPD | CVG_DST_CLAMP | ZMODE_OPA |
+ALPHA_CVG_SEL | GBL_c2(...)` (`gbi.h`). So the combined word carries `Z_CMP |
+Z_UPD | ZMODE_OPA` — exactly the external per-object seed this project needs,
+at the same scope C2 already validated (a fighter's two `common_parts`
+skeleton graphs), for exactly the same structural reason: a joint's own node
+list need not repeat state its external wrapper already set.
+
+`mesh::State::new`'s single `initial_lit: bool` parameter was generalized
+into `pub struct InitialMaterial { lit, depth_test, depth_write, depth_mode }`
+(`convert`/`convert_sequence` updated to match), with a named
+`InitialMaterial::FIGHTER_EXTERNAL` constant bundling this render-mode seed
+alongside `lit`. `tools/romtool`'s `fighter_skeleton_graphs`/`pack`/`scene`/
+`file_meshes` all now compute a single `initial_material_for(...)` per graph
+instead of a bare bool. Tested with `mesh.rs`'s
+`convert_sequence_fighter_external_seeds_depth_test_and_write_with_no_in_list_render_mode`,
+`convert_sequence_default_leaves_depth_test_and_write_off`, and
+`zmode_from_render_mode_decodes_all_four_values`.
+
+**Measurement.** Unlike C2's seed, this one is *not* redundant.
+`census_depth_seed_measured_impact_on_skeleton_graphs` (kept permanently): of
+771 fighter-skeleton-graph primitives, the seed flips **732 (95%)** from
+`depth_test`/`depth_write` false to true — most of these graphs' own node
+lists never repeat `G_SETRENDERMODE` at all, unlike lighting where every
+relevant list already carried its own `G_MW_LIGHTCOL`. After seeding,
+archive-wide `depth_test`/`depth_write` rise to 1324/1308 — still far short
+of `z_buffer`'s 5792. The remaining ~4468-primitive gap is not fighter-
+skeleton geometry (that scope is now fully seeded); it is stage, effect, or
+other object categories that likely have their own external
+`G_SETRENDERMODE` wrapper this project has not yet located — the same open
+shape as RE-241's "other graphs" `looks_like_unit_normal` remainder for
+lighting.
+
+`crates/ssb-rom/src/pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
+DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (pack `VERSION` 27→28) recording the new
+fields for inspection, matching `LIT`'s existing precedent. `psp/src/
+meshdraw.rs` is **deliberately unchanged**: it still keys `GuState::DepthTest`
+off `z_buffer`, not the new, more accurate `depth_test`. Switching now would
+regress the ~4468 primitives this census has not yet explained — `z_buffer`
+is the already device-validated signal (RE-068), and `depth_test` is only
+proven correct for the fighter-skeleton subset so far. `assets/generated/
+ssb64.pak` rebuilt; mesh/triangle/draw-call counts (2044/36772/8056) are
+identical to a pre-change rebuild from the same ROM, confirmed by diffing
+both builds' `pack` summaries — the new fields did not fragment any existing
+primitive merge group.
+
+**Confidence.** High for the data model, the bit positions (cross-checked
+against `gbi.h` directly), and the fighter-skeleton seed's real, measured,
+non-null impact. The remaining ~4468-primitive gap is a genuine open
+question, not yet explained — this entry does not claim `R2.2`/C3 complete.
+No PSP-side rendering behaviour changed in this entry; `psp/src/meshdraw.rs`'s
+`sceGuDepthMask` wiring, the non-fighter-skeleton remainder, and the required
+depth-test/no-write translucent-front/opaque-behind regression with device
+evidence are explicitly deferred to a follow-up entry, the same multi-part
+shape C2 took (RE-241/242/243).
+
+**Verification.** `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+`ssb-rom` 417 passed (414 prior + 3 new unit tests), `romtool` 19 passed (17
+prior + 2 new census tests), `ssb-engine` 48, `ssb-game` 120, 0 failed
+overall. `cargo fmt --check` clean. `cargo clippy --workspace --all-targets`
+clean (same pre-existing, unrelated warnings as prior sessions). Pack
+rebuilt and mesh/triangle/draw-call counts verified unchanged from a
+pre-change rebuild of the same ROM.
+
+---
+
 ## RE-243 — Wiring the external-lighting seed closes `R2.2`/C2, but changes zero real vertices (`PLAN.md` R2.2/C2, complete)
 
 **Question.** RE-242 recovered the archive mapping RE-241 needed but left
