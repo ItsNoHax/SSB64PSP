@@ -113,7 +113,7 @@
   `PLAN.md`, this snapshot.
 - Commit: `5895bc5` (RE-233); `af04b05` (RE-234, docs-only, T8 in progress);
   `8c26aa4`/`6639011` (RE-235, golden refresh + docs, T8 in progress);
-  RE-236 (physical-PSP capture + T8 closure) not yet committed.
+  `8e29273` (RE-236, physical-PSP capture + T8 closure, docs-only).
 
 ## Continuation
 
