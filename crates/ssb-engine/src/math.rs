@@ -453,6 +453,30 @@ pub fn quantize_lookat_basis(v: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// The RSP's own `M^T * v`, normalised -- the look-at basis transform texgen
+/// uses to carry a world-space look-at direction into an object's local
+/// space. `columns[c]` is the object's model matrix's column `c`, upper 3x3
+/// only (the translation/`w` row and column never apply to a direction).
+/// `refs/BattleShip`'s `Interpreter::CalculateNormalDir`
+/// (`libultraship/src/fast/interpreter.cpp:2610-2616`) is the reference:
+/// dequantize, multiply by the transposed modelview, normalise. The
+/// normalisation is also what makes a uniform model scale drop out, since
+/// the transpose of a scaled rotation scales every row by the same factor.
+/// Returns `[0.0; 3]` for a singular matrix rather than producing
+/// infinities. `PLAN.md` R2.1/T4: pulled out of `meshdraw::DrawState::
+/// texgen_object_basis` so it is host-testable and shared by both texgen
+/// paths that call it, rather than a PSP-only inline closure.
+pub fn transform_lookat_basis(columns: [[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
+    let dot = |c: [f32; 3]| c[0] * v[0] + c[1] * v[1] + c[2] * v[2];
+    let r = [dot(columns[0]), dot(columns[1]), dot(columns[2])];
+    let len = sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    if len > 1.0e-6 {
+        [r[0] / len, r[1] / len, r[2] / len]
+    } else {
+        [0.0; 3]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,5 +654,47 @@ mod tests {
         assert_eq!(quantized[2], 0.0);
         assert!((quantized[0] - basis[0]).abs() < 1.0 / 127.0);
         assert!((quantized[1] - basis[1]).abs() < 1.0 / 127.0);
+    }
+
+    const IDENTITY_COLUMNS: [[f32; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    #[test]
+    fn transform_lookat_basis_identity_is_a_no_op() {
+        let v = [0.6, -0.8, 0.0];
+        let r = transform_lookat_basis(IDENTITY_COLUMNS, v);
+        assert!(
+            close(r[0], 0.6) && close(r[1], -0.8) && close(r[2], 0.0),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn transform_lookat_basis_rotation_carries_the_direction_along() {
+        // A node rotated 90 degrees about Z: object-space X maps onto
+        // world-space Y, so the world-space X look-at direction should come
+        // back as the node's own -Y (M^T, not M) in object space.
+        let columns = [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let r = transform_lookat_basis(columns, [1.0, 0.0, 0.0]);
+        assert!(
+            close(r[0], 0.0) && close(r[1], -1.0) && close(r[2], 0.0),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn transform_lookat_basis_uniform_scale_drops_out() {
+        let scaled = [[5.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 5.0]];
+        let r = transform_lookat_basis(scaled, [1.0, 0.0, 0.0]);
+        assert!(
+            close(r[0], 1.0) && close(r[1], 0.0) && close(r[2], 0.0),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn transform_lookat_basis_singular_matrix_is_zero_not_nan() {
+        let singular = [[0.0; 3]; 3];
+        let r = transform_lookat_basis(singular, [1.0, 0.0, 0.0]);
+        assert_eq!(r, [0.0; 3]);
     }
 }

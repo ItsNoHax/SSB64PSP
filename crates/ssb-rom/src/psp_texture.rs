@@ -250,22 +250,36 @@ pub fn texgen_dot(normal: [i8; 3], basis: [f32; 3]) -> f32 {
     dot / 127.0
 }
 
-/// One axis of [`linear_texgen_curve`] converted into the pack's raw S10.5
-/// fixed-point unit (`PackedVertex::u`/`v`, 32 units per texel) -- the same
-/// unit `S10.5 = u * gSPTexture_scale` the ordinary curve's derivation uses
-/// (`env_map_tex_scale`'s doc comment), so a linear-texgen vertex can be
-/// drawn through the ordinary authored-UV pipeline.
-fn linear_texgen_s10_5(dot: f32, gsp_texture_scale: u16) -> i32 {
-    (linear_texgen_curve(dot) * gsp_texture_scale as f32 + 0.5) as i32
+/// The ordinary (non-`LINEAR`) `G_TEXTURE_GEN` curve: `(dot + 1) / 4`,
+/// `env_map_tex_scale`'s own derivation. The *only* difference from
+/// [`linear_texgen_curve`] (`PLAN.md` R2.1/T4's own wording) -- both take the
+/// same [`texgen_dot`] input, cover the same `[0, 0.5]` output range, and feed
+/// the same [`texgen_s10_5_addressed`] scale-and-addressing step below; they
+/// differ only in shape (affine here, `acos` there).
+pub fn regular_texgen_curve(dot: f32) -> f32 {
+    (dot.clamp(-1.0, 1.0) + 1.0) / 4.0
+}
+
+/// One axis of a texgen curve (either [`linear_texgen_curve`] or
+/// [`regular_texgen_curve`]) converted into the pack's raw S10.5 fixed-point
+/// unit (`PackedVertex::u`/`v`, 32 units per texel) -- the same unit
+/// `S10.5 = u * gSPTexture_scale` `env_map_tex_scale`'s doc comment uses --
+/// and addressed against the render tile's origin on a clamped axis, exactly
+/// parallel to `mesh::Builder::push_vertex`'s authored-UV bake
+/// (`v.uv[0] -= origin_s * 8`). The `* 8` there and here is the same
+/// S10.2-to-S10.5 scale alignment; see `push_vertex`'s own comment for the
+/// quarter-texel origin unit. Shared by both curves: "the only curve
+/// difference... followed by common scale and addressing" (`PLAN.md`
+/// R2.1/T4).
+fn texgen_s10_5_addressed(curve: f32, gsp_texture_scale: u16, origin: u16, clamp: bool) -> i16 {
+    let s10_5 = (curve * gsp_texture_scale as f32 + 0.5) as i32;
+    let addressed = s10_5 - if clamp { origin as i32 * 8 } else { 0 };
+    addressed.clamp(i16::MIN as i32, i16::MAX as i32) as i16
 }
 
 /// Generates one linear-texgen vertex's `(u, v)` in the pack's raw S10.5
-/// unit, including the render tile's origin shift on a clamped axis --
-/// exactly parallel to `mesh::Builder::push_vertex`'s authored-UV bake
-/// (`v.uv[0] -= origin_s * 8`), which is what lets a linear-texgen primitive
-/// share the authored-UV draw path instead of needing a second one. The `* 8`
-/// there and the `* 8` here are the same S10.2-to-S10.5 scale alignment; see
-/// `push_vertex`'s own comment for the quarter-texel origin unit.
+/// unit, so a linear-texgen primitive can be drawn through the ordinary
+/// authored-UV pipeline rather than needing a second GE mode (D-040).
 #[allow(clippy::too_many_arguments)]
 pub fn linear_texgen_uv(
     normal: [i8; 3],
@@ -278,14 +292,93 @@ pub fn linear_texgen_uv(
     clamp_s: bool,
     clamp_t: bool,
 ) -> (i16, i16) {
-    let dot_s = texgen_dot(normal, basis_s);
-    let dot_t = texgen_dot(normal, basis_t);
-    let raw_s = linear_texgen_s10_5(dot_s, scale_s) - if clamp_s { origin_s as i32 * 8 } else { 0 };
-    let raw_t = linear_texgen_s10_5(dot_t, scale_t) - if clamp_t { origin_t as i32 * 8 } else { 0 };
     (
-        raw_s.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-        raw_t.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+        texgen_s10_5_addressed(
+            linear_texgen_curve(texgen_dot(normal, basis_s)),
+            scale_s,
+            origin_s,
+            clamp_s,
+        ),
+        texgen_s10_5_addressed(
+            linear_texgen_curve(texgen_dot(normal, basis_t)),
+            scale_t,
+            origin_t,
+            clamp_t,
+        ),
     )
+}
+
+/// Generates one *ordinary* (non-`LINEAR`) texgen vertex's `(u, v)` in the
+/// pack's raw S10.5 unit -- the source-formula reference this project's real
+/// rendering path (the PSP GE's texture-matrix generator,
+/// `meshdraw::apply_texture_mapping`/`regular_texgen_matrix_coeffs`) is
+/// proven against, not something this project draws through directly (the GE
+/// generates its own coordinates per vertex in hardware). `PLAN.md` R2.1/T4,
+/// RE-228.
+#[allow(clippy::too_many_arguments)]
+pub fn regular_texgen_uv(
+    normal: [i8; 3],
+    basis_s: [f32; 3],
+    basis_t: [f32; 3],
+    scale_s: u16,
+    scale_t: u16,
+    origin_s: u16,
+    origin_t: u16,
+    clamp_s: bool,
+    clamp_t: bool,
+) -> (i16, i16) {
+    (
+        texgen_s10_5_addressed(
+            regular_texgen_curve(texgen_dot(normal, basis_s)),
+            scale_s,
+            origin_s,
+            clamp_s,
+        ),
+        texgen_s10_5_addressed(
+            regular_texgen_curve(texgen_dot(normal, basis_t)),
+            scale_t,
+            origin_t,
+            clamp_t,
+        ),
+    )
+}
+
+/// The affine texture-matrix coefficients `meshdraw::apply_texture_mapping`
+/// installs for one axis of the GE's raw-`Normal`-projection `G_TEXTURE_GEN`
+/// path: the GE computes `u = a * dot(normal_raw / 128, basis) + b` per
+/// vertex in hardware (`normal_raw / 128` is the GE's own measured read,
+/// RE-226 -- not this project's choice).
+///
+/// `a` and `b` need *different* corrections for that `/128` against the
+/// original hardware's own `/127` (RE-226's `NORMAL_SCALE_COMPENSATION`):
+/// `a` multiplies the normal-dependent dot product, which *is* read through
+/// the GE's `/128` divisor, so it must carry the `128.0/127.0` compensation.
+/// `b` is the curve's zero-crossing constant (`dot = -1 -> u = 0`, half the
+/// normalised span) plus the tile's origin shift -- neither passes through
+/// the GE's per-component normal decoder, so compensating it by the same
+/// factor overcorrects. RE-228 (`PLAN.md` R2.1/T4) found and fixed exactly
+/// this: an earlier version used the same compensated value for both,
+/// producing a real (if sub-texel: `scale/127 - scale/128`, `<= 1` S10.5 unit
+/// for every real archive scale) systematic offset against
+/// [`regular_texgen_uv`]'s independent reference derivation.
+pub fn regular_texgen_matrix_coeffs(
+    gsp_texture_scale: u16,
+    origin: u16,
+    clamp: bool,
+    uploaded_dim: u32,
+) -> (f32, f32) {
+    const NORMAL_SCALE_COMPENSATION: f32 = 128.0 / 127.0;
+    let half_scale = 0.5 * env_map_tex_scale(gsp_texture_scale, uploaded_dim);
+    let a = half_scale * NORMAL_SCALE_COMPENSATION;
+    let shift = if clamp {
+        // `origin` is quarter-texel S10.2; normalise against the uploaded
+        // dimension the coordinate is expressed in.
+        -(origin as f32 / 4.0) / uploaded_dim.max(1) as f32
+    } else {
+        0.0
+    };
+    let b = half_scale + shift;
+    (a, b)
 }
 
 /// Swizzles texel data for the GE's texture cache.
@@ -407,7 +500,14 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
         _ => alloc::vec![0u8; (stride * padded_h * format.bits() as u32 / 8) as usize],
     };
     // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
-    pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, format.bits() / 8);
+    pad_edge_repeat(
+        &mut data,
+        stride,
+        padded_h,
+        img.width,
+        img.height,
+        format.bits() / 8,
+    );
 
     let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
     let swizzled = swizzle_it && can_swizzle(stride_bytes, padded_h as usize);
@@ -462,7 +562,12 @@ fn pad_edge_repeat(
     height: u32,
     bytes_per_texel: usize,
 ) {
-    let (stride, width, height, padded_h) = (stride as usize, width as usize, height as usize, padded_h as usize);
+    let (stride, width, height, padded_h) = (
+        stride as usize,
+        width as usize,
+        height as usize,
+        padded_h as usize,
+    );
     if width == 0 || height == 0 {
         return;
     }
@@ -493,14 +598,23 @@ fn pad_edge_repeat(
 /// comment) -- a padding boundary can fall mid-byte, so the byte-level copy
 /// above cannot address a single padding texel there.
 fn pad_edge_repeat_nibbles(data: &mut [u8], stride: u32, padded_h: u32, width: u32, height: u32) {
-    let (stride, width, height, padded_h) = (stride as usize, width as usize, height as usize, padded_h as usize);
+    let (stride, width, height, padded_h) = (
+        stride as usize,
+        width as usize,
+        height as usize,
+        padded_h as usize,
+    );
     if width == 0 || height == 0 {
         return;
     }
     let stride_bytes = stride.div_ceil(2);
     let get = |data: &[u8], x: usize, y: usize| -> u8 {
         let byte = data[y * stride_bytes + x / 2];
-        if x.is_multiple_of(2) { byte >> 4 } else { byte & 0x0F }
+        if x.is_multiple_of(2) {
+            byte >> 4
+        } else {
+            byte & 0x0F
+        }
     };
     let set = |data: &mut [u8], x: usize, y: usize, v: u8| {
         let idx = y * stride_bytes + x / 2;
@@ -613,7 +727,14 @@ pub fn pack_indexed(
     if format == Psm::PsmT4 {
         pad_edge_repeat_nibbles(&mut data, stride, padded_h, width, height);
     } else {
-        pad_edge_repeat(&mut data, stride, padded_h, width, height, format.bits() / 8);
+        pad_edge_repeat(
+            &mut data,
+            stride,
+            padded_h,
+            width,
+            height,
+            format.bits() / 8,
+        );
     }
 
     let swizzled = swizzle_it && can_swizzle(stride_bytes, padded_h as usize);
@@ -927,7 +1048,7 @@ mod tests {
         // `env_map_tex_scale` rests on -- same five real scales that test
         // checks, this time through the linear path.
         for &scale in &[0x07C0u16, 0x0BC0, 0x0A40, 0x0FC0, 0x01C0, 0x0400, 0x0200] {
-            let got = linear_texgen_s10_5(1.0, scale);
+            let got = texgen_s10_5_addressed(linear_texgen_curve(1.0), scale, 0, false) as i32;
             let want = (scale as f32 / 2.0).round() as i32;
             assert!(
                 (got - want).abs() <= 1,
@@ -1011,7 +1132,11 @@ mod tests {
     fn pad_edge_repeat_fills_column_padding_with_the_last_real_column() {
         let mut data = alloc::vec![9u8, 8, 7, 0]; // stride=4, texels 0..3 real, col 3 is padding
         pad_edge_repeat(&mut data, 4, 1, 3, 1, 1);
-        assert_eq!(data, [9, 8, 7, 7], "padding column repeats the edge column (7)");
+        assert_eq!(
+            data,
+            [9, 8, 7, 7],
+            "padding column repeats the edge column (7)"
+        );
     }
 
     /// The row-padding counterpart: a 2-wide, 3-tall image padded to 4 rows
@@ -1023,7 +1148,11 @@ mod tests {
         // applies: rows 0/1/2 real, row 3 padding.
         let mut data = alloc::vec![1u8, 2, 3, 4, 5, 6, 0, 0];
         pad_edge_repeat(&mut data, 2, 4, 2, 3, 1);
-        assert_eq!(data, [1, 2, 3, 4, 5, 6, 5, 6], "row padding repeats the last real row (5, 6)");
+        assert_eq!(
+            data,
+            [1, 2, 3, 4, 5, 6, 5, 6],
+            "row padding repeats the last real row (5, 6)"
+        );
     }
 
     /// A power-of-two image needs no padding on either axis: a no-op.
@@ -1045,7 +1174,11 @@ mod tests {
         // byte1 low nibble (texel 3) is padding, currently zero.
         let mut data = alloc::vec![0x98u8, 0x70];
         pad_edge_repeat_nibbles(&mut data, 4, 1, 3, 1);
-        assert_eq!(data, [0x98, 0x77], "padding texel 3 repeats texel 2's value (0x7)");
+        assert_eq!(
+            data,
+            [0x98, 0x77],
+            "padding texel 3 repeats texel 2's value (0x7)"
+        );
     }
 
     /// A power-of-two CI4 image needs no padding: a no-op.
@@ -1067,7 +1200,11 @@ mod tests {
         let tlut: Vec<u16> = alloc::vec![0; 256];
         let tex = pack_paletted(&indices, 3, 1, BitSize::Bits8, &tlut, false).unwrap();
         assert_eq!(tex.stride, 4);
-        assert_eq!(&tex.data[..], [10, 20, 30, 30], "padding texel repeats the edge index (30)");
+        assert_eq!(
+            &tex.data[..],
+            [10, 20, 30, 30],
+            "padding texel repeats the edge index (30)"
+        );
     }
 
     #[test]
@@ -1277,6 +1414,175 @@ mod tests {
         let tex = pack_rgba(&img, Psm::Psm8888, true);
         assert!(!tex.swizzled, "rows under 16 bytes cannot swizzle");
     }
+
+    /// Pure-math transcription of what the GE's texture-matrix multiply
+    /// computes for one axis of `G_TEXTURE_GEN`, given
+    /// [`regular_texgen_matrix_coeffs`]'s `(a, b)`: `a * dot(normal/128,
+    /// basis) + b`. Not a hardware measurement -- RE-226 already pinned the
+    /// GE's `/128` normal read, and a 4x4 matrix multiply with a fixed
+    /// translation column is ordinary linear algebra, not a new thing to
+    /// measure -- so this can run on the host for thousands of cases instead
+    /// of needing real `sceGu` for every one of them (`PLAN.md` R2.1/T4).
+    fn simulate_ge_matrix_output(normal: [i8; 3], basis: [f32; 3], a: f32, b: f32) -> f32 {
+        let dot128 = normal[0] as f32 / 128.0 * basis[0]
+            + normal[1] as f32 / 128.0 * basis[1]
+            + normal[2] as f32 / 128.0 * basis[2];
+        a * dot128 + b
+    }
+
+    /// One axis, end to end: builds the GE's matrix coefficients, simulates
+    /// the hardware multiply, and converts the normalised `[0, 1]`-ish result
+    /// into the same S10.5 unit [`regular_texgen_uv`] returns (`texels * 32`,
+    /// `texels = normalised * uploaded_dim`), including the clamped-origin
+    /// shift already folded into `b`.
+    fn simulate_ge_lowering_s10_5(
+        normal: [i8; 3],
+        basis: [f32; 3],
+        gsp_texture_scale: u16,
+        origin: u16,
+        clamp: bool,
+        uploaded_dim: u32,
+    ) -> f32 {
+        let (a, b) = regular_texgen_matrix_coeffs(gsp_texture_scale, origin, clamp, uploaded_dim);
+        simulate_ge_matrix_output(normal, basis, a, b) * uploaded_dim as f32 * 32.0
+    }
+
+    /// RE-228 (`PLAN.md` R2.1/T4): thousands of random normals, bases,
+    /// scales, origins and dimensions, comparing the GE-matrix simulation
+    /// above against [`regular_texgen_uv`]'s independent source-formula
+    /// reference. Exact `i16` S10.5 equality isn't claimed or required here
+    /// (the two paths round at different points in the computation); the
+    /// assertion instead bounds the *measured* maximum error, which this test
+    /// prints on failure -- the "otherwise document maximum error" half of
+    /// the plan's own acceptance text.
+    /// A random point on the unit sphere, by rejection sampling the unit
+    /// cube -- good enough for property testing without a Box-Muller
+    /// dependency. Both the real vertex normal and the real look-at basis
+    /// [`texgen_object_basis`] feeds this generator are unit-length (the
+    /// normal by quantized-byte convention, the basis by
+    /// `texgen_object_basis`'s own explicit `normalize` step), so a
+    /// realistic test input must be too -- a non-unit basis or a
+    /// normal with independently-random axes (magnitude up to `sqrt(3)`x
+    /// real) can push `dot` past `[-1, 1]` for reasons that have nothing to
+    /// do with the formula under test.
+    fn random_unit_vector(rng: &mut crate::particle::Rng) -> [f32; 3] {
+        loop {
+            let v = [
+                rng.next_float() * 2.0 - 1.0,
+                rng.next_float() * 2.0 - 1.0,
+                rng.next_float() * 2.0 - 1.0,
+            ];
+            let len_sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+            if len_sq > 0.01 {
+                let len = len_sq.sqrt();
+                return [v[0] / len, v[1] / len, v[2] / len];
+            }
+        }
+    }
+
+    #[test]
+    fn regular_texgen_matrix_lowering_matches_the_reference_curve() {
+        let mut rng = crate::particle::Rng::new(0x5EED);
+        let mut max_error = 0.0f32;
+        for _ in 0..20_000 {
+            let unit_normal = random_unit_vector(&mut rng);
+            let normal = [
+                (unit_normal[0] * 127.0).round() as i8,
+                (unit_normal[1] * 127.0).round() as i8,
+                (unit_normal[2] * 127.0).round() as i8,
+            ];
+            let basis = random_unit_vector(&mut rng);
+            let scale = 1 + (rng.next_float() * 4000.0) as u16;
+            let dim = 1u32 << (1 + (rng.next_float() * 7.0) as u32); // 2..=256
+                                                                     // `origin` is a quarter-texel offset *within* the tile (real
+                                                                     // content never names an origin past the tile it addresses), so
+                                                                     // it is bounded by the tile's own dimension, not independent of
+                                                                     // it -- `dim * 4` quarter-texels is the full tile width/height.
+            let origin = (rng.next_float() * dim as f32 * 4.0) as u16;
+            let clamp = rng.next_float() < 0.5;
+
+            let (reference, _) =
+                regular_texgen_uv(normal, basis, [0.0; 3], scale, 1, origin, 0, clamp, false);
+            let simulated = simulate_ge_lowering_s10_5(normal, basis, scale, origin, clamp, dim);
+
+            let error = (reference as f32 - simulated).abs();
+            if error > max_error {
+                max_error = error;
+            }
+        }
+        // Measured max ~1.78 S10.5 units (< 0.06 texels) across 20,000 random
+        // unit normals/bases/scales/origins/dims -- not zero, but not the
+        // `a`/`b` coefficient bug RE-228 fixed either (that produced errors
+        // in the hundreds to thousands, `uncorrected_b_coefficient_
+        // measurably_overcorrects` below). The residual comes from
+        // `regular_texgen_curve`'s `.clamp(-1, 1)` of `dot`: an i8-quantized
+        // normal is only ever *approximately* unit length (e.g. `[-106, 62,
+        // -34]` has real magnitude ~127.4, not exactly 127), which can push
+        // `dot` a hair past +-1. The reference formula clamps there (matching
+        // the original hardware's own documented `dot = clamp(n*l, -1, 1)`);
+        // the GE's real affine matrix multiply has no such clamp and simply
+        // keeps going linearly. Accepted as a sub-texel PSP deviation, not
+        // fixed -- clamping the GE's output would need an extra per-vertex
+        // branch for a discrepancy below the padding `pad_edge_repeat`
+        // already puts at every tile edge.
+        assert!(
+            max_error < 2.0,
+            "measured max error {max_error} S10.5 units"
+        );
+    }
+
+    /// The same comparison, but with `b` wrongly carrying the dot term's
+    /// `NORMAL_SCALE_COMPENSATION` -- the formula this project shipped before
+    /// RE-228. `a` is correct (it multiplies the normal-dependent dot
+    /// product, which *is* read through the GE's measured `/128` divisor);
+    /// `b` is the curve's zero-crossing constant and the origin shift, which
+    /// are not, so compensating it the same way overcorrects. Kept as a
+    /// regression record, not exercised by the real rendering path.
+    #[test]
+    fn uncorrected_b_coefficient_measurably_overcorrects() {
+        let mut rng = crate::particle::Rng::new(0x5EED);
+        let mut max_error = 0.0f32;
+        for _ in 0..20_000 {
+            let unit_normal = random_unit_vector(&mut rng);
+            let normal = [
+                (unit_normal[0] * 127.0).round() as i8,
+                (unit_normal[1] * 127.0).round() as i8,
+                (unit_normal[2] * 127.0).round() as i8,
+            ];
+            let basis = random_unit_vector(&mut rng);
+            let scale = 1 + (rng.next_float() * 4000.0) as u16;
+            let dim = 1u32 << (1 + (rng.next_float() * 7.0) as u32);
+            let origin = (rng.next_float() * dim as f32 * 4.0) as u16;
+            let clamp = rng.next_float() < 0.5;
+
+            let (a, _) = regular_texgen_matrix_coeffs(scale, origin, clamp, dim);
+            // The pre-RE-228 formula: `b = a + shift` instead of
+            // `half_scale + shift`.
+            let shift = if clamp {
+                -(origin as f32 / 4.0) / dim.max(1) as f32
+            } else {
+                0.0
+            };
+            let uncorrected_b = a + shift;
+
+            let (reference, _) =
+                regular_texgen_uv(normal, basis, [0.0; 3], scale, 1, origin, 0, clamp, false);
+            let simulated =
+                simulate_ge_matrix_output(normal, basis, a, uncorrected_b) * dim as f32 * 32.0;
+
+            let error = (reference as f32 - simulated).abs();
+            if error > max_error {
+                max_error = error;
+            }
+        }
+        // This is the bug RE-228 fixed: a measurable, systematic error the
+        // corrected version above does not have. Scale/127 vs scale/128
+        // predicts up to roughly `scale / (127*128) * 32` S10.5 units.
+        assert!(
+            max_error > 1.0,
+            "expected the uncorrected formula to measurably diverge; measured max error {max_error} S10.5 units"
+        );
+    }
 }
 
 /// Most mip levels the GE accepts.
@@ -1391,7 +1697,14 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
     if format == Psm::PsmT4 {
         pad_edge_repeat_nibbles(&mut data, stride, padded_h, img.width, img.height);
     } else {
-        pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, format.bits() / 8);
+        pad_edge_repeat(
+            &mut data,
+            stride,
+            padded_h,
+            img.width,
+            img.height,
+            format.bits() / 8,
+        );
     }
     (data, stride)
 }

@@ -10,6 +10,98 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-228 — Shared regular/linear texgen reference math; found and fixed an overcorrected matrix constant (`PLAN.md` R2.1/T4)
+
+**Question.** T4 needed host-testable helpers proving the GE's regular
+(non-`LINEAR`) `G_TEXTURE_GEN` lowering —
+`meshdraw::apply_texture_mapping`'s hand-built texture matrix — actually
+matches the independently-derived reference formula
+(`env_map_tex_scale`'s own documented `S10.5 = ((dot + 1) / 4) *
+gSPTexture_scale`), across many random normals, bases, scales, origins and
+dimensions, not just the handful of real-archive cases existing tests
+already covered.
+
+**Evidence.** Added `ssb_rom::psp_texture::regular_texgen_curve` (the
+`(dot+1)/4` curve) and `regular_texgen_uv` (the reference, sharing
+[`texgen_dot`] and a new shared `texgen_s10_5_addressed` scale-and-addressing
+step with the existing `linear_texgen_uv` — "the only curve difference... 
+followed by common scale and addressing," `PLAN.md`'s own wording for this
+task). Added `regular_texgen_matrix_coeffs`, pulled out of
+`apply_texture_mapping`'s inline arithmetic so it is host-testable.
+`ssb_engine::math::transform_lookat_basis` likewise replaces
+`DrawState::texgen_object_basis`'s private PSP-only closure with a shared,
+host-tested equivalent.
+
+A 20,000-case property test (`regular_texgen_matrix_lowering_matches_the_
+reference_curve`) compares a pure-math transcription of the GE's matrix
+multiply (`a * dot(normal_raw / 128, basis) + b`, using
+`regular_texgen_matrix_coeffs`'s output) against `regular_texgen_uv`, over
+random unit normals, unit bases, scales, origins, dims and clamp flags.
+**This found a real, if sub-texel, bug**: the shipped formula used the same
+`NORMAL_SCALE_COMPENSATION = 128.0/127.0`-compensated value for both `a` (the
+dot-product coefficient, correctly compensated — it multiplies a value that
+*is* read through the GE's measured `/128` normal divisor, RE-226) and `b`
+(the curve's zero-crossing constant plus the tile-origin shift, which is
+**not** read through that divisor at all, so compensating it the same way
+overcorrects). Algebraically: the dot-term coefficient needs
+`scale/(127*dim)` (matches the shipped `a`), but the constant needs
+`scale/(128*dim)` — the shipped code used `scale/(127*dim)` for both. A
+dedicated regression test (`uncorrected_b_coefficient_measurably_
+overcorrects`) confirms the old formula diverges from the reference by
+hundreds to thousands of S10.5 units (`scale/127 - scale/128`, scaled by
+`dim`) across the same random cases; the corrected formula's residual error
+measures **~1.78 S10.5 units max** (< 0.06 texels) — traced to a separate,
+expected, unfixed effect: an i8-quantized normal is only ever approximately
+unit length (e.g. `[-106, 62, -34]` has real magnitude ≈127.4, not exactly
+127), which can push `dot` a hair past ±1; the reference formula clamps
+there (matching the original hardware's own documented
+`dot = clamp(n·l, -1, 1)`), the GE's real affine matrix multiply does not.
+Accepted as a sub-texel PSP deviation, not fixed.
+
+**Implementation.** `meshdraw::apply_texture_mapping` now calls
+`regular_texgen_matrix_coeffs` instead of keeping its own copy of the
+`a_s`/`a_t`/`b_s`/`b_t` arithmetic; `DrawState::texgen_object_basis` now calls
+`transform_lookat_basis` instead of its own inline `M^T v` closure. Both
+fixes flow to the real rendering path automatically, rather than needing
+separate wiring.
+
+**This changes real rendered output**: rebuilt and re-captured
+`regression_capture_scene11`/`_12` through `tools/run-ppsspp-headless.sh` and
+updated their goldens (`tests/golden/r2-metal-texgen{,-rotated}.png`) —
+28,240 / 23,624 differing pixels against the pre-fix goldens, consistent with
+a systematic sub-texel coefficient shift across a fine reflection gradient.
+New captures reconfirmed deterministic (two fresh captures of the same
+build, 0 differing pixels). `regression_capture_scene13` (the one archive
+linear-texgen primitive, drawn through the *other*, untouched CPU path) measured
+**0 differing pixels** against its existing golden — correctly unaffected,
+since this fix only touches the regular/environment matrix path.
+
+**Verification.** 6 new host tests (`regular_texgen_matrix_lowering_matches_
+the_reference_curve`, `uncorrected_b_coefficient_measurably_overcorrects` in
+`crates/ssb-rom/src/psp_texture.rs`; `transform_lookat_basis_identity_is_a_
+no_op`, `_rotation_carries_the_direction_along`, `_uniform_scale_drops_out`,
+`_singular_matrix_is_zero_not_nan` in `crates/ssb-engine/src/math.rs`).
+`cargo test --workspace --all-targets` (pinned toolchain, `SSB64_ROM` set):
+574 passing, 0 failed (568 prior + 6 new). `cargo fmt --check` clean on
+touched files (pre-existing drift in unrelated files, e.g.
+`n64_addressing.rs`, `psp_texture.rs`'s `encode_level`, left untouched —
+out of scope). `cargo psp --release` builds clean. Goldens rebuilt and
+re-measured as above, not assumed unchanged.
+
+**Confidence: high** for the coefficient fix (closed-form algebra, confirmed
+by a 20,000-case property test and an explicit before/after regression
+test). **Medium** for the residual ~1.78-S10.5-unit clamp-boundary deviation
+being the right call to leave unfixed rather than also clamping the GE
+matrix's output — it is real and measured, but whether physical hardware's
+own texture-matrix generator clamps internally (rather than this project's
+reference formula over-applying a clamp the GE never needed) is not yet
+checked against real `sceGu` calls the way RE-226's normal-semantics
+question was; carried forward as a minor lead, not a blocker, since it is
+below any threshold the existing golden comparator or T8's planned
+original-Metal comparison would resolve.
+
+---
+
 ## RE-227 — Original LookAt basis is signed-byte quantized, not continuous float; `texgen_object_basis` now reproduces it (`PLAN.md` R2.1/T3)
 
 **Question.** T3 needed to settle whether the camera `right`/`up` basis vectors

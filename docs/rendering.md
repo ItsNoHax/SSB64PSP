@@ -244,16 +244,26 @@ match arm, which currently reads only `G_CULL_BACK`/`G_CULL_FRONT`/
   normal (RE-226: the RSP's own `G_TEXTURE_GEN` never normalises the
   quantised normal either, only scales it, and the previously-shipped
   `NormalizedNormal` mode was measured collapsing every normal to the same
-  output regardless of magnitude) and the matrix carrying the exact affine
-  term `u = dot * a + (a + origin_shift)`, `a = gSPTexture_scale / (128 *
-  uploaded_dim) * (128/127)`. The trailing `128/127` factor compensates for
-  the GE's own measured internal divisor (`/128`) against the original
-  hardware's `/127` (RE-226), reproducing `dot = (n · l) / 127` exactly. The
+  output regardless of magnitude) and the matrix carrying the affine term
+  `u = dot * a + b`, via `regular_texgen_matrix_coeffs`
+  (`crates/ssb-rom/src/psp_texture.rs`). `a` and `b` need *different*
+  corrections for the GE's own measured internal divisor (`/128`) against
+  the original hardware's `/127` (RE-226): `a = gSPTexture_scale / (128 *
+  uploaded_dim) * (128/127)` — it multiplies the normal-dependent dot
+  product, which *is* read through that divisor — but `b`, the curve's
+  zero-crossing constant plus the tile-origin shift, is not, so it must
+  **not** carry the same `128/127` factor: `b = gSPTexture_scale / (128 *
+  uploaded_dim) + origin_shift`. RE-228 (`PLAN.md` R2.1/T4) found and fixed
+  a real, if sub-texel, bug here — an earlier version used the
+  `128/127`-compensated `a` for `b` too, overcorrecting by up to
+  `scale/127 - scale/128` S10.5 units, caught by a 20,000-case random
+  property test against an independent source-formula reference. The
   generator reads the object-space normal, so each node's world transform is
   folded into the matrix rows as `normalize(M^T · lookat)` — the RSP's own
-  `CalculateNormalDir` — while the vertex normal itself is fed in unscaled.
-  No GE light is involved, so the fighter's light 0 cannot reach the
-  reflection.
+  `CalculateNormalDir`, reproduced by `ssb_engine::math::
+  transform_lookat_basis` — while the vertex normal itself is fed in
+  unscaled. No GE light is involved, so the fighter's light 0 cannot reach
+  the reflection.
 
   `PrimDesc` carries the `gSPTexture` scale and the render tile's origin for
   exactly this path (pack `VERSION` 27): under `G_TEXTURE_GEN` the RSP never
@@ -534,12 +544,14 @@ the swizzle. Both are unit-tested and confirmed on device (RE-022).
   power-of-two texture padding — see `PLAN.md` R2.0/P0b.
 
 * Texgen is implemented and self-validated, but not closed: the ordered
-  T1–T10 queue in `PLAN.md` has raw normal semantics (T2, RE-226) and LookAt
-  quantization (T3, RE-227) measured and fixed; load-space provenance
-  (T1's own cross-node gap), shared regular/linear reference math,
-  tile-shift/addressing proof and an original-N64 Metal comparison remain
-  open (T4–T9). The current `G_TEXTURE_GEN_LINEAR` path is source-formula
-  exact, not claimed bit-exact to N64.
+  T1–T10 queue in `PLAN.md` has raw normal semantics (T2, RE-226), LookAt
+  quantization (T3, RE-227) and shared regular/linear reference math (T4,
+  RE-228 — which also found and fixed a real overcorrected matrix constant)
+  measured and fixed; load-space provenance (T1's own cross-node gap),
+  linear integer conversion, tile-shift/addressing proof and an
+  original-N64 Metal comparison remain open (T5–T9). The current
+  `G_TEXTURE_GEN_LINEAR` path is source-formula exact, not claimed bit-exact
+  to N64.
 
 * Renderer model corrections remain open under `PLAN.md` R2.2/C1–C7:
   single-source primitive-colour ownership, load-time lighting provenance,

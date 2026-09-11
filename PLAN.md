@@ -3106,8 +3106,10 @@ Status: `IN PROGRESS` — `R2.0` closed (RE-224). T1 measured (RE-225): model-
 space invariance does **not** hold (164 cross-node differing-transform vertex
 reuses, D-042 revised). T2 complete (RE-226): raw signed-byte normal
 semantics measured and fixed (D-038 revised). T3 complete (RE-227): original
-LookAt basis quantization measured and fixed (D-040 revised). T1's remedy
-carries forward through T4 next.
+LookAt basis quantization measured and fixed (D-040 revised). T4 complete
+(RE-228): shared regular/linear reference math built and proven against the
+real GE lowering, finding and fixing a real overcorrected matrix constant.
+T1's remedy carries forward through T5 next.
 
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
@@ -3208,13 +3210,30 @@ Evidence: RE-227 in `docs/reverse-engineering.md`; D-040 in `DECISIONS.md`.
 
 ### T4 — Shared regular/linear reference math
 
-Create readable host-testable helpers for quantized LookAt, transformed basis,
-raw signed-byte dot and S10.5 conversion. The only curve difference is
-`(1 + dot) / 4` versus `acos(-dot) / (2*pi)`, followed by common scale and
-addressing. Prove the regular GE lowering matches the reference. Compare
-thousands of random normals, bases, rotations and scales; require exact S10.5
-equality where possible, otherwise document maximum error and whether CPU
-generation is preferable.
+Status: `COMPLETE` — RE-228. Added `ssb_rom::psp_texture::regular_texgen_curve`
+(`(dot+1)/4`) and `regular_texgen_uv`, sharing `texgen_dot` and a new
+`texgen_s10_5_addressed` scale-and-addressing step with the existing
+`linear_texgen_uv` -- the "only curve difference... common scale and
+addressing" this task names. Added `regular_texgen_matrix_coeffs` (pulled
+out of `apply_texture_mapping`'s inline arithmetic) and
+`ssb_engine::math::transform_lookat_basis` (pulled out of
+`texgen_object_basis`'s inline closure) so both are host-testable and the
+real rendering path calls the same code the tests exercise, not a separate
+copy. A 20,000-case random property test proved the GE's matrix lowering
+matches the reference to within ~1.78 S10.5 units (a documented, unfixed
+clamp-boundary effect, not exact equality) -- and, in proving it, **found
+and fixed a real bug**: the shipped `b` (texture-matrix translation
+constant) wrongly carried the same `128/127` `NORMAL_SCALE_COMPENSATION`
+the dot-term coefficient `a` needs, overcorrecting by up to
+`scale/127 - scale/128` S10.5 units. Fixed in `regular_texgen_matrix_coeffs`;
+a dedicated regression test pins the old formula's measured divergence
+(hundreds to thousands of S10.5 units) so it cannot silently return.
+Rebuilt and updated two of three texgen goldens (`tests/golden/
+r2-metal-texgen{,-rotated}.png`, 28,240 / 23,624 differing pixels);
+`regression_capture_scene13` (the one linear-texgen primitive, drawn through
+the untouched CPU path) measured 0 differing pixels, correctly unaffected.
+
+Evidence: RE-228 in `docs/reverse-engineering.md`.
 
 ### T5 — Linear integer conversion
 
