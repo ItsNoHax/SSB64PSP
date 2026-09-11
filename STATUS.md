@@ -3,17 +3,32 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.1/T8 — Original-ROM Metal comparison` (in progress)
 - Status: `IN_PROGRESS`
-- In progress: `RE-234` (2026-09-11) -- original-ROM leg of T8 captured. A
-  one-byte RAM stage-select warp (`gSCManagerSceneData.spgame_stage` @
-  `0x800a4ae7` = `10`/`nSC1PGameStageMMario`) was derived from the decomp for
-  the scripted Mupen64Plus harness but not used or measured live; the user
-  instead played the real ROM through M64Py's real 1P Mode route to stage 8
-  (VS Metal Mario, Meta Crystal stage) and captured three screenshots
-  spanning match start through mid-fight, saved out-of-Git under
+- In progress: `RE-235` (2026-09-11) -- PPSSPP leg of T8 done. The
+  `StageMetalFile2` PPSSPP goldens (`tests/golden/r2-metal-texgen{,-rotated,
+  -linear}.png`, scenes 11-13) were stale since `R2.1`/T7a (RE-232, which
+  fixed real addressing on exactly this file); rebuilding found 41,852 /
+  26,765 / 31,834 differing pixels against the pre-T7a goldens. Refreshed all
+  three, each reconfirmed deterministic across a second rebuild (`0` diff),
+  and confirmed via `git status` that no other golden was touched. Cross-
+  checked qualitatively against RE-234's original-ROM captures: crystal
+  silhouette, facet colour pattern and the fence/railing texture all match;
+  scene 11 vs 12's quarter-turn confirms the reflection still responds to
+  rotation post-fix. Blocked on the physical-PSP leg: `usbhostfs_pc`
+  refused the connected PSP with a USB permission error even though
+  `/etc/udev/rules.d/50-psplink.rules` is installed (`/dev/bus/usb/001/003`
+  still `root:root`) -- needs a device replug or udev retrigger, not
+  resolved this session. `docs/visual-regression.md` and `PLAN.md` updated;
+  full account in RE-235.
+- Previously in progress: `RE-234` (2026-09-11) -- original-ROM leg of T8
+  captured. A one-byte RAM stage-select warp
+  (`gSCManagerSceneData.spgame_stage` @ `0x800a4ae7` = `10`/
+  `nSC1PGameStageMMario`) was derived from the decomp for the scripted
+  Mupen64Plus harness but not used or measured live; the user instead played
+  the real ROM through M64Py's real 1P Mode route to stage 8 (VS Metal
+  Mario, Meta Crystal stage) and captured three screenshots spanning match
+  start through mid-fight, saved out-of-Git under
   `~/ppsspp-test/re151/stage8-metal/`. Stage/fighter identity confirmed
-  visually against `dSC1PGameStageDesc`'s stage-8 entry. Still open: the
-  equivalent PPSSPP capture, the equivalent physical-PSP capture, and the
-  actual texgen-focused ROI comparison across all three.
+  visually against `dSC1PGameStageDesc`'s stage-8 entry.
 - Last complete: `RE-233` (2026-09-11) -- fixed a real-hardware-only
   collision/fighter debug-overlay corruption found during a routine
   physical-PSP PSPLink run of `766cb47`: the fighter's magenta collision
@@ -73,23 +88,22 @@
   `DECISIONS.md` entry: this was a correctness fix to already-decided
   addressing semantics (D-038), not a new architectural decision, matching
   RE-220/RE-221's own precedent.
-- Next: `R2.1`/T8 continuation -- the original-ROM leg is captured (RE-234).
-  Still needed: an equivalent PPSSPP capture and an equivalent physical-PSP
-  capture of the same stage-8 Metal Mario / Meta Crystal content at matching
-  states, then the actual texgen-focused ROI comparison across original
-  N64/PPSSPP/physical PSP -- model/camera reflection response, diffuse-light
-  independence, ordinary-versus-linear behavior, tile-origin phase and
-  generated span, at least two rotations (three original-ROM poses already
-  in hand). This is the first `R2.1` task since T7/T7a to need an actual
-  rendered comparison (T7a itself changed no golden -- it fixed a bake bug
-  proven correct by exhaustive archive measurement, not by a new capture) --
-  consider whether it should also cover the `StageMetalFile2`-family
-  materials RE-231/RE-232's fix targeted at a reflection-aligned camera
-  angle, to see the corrected texel in practice.
-- Blockers: none for starting T8. `R2.1`/T1's own finding (164 cross-node
-  differing-transform vertex reuses) is an open, tracked, *known* gap --
-  not a blocker. `R2.2`/C1-C7 renderer corrective gate remains behind all of
-  `R2.1`. Combat remains gated behind `R2.2`.
+- Next: `R2.1`/T8 continuation -- original-ROM leg captured (RE-234), PPSSPP
+  leg done and cross-checked (RE-235). Still needed: the physical-PSP leg
+  (both the regular-rotation scenes 11/12 re-diff and the linear scene 13
+  re-diff against the just-refreshed goldens), currently blocked on a USB
+  permission error -- see Blockers below -- then T8 can formally close.
+- Blockers: the physical-PSP leg of T8 needs the connected PSP
+  (`054c:01c9`) reachable via `usbhostfs_pc`/PSPLink again. `/dev/bus/usb/
+  001/003` is `root:root` despite the udev rule being installed; needs
+  either the device replugged so the rule re-applies, `sudo udevadm control
+  --reload-rules && sudo udevadm trigger`, or confirmation PSPLink (not mass
+  storage) is actually open on the PSP -- a physical/`sudo` action outside
+  this project's tree, not resolved this session.
+  `R2.1`/T1's own finding (164 cross-node differing-transform vertex reuses)
+  is an open, tracked, *known* gap -- not a blocker. `R2.2`/C1-C7 renderer
+  corrective gate remains behind all of `R2.1`. Combat remains gated behind
+  `R2.2`.
   Separately (not blocking): a real bug was found and flagged (not fixed)
   in the `debug_overlay` PSP viewer -- object-view HUD text renders
   corrupted/double-exposed in every capture. See the spawned follow-up task
@@ -102,13 +116,14 @@
   calls the way RE-226's normal-semantics question was -- minor lead for a
   future task, not currently assigned.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-234.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-235.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`IN PROGRESS`, T1
   measured, T2/T3/T4/T5/T6/T7a complete, T7 measured (T7a closed it), T8 in
-  progress -- original-ROM leg captured per RE-234, PPSSPP/physical-PSP legs
-  and comparison open). RE-233 is not a `PLAN.md` line item -- an
-  interleaved hardware-only rendering bug found and fixed via a physical
-  PSPLink run, orthogonal to the `R2.1` texgen queue.
+  progress -- original-ROM leg captured per RE-234, PPSSPP leg done and
+  cross-checked per RE-235, physical-PSP leg blocked/open). RE-233 is not a
+  `PLAN.md` line item -- an interleaved hardware-only rendering bug found
+  and fixed via a physical PSPLink run, orthogonal to the `R2.1` texgen
+  queue.
 - Decisions: `DECISIONS.md` -- no new revision for RE-233 (a lifetime/GE
   submission correctness fix, not a decision premise change) or for RE-232
   (correctness fix to already-decided addressing semantics, not a new
@@ -129,8 +144,10 @@
   set) all pass; this fix touches only `psp/`, outside the host workspace.
   No asset-pipeline code changed, so `assets/generated/ssb64.pak` did not
   need rebuilding.
-- Documentation: RE-233, `docs/porting-status.md`, this snapshot.
-- Commit: `5895bc5` (RE-233); `af04b05` (RE-234, docs-only, T8 in progress).
+- Documentation: RE-233, RE-235, `docs/visual-regression.md`,
+  `docs/porting-status.md`, this snapshot.
+- Commit: `5895bc5` (RE-233); `af04b05` (RE-234, docs-only, T8 in progress);
+  RE-235 not yet committed (golden refresh + docs, T8 still in progress).
 
 ## Continuation
 
