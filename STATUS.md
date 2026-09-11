@@ -3,8 +3,30 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`IN_PROGRESS`,
-  part 4 of an unknown number, RE-244/RE-245/RE-246/RE-247); C4-C7 remain
-- Last complete: `RE-247` (2026-09-11) -- `R2.2`/C3 part 4: tracing RE-246's
+  part 5 of an unknown number, RE-244/RE-245/RE-246/RE-247/RE-248); C4-C7 remain
+- Last complete: `RE-248` (2026-09-11) -- `R2.2`/C3 part 5: closed file 39
+  (`IFCommonObject`), RE-247's one remaining unattributed file. Its own
+  decomp header comment (`refs/ssb-decomp-re/src/relocData/
+  39_IFCommonObject.c`) states it is orphaned interface geometry with no
+  code path referencing it beyond its FileID extern. `grep -rn
+  llIFCommonObjectFileID refs/ssb-decomp-re/src/` returns zero matches --
+  confirmed by reading both `if/ifcommon.c` and `if/ifscreenflash.c` in
+  full: every real `ProcDisplay` there either draws inline `Gfx` (no
+  `DObjDesc` graph at all) or walks a *different* named `dIFCommon*`
+  resource (damage/stock/timer/tag/arrows/pause HUD elements); none
+  reference file 39's own symbols. Same shape as RE-247's unregistered file
+  47, not the same shape as the transition scenes (each named by
+  `dLBTransitionDescs`). Measured via a temporary probe (mirroring
+  `census_independent_depth_state_vs_z_buffer_geometry_bit`, filtered to
+  file 39, reverted after use): file 39 decodes to exactly 185 primitives,
+  100% diverging (`z_buffer`=true, `depth_test`/`depth_write`=false for
+  all). No seed applies -- there is no `ProcDisplay` to seed. This explains
+  185 of the 1808-primitive archive-wide gap without any code change (no
+  path draws file 39, so `romtool pack`/runtime are already correct to
+  never render it). Remaining gap: ~1623 primitives (layers 0/2/3, items,
+  effects, main-camera default). See `docs/reverse-engineering.md` RE-248
+  for the full entry.
+- Previously complete: `RE-247` (2026-09-11) -- `R2.2`/C3 part 4: tracing RE-246's
   two unattributed files (39, 51) found `ssb_rom::transition::ASSETS`'s
   `"camera"` entry pointed at the **wrong file** -- a real pack-content bug,
   not just a depth-state attribution gap. `dLBTransitionDescs`'s eighth
@@ -95,28 +117,20 @@
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
 - Next: `R2.2`/C3 continues. Remaining sub-problems, in order:
-  1. File 39 (`IFCommonObject`) still carries unexplained depth-state
-     divergence -- confirm its real draw path (possibly
-     `ifScreenFlashProcDisplay` or a similar `if`-prefixed wrapper, not yet
-     traced; `refs/ssb-decomp-re/src/if/ifcommon.c`/`ifscreenflash.c` were
-     not read closely this session) before seeding it one way or the
-     other. RE-247 ruled out file 51 (it is `dLBTransitionDescs`'s
-     "Camera Shutter" entry, now correctly seeded by
-     `LB_TRANSITION_EXTERNAL`) and file 47 (unregistered, unused --
-     `ASSETS` no longer references it).
-  2. Find (or rule out) any other object category's or camera's own
+  1. Find (or rule out) any other object category's or camera's own
      external wrapper -- render layers 0/2/3 need none; items and effects
-     carry no wrapper of their own; the remaining 1808-primitive
-     archive-wide gap is not yet attributed to a specific cause, and part
-     of it may be the main battle camera's own first-drawn-object default
-     (RE-246), which is not statically attributable the way the transition
-     cameras were. Until this is understood, do not change `psp/src/
-     meshdraw.rs`'s depth-test signal away from `z_buffer`.
-  3. Give `PlannedList` its own `list_id` field (`scene::DlLink::list_id`
+     carry no wrapper of their own; file 39 is confirmed dead (RE-248); the
+     remaining ~1623-primitive archive-wide gap is not yet attributed to a
+     specific cause, and part of it may be the main battle camera's own
+     first-drawn-object default (RE-246), which is not statically
+     attributable the way the transition cameras were. Until this is
+     understood, do not change `psp/src/meshdraw.rs`'s depth-test signal
+     away from `z_buffer`.
+  2. Give `PlannedList` its own `list_id` field (`scene::DlLink::list_id`
      is parsed but discarded today) so stage render-layer 1's 21 list-1
      (translucent) `DObjDLLink` entries can be seeded with depth-test-
      without-write instead of today's uniform opaque write-on seed.
-  4. Once the real per-primitive `depth_test`/`depth_write` state is fully
+  3. Once the real per-primitive `depth_test`/`depth_write` state is fully
      accounted for archive-wide, wire `psp/src/meshdraw.rs`'s
      `apply_material` to use it: keep `GuState::DepthTest` correctness at
      least as good as today's `z_buffer` heuristic, and map `depth_write`
@@ -126,7 +140,7 @@
      PPSSPP or physical-PSP evidence, per `PLAN.md`'s C3 acceptance
      criteria. `depth_mode` (`ZMode`) has no PSP GE equivalent hardware
      feature identified yet; kept as measured data only.
-- Blockers: none for what RE-247 closed (it does not close C3). Same
+- Blockers: none for what RE-248 closed (it does not close C3). Same
   non-blocking follow-ups RE-240/RE-241/RE-242/RE-245 already recorded
   remain open (visual before/after for RE-240's 23 affected files; the
   `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
@@ -137,35 +151,30 @@
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-247.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-248.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
   `IN_PROGRESS`, C4-C7 remain).
-- Decisions: `DECISIONS.md` -- no new revision for RE-247 (D-042 already
+- Decisions: `DECISIONS.md` -- no new revision for RE-248 (D-042 already
   covers "renderer correctness claims stay provisional until R2.2 closes").
 - Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  the 11 loading-break transition scenes (now correctly including file 51,
-  excluding file 47) carry a camera-level external depth seed, shrinking
-  the archive-wide `z_buffer`/`depth_test` gap from 3891 to 1808; the
-  remainder (layers 0/2/3, items, effects, file 39, and any statically-
-  visible fraction of the main-camera default) and PSP-side wiring remain
-  open.
-- Verification (RE-247): `cargo test --workspace --all-targets` (`SSB64_ROM`
+  file 39 (`IFCommonObject`) is confirmed orphaned geometry no code path
+  draws, explaining 185 of the 1808-primitive archive-wide `z_buffer`/
+  `depth_test` gap with no seed needed; the remainder (layers 0/2/3, items,
+  effects, and any statically-visible fraction of the main-camera default)
+  and PSP-side wiring remain open.
+- Verification (RE-248): no production code changed this session (docs
+  only; a temporary probe test in `tools/romtool/src/main.rs` was added,
+  run, and reverted). `cargo test --workspace --all-targets` (`SSB64_ROM`
   set): `ssb-rom` 419 passed, `romtool` 22 passed, `ssb-engine` 48,
-  `ssb-game` 120, 0 failed overall. `cargo fmt --check` clean. `cargo
-  clippy --workspace --all-targets` clean (same pre-existing, unrelated
-  warnings as prior sessions). `transition_inventory` example re-run
-  against the real ROM confirms `camera` now resolves to file 51, graph
-  `0x3F90`, 9 nodes, 8 scripts, 64 frames. Pack rebuilt (`romtool pack`):
-  mesh/triangle/draw/texture/object counts unchanged (2044/36772/8056/
-  1345/374); `transitions` animated-node count and pack size both grew as
-  expected (see RE-247). Code changed: `crates/ssb-rom/src/
-  transition.rs` (`ASSETS`'s `"camera"` entry, `EXPECTED_FILES` test,
-  module doc comment).
-- Documentation: RE-247, `PLAN.md` (`R2.2`/C3 status, cross-reference
+  `ssb-game` 120, 0 failed overall -- unchanged from RE-247. `cargo fmt
+  --check` clean. `cargo clippy --workspace --all-targets` clean (same
+  pre-existing, unrelated warnings as prior sessions). No pack rebuild
+  needed (no asset-pipeline code changed).
+- Documentation: RE-248, `PLAN.md` (`R2.2`/C3 status, cross-reference
   table, acceptance checklist), `docs/porting-status.md`, this snapshot.
-- Commit: `1513745` (RE-247, `R2.2`/C3 part 4: fix `transition::ASSETS`'s
-  wrong `"camera"` file/graph).
+- Commit: pending (RE-248, `R2.2`/C3 part 5: confirm file 39 is orphaned,
+  never drawn, needs no depth seed).
 
 ## Continuation
 

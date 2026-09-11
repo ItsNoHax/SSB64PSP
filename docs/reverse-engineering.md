@@ -10,6 +10,67 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-248 — File 39 (`IFCommonObject`) is genuinely orphaned, never drawn by any code path; its 185 primitives are dead ROM content, not a missed depth-seed wrapper (`PLAN.md` R2.2/C3, part 5, in progress)
+
+**Question.** RE-244/245/246/247 explained all but 1808 of the archive-wide
+`z_buffer`-vs-`depth_test` primitive gap, and named file 39 (`IFCommonObject`)
+as the one remaining file this project had not read closely enough to
+attribute — RE-245 already noted it shares file 47/51's segment-`0x1`
+two-texture-bind signature (RE-099) but is not named by any
+`dLBTransitionDescs`-style table. `STATUS.md` asked whether it is drawn by
+`ifScreenFlashProcDisplay` or some other `if`-prefixed wrapper in
+`refs/ssb-decomp-re/src/if/ifcommon.c`/`ifscreenflash.c`, neither of which
+had been read closely yet.
+
+**What the decomp says about itself.** `refs/ssb-decomp-re/src/relocData/
+39_IFCommonObject.c`'s own header comment (written by the external decomp
+project, not this one) states plainly: "orphaned interface geometry file. No
+code path in src/ references `ll*IFCommonObject` beyond its FileID extern."
+`grep -rn llIFCommonObjectFileID refs/ssb-decomp-re/src/` returns **zero**
+matches anywhere in `src/` (including `if/ifcommon.c` and `if/ifscreenflash.c`,
+both read in full for this entry) — the symbol is declared
+(`reloc_data_symbols.us.txt:42`, `llIFCommonObjectFileID = 0x27`) but never
+consumed by any function. Read both `if` files directly: `ifScreenFlashProcDisplay`
+draws a screen-flash quad via its own inline `Gfx` array, not a `DObjDesc`
+graph; every other `ProcDisplay` in `ifcommon.c` either draws inline
+geometry the same way or calls `gcDrawDObjTreeForGObj`/`DLLinksForGObj` on a
+`GObj` built from a *different* named `dIFCommon*` resource (damage/stock/
+timer/tag/arrows/pause HUD elements) — none reference file 39's own symbols
+(`dIFCommonObject_DObjDesc_joints`, `dIFCommonObject_AnimJoint`, or any
+`dIFCommonObject_DL_*`). This is the same shape RE-247 found for file 47
+(unregistered, unused), not the same shape as files 39–51's transition
+scenes (each named by `dLBTransitionDescs`).
+
+**Measured.** A temporary probe (mirroring `census_independent_depth_state_
+vs_z_buffer_geometry_bit`, filtered to file 39, reverted after use) against
+the real ROM: file 39 decodes to exactly **185** primitives, all with
+`z_buffer`=true and `depth_test`/`depth_write`=false — the entire file
+diverges, same as the transition scenes. This explains 185 of the
+1808-primitive archive-wide gap (10.2%). Unlike RE-246/247's transition
+scenes, no seed is warranted: file 39 is never reached by `load_all`'s own
+graph discovery through any real game code path (`ssb_rom` has no `ASSETS`-
+style table naming it, matching the decomp's own finding), so its
+`z_buffer`-vs-`depth_test` divergence is a property of geometry the shipped
+game never renders. `census_independent_depth_state_vs_z_buffer_geometry_bit`
+walks the raw archive (every file, reachable or not), which is why dead
+content like this still shows up in an "archive-wide" census — the same
+reason file 47 did before RE-247's fix pointed `ASSETS` away from it.
+
+**Conclusion.** File 39 closes as "no wrapper to find" rather than "wrapper
+not yet found": it has no draw path at all, so it needs no `InitialMaterial`
+seed. The archive-wide gap's remaining ~1623 primitives (1808 minus file
+39's 185) are layers 0/2/3, items, effects, and any statically-attributable
+fraction of the main battle camera's own first-drawn-object default —
+RE-246's already-open remainder, unaffected by this entry.
+
+**Confidence: high.** The decomp's own header comment and a `grep` returning
+zero matches are direct, unambiguous evidence of non-use, corroborated by a
+full read of both `if` source files finding no reference to file 39's
+symbols under any name. The 185-primitive/100%-divergence measurement is a
+direct count from the same conversion pipeline the permanent census uses.
+
+---
+
 ## RE-247 — `ssb_rom::transition::ASSETS`'s "camera" entry pointed at the wrong file: a real pack-content bug, not just a C3 attribution gap (`PLAN.md` R2.2/C3, part 4, in progress)
 
 **Question.** `R2.2`/C3's remaining work (RE-246) named two files RE-099
