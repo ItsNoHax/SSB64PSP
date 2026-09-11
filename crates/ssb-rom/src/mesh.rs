@@ -283,6 +283,40 @@ impl InitialMaterial {
         depth_write: true,
         depth_mode: ZMode::Opaque,
     };
+
+    /// A third, structurally different external-seed mechanism (RE-246):
+    /// not an object's own `gDPSetRenderMode` call (`FIGHTER_EXTERNAL`,
+    /// `GROUND_LAYER1_EXTERNAL`), but a *camera*-level default. `sys/
+    /// objdisplay.c`'s `func_8001663C` (called first thing by every camera's
+    /// per-frame display driver, `func_80017D3C`, before it walks that
+    /// camera's own tagged `GObj` list) unconditionally issues
+    /// `gDPSetRenderMode(G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2)` for
+    /// buffer 0 -- `Z_CMP | Z_UPD | ZMODE_OPA`, the same bits as
+    /// `FIGHTER_EXTERNAL`/`GROUND_LAYER1_EXTERNAL` -- regardless of
+    /// `COBJ_FLAG_ZBUFFER` (that flag only clears the depth *image*, a
+    /// separate step). This default only reaches a primitive uncorrupted if
+    /// nothing else drawn earlier under the same camera already changed the
+    /// render mode -- true in general only when a camera's tagged list draws
+    /// exactly one thing, which is why this project cannot apply it
+    /// archive-wide the way `GROUND_LAYER1_EXTERNAL` is applied per stage
+    /// layer.
+    ///
+    /// The eleven loading-break transition scenes (`crate::transition::
+    /// ASSETS`) are exactly that case: `lb::lbTransitionMakeCamera` creates a
+    /// dedicated camera (buffer 0, via `func_80017DBC`) carrying only the
+    /// transition's own `GObj`, and `lbTransitionProcDisplay` never issues
+    /// its own `G_SETRENDERMODE` before `gcDrawDObjTreeForGObj` -- so every
+    /// primitive in one of these eleven graphs really is drawn under the
+    /// camera's untouched default, not the RDP-reset baseline
+    /// [`Self::default`] would otherwise assume. `lbTransitionProcDisplay`
+    /// never sets `G_LIGHTING` either, so `lit` stays `false`, matching
+    /// `GROUND_LAYER1_EXTERNAL`.
+    pub const LB_TRANSITION_EXTERNAL: InitialMaterial = InitialMaterial {
+        lit: false,
+        depth_test: true,
+        depth_write: true,
+        depth_mode: ZMode::Opaque,
+    };
 }
 
 /// Render state a primitive is drawn under.
@@ -5332,6 +5366,43 @@ mod tests {
         assert!(
             !mesh.vertices[0].lit,
             "gr's wrapper does not set G_LIGHTING"
+        );
+    }
+
+    #[test]
+    fn convert_sequence_lb_transition_external_seeds_depth_but_not_lit() {
+        // R2.2/C3 (RE-246): `lbTransitionMakeCamera`'s dedicated camera
+        // (buffer 0) gets `Z_CMP | Z_UPD | ZMODE_OPA` from `sys/objdisplay.c`'s
+        // `func_8001663C`, the camera-level default every buffer-0 camera's
+        // display driver applies before walking its own tagged GObj list --
+        // and `lbTransitionProcDisplay` never issues its own
+        // `G_SETRENDERMODE`, so a transition's own node list inherits it
+        // untouched.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+        }];
+        let mesh = convert_sequence(
+            &items,
+            Source::bare(&file),
+            InitialMaterial::LB_TRANSITION_EXTERNAL,
+        )
+        .pop()
+        .unwrap()
+        .unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.depth_test, "Z_CMP must be seeded on");
+        assert!(m.depth_write, "Z_UPD must be seeded on");
+        assert_eq!(m.depth_mode, ZMode::Opaque);
+        assert!(
+            !mesh.vertices[0].lit,
+            "lbTransitionProcDisplay does not set G_LIGHTING"
         );
     }
 
