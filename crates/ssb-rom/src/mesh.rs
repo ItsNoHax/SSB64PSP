@@ -1298,8 +1298,16 @@ impl State {
         // rect is the texture.
         let (mask_s, mask_t) = self.tile0_mask.unwrap_or((0, 0));
         let (w, h) = (
-            if mask_s > 0 { drawn_width.min(1 << mask_s) } else { drawn_width },
-            if mask_t > 0 { drawn_height.min(1 << mask_t) } else { drawn_height },
+            if mask_s > 0 {
+                drawn_width.min(1 << mask_s)
+            } else {
+                drawn_width
+            },
+            if mask_t > 0 {
+                drawn_height.min(1 << mask_t)
+            } else {
+                drawn_height
+            },
         );
         let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
         // `G_TX_MIRROR` is bit 0 of `cms`/`cmt`. Only meaningful with an
@@ -1412,7 +1420,8 @@ impl State {
     fn current_texture_shape(&self) -> Option<TextureRef> {
         let (fmt, siz) = self.tile0_fmt?;
         let (mask_s, mask_t) = self.tile0_mask?;
-        let (drawn_width, drawn_height) = self.tile_dims.unwrap_or((1u16 << mask_s, 1u16 << mask_t));
+        let (drawn_width, drawn_height) =
+            self.tile_dims.unwrap_or((1u16 << mask_s, 1u16 << mask_t));
         let (w, h) = match self.tile_dims {
             Some((w, h)) => (
                 if mask_s > 0 { w.min(1 << mask_s) } else { w },
