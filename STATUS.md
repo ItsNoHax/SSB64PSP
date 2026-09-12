@@ -363,7 +363,7 @@
 - Documentation: RE-252, RE-253, `PLAN.md` (`R2.2`/C4 status now
   `COMPLETE`, R0.16's D-036 acceptance item checked off, cross-reference
   table), `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-252/RE-253, `R2.2`/C4: preserve primitive submission
+- Commit: `db2b0c2` (RE-252/RE-253, `R2.2`/C4: preserve primitive submission
   order in `merge_by_material`, and fix the `tools/romtool` texture-cache-
   key gap found while verifying it, closing C4).
 
