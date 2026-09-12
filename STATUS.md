@@ -26,6 +26,9 @@
   crystal the scene actually tests (pixel-identical); not traced further
   this session. No new corruption found on any of the 15. See
   `docs/reverse-engineering.md` RE-257 for the full per-scene breakdown.
+  User confirmed refreshing all 15 committed golden PNGs afterward
+  (`61d417f`) -- 14 changed, `r2-depth-mask-diagnostic.png` byte-identical
+  so untouched.
 - Previously complete: `RE-256` (2026-09-12) -- `R2.2`/C6, **unblocks C6,
   does not close it**: fixed RE-255's pack-load-failure blocker via
   `MEMSIZE=1`, the standard PSP homebrew `PARAM.SFO` key requesting the full
@@ -433,8 +436,8 @@
   `G_TEXTURE_GEN_LINEAR` crystal is pixel-identical between captures.
 - Documentation: RE-257, `PLAN.md` (C6 section, lighting-correctness gate
   row), this snapshot.
-- Commit: pending -- this snapshot's own doc updates not yet committed as
-  of writing; no source change to accompany them (analysis-only entry).
+- Commit: `038a548` (RE-257, per-scene diff explanation, docs only);
+  `61d417f` (golden refresh, 14 of 15 `tests/golden/*.png` changed).
 
 ## Continuation
 
