@@ -3,8 +3,77 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`COMPLETE`,
-  RE-244 through RE-251, 8 parts); C4-C7 remain
-- Last complete: `RE-251` (2026-09-11) -- `R2.2`/C3 part 8, **closes C3**:
+  RE-244 through RE-251, 8 parts); C4 (`COMPLETE`, RE-252/RE-253); C5-C7
+  remain
+- Last complete: `RE-253` (2026-09-12) -- found and fixed while verifying
+  RE-252's own golden-scene impact, not a separately-planned task.
+  `tools/romtool/src/main.rs`'s texture cache key (`TexKey`) omitted
+  `width`/`height`/`drawn_width`/`drawn_height`/`format`/`size`/
+  `palette_entries`/`palette` -- all fields `convert_texture` actually bakes
+  into a texture's bytes -- so two primitives sharing one base
+  image+palette+wrap but drawing a *different* crop of it (ordinary for a
+  shared character texture sheet) silently shared one cache entry;
+  whichever primitive converted first "won" and every other primitive got
+  its crop instead. Found because rebuilding the pack after RE-252's own
+  submission-order fix changed 11 of 15 golden scenes far more than a pure
+  draw-order fix should (up to 6940 pixels on Fox's fighter scene, ears
+  flipping brown-to-white) -- the reorder was just picking a different
+  arbitrary "first" among keys that were already colliding, not a new
+  problem. A first fix attempt keyed on the *entire* `TextureRef` struct
+  (reasoning from `merge_by_material`'s own whole-struct key, RE-252) and
+  overcorrected: `origin_s`/`origin_t`/`mask_s`/`mask_t`/`framebuffer` are
+  real fields but `convert_texture` never reads them (draw-time-only
+  inputs), so including them inflated the archive-wide texture count from
+  1345 to 2011 (+49.5%) instead of closing the real gap; reverted in favor
+  of the exhaustive-but-hand-picked field set `convert_texture` actually
+  depends on. Also caught its own second wrong turn: assumed `format`/
+  `size`/`palette_entries`/`palette` were safe to leave out ("same ROM
+  address always decodes the same way") without measuring it -- a new
+  permanent test,
+  `texture_key_fields_never_vary_for_a_fixed_data_and_palette_location`
+  (`SSB64_ROM`-gated), measured that assumption **false** (1 real
+  format/size conflict, 46 real palette-shape conflicts archive-wide), so
+  all four are in the final key too. `TexKey` is now a named 12-field
+  struct (was a tuple; this field count exceeds Rust's blanket-impl arity
+  of 12 for tuples). Verified archive-wide: textures 1345->**1762**
+  (+417, +31.0%, measured identical regardless of whether RE-252's own
+  mesh-order fix is applied, confirming the key is now genuinely
+  order-independent); pack size 11422.3->**25639.3 KiB** (+124.5%, a large,
+  expected jump from no longer collapsing real crop/format variants --
+  flagged below as a new follow-up, PSP RAM headroom not yet checked). With
+  both fixes applied, all 15 golden scenes are byte-identical to their own
+  pre-RE-252 counterparts -- RE-252's fix has zero measured visual effect on
+  the current corpus, so no goldens needed refreshing this session. See
+  `docs/reverse-engineering.md` RE-253 for the full entry.
+- Previously complete: `RE-252` (2026-09-12) -- `R2.2`/C4, **closes C4**:
+  RE-217 had already flagged `merge_by_material`'s `BTreeMap<MeshMaterial,
+  _>` grouping as a risk (can turn a submitted `A B A` material sequence
+  into `A A B`, moving triangles across whatever a `B` primitive would
+  test/blend against). Confirmed directly: `walk`'s own `Builder::flush`
+  only pushes a primitive when the material actually *changes*, so
+  consecutive primitives never already share a material -- meaning
+  `merge_by_material`'s only real effect was reordering *non-adjacent* runs,
+  never a true "coalesce adjacent duplicates" optimisation in practice.
+  Rewrote it to merge only when the immediately preceding output primitive
+  already has the same material, never regrouping across a gap; given the
+  above invariant this is normally a no-op today, but it removes the
+  archive-wide reordering and guards against a future change reintroducing
+  it. Fixed two stale doc comments (`MeshMaterial`'s own "primitives are
+  grouped by this key" claim; a test comment making the same claim) that
+  described the old, now-wrong behaviour as current. Test
+  `material_change_splits_then_merges_back` (which asserted the *old*, wrong
+  `A B A` -> 2-primitives behaviour) renamed to
+  `non_adjacent_same_material_runs_stay_separate_and_in_order` and flipped
+  to assert 3 primitives in draw order; added
+  `adjacent_same_material_runs_merge` to exercise the merge path directly,
+  since the real pipeline no longer naturally produces adjacent duplicates
+  to hit it through `convert`. Measured draw-call growth archive-wide: +89
+  (`romtool mesh`, 3279->3368) to +113 (`romtool pack`, real pipeline,
+  8056->8169, isolated from RE-253's own effect by holding its `TexKey` fix
+  constant on both sides) -- recorded as an `R3` (Rendering Performance)
+  lead, not a regression to chase. See `docs/reverse-engineering.md` RE-252
+  for the full entry.
+- Previously complete: `RE-251` (2026-09-11) -- `R2.2`/C3 part 8, **closes C3**:
   wired `psp/src/meshdraw.rs`'s `apply_material` to the independent
   `depth_test`/`depth_write` state RE-244-250 built and fully seeded,
   superseding the interim `z_buffer`-keyed `GuState::DepthTest` proxy
@@ -231,71 +300,72 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C3 is closed. `R2.2`/C4 -- Preserve submission order -- is the
-  next eligible task: audit `merge_by_material` and callers; measure
-  primitive runs before/after, non-adjacent merges, and translucency/
-  depth-write/alpha-test/framebuffer interactions the merge could reorder
-  incorrectly (`PLAN.md` C4 for the full description). Not yet started.
-- Blockers: none. Two non-blocking follow-ups from this session, not yet
-  investigated: (1) a pre-existing environment/toolchain drift makes
-  rebuilt PPSSPP headless captures differ from several *committed* golden
-  PNGs by tens of thousands of pixels even with zero code changes (found
-  while isolating RE-251's own effect via same-environment pre/post
-  rebuilds instead of comparing against the committed goldens directly);
-  (2) physical-PSP confirmation of `tests/golden/r2-depth-mask-diagnostic.png`
-  (PSPLink was not in an active session this session could establish). Same
-  non-blocking follow-ups RE-240/RE-241/RE-242/RE-245 already recorded
-  remain open (visual before/after for RE-240's 23 affected files; the
-  `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
-  screenshot; RE-228's clamp-boundary deviation; RE-214/RE-236's known
-  screenshot noise floor; R2.1/T1's 164 cross-node differing-transform
-  vertex reuses) -- none are new, see prior snapshot history for detail.
+- Next: `R2.2`/C4 is closed. `R2.2`/C5 -- Systematic PSP GE cache isolation --
+  is the next eligible task: inventory every raw GU mutation outside
+  `apply_material` (mesh, collision/debug markers, particles, wallpaper/
+  framebuffer, UI/debug, fighter-light paths), record function/changed
+  state/cache field/invalidation/whether a draw follows, and add
+  `DrawState::invalidate_all()` or centralize mutations (`PLAN.md` C5 for
+  the full description). Not yet started.
+- Blockers: none. New non-blocking follow-up from this session, not yet
+  investigated: RE-253's `TexKey` fix grew the real pack from 11422.3 to
+  25639.3 KiB (+124.5%, 1345->1762 textures) by no longer collapsing real
+  crop/format variants that were previously silently sharing (and
+  corrupting) one cache entry -- expected given the fix, but real-PSP RAM
+  headroom for a pack this size has not been checked this session. Prior
+  non-blocking follow-ups remain open: (1) the environment/toolchain drift
+  making rebuilt PPSSPP headless captures differ from committed golden PNGs
+  by tens of thousands of pixels even with zero code changes (RE-251); (2)
+  physical-PSP confirmation of `tests/golden/r2-depth-mask-diagnostic.png`
+  (RE-251); (3) RE-240/RE-241/RE-242/RE-245's older follow-ups (visual
+  before/after for RE-240's 23 affected files; the `debug_overlay` HUD text
+  bug, `task_1bf9bc35`; RE-224's TEXVIEW screenshot; RE-228's
+  clamp-boundary deviation; RE-214/RE-236's known screenshot noise floor;
+  R2.1/T1's 164 cross-node differing-transform vertex reuses) -- none are
+  new, see prior snapshot history for detail.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-251.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-253.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
-  `COMPLETE`, C4-C7 remain).
-- Decisions: `DECISIONS.md` -- no new revision for RE-251 (D-042 already
-  covers "renderer correctness claims stay provisional until R2.2 closes";
-  C3 closing does not close R2.2 itself, C4-C7 remain).
+  `COMPLETE`, C4 `COMPLETE`, C5-C7 remain). `R0.16`'s own D-036-ordering-rule
+  acceptance item is now checked off: both flagged optimizations
+  (`merge_by_material`, `TexKey`) confirmed keyed on their real dependency
+  set.
+- Decisions: `DECISIONS.md` -- no new revision for RE-252/RE-253 (D-042
+  already covers "renderer correctness claims stay provisional until R2.2
+  closes"; C4 closing does not close R2.2 itself, C5-C7 remain).
 - Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  `psp/src/meshdraw.rs`'s `apply_material` now reads `depth_test`/
-  `depth_write` directly instead of the `z_buffer` proxy; `PLAN.md`
-  R2.2/C3 is `COMPLETE`.
-- Verification (RE-251): `psp/src/meshdraw.rs`'s `apply_material` replaced
-  its `flags::Z_BUFFER`-gated `GuState::DepthTest` toggle with
-  `flags::DEPTH_TEST`, and added `sys::sceGuDepthMask` keyed on
-  `flags::DEPTH_WRITE`. New `psp/src/depth_diag.rs` (`depth_mask_diagnostic`
-  feature) and `psp/Cargo.toml` feature entry. `crates/ssb-rom/src/pack.rs`'s
-  `DEPTH_TEST`/`DEPTH_WRITE` doc comments updated to say they are now
-  consumed on the device side. `cargo test --workspace --all-targets`
-  (`SSB64_ROM` set): `ssb-rom` 420, `romtool` 22, `ssb-engine` 48, `ssb-game`
-  120 passed, 0 failed -- unchanged counts (no `ssb-rom` data-model change).
-  `cargo fmt --check`/`cargo clippy --all-targets` clean in `psp/` (same
-  pre-existing warnings as prior sessions; the new file adds none). Pack not
-  rebuilt (no asset-pipeline code changed; pack SHA-256 unchanged,
-  `189904a9...52962`). PPSSPP headless: measured the 14 existing golden
-  scenes against a same-environment pre/post rebuild (isolating this
-  change's real effect from the separately-flagged environment-drift
-  issue) -- 9 byte-identical, 4 changed by a small, localized, visually-
-  explainable amount and refreshed (`r0-dream-land-default.png`,
-  `r2-metal-texgen.png`, `r2-metal-texgen-rotated.png`,
-  `r2-metal-texgen-camera-rotated.png`). Added and captured
-  `tests/golden/r2-depth-mask-diagnostic.png`
-  (SHA-256 `47d0cb28...45890`), self-validated by a temporary bug injection
-  that made its expected pixel vanish, then reverted; two captures of the
-  fixed build are byte-identical. Rebuilt the plain default (no-feature)
-  EBOOT afterward per this project's own convention.
-- Documentation: RE-251, `PLAN.md` (`R2.2`/C3 status now `COMPLETE`,
-  cross-reference table, acceptance checklist), `docs/porting-status.md`,
-  `docs/visual-regression.md` (new scene section, test-matrix row,
-  C1-C7 pending-matrix note), `crates/ssb-rom/src/pack.rs` doc comments,
-  this snapshot.
-- Commit: `81cd2f4` (RE-251, `R2.2`/C3 part 8: wire `apply_material` to
-  independent depth-test/write state, closing C3).
+  `merge_by_material` now preserves submission order (RE-252, `PLAN.md`
+  R2.2/C4 `COMPLETE`); `tools/romtool`'s texture cache key widened to its
+  full real dependency set (RE-253).
+- Verification (RE-252/RE-253): `crates/ssb-rom/src/mesh.rs`'s
+  `merge_by_material` now merges only adjacent identical-material
+  primitives; `tools/romtool/src/main.rs`'s `TexKey` widened from an 8-field
+  tuple to a 12-field named struct. `cargo test --workspace --all-targets`
+  (`SSB64_ROM` set): `ssb-rom` 421 (+1), `romtool` 23 (+1), `ssb-engine` 48,
+  `ssb-game` 120 passed, 0 failed. `cargo fmt --check`/`cargo clippy
+  --all-targets --release` clean (no new warnings from either changed
+  file). `romtool pack` against the real ROM (both fixes applied): meshes
+  2044, triangles 36772, draws 8056->**8169** (+113), textures
+  1345->**1762** (+417), pack size 11422.3->**25639.3 KiB**; object/costume/
+  stage/fighter/animation counts all unchanged. PPSSPP headless: all 15
+  existing golden scenes (`r0-dream-land-default` through
+  `r2-depth-mask-diagnostic`) captured against packs built with only
+  RE-253's fix applied (isolating RE-252's own effect) -- **byte-identical**
+  in every pairing, so no goldens needed refreshing this session; an
+  earlier, confounded comparison (RE-252's fix without RE-253's) had shown
+  11/15 differing by up to 6940 pixels, fully explained and resolved by
+  RE-253, not by any further change to RE-252 itself. Rebuilt the plain
+  default (no-feature) EBOOT afterward per this project's own convention.
+- Documentation: RE-252, RE-253, `PLAN.md` (`R2.2`/C4 status now
+  `COMPLETE`, R0.16's D-036 acceptance item checked off, cross-reference
+  table), `docs/porting-status.md`, this snapshot.
+- Commit: pending (RE-252/RE-253, `R2.2`/C4: preserve primitive submission
+  order in `merge_by_material`, and fix the `tools/romtool` texture-cache-
+  key gap found while verifying it, closing C4).
 
 ## Continuation
 

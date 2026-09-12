@@ -876,26 +876,70 @@ impl<'a> Texels<'a> {
 /// points the texture at the resulting [`ssb_rom::pack::MatAnimDesc`] --
 /// deduplicated via `mat_anim_index` the same way textures already are, so
 /// many primitives sharing one script do not upload its palettes twice.
-/// Keys the texture cache by the texel location, the palette identity, and
-/// the wrap/mirror/clamp mode: `(image_file, image_offset, palette_file,
-/// palette_offset, mirror_s, mirror_t, clamp_s, clamp_t)`. Palette-less
-/// formats key their palette fields as `(id, u32::MAX)`, a sentinel no real
-/// palette offset can ever equal, so two different-palette primitives
-/// sharing one image (RE-098: exactly the shape a costume's own `PaletteID`
-/// override produces) get their own cache entries instead of silently
-/// reusing whichever palette happened to be resolved first.
+/// Keys the texture cache on every [`ssb_rom::mesh::TextureRef`] field
+/// [`convert_texture`] actually reads to produce its baked bytes (RE-253),
+/// plus the texel/palette file each `Option<u16>` resolves to. R0.16/RE-122
+/// already moved this key from a bare `(image_file, image_offset,
+/// palette_file, palette_offset)` 4-tuple to an 8-tuple adding `mirror_s`/
+/// `mirror_t`/`clamp_s`/`clamp_t`, on exactly this reasoning -- state
+/// `convert_texture` bakes into different bytes must be in the key, or
+/// whichever primitive converts first silently donates its own bytes to
+/// every other primitive sharing the narrower key.
 ///
-/// The wrap/mirror/clamp fields matter for the identical reason (R0.16/
-/// RE-122): `convert_texture` pre-bakes a *mirrored* copy of the texture
-/// when `mirror_s`/`mirror_t` is set (RE-067) — two different bytes for the
-/// same source image, not a runtime flag on otherwise-identical data. Before
-/// this fix, the key ignored wrap mode entirely, so the same image+palette
-/// bound once with mirroring and once without (measured: 126 archive-wide
-/// occurrences) shared one cache entry — whichever binding was converted
-/// first "won", and every other binding silently got that texture's own
-/// wrap-dependent bytes and `TextureDesc::wrap` bits, regardless of its own
-/// real `cms`/`cmt`.
-type TexKey = (u32, u32, u32, u32, bool, bool, bool, bool);
+/// RE-253 measured the 8-tuple still missing every other field
+/// `convert_texture` reads: `width`/`height` (the loaded/cropped tile size),
+/// `drawn_width`/`drawn_height` (the mirror-bake rect, RE-067), `format`/
+/// `size`, and `palette_entries`/`palette` (the CI4 bank, RE-223). Two
+/// primitives sharing one base image+palette+wrap but drawing a *different*
+/// crop of it (an ordinary pattern for a shared character texture sheet)
+/// silently shared one cache entry. Found while investigating why RE-252's
+/// submission-order fix changed 11 of 15 golden scenes far more than its own
+/// primitive-reorder effect could explain -- the reorder was simply picking
+/// a different arbitrary "first" among already-colliding keys, not
+/// introducing a new problem.
+///
+/// `format`/`size`/`palette_entries`/`palette` were first assumed safe to
+/// leave out, on the theory that reading the same ROM address always decodes
+/// it the same way -- an assumption, not yet a measurement, so
+/// `texture_key_fields_never_vary_for_a_fixed_data_and_palette_location`
+/// below was written to check it before shipping that gap. It measured the
+/// assumption **false**: 1 real `(data_file, data_offset)` pair with two
+/// different format/size, and 46 real `(palette_file, palette_offset)` pairs
+/// with two different `palette_entries`/bank values, archive-wide. All four
+/// fields are in the key below.
+///
+/// A first attempt keyed on the *entire* `TextureRef` instead of this
+/// specific field set, reasoning from `merge_by_material`'s own whole-struct
+/// `MeshMaterial` key (RE-252). That overcorrected: `origin_s`/`origin_t`/
+/// `mask_s`/`mask_t`/`framebuffer` are real `TextureRef` fields but
+/// `convert_texture` never reads any of them (they are draw-time UV/clamp
+/// inputs consumed elsewhere, not baking inputs) — including them fragmented
+/// legitimately-identical baked textures across every primitive with a
+/// merely different absolute tile origin, inflating the archive-wide texture
+/// count from 1,345 to 2,011 (+49.5%) instead of closing RE-253's measured
+/// 45-texture gap. `MeshMaterial`'s whole-struct key is safe because every
+/// one of its fields *is* real render state; `TextureRef` mixes baking
+/// inputs with draw-time-only ones, so the correct key is the exhaustive
+/// subset `convert_texture` depends on, not the whole struct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct TexKey {
+    data_file: u32,
+    data_offset: u32,
+    palette_file: u32,
+    palette_offset: Option<u32>,
+    format: ssb_rom::texture::Format,
+    size: ssb_rom::texture::BitSize,
+    width: u16,
+    height: u16,
+    drawn_width: u16,
+    drawn_height: u16,
+    palette_entries: u16,
+    palette: u8,
+    mirror_s: bool,
+    mirror_t: bool,
+    clamp_s: bool,
+    clamp_t: bool,
+}
 
 #[derive(Default)]
 struct MatAnimData {
@@ -906,16 +950,24 @@ struct MatAnimData {
 }
 
 fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
-    (
-        t.data_file.map_or(id, u32::from),
-        t.data_offset,
-        t.palette_file.map_or(id, u32::from),
-        t.palette_offset.unwrap_or(u32::MAX),
-        t.mirror_s,
-        t.mirror_t,
-        t.clamp_s,
-        t.clamp_t,
-    )
+    TexKey {
+        data_file: t.data_file.map_or(id, u32::from),
+        data_offset: t.data_offset,
+        palette_file: t.palette_file.map_or(id, u32::from),
+        palette_offset: t.palette_offset,
+        format: t.format,
+        size: t.size,
+        width: t.width,
+        height: t.height,
+        drawn_width: t.drawn_width,
+        drawn_height: t.drawn_height,
+        palette_entries: t.palette_entries,
+        palette: t.palette,
+        mirror_s: t.mirror_s,
+        mirror_t: t.mirror_t,
+        clamp_s: t.clamp_s,
+        clamp_t: t.clamp_t,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -936,23 +988,35 @@ fn pack_mesh(
         let texture_index = match prim.material.texture {
             None => None,
             // RE-099/RE-100: no ROM bytes to convert -- the device fills
-            // this in at run time (`Gpu::request_transition_capture`).
-            // Keyed on `(u32::MAX, u32::MAX, width, height)` rather than
-            // through `texture_cache_key`: a framebuffer `TextureRef` always
-            // has `data_file: None, data_offset: 0, palette: None`, which
-            // would otherwise collide with a real, unpaletted texture
-            // legitimately bound at offset 0 of the same file.
+            // this in at run time (`Gpu::request_transition_capture`). Keyed
+            // on width/height alone, under a `(u32::MAX, u32::MAX)` file
+            // prefix no real resolved file id can ever equal: unlike a real
+            // texture, a framebuffer capture has no baked crop/mirror bytes
+            // to disambiguate (there is no pixel data to bake, RE-253), so
+            // every other field is pinned to a fixed sentinel value rather
+            // than the real primitive's own -- otherwise this would fragment
+            // one runtime capture into needless duplicate pack entries
+            // across primitives that legitimately share it at different tile
+            // origins.
             Some(t) if t.framebuffer => {
-                let key = (
-                    u32::MAX,
-                    u32::MAX,
-                    t.width as u32,
-                    t.height as u32,
-                    false,
-                    false,
-                    false,
-                    false,
-                );
+                let key = TexKey {
+                    data_file: u32::MAX,
+                    data_offset: 0,
+                    palette_file: u32::MAX,
+                    palette_offset: None,
+                    format: ssb_rom::texture::Format::Rgba,
+                    size: ssb_rom::texture::BitSize::Bits4,
+                    width: t.width,
+                    height: t.height,
+                    drawn_width: 0,
+                    drawn_height: 0,
+                    palette_entries: 0,
+                    palette: 0,
+                    mirror_s: false,
+                    mirror_t: false,
+                    clamp_s: false,
+                    clamp_t: false,
+                };
                 Some(
                     *tex_index
                         .entry(key)
@@ -7819,6 +7883,100 @@ mod tests {
             "a real texgen primitive with no bound texture now exists: promote the synthetic \
              transition test's assumption to a real-archive one and check the new content \
              renders correctly untextured"
+        );
+    }
+
+    /// RE-253: before trusting `format`/`size`/`palette_entries`/`palette`
+    /// (the CI4 bank) as safe to leave out of `TexKey`, measured whether a
+    /// fixed `(data_file, data_offset)`/`(palette_file, palette_offset)`
+    /// pair ever decodes two different ways archive-wide. It does not --
+    /// this census measured 1 real format/size conflict and 46 real
+    /// palette-shape conflicts, so all four fields are in `TexKey` (its own
+    /// doc comment) regardless. Kept as a permanent regression census, the
+    /// same shape RE-240's `census_lit_primitives_with_a_colour_baking_
+    /// branch` already uses: these exact counts are what a fixed ROM
+    /// produces today, and a future change to how tiles/palettes get
+    /// resolved that silently made them common again would be the kind of
+    /// regression worth re-measuring, not just re-fixing.
+    #[test]
+    fn texture_key_fields_never_vary_for_a_fixed_data_and_palette_location() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut data_shape: std::collections::BTreeMap<
+            (u32, u32),
+            (ssb_rom::texture::Format, ssb_rom::texture::BitSize),
+        > = std::collections::BTreeMap::new();
+        let mut palette_shape: std::collections::BTreeMap<(u32, u32), (u16, u8)> =
+            std::collections::BTreeMap::new();
+        let mut data_conflicts = 0usize;
+        let mut palette_conflicts = 0usize;
+        let mut textures_seen = 0usize;
+        for id in 0..archive.len() as u32 {
+            let Some(file) = loaded.files.get(id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            for mesh in super::file_meshes(&loaded, file) {
+                for p in &mesh.primitives {
+                    let Some(t) = p.material.texture else {
+                        continue;
+                    };
+                    if t.framebuffer {
+                        continue;
+                    }
+                    textures_seen += 1;
+                    let data_key = (t.data_file.map_or(id, u32::from), t.data_offset);
+                    let shape = (t.format, t.size);
+                    match data_shape.entry(data_key) {
+                        std::collections::btree_map::Entry::Vacant(e) => {
+                            e.insert(shape);
+                        }
+                        std::collections::btree_map::Entry::Occupied(e) => {
+                            if *e.get() != shape {
+                                data_conflicts += 1;
+                            }
+                        }
+                    }
+                    if let Some(off) = t.palette_offset {
+                        let palette_key = (t.palette_file.map_or(id, u32::from), off);
+                        let shape = (t.palette_entries, t.palette);
+                        match palette_shape.entry(palette_key) {
+                            std::collections::btree_map::Entry::Vacant(e) => {
+                                e.insert(shape);
+                            }
+                            std::collections::btree_map::Entry::Occupied(e) => {
+                                if *e.get() != shape {
+                                    palette_conflicts += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        println!(
+            "RE-253 texture-key-field census: {textures_seen} real texture bindings, \
+             {} distinct data locations, {} distinct palette locations, \
+             {data_conflicts} format/size conflicts, {palette_conflicts} palette-shape conflicts",
+            data_shape.len(),
+            palette_shape.len()
+        );
+        assert!(textures_seen > 0, "archive-wide walk found no textures");
+        // Both fields are already in `TexKey` (its own doc comment), so a
+        // nonzero count here does not mean textures render wrong -- it means
+        // this census's own baseline moved, worth a fresh look either way.
+        assert_eq!(
+            data_conflicts, 1,
+            "format/size conflict count for a fixed (data_file, data_offset) changed from RE-253's \
+             measured baseline of 1"
+        );
+        assert_eq!(
+            palette_conflicts, 46,
+            "palette_entries/bank conflict count for a fixed (palette_file, palette_offset) changed \
+             from RE-253's measured baseline of 46"
         );
     }
 

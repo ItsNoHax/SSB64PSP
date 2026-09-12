@@ -217,7 +217,7 @@ so nothing is duplicated and nothing is missing an owner.
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance) and C3 (RE-244–251, independent depth state) are `COMPLETE` — C4–C7 remain open |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state) and C4 (RE-252/RE-253, submission order) are `COMPLETE` — C5–C7 remain open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `COMPLETE` for `R2.2`/C3 — RE-244 through RE-250 (parts 1-7) built and measured independent `depth_test`/`depth_write`/`depth_mode` fields, traced and seeded every external wrapper found (fighter skeleton, stage render-layer 1, the 11 loading-break transitions, layer 1's list-1 translucent entries), and confirmed the remainder is real archive content, not a missing seed; RE-251 (part 8) wired `psp/src/meshdraw.rs`'s `apply_material` to that state directly (`GuState::DepthTest`/`sceGuDepthMask`, superseding the interim `z_buffer` proxy), measured the golden-scene impact against a same-environment pre/post rebuild (9/13 existing scenes byte-identical, 4 change by a small, visually-explainable, localized amount), and added a self-validating synthetic `depth_mask_diagnostic` regression (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch with PPSSPP evidence (physical-PSP confirmation still open) |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
@@ -2290,10 +2290,12 @@ RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
 
 ## R0.16 — N64 Render-State Model Fidelity
 
-Status: `VERIFYING` — RE-122's texture-key fix remains valid, but RE-217
-confirmed that `merge_by_material` still globally reorders non-adjacent
-primitive runs. R2.2/C4 must preserve submission order before this task can
-close.
+Status: `VERIFYING` — RE-122's texture-key fix remains valid; RE-217's
+`merge_by_material` non-adjacent-reorder finding is now fixed (RE-252,
+`PLAN.md` R2.2/C4, `COMPLETE`), which also surfaced and fixed a second,
+independent texture-cache-key gap (RE-253) in the same file RE-122 already
+touched. Remaining before this task can close: R2.2/C5's raw-GU-mutation
+inventory.
 
 ### Current evidence
 
@@ -2472,17 +2474,23 @@ established (D-036).
   every count had drifted) and the geometry-mode-set line (`G_SHADE`/
   `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` added, each with its own real ROM
   file references and current handling status)
-* [ ] D-036's ordering rule (state fidelity before batching/state-sorting/
+* [x] D-036's ordering rule (state fidelity before batching/state-sorting/
   draw-call reduction) is checked against every existing optimization already
   shipped (vertex dedup, material merge, `TexKey`/`texture_cache` dedup) and
   each one is confirmed not to have discarded state this audit found required
-  — RE-122: vertex dedup and material merge are safe by construction (each
-  keys on its entire relevant struct); `TexKey` had a real violation
-  (wrap/mirror/clamp mode omitted from the cache key, 126 archive-wide
-  occurrences of two different-wrap bindings silently sharing one entry),
-  now fixed by widening the key to include it. RE-217 separately found that
-  `merge_by_material` uses a global `BTreeMap`, so non-adjacent equal-material
-  runs can still be reordered; adjacent-run preservation is R2.2/C4.
+  — RE-122: vertex dedup is safe by construction (keys on its entire relevant
+  struct); `TexKey` had a real violation (wrap/mirror/clamp mode omitted from
+  the cache key, 126 archive-wide occurrences of two different-wrap bindings
+  silently sharing one entry), fixed by widening the key to include it. RE-217
+  separately found that `merge_by_material` uses a global `BTreeMap`, so
+  non-adjacent equal-material runs can still be reordered; fixed by RE-252
+  (`PLAN.md` R2.2/C4, `COMPLETE`). Re-auditing `TexKey` while verifying
+  RE-252's own golden-scene impact found RE-122's fix was itself still
+  incomplete — `width`/`height`/`drawn_width`/`drawn_height`/`format`/`size`/
+  `palette_entries`/`palette` were also read by `convert_texture` but not in
+  the key — fixed by RE-253. Both material merge and `TexKey` are now
+  confirmed keyed on the exhaustive field set each optimization's own output
+  actually depends on.
 * [x] any state this audit finds genuinely unrecoverable on PSP is recorded as
   an `ACCEPTED_DEVIATION` per `AGENTS.md` §9, not silently absent — checked
   every category this audit found (`G_SHADE`, `G_TEXTURE_GEN`, `blend_color`):
@@ -3452,7 +3460,9 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 ## R2.2 — Second Renderer Corrective Gate (C1–C7)
 
 Status: `IN_PROGRESS` — C1 complete (RE-240); C2 complete (RE-241, RE-242,
-RE-243); C3 complete (RE-244–251); C4–C7 remain, depend on R2.1/T1–T10
+RE-243); C3 complete (RE-244–251); C4 complete (RE-252, plus an incidental
+but necessary `tools/romtool` texture-cache-key fix, RE-253, found while
+verifying C4's own golden-scene impact); C5–C7 remain, depend on R2.1/T1–T10
 (`COMPLETE`). Must close before R3 or a stable rendering-gate claim. Do not
 optimize while it is open.
 
@@ -3721,7 +3731,7 @@ own acceptance line accepts either. See RE-251 for full detail, including an
 unrelated environment/toolchain golden-drift issue found and deliberately
 left open, not fixed, by this entry.
 
-### C4 — Preserve submission order
+### C4 — Preserve submission order — `COMPLETE` (RE-252)
 
 Audit `merge_by_material` and callers; measure primitive runs before/after,
 non-adjacent merges, and translucency/depth-write/alpha-test/framebuffer
@@ -3730,6 +3740,19 @@ involvement. Replace global grouping with adjacent identical-state runs only:
 translucency, depth-write, framebuffer, multi-pass, decal, alpha/coverage or
 render-target boundaries without proof. Add an `A B A` test, rerun goldens,
 and record draw-call growth as an R3 lead.
+
+RE-252 found `merge_by_material` was regrouping *non-adjacent* same-material
+runs archive-wide (a `BTreeMap<MeshMaterial, _>` global grouping, not an
+adjacent-only merge), turning `A B A` into `AA B`. `walk`'s own
+`Builder::flush` already guarantees no two *adjacent* primitives share a
+material, so an adjacent-only rewrite is normally a no-op in practice and
+closes the reordering with no new state needed. `A B A` test added
+(`non_adjacent_same_material_runs_stay_separate_and_in_order`); draw-call
+growth measured at +89 (`romtool mesh`, 3,279→3,368) to +113 (`romtool pack`,
+real pipeline, 8,056→8,169) archive-wide, recorded as an R3 lead. All 15
+golden scenes byte-identical (RE-252/RE-253 both — see RE-253 for the
+texture-cache-key confound found and fixed while establishing this). See
+RE-252 for full detail.
 
 ### C5 — Systematic PSP GE cache isolation
 
