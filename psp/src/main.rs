@@ -100,6 +100,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene12")
             || cfg!(feature = "regression_capture_scene13")
             || cfg!(feature = "regression_capture_scene14")
+            || cfg!(feature = "regression_capture_scene15")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "texgen_normal_diagnostic_0")
@@ -577,6 +578,19 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // RE-257: Link's own file-324 graph at 0x3AE8 -- the sixth non-Mario
+    // fighter golden, named explicitly in `PLAN.md`'s C6 recheck list but
+    // never given one until now.
+    if cfg!(feature = "regression_capture_scene15") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 324 && o.source_offset == 0x3AE8)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     if cfg!(any(
         feature = "regression_capture_scene11",
         feature = "regression_capture_scene12",
@@ -687,7 +701,8 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene11",
             feature = "regression_capture_scene12",
             feature = "regression_capture_scene13",
-            feature = "regression_capture_scene14"
+            feature = "regression_capture_scene14",
+            feature = "regression_capture_scene15"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -1230,7 +1245,8 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene11",
                     feature = "regression_capture_scene12",
                     feature = "regression_capture_scene13",
-                    feature = "regression_capture_scene14"
+                    feature = "regression_capture_scene14",
+                    feature = "regression_capture_scene15"
                 ))
             {
                 spin += 0.02;

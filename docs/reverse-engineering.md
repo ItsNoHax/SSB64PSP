@@ -10,6 +10,59 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-258 — Link, added to C6's fighter recheck, shows a white tunic instead of green: open, not yet resolved (`PLAN.md` R2.2/C6)
+
+**Question.** `PLAN.md` R2.2/C6 explicitly names Link in its fighter recheck
+list ("recheck Mario, Fox, Kirby, Ness, Captain Falcon and Link"), but no
+golden scene has ever covered him — file 324 (`fighter::FIGHTER_FILES`'
+`"Link"` entry, matching `real_rom_common_parts_match_every_named_model_file`)
+has never been rendered or looked at since C1 shipped.
+
+**Evidence.** Added `regression_capture_scene15` (mirrors scene6–10's own
+pattern exactly): file 324's lower-offset graph of its symmetric 32-node
+pair, `0x3AE8` (the pairing convention scene10's own comment already
+documents: "the lower-offset of the file's symmetric ... graph pair").
+`romtool textures --file 324`: 31/31 textures pack, 0 failures — no
+texture-conversion gap. Captured via the fixed harness (RE-256): correct
+Hylian-crest shield colours (red/blue), correct blonde hair, correct brown
+boots, correct T-pose rest-pose skeleton (expected — this is the raw
+`common_parts` bind pose with no animation applied, same as every other
+fighter scene shows) — but the tunic itself renders pale white/cream, not
+its canonical green.
+
+**Hypothesis.** Not yet determined. Candidates, none checked this session:
+(a) the tunic primitive is untextured (vertex-colour/PRIM only) and that
+colour is wrong — the same *class* of bug RE-240 fixed, but on a file
+(324) RE-240's own census never had reason to single out for a targeted
+look, since no golden ever exercised it before now; (b) the tunic's real
+texture exists but is not binding at draw time (a mesh-conversion or
+draw-time bug specific to this never-before-tested file); (c) this is
+simply a lighting/shading artifact of the un-animated rest pose (no
+runtime fighter-light context applied yet) and would look correct once a
+real battle-camera/lit context runs. Distinguishing these needs the same
+kind of vertex/primitive-level inspection RE-240 already did for the other
+23 files, just aimed at file 324 specifically.
+
+**Implementation.** Added `regression_capture_scene15` (`psp/Cargo.toml`,
+`psp/src/main.rs`) as new, permanent test infrastructure — the object
+selection, freeze/HUD-suppression wiring, and idle-spin suppression all
+follow scene6–10's established pattern exactly. **No golden PNG committed
+for it** — unlike scenes 1–14, this scene's own correctness is the open
+question, so there is nothing to lock in as "expected" yet.
+
+**Left open.** This is a new investigative thread, not resolved here.
+Needs: per-primitive material dump for the tunic (lit/unlit, `prim_color`,
+bound texture) the way RE-240's own census worked, and a decision on
+whether it's a real bug or an expected rest-pose artifact before any
+golden is added for this scene.
+
+**Confidence:** High that the scene/feature/object-selection wiring itself
+is correct (shield/hair/boots all show plausible, correct colours — only
+the tunic is suspect). Not yet measured: the actual cause of the tunic
+colour.
+
+---
+
 ## RE-257 — Per-scene explanation of RE-256's 15 golden diffs: all trace to RE-240 or RE-251, none is new corruption (`PLAN.md` R2.2/C6)
 
 **Question.** RE-256 got all 15 goldens loading real content again but left

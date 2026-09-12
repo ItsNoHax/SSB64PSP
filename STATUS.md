@@ -5,8 +5,21 @@
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`COMPLETE`,
   RE-244 through RE-251, 8 parts); C4 (`COMPLETE`, RE-252/RE-253); C5
   (`COMPLETE`, RE-254); C6 (`IN_PROGRESS`, unblocked by RE-256, all 15
-  golden diffs explained by RE-257, not closed); C7 remains
-- Last complete: `RE-257` (2026-09-12) -- `R2.2`/C6, per-scene explanation of
+  golden diffs explained by RE-257, Link recheck opened a new question
+  RE-258, not closed); C7 remains
+- Last complete: `RE-258` (2026-09-12) -- `R2.2`/C6, added
+  `regression_capture_scene15` for Link (file 324, graph `0x3AE8`) --
+  explicitly named in `PLAN.md`'s C6 recheck list but never given a scene.
+  Mirrors scene6-10's pattern exactly (feature flag, object selection,
+  freeze/HUD-suppression, idle-spin suppression). Capture shows correct
+  shield/hair/boot colours but a **white/cream tunic where canon is
+  green** -- `romtool textures --file 324` shows 0 conversion failures, so
+  not a packing gap. Cause not yet determined (untextured/wrong-vertex-
+  colour vs. a real draw-time bug vs. an expected rest-pose artifact) --
+  left open rather than guessed. **No golden PNG committed for this scene**
+  since its own correctness is the open question. See
+  `docs/reverse-engineering.md` RE-258.
+- Previously complete: `RE-257` (2026-09-12) -- `R2.2`/C6, per-scene explanation of
   RE-256's 15 golden diffs (C6's own "explain every change" requirement).
   12 of 15 (Fox/Falcon/Kirby/Ness/DK fighters, Stage Sector, Catch Swirl,
   Dream Land, all 3 metal-texgen camera/rotation variants) trace directly
@@ -373,71 +386,75 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C6 is unblocked (RE-256) and every golden diff is now
-  individually explained (RE-257). Remaining C6 work: (1) a deliberate
-  decision on formally refreshing the 15 committed golden PNGs (not done
-  automatically -- `AGENTS.md`'s "never overwrite goldens blindly"); (2)
-  the broader fighter/effect/lighting/texture-blend/translucency/billboard/
-  framebuffer recheck `PLAN.md` C6 asks for, beyond the 5 fighters already
-  covered by the existing golden set; (3) physical-PSP confirmation that
-  `MEMSIZE=1` actually grants extra RAM on the real Slim unit (PPSSPP's
-  memory model matches Slim/Brite hardware but is not proof of it); (4)
+- Next: `R2.2`/C6 is unblocked (RE-256), every golden diff explained
+  (RE-257), goldens refreshed. Remaining C6 work: (1) resolve RE-258's open
+  question (why Link's tunic renders white, not green) before deciding
+  whether to add a golden for `regression_capture_scene15` -- needs a
+  per-primitive material dump (lit/unlit, `prim_color`, bound texture) the
+  way RE-240's own census worked, aimed at file 324; (2) the broader
+  fighter/effect/lighting/texture-blend/translucency/billboard/framebuffer
+  recheck `PLAN.md` C6 asks for, beyond the 6 fighters now covered; (3)
+  physical-PSP confirmation that `MEMSIZE=1` actually grants extra RAM on
+  the real Slim unit (PPSSPP's memory model matches Slim/Brite hardware
+  but is not proof of it) -- **no physical PSP available in this
+  environment**, needs the user's own hardware session; (4)
   `r2-metal-texgen-linear`'s own genuine open question (a 25,552px diff
   confined to an incidental background prop, not the tested texgen
   content) is not yet traced.
-- Blockers: none. New non-blocking follow-ups from this session: (1) the
-  globally-installed `cargo-psp`/`mksfo`/`pack-pbp`
-  is now a hybrid build (the user's own fork's pre-`fix-panic-payload-
-  nightly` base, plus this session's `MEMSIZE` patch) -- their
-  `fix-panic-payload-nightly` branch's own `libunwind`/`PanicPayload` fixes
-  are not in the currently-installed binary; reconciling that branch's
-  nightly requirement (2026-08-26+) with this project's pinned one
-  (2026-08-01, documented broken past 2026-08-25) is a pre-existing
-  conflict this session did not create and did not resolve; (2)
-  `r2-metal-texgen-linear`'s incidental-prop texture-clarity difference
-  (RE-257), not traced this session. Prior non-blocking follow-ups remain
-  open: (a) RE-251's environment/toolchain drift for `depth_mask_diagnostic`
-  (the one pack-independent golden, still 0px so unaffected by RE-255/256);
-  (b) physical-PSP confirmation of `tests/golden/r2-depth-mask-
-  diagnostic.png` (RE-251); (c) RE-240/RE-241/RE-242/RE-245's older
-  follow-ups (visual before/after for RE-240's 23 affected files is now
-  substantially covered by RE-257 for the 5 fighters/Stage-Sector already
-  in the golden set, 18 of the 23 files remain unchecked; the
-  `debug_overlay` HUD text bug, `task_1bf9bc35`; RE-224's TEXVIEW
-  screenshot; RE-228's clamp-boundary deviation; RE-214/RE-236's known
-  screenshot noise floor; R2.1/T1's 164 cross-node differing-transform
-  vertex reuses) -- see prior snapshot history for detail.
+- Blockers: none for further software work; physical-PSP confirmation (3
+  above) specifically needs hardware access this environment doesn't have.
+  New non-blocking follow-ups from this session: (1) the globally-installed
+  `cargo-psp`/`mksfo`/`pack-pbp` is now a hybrid build (the user's own
+  fork's pre-`fix-panic-payload-nightly` base, plus this session's
+  `MEMSIZE` patch) -- their `fix-panic-payload-nightly` branch's own
+  `libunwind`/`PanicPayload` fixes are not in the currently-installed
+  binary; reconciling that branch's nightly requirement (2026-08-26+) with
+  this project's pinned one (2026-08-01, documented broken past
+  2026-08-25) is a pre-existing conflict this session did not create and
+  did not resolve; (2) `r2-metal-texgen-linear`'s incidental-prop
+  texture-clarity difference (RE-257), not traced; (3) RE-258's white-tunic
+  question. Prior non-blocking follow-ups remain open: (a) RE-251's
+  environment/toolchain drift for `depth_mask_diagnostic` (the one
+  pack-independent golden, still 0px so unaffected by RE-255/256); (b)
+  physical-PSP confirmation of `tests/golden/r2-depth-mask-diagnostic.png`
+  (RE-251); (c) RE-240/RE-241/RE-242/RE-245's older follow-ups (visual
+  before/after for RE-240's 23 affected files is now substantially covered
+  by RE-257 for the 6 fighters/Stage-Sector already in the golden set, 17
+  of the 23 files remain unchecked; the `debug_overlay` HUD text bug,
+  `task_1bf9bc35`; RE-224's TEXVIEW screenshot; RE-228's clamp-boundary
+  deviation; RE-214/RE-236's known screenshot noise floor; R2.1/T1's 164
+  cross-node differing-transform vertex reuses) -- see prior snapshot
+  history for detail.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-257.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-258.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
   `COMPLETE`, C4 `COMPLETE`, C5 `COMPLETE`, C6 `IN_PROGRESS` (unblocked,
-  diffs explained, not closed), C7 remains).
-- Decisions: `DECISIONS.md` -- no new revision for RE-257; D-042 ("renderer
+  diffs explained, Link recheck open, not closed), C7 remains).
+- Decisions: `DECISIONS.md` -- no new revision for RE-258; D-042 ("renderer
   correctness claims stay provisional until R2.2 closes") still applies.
-- Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row
-  (RE-256: C6 unblocked via `MEMSIZE=1`; per-scene diffs now explained by
-  RE-257, formal refresh still open).
-- Verification (RE-257): no code changed -- analysis only. Side-by-side
-  comparison (`magick +append`) of every one of the 15 recaptured goldens
-  (RE-256) against its committed PNG. Cross-referenced RE-240's own
-  `census_lit_primitives_with_a_colour_baking_branch` file list (23 files)
-  against each scene's source file: Fox (313), Falcon (332), Kirby (328),
-  Ness (335), DK (317) and Stage Sector (109) are all in that list. Catch
-  Swirl (file 84, not in the list) matches RE-240's separate unlit-
-  double-scale mechanism instead. Dream Land and the 3 rotation/camera
-  metal-texgen variants match RE-251's already-documented depth-order
-  corrections. `depth_mask_diagnostic` unaffected (0px, pack-independent).
-  `r2-metal-texgen-linear`'s 25,552px diff isolated to an incidental prop
-  (a sign/plank) by visual inspection -- the scene's own
-  `G_TEXTURE_GEN_LINEAR` crystal is pixel-identical between captures.
-- Documentation: RE-257, `PLAN.md` (C6 section, lighting-correctness gate
-  row), this snapshot.
+- Subsystem: `docs/porting-status.md` -- not updated this entry (RE-258 is
+  an open question, not a completed fix; nothing to record there yet).
+- Verification (RE-258): `psp/Cargo.toml`/`psp/src/main.rs` gained
+  `regression_capture_scene15` (feature flag, object selection at file
+  324/`0x3AE8`, wired into the same freeze/HUD-suppression/idle-spin lists
+  scenes 6-10 use). `cargo fmt --check` clean. `cargo psp --release
+  --features regression_capture_scene15,headless_capture` builds clean, no
+  new warnings. `romtool textures --file 324`: 31/31 textures packed, 0
+  failed. Captured via the fixed harness: correct shield/hair/boot colours,
+  T-pose rest skeleton (expected, matches every other fighter scene's own
+  unanimated state), white/cream tunic instead of canonical green -- cause
+  not yet determined. No golden PNG added for this scene.
+- Documentation: RE-258, this snapshot. `PLAN.md`'s C6 section not
+  re-edited this entry (already reflects "broader recheck" as open work;
+  RE-258 is that work in progress, not a new plan-level fact).
 - Commit: `038a548` (RE-257, per-scene diff explanation, docs only);
-  `61d417f` (golden refresh, 14 of 15 `tests/golden/*.png` changed).
+  `61d417f` (golden refresh, 14 of 15 `tests/golden/*.png` changed);
+  pending (RE-258's `regression_capture_scene15` code + docs, not yet
+  committed as of writing).
 
 ## Continuation
 
