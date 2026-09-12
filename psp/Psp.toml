@@ -1,1 +1,7 @@
 title = "Super Smash Bros. 64"
+
+# RE-255: the real asset pack (~25.6MiB) exceeds the ~20-24MiB default user
+# partition. MEMSIZE=1 requests full memory access (64MB total RAM instead
+# of 32MB) on PSP-2000/3000 (Slim/Brite) hardware -- ignored on PSP-1000
+# (Fat). Standard PSP homebrew SDK PARAM.SFO key.
+memsize = 1
