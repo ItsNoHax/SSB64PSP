@@ -302,6 +302,40 @@ impl DrawState {
         self.last_texture_mapping = None;
     }
 
+    /// Forgets every last-applied comparison this cache tracks, forcing the
+    /// next primitive to reissue all of its GE state unconditionally.
+    ///
+    /// Wider than [`Self::forget_texture`]: that one covers only
+    /// `draw_line_strip`/`draw_triangles`'s narrow `Texture2D`-only bypass
+    /// (RE-118). This covers a raw GU mutation of arbitrary breadth --
+    /// `draw_texture_quad`/`draw_particle`'s own direct `bind_texture`/
+    /// `sceGuTexFunc`/`sceGuTexScale` calls, a 2D sprite overlay
+    /// (`Gpu::draw_wallpaper_sprite`), or a self-contained diagnostic scene
+    /// (`normal_diag`/`depth_diag`) -- run between two cached mesh draws
+    /// sharing this `DrawState` (R2.2/C5's systematic GE-cache-isolation
+    /// inventory, RE-254). Every site this project currently has is either
+    /// mutually exclusive with another `DrawState`-tracked draw in the same
+    /// frame, or the last draw call issued before that frame ends, so this
+    /// is a hardening measure against future callers, not a fix for an
+    /// observed corruption.
+    ///
+    /// Deliberately does not touch `runtime_fighter_light`: that is the
+    /// caller's own fighter-light *context*, set and cleared explicitly by
+    /// [`Self::configure_fighter_light`]/[`Self::finish_fighter_light`], not
+    /// a cached comparison a side channel can invalidate. A raw draw run
+    /// mid-scope (e.g. a 2D overlay that disables `GuState::Lighting`
+    /// itself) is still handled correctly: resetting `last_flags` here
+    /// forces the next `LIT` primitive to reissue its flags, which
+    /// re-enables lighting regardless of what the intervening raw call did.
+    pub fn invalidate_all(&mut self) {
+        self.last_texture = None;
+        self.last_flags = None;
+        self.last_texture_blend = None;
+        self.last_fighter_light_colors = None;
+        self.last_fighter_material_color = None;
+        self.last_texture_mapping = None;
+    }
+
     /// Records the model matrix a node is about to draw under.
     ///
     /// Called once per node, from the same place the matrix is pushed, so the
@@ -1503,7 +1537,12 @@ pub fn billboard_bounds(pack: &Pack<'_>, node: &NodeDesc) -> Option<([f32; 3], [
 /// # Safety
 ///
 /// The pack buffer must outlive the frame.
-pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQuadVertex; 6]) {
+pub unsafe fn draw_texture_quad(
+    pack: &Pack<'_>,
+    index: u32,
+    verts: &mut [TexQuadVertex; 6],
+    draw_state: &mut DrawState,
+) {
     let Some(t) = pack.texture(index) else { return };
     bind_texture(pack, &t, None);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
@@ -1545,6 +1584,11 @@ pub unsafe fn draw_texture_quad(pack: &Pack<'_>, index: u32, verts: &mut [TexQua
         core::ptr::null(),
         verts.as_ptr() as *const c_void,
     );
+    // R2.2/C5 (RE-254): `bind_texture`/`sceGuTexFunc`/`sceGuTexScale` above
+    // ran raw, bypassing `draw_state` entirely -- the next cached mesh draw
+    // sharing it must not trust stale comparisons this call already
+    // invalidated.
+    draw_state.invalidate_all();
 }
 
 /// Draws one live `LBParticle` as a camera-facing quad (RE-183).
@@ -1586,6 +1630,7 @@ pub unsafe fn draw_particle(
     primcolor: [u8; 4],
     envcolor: Option<[u8; 4]>,
     verts: &mut [TexQuadVertex; 6],
+    draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(texture_index) else {
         return;
@@ -1640,6 +1685,8 @@ pub unsafe fn draw_particle(
         core::ptr::null(),
         verts.as_ptr() as *const c_void,
     );
+    // R2.2/C5 (RE-254): same raw bypass as `draw_texture_quad` above.
+    draw_state.invalidate_all();
 }
 
 /// Vertex layout for [`draw_texture_quad`].

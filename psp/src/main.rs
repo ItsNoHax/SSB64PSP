@@ -1393,6 +1393,7 @@ unsafe fn run() -> ! {
                                 particle.state.primcolor,
                                 envcolor,
                                 &mut PARTICLE_QUAD.0,
+                                &mut draw_state,
                             );
                             dbg_tex = frame;
                             shown = (
@@ -1475,6 +1476,7 @@ unsafe fn run() -> ! {
                             particle.state.primcolor,
                             envcolor,
                             &mut PARTICLE_QUAD.0,
+                            &mut draw_state,
                         );
                         dbg_tex = frame;
                     }
@@ -1535,7 +1537,7 @@ unsafe fn run() -> ! {
             Some(p) if tex_view => {
                 // Flat orthographic-ish view of one texture.
                 gpu.model_transform([0.0, 0.0, -2.2], [0.0, 0.0, 0.0], 1.0);
-                meshdraw::draw_texture_quad(p, tex_index, &mut TEX_QUAD.0);
+                meshdraw::draw_texture_quad(p, tex_index, &mut TEX_QUAD.0, &mut draw_state);
             }
             Some(p) if stage_view => {
                 if let Some(stage) = p.stage(stage_index) {
@@ -2335,6 +2337,9 @@ unsafe fn run() -> ! {
             unsafe {
                 gpu.draw_wallpaper_sprite();
             }
+            // R2.2/C5 (RE-254): the sprite draw above mutates GE state raw,
+            // bypassing `draw_state` entirely.
+            draw_state.invalidate_all();
         }
         #[cfg(any(
             feature = "texgen_normal_diagnostic_0",
@@ -2345,12 +2350,20 @@ unsafe fn run() -> ! {
             feature = "texgen_normal_diagnostic_5",
             feature = "texgen_normal_diagnostic_6"
         ))]
-        unsafe {
-            normal_diag::draw(&mut gpu, aspect);
+        {
+            unsafe {
+                normal_diag::draw(&mut gpu, aspect);
+            }
+            // R2.2/C5 (RE-254): same -- a self-contained diagnostic scene
+            // drawn raw, bypassing `draw_state`.
+            draw_state.invalidate_all();
         }
         #[cfg(feature = "depth_mask_diagnostic")]
-        unsafe {
-            depth_diag::draw(&mut gpu, aspect);
+        {
+            unsafe {
+                depth_diag::draw(&mut gpu, aspect);
+            }
+            draw_state.invalidate_all();
         }
         gpu.end_frame();
         #[cfg(feature = "headless_capture")]

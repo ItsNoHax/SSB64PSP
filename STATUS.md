@@ -3,9 +3,33 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Task: `R2.2 — Second Renderer Corrective Gate (C1-C7)` (`IN_PROGRESS`)
 - Status: `IN_PROGRESS` -- C1 (`COMPLETE`); C2 (`COMPLETE`); C3 (`COMPLETE`,
-  RE-244 through RE-251, 8 parts); C4 (`COMPLETE`, RE-252/RE-253); C5-C7
-  remain
-- Last complete: `RE-253` (2026-09-12) -- found and fixed while verifying
+  RE-244 through RE-251, 8 parts); C4 (`COMPLETE`, RE-252/RE-253); C5
+  (`COMPLETE`, RE-254); C6-C7 remain
+- Last complete: `RE-254` (2026-09-12) -- `R2.2`/C5, **closes C5**:
+  systematic inventory of every raw GU (`sceGu*`) mutation outside
+  `apply_material`, checked against the one bar that actually matters
+  (`DrawState::begin_frame` already clears the whole cache every frame, so
+  only a raw mutation sitting *between* two `DrawState`-tracked draws in the
+  same frame can corrupt anything). Found exactly one live case --
+  `draw_collision`/`draw_fighter` via `draw_line_strip`/`draw_triangles`'s
+  raw `Texture2D` disable -- already fixed by RE-118's `forget_texture`.
+  Every other site (`draw_texture_quad`, `draw_particle`,
+  `Gpu::draw_wallpaper_sprite`, `normal_diag::draw`, `depth_diag::draw`) is
+  either structurally unreachable in the same frame as any `DrawState`-
+  tracked draw (mutually exclusive debug-viewer `match` arms) or the last
+  thing to touch the GE before that frame's `end_frame` -- a measured
+  negative result. Added `DrawState::invalidate_all()` (a `forget_texture`
+  superset covering `last_texture`/`last_flags`/`last_texture_blend`/
+  `last_fighter_light_colors`/`last_fighter_material_color`/
+  `last_texture_mapping`, deliberately excluding `runtime_fighter_light` --
+  that is the caller's own explicit fighter-light context, not a cached
+  comparison) and wired it at all five sites as hardening against future
+  callers, not a fix for an observed bug. `draw_texture_quad`/`draw_particle`
+  now take a `&mut DrawState` parameter; their three `main.rs` call sites
+  updated to pass the frame's existing `draw_state`. See
+  `docs/reverse-engineering.md` RE-254 for the full per-site inventory
+  table.
+- Previously complete: `RE-253` (2026-09-12) -- found and fixed while verifying
   RE-252's own golden-scene impact, not a separately-planned task.
   `tools/romtool/src/main.rs`'s texture cache key (`TexKey`) omitted
   `width`/`height`/`drawn_width`/`drawn_height`/`format`/`size`/
@@ -300,72 +324,74 @@
   null result. Measurably not redundant (732/771, 95%, fighter-skeleton
   primitives flip). `pack.rs` gained `flags::{DEPTH_TEST, DEPTH_WRITE,
   DEPTH_MODE_BIT0, DEPTH_MODE_BIT1}` (`VERSION` 27->28).
-- Next: `R2.2`/C4 is closed. `R2.2`/C5 -- Systematic PSP GE cache isolation --
-  is the next eligible task: inventory every raw GU mutation outside
-  `apply_material` (mesh, collision/debug markers, particles, wallpaper/
-  framebuffer, UI/debug, fighter-light paths), record function/changed
-  state/cache field/invalidation/whether a draw follows, and add
-  `DrawState::invalidate_all()` or centralize mutations (`PLAN.md` C5 for
-  the full description). Not yet started.
-- Blockers: none. New non-blocking follow-up from this session, not yet
-  investigated: RE-253's `TexKey` fix grew the real pack from 11422.3 to
-  25639.3 KiB (+124.5%, 1345->1762 textures) by no longer collapsing real
-  crop/format variants that were previously silently sharing (and
-  corrupting) one cache entry -- expected given the fix, but real-PSP RAM
-  headroom for a pack this size has not been checked this session. Prior
-  non-blocking follow-ups remain open: (1) the environment/toolchain drift
-  making rebuilt PPSSPP headless captures differ from committed golden PNGs
-  by tens of thousands of pixels even with zero code changes (RE-251); (2)
-  physical-PSP confirmation of `tests/golden/r2-depth-mask-diagnostic.png`
-  (RE-251); (3) RE-240/RE-241/RE-242/RE-245's older follow-ups (visual
-  before/after for RE-240's 23 affected files; the `debug_overlay` HUD text
-  bug, `task_1bf9bc35`; RE-224's TEXVIEW screenshot; RE-228's
-  clamp-boundary deviation; RE-214/RE-236's known screenshot noise floor;
-  R2.1/T1's 164 cross-node differing-transform vertex reuses) -- none are
-  new, see prior snapshot history for detail.
+- Next: `R2.2`/C5 is closed. `R2.2`/C6 -- Integrated regression -- is the
+  next eligible task: run the full host suite after C1-C5, rebuild the real
+  pack and record pack size/mesh/primitive/draw-run/texture counts and
+  affected vertices/materials, rerun every deterministic golden and explain
+  every change, recheck Mario/Fox/Kirby/Ness/Captain Falcon/Link plus
+  lighting/texture blend/flat colour/translucency/alpha/billboard/
+  framebuffer/effects, and repeat representative physical-PSP captures
+  (`PLAN.md` C6 for the full description). Not yet started.
+- Blockers: none. New non-blocking follow-up from this session: if
+  `Gpu::draw_wallpaper_sprite` (RE-193) is ever wired into real gameplay
+  rather than staying diagnostic-only, it would become the first site where
+  RE-254's `invalidate_all()` hardening is live rather than provably inert
+  -- worth a synthetic regression scene at that point, not before. Prior
+  non-blocking follow-ups remain open: (1) RE-253's `TexKey` fix grew the
+  real pack from 11422.3 to 25639.3 KiB (+124.5%, 1345->1762 textures),
+  real-PSP RAM headroom not yet checked; (2) the environment/toolchain
+  drift making rebuilt PPSSPP headless captures differ from committed
+  golden PNGs by tens of thousands of pixels even with zero code changes
+  (RE-251); (3) physical-PSP confirmation of
+  `tests/golden/r2-depth-mask-diagnostic.png` (RE-251); (4)
+  RE-240/RE-241/RE-242/RE-245's older follow-ups (visual before/after for
+  RE-240's 23 affected files; the `debug_overlay` HUD text bug,
+  `task_1bf9bc35`; RE-224's TEXVIEW screenshot; RE-228's clamp-boundary
+  deviation; RE-214/RE-236's known screenshot noise floor; R2.1/T1's 164
+  cross-node differing-transform vertex reuses) -- none are new, see prior
+  snapshot history for detail.
 - Hardware note: run `pspsh -e reset` after every killed PSPLink module.
   The physical PSP's `/dev/bus/usb/NNN/NNN` node permission can go stale
   after a reconnect; replugging the device re-enumerates it and reapplies
   the rule (RE-236).
-- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-253.
+- Evidence: `docs/reverse-engineering.md` -- RE-217 through RE-254.
 - Plan: `PLAN.md` -- `R2.0` (`COMPLETE`); `R2.1` (`COMPLETE`, T1-T10 all
   terminal); `R2.2` (`IN_PROGRESS`, C1 `COMPLETE`, C2 `COMPLETE`, C3
-  `COMPLETE`, C4 `COMPLETE`, C5-C7 remain). `R0.16`'s own D-036-ordering-rule
-  acceptance item is now checked off: both flagged optimizations
-  (`merge_by_material`, `TexKey`) confirmed keyed on their real dependency
-  set.
-- Decisions: `DECISIONS.md` -- no new revision for RE-252/RE-253 (D-042
-  already covers "renderer correctness claims stay provisional until R2.2
-  closes"; C4 closing does not close R2.2 itself, C5-C7 remain).
-- Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row:
-  `merge_by_material` now preserves submission order (RE-252, `PLAN.md`
-  R2.2/C4 `COMPLETE`); `tools/romtool`'s texture cache key widened to its
-  full real dependency set (RE-253).
-- Verification (RE-252/RE-253): `crates/ssb-rom/src/mesh.rs`'s
-  `merge_by_material` now merges only adjacent identical-material
-  primitives; `tools/romtool/src/main.rs`'s `TexKey` widened from an 8-field
-  tuple to a 12-field named struct. `cargo test --workspace --all-targets`
-  (`SSB64_ROM` set): `ssb-rom` 421 (+1), `romtool` 23 (+1), `ssb-engine` 48,
-  `ssb-game` 120 passed, 0 failed. `cargo fmt --check`/`cargo clippy
-  --all-targets --release` clean (no new warnings from either changed
-  file). `romtool pack` against the real ROM (both fixes applied): meshes
-  2044, triangles 36772, draws 8056->**8169** (+113), textures
-  1345->**1762** (+417), pack size 11422.3->**25639.3 KiB**; object/costume/
-  stage/fighter/animation counts all unchanged. PPSSPP headless: all 15
-  existing golden scenes (`r0-dream-land-default` through
-  `r2-depth-mask-diagnostic`) captured against packs built with only
-  RE-253's fix applied (isolating RE-252's own effect) -- **byte-identical**
-  in every pairing, so no goldens needed refreshing this session; an
-  earlier, confounded comparison (RE-252's fix without RE-253's) had shown
-  11/15 differing by up to 6940 pixels, fully explained and resolved by
-  RE-253, not by any further change to RE-252 itself. Rebuilt the plain
-  default (no-feature) EBOOT afterward per this project's own convention.
-- Documentation: RE-252, RE-253, `PLAN.md` (`R2.2`/C4 status now
-  `COMPLETE`, R0.16's D-036 acceptance item checked off, cross-reference
-  table), `docs/porting-status.md`, this snapshot.
-- Commit: `db2b0c2` (RE-252/RE-253, `R2.2`/C4: preserve primitive submission
-  order in `merge_by_material`, and fix the `tools/romtool` texture-cache-
-  key gap found while verifying it, closing C4).
+  `COMPLETE`, C4 `COMPLETE`, C5 `COMPLETE`, C6-C7 remain).
+- Decisions: `DECISIONS.md` -- no new revision for RE-254 (D-042 already
+  covers "renderer correctness claims stay provisional until R2.2 closes";
+  C5 closing does not close R2.2 itself, C6-C7 remain).
+- Subsystem: `docs/porting-status.md` -- updated the "Mesh conversion" row
+  (RE-254 closes C5, points at C6 next), the "PSP mesh drawing" row
+  (depth/submission-order/cache-isolation all now closed under C3-C5), and
+  the "PSP GU backend" row (`DrawState::invalidate_all()` hardening, C5
+  `COMPLETE`).
+- Verification (RE-254): `psp/src/meshdraw.rs` gained
+  `DrawState::invalidate_all()`; `draw_texture_quad`/`draw_particle` now
+  take `&mut DrawState` and call it after their draw; `psp/src/main.rs`
+  updated their three call sites and added `invalidate_all()` calls after
+  `Gpu::draw_wallpaper_sprite`/`normal_diag::draw`/`depth_diag::draw`.
+  `cargo test --workspace --all-targets` (`SSB64_ROM` set): `ssb-rom` 421,
+  `romtool` 23, `ssb-engine` 48, `ssb-game` 120 passed, 0 failed (unchanged
+  counts -- no host-testable code touched). `cargo fmt --check`/`cargo
+  clippy --all-targets --release` clean. `psp/`: `cargo psp --release` and
+  `--release --features {wallpaper_sprite_audit_capture,
+  depth_mask_diagnostic, texgen_normal_diagnostic_0}` all build clean, no
+  new warnings. Of the 15 committed golden scenes, only
+  `depth_mask_diagnostic` reaches any changed code (`depth_diag::draw`'s
+  new tail-of-frame `invalidate_all()` call); a same-environment
+  before/after capture (`git stash`) of that scene is **byte-identical**, 0
+  differing pixels -- confirming the predicted no-op. The other 14 goldens
+  were not re-captured: confirmed by reading `main.rs`'s view-mode flags
+  that their deterministic scenes never reach `draw_texture_quad`,
+  `draw_particle`, `draw_wallpaper_sprite`, `normal_diag::draw` or
+  `depth_diag::draw` at all. Rebuilt the plain default (no-feature) EBOOT
+  afterward per this project's own convention.
+- Documentation: RE-254, `PLAN.md` (`R2.2`/C5 status now `COMPLETE`,
+  R0.15/R0.16 status notes updated, cross-reference table), lighting-
+  correctness gate row, `docs/porting-status.md`, this snapshot.
+- Commit: pending (RE-254, `R2.2`/C5: systematic GE-cache inventory, adds
+  `DrawState::invalidate_all()`, closes C5).
 
 ## Continuation
 
