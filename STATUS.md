@@ -390,7 +390,7 @@
 - Documentation: RE-254, `PLAN.md` (`R2.2`/C5 status now `COMPLETE`,
   R0.15/R0.16 status notes updated, cross-reference table), lighting-
   correctness gate row, `docs/porting-status.md`, this snapshot.
-- Commit: pending (RE-254, `R2.2`/C5: systematic GE-cache inventory, adds
+- Commit: `95af519` (RE-254, `R2.2`/C5: systematic GE-cache inventory, adds
   `DrawState::invalidate_all()`, closes C5).
 
 ## Continuation
