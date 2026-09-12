@@ -320,8 +320,10 @@ impl InitialMaterial {
 
 /// Render state a primitive is drawn under.
 ///
-/// Ordering matters: primitives are grouped by this key, so cheap-to-compare
-/// fields come first and the sort naturally clusters same-texture draws.
+/// `PartialOrd`/`Ord` are derived only because struct-level derive needs every
+/// field to support them; nothing compares two `MeshMaterial`s by this order.
+/// A [`Mesh`]'s primitive order is submission order (RE-252, `PLAN.md`
+/// R2.2/C4) -- see [`merge_by_material`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct MeshMaterial {
     pub texture: Option<TextureRef>,
@@ -2241,28 +2243,38 @@ fn emit_tri(builder: &mut Builder, state: &State, tri: [u8; 3]) -> Result<(), Me
     Ok(())
 }
 
-/// Merges primitives that share a material into single draws.
+/// Merges only *adjacent* same-material primitives, preserving draw order.
 ///
-/// This is the state-sorting step: on the GE, a draw call is cheap but a state
-/// change is not, so collapsing N same-material runs into one draw is the
-/// highest-value optimisation available at conversion time — and it costs
-/// nothing at runtime.
+/// RE-252 (`PLAN.md` R2.2/C4): this used to group every primitive by material
+/// archive-wide (a `BTreeMap<MeshMaterial, Vec<u16>>` keyed concatenation),
+/// which reorders triangles whenever the same material recurs non-adjacently
+/// -- `A B A` became `AA B`, drawing the second `A` run's triangles before
+/// `B`'s. On real hardware, sequencing is part of correctness: it decides
+/// what a translucent surface blends against, what a depth-write-disabled
+/// surface tests against, and what a framebuffer-read effect samples.
+/// Reordering silently changes all three.
+///
+/// [`walk`] already produces the correct grouping: [`Builder::flush`] only
+/// pushes a primitive when the material actually changes, so two consecutive
+/// entries in `prims` never already share a material by construction. This
+/// function's own adjacent-only merge is therefore normally a no-op -- it
+/// exists to absorb a run artificially split by something other than a
+/// material change (there is none today) without silently reintroducing the
+/// non-adjacent regrouping bug if one is added later.
 ///
 /// With a shared vertex buffer this is a pure index-list concatenation -- no
-/// re-indexing needed, which is both simpler and much faster than the
-/// per-primitive-buffer version it replaced.
+/// re-indexing needed.
 fn merge_by_material(prims: Vec<Primitive>) -> Vec<Primitive> {
-    let mut by_material: BTreeMap<MeshMaterial, Vec<u16>> = BTreeMap::new();
+    let mut out: Vec<Primitive> = Vec::with_capacity(prims.len());
     for p in prims {
-        by_material
-            .entry(p.material)
-            .or_default()
-            .extend_from_slice(&p.indices);
+        match out.last_mut() {
+            Some(last) if last.material == p.material => {
+                last.indices.extend_from_slice(&p.indices);
+            }
+            _ => out.push(p),
+        }
     }
-    by_material
-        .into_iter()
-        .map(|(material, indices)| Primitive { material, indices })
-        .collect()
+    out
 }
 
 /// The tile the RDP samples when drawing (`G_TX_RENDERTILE`). Other tiles are
@@ -3612,9 +3624,9 @@ mod tests {
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
-        // `MeshMaterial::cmp` groups primitives by material, not draw order
-        // (the doc comment on `MeshMaterial` above), so each stage is found
-        // by its own distinguishing state rather than by index.
+        // Found by its own distinguishing state rather than by index, purely
+        // so this test does not depend on which of the three states happens
+        // to sort first; primitive order itself is draw order (RE-252).
         assert_eq!(
             mesh.primitives.len(),
             3,
@@ -3884,7 +3896,11 @@ mod tests {
     }
 
     #[test]
-    fn material_change_splits_then_merges_back() {
+    fn non_adjacent_same_material_runs_stay_separate_and_in_order() {
+        // RE-252 (`PLAN.md` R2.2/C4): an `A B A` material sequence used to
+        // merge into `AA B`, reordering the second `A` run's triangles ahead
+        // of `B`'s. Submission order must survive: three primitives, in the
+        // order they were drawn, not two.
         let file = vertex_data(3);
         let red = [255, 0, 0, 255];
         let blue = [0, 0, 255, 255];
@@ -3914,16 +3930,46 @@ mod tests {
             Cmd::End,
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
-        // Three runs, two distinct materials -> two draws, not three.
-        assert_eq!(mesh.primitives.len(), 2, "same material must merge");
+        assert_eq!(
+            mesh.primitives.len(),
+            3,
+            "non-adjacent same-material runs must not merge"
+        );
         assert_eq!(mesh.triangle_count(), 3);
 
-        let red_prim = mesh
+        let colors: Vec<_> = mesh
             .primitives
             .iter()
-            .find(|p| p.material.prim_color == Some(red))
-            .expect("red primitive");
-        assert_eq!(red_prim.triangle_count(), 2, "both red runs merged");
+            .map(|p| p.material.prim_color)
+            .collect();
+        assert_eq!(
+            colors,
+            [Some(red), Some(blue), Some(red)],
+            "draw order must be preserved"
+        );
+        for p in &mesh.primitives {
+            assert_eq!(p.triangle_count(), 1);
+        }
+    }
+
+    #[test]
+    fn adjacent_same_material_runs_merge() {
+        // The material-change split in `walk` already guarantees consecutive
+        // `Primitive`s never share a material, so this exercises
+        // `merge_by_material`'s adjacent-merge path directly rather than
+        // relying on that invariant holding forever.
+        let material = MeshMaterial::default();
+        let a = Primitive {
+            material,
+            indices: vec![0, 1, 2],
+        };
+        let b = Primitive {
+            material,
+            indices: vec![2, 1, 0],
+        };
+        let merged = merge_by_material(vec![a, b]);
+        assert_eq!(merged.len(), 1, "adjacent identical materials must merge");
+        assert_eq!(merged[0].indices, [0, 1, 2, 2, 1, 0]);
     }
 
     #[test]

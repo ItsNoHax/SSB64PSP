@@ -10,6 +10,216 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-253 — `tools/romtool`'s texture cache key ignored crop/format/palette-shape state, silently sharing baked texture bytes across primitives with different tile windows
+
+**Question.** While verifying RE-252's `merge_by_material` submission-order
+fix against the 15 committed golden scenes, the rebuilt pack changed 11 of
+15 by far more than a pure draw-order fix should ever move pixels (up to
+6,940 pixels on `r2-fox-fighter.png` — Fox's ear tufts flipping from brown to
+near-white). That size and shape (whole-region recolouring, not edge/
+occlusion noise) meant something other than draw order was moving. Is
+`pack_mesh`'s texture cache dedup actually keying on everything
+`convert_texture` bakes into a texture's bytes?
+
+**Evidence.** `tools/romtool/src/main.rs`'s `TexKey`/`texture_cache_key`
+(R0.16/RE-122) already widened once, from a bare `(image_file, image_offset,
+palette_file, palette_offset)` 4-tuple to an 8-tuple adding `mirror_s`/
+`mirror_t`/`clamp_s`/`clamp_t`, after RE-122 measured 126 archive-wide cases
+where two different wrap-mode bindings of one image+palette silently shared
+a cache entry. Re-auditing `convert_texture` against that same 8-tuple found
+it also reads `width`, `height`, `drawn_width`, `drawn_height`, `format`,
+`size`, `palette_entries` and `palette` (the CI4 bank, RE-223) — none of
+which were in the key. `width`/`height` is the loaded/cropped tile size;
+`drawn_width`/`drawn_height` is the mirror-bake rect (RE-067). Two
+primitives sharing one base image+palette+wrap but drawing a *different*
+crop of it — an ordinary pattern for a shared character texture sheet, where
+one primitive draws the face and another the ear from the same sheet —
+silently shared one cache entry: whichever primitive converted first "won",
+and every other primitive got that one's crop regardless of its own real
+tile window.
+
+A temporary `TexKey`-keyed `thread_local` census (same technique RE-122
+used) confirmed real, if rare, direct collisions from `width`/`height` alone
+(10 occurrences, e.g. a `160x25` tile and a `160x24` tile of the same base
+image sharing one entry), but that undercounted the true blast radius: a
+content-hash comparison of every texture in a from-scratch pack built before
+vs. after RE-252's own reorder (isolating draw-order's effect from this bug)
+found **45 of 1,345 textures** decode to genuinely different bytes purely
+depending on primitive iteration order — the reorder was not introducing a
+new problem, it was just picking a different arbitrary "first" among
+keys that were *already* colliding.
+
+**Two more fields were suspected but not real.** `origin_s`/`origin_t` (the
+tile's absolute clamp origin, RE-152 — literally "Fox's lower-face texture")
+and `mask_s`/`mask_t` (the repeat period, RE-102) looked like plausible
+additional culprits given RE-152's own Fox precedent. A first fix attempt
+keyed on the *entire* `TextureRef` struct instead of a hand-picked field
+list, reasoning from `merge_by_material`'s own whole-struct `MeshMaterial`
+key (RE-252's doc comment: "the key is the whole relevant struct, so no
+field can be silently ignored even in principle"). That overcorrected:
+`convert_texture` never actually reads `origin_s`/`origin_t`/`mask_s`/
+`mask_t`/`framebuffer` — they are draw-time UV/clamp inputs consumed
+elsewhere (`psp/src/meshdraw.rs`), not baking inputs — so including them
+fragmented legitimately-identical baked textures across every primitive
+with a merely different absolute tile origin, inflating the archive-wide
+texture count from 1,345 to **2,011 (+49.5%)** instead of closing the
+measured 45-texture gap. Reverted. `MeshMaterial`'s whole-struct key is safe
+because every one of its fields *is* real render state; `TextureRef` mixes
+baking inputs with draw-time-only ones, so the correct key is the exhaustive
+*subset* `convert_texture` depends on, not the whole struct — the same
+"audit what the optimization actually depends on, don't assume" standard
+D-036/RE-122 already set, applied one level more carefully.
+
+**`format`/`size`/`palette_entries`/`palette` were assumed safe to leave
+out** on the theory that reading the same ROM address always decodes it the
+same way — an assumption, not a measurement. A new permanent regression
+test, `texture_key_fields_never_vary_for_a_fixed_data_and_palette_location`
+(`tools/romtool/src/main.rs`, `SSB64_ROM`-gated), measured it **false**: 1
+real `(data_file, data_offset)` pair decodes as two different format/size
+combinations, and 46 real `(palette_file, palette_offset)` pairs have two
+different `palette_entries`/bank values, archive-wide. All four fields are
+in the final key alongside the other eight.
+
+**Implementation.** `TexKey` is now a 12-field named struct (`data_file`,
+`data_offset`, `palette_file`, `palette_offset`, `format`, `size`, `width`,
+`height`, `drawn_width`, `drawn_height`, `palette_entries`, `palette`,
+`mirror_s`, `mirror_t`, `clamp_s`, `clamp_t` — a tuple this size exceeds
+Rust's blanket trait impls past arity 12, forcing the switch from the old
+tuple to a proper struct anyway). Also drops the old key's `u32::MAX`
+palette-offset sentinel as unnecessary noise: `TextureRef::palette_offset`
+is already `Option<u32>`, so `None` and a real offset were never actually
+ambiguous without one. The framebuffer-role branch (RE-099/RE-100) keeps its
+own separate, deliberately-reduced `TexKey` literal (file-id sentinel plus
+width/height only, every other field pinned to a fixed placeholder) since a
+runtime-filled capture has no baked crop/mirror bytes to disambiguate in the
+first place — auditing it against `convert_texture` doesn't apply, since
+`convert_texture` is never called for it.
+
+**Verified archive-wide.** `romtool pack` (real ROM): textures
+`1,345 → 1,762` (+417, +31.0%, independent of RE-252 — measured identical on
+both an RE-252-fixed and an RE-252-unfixed mesh conversion, confirming the
+key fix is now order-independent by construction, which is the actual
+property this bug needed). Pack size `11,422.3 → 25,639.3 KiB` (+124.5%) —
+a large jump, expected once previously-collapsed crop/format variants stop
+sharing one entry, but large enough to flag as a new, not-yet-investigated
+follow-up: real-PSP RAM headroom for a pack this size has not been checked
+this session (`STATUS.md`). `cargo test --workspace --all-targets`
+(`SSB64_ROM` set): `romtool` 23 (+1, the new census test), others unchanged.
+`cargo fmt --check`/`cargo clippy --all-targets --release` clean (no new
+warnings from this file). All 15 golden scenes re-captured against packs
+built from this fix alone (both an RE-252-fixed and RE-252-unfixed mesh
+conversion): **byte-identical to their own pre-fix counterpart in each
+pairing** — this fix's own visual effect on the current golden corpus is
+zero, because none of the 15 scenes happen to draw two colliding crops of
+the same base image inside their own frozen camera window; RE-252's
+`non_adjacent_same_material_runs_stay_separate_and_in_order` test is the
+closest thing to a regression case for either fix's failure mode. Not
+independently re-verified against one specific named fighter/texture this
+session beyond the Fox-ear observation that motivated the investigation
+(same "measured archive-wide plus a clean baseline, not re-checked against
+one specific case" caveat RE-102/RE-122 themselves recorded for structurally
+similar fixes).
+
+**What this means for RE-252.** RE-252's own submission-order fix has **no
+measured visual effect on the current golden corpus** once this confound is
+removed — all 15 scenes are byte-identical between an RE-252-fixed and
+RE-252-unfixed pack, both built with this fix already applied. Same
+"real, necessary correctness fix with no golden yet able to exercise it"
+shape RE-251 hit for its own `sceGuDepthMask` wiring, which needed a
+purpose-built synthetic scene (`depth_mask_diagnostic`) to actually prove
+out. No synthetic scene was added for RE-252 this session; the unit-level
+`non_adjacent_same_material_runs_stay_separate_and_in_order` test is
+considered sufficient given the archive-wide null result, but a PPSSPP-level
+`A B A` diagnostic scene remains a good candidate for a future session if
+`PLAN.md`'s C4 acceptance is judged to need device-level proof, not just a
+host unit test.
+
+**Confidence: high for both the diagnosis (measured, not assumed, at every
+step — including catching two of the investigation's own wrong turns, the
+whole-struct overcorrection and the "safe to omit" assumption, before they
+shipped) and the fix's correctness (order-independence verified directly);
+open for physical-PSP confirmation and the newly-flagged pack-size/RAM
+question, both explicitly deferred, not silently dropped.**
+
+---
+
+## RE-252 — `merge_by_material` preserved only adjacent same-material runs, not real submission order (`PLAN.md` R2.2/C4)
+
+**Question.** RE-217 already flagged the shape of this risk directly:
+"`mesh.rs`'s `merge_by_material` accumulates primitives in a `BTreeMap`,
+which globally groups equal materials and can move an `A B A` submission
+into `A A B`" — named as one of R0.16's still-open risks and promoted to
+`PLAN.md` R2.2/C4's own acceptance item. Confirm that diagnosis with real
+evidence, then fix it: does collapsing same-material primitives into one
+draw call actually reorder triangles relative to the original display list,
+and does that reordering ever cross a boundary (translucency, depth-write,
+framebuffer) where order is part of correctness rather than just an
+optimisation?
+
+**Evidence.** `merge_by_material` grouped every primitive in a `Vec<Primitive>`
+by `MeshMaterial` into a `BTreeMap<MeshMaterial, Vec<u16>>`, then emitted one
+concatenated `Primitive` per distinct material, in `MeshMaterial`'s own `Ord`
+order. `walk`'s own `Builder::flush` already only pushes a primitive when the
+material actually changes, so consecutive entries in its output never share a
+material by construction — meaning `merge_by_material`'s only real effect was
+to reorder and concatenate *non-adjacent* same-material runs archive-wide.
+An `A B A` material sequence (two red-primitive runs separated by a blue one)
+became `AA B`: the second `A` run's triangles moved to draw *before* `B`,
+not after it, changing what a translucent `B` would blend against or what a
+depth-write-disabled `B` would test against, had either boundary been
+crossed. `mesh.rs`'s own pre-existing test for exactly this shape,
+`material_change_splits_then_merges_back`, asserted the old (wrong) behaviour
+directly: "same material must merge" across the intervening blue run.
+
+**Implementation.** Rewrote `merge_by_material` to merge only when the
+*immediately preceding* output primitive already has the same material
+(`out.last_mut()` comparison), never regrouping across a gap. Given
+`Builder::flush`'s existing invariant, this new adjacent-only merge is
+normally a no-op in practice — but it removes the archive-wide reordering
+`BTreeMap`-by-material grouping was doing, and guards against a future change
+that splits an otherwise-continuous same-material run (there is none today)
+silently reintroducing the non-adjacent regrouping bug. Updated the stale
+`MeshMaterial`'s own doc comment ("ordering matters: primitives are grouped
+by this key") and a second stale test comment, both of which described the
+old, now-incorrect behaviour as if it were still current — `Ord`/`PartialOrd`
+on `MeshMaterial` turned out to be unused for grouping purposes archive-wide
+once this was fixed (confirmed via search; kept, since struct-level `Ord`
+derive needs every field to support it regardless).
+
+**Test changes.** `material_change_splits_then_merges_back` renamed to
+`non_adjacent_same_material_runs_stay_separate_and_in_order` and its
+assertion flipped: the same `A B A` sequence must now produce 3 primitives,
+in draw order, not 2. Added
+`adjacent_same_material_runs_merge`, calling `merge_by_material` directly on
+two already-adjacent same-material primitives, to exercise the merge path in
+isolation given the real pipeline no longer naturally produces adjacent
+duplicates to hit it through `convert`.
+
+**Verified archive-wide.** `romtool mesh` (per-root-display-list census, no
+texture-cache interaction): draw calls after merge `3,279 → 3,368` (+89,
++2.7%, 1,754 display lists, 0 failures either side). The real asset pipeline
+(`romtool pack`, `SequenceItem`-threaded fighter/stage conversion): draws
+`8,056 → 8,169` (+113, +1.4%), isolated from RE-253's own separately-measured
+effect by holding RE-253's `TexKey` fix constant on both sides — mesh/
+triangle/object/costume/stage/fighter/animation counts and texture count
+(1,762) all identical either way, confirming this fix's only archive-wide
+effect is draw-call count, exactly as its own scope promises. Recorded as an
+`R3` (Rendering Performance) lead: 89–113 more draw calls archive-wide is the
+real cost of no longer collapsing non-adjacent runs, which is now correctness
+rather than a regression to chase. `cargo test --workspace --all-targets`
+(`SSB64_ROM` set): `ssb-rom` 421 (+1 net: one test rewritten, one added),
+others unchanged. `cargo fmt --check`/`cargo clippy --all-targets --release`
+clean. All 15 golden scenes byte-identical (see RE-253 for why an earlier,
+confounded comparison showed 11/15 differing, and why that was never this
+fix's own effect).
+
+**Confidence: high.** The reordering bug and its fix are both directly
+verifiable from `Builder::flush`'s own invariant, not just golden-image
+inference; the `A B A` unit test pins the previously-wrong behaviour so it
+cannot silently return.
+
+---
+
 ## RE-251 — `apply_material` wired to independent depth-test/write state; synthetic `sceGuDepthMask` regression added (`PLAN.md` R2.2/C3, part 8, closes C3)
 
 **Question.** RE-244 through RE-250 built and measured `MeshMaterial::{depth_test,
