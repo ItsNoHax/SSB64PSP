@@ -3819,10 +3819,9 @@ the fallback. Differing-pixel counts against the *committed* goldens are
 much smaller (0–74,045, down from 60,000–110,000+) but not yet individually
 re-explained per scene. **Not yet done, C6 still open:** per-scene
 re-explanation/refresh of all 15 goldens (matching RE-251's own approach for
-C3), the fighter/effect recheck, physical-PSP confirmation of `MEMSIZE`'s
-real-hardware effect, and suppressing a newly-noticed small `"FPS: 60.0"`
-PPSSPP-native overlay artifact in captures (RE-256) before any golden is
-formally refreshed. See RE-256 for the full evidence chain, including a
+C3), the fighter/effect recheck, and physical-PSP confirmation of
+`MEMSIZE`'s real-hardware effect. See RE-256 for the full evidence chain,
+including a
 toolchain near-miss (this session accidentally broke and then restored the
 user's global `cargo-psp` install without touching their own git history).
 

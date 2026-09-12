@@ -53,10 +53,17 @@ cp -f "$EBOOT" "$MEMSTICK/EBOOT.PBP"
 cp -f "$PACK" "$MEMSTICK/ssb64.pak"
 rm -f "$OUT/screenshot.bmp" "$OUT/screenshot.png" "$OUT/ppsspp-headless.log"
 
+# RE-256: booting an installed PSP_GAME directory (needed for MEMSIZE above)
+# also picks up PPSSPP's own "FPS: N.N" debug-stats overlay, which a loose
+# EBOOT.PBP boot never showed. Force it off rather than let it bleed into
+# golden pixels.
+printf '[General]\niShowStatusFlags = 0\n' > "$OUT/no-status-overlay.ini"
+
 echo "==> running PPSSPPHeadless (backend=$BACKEND, timeout=${SECONDS_TO_RUN}s)"
 set +e
 "$HEADLESS_BIN" \
     --graphics="$BACKEND" \
+    --appendconfig="$OUT/no-status-overlay.ini" \
     --screenshot-save="$OUT/screenshot.bmp" \
     --timeout="$SECONDS_TO_RUN" \
     "$MEMSTICK/EBOOT.PBP" > "$OUT/ppsspp-headless.log" 2>&1
