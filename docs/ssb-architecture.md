@@ -336,9 +336,12 @@ directly to PSP and is better than incremental allocation. Detail in
 | RDP TMEM | 4 KiB | VRAM | 2 MiB |
 | — | | Scratchpad | 16 KiB |
 
-The PSP has strictly more memory than the N64 in every category except TMEM,
-which we do not need because textures live in VRAM rather than being streamed
-per-primitive. **Memory pressure is not expected to be the port's constraint.**
+The PSP has more nominal main memory than the N64, but that does not make
+memory pressure irrelevant. RE-253 grew the real asset pack to 26,254,608
+bytes and RE-255 proved it cannot coexist with the application in the default
+32 MiB process mode. PSP-2000/3000 therefore require `PARAM.SFO`'s `MEMSIZE=1`
+64 MiB mode (physically confirmed in RE-260). PSP-1000 remains a distinct
+32 MiB compatibility problem; VRAM is still a separate 2 MiB constraint.
 
 ---
 

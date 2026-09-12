@@ -1929,6 +1929,25 @@ unsafe fn run() -> ! {
                         );
                         gpu.model_matrix()
                     };
+                    // RE-261: Link's tunic is largely grayscale texture data
+                    // tinted by the per-material LIGHT_1/LIGHT_2 colours. The
+                    // ordinary object viewer intentionally has no fighter-
+                    // lighting context, so it falls back to gray baked vertex
+                    // shading and cannot validate Link's canonical palette.
+                    // Scene 15 is the focused exception: exercise the same
+                    // source-derived Dream Land light used by the simulated-
+                    // fighter path above without perturbing the established
+                    // generic-viewer goldens for scenes 6-10.
+                    let fighter_light = if cfg!(feature = "regression_capture_scene15") {
+                        if let Some(stage) = p.stage(0) {
+                            draw_state.configure_fighter_light(stage.light_angle_xy);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
                     let tris = meshdraw::draw_object_posed(
                         p,
                         &obj,
@@ -1940,6 +1959,9 @@ unsafe fn run() -> ! {
                         cfg!(feature = "effect_material_audit_capture").then_some(&effect_mat_anim),
                         costume_index,
                     );
+                    if fighter_light {
+                        draw_state.finish_fighter_light();
+                    }
                     let placed = (0..obj.node_count)
                         .filter_map(|k| p.node(obj.first_node + k))
                         .filter(|n| n.mesh != ssb_rom::pack::NodeDesc::NO_MESH)

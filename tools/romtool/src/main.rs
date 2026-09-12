@@ -3979,6 +3979,12 @@ impl Loaded {
                     if c.blend.is_some() {
                         m.blend_color = c.blend;
                     }
+                    if c.light1.is_some() {
+                        m.light1_color = c.light1;
+                    }
+                    if c.light2.is_some() {
+                        m.light2_color = c.light2;
+                    }
                     // `PaletteID` (RE-096: 45% of real fighter costume
                     // scripts carry one) selects which of
                     // `MObjSub.palettes[]` this costume actually wears --
