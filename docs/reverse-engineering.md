@@ -10,6 +10,118 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-255 — C6 integrated regression pass finds the real pack no longer fits in PSP RAM: every golden capture is silently the M1 fallback tetrahedron (`PLAN.md` R2.2/C6)
+
+**Question.** `PLAN.md` R2.2/C6 asks for an integrated regression pass across
+C1–C5: rebuild the real pack, rerun all 15 committed goldens, and explain
+every change. RE-251 already documented that a same-environment rebuild vs.
+the committed golden PNGs shows a pre-existing "tens of thousands of pixels"
+environment/toolchain drift even with zero code change, for 4 of the 15
+scenes it happened to measure. Do the other 14 re-captures fall in that same
+explainable bucket, or is something else going on?
+
+**Evidence.** `cargo test --workspace --all-targets` (`SSB64_ROM` set): 421/
+23/48/120 passed, 0 failed — unchanged from RE-254's own count. `romtool
+pack` rebuilt from the same ROM: byte-identical to the pre-rebuild file
+(`cmp` exit 0), meshes 2044, triangles 36772, objects 374, textures 1762,
+size 25639.3 KiB — matching RE-253's own recorded post-growth numbers
+exactly, confirming no pack-format drift across C1–C5.
+
+Re-running all 15 `regression_capture*`/`depth_mask_diagnostic` goldens
+through `tools/run-ppsspp-headless.sh` and diffing against the committed
+PNGs found 14 of 15 differing by 60,000–110,000 pixels (only
+`depth_mask_diagnostic`, the one synthetic non-pack scene, was 0). That is
+larger than RE-251's own 4 measured drift values (1120–13,008px), so rather
+than assume drift, this session built a same-environment pre-R2.2 baseline
+(`git worktree` at `f31f889`, the commit immediately before C1/RE-240) and
+re-diffed current-HEAD captures against it, eliminating environment drift as
+a variable entirely (both built with the identical local `PPSSPPHeadless`
+binary and toolchain in the same session). The diff stayed large
+(46,000–105,000px per scene) — inconsistent with C1–C5's own documented
+per-change deltas (C3/RE-251 alone: 9 of 13 byte-identical, the other 4 in
+the hundreds-to-low-thousands of pixels).
+
+Reading the two captures side by side (`magick ... +append`) showed the
+"current" side was not Dream Land, Fox, Falcon, or any ROM content at all —
+it was `main.rs`'s **M1 milestone fallback tetrahedron** (`static TRIANGLE`,
+`psp/src/main.rs:164`, drawn only in the `None` arm of `match &pack`, i.e.
+whenever the on-device pack failed to load). This reproduced from a fully
+clean `cargo clean -p ssb64-psp` rebuild, ruling out stale build-cache
+artifacts. A temporary diagnostic build (`diag_pack_status` feature, not
+committed — dumps `assets::load_pack()`'s result via the existing
+`Gpu::debug_text`/`sceGuDebugPrint` HUD path rather than `psp::dprintln!`,
+which writes directly to VRAM and is invisible to the GE-based headless
+screenshot hook) printed:
+
+```
+buf_len=0 opened_is_some=false status=out of memory
+```
+
+`assets::load_pack()` (`psp/src/assets.rs:107`) opens the file fine (all
+three `SEARCH_PATHS` candidates resolve under PPSSPPHeadless the same way
+they always have) but `AlignedBuf::new(size)` (`psp/src/assets.rs:26`)
+returns `None` — the no_std allocator cannot satisfy a single ~25.6MiB
+aligned allocation. `assets::LoadError::OutOfMemory` is returned, `pack`
+becomes `None`, and every one of the 15 goldens' `stage_view`/object-viewer
+code paths falls into the same `None => { fall back to built-in tetrahedron
+}` arm — hence all 14 pack-dependent scenes showing the *same* fallback
+geometry, and hence the earlier "drift" numbers all landing in a similar
+60k–110k-pixel range regardless of which scene's golden they were diffed
+against (they were really being diffed against a shared, unrelated,
+spinning tetrahedron, not against each other's real content).
+
+**This is not new corruption from C1–C5's own logic — it is RE-253's own
+flagged, until-now-unverified follow-up materializing.** RE-253 grew the
+pack from 11422.3 KiB to 25639.3 KiB (+124.5%, 1345→1762 textures) fixing a
+real texture-deduplication correctness bug, and its own entry explicitly
+flagged "real-PSP RAM headroom not yet checked." Checked now: it fails. A
+PSP-1000 (Phat) has 32MiB total RAM; PPSSPPHeadless's default memory model
+matches that unless the module opts into extended/kernel memory (this
+module does not — `psp::module!("ssb64_psp", 1, 0)` requests nothing
+extra). A single ~25.6MiB allocation for the pack alone, before any other
+engine/GE/stack heap usage, does not fit.
+
+**Hypothesis.** The regression is real and it is a memory-budget one, not a
+rendering-logic one: RE-252/RE-253's primitive-submission-order and
+texture-key fixes were both necessary correctness fixes (confirmed by their
+own entries), but their combined effect pushed the asset pack's real-content
+size past what an unmodified-memory-mode PSP can hold in one contiguous
+buffer. Every C1–C5 rendering-logic change (RE-240 through RE-254) is
+individually unverifiable against real ROM content on this build until the
+pack fits in memory again — the 15 committed goldens currently prove nothing
+about C1–C5's actual rendering correctness, only that the fallback path
+still runs.
+
+**Implementation.** None yet — no code changed by this entry. The temporary
+`diag_pack_status` diagnostic (a `psp/Cargo.toml` feature plus a `main.rs`
+block) was reverted (`git checkout --`) after producing the evidence above;
+it is not part of the committed tree. The real pack
+(`assets/generated/ssb64.pak`) was rebuilt during this investigation and is
+byte-identical to the pre-existing one (gitignored, not committed, per
+`AGENTS.md`).
+
+**Left open, blocking `PLAN.md` R2.2/C6.** This needs an explicit decision
+before C6's golden re-verification can mean anything: candidates include (a)
+requesting extended/kernel memory on capable hardware (Slim/Brite and
+later only — would not help a Phat PSP-1000), (b) shrinking the real pack
+back under budget (texture compression, dropping redundant mip levels,
+per-stage/per-fighter streaming instead of one flat archive), or (c) some
+combination. Not decided here — flagged for the user/next session rather
+than picked unilaterally, since it is an architecture trade-off, not a
+"smallest change" bugfix. Until resolved, C6 cannot close and every
+existing golden PNG's claim to represent current rendering behaviour is
+unverified.
+
+**Confidence:** High that the mechanism is exactly `AlignedBuf::new`
+returning `None` at the pack's current size on an unmodified-memory-mode
+build (reproduced from a clean rebuild, confirmed via direct on-screen
+`status=out of memory` readout). Not yet measured: the exact usable-heap
+ceiling on this build (only that ~25.6MiB alone exceeds it), and whether
+physical hardware (PPSSPPHeadless's memory model is a match, not a proof)
+agrees.
+
+---
+
 ## RE-254 — Systematic PSP GE cache isolation inventory: one narrower bypass than `forget_texture` already covered, hardened with `DrawState::invalidate_all` (`PLAN.md` R2.2/C5)
 
 **Question.** `PLAN.md` R2.2/C5 asks for a systematic inventory of every raw
