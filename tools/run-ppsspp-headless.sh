@@ -41,18 +41,25 @@ PACK="$REPO/assets/generated/ssb64.pak"
 [ -f "$EBOOT" ] || { echo "EBOOT not found: $EBOOT" >&2; exit 1; }
 [ -f "$PACK" ] || { echo "asset pack not found: $PACK" >&2; exit 1; }
 
-mkdir -p "$OUT"
-cp -f "$EBOOT" "$OUT/EBOOT.PBP"
-cp -f "$PACK" "$OUT/ssb64.pak"
+# RE-255/RE-256: PPSSPPHeadless only reads PARAM.SFO's MEMSIZE key (needed
+# for the real pack to fit in RAM) when the target is identified as an
+# installed PSP_GAME directory, not a loose EBOOT.PBP path -- so this stages
+# into PPSSPP's own memstick directory (~/.ppsspp/PSP/GAME) rather than a
+# scratch directory. A dedicated, always-overwritten subfolder keeps this
+# from colliding with any real installed homebrew there.
+MEMSTICK="${PPSSPP_MEMSTICK_DIR:-$HOME/.ppsspp/PSP/GAME}/ssb64_regression"
+mkdir -p "$OUT" "$MEMSTICK"
+cp -f "$EBOOT" "$MEMSTICK/EBOOT.PBP"
+cp -f "$PACK" "$MEMSTICK/ssb64.pak"
 rm -f "$OUT/screenshot.bmp" "$OUT/screenshot.png" "$OUT/ppsspp-headless.log"
 
 echo "==> running PPSSPPHeadless (backend=$BACKEND, timeout=${SECONDS_TO_RUN}s)"
 set +e
-( cd "$OUT" && "$HEADLESS_BIN" \
+"$HEADLESS_BIN" \
     --graphics="$BACKEND" \
     --screenshot-save="$OUT/screenshot.bmp" \
     --timeout="$SECONDS_TO_RUN" \
-    "$OUT/EBOOT.PBP" ) > "$OUT/ppsspp-headless.log" 2>&1
+    "$MEMSTICK/EBOOT.PBP" > "$OUT/ppsspp-headless.log" 2>&1
 STATUS=$?
 set -e
 

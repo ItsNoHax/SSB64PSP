@@ -10,6 +10,131 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-256 — `MEMSIZE=1` fixes RE-255's pack-load failure; fixed golden-capture harness confirms real content on all 15 scenes (`PLAN.md` R2.2/C6)
+
+**Question.** RE-255 found the on-device pack load fails
+(`LoadError::OutOfMemory`) at the pack's current ~25.6MiB size, blocking
+`PLAN.md` R2.2/C6. Presented three options to the user (extended memory,
+shrinking the pack, streaming); asked to confirm scope first, since
+`docs/memory.md`'s own `AssetArena` plan already assumes per-scene loading
+is the real game's long-term design and the debug/M4 scene viewer's
+"load the whole pack at boot" pattern is a deliberate shortcut for that
+tool's own browse-anything use case, not the shipped game's architecture.
+User chose: fix the debug viewer's memory budget (not its loading pattern),
+via the standard PSP homebrew mechanism for this.
+
+**Evidence.** PSP homebrew SDK has a standard, sanctioned `PARAM.SFO` key,
+`MEMSIZE`, that requests the full 64MiB RAM (instead of 32MiB) on PSP-2000/
+3000 (Slim/Brite) hardware -- exactly the hardware this project's own
+physical testing already uses (PSP Slim, RE-201 onward) -- confirmed by
+reading PPSSPP's own source (`Core/PSPLoaders.cpp`'s `UseLargeMem`,
+`Core/System.cpp`'s `CPU_Init`). Verified empirically in three stages:
+
+1. A temporary diagnostic (reverted, not committed) that probed
+   `sceKernelAllocPartitionMemory` at increasing sizes found the default
+   ceiling is 20-24MiB (fails at 24MiB, succeeds at 20MiB) -- consistent
+   with RE-255's `OutOfMemory` at ~25.6MiB and with a PSP-1000-equivalent
+   user partition, regardless of the physical test unit being a Slim.
+2. Patching a built `PARAM.SFO` to add `MEMSIZE=1` and re-running the same
+   probe under `PPSSPPHeadless` on a **loose** `EBOOT.PBP` path made no
+   difference (still 20-24MiB) -- tracing `Core/System.cpp`'s
+   `CPU_Init` showed a loose file is identified as `PSP_ELF`/loose-`PBP`,
+   which never calls `LoadParamSFOFromPBP`/`InitMemorySizeForGame` at all
+   (confirmed by the log: `"No DiscID found"` even though the patched SFO
+   had one, and no `"requested full ... memory access"` line).
+3. Booting the same patched build from an **installed**
+   `PSP/GAME/<id>/EBOOT.PBP` layout (matching `IdentifiedFileType::
+   PSP_PBP_DIRECTORY`, the real install/hardware convention) printed
+   `"Game requested full PSP-2000 memory access"` and produced a real
+   Dream Land capture (not the fallback tetrahedron), diffing only 14,044
+   pixels against the committed golden (down from the fallback's 80,636).
+
+**Implementation.** Two repos, three files:
+
+* `~/Programming/rust-psp` (the user's own fork; NOT `mksfo`'s
+  upstream/crates.io source): added `MEMSIZE` to `mksfo`'s key whitelist
+  (`cargo-psp/src/bin/mksfo.rs`, `Dword`, valid for `MG`/`UG` categories)
+  and a `memsize: Option<u32>` field threaded through `cargo-psp`'s
+  `PspConfig` (`cargo-psp/src/main.rs`), mirroring the existing `region`/
+  `parental_level` fields.
+* `psp/Psp.toml`: added `memsize = 1`.
+
+**A self-inflicted near-miss during this fix, corrected before it caused
+harm.** The fork's checked-out branch (`fix-panic-payload-nightly`,
+commit `8c3d5dd`, authored by the user for unrelated `PanicPayload`/
+`libunwind` work) had already bumped its own minimum-nightly gate to
+`nightly-2026-08-26`+ -- a nightly `psp/rust-toolchain.toml` explicitly
+documents as **known broken** for this project (pins `nightly-2026-08-01`
+with an explicit "Known broken: nightly-2026-08-26 and later" note).
+Building and `cargo install --path .`-ing directly from that checkout (as
+first attempted) silently overwrote the previously-working global
+`~/.cargo/bin/cargo-psp`/`mksfo`/`pack-pbp` with a version that refused to
+build this project at all. Caught immediately (the very next `cargo psp`
+build failed with `cargo-psp requires rustc nightly version >= ...`) and
+fixed **without touching the user's own checkout or its commit history**:
+a temporary `git worktree` at `b804e0e` (the commit immediately before
+their nightly bump) got the `MEMSIZE` patch applied and installed from
+there instead, leaving `~/Programming/rust-psp`'s actual branch/HEAD
+exactly as the user left it. The globally-installed `cargo-psp` is now a
+hybrid (their pre-bump base plus this session's `MEMSIZE` patch) --
+**flagged, not silently left**: their `fix-panic-payload-nightly` branch's
+own `libunwind`/`PanicPayload` fixes are not in the currently-installed
+binary, and reconciling the two nightly requirements (this project's
+pinned `2026-08-01` vs. their other branch's `2026-08-26`+) is a
+pre-existing conflict this session did not create and did not resolve --
+worth the user's own attention if that other work needs the global tool
+again.
+
+**The golden-capture harness itself needed a fix too.**
+`tools/run-ppsspp-headless.sh` booted a loose `EBOOT.PBP` path, which (per
+point 2 above) can never honor `MEMSIZE` regardless of the on-device fix.
+Changed it to stage into PPSSPP's own memstick directory
+(`~/.ppsspp/PSP/GAME/ssb64_regression`, override via
+`PPSSPP_MEMSTICK_DIR`) instead, matching the installed-directory
+convention real hardware and `tools/stage-psp-regression.sh` already use.
+
+**Result.** Rebuilt with `MEMSIZE=1` and recaptured all 15 goldens through
+the fixed harness: every scene now shows real ROM content (verified
+visually for `r0-dream-land-default`, `r1-mvopeningroom` and
+`r2-saffron-city-gate` via side-by-side comparison against the committed
+goldens -- correct geometry, correct layout, no black holes or missing
+objects), not the RE-255 fallback tetrahedron. Differing-pixel counts
+against the *committed* goldens range 0 (`depth_mask_diagnostic`, pack-
+independent) to 74,045 (`r1-mvopeningroom`) -- down sharply from the
+fallback-tetrahedron diffs (60,000-110,000+ each) but not yet
+individually re-explained per scene the way C6 ultimately requires. Two
+visually-confirmed contributors, neither of which is new corruption: (1)
+RE-240's real, intentional `PRIM`/lighting fix (single-sourced, normals no
+longer baked as RGB) predates any golden ever being re-baselined against a
+pack that could load at all, so a real, larger-than-RE-251's-own-C3-deltas
+visual difference is expected wherever it applies; (2) RE-251's
+already-documented environment/toolchain drift. A third, newly-noticed,
+small, bounded artifact: a `"FPS: 60.0"` PPSSPP-native debug-stats overlay
+bleeds into captures now that they boot through the user's real,
+persistent `~/.ppsspp` profile rather than a scratch directory -- its
+`iShowStatusFlags`/`iDebugOverlay` trigger was not tracked down (config
+file for it could not be found under `~/.ppsspp`, so it is not a simple
+saved-setting override); confined to a small fixed screen region, it does
+not account for the bulk of any scene's diff but should be suppressed
+before the goldens are formally refreshed.
+
+**Left open, C6 still not closed.** This unblocks C6 (the pack loads, the
+harness works) but does not finish it: the 15 goldens still need
+per-scene re-explanation (or refresh) the way RE-251 did for C3's own
+smaller set, the fighter/effect recheck `PLAN.md` C6 asks for has not
+been done, physical-PSP confirmation of `MEMSIZE`'s real-hardware effect
+is still open (PPSSPP's memory model is a match for Slim/Brite, not proof
+of it), and the `"FPS: 60.0"` overlay should be suppressed first. See
+`PLAN.md` R2.2/C6 for the updated status.
+
+**Confidence:** High that `MEMSIZE=1` is the correct, standard mechanism
+and that it works end-to-end for this build (measured: PARAM.SFO byte
+contents, the PPSSPP log line, and a real non-fallback capture). Not yet
+measured: real physical-PSP confirmation, or the exact cause of the FPS
+overlay.
+
+---
+
 ## RE-255 — C6 integrated regression pass finds the real pack no longer fits in PSP RAM: every golden capture is silently the M1 fallback tetrahedron (`PLAN.md` R2.2/C6)
 
 **Question.** `PLAN.md` R2.2/C6 asks for an integrated regression pass across
