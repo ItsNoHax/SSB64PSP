@@ -422,8 +422,15 @@ RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen-linear.png` for the
 same post-T7a reason as scenes 11/12 above; RE-215's physical-PSP match was
 against the pre-T7a golden. RE-236 re-captured this scene on physical PSP
 against the refreshed golden (30,345 differing pixels 2x-upscaled, same
-noise-floor order as the other two) — the corrected linear-texgen gradient
-matches on real hardware too, closing `R2.1`/T8.
+noise-floor order as the other two), closing `R2.1`/T8.
+
+RE-259 corrects those entries' visual attribution: the old smooth top bar
+was **not** the linear-texgen primitive. A temporary build skipping exactly
+`TEXTURE_GEN_LINEAR` removed the large pink/tan crystal cluster on the right
+while leaving the top bar intact. The bar's later lattice appearance is the
+expected result of RE-252/RE-253 removing a first-wins collision between
+non-linear file-117 baked-texture variants. The scene still covers the one
+linear primitive; its on-screen region is the crystal cluster, not the bar.
 
 ## Fourteenth deterministic test scene (RE-237)
 
@@ -535,23 +542,44 @@ depth_write == true`, so the new wiring changes nothing for them. All four
 changed goldens were refreshed after visual inspection found each diff
 localized and explainable, not corrupted (see RE-251).
 
-## Pending texgen and renderer-corrective matrix
+## Sixteenth scene: Link costume-light regression (RE-258/RE-261)
+
+`regression_capture_scene15` selects Link's file 324 graph `0x3AE8` and uses
+the established object-view freeze/HUD suppression. Unlike the generic fighter
+viewer scenes, it also configures Dream Land's source-derived fighter light:
+Link's grayscale tunic textures are intentionally tinted by material
+`LIGHT1COLOR`/`LIGHT2COLOR`, so a light-free viewer cannot validate his
+costume. RE-261 fixed the converter dropping those two already-decoded costume
+tracks; the exact decompilation values are pinned by a unit test.
+
+Capture and compare with:
+
+```
+tools/run-ppsspp-headless.sh --feature regression_capture_scene15
+tools/compare-screenshot.sh tests/golden/r2-link-fighter.png ~/ppsspp-headless-test/screenshot.png
+```
+
+Two post-fix captures differ by 0 pixels. The incorrect-blue to canonical-
+green correction changes 7,492 pixels. The accepted golden is
+`tests/golden/r2-link-fighter.png`, SHA-256
+`37f14f3cb2d6ba2cf2fca2ff2fd16926aa8483b62a052208971e689ec795e5ed`.
+
+## Texgen and renderer-corrective matrix
 
 Scenes 11–14 prove the current PSP lowering is deterministic and responsive;
-they do not prove original-N64 equivalence. `PLAN.md` R2.1/T1–T10 owns the
-remaining texgen evidence: cross-node `G_VTX` provenance and tile-shift/
-origin/mirror/clamp phase cases beyond what's already measured (RE-225/
-RE-230/RE-231/RE-232), plus `R2.1`/T10's own documentation reconciliation.
+they do not by themselves prove original-N64 equivalence. `PLAN.md`
+R2.1/T1–T10's source, ROM, PPSSPP, original-ROM and physical-PSP matrix is
+complete (RE-225–239); the remaining cross-node reuse item is tracked as a
+non-blocking follow-up rather than reopened T1–T10 work.
 Record PSP model, firmware, commit, pack hash, EBOOT identity, scene and
 capture hash for each hardware run; regenerate any golden after a semantic
 change.
 
-`PLAN.md` R2.2/C1–C7 requires deterministic regressions for primitive
-colour ownership, load-time lighting provenance, independent depth writes
-(C1–C3, all `COMPLETE` — the last closed by RE-251's `depth_mask_diagnostic`
-scene above), adjacent-only primitive merging and PSP GE cache invalidation
-(C4–C6, open). The existing goldens remain useful baselines, but a changed
-pixel must be explained by the correction before it is accepted.
+`PLAN.md` R2.2/C1–C7 is complete (RE-240–261). The 16-scene suite covers
+primitive colour ownership, load-time lighting provenance, independent depth
+writes, adjacent-only primitive merging, PSP GE cache invalidation and fighter
+costume-light propagation. Every semantic golden change was explained before
+acceptance; RE-261 records the final complete-matrix run.
 
 ## Capture procedure
 
@@ -650,11 +678,11 @@ pixel oracle.
 | CI4 texture | Dream Land's ground texture, file 103 `+0x1BE0`, 32×32 CI4 (`docs/reverse-engineering.md`, RE-046) | Yes |
 | Palette / CLUT | Same CI4 ground texture's palette load | Yes |
 | Mirror wrap mode | Dream Land's canopy, `G_TX_MIRROR` on both axes, file 104 offset `0xE20` (`mirror_s=true, mirror_t=true`) and offset `0x5F0` (`mirror_s=true, mirror_t=false`) (RE-067) | Yes |
-| Lighting | Dream Land's platform/canopy shading (`G_LIGHTING`, runtime GE light/material path, RE-164–167) | Yes, covered path; C1/C2 revalidation pending |
+| Lighting | Dream Land's platform/canopy shading plus Link's costume `LIGHT1COLOR`/`LIGHT2COLOR` under the runtime fighter-light path (RE-164–167, RE-240–243, RE-261) | Yes — scenes 1 and 16 |
 | `combiner_shade_scale` shape | Dream Land's lit, unlit-texture primitives (RE-073); exact per-primitive attribution not isolated in this task | Likely, unconfirmed |
 | Depth testing | Dream Land's canopy occluding the platform behind it; independent compare/write state wired (RE-251) | Yes — plus `tests/golden/r2-depth-mask-diagnostic.png`'s dedicated ON→OFF→ON `sceGuDepthMask` regression |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
-| Fighter model + skeleton | Mario, idle pose, spawn 0; Fox, file 313 graph `0x2938` (RE-152/RE-207); Captain Falcon, file 332 graph `0x3BE0` (RE-208) | Yes — scene 1, `tests/golden/r0-dream-land-default.png`; scene 6, `tests/golden/r2-fox-fighter.png`; scene 7, `tests/golden/r2-falcon-fighter.png` |
+| Fighter model + skeleton | Mario plus the five established object-view fighters and Link file 324 graph `0x3AE8` with source-authored costume lighting (RE-152, RE-207–212, RE-261) | Yes — scenes 1, 6–10 and 16, including `tests/golden/r2-link-fighter.png` |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | `combiner_texture_blend` shape | RE-200: file 109 (`StageSectorFile2`) graph `0x44C8`, 7 converted primitives | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | `combiner_flat_color` shape | RE-200: file 84 (`EFCommonEffects2`) graph `0x2760` (`CatchSwirlDObjDesc`), 4 converted primitives | Yes — scene 4, `tests/golden/r1-catch-swirl-flat-color.png` |
@@ -750,9 +778,11 @@ differing pixels). The golden image is committed at
 source-proven billboard Z-scale correction deliberately changed 9,972 pixels.
 RE-152 refreshes it again after the nonzero clamp-window correction changed
 85 pixels, all within the small Mario model at `(479,337)..(486,354)`; stage
-pixels are unchanged. Two independent captures of the new build are
-pixel-identical. Its SHA-256 is
-`a1d9c22538d6f56ab0d850630c3649e4b7adede799d10f15d4cdd0ab6ced1194`.
+pixels are unchanged. Two independent captures of that build were
+pixel-identical. RE-261 refreshes it once more for the source-authored
+costume-light-track correction: 24 stable pixels on Mario's lower body, with
+all stage pixels unchanged. Its current SHA-256 is
+`26bbcc129dd7a9ebe5b5f92aed8eef7aaae82837d41ab3a9077d53c2161605ac`.
 
 RE-199 executed the same end-to-end procedure for the second scene
 (`regression_capture_scene2`, file 52's `mvopeningroom.c` graph). The first

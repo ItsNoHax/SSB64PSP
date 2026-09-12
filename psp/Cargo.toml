@@ -95,7 +95,9 @@ regression_capture_scene10 = []
 # 32-node graph pair (0x3AE8 vs 0x74B0), matching scene10's own convention
 # for picking between a fighter's two `common_parts` skeleton graphs. Same
 # deterministic object-viewer freeze and diagnostic suppression as scenes
-# 2-4 and 6-10. Off by default.
+# 2-4 and 6-10, plus Dream Land's source-derived fighter-light context so
+# Link's material-light-tinted tunic is not reduced to the generic viewer's
+# gray fallback (RE-261). Off by default.
 regression_capture_scene15 = []
 
 # Fidelity probe: StageMetalFile2's first two-node graph (file 117, graph

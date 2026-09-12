@@ -10,7 +10,177 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
-## RE-258 — Link, added to C6's fighter recheck, shows a white tunic instead of green: open, not yet resolved (`PLAN.md` R2.2/C6)
+## RE-261 — Fighter costume light tracks restore Link's canonical green tunic and close the integrated renderer regression (`PLAN.md` R2.2/C6)
+
+**Question.** RE-258's generic object-view capture rendered Link's tunic
+white/cream. Applying the real fighter-light context made it blue rather than
+green, proving the grayscale tunic textures were being tinted but that the
+packed default costume colour was wrong.
+
+**Source evidence and cause.** `324_LinkModel.c` drives `LIGHT1COLOR` and
+`LIGHT2COLOR` in its costume material-animation scripts. The four authored
+values are green `[20, 76, 20, 0]`, lavender `[115, 102, 179, 0]`, red
+`[51, 0, 0, 0]`, and blue `[0, 51, 102, 0]`. `matanim::colors_at` already
+decoded all five extended colour tracks, but `Colors` exposed only PRIM, ENV,
+and BLEND. The converter therefore discarded the two light tracks and kept
+the material record's baked final-costume blue. This was a data-loss bug, not
+a texture decode or animation failure.
+
+**Implementation.** `matanim::Colors` now exposes `light1`/`light2`, and
+`romtool` applies them when resolving costume zero. A unit test encodes the
+exact Link source sequence and asserts all four values. Scene 15 now wraps
+only Link's focused capture in Dream Land's source-derived fighter-light
+context; the generic object viewer and its established fighter goldens remain
+unchanged.
+
+**Visual verification.** The rebuilt scene is canonical green and is
+deterministic across two captures (0 differing pixels). The incorrect-blue to
+correct-green change affects 7,492 pixels. The accepted golden is
+`tests/golden/r2-link-fighter.png`, SHA-256
+`37f14f3cb2d6ba2cf2fca2ff2fd16926aa8483b62a052208971e689ec795e5ed`.
+The other 15 goldens were rerun: 14 matched exactly. Dream Land changed by a
+stable, source-explained 24 pixels on Mario's lower-body costume-light
+material and was refreshed; its new SHA-256 is
+`26bbcc129dd7a9ebe5b5f92aed8eef7aaae82837d41ab3a9077d53c2161605ac`.
+
+**Integrated C6 evidence.** The real pack is 26,254,608 bytes (SHA-256
+`d992dbe734f63b7cb97e36d68b56ea703d6beab25ff68b53bec556f03b3474c6`),
+with 2,044 meshes, 36,772 triangles, 8,169 draw runs, 1,762 textures, and 374
+objects. `romtool effects` accepts all 46 manager DObj effects, all 35
+transform animations, 24/26 material animations (the two source-unreachable
+rest-invisible cases already documented), and all 160 particle scripts.
+The billboard inventory reports 109 billboards and zero structural anomalies;
+all 11 framebuffer transitions replay and bind; `romtool texgen --verify`
+passes. Together with the 16-scene golden matrix and RE-260's physical full-
+pack load, this covers C6's fighter, lighting, texture blend, flat colour,
+translucency, alpha/depth, billboard, framebuffer, effect, and texgen rows.
+
+**Verification.** `cargo fmt --all --check`, all 613 workspace tests, and a
+plain feature-free `cargo psp --release` pass. Strict workspace Clippy is not
+clean under the current toolchain because of three unrelated pre-existing
+`needless_range_loop` lints in `coord.rs`, `matanim.rs`, and `objanim.rs`;
+none is on this change path. The normal EBOOT is 5,078,344 bytes, SHA-256
+`57d27419c57610dc82b491b0780e36a7bf0c4acd73b410a3e547ba85894fab5c`.
+
+**Conclusion / confidence.** High. Exact decompilation values, a focused unit
+test, deterministic captures, the complete regression matrix, subsystem
+audits, and a feature-free PSP build agree. RE-258 is resolved and C6 is
+complete. The user's earlier motion stop remains RE-260's capture-only
+four-second freeze; sustained normal-build hardware motion has not yet been
+reported and is not claimed here.
+
+---
+
+## RE-260 — The physical-PSP "animation crash" is the regression build's intentional four-second freeze; MEMSIZE is proven (`PLAN.md` R2.2/C6)
+
+**Observation.** The user launched RE-259's installed EBOOT from the PSP
+Slim's XMB and confirmed it loaded correctly with the full pack, so
+`PARAM.SFO`'s `MEMSIZE=1` request works on the target hardware. After a couple
+of movements/jumps, animations stopped while the application itself remained
+alive. That second symptom initially looked like a separate runtime failure.
+
+**Cause.** The staged EBOOT was built with `--features regression_capture`.
+That feature is deliberately unsuitable for interactive play:
+`deterministic_capture_frozen` becomes true at 240 fixed simulation ticks
+(four seconds), and the stage-view call to `Play::tick` is guarded by its
+inverse. Fighter physics, status animation, stage animation, material
+animation, and the other deterministic mutations consequently hold their
+captured state while the render loop continues. The timing and failure shape
+match the hardware observation exactly: motion freezes, but the process and
+display do not crash.
+
+**Independent animation check.** `romtool figatree` replayed all 20 Mario
+movement slots for 600 frames from the exact staged pack. The pack and ROM
+poses matched across 9,764 joints, and all 568,862 measured bone lengths were
+preserved (worst variation 0.064 units). There was no desynchronisation. This
+rules against the swallowed `Skeleton::tick` error path as the cause of the
+observed stop.
+
+**Resolution.** No source change: deterministic freezing is required by the
+visual-regression harness and is disabled by default. A plain
+`cargo psp --release` build completed successfully at commit `d524114`:
+EBOOT 5,078,280 bytes, SHA-256
+`ef9d05303a6f683c079a0eb26214b3ba86ebc2a8e26e40add8f0c6734096d50c`.
+It is ready to replace the capture EBOOT at the next PSPLink connection.
+
+**Confidence:** High. The installed build identity, exact four-second guard,
+continued render loop, user-observed timing, and independent full animation
+replay all agree.
+
+---
+
+## RE-259 — Scene 13's changed top bar is a non-linear RE-252/RE-253 texture-cache correction, not the linear-texgen primitive (`PLAN.md` R2.2/C6)
+
+**Question.** RE-257 left `r2-metal-texgen-linear`'s 25,552-pixel outlier
+open: the old golden showed a smooth yellow/white/red top bar while the
+refreshed golden shows a sharp red lattice. Is that bar the scene's sole
+`G_TEXTURE_GEN_LINEAR` primitive, as older visual-regression notes claimed,
+and did C1-C5 regress it?
+
+**Evidence.** The historical golden from `8c26aa4` (SHA-256
+`26120a2b703da6325b52c5465980ce336a5091e6732469301348336f1b421114`)
+and the current golden (SHA-256
+`72c46c034df3caeb8695a65ed35d372fa761d6fceafb3ddcaf3c96bf64844cf0`)
+reproduce the reported change. Three controlled diagnostics isolate it:
+
+* File 117 graph `0x2EE0` resolves to display list `0x2950`, with 15 packed
+  primitives. Primitive 0 is the **only** linear-texgen primitive: CI4
+  texture `+0x718`, 16x8, palette `+0xBC0`. A temporary, reverted
+  `draw_mesh` diagnostic that skipped exactly
+  `flags::TEXTURE_GEN_LINEAR` removed the large pink/tan crystal cluster on
+  the right (10,820 changed pixels) while leaving the disputed top lattice
+  bar untouched. The old documentation had visually identified the wrong
+  object; the crystal cluster, not the top bar, is this scene's linear-
+  texgen coverage.
+* The linear primitive's `TextureRef` does not collide under RE-253's old
+  eight-field texture key. Non-linear primitives in the same display list
+  do: for example, primitives 4/5 share file 117 image `+0x7A8`, palette
+  `+0xC10`, 32x32 CI4 and identical wrap flags, but need different baked
+  draw rectangles (`192x128` and `192x64`); an earlier file-117 binding of
+  the same old key uses `384x192`. The old key omitted precisely those
+  `drawn_width`/`drawn_height` fields.
+* Rebuilding the current tree with only the old narrow key produced a mixed
+  red/lattice bar (2,424 pixels from the current full-key golden). Restoring
+  both the old key **and** RE-252's old global
+  `BTreeMap<MeshMaterial, _>` grouping reproduced the historical smooth
+  gradient bar. That is RE-253's documented failure mechanism exactly:
+  changing primitive order changes which incompatible baked texture becomes
+  the narrow key's first-wins donor. The current adjacent-only order plus
+  full `TexKey` gives every primitive its own source-derived baked texture,
+  so the lattice is the corrected output rather than a new rendering bug.
+
+This also corrects RE-253's earlier statement that all 15 golden scenes were
+byte-identical across its key fix. The new controlled scene-13 reproduction
+disproves that statement; whatever that earlier comparison measured, it did
+not isolate the two pack variants successfully. RE-255 later showed why
+captures from this period demanded particular care: the enlarged post-fix
+pack could silently fall back when `MEMSIZE` was not active.
+
+**Implementation.** No renderer or packer change. Corrected `PLAN.md`,
+`STATUS.md`, and `docs/visual-regression.md`; the temporary old-key,
+old-order, and skip-linear probes remained outside the main worktree and
+were removed after capture. Scene 13's current golden remains unchanged.
+
+**Physical-PSP handoff.** The PSP Slim was available over PSPLink v3.2.1
+(`pspver`: 6.61). Built commit `d524114` with `regression_capture` and staged
+the installed files to `ms0:/PSP/GAME/ssb64/`: EBOOT 5,062,376 bytes,
+SHA-256 `fc59c6084afe01d62d0abb34de87e861f5216764d40b7b8b3805f7db0aa47f1c`;
+pack 26,254,608 bytes, SHA-256
+`9609c51b0ccca6c7940cd6b99b9e0a467aa82d11b13f8ae26360d81ccbbf7aa8`.
+PSPLink's remote `ls` confirmed both destination sizes. The user then launched
+that installed EBOOT from the XMB and confirmed that the full content loaded
+and remained interactive, physically proving that `MEMSIZE=1` activated and
+removed the former pack-load limit. RE-260 separates the later four-second
+animation stop as the staged capture build's intentional freeze.
+
+**Confidence:** High. The tested primitive was identified by its packed flag
+and removed in a PPSSPP renderer capture, while the disputed prop was reproduced independently
+by restoring the exact two historical mechanisms that controlled the old
+cache winner.
+
+---
+
+## RE-258 — Link's white tunic exposed missing costume-light-track propagation; resolved by RE-261 (`PLAN.md` R2.2/C6)
 
 **Question.** `PLAN.md` R2.2/C6 explicitly names Link in its fighter recheck
 list ("recheck Mario, Fox, Kirby, Ness, Captain Falcon and Link"), but no
@@ -50,16 +220,16 @@ follow scene6–10's established pattern exactly. **No golden PNG committed
 for it** — unlike scenes 1–14, this scene's own correctness is the open
 question, so there is nothing to lock in as "expected" yet.
 
-**Left open.** This is a new investigative thread, not resolved here.
-Needs: per-primitive material dump for the tunic (lit/unlit, `prim_color`,
-bound texture) the way RE-240's own census worked, and a decision on
-whether it's a real bug or an expected rest-pose artifact before any
-golden is added for this scene.
+**Resolution (RE-261).** The tunic textures are intentionally grayscale and
+receive costume colour from the material animation's `LIGHT1COLOR` and
+`LIGHT2COLOR` tracks. Those tracks were decoded but discarded before packing,
+leaving the baked blue costume value. Propagating both tracks and applying the
+real fighter-light context restores the source-authored green default; scene
+15 now has an accepted deterministic golden.
 
 **Confidence:** High that the scene/feature/object-selection wiring itself
-is correct (shield/hair/boots all show plausible, correct colours — only
-the tunic is suspect). Not yet measured: the actual cause of the tunic
-colour.
+is correct. The actual cause and corrected output are independently measured
+in RE-261.
 
 ---
 
@@ -136,6 +306,12 @@ clarity difference.
 **Confidence:** High for the 14 explained scenes (direct file-list
 cross-reference plus visual inspection ruling out missing/corrupted
 geometry). Low/unmeasured for scene 13's specific cause.
+
+**Correction (RE-259).** Scene 13 is now explained. The disputed top bar is
+not the linear-texgen primitive; it is non-linear geometry whose historical
+texture depended on the pre-RE-253 narrow cache key and RE-252's old global
+material grouping. The actual linear primitive is the pink/tan crystal
+cluster and remained intact.
 
 ---
 
@@ -249,12 +425,12 @@ confined to this session's own manual commands, never present in the
 batch that produced the pixel counts above. Corrected here rather than
 left as a misleading open item.
 
-**Left open, C6 still not closed.** This unblocks C6 (the pack loads, the
-harness works) but does not finish it: the 15 goldens still need
+**State at RE-256 (subsequently closed by RE-261).** This unblocked C6 (the pack loads, the
+harness works) but did not finish it: the 15 goldens still needed
 per-scene re-explanation (or refresh) the way RE-251 did for C3's own
 smaller set, the fighter/effect recheck `PLAN.md` C6 asks for has not
 been done, and physical-PSP confirmation of `MEMSIZE`'s real-hardware
-effect is still open (PPSSPP's memory model is a match for Slim/Brite,
+effect was still open (PPSSPP's memory model is a match for Slim/Brite,
 not proof of it). See `PLAN.md` R2.2/C6 for the updated status.
 
 **Confidence:** High that `MEMSIZE=1` is the correct, standard mechanism
@@ -582,12 +758,14 @@ follow-up: real-PSP RAM headroom for a pack this size has not been checked
 this session (`STATUS.md`). `cargo test --workspace --all-targets`
 (`SSB64_ROM` set): `romtool` 23 (+1, the new census test), others unchanged.
 `cargo fmt --check`/`cargo clippy --all-targets --release` clean (no new
-warnings from this file). All 15 golden scenes re-captured against packs
-built from this fix alone (both an RE-252-fixed and RE-252-unfixed mesh
-conversion): **byte-identical to their own pre-fix counterpart in each
-pairing** — this fix's own visual effect on the current golden corpus is
-zero, because none of the 15 scenes happen to draw two colliding crops of
-the same base image inside their own frozen camera window; RE-252's
+warnings from this file). This entry originally reported all 15 golden
+scenes byte-identical across isolated fixed/unfixed-key pack pairs.
+**Correction (RE-259): that visual-null claim was false.** A controlled
+scene-13 rebuild now proves its top bar changes when both the old narrow key
+and old global material grouping are restored; the earlier capture did not
+successfully isolate the two pack variants. RE-255 later established that
+the enlarged pack could silently fall back without active `MEMSIZE`, which
+is why that period's capture claims require explicit content checks. RE-252's
 `non_adjacent_same_material_runs_stay_separate_and_in_order` test is the
 closest thing to a regression case for either fix's failure mode. Not
 independently re-verified against one specific named fighter/texture this
@@ -2172,10 +2350,10 @@ inspection of all three upscaled captures (beyond the diff count) confirms
 the actual content matches: scene 11 and 12 show the same crystal cluster at
 the same two rotations as their PPSSPP goldens (only PSPLink's own status
 text and expected edge antialiasing differ), and scene 13 shows the same
-rope-walkway geometry with the same smooth yellow-white-red linear-texgen
-gradient bar — the corrected texel from RE-232's (T7a) addressing fix
-renders identically on real hardware, not just in PPSSPP's software
-rasterizer.
+rope-walkway and crystal geometry. This entry originally identified the
+smooth top bar as the linear-texgen primitive; RE-259's flag-selective draw
+probe later corrected that visual attribution to the right-side pink/tan
+crystal cluster.
 
 **Conclusion.** `PLAN.md` R2.1/T8 acceptance is met: original-N64 (RE-234,
 real 1P Mode play), PPSSPP (RE-235, refreshed post-T7a) and physical PSP
@@ -2183,8 +2361,9 @@ real 1P Mode play), PPSSPP (RE-235, refreshed post-T7a) and physical PSP
 model rotations (scenes 11/12) plus the one linear-texgen primitive (scene
 13). Model/camera reflection response was directly checked (scene 11 vs 12
 differs substantially on both PPSSPP and hardware) and ordinary-versus-linear
-behaviour was directly checked (scene 11/12 vs scene 13's distinct gradient
-primitive). Diffuse-light independence, tile-origin phase and generated span
+behaviour was directly checked (scene 11/12 vs scene 13's distinct linear
+crystal primitive; visual identity corrected by RE-259). Diffuse-light
+independence, tile-origin phase and generated span
 were not re-derived from these screenshots directly — they rest on T2's
 (RE-226), T6's (RE-230) and T7/T7a's (RE-231/RE-232) own dedicated
 measurements, which this entry's matching captures are consistent with, not
@@ -2253,9 +2432,10 @@ crops of exactly that crystal cluster in isolation (`StageMetalFile2` graph
 `0x1B10`) — same silhouette, same magenta/purple/tan/light-highlight facet
 colour pattern, and the same small red woven-lattice-textured rectangle
 (the fence/railing material) visible at the base. Scene 13 (`0x2EE0`) shows
-the rope-walkway geometry plus one smooth horizontal yellow-white-red
-gradient bar — the archive's one packed `G_TEXTURE_GEN_LINEAR` primitive
-(RE-215) — which is not separately identifiable in RE-234's small,
+the rope-walkway geometry and the archive's one packed
+`G_TEXTURE_GEN_LINEAR` primitive (RE-215), the right-side pink/tan crystal
+cluster per RE-259's later flag-selective draw probe — which is not
+separately identifiable in RE-234's small,
 distant, full-gameplay captures, so this specific ROI has no original-ROM
 counterpart to compare against pixel-for-pixel; its correctness rests on
 T2-T5's source-level and archive-wide measurements instead, as it already

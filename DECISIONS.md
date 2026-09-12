@@ -460,7 +460,10 @@ read by anything.
 
 **Reasoning:** Every regression this project has hit and fixed in `R0.6`/`R0.7`/`R0.10` (RE-039, RE-064, RE-068, RE-073, RE-079, RE-080, RE-092–094, RE-106) was a case of state being dropped, not threaded, before it reached the PSP translation step — never a case of the PSP GE lacking the feature. Optimizing state away before its correctness is established makes the *next* such bug undetectable, because there is nothing left to compare against the original's behaviour.
 
-**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State`, `MeshMaterial`), `crates/ssb-rom/src/pack.rs` (record formats)
+**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State`, `MeshMaterial`),
+`crates/ssb-rom/src/pack.rs` (record formats). The corrective correctness
+gate passed in R2.2/C1–C7 (RE-240–261); R3 may optimize only from that
+adjacent-order, independently-modelled state baseline.
 
 **Reference:** `PLAN.md` R0.16, `docs/rendering.md` "Renderer evolution"
 
@@ -532,11 +535,15 @@ behaviour.
 
 ### D-042: Renderer correctness claims stay provisional until the corrective gate passes
 **Decision:** Existing source-derived renderer implementations and regression
-captures remain usable evidence for their covered paths, but R0/R1 must not be
-declared stable while `PLAN.md` R2.1/R2.2 are open. In particular, do not treat
+captures remain usable evidence for their covered paths, but R0/R1 were not to
+be declared stable while `PLAN.md` R2.1/R2.2 remained open. In particular, do not treat
 primitive-level texgen as globally valid until load-space/normal-transform
 provenance is audited, or treat `G_ZBUFFER` as the complete N64 depth model
 until compare and write state are separated.
+
+**Gate result (RE-261):** R2.1 and R2.2 are complete, so this provisional hold
+is satisfied. It remains the rule for future reopened renderer state, not an
+open blocker on the current R0/R1 evidence.
 
 **Reasoning:** The 2026-09-10 reconciliation found concrete gaps between the
 current implementation and the stronger completion claims: `CacheEntry` does
@@ -545,17 +552,13 @@ global grouping, `MeshMaterial` has one depth bit, and raw GU paths remain
 outside the cache-controlled material path. These are correctness questions,
 not performance work.
 
-**Implementation:** Pending `PLAN.md` R2.1/T1–T10 and R2.2/C1–C7.
-`R2.1`/T1 (RE-225) has now run the load-space/normal-transform provenance
-audit this decision called for: it is **not** invariant. 164 vertex-load
-instances (15 sites, 7 fighter files) reuse a vertex across a parent/child
-joint boundary whose model transform genuinely differs — every real GE
-draw-time texture-matrix resolution in this port on those specific vertices
-disagrees with what real load-time hardware semantics would generate. Fixing
-it needs T2/T3's raw-normal and LookAt-quantization measurements and T4's
-validated regular-texgen CPU reference first, so the finding stands recorded
-here rather than acted on early. Primitive-level texgen (D-039) is unaffected
-— that decision is about mode/scale, not model-space, and remains correct.
+**Implementation:** Complete. R2.1/T1–T10 (RE-225–239) measured and corrected
+texgen semantics; R2.2/C1–C7 (RE-240–261) closed PRIM ownership, lighting
+provenance, independent depth state, submission order and GU cache isolation,
+then passed the integrated regression. T1's 164 cross-node differing-transform
+vertex reuses remain a quantified follow-up, not an unmeasured correctness
+claim. Primitive-level texgen (D-039) is unaffected — that decision concerns
+mode/scale, not model-space, and remains correct.
 
 **Reference:** RE-217, RE-225, `docs/reverse-engineering.md`, `AGENTS.md`
 
@@ -585,7 +588,10 @@ power-of-two allocation — both confirmed by direct code reading, neither
 previously checked against N64 semantics for the specific case each claim
 needs.
 
-**Implementation status:** Pending `PLAN.md` R2.0/P0a–P1.
+**Implementation status:** Complete (`PLAN.md` R2.0/P0a–P2, RE-219–224).
+The result is not blanket equivalence: N64 3-point reconstruction remains an
+accepted PSP fixed-function deviation, while mirror+clamp periods, logical-
+edge padding and CI4 palette-bank handling were measured and corrected.
 
 **Reference:** RE-218, `docs/reverse-engineering.md`. Supersedes the
 unqualified equivalence/completeness conclusions drawn from RE-066, RE-102

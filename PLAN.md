@@ -190,12 +190,11 @@ Remaining renderer work is governed by the rendering milestones below.
 
 # 6. R0 — Rendering Correctness
 
-Status: `VERIFYING` — RE-217 found renderer-model correctness work that
-reopens parts of R0.6, R0.15 and R0.16; RE-218 additionally reopens R0.5's
-filtering and mirror/clamp/mask/POT-padding addressing claims. R2.0 is the
-active first task; R2.1 is the texgen audit queued behind it; R2.2 must
-close the corrective gate before R0/R1 can be treated as stable. R2 remains
-required before R3/combat unlock.
+Status: `VERIFYING` — R2.0's filtering/addressing reopening and R2.1's texgen
+audit are complete (RE-219–239); R2.2's renderer corrective gate is complete
+(RE-240–261). R0.5, R0.6, R0.15 and R0.16 are stable again. R0.10's
+explicitly-scoped material-animation remainder and the physical R2 matrix
+remain; R2 and R3 are still required before combat unlock.
 
 This is the current development gate.
 
@@ -214,17 +213,17 @@ so nothing is duplicated and nothing is missing an owner.
 | Correctness category | Owning task(s) | Status |
 | --- | --- | --- |
 | Geometry (vertex positions/colors/normals, triangle topology, culling, matrix transforms, projection, viewport/scissor, coordinate conventions) | R0.8 (transforms), R0.14 (camera/projection), R0.6 (culling/geometry-mode defaults) | `COMPLETE` |
-| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
-| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
+| N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `COMPLETE` — RE-217's findings closed by R2.2/C1–C7 (RE-240–261) |
+| Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `COMPLETE` — R2.0 (RE-219–224) measured filtering, addressing and remaining `G_SETTILE` fields; N64 three-point vs PSP bilinear is an explicit accepted deviation, while the measurable addressing/palette gaps were fixed |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6 is unblocked (RE-256) and all 15 goldens' diffs are now individually explained (RE-257: 12/15 trace directly to RE-240, 2 unaffected, 1 has an unexplained incidental-prop difference not implicating the tested content) but formal golden refresh, the broader fighter/effect recheck and physical-PSP confirmation remain, C7 remains open |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `COMPLETE` — C1/C2 (RE-240–243) close PRIM ownership and load-time provenance; RE-261 preserves costume light tracks and passes the integrated 16-scene matrix |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `COMPLETE` for `R2.2`/C3 — RE-244 through RE-250 (parts 1-7) built and measured independent `depth_test`/`depth_write`/`depth_mode` fields, traced and seeded every external wrapper found (fighter skeleton, stage render-layer 1, the 11 loading-break transitions, layer 1's list-1 translucent entries), and confirmed the remainder is real archive content, not a missing seed; RE-251 (part 8) wired `psp/src/meshdraw.rs`'s `apply_material` to that state directly (`GuState::DepthTest`/`sceGuDepthMask`, superseding the interim `z_buffer` proxy), measured the golden-scene impact against a same-environment pre/post rebuild (9/13 existing scenes byte-identical, 4 change by a small, visually-explainable, localized amount), and added a self-validating synthetic `depth_mask_diagnostic` regression (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch with PPSSPP evidence (physical-PSP confirmation still open) |
-| Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
+| Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R1 renderer scope `COMPLETE`: transparency, particles, billboards and framebuffer effects pass RE-261; shadows and real UI remain future systems |
 | Visual-regression methodology (deterministic test scenes; reference vs. PPSSPP-software vs. PPSSPP-hardware vs. physical PSP; test matrix) | **R0.17** | `COMPLETE` |
 | Reference-port comparative audit (sf64-psp, oot-PSP) | **R0.18** | `COMPLETE` |
 
-`R0.16`, `R0.17` and `R0.18` are new tasks added below to close the gaps this
+`R0.16`, `R0.17` and `R0.18` were added below to close the gaps this
 table identifies: this project already has extensive, evidence-driven
 per-feature correctness work (`R0.1`–`R0.15`), but no task previously owned
 (a) auditing whether the intermediate representation itself is faithful
@@ -411,7 +410,7 @@ RE-037, RE-057, RE-064, RE-162 in `docs/reverse-engineering.md`.
 
 ## R0.5 — Texture Filtering / LOD / Mipmapping
 
-Status: `VERIFYING` — RE-218 reopened the filtering-equivalence and mirror/
+Status: `COMPLETE` — RE-218 reopened the filtering-equivalence and mirror/
 clamp/mask/POT-padding addressing claims below; RE-219 (`R2.0`/P0a) closed
 filtering with `ACCEPTED_DEVIATION`; RE-220 (`R2.0`/P0b) closed the `mask ==
 0` question (invariant, no fix needed) and measured two real addressing
@@ -619,9 +618,10 @@ RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, 
 
 ## R0.6 — Material System Correctness
 
-Status: `VERIFYING` — prior combiner, lighting and depth evidence remains
-valid for the paths it covered, but RE-217 identifies unverified ownership and
-state-model requirements tracked by R2.2/C1–C3.
+Status: `COMPLETE` — prior combiner evidence remains valid; R2.2/C1–C3
+closed primitive-colour ownership, load-time lighting provenance and
+independent depth compare/write state (RE-240–251), and RE-261's integrated
+regression revalidated the affected paths.
 
 ### Current evidence
 
@@ -2168,9 +2168,9 @@ RE-034, RE-082, RE-084, RE-085, RE-131, RE-150, RE-151 in `docs/reverse-engineer
 
 ## R0.15 — Render-State Isolation
 
-Status: `VERIFYING` — RE-118 closed the known texture-cache bypass; RE-254
-completed the broader direct-GU inventory R2.2/C5 required and found no
-further live bypass.
+Status: `COMPLETE` — RE-118 closed the known texture-cache bypass; RE-254
+completed the broader direct-GU inventory R2.2/C5 required, found no further
+live bypass, and added systematic invalidation at all out-of-band draw paths.
 
 ### Current evidence
 
@@ -2224,7 +2224,8 @@ Rebuilt pack: byte-identical to baseline (5253.2 KiB, same counts —
 test-only change). `cargo psp --release` + `tools/run-ppsspp.sh`: Dream
 Land re-screenshotted clean (pixel-normal, 60 FPS, no panics).
 
-**Not yet covered:** the PSP-side `psp/src/meshdraw.rs::DrawState`'s own
+**Historical gap, now closed by RE-118/RE-254:** the PSP-side
+`psp/src/meshdraw.rs::DrawState`'s own
 GE draw-state cache (`last_texture`/`last_flags`/`last_texture_blend`) is
 a *second* layer this task's "leak between draws" objective also
 touches — RE-074 already found and fixed one real bug there (`bind_texture`
@@ -2290,12 +2291,12 @@ RE-064, RE-074, RE-117, RE-118, RE-254 in `docs/reverse-engineering.md`.
 
 ## R0.16 — N64 Render-State Model Fidelity
 
-Status: `VERIFYING` — RE-122's texture-key fix remains valid; RE-217's
+Status: `COMPLETE` — RE-122's texture-key fix remains valid; RE-217's
 `merge_by_material` non-adjacent-reorder finding is now fixed (RE-252,
 `PLAN.md` R2.2/C4, `COMPLETE`), which also surfaced and fixed a second,
 independent texture-cache-key gap (RE-253) in the same file RE-122 already
-touched. Remaining before this task can close: R2.2/C5's raw-GU-mutation
-inventory.
+touched. RE-254 completed R2.2/C5's raw-GU-mutation inventory and systematic
+cache invalidation; RE-261's integrated matrix found no state-leak regression.
 
 ### Current evidence
 
@@ -2674,12 +2675,10 @@ lead for `R3` once it unblocks.
 
 # 7. R1 — Rendering Completeness
 
-Status: `VERIFYING` — RE-200 established the R1 scene/completeness evidence,
-but RE-217's corrective queue requires the integrated C6 regression pass before
-the rendering gate can treat those goldens as stable.
-
-R1's existing scene evidence remains useful, but no completion claim may
-bypass the reopened R0.6/R0.15/R0.16 work or R2.2/C6.
+Status: `COMPLETE` — RE-200 established the scene/completeness evidence;
+RE-240–260 closed the corrective findings and RE-261's integrated C6 pass
+revalidated all 16 deterministic scenes plus effects, billboards, framebuffer
+transitions and texgen.
 
 ### Objective
 
@@ -2833,11 +2832,10 @@ Demonstrate that every discovered SSB64 rendering path required for the game is 
 
 # 8. R2 — Physical PSP Rendering Validation
 
-Status: `IN_PROGRESS` — representative physical-PSP captures exist, but
-`R2.0` (newly reopened filtering/addressing correctness), the formal texgen
-fidelity gate, and the renderer-corrective gate below all remain open. `R2.0`
-is the current first task; do not resume `R2.1`/T1 or continue into `R2.2`
-until it closes.
+Status: `IN_PROGRESS` — R2.0, R2.1 and R2.2 are complete. Representative
+physical-PSP captures and the full-pack `MEMSIZE=1` proof exist, but the formal
+hardware matrix still lacks PSP-1000 and long-duration/exhaustive coverage;
+that remaining physical validation keeps R3 blocked.
 RE-202 found and fixed a hardware-only crash in the interactive
 viewer's debug HUD (`sceGuDebugFlush`) that RE-201's `regression_capture`
 run never exercised. RE-203 then ran all four golden regression scenes on
@@ -3150,7 +3148,8 @@ archive (0/202) and covered by a synthetic, test-the-test-proven test.
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
 it: raw GEN/LINEAR bits remain independent, LINEAR never enables generation by
-itself, pack version 27 retains texgen scale and tile origin, regular texgen
+itself, pack version 28 retains texgen scale, tile origin and independent depth
+state; regular texgen
 uses the GE texture-matrix path, and linear texgen remains CPU-generated
 through authored UVs until shared equivalence is proven.
 
@@ -3459,18 +3458,14 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 
 ## R2.2 — Second Renderer Corrective Gate (C1–C7)
 
-Status: `IN_PROGRESS` — C1 complete (RE-240); C2 complete (RE-241, RE-242,
+Status: `COMPLETE` — C1 complete (RE-240); C2 complete (RE-241, RE-242,
 RE-243); C3 complete (RE-244–251); C4 complete (RE-252, plus an incidental
 but necessary `tools/romtool` texture-cache-key fix, RE-253, found while
-verifying C4's own golden-scene impact); C5 complete (RE-254). C6 found a
-blocking problem rather than closing clean: RE-255 — the real pack (grown to
-25639.3 KiB by RE-253's own necessary texture-key fix) no longer fits in an
-unmodified-memory-mode PSP's RAM, so every one of the 15 committed goldens'
-on-device capture silently falls back to the M1 milestone tetrahedron
-instead of real ROM content. None of C1–C5's rendering-logic changes are
-currently re-verifiable against real content until this is resolved — see
-RE-255 before resuming C6. C7 remains. Must close before R3 or a stable
-rendering-gate claim. Do not optimize while it is open.
+verifying C4's own golden-scene impact); C5 complete (RE-254); C6 complete
+(RE-255–261, including the `MEMSIZE=1` pack-load fix, physical full-pack load,
+Link costume-light correction and 16-scene/subsystem matrix); C7 complete.
+The corrective gate is closed. R3 remains blocked only by R2's outstanding
+physical-hardware matrix, not by renderer-model uncertainty.
 
 ### C1 — Single-source `prim_color`
 
@@ -3790,7 +3785,7 @@ full per-site inventory table.
 
 ### C6 — Integrated regression
 
-Status: `IN_PROGRESS` — unblocked by RE-256, not yet closed.
+Status: `COMPLETE` — RE-261.
 
 Run the full host suite after C1–C5, rebuild the real pack and record pack
 size, mesh/primitive/draw-run/texture counts, affected vertices and materials.
@@ -3819,32 +3814,59 @@ full evidence chain, including a toolchain near-miss (this session
 accidentally broke and then restored the user's global `cargo-psp` install
 without touching their own git history).
 
-RE-257 then explained every one of the 15 diffs per scene, as this task's
-own acceptance requires: 12 of 15 (all 5 fighters, Stage Sector, Catch
+RE-257 explained 14 of the 15 diffs per scene, and RE-259 closed its one
+remaining question, as this task's own acceptance requires: 12 of 15 (all 5
+fighters, Stage Sector, Catch
 Swirl, Dream Land, all 3 metal-texgen camera/rotation variants) trace
 directly to RE-240's already-verified `PRIM`/lighting fix — either via its
 own 23-file lit-vertex census (Fox/Falcon/Kirby/Ness/DK/Stage-Sector's
 files are all in that list) or its unlit-double-scale mechanism (Catch
 Swirl's flat-colour test, gray→yellow, is the textbook predicted effect).
-2 (`depth_mask_diagnostic`, unaffected) needed no explanation. 1
-(`r2-metal-texgen-linear`) has a genuine, not-yet-explained diff, but it is
-confined to an incidental background prop, not the crystal/texgen content
-the scene exists to test. No new corruption found on any of the 15.
+2 (`depth_mask_diagnostic`, unaffected) needed no explanation. The final
+outlier (`r2-metal-texgen-linear`) is now source-isolated: its changed top
+bar is non-linear geometry whose old texture came from RE-253's narrow-cache
+first-wins collision, with RE-252's former global material sort deciding the
+wrong donor. A skip-linear device diagnostic removes the right-side pink/tan
+crystal cluster while leaving that bar intact, correcting older notes that
+had visually identified the bar itself as the linear primitive. No new
+corruption was found on any of the 15.
 
-**Not yet done, C6 still open:** a deliberate decision on formally
-refreshing the 15 committed golden PNGs (not done here — `AGENTS.md`'s
-"never overwrite goldens blindly"), the broader fighter/effect recheck
-beyond the 5 fighters already covered, physical-PSP confirmation of
-`MEMSIZE`'s real-hardware effect, and `r2-metal-texgen-linear`'s incidental
-prop-texture-clarity difference.
+The user approved the formal golden refresh after the per-scene inspection;
+commit `61d417f` updated 14 PNGs, while the pack-independent depth diagnostic
+remained byte-identical. RE-258 then added the explicitly-required Link scene
+and exposed a white/cream-tunic question. RE-261 traced it to decoded-but-
+discarded fighter `LIGHT1COLOR`/`LIGHT2COLOR` costume tracks, propagated those
+source-authored values, and added the canonical green Link golden.
+
+The installed RE-259 build then loaded the full 25.6 MiB pack from the PSP
+Slim's XMB, physically confirming that `PARAM.SFO`'s `MEMSIZE=1` request fixed
+the real-hardware memory limit. Its apparent animation failure after a few
+actions was RE-260's expected diagnostic freeze: that EBOOT deliberately had
+`regression_capture` enabled, so every simulation and animation mutation stops
+after 240 ticks while rendering continues. The normal, feature-free release
+does not contain that guard.
+
+All 16 deterministic scenes pass after one source-explained 24-pixel Dream
+Land refresh. The broader C6 audit also passes: 46/46 manager effects, 35/35
+transform animations, all 160 particle scripts, 109 billboards with zero
+structural anomalies, all 11 framebuffer transitions, and texgen invariants.
+Pack/build metrics, hashes, the strict-Clippy caveat, and the complete command
+results are recorded in RE-261. C6 is closed.
 
 ### C7 — Reconcile documentation
+
+Status: `COMPLETE` — RE-261 documentation pass.
 
 After C6 update `STATUS.md`, `PLAN.md`, `TODO.md`, rendering/porting/
 reverse-engineering/visual-regression docs and `DECISIONS.md`. Correct claims
 about depth completion, render-state fidelity, primitive sorting, load-time and
 pack/runtime lighting, PRIM ownership and DrawState isolation. Add separate
 evidence entries for independently demonstrated findings.
+
+Reconciled the listed documents, including stale claims that lighting, depth,
+submission order and GE-cache isolation were pending; corrected pack version
+and PSP memory assumptions; resolved RE-258; and kept the remaining physical-
+hardware matrix distinct from the now-closed renderer corrective gate.
 
 Execute C1 → C2 → C3 → C4 → C5 → C6 → C7. Stop progression if normals are
 modified before lighting, PRIM is applied twice, vertex meaning depends on

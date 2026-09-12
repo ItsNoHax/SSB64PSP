@@ -47,6 +47,8 @@ use crate::figatree::{Aobj, Kind};
 pub const TRACK_PRIM: usize = 0;
 pub const TRACK_ENV: usize = 1;
 pub const TRACK_BLEND: usize = 2;
+pub const TRACK_LIGHT1: usize = 3;
+pub const TRACK_LIGHT2: usize = 4;
 const TRACK_COUNT: usize = 5;
 
 /// Joint tracks a command can also name (`nGCAnimTrackMaterialStart`
@@ -110,6 +112,10 @@ pub struct Colors {
     pub prim: Option<[u8; 4]>,
     pub env: Option<[u8; 4]>,
     pub blend: Option<[u8; 4]>,
+    /// Costume-selected `LIGHT_1` directional-source colour.
+    pub light1: Option<[u8; 4]>,
+    /// Costume-selected `LIGHT_2` ambient-source colour.
+    pub light2: Option<[u8; 4]>,
     /// `PaletteID` (joint track [`TRACK_PALETTE_ID`]), cast the same way the
     /// real draw path casts it (`(s32)mobj->palette_id`) — an index into
     /// `MObjSub.palettes[]`, not a colour. RE-096: 45% (200/441) of real
@@ -291,6 +297,8 @@ pub fn colors_at(data: &[u8], script: u32, frame: f32) -> Result<Colors, MatAnim
         prim: read(TRACK_PRIM),
         env: read(TRACK_ENV),
         blend: read(TRACK_BLEND),
+        light1: read(TRACK_LIGHT1),
+        light2: read(TRACK_LIGHT2),
         palette_id,
     })
 }
@@ -790,6 +798,40 @@ mod tests {
         assert!(c.prim.is_some());
         assert_eq!(c.env, None);
         assert_eq!(c.blend, None);
+        assert_eq!(c.light1, None);
+        assert_eq!(c.light2, None);
+    }
+
+    #[test]
+    fn link_light_tracks_select_the_default_green_costume() {
+        // Link's real costume scripts use the two light-colour tracks rather
+        // than PrimColor. These are the exact four source values from file
+        // 324 at 0x4120/0x4158/0x4190/0x421c/0x4254/0x42dc.
+        let both = (1 << TRACK_LIGHT1) | (1 << TRACK_LIGHT2);
+        let d = script(&[
+            cmd(OP_EXT_VAL_AFTER_BLOCK, both, 0),
+            0x144c_1400,
+            0x144c_1400,
+            cmd(OP_EXT_VAL_AFTER_BLOCK, both, 1),
+            0x7366_b300,
+            0x7366_b300,
+            cmd(OP_EXT_VAL_AFTER_BLOCK, both, 1),
+            0x3300_0000,
+            0x3300_0000,
+            cmd(OP_EXT_VAL_AFTER, both, 1),
+            0x0033_6600,
+            0x0033_6600,
+            cmd(OP_WAIT, 0, 98),
+            cmd(OP_END, 0, 0),
+        ]);
+        let at = |costume: f32| {
+            let c = colors_at(&d, 0, costume).unwrap();
+            (c.light1.unwrap(), c.light2.unwrap())
+        };
+        assert_eq!(at(0.0), ([20, 76, 20, 0], [20, 76, 20, 0]));
+        assert_eq!(at(1.0), ([115, 102, 179, 0], [115, 102, 179, 0]));
+        assert_eq!(at(2.0), ([51, 0, 0, 0], [51, 0, 0, 0]));
+        assert_eq!(at(3.0), ([0, 51, 102, 0], [0, 51, 102, 0]));
     }
 
     #[test]
