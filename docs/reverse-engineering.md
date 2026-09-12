@@ -108,30 +108,30 @@ RE-240's real, intentional `PRIM`/lighting fix (single-sourced, normals no
 longer baked as RGB) predates any golden ever being re-baselined against a
 pack that could load at all, so a real, larger-than-RE-251's-own-C3-deltas
 visual difference is expected wherever it applies; (2) RE-251's
-already-documented environment/toolchain drift. A third, newly-noticed,
-small, bounded artifact: a `"FPS: 60.0"` PPSSPP-native debug-stats overlay
-bleeds into captures now that they boot through the user's real,
-persistent `~/.ppsspp` profile rather than a scratch directory -- its
-`iShowStatusFlags`/`iDebugOverlay` trigger was not tracked down (config
-file for it could not be found under `~/.ppsspp`, so it is not a simple
-saved-setting override); confined to a small fixed screen region, it does
-not account for the bulk of any scene's diff but should be suppressed
-before the goldens are formally refreshed.
+already-documented environment/toolchain drift. A third apparent
+contributor, a `"FPS: 60.0"` PPSSPP-native debug-stats overlay, seen in
+this session's own ad hoc manual diagnostic invocations (raw
+`PPSSPPHeadless` calls outside `tools/run-ppsspp-headless.sh`, used to
+verify `MEMSIZE` end-to-end), turned out **not** to affect the real
+harness's own captures at all: `tools/run-ppsspp-headless.sh` now passes
+`--appendconfig` forcing `iShowStatusFlags = 0` defensively, and the
+before/after captures are byte-identical (`cmp`) -- the overlay was
+confined to this session's own manual commands, never present in the
+batch that produced the pixel counts above. Corrected here rather than
+left as a misleading open item.
 
 **Left open, C6 still not closed.** This unblocks C6 (the pack loads, the
 harness works) but does not finish it: the 15 goldens still need
 per-scene re-explanation (or refresh) the way RE-251 did for C3's own
 smaller set, the fighter/effect recheck `PLAN.md` C6 asks for has not
-been done, physical-PSP confirmation of `MEMSIZE`'s real-hardware effect
-is still open (PPSSPP's memory model is a match for Slim/Brite, not proof
-of it), and the `"FPS: 60.0"` overlay should be suppressed first. See
-`PLAN.md` R2.2/C6 for the updated status.
+been done, and physical-PSP confirmation of `MEMSIZE`'s real-hardware
+effect is still open (PPSSPP's memory model is a match for Slim/Brite,
+not proof of it). See `PLAN.md` R2.2/C6 for the updated status.
 
 **Confidence:** High that `MEMSIZE=1` is the correct, standard mechanism
 and that it works end-to-end for this build (measured: PARAM.SFO byte
 contents, the PPSSPP log line, and a real non-fallback capture). Not yet
-measured: real physical-PSP confirmation, or the exact cause of the FPS
-overlay.
+measured: real physical-PSP confirmation.
 
 ---
 

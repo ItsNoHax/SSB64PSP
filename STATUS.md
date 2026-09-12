@@ -31,8 +31,10 @@
   pre-break commit, without touching the user's own checkout/branch state.
   See `docs/reverse-engineering.md` RE-256 for the full evidence chain and
   what C6 still needs (per-scene refresh, fighter/effect recheck,
-  physical-PSP confirmation, an `"FPS: 60.0"` overlay artifact to suppress
-  first).
+  physical-PSP confirmation). A suspected `"FPS: 60.0"` overlay artifact
+  turned out to be confined to this session's own manual diagnostic
+  commands, not the real harness -- corrected in RE-256, not a real
+  follow-up.
 - Previously complete: `RE-255` (2026-09-12) -- `R2.2`/C6 attempt, found the
   blocker RE-256 then fixed: all 15 committed goldens differed from the
   on-device build by 60,000+ pixels each; traced to `assets::load_pack` ->
@@ -367,14 +369,13 @@
   fighter/effect/lighting/texture-blend/translucency/billboard/framebuffer
   recheck `PLAN.md` C6 asks for; (3) physical-PSP confirmation that
   `MEMSIZE=1` actually grants extra RAM on the real Slim unit (PPSSPP's
-  memory model matches Slim/Brite hardware but is not proof of it); (4)
-  suppress the newly-noticed `"FPS: 60.0"` PPSSPP-native overlay artifact
-  in captures before formally refreshing any golden.
+  memory model matches Slim/Brite hardware but is not proof of it).
+  `tools/run-ppsspp-headless.sh` already defensively suppresses a
+  `"FPS: 60.0"` PPSSPP debug-stats overlay via `--appendconfig`, confirmed
+  (RE-256) not to have affected any of the diff counts above -- no action
+  needed there.
 - Blockers: none. New non-blocking follow-ups from this session: (1) the
-  `"FPS: 60.0"` debug-stats overlay now bleeding into headless captures
-  (RE-256) since they boot through the user's real, persistent `~/.ppsspp`
-  profile rather than a scratch directory -- its config trigger was not
-  tracked down; (2) the globally-installed `cargo-psp`/`mksfo`/`pack-pbp`
+  globally-installed `cargo-psp`/`mksfo`/`pack-pbp`
   is now a hybrid build (the user's own fork's pre-`fix-panic-payload-
   nightly` base, plus this session's `MEMSIZE` patch) -- their
   `fix-panic-payload-nightly` branch's own `libunwind`/`PanicPayload` fixes
