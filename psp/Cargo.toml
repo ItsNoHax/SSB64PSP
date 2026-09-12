@@ -89,6 +89,15 @@ regression_capture_scene9 = []
 # as scenes 2-4 and 6-9. Off by default.
 regression_capture_scene10 = []
 
+# R2.2/C6 broader-coverage scene (RE-257): Link, explicitly named in
+# `PLAN.md`'s C6 recheck list alongside Mario/Fox/Kirby/Ness/Captain Falcon
+# but never given a golden. Selects the lower-offset of file 324's symmetric
+# 32-node graph pair (0x3AE8 vs 0x74B0), matching scene10's own convention
+# for picking between a fighter's two `common_parts` skeleton graphs. Same
+# deterministic object-viewer freeze and diagnostic suppression as scenes
+# 2-4 and 6-10. Off by default.
+regression_capture_scene15 = []
+
 # Fidelity probe: StageMetalFile2's first two-node graph (file 117, graph
 # 0x1B10). Exercises real ordinary `G_TEXTURE_GEN` material state without item
 # gameplay. Despite RE-214's original description, this graph's primitives
