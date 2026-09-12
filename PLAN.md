@@ -217,7 +217,7 @@ so nothing is duplicated and nothing is missing an owner.
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state) and C4 (RE-252/RE-253, submission order) are `COMPLETE` — C5–C7 remain open |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6–C7 remain open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `COMPLETE` for `R2.2`/C3 — RE-244 through RE-250 (parts 1-7) built and measured independent `depth_test`/`depth_write`/`depth_mode` fields, traced and seeded every external wrapper found (fighter skeleton, stage render-layer 1, the 11 loading-break transitions, layer 1's list-1 translucent entries), and confirmed the remainder is real archive content, not a missing seed; RE-251 (part 8) wired `psp/src/meshdraw.rs`'s `apply_material` to that state directly (`GuState::DepthTest`/`sceGuDepthMask`, superseding the interim `z_buffer` proxy), measured the golden-scene impact against a same-environment pre/post rebuild (9/13 existing scenes byte-identical, 4 change by a small, visually-explainable, localized amount), and added a self-validating synthetic `depth_mask_diagnostic` regression (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch with PPSSPP evidence (physical-PSP confirmation still open) |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
@@ -2168,9 +2168,9 @@ RE-034, RE-082, RE-084, RE-085, RE-131, RE-150, RE-151 in `docs/reverse-engineer
 
 ## R0.15 — Render-State Isolation
 
-Status: `VERIFYING` — RE-118 closed the known texture-cache bypass, but
-RE-217 found that the broader direct-GU inventory required by R2.2/C5 has not
-been completed.
+Status: `VERIFYING` — RE-118 closed the known texture-cache bypass; RE-254
+completed the broader direct-GU inventory R2.2/C5 required and found no
+further live bypass.
 
 ### Current evidence
 
@@ -2280,11 +2280,11 @@ Ensure render state cannot incorrectly leak between display-list/material/node d
 * [x] culling tracked — same test
 * [x] geometry state tracked — same test (lighting/shading-smooth bits)
 * [x] texture addressing tracked — RE-064's existing test already covers this via whole-`TextureRef` equality (RE-117 documents it explicitly)
-* [ ] state leakage tests added — the decode-time state-threading tests remain valid (RE-117), and RE-118 fixed the known collision/fighter overlay texture-cache bypass. The broader direct-GU inventory and invalidate-all regression required for the PSP-side cache remains open under R2.2/C5.
+* [x] state leakage tests added — the decode-time state-threading tests remain valid (RE-117), RE-118 fixed the known collision/fighter overlay texture-cache bypass, and RE-254 (R2.2/C5) completed the broader direct-GU inventory and added `DrawState::invalidate_all()`.
 
 ### Evidence
 
-RE-064, RE-074, RE-117, RE-118 in `docs/reverse-engineering.md`.
+RE-064, RE-074, RE-117, RE-118, RE-254 in `docs/reverse-engineering.md`.
 
 ---
 
@@ -3754,7 +3754,7 @@ golden scenes byte-identical (RE-252/RE-253 both — see RE-253 for the
 texture-cache-key confound found and fixed while establishing this). See
 RE-252 for full detail.
 
-### C5 — Systematic PSP GE cache isolation
+### C5 — Systematic PSP GE cache isolation — `COMPLETE` (RE-254)
 
 Inventory every raw GU mutation outside `apply_material`, including mesh,
 collision/debug markers, particles, wallpaper/framebuffer, UI/debug and
@@ -3765,6 +3765,22 @@ culling/shading/lighting/light/material, blend, alpha-test, depth test/
 function/write and texgen. Add `DrawState::invalidate_all()` or centralize
 mutations. Regress A→raw draw→A, A→fighter-light setup→A→teardown→A and
 A→2D sprite→A.
+
+RE-254 found exactly one live bypass (`draw_collision`/`draw_fighter` via
+`draw_line_strip`/`draw_triangles`'s raw `Texture2D` disable), already fixed
+by RE-118's `forget_texture`. Every other raw-mutation site
+(`draw_texture_quad`, `draw_particle`, `Gpu::draw_wallpaper_sprite`,
+`normal_diag::draw`, `depth_diag::draw`) is either structurally unreachable
+in the same frame as a `DrawState`-tracked draw (mutually exclusive
+debug-viewer match arms) or the last thing to touch the GE before that
+frame's `end_frame` — a measured negative result, not a bug. Added
+`DrawState::invalidate_all()` (a `forget_texture` superset, deliberately
+excluding `runtime_fighter_light`) and wired it at all five sites as
+hardening against future callers. All 15 golden scenes' reachability
+re-verified by reading `main.rs`'s view-mode flags; the one golden whose
+feature (`depth_mask_diagnostic`) reaches new code was re-captured
+same-environment before/after and is byte-identical. See RE-254 for the
+full per-site inventory table.
 
 ### C6 — Integrated regression
 

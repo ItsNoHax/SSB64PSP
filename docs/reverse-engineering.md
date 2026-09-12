@@ -10,6 +10,116 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-254 — Systematic PSP GE cache isolation inventory: one narrower bypass than `forget_texture` already covered, hardened with `DrawState::invalidate_all` (`PLAN.md` R2.2/C5)
+
+**Question.** `PLAN.md` R2.2/C5 asks for a systematic inventory of every raw
+GU (`sceGu*`) mutation outside `apply_material`, across mesh, collision/
+debug markers, particles, wallpaper/framebuffer, UI/debug and fighter-light
+paths: for each, record the function, the state it changes, which
+`DrawState` cache field (if any) that state corresponds to, whether anything
+invalidates the cache afterward, and whether a `DrawState`-tracked draw
+follows in the same frame (the only way a stale cache entry can actually
+corrupt a render). RE-118 (`PLAN.md` R0.15) already found and fixed one such
+bypass (`draw_line_strip`/`draw_triangles` disabling `GuState::Texture2D`
+directly); the question is whether it is the only one.
+
+**Evidence.** Grepped every `sceGu*`/`sceGum*` call site in `psp/src`
+outside `apply_material` (`psp/src/meshdraw.rs:719`) and classified each by
+which function calls it and whether that function receives a `DrawState`:
+
+| Function | File | State mutated | Cache field | Invalidated? | Draw follows same frame? |
+|---|---|---|---|---|---|
+| `Gpu::init` | `gu.rs` | full pipeline baseline (depth/scissor/cull/shade/etc.) | none (runs before any `DrawState` exists) | n/a | n/a — this *is* the baseline |
+| `Gpu::begin_frame`/`end_frame` | `gu.rs` | clear, finish/sync/swap | none | n/a | `DrawState::begin_frame` already resets the whole cache at the start of every frame (`main.rs:1267`), independent of this |
+| `Gpu::set_perspective`/`reset_modelview`/`set_view`/`model_transform`/`model_matrix` | `gu.rs` | matrix stack only | none (no render-state field tracks matrices) | n/a | matrices are never cached for skip-logic, so nothing to invalidate |
+| `Gpu::draw_wallpaper_sprite` | `gu.rs` | `Texture2D`/`Lighting`/`DepthTest`/`Blend`, tex mode/image/filter/wrap/scale/offset/func | `last_texture`, `last_flags`, `last_texture_mapping` | **was not** — now calls `draw_state.invalidate_all()` at its `wallpaper_sprite_audit_capture` call site (`main.rs`) | no — it is the last draw issued before `end_frame` at every call site that exists; not yet wired into real gameplay (RE-193 remains diagnostic-only) |
+| `Gpu::draw_triangles`/`draw_line_strip` | `gu.rs`, called from `draw_collision`/`draw_fighter` | `Texture2D` only | `last_texture`, `last_texture_mapping` | **yes**, already — `forget_texture()` (RE-118) | yes — `draw_stage_animated` → `draw_collision` → `draw_fighter` share one `DrawState` in `stage_view` (`main.rs:1676-1743`); this is the one bypass that is a live, already-fixed case |
+| `bind_texture`/`apply_texture_mapping` inside `apply_material` | `meshdraw.rs` | texture/CLUT/mapping | all texture fields | n/a — this *is* the cache's own writer | n/a |
+| `bind_texture` + raw `sceGuTexFunc`/`sceGuTexScale` in `draw_texture_quad`/`draw_particle` | `meshdraw.rs` | texture/CLUT, tex func, tex scale | `last_texture`, `last_texture_blend`, `last_texture_mapping` | **was not** — now take `draw_state: &mut DrawState` and call `invalidate_all()` after their draw | no — both only run from mutually exclusive debug-viewer match arms (`tex_view`/`particle_view`/`effect_spawn_view` in `main.rs`'s single `match &pack { .. }`), never in the same frame as another arm's `draw_object_node` |
+| `normal_diag::draw`, `depth_diag::draw` | `normal_diag.rs`, `depth_diag.rs` | entire self-contained scene (clear, matrices, texture, all render flags) | every field | **was not** — now `main.rs` calls `draw_state.invalidate_all()` immediately after each, guarded by the same `cfg` | no — both are called unconditionally after the frame's `match` block, immediately before `gpu.end_frame()`; nothing `DrawState`-tracked runs later in that frame |
+
+**Hypothesis.** Given `DrawState::begin_frame` already clears every cached
+comparison at the start of each frame (`meshdraw.rs:208-223`), the only way a
+raw bypass can actually corrupt a render is *within* one frame, between two
+`DrawState`-tracked draws. Checking every site above against that bar found
+exactly one live case (`draw_collision`/`draw_fighter`, already fixed by
+RE-118) and no others: every other raw-mutation site is either the last
+`DrawState`-relevant thing to happen in its frame, or structurally
+unreachable in the same frame as any `DrawState`-tracked draw (mutually
+exclusive `match` arms). So the inventory's answer is a **measured negative
+result** for new corruption, not a discovered bug.
+
+**Implementation.** `C5` still asks to "add `DrawState::invalidate_all()` or
+centralize mutations" — read as hardening against *future* code (a caller
+that draws a 2D overlay after a diagnostic scene, say) rather than a fix for
+an observed one, since the audit above found none. Added
+`DrawState::invalidate_all()` (`meshdraw.rs`), a superset of `forget_texture`
+covering `last_texture`, `last_flags`, `last_texture_blend`,
+`last_fighter_light_colors`, `last_fighter_material_color` and
+`last_texture_mapping` — deliberately *not* `runtime_fighter_light`, which is
+the caller's own fighter-light context (set/cleared explicitly by
+`configure_fighter_light`/`finish_fighter_light`), not a cached comparison a
+side channel can invalidate; resetting `last_flags` already forces the next
+`LIT` primitive to reissue its flags and re-enable lighting regardless of
+what an intervening raw call did to it. Wired at every raw-mutation site
+found above that lacked it: `draw_texture_quad`/`draw_particle` now take a
+`&mut DrawState` and call `invalidate_all()` after their draw;
+`draw_wallpaper_sprite`'s one call site and `normal_diag::draw`/
+`depth_diag::draw`'s call sites in `main.rs` call it immediately after.
+`forget_texture`'s own narrower scope is left alone at its two existing call
+sites (`draw_collision`/`draw_fighter`) — `draw_line_strip`/`draw_triangles`
+only ever disable `Texture2D`, so the wider reset would be strictly
+unnecessary there.
+
+**Regression coverage.** C5 also asks to regress `A→raw draw→A`,
+`A→fighter-light setup→A→teardown→A` and `A→2D sprite→A`. The
+fighter-light case is already covered structurally: `configure_fighter_light`/
+`finish_fighter_light` reset their own relevant fields directly (predates
+this entry). The `A→raw draw→A`/`A→2D sprite→A` cases have no existing
+golden that exercises them, matching RE-251's own "real, necessary
+correctness fix with no golden yet able to exercise it" shape — every
+current call site of the newly-invalidated functions is provably unreached
+by any of the 15 committed goldens (`draw_texture_quad`/`draw_particle`
+need debug-viewer button state no frozen capture sets; `draw_wallpaper_sprite`/
+`normal_diag`/`depth_diag` have no committed golden at all except
+`depth_mask_diagnostic`, whose one call to `depth_diag::draw` is
+tail-of-frame). No synthetic scene was added this session to force a live
+case, since the audit found none to force — left as a `TODO.md` candidate if
+`draw_wallpaper_sprite` is ever wired into real gameplay (RE-193), which
+would be the first site where this actually matters.
+
+**Verified.** `cargo test --workspace --all-targets` (`SSB64_ROM` set):
+`ssb-rom` 421, `romtool` 23, `ssb-engine` 48, `ssb-game` 120 passed, 0
+failed (unchanged counts — no host-testable code touched). `cargo fmt
+--check`/`cargo clippy --all-targets --release` clean. `psp/`: `cargo psp
+--release` and `--release --features {wallpaper_sprite_audit_capture,
+depth_mask_diagnostic, texgen_normal_diagnostic_0}` all build clean (no new
+warnings). `r2-depth-mask-diagnostic.png`'s scene (the one committed golden
+whose feature reaches new code from this change, via `depth_diag::draw`'s
+new `invalidate_all()` call): a same-environment before/after capture (this
+change vs. `git stash`) is **byte-identical**, 0 differing pixels — the
+predicted no-op. The other 14 committed goldens were not re-captured: their
+own deterministic scenes never reach `draw_texture_quad`, `draw_particle`,
+`draw_wallpaper_sprite`, `normal_diag::draw` or `depth_diag::draw` at all
+(confirmed by reading `main.rs`'s view-mode flags — `tex_view` needs a
+button press, `particle_view`/`effect_spawn_view` need features none of the
+15 goldens enable), so re-capturing them would only re-measure RE-251's
+already-open environment/toolchain golden-drift issue, not this change.
+Rebuilt the plain default (no-feature) EBOOT afterward per this project's
+own convention.
+
+**Confidence:** High for the inventory itself (exhaustive grep over every
+`sceGu*`/`sceGum*` call site in `psp/src`, each one individually traced to
+its caller and cross-checked against `main.rs`'s control flow for same-frame
+reachability). Medium for "no live bug exists": correct as of this
+snapshot's call graph, but the safety is partly structural (match-arm
+mutual exclusivity, tail-of-frame ordering) rather than enforced by a type
+or a test, so a future caller could reintroduce the RE-118 shape without
+`invalidate_all()` failing loudly — exactly what this entry's hardening
+guards against without proving it is currently exercised.
+
+---
+
 ## RE-253 — `tools/romtool`'s texture cache key ignored crop/format/palette-shape state, silently sharing baked texture bytes across primitives with different tile windows
 
 **Question.** While verifying RE-252's `merge_by_material` submission-order
