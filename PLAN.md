@@ -217,7 +217,7 @@ so nothing is duplicated and nothing is missing an owner.
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6 is unblocked (RE-256: `MEMSIZE=1` fixes RE-255's pack-load failure) but not closed — all 15 goldens now show real content but still need per-scene re-explanation/refresh, C7 remains open |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6 is unblocked (RE-256) and all 15 goldens' diffs are now individually explained (RE-257: 12/15 trace directly to RE-240, 2 unaffected, 1 has an unexplained incidental-prop difference not implicating the tested content) but formal golden refresh, the broader fighter/effect recheck and physical-PSP confirmation remain, C7 remains open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `COMPLETE` for `R2.2`/C3 — RE-244 through RE-250 (parts 1-7) built and measured independent `depth_test`/`depth_write`/`depth_mode` fields, traced and seeded every external wrapper found (fighter skeleton, stage render-layer 1, the 11 loading-break transitions, layer 1's list-1 translucent entries), and confirmed the remainder is real archive content, not a missing seed; RE-251 (part 8) wired `psp/src/meshdraw.rs`'s `apply_material` to that state directly (`GuState::DepthTest`/`sceGuDepthMask`, superseding the interim `z_buffer` proxy), measured the golden-scene impact against a same-environment pre/post rebuild (9/13 existing scenes byte-identical, 4 change by a small, visually-explainable, localized amount), and added a self-validating synthetic `depth_mask_diagnostic` regression (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch with PPSSPP evidence (physical-PSP confirmation still open) |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
@@ -3814,16 +3814,29 @@ RE-256 fixed this: `MEMSIZE=1` (a standard PSP homebrew `PARAM.SFO` key
 unlocking Slim/Brite's full 64MiB RAM instead of 32MiB) plus a
 golden-capture-harness fix (`tools/run-ppsspp-headless.sh` now boots an
 installed `PSP/GAME/` layout, the only way `PARAM.SFO` is actually read).
-All 15 goldens now show real content (verified visually for 3 of them), not
-the fallback. Differing-pixel counts against the *committed* goldens are
-much smaller (0–74,045, down from 60,000–110,000+) but not yet individually
-re-explained per scene. **Not yet done, C6 still open:** per-scene
-re-explanation/refresh of all 15 goldens (matching RE-251's own approach for
-C3), the fighter/effect recheck, and physical-PSP confirmation of
-`MEMSIZE`'s real-hardware effect. See RE-256 for the full evidence chain,
-including a
-toolchain near-miss (this session accidentally broke and then restored the
-user's global `cargo-psp` install without touching their own git history).
+All 15 goldens now show real content, not the fallback. See RE-256 for the
+full evidence chain, including a toolchain near-miss (this session
+accidentally broke and then restored the user's global `cargo-psp` install
+without touching their own git history).
+
+RE-257 then explained every one of the 15 diffs per scene, as this task's
+own acceptance requires: 12 of 15 (all 5 fighters, Stage Sector, Catch
+Swirl, Dream Land, all 3 metal-texgen camera/rotation variants) trace
+directly to RE-240's already-verified `PRIM`/lighting fix — either via its
+own 23-file lit-vertex census (Fox/Falcon/Kirby/Ness/DK/Stage-Sector's
+files are all in that list) or its unlit-double-scale mechanism (Catch
+Swirl's flat-colour test, gray→yellow, is the textbook predicted effect).
+2 (`depth_mask_diagnostic`, unaffected) needed no explanation. 1
+(`r2-metal-texgen-linear`) has a genuine, not-yet-explained diff, but it is
+confined to an incidental background prop, not the crystal/texgen content
+the scene exists to test. No new corruption found on any of the 15.
+
+**Not yet done, C6 still open:** a deliberate decision on formally
+refreshing the 15 committed golden PNGs (not done here — `AGENTS.md`'s
+"never overwrite goldens blindly"), the broader fighter/effect recheck
+beyond the 5 fighters already covered, physical-PSP confirmation of
+`MEMSIZE`'s real-hardware effect, and `r2-metal-texgen-linear`'s incidental
+prop-texture-clarity difference.
 
 ### C7 — Reconcile documentation
 
