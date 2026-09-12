@@ -217,7 +217,7 @@ so nothing is duplicated and nothing is missing an owner.
 | N64 render-state model (faithful intermediate representation; must not collapse to `mesh + texture + basic colour`) | **R0.16**, R0.15 (render-state isolation), R0.6 (state threading) | `VERIFYING` — RE-217 / R2.2 |
 | Texture correctness (formats, CI4/CI8, TLUT/palette lifetime, relocation, dimensions, coordinate scaling, filtering, LOD, mipmaps, clamp/mirror/repeat, masks/shifts) | R0.3, R0.4, R0.5, **R2.0** | `VERIFYING` — RE-218 reopened R0.5's filtering and mirror/clamp/mask/POT-padding claims; RE-219 (`R2.0`/P0a) closed the filtering question with `ACCEPTED_DEVIATION`; R2.0/P0b–P1 still own the remaining mirror/clamp/mask/POT-padding/field-census investigation. Format/CI4/CI8/TLUT/relocation/LOD/mipmap conclusions are unaffected and remain `COMPLETE`; RE-201 physical PSP evidence stands for the scene it covers |
 | Combiner correctness (`G_SETCOMBINE` shapes, TEXEL0/TEXEL1/SHADE/PRIMITIVE/ENVIRONMENT, RGB/alpha, interpolation/modulation) | R0.6 | `COMPLETE` for classified static paths; runtime shield colours deferred with their effect path (RE-168) |
-| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6–C7 remain open |
+| Lighting correctness (`G_LIGHTING`, shading, normals, vertex colors, material interaction, ambient/directional lights) | R0.6 / R2.2-C1/C2 | `VERIFYING` for the overall `R2.2` gate; C1 (RE-240, `PRIM` ownership), C2 (RE-241–243, load-time provenance), C3 (RE-244–251, independent depth state), C4 (RE-252/RE-253, submission order) and C5 (RE-254, GE cache isolation) are `COMPLETE` — C6 is `BLOCKED` (RE-255: the real pack no longer fits in PSP RAM, so no golden currently proves anything about C1–C5's rendering correctness), C7 remains open |
 | Alpha/blending correctness (alpha compare/test, source/destination blending, translucent vs. opaque, depth writes, render ordering) | R0.6 | `COMPLETE` for the classified single-cycle formulas (RE-129/130); rare `PRIM_ALPHA` and two-cycle cases remain documented declines |
 | Depth/culling correctness (depth direction/range/function/writes, polygon culling, winding, clipping) | R0.6 / R0.14 / R2.2-C3 | `COMPLETE` for `R2.2`/C3 — RE-244 through RE-250 (parts 1-7) built and measured independent `depth_test`/`depth_write`/`depth_mode` fields, traced and seeded every external wrapper found (fighter skeleton, stage render-layer 1, the 11 loading-break transitions, layer 1's list-1 translucent entries), and confirmed the remainder is real archive content, not a missing seed; RE-251 (part 8) wired `psp/src/meshdraw.rs`'s `apply_material` to that state directly (`GuState::DepthTest`/`sceGuDepthMask`, superseding the interim `z_buffer` proxy), measured the golden-scene impact against a same-environment pre/post rebuild (9/13 existing scenes byte-identical, 4 change by a small, visually-explainable, localized amount), and added a self-validating synthetic `depth_mask_diagnostic` regression (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch with PPSSPP evidence (physical-PSP confirmation still open) |
 | Render-pass completeness (transparency, particles, shadows, framebuffer effects, UI, other passes) | R0.12 (billboards), R0.13 (framebuffer), top-level R1 §7 (completeness gate) | R0.12 and R0.13 `COMPLETE`; particles/shadows/UI not started (see `docs/rendering.md` "Rendering status" table) |
@@ -3462,9 +3462,15 @@ physical and original-Metal gates. Any unavoidable PSP difference needs an
 Status: `IN_PROGRESS` — C1 complete (RE-240); C2 complete (RE-241, RE-242,
 RE-243); C3 complete (RE-244–251); C4 complete (RE-252, plus an incidental
 but necessary `tools/romtool` texture-cache-key fix, RE-253, found while
-verifying C4's own golden-scene impact); C5–C7 remain, depend on R2.1/T1–T10
-(`COMPLETE`). Must close before R3 or a stable rendering-gate claim. Do not
-optimize while it is open.
+verifying C4's own golden-scene impact); C5 complete (RE-254). C6 found a
+blocking problem rather than closing clean: RE-255 — the real pack (grown to
+25639.3 KiB by RE-253's own necessary texture-key fix) no longer fits in an
+unmodified-memory-mode PSP's RAM, so every one of the 15 committed goldens'
+on-device capture silently falls back to the M1 milestone tetrahedron
+instead of real ROM content. None of C1–C5's rendering-logic changes are
+currently re-verifiable against real content until this is resolved — see
+RE-255 before resuming C6. C7 remains. Must close before R3 or a stable
+rendering-gate claim. Do not optimize while it is open.
 
 ### C1 — Single-source `prim_color`
 
@@ -3784,12 +3790,33 @@ full per-site inventory table.
 
 ### C6 — Integrated regression
 
+Status: `BLOCKED` (RE-255).
+
 Run the full host suite after C1–C5, rebuild the real pack and record pack
 size, mesh/primitive/draw-run/texture counts, affected vertices and materials.
 Rerun every deterministic golden and explain every change. Recheck Mario, Fox,
 Kirby, Ness, Captain Falcon and Link plus lighting, texture blend, flat colour,
 translucency, alpha, billboard, framebuffer and effects. Repeat representative
 physical-PSP captures; never overwrite goldens blindly.
+
+Host suite reran clean (421/23/48/120 passed, 0 failed, unchanged since C5).
+The real pack rebuilds byte-identical (meshes 2044, triangles 36772, objects
+374, textures 1762, size 25639.3 KiB — matching RE-253's own numbers, no
+drift across C1–C5). Rerunning all 15 committed goldens found 14 of 15
+differing by 60,000+ pixels each — traced (RE-255) not to a rendering
+regression but to the on-device pack load itself now failing
+(`assets::load_pack` → `AlignedBuf::new` → `LoadError::OutOfMemory`) at the
+pack's current ~25.6MiB size, so every capture is silently the M1 fallback
+tetrahedron instead of real content. This is RE-253's own flagged
+"real-PSP RAM headroom not yet checked" follow-up, now confirmed to fail.
+**C6 cannot meaningfully close, and C1–C5's rendering-logic changes cannot be
+re-verified against real ROM content, until the pack fits in memory again**
+— see RE-255 for the full evidence chain and candidate fixes (extended
+memory on capable hardware only, shrinking the pack, or streaming instead of
+one flat archive). Not decided here; flagged for the user rather than picked
+unilaterally, since it is an architecture trade-off. Physical-PSP captures
+and the fighter/effect recheck are not meaningful to attempt until this
+closes, since the same fallback would appear on real hardware too.
 
 ### C7 — Reconcile documentation
 
