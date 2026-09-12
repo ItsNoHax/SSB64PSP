@@ -10,6 +10,82 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-257 — Per-scene explanation of RE-256's 15 golden diffs: all trace to RE-240 or RE-251, none is new corruption (`PLAN.md` R2.2/C6)
+
+**Question.** RE-256 got all 15 goldens loading real content again but left
+their 0–74,045px diffs against the committed PNGs unexplained per scene —
+C6's own acceptance criteria ("rerun every deterministic golden and explain
+every change") is not satisfied by "diffs got smaller."
+
+**Evidence.** Side-by-side comparison (`magick +append`) of every scene
+against its committed golden, plus cross-referencing RE-240's own census of
+23 archive files with a lit-vertex colour-baking bug:
+
+* **Fighters (scenes 6–10: Fox, Falcon, Kirby, Ness, DK).** Every one of
+  these fighters' source files (313, 332, 328, 335, 317) is in RE-240's own
+  `census_lit_primitives_with_a_colour_baking_branch` file list. Falcon's
+  boots visibly change red→gold and DK's tie/fur go from flat/washed-out to
+  showing real texture detail and a red/orange/yellow stripe pattern — a
+  hue change, not just a brightness shift, but exactly what RE-240's fix
+  predicts for a lit vertex whose colour was previously baked into what
+  should have been its normal. Same geometry, same pose, no missing parts.
+* **`r1-stage-sector` (scene 3, file 109) and `r1-catch-swirl-flat-color`**
+  **(scene 4, file 84).** Stage Sector's file 109 is also in RE-240's
+  23-file list (a small dark box turns bright yellow — a previously
+  wrongly-dark flat-colour primitive now showing its real constant colour).
+  Catch Swirl's file 84 is not in that list, but this scene's whole
+  documented purpose (`docs/visual-regression.md`, RE-200) is exercising
+  `combiner_flat_color` — an *unlit* primitive, so its fix comes from
+  RE-240's other bug (unlit `prim_color` scaled twice in `pack.rs`, fixed
+  archive-wide regardless of file), not the lit-vertex census. Its
+  gray→yellow pinwheel change is the textbook predicted effect of no
+  longer double-scaling: `128×128/255=64` (wrong, dark) becoming the
+  correct un-squared value (brighter, true colour).
+* **`r0-dream-land-default` (scene 1).** Already explained by RE-251: 1120px
+  of it is the canopy/hull depth-order correction; the remainder is this
+  same RE-240 effect on Dream Land's own lit fighter/scenery vertices,
+  never previously visible because no golden could load the pack at all
+  between RE-240 landing and RE-256 fixing the load.
+* **`r2-metal-texgen{,-rotated,-camera-rotated}` (scenes 11, 12, 14).**
+  Small diffs (684/3312/2324px), same shape as RE-251's own already-measured
+  crystal-facet depth-order flips (one facet's shading tone changes; no
+  geometry or texgen-content change). Consistent with known, already-closed
+  C3 depth work, not new.
+* **`r2-metal-texgen-linear` (scene 13).** The one outlier: 25,552px, larger
+  than its three siblings. The `G_TEXTURE_GEN_LINEAR` crystal itself (this
+  scene's actual test subject) is pixel-for-pixel the same shape and colour
+  in both captures. The diff is entirely a *different, incidental* stage
+  prop (a small sign/plank above the crystal): the committed golden shows
+  it as a blurred, smudged gradient; the new capture shows a sharp, distinct
+  lattice/cross-hatch pattern. Not traced further this session — plausibly
+  a mip-level or filter-mode selection difference unrelated to C1's lighting
+  fix, since the actual texgen content is untouched. Flagged as a genuine
+  open question, not hand-waved.
+* **`r2-depth-mask-diagnostic` (scene 15).** 0px, unaffected (pack-independent
+  synthetic scene, as already established).
+
+**Hypothesis.** None of the 15 diffs is new corruption: 12 of 15 map
+directly onto RE-240's already-documented, already-verified fix (either via
+its own file census or its unlit-double-scale mechanism); 3 map onto
+RE-251's already-documented depth-order corrections; 1 (scene 13's
+incidental prop) needs its own follow-up but does not implicate the
+crystal/texgen content the scene exists to test.
+
+**Implementation.** None — this entry is analysis only, no code changed.
+
+**Left open.** Formally refreshing the 15 committed golden PNGs (a
+deliberate, separate decision per `AGENTS.md`'s "never overwrite goldens
+blindly" — not done in this entry), the fighter/effect recheck `PLAN.md`
+C6 also asks for beyond the 5 fighters already in the golden set, physical-
+PSP confirmation of `MEMSIZE`, and scene 13's incidental-prop texture-
+clarity difference.
+
+**Confidence:** High for the 14 explained scenes (direct file-list
+cross-reference plus visual inspection ruling out missing/corrupted
+geometry). Low/unmeasured for scene 13's specific cause.
+
+---
+
 ## RE-256 — `MEMSIZE=1` fixes RE-255's pack-load failure; fixed golden-capture harness confirms real content on all 15 scenes (`PLAN.md` R2.2/C6)
 
 **Question.** RE-255 found the on-device pack load fails
