@@ -1945,6 +1945,22 @@ unsafe fn run() -> ! {
                         } else {
                             false
                         }
+                    } else if cfg!(feature = "regression_capture_scene6") {
+                        // RE-264: the supplied original-game reference shows
+                        // Fox on Sector Z. Use that stage's decompiled
+                        // `MPGroundData.light_angle` so the white directional
+                        // material on his gloves and boots is evaluated under
+                        // the same light rather than the generic viewer's gray
+                        // baked fallback.
+                        if let Some(stage) = (0..p.stage_count())
+                            .filter_map(|i| p.stage(i))
+                            .find(|stage| stage.source_file == 262)
+                        {
+                            draw_state.configure_fighter_light(stage.light_angle_xy);
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         false
                     };

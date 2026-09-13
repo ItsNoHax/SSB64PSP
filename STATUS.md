@@ -3,11 +3,36 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-262 — signed clamped UV lowering`. The missing eyes and
-  related stretched edge texels are corrected in pack v29 without changing the
-  common compact indexed draw path.
-- Current build: RE-262 code, refreshed deterministic goldens, and reconciled
-  renderer evidence; the formal R2 physical-hardware matrix remains primary.
+- Last complete: `RE-264 — fighter light-channel enable and Ness neutral-face
+  reconstruction`. Fox's source-white gloves/boots now receive the missing
+  directional term, and Ness's Kirby-shaped eye artifact is corrected.
+- Current build: RE-264 code, rebuilt v29 pack, refreshed deterministic
+  goldens, and reconciled renderer evidence; the formal R2 physical-hardware
+  matrix remains primary.
+
+## RE-264 result
+
+Fox's materials were already correct in the ROM: white directional light over
+gray ambient. The PSP configured light 0 but never enabled its independent GE
+channel, so only the gray ambient term reached fighters. The runtime now pairs
+`GU_LIGHT0` with the existing global lighting scope, and scene 6 uses Sector
+Z's source angle from file 262. Fox's gloves and boots render white while
+retaining directional shading; Dream Land's Mario and Link lighting were
+refreshed for the same state correction.
+
+Ness's default file-335 texture at `0xB7A0` contains the same single-texel eye
+steps as Kirby. It now receives the same mild, exact-file-and-offset
+reconstruction correction and renders two smooth upright eyes.
+
+- Goldens: Dream Land `4979febc5824...`, Saffron City `de666a5c1b3e...`, Fox
+  `a3fb34835383...`, Ness `5d81b418a8fd...`, Link `1d5ff77266e1...`; all
+  compare exactly to their accepted PPSSPP-software captures.
+- Pack: 26,288,016 bytes,
+  `495a4bcd52f0cfe720d5007a0e9d45b8453e2fb09cb89283993926713a7568db`
+- Normal EBOOT: 5,088,016 bytes,
+  `e8a058b9bb56f54f0773adefde37c37e3f60251cdf9ff2c776ad4f308a5ccf20`
+- Physical PSP confirmation of this corrected light state and Ness texture is
+  still required by R2.
 
 ## RE-262 result
 
@@ -33,8 +58,8 @@ positive coordinates and held the wrong edge texel over one eye.
 ## Integrated verification
 
 - `cargo fmt --all --check`: pass
-- `cargo test --workspace`: 614 passed
-- all 16 deterministic goldens: exact after the explained RE-262 refresh
+- `cargo test --workspace`: 616 passed
+- all 16 deterministic goldens: exact after the explained RE-262–264 refreshes
 - effects: 46/46 manager objects, 35/35 transform animations, 24/26 material
   animations (two documented source-unreachable rest-invisible cases), all
   160 particle scripts
@@ -64,19 +89,19 @@ The formal R2 matrix still needs:
 - broader/exhaustive hardware coverage sufficient to close “no hardware-only
   rendering failures remain”
 - physical confirmation of the synthetic depth-mask diagnostic
-- physical re-capture of representative RE-262 signed-clamp scenes (at least
-  Fox, Link, and one affected stage)
+- physical re-capture of representative RE-262 signed-clamp scenes and RE-264
+  lighting/face changes (at least Fox, Ness, Link, and one affected stage)
 
 These physical requirements keep R3 and combat blocked. There is no remaining
 R2.2 renderer-model blocker.
 
 ## Non-blocking follow-ups
 
-- RE-263 resolves Kirby's false inward eye spikes as a PSP reconstruction
-  artifact, not a mirror-state error. A file-and-offset-scoped mild filter now
-  preserves the ROM face while restoring the original render's oval eyes;
-  scene 8 has a refreshed PPSSPP-software golden. Physical PSP confirmation
-  remains part of R2.
+- RE-263/264 resolve Kirby's and Ness's false inward eye spikes as PSP
+  reconstruction artifacts, not mirror-state errors. File-and-offset-scoped
+  mild filters preserve the ROM faces while restoring the original render's
+  oval eyes; scenes 8 and 9 have refreshed PPSSPP-software goldens. Physical
+  PSP confirmation remains part of R2.
 - T1's 164 cross-node differing-transform vertex reuses remain measured.
 - N64 three-point filtering vs PSP bilinear remains an accepted fixed-function
   deviation (RE-219).

@@ -199,6 +199,9 @@ division FPU trap in `objanim.rs`'s `StageJoint::apply`, the same class
 matches this golden (upscaled 2x nearest-neighbour) with only the expected
 edge-antialiasing band and known overlay regions differing, the same result
 shape RE-203 found for the other four scenes.
+That physical comparison predates RE-264's corrected directional-light state;
+the current golden's 12 changed Mario pixels still require an R2 hardware
+re-capture.
 
 ## Sixth deterministic test scene (RE-207)
 
@@ -209,7 +212,10 @@ freeze, idle-spin freeze, `stage_view` disable and HUD suppression. The graph
 was chosen deliberately, not arbitrarily: it is the exact one RE-152 found
 and fixed a real bug on (a clamp-window coordinate bug that painted Fox's
 lower face solid black), so this scene doubles as a regression check for
-that fix rather than an untested pick.
+that fix rather than an untested pick. RE-264 additionally wraps this scene in
+Sector Z's source light (selected by `StageDesc.source_file == 262`), matching
+the supplied original-game setting and pinning the white directional material
+on Fox's gloves and boots plus the required PSP `GU_LIGHT0` channel enable.
 
 Build and compare:
 
@@ -225,6 +231,8 @@ empty, `main_thread` alive in `thlist`). Native capture matches this golden
 (upscaled 2x nearest-neighbour) with only the expected edge-antialiasing
 band and PPSSPP's own FPS-counter overlay differing — no solid interior
 region of the model differs, confirming RE-152's fix holds on real hardware.
+That physical comparison predates RE-264's corrected directional-light state;
+the current golden still requires an R2 hardware re-capture.
 
 ## Seventh deterministic test scene (RE-208)
 
@@ -290,7 +298,10 @@ alongside Fox, Captain Falcon and Kirby, as a fighter whose surface
 "melted" into rainbow noise under the old per-primitive majority-vote
 lit-vs-literal heuristic — a different bug class than scenes 6-8's
 UV-scale/clamp fix, and the one fighter from RE-103's set still
-hardware-untested.
+hardware-untested. RE-264 later adds the exact `(file 335, offset 0xB7A0)`
+neutral-face reconstruction correction, removing the same inward eye spikes
+RE-263 isolated on Kirby without changing Ness's geometry, UVs, or palette
+selection.
 
 Build and compare:
 
@@ -336,6 +347,8 @@ exceptions, native capture matches this golden (upscaled 2x
 nearest-neighbour) with only the expected edge-antialiasing band, PSPLink's
 status text, and PPSSPP's FPS-counter overlay differing — no solid interior
 region of the model differs.
+That physical comparison predates RE-264's face correction; the current golden
+still requires an R2 hardware re-capture.
 
 ## Eleventh and twelfth deterministic test scenes (RE-214)
 
@@ -565,7 +578,10 @@ Two post-fix captures differ by 0 pixels. The incorrect-blue to canonical-
 green correction changes 7,492 pixels. The accepted golden is
 `tests/golden/r2-link-fighter.png`, SHA-256
 `b2a6763d4670475df115b396773fe3c2a9a7858ee904be9ed223636445124b54`
-after RE-262's later signed-clamp correction restored the second eye.
+after RE-262's later signed-clamp correction restored the second eye. RE-264
+supersedes it with hash `1d5ff77266e193e7012ec4842af4da1305281d781d87c7bf701a743b2a6f0733`
+after enabling the directional light channel that this scene was already
+configured to use.
 
 ## Signed-clamp UV regression refresh (RE-262)
 
@@ -577,7 +593,7 @@ authored-UV primitives and `meshdraw` submits those corners as float UVs.
 The complete PPSSPP-software matrix was rebuilt and visually reviewed. The
 semantic deltas against the pre-fix goldens are:
 
-| Scene | Differing pixels | Current SHA-256 |
+| Scene | Differing pixels | Post-RE-262 SHA-256 |
 |---|---:|---|
 | Dream Land | 23,852 | `06985d0fce8671b6cb1d66018834653b95380ff9a5e8164f429c9a29ebe9e60d` |
 | Opening room | 1,096 | `148d9d1ad9161a988c91d579fa54908424eac471f1272793547e5cda34b8ac59` |
@@ -603,6 +619,33 @@ this refresh. They remain evidence for the renderer state tested at the time,
 but do not validate these 11 current goldens; re-capture is still required by
 R2.
 
+## Fighter light and Ness face regression refresh (RE-264)
+
+`sceGuLight` configures a PSP light but does not enable its independently
+gated channel. Enabling `GU_LIGHT0` restores the directional term to every
+runtime fighter-light scope. Fox's focused scene now uses Sector Z's packed
+source direction, while Dream Land's Mario and Link retain their existing
+source contexts. Ness separately receives the same exact-key, mild face
+reconstruction correction as Kirby.
+
+The PPSSPP-software deltas against the immediately preceding committed
+goldens are:
+
+| Scene | Differing pixels | Current SHA-256 |
+|---|---:|---|
+| Dream Land | 128 | `4979febc58244f9ece07fbfdbb64da4cfa4150b7f0ebea444cc16d86ac6c72e8` |
+| Saffron City | 12 | `de666a5c1b3e3e23dd46a03fbf227f3a5761f3299bb8cbac19b4ff7d3de7e71b` |
+| Fox | 57,220 | `a3fb34835383411ba9b0ad38ce52e008ebb42b195ed3daaa5a5f4edf11ae1a66` |
+| Ness | 8,800 | `5d81b418a8fdf60baf215d2783e540fe0d579ea8b8e5ed4efaab679b03d3604b` |
+| Link | 20,368 | `1d5ff77266e193e7012ec4842af4da1305281d781d87c7bf701a743b2a6f0733` |
+
+Each accepted golden compares at zero differing pixels to its corresponding
+capture. Two independently built Fox and Ness captures are byte-identical.
+Visual inspection confirms that Fox's upward-facing glove/boot surfaces are white
+with shaded facets intact, Ness's eyes are smooth upright ovals, and the
+Dream Land/Saffron City/Link changes are confined to fighter lighting. These
+are PPSSPP results; current physical-PSP confirmation remains required by R2.
+
 ## Texgen and renderer-corrective matrix
 
 Scenes 11–14 prove the current PSP lowering is deterministic and responsive;
@@ -618,7 +661,8 @@ change.
 primitive colour ownership, load-time lighting provenance, independent depth
 writes, adjacent-only primitive merging, PSP GE cache invalidation and fighter
 costume-light propagation. Every semantic golden change was explained before
-acceptance; RE-261 records the final complete-matrix run.
+acceptance; RE-264 records the subsequent focused fighter-light and Ness-face
+refresh while leaving the corrective gate closed.
 
 ## Capture procedure
 
