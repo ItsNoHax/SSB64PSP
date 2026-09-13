@@ -10,6 +10,68 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-262 — Signed clamped UVs require a float-coordinate PSP draw path
+
+**Question.** Why did Fox and Link each lose one eye even though their decoded
+face textures were complete, symmetric images?
+
+**Source and ROM evidence.** Fox file 313 binds the face-eye image at
+`+0x7300` with mirror+clamp S and reaches authored U `-41`; Link file 324
+binds its eye image at `+0xC6E8` with the same addressing mode and reaches U
+`-143`. Independent texture dumps show both eyes in each packed image, and
+the corresponding geometry is symmetric. The existing real-archive
+addressing census also contains 175 mirror+clamp axis instances whose authored
+range crosses below zero, so this is not isolated corrupt fighter data.
+
+**Cause.** N64 vertex UVs are signed S10.5. PPSSPP's
+`VertexDecoderCommon.cpp` decodes `GU_TEXTURE_16BIT` through `u16_le` and
+divides by 32768; this agrees with the PSP format's unsigned interpretation.
+The packed bit pattern for Fox's `-41` therefore became `65495`. Repeat axes
+remain correct because that reinterpretation adds exactly 2048 texels, an
+integer multiple of every power-of-two N64 mask period. Clamp axes do not:
+they hold the opposite edge texel across the affected triangle, hiding one
+eye and stretching blank/incorrect edge colours across other surfaces.
+RE-020's earlier statement that texture coordinates merely share the 16-bit
+normalisation was incomplete because it did not distinguish UV signedness.
+
+**Implementation.** Pack version 29 adds `SIGNED_CLAMP_UV`. The writer marks
+an ordinary authored-UV primitive only when one of its referenced coordinates
+is negative on a clamped axis. `meshdraw` keeps the compact indexed 16-bit path
+for every other primitive; a marked draw expands just its indexed corners in
+the display-list arena and submits the exact signed value through
+`GU_TEXTURE_32BITF`. Texgen remains on its existing paths and repeat-only
+negative coordinates need no fallback.
+
+**Verification.** The focused pack test covers Fox-shaped negative clamp,
+repeat, and texgen cases. The real v29 pack remains 26,254,608 bytes and loads
+cleanly (SHA-256
+`119b856a7e827eaa53436295448132d09849b384eec02c4fb09e51f0e3933384`).
+All 614 workspace tests and `cargo fmt --all --check` pass; the feature-free
+PSP release builds to 5,087,556 bytes (SHA-256
+`1d9d0b3b481683b4701c80c7a397da79c94d07b36fee2a7dc61fbe1b8ae3d113`).
+Two independent Fox captures are byte-identical (SHA-256
+`3196cc914976b273fce444e75deadd5307ced52ac65b735b89ea2f71fabf6a2f`),
+as are two Link captures (SHA-256
+`b2a6763d4670475df115b396773fe3c2a9a7858ee904be9ed223636445124b54`).
+Both fighters now show two eyes, and the same correction restores Fox's
+muzzle, Falcon's face/boots, DK's tie, and coherent stage texels.
+
+The complete 16-scene PPSSPP-software matrix was rebuilt and visually
+reviewed. Eleven source-textured scenes change by an explained 804–23,852
+pixels; the flat-colour scene, all three pure ordinary-texgen controls, and
+the synthetic depth-state diagnostic remain byte-identical. The mixed linear-
+texgen scene changes only on neighboring authored-UV rail primitives, not its
+linear-generated crystal. These refreshed goldens are software evidence;
+physical-PSP re-capture of the affected scenes remains part of R2.
+
+**Conclusion / confidence.** High for the cause and PPSSPP correction: source
+texture/addressing data, GE-format implementation evidence, a focused unit
+test, deterministic captures, and the independent control scenes agree.
+Physical hardware validation is still required before the renderer gate can
+close.
+
+---
+
 ## RE-261 — Fighter costume light tracks restore Link's canonical green tunic and close the integrated renderer regression (`PLAN.md` R2.2/C6)
 
 **Question.** RE-258's generic object-view capture rendered Link's tunic
@@ -9150,7 +9212,9 @@ interprets them as **normalised** fixed point, dividing by 32768. N64
 coordinates in the hundreds therefore became hundredths of a unit, collapsing
 the model to an invisible speck at the origin.
 
-The same applies to `GU_TEXTURE_16BIT`.
+`GU_TEXTURE_16BIT` is also normalised by 32768, but unlike the signed vertex
+position field its value is unsigned. RE-262 records the later-discovered
+signed-clamp consequence and the narrow float-UV fallback.
 
 **Implementation.** A uniform model-matrix scale of 32768 undoes it
 (`meshdraw::MODEL_SCALE`). Precision is unaffected: the coordinates are
@@ -9166,10 +9230,10 @@ point (32 units per texel) converted, giving
 **Confidence: certain.** Directly observed before and after.
 
 **Note on the claim this invalidates:** the 16-bit vertex format was described
-as "free, because the N64 data is already `i16`". It is still a bandwidth win
-(16 bytes versus 24), but it is *not* free — it requires a compensating model
-scale, and any code that mixes 16-bit meshes with float meshes must apply the
-right scale to each.
+as "free, because the N64 data is already `i16`". It remains a bandwidth win
+(the current packed layout is 20 bytes versus 36 with float position/normal/
+UV), but it is *not* free — positions require a compensating model scale, and
+RE-262 later proved signed clamped UVs require a float-coordinate exception.
 
 ---
 

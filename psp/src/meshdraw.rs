@@ -9,10 +9,12 @@
 //! * **Indexed draws.** One `sceGuDrawArray` per primitive, indexing a vertex
 //!   buffer shared by the whole mesh, so the GE's post-transform cache works
 //!   across primitives.
-//! * **16-bit position and UV, signed-byte normals.** `GU_VERTEX_16BIT |
-//!   GU_TEXTURE_16BIT | GU_NORMAL_8BIT` — 20 bytes per vertex. The N64 data
-//!   is already integral, so the narrowing is lossless; preserving normals is
-//!   required for the original per-fighter directional light (RE-164).
+//! * **16-bit position and mostly-16-bit UV, signed-byte normals.** The common
+//!   path is `GU_VERTEX_16BIT | GU_TEXTURE_16BIT | GU_NORMAL_8BIT` at 20 bytes
+//!   per vertex. The GE's texture field is unsigned, however, so primitives
+//!   with a negative authored coordinate on a clamped axis expand transiently
+//!   to float UVs; preserving normals is required for the original per-fighter
+//!   directional light (RE-164).
 //! * **State set only when it changes.** Primitives arrive sorted by material
 //!   from the converter, so tracking the last-applied state turns a per-draw
 //!   cost into a per-material one.
@@ -58,6 +60,33 @@ const VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
 /// is immutable and shared across primitives.
 const UNINDEXED_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
     VertexType::TEXTURE_16BIT.bits()
+        | VertexType::COLOR_8888.bits()
+        | VertexType::NORMAL_8BIT.bits()
+        | VertexType::VERTEX_16BIT.bits()
+        | VertexType::TRANSFORM_3D.bits(),
+);
+
+/// Transient layout for the one case `GU_TEXTURE_16BIT` cannot represent:
+/// signed N64 UVs below zero on a clamped axis. Positions and normals retain
+/// their compact native formats; only the two texture coordinates expand.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct FloatUvVertex {
+    u: f32,
+    v: f32,
+    color: u32,
+    nx: i8,
+    ny: i8,
+    nz: i8,
+    _normal_pad: u8,
+    x: i16,
+    y: i16,
+    z: i16,
+    _tail_pad: i16,
+}
+
+const FLOAT_UV_VERTEX_FORMAT: VertexType = VertexType::from_bits_truncate(
+    VertexType::TEXTURE_32BITF.bits()
         | VertexType::COLOR_8888.bits()
         | VertexType::NORMAL_8BIT.bits()
         | VertexType::VERTEX_16BIT.bits()
@@ -1034,8 +1063,54 @@ pub unsafe fn draw_mesh(
             .flatten()
             .filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
+        let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
 
-        if effect_colors.is_some() || linear_texgen {
+        if signed_clamp_uv {
+            // N64 authored UVs are signed S10.5. The GE's 16-bit texture
+            // field is *unsigned*, so a negative value such as Fox's -41 is
+            // decoded as 65495 and Clamp samples the far edge across most of
+            // the triangle. Preserve the exact signed value through the GE's
+            // float texture-coordinate format. `apply_texture_mapping` keeps
+            // the same 1024/dimension scale, so divide by the integer path's
+            // 32768 normalisation here and no other state changes.
+            let bytes = p.index_count as usize * core::mem::size_of::<FloatUvVertex>();
+            let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut FloatUvVertex;
+            for (corner, raw_index) in indices.chunks_exact(2).enumerate() {
+                let index = u16::from_le_bytes([raw_index[0], raw_index[1]]) as usize;
+                let source_offset = index * core::mem::size_of::<PackedVertex>();
+                let mut source = verts
+                    .get(source_offset..source_offset + core::mem::size_of::<PackedVertex>())
+                    .map(|bytes| *(bytes.as_ptr() as *const PackedVertex))
+                    .unwrap_or_default();
+                if let Some(colors) = effect_colors {
+                    source.color = colors.vertex_color(
+                        source.color,
+                        p.flags & flags::FLAT_COLOR != 0,
+                        p.flags & flags::TEXTURE_BLEND != 0,
+                    );
+                }
+                dynamic.add(corner).write(FloatUvVertex {
+                    u: source.u as f32 / VERTEX_16BIT_DIVISOR,
+                    v: source.v as f32 / VERTEX_16BIT_DIVISOR,
+                    color: source.color,
+                    nx: source.nx,
+                    ny: source.ny,
+                    nz: source.nz,
+                    _normal_pad: 0,
+                    x: source.x,
+                    y: source.y,
+                    z: source.z,
+                    _tail_pad: 0,
+                });
+            }
+            sys::sceGumDrawArray(
+                GuPrimitive::Triangles,
+                FLOAT_UV_VERTEX_FORMAT,
+                p.index_count as i32,
+                core::ptr::null(),
+                dynamic as *const c_void,
+            );
+        } else if effect_colors.is_some() || linear_texgen {
             // `sceGuGetMemory` allocates from the current display-list arena,
             // whose lifetime already matches this asynchronous GE submission.
             // Expanding the indexed corners avoids mutating shared pack data

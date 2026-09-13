@@ -26,7 +26,11 @@ Permanent technical decisions recovered from the repository. Each entry records 
 **Reasoning:**
 - PSP CPU is the bottleneck; bandwidth matters
 - N64 vertex cache (32 entries) forces re-uploads; indexing at build time gives 2.09x reuse
-- 16-bit vertex components (positions already `i16`, UVs S10.5) map to `GU_VERTEX_16BIT` / `GU_TEXTURE_16BIT` directly — 12 bytes vs 24 per vertex
+- Positions and most UVs stay in compact 16-bit GE fields. N64 S10.5 UV
+  storage is signed while `GU_TEXTURE_16BIT` is unsigned, so primitives with
+  negative coordinates on clamped axes are marked at pack time and expanded
+  transiently to float UVs; the common indexed path remains 20 bytes per
+  vertex instead of 36 (RE-262).
 - Material merging at build time reduces GE state changes
 
 **Implemented:** `crates/ssb-rom/src/texture.rs`, `psp_texture.rs`, `mesh.rs`, `pack.rs`

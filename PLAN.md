@@ -596,7 +596,7 @@ Determine and reproduce the actual texture sampling behavior used by SSB64.
 * [x] mipmapping behavior identified — RE-127: same measurement; `G_MDSFT_TEXTDETAIL` is 121/121 `G_TD_CLAMP` (zero `G_TD_SHARPEN`/`G_TD_DETAIL`), the mode that would make mip-tile blending meaningful even if `G_TL_LOD` were active — traditional N64 mipmapping is never used by this game's content
 * [x] `mask == 0` N64 semantics verified — RE-220 (`R2.0`/P0b): transcribed `angrylion-rdp-plus`'s forced-clamp rule (`clampens = cs || !mask_s`) and censused every real drawn primitive archive-wide; zero of 4,968 possible axis slots have `mask_s == 0`/`mask_t == 0`, so the rule never has an observable effect on this ROM's content — pinned with a test
 * [x] `G_SETTILE`'s `palette`/`line`/`tmem`/`shift_s`/`shift_t` fields censused — RE-223 (`R2.0`/P1): 2,238 real render-tile-0 instances archive-wide. `shift_s`/`shift_t`/`tmem` measure zero (`tmem`/`line` also structurally unconsumed, since conversion reads texels straight from ROM, never through TMEM), all pinned. `palette` was a real, material gap — 7/1,948 CI4 instances (file 86, `ITCommonObject`) request bank 1 of a 48-entry loaded TLUT that `mesh.rs` used to always resolve as bank 0; RE-224 (`R2.0`/P2) fixed it, confirmed by two host tests built from RE-223's own measured real shape (PPSSPP visual confirmation not obtained — see RE-224)
-* [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and found the remaining coordinate bug: ordinary clamped tiles with nonzero `G_SETTILESIZE` origins retained absolute N64 UVs after upload to a zero-origin PSP texture. Clamped axes now subtract the tile origin while repeat axes preserve absolute mask phase; focused tests and a PPSSPP before/after confirm the fix
+* [x] texture coordinate behavior verified — RE-128: `TEXVIEW`, the debug viewer's direct texture-display mode (bypasses lighting/geometry entirely), confirms in PPSSPP that Fox's real face texture (index 550) and Kirby's real face texture (index 734) both match `romtool texdump`'s independent reference decode exactly. RE-152 then geometrically isolated Fox's black lower face to primitive 4 / texture 551 and fixed the nonzero clamp-window origin. RE-262 found the remaining missing-eye cause: the GE reads `GU_TEXTURE_16BIT` as unsigned even though N64 S10.5 UVs are signed. Pack v29 marks negative clamped coordinates for an exact float-UV fallback while repeat axes keep the compact path; a focused test and the complete deterministic PPSSPP matrix verify the correction
 * [x] wrap/clamp/mirror behavior verified — RE-067: `Mirror` (29% of packed textures) is exactly reproduced by pre-baking; RE-102 corrected RE-066's own "`Repeat` is correct for every case" conclusion — real hardware clamps on several fighters' face/torso/head textures where RE-044's mask-based narrowing is a no-op, now reproduced via `TextureDesc::wrap`/`sceGuTexWrap(Clamp, ...)` per axis. RE-220 (`R2.0`/P0b) built the full reference model RE-218 asked for and found two real, material gaps: mirror+clamp addressing diverging from real hardware past the first mirrored period (99/810 real axis instances, 12.22%), and PSP's zero-filled power-of-two texture padding corrupting bilinear sampling near a clamped non-POT logical edge (347/456 real axis instances, 71.4%). RE-221 (`R2.0`/P0c) closed the first: `texture::mirror_extend` now bakes every mirrored period the drawn rect spans instead of always exactly two; re-measured archive-wide divergence is 0/810. RE-222 (`R2.0`/P0d) closed the second: `pad_edge_repeat`/`pad_edge_repeat_nibbles` fill padding with the repeated edge instead of zeros, no-op on an already-POT texture and never touching a mirrored axis by construction
 * [x] Dream Land canopy discrepancy resolved — RE-201: direct 480×272 PSP Slim framebuffer capture under PSPLink matches the documented deterministic Dream Land canopy composition; prior FPU-trap faults in material/joint animation were fixed before capture
 * [x] no unsupported mipmapping assumptions remain — RE-127: `G_TEXTURE`'s `level` field is nonzero in 241 real asset display lists, which looked like a missed signal, but is confirmed inert (never consumed) since neither `G_TL_LOD` nor `G_TD_SHARPEN`/`G_TD_DETAIL` is ever active archive-wide; this project's own PSP-side `pack_mipped`/`sceGuTexLevelMode(Auto)` mip chains are a deliberate anti-aliasing technique (RE-053/070), independently justified, not an attempt to reproduce a real N64 mechanic that turns out not to exist
@@ -608,11 +608,15 @@ it with correct coordinates. Primitive isolation identified head primitive 4
 absolute window beginning at `(95.5, 143)` texels; the PSP texture begins at
 zero, so the old absolute UVs clamped to a black edge texel. Rebase now occurs
 per clamped axis. This was a texture-coordinate lowering defect, not evidence
-of a primitive-colour or lighting failure.
+of a primitive-colour or lighting failure. RE-262 subsequently corrected the
+separate signed-UV/unsigned-GE mismatch that hid one eye and stretched other
+clamped edge texels.
 
 ### Evidence
 
-RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102, RE-127, RE-128, RE-152, RE-169, RE-218 in `docs/reverse-engineering.md`.
+RE-044, RE-053, RE-066, RE-067, RE-070, RE-075, RE-081, RE-101, RE-102,
+RE-127, RE-128, RE-152, RE-169, RE-218, RE-262 in
+`docs/reverse-engineering.md`.
 
 ---
 
@@ -3148,8 +3152,8 @@ archive (0/202) and covered by a synthetic, test-the-test-proven test.
 This queue is authoritative for closing `G_TEXTURE_GEN` and
 `G_TEXTURE_GEN_LINEAR`. Preserve the current known-good behavior while doing
 it: raw GEN/LINEAR bits remain independent, LINEAR never enables generation by
-itself, pack version 28 retains texgen scale, tile origin and independent depth
-state; regular texgen
+itself, pack version 29 retains texgen scale, tile origin, independent depth
+state, and the signed-clamp UV marker; regular texgen
 uses the GE texture-matrix path, and linear texgen remains CPU-generated
 through authored UVs until shared equivalence is proven.
 

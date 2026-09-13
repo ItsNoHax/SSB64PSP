@@ -157,7 +157,13 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    `ZMODE`, independent of `Z_BUFFER` (`G_ZBUFFER`). A v27 pack has only
 ///    `Z_BUFFER` and cannot distinguish real depth-test-without-write
 ///    translucency from ordinary opaque depth-tested geometry.
-pub const VERSION: u32 = 28;
+/// 29 adds `flags::SIGNED_CLAMP_UV`: the N64's authored S10.5 coordinates are
+///    signed, while the PSP GE reads `GU_TEXTURE_16BIT` as unsigned. Repeat
+///    axes preserve their phase across the unsigned wrap, but a negative
+///    coordinate on a clamped axis becomes a large positive value and clamps
+///    to the wrong edge. Marking the affected primitive selects the exact
+///    float-UV draw path on device; a v28 pack cannot identify those draws.
+pub const VERSION: u32 = 29;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -221,8 +227,10 @@ impl Header {
 /// exactly that order. Reordering renders garbage with no error.
 ///
 /// 20 bytes, against 36 with float position, normal, and UV. N64 data is
-/// already `i16` positions, signed-byte normals and S10.5 UVs, so narrowing
-/// is lossless.
+/// already `i16` positions, signed-byte normals and S10.5 UVs, so pack-time
+/// storage is lossless. The PSP GE interprets `GU_TEXTURE_16BIT` as unsigned,
+/// however; [`flags::SIGNED_CLAMP_UV`] selects transient float UVs where that
+/// interpretation would change clamped addressing.
 ///
 /// Colour stays 8888 rather than dropping to 5551 (which would fit in 12
 /// bytes): when a material is lit these bytes carry a packed *normal*, and
@@ -335,6 +343,14 @@ pub mod flags {
     pub const DEPTH_MODE_BIT0: u32 = 1 << 17;
     /// RE-244: `ZMODE`'s high bit; see [`DEPTH_MODE_BIT0`].
     pub const DEPTH_MODE_BIT1: u32 = 1 << 18;
+    /// At least one authored coordinate used by this primitive is negative on
+    /// an axis whose texture clamps. N64 S10.5 UVs are signed, but the PSP's
+    /// `GU_TEXTURE_16BIT` format is unsigned; the device must expand this
+    /// primitive to float UVs instead of reinterpreting the sign bit.
+    ///
+    /// Repeat axes need no fallback: the unsigned reinterpretation adds 2048
+    /// texels, an exact multiple of every power-of-two N64 mask period.
+    pub const SIGNED_CLAMP_UV: u32 = 1 << 19;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -1763,6 +1779,24 @@ impl PackWriter {
             }
             if m.light2_color.is_some() {
                 f |= flags::LIGHT2_COLOR;
+            }
+            // The GE decodes GU_TEXTURE_16BIT as unsigned (`u16 / 32768`),
+            // whereas the N64 vertex format is signed S10.5. Reinterpreting a
+            // negative coordinate is harmless on a repeat axis because the
+            // added 2048 texels preserve every power-of-two mask phase, but a
+            // clamped axis jumps to the opposite edge (Fox/Link lose one eye).
+            // Texgen ignores authored UVs, so only ordinary mapping is marked.
+            if m.texture_gen == crate::mesh::TextureGen::None {
+                if let Some(t) = m.texture.or(m.texture_shape) {
+                    let needs_float_uv = p.indices.iter().any(|&index| {
+                        mesh.vertices.get(index as usize).is_some_and(|v| {
+                            (t.clamp_s && v.uv[0] < 0) || (t.clamp_t && v.uv[1] < 0)
+                        })
+                    });
+                    if needs_float_uv {
+                        f |= flags::SIGNED_CLAMP_UV;
+                    }
+                }
             }
             // The PSP's cutout approximation is `alpha > 0`. Therefore an
             // alpha threshold at any nonzero reference already satisfies both
@@ -3320,6 +3354,65 @@ mod tests {
 
         let idx = pack.indices(&p).unwrap();
         assert_eq!(idx, &[0, 0, 1, 0, 2, 0]); // little-endian u16
+    }
+
+    #[test]
+    fn marks_negative_authored_uv_only_on_a_clamped_axis() {
+        let texture = crate::mesh::TextureRef {
+            data_file: None,
+            data_offset: 0x100,
+            format: crate::texture::Format::Rgba,
+            size: crate::texture::BitSize::Bits16,
+            width: 32,
+            height: 32,
+            palette_file: None,
+            palette_offset: None,
+            palette_entries: 0,
+            palette: 0,
+            mirror_s: true,
+            mirror_t: false,
+            clamp_s: true,
+            clamp_t: false,
+            framebuffer: false,
+            origin_s: 0,
+            origin_t: 0,
+            mask_s: 5,
+            mask_t: 5,
+            drawn_width: 64,
+            drawn_height: 32,
+        };
+
+        let packed_flags = |texture, mode| {
+            let mut mesh = sample_mesh();
+            mesh.vertices[0].uv = [-41, 64];
+            mesh.primitives[0].material.texture = Some(texture);
+            mesh.primitives[0].material.texture_gen = mode;
+            let mut w = PackWriter::new();
+            w.add_mesh(&mesh, 313, 0x1ED8, |_| Some(7), |_| None);
+            let bytes = w.finish();
+            Pack::open(&bytes).unwrap().prim(0).unwrap().flags
+        };
+
+        assert_ne!(
+            packed_flags(texture, crate::mesh::TextureGen::None) & flags::SIGNED_CLAMP_UV,
+            0,
+            "Fox's negative U on a clamped face tile needs float UVs"
+        );
+
+        let repeat = crate::mesh::TextureRef {
+            clamp_s: false,
+            ..texture
+        };
+        assert_eq!(
+            packed_flags(repeat, crate::mesh::TextureGen::None) & flags::SIGNED_CLAMP_UV,
+            0,
+            "unsigned wrap preserves a repeat axis's power-of-two mask phase"
+        );
+        assert_eq!(
+            packed_flags(texture, crate::mesh::TextureGen::Regular) & flags::SIGNED_CLAMP_UV,
+            0,
+            "texgen does not consume authored UVs"
+        );
     }
 
     #[test]
