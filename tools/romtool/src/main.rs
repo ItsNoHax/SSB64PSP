@@ -7873,12 +7873,16 @@ mod tests {
             "a default (empty) census should have no correctness-critical violations"
         );
 
-        let mut mode_mismatch = TexgenCensus::default();
-        mode_mismatch.load_draw_mode_mismatch = 1;
+        let mode_mismatch = TexgenCensus {
+            load_draw_mode_mismatch: 1,
+            ..TexgenCensus::default()
+        };
         assert!(!verify_texgen(&mode_mismatch).is_empty());
 
-        let mut scale_mismatch = TexgenCensus::default();
-        scale_mismatch.load_draw_scale_mismatch = 1;
+        let scale_mismatch = TexgenCensus {
+            load_draw_scale_mismatch: 1,
+            ..TexgenCensus::default()
+        };
         assert!(!verify_texgen(&scale_mismatch).is_empty());
 
         let mut nonzero_shift = TexgenCensus::default();
