@@ -72,6 +72,9 @@ R2.2 renderer-model blocker.
 
 ## Non-blocking follow-ups
 
+- RE-263 checked the reported mirrored-looking Kirby eyes against file 328's
+  ROM texture and resolved tile state. Both mirror flags are clear and U runs
+  left-to-right; the symmetry is source-authored, so no renderer fix applies.
 - T1's 164 cross-node differing-transform vertex reuses remain measured.
 - N64 three-point filtering vs PSP bilinear remains an accepted fixed-function
   deviation (RE-219).

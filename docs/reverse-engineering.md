@@ -10,6 +10,35 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-263 — Kirby's mirrored-looking eyes are source-authored, not a tile-mirroring error
+
+**Question.** The default Kirby capture makes the two eye shapes look like
+reflections of one another. Is the PSP path mirroring the face texture
+incorrectly?
+
+**ROM and decompilation evidence.** Kirby file 328's default 32x32 CI4 face
+texture is `dKirbyModel_Tex_0x1CF60` (`+0x1CF60`) in the decompilation and in
+the ROM. The decoded texture itself contains both eyes in the reported
+mirrored-looking arrangement. The primitive that places it on Kirby's head
+has `mirror_s = false` and `mirror_t = false`; both axes are ordinary clamped
+32-texel tiles (`mask_s = mask_t = 5`). Its authored U coordinates also run
+monotonically across the model: representative left/right vertices at model
+X `-140`/`+140` carry rebased U `-319`/`1341`, rather than a reversed mapping.
+
+**Verification.** The archive-wide authored-UV addressing census still reports
+zero divergences between the N64 addressing reference and the current PSP
+lowering across all 816 mirror+clamp axis instances. The focused signed-clamp
+pack test also passes. The diagnostic instrumentation used to print Kirby's
+resolved `TextureRef` and vertices was removed after inspection; the worktree
+contains no product-code change from this investigation.
+
+**Conclusion / confidence.** High: neither texture axis is mirrored by render
+state and the UV direction is not reversed. Changing one eye independently
+would edit source artwork rather than reproduce original ROM behavior, so no
+renderer or asset-pipeline change is appropriate.
+
+---
+
 ## RE-262 — Signed clamped UVs require a float-coordinate PSP draw path
 
 **Question.** Why did Fox and Link each lose one eye even though their decoded
