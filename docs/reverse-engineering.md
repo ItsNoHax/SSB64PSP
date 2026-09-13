@@ -10,32 +10,57 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
-## RE-263 — Kirby's mirrored-looking eyes are source-authored, not a tile-mirroring error
+## RE-263 — Kirby's false eye spikes are a PSP texture-reconstruction artifact
 
-**Question.** The default Kirby capture makes the two eye shapes look like
-reflections of one another. Is the PSP path mirroring the face texture
-incorrectly?
+**Question.** The default Kirby audit capture turns the tops of both eyes into
+inward-pointing “M” shapes. Is the face texture mirrored, is the wrong fighter
+detail graph selected, or is this a PSP reconstruction difference?
 
-**ROM and decompilation evidence.** Kirby file 328's default 32x32 CI4 face
-texture is `dKirbyModel_Tex_0x1CF60` (`+0x1CF60`) in the decompilation and in
-the ROM. The decoded texture itself contains both eyes in the reported
-mirrored-looking arrangement. The primitive that places it on Kirby's head
-has `mirror_s = false` and `mirror_t = false`; both axes are ordinary clamped
-32-texel tiles (`mask_s = mask_t = 5`). Its authored U coordinates also run
-monotonically across the model: representative left/right vertices at model
-X `-140`/`+140` carry rebased U `-319`/`1341`, rather than a reversed mapping.
+**Source evidence.** Kirby file 328's default face is the 32x32 CI4
+`dKirbyModel_Tex_0x1CF60` at `+0x1CF60`, selected by texture ID zero exactly as
+`gcAddMObj` and `ftManagerMakeFighter` initialise it. The high-detail fighter
+graph is `+0x1448`; substituting the low-detail `+0x2CD0` graph made the audit
+render worse and was reverted. The face primitive has `mirror_s = false` and
+`mirror_t = false`, both axes clamp with a 32-texel period, and U runs
+left-to-right across the model. The report was therefore not a literal mirror
+state bug.
 
-**Verification.** The archive-wide authored-UV addressing census still reports
-zero divergences between the N64 addressing reference and the current PSP
-lowering across all 816 mirror+clamp axis instances. The focused signed-clamp
-pack test also passes. The diagnostic instrumentation used to print Kirby's
-resolved `TextureRef` and vertices was removed after inspection; the worktree
-contains no product-code change from this investigation.
+The decoded source pixels do contain one-texel stair steps around the white
+highlights. On the original game's 1P character-select render those reconstruct
+as two smooth, upright ovals; the same is visible in the supplied original-game
+reference. In the PSP audit render, level-zero linear magnification exposes the
+individual steps as dark inward spikes. Point-filter and low-detail A/Bs both
+made the artifact more pronounced. This is a concrete instance of RE-219's
+measured N64 three-point-versus-PSP bilinear deviation, amplified by a tiny,
+high-contrast face texture.
 
-**Conclusion / confidence.** High: neither texture axis is mirrored by render
-state and the UV direction is not reversed. Changing one eye independently
-would edit source artwork rather than reproduce original ROM behavior, so no
-renderer or asset-pipeline change is appropriate.
+**Implementation.** `tools/romtool` now identifies the exact resolved texture
+key `(file 328, offset 0x1CF60)` and applies a mild centre-weighted 3x3
+reconstruction filter before mirroring/padding: the authored centre texel keeps
+24/32 of the result and each neighbour contributes 1/32. The corrected image
+is packed as unquantized `Psm8888`, preserving the interpolated edge colours
+that CI4 requantization would discard. This changes no geometry, UV, mirror,
+or source-art selection, and the resolved file ID prevents another archive
+file with the same local offset from receiving the correction. The existing
+Dream Land exceptions retain their stronger box filter through the same typed
+correction table.
+
+**Verification.** The real pack still contains 2,044 meshes, 36,772 triangles,
+8,169 draws, and 1,762 textures. Five packed crop/wrap variants of Kirby's
+shared neutral image now carry corrected RGBA mip chains (`748 -> 753` mipped
+textures); pack size rises by 23.3 KiB (`25,639.4 -> 25,662.7 KiB`) and reload
+verification passes. The focused filter unit test pins flat-image identity and
+the 24:1 centre/neighbour weights. The refreshed scene-8 PPSSPP-software capture
+changes 13,956 pixels, removes both false spikes, keeps the black outlines and
+blue lower halves, and compares byte-identically to the new golden (SHA-256
+`b9f33479ae5dc5b95defaa98e6a9a39cebe287ae8f846a721f0e1783efa0ca44`).
+This remains emulator evidence; physical-PSP confirmation is still required by
+the R2 gate.
+
+**Confidence.** High on diagnosis and the bounded visible correction: ROM,
+decompilation, original-ROM capture, texture dump, and PSP A/Bs agree. This is
+an approximation of the unavailable N64 reconstruction filter, not a claim of
+pixel-exact RDP emulation.
 
 ---
 

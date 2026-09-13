@@ -227,6 +227,39 @@ pub fn box_blur_wrapped(img: &Rgba8) -> Rgba8 {
     out
 }
 
+/// Applies a mild centre-weighted reconstruction filter, wrapping at texture
+/// edges. Unlike [`box_blur_wrapped`], the source texel keeps three quarters
+/// of the weight, so sharp authored details remain legible while single-texel
+/// stair steps are softened.
+pub fn mild_filter_wrapped(img: &Rgba8) -> Rgba8 {
+    let (w, h) = (img.width, img.height);
+    let mut out = Rgba8::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = [0u32; 4];
+            for dy in [h - 1, 0, 1] {
+                for dx in [w - 1, 0, 1] {
+                    let px = img.get((((y + dy) % h) * w + (x + dx) % w) as usize);
+                    let weight = if dx == 0 && dy == 0 { 24 } else { 1 };
+                    for (a, p) in acc.iter_mut().zip(px) {
+                        *a += p as u32 * weight;
+                    }
+                }
+            }
+            out.put(
+                (y * w + x) as usize,
+                [
+                    (acc[0] / 32) as u8,
+                    (acc[1] / 32) as u8,
+                    (acc[2] / 32) as u8,
+                    (acc[3] / 32) as u8,
+                ],
+            );
+        }
+    }
+    out
+}
+
 /// Expands an RGBA5551 texel. The single alpha bit becomes 0 or 255.
 ///
 /// Channels are widened by bit replication (`c << 3 | c >> 2`) rather than a
@@ -540,6 +573,22 @@ mod tests {
         for i in 0..9 {
             assert_eq!(out.get(i), [42, 100, 200, 255]);
         }
+    }
+
+    #[test]
+    fn mild_filter_preserves_flat_images_and_weights_the_center() {
+        let mut flat = Rgba8::new(3, 3);
+        for i in 0..9 {
+            flat.put(i, [42, 100, 200, 255]);
+        }
+        assert_eq!(mild_filter_wrapped(&flat), flat);
+
+        let mut impulse = Rgba8::new(3, 3);
+        impulse.put(4, [160, 80, 40, 255]);
+        let out = mild_filter_wrapped(&impulse);
+        assert_eq!(out.get(4), [120, 60, 30, 191]);
+        assert_eq!(out.get(1), [5, 2, 1, 7]);
+        assert_eq!(out.get(0), [5, 2, 1, 7]);
     }
 
     #[test]

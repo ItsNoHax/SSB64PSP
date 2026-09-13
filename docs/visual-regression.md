@@ -261,7 +261,9 @@ the convention scenes 6-7 used for Fox and Falcon). Kirby was chosen because
 RE-102 (R0.5) named him, alongside Fox and Falcon, as the third of three
 fighters with a real UV-scale/clamp bug on face/torso/head textures — this
 scene completes the regression lineage RE-207/RE-208 started for that bug
-class.
+class. RE-263 later extended the scene to pin the PSP reconstruction
+correction for Kirby's 32x32 neutral face: the expected image has two upright
+oval eyes without the false inward spikes produced by raw CI4 magnification.
 
 Build and compare:
 
