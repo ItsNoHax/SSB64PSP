@@ -287,6 +287,10 @@ impl DrawState {
             LightComponent::DIFFUSE,
             &direction,
         );
+        // `sceGuLight` programs the channel but does not enable it. Both the
+        // per-channel gate and the per-primitive `Lighting` gate below are
+        // required; omitting this left only LIGHT_2's gray ambient term.
+        sys::sceGuEnable(GuState::Light0);
         self.runtime_fighter_light = true;
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
@@ -302,6 +306,7 @@ impl DrawState {
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
         sys::sceGuDisable(GuState::Lighting);
+        sys::sceGuDisable(GuState::Light0);
     }
 
     /// Forgets the cached texture binding, forcing the next primitive to

@@ -54,9 +54,10 @@ regression_capture_scene5 = []
 # than Mario's own skeleton on screen. Selects Fox's own file-313 graph at
 # 0x2938 (RE-152's exact identification -- the graph whose head primitive
 # 4/texture 551 previously rendered a solid black clamp-window bug, fixed by
-# preserving the render tile's uls/ult origin). Same deterministic
-# object-viewer freeze and diagnostic suppression as scenes 2-4. Off by
-# default.
+# preserving the render tile's uls/ult origin). RE-264 applies Sector Z's
+# source fighter light to pin Fox's white gloves/boots and the PSP light-0
+# enable. Same deterministic object-viewer freeze and diagnostic suppression
+# as scenes 2-4. Off by default.
 regression_capture_scene6 = []
 
 # R2 broader-coverage scene: the second non-Mario fighter golden. Selects
@@ -78,8 +79,9 @@ regression_capture_scene8 = []
 # Captain Falcon and Kirby, as a fighter whose surface "melted" into
 # rainbow noise under the old per-primitive majority-vote lit-vs-literal
 # heuristic -- a different bug class than scenes 6-8's UV-scale/clamp fix.
-# Same deterministic object-viewer freeze and diagnostic suppression as
-# scenes 2-4 and 6-8. Off by default.
+# RE-264 also pins the bounded neutral-face reconstruction correction shared
+# with Kirby. Same deterministic object-viewer freeze and diagnostic
+# suppression as scenes 2-4 and 6-8. Off by default.
 regression_capture_scene9 = []
 
 # R2 broader-coverage scene: the fifth non-Mario fighter golden. Selects

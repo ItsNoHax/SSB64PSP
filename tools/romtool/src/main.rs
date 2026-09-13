@@ -2493,12 +2493,9 @@ fn convert_texture(
     };
 
     let source_file = t.data_file.map_or(src.home.id, u32::from);
-    let correction = TEXTURE_FILTER_CORRECTIONS
-        .iter()
-        .find(|&&(f, o, _, _)| source_file == f && t.data_offset == o)
-        .map(|&(_, _, filter, _)| filter);
+    let correction = texture_filter_correction(source_file, t.data_offset);
     if let Some(filter) = correction {
-        // RE-070/RE-263: named, evidence-based exceptions, not a general
+        // RE-070/RE-263/RE-264: named, evidence-based exceptions, not a general
         // texture-content heuristic -- see `TEXTURE_FILTER_CORRECTIONS`.
         //
         // RE-075: blur *before* mirroring, not after. Both canopy textures
@@ -2568,15 +2565,15 @@ fn convert_texture(
 ///
 /// The two Dream Land textures need a full box average because their dithered
 /// CI4 palette relies on the analog blur of composite video (RE-053/070).
-/// Kirby's neutral face instead needs the milder centre-weighted filter: the
-/// source's single-texel stair steps reconstruct as smooth oval eyes on the
-/// original N64 render, while PSP linear magnification exposes them as false
-/// inward spikes (RE-263). Each corrected texture is decoded and packed
-/// unquantized as `Psm8888`; the match includes the resolved archive file so
-/// an unrelated local offset cannot receive the same correction.
+/// Kirby's and Ness's neutral faces instead need the milder centre-weighted
+/// filter: the source's single-texel stair steps reconstruct as smooth eyes on
+/// the original N64 render, while PSP linear magnification exposes them as
+/// false inward spikes (RE-263/264). Each corrected texture is decoded and
+/// packed unquantized as `Psm8888`; the match includes the resolved archive
+/// file so an unrelated local offset cannot receive the same correction.
 ///
 /// Do not add an entry without an original-render comparison and a PSP A/B.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TextureFilterCorrection {
     Box,
     Mild,
@@ -2601,7 +2598,20 @@ const TEXTURE_FILTER_CORRECTIONS: &[(u32, u32, TextureFilterCorrection, &str)] =
         TextureFilterCorrection::Mild,
         "Kirby neutral face",
     ),
+    (
+        335,
+        0xB7A0,
+        TextureFilterCorrection::Mild,
+        "Ness neutral face",
+    ),
 ];
+
+fn texture_filter_correction(file: u32, offset: u32) -> Option<TextureFilterCorrection> {
+    TEXTURE_FILTER_CORRECTIONS
+        .iter()
+        .find(|&&(f, o, _, _)| file == f && offset == o)
+        .map(|&(_, _, filter, _)| filter)
+}
 
 /// The whole archive, read once.
 ///
@@ -7828,11 +7838,25 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 #[cfg(test)]
 mod tests {
     use super::{
-        normal_transform_equivalent, palette_bank_offset, verify_texgen, TexgenCensus, TileState,
-        DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
-        EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
+        normal_transform_equivalent, palette_bank_offset, texture_filter_correction, verify_texgen,
+        TexgenCensus, TextureFilterCorrection, TileState, DIRECT_MANAGER_EFFECT_ASSETS,
+        DIRECT_MANAGER_EFFECT_MOBJ_PAIRS, EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
     };
     use std::collections::BTreeSet;
+
+    #[test]
+    fn face_filter_corrections_are_scoped_to_exact_texture_sources() {
+        assert_eq!(
+            texture_filter_correction(328, 0x1CF60),
+            Some(TextureFilterCorrection::Mild)
+        );
+        assert_eq!(
+            texture_filter_correction(335, 0xB7A0),
+            Some(TextureFilterCorrection::Mild)
+        );
+        assert_eq!(texture_filter_correction(334, 0xB7A0), None);
+        assert_eq!(texture_filter_correction(335, 0xB7A4), None);
+    }
 
     /// `PLAN.md` R2.1/T10: `verify_texgen`'s failure branches, exercised
     /// synthetically so they're host-testable without `SSB64_ROM` -- the
