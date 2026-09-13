@@ -2492,12 +2492,14 @@ fn convert_texture(
         ))
     };
 
-    if NEEDS_DITHER_BLUR
+    let source_file = t.data_file.map_or(src.home.id, u32::from);
+    let correction = TEXTURE_FILTER_CORRECTIONS
         .iter()
-        .any(|&(f, o, _)| t.data_file == Some(f) && t.data_offset == o)
-    {
-        // RE-070: named, evidence-based exception, not a general "detect
-        // dithering" heuristic -- see `NEEDS_DITHER_BLUR`'s doc comment.
+        .find(|&&(f, o, _, _)| source_file == f && t.data_offset == o)
+        .map(|&(_, _, filter, _)| filter);
+    if let Some(filter) = correction {
+        // RE-070/RE-263: named, evidence-based exceptions, not a general
+        // texture-content heuristic -- see `TEXTURE_FILTER_CORRECTIONS`.
         //
         // RE-075: blur *before* mirroring, not after. Both canopy textures
         // mirror on both axes (RE-067). `box_blur_wrapped` wraps its 3x3
@@ -2523,7 +2525,10 @@ fn convert_texture(
             (!tlut.is_empty()).then_some(tlut.as_slice()),
         )
         .ok()?;
-        let blurred = texture::box_blur_wrapped(&img);
+        let blurred = match filter {
+            TextureFilterCorrection::Box => texture::box_blur_wrapped(&img),
+            TextureFilterCorrection::Mild => texture::mild_filter_wrapped(&img),
+        };
         let mirrored = texture::mirror_extend(
             &blurred,
             t.mirror_s,
@@ -2559,22 +2564,43 @@ fn convert_texture(
     }
 }
 
-/// Textures whose dithered CI4 palette reads as a checkerboard on the PSP's
-/// sharp LCD instead of the smooth gradient the N64 fakes via a composite-
-/// video CRT's analog blur (RE-053, RE-070). Verified per-texture, not
-/// pattern-matched: bilinear filtering alone was measured (an on-device
-/// nearest-vs-linear A/B) not to compensate, and quantizing a blurred
-/// result back to the same small palette mostly undoes the blur, so each
-/// entry here is decoded, box-blurred (`texture::box_blur_wrapped`) and
-/// packed unquantized (`Psm8888`) instead of through the normal paletted
-/// path -- spending real, bounded VRAM (about +19 KiB each) only where a
-/// human confirmed on screen that it was needed. Do not add an entry
-/// without the same before/after screenshot comparison; a general
-/// "detect dithering automatically" heuristic risks blurring textures that
-/// are not supposed to be smooth (flat-colour icons, sharp sprite art).
-const NEEDS_DITHER_BLUR: &[(u16, u32, &str)] = &[
-    (103, 0xE20, "Dream Land canopy gradient"),
-    (103, 0x5F0, "Dream Land canopy highlight"),
+/// Exact, evidence-backed texture reconstruction exceptions for PSP output.
+///
+/// The two Dream Land textures need a full box average because their dithered
+/// CI4 palette relies on the analog blur of composite video (RE-053/070).
+/// Kirby's neutral face instead needs the milder centre-weighted filter: the
+/// source's single-texel stair steps reconstruct as smooth oval eyes on the
+/// original N64 render, while PSP linear magnification exposes them as false
+/// inward spikes (RE-263). Each corrected texture is decoded and packed
+/// unquantized as `Psm8888`; the match includes the resolved archive file so
+/// an unrelated local offset cannot receive the same correction.
+///
+/// Do not add an entry without an original-render comparison and a PSP A/B.
+#[derive(Clone, Copy)]
+enum TextureFilterCorrection {
+    Box,
+    Mild,
+}
+
+const TEXTURE_FILTER_CORRECTIONS: &[(u32, u32, TextureFilterCorrection, &str)] = &[
+    (
+        103,
+        0xE20,
+        TextureFilterCorrection::Box,
+        "Dream Land canopy gradient",
+    ),
+    (
+        103,
+        0x5F0,
+        TextureFilterCorrection::Box,
+        "Dream Land canopy highlight",
+    ),
+    (
+        328,
+        0x1CF60,
+        TextureFilterCorrection::Mild,
+        "Kirby neutral face",
+    ),
 ];
 
 /// The whole archive, read once.
