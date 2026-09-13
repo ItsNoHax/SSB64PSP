@@ -562,7 +562,44 @@ tools/compare-screenshot.sh tests/golden/r2-link-fighter.png ~/ppsspp-headless-t
 Two post-fix captures differ by 0 pixels. The incorrect-blue to canonical-
 green correction changes 7,492 pixels. The accepted golden is
 `tests/golden/r2-link-fighter.png`, SHA-256
-`37f14f3cb2d6ba2cf2fca2ff2fd16926aa8483b62a052208971e689ec795e5ed`.
+`b2a6763d4670475df115b396773fe3c2a9a7858ee904be9ed223636445124b54`
+after RE-262's later signed-clamp correction restored the second eye.
+
+## Signed-clamp UV regression refresh (RE-262)
+
+N64 vertex UVs are signed S10.5, but the PSP GE reads
+`GU_TEXTURE_16BIT` as unsigned. Negative coordinates therefore retained
+repeat phase but clamped to the wrong edge. Pack v29 marks only the affected
+authored-UV primitives and `meshdraw` submits those corners as float UVs.
+
+The complete PPSSPP-software matrix was rebuilt and visually reviewed. The
+semantic deltas against the pre-fix goldens are:
+
+| Scene | Differing pixels | Current SHA-256 |
+|---|---:|---|
+| Dream Land | 23,852 | `06985d0fce8671b6cb1d66018834653b95380ff9a5e8164f429c9a29ebe9e60d` |
+| Opening room | 1,096 | `148d9d1ad9161a988c91d579fa54908424eac471f1272793547e5cda34b8ac59` |
+| Sector | 1,512 | `646d177fa69c46d832036b63e83ff80195f0145b26dbd016f37b3dc15266fc8c` |
+| Saffron City | 2,428 | `91e63ab2a2b4d34a870c44e8d9c1970e82735d62f3cc951b83fe55cb8f437738` |
+| Fox | 9,744 | `3196cc914976b273fce444e75deadd5307ced52ac65b735b89ea2f71fabf6a2f` |
+| Captain Falcon | 21,152 | `e2cd218f2fd650a2caa9e89775da9c8b0d7370898b9e717f6f307672062c41a1` |
+| Kirby | 804 | `019f2da6889c1c3bf80f5f93dd26e2d9d91d28193405600c1603bff7236e9051` |
+| Ness | 5,420 | `3816230c761b9f37537218585fac604bec621dcced00a5f1a405b5a287942835` |
+| Donkey Kong | 11,448 | `b9bc2f20f59201421c69c832a04a8c84a923f3fe909ad22edf43e9ef7ea127ec` |
+| Mixed linear-texgen graph | 8,316 | `c23fc59e5ddb82de9418c923272a228e947fc7e3216dc985383dbf2b5610684a` |
+| Link | 2,784 | `b2a6763d4670475df115b396773fe3c2a9a7858ee904be9ed223636445124b54` |
+
+The flat-colour scene, three pure ordinary-texgen controls, and synthetic
+depth-mask diagnostic remain byte-identical. Scene 13's change is confined to
+neighboring authored-UV rail primitives; its linear-generated crystal remains
+on the established path. Two Fox captures and two Link captures independently
+match byte-for-byte. All changed regions replace stretched edge/blank texels
+with coherent source art.
+
+The physical-PSP comparisons recorded in the older per-scene sections predate
+this refresh. They remain evidence for the renderer state tested at the time,
+but do not validate these 11 current goldens; re-capture is still required by
+R2.
 
 ## Texgen and renderer-corrective matrix
 
@@ -682,7 +719,7 @@ pixel oracle.
 | `combiner_shade_scale` shape | Dream Land's lit, unlit-texture primitives (RE-073); exact per-primitive attribution not isolated in this task | Likely, unconfirmed |
 | Depth testing | Dream Land's canopy occluding the platform behind it; independent compare/write state wired (RE-251) | Yes — plus `tests/golden/r2-depth-mask-diagnostic.png`'s dedicated ON→OFF→ON `sceGuDepthMask` regression |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
-| Fighter model + skeleton | Mario plus the five established object-view fighters and Link file 324 graph `0x3AE8` with source-authored costume lighting (RE-152, RE-207–212, RE-261) | Yes — scenes 1, 6–10 and 16, including `tests/golden/r2-link-fighter.png` |
+| Fighter model + skeleton | Mario plus the five established object-view fighters and Link file 324 graph `0x3AE8` with source-authored costume lighting and corrected signed-clamp UVs (RE-152, RE-207–212, RE-261/262) | Yes — scenes 1, 6–10 and 16, including `tests/golden/r2-link-fighter.png` |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | `combiner_texture_blend` shape | RE-200: file 109 (`StageSectorFile2`) graph `0x44C8`, 7 converted primitives | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | `combiner_flat_color` shape | RE-200: file 84 (`EFCommonEffects2`) graph `0x2760` (`CatchSwirlDObjDesc`), 4 converted primitives | Yes — scene 4, `tests/golden/r1-catch-swirl-flat-color.png` |
@@ -781,8 +818,9 @@ RE-152 refreshes it again after the nonzero clamp-window correction changed
 pixels are unchanged. Two independent captures of that build were
 pixel-identical. RE-261 refreshes it once more for the source-authored
 costume-light-track correction: 24 stable pixels on Mario's lower body, with
-all stage pixels unchanged. Its current SHA-256 is
-`26bbcc129dd7a9ebe5b5f92aed8eef7aaae82837d41ab3a9077d53c2161605ac`.
+all stage pixels unchanged. RE-262 later corrects signed clamped UVs across
+the canopy and Mario, changing 23,852 pixels; its current SHA-256 is
+`06985d0fce8671b6cb1d66018834653b95380ff9a5e8164f429c9a29ebe9e60d`.
 
 RE-199 executed the same end-to-end procedure for the second scene
 (`regression_capture_scene2`, file 52's `mvopeningroom.c` graph). The first

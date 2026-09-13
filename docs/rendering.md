@@ -342,10 +342,12 @@ Three compounding wins, all paid for at build time:
 
 1. **Indexing** — the RSP re-uploads shared vertices because its cache holds
    only 32. Undoing that gives 2.09x reuse.
-2. **16-bit vertex components** — N64 positions are already `i16` and UVs are
-   S10.5, so they map onto `GU_VERTEX_16BIT` / `GU_TEXTURE_16BIT` directly.
-   12 bytes per vertex instead of 24. Converting to `f32` would double vertex
-   bandwidth for no fidelity gain, on a machine that is bandwidth-bound.
+2. **16-bit vertex components** — N64 positions are already `i16`, and signed
+   S10.5 UVs can normally use `GU_TEXTURE_16BIT`. The GE decodes that texture
+   field as unsigned, though: a negative coordinate on a clamped axis would
+   jump to the far edge. RE-262 marks only those primitives and expands their
+   indexed corners transiently to float UVs. The common path stays at 20 bytes
+   per vertex instead of 36 without sacrificing signed clamp semantics.
 3. **Material merging** — primitives sharing a material are merged into single
    draws, because GE state changes cost far more than draw calls.
 
