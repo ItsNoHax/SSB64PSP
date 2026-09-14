@@ -8793,21 +8793,19 @@ of the archive region.
 
 ## RE-267 — Donkey Kong's CI4 textures require decoded-RGBA transport in the PSP regression capture
 
-**Question.** Are the black-and-white bands on Donkey Kong's face, hands and
-feet source artwork, a bad camera/light setup, or a paletted-texture transport
-failure?
+**Superseded in part by RE-268.** The earlier conclusion that the tie and limb
+bands were authored was incorrect: it had decoded padded source rows at the
+visible tile width. This record now covers only the independently measured
+PSP paletted-texture transport fallback.
+
+**Question.** Does transporting file 317's correctly decoded CI4 pixels as
+PSP8888 avoid a PSP paletted-texture failure?
 
 **Evidence.** File 317's high-detail graph (`0x39A8`) binds CI4 textures to
-the affected nodes: the hands use the 24x24 texture at `0xCD60`, the head
-uses the 24x24 texture at `0xC378`, the feet reuse the 24x24/24x8 pair, and
-the tie uses the 24x20 texture at `0xD4B8`. `romtool texdump --file 317`
-decodes those source textures with their named 16-entry TLUTs: the hand/foot
-and tie bands are authored black/peach and black/red/yellow texels, while the
-head source is ordinary brown fur and face shading. A control pack that
-transports the same decoded pixels as PSP8888 removes the head's false
-black-and-white corruption while leaving the authored tie and limb markings
-unchanged. Swizzling, T4 nibble order, CLUT-load block count, and camera/light
-state were each varied independently and did not explain the result.
+the affected nodes. A control pack that transports the same decoded pixels as
+PSP8888 removes the head's false black-and-white corruption. Swizzling, T4
+nibble order, CLUT-load block count, and camera/light state were each varied
+independently and did not explain that transport failure.
 
 **Implementation.** `convert_texture` expands paletted textures whose home
 archive is file 317 to PSP8888. This is a format transport fallback, not a
@@ -8816,12 +8814,46 @@ TLUT and writes those exact RGBA values. It adds about 2.8 MiB to the
 generated pack, which remains within the existing 64 MiB regression target.
 
 **Verification.** A rebuilt v29 pack loads cleanly. The Donkey Kong
-headless PPSSPP-software capture has a stable, correctly coloured face and
-the source-authored tie, hand, and foot markings. Physical PSP confirmation
-remains required by R2.
+headless PPSSPP-software capture has a stable, correctly coloured face. The
+tie, hand, foot, and ear reconstruction is recorded and verified separately
+in RE-268. Physical PSP confirmation remains required by R2.
 
 **Confidence: high for the source-texture classification; PPSSPP-only for
 the transport fallback.**
+
+---
+
+## RE-268 — RDP source pitch is independent of the visible texture-tile width
+
+**Question.** Why did Donkey Kong's tie, hands, feet, and ears shear into
+vertical bands even when their CI4 palettes were decoded correctly?
+
+**Evidence.** File 317's affected display lists set a 24-pixel render tile
+with `G_SETTILE.line == 2`. For CI4, two 64-bit words per row is a 32-texel
+ROM source stride, not the 24-pixel visible tile width. The corresponding
+texture declarations corroborate that layout: the tie at `0xD4B8` is a
+32x20 source buffer rendered through a 24x20 tile, and the hand/foot texture
+at `0xCD60` is a 32x24 source buffer rendered through a 24x24 tile. Treating
+each buffer as tightly packed at the visible width advances subsequent rows
+eight texels early, producing the observed bands. A PPSSPP software capture
+after preserving the source pitch restores the red tie with its yellow `DK`
+mark and the smooth hand and foot surfaces.
+
+**Implementation.** `mesh::TextureRef` now carries `source_width`, derived
+from the render tile's `line` field. `romtool` includes that field in its
+texture cache key, decodes the physical source rows, and crops the visible
+tile before mirror/clamp lowering. File 317 remains decoded to PSP8888 under
+RE-267, avoiding the separately measured PSP paletted-texture transport
+failure.
+
+**Verification.** The new mesh unit case proves a 24-wide CI4 tile retains a
+32-texel source stride. `cargo fmt --all --check` and `cargo test --workspace`
+pass. The rebuilt pack reloads cleanly; the refreshed Donkey Kong golden is a
+deterministic PPSSPP-software capture. Physical PSP confirmation remains part
+of R2.
+
+**Confidence: high; the display-list pitch and source buffer sizes agree
+directly.**
 
 ---
 

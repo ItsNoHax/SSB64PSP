@@ -73,6 +73,13 @@ pub struct TextureRef {
     pub size: BitSize,
     pub width: u16,
     pub height: u16,
+    /// Width, in source texels, of each row in the ROM image buffer.
+    ///
+    /// The RDP can load a padded row into TMEM and then draw only a narrower
+    /// tile from it. `width` is that visible tile width; this is the stride
+    /// needed to reach the next row in the original image data. Most assets
+    /// have no padding and therefore carry the same value as `width`.
+    pub source_width: u16,
     /// Archive file holding the palette, when it is not the list's own.
     pub palette_file: Option<u16>,
     /// Byte offset of the palette, for `Ci` formats.
@@ -1175,6 +1182,8 @@ struct State {
     tile0_cm: Option<(u8, u8)>,
     /// `G_SETTILE`'s raw `palette` on tile 0. See [`TextureRef::palette`].
     tile0_palette: Option<u8>,
+    /// `line` fields for the eight RDP tiles, in 64-bit words per source row.
+    tile_lines: [u16; 8],
     palette_offset: Option<u32>,
     palette_file: Option<u16>,
     palette_entries: u16,
@@ -1231,6 +1240,7 @@ impl State {
             tile0_mask: None,
             tile0_cm: None,
             tile0_palette: None,
+            tile_lines: [0; 8],
             palette_offset: None,
             palette_file: None,
             palette_entries: 0,
@@ -1504,6 +1514,16 @@ impl State {
         let clamp_s = cm_s & 0x2 != 0;
         let clamp_t = cm_t & 0x2 != 0;
         let palette = self.tile0_palette.unwrap_or(0);
+        // `G_SETTILE.line` is measured in 64-bit words. The render tile's
+        // pitch can be wider than its drawn rectangle; decoding it as that
+        // narrower width shears every row after the first (RE-268).
+        let source_width = BitSize::from_raw(siz)
+            .and_then(|size| {
+                let width =
+                    u32::from(self.tile_lines[RENDER_TILE as usize]) * 64 / size.bits() as u32;
+                (width >= u32::from(w)).then_some(width as u16)
+            })
+            .unwrap_or(w);
 
         if self.framebuffer_capture {
             // No archive location: the real content is filled in on the
@@ -1520,6 +1540,7 @@ impl State {
                 size: BitSize::from_raw(siz)?,
                 width: w,
                 height: h,
+                source_width,
                 palette_file: None,
                 palette_offset: None,
                 palette_entries: 0,
@@ -1546,6 +1567,7 @@ impl State {
             size: BitSize::from_raw(siz)?,
             width: w,
             height: h,
+            source_width,
             palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
@@ -1612,6 +1634,7 @@ impl State {
             size: BitSize::from_raw(siz)?,
             width: w,
             height: h,
+            source_width: w,
             palette_file: self.palette_file,
             palette_offset: self.palette_offset,
             palette_entries: self.palette_entries,
@@ -2059,6 +2082,7 @@ fn walk(
             Cmd::SetTile {
                 format,
                 size,
+                line,
                 tile,
                 mask_s,
                 mask_t,
@@ -2067,6 +2091,7 @@ fn walk(
                 palette,
                 ..
             } => {
+                state.tile_lines[tile as usize] = line;
                 // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
                 // sampled. A display list configures several tiles — tiles 5
                 // and 7 stage TLUT loads — and taking whichever came last
@@ -4490,7 +4515,7 @@ mod tests {
     #[test]
     fn tile_size_converts_10_2_fixed_point_to_pixels() {
         let file = vertex_data(3);
-        // 0..=(31<<2) inclusive in 10.2 -> 32 pixels.
+        // 0..=(23<<2) inclusive in 10.2 -> 24 pixels.
         let cmds = [
             vtx(3),
             // SETTIMG carries the address. Its format/size describe the *load*
@@ -4507,7 +4532,8 @@ mod tests {
             Cmd::SetTile {
                 format: 2,
                 size: 0,
-                line: 0,
+                // Two 64-bit words are 16 bytes, or 32 CI4 source texels.
+                line: 2,
                 tmem: 0,
                 tile: 0,
                 palette: 0,
@@ -4522,7 +4548,7 @@ mod tests {
                 tile: 0,
                 uls: 0,
                 ult: 0,
-                lrs: 31 << 2,
+                lrs: 23 << 2,
                 lrt: 15 << 2,
             },
             Cmd::Texture {
@@ -4537,7 +4563,11 @@ mod tests {
         ];
         let mesh = convert(&cmds, Source::bare(&file)).unwrap();
         let tex = mesh.primitives[0].material.texture.expect("texture bound");
-        assert_eq!((tex.width, tex.height), (32, 16));
+        assert_eq!((tex.width, tex.height), (24, 16));
+        assert_eq!(
+            tex.source_width, 32,
+            "source pitch stays separate from the tile width"
+        );
         assert_eq!(tex.format, Format::Ci, "tile 0 wins over SETTIMG");
         assert_eq!(tex.size, BitSize::Bits4);
     }

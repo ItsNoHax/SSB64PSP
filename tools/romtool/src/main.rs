@@ -931,6 +931,7 @@ struct TexKey {
     size: ssb_rom::texture::BitSize,
     width: u16,
     height: u16,
+    source_width: u16,
     drawn_width: u16,
     drawn_height: u16,
     palette_entries: u16,
@@ -959,6 +960,7 @@ fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
         size: t.size,
         width: t.width,
         height: t.height,
+        source_width: t.source_width,
         drawn_width: t.drawn_width,
         drawn_height: t.drawn_height,
         palette_entries: t.palette_entries,
@@ -1008,6 +1010,7 @@ fn pack_mesh(
                     size: ssb_rom::texture::BitSize::Bits4,
                     width: t.width,
                     height: t.height,
+                    source_width: t.width,
                     drawn_width: 0,
                     drawn_height: 0,
                     palette_entries: 0,
@@ -2445,17 +2448,11 @@ fn convert_texture(
     if (t.data_offset >> 24) != 0 || (t.data_offset == 0 && t.data_file.is_none()) {
         return None; // segmented, or a pointer nothing resolved
     }
-    // RE-267: Donkey Kong's model uses small CI4 material textures whose
-    // palette path corrupts on the PSP golden-test renderer.  The decoded
-    // RGBA pixels are authoritative ROM output, so expanding this one model
-    // file preserves its image exactly while bypassing that transport issue.
     let psm = if src.home.id == 317 && psp::choose_psm(t.format, t.size).is_paletted() {
         psp::Psm::Psm8888
     } else {
         psp::choose_psm(t.format, t.size)
     };
-    let need = texture::data_len(t.width as u32, t.height as u32, t.size);
-    let texels = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
 
     let tlut: Vec<u16> = match t.palette_offset {
         Some(off) => {
@@ -2480,15 +2477,7 @@ fn convert_texture(
     // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
     // whatever dimensions the packed texture actually reports (RE-067).
     let decode_mirrored = |tlut: Option<&[u16]>| {
-        let img = texture::decode(
-            texels,
-            t.width as u32,
-            t.height as u32,
-            t.format,
-            t.size,
-            tlut,
-        )
-        .ok()?;
+        let img = decode_texture(file, t, tlut)?;
         Some(texture::mirror_extend(
             &img,
             t.mirror_s,
@@ -2521,15 +2510,7 @@ fn convert_texture(
         // `sceGuTexWrap(Repeat, Repeat)`'s real addressing, but this is a
         // correctness cleanup, not a claimed fix for RE-053/RE-070's
         // still-open dithering discrepancy.
-        let img = texture::decode(
-            texels,
-            t.width as u32,
-            t.height as u32,
-            t.format,
-            t.size,
-            (!tlut.is_empty()).then_some(tlut.as_slice()),
-        )
-        .ok()?;
+        let img = decode_texture(file, t, (!tlut.is_empty()).then_some(tlut.as_slice()))?;
         let blurred = match filter {
             TextureFilterCorrection::Box => texture::box_blur_wrapped(&img),
             TextureFilterCorrection::Mild => texture::mild_filter_wrapped(&img),
@@ -2567,6 +2548,44 @@ fn convert_texture(
         decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))
             .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
     }
+}
+
+/// Decodes the visible tile from a possibly padded ROM image buffer.
+///
+/// `G_LOADBLOCK` records source rows in 64-bit-word strides. The renderer
+/// samples only `TextureRef::width` texels. A nonzero tile origin addresses a
+/// window in that loaded image, so crop it after decoding the physical rows.
+fn decode_texture(
+    file: &[u8],
+    t: &ssb_rom::mesh::TextureRef,
+    tlut: Option<&[u16]>,
+) -> Option<ssb_rom::texture::Rgba8> {
+    use ssb_rom::texture;
+
+    let source_width = u32::from(t.source_width.max(t.width));
+    let width = u32::from(t.width);
+    let height = u32::from(t.height);
+    let source_row = texture::data_len(source_width, 1, t.size);
+    let need = source_row.checked_mul(height as usize)?;
+    let source = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
+    let image = texture::decode(source, source_width, height, t.format, t.size, tlut).ok()?;
+    if source_width == width {
+        return Some(image);
+    }
+    let start_x = (u32::from(t.origin_s) >> 2) % source_width;
+    let start_y = (u32::from(t.origin_t) >> 2) % height;
+    let mut tile = texture::Rgba8::new(width, height);
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let source_x = (start_x as usize + x) % source_width as usize;
+            let source_y = (start_y as usize + y) % height as usize;
+            tile.put(
+                y * width as usize + x,
+                image.get(source_y * source_width as usize + source_x),
+            );
+        }
+    }
+    Some(tile)
 }
 
 /// Exact, evidence-backed texture reconstruction exceptions for PSP output.
@@ -10078,6 +10097,7 @@ mod tests {
             size: BitSize::Bits4,
             width: 1,
             height: 1,
+            source_width: 1,
             palette_file: None,
             palette_offset: Some(5),
             palette_entries: 48,

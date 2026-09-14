@@ -3,12 +3,11 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-267 — Donkey Kong's CI4 model textures use decoded RGBA
-  transport in the PSP regression capture`. The complete twelve-fighter PPSSPP
-  software gate is now available.
-- Current build: RE-267 code with the existing v29 pack, 22 deterministic
-  goldens, and reconciled renderer evidence; the formal R2 physical-hardware
-  matrix remains primary.
+- Last complete: `RE-268 — RDP source pitch is independent of the visible
+  texture-tile width`. Donkey Kong's tie, hands, feet, and ears now use the
+  ROM's padded CI4 source rows in the PPSSPP software golden.
+- Current build: RE-268 code with the existing v29 pack and 22 deterministic
+  goldens; the formal R2 physical-hardware matrix remains primary.
 
 ## RE-264 result
 
