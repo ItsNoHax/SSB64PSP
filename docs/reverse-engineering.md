@@ -8841,10 +8841,10 @@ mark and the smooth hand and foot surfaces.
 
 **Implementation.** `mesh::TextureRef` now carries `source_width`, derived
 from the render tile's `line` field. `romtool` includes that field in its
-texture cache key, decodes the physical source rows, and crops the visible
-tile before mirror/clamp lowering. File 317 remains decoded to PSP8888 under
-RE-267, avoiding the separately measured PSP paletted-texture transport
-failure.
+texture cache key, decodes the physical source rows, and lowers the visible
+top-left rectangle before mirror/clamp lowering. File 317 remains decoded to
+PSP8888 under RE-267, avoiding the separately measured PSP paletted-texture
+transport failure.
 
 **Verification.** The new mesh unit case proves a 24-wide CI4 tile retains a
 32-texel source stride. `cargo fmt --all --check` and `cargo test --workspace`
@@ -8854,6 +8854,39 @@ of R2.
 
 **Confidence: high; the display-list pitch and source buffer sizes agree
 directly.**
+
+---
+
+## RE-269 — RDP tile origin is not a source-image offset
+
+**Question.** Why did opaque black rectangles remain at Donkey Kong's wrist
+and ankle seams after RE-268 restored the padded source rows?
+
+**Evidence.** The affected packed textures are fully opaque: hand texture
+`0xCD60` (24x24), its 24x8 companion, and the equivalent foot textures all
+have 576/576 or 192/192 opaque decoded texels. The rectangles therefore were
+not alpha-test holes or missing geometry. The 24x8 companion has a nonzero
+`G_SETTILESIZE` origin, while `mesh::Builder::push_vertex` already subtracts
+that origin from clamped authored UVs. RE-268 also used the origin as a crop
+offset into the newly preserved 32-texel source rows, shifting those pixels a
+second time and exposing the texture's black border region. Decoding from the
+source buffer's top-left instead removes the blocks in the PPSSPP software
+capture while retaining the restored tie, hands, feet, ears, and head.
+
+**Implementation.** `decode_texture` now decodes the physical padded source
+buffer and copies the visible rectangle from its top-left. Tile origin remains
+solely an RDP coordinate-addressing concern; it is already lowered into the
+mesh UVs where needed. The new unit regression uses a padded RGBA16 source
+with a nonzero tile origin and proves that the first visible pixels come from
+the source buffer's top-left rather than from a second origin offset.
+
+**Verification.** `cargo fmt --all --check` and the new targeted `romtool`
+unit test pass. A rebuilt 28,531.3 KiB pack loads cleanly, and the refreshed
+Donkey Kong golden is a deterministic PPSSPP-software capture without the
+black seam blocks. Physical PSP confirmation remains part of R2.
+
+**Confidence: high; source alpha, display-list state, UV lowering, and the
+capture all agree.**
 
 ---
 

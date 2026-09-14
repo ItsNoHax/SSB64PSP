@@ -3,10 +3,11 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-268 — RDP source pitch is independent of the visible
-  texture-tile width`. Donkey Kong's tie, hands, feet, and ears now use the
-  ROM's padded CI4 source rows in the PPSSPP software golden.
-- Current build: RE-268 code with the existing v29 pack and 22 deterministic
+- Last complete: `RE-269 — RDP tile origin is not a source-image offset`.
+  Donkey Kong's tie, hands, feet, ears, and head now use the ROM's padded CI4
+  source rows without double-applying the tile origin in the PPSSPP software
+  golden.
+- Current build: RE-269 code with the existing v29 pack and 22 deterministic
   goldens; the formal R2 physical-hardware matrix remains primary.
 
 ## RE-264 result

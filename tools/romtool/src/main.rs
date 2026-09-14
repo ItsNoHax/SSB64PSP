@@ -2553,8 +2553,11 @@ fn convert_texture(
 /// Decodes the visible tile from a possibly padded ROM image buffer.
 ///
 /// `G_LOADBLOCK` records source rows in 64-bit-word strides. The renderer
-/// samples only `TextureRef::width` texels. A nonzero tile origin addresses a
-/// window in that loaded image, so crop it after decoding the physical rows.
+/// samples only `TextureRef::width` texels. The render tile's origin belongs
+/// to texture-coordinate addressing, not the source image: `mesh::Builder`
+/// has already rebased authored UVs for clamped tiles. Therefore this lowers
+/// the physical source buffer from its top-left corner without applying that
+/// origin a second time.
 fn decode_texture(
     file: &[u8],
     t: &ssb_rom::mesh::TextureRef,
@@ -2572,16 +2575,12 @@ fn decode_texture(
     if source_width == width {
         return Some(image);
     }
-    let start_x = (u32::from(t.origin_s) >> 2) % source_width;
-    let start_y = (u32::from(t.origin_t) >> 2) % height;
     let mut tile = texture::Rgba8::new(width, height);
     for y in 0..height as usize {
         for x in 0..width as usize {
-            let source_x = (start_x as usize + x) % source_width as usize;
-            let source_y = (start_y as usize + y) % height as usize;
             tile.put(
                 y * width as usize + x,
-                image.get(source_y * source_width as usize + source_x),
+                image.get(y * source_width as usize + x),
             );
         }
     }
@@ -10139,5 +10138,56 @@ mod tests {
         let packed_guard = super::convert_texture(texels, &out_of_range, false)
             .expect("an out-of-range bank must not panic");
         assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
+    }
+
+    #[test]
+    fn padded_source_rows_do_not_apply_the_tile_origin_twice() {
+        use ssb_rom::mesh::TextureRef;
+        use ssb_rom::texture::{BitSize, Format};
+
+        // Two 4-texel RGBA16 source rows, rendered through a 2-wide tile.
+        // The nonzero origin is already represented by the packed UVs; it
+        // must not also skip the first two pixels in this source buffer.
+        let source = [
+            0xF801u16, 0x07C1, 0x003F, 0xFFFF, // red, green, blue, white
+            0xFFFF, 0x003F, 0x07C1, 0xF801, // white, blue, green, red
+        ]
+        .into_iter()
+        .flat_map(u16::to_be_bytes)
+        .collect::<Vec<_>>();
+        let texture = TextureRef {
+            data_file: None,
+            data_offset: 0,
+            format: Format::Rgba,
+            size: BitSize::Bits16,
+            width: 2,
+            height: 2,
+            source_width: 4,
+            palette_file: None,
+            palette_offset: None,
+            palette_entries: 0,
+            palette: 0,
+            mirror_s: false,
+            mirror_t: false,
+            clamp_s: true,
+            clamp_t: true,
+            framebuffer: false,
+            origin_s: 2 << 2,
+            origin_t: 0,
+            mask_s: 0,
+            mask_t: 0,
+            drawn_width: 2,
+            drawn_height: 2,
+        };
+
+        let image = super::decode_texture(&source, &texture, None).expect("texture decodes");
+        assert_eq!(
+            image.pixels,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, // source row 0, columns 0..2
+                255, 255, 255, 255, 0, 0, 255, 255, // source row 1, columns 0..2
+            ],
+            "the visible tile starts at the source buffer's top-left"
+        );
     }
 }
