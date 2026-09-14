@@ -3,10 +3,10 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-264 — fighter light-channel enable and Ness neutral-face
-  reconstruction`. Fox's source-white gloves/boots now receive the missing
-  directional term, and Ness's Kirby-shaped eye artifact is corrected.
-- Current build: RE-264 code, rebuilt v29 pack, refreshed deterministic
+- Last complete: `RE-266 — fighter regression features are named for their
+  character, and non-fighter scene features are contiguous (1–9)`. The
+  complete twelve-fighter PPSSPP software gate is now available.
+- Current build: RE-266 code with the existing v29 pack, 22 deterministic
   goldens, and reconciled renderer evidence; the formal R2 physical-hardware
   matrix remains primary.
 
@@ -15,8 +15,8 @@
 Fox's materials were already correct in the ROM: white directional light over
 gray ambient. The PSP configured light 0 but never enabled its independent GE
 channel, so only the gray ambient term reached fighters. The runtime now pairs
-`GU_LIGHT0` with the existing global lighting scope, and scene 6 uses Sector
-Z's source angle from file 262. Fox's gloves and boots render white while
+`GU_LIGHT0` with the existing global lighting scope, and the Fox capture uses
+Sector Z's source angle from file 262. Fox's gloves and boots render white while
 retaining directional shading; Dream Land's Mario and Link lighting were
 refreshed for the same state correction.
 
@@ -59,7 +59,7 @@ positive coordinates and held the wrong edge texel over one eye.
 
 - `cargo fmt --all --check`: pass
 - `cargo test --workspace`: 616 passed
-- all 16 deterministic goldens: exact after the explained RE-262–264 refreshes
+- all 22 deterministic goldens: exact after the explained RE-262–265 refreshes
 - effects: 46/46 manager objects, 35/35 transform animations, 24/26 material
   animations (two documented source-unreachable rest-invisible cases), all
   160 particle scripts
@@ -100,7 +100,7 @@ R2.2 renderer-model blocker.
 - RE-263/264 resolve Kirby's and Ness's false inward eye spikes as PSP
   reconstruction artifacts, not mirror-state errors. File-and-offset-scoped
   mild filters preserve the ROM faces while restoring the original render's
-  oval eyes; scenes 8 and 9 have refreshed PPSSPP-software goldens. Physical
+  oval eyes; the Kirby and Ness captures have refreshed PPSSPP-software goldens. Physical
   PSP confirmation remains part of R2.
 - T1's 164 cross-node differing-transform vertex reuses remain measured.
 - N64 three-point filtering vs PSP bilinear remains an accepted fixed-function

@@ -50,7 +50,7 @@ regression_capture_scene4 = []
 # `regression_capture`. Off by default.
 regression_capture_scene5 = []
 
-# R2 broader-coverage scene: the first golden scene to put a fighter other
+# R2 broader-coverage capture: the first golden scene to put a fighter other
 # than Mario's own skeleton on screen. Selects Fox's own file-313 graph at
 # 0x2938 (RE-152's exact identification -- the graph whose head primitive
 # 4/texture 551 previously rendered a solid black clamp-window bug, fixed by
@@ -58,84 +58,99 @@ regression_capture_scene5 = []
 # source fighter light to pin Fox's white gloves/boots and the PSP light-0
 # enable. Same deterministic object-viewer freeze and diagnostic suppression
 # as scenes 2-4. Off by default.
-regression_capture_scene6 = []
+regression_capture_fox = ["fighter_regression_capture"]
 
 # R2 broader-coverage scene: the second non-Mario fighter golden. Selects
 # Captain Falcon's own file-332 graph at 0x3BE0 -- one of the three fighters
 # (with Fox and Kirby) RE-102 measured a real UV-scale/clamp bug on. Same
-# deterministic object-viewer freeze and diagnostic suppression as scenes
-# 2-4 and 6. Off by default.
-regression_capture_scene7 = []
+# deterministic object-viewer freeze and diagnostic suppression as the earlier
+# viewer captures. Off by default.
+regression_capture_captain_falcon = ["fighter_regression_capture"]
 
 # R2 broader-coverage scene: the third non-Mario fighter golden. Selects
 # Kirby's own file-328 graph at 0x1448 -- the third of the three fighters
 # (with Fox and Captain Falcon) RE-102 measured a real UV-scale/clamp bug
 # on. Same deterministic object-viewer freeze and diagnostic suppression as
-# scenes 2-4, 6 and 7. Off by default.
-regression_capture_scene8 = []
+# the other fighter captures. Off by default.
+regression_capture_kirby = ["fighter_regression_capture"]
 
 # R2 broader-coverage scene: the fourth non-Mario fighter golden. Selects
 # Ness's own file-335 graph at 0x26B0. RE-103 named Ness, alongside Fox,
 # Captain Falcon and Kirby, as a fighter whose surface "melted" into
 # rainbow noise under the old per-primitive majority-vote lit-vs-literal
-# heuristic -- a different bug class than scenes 6-8's UV-scale/clamp fix.
+# heuristic -- a different bug class than the earlier fighters' UV-scale/clamp
+# fix.
 # RE-264 also pins the bounded neutral-face reconstruction correction shared
 # with Kirby. Same deterministic object-viewer freeze and diagnostic
 # suppression as scenes 2-4 and 6-8. Off by default.
-regression_capture_scene9 = []
+regression_capture_ness = ["fighter_regression_capture"]
 
 # R2 broader-coverage scene: the fifth non-Mario fighter golden. Selects
 # Donkey Kong's own file-317 graph at 0x39A8 -- the lower-offset of the
-# file's symmetric 26-node graph pair, matching the convention scenes 6-9
-# used. Same deterministic object-viewer freeze and diagnostic suppression
-# as scenes 2-4 and 6-9. Off by default.
-regression_capture_scene10 = []
+# file's symmetric 26-node graph pair, matching the convention used by the
+# earlier fighter captures. Same deterministic object-viewer freeze and
+# diagnostic suppression as the other fighter captures. Off by default.
+regression_capture_donkey_kong = ["fighter_regression_capture"]
 
 # R2.2/C6 broader-coverage scene (RE-257): Link, explicitly named in
 # `PLAN.md`'s C6 recheck list alongside Mario/Fox/Kirby/Ness/Captain Falcon
 # but never given a golden. Selects the lower-offset of file 324's symmetric
-# 32-node graph pair (0x3AE8 vs 0x74B0), matching scene10's own convention
+# 32-node graph pair (0x3AE8 vs 0x74B0), matching the other fighter captures'
+# convention
 # for picking between a fighter's two `common_parts` skeleton graphs. Same
-# deterministic object-viewer freeze and diagnostic suppression as scenes
-# 2-4 and 6-10, plus Dream Land's source-derived fighter-light context so
+# deterministic object-viewer freeze and diagnostic suppression as the other
+# fighter captures, plus Dream Land's source-derived fighter-light context so
 # Link's material-light-tinted tunic is not reduced to the generic viewer's
 # gray fallback (RE-261). Off by default.
-regression_capture_scene15 = []
+regression_capture_link = ["fighter_regression_capture"]
+
+# Every playable fighter has a deterministic neutral-model regression scene.
+# The original game supplies a stage-directional light immediately before
+# `ftDisplayMainProcDisplay`; these captures do the same, rather than showing
+# a lightless object-browser approximation.  Individual features are kept
+# separate so each image is a stable, independently comparable golden.
+fighter_regression_capture = []
+regression_capture_mario = ["fighter_regression_capture"]
+regression_capture_samus = ["fighter_regression_capture"]
+regression_capture_luigi = ["fighter_regression_capture"]
+regression_capture_yoshi = ["fighter_regression_capture"]
+regression_capture_pikachu = ["fighter_regression_capture"]
+regression_capture_purin = ["fighter_regression_capture"]
 
 # Fidelity probe: StageMetalFile2's first two-node graph (file 117, graph
 # 0x1B10). Exercises real ordinary `G_TEXTURE_GEN` material state without item
 # gameplay. Despite RE-214's original description, this graph's primitives
 # (3530-3534, 3547-3550) are all ordinary texgen -- the archive's one
 # `G_TEXTURE_GEN_LINEAR` primitive (3542) lives in a sibling graph, exercised
-# by scene 13 instead (see that scene's own comment).
-regression_capture_scene11 = []
+# by scene 8 instead (see that scene's own comment).
+regression_capture_scene6 = []
 
-# The same StageMetalFile2 graph as scene 11, frozen a quarter turn further
+# The same StageMetalFile2 graph as scene 6, frozen a quarter turn further
 # round (RE-214). One frozen reflection cannot distinguish a correct texgen
 # basis from a stuck or constant one; a second deterministic capture of the
 # same geometry under the same camera at a known different rotation can.
-regression_capture_scene12 = []
+regression_capture_scene7 = []
 
 # StageMetalFile2's *second* two-node graph (file 117, graph 0x2EE0) -- the
 # only graph in the archive whose pack content actually carries
-# `G_TEXTURE_GEN_LINEAR` (prim 3542, tex 499, 12 triangles). Scenes 11/12
+# `G_TEXTURE_GEN_LINEAR` (prim 3542, tex 499, 12 triangles). Scenes 6/7
 # target 0x1B10, which despite an earlier RE-214 note turned out to be
 # ordinary texgen only (found while implementing the exact `acos` curve:
-# scene 11's golden was unchanged by the new code, which a reachability probe
+# scene 6's golden was unchanged by the new code, which a reachability probe
 # traced to this). Off by default.
-regression_capture_scene13 = []
+regression_capture_scene8 = []
 
 # R2.1/T9 camera-rotation case: the same ordinary-texgen graph as scenes
-# 11/12 (file 117, graph 0x1B10), but framed with a real, non-identity view
+# 6/7 (file 117, graph 0x1B10), but framed with a real, non-identity view
 # matrix (35 degrees yaw, 20 degrees pitch around the object) instead of the
 # object viewer's usual identity-view/push-the-object-back trick, mirroring
 # `stage_view`'s own real-camera branch (RE-131/RE-214) so `texgen_basis` is
-# a genuine camera right/up rather than world X/Y. Scenes 11/12 already prove
+# a genuine camera right/up rather than world X/Y. Scenes 6/7 already prove
 # response to *object* rotation under a fixed camera; this proves response to
 # *camera* rotation under a fixed object, the case T3 (RE-227) named as
 # dormant (no scene fed a non-identity basis into `quantize_lookat_basis`).
 # Off by default.
-regression_capture_scene14 = []
+regression_capture_scene9 = []
 
 # `R2.2`/C3 measurement rig (RE-251): a synthetic, non-ROM diagnostic proving
 # `apply_material`'s `sceGuDepthMask` wiring, the same `texgen_normal_

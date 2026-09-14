@@ -10,6 +10,68 @@ answerable from the decomp should be answered from the decomp, not guessed.
 
 ---
 
+## RE-266 — Capture identifiers name fighters and keep generic scenes contiguous
+
+**Question.** Now that every playable fighter has an independent regression,
+do the feature identifiers still make their subject and ordering clear?
+
+**Implementation.** Renamed the six legacy fighter features to
+`regression_capture_fox`, `_captain_falcon`, `_kirby`, `_ness`,
+`_donkey_kong`, and `_link`. The remaining generic capture features now form
+one contiguous set: `regression_capture` (scene 1) and
+`regression_capture_scene2` through `_scene9`; former scenes 11–14 became
+scenes 6–9. The twelve fighter features are all character-named. No scene,
+golden image, model selection, light, camera, or capture timing changed.
+
+**Verification.** The fighter gate now invokes only character-named features.
+`cargo check` builds both a renamed fighter (`regression_capture_fox`) and a
+renumbered generic scene (`regression_capture_scene6`). Current runnable
+documentation uses the new names; historical RE prose retains its original
+scene numbers when referring to a past capture or filename.
+
+**Confidence.** Certain; this is a feature-identifier-only refactor.
+
+---
+
+## RE-265 — Every playable fighter needs the in-game pose and fighter-light scope in its golden
+
+**Question.** Do the deterministic fighter goldens exercise each playable
+character as the game renders it, rather than as an unlit raw `DObjDesc`
+hierarchy in the debug browser?
+
+**Source evidence.** `FTCommonPartContainer` provides the high-detail graph
+for each of the twelve playable `FTKind`s. `ftDisplayMainProcDisplay` applies
+the fighter's current figatree before draw and rebuilds the active stage's
+directional light immediately beforehand. The raw Link graph at file 324
+`+0x3AE8` visibly demonstrates why this matters: its bind pose has horizontal
+arms, while the real looping `Wait` figatree (file 1115) supplies the shield
+and sword holding pose used in game. `FIGHTER_ANIMS` independently maps every
+playable kind to that `Wait` file.
+
+**Implementation.** `FighterRegressionScene` is the single capture map for
+Mario (296/`0x2200`), Fox (313/`0x2938`), Donkey Kong (317/`0x39A8`), Samus
+(320/`0x3520`), Luigi (323/`0x2410`), Link (324/`0x3AE8`), Yoshi
+(338/`0x33A0`), Captain Falcon (332/`0x3BE0`), Kirby (328/`0x1448`), Pikachu
+(341/`0x2650`), Jigglypuff (330/`0x2028`) and Ness (335/`0x26B0`). The scene
+selects its graph, starts its exact `Wait` animation, uses the posed bounds
+for the fixed 38-degree fitted camera, and configures the runtime fighter
+light for every capture. Dream Land is the shared neutral source light; Fox
+uses Sector Z's source angle, preserving RE-264's original-game comparison.
+Twelve character-named per-fighter features feed one
+`tools/verify-fighter-goldens.sh` exact-pixel gate.
+
+**Verification.** The twelve fresh PPSSPP-software captures all compare at
+zero differing pixels to their committed goldens. `cargo fmt --all --check`
+and `cargo test --workspace` pass (616 tests). Visual review confirms the
+neutral posed models, including Link's shield/sword posture, rather than bind
+poses. This expands software regression coverage; physical-PSP confirmation
+remains R2 work.
+
+**Confidence.** Certain for graph/animation/light selection; high for the
+neutral-presentation choice, directly matching the original display path.
+
+---
+
 ## RE-264 — Fox's white extremities reveal a disabled PSP light channel; Ness shares Kirby's reconstruction artifact
 
 **Question.** Why are Fox's white gloves and boots gray in the PSP capture,
@@ -363,7 +425,7 @@ golden scene has ever covered him — file 324 (`fighter::FIGHTER_FILES`'
 `"Link"` entry, matching `real_rom_common_parts_match_every_named_model_file`)
 has never been rendered or looked at since C1 shipped.
 
-**Evidence.** Added `regression_capture_scene15` (mirrors scene6–10's own
+**Evidence.** Added `regression_capture_link` (mirrors scene6–10's own
 pattern exactly): file 324's lower-offset graph of its symmetric 32-node
 pair, `0x3AE8` (the pairing convention scene10's own comment already
 documents: "the lower-offset of the file's symmetric ... graph pair").
@@ -388,7 +450,7 @@ real battle-camera/lit context runs. Distinguishing these needs the same
 kind of vertex/primitive-level inspection RE-240 already did for the other
 23 files, just aimed at file 324 specifically.
 
-**Implementation.** Added `regression_capture_scene15` (`psp/Cargo.toml`,
+**Implementation.** Added `regression_capture_link` (`psp/Cargo.toml`,
 `psp/src/main.rs`) as new, permanent test infrastructure — the object
 selection, freeze/HUD-suppression wiring, and idle-spin suppression all
 follow scene6–10's established pattern exactly. **No golden PNG committed
@@ -2429,7 +2491,7 @@ camera basis from any existing scene, since the object viewer (scenes 2-13)
 always renders under an identity view matrix and only ever rotates the
 *object* (scenes 11/12's own comparison), while `stage_view`'s real-camera
 branch (RE-131/RE-214) is a different code path never fed a texgen-bound
-object. Added `regression_capture_scene14` (`psp/Cargo.toml`,
+object. Added `regression_capture_scene9` (`psp/Cargo.toml`,
 `psp/src/main.rs`): the same ordinary-texgen graph scenes 11/12 use (file
 117, offset `0x1B10`), but instead of the object viewer's usual identity-
 view/push-the-object-back placement, it loads a real `sceGumMatrixMode(View)`
@@ -2461,7 +2523,7 @@ Pack hash unchanged from RE-233/RE-235/RE-236 (no asset-pipeline code
 touched):
 `ef8e58f9ca360f08c593ff3297c0ba31350f4f84c8aaae82eab8c80f89e8f2a0`
 (`assets/generated/ssb64.pak`). Both hardware captures built from this
-entry's own commit (`psp/Cargo.toml`'s new `regression_capture_scene14`
+entry's own commit (`psp/Cargo.toml`'s new `regression_capture_scene9`
 feature and `psp/src/main.rs`'s camera-orbit branch did not exist before
 it). Captures saved out-of-Git under `~/ppsspp-test/re237/`, per
 `docs/psplink.md`.
@@ -2500,13 +2562,13 @@ v3.2.1 hardware RE-214/RE-215/RE-233 used, each following
 checked before each load; `kill` + `reset` between scenes, not only after a
 fault):
 
-* scene 11 (`regression_capture_scene11`): `ldstart` UID `0x04399105`,
+* scene 11 (`regression_capture_scene6`): `ldstart` UID `0x04399105`,
   `exlist` empty, `scrshot host0:/psp-hw-scene11.bmp` — sha256
   `57bc9d0271a030ad5fb298c8e87c73a6e43a5535c83dd32b2ddb3d7e4d581695`.
-* scene 12 (`regression_capture_scene12`): `ldstart` UID `0x04392907`,
+* scene 12 (`regression_capture_scene7`): `ldstart` UID `0x04392907`,
   `exlist` empty, `scrshot host0:/psp-hw-scene12.bmp` — sha256
   `224351a09c5dbcccf688bcec5ae40794cb1c1c1ef6a43e68e9e026f32e674f75`.
-* scene 13 (`regression_capture_scene13`): `ldstart` UID `0x0441A007`,
+* scene 13 (`regression_capture_scene8`): `ldstart` UID `0x0441A007`,
   `exlist` empty, `scrshot host0:/psp-hw-scene13.bmp` — sha256
   `0cd9099fb8396787a30f5d85c5a155bdc57ea9d0246b1b93af8a8ed34d639fb0`.
 
@@ -3087,7 +3149,7 @@ ordinary (non-`LINEAR`) path renders through the GE's own hardware texture
 matrix (`regular_texgen_matrix_coeffs`) and never calls
 `texgen_s10_5_addressed` at runtime — `regular_texgen_uv` is reference-only,
 used by RE-228's property test. Rebuilt and re-captured
-`regression_capture_scene11`/`_12`/`_13` via `tools/run-ppsspp-headless.sh`:
+`regression_capture_scene6`/`_7`/`_13` via `tools/run-ppsspp-headless.sh`:
 scene11/scene12 (regular/GE path) measured **0 differing pixels**, confirming
 this fix is correctly scoped away from them; scene13 (the one linear-texgen
 primitive) measured 4,696 differing pixels against its pre-fix golden,
@@ -3159,12 +3221,12 @@ fixes flow to the real rendering path automatically, rather than needing
 separate wiring.
 
 **This changes real rendered output**: rebuilt and re-captured
-`regression_capture_scene11`/`_12` through `tools/run-ppsspp-headless.sh` and
+`regression_capture_scene6`/`_7` through `tools/run-ppsspp-headless.sh` and
 updated their goldens (`tests/golden/r2-metal-texgen{,-rotated}.png`) —
 28,240 / 23,624 differing pixels against the pre-fix goldens, consistent with
 a systematic sub-texel coefficient shift across a fine reflection gradient.
 New captures reconfirmed deterministic (two fresh captures of the same
-build, 0 differing pixels). `regression_capture_scene13` (the one archive
+build, 0 differing pixels). `regression_capture_scene8` (the one archive
 linear-texgen primitive, drawn through the *other*, untouched CPU path) measured
 **0 differing pixels** against its existing golden — correctly unaffected,
 since this fix only touches the regular/environment matrix path.
@@ -3244,12 +3306,12 @@ call this one method, so both automatically receive the identical
 quantized-then-transformed basis without separate wiring.
 
 **Why the goldens did not need rebuilding.** Every existing texgen regression
-scene (`regression_capture_scene11/12/13`) drives the debug object-viewer,
+scene (`regression_capture_scene6/7/8`) drives the debug object-viewer,
 which leaves `DrawState::texgen_basis` at `None` — the identity default
 `([1,0,0], [0,1,0])`. Both components that default ever takes are `0.0` and
 `+1.0`, the two values `quantize_lookat_component` round-trips exactly, so
 quantizing it is a no-op. Measured, not assumed: rebuilt and re-captured
-`regression_capture_scene11` and `_12` through
+`regression_capture_scene6` and `_12` through
 `tools/run-ppsspp-headless.sh` post-fix and diffed against their existing
 goldens — **0 differing pixels**, both scenes. This fix changes real output
 only once a rotated real-camera basis reaches a texgen primitive, which no
@@ -3267,7 +3329,7 @@ quantization step, `1/127`). `cargo test --workspace --all-targets` (pinned
 toolchain, `SSB64_ROM` set): 568 passing, 0 failed (560 prior + 8 new).
 `cargo fmt --check` clean on touched files in both the host workspace and
 `psp/`. `cargo psp --release` builds clean (default features). Re-captured
-`regression_capture_scene11`/`_12` against their existing goldens: 0 differing
+`regression_capture_scene6`/`_7` against their existing goldens: 0 differing
 pixels both, confirming the identity-basis no-op claim above rather than
 assuming it.
 
@@ -3379,7 +3441,7 @@ inherit the same compensation automatically (they are defined in terms of
 `a_s`/`a_t`, not re-derived).
 
 This changes real rendered output for every texgen-affected pixel: rebuilt
-and re-captured `regression_capture_scene11/12/13` through
+and re-captured `regression_capture_scene6/7/8` through
 `tools/run-ppsspp-headless.sh` and updated their three goldens
 (`tests/golden/r2-metal-texgen{,-rotated,-linear}.png`) — 45,484 / 29,874 /
 27,570 differing pixels against the pre-fix goldens respectively, consistent
@@ -4404,7 +4466,7 @@ primitive (prim 3542, scale `0x0400`/`0x0200`, tile origin `6/3`).
 
 ### 4. Scene 11/12 never exercised this primitive
 
-Verifying the fix on device, the very first capture of `regression_capture_scene11`
+Verifying the fix on device, the very first capture of `regression_capture_scene6`
 came back **byte-identical** to its pre-fix golden — not a subtle miss, a
 plain zero-pixel diff. A reachability probe (a debug colour marker written
 into the linear-texgen branch, rebuilt, recaptured) confirmed the branch
@@ -4425,7 +4487,7 @@ the file, not primitives placed under one specific object. Neither was
 checked against the pack directly until this fix needed a device diff to
 actually move.
 
-**New scene:** `regression_capture_scene13` selects the `0x2EE0` graph, same
+**New scene:** `regression_capture_scene8` selects the `0x2EE0` graph, same
 object-viewer pattern as scenes 11/12 (`psp/src/main.rs`, `psp/Cargo.toml`).
 Golden `tests/golden/r2-metal-texgen-linear.png`, SHA-256
 `0622e2a306454a0b888636c05914d2622ac359f0a597468564a47fd418b2f03a`.
@@ -4439,18 +4501,18 @@ PPSSPP 1.20.4, software rasteriser, deterministic frozen tick, pack SHA-256
 `295b62dc349c609dcd1443722861feca122e9441569e0f17f515d6aad74b8c7c` (unchanged
 from RE-214 — this fix touches draw-time code only, not the pack format):
 
-* `regression_capture_scene13` (the `0x2EE0` graph): the pre-fix build (old
+* `regression_capture_scene8` (the `0x2EE0` graph): the pre-fix build (old
   ordinary-mapping code, restored via `git stash` around only
   `psp/src/meshdraw.rs`/`crates/ssb-rom/src/psp_texture.rs` so the new scene's
   wiring stayed in place) and the fixed build differ by 10,766 pixels on this
   scene — the change is real, not inert. Two captures of the fixed build are
   byte-identical (deterministic).
-* `regression_capture_scene11`/`regression_capture_scene12` (the `0x1B10`
+* `regression_capture_scene6`/`regression_capture_scene7` (the `0x1B10`
   graph, ordinary-only): both byte-identical to their existing RE-214
   goldens, as expected now that the actual graph is known not to carry any
   linear content.
 * `regression_capture` (Dream Land): byte-identical to `r0-dream-land-default.png`.
-* `regression_capture_scene6` (Fox, the only fighter golden checked here):
+* `regression_capture_fox` (Fox, the only fighter golden checked here):
   byte-identical to `r2-fox-fighter.png` — no fighter golden carries texgen,
   so this is the "did the authored-UV path leak" check RE-214 also ran.
 
@@ -4637,7 +4699,7 @@ RE-213 used `sceGuTexMapMode(EnvironmentMap, 0, 1)`. Two faults:
 
 The second was measured, not reasoned: installing the 64x-larger authored-UV
 scale factor under environment mapping produced a **byte-identical** PPSSPP
-capture of `regression_capture_scene11`, while changing only the basis vector
+capture of `regression_capture_scene6`, while changing only the basis vector
 in the same build changed every reflective facet (RMSE 0.025). The scale was
 being ignored; the basis was not.
 
@@ -4686,10 +4748,10 @@ alpha-gate overlap cases.
 
 PPSSPP 1.20.4, software rasteriser, deterministic frozen tick:
 
-* `regression_capture_scene11` (`StageMetalFile2` graph `0x1B10`) renders the
+* `regression_capture_scene6` (`StageMetalFile2` graph `0x1B10`) renders the
   reflective geometry; two captures byte-identical. Golden
   `tests/golden/r2-metal-texgen.png`, SHA-256 `588a412e...`.
-* New `regression_capture_scene12` is the same graph frozen a quarter turn
+* New `regression_capture_scene7` is the same graph frozen a quarter turn
   further round. A single frozen reflection cannot distinguish a correct basis
   from a stuck or constant one; the pair can. They differ by RMSE 0.058 under
   the same camera and geometry. Golden
@@ -4867,7 +4929,7 @@ session picked the next untested fighter in `FIGHTER_COSTUME_COUNTS`
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`
 (unchanged from RE-210 — no asset-pipeline code touched this session).
 
-**Method.** Added `regression_capture_scene10` (`psp/Cargo.toml`,
+**Method.** Added `regression_capture_donkey_kong` (`psp/Cargo.toml`,
 `psp/src/main.rs`), following scenes 2–4/6–9's exact object-viewer pattern
 at all four call sites (`deterministic_capture_frozen`, object selection,
 `stage_view` suppression, idle-spin suppression). `romtool scene --file 317
@@ -4972,7 +5034,7 @@ set still hardware-untested.
 `usbhostfs_pc`/`host0:` session as RE-201–209, pack hash
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
 
-**Method.** Added `regression_capture_scene9` (`psp/Cargo.toml`,
+**Method.** Added `regression_capture_ness` (`psp/Cargo.toml`,
 `psp/src/main.rs`), following scenes 2–4/6–8's exact object-viewer pattern.
 Ness's model file id is not one of RE-102's `209/236/229` fighter-*data*
 file ids (a different table from the model-*graph* file); found it instead
@@ -5038,7 +5100,7 @@ real UV-scale/clamp texture bug.
 `usbhostfs_pc`/`host0:` session as RE-201–208, pack hash
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
 
-**Method.** Added `regression_capture_scene8` (`psp/Cargo.toml`,
+**Method.** Added `regression_capture_kirby` (`psp/Cargo.toml`,
 `psp/src/main.rs`), following scenes 2–4/6/7's exact object-viewer pattern.
 `romtool scene --file 328 --list` reports 8 graphs total in file 328, but
 two of them — at `0x1448` and `0x2CD0` — are the symmetric 27-node pair
@@ -5102,7 +5164,7 @@ a human operator and cannot be resolved by an agent session alone.
 `usbhostfs_pc`/`host0:` session as RE-201–207, pack hash
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
 
-**Method.** Added `regression_capture_scene7` (`psp/Cargo.toml`,
+**Method.** Added `regression_capture_captain_falcon` (`psp/Cargo.toml`,
 `psp/src/main.rs`), following scenes 2–4/6's exact object-viewer pattern.
 Picked Captain Falcon over the other untested fighters because RE-102 (R0.5)
 already named him, alongside Fox and Kirby specifically, as one of three
@@ -5167,7 +5229,7 @@ remain" row.
 `usbhostfs_pc`/`host0:` session as RE-201–206, pack hash
 `7647db75dce032048e6ab69a1ada5b6990e8ccfd9c86d36a6c04fe612650b2f0`.
 
-**Method.** Added `regression_capture_scene6` (`psp/Cargo.toml`,
+**Method.** Added `regression_capture_fox` (`psp/Cargo.toml`,
 `psp/src/main.rs`), following scenes 2–4's exact object-viewer pattern
 (disable default `stage_view`, override the depth/triangle heuristic's
 `object_index`, freeze at tick 240, suppress the idle model spin, reuse
@@ -8748,7 +8810,7 @@ approximation pending CPU generation after model/view normal transformation.
 This prevents loss of source state and gives the future exact path a stable
 on-disk signal.
 
-**Metal scene.** Added deterministic `regression_capture_scene11`: file 117
+**Metal scene.** Added deterministic `regression_capture_scene6`: file 117
 (`StageMetalFile2`) graph `0x1B10`, two nodes, real texgen material state.
 PPSSPP software capture shows textured reflective geometry. Native capture on
 PSP Slim, 6.61 ARK/Infinity, PSPLink 3.2.1 via USBHostFS succeeded with no

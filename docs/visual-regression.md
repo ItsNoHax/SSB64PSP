@@ -203,9 +203,9 @@ That physical comparison predates RE-264's corrected directional-light state;
 the current golden's 12 changed Mario pixels still require an R2 hardware
 re-capture.
 
-## Sixth deterministic test scene (RE-207)
+## Fox fighter capture (RE-207)
 
-Every prior fighter-bearing scene used Mario. `regression_capture_scene6`
+Every prior fighter-bearing scene used Mario. `regression_capture_fox`
 puts Fox on screen instead, reusing scenes 2–4's object-viewer pattern:
 selects file 313 offset `0x2938`, Fox's own model graph, and the same tick-240
 freeze, idle-spin freeze, `stage_view` disable and HUD suppression. The graph
@@ -220,7 +220,7 @@ on Fox's gloves and boots plus the required PSP `GU_LIGHT0` channel enable.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene6
+cd psp && cargo psp --release --features regression_capture_fox
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-fox-fighter.png ~/ppsspp-test/screenshot.png
 ```
@@ -234,12 +234,12 @@ region of the model differs, confirming RE-152's fix holds on real hardware.
 That physical comparison predates RE-264's corrected directional-light state;
 the current golden still requires an R2 hardware re-capture.
 
-## Seventh deterministic test scene (RE-208)
+## Captain Falcon fighter capture (RE-208)
 
-`regression_capture_scene7` puts Captain Falcon on screen, the same
-object-viewer pattern as scene 6: selects file 332 offset `0x3BE0`, Falcon's
+`regression_capture_captain_falcon` puts Captain Falcon on screen, using the
+same object-viewer pattern: selects file 332 offset `0x3BE0`, Falcon's
 own model graph (the lower-offset of the file's two symmetric 26-node
-graphs, matching the convention scene 6 used for Fox). Falcon was chosen
+graphs, matching Fox's graph-pair convention). Falcon was chosen
 over the other untested fighters because RE-102 (R0.5) already named him,
 alongside Fox and Kirby specifically, as one of three fighters with a real
 UV-scale/clamp bug on face/torso/head textures — this scene extends the
@@ -248,7 +248,7 @@ same regression lineage RE-207 started for Fox to a second fighter.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene7
+cd psp && cargo psp --release --features regression_capture_captain_falcon
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-falcon-fighter.png ~/ppsspp-test/screenshot.png
 ```
@@ -260,12 +260,12 @@ empty, `main_thread` alive in `thlist`). Native capture matches this golden
 band, PSPLink's status text, and PPSSPP's FPS-counter overlay differing — no
 solid interior region of the model differs.
 
-## Eighth deterministic test scene (RE-209)
+## Kirby fighter capture (RE-209)
 
-`regression_capture_scene8` puts Kirby on screen, the same object-viewer
-pattern as scenes 6-7: selects file 328 offset `0x1448`, Kirby's own model
+`regression_capture_kirby` puts Kirby on screen, using the same object-viewer
+pattern as the prior fighter captures: selects file 328 offset `0x1448`, Kirby's own model
 graph (the lower-offset of the file's symmetric 27-node graph pair, matching
-the convention scenes 6-7 used for Fox and Falcon). Kirby was chosen because
+Fox and Falcon's graph-pair convention). Kirby was chosen because
 RE-102 (R0.5) named him, alongside Fox and Falcon, as the third of three
 fighters with a real UV-scale/clamp bug on face/torso/head textures — this
 scene completes the regression lineage RE-207/RE-208 started for that bug
@@ -276,7 +276,7 @@ oval eyes without the false inward spikes produced by raw CI4 magnification.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene8
+cd psp && cargo psp --release --features regression_capture_kirby
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-kirby-fighter.png ~/ppsspp-test/screenshot.png
 ```
@@ -288,15 +288,15 @@ empty, `main_thread` alive in `thlist`). Native capture matches this golden
 band, PSPLink's status text, and PPSSPP's FPS-counter overlay differing — no
 solid interior region of the model differs.
 
-## Ninth deterministic test scene (RE-210)
+## Ness fighter capture (RE-210)
 
-`regression_capture_scene9` puts Ness on screen, the same object-viewer
-pattern as scenes 6-8: selects file 335 offset `0x26B0`, Ness's own model
+`regression_capture_ness` puts Ness on screen, using the same object-viewer
+pattern as the prior fighter captures: selects file 335 offset `0x26B0`, Ness's own model
 graph (the lower-offset of the file's symmetric 27-node graph pair, matching
-the convention scenes 6-8 used). Ness was chosen because RE-103 named him,
+the existing fighter graph-pair convention). Ness was chosen because RE-103 named him,
 alongside Fox, Captain Falcon and Kirby, as a fighter whose surface
 "melted" into rainbow noise under the old per-primitive majority-vote
-lit-vs-literal heuristic — a different bug class than scenes 6-8's
+lit-vs-literal heuristic — a different bug class than the prior fighters'
 UV-scale/clamp fix, and the one fighter from RE-103's set still
 hardware-untested. RE-264 later adds the exact `(file 335, offset 0xB7A0)`
 neutral-face reconstruction correction, removing the same inward eye spikes
@@ -306,7 +306,7 @@ selection.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene9
+cd psp && cargo psp --release --features regression_capture_ness
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-ness-fighter.png ~/ppsspp-test/screenshot.png
 ```
@@ -318,12 +318,12 @@ empty, `main_thread` alive in `thlist`). Native capture matches this golden
 band and PPSSPP's FPS-counter overlay differing — no solid interior region
 of the model differs.
 
-## Tenth deterministic test scene (RE-212)
+## Donkey Kong fighter capture (RE-212)
 
-`regression_capture_scene10` puts Donkey Kong on screen, the same
-object-viewer pattern as scenes 6-9: selects file 317 offset `0x39A8`,
+`regression_capture_donkey_kong` puts Donkey Kong on screen, using the same
+object-viewer pattern as the prior fighter captures: selects file 317 offset `0x39A8`,
 DK's own model graph (the lower-offset of the file's symmetric 26-node
-graph pair, matching the convention scenes 6-9 used). DK was chosen as the
+graph pair, matching the existing fighter graph-pair convention). DK was chosen as the
 next untested fighter in `FIGHTER_COSTUME_COUNTS`
 (`tools/romtool/src/main.rs`) order once RE-102's and RE-103's own named
 fighter sets were both exhausted (RE-207–210).
@@ -331,7 +331,7 @@ fighter sets were both exhausted (RE-207–210).
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene10
+cd psp && cargo psp --release --features regression_capture_donkey_kong
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-dk-fighter.png ~/ppsspp-test/screenshot.png
 ```
@@ -350,14 +350,14 @@ region of the model differs.
 That physical comparison predates RE-264's face correction; the current golden
 still requires an R2 hardware re-capture.
 
-## Eleventh and twelfth deterministic test scenes (RE-214)
+## Sixth and seventh deterministic test scenes (RE-214)
 
-`regression_capture_scene11` selects `StageMetalFile2`'s first graph (file
+`regression_capture_scene6` selects `StageMetalFile2`'s first graph (file
 117, offset `0x1B10`, two nodes) in the same object-viewer pattern as scenes
-2-4 and 6-10. It is the only content this port can currently show that draws
+2–4. It is the only content this port can currently show that draws
 real `G_TEXTURE_GEN` material state.
 
-`regression_capture_scene12` is the **same** graph under the **same** camera,
+`regression_capture_scene7` is the **same** graph under the **same** camera,
 frozen a quarter turn further round. It exists because one frozen reflection
 is not evidence: a correct coordinate generator, a stuck basis and a constant
 both produce a single plausible frame. Two deterministic captures at two known
@@ -368,11 +368,11 @@ would pass either frame alone.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene11
+cd psp && cargo psp --release --features regression_capture_scene6
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-metal-texgen.png ~/ppsspp-test/screenshot.png
 
-cd psp && cargo psp --release --features regression_capture_scene12
+cd psp && cargo psp --release --features regression_capture_scene7
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-metal-texgen-rotated.png ~/ppsspp-test/screenshot.png
 ```
@@ -398,23 +398,23 @@ re-captured both scenes on physical PSP against the refreshed goldens
 (36,607 / 27,076 differing pixels 2x-upscaled — the same noise-floor order
 as RE-214's own baseline) and closed `R2.1`/T8.
 
-## Thirteenth deterministic test scene (RE-215)
+## Eighth deterministic test scene (RE-215)
 
-`regression_capture_scene13` selects `StageMetalFile2`'s **second** graph
+`regression_capture_scene8` selects `StageMetalFile2`'s **second** graph
 (file 117, offset `0x2EE0`, two nodes) in the same object-viewer pattern as
-scenes 11/12. Verifying RE-215's exact `G_TEXTURE_GEN_LINEAR` fix found that
-scenes 11/12's graph (`0x1B10`) carries only *ordinary* texgen primitives —
+scenes 6/7. Verifying RE-215's exact `G_TEXTURE_GEN_LINEAR` fix found that
+scenes 6/7's graph (`0x1B10`) carries only *ordinary* texgen primitives —
 the archive's one packed linear primitive (file 117, texture 499, 12
 triangles) lives in this sibling graph instead. A reachability check (a debug
 colour marker in the linear-texgen branch) and a direct read of
 `assets/generated/ssb64.pak` both confirmed it before this scene was added;
 see RE-215 for the full account, including the correction to an earlier
-RE-214 note that had claimed scene 11 itself carried linear triangles.
+RE-214 note that had claimed scene 6 itself carried linear triangles.
 
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene13
+cd psp && cargo psp --release --features regression_capture_scene8
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-metal-texgen-linear.png ~/ppsspp-test/screenshot.png
 ```
@@ -423,7 +423,7 @@ The fix's effect was confirmed against this exact scene before adopting the
 golden: rebuilding with the pre-fix ordinary-mapping code (everything but the
 scene's own wiring reverted) and comparing against the fixed build showed
 10,766 differing pixels — not inert. Two captures of the fixed build are
-byte-identical (deterministic). Scenes 11, 12, Dream Land, and the Fox
+byte-identical (deterministic). Scenes 6, 7, Dream Land, and the Fox
 fighter golden (the only fighter-viewer check run here; no fighter golden
 carries texgen) are all still byte-identical to their existing goldens —
 this fix is isolated to the one graph that actually carries linear content.
@@ -434,7 +434,7 @@ PPSSPP golden (pink/tan reflective facet, yellow flag panel, gold crystal
 band). Hashes recorded in RE-215.
 
 RE-235 (`PLAN.md` R2.1/T8) refreshed `r2-metal-texgen-linear.png` for the
-same post-T7a reason as scenes 11/12 above; RE-215's physical-PSP match was
+same post-T7a reason as scenes 6/7 above; RE-215's physical-PSP match was
 against the pre-T7a golden. RE-236 re-captured this scene on physical PSP
 against the refreshed golden (30,345 differing pixels 2x-upscaled, same
 noise-floor order as the other two), closing `R2.1`/T8.
@@ -447,10 +447,10 @@ expected result of RE-252/RE-253 removing a first-wins collision between
 non-linear file-117 baked-texture variants. The scene still covers the one
 linear primitive; its on-screen region is the crystal cluster, not the bar.
 
-## Fourteenth deterministic test scene (RE-237)
+## Ninth deterministic test scene (RE-237)
 
-`regression_capture_scene14` selects the same ordinary-texgen graph as scenes
-11/12 (file 117, `0x1B10`), but frames it with a real, rotated view matrix
+`regression_capture_scene9` selects the same ordinary-texgen graph as scenes
+6/7 (file 117, `0x1B10`), but frames it with a real, rotated view matrix
 (35 degrees yaw, 20 degrees pitch, `sceGumMatrixMode(View)` via
 `gpu.set_view`) instead of the object viewer's usual identity-view/push-the-
 object-back placement, and sets `draw_state.texgen_basis` from that same
@@ -462,19 +462,19 @@ existing scene had ever fed it a non-identity basis before this one.
 Build and compare:
 
 ```
-cd psp && cargo psp --release --features regression_capture_scene14
+cd psp && cargo psp --release --features regression_capture_scene9
 tools/run-ppsspp.sh --no-build --seconds 6
 tools/compare-screenshot.sh tests/golden/r2-metal-texgen-camera-rotated.png ~/ppsspp-test/screenshot.png
 ```
 
 Deterministic across two headless rebuilds (identical sha256). Visually
-distinct from scene 11's own golden (74,848 differing pixels against it) —
+distinct from scene 6's own golden (74,848 differing pixels against it) —
 the same crystal cluster viewed from a materially different angle, with a
 different reflected-facet colour pattern, confirming the camera basis
 actually drives the generated texture coordinates rather than being inert.
 
 Physical PSP hardware verification (RE-237): same PSP Slim, 6.61, ARK/
-Infinity, PSPLink v3.2.1 hardware as scenes 11-13. `ldstart`ed with `exlist`
+Infinity, PSPLink v3.2.1 hardware as scenes 6–8. `ldstart`ed with `exlist`
 empty and `main_thread` alive; native capture (2x-upscaled) diffed against
 this golden at 19,304 differing pixels — the smallest noise-floor gap of any
 texgen scene measured this way so far. Hashes recorded in RE-237.
@@ -559,7 +559,7 @@ localized and explainable, not corrupted (see RE-251).
 
 ## Sixteenth scene: Link costume-light regression (RE-258/RE-261)
 
-`regression_capture_scene15` selects Link's file 324 graph `0x3AE8` and uses
+`regression_capture_link` selects Link's file 324 graph `0x3AE8` and uses
 the established object-view freeze/HUD suppression. Unlike the generic fighter
 viewer scenes, it also configures Dream Land's source-derived fighter light:
 Link's grayscale tunic textures are intentionally tinted by material
@@ -570,7 +570,7 @@ tracks; the exact decompilation values are pinned by a unit test.
 Capture and compare with:
 
 ```
-tools/run-ppsspp-headless.sh --feature regression_capture_scene15
+tools/run-ppsspp-headless.sh --feature regression_capture_link
 tools/compare-screenshot.sh tests/golden/r2-link-fighter.png ~/ppsspp-headless-test/screenshot.png
 ```
 
@@ -582,6 +582,41 @@ after RE-262's later signed-clamp correction restored the second eye. RE-264
 supersedes it with hash `1d5ff77266e193e7012ec4842af4da1305281d781d87c7bf701a743b2a6f0733`
 after enabling the directional light channel that this scene was already
 configured to use.
+
+## All-playable-fighter neutral regressions (RE-265)
+
+The original game's fighter display path does more than submit a model graph:
+it installs the high-detail `FTCommonPart`, applies the looping `Wait`
+figatree pose, rebuilds the active stage's directional light, and then draws.
+The old object-view goldens covered only six isolated fighters, and four of
+those omitted the runtime light scope. A raw graph also leaves Link in his
+bind-pose T-pose, which is not an in-game presentation.
+
+Every playable character now has an independently buildable capture feature
+and committed `r2-*-fighter.png` golden. Each scene selects the decomp/ROM
+high-detail model graph, starts that fighter's `Wait` animation from frame
+zero, freezes it at deterministic tick 240, and frames the posed hierarchy
+with the existing fixed 38-degree fitted camera. Dream Land supplies the
+shared source stage light; Fox retains Sector Z because that is the supplied
+original-game reference context. The PSP `GU_LIGHT0` scope and each model's
+authored material light colours are therefore exercised for all twelve.
+
+The fighter features are named for their subject (for example,
+`regression_capture_fox` and `regression_capture_link`). The remaining
+numbered non-fighter scenes are contiguous: `regression_capture` is scene 1,
+followed by `regression_capture_scene2` through `_scene9`.
+
+Run the exact-pixel gate with:
+
+```
+tools/verify-fighter-goldens.sh
+```
+
+It rebuilds, captures, and compares Mario, Fox, Donkey Kong, Samus, Luigi,
+Link, Yoshi, Captain Falcon, Kirby, Pikachu, Jigglypuff, and Ness. The twelve
+2026-09-14 PPSSPP-software captures compare at zero differing pixels; their
+individual SHA-256 values are the committed image hashes. This is an expanded
+software regression suite, not a claim of new physical-PSP coverage.
 
 ## Signed-clamp UV regression refresh (RE-262)
 
@@ -608,7 +643,7 @@ semantic deltas against the pre-fix goldens are:
 | Link | 2,784 | `b2a6763d4670475df115b396773fe3c2a9a7858ee904be9ed223636445124b54` |
 
 The flat-colour scene, three pure ordinary-texgen controls, and synthetic
-depth-mask diagnostic remain byte-identical. Scene 13's change is confined to
+depth-mask diagnostic remain byte-identical. Scene 8's change is confined to
 neighboring authored-UV rail primitives; its linear-generated crystal remains
 on the established path. Two Fox captures and two Link captures independently
 match byte-for-byte. All changed regions replace stretched edge/blank texels
@@ -648,7 +683,7 @@ are PPSSPP results; current physical-PSP confirmation remains required by R2.
 
 ## Texgen and renderer-corrective matrix
 
-Scenes 11–14 prove the current PSP lowering is deterministic and responsive;
+Scenes 6–9 prove the current PSP lowering is deterministic and responsive;
 they do not by themselves prove original-N64 equivalence. `PLAN.md`
 R2.1/T1–T10's source, ROM, PPSSPP, original-ROM and physical-PSP matrix is
 complete (RE-225–239); the remaining cross-node reuse item is tracked as a
@@ -657,7 +692,7 @@ Record PSP model, firmware, commit, pack hash, EBOOT identity, scene and
 capture hash for each hardware run; regenerate any golden after a semantic
 change.
 
-`PLAN.md` R2.2/C1–C7 is complete (RE-240–261). The 16-scene suite covers
+`PLAN.md` R2.2/C1–C7 is complete (RE-240–261). The 22-scene suite covers
 primitive colour ownership, load-time lighting provenance, independent depth
 writes, adjacent-only primitive merging, PSP GE cache invalidation and fighter
 costume-light propagation. Every semantic golden change was explained before
@@ -765,7 +800,7 @@ pixel oracle.
 | `combiner_shade_scale` shape | Dream Land's lit, unlit-texture primitives (RE-073); exact per-primitive attribution not isolated in this task | Likely, unconfirmed |
 | Depth testing | Dream Land's canopy occluding the platform behind it; independent compare/write state wired (RE-251) | Yes — plus `tests/golden/r2-depth-mask-diagnostic.png`'s dedicated ON→OFF→ON `sceGuDepthMask` regression |
 | Back-face culling | Dream Land's stage geometry (`cull_back` default for non-object-view) | Yes |
-| Fighter model + skeleton | Mario plus the five established object-view fighters and Link file 324 graph `0x3AE8` with source-authored costume lighting and corrected signed-clamp UVs (RE-152, RE-207–212, RE-261/262) | Yes — scenes 1, 6–10 and 16, including `tests/golden/r2-link-fighter.png` |
+| Fighter model + skeleton | All 12 playable fighters, each in its high-detail `FTCommonPart` graph and source `Wait` pose with runtime fighter lighting (RE-265) | Yes — 12 `tests/golden/r2-*-fighter.png` images |
 | CI8 texture | RE-198: file 52 (`mvopeningroom.c`'s opening-movie scene), texel data offset `0x2ee8`, 16×32 — one of 75 CI8-bound primitives archive-wide | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | `combiner_texture_blend` shape | RE-200: file 109 (`StageSectorFile2`) graph `0x44C8`, 7 converted primitives | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | `combiner_flat_color` shape | RE-200: file 84 (`EFCommonEffects2`) graph `0x2760` (`CatchSwirlDObjDesc`), 4 converted primitives | Yes — scene 4, `tests/golden/r1-catch-swirl-flat-color.png` |

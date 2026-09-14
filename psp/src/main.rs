@@ -91,16 +91,11 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene3")
             || cfg!(feature = "regression_capture_scene4")
             || cfg!(feature = "regression_capture_scene5")
+            || cfg!(feature = "fighter_regression_capture")
             || cfg!(feature = "regression_capture_scene6")
             || cfg!(feature = "regression_capture_scene7")
             || cfg!(feature = "regression_capture_scene8")
             || cfg!(feature = "regression_capture_scene9")
-            || cfg!(feature = "regression_capture_scene10")
-            || cfg!(feature = "regression_capture_scene11")
-            || cfg!(feature = "regression_capture_scene12")
-            || cfg!(feature = "regression_capture_scene13")
-            || cfg!(feature = "regression_capture_scene14")
-            || cfg!(feature = "regression_capture_scene15")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "texgen_normal_diagnostic_0")
@@ -268,6 +263,63 @@ fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
         ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
         ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
     }
+}
+
+/// One playable fighter's neutral-model regression setup.
+///
+/// `model_file`/`graph` are the high-detail `FTCommonPart` selected by the
+/// original fighter setup, not a graph discovered by the browser.  The camera
+/// is the object viewer's fixed, bounds-fitted neutral camera (`CAM_FIT`), and
+/// `light_stage` supplies the stage direction that `ftDisplayMainProcDisplay`
+/// rebuilds immediately before it draws the model.  This makes every capture
+/// an in-game-renderer model check rather than a lightless asset preview.
+#[derive(Clone, Copy)]
+struct FighterRegressionScene {
+    fighter_kind: u8,
+    model_file: u32,
+    graph: u32,
+    light_stage: FighterLightStage,
+}
+
+#[derive(Clone, Copy)]
+enum FighterLightStage {
+    DreamLand,
+    SectorZ,
+}
+
+/// The one fighter scene selected by this build.  Cargo features intentionally
+/// remain separate so every golden has one unambiguous model, light and camera
+/// configuration. Named features keep a fighter golden tied to its subject;
+/// numbered features are reserved for the contiguous non-fighter scene set.
+fn fighter_regression_scene() -> Option<FighterRegressionScene> {
+    let scene = if cfg!(feature = "regression_capture_mario") {
+        FighterRegressionScene { fighter_kind: 0, model_file: 296, graph: 0x2200, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_fox") {
+        FighterRegressionScene { fighter_kind: 1, model_file: 313, graph: 0x2938, light_stage: FighterLightStage::SectorZ }
+    } else if cfg!(feature = "regression_capture_donkey_kong") {
+        FighterRegressionScene { fighter_kind: 2, model_file: 317, graph: 0x39A8, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_samus") {
+        FighterRegressionScene { fighter_kind: 3, model_file: 320, graph: 0x3520, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_luigi") {
+        FighterRegressionScene { fighter_kind: 4, model_file: 323, graph: 0x2410, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_link") {
+        FighterRegressionScene { fighter_kind: 5, model_file: 324, graph: 0x3AE8, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_yoshi") {
+        FighterRegressionScene { fighter_kind: 6, model_file: 338, graph: 0x33A0, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_captain_falcon") {
+        FighterRegressionScene { fighter_kind: 7, model_file: 332, graph: 0x3BE0, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_kirby") {
+        FighterRegressionScene { fighter_kind: 8, model_file: 328, graph: 0x1448, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_pikachu") {
+        FighterRegressionScene { fighter_kind: 9, model_file: 341, graph: 0x2650, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_purin") {
+        FighterRegressionScene { fighter_kind: 10, model_file: 330, graph: 0x2028, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_ness") {
+        FighterRegressionScene { fighter_kind: 11, model_file: 335, graph: 0x26B0, light_stage: FighterLightStage::DreamLand }
+    } else {
+        return None;
+    };
+    Some(scene)
 }
 
 fn psp_main() {
@@ -505,96 +557,26 @@ unsafe fn run() -> ! {
             }
         }
     }
-    // RE-152: Fox's own file-313 graph at 0x2938 -- the first golden scene to
-    // put a fighter other than Mario on screen. Chosen because it is already
-    // the exact graph a real bug (the clamp-window black face) was found and
-    // fixed on, making it a meaningful regression target, not an arbitrary
-    // pick.
-    if cfg!(feature = "regression_capture_scene6") {
+    // Every fighter capture resolves the high-detail `FTCommonPart` graph
+    // named in `fighter_regression_scene`, rather than a browser-ranked
+    // hierarchy.  The original game builds this graph at full detail before
+    // its per-frame fighter light scope is applied below.
+    if let Some(scene) = fighter_regression_scene() {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
                 p.object(i)
-                    .is_some_and(|o| o.source_file == 313 && o.source_offset == 0x2938)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // RE-208: Captain Falcon's own file-332 graph at 0x3BE0 -- the second
-    // non-Mario fighter golden, following RE-207's Fox pattern exactly.
-    // Chosen for the same reason RE-102 measured it alongside Fox and Kirby
-    // as one of the three fighters with a real UV-scale/clamp bug on its
-    // face/torso/head textures.
-    if cfg!(feature = "regression_capture_scene7") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 332 && o.source_offset == 0x3BE0)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // RE-209: Kirby's own file-328 graph at 0x1448 -- the third fighter
-    // golden, following RE-207/RE-208's pattern exactly. RE-102 named Kirby
-    // alongside Fox and Captain Falcon as the third fighter with a real
-    // UV-scale/clamp bug on its face/torso/head textures.
-    if cfg!(feature = "regression_capture_scene8") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 328 && o.source_offset == 0x1448)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // RE-210: Ness's own file-335 graph at 0x26B0 -- the fourth non-Mario
-    // fighter golden. RE-103 named Ness, alongside Fox, Captain Falcon and
-    // Kirby, as a fighter whose "melted" rainbow-noise surface came from the
-    // majority-vote lit-vs-literal heuristic misreading normals as vertex
-    // colours -- a different bug class than scenes 6-8's UV-scale/clamp fix,
-    // so this extends coverage rather than repeating it.
-    if cfg!(feature = "regression_capture_scene9") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 335 && o.source_offset == 0x26B0)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // Donkey Kong's own file-317 graph at 0x39A8 -- the fifth non-Mario
-    // fighter golden. Extends coverage past RE-207/208/209/210's four
-    // fighters into the remaining seven still hardware-untested.
-    if cfg!(feature = "regression_capture_scene10") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 317 && o.source_offset == 0x39A8)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // RE-257: Link's own file-324 graph at 0x3AE8 -- the sixth non-Mario
-    // fighter golden, named explicitly in `PLAN.md`'s C6 recheck list but
-    // never given one until now.
-    if cfg!(feature = "regression_capture_scene15") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 324 && o.source_offset == 0x3AE8)
+                    .is_some_and(|o| {
+                        o.source_file == scene.model_file && o.source_offset == scene.graph
+                    })
             }) {
                 object_index = i;
             }
         }
     }
     if cfg!(any(
-        feature = "regression_capture_scene11",
-        feature = "regression_capture_scene12",
-        feature = "regression_capture_scene14"
+        feature = "regression_capture_scene6",
+        feature = "regression_capture_scene7",
+        feature = "regression_capture_scene9"
     )) {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
@@ -608,7 +590,7 @@ unsafe fn run() -> ! {
     // The sibling `StageMetalFile2` graph that actually carries the pack's
     // one `G_TEXTURE_GEN_LINEAR` primitive (RE-214 §10/B; see this feature's
     // own comment in `psp/Cargo.toml`).
-    if cfg!(feature = "regression_capture_scene13") {
+    if cfg!(feature = "regression_capture_scene8") {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
                 p.object(i)
@@ -693,16 +675,12 @@ unsafe fn run() -> ! {
             feature = "regression_capture_scene2",
             feature = "regression_capture_scene3",
             feature = "regression_capture_scene4",
+            feature = "fighter_regression_capture",
             feature = "regression_capture_scene6",
             feature = "regression_capture_scene7",
             feature = "regression_capture_scene8",
             feature = "regression_capture_scene9",
-            feature = "regression_capture_scene10",
-            feature = "regression_capture_scene11",
-            feature = "regression_capture_scene12",
-            feature = "regression_capture_scene13",
-            feature = "regression_capture_scene14",
-            feature = "regression_capture_scene15"
+            feature = "regression_capture_link"
         ));
     let mut stage_index: u32 = 0;
     // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
@@ -792,6 +770,25 @@ unsafe fn run() -> ! {
             object_index = start_anim(p, anim_index, &mut skeleton).unwrap_or(object_index);
         }
     }
+    // A DObjDesc's rest transforms are only the rig's bind pose (Link's is a
+    // conspicuous T-pose), not a presentation-ready fighter.  The game puts
+    // every standing fighter on its looping `Wait` figatree before drawing;
+    // start that exact per-kind animation here and let the normal fixed-tick
+    // path advance it until the capture freeze.  This keeps the golden's
+    // camera framing, skeleton and material draw path identical to a real
+    // neutral in-game fighter rather than using the browser's raw hierarchy.
+    if let (Some(scene), Some(p)) = (fighter_regression_scene(), &pack) {
+        if let Some((index, anim)) = (0..p.anim_count()).find_map(|index| {
+            let anim = p.anim(index)?;
+            (anim.fighter == u32::from(scene.fighter_kind)
+                && anim.slot == ssb_rom::anim::SLOT_WAIT as u32)
+                .then_some((index, anim))
+        }) {
+            anim_index = index;
+            skeleton.start(p, &anim, 0.0, 1.0);
+            anim_playing = true;
+        }
+    }
 
     let mut sim = FixedClock::new(clock.now_us());
 
@@ -809,8 +806,8 @@ unsafe fn run() -> ! {
         feature = "effect_material_audit_capture"
     )) {
         0.45f32
-    } else if cfg!(feature = "regression_capture_scene12") {
-        // Scene 12 is scene 11's object at a quarter turn (RE-214). A frozen
+    } else if cfg!(feature = "regression_capture_scene7") {
+        // Scene 7 is scene 6's object at a quarter turn (RE-214). A frozen
         // reflection is not evidence that the coordinate generator works: a
         // constant, a stuck basis and a correct basis all produce the same
         // single frame. Two deterministic captures of the same geometry under
@@ -1237,16 +1234,12 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene2",
                     feature = "regression_capture_scene3",
                     feature = "regression_capture_scene4",
+                    feature = "fighter_regression_capture",
                     feature = "regression_capture_scene6",
                     feature = "regression_capture_scene7",
                     feature = "regression_capture_scene8",
                     feature = "regression_capture_scene9",
-                    feature = "regression_capture_scene10",
-                    feature = "regression_capture_scene11",
-                    feature = "regression_capture_scene12",
-                    feature = "regression_capture_scene13",
-                    feature = "regression_capture_scene14",
-                    feature = "regression_capture_scene15"
+                    feature = "regression_capture_link"
                 ))
             {
                 spin += 0.02;
@@ -1840,7 +1833,7 @@ unsafe fn run() -> ! {
                     // Frame the whole hierarchy, not one node: an object's
                     // nodes are spread over the stage, so bounding only the
                     // first would put the camera inside the scene.
-                    let object_bounds = if cfg!(feature = "effect_animation_audit_capture") {
+                    let object_bounds = if cfg!(feature = "effect_animation_audit_capture") || anim_playing {
                         meshdraw::object_bounds_posed(p, &obj, &posed[..posed_len])
                     } else {
                         meshdraw::object_bounds(p, &obj)
@@ -1890,7 +1883,7 @@ unsafe fn run() -> ! {
                     // deriving a second convention. The object stays at its
                     // own real position (no recentring translate baked into
                     // the model matrix); the camera orbits it instead.
-                    let base = if cfg!(feature = "regression_capture_scene14") {
+                    let base = if cfg!(feature = "regression_capture_scene9") {
                         let at = ssb_engine::math::Vec3::new(centre[0], centre[1], centre[2]);
                         const YAW: f32 = 0.610_865_2; // 35 degrees
                         const PITCH: f32 = 0.349_065_85; // 20 degrees
@@ -1929,41 +1922,27 @@ unsafe fn run() -> ! {
                         );
                         gpu.model_matrix()
                     };
-                    // RE-261: Link's tunic is largely grayscale texture data
-                    // tinted by the per-material LIGHT_1/LIGHT_2 colours. The
-                    // ordinary object viewer intentionally has no fighter-
-                    // lighting context, so it falls back to gray baked vertex
-                    // shading and cannot validate Link's canonical palette.
-                    // Scene 15 is the focused exception: exercise the same
-                    // source-derived Dream Land light used by the simulated-
-                    // fighter path above without perturbing the established
-                    // generic-viewer goldens for scenes 6-10.
-                    let fighter_light = if cfg!(feature = "regression_capture_scene15") {
-                        if let Some(stage) = p.stage(0) {
+                    // `ftDisplayMainProcDisplay` rebuilds this scope before
+                    // every in-game fighter draw.  A generic object viewer
+                    // intentionally omits it, but every fighter golden must
+                    // exercise its authored material-light colours and the
+                    // PSP directional-light channel.  Dream Land is the
+                    // shared neutral context; Fox keeps Sector Z because the
+                    // supplied original-game comparison uses that stage.
+                    let fighter_light = fighter_regression_scene().is_some_and(|scene| {
+                        let stage = match scene.light_stage {
+                            FighterLightStage::DreamLand => p.stage(0),
+                            FighterLightStage::SectorZ => (0..p.stage_count())
+                                .filter_map(|i| p.stage(i))
+                                .find(|stage| stage.source_file == 262),
+                        };
+                        if let Some(stage) = stage {
                             draw_state.configure_fighter_light(stage.light_angle_xy);
                             true
                         } else {
                             false
                         }
-                    } else if cfg!(feature = "regression_capture_scene6") {
-                        // RE-264: the supplied original-game reference shows
-                        // Fox on Sector Z. Use that stage's decompiled
-                        // `MPGroundData.light_angle` so the white directional
-                        // material on his gloves and boots is evaluated under
-                        // the same light rather than the generic viewer's gray
-                        // baked fallback.
-                        if let Some(stage) = (0..p.stage_count())
-                            .filter_map(|i| p.stage(i))
-                            .find(|stage| stage.source_file == 262)
-                        {
-                            draw_state.configure_fighter_light(stage.light_angle_xy);
-                            true
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
+                    });
                     let tris = meshdraw::draw_object_posed(
                         p,
                         &obj,

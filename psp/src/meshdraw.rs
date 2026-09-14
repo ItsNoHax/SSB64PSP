@@ -639,7 +639,7 @@ unsafe fn bind_texture(
 /// effect in that mode, so it can only ever sweep the full uploaded texture.
 /// That was measured, not assumed -- installing the 64x-larger authored-UV
 /// factor under environment mapping produced a byte-identical PPSSPP capture
-/// of `regression_capture_scene11` (RE-214). Real content needs the scale: of
+/// of `regression_capture_scene6` (RE-214). Real content needs the scale: of
 /// the six textures a texgen draw binds archive-wide, `StageMetalFile2`'s own
 /// 32x8 one sweeps 16 of its 32 uploaded texels, and the 48x42 tile padded to
 /// 64x64 sweeps 47x41 -- the rest is padding the RDP never samples.
