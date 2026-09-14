@@ -2891,7 +2891,7 @@ PPSSPP is not sufficient.
 
 * [x] EBOOT boots on physical PSP — RE-201, RE-202, RE-203
 * [x] runtime asset pack loads — RE-203 (pack hash `7647db75...650b2f0`, all four scenes render pack content correctly)
-* [x] representative fighters render — RE-203: Mario matches PPSSPP golden; RE-207: Fox (`regression_capture_scene6`, file 313 graph `0x2938`) matches its PPSSPP golden with zero exceptions, confirming RE-152's clamp-window face fix on real hardware; RE-208: Captain Falcon (`regression_capture_scene7`, file 332 graph `0x3BE0`) matches its PPSSPP golden with zero exceptions; RE-209: Kirby (`regression_capture_scene8`, file 328 graph `0x1448`) matches its PPSSPP golden with zero exceptions; RE-210: Ness (`regression_capture_scene9`, file 335 graph `0x26B0`) matches its PPSSPP golden with zero exceptions, confirming RE-103's per-vertex lit/literal fix on real hardware; RE-212: Donkey Kong (`regression_capture_scene10`, file 317 graph `0x39A8`) matches its PPSSPP golden with zero exceptions
+* [x] representative fighters render — RE-203: Mario matches PPSSPP golden; RE-207: Fox (`regression_capture_fox`, file 313 graph `0x2938`) matches its PPSSPP golden with zero exceptions, confirming RE-152's clamp-window face fix on real hardware; RE-208: Captain Falcon (`regression_capture_captain_falcon`, file 332 graph `0x3BE0`) matches its PPSSPP golden with zero exceptions; RE-209: Kirby (`regression_capture_kirby`, file 328 graph `0x1448`) matches its PPSSPP golden with zero exceptions; RE-210: Ness (`regression_capture_ness`, file 335 graph `0x26B0`) matches its PPSSPP golden with zero exceptions, confirming RE-103's per-vertex lit/literal fix on real hardware; RE-212: Donkey Kong (`regression_capture_donkey_kong`, file 317 graph `0x39A8`) matches its PPSSPP golden with zero exceptions
 * [x] representative stages render — RE-203: Dream Land, `StageSectorFile2`, `MVOpeningRoom`
 * [x] fighter animation works — RE-203: Mario's 240-tick fall/physics simulation completes on hardware and matches the PPSSPP golden
 * [x] stage animation works — RE-205: `regression_capture_scene5` (stage 9, Saffron City) isolates RE-142/RE-143's already-proven animated gate; found and fixed a third FPU-trap site in `objanim.rs`'s `StageJoint::apply`; hardware capture matches the PPSSPP golden with zero exceptions
@@ -2899,7 +2899,7 @@ PPSSPP is not sufficient.
 * [x] textures render correctly — RE-203: CI8, untextured/vertex-coloured, and clamp-mode texturing match their goldens
 * [x] framebuffer effects work — RE-204: RE-193's real `SObj` wallpaper-sprite draw hardware-tested, luminance ratio matches PPSSPP evidence, deterministic once settled
 * [x] VRAM usage verified — RE-204: 1,360 KiB of 2 MiB EDRAM (only three allocation sites, grep-confirmed), ~688 KiB headroom, runtime bound check passes on every successful boot
-* [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus a sixth (Fox), a seventh (Captain Falcon), an eighth (Kirby), a ninth (Ness), a tenth (Donkey Kong), an eleventh and twelfth (`StageMetalFile2` ordinary texgen at two rotations, RE-214) and a thirteenth (`StageMetalFile2`'s linear-texgen graph, RE-215) and the plain interactive build are now clean, but coverage is not exhaustive across all 12 fighters/41 stages/effects
+* [ ] no hardware-only rendering failures remain — five golden scenes (Dream Land/Mario, `MVOpeningRoom`, `StageSectorFile2`, `CatchSwirl`, Saffron City) plus fighter, texgen, and plain-interactive checks are clean. RE-265 adds exact PPSSPP software goldens for all 12 playable fighters in their high-detail Wait pose with runtime fighter lighting, but physical coverage is still not exhaustive across all 12 fighters/41 stages/effects
 * [x] `G_TEXTURE_GEN` compared against original output — RE-234: real 1P Mode play through the legitimate stage-8 route reached VS Metal Mario / Meta Crystal, three original-ROM screenshots captured. RE-235/RE-236 cross-checked the refreshed PPSSPP and physical-PSP `StageMetalFile2` goldens against them (qualitative shape/colour/material-behavior match, the `R2.1`/T8 acceptance's own named comparison method — not a pixel-level ROI overlay)
 * [x] `G_TEXTURE_GEN_LINEAR` implemented exactly — the `R2.1`/T1–T10 gate closed (RE-225–239): raw-normal (T2), quantized-LookAt (T3), shared regular/linear reference math (T4), integer-conversion (T5), tile/lighting audit (T6), addressing (T7/T7a), original-ROM/PPSSPP/physical-PSP comparison (T8/T9) and test/doc closure (T10) all measured and, where fixed, re-verified against the real ROM. Source-formula and reference-port exact, hardware-verified at the qualitative-comparison bar `R2.1`/T8 itself set; not a claim of pixel-exact original-N64 output (no such original capture method exists for this content, per RE-216)
 * [x] hardware model recorded — PSP Slim, firmware 6.61, ARK/Infinity, PSPLink v3.2.1 (RE-201, RE-202, RE-203)
@@ -3142,7 +3142,7 @@ goldens (RE-236), matching at the same noise-floor order RE-214 established.
 T9 complete (RE-236/RE-237): all five physical-PSP matrix items captured —
 regular rotations A/B and linear texgen via T8's own scenes 11-13 (RE-236),
 plus a real-hardware raw normal diagnostic and a new camera-rotation scene
-(`regression_capture_scene14`) exercising T3's previously-dormant non-
+(`regression_capture_scene9`) exercising T3's previously-dormant non-
 identity LookAt basis (RE-237). T10 complete (RE-238/RE-239): stale
 `docs/porting-status.md` reconciled, `romtool texgen ROM --verify` built and
 run clean against the real ROM, zero-normal test added, and the
@@ -3214,7 +3214,7 @@ acceptance text named (identical output, magnitude discarded); under raw
 output. `meshdraw::apply_texture_mapping` now uses raw `Normal` mode with the
 dot-product term scaled by `128.0/127.0` to compensate the GE's measured
 `/128` against the original hardware's `/127`, matching `(normal · LookAt) /
-127` exactly. `regression_capture_scene11/12/13`'s goldens rebuilt and
+127` exactly. `regression_capture_scene6/7/8`'s goldens rebuilt and
 updated (45,484 / 29,874 / 27,570 differing pixels vs. the pre-fix goldens;
 new captures reconfirmed deterministic). D-038 revised.
 
@@ -3237,7 +3237,7 @@ texture-matrix) and linear (CPU-generated) texgen paths — which both call
 this one method — receive the identical quantized-then-transformed basis
 with no separate wiring. 8 new host tests added (boundary, asymmetry,
 round-trip exactness/inexactness, a realistic 45° divergence case).
-`regression_capture_scene11`/`_12` re-captured and diffed against their
+`regression_capture_scene6`/`_7` re-captured and diffed against their
 existing goldens: 0 differing pixels both — every current texgen regression
 scene uses the identity (camera-less) basis, whose only components (`0.0`,
 `+1.0`) round-trip exactly, so this fix is currently dormant pixel-wise; it
@@ -3269,7 +3269,7 @@ a dedicated regression test pins the old formula's measured divergence
 (hundreds to thousands of S10.5 units) so it cannot silently return.
 Rebuilt and updated two of three texgen goldens (`tests/golden/
 r2-metal-texgen{,-rotated}.png`, 28,240 / 23,624 differing pixels);
-`regression_capture_scene13` (the one linear-texgen primitive, drawn through
+`regression_capture_scene8` (the one linear-texgen primitive, drawn through
 the untouched CPU path) measured 0 differing pixels, correctly unaffected.
 
 Evidence: RE-228 in `docs/reverse-engineering.md`.
@@ -3287,7 +3287,7 @@ removed it to match both references. Added
 (`N+0.49`/`N+0.50`/`N+0.51` at every real ROM texgen scale). Changes real
 rendered output only for the linear-texgen path (`linear_texgen_uv` drives
 real pack UVs; the ordinary path renders through the GE hardware matrix and
-never calls this function at runtime) — `regression_capture_scene13`'s golden
+never calls this function at runtime) — `regression_capture_scene8`'s golden
 rebuilt (4,696 differing pixels), `_11`/`_12` reconfirmed at 0 differing
 pixels. "Source-formula exact" stands; no original-ROM output yet to promote
 to "bit-exact to N64".
@@ -3404,7 +3404,7 @@ captured on physical PSP as part of `T8`'s own physical-PSP leg (RE-236,
 scenes 11/12/13). RE-237 closed the remaining two items: a raw normal
 diagnostic (`texgen_normal_diagnostic_6`, `[73,-41,99]` raw `Normal` mode)
 run on real hardware for the first time, matching its predicted `(179, 99)`
-texel exactly; and a new `regression_capture_scene14` (same file-117
+texel exactly; and a new `regression_capture_scene9` (same file-117
 `0x1B10` graph as scenes 11/12, framed with a real, rotated view matrix
 instead of the object viewer's usual identity view) exercising the
 non-identity camera basis `R2.1`/T3 (RE-227) left dormant, captured both on
