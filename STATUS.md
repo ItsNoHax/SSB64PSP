@@ -3,10 +3,10 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-266 — fighter regression features are named for their
-  character, and non-fighter scene features are contiguous (1–9)`. The
-  complete twelve-fighter PPSSPP software gate is now available.
-- Current build: RE-266 code with the existing v29 pack, 22 deterministic
+- Last complete: `RE-267 — Donkey Kong's CI4 model textures use decoded RGBA
+  transport in the PSP regression capture`. The complete twelve-fighter PPSSPP
+  software gate is now available.
+- Current build: RE-267 code with the existing v29 pack, 22 deterministic
   goldens, and reconciled renderer evidence; the formal R2 physical-hardware
   matrix remains primary.
 

@@ -8791,6 +8791,40 @@ of the archive region.
 
 ---
 
+## RE-267 — Donkey Kong's CI4 textures require decoded-RGBA transport in the PSP regression capture
+
+**Question.** Are the black-and-white bands on Donkey Kong's face, hands and
+feet source artwork, a bad camera/light setup, or a paletted-texture transport
+failure?
+
+**Evidence.** File 317's high-detail graph (`0x39A8`) binds CI4 textures to
+the affected nodes: the hands use the 24x24 texture at `0xCD60`, the head
+uses the 24x24 texture at `0xC378`, the feet reuse the 24x24/24x8 pair, and
+the tie uses the 24x20 texture at `0xD4B8`. `romtool texdump --file 317`
+decodes those source textures with their named 16-entry TLUTs: the hand/foot
+and tie bands are authored black/peach and black/red/yellow texels, while the
+head source is ordinary brown fur and face shading. A control pack that
+transports the same decoded pixels as PSP8888 removes the head's false
+black-and-white corruption while leaving the authored tie and limb markings
+unchanged. Swizzling, T4 nibble order, CLUT-load block count, and camera/light
+state were each varied independently and did not explain the result.
+
+**Implementation.** `convert_texture` expands paletted textures whose home
+archive is file 317 to PSP8888. This is a format transport fallback, not a
+texture edit: the converter first decodes the ROM texels through their real
+TLUT and writes those exact RGBA values. It adds about 2.8 MiB to the
+generated pack, which remains within the existing 64 MiB regression target.
+
+**Verification.** A rebuilt v29 pack loads cleanly. The Donkey Kong
+headless PPSSPP-software capture has a stable, correctly coloured face and
+the source-authored tie, hand, and foot markings. Physical PSP confirmation
+remains required by R2.
+
+**Confidence: high for the source-texture classification; PPSSPP-only for
+the transport fallback.**
+
+---
+
 ## RE-213 — Texgen/mip physical capture; linear formula and Yoshi `G_SHADE` follow-up
 
 **Texgen formula.** F3DEX's ordinary form generates post-projection,
