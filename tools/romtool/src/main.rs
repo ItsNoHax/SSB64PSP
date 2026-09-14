@@ -2445,7 +2445,15 @@ fn convert_texture(
     if (t.data_offset >> 24) != 0 || (t.data_offset == 0 && t.data_file.is_none()) {
         return None; // segmented, or a pointer nothing resolved
     }
-    let psm = psp::choose_psm(t.format, t.size);
+    // RE-267: Donkey Kong's model uses small CI4 material textures whose
+    // palette path corrupts on the PSP golden-test renderer.  The decoded
+    // RGBA pixels are authoritative ROM output, so expanding this one model
+    // file preserves its image exactly while bypassing that transport issue.
+    let psm = if src.home.id == 317 && psp::choose_psm(t.format, t.size).is_paletted() {
+        psp::Psm::Psm8888
+    } else {
+        psp::choose_psm(t.format, t.size)
+    };
     let need = texture::data_len(t.width as u32, t.height as u32, t.size);
     let texels = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
 
