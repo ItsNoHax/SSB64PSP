@@ -5,6 +5,11 @@ description: Need to observe or navigate the original N64 game live (not just re
 
 # N64 emulator (headless, scripted)
 
+Use this skill (headless Mupen64Plus) whenever you need the real N64 game
+live — not PSP output. For PSP visual/rendering testing use
+[visual-regression](../visual-regression/SKILL.md) (PPSSPPHeadless); for real
+PSP hardware testing use [psp-hardware](../psp-hardware/SKILL.md) (PSPLink).
+
 Use this when the decompilation's *static* behavior is ambiguous or
 insufficient — e.g. runtime-only state (camera settle after N ticks,
 animation timing, live struct values) or reaching a specific menu/gameplay

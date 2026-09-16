@@ -33,7 +33,7 @@ tools/compare-screenshot.sh tests/golden/r2-saffron-city-gate.png ~/ppsspp-test/
 ```
 
 Physical PSP hardware verification (RE-205): built and `ldstart`ed under
-PSPLink the same way as the other four scenes (`docs/psplink.md`). This
+PSPLink the same way as the other four scenes (`psp-hardware` Skill). This
 surfaced a real hardware-only fault — a third `1.0 / payload` speculative-
 division FPU trap in `objanim.rs`'s `StageJoint::apply`, the same class
 `f111892` already fixed in `figatree.rs`/`matanim.rs` — fixed with the same

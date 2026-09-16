@@ -13,7 +13,7 @@ references.
 - `DECISIONS.md` (index) + `docs/decisions/D-XXX.md`: permanent architectural decisions.
 - `docs/rendering.md` (entry point) + `docs/rendering/*.md`: renderer technical reference by domain.
 - `docs/visual-regression.md` (entry point) + `docs/visual-regression/{README,scenes/*}.md`: golden-capture methodology.
-- `docs/ssb-architecture.md`, `docs/memory.md`, `docs/psplink.md`: standalone domain references.
+- `docs/ssb-architecture.md`, `docs/memory.md`: standalone domain references.
 - `TODO.md`: future work not yet in the roadmap.
 
 If code and documentation disagree, investigate with source evidence and fix
@@ -46,9 +46,9 @@ files. Read a whole file only when symbol-level retrieval is inappropriate
 | Permanent architectural choice? | `DECISIONS.md` index → specific `D-xxx.md` only |
 | Rendering behavior? | `rendering` Skill → relevant `docs/rendering/*.md` |
 | Original-game behavior unknown? | `reverse-engineering` Skill |
-| Need to observe/navigate the live original N64 game? | `n64-emulator` Skill |
-| Physical PSP issue? | `psp-hardware` Skill |
-| Golden/capture issue? | `visual-regression` Skill |
+| Need to observe/navigate the live original N64 game? | `n64-emulator` Skill (headless Mupen64Plus) |
+| Visual/rendering testing (screenshots, goldens)? | `visual-regression` Skill (PPSSPPHeadless) |
+| Physical-hardware testing (real PSP, PSPLink)? | `psp-hardware` Skill |
 | Asset/pack/ROM format? | `asset-pipeline` Skill |
 | Updating project docs/state? | `documentation` Skill |
 | Resuming work generally? | `continue-plan` Skill / `/continue-plan` |

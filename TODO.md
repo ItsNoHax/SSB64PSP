@@ -88,14 +88,14 @@ leakage and confirming texture decode/mirror-baking are correct. Two
 hypotheses remain undistinguished: a faithfully-reproduced ROM quirk needing
 a `TEXTURE_FILTER_CORRECTIONS`-style named fix (RE-263/264 precedent), or a
 real addressing/scale bug specific to this overscan magnitude. Needs an
-accurate N64 reference render (real hardware or `angrylion-rdp-plus`) to
-tell which. RE-275 found `angrylion-rdp-plus` is locally available (bundled
-in the RMG flatpak, distinct from the M64Py flatpak RE-151/RE-216's harness
-targets) and ported RE-216's scripted-capture driver to it
-(`~/ppsspp-test/re151-harness/re274_angrylion_driver.py`, out-of-Git), but it
-segfaults inside the plugin's `PluginStartup` for a reason not yet
-root-caused (no `gdb` available to symbolize the core dump) — needs either
-symbol tooling to debug the crash, or a real-hardware capture instead.
+accurate N64 reference render to tell which. RE-275 tried routing this
+through `angrylion-rdp-plus` (a cycle-accurate RDP reference renderer bundled
+in the RMG flatpak); root-caused and fixed a `PluginStartup` segfault there,
+but hit a further, unsolved headless-GL hurdle (`SDL_CreateWindow`/GLX) and
+is closed as superseded — the `n64-emulator` skill's existing Rice-based
+headless capture already gives a working (if approximate, not RDP-cycle-
+accurate) reference route. Next step: use the `n64-emulator` skill to reach
+this camera distance on Mario's face live and capture a reference frame.
 
 ---
 
