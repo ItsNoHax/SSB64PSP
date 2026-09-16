@@ -5,6 +5,12 @@ description: Golden screenshots, PPSSPPHeadless, deterministic captures, screens
 
 # Visual regression
 
+Use this skill (PPSSPPHeadless) for visual/rendering testing — deterministic
+screenshots and golden comparisons. For real-hardware validation and crash
+capture use [psp-hardware](../psp-hardware/SKILL.md) (PSPLink) instead; for
+live original-N64 behavior use [n64-emulator](../n64-emulator/SKILL.md)
+(headless Mupen64Plus) instead.
+
 1. Load general methodology first:
    [docs/visual-regression/README.md](../../docs/visual-regression/README.md)
    — PPSSPPHeadless setup, golden rules (what a golden does/doesn't prove),

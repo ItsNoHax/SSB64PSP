@@ -284,4 +284,4 @@ editing a record.
 | RE-272 | Fighter face textures show a repeating/aliased artifact absent from the raw ROM texture | OPEN | texture, fighter, hardware, visual-regression, geometry |  |
 | RE-273 | First physical confirmation on a second hardware unit (PSP-3000) | COMPLETE | hardware, visual-regression, fighter, psp-ge, stage |  |
 | RE-274 | RE-272's forehead artifact traces to one self-contained, wide-UV draw call | OPEN | texture, fighter, geometry, hardware, visual-regression |  |
-| RE-275 | angrylion-rdp-plus reference-render harness ported to RMG's sandbox, segfaults on plugin startup | OPEN | texture, fighter, hardware, visual-regression, toolchain |  |
+| RE-275 | angrylion-rdp-plus reference-render harness ported to RMG's sandbox, segfaults on plugin startup | CLOSED | texture, fighter, hardware, visual-regression, toolchain |  |

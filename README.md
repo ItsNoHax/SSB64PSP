@@ -253,8 +253,9 @@ The script stages the generated asset pack next to the executable before launchi
 
 ### 9. Debug physical PSP crashes
 
-See [PSPLink hardware-crash debugging](docs/psplink.md) for installation,
-`host0:` live loading, exception mapping, native captures, and evidence.
+See the `psp-hardware` Skill (`.claude/skills/psp-hardware/SKILL.md`) for
+PSPLink installation, `host0:` live loading, exception mapping, native
+captures, and evidence.
 
 ---
 

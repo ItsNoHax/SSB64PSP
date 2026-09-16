@@ -25,8 +25,8 @@ PSPLink the same way as the other nine scenes. The first two attempts
 produced the built-in fallback tetrahedron instead of DK despite `exlist`
 being empty and `main_thread` alive in `thlist` — a silently failed
 asset-pack open, invisible to this project's usual health checks. `pspsh -e
-reset` before the next `ldstart` resolved it; see RE-212 and
-`docs/psplink.md` for the methodology finding. Once resolved: zero
+reset` before the next `ldstart` resolved it; see RE-212 and the
+`psp-hardware` Skill for the methodology finding. Once resolved: zero
 exceptions, native capture matches this golden (upscaled 2x
 nearest-neighbour) with only the expected edge-antialiasing band, PSPLink's
 status text, and PPSSPP's FPS-counter overlay differing — no solid interior
