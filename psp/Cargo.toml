@@ -192,6 +192,17 @@ texgen_normal_diagnostic_6 = [] # [73,-41,99], Normal (raw)
 # `texgen_normal_diagnostic_*` do. Off by default.
 addr_diag_probe = []
 
+# R2/RE-280 measurement rig: RE-278's own named remainder, both at once. Draws
+# two real screen-space triangle quads (`GuPrimitive::Triangles`, matching
+# `draw_mesh`'s real topology, not `addr_diag_probe`'s degenerate sprites)
+# whose corners carry genuinely different `u` values spanning RE-274's own
+# `-31..90` texel range, so interior columns are real GE-interpolated
+# coordinates, through the actual `Ci4`/CLUT paletted bind path
+# (`sceGuClutMode`/`sceGuClutLoad`/`PsmT4`) `bind_texture` uses for the real
+# primitive, which `addr_diag_probe`'s plain `Psm8888` texture did not
+# exercise. Off by default.
+tri_addr_diag_probe = []
+
 # Requests one framebuffer capture from PPSSPPHeadless after the deterministic
 # scene has reached its frozen tick. The devctl is ignored by real PSPs, so it
 # is safe to combine with any regression scene and has no effect on normal
