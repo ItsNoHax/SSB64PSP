@@ -1,388 +1,48 @@
 # Technical Decisions
 
-Permanent technical decisions recovered from the repository. Each entry records **what was decided**, **why**, and **where it's implemented**. Do not revisit unless new evidence contradicts.
-
----
+Permanent technical decisions recovered from the repository. Each is a short,
+addressable record under `docs/decisions/D-NNN.md` with the full decision,
+reasoning, implementation and references (including later amendments). Do not
+revisit a decision unless new evidence contradicts it.
 
 ## Rendering Architecture
 
-### D-001: No RDP Emulation — Build-Time Display List Conversion
-**Decision:** Parse F3DEX2 display lists at build time (`crates/ssb-rom/src/dl.rs`) and lower to PSP vertex buffers + `sceGu` state. Do not emulate the RDP at runtime.
-
-**Reasoning:**
-- Smash 64 geometry is **static ROM data** (unlike Star Fox 64 which generates DLs dynamically)
-- Preconversion is strictly cheaper on 333 MHz MIPS CPU
-- `sf64-psp` does runtime translation because it must; we don't
-
-**Implemented:** `crates/ssb-rom/src/dl.rs`, `crates/ssb-rom/src/mesh.rs`, `crates/ssb-rom/src/pack.rs`
-
-**Reference:** `docs/rendering.md` "The central decision"
-
----
-
-### D-002: Preconversion Over Runtime Conversion
-**Decision:** Convert all assets (textures, meshes, animations) at build time. Ship PSP-native formats in the runtime pack.
-
-**Reasoning:**
-- PSP CPU is the bottleneck; bandwidth matters
-- N64 vertex cache (32 entries) forces re-uploads; indexing at build time gives 2.09x reuse
-- Positions and most UVs stay in compact 16-bit GE fields. N64 S10.5 UV
-  storage is signed while `GU_TEXTURE_16BIT` is unsigned, so primitives with
-  negative coordinates on clamped axes are marked at pack time and expanded
-  transiently to float UVs; the common indexed path remains 20 bytes per
-  vertex instead of 36 (RE-262).
-- Material merging at build time reduces GE state changes
-
-**Implemented:** `crates/ssb-rom/src/texture.rs`, `psp_texture.rs`, `mesh.rs`, `pack.rs`
-
-**Reference:** `docs/rendering.md` "Geometry conversion results"
-
----
-
-### D-003: Texture Formats — Keep Paletted Textures Paletted
-**Decision:** Convert CI4/CI8 to `PsmT4`/`PsmT8` + CLUT. Convert I4/I8 to palettized greyscale. Expand IA/RGBA32 to `Psm8888`.
-
-**Reasoning:**
-- 77% VRAM saved (1078 KiB packed vs 4711 KiB naive RGBA8888)
-- PSP has native CLUT support; CI4/CI8 convert ~1:1
-- CI4 is dominant (468/545 textures)
-- VRAM budget is ~700 KiB after framebuffers + depth; full set doesn't fit at once
-
-**Implemented:** `crates/ssb-rom/src/psp_texture.rs`
-
-**Update (RE-053, RE-067, RE-070):** the packed total has grown since this
-decision as correctness fixes were added on top of the format choice above —
-mip chains (RE-053), mirrored-texture pre-baking (RE-067), and a targeted
-per-texture dither blur (RE-070) all cost real VRAM. Current measured total is
-**1170.9 KiB**, 1.7x the ~700 KiB budget; texture streaming (`TODO.md` Phase
-G) is no longer optional headroom.
-
-**Reference:** `docs/rendering.md` "Texture conversion results", `docs/memory.md` VRAM budget
-
----
-
-### D-004: Coordinate Systems — No Handedness Flip, No Matrix Transpose
-**Decision:** N64 and PSP both use right-handed, `+Y` up, view down `-Z`. N64 row-major/row-vector cancels with PSP column-major/column-vector. Only s15.16 → `f32` widening is real work.
-
-**Reasoning:**
-- Verified by algebra: two transposes cancel (`Mpsp[i][j] = M64[j][i]`)
-- Unit test `row_vector_translation_lands_in_the_translation_column` caught early transpose bug
-- `ftPhysicsApplyGravityClampTVel` does `vel_air.y -= gravity` → `+Y` up confirmed
-
-**Implemented:** `crates/ssb-engine/src/coord.rs::n64_to_psp_matrix`, `n64_to_psp_position`
-
-**Reference:** RE-004, RE-005, `docs/rendering.md` "Coordinate handling"
-
----
-
-### D-005: Fixed 60 Hz Simulation Decoupled from Rendering
-**Decision:** Game simulation runs at fixed 60 Hz tick. Rendering follows PSP display cadence (~59.94 Hz). Accumulator with capped catch-up.
-
-**Reasoning:**
-- Every timing constant in decomp expressed in frames
-- `scheduler.c` registers `osViSetEvent(..., INTR_VRETRACE, 1)` — event every retrace = 60 Hz NTSC
-- Steady state = 1 tick per vblank
-
-**Implemented:** `crates/ssb-engine/src/timing.rs`
-
-**Reference:** RE-006, `docs/reverse-engineering.md`
-
----
-
-### D-006: Vertex Format — 16-bit Normalized Requires Model Scale
-**Decision:** `GU_VERTEX_16BIT` interprets coordinates as normalized fixed point (divide by 32768). Apply uniform model-matrix scale of 32768 to undo. UVs: S10.5 (32 units/texel) → `sceGuTexScale(1024/w, 1024/h)`.
-
-**Reasoning:**
-- Without scale, N64 coordinates in hundreds became hundredths → invisible speck at origin
-- Precision unaffected: coordinates are integers well inside `i16` range
-
-**Implemented:** `psp/src/meshdraw.rs::MODEL_SCALE` (32768), `sceGuTexScale(1024/width, 1024/height)`
-
-**Reference:** RE-020
-
----
-
-### D-007: Depth Buffer — Inverted Range
-**Decision:** PSP depth buffer inverted: near=65535, far=0. Use `sceGuDepthRange(65535, 0)` + `DepthFunc::GreaterOrEqual`.
-
-**Reasoning:** Classic source of "everything renders in wrong order" bugs. Verified working. RE-085 confirmed this matches the `psp` crate's own documented `sceGuDepthRange` convention exactly ("the depth buffer is inversed, and takes values from 65535 to 0" — the SDK binding's own doc comment, not an inference), not a workaround for a bug this project introduced.
-
-**Implemented:** `psp/src/gu.rs`
-
-**Reference:** `docs/rendering.md` "Depth", RE-085
-
----
-
-### D-008: Aspect Ratio — Pillarboxed 362×272
-**Decision:** Game renders 320×240 (4:3). PSP is 480×272. Default is pillarboxed 362×272 viewport, centered. Applied to **both** `sceGuViewport` and `sceGuScissor`.
-
-**Reasoning:** Stretching would distort characters. Feeding pillarbox aspect to projection while leaving GE viewport at 480 stretches by 1.33x.
-
-**Implemented:** `crates/ssb-engine/src/coord.rs::pillarboxed_viewport()`, `psp/src/gu.rs::Gpu::init`
-
-**Reference:** RE-034, `docs/rendering.md` "Coordinate handling"
-
----
+- [D-001](docs/decisions/D-001.md): No RDP Emulation — Build-Time Display List Conversion
+- [D-002](docs/decisions/D-002.md): Preconversion Over Runtime Conversion
+- [D-003](docs/decisions/D-003.md): Texture Formats — Keep Paletted Textures Paletted
+- [D-004](docs/decisions/D-004.md): Coordinate Systems — No Handedness Flip, No Matrix Transpose
+- [D-005](docs/decisions/D-005.md): Fixed 60 Hz Simulation Decoupled from Rendering
+- [D-006](docs/decisions/D-006.md): Vertex Format — 16-bit Normalized Requires Model Scale
+- [D-007](docs/decisions/D-007.md): Depth Buffer — Inverted Range
+- [D-008](docs/decisions/D-008.md): Aspect Ratio — Pillarboxed 362×272
 
 ## Asset Pipeline
 
-### D-009: VPK0 Decompression — Postfix Huffman, Bit-Width Leaves
-**Decision:** VPK0 uses LZ77 with two postfix-encoded Huffman trees. Leaves hold **bit widths**, not values.
-
-**Reasoning:** Two independent verification paths agree for all 499 compressed files:
-1. Walking intern chain through decompressed payload (single wrong byte derails it)
-2. ROM gap measurement (doesn't depend on decompression)
-
-**Implemented:** `crates/ssb-rom/src/vpk0.rs`
-
-**Reference:** RE-001, RE-002
-
----
-
-### D-010: relocData Archive — Intern/Extern Chains Through Pointer Slots
-**Decision:** Intern relocations: singly linked list threaded through pointer slots being patched. Extern: identical but targets in other files; target file IDs in `u16` array after file data.
-
-**Reasoning:** Matches `lbRelocLoadAndRelocFile` exactly. 61,343 intern + 3,092 extern slots across 2132 files, 0 mismatches.
-
-**Implemented:** `crates/ssb-rom/src/archive.rs`
-
-**Reference:** RE-001, `docs/ssb-architecture.md` §5
-
----
-
-### D-011: Extern Relocations — Zeroed in Pack, Patched at Runtime Load
-**Decision:** Pack records extern slots in manifest but leaves them zeroed. Runtime loader will compute closure, assign offsets, apply intern + extern relocations.
-
-**Reasoning:** Target addresses depend on runtime layout. Same three-step shape as original: compute closure → allocate → patch.
-
-**Implemented:** `crates/ssb-rom/src/pack.rs` (manifest), runtime loader TODO
-
-**Reference:** `docs/porting-status.md` "Known gaps #6", `docs/memory.md` "Extern relocations and layout"
-
----
-
-### D-012: DObjDesc Arrays — Depth-Tagged Flattened Tree
-**Decision:** `DObjDesc.id & 0xFFF` = node depth. Parent = most recent node at `depth - 1`. Terminator = depth 18 (out of range). High nibble selects matrix composition kind.
-
-**Reasoning:** Recovered by scanner with 5 constraints. Validated: 363 arrays across 134 files, per-file counts identical to decomp, 180 annotated arrays exact.
-
-**Implemented:** `crates/ssb-rom/src/scan.rs`, `scene.rs`
-
-**Reference:** RE-023
-
----
-
-### D-013: DObj Display List Field — Undiscriminated Union
-**Decision:** Field is union of `Gfx*`, `Gfx**`, `DObjDLLink*`, `DObjMultiList*`, `DObjDistDL*`. Disambiguate structurally: try `DObjDLLink` first (constrained shape: `list_id < 4` + relocated pointer), fall back to `Gfx*`.
-
-**Reasoning:** Real display list cannot pass as link array (`G_VTX` command word `0x01xxxxxx` > 4). 1661 node fields resolve, 1417 convert with triangles.
-
-**Implemented:** `crates/ssb-rom/src/mesh.rs`
-
-**Reference:** RE-025
-
----
-
-### D-014: Fighter Vertex Cache — Shared Across Joints (Rest Pose Only)
-**Decision:** Convert scene graph lists in draw order, threading one 32-entry vertex cache. Each cached vertex records loading node; triangles borrowing vertices rebase via `inv(world_here) * world_there`. Exact for rest pose only.
-
-**Reasoning:** `gcDrawDObjTree` walks tree emitting into one command stream — RSP cache survives across lists. Joint's list draws triangles with vertices loaded by previous joint = N64's skinning without per-vertex weights. Conversion failures 244 → 0.
-
-**Implemented:** `crates/ssb-rom/src/mesh.rs` (draw-order traversal + cache threading)
-
-**Reference:** RE-026
-
----
-
-### D-015: Fighter Palette — Named by FTCommonPart Parallel to DObjDesc
-**Decision:** `FTCommonPart` struct pairs `DObjDesc*` with `MObjSub***` (parallel arrays). Both are extern relocations recorded by archive loader. Display list calls segment `0x0E` + 8×index to select MObj.
-
-**Reasoning:** Search-by-demand-vector failed (26/50 = coin flip). Struct pairing is definitive. Chain length matches display-list demand for 310/310 nodes. All 459 resolved offsets match decomp.
-
-**Implemented:** `crates/ssb-rom/src/mobj.rs`, `scene.rs`
-
-**Reference:** RE-027
-
----
-
-### D-016: Stage Material Table — One Word Further in MPGroundDesc
-**Decision:** `MPGroundDesc` = `{ DObjDesc* dobjdesc; AObjEvent32** anim_joints; MObjSub*** p_mobjsubs; ... }`. Table at `dobjdesc + 8` (not `+4` like fighters) because `anim_joints` sits between.
-
-**Reasoning:** Every stage layer went unmatched while fighters matched — single word offset difference. Reading struct rather than pattern-matching adjacency is robust.
-
-**Implemented:** `crates/ssb-rom/src/stage.rs`
-
-**Reference:** RE-028
-
----
-
-### D-017: Stage Collision — 2D Polylines, vertex2 Is Count
-**Decision:** `MPVertexLinks { u16 vertex1, vertex2 }` — `vertex2` is **count**, not second index. Lines are polylines: `for (v = vertex1; v < vertex1 + vertex2 - 1; v++)`.
-
-**Reasoning:** Dream Land line 3 = `{9, 2}` → vertices 9..11 → symmetric platform at y=0. "Second vertex index" interpretation gives wrong geometry. Array lengths derived from data (max `group_id + line_count`, etc.).
-
-**Implemented:** `crates/ssb-rom/src/collision.rs`
-
-**Reference:** RE-029
-
----
-
-### D-018: Surface Flags — Upper Byte State, Lower Byte Material
-**Decision:** `MAP_VERTEX_COLL_PASS (1<<14)` = drop-through. `MAP_VERTEX_COLL_CLIFF (1<<15)` = ledge-grabbable. Lower byte = `MPMaterial` → friction via `dMPCollisionMaterialFrictions[material] * attr->traction`.
-
-**Reasoning:** Dream Land: three floating platforms = `pass` (drop through), main platform = `cliff` (no drop, grabbable), ceiling/walls = neither. Four independent facts, four matches. Spawn drop test: 158/162 land, 2-6 units below start.
-
-**Implemented:** `crates/ssb-rom/src/collision.rs`, `crates/ssb-game/src/collision.rs`
-
-**Reference:** RE-030
-
----
-
-### D-019: Collision Query — Swept Segment, Not Point Test
-**Decision:** `mpCollisionCheckFloorLineCollisionSame` tests swept segment from old→new position. Dispatches on segment flat vs tilted. Landing snap at 0.001 tolerance.
-
-**Reasoning:** Stops fast fallers from crossing platform in one frame. 0.001 is literal in decomp, not tuning knob — lets fighter standing exactly on surface register as touching.
-
-**Implemented:** `crates/ssb-game/src/collision.rs`
-
-**Reference:** RE-030
-
----
-
-### D-020: Animation — Figatree (AObjEvent16) for Fighters, AObjEvent32 for Stages
-**Decision:** Fighters use compact 16-bit `AObjEvent16` (figatree). Stages use 32-bit `AObjEvent32`. Both use same `AObj` interpolation (cubic/linear/step). Pack both.
-
-**Reasoning:** Decomp uses both formats. Figatree has per-joint command stream with `ftAnimGetTargetValue` scales. Stage animation validated 3 ways: ROM replay, pack pose match (444,960 values), device frame diff.
-
-**Implemented:** `crates/ssb-rom/src/figatree.rs`, `anim.rs`, `objanim.rs`, `anim_table.rs`
-
-**Reference:** RE-036, RE-050, RE-051, RE-052
-
----
-
-### D-021: Physics — Float, Not Fixed Point
-**Decision:** Original uses `f32` throughout (`ftPhysicsApplyGravityClampTVel` does `vel_air.y -= gravity`). No fixed-point representation to recover.
-
-**Reasoning:** Direct port preserves behavior. `+Y` up, gravity subtracts. Z is shallow depth axis clamped to ±60.
-
-**Implemented:** `crates/ssb-game/src/physics.rs` (16 functions, original addresses cited)
-
-**Reference:** `docs/ssb-architecture.md` §7
-
----
-
-### D-022: Fighter Constants — Data-Driven from FTAttributes
-**Decision:** All 27 characters' `FTAttributes` extracted from relocData, verified field-by-field against decomp. Invented defaults were 26x off and hid stick-scaling bug in air drift.
-
-**Reasoning:** Per-character tuning is data in original. Gravity, terminal velocities, air accel/friction, traction, dash/run speed, weight, jump params, shield size, SFX IDs, move availability bitfields.
-
-**Implemented:** `crates/ssb-rom/src/fighter.rs`, `crates/ssb-game/src/fighter.rs`
-
-**Reference:** RE-032, `docs/porting-status.md` Physics
-
----
-
-### D-023: Movement Status Machine — Original Interrupt Chain + Tap Counter
-**Decision:** Port status machine verbatim: Wait, 3×Walk, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy, Pass. Original interrupt-chain ordering and tap-counter input model. 5 statuses with no duration in `FTAttributes` take it from figatree animation.
-
-**Reasoning:** Matches decomp exactly. All 20 movement statuses have animations (532 in pack).
-
-**Implemented:** `crates/ssb-game/src/status.rs`, `fighter.rs`
-
-**Reference:** RE-033, RE-035, `docs/porting-status.md` Fighter state
-
----
-
-### D-024: Light Colors — Preserve Source State
-**Decision:** Preserve flagged `MObjSub::light1color` / `light2color` writes as
-per-material state. Light direction and both source colours affect output.
-
-**Reasoning:** RE-165 found Mario's initial `MOBJ_FLAG_LIGHT2` record carries
-the non-white ambient `(0x4C,0x4C,0x4C)`. The earlier white-only conclusion
-was incomplete because it did not follow the runtime MObj graphics-heap path.
-
-**Implementation status:** RE-164–167 replace the former data-loss basis for
-the baked-light fallback: pack v23 retains stage X/Y angles, raw signed
-normals, zero-valid LIGHT_1/LIGHT_2 writes, and the combiner's resolved shade
-scale; the PSP scopes one GE directional light to fighter draws, keeps literal
-primitives unlit, and applies `PRIMITIVE * SHADE` through GE material colour.
-The matched original Dream Land comparison restores Mario's red/blue costume
-semantics without a brightness approximation. Exact cross-renderer pixels are
-not claimed, and physical PSP validation remains R2.
-
-**Reference:** RE-024, RE-065, RE-103/105, RE-164–168, `TODO.md` Phase D
-
----
-
-### D-025: Fog — Effectively Unused
-**Decision:** `G_SETFOGCOLOR` appears twice in entire game. Fog not implemented.
-
-**Reasoning:** Not worth runtime cost. Confirmed by `romtool scan` opcode counts.
-
-**Re-verified (RE-072):** the "twice" figure held up against a stricter check
-than the original opcode count — reliable, reloc-anchored display-list
-discovery (an `Exhaustive`-mode re-scan initially found 7/4, both false
-positives from that mode's known noise). Both real occurrences are
-functionally inert, not just rare: no code anywhere in the decompilation
-calls `gSPFogPosition` to configure a fog range, and the one real stage
-that sets a fog colour (`118_StageYosterSmallFile2`) never references
-`G_BL_CLR_FOG` in its own render mode, so the colour is set and never
-read by anything.
-
-**Reference:** `docs/rendering.md` "Measured usage", RE-072
-
----
+- [D-009](docs/decisions/D-009.md): VPK0 Decompression — Postfix Huffman, Bit-Width Leaves
+- [D-010](docs/decisions/D-010.md): relocData Archive — Intern/Extern Chains Through Pointer Slots
+- [D-011](docs/decisions/D-011.md): Extern Relocations — Zeroed in Pack, Patched at Runtime Load
+- [D-012](docs/decisions/D-012.md): DObjDesc Arrays — Depth-Tagged Flattened Tree
+- [D-013](docs/decisions/D-013.md): DObj Display List Field — Undiscriminated Union
+- [D-014](docs/decisions/D-014.md): Fighter Vertex Cache — Shared Across Joints (Rest Pose Only)
+- [D-015](docs/decisions/D-015.md): Fighter Palette — Named by FTCommonPart Parallel to DObjDesc
+- [D-016](docs/decisions/D-016.md): Stage Material Table — One Word Further in MPGroundDesc
+- [D-017](docs/decisions/D-017.md): Stage Collision — 2D Polylines, vertex2 Is Count
+- [D-018](docs/decisions/D-018.md): Surface Flags — Upper Byte State, Lower Byte Material
+- [D-019](docs/decisions/D-019.md): Collision Query — Swept Segment, Not Point Test
+- [D-020](docs/decisions/D-020.md): Animation — Figatree (AObjEvent16) for Fighters, AObjEvent32 for Stages
+- [D-021](docs/decisions/D-021.md): Physics — Float, Not Fixed Point
+- [D-022](docs/decisions/D-022.md): Fighter Constants — Data-Driven from FTAttributes
+- [D-023](docs/decisions/D-023.md): Movement Status Machine — Original Interrupt Chain + Tap Counter
+- [D-024](docs/decisions/D-024.md): Light Colors — Preserve Source State
+- [D-025](docs/decisions/D-025.md): Fog — Effectively Unused
 
 ## Platform & Toolchain
 
-### D-026: PSP Crate Outside Workspace — Pinned Nightly + build-std
-**Decision:** `psp/` is a separate Cargo project (excluded from workspace). Uses `psp/rust-toolchain.toml` pinning `nightly-2026-08-01`. Root workspace runs `cargo test` on stable.
-
-**Reasoning:** `rust-psp` needs nightly + `-Z build-std`. Reaches into unstable `core::panic::PanicPayload`. Keeps host CI fast and stable.
-
-**Reference:** `psp/rust-toolchain.toml`, `.github/workflows/ci.yml`
-
----
-
-### D-027: no_std Discipline — Workspace Default-Features = false
-**Decision:** Core crates (`ssb-rom`, `ssb-engine`, `ssb-game`) are `no_std` with `default = ["std"]`. Workspace dependencies declare `default-features = false`. Crates wanting `std` opt in via their own `std` feature. CI builds all three for `thumbv7em-none-eabi` to catch leakage.
-
-**Reasoning:** A crate cannot turn off a workspace dependency's default features. If `std` leaks, PSP build fails with confusing "can't find crate for `std`".
-
-**Implemented:** Root `Cargo.toml:31-33`, each crate's `Cargo.toml`
-
-**Reference:** `.github/workflows/ci.yml` (builds all three for `thumbv7em-none-eabi`)
-
----
-
-### D-028: Asset Pack Mandatory — Built Separately by romtool
-**Decision:** `cargo psp` builds executable only. `romtool pack` builds `assets/generated/ssb64.pak`. `run-ppsspp.sh` stages both together.
-
-**Reasoning:** Clean separation. Without pack, viewer falls back to built-in tetrahedron.
-
-**Reference:** `docs/agent-protocol.md` (asset-pack discipline), README Quick Start
-
----
-
-### D-029: Debug Overlay — Software Rasteriser Required in PPSSPP
-**Decision:** `sceGuDebugFlush` paints VRAM with CPU. PPSSPP hardware backends don't reflect CPU VRAM writes. Force software rasteriser via config append.
-
-**Reasoning:** Emulator limitation, not port bug. Real HUD will render as GE geometry (Renderer 3), removing dependency.
-
-**Implemented:** `tools/run-ppsspp.sh --appendconfig`
-
-**Reference:** RE-014, `tools/run-ppsspp.sh`
-
----
-
-### D-030: Toolchain Pinning — Successful Compile ≠ Working
-**Decision:** Before bumping `psp/rust-toolchain.toml`: build with new nightly AND boot in PPSSPP. Known broken: `nightly-2026-08-26+`.
-
-**Reasoning:** `rust-psp` imports unstable `core` internals. Compile success is not sufficient evidence.
-
-**Reference:** RE-012, `psp/rust-toolchain.toml`
-
----
+- [D-026](docs/decisions/D-026.md): PSP Crate Outside Workspace — Pinned Nightly + build-std
+- [D-027](docs/decisions/D-027.md): no_std Discipline — Workspace Default-Features = false
+- [D-028](docs/decisions/D-028.md): Asset Pack Mandatory — Built Separately by romtool
+- [D-029](docs/decisions/D-029.md): Debug Overlay — Software Rasteriser Required in PPSSPP
+- [D-030](docs/decisions/D-030.md): Toolchain Pinning — Successful Compile ≠ Working
 
 ## Architecture Comparison (From `docs/ssb-architecture.md` §11)
 
@@ -398,206 +58,34 @@ read by anything.
 
 **Key insight:** `n64psp` provides layering shape (runtime must not know game; graphics backend registered, not hardcoded) adopted as Layers A/B/C. `sf64-psp` is mature reference for N64→PSP rendering but translates at runtime — we preconvert because Smash geometry is static.
 
----
 
 ## Unsafe Discipline
 
-### D-031: Unsafe Only for PSP APIs / VFPU / GPU Memory
-**Decision:** No `unsafe` without concrete reason. When required for `sceGu`, `sceCtrl`, VFPU, GPU DMA, isolate behind small safe abstractions.
-
-**Reasoning:** Rust safety guarantees matter. PSP FFI boundaries are the only justified `unsafe`.
-
-**Reference:** this decision record
-
----
+- [D-031](docs/decisions/D-031.md): Unsafe Only for PSP APIs / VFPU / GPU Memory
 
 ## Profiling Before Optimizing
 
-### D-032: VFPU After Profiling
-**Decision:** Scalar Rust first. Benchmark. Identify hot functions. Then VFPU. Compare output. Benchmark again.
-
-**Reasoning:** Premature VFPU optimization is a trap. Profile data drives decisions.
-
-**Reference:** PLAN.md R3 ("Do not perform speculative optimization before measurement")
-
----
+- [D-032](docs/decisions/D-032.md): VFPU After Profiling
 
 ## Version Control
 
-### D-033: ROM and Generated Assets Gitignored
-**Decision:** `rom/` and `assets/generated/` are gitignored. CI rejects committed ROM files.
-
-**Reasoning:** Legal requirement. User supplies own ROM. Build generates assets locally.
-
-**Reference:** `docs/agent-protocol.md` (asset-pack discipline), README Legal
-
----
+- [D-033](docs/decisions/D-033.md): ROM and Generated Assets Gitignored
 
 ## Validation Philosophy
 
-### D-034: Two Independent Readings Must Agree
-**Decision:** Every verification uses two independent paths that must agree:
-- VPK0: chain walk (needs correct bytes) vs ROM gap (no decompression)
-- Fighter constants: ROM extraction vs decomp source
-- Animation lengths: two decode paths
-- Collision: spawn drop test (data-driven, not unit fixture)
-
-**Reasoning:** A wrong offset doesn't produce near miss; it produces garbage. Agreement across independent paths is the evidence.
-
-**Reference:** RE-002, RE-030, RE-032, RE-035, RE-036, RE-052, README "Verification"
-
----
+- [D-034](docs/decisions/D-034.md): Two Independent Readings Must Agree
 
 ## Milestone Validation
 
-### D-035: Functional Validation Required, Not Just Compile
-**Decision:** Do not advance milestone because code compiles. Each milestone requires functional validation (Rule 12). Percentages = intended scope, not line count. COMPLETE = validated (Rule 11).
-
-**Reasoning:** Compiles ≠ works. Porting status tracks validated subsystems.
-
----
+- [D-035](docs/decisions/D-035.md): Functional Validation Required, Not Just Compile
 
 ## Rendering Fidelity
 
-### D-036: N64 Render-State Fidelity Must Precede Optimization
-**Decision:** The intermediate representation between display-list decoding and PSP translation (`mesh::State`/`MeshMaterial`, `pack::PrimDesc`/`TextureDesc`/`MatAnimDesc`) must preserve N64 render state — texture/tile state, combiner shape, primitive/environment colour, geometry mode, lighting mode, alpha/blend state, depth state, filtering/addressing, LOD, palette/TLUT state, relevant render-pass state — for as long as SSB64 actually uses that state. It must not be collapsed early into `mesh + texture + basic colour`. Draw-call batching, state sorting, vertex-cache tricks and other aggressive collapsing/merging optimizations (`PLAN.md` R3, `docs/rendering.md` "Renderer 4") may only discard state *after* the correctness gate (`PLAN.md` R0/R1) has passed for the state in question, and only where discarding it does not change rendering semantics. Build-time vertex/index merging that does not destroy state (D-002) is exempt — it already happens after each primitive's full material state is resolved, not instead of resolving it.
-
-**Reasoning:** Every regression this project has hit and fixed in `R0.6`/`R0.7`/`R0.10` (RE-039, RE-064, RE-068, RE-073, RE-079, RE-080, RE-092–094, RE-106) was a case of state being dropped, not threaded, before it reached the PSP translation step — never a case of the PSP GE lacking the feature. Optimizing state away before its correctness is established makes the *next* such bug undetectable, because there is nothing left to compare against the original's behaviour.
-
-**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State`, `MeshMaterial`),
-`crates/ssb-rom/src/pack.rs` (record formats). The corrective correctness
-gate passed in R2.2/C1–C7 (RE-240–261); R3 may optimize only from that
-adjacent-order, independently-modelled state baseline.
-
-**Reference:** `PLAN.md` R0.16, `docs/rendering.md` "Renderer evolution"
-
----
-
-### D-037: Reference Ports Are Technical References, Not Authorities
-**Decision:** `BattleShip`, `sf64-psp`, `n64psp` and `oot-PSP` (`https://github.com/z2442/oot-PSP`) are all held to the same standard: consult them for N64 rendering/runtime technique, do not copy their architecture or assumptions wholesale, and do not treat any of them as authoritative over the SSB64 decompilation or ROM. Where a reference port's implementation disagrees with the decompilation/ROM for SSB64's own behaviour, investigate and prefer the decompilation/ROM (`AGENTS.md` §6). Where a reference port does something this project's renderer does not, classify the difference as one of: (1) SSB64 genuinely needs it, (2) SSB64 does not use it, (3) PSP needs a different implementation than that reference's target platform, or (4) this project's implementation is simply incomplete — and record the conclusion (`PLAN.md` R0.18).
-
-**Reasoning:** `sf64-psp` was previously the only reference port with an explicit "not an authority" rule (`AGENTS.md` §10, originally written for BattleShip). `oot-PSP` targets the same platform (PSP) as this project, unlike BattleShip (PC/Mac/Linux/Android) or sf64-psp/n64psp's own original scope — closer architecturally, but Ocarina of Time's rendering needs are not SSB64's, so the same non-authority rule applies without exception.
-
-**Implemented:** n/a (documentation/process decision)
-
-**Reference:** `AGENTS.md` §6, §10, `PLAN.md` R0.18, `README.md` "References"
-
-**Reference:** `docs/agent-protocol.md` (task completion semantics), `docs/porting-status.md` header
-
----
-
-### D-038: Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
-**Decision:** `G_TEXTURE_GEN` is reproduced through the PSP GE's texture-**matrix** coordinate generator (`sceGuTexMapMode(TextureMatrix, ...)` plus `sceGuTexProjMapMode(Normal)`), never through `TextureMapMode::EnvironmentMap`. The node's world transform, the source `gSPTexture` scale and the render tile's origin are all carried in that matrix. Texture-coordinate *mapping* state is kept separate from texture *binding* state: `bind_texture` must not install a coordinate scale, because the correct scale depends on the mapping mode as well as the binding.
-
-**Reasoning:** The environment-map generator computes the right dot product but ignores `sceGuTexScale` and `sceGuTexOffset`, so it can only ever sweep the full uploaded texture. That was measured, not assumed — installing a 64x-larger scale factor under environment mapping produced a byte-identical PPSSPP capture (RE-214). Real SSB64 content needs the scale: one `StageMetalFile2` tile sweeps 16 of its 32 uploaded texels, a 48x42 tile padded to 64x64 sweeps 47x41, and 57 texgen triangles bind a tile with a nonzero origin. The texture-matrix generator carries all of it exactly, and as a side effect removes the environment path's coupling of the reflection's S axis to whichever GE light slot was named — light 0 being SSB64's own fighter light.
-
-**Revised by RE-226 (`PLAN.md` R2.1/T2):** the projection mode was originally `NormalizedNormal`, an unmeasured assumption. Measured against both PPSSPP source and this project's own real `sceGu` draw calls: the RSP's own `G_TEXTURE_GEN` never normalizes the quantized vertex normal, only scales it (`/127`), and `NormalizedNormal` was found to discard normal magnitude entirely — `[64,0,0]` and `[127,0,0]` produced identical output. Switched to raw `Normal` mode, with the dot-product term scaled by `128.0/127.0` to compensate for the GE's own `/128` internal divisor (measured, not the `/127` the original hardware uses) and reproduce the original formula exactly.
-
-**Implemented:** `psp/src/meshdraw.rs` (`apply_texture_mapping`, `TextureMapping`, `DrawState::texgen_object_basis`), `crates/ssb-rom/src/psp_texture.rs` (`env_map_tex_scale`, `authored_uv_tex_scale`)
-
-**Reference:** `docs/reverse-engineering.md` RE-214, RE-226, `docs/rendering.md` "Geometry modes set"
-
----
-
-### D-039: Texgen State Is Primitive-Level Because the Archive Says So
-**Decision:** `G_TEXTURE_GEN` mode and its `gSPTexture` scale are stored on the primitive (`MeshMaterial`, `PrimDesc`), not at vertex-cache/load granularity — and the raw `G_TEXTURE_GEN`/`G_TEXTURE_GEN_LINEAR` geometry-mode bits are preserved independently rather than collapsed into a single mode enum.
-
-**Reasoning:** F3DEX generates texture coordinates during `G_VTX` processing, so primitive-level state is only equivalent under an invariance this project does not get to assume. `romtool texgen` measures it archive-wide: of 3,012 texgen triangles, zero load a vertex under a different effective mode or a different `G_TEXTURE` scale than the draw, including the 203 that reuse a vertex across a node or display-list boundary. Primitive granularity is therefore a proven optimisation. The raw bits are kept separate because `G_TEXTURE_GEN_LINEAR` is a modifier, not an enabler: a list may clear `G_TEXTURE_GEN` while retaining it, and re-setting `G_TEXTURE_GEN` must resume in linear mode — which a three-state enum cannot express. If future evidence (another region's ROM, or content this port does not yet reach) violates the invariance, move the state to the vertex-load level rather than reaching for "last material wins".
-
-**Implemented:** `crates/ssb-rom/src/mesh.rs` (`State::geometry_mode`, `TextureGen::from_geometry_mode`, `MeshMaterial::texgen_scale`), `tools/romtool/src/main.rs` (`texgen`)
-
-**Reference:** `docs/reverse-engineering.md` RE-214
-
----
-
-### D-040: Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
-**Decision:** `G_TEXTURE_GEN_LINEAR` is reproduced by generating its `acos(-dot)/(2*pi)` curve per vertex on the CPU, using the RSP's own dot product (`normal / 127`, not a true renormalisation), and writing the result into the pack's existing raw S10.5 authored-UV unit so the primitive draws through the ordinary authored-UV `TextureMapMode` rather than a second GE coordinate-generation mode or a duplicated texture. A lookup table for the curve was considered and rejected.
-
-**Reasoning:** No GE generator mode can reproduce this curve — the hardware's texture-matrix and environment-map generators are both affine in the dot product, and `acos` is not. Reusing the authored-UV pipeline (rather than inventing a second CPU-generated coordinate mode) was possible because the generated coordinate, worked through algebraically, lands in exactly the same raw S10.5 unit and the same clamped-axis origin-shift rule (`* 8`) `mesh::Builder::push_vertex` already uses (RE-152) — the uploaded texture's dimension cancels out of the derivation entirely. A LUT was rejected because it is only exact over a finite input domain: the vertex normal is quantised (`i8`), but the look-at basis it is dotted against is a continuous per-frame float (the camera can rotate arbitrarily), so a LUT keyed on the normal alone would still have to interpolate or accept error, for no accuracy gain over a direct polynomial `acos`, while adding a build-time table and a runtime gather. The archive-wide population (257 triangles, 12 packed primitives) is small enough that this was not worth measuring as a bottleneck before rejecting it.
-
-**Implemented:** `crates/ssb-rom/src/psp_texture.rs` (`linear_texgen_curve`, `texgen_dot`, `linear_texgen_uv`, `acos`), `psp/src/meshdraw.rs` (`draw_mesh`'s dynamic-vertex branch, `apply_texture_mapping`'s `environment` flag)
-
-**Revised by RE-227 (`PLAN.md` R2.1/T3):** the look-at basis this reasoning called "a continuous per-frame float" is not — the original hardware quantizes it to a signed byte (`FTOFRAC8`) once per camera, before any per-vertex work. `DrawState::texgen_object_basis` now reproduces that quantization. The LUT rejection's conclusion is unaffected (a per-frame-varying basis, even quantized, still is not a fixed input domain the way the vertex normal alone is), but the premise as originally stated was imprecise.
-
-**Reference:** `docs/reverse-engineering.md` RE-215, D-038 (the ordinary-curve GE-generator decision this one deliberately does not extend)
-
-### D-041: PPSSPPHeadless Is the Automated Visual-Verification Runner
-**Decision:** Deterministic visual verification uses the locally built
-`PPSSPPHeadless` target and `tools/run-ppsspp-headless.sh`. The windowed
-`tools/run-ppsspp.sh` helper remains available for interactive inspection and
-hardware-backend experiments, but is not the automated golden-capture path.
-
-**Reasoning:** Headless capture removes X11/window/compositor timing from the
-evidence path. The PSP capture build requests one screenshot after its fixed
-deterministic tick through PPSSPP's emulator-only `emulator:` devctl, while
-real PSPs simply ignore that request. Software rendering remains the default
-for deterministic pixel comparisons; PPSSPP still does not prove physical PSP
-behaviour.
-
-**Implemented:** `psp/Cargo.toml` (`headless_capture`), `psp/src/main.rs`,
-`tools/run-ppsspp-headless.sh`, `docs/visual-regression.md`
-
-### D-042: Renderer correctness claims stay provisional until the corrective gate passes
-**Decision:** Existing source-derived renderer implementations and regression
-captures remain usable evidence for their covered paths, but R0/R1 were not to
-be declared stable while `PLAN.md` R2.1/R2.2 remained open. In particular, do not treat
-primitive-level texgen as globally valid until load-space/normal-transform
-provenance is audited, or treat `G_ZBUFFER` as the complete N64 depth model
-until compare and write state are separated.
-
-**Gate result (RE-261):** R2.1 and R2.2 are complete, so this provisional hold
-is satisfied. It remains the rule for future reopened renderer state, not an
-open blocker on the current R0/R1 evidence.
-
-**Reasoning:** The 2026-09-10 reconciliation found concrete gaps between the
-current implementation and the stronger completion claims: `CacheEntry` does
-not retain load-time lighting or matrix provenance, `merge_by_material` uses
-global grouping, `MeshMaterial` has one depth bit, and raw GU paths remain
-outside the cache-controlled material path. These are correctness questions,
-not performance work.
-
-**Implementation:** Complete. R2.1/T1–T10 (RE-225–239) measured and corrected
-texgen semantics; R2.2/C1–C7 (RE-240–261) closed PRIM ownership, lighting
-provenance, independent depth state, submission order and GU cache isolation,
-then passed the integrated regression. T1's 164 cross-node differing-transform
-vertex reuses remain a quantified follow-up, not an unmeasured correctness
-claim. Primitive-level texgen (D-039) is unaffected — that decision concerns
-mode/scale, not model-space, and remains correct.
-
-**Reference:** RE-217, RE-225, `docs/reverse-engineering.md`, `AGENTS.md`
-
----
-
-### D-043: Filtering and Tile-Addressing Equivalence Claims Remain Provisional Pending R2.0
-**Decision:** Do not treat any of the following as established: `G_TF_BILERP
-== PSP Linear` filtering; the current mirror+clamp lowering is exact for
-coordinates beyond the first mirrored period, for authored UVs as well as
-texgen; `mask == 0` clamp handling (`clamp_s = cm_s & 0x2 != 0` independent of
-mask) is sufficient; PSP power-of-two texture padding cannot affect N64 clamp
-addressing. Each is reopened by RE-218 and owned by `PLAN.md` R2.0
-(`P0a`/`P0b`/`P1`) until that task's own reference-model measurement closes
-it, one way or the other — including the possibility that some of them turn
-out to already be correct.
-
-**Reasoning:** RE-124 measured only that SSB64 selects the `G_TF_BILERP`
-filter mode, not that the RDP's real 3-point reconstruction matches PSP's
-four-tap bilinear filter — those are different operations sharing a name.
-RE-067/RE-102/RE-066 are real, evidenced fixes for the specific cases each
-investigated, but none built or checked against a full N64 tile-addressing
-reference model for the region each of R2.0's three addressing questions
-actually needs. `mesh.rs:1290-1291,1379-1380` applies `clamp_s`/`clamp_t`
-unconditionally on `mask_s`/`mask_t`, and `psp_texture.rs`'s packers
-zero-fill the padding between a texture's logical dimensions and its padded
-power-of-two allocation — both confirmed by direct code reading, neither
-previously checked against N64 semantics for the specific case each claim
-needs.
-
-**Implementation status:** Complete (`PLAN.md` R2.0/P0a–P2, RE-219–224).
-The result is not blanket equivalence: N64 3-point reconstruction remains an
-accepted PSP fixed-function deviation, while mirror+clamp periods, logical-
-edge padding and CI4 palette-bank handling were measured and corrected.
-
-**Reference:** RE-218, `docs/reverse-engineering.md`. Supersedes the
-unqualified equivalence/completeness conclusions drawn from RE-066, RE-102
-and RE-124 for the specific claims above only — those entries' own
-measurements remain valid history for what they actually tested.
+- [D-036](docs/decisions/D-036.md): N64 Render-State Fidelity Must Precede Optimization
+- [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
+- [D-038](docs/decisions/D-038.md): Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
+- [D-039](docs/decisions/D-039.md): Texgen State Is Primitive-Level Because the Archive Says So
+- [D-040](docs/decisions/D-040.md): Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
+- [D-041](docs/decisions/D-041.md): PPSSPPHeadless Is the Automated Visual-Verification Runner
+- [D-042](docs/decisions/D-042.md): Renderer correctness claims stay provisional until the corrective gate passes
+- [D-043](docs/decisions/D-043.md): Filtering and Tile-Addressing Equivalence Claims Remain Provisional Pending R2.0
