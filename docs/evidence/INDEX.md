@@ -281,3 +281,5 @@ editing a record.
 | RE-269 | RDP tile origin is not a source-image offset | COMPLETE | texture, geometry, fighter, hardware, toolchain |  |
 | RE-270 | Physical confirmation of RE-262/264/269's Fox, Ness, Link and Donkey Kong fixes, and Dream Land's lighting... | COMPLETE | fighter, hardware, lighting, visual-regression, stage |  |
 | RE-271 | Exhaustive fighter physical matrix | COMPLETE | fighter, hardware, psp-ge, depth, visual-regression |  |
+| RE-272 | Fighter face textures show a repeating/aliased artifact absent from the raw ROM texture | OPEN | texture, fighter, hardware, visual-regression, geometry |  |
+| RE-273 | First physical confirmation on a second hardware unit (PSP-3000) | COMPLETE | hardware, visual-regression, fighter, psp-ge, stage |  |
