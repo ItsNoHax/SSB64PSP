@@ -73,7 +73,7 @@ fallback.
 Target: R2 (blocks full confidence in "representative fighters render",
 already marked complete)
 Status: OPEN
-Evidence: RE-272, RE-274
+Evidence: RE-272, RE-274, RE-275
 Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
 raw ROM dump but renders as a repeating, aliased pattern with red patches
 near the ears on both PPSSPP and physical PSP hardware — same renderer code
@@ -89,7 +89,13 @@ hypotheses remain undistinguished: a faithfully-reproduced ROM quirk needing
 a `TEXTURE_FILTER_CORRECTIONS`-style named fix (RE-263/264 precedent), or a
 real addressing/scale bug specific to this overscan magnitude. Needs an
 accurate N64 reference render (real hardware or `angrylion-rdp-plus`) to
-tell which.
+tell which. RE-275 found `angrylion-rdp-plus` is locally available (bundled
+in the RMG flatpak, distinct from the M64Py flatpak RE-151/RE-216's harness
+targets) and ported RE-216's scripted-capture driver to it
+(`~/ppsspp-test/re151-harness/re274_angrylion_driver.py`, out-of-Git), but it
+segfaults inside the plugin's `PluginStartup` for a reason not yet
+root-caused (no `gdb` available to symbolize the core dump) — needs either
+symbol tooling to debug the crash, or a real-hardware capture instead.
 
 ---
 
