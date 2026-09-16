@@ -46,6 +46,7 @@ files. Read a whole file only when symbol-level retrieval is inappropriate
 | Permanent architectural choice? | `DECISIONS.md` index → specific `D-xxx.md` only |
 | Rendering behavior? | `rendering` Skill → relevant `docs/rendering/*.md` |
 | Original-game behavior unknown? | `reverse-engineering` Skill |
+| Need to observe/navigate the live original N64 game? | `n64-emulator` Skill |
 | Physical PSP issue? | `psp-hardware` Skill |
 | Golden/capture issue? | `visual-regression` Skill |
 | Asset/pack/ROM format? | `asset-pipeline` Skill |
