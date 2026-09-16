@@ -1,149 +1,115 @@
 # Porting Status
 
-Per `AGENTS.md` §13. Percentages are of *intended scope for that subsystem*,
+Per `PLAN.md` §12/13. Percentages are of *intended scope for that subsystem*,
 not of the original's line count. A subsystem is only `COMPLETE` when it has
 been functionally validated, not merely compiled.
 
 This file tracks **per-subsystem** implementation status only. Current
-milestone/task and overall execution state live in `STATUS.md`, and the
-ordered roadmap with acceptance criteria lives in `PLAN.md` — do not look for
-a milestone table here, and do not add one back; duplicating that state
-across files is how it goes stale (an earlier version of this table
-contradicted the subsystem rows directly below it: it claimed stage rendering
-had "no animation yet" while the animation and stage-animation rows in the
-same file already documented animation playing on device).
+milestone/task and overall execution state live in `STATUS.md`; the ordered
+roadmap with acceptance criteria lives in `PLAN.md`/`plans/**`. Do not add a
+milestone table here — that state belongs in exactly one place.
 
-Last updated: 2026-09-13.
+Detailed investigation narratives (what was measured, how a bug was found and
+fixed) live in `docs/evidence/re/RE-XXX.md`, not in this table. This file
+records the current model only: what works, what evidence backs it, and what
+remains.
 
 ## Subsystems
 
-| Subsystem | Status | Validation |
-|---|---|---|
-| ROM validation | ✅ COMPLETE | SHA-1/MD5 checked against the real dump; byte-order and size rejection unit-tested |
-| VPK0 decompression | ✅ COMPLETE | All 499 compressed files cross-verified against independent ROM geometry (RE-002) |
-| relocData archive | ✅ COMPLETE | 2132/2132 files load; 61,343 intern + 3,092 extern relocations, 0 mismatches |
-| Asset extraction CLI | ✅ COMPLETE | `romtool extract` produces 16.29 MiB + manifest |
-| F3DEX2 DL parser | ✅ COMPLETE | All opcodes Smash emits, verified against real lists; `G_VTX` encoding regression-tested (RE-017) |
-| N64 texture decode | 🟢 85% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded and unit-tested; 638 real scene/effect material textures plus all 246 LBParticle frames decode and ship in the pack |
-| Texture → PSP conversion | 🟢 97% / COMPLETE for measured renderer scope | ROM-backed conversion, mirror/clamp/origin/signed-coordinate lowering, palette banks and texgen's R2.1/T1–T10 gate are complete (RE-201, RE-219–239, RE-262). Negative N64 S10.5 coordinates on clamped axes use a marked float-UV PSP draw because `GU_TEXTURE_16BIT` is unsigned; N64 three-point filtering remains a measured PSP fixed-function deviation, with bounded file+offset reconstruction corrections for Kirby's and Ness's visibly affected neutral faces (RE-263/264). Current pack format is version 29. |
-| DL discovery | ✅ COMPLETE | 1,864 lists across 135 files; converter used as validator (RE-017) |
-| Mesh conversion | 🟡 88% / VERIFYING | 0 archive-wide conversion failures; combiner classification and material threading are implemented. RE-217 reopened validation for single-source `PRIM * SHADE` (closed, RE-240/`R2.2`/C1) and `G_VTX` load-time lighting provenance (closed, RE-241–243/`R2.2`/C2, including the external-per-object `G_LIGHTING` seed for fighter skeleton graphs — measured zero real vertices affected, since RE-105's `G_MW_LIGHTCOL` signal already covers them). RE-244 (`R2.2`/C3, part 1) adds independent `depth_test`/`depth_write`/`depth_mode` fields (`Z_CMP`/`Z_UPD`/`ZMODE`, separate from `z_buffer`/`G_ZBUFFER`) and the same external-per-object seed for the fighter skeleton graphs' `G_SETRENDERMODE` — unlike C2's lighting seed, measurably not redundant (732/771 fighter-skeleton primitives change), but the wider archive still diverged 90% from `z_buffer` with the cause not yet found. RE-245 (`R2.2`/C3, part 2) found and wired the same external wrapper for stage render-layer 1 (`InitialMaterial::GROUND_LAYER1_EXTERNAL`, 577/776 primitives flip), shrinking the archive-wide gap from 4468 to 3891; items/effects carry no such wrapper, and layer 1's 21 list-1 (translucent) `DObjDLLink` entries are still seeded as opaque pending a `list_id` field on `PlannedList`. RE-246 (`R2.2`/C3, part 3) found the dominant remainder was a *camera*-level default, not an object wrapper: `sys/objdisplay.c`'s `func_8001663C` unconditionally sets `Z_CMP | Z_UPD | ZMODE_OPA` for every buffer-0 camera before it walks its own tagged `GObj` list, and the 11 loading-break transition scenes each run under a dedicated single-object camera, so the default reaches them uncorrupted; wired `InitialMaterial::LB_TRANSITION_EXTERNAL` (1951/1951 primitives flip), shrinking the gap from 3891 to 1940. This default is deliberately not generalized to the main battle camera or any other shared camera, since which object draws first there is runtime state, not archive data. RE-247 (`R2.2`/C3, part 4) found `ssb_rom::transition::ASSETS`'s `"camera"` entry itself pointed at the wrong file (47, unregistered) instead of the real `dLBTransitionDescs` "Camera Shutter" file (51) — a real pack-content bug in the already-shipped results-screen-wipe feature, not just a census gap; fixed, raising the seed's measured impact to 2083/2083 and shrinking the gap to 1808. RE-248 (`R2.2`/C3, part 5) confirmed file 39 (`IFCommonObject`) is orphaned geometry no code path ever draws (decomp's own header comment, zero-match `grep` across `refs/ssb-decomp-re/src/`, both `if` source files read in full) — its 185 primitives (100% diverging) are dead ROM content needing no seed, explaining 185 of the 1808 gap. RE-249 (`R2.2`/C3, part 6) ruled out any further external wrapper archive-wide: no dominant cluster remains (largest file 3.3% of the gap); a 37-file `Stage*File2+`/`GRBonus*File2` cluster (617 primitives) and several fighter-submodel/item files, traced directly, are real in-content `G_ZBUFFER`-without-`Z_CMP`/`Z_UPD` divergence (proven from `convert_sequence`'s own state derivation), not a missing seed — the exact case C3 exists to capture. RE-250 (`R2.2`/C3, part 7) closed the `list_id` gap: `PlannedList` now keeps which task list a `DObjDLLink` entry targets, and a new per-item `SequenceItem::depth_seed` override (modelling `grDisplayLayer1{Pri,Sec}ProcDisplay`'s two independently-reset task-list command heads) seeds layer 1's list-1 entries depth-test-without-write instead of the uniform opaque seed — layer 1's `depth_write`-true count falls from 776/776 to 668/776, with `romtool pack`'s mesh/triangle/draw/texture/object/transition counts and pack size unchanged. RE-251 (`R2.2`/C3, part 8, **closes C3**) wired `psp/src/meshdraw.rs`'s `apply_material` to `GuState::DepthTest`/`sceGuDepthMask` from this data directly, superseding the `z_buffer` proxy; measured against a same-environment pre/post rebuild, 9 of 13 existing golden scenes are byte-identical and the other 4 change by a small, localized, visually-explainable amount (canopy/hull occlusion, one crystal facet). Added a self-validating synthetic `depth_mask_diagnostic` scene (`psp/src/depth_diag.rs`) proving the translucent-front/opaque-behind ON→OFF→ON `sceGuDepthMask` switch, since no ROM-content golden's frozen camera happens to occlusion-test a write-disabled surface. PPSSPP headless evidence only; physical-PSP confirmation remains open. RE-252 (`R2.2`/C4, **closes C4**) fixed `merge_by_material`'s global `BTreeMap` regrouping (RE-217): it silently reordered non-adjacent same-material primitive runs (`A B A` → `AA B`) archive-wide; rewritten to merge only truly-adjacent runs, which `walk`'s own `Builder::flush` invariant already guarantees is normally a no-op, closing the reorder with no new state. Measured draw-call growth: +89 (`romtool mesh`, 3279→3368) to +113 (`romtool pack`, real pipeline, 8056→8169), recorded as an `R3` lead. While verifying this against the 15 committed golden scenes, found and fixed (RE-253) a second, independent bug in `tools/romtool`'s own texture-cache key (`TexKey`): it omitted `width`/`height`/`drawn_width`/`drawn_height`/`format`/`size`/`palette_entries`/`palette`, all of which `convert_texture` bakes into a texture's bytes, so two primitives sharing one base image+palette+wrap but a different crop silently shared one cache entry (45/1345 textures measured order-dependent as a result). Fixed by widening `TexKey` to the exhaustive field set `convert_texture` actually depends on (archive-wide: textures 1345→1762, pack size 11422.3→25639.3 KiB — a large, expected jump from no longer collapsing real crop variants). RE-254 (`R2.2`/C5, **closes C5**) inventoried every raw GU mutation outside `apply_material`: found one live cache bypass (`draw_collision`/`draw_fighter`, already fixed by RE-118) and no others, then hardened `draw_texture_quad`/`draw_particle`/`Gpu::draw_wallpaper_sprite`/`normal_diag::draw`/`depth_diag::draw` with a new `DrawState::invalidate_all()` against future callers. RE-255 (`R2.2`/C6 attempt, found the blocker RE-256 then fixed) reran the host suite (clean, unchanged) and rebuilt the real pack (byte-identical: 25639.3 KiB, matching RE-253), but found all 15 committed goldens' on-device pack load failed (`assets::load_pack` → `LoadError::OutOfMemory` at the pack's ~25.6MiB size), so every capture was silently the M1 fallback tetrahedron rather than ROM content — RE-253's own flagged RAM-headroom risk, confirmed. RE-256 (`R2.2`/C6) fixed this with `MEMSIZE=1` plus an installed-layout headless harness. RE-257/RE-259 then explained every current golden change per scene, including scene 13's corrected non-linear cache donor, and the approved refresh landed in `61d417f`. RE-260 physically confirmed the full 26,254,608-byte pack loads from the installed EBOOT on PSP Slim hardware; the later motion stop was the staged `regression_capture` build's intentional four-second freeze, not an animation or process fault. RE-261 resolves RE-258: fighter costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks now survive packing, restoring Link's source-authored green tunic under the real fighter-light context. All 16 deterministic scenes and the broader effects/billboard/framebuffer/texgen audits pass, closing C6 and the R2.2 corrective gate. See `PLAN.md` R2.2/C6. |
-| Model conversion | 🟡 82% / VERIFYING | Meshes extracted, DObj hierarchy applied, all 127 discovered material graphs paired (RE-163), and primitive colours applied on the covered combiner paths. RE-240/RE-241/RE-242/RE-243 close runtime-lit/literal ownership and load-time vertex semantics (`R2.2`/C1–C2) across the named mixed-material fighters. |
-| Stage animation | 🟢 90% | The 32-bit `AObjEvent32` joint stream is decoded, packed and **played on device: 35 stages, 206 animated nodes at 60 FPS**. All scripts replay from the ROM and loop after 600 frames (RE-050); **every packed pose matches the archive across 444,960 values** (`romtool stages --pack`, RE-052). RE-142 fixed `StageAnimator::compose` so null-script children inherit an animated parent's transform, pinning it with a hierarchy test and a Saffron City PPSSPP comparison (836 changed RGB pixels confined to the gate). RE-143 supplies exact signed billboard scale from the animated hierarchy. Dream Land has no joint animation; its scenery moves through game code. RE-205 verified Saffron City's animated gate on **physical PSP hardware** (`regression_capture_scene5`), matching its PPSSPP golden with zero exceptions, and found/fixed a third `1.0 / payload` FPU-trap site in `objanim.rs::StageJoint::apply` (the same class `f111892` already fixed in fighter/material animation) that this exact scene exposed. |
-| Billboard nodes | 🟢 100% | 109 nodes flagged; RE-131–133 shipped the real camera and distinct Kind48 basis. RE-140 inventories every source node; RE-141 corrected Kind46 spin to Z. RE-142 fixed animated-parent inheritance; RE-143 reproduces signed animated X/Y scale. RE-144 restores the original X/Y/X scale rule and adds stable isolation. RE-145 captures and individually reviews all 109 ordinals in PPSSPP: 103 visibly nondegenerate, four intentionally subpixel from authored `0.00001` scale, and two intentionally transparent from all-zero UVs sampling an alpha-zero texel. R0.12 is complete; physical PSP validation remains part of the later rendering gate. |
-| Asset pack format | ✅ COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested. Current pack version 29 includes animation tables, material-animation attachments, lighting state, local rest transforms, LBParticle data, alpha-compare state, texgen scale/origin state, independent depth compare/write/mode state, and the signed-clamp UV lowering marker. |
-| PSP asset loading | ✅ COMPLETE on PSP-2000/3000 | The version-29 pack keeps RE-260's physically proven 26,254,608-byte size and loads aligned/cache-flushed in PPSSPP; `MEMSIZE=1` was physically proven with the same-sized v28 pack on PSP Slim. A v29 hardware recheck and PSP-1000's 32 MiB compatibility remain R2 requirements. |
-| PSP mesh drawing | 🟡 90% / VERIFYING | Indexed GE draws, CLUT textures, addressing, animation, alpha gates, runtime lighting and texgen are implemented and exercised in PPSSPP/physical-PSP scenes. RE-226/RE-227/RE-228/RE-229 close raw-normal semantics, LookAt quantization, shared regular/linear texgen reference math (which also found and fixed a real overcorrected matrix constant), and linear integer conversion (truncation, not rounding — another dormant bug found and fixed); RE-230 confirms texgen-bound tiles never carry a nonzero `shift_s`/`shift_t` (no N64 shifting implementation needed) and records per-mode tile/scale/`G_LIGHTING` state for T7/T8. RE-231 (T7) checks real texgen materials' generated coordinates against `R2.0`/P0b's hardware addressing model: 25 of 34 real axis instances agree; 9 diverge by one texel, only at the sweep's `dot = +1` extreme, on a mask-narrowed clamp-without-mirror axis — measured and pinned as a regression baseline, fix opened as `T7a`. RE-232 (T7a) fixes the divergence at its real cause (`n64_addressing::psp_lowering_axis`'s host model and the matching real bake, `texture::mirror_extend`/`meshdraw::bind_texture`'s wrap-mode target), re-measured at a strict 0/34; `assets/generated/ssb64.pak` rebuilt with the fix. RE-233 fixes a real-hardware-only debug-overlay corruption found on a physical PSPLink run: `Gpu::draw_line_strip` (used by `draw_collision`/`draw_fighter`) submitted GE vertex data straight from a shared, CPU-rewritten `LINE_BUF` instead of `sceGuGetMemory`-allocated display-list-arena memory, so the async GE could read a later segment's overwritten data — invisible under PPSSPP, reproducible from frame 0 on real hardware, now fixed to match `draw_object_posed`'s existing safe pattern and re-verified clean on the same hardware. RE-234–236 close T8 (original-ROM Metal comparison: real 1P-mode capture, refreshed PPSSPP goldens, physical-PSP re-capture, all agreeing at the established noise floor). RE-236–237 close T9 (physical PSP matrix: regular rotations, linear texgen, a raw normal diagnostic and a new rotated-camera scene, all captured on real hardware). `romtool texgen --verify` (T10) runs the addressing/mode/scale/shift invariants above as a CLI gate against any ROM, not just a host test; RE-239 closed T10's last item (the textured→untextured→texgen mapping transition, measured absent from the real archive and covered by a synthetic test), closing `R2.1` (T1–T10) entirely. Independent depth writes (RE-251), submission order (RE-252/RE-253), DrawState cache isolation (RE-254), and the integrated 16-scene/effects regression (RE-261) close R2.2/C3–C7. T1's cross-node reuse gap remains tracked and non-blocking; the remaining gate is physical R2 coverage. |
-| Coordinate conversion | 🟢 80% | Matrix/UV/viewport unit-tested. RE-262 fixes signed N64 S10.5 UVs being reinterpreted as unsigned by `GU_TEXTURE_16BIT` on clamped axes; the 16-scene PPSSPP matrix passes, with hardware confirmation still required. |
-| Battle camera / projection | ✅ COMPLETE | R0.14: default camera source port, viewport/aspect/depth, one-to-four fighter interest union, Wait zoom and original quantized trigonometry are tested. RE-151 reads the original ROM's live Dream Land camera state and matches distance/look-at within 0.1 game units and eye within 0.67; independent PPSSPP audit captures are byte-identical. Special camera modes belong to future gameplay states; physical PSP validation remains R2. |
-| Math (scalar) | 🟢 80% | 36 unit tests; no VFPU path yet (correctly — profile first) |
-| VFPU optimization | 🔴 0% | Deliberately not started |
-| Engine traits (Layer B) | 🟢 70% | Renderer / Audio / Input / Timing / Clock defined |
-| Timing / fixed clock | ✅ COMPLETE | Catch-up cap, backwards-clock, 60-ticks-per-second all unit-tested |
-| Input mapping | 🟢 75% | Mapping + nub scaling unit-tested; deadzone and C-buttons unresolved (RE-008, RE-009) |
-| PSP GU backend | 🟡 89% / VERIFYING | Init/frame lifecycle, matrices, indexed textured mesh draws, CI4/CI8 CLUT upload, mip-level upload, filtering, repeat/clamp addressing, alpha test/blend, depth/culling, billboard transforms, and runtime fighter lighting are implemented in `psp/src/gu.rs` and `psp/src/meshdraw.rs`. RE-264 enables the independently gated `GU_LIGHT0` channel as well as global lighting, restoring the directional term previously missing from fighter draws. RE-262 keeps indexed 16-bit UVs as the common path and expands only signed-clamp draws to exact float UVs. Independent depth compare/write state is wired (RE-251); the raw-GU-mutation inventory and cache invalidation are complete (RE-254). |
-| PSP input backend | 🟢 70% | `sceCtrl` analog read wired to the shared mapping |
-| PSP audio backend | 🔴 0% | |
-| Physics | 🟢 60% | 16 functions ported with original addresses cited, and *driven* — `Fighter::tick` runs gravity, drift and material friction against the stage each tick. Running on all 27 characters' **real** constants, extracted from the ROM and verified field-by-field against the decompilation; the invented defaults they replaced were 26x off and had hidden a stick-scaling bug in air drift (RE-032) |
-| Fighter state | 🟢 60% | The movement status machine: Wait, three walks, Dash, Run, RunBrake, Turn, KneeBend, Jump F/B, JumpAerial F/B, Fall, FallAerial, Squat, Landing light/heavy and Pass, with the original's interrupt-chain ordering and its tap-counter input model (RE-033). Plus roster, facing, hitlag/hitstun, spawn placement and every character's constants. All of them now **end on their own**: the five that had no duration in `FTAttributes` take it from their figatree animation instead, read out of the ROM and verified against the decompilation for all 27 fighters (RE-035). No attacks, specials, grabs, shields or damage states |
-| Collision | 🟢 60% | Geometry extracted for all 41 stages, packed, and read back. Swept floor query, vertical floor projection, per-line surface height and the `mpprocess` floor path (substepping, landing snap, ledge corner, follow-the-surface) all ported. Surface flags confirmed against how Dream Land plays; `dMPCollisionMaterialFrictions` recovered. **158/158 spawns hold a simulated fighter still for 60 ticks at zero drift**, and the swept and projected solvers agree on every one (RE-030, RE-031). No ceiling or wall queries; moving groups are tested at rest |
-| Animation | 🟢 90% | **Figatree scripts decode to per-joint transforms, and are packed.** The `AObjEvent16` command stream, `ftAnimGetTargetValue`'s per-track scales and the `AObj` cubic/linear/step interpolation are ported; `romtool figatree` plays all 189 movement animations for 40 frames with zero desynchronisation, and each one's script count matches its fighter's joint count under a rule with no exceptions (RE-036). Joints are mapped through `setup_parts` and `commonparts_container`, both read as archive relocations rather than matched by shape. The current pack carries all 189 animations, 4709 joint entries and each node's local rest transform, and `romtool figatree --pack` replays 3444 joints from it against the ROM with **every pose identical**. A `Skeleton` ticks every joint on device and the object's node matrices are recomposed from the result at 60 FPS, browsable in the viewer. **Validated**: composed poses match the ROM exactly across 3444 joints, no bone changes length across **204,547 measurements over all 189 animations**, the feet stay planted through the static grounded poses, and Turn's opening frame renders as a standing Mario (RE-038). **The status machine drives it**: `Play::tick` restarts the skeleton when the fighter changes status, at the speed the status supplies, and the stage view draws the posed model where the simulation puts it (`docs/images/m4-fighter-status.png`). **All twenty movement statuses** have an animation, not just the seven with a length — the current pack's 532 sparse fighter/slot entries replay **9,692 joints** identically against the ROM and preserve **567,662 bone lengths**. RE-171 additionally renders and captures all 532 under PPSSPP: every identity header advances uniquely, every centred crop contains model content, sampled captures hold 60 FPS, and the log is clean. The audit exposed and fixed `fighter_anim`'s false dense-table assumption, so missing original motions can no longer shift later runtime lookups. The `TransN` motions map correctly. No `translate_scales`; the viewer still frames its camera on the rest bounds |
-| Scene graph (DObj) | 🟢 87% | All 363 discovered `DObjDesc` arrays plus 11 source-named direct effect constructions are packed as 374 objects (RE-172; one of the 12 direct effects aliases an already-discovered graph). Three union members of `DObj`'s display-list field resolve, and node lists convert in draw order through one shared vertex cache. `MObj` material chains cover **all 127 graphs that require them**; all 468 paired nodes have zero chain/demand mismatches. `GObj` layer and general animation remain absent. |
-| Effects / particles | 🟢 90% | RE-172–189 cover all 53 manager descriptors, 46 unique display-bearing effects, 160 `LBParticle` scripts, 65 texture series, 246 frames, material/texture/colour animation, spawn trees, `LBGenerator`, PSP drawing, exhaustive device audits, and one live manager-effect runtime spawn event. This closes R1 renderer scope. Facing-dependent streams and the other 25+ gameplay call sites remain later integration work. |
-| Stages | 🟢 65% | All 41 `MPGroundData` headers recovered (RE-028): render layers, camera/map bounds, BGM id. Collision decoded for all 41 (RE-029) and **packed**: 1531 polylines, 3331 vertices, 520 map points. Every one of the **100 render layers resolves to a packed object**. RE-170's automated PPSSPP-software audit captures all 41 stages in stable pack order: 41/41 nonblank unique frames, source-identifying HUDs, 60 FPS, and no logged renderer/load failures. This satisfies R1's software "all stages render" row; physical PSP remains R2. A fighter stands on stage collision (RE-031). No stage *loader* — the viewer browses stages, a match does not select one |
-| Items | 🔴 0% | |
-| CPU AI | 🔴 0% | |
-| Menus | 🔴 0% | |
-| Save data | 🔴 0% | |
-| Debug/profiler | 🟡 20% | Frame timing sections defined; on-screen text overlay working |
-| CI | ✅ COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required |
+| Subsystem | Status | Current capability | Evidence | Remaining gap | Task |
+|---|---|---|---|---|---|
+| ROM validation | COMPLETE | SHA-1/MD5 checked against the real dump; byte-order/size rejection unit-tested | — | — | M2 |
+| VPK0 decompression | COMPLETE | All 499 compressed files decode, cross-verified against independent ROM geometry | RE-002 | — | M2 |
+| relocData archive | COMPLETE | 2132/2132 files load; 61,343 intern + 3,092 extern relocations, 0 mismatches | RE-001 | Runtime extern-relocation loader (patches at scene load) not built | M2 |
+| Asset extraction CLI | COMPLETE | `romtool extract` produces 16.29 MiB + manifest | — | — | M2 |
+| F3DEX2 DL parser | COMPLETE | All opcodes Smash emits, verified against real lists | RE-017 | — | R0.2 |
+| N64 texture decode | 85% | RGBA16/32, IA4/8/16, I4/8, CI4/8 decoded; 638 material textures + 246 LBParticle frames ship in pack | — | — | R0.3 |
+| Texture → PSP conversion | COMPLETE for measured renderer scope | Mirror/clamp/origin/signed-coordinate lowering, palette banks, texgen T1–T10 gate all complete. Pack format v29 | RE-201, RE-219–239, RE-262–269 | N64 3-point filtering vs PSP bilinear is an accepted fixed-function deviation (RE-219) | R0.5, R2.0 |
+| DL discovery | COMPLETE | 1,864 lists across 135 files; converter used as its own validator | RE-017 | — | R0.2 |
+| Mesh conversion | VERIFYING (88%) | 0 archive-wide conversion failures; PRIM ownership, load-time lighting provenance, and independent depth compare/write/mode state are implemented and closed (`R2.2` C1–C7) | RE-217, RE-240–261 | Physical-PSP confirmation of the depth-mask fix; full narrative in `plans/rendering/R2.md` | R2.2 |
+| Model conversion | VERIFYING (82%) | Meshes extracted, DObj hierarchy applied, all 127 discovered material graphs paired, primitive colours applied on covered combiner paths | RE-163, RE-240–243 | — | R0.7, R2.2 |
+| Stage animation | 90% | `AObjEvent32` joint stream decoded, packed, played on device: 35 stages, 206 animated nodes at 60 FPS; every packed pose matches the archive across 444,960 values | RE-050–052, RE-142, RE-143, RE-205 | Dream Land has no joint animation (scenery moves through game code, not a gap) | R0.9 |
+| Billboard nodes | 100% | 109 nodes flagged and captured; real camera basis, Kind46/48 spin and scale rules, animated-parent inheritance all shipped | RE-131–133, RE-140–145 | Physical PSP validation is part of the later rendering gate | R0.12 |
+| Asset pack format | COMPLETE | Zero-copy, 16-byte aligned, little-endian; writer + reader unit-tested. v29 carries animation, material-animation, lighting, rest transforms, LBParticle, alpha-compare, texgen, independent depth state, signed-clamp UV marker | — | — | M2 |
+| PSP asset loading | COMPLETE on PSP-2000/3000/Slim | v29 pack (26,254,608 B) loads aligned/cache-flushed; `MEMSIZE=1` physically proven | RE-256, RE-260 | PSP-1000's 32 MiB compatibility unresolved (can't use `MEMSIZE=1`) | R2 |
+| PSP mesh drawing | VERIFYING (90%) | Indexed GE draws, CLUT textures, addressing, animation, alpha gates, runtime lighting and texgen implemented and exercised in PPSSPP and on physical PSP | RE-226–239, RE-251–254, RE-261, RE-270, RE-271 | Full derivation in `plans/rendering/R2.md`; remaining gate is physical R2 coverage (PSP-1000, broader scenes, longer runs) | R2.1, R2.2, R2 |
+| Coordinate conversion | 80% | Matrix/UV/viewport unit-tested; signed N64 S10.5 UVs on clamped axes now expand to float UVs instead of being misread as unsigned | RE-262 | On-hardware confirmation beyond the current physical matrix | R0.8 |
+| Battle camera / projection | COMPLETE | Default camera source-ported; viewport/aspect/depth, 1-4 fighter interest union, Wait zoom, quantized trigonometry tested; matches original ROM camera state within 0.1 game units | RE-151 | Special camera modes are future gameplay states; physical PSP validation is R2 | R0.14 |
+| Math (scalar) | 80% | 36 unit tests | — | No VFPU path yet — correctly, profile first (D-032) | R3 |
+| VFPU optimization | 0% | Deliberately not started | — | — | R3/G5 |
+| Engine traits (Layer B) | 70% | Renderer / Audio / Input / Timing / Clock traits defined | — | — | M3 |
+| Timing / fixed clock | COMPLETE | Catch-up cap, backwards-clock, 60-ticks-per-second all unit-tested | — | — | M3 |
+| Input mapping | 75% | Mapping + nub scaling unit-tested | — | Deadzone and C-button mapping unresolved | TODO (RE-008, RE-009) |
+| PSP GU backend | VERIFYING (89%) | Init/frame lifecycle, matrices, indexed textured mesh draws, CLUT upload, mip upload, filtering, addressing, alpha test/blend, depth/culling, billboards, runtime fighter lighting all implemented | RE-251, RE-254, RE-262, RE-264 | — | R2.2 |
+| PSP input backend | 70% | `sceCtrl` analog read wired to the shared mapping | — | — | M3 |
+| PSP audio backend | 0% | Not started | — | Mixer thread, VADPCM decode, sequencing all open | G4 |
+| Physics | 60% | 16 functions ported with original addresses cited, driven every tick against real per-character constants (all 27 fighters) extracted from ROM and verified field-by-field against decomp | RE-032 | — | M3 |
+| Fighter state | 60% | Movement status machine (Wait/walks/Dash/Run/Turn/Jump/Fall/Squat/Landing/Pass) with original interrupt-chain + tap-counter model; all statuses end on their own via figatree-derived duration | RE-033, RE-035 | No attacks, specials, grabs, shields or damage states (blocked behind rendering gate) | M3, G0 |
+| Collision | 60% | Geometry extracted/packed for all 41 stages; swept + projected floor solvers agree on 158/158 spawn tests | RE-030, RE-031 | No ceiling/wall queries; moving groups tested at rest only | M3 |
+| Animation | 90% | Figatree scripts decode to per-joint transforms and are packed; 189 movement animations, 4709 joint entries, all poses match ROM exactly; skeleton ticks at 60 FPS on device; all 532 sparse fighter/slot entries replay correctly | RE-036, RE-038, RE-171 | No `translate_scales`; viewer camera frames on rest bounds only | M3 |
+| Scene graph (DObj) | 87% | All 363 discovered `DObjDesc` arrays + 11 direct effects packed as 374 objects; `MObj` chains cover all 127 graphs requiring them, 0 mismatches | RE-172 | `GObj` layer and general animation remain absent | R0.7 |
+| Effects / particles | 90% | 53 manager descriptors, 46 display-bearing effects, 160 `LBParticle` scripts, 65 texture series, 246 frames all covered; closes R1 renderer scope | RE-172–189 | Facing-dependent streams and 25+ gameplay call sites are later integration work | R1 |
+| Stages | 65% | All 41 `MPGroundData` headers recovered; collision decoded and packed for all 41; all 100 render layers resolve to a packed object; automated audit captures all 41 at 60 FPS | RE-028, RE-029, RE-170 | No stage *loader* — viewer browses stages, a match does not select one | G2 |
+| Items | 0% | Not started | — | — | G1 |
+| CPU AI | 0% | Not started | — | — | G1 |
+| Menus | 0% | Not started | — | — | G3 |
+| Save data | 0% | Not started | — | — | G3 |
+| Debug/profiler | 20% | Frame timing sections defined; on-screen text overlay working | — | — | — |
+| CI | COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required | — | — | — |
 
-**Per-fighter combat progress: all 12 at 0%.** Correctly so — combat (`PLAN.md`
-G0) is blocked behind the rendering gate (R0–R3) and has not started. This is
-independent of rendering: fighter *models*, *animation* and *movement physics*
-are implemented and tracked in the rows above; only combat-specific state
-(attacks, hitboxes, damage) is unstarted.
+**Per-fighter combat progress: all 12 at 0%.** Correctly so — combat
+(`PLAN.md` G0) is blocked behind the rendering gate (R0–R3) and has not
+started. Fighter *models*, *animation* and *movement physics* are
+implemented and tracked above; only combat-specific state (attacks,
+hitboxes, damage) is unstarted.
 
 ## Test coverage
 
-614 workspace tests passing: `ssb-rom` 423, `ssb-engine` 48, `ssb-game` 120,
-and `romtool` 23. Reproduce with `cargo test --workspace`.
+See `STATUS.md` "Current verification baseline" for the live workspace test
+count. Reproduce with `cargo test --workspace`.
 
 ## M1 verification (PPSSPP)
 
-Verified 2026-08-27 under PPSSPP 1.20.4 (OpenGL and software rasteriser), X11:
-
-* Module loads — `tag=ELF/ssb64_psp` at `0x08804000`, imports resolved for
-  `sceGeListEnQueue`, `sceCtrlReadBufferPositive`, `sceCtrlSetSamplingMode`,
-  `sceDisplaySetMode`, `sceDisplayWaitVblankStart`.
-* `PARAM.SFO` title reads correctly ("Super Smash Bros. 64").
-* GE display lists submit; `sceDisplaySetMode(0, 480, 272)` and
-  `sceDisplaySetFrameBuf` run each frame.
-* **Locked 60.0 FPS.**
-* Geometry renders with correct vertex-colour interpolation and depth.
-* Animation advances (rotation differs between captures).
-* Physics runs on-device: the test object falls under gravity and lands on the
-  test floor at exactly y = -3.00.
-
-Measured from the on-screen diagnostics (RE-016):
-
-```
-frame 701  tick 701          <- exact 60 Hz lockstep, no drift over 700 frames
-ticks/frame 1  dropped 0     <- no catch-up, no dropped ticks
-cpu 13us / budget 16667us    <- 0.08% of the frame budget
-frame 16682us  view 362x272  <- 59.94 Hz; the value the helper returns
-```
-
-These are *baseline* numbers on a four-triangle scene under an emulator, not a
-performance prediction for a real match on real hardware.
-
+Verified 2026-08-27 under PPSSPP 1.20.4 (OpenGL and software rasteriser),
+X11: module loads and imports resolve, `PARAM.SFO` title correct, GE display
+lists submit at a locked 60.0 FPS, geometry renders with correct
+vertex-colour interpolation and depth, animation advances, and physics runs
+on-device (test object lands at exactly y = -3.00). Exact-lockstep timing
+diagnostics recorded in RE-016. These are baseline numbers on a four-triangle
+scene under an emulator, not a performance prediction for real hardware.
 Reproduce with `tools/run-ppsspp.sh`.
 
 ## Known gaps and honest caveats
 
-1. **Physical PSP hardware validation is still in progress.** PPSSPP is not
-   proof of hardware behaviour (`AGENTS.md` §16). RE-201–237 record
-   representative PSP Slim/6.61 captures for the current renderer. Texgen's
-   physical-PSP validation is now complete: RE-236/RE-237 captured all five
-   `R2.1`/T9 matrix items (regular rotations, linear texgen, a raw normal
-   diagnostic, a rotated-camera scene) on real hardware, and RE-234–236 closed
-   the original-N64 Metal comparison (`R2.1`/T8) against real 1P-mode play.
-   Exhaustive coverage beyond texgen, and the `R2.2` corrective regressions,
-   remain open. Treat every "on device" claim elsewhere in this file as PPSSPP
-   unless a hardware model and build are cited. Separately, a real bug is open
-   and tracked (not fixed): the `debug_overlay` PSP viewer's object-view HUD
-   text renders corrupted/double-exposed in every physical capture.
+1. **Physical PSP hardware validation is ongoing, not complete.** PPSSPP is
+   not proof of hardware behaviour (`AGENTS.md`). See `STATUS.md` and
+   `plans/rendering/R2.md` for the current physical-matrix state. A real,
+   still-tracked bug (not confirmed fixed): the `debug_overlay` PSP viewer's
+   object-view HUD text renders corrupted/double-exposed in physical capture
+   (RE-224). Treat every "on device" claim elsewhere in this file as PPSSPP
+   unless a hardware model and build are cited.
 
 2. **The debug overlay only displays under PPSSPP's software rasteriser.**
-   Resolved as an emulator limitation, not a port bug (RE-014):
-   `sceGuDebugFlush` paints VRAM with the CPU, and PPSSPP's hardware backends
-   do not reflect those writes. `tools/run-ppsspp.sh` forces the software
-   renderer so diagnostics are always visible. The real HUD will render as GE
-   geometry (Renderer 3), which removes the dependency entirely.
+   Emulator limitation, not a port bug (RE-014): `sceGuDebugFlush` paints
+   VRAM with the CPU, and PPSSPP's hardware backends don't reflect those
+   writes. `tools/run-ppsspp.sh` forces the software renderer. A future GE-
+   geometry HUD (Renderer 3) removes the dependency entirely.
 
-3. **Extracted assets are unparsed.** `romtool extract` produces byte-exact
-   file payloads, but nothing yet interprets them as textures, meshes or
-   attribute tables. The archive layer is trustworthy; the layers above it
-   do not exist.
+3. **Extracted assets are unparsed below the archive layer** for anything
+   `romtool` doesn't yet interpret as textures/meshes/attribute tables — the
+   archive layer itself is trustworthy.
 
 4. **Attribute coverage stops at the scalar head.** All 27 characters'
-   `FTAttributes` are extracted and packed, cross-checked field by field
-   against the decompilation (RE-032). Only the leading 45 scalars are decoded;
-   the hurtbox descriptors, sound ids and joint indices further into the struct
-   are still untouched, so nothing above physics and collision can read them.
+   `FTAttributes` are extracted, packed and verified field-by-field against
+   the decompilation (RE-032), but only the leading 45 scalars are decoded;
+   hurtbox descriptors, sound IDs and joint indices further into the struct
+   are untouched.
 
-5. **The movement animation pipeline is far along; combat does not exist.** A
-   fighter walks, dashes, jumps and lands on a stage with the right animation
-   for each, in its own colours. There are no attacks, hitboxes, hurtboxes,
-   damage, knockback, hitstun, opponent, stocks or match loop, and per the
-   rendering gate (`AGENTS.md` §5, `PLAN.md` G0) none of that may be started
-   until R0–R3 are complete. The vertical slice described in `TODO.md`
-   ("Combat Vertical Slice") is recorded for when that gate opens, not as
-   current or next work.
+5. **The movement animation pipeline is far along; combat does not exist.**
+   No attacks, hitboxes, hurtboxes, damage, knockback, hitstun, opponent,
+   stocks or match loop — per the rendering gate, none of that may start
+   until R0–R3 are complete. See `TODO.md` "Combat Vertical Slice".
 
-6. **The extern relocation slots are zeroed, not resolved.** `romtool` records
-   them in the manifest rather than patching them, because the target address
-   depends on runtime layout. The runtime loader that applies them does not
-   exist yet. The *converter* now follows them (RE-037), which is what got the
-   stages textured, but the PSP-side loader that would patch them at load time
-   still does not exist.
+6. **Extern relocation slots are zeroed, not resolved.** `romtool` records
+   them in the manifest; the runtime loader that patches them at scene load
+   does not exist yet. The *converter* already follows them (RE-037).

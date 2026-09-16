@@ -1,137 +1,46 @@
 # Current State
 
-- Milestone: `R2 — Physical PSP Rendering Validation`
-- Primary task: complete the remaining physical-hardware matrix.
-- Status: `IN_PROGRESS`
-- Last complete: `RE-271 — Exhaustive fighter physical matrix; draw_triangles
-  had the same static-buffer GE race draw_line_strip already fixed, found
-  via the depth-mask diagnostic's own physical debut; 10-minute
-  sustained-run evidence`. All 12 playable fighters, the depth-mask
-  diagnostic (post-fix), and a 10-minute sustained run are now physically
-  confirmed on PSP Slim, 6.6.1, ARK/Infinity, PSPLink v3.2.1, zero
-  exceptions throughout.
-- Current build: RE-271 code, pack `a79b0aa9...5935f` (28,531.3 KiB), plain
-  feature-free EBOOT `66ce9869...a5336`. PSP-1000 coverage and coverage
-  beyond this session's fighter/diagnostic/10-minute matrix (broader
-  stage/effect coverage, multi-hour runs) are deliberately deferred until
-  the game structure (beyond the asset viewer) is in place.
+Milestone: `R2 — Physical PSP Rendering Validation`
+Primary task: complete the remaining physical-hardware matrix
+Task state: `IN_PROGRESS`
 
-## RE-264 result
+Current objective: physically confirm the parts of R2's matrix not yet
+covered on real hardware. All 12 playable fighters, the depth-mask
+diagnostic, and a 10-minute sustained run are confirmed on PSP Slim/6.6.1.
+PSP-1000 coverage and broader/longer coverage remain, deliberately deferred
+until the game structure grows beyond the current asset viewer.
 
-Fox's materials were already correct in the ROM: white directional light over
-gray ambient. The PSP configured light 0 but never enabled its independent GE
-channel, so only the gray ambient term reached fighters. The runtime now pairs
-`GU_LIGHT0` with the existing global lighting scope, and the Fox capture uses
-Sector Z's source angle from file 262. Fox's gloves and boots render white while
-retaining directional shading; Dream Land's Mario and Link lighting were
-refreshed for the same state correction.
+Last completed: `RE-271` — exhaustive fighter physical matrix; found and
+fixed `draw_triangles`'s static-buffer GE race (same class `draw_line_strip`
+was already fixed for); 10-minute sustained-run evidence.
 
-Ness's default file-335 texture at `0xB7A0` contains the same single-texel eye
-steps as Kirby. It now receives the same mild, exact-file-and-offset
-reconstruction correction and renders two smooth upright eyes.
+Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
+compatibility there is unresolved rather than assumed. No dedicated capture
+scenes exist yet for full stage/effect coverage or runs longer than 10
+minutes. None of these block R2.2 (closed) — they gate the *physical* R2
+matrix only, and are deliberately deferred until the game structure grows
+beyond the asset viewer.
 
-- Goldens: Dream Land `4979febc5824...`, Saffron City `de666a5c1b3e...`, Fox
-  `a3fb34835383...`, Ness `5d81b418a8fd...`, Link `1d5ff77266e1...`; all
-  compare exactly to their accepted PPSSPP-software captures.
-- Pack: 26,288,016 bytes,
-  `495a4bcd52f0cfe720d5007a0e9d45b8453e2fb09cb89283993926713a7568db`
-- Normal EBOOT: 5,088,016 bytes,
-  `e8a058b9bb56f54f0773adefde37c37e3f60251cdf9ff2c776ad4f308a5ccf20`
-- RE-270 physically confirms this corrected light state (Fox) and the Ness
-  eye texture on real PSP hardware.
+Current verification baseline: `cargo fmt --all --check` clean; `cargo test
+--workspace` 616 passed; all 22 deterministic goldens exact; effects 46/46
+manager objects, 35/35 transform + 24/26 material animations, 160/160
+particle scripts; 109 billboards, 0 anomalies; 11/11 framebuffer transitions;
+`romtool texgen --verify` pass; plain feature-free `cargo psp --release`
+pass; strict Clippy not clean (3 pre-existing `needless_range_loop` lints in
+`coord.rs`/`matanim.rs`/`objanim.rs`, unrelated to this work).
 
-## RE-262 result
+Required next action: resume the physical R2 matrix if PSP hardware is
+available (PSP-1000 coverage, broader stage/effect scenes, longer runs);
+otherwise record the concrete access/PSP-1000-memory blocker. Do not start
+R3 or combat before R2's physical matrix is closed.
 
-Fox and Link did not have corrupt eye textures. Their face primitives use
-negative signed S10.5 U coordinates on a clamped axis, while the PSP GE reads
-`GU_TEXTURE_16BIT` as unsigned. The bit patterns therefore became large
-positive coordinates and held the wrong edge texel over one eye.
+Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
+Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271 (see
+[docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
+chain, RE-240–271). Toolchain note: the global `cargo-psp` install is a
+hybrid build, see RE-256.
+Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
+[docs/rendering.md](docs/rendering.md), [docs/psplink.md](docs/psplink.md)
 
-- Pack v29 marks only ordinary authored-UV primitives with a negative
-  coordinate on a clamped axis. Those indexed corners expand transiently to
-  exact float UVs; repeat and texgen paths are unchanged.
-- Fox and Link both render two eyes. Their independent duplicate captures are
-  byte-identical; current hashes are `3196cc914976...` and
-  `b2a6763d4670...` respectively.
-- All 16 deterministic scenes pass. Eleven textured scenes changed by visually
-  reviewed, source-coherent amounts; flat colour, three pure texgen controls,
-  and the depth-state diagnostic remain byte-identical.
-- Pack: 26,254,608 bytes,
-  `119b856a7e827eaa53436295448132d09849b384eec02c4fb09e51f0e3933384`
-- Normal EBOOT: 5,087,556 bytes,
-  `1d9d0b3b481683b4701c80c7a397da79c94d07b36fee2a7dc61fbe1b8ae3d113`
-
-## Integrated verification
-
-- `cargo fmt --all --check`: pass
-- `cargo test --workspace`: 616 passed
-- all 22 deterministic goldens: exact after the explained RE-262–265 refreshes
-- effects: 46/46 manager objects, 35/35 transform animations, 24/26 material
-  animations (two documented source-unreachable rest-invisible cases), all
-  160 particle scripts
-- billboards: 109 inventoried, 0 structural anomalies
-- framebuffer transitions: 11/11 replayed and object-bound
-- `romtool texgen --verify`: pass
-- plain feature-free `cargo psp --release`: pass
-- strict workspace Clippy: not clean under the current toolchain because of
-  three unrelated pre-existing `needless_range_loop` lints in `coord.rs`,
-  `matanim.rs` and `objanim.rs`; not expanded into this fix
-
-## Hardware state
-
-RE-260 physically proves `MEMSIZE=1` loads the same-sized v28 full pack on PSP
-Slim/6.61; v29 and its float-UV draw path have PPSSPP evidence only so far.
-The reported motion stop came from the staged `regression_capture` EBOOT's
-intentional tick-240 freeze; the process and renderer stayed alive, and an
-independent 600-frame Mario audit replayed all 20 movement slots exactly.
-RE-271 now supersedes the "not yet reported" caveat: the plain feature-free
-EBOOT ran 10 continuous real-time minutes under PSPLink with zero exceptions
-and intact rendering at the end.
-
-RE-270 physically re-captured Fox, Ness, Link, Donkey Kong, and Dream Land
-(pack `a79b0aa9...5935f`, 28,531.3 KiB) confirming RE-262's signed-clamp fix
-and RE-264/269's lighting/texture fixes hold on real GE hardware. RE-271 then
-physically captured the six remaining playable fighters (Mario, Luigi, Samus,
-Yoshi, Pikachu, Purin — none previously hardware-tested), re-captured Kirby
-post-RE-263, and physically ran the depth-mask diagnostic for the first time —
-finding and fixing a real hardware-only GE race in `Gpu::draw_triangles`
-(the same static-scratch-buffer hazard `draw_line_strip` was already fixed
-for), then re-confirming the diagnostic matches its golden after the fix.
-
-The formal R2 matrix still needs, deliberately deferred until the game
-structure grows beyond the current asset viewer:
-
-- PSP-1000 coverage. Its 32 MiB RAM cannot use `MEMSIZE=1`, so current pack
-  compatibility is unresolved rather than assumed.
-- broader/exhaustive hardware coverage beyond the 22 committed deterministic
-  goldens (all now physically confirmed) — full 41-stage/effect coverage has
-  no dedicated capture scenes yet
-- longer-than-10-minute sustained runs
-
-These physical requirements keep R3 and combat blocked. There is no remaining
-R2.2 renderer-model blocker.
-
-## Non-blocking follow-ups
-
-- RE-263/264 resolve Kirby's and Ness's false inward eye spikes as PSP
-  reconstruction artifacts, not mirror-state errors. File-and-offset-scoped
-  mild filters preserve the ROM faces while restoring the original render's
-  oval eyes; the Kirby and Ness captures have refreshed PPSSPP-software
-  goldens. RE-270/271 physically confirm Ness and Kirby respectively.
-- T1's 164 cross-node differing-transform vertex reuses remain measured.
-- N64 three-point filtering vs PSP bilinear remains an accepted fixed-function
-  deviation (RE-219).
-- Full runtime fighter costume selection is future work; costume zero now
-  resolves palette and all five colour/light tracks.
-- The installed global `cargo-psp` remains the previously documented hybrid
-  build; reconciling the user's newer rust-psp branch with this repository's
-  pinned nightly is separate toolchain work.
-
-## Continuation
-
-Read `AGENTS.md`, this file, the R2 acceptance section in `PLAN.md`, and
-the affected subsystem/evidence rows. Inspect Git state. Resume the physical
-R2 matrix if the required hardware is available; otherwise record the concrete
-access/PSP-1000 memory blocker without starting R3 or combat. PSP-1000 and
-exhaustive/long-duration hardware coverage are deliberately deferred until
-the game structure grows beyond the current asset viewer.
+Current build: RE-271 code. Pack `a79b0aa9...5935f` (28,531.3 KiB). Plain
+feature-free EBOOT `66ce9869...a5336`.
