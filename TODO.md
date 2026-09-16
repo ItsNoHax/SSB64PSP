@@ -73,7 +73,7 @@ fallback.
 Target: R2 (blocks full confidence in "representative fighters render",
 already marked complete)
 Status: OPEN
-Evidence: RE-272
+Evidence: RE-272, RE-274
 Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
 raw ROM dump but renders as a repeating, aliased pattern with red patches
 near the ears on both PPSSPP and physical PSP hardware — same renderer code
@@ -81,8 +81,15 @@ path on both, so not hardware-specific and not new. The regression-capture
 golden methodology cannot detect this class of bug by construction (it only
 checks PSP-vs-PPSSPP self-consistency, not fidelity to the source texture),
 so other fighters' passing captures are not evidence they are unaffected.
-Root cause not yet found (UV/tile addressing, scale, or mip interaction are
-candidates, per RE-272); needs its own scoped investigation.
+RE-274 traced the exact draw call: one self-contained 24-triangle primitive
+(file 296, node 8, dl `0x1990`) whose own freshly-loaded vertices carry a UV
+span 3.46x/1.19x the packed mirror+clamp tile, ruling out cross-node texture
+leakage and confirming texture decode/mirror-baking are correct. Two
+hypotheses remain undistinguished: a faithfully-reproduced ROM quirk needing
+a `TEXTURE_FILTER_CORRECTIONS`-style named fix (RE-263/264 precedent), or a
+real addressing/scale bug specific to this overscan magnitude. Needs an
+accurate N64 reference render (real hardware or `angrylion-rdp-plus`) to
+tell which.
 
 ---
 
