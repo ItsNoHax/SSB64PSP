@@ -3,12 +3,18 @@
 - Milestone: `R2 — Physical PSP Rendering Validation`
 - Primary task: complete the remaining physical-hardware matrix.
 - Status: `IN_PROGRESS`
-- Last complete: `RE-269 — RDP tile origin is not a source-image offset`.
-  Donkey Kong's tie, hands, feet, ears, and head now use the ROM's padded CI4
-  source rows without double-applying the tile origin in the PPSSPP software
-  golden.
-- Current build: RE-269 code with the existing v29 pack and 22 deterministic
-  goldens; the formal R2 physical-hardware matrix remains primary.
+- Last complete: `RE-271 — Exhaustive fighter physical matrix; draw_triangles
+  had the same static-buffer GE race draw_line_strip already fixed, found
+  via the depth-mask diagnostic's own physical debut; 10-minute
+  sustained-run evidence`. All 12 playable fighters, the depth-mask
+  diagnostic (post-fix), and a 10-minute sustained run are now physically
+  confirmed on PSP Slim, 6.6.1, ARK/Infinity, PSPLink v3.2.1, zero
+  exceptions throughout.
+- Current build: RE-271 code, pack `a79b0aa9...5935f` (28,531.3 KiB), plain
+  feature-free EBOOT `66ce9869...a5336`. PSP-1000 coverage and coverage
+  beyond this session's fighter/diagnostic/10-minute matrix (broader
+  stage/effect coverage, multi-hour runs) are deliberately deferred until
+  the game structure (beyond the asset viewer) is in place.
 
 ## RE-264 result
 
@@ -31,8 +37,8 @@ reconstruction correction and renders two smooth upright eyes.
   `495a4bcd52f0cfe720d5007a0e9d45b8453e2fb09cb89283993926713a7568db`
 - Normal EBOOT: 5,088,016 bytes,
   `e8a058b9bb56f54f0773adefde37c37e3f60251cdf9ff2c776ad4f308a5ccf20`
-- Physical PSP confirmation of this corrected light state and Ness texture is
-  still required by R2.
+- RE-270 physically confirms this corrected light state (Fox) and the Ness
+  eye texture on real PSP hardware.
 
 ## RE-262 result
 
@@ -78,19 +84,29 @@ Slim/6.61; v29 and its float-UV draw path have PPSSPP evidence only so far.
 The reported motion stop came from the staged `regression_capture` EBOOT's
 intentional tick-240 freeze; the process and renderer stayed alive, and an
 independent 600-frame Mario audit replayed all 20 movement slots exactly.
-A feature-free normal EBOOT is built, but sustained motion on that exact build
-has not yet been reported and is not claimed.
+RE-271 now supersedes the "not yet reported" caveat: the plain feature-free
+EBOOT ran 10 continuous real-time minutes under PSPLink with zero exceptions
+and intact rendering at the end.
 
-The formal R2 matrix still needs:
+RE-270 physically re-captured Fox, Ness, Link, Donkey Kong, and Dream Land
+(pack `a79b0aa9...5935f`, 28,531.3 KiB) confirming RE-262's signed-clamp fix
+and RE-264/269's lighting/texture fixes hold on real GE hardware. RE-271 then
+physically captured the six remaining playable fighters (Mario, Luigi, Samus,
+Yoshi, Pikachu, Purin — none previously hardware-tested), re-captured Kirby
+post-RE-263, and physically ran the depth-mask diagnostic for the first time —
+finding and fixing a real hardware-only GE race in `Gpu::draw_triangles`
+(the same static-scratch-buffer hazard `draw_line_strip` was already fixed
+for), then re-confirming the diagnostic matches its golden after the fix.
+
+The formal R2 matrix still needs, deliberately deferred until the game
+structure grows beyond the current asset viewer:
 
 - PSP-1000 coverage. Its 32 MiB RAM cannot use `MEMSIZE=1`, so current pack
   compatibility is unresolved rather than assumed.
-- a long-duration feature-free physical run
-- broader/exhaustive hardware coverage sufficient to close “no hardware-only
-  rendering failures remain”
-- physical confirmation of the synthetic depth-mask diagnostic
-- physical re-capture of representative RE-262 signed-clamp scenes and RE-264
-  lighting/face changes (at least Fox, Ness, Link, and one affected stage)
+- broader/exhaustive hardware coverage beyond the 22 committed deterministic
+  goldens (all now physically confirmed) — full 41-stage/effect coverage has
+  no dedicated capture scenes yet
+- longer-than-10-minute sustained runs
 
 These physical requirements keep R3 and combat blocked. There is no remaining
 R2.2 renderer-model blocker.
@@ -100,8 +116,8 @@ R2.2 renderer-model blocker.
 - RE-263/264 resolve Kirby's and Ness's false inward eye spikes as PSP
   reconstruction artifacts, not mirror-state errors. File-and-offset-scoped
   mild filters preserve the ROM faces while restoring the original render's
-  oval eyes; the Kirby and Ness captures have refreshed PPSSPP-software goldens. Physical
-  PSP confirmation remains part of R2.
+  oval eyes; the Kirby and Ness captures have refreshed PPSSPP-software
+  goldens. RE-270/271 physically confirm Ness and Kirby respectively.
 - T1's 164 cross-node differing-transform vertex reuses remain measured.
 - N64 three-point filtering vs PSP bilinear remains an accepted fixed-function
   deviation (RE-219).
@@ -116,4 +132,6 @@ R2.2 renderer-model blocker.
 Read `AGENTS.md`, this file, the R2 acceptance section in `PLAN.md`, and
 the affected subsystem/evidence rows. Inspect Git state. Resume the physical
 R2 matrix if the required hardware is available; otherwise record the concrete
-access/PSP-1000 memory blocker without starting R3 or combat.
+access/PSP-1000 memory blocker without starting R3 or combat. PSP-1000 and
+exhaustive/long-duration hardware coverage are deliberately deferred until
+the game structure grows beyond the current asset viewer.
