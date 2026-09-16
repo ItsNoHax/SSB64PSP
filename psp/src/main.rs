@@ -16,6 +16,8 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
+#[cfg(feature = "addr_diag_probe")]
+mod addr_diag;
 mod assets;
 #[cfg(feature = "depth_mask_diagnostic")]
 mod depth_diag;
@@ -98,6 +100,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene9")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
+            || cfg!(feature = "addr_diag_probe")
             || cfg!(feature = "texgen_normal_diagnostic_0")
             || cfg!(feature = "texgen_normal_diagnostic_1")
             || cfg!(feature = "texgen_normal_diagnostic_2")
@@ -2395,6 +2398,13 @@ unsafe fn run() -> ! {
         {
             unsafe {
                 depth_diag::draw(&mut gpu, aspect);
+            }
+            draw_state.invalidate_all();
+        }
+        #[cfg(feature = "addr_diag_probe")]
+        {
+            unsafe {
+                addr_diag::draw(&mut gpu);
             }
             draw_state.invalidate_all();
         }

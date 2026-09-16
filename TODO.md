@@ -73,7 +73,7 @@ fallback.
 Target: R2 (blocks full confidence in "representative fighters render",
 already marked complete)
 Status: OPEN
-Evidence: RE-272, RE-274, RE-275, RE-276, RE-277
+Evidence: RE-272, RE-274, RE-275, RE-276, RE-277, RE-278
 Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
 raw ROM dump but renders as a repeating, aliased pattern with red patches
 near the ears on both PPSSPP and physical PSP hardware — same renderer code
@@ -96,14 +96,19 @@ against this project's PSP-lowering model, not just the per-vertex extremes
 RE-220/RE-221's archive-wide census already covered) across both axes' full
 measured UV range, including well past the drawn rect's far edge: **zero**
 mismatches. The addressing formula itself is now ruled out three ways
-(archive-wide census, live N64 capture, dense per-texel sweep). Next step:
-this is a severe minification case (a 64-wide baked image stretched 3.46x
-across a whole-head-sized screen region) with no mipmap chain (`RE-127`) and
-no PSP GE anti-aliasing, unlike the real N64 RDP's per-pixel coverage AA —
-RE-277's best-supported remaining hypothesis, not yet measured. Check the GE's
-actual sampling behavior directly (a synthetic known-pattern texture with a
-controlled wide UV sweep, captured and diffed per destination pixel) before
-reaching for a `TEXTURE_FILTER_CORRECTIONS`-style named acceptance.
+(archive-wide census, live N64 capture, dense per-texel sweep). RE-278 then
+built a permanent measurement rig (`psp/src/addr_diag.rs`, `addr_diag_probe`
+feature) sampling a synthetic 64-texel mirror+clamp texture at fixed,
+non-interpolated coordinates spanning the same range under both `Nearest`
+and `Linear` filtering on PPSSPPHeadless: every probe, including two
+half-texel probes straddling the clamp boundary, read exactly the predicted
+value — ruling out "the GE mis-samples a known coordinate near this
+boundary" too. Next step: RE-278 explicitly did not test per-pixel *triangle
+interpolation* (perspective-correct UV across real geometry, not a fixed 2D
+sprite sample) or the real primitive's actual `Ci4`/CLUT paletted format —
+build a small real-triangle rig through the same `Ci4` bind path with a
+comparable per-triangle UV delta before reaching for a
+`TEXTURE_FILTER_CORRECTIONS`-style named acceptance.
 
 ---
 

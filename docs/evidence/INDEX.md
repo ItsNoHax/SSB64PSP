@@ -287,3 +287,4 @@ editing a record.
 | RE-275 | angrylion-rdp-plus reference-render harness ported to RMG's sandbox, segfaults on plugin startup | CLOSED — superseded. Root cause found (below), but the path is | texture, fighter, hardware, visual-regression, toolchain |  |
 | RE-276 | Live N64 reference render clears Mario's face: a real PSP-side addressing bug, not a ROM quirk | COMPLETE | texture, fighter, hardware, visual-regression, toolchain |  |
 | RE-277 | Dense per-texel sweep clears the addressing formula itself | OPEN | texture, fighter, hardware, visual-regression |  |
+| RE-278 | Fixed-coordinate GE sampling matches the addressing model exactly, including the Linear clamp-boundary blend | OPEN | texture, fighter, hardware, visual-regression |  |
