@@ -73,7 +73,7 @@ fallback.
 Target: R2 (blocks full confidence in "representative fighters render",
 already marked complete)
 Status: OPEN
-Evidence: RE-272, RE-274, RE-275, RE-276
+Evidence: RE-272, RE-274, RE-275, RE-276, RE-277
 Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
 raw ROM dump but renders as a repeating, aliased pattern with red patches
 near the ears on both PPSSPP and physical PSP hardware — same renderer code
@@ -90,11 +90,20 @@ render (Mupen64Plus/Rice, reached via a temporary patched decomp build —
 `angrylion-rdp-plus` stayed blocked per RE-275) of Mario's face at this exact
 overscan renders **clean**, no repeating pattern — evidence against "a
 faithfully-reproduced ROM quirk" and for "a real addressing/scale bug
-specific to this project's PSP renderer". Next step: find the actual bug —
-most likely this project's own `mirror_extend`/addressing code for overscan
-beyond the periods RE-220/RE-221 already handle, or how
-`meshdraw::bind_texture` sets up the GE wrap state for this magnitude — not
-a `TEXTURE_FILTER_CORRECTIONS`-style named acceptance.
+specific to this project's PSP renderer". RE-277 then ran RE-274's own named
+next step (a dense per-texel sweep of `n64_addressing`'s hardware model
+against this project's PSP-lowering model, not just the per-vertex extremes
+RE-220/RE-221's archive-wide census already covered) across both axes' full
+measured UV range, including well past the drawn rect's far edge: **zero**
+mismatches. The addressing formula itself is now ruled out three ways
+(archive-wide census, live N64 capture, dense per-texel sweep). Next step:
+this is a severe minification case (a 64-wide baked image stretched 3.46x
+across a whole-head-sized screen region) with no mipmap chain (`RE-127`) and
+no PSP GE anti-aliasing, unlike the real N64 RDP's per-pixel coverage AA —
+RE-277's best-supported remaining hypothesis, not yet measured. Check the GE's
+actual sampling behavior directly (a synthetic known-pattern texture with a
+controlled wide UV sweep, captured and diffed per destination pixel) before
+reaching for a `TEXTURE_FILTER_CORRECTIONS`-style named acceptance.
 
 ---
 
