@@ -29,8 +29,11 @@ exist yet for full stage/effect coverage or runs longer than 10 minutes.
 None of these block R2.2 (closed) — they gate the *physical* R2 matrix only,
 and are deliberately deferred until the game structure grows beyond the
 asset viewer. Separately, `RE-272`'s face-texture bug is open and
-unblocked — it needs its own scoped investigation (see `TODO.md`), not
-physical-hardware access.
+unblocked — `RE-274` traced it to one self-contained, wide-UV draw call
+(file 296, node 8, dl `0x1990`) and ruled out cross-node texture leakage and
+mirror-bake corruption, but root cause (ROM-faithful filtering gap vs. a
+real addressing/scale bug) needs an accurate N64 reference render to
+distinguish — see `TODO.md`. Does not need physical-hardware access.
 
 Current verification baseline: `cargo fmt --all --check` clean; `cargo test
 --workspace` 616 passed; all 22 deterministic goldens exact; effects 46/46
@@ -42,17 +45,19 @@ pass; strict Clippy not clean (3 pre-existing `needless_range_loop` lints in
 
 Required next action: resume the physical R2 matrix if PSP-1000 hardware
 becomes available; otherwise record the concrete access blocker. Separately,
-open a scoped investigation for `RE-272`'s face-texture rendering bug
-(candidates: UV/tile addressing, texture scale, mip interaction — not yet
-distinguished) when picked up; it does not require physical-hardware access
-to investigate (root cause is likely in `mesh.rs`/pack conversion or
-`meshdraw.rs`, reproducible under PPSSPP alone). Do not start R3 or combat
-before R2's physical matrix is closed.
+`RE-272`/`RE-274`'s face-texture bug needs an accurate N64 reference render
+(real hardware or `angrylion-rdp-plus`) of Mario's face at this camera
+distance to tell whether the wide-UV mirror+clamp overscan is a faithfully-
+reproduced ROM quirk (needing a `TEXTURE_FILTER_CORRECTIONS`-style named fix,
+RE-263/264 precedent) or a real addressing/scale bug (needing the
+`n64_addressing` reference model run against this axis's exact parameters).
+Does not require physical-hardware access. Do not start R3 or combat before
+R2's physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
-RE-273 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full
-R2.2/physical chain, RE-240–273). Toolchain note: the global `cargo-psp`
+RE-273, RE-274 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the
+full R2.2/physical chain, RE-240–274). Toolchain note: the global `cargo-psp`
 install is a hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), [docs/psplink.md](docs/psplink.md)
