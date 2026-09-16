@@ -183,6 +183,15 @@ texgen_normal_diagnostic_4 = [] # [-128,0,0], Normal (raw)
 texgen_normal_diagnostic_5 = [] # [90,90,0], Normal (raw)
 texgen_normal_diagnostic_6 = [] # [73,-41,99], Normal (raw)
 
+# R2/RE-278 measurement rig: does real GE hardware sampling match
+# `n64_addressing`'s reference model (already checked host-side, RE-277) for
+# RE-272/274's exact mirror+clamp wide-overscan axis? Draws a synthetic
+# 64-texel triangle-wave texture at fixed, non-interpolated probe coordinates
+# (`addr_diag::PROBES`) under both `Nearest` and `Linear` filtering, in one
+# frame, replacing the whole scene the same way `depth_mask_diagnostic`/
+# `texgen_normal_diagnostic_*` do. Off by default.
+addr_diag_probe = []
+
 # Requests one framebuffer capture from PPSSPPHeadless after the deterministic
 # scene has reached its frozen tick. The devctl is ignored by real PSPs, so it
 # is safe to combine with any regression scene and has no effect on normal
