@@ -69,6 +69,21 @@ Reason: no fail-fast mode exists for unresolved texture/missing palette/
 unknown transform; would help catch regressions earlier than a silent
 fallback.
 
+### Fighter face texture repeats/corrupts (Mario, at least)
+Target: R2 (blocks full confidence in "representative fighters render",
+already marked complete)
+Status: OPEN
+Evidence: RE-272
+Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
+raw ROM dump but renders as a repeating, aliased pattern with red patches
+near the ears on both PPSSPP and physical PSP hardware — same renderer code
+path on both, so not hardware-specific and not new. The regression-capture
+golden methodology cannot detect this class of bug by construction (it only
+checks PSP-vs-PPSSPP self-consistency, not fidelity to the source texture),
+so other fighters' passing captures are not evidence they are unaffected.
+Root cause not yet found (UV/tile addressing, scale, or mip interaction are
+candidates, per RE-272); needs its own scoped investigation.
+
 ---
 
 ## Deferred Work Behind the Rendering Gate (PLAN.md G1–G5)
