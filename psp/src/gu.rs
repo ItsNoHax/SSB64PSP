@@ -787,17 +787,32 @@ impl Gpu {
     /// `verts` must be 16-byte aligned for the GE to DMA it, which is why the
     /// caller passes an `Align16` buffer.
     ///
+    /// Copies `verts` into memory allocated from the current display-list
+    /// arena before submitting, the same `sceGuGetMemory` pattern
+    /// [`Gpu::draw_line_strip`] uses and for the same reason: the GE reads
+    /// submitted vertex data asynchronously, and a caller that reuses one
+    /// scratch buffer across several draws in the same frame (`depth_diag.rs`
+    /// does exactly this, one static buffer for three sequential quads) can
+    /// have real hardware's GE still reading an earlier draw's vertices out
+    /// of that buffer after the CPU has already overwritten it with the next
+    /// one -- silently substituting the last draw's geometry into the
+    /// earlier, still-pending draw calls. PPSSPP's GE emulation keeps pace
+    /// with the CPU closely enough that this never shows up there.
+    ///
     /// # Safety
     ///
-    /// `verts` must live until the frame is submitted.
+    /// `verts` must be 16-byte aligned.
     pub unsafe fn draw_triangles(&mut self, verts: &[GuVertex]) {
         sys::sceGuDisable(GuState::Texture2D);
+        let bytes = verts.len() * core::mem::size_of::<GuVertex>();
+        let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut GuVertex;
+        core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, verts.len());
         sys::sceGumDrawArray(
             GuPrimitive::Triangles,
             GuVertex::FORMAT,
             verts.len() as i32,
             core::ptr::null(),
-            verts.as_ptr() as *const c_void,
+            dynamic as *const c_void,
         );
     }
 
