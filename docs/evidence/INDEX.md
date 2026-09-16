@@ -285,3 +285,4 @@ editing a record.
 | RE-273 | First physical confirmation on a second hardware unit (PSP-3000) | COMPLETE | hardware, visual-regression, fighter, psp-ge, stage |  |
 | RE-274 | RE-272's forehead artifact traces to one self-contained, wide-UV draw call | OPEN | texture, fighter, geometry, hardware, visual-regression |  |
 | RE-275 | angrylion-rdp-plus reference-render harness ported to RMG's sandbox, segfaults on plugin startup | CLOSED | texture, fighter, hardware, visual-regression, toolchain |  |
+| RE-276 | Live N64 reference render clears Mario's face: a real PSP-side addressing bug, not a ROM quirk | COMPLETE | texture, fighter, hardware, visual-regression, toolchain |  |

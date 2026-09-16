@@ -105,7 +105,73 @@ For scripts needing RDRAM reads/writes or custom step sequences beyond what
   scheduling jitter is the leading suspect). It does not leak the flatpak
   process; a bare retry of the same command has always succeeded in
   testing. Treat it as a retryable flake, not a route bug, unless it
-  reproduces on the same route every time.
+  reproduces on the same route every time. **The rate is much worse under
+  host CPU contention** — one RE-276 session saw the failure rate spike to
+  roughly 85-90% (12-20+ retries needed per run) with a background Chrome
+  process pinning a CPU core, on an otherwise-idle 24-core machine (load
+  average ~1, plenty of spare cores). A tight retry loop still eventually
+  succeeds; it just costs more attempts. This is also the strongest
+  practical reason to prefer the decomp-rebuild warp technique below over
+  a long scripted `--route` when the host is under load: fewer total frames
+  means fewer chances to hit the stall.
+
+## Reaching a specific game state: menu navigation vs. decomp rebuild
+
+For a state reachable by a short, known button sequence, script it with
+`--route` directly. For a state that's expensive to reach by menu (deep
+menu chains, or this session's host was flaky enough that even a ~900-frame
+idle-to-title route needed 10-20 retries), **don't try to RDRAM-warp
+`gSCManagerSceneData.scene_curr`** (`refs/ssb-decomp-re/src/sc/scmanager.c`,
+US address `0x800a4ad0`) **from outside** — `scManagerRunLoop`'s
+`while(TRUE) { switch(scene_curr) { ... } }` only re-reads `scene_curr` once
+per *scene lifetime* (each case blocks inside its own per-frame loop,
+potentially thousands of frames, and only returns when it decides on its
+own that the user finished it), not once per video frame. An external write
+lands in memory (reads back correctly) but sits inert until the current
+scene organically exits and overwrites it with its own hardcoded target —
+confirmed by direct measurement, RE-276.
+
+**What works:** patch `refs/ssb-decomp-re` locally (temporary, revert with
+`git checkout --` after use — never commit), rebuild
+(`PATH=~/ppsspp-test/mips-bin-shim:$PATH make -j$(nproc)`, see Toolchain
+setup below), and run the patched `build/smashbrothers.us.z64` through this
+skill's harness instead of the real `rom/`. Writing the target state inside
+`scManagerRunLoop` right after its own
+`gSCManagerSceneData = dSCManagerDefaultSceneData;` reset (so the write is
+part of the game's own boot path, not a race against it) reliably lands on
+the *first* attempt — RE-276's scene-warp and camera-warp runs both
+succeeded first-try, against 12-20+ retries for menu navigation to the same
+depth. `SCCommonData`'s field layout (`src/sc/sctypes.h`) has to be
+hand-offset (u8 fields pack tightly, u16/u32 naturally aligned, no debug
+symbols carry struct offsets) — RE-276 has a worked example including
+`training_man_fkind`/`training_com_fkind` (fighter/CPU select) and forcing
+Training Mode's edit-triggered "Close-Up" camera call
+(`gmCameraSetStatusPlayerZoom`) directly, since that field is edge-triggered
+on live controller input inside the pause menu and doesn't respond to a
+static poke at all.
+
+### Toolchain setup (once per machine)
+
+`refs/ssb-decomp-re/installDependencies.sh` assumes Debian package names
+(`apt`). On Fedora/Nobara: `sudo dnf install clang glibc-devel.i686
+binutils-mips64-linux-gnu`, then `git submodule update --init --recursive`
+(asm-processor/asm-differ), `bash tools/ido-irix4/provision.sh` (IRIX4
+frontend `ovl8_8.c` needs), and manually fetch IDO 5.3 the same way
+`installDependencies.sh` fetches 7.1 if `tools/ido-recomp/5.3/cc` is
+missing. Fedora's cross-binutils package uses the `mips64-linux-gnu-*`
+prefix, not the `mips-elf`/`mips-linux-gnu` prefix the Makefile probes for
+(`LD_MIPS := $(shell command -v mips-linux-gnu-ld ...)`) — shim it with
+symlinks under a dir on `$PATH` (e.g. `~/ppsspp-test/mips-bin-shim/`), but
+make `mips-linux-gnu-ld` a wrapper script forcing
+`exec mips64-linux-gnu-ld -m elf32btsmip "$@"` rather than a bare symlink:
+the real toolchain's default link emulation isn't the plain 32-bit target
+the Makefile's un-flagged `$(LD) -Map ... -o $@ $(LDFLAGS)` call expects,
+and objects fail to link with "ABI is incompatible with that of the
+selected emulation" otherwise. Verify the toolchain before trusting any
+patched build: `make init -j$(nproc)` clean, then confirm
+`build/smashbrothers.us.z64` is byte-identical to `baserom.us.z64`
+(`sha1sum`, expect `e2929e10fccc0aa84e5776227e798abc07cedabf`) *before*
+applying any patch.
 
 ## Recording findings
 

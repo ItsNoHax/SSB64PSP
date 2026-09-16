@@ -73,7 +73,7 @@ fallback.
 Target: R2 (blocks full confidence in "representative fighters render",
 already marked complete)
 Status: OPEN
-Evidence: RE-272, RE-274, RE-275
+Evidence: RE-272, RE-274, RE-275, RE-276
 Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
 raw ROM dump but renders as a repeating, aliased pattern with red patches
 near the ears on both PPSSPP and physical PSP hardware — same renderer code
@@ -84,18 +84,17 @@ so other fighters' passing captures are not evidence they are unaffected.
 RE-274 traced the exact draw call: one self-contained 24-triangle primitive
 (file 296, node 8, dl `0x1990`) whose own freshly-loaded vertices carry a UV
 span 3.46x/1.19x the packed mirror+clamp tile, ruling out cross-node texture
-leakage and confirming texture decode/mirror-baking are correct. Two
-hypotheses remain undistinguished: a faithfully-reproduced ROM quirk needing
-a `TEXTURE_FILTER_CORRECTIONS`-style named fix (RE-263/264 precedent), or a
-real addressing/scale bug specific to this overscan magnitude. Needs an
-accurate N64 reference render to tell which. RE-275 tried routing this
-through `angrylion-rdp-plus` (a cycle-accurate RDP reference renderer bundled
-in the RMG flatpak); root-caused and fixed a `PluginStartup` segfault there,
-but hit a further, unsolved headless-GL hurdle (`SDL_CreateWindow`/GLX) and
-is closed as superseded — the `n64-emulator` skill's existing Rice-based
-headless capture already gives a working (if approximate, not RDP-cycle-
-accurate) reference route. Next step: use the `n64-emulator` skill to reach
-this camera distance on Mario's face live and capture a reference frame.
+leakage and confirming texture decode/mirror-baking are correct. RE-276
+closed the two-hypothesis question RE-274 left open: a live N64 reference
+render (Mupen64Plus/Rice, reached via a temporary patched decomp build —
+`angrylion-rdp-plus` stayed blocked per RE-275) of Mario's face at this exact
+overscan renders **clean**, no repeating pattern — evidence against "a
+faithfully-reproduced ROM quirk" and for "a real addressing/scale bug
+specific to this project's PSP renderer". Next step: find the actual bug —
+most likely this project's own `mirror_extend`/addressing code for overscan
+beyond the periods RE-220/RE-221 already handle, or how
+`meshdraw::bind_texture` sets up the GE wrap state for this magnitude — not
+a `TEXTURE_FILTER_CORRECTIONS`-style named acceptance.
 
 ---
 
