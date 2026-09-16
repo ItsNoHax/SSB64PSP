@@ -37,6 +37,8 @@ mod normal_diag;
 mod play;
 mod results_transition;
 mod timing;
+#[cfg(feature = "tri_addr_diag_probe")]
+mod tri_addr_diag;
 
 use core::f32::consts::PI;
 
@@ -101,6 +103,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
+            || cfg!(feature = "tri_addr_diag_probe")
             || cfg!(feature = "texgen_normal_diagnostic_0")
             || cfg!(feature = "texgen_normal_diagnostic_1")
             || cfg!(feature = "texgen_normal_diagnostic_2")
@@ -2405,6 +2408,13 @@ unsafe fn run() -> ! {
         {
             unsafe {
                 addr_diag::draw(&mut gpu);
+            }
+            draw_state.invalidate_all();
+        }
+        #[cfg(feature = "tri_addr_diag_probe")]
+        {
+            unsafe {
+                tri_addr_diag::draw(&mut gpu);
             }
             draw_state.invalidate_all();
         }

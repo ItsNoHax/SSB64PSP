@@ -288,3 +288,5 @@ editing a record.
 | RE-276 | Live N64 reference render clears Mario's face: a real PSP-side addressing bug, not a ROM quirk | COMPLETE | texture, fighter, hardware, visual-regression, toolchain |  |
 | RE-277 | Dense per-texel sweep clears the addressing formula itself | OPEN | texture, fighter, hardware, visual-regression |  |
 | RE-278 | Fixed-coordinate GE sampling matches the addressing model exactly, including the Linear clamp-boundary blend | OPEN | texture, fighter, hardware, visual-regression |  |
+| RE-279 | RE-274's real primitive is correctly routed through the signed-UV float path | RESOLVED | texture, fighter, hardware, visual-regression |  |
+| RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | OPEN (root cause found and confirmed; fix not yet applied) | texture, fighter, hardware, visual-regression, asset-pipeline |  |
