@@ -13,15 +13,19 @@ confirmed pixel-level against the raw ROM texture (clean — the defect is
 pipeline-introduced); the CI4 swizzle-threshold hypothesis was tested
 (patched, rebuilt, re-captured, measured 0 pixel difference) and rejected,
 then cleanly reverted. Root cause not yet found for any of the nine
-symptoms; next step is RE-274-style per-draw-call DL tracing on Fox's
-glove/forearm primitive. This blocks resuming the physical R2 matrix (which
+symptoms; a follow-up RE-274-style DL trace ruled out the initial
+glove-node/texture guess (see "Required next action" below for the
+refined lead). This blocks resuming the physical R2 matrix (which
 was otherwise down to only the PSP-1000-availability blocker below) — do
 not treat R2's rendering gate as closed until RE-283 concludes.
 
 Last completed: `RE-283` — **catalogued nine fighters' worth of
 user-reported texture/geometry defects, confirmed at least one (Fox) at
-pixel level against the raw ROM, and tested-and-rejected one hypothesis
-(CI4 swizzle-threshold).** See `docs/evidence/re/RE-283.md`.
+pixel level against the raw ROM, tested-and-rejected one hypothesis (CI4
+swizzle-threshold), and then DL-traced Fox's actual glove/forearm nodes
+(6/12), finding they bind no texture at all and that the previously-
+suspected `file 299` textures are packed but never wired into any
+object's node table.** See `docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
 nibble-order fix on real PSP hardware.** Built
@@ -118,10 +122,20 @@ measured (0-pixel-diff PPSSPPHeadless capture against the existing golden),
 rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
 `assets/generated/ssb64.pak` are both back to their RE-281 state.
 
-Required next action: root-cause RE-283's fighter texture/geometry defects
-(start with Fox's forearm/glove speckle — the one already pixel-confirmed
-against the raw ROM — using RE-274's per-draw-call DL-trace method) before
-treating R2's rendering gate as closed. Physically confirming the PSP-1000
+Required next action: continue root-causing RE-283's fighter texture/
+geometry defects. This session's RE-274-style DL trace on Fox found the
+glove/forearm nodes (6/12, not the previously-guessed 9-13) bind **no
+texture at all** — pure vertex-colour geometry — and that the two `file
+299` textures earlier suspected of being the glove are bound by an
+orphaned discovered display list `pack()` converts standalone and never
+wires into any object's node table (reasoned from the writer code only,
+not yet confirmed from the runtime `Pack`/`meshdraw` side). Next step:
+correlate the golden's `(330,250)-(420,340)` screen crop with the actual
+node(s) projecting there (the hand/forearm trace ruled out is not yet
+replaced with a positive identification), then check for a stale/wrong
+CLUT entry on whatever texture that turns out to be — the speckle's
+isolated-wrong-hue-within-a-correct-gradient signature fits a bad palette
+entry better than a UV/geometry bug. Physically confirming the PSP-1000
 class remains the sole *physical*-matrix blocker (unchanged — no PSP-1000
 unit available in this environment) but is secondary to RE-283 now that the
 renderer's own PPSSPP-software correctness is back in question. Do not
