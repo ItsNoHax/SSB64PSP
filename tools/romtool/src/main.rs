@@ -2492,11 +2492,24 @@ fn convert_texture(
     // completely -- same small-paletted-texture (8-byte-row-or-narrower
     // PsmT4) GE quirk as Link's boot/shin-cuff and Yoshi's head.
     let is_falcon_shoulder = src.home.id == 332 && t.data_file.is_none() && t.data_offset == 0xC508;
+    // RE-283 (Ness follow-up): file 335's node 4 (right shoulder/sleeve, graph
+    // 0x26B0) binds an 8x8 CI4 texture at offset 0xBDE8, mirror-narrowed to
+    // 8x16 -- the same small-paletted packed shape (8-byte-row-or-narrower
+    // `PsmT4`) as Link's boot/shin-cuff, Yoshi's head and Falcon's shoulder.
+    // A raw `dlraw` decode of this node's list first desynced onto the wrong
+    // offsets entirely (0xAD00/0xAE30/0xAB20, all clean 16x32 shirt-stripe
+    // textures unaffected by bypassing them); the authoritative
+    // `pack()`/`plan_draw_order` pipeline (`romtool scene --dump-node 4`)
+    // recovered the real bound texture. Node-isolating (`RE283_ONLY_LOCAL_NODE=4`)
+    // reproduced the user's "right shoulder strap area shows scrambled pixel
+    // noise" exactly; this bypass alone clears it completely.
+    let is_ness_shoulder = src.home.id == 335 && t.data_file.is_none() && t.data_offset == 0xBDE8;
     let psm = if (src.home.id == 317
         || is_link_boot
         || is_link_shin
         || is_yoshi_head
-        || is_falcon_shoulder)
+        || is_falcon_shoulder
+        || is_ness_shoulder)
         && psp::choose_psm(t.format, t.size).is_paletted()
     {
         psp::Psm::Psm8888
