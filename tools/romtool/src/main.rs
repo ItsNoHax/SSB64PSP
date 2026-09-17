@@ -2466,7 +2466,22 @@ fn convert_texture(
     // reproduces the same purple/black speckle class as the boot defect;
     // the same paletted-transport bypass that fixed it applies here too.
     let is_link_shin = src.home.id == 324 && t.data_file.is_none() && t.data_offset == 0xB4E0;
-    let psm = if (src.home.id == 317 || is_link_boot || is_link_shin)
+    // RE-283 (Yoshi follow-up): file 338's head node (node 3) binds two small
+    // CI4 textures under `Clamp`/`Clamp` addressing (no mirror) -- the mouth-
+    // corner mark (offset 0x9518, 8x8) and both eyes (offset 0x9BD0, 16x16,
+    // bound twice). Node-isolating (`RE283_ONLY_LOCAL_NODE=3`) reproduced the
+    // user's "heavy scrambled multicolour noise" and "smaller patch near the
+    // nostril" exactly; disabling each texture in turn localized the ridge
+    // noise to the eye texture and the mouth-corner mark to this one, and
+    // disabling both together left the head perfectly clean. Both are the
+    // same small-paletted packed shape (8-byte-row-or-narrower `PsmT4`) as
+    // Link's boot/shin-cuff defect, this time reached through `Clamp`
+    // addressing rather than `Wrap` -- the same GE quirk is not gated on
+    // wrap mode specifically, just this texture-size class. Same fix.
+    let is_yoshi_head = src.home.id == 338
+        && t.data_file.is_none()
+        && (t.data_offset == 0x9518 || t.data_offset == 0x9BD0);
+    let psm = if (src.home.id == 317 || is_link_boot || is_link_shin || is_yoshi_head)
         && psp::choose_psm(t.format, t.size).is_paletted()
     {
         psp::Psm::Psm8888
