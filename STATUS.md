@@ -8,14 +8,44 @@ Current objective: physically confirm the parts of R2's matrix not yet
 covered on real hardware. All 12 playable fighters, the depth-mask
 diagnostic, and a 10-minute sustained run are confirmed on PSP Slim/6.6.1;
 the depth-mask diagnostic, a Mario fighter capture, and a second 10-minute
-sustained run are now also confirmed on a second unit, PSP-3000. PSP-1000
-coverage (32 MiB RAM, distinct from both units tested so far) and
-broader/longer coverage remain, deliberately deferred until the game
-structure grows beyond the current asset viewer.
+sustained run are also confirmed on a second unit, PSP-3000. RE-281's
+`Ci4`/`PsmT4` nibble-order fix (closing RE-272's Mario-face bug) is now
+physically re-confirmed on the PSP Slim (RE-282). PSP-1000 coverage (32 MiB
+RAM, distinct from both units tested so far) remains the sole open item in
+the physical matrix, deliberately deferred until the game structure grows
+beyond the current asset viewer — no PSP-1000 unit is available.
 
-Last completed: `RE-281` — **applied RE-280's identified `Ci4`/`PsmT4`
+Last completed: `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
+nibble-order fix on real PSP hardware.** Built
+`cargo psp --release --features regression_capture_mario` (PRX SHA-256
+`dacdd5907d743fea5b478b73eb67018b2f3f01a4f0182d33bb257b45dc04219a`) against
+the unchanged RE-281 pack
+(`0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368`). Loaded
+on a PSP Slim (firmware 6.61, ARK/Infinity, PSPLink v3.2.1) via `host0:`
+(fixed a stale USB-permission issue first: the `50-psplink.rules` udev rule
+was present but hadn't applied to the already-enumerated device node; a
+cable replug re-triggered udev and fixed it, no rule change needed). `reset`
+issued before load per this project's own PSPLink convention. Zero
+exceptions (`exlist` empty, `main_thread` alive in `thlist`) after the
+240-tick deterministic-capture freeze. Native `scrshot` capture
+(SHA-256 `5e72668e314e3a3f25ec8711731e0a8c58312b7d3b9ea575b1216413fcd417e0`,
+not committed) shows Mario's cap "M" emblem rendering clean and
+correctly-rounded, with no repeating adjacent-texel-pair-swap artifact —
+RE-272's original named complaint. Quantitative diff against
+`tests/golden/r2-mario-fighter.png` (box-downsampled to the hardware
+capture's resolution, PSPLink overlay region excluded): 349/130,560 pixels
+(0.27%) exceed a 30-level threshold, consistent with this project's existing
+hardware-vs-PPSSPP antialiasing noise floor (RE-203/RE-207), not a new
+defect. This closes the one remaining item RE-281's own Confidence note
+named; the RE-272→RE-281 investigation chain is now fully closed on both
+PPSSPP and real hardware. Shut down cleanly (`kill`, `reset`,
+`usbhostfs_pc` stopped). No production code changed this session; only
+`docs/evidence/re/RE-282.md` added, `docs/evidence/INDEX.md` regenerated,
+and `plans/rendering/R2.md`/this file updated.
+
+Before that, `RE-281` — applied RE-280's identified `Ci4`/`PsmT4`
 nibble-order fix and closed RE-272's Mario-face bug on PPSSPP software
-rendering.** Flipped all three coordinated sites in
+rendering. Flipped all three coordinated sites in
 `crates/ssb-rom/src/psp_texture.rs` together (`encode_level`'s `PsmT4`
 branch, `pack_indexed`'s straight ROM-copy path — now swaps nibbles instead
 of copying unchanged — and `pad_edge_repeat_nibbles`'s `get`/`set`
@@ -32,50 +62,24 @@ pack: 18 goldens changed, 4 did not (`r1-catch-swirl-flat-color.png`,
 smoothly-shaded content or bytes whose two nibbles happen to be equal).
 Refreshed all 18 changed goldens; every changed pixel traces to the same
 single cause (corrected `Ci4` texel decode), not a rendering regression.
-Reconfirmed capture determinism on two of the changed scenes (Dream Land,
-Mario) with independent rebuilds after the refresh: 0 differing pixels both.
-Rebuilt the plain feature-free EBOOT clean afterward (per the
-visual-regression skill's own rule), new hash
-`9b9bfb8f...e902ca8c`. **Visually confirmed against Mario's face/cap texture
-specifically** (RE-272's original complaint): the old golden's cap "M"
-emblem showed the classic jagged, aliased adjacent-texel-pair-swap artifact;
-the new capture shows a clean, correctly-rounded logo with no repeating
-pattern. Not yet re-confirmed on physical PSP hardware (PPSSPP software
-rasterizer only) — RE-272 itself already established the bug reproduces
-identically on PPSSPP and real hardware, so this project's own existing
-precedent treats that as strong evidence the fix carries over, but a
-dedicated physical recapture remains a to-do alongside the rest of the
-physical matrix below, not a new blocker. This closes the RE-272→RE-280
-investigation chain; RE-272, RE-274, RE-277, RE-278 and RE-280 are now all
-marked `COMPLETE`, pointing to RE-281.
 
 Before that, `RE-280` found RE-272/274's Mario-face bug's actual root
 cause: `ssb_rom::psp_texture`'s `Ci4` (`PsmT4`) packing packed two 4-bit
 texels per byte high-nibble-first, "matching the N64 order" — but PPSSPP's
 `PsmT4` reader (the deterministic golden source this project already trusts
-for GE addressing) wants the opposite order, low nibble first. Confirmed
-with a permanent rig (`psp/src/tri_addr_diag.rs`, `tri_addr_diag_probe`
-feature): swapping the nibble order made all 12 fixed probes read exactly
-the predicted value (was 2/12) and turned the corrupted interpolated
-readback into a clean ramp — decisive confirmation, now applied by RE-281.
-Before that, `RE-279` confirmed RE-274's real primitive is correctly routed
-through `meshdraw`'s signed-UV float path. Before that, `RE-278` built a
-permanent measurement rig (`psp/src/addr_diag.rs`, `addr_diag_probe`
-feature) ruling out "the GE mis-samples a known fixed coordinate near [the
-clamp] boundary" as RE-272's cause. Before that, `RE-277` ran a dense
-per-texel sweep ruling out the addressing *formula* itself, three
-independent ways in total (RE-220's archive-wide census, RE-276's live N64
-capture, this dense sweep). Before that, `RE-276` — a live N64 reference
-render of Mario's face at RE-274's exact wide-UV overscan renders clean, no
-repeating pattern — evidence against "faithfully-reproduced ROM quirk" and
-for "real PSP-side addressing/scale bug". Before that, `RE-275` ported
-RE-216's scripted Mupen64Plus capture driver to the RMG flatpak, root-caused
-and fixed a `PluginStartup` segfault, but hit a further headless-GL hurdle —
-closed as superseded once RE-276's Rice-based route worked instead. Before
-that, `RE-273` physically confirmed the renderer on a second hardware unit
-(PSP-3000): scene1, depth-mask diagnostic (RE-271's fix holds), Mario
-fighter capture, 10-minute sustained run, zero exceptions throughout — and
-that Mario capture surfaced `RE-272`, now closed as described above.
+for GE addressing) wants the opposite order, low nibble first. Before that,
+`RE-279` confirmed RE-274's real primitive is correctly routed through
+`meshdraw`'s signed-UV float path. Before that, `RE-278` built a permanent
+measurement rig ruling out "the GE mis-samples a known fixed coordinate near
+[the clamp] boundary" as RE-272's cause. Before that, `RE-277` ran a dense
+per-texel sweep ruling out the addressing *formula* itself. Before that,
+`RE-276` — a live N64 reference render of Mario's face renders clean, no
+repeating pattern — evidence for "real PSP-side addressing/scale bug" over
+"faithfully-reproduced ROM quirk". Before that, `RE-273` physically
+confirmed the renderer on a second hardware unit (PSP-3000): scene1,
+depth-mask diagnostic (RE-271's fix holds), Mario fighter capture,
+10-minute sustained run, zero exceptions throughout — and that Mario
+capture surfaced `RE-272`, now closed as described above.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
@@ -84,10 +88,9 @@ exist yet for full stage/effect coverage or runs longer than 10 minutes.
 None of these block R2.2 (closed) — they gate the *physical* R2 matrix only,
 and are deliberately deferred until the game structure grows beyond the
 asset viewer. RE-272's face-texture bug (root-caused by RE-280, fixed by
-RE-281) is closed on PPSSPP software rendering; a physical-hardware
-recapture confirming the fix holds on real hardware too is now folded into
-the same deferred physical-matrix follow-up as PSP-1000, not a separate
-blocker.
+RE-281, physically re-confirmed by RE-282) is now fully closed on both
+PPSSPP and real hardware — no longer part of the deferred physical-matrix
+follow-up.
 
 Current verification baseline: `cargo fmt --all --check` clean; `cargo test
 --workspace` 617 passed; all 22 deterministic goldens exact against the
@@ -97,34 +100,28 @@ objects, 35/35 transform + 24/26 material animations, 160/160 particle
 scripts; 109 billboards, 0 anomalies; 11/11 framebuffer transitions; `romtool
 texgen --verify` pass; plain feature-free `cargo psp --release` pass; strict
 Clippy not clean (3 pre-existing `needless_range_loop` lints in
-`coord.rs`/`matanim.rs`/`objanim.rs`, unrelated to this work). This session's
-production-code change is RE-281's applied fix to
-`crates/ssb-rom/src/psp_texture.rs` (the three coordinated `Ci4`/`PsmT4`
-nibble-order sites) plus its test updates; `assets/generated/ssb64.pak`
-rebuilt (gitignored, not committed) and 18 of the 22 `tests/golden/*.png`
-files refreshed and committed. The earlier `tri_addr_diag_probe`
-(`psp/src/tri_addr_diag.rs`) and `addr_diag_probe` diagnostics remain
-in-tree, off-by-default, unchanged this session.
+`coord.rs`/`matanim.rs`/`objanim.rs`, unrelated to this work). This session
+(RE-282) made no production-code change; it built
+`--features regression_capture_mario` and `--release` PRXes for hardware
+loading only. `assets/generated/ssb64.pak` is unchanged from RE-281's
+rebuild.
 
 Required next action: resume the physical R2 matrix if PSP-1000 hardware
-becomes available; otherwise record the concrete access blocker. While doing
-so (or separately, since it needs no new hardware unit), physically
-re-capture at least Mario on already-available hardware (PSP Slim and/or
-PSP-3000) against the RE-281-refreshed pack/goldens to confirm the
-`Ci4`/`PsmT4` nibble-order fix holds on real hardware, not just PPSSPP's
-software rasterizer — closing the one remaining item RE-281's own confidence
-note names. Do not start R3 or combat before R2's physical matrix is closed.
+becomes available; otherwise record the concrete access blocker (unchanged
+from before — no PSP-1000 unit is available in this environment). No other
+item is currently open in the physical matrix. Do not start R3 or combat
+before R2's physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
-RE-273, RE-274, RE-275, RE-276, RE-277, RE-278, RE-279, RE-280, RE-281 (see
-[docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
-chain, RE-240–281). Toolchain note: the global `cargo-psp` install is a
-hybrid build, see RE-256.
+RE-273, RE-274, RE-275, RE-276, RE-277, RE-278, RE-279, RE-280, RE-281,
+RE-282 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full
+R2.2/physical chain, RE-240–282). Toolchain note: the global `cargo-psp`
+install is a hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-281 code (this session's fix). Pack
-`0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368` (28,531.3
-KiB). Plain feature-free EBOOT
+Current build: RE-281 pack/code (unchanged this session).
+Pack `0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368`
+(28,531.3 KiB). Plain feature-free EBOOT
 `9b9bfb8f94730a47ea04e50cb2a75a8d91536bd9b13f74682256a3ebe902ca8c`.
