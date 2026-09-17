@@ -8,24 +8,31 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Fox's forearm/glove speckle is
-confirmed pixel-level against the raw ROM texture (clean — the defect is
-pipeline-introduced); the CI4 swizzle-threshold hypothesis was tested
-(patched, rebuilt, re-captured, measured 0 pixel difference) and rejected,
-then cleanly reverted. Root cause not yet found for any of the nine
-symptoms; a follow-up RE-274-style DL trace ruled out the initial
-glove-node/texture guess (see "Required next action" below for the
-refined lead). This blocks resuming the physical R2 matrix (which
-was otherwise down to only the PSP-1000-availability blocker below) — do
-not treat R2's rendering gate as closed until RE-283 concludes.
+RE-272's now-closed Mario-face artifact. Fox's forearm/glove speckle is now
+traced to an exact node (see "Last completed" below) — root cause not yet
+found for any of the nine symptoms overall. This blocks resuming the
+physical R2 matrix (which was otherwise down to only the
+PSP-1000-availability blocker below) — do not treat R2's rendering gate as
+closed until RE-283 concludes.
 
 Last completed: `RE-283` — **catalogued nine fighters' worth of
-user-reported texture/geometry defects, confirmed at least one (Fox) at
-pixel level against the raw ROM, tested-and-rejected one hypothesis (CI4
-swizzle-threshold), and then DL-traced Fox's actual glove/forearm nodes
-(6/12), finding they bind no texture at all and that the previously-
-suspected `file 299` textures are packed but never wired into any
-object's node table.** See `docs/evidence/re/RE-283.md`.
+user-reported texture/geometry defects; confirmed at least one (Fox) at
+pixel level against the raw ROM; tested-and-rejected the CI4
+swizzle-threshold hypothesis; DL-traced Fox's actual glove/forearm nodes,
+finding they bind no texture at all and that the previously-suspected
+`file 299` textures are orphaned (never wired into any object's node
+table); and then positively identified the golden crop's source geometry**
+via a temporary `node_isolate_debug` probe (added and reverted this
+session) that renders one global pack node at a time: the crop is exactly
+the union of node 10 (upper forearm, correctly textured cuff), node 11
+(wrist, `tex None`, renders as a flat, uniformly wrong dark-brown
+`#321d01` blob — confirmed byte-for-byte present in the committed golden),
+and node 12 (hand, `tex None`, correctly Gouraud-shaded white glove). The
+"speckle" is node 11's own real geometry and colour, not a stray texture
+read, CLUT error, or z-fighting — all three prior hypotheses are now
+superseded. Whether `#321d01` is a `lit`/unlit misclassification bug or an
+authored shadow colour the original keeps hidden is not yet resolved.
+See `docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
 nibble-order fix on real PSP hardware.** Built
@@ -123,23 +130,25 @@ rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
 `assets/generated/ssb64.pak` are both back to their RE-281 state.
 
 Required next action: continue root-causing RE-283's fighter texture/
-geometry defects. This session's RE-274-style DL trace on Fox found the
-glove/forearm nodes (6/12, not the previously-guessed 9-13) bind **no
-texture at all** — pure vertex-colour geometry — and that the two `file
-299` textures earlier suspected of being the glove are bound by an
-orphaned discovered display list `pack()` converts standalone and never
-wires into any object's node table (reasoned from the writer code only,
-not yet confirmed from the runtime `Pack`/`meshdraw` side). Next step:
-correlate the golden's `(330,250)-(420,340)` screen crop with the actual
-node(s) projecting there (the hand/forearm trace ruled out is not yet
-replaced with a positive identification), then check for a stale/wrong
-CLUT entry on whatever texture that turns out to be — the speckle's
-isolated-wrong-hue-within-a-correct-gradient signature fits a bad palette
-entry better than a UV/geometry bug. Physically confirming the PSP-1000
-class remains the sole *physical*-matrix blocker (unchanged — no PSP-1000
-unit available in this environment) but is secondary to RE-283 now that the
-renderer's own PPSSPP-software correctness is back in question. Do not
-start R3 or combat before both RE-283 and R2's physical matrix are closed.
+geometry defects. Fox's wrist node (local node 11 of graph `0x2938`, `dl
+0x22B8`) is now positively identified as the source of the golden's
+`(330,250)-(420,340)` crop defect — it renders a flat, uniformly wrong
+`#321d01` dark-brown blob where the adjacent cuff (node 10) and glove (node
+12) are correctly white/grey. Next step: determine whether this is a real
+pipeline bug (dump node 11's raw ROM `G_VTX` colour bytes — no existing
+`romtool` command does this yet, needs a small temporary diagnostic — to
+check for a `lit`/unlit misclassification, RE-240/RE-241's named bug class)
+or an authored shadow colour the original N64 keeps hidden behind
+overlapping geometry that this port's own per-node transform exposes (get a
+live original-N64 reference of Fox's wrist via the `n64-emulator` Skill,
+RE-276's own method). Once Fox's specific defect is resolved, the other
+eight fighters' symptoms (Mario/Luigi missing buttons, Samus/Link/Yoshi/
+Falcon/Ness speckle, Pikachu/Kirby face-colour mismatch) remain open and
+untraced. Physically confirming the PSP-1000 class remains the sole
+*physical*-matrix blocker (unchanged — no PSP-1000 unit available in this
+environment) but is secondary to RE-283 now that the renderer's own
+PPSSPP-software correctness is back in question. Do not start R3 or combat
+before both RE-283 and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
