@@ -30,6 +30,7 @@ pub const G_BRANCH_Z: u8 = 0x04;
 pub const G_TRI1: u8 = 0x05;
 pub const G_TRI2: u8 = 0x06;
 pub const G_QUAD: u8 = 0x07;
+pub const G_LINE3D: u8 = 0x08;
 pub const G_TEXTURE: u8 = 0xD7;
 pub const G_POPMTX: u8 = 0xD8;
 pub const G_GEOMETRYMODE: u8 = 0xD9;
@@ -61,6 +62,12 @@ pub const G_SETPRIMCOLOR: u8 = 0xFA;
 pub const G_SETENVCOLOR: u8 = 0xFB;
 pub const G_SETCOMBINE: u8 = 0xFC;
 pub const G_SETTIMG: u8 = 0xFD;
+/// Sets the RDP's output colour image (render target). Real, legitimate
+/// F3DEX2 opcode, but Smash's per-object display lists never emit it — only
+/// the graphics-task setup code that frames the whole scene does. Seeing it
+/// while walking an object's mesh list is a strong sign the walk has left
+/// real display-list data (see `Cmd::Other`'s doc comment, RE-283).
+pub const G_SETCIMG: u8 = 0xFF;
 
 /// An N64 segmented address: the top byte selects a segment, the rest is an
 /// offset into it. Resolving one needs the segment table that was live at the
@@ -204,7 +211,59 @@ pub enum Cmd {
         offset: u16,
         data: u32,
     },
+    /// Draws a debug/wireframe line between two vertex-cache indices.
+    /// `width` is added to the RDP's 1.5px minimum, in half-pixel units.
+    /// F3DEX2's `gSPLine3D`/`gSPLineW3D`: unlike every other command here,
+    /// the vertex/width fields live entirely in `w0` and `w1` is unused
+    /// (always 0). Not known to be emitted by any of Smash's per-object
+    /// meshes; modeled mainly so it stops showing up as `Other` and getting
+    /// mistaken for a desync signal (RE-283 mistook this opcode for an
+    /// unimplemented matrix-load command before it was decoded here).
+    Line3D {
+        v0: u8,
+        v1: u8,
+        width: u8,
+    },
     /// A command we decode but do not model yet.
+    ///
+    /// `decode` never fails: every possible opcode byte maps to *some*
+    /// `Cmd`, either a modeled one or this. That makes `Other` load-bearing
+    /// for two different situations that must not be confused:
+    ///
+    /// 1. A *known* F3DEX2/RDP opcode this crate has not bothered to give a
+    ///    dedicated variant to (e.g. `G_SETSCISSOR`, `G_FILLRECT`,
+    ///    `G_TEXRECT`) because `mesh::convert_sequence` has no use for it.
+    ///    This is benign and expected in real display lists.
+    /// 2. A byte pattern with no defined F3DEX2 meaning at all, or a real
+    ///    opcode (like `G_SETCIMG`, the RDP's set-render-target command)
+    ///    that is never legitimately used inside one of Smash's per-object
+    ///    display lists. Seeing this while decoding what is assumed to be
+    ///    object geometry means the walk is very likely no longer looking
+    ///    at real display-list data — either the start offset was wrong, or
+    ///    it read past the list's true end into unrelated bytes that happen
+    ///    to decode into opcode-shaped words anyway.
+    ///
+    /// `Cmd` alone cannot distinguish the two, and neither `decode` nor
+    /// [`decode_list_at`] treats case 2 as an error — they keep decoding at
+    /// the fixed `CMD_SIZE` stride regardless, because F3DEX2 commands are
+    /// always one 8-byte word each (there is no variable-length command to
+    /// "lose sync" on). What actually happens in case 2 is every command
+    /// *after* the bad one is still a real decode of real bytes, just bytes
+    /// that were never meant to be interpreted as a display list — so they
+    /// come out looking like perfectly plausible `SetTimg`/`Tri1`/`Tri2`
+    /// commands (valid-looking addresses, in-range-looking vertex indices)
+    /// while actually being garbage.
+    ///
+    /// RE-283 lost a full session to exactly this: a scratch raw-decode
+    /// tool hit `Other{opcode: 255}`/`Other{opcode: 8}` partway through a
+    /// list and kept trusting everything decoded afterward, including a
+    /// `SetTimg` address that looked real. **Any consumer of `decode_list`/
+    /// [`decode_list_at`] that sees an `Other` whose `opcode` is not one of
+    /// this file's named-but-unmodeled constants must treat every command
+    /// after it in that same decode as unverified**, and must cross-check
+    /// texture/vertex attribution against an authoritative resolution path
+    /// (`mesh::convert_sequence`, or the real `pack()`/`plan_draw_order`
+    /// traversal) before drawing conclusions from it.
     Other {
         opcode: u8,
         w0: u32,
@@ -289,6 +348,14 @@ pub fn decode(raw: &[u8]) -> Result<Cmd> {
         // Triangle indices are stored as index*2.
         G_TRI1 => Cmd::Tri1(tri(w0 >> 16, w0 >> 8, w0)),
         G_TRI2 => Cmd::Tri2(tri(w0 >> 16, w0 >> 8, w0), tri(w1 >> 16, w1 >> 8, w1)),
+
+        // gSPLine3D/gSPLineW3D: vertex indices are index*2, same encoding as
+        // Tri1/Tri2; width is the raw low byte. w1 is unused by this opcode.
+        G_LINE3D => Cmd::Line3D {
+            v0: ((w0 >> 16) & 0xFF) as u8 / 2,
+            v1: ((w0 >> 8) & 0xFF) as u8 / 2,
+            width: (w0 & 0xFF) as u8,
+        },
 
         G_DL => {
             // The low byte of w0 selects call (0) vs branch (1).
@@ -414,6 +481,15 @@ fn tri(a: u32, b: u32, c: u32) -> [u8; 3] {
 /// `base` is where `data` starts within its file, and is only used to fill in
 /// [`Cmd::SetTimg::slot`]. Pass the real offset whenever the caller has it:
 /// a texture that lives in another file can only be found through that slot.
+///
+/// This never returns an error for bad opcode data — see [`Cmd::Other`] for
+/// why that matters. If `data` does not actually start at a real display
+/// list (or if `base` is wrong), the result can decode all the way through
+/// to a `G_ENDDL`-shaped word without ever coming back as `Err`, and every
+/// command in it looks individually plausible. Callers doing exploratory or
+/// blind decoding (not driven by a known-good object/scene graph) must scan
+/// the result for `Cmd::Other` first and treat an unexpected one as a sign
+/// the whole decode may be untrustworthy, per [`Cmd::Other`]'s doc comment.
 pub fn decode_list_at(data: &[u8], base: u32) -> Result<Vec<Cmd>> {
     let mut out = Vec::new();
     for (i, raw) in data.as_chunks::<CMD_SIZE>().0.iter().enumerate() {
@@ -530,6 +606,19 @@ mod tests {
     fn decodes_tri1_halving_indices() {
         // Vertices 0, 1, 2 are encoded as 0, 2, 4.
         assert_eq!(cmd(0x0500_0204, 0), Cmd::Tri1([0, 1, 2]));
+    }
+
+    #[test]
+    fn decodes_line3d_halving_indices() {
+        // Vertices 0, 3 with width 5, encoded as 0, 6 (index*2).
+        assert_eq!(
+            cmd(0x0800_0605, 0),
+            Cmd::Line3D {
+                v0: 0,
+                v1: 3,
+                width: 5
+            }
+        );
     }
 
     #[test]

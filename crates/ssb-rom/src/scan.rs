@@ -400,6 +400,7 @@ fn opcode_of(cmd: &Cmd) -> u8 {
         Cmd::SetOtherModeL { .. } => dl::G_SETOTHERMODE_L,
         Cmd::Sync(op) => op,
         Cmd::MoveWord { .. } => dl::G_MOVEWORD,
+        Cmd::Line3D { .. } => dl::G_LINE3D,
         Cmd::Other { opcode, .. } => opcode,
     }
 }
@@ -415,6 +416,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         dl::G_TRI1 => "G_TRI1",
         dl::G_TRI2 => "G_TRI2",
         dl::G_QUAD => "G_QUAD",
+        dl::G_LINE3D => "G_LINE3D",
         dl::G_TEXTURE => "G_TEXTURE",
         dl::G_POPMTX => "G_POPMTX",
         dl::G_GEOMETRYMODE => "G_GEOMETRYMODE",
@@ -444,6 +446,7 @@ pub fn opcode_name(op: u8) -> &'static str {
         dl::G_SETENVCOLOR => "G_SETENVCOLOR",
         dl::G_SETCOMBINE => "G_SETCOMBINE",
         dl::G_SETTIMG => "G_SETTIMG",
+        dl::G_SETCIMG => "G_SETCIMG",
         _ => "?",
     }
 }
