@@ -8,11 +8,11 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current pack, separate from RE-272's
-now-closed Mario-face artifact. Six of nine items are fully closed, each
+now-closed Mario-face artifact. Seven of nine items are fully closed, each
 confirmed on both PPSSPP and physical PSP hardware: Fox, Mario/Luigi, Samus,
-Link's boot, Link's shin cuff, and (this session) Yoshi.
+Link's boot, Link's shin cuff, Yoshi, and (this session) Captain Falcon.
 
-**Yoshi's head noise: closed this session, on both PPSSPP and physical
+**Yoshi's head noise: closed on both PPSSPP and physical
 hardware.** Node-isolated to node 3 of the runtime graph (`file 338, graph
 0x33A0`) — the head node, containing every symptom the user reported
 ("heavy scrambled multicolour noise across the saddle/head-back region, plus
@@ -33,33 +33,60 @@ with the same paletted-transport bypass those items used
 (`tools/romtool/src/main.rs`'s `convert_texture`, new `is_yoshi_head` arm,
 `Psm8888` instead of `PsmT4` for these two textures).
 
-**Verification (both platforms, same bar every other closed RE-283 item
-met):** PPSSPP — node-isolated capture confirms both eyes render their
-correct texture and the mouth-corner mark is a clean small decal, no noise
-anywhere; full `regression_capture_yoshi` capture diffs against the prior
-(RE-281) golden in a tight bbox (`(436,114)-(543,177)`, 3,920 px) covering
-only the head, nothing else moved;
-`tools/verify-fighter-goldens.sh` re-run for all 12 playable fighters — all
-12 pass, Yoshi against its freshly refreshed golden. Physical — same unit as
-every prior RE-283 hardware check (PSP Slim, firmware 6.61, ARK/Infinity,
-PSPLink v3.2.1), connected with no USB-permission issue this session: native
-`scrshot` of the same node-isolated primitive matches the PPSSPP capture
-exactly. `cargo fmt --all --check` and `cargo test --workspace` (617 passed)
-clean; plain feature-free `cargo psp --release` EBOOT hash unchanged
-(`9b9bfb8f...902ca8c`), confirming the fix is entirely pack-time
-(`tools/romtool`), not PSP runtime code. `tests/golden/r2-yoshi-fighter.png`
-refreshed and committed. All scratch node-isolation and per-texture
-disable/re-enable instrumentation reverted after use.
+**Captain Falcon's shoulder pad: closed, on both PPSSPP and physical
+hardware.** A prior session node-isolated the defect to node 10 of file 332
+(graph `0x3BE0`) but ruled out its two leads (the small-paletted-texture
+bypass; the mat-anim/CLUT-swap path) without success — both tests turned out
+to target the *wrong* texture, a false attribution (`0xC128`/`0xBBB0`)
+produced by a desynced raw `dlraw` command dump. This session first verified
+the `RE283_ONLY_LOCAL_NODE` node-mapping assumption was never actually wrong
+(`romtool scene --nodes` confirms node 10/graph `0x3BE0`'s display list sits
+at offset `0x3068`, matching the prior session's own isolation), then
+re-isolated node 10 and applied the same `Psm8888` bypass to node 10's real
+texture — an 8x8 CI4 dither at offset `0xC508`, already correctly identified
+by the prior session's `pack()`/`plan_draw_order` cross-check but never
+actually tested. The scrambled yellow/orange/black patch is completely gone,
+replaced by a smoothly-shaded silver/grey gradient consistent with the
+dither texture's designed minification behavior and matching Captain
+Falcon's canonical shoulder-pad colour (visible on the model's other,
+already-clean mirrored shoulder pad). Fixed permanently
+(`tools/romtool/src/main.rs`'s `convert_texture`, new `is_falcon_shoulder`
+arm, same `Psm8888` bypass class). Full writeup, including the node-mapping
+verification and the marker-test methodology:
+`docs/evidence/re/RE-283.md`'s Captain Falcon section.
 
-**A methodology note for future sessions:** partway through this
-investigation, a `cargo psp` build failed on an unrelated scratch-debug
+**Verification (both platforms, same bar every other closed RE-283 item
+met):** PPSSPP — node-isolated capture confirms node 10 renders clean with no
+scrambled patch, and the full-pose `regression_capture_captain_falcon`
+capture diffs against the prior golden in a tight bbox
+(`(380,118)-(458,196)`, 78x78 px) covering only the shoulder pad, nothing
+else moved; `tools/verify-fighter-goldens.sh` re-run for all 12 playable
+fighters — all 12 pass, Falcon against its freshly refreshed golden. Physical
+— same unit as every prior RE-283 hardware check (PSP Slim, firmware 6.61,
+ARK/Infinity, PSPLink v3.2.1): native `scrshot` of the full-pose build shows
+the identical clean silver/grey shoulder pad, no exceptions (`exlist` empty,
+`main_thread` alive throughout). `cargo fmt --all --check` and
+`cargo test --workspace` (618 passed) clean; plain feature-free
+`cargo psp --release` EBOOT hash unchanged (`9b9bfb8f...902ca8c`), confirming
+the fix is entirely pack-time (`tools/romtool`), not PSP runtime code.
+`tests/golden/r2-falcon-fighter.png` refreshed and committed. All scratch
+node-isolation and marker-test instrumentation reverted after use.
+
+**A methodology note for future sessions:** partway through an earlier
+RE-283 session, a `cargo psp` build failed on an unrelated scratch-debug
 compile error; `--no-build` reuses of the stale (silently non-functional)
 EBOOT that failure left behind produced misleading "no visible effect" and
 even fully blank-screen results for several diagnostic pack variants,
 until noticed and every prior diagnostic was redone behind a verified-fresh
 full rebuild. Treat a `--no-build` capture as suspect for the rest of a
 session after any build failure, and prefer a full rebuild when a result
-looks surprising (unchanged, or blank).
+looks surprising (unchanged, or blank). Separately, this session confirmed
+another failure mode from the same chain: a raw single-list command dump
+(`romtool dlraw`, no `convert_sequence` resolution) can desync silently on
+an unrecognized opcode and produce a plausible-looking but false command
+stream — always cross-check a raw decode against the authoritative
+`pack()`/`plan_draw_order` pipeline before trusting an offset it reports,
+not after a fix test built on it has already failed to explain the result.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
@@ -75,20 +102,22 @@ correct `0666` device-node permissions) — not a standing blocker, but worth
 a replug first if a future session hits "Permission error while opening the
 USB device" again before assuming the udev rule itself needs reinstalling.
 
-Required next action: continue RE-283 with the remaining four untraced
-fighters (Captain Falcon, Ness, Pikachu, Kirby), each checked against the
-same checklist this session and every prior RE-283 session used (own
-ROM-authored state vs. a real tile-addressing/packing quirk vs. genuine
-porting bug; check against real N64 output before concluding either way;
-node-isolate first, then classify the mechanism — including, per this
-session's finding, checking whether *multiple* textures on the same node
-each contribute part of one reported symptom before declaring a single
-texture the whole cause — then fix or record an `ACCEPTED_DEVIATION`), each
-on its own trace — do not assume one fighter's cause generalizes to another
-without checking. Physically confirming the PSP-1000 class remains the sole
-other *physical*-matrix blocker (unchanged — no PSP-1000 unit available in
-this environment) but is secondary to RE-283 until it concludes. Do not
-start R3 or combat before both RE-283 and R2's physical matrix are closed.
+Required next action: continue RE-283 with the remaining three untraced
+fighters (Ness, Pikachu, Kirby), each checked against the same checklist
+every prior RE-283 session used (own ROM-authored state vs. a real
+tile-addressing/packing quirk vs. genuine porting bug; check against real
+N64 output before concluding either way; node-isolate first, then classify
+the mechanism — including checking whether *multiple* textures on the same
+node each contribute part of one reported symptom before declaring a single
+texture the whole cause, and cross-checking any raw single-list command
+decode against the authoritative `pack()`/`plan_draw_order` pipeline before
+trusting it, per this chain's `dlraw` desync finding — then fix or record an
+`ACCEPTED_DEVIATION`), each on its own trace — do not assume one fighter's
+cause generalizes to the next one without checking. Physically confirming
+the PSP-1000 class remains the sole other *physical*-matrix blocker
+(unchanged — no PSP-1000 unit available in this environment) but is
+secondary to RE-283 until it concludes. Do not start R3 or combat before
+both RE-283 and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
@@ -99,10 +128,11 @@ for the full R2.2/physical chain, RE-240–283). Toolchain note: the global
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-283-sixteenth-follow-up pack/code (this session — Yoshi's
-head-noise fix, confirmed on PPSSPP and physical PSP hardware).
-Pack `808925688a5a40698e459c8b14a89c45e3acbed6f51c4781ba33cadb2637e91c`
-(28,546.6 KiB). Plain feature-free EBOOT
+Current build: RE-283-seventeenth-follow-up pack/code (this session —
+Captain Falcon shoulder-pad fix, confirmed on PPSSPP and physical PSP
+hardware).
+Pack `291f9b9a0e000c942b3cd3ce3e521b357c5994fb15e1166136c45f2add220530`
+(28,568.0 KiB). Plain feature-free EBOOT
 `9b9bfb8f94730a47ea04e50cb2a75a8d91536bd9b13f74682256a3ebe902ca8c`
-(unchanged from RE-281/the boot and shin-cuff fixes — this fix also touched
-only pack-time conversion).
+(unchanged from RE-281/the boot, shin-cuff and Yoshi fixes — this fix also
+touched only pack-time conversion).
