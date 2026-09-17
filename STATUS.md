@@ -4,97 +4,84 @@ Milestone: `R2 — Physical PSP Rendering Validation`
 Primary task: complete the remaining physical-hardware matrix
 Task state: `IN_PROGRESS`
 
-Current objective: `RE-283` reopened the fighter-texture quality gate —
-user-reported visual defects (missing Mario/Luigi overalls buttons, texture
-speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
-mismatch) are confirmed real on the current pack, separate from RE-272's
-now-closed Mario-face artifact. Eight of nine items are fully closed, each
-confirmed on both PPSSPP and physical PSP hardware: Fox, Mario/Luigi, Samus,
-Link's boot, Link's shin cuff, Yoshi, Captain Falcon, and (this session)
-Ness.
+Current objective: `RE-283` (the reopened fighter-texture quality gate) is
+now fully traced — all nine user-reported items are accounted for. Eight
+are fixed and confirmed on both PPSSPP and physical PSP hardware: Fox,
+Mario/Luigi, Samus, Link's boot, Link's shin cuff, Yoshi, Captain Falcon,
+and Ness. **This session traced the remaining two (Pikachu, Kirby) and
+found neither reproduces the scrambled-CI4 defect class** — no code fix was
+needed or applied for either.
 
-**Ness's shoulder-strap noise: closed on both PPSSPP and physical
-hardware.** Node-isolated to node 4 of the runtime graph (`file 335, graph
-0x26B0`) — the right upper-arm/shoulder segment, containing the user-reported
-"scrambled pixel noise" at the collar/sleeve junction. A raw `dlraw`-style
-decode of this node's display list first gave a false lead (three clean
-16x32 shirt-stripe textures at offsets `0xAD00`/`0xAE30`/`0xAB20`); bypassing
-each individually and together, rebuilding the pack each time, produced zero
-visible change — a repeat of the same "raw single-list decode can desync
-silently" trap this chain already documented for Captain Falcon. The
-authoritative `pack()`/`plan_draw_order` pipeline (a temporary
-`romtool scene --dump-node` diagnostic reading the real resolved
-`MeshMaterial`) recovered the actual bound texture: an 8x8 CI4 decal at ROM
-offset `0xBDE8`, `Clamp`/`Clamp` addressing narrowed by a mirror to a drawn
-8x16 — the same small-paletted packed shape (8-byte-row-or-narrower
-`PsmT4`) as every other closed item in this chain. The raw ROM texture
-decodes cleanly (a plain yellow/black stripe). Fixed with the same
-paletted-transport bypass those items used (`tools/romtool/src/main.rs`'s
-`convert_texture`, new `is_ness_shoulder` arm, `Psm8888` instead of `PsmT4`).
+**Pikachu:** node-isolating its default Wait-pose graph (file 341, graph
+`0x2650`) found the reported "face colour mismatch" is not present in the
+current build (eyes/cheeks pixel-sampled clean) — consistent with RE-281's
+CI4/`PsmT4` nibble fix already having changed Pikachu's golden. The
+reported "cracks" reproduced exactly: a dark streak across the collar,
+traced to an 8-byte-row CI4 gradient decal (file 341 `+0x7350`, 16x8,
+`mirror_s`+`clamp_t`) bound to nodes 1/2. Unlike every other RE-283 item,
+applying the same `Psm8888` paletted-transport bypass produced **zero**
+pixel change — a clean negative result, not an unexplained one: the raw ROM
+texel data is an uncorrupted gradient, and the primitive's own UV span
+(3.47 T-repeats under `Clamp`) predicts exactly this streak as ordinary
+clamp-past-the-edge addressing (RE-067/RE-102's already-established
+mirror+clamp conversion) holding the gradient's darkest row — not a PSP GE
+rendering defect. No fix applied.
 
-**Verification (both platforms, same bar every other closed RE-283 item
-met):** PPSSPP — node-isolated capture confirms node 4 renders clean with no
-scrambled patch, and the full-pose `regression_capture_ness` capture diffs
-against the prior golden in a tight bbox (`(418,268)-(555,309)`, 137x41 px)
-covering only the collar/shoulder region, nothing else moved;
-`tools/verify-fighter-goldens.sh` re-run for all 12 playable fighters — all
-12 pass, Ness against its freshly refreshed golden. Physical — same unit as
-every prior RE-283 hardware check (PSP Slim, firmware 6.61, ARK/Infinity,
-PSPLink v3.2.1): native `scrshot` of the full-pose build shows the identical
-clean striped shoulder, no scrambled patch, no exceptions (`exlist` empty,
-`main_thread` alive throughout). `cargo fmt --all --check` and
-`cargo test --workspace` (618 passed) clean; plain feature-free
-`cargo psp --release` EBOOT hash unchanged (`9b9bfb8f...902ca8c`), confirming
-the fix is entirely pack-time (`tools/romtool`), not PSP runtime code.
-`tests/golden/r2-ness-fighter.png` refreshed and committed. All scratch
-node-isolation and diagnostic instrumentation reverted after use.
+**Kirby:** node-isolating every textured/geometry node reachable from its
+default Wait-pose graph (file 328, graph `0x1448`) found only one texture
+in the whole model — a 32x32 CI4 face decal (`+0x1CF60`) — and its raw ROM
+decode is pixel-identical to the rendered face (correct eyes/cheeks/mouth,
+no mismatch). Kirby's arms and feet carry **no texture at all** (solid
+Gouraud-shaded geometry), so nothing in this defect class could apply
+there. The file's other, stranger textures (including one visibly borrowed
+from Yoshi's own file 338 that decodes to Yoshi's red saddle shape) all
+belong to Kirby's separate per-copy-ability hat graphs or its four
+non-default costumes — none reachable from the tested costume-0 body, so
+they cannot explain a defect in the current golden. A genuine Kirby-model
+defect was not found.
 
-**A methodology note for future sessions:** partway through an earlier
-RE-283 session, a `cargo psp` build failed on an unrelated scratch-debug
-compile error; `--no-build` reuses of the stale (silently non-functional)
-EBOOT that failure left behind produced misleading "no visible effect" and
-even fully blank-screen results for several diagnostic pack variants,
-until noticed and every prior diagnostic was redone behind a verified-fresh
-full rebuild. Treat a `--no-build` capture as suspect for the rest of a
-session after any build failure, and prefer a full rebuild when a result
-looks surprising (unchanged, or blank). Separately, this session confirmed
-another failure mode from the same chain: a raw single-list command dump
-(`romtool dlraw`, no `convert_sequence` resolution) can desync silently on
-an unrecognized opcode and produce a plausible-looking but false command
-stream — always cross-check a raw decode against the authoritative
-`pack()`/`plan_draw_order` pipeline before trusting an offset it reports,
-not after a fix test built on it has already failed to explain the result.
+**Verification (both fighters, this session):** software-only — no code
+changed, so no new build/pack/hardware verification was needed or run;
+`assets/generated/ssb64.pak` SHA-256 is unchanged
+(`256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`) after
+this session's scratch instrumentation (a temporary `romtool scene
+--dump-node` diagnostic and a temporary `RE283_ONLY_LOCAL_NODE`-gated node
+filter in `psp/src/main.rs`, both reverted with `git checkout --`
+immediately after use, matching this chain's established practice for
+throwaway diagnostics).
+
+**A residual, explicitly non-blocking gap:** costumes other than 0 and
+Kirby's per-copy-ability hat graphs were not captured or tested by this
+session (no golden scene exercises them yet), so a real defect could still
+exist in that untested surface if the user's original "weird ear texture"
+report referred to it. This is future golden-coverage work, not a standing
+R2 blocker — combat/copy-abilities are not implemented yet, so that content
+is not currently reachable in normal play either.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
 the PSP-3000 tested so far is in that RAM class. No dedicated capture scenes
-exist yet for full stage/effect coverage or runs longer than 10 minutes.
-None of these block R2.2 (closed) — they gate the *physical* R2 matrix only,
-and are deliberately deferred until the game structure grows beyond the
-asset viewer. RE-272's face-texture bug is fully closed on both PPSSPP and
-real hardware — no longer part of the deferred physical-matrix follow-up.
-The USB-permission issue that blocked physical work earlier in RE-283's
-session history was resolved by reconnecting the PSP (new bus address,
-correct `0666` device-node permissions) — not a standing blocker, but worth
-a replug first if a future session hits "Permission error while opening the
-USB device" again before assuming the udev rule itself needs reinstalling.
+exist yet for full stage/effect coverage, runs longer than 10 minutes, or
+non-default fighter costumes/copy-ability hats (see the Pikachu/Kirby note
+above). None of these block R2.2 (closed) — they gate the *physical* R2
+matrix (and, for the costume/ability gap, golden coverage) only, and are
+deliberately deferred until the game structure grows beyond the asset
+viewer. The USB-permission issue that blocked physical work earlier in
+RE-283's session history was resolved by reconnecting the PSP (new bus
+address, correct `0666` device-node permissions) — not a standing blocker,
+but worth a replug first if a future session hits "Permission error while
+opening the USB device" again before assuming the udev rule itself needs
+reinstalling.
 
-Required next action: continue RE-283 with the remaining two untraced
-fighters (Pikachu, Kirby), each checked against the same checklist every
-prior RE-283 session used (own ROM-authored state vs. a real
-tile-addressing/packing quirk vs. genuine porting bug; check against real
-N64 output before concluding either way; node-isolate first, then classify
-the mechanism — including checking whether *multiple* textures on the same
-node each contribute part of one reported symptom before declaring a single
-texture the whole cause, and cross-checking any raw single-list command
-decode against the authoritative `pack()`/`plan_draw_order` pipeline before
-trusting it, per this chain's `dlraw` desync finding (now repeated twice,
-Falcon and Ness both) — then fix or record an `ACCEPTED_DEVIATION`), each on
-its own trace — do not assume one fighter's cause generalizes to the next
-one without checking. Physically confirming the PSP-1000 class remains the
-sole other *physical*-matrix blocker (unchanged — no PSP-1000 unit available
-in this environment) but is secondary to RE-283 until it concludes. Do not
-start R3 or combat before both RE-283 and R2's physical matrix are closed.
+Required next action: RE-283's per-fighter chase is complete — all nine
+reported items are accounted for (eight fixed and hardware-confirmed, two
+traced to no reproducible defect). The next R2 physical-matrix work is
+confirming the PSP-1000 RAM class (sole remaining *physical*-matrix
+blocker, no PSP-1000 unit available in this environment) or building the
+dedicated capture scenes this session's residual gap and STATUS's
+longstanding note call out (full stage/effect coverage, long runs,
+non-default costumes/ability hats). Do not start R3 or combat before R2's
+physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
@@ -105,10 +92,10 @@ for the full R2.2/physical chain, RE-240–283). Toolchain note: the global
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-283-eighteenth-follow-up pack/code (this session —
-Ness shoulder-strap fix, confirmed on PPSSPP and physical PSP hardware).
-Pack `256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`
+Current build: RE-283-eighteenth-follow-up pack/code (Ness shoulder-strap
+fix, confirmed on PPSSPP and physical PSP hardware) — unchanged this
+session; Pikachu/Kirby tracing needed no code fix. Pack
+`256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`
 (28,572.0 KiB). Plain feature-free EBOOT
 `9b9bfb8f94730a47ea04e50cb2a75a8d91536bd9b13f74682256a3ebe902ca8c`
-(unchanged from RE-281/the boot, shin-cuff, Yoshi and Falcon fixes — this
-fix also touched only pack-time conversion).
+(unchanged since RE-281/the boot, shin-cuff, Yoshi, Falcon and Ness fixes).
