@@ -2458,7 +2458,15 @@ fn convert_texture(
     // was widened enough to actually swizzle) ruled out stride/swizzle as the
     // mechanism, matching RE-267's own "swizzling... did not explain" finding.
     let is_link_boot = src.home.id == 324 && t.data_file.is_none() && t.data_offset == 0xCF18;
-    let psm = if (src.home.id == 317 || is_link_boot)
+    // RE-283 (fifteenth follow-up): file 324's rear-leg shin-cuff texture
+    // (Link's, offset 0xB4E0, 16x32 CI4, same 8-byte-row shape as the boot
+    // texture above) node-isolated to node 23 only -- its mirrored twin
+    // (node 28, same texture, `G_SETTILE.cms` mirror instead of wrap)
+    // renders clean. Repeat-wrapped sampling of this exact packed shape
+    // reproduces the same purple/black speckle class as the boot defect;
+    // the same paletted-transport bypass that fixed it applies here too.
+    let is_link_shin = src.home.id == 324 && t.data_file.is_none() && t.data_offset == 0xB4E0;
+    let psm = if (src.home.id == 317 || is_link_boot || is_link_shin)
         && psp::choose_psm(t.format, t.size).is_paletted()
     {
         psp::Psm::Psm8888
