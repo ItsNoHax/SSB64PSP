@@ -7,60 +7,97 @@ Task state: `IN_PROGRESS`
 Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
-mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Four of nine items are now fully
-closed (Fox, Mario/Luigi, Samus, Link). Link's boot defect (nodes 25/30, both
-feet identically) is fully closed this session: after the whole
-`ssb-rom`/`tools/romtool` pipeline and the PSP runtime GE bind were already
-proven clean by live instrumentation, and a physical-hardware capture
-confirmed the purple/black patch is a genuine PSP GE rendering defect for
-this texture's packed shape (not a PPSSPP-only quirk), the user directed
-pursuing a fix rather than an `ACCEPTED_DEVIATION`. A stride/swizzle-floor
-hypothesis was tested and rejected (widening the row to 16 bytes made the
-texture swizzle but left the defect byte-identical). The fix that worked:
-bypass PSP's paletted-texture transport for this one texture (`Psm8888`
-instead of `PsmT4`, decoding the ROM texels through their real TLUT at pack
-time) — the same class of fix `tools/romtool`'s `convert_texture` already
-has for Donkey Kong's file 317 (RE-267). Confirmed removed on PPSSPP
-(node-isolated and full-pose capture, diff tightly bounded to the boot
-region, 21/22 other goldens byte-identical) and on physical PSP hardware
-(same PSP Slim, PSPLink v3.2.1). `tests/golden/r2-link-fighter.png`
-refreshed. Five (Yoshi, Captain Falcon, Ness, Pikachu, Kirby) remain fully
-untraced. This blocks resuming the physical R2 matrix (which was otherwise
-down to only the PSP-1000-availability blocker below) — do not treat R2's
-rendering gate as closed until RE-283 concludes for the remaining fighters.
-Note: the full-pose capture also surfaced a separate, unrelated dark/purple
-speckle pattern on Link's shin cuff/greave, untouched by this fix and not
-investigated — not conflated with the closed boot item; may need its own
-trace later if it turns out not to be authored art.
+mismatch) are confirmed real on the current pack, separate from RE-272's
+now-closed Mario-face artifact. Four of nine items are fully closed (Fox,
+Mario/Luigi, Samus, Link's boot). Link's boot defect (nodes 25/30, both feet
+identically) was closed last session: a genuine PSP GE rendering defect for
+that texture's packed shape (confirmed on both PPSSPP and physical hardware),
+fixed by bypassing PSP's paletted-texture transport for that one texture
+(`Psm8888` instead of `PsmT4`), the same class of fix `tools/romtool`'s
+`convert_texture` already had for Donkey Kong (RE-267). See
+`docs/evidence/re/RE-283.md`'s fourteenth follow-up for the full chain.
 
-Last completed: `RE-283` (this session's fourteenth follow-up) — **fixed
-Link's boot defect by bypassing PSP's paletted-texture transport for that
-one texture, closing the item at the user's explicit direction (fix, not
-`ACCEPTED_DEVIATION`).** `crates/ssb-rom/src/psp_texture.rs`: tested and
-rejected a stride/swizzle-floor hypothesis (floored `pack_indexed`'s row to
-16 bytes; confirmed via a temporary debug print that this texture then packs
-at `stride=32 swizzled=true`, but a rebuilt-pack PPSSPP node-isolated capture
-showed the purple/black patch byte-identical — reverted the change and its
-test). `tools/romtool/src/main.rs`'s `convert_texture`: added `is_link_boot`
-(`src.home.id == 324 && t.data_file.is_none() && t.data_offset == 0xCF18`,
-confirmed the unique match via a temporary debug print) alongside the
-existing Donkey Kong (`src.home.id == 317`) case, forcing `Psm8888` instead
-of `PsmT4` for this texture only. Rebuilt `assets/generated/ssb64.pak`
-(+1.0 KiB). Verified with the same node-isolate scratch prior follow-ups
-used (`draw_object_posed_filtered` `pub(crate)`, `RE283_ONLY_LOCAL_NODE`
-compile-time filter): PPSSPP node-isolated capture shows the patch gone;
-full `regression_capture_link` capture diffs only the boot region (2,836
-pixels) against the prior golden, with the other 21/22 deterministic
-goldens byte-identical; two captures of the fixed build are byte-identical
-(deterministic). Physical PSP (Slim, firmware 6.61, ARK/Infinity, PSPLink
-v3.2.1): `exlist` empty, `main_thread` alive, native `scrshot` capture shows
-the same clean boot, patch gone. `cargo fmt --all --check` and `cargo test
---workspace` (617 passed) clean; plain feature-free `cargo psp --release`
-EBOOT hash unchanged (fix is pack-time only, no PSP runtime code changed).
-All scratch instrumentation reverted; captures not committed. See
-`docs/evidence/re/RE-283.md`'s "fourteenth follow-up" section; prior
-follow-ups' own findings stand unchanged.
+**New handover task (user-directed, not yet started): a second, separate
+dark/purple speckle pattern on Link, on his shin cuff/greave, above the now-
+fixed boot.** Noticed while confirming the boot fix's blast radius (the
+full-`regression_capture_link`-scene diff against the prior golden was
+tightly bounded to the boot region, `y >= 414` in the 960x544 capture; the
+speckle sits just above that, untouched by the boot fix, confirmed pixel-
+identical before and after it). **Not yet node-isolated, not yet root-caused
+— this is a fresh, unexplored item, not a continuation of the closed boot
+trace.** Coordinates below are this session's own reproduction, given for a
+head start; re-derive them rather than trusting them blindly, since no
+capture was committed (repo policy: no captures in Git) and pixel positions
+can shift if unrelated code changes.
+
+**Reproduction.** `tools/run-ppsspp-headless.sh --feature
+"regression_capture,regression_capture_link"` (file 324, graph `0x3AE8`,
+Link's full posed high-detail Wait render, matches `tests/golden/
+r2-link-fighter.png`). In the resulting 960x544 capture, crop roughly
+`x:460-570, y:340-420` — Link's rear leg (the one nearer the shield/sword
+side), just above the boot collar. The speckle is dark purple/black,
+irregular, mixed with brown — visually similar in *character* (same purple
+family) to the boot defect's now-fixed patch, which is worth checking first,
+but do not assume it is the same texture, node, or mechanism without
+verifying. **Asymmetric, unlike the boot defect:** the front leg (crop
+`x:400-470, y:340-420`, facing the camera) shows a clean, unspeckled brown
+greave at the same height — so this is not "both legs identically" the way
+nodes 25/30 were; it is isolated to one leg/node, which narrows the search
+faster than the boot trace did.
+
+**Suggested next steps, not prescriptive:**
+1. Node-isolate it. Reuse the same scratch prior RE-283 follow-ups used:
+   `psp/src/meshdraw.rs`'s `draw_object_posed_filtered` made `pub(crate)`
+   temporarily; `psp/src/main.rs`'s object-view fighter-draw call site
+   (~line 1952, `meshdraw::draw_object_posed(...)`) switched to call
+   `draw_object_posed_filtered` directly with a compile-time
+   `option_env!("RE283_ONLY_LOCAL_NODE")`-read filter, `obj.first_node + n`
+   (node ids from `romtool scene --nodes` are object-relative; the filter
+   parameter is pack-global — this unit mismatch cost real time in the boot
+   trace, see RE-283's twelfth follow-up). Sweep node ids near 25/30 first
+   (spatially adjacent to the boots), but confirm against the actual *posed*
+   render, not bind-pose node coordinates (`romtool scene --nodes` alone is
+   known to mislead here — see RE-283's seventh/thirteenth follow-ups).
+2. Once isolated, run the same checklist RE-283 already uses: does the node
+   carry its own ROM-authored `PRIM*SHADE`/`SetPrimColor`, a genuine
+   tile-addressing/UV quirk, or a downstream packing/bind bug? Check whether
+   it is the *same* class of defect as the boot (small paletted-texture GE
+   quirk — if so, `tools/romtool/src/main.rs`'s `convert_texture` already has
+   the fix pattern: `is_link_boot`/`src.home.id == 317` precedent, add a new
+   scoped match arm keyed to this texture's own `data_file`/`data_offset`,
+   confirmed unique via a temporary debug `eprintln!` the same way).
+3. **Do not assume it is a bug before checking against real N64 output.**
+   Samus's olive-camo cannon (RE-283, eighth follow-up) and Fox's wrist band
+   (RE-283, fifth follow-up) both turned out to be real, ROM-authored
+   original-hardware appearance, not porting bugs — dark/irregular fabric or
+   armor patterns are a real, recurring class of "looks like corruption but
+   isn't" on this ROM. If a colour/geometry source is found and looks
+   ROM-authored, confirm with a live original-N64 capture via the
+   `refs/ssb-decomp-re` decomp-rebuild warp technique (`n64-emulator` Skill,
+   `nFTKindXxx` in `scmanager.c`'s `training_man_fkind`/`training_com_fkind`,
+   same relative patch sites RE-283's fifth/eighth follow-ups used) before
+   concluding either way.
+4. Known PSP-target-tracing traps, already paid for by prior follow-ups:
+   `psp::dprintln!` writes straight to VRAM, invisible to the GE-based
+   headless screenshot hook (RE-013/RE-255) — use real GE draws instead; and
+   `Gpu::debug_text`/`sceGuDebugPrint` corrupts rendering specifically under
+   a `regression_capture`-family frozen build (RE-123/RE-125) — untextured
+   `TRANSFORM_2D` GE quads work under that same build where debug text does
+   not.
+5. Whatever the outcome, revert all scratch instrumentation (`git checkout
+   --` on `psp/src/main.rs`/`psp/src/meshdraw.rs`) before finishing, same as
+   every prior RE-283 follow-up; do not commit captures.
+
+This is not yet in RE-283's checklist as a numbered item (it was found
+incidentally, after Fox/Mario-Luigi/Samus/Link's boot were already
+enumerated) — open a new follow-up section in `docs/evidence/re/RE-283.md`
+("fifteenth follow-up" or its own record if it turns out unrelated to the
+rest of RE-283) once there is a finding to write up, per this project's
+"measure, then record" convention. Yoshi, Captain Falcon, Ness, Pikachu,
+Kirby remain fully untraced and still block the physical R2 matrix
+independently of this new item — do not treat either as higher-priority
+than the other without cause; the user asked for the shin speckle next, so
+start there.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
@@ -71,61 +108,25 @@ and are deliberately deferred until the game structure grows beyond the
 asset viewer. RE-272's face-texture bug is fully closed on both PPSSPP and
 real hardware — no longer part of the deferred physical-matrix follow-up.
 
-Current verification baseline: `cargo fmt --all --check` clean; `cargo test
---workspace` 617 passed; 21/22 deterministic goldens exact against the
-rebuilt pack, `r2-link-fighter.png` refreshed (explained delta: Link's boot
-texture, RE-283); effects 46/46 manager objects, 35/35 transform + 24/26
+Current verification baseline (unchanged since last session, no code
+touched this handover): `cargo fmt --all --check` clean; `cargo test
+--workspace` 617 passed; 22/22 deterministic goldens exact against the
+current pack; effects 46/46 manager objects, 35/35 transform + 24/26
 material animations, 160/160 particle scripts; 109 billboards, 0 anomalies;
 11/11 framebuffer transitions; `romtool texgen --verify` pass; plain
-feature-free `cargo psp --release` pass (EBOOT hash unchanged from RE-281);
-strict Clippy not clean (3 pre-existing `needless_range_loop` lints,
-unrelated to this work). `assets/generated/ssb64.pak` rebuilt this session
-(pack hash below); `crates/ssb-rom` unchanged (its stride-floor experiment
-was reverted); `tools/romtool` gained the scoped `is_link_boot` fix.
+feature-free `cargo psp --release` pass; strict Clippy not clean (3
+pre-existing `needless_range_loop` lints, unrelated to this work).
 
-Required next action: continue RE-283 with the remaining five fighters.
-Yoshi, Captain Falcon, Ness, Pikachu, Kirby remain fully untraced: check
-each against the same "does the node carry its own authored PRIM*SHADE
-colour, a ROM-authored tile-addressing/UV quirk, or a bug downstream in
-texture packing/binding or the runtime GE bind" pattern first, but do not
-assume any one conclusion generalizes — treat that checklist as a starting
-point, not exhaustive. Given Link's own resolution this session, also check
-early whether a given fighter's defect is the same "GE mis-renders this
-exact small paletted-texture shape" class before assuming a novel cause —
-but confirm with the same live-instrumentation/isolation rigor rather than
-assuming it generalizes without checking. Each needs its own trace and,
-where a colour/geometry source is found, potentially its own
-original-hardware visibility check via the now twice-proven
-`refs/ssb-decomp-re` decomp-rebuild warp technique (`n64-emulator` Skill,
-`nFTKindXxx` in `scmanager.c`'s `training_man_fkind`/`training_com_fkind`
-fields, same relative patch sites prior follow-ups used). When isolating a
-single node for any of these, use the *posed* skeleton
-(`draw_object_posed_filtered` with the real `posed[..posed_len]` array and a
-node filter), not `draw_object_node`'s bind-pose-only path — confirmed
-twice now (Samus's seventh follow-up, Link's trace) that trusting bind-pose
-node coordinates (e.g. from `romtool scene --nodes`) to guess which limb is
-which silently misleads; always cross-check against the actual posed render
-first. This project's `psp/src/meshdraw.rs` already has the real isolate
-primitive (`draw_object_posed_filtered`'s `only_node` parameter, built for
-R0.12's billboard audit) — reuse it (temporarily `pub(crate)`, plus a
-compile-time `option_env!`-read local-node filter threaded into the real
-fighter-view draw call, since the PSP target has no runtime env access)
-rather than building a new one; revert the exposure after use. Two
-PSP-target-tracing traps hit and worth avoiding: `psp::dprintln!` writes
-straight to VRAM, invisible to the GE-based headless screenshot hook
-(RE-013/RE-255) — use real GE draws instead; and `Gpu::debug_text`/
-`sceGuDebugPrint` corrupts rendering specifically under a
-`regression_capture`-family frozen build (RE-123/RE-125) — untextured
-`TRANSFORM_2D` GE quads work under that same build where debug text does
-not. If a fighter's defect turns out to be the same small-paletted-texture
-GE quirk Link's was, `tools/romtool/src/main.rs`'s `convert_texture` already
-has the fix pattern (`is_link_boot`/`src.home.id == 317` precedent) — scope
-a new match arm to that fighter's exact `data_file`/`data_offset` rather
-than widening either existing condition. Physically confirming the
-PSP-1000 class remains the sole *physical*-matrix blocker (unchanged — no
-PSP-1000 unit available in this environment) but is secondary to RE-283
-until it concludes for the remaining fighters. Do not start R3 or combat
-before both RE-283 and R2's physical matrix are closed.
+Required next action: node-isolate and trace Link's shin-cuff speckle (see
+above) — this is the active task. After it concludes (fixed, or confirmed
+ROM-authored and not a bug), continue RE-283 with the remaining five
+untraced fighters (Yoshi, Captain Falcon, Ness, Pikachu, Kirby), each
+checked against the same checklist, each on its own trace — do not assume
+one fighter's cause generalizes to another without checking. Physically
+confirming the PSP-1000 class remains the sole *physical*-matrix blocker
+(unchanged — no PSP-1000 unit available in this environment) but is
+secondary to RE-283 until it concludes. Do not start R3 or combat before
+both RE-283 and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
@@ -136,8 +137,9 @@ for the full R2.2/physical chain, RE-240–283). Toolchain note: the global
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-283-fourteenth-follow-up pack/code (this session).
+Current build: RE-283-fourteenth-follow-up pack/code (previous session; no
+code or pack change this handover).
 Pack `f477c52c096ce5c78702fdc07b3f62df7ef279e06dca6feea2d9ceae2ad32b84`
 (28,532.3 KiB). Plain feature-free EBOOT
 `9b9bfb8f94730a47ea04e50cb2a75a8d91536bd9b13f74682256a3ebe902ca8c`
-(unchanged from RE-281 — this fix touched only pack-time conversion).
+(unchanged from RE-281 — the boot fix touched only pack-time conversion).
