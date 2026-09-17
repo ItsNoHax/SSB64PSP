@@ -8,31 +8,44 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Fox's forearm/glove speckle is now
-traced to an exact node (see "Last completed" below) — root cause not yet
-found for any of the nine symptoms overall. This blocks resuming the
-physical R2 matrix (which was otherwise down to only the
+RE-272's now-closed Mario-face artifact. Fox's wrist-node defect colour is
+now fully explained mathematically (see "Last completed" below), but
+whether that explanation matches real N64 hardware is not yet settled, and
+the other eight fighters' symptoms remain untraced. This blocks resuming
+the physical R2 matrix (which was otherwise down to only the
 PSP-1000-availability blocker below) — do not treat R2's rendering gate as
 closed until RE-283 concludes.
 
-Last completed: `RE-283` — **catalogued nine fighters' worth of
-user-reported texture/geometry defects; confirmed at least one (Fox) at
-pixel level against the raw ROM; tested-and-rejected the CI4
-swizzle-threshold hypothesis; DL-traced Fox's actual glove/forearm nodes,
-finding they bind no texture at all and that the previously-suspected
-`file 299` textures are orphaned (never wired into any object's node
-table); and then positively identified the golden crop's source geometry**
-via a temporary `node_isolate_debug` probe (added and reverted this
-session) that renders one global pack node at a time: the crop is exactly
-the union of node 10 (upper forearm, correctly textured cuff), node 11
-(wrist, `tex None`, renders as a flat, uniformly wrong dark-brown
-`#321d01` blob — confirmed byte-for-byte present in the committed golden),
-and node 12 (hand, `tex None`, correctly Gouraud-shaded white glove). The
-"speckle" is node 11's own real geometry and colour, not a stray texture
-read, CLUT error, or z-fighting — all three prior hypotheses are now
-superseded. Whether `#321d01` is a `lit`/unlit misclassification bug or an
-authored shadow colour the original keeps hidden is not yet resolved.
-See `docs/evidence/re/RE-283.md`.
+Last completed: `RE-283` (this session's third follow-up) — **ruled out
+the `lit`/unlit-misclassification hypothesis and found the exact
+arithmetic source of Fox's wrist-node `#321d01` defect colour**, using a
+temporary `romtool vtxdump` diagnostic (added and reverted this session)
+with two modes: a raw static `G_VTX` byte dump, and a real-pipeline trace
+running `plan_draw_order`/`convert_sequence` (the same code `pack()`
+uses). Node 11's (wrist) five raw vertex normals are legitimate unit
+vectors (magnitude ~127), not miscoded colour bytes — ruling out
+byte-level corruption outright. The real pipeline resolves node 11's
+triangle material to `prim_color = [168, 98, 4]` (`#A86204`, Fox's "arm
+fur" colour, identical to the value node 5 — the mirrored right-arm
+equivalent — sets explicitly), via the same `PRIM * SHADE` "arms" combiner
+shape this codebase's own Mario test fixture already names. Both scene
+lights are achromatic (`#FFFFFF` directional, `#4C4C4C` ambient), so
+`76/255 × [168, 98, 4]` truncates to exactly `[50, 29, 1] = #321d01` —
+an exact, not approximate, reconstruction of the golden's defect colour.
+This is real, correctly-combinered math, not a decode bug — but *why*
+that specific `PRIM` value is still active by the time node 11's own
+triangles draw is not fully traced: `plan_draw_order`'s `Gfx *dls[2]`
+pre/post-pair mechanism (RE-225/T1) is ruled out (every node in this
+graph resolves as a single `Direct` entry), and a plain
+"last-state-of-the-previous-node's-list" model already fails to predict
+node 10's own first primitive's `prim_color`, so the real mechanism runs
+through per-triangle-command state and cross-node vertex-cache reuse this
+session did not fully unravel. Two possibilities remain: (a) a real
+state-threading defect in `plan_draw_order`/`convert_sequence`, or (b) the
+ROM's own DL and vertex-cache reuse produce this same result on real
+hardware too, for a sliver the original keeps hidden behind overlapping
+cuff/glove geometry that this port's per-node transform exposes. See
+`docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
 nibble-order fix on real PSP hardware.** Built
@@ -127,28 +140,38 @@ rebuild. RE-283 also lands with no surviving production-code change: its one
 tested hypothesis (widen the CI4 swizzle-eligibility floor) was patched,
 measured (0-pixel-diff PPSSPPHeadless capture against the existing golden),
 rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
-`assets/generated/ssb64.pak` are both back to their RE-281 state.
+`assets/generated/ssb64.pak` are both back to their RE-281 state. This
+session's own follow-up (the `vtxdump` diagnostic and node 11 material
+trace) also made no surviving production-code change: `tools/romtool/src/
+main.rs`'s temporary subcommand was reverted (`git checkout --`) after use;
+only `docs/evidence/re/RE-283.md` and this file were updated.
 
 Required next action: continue root-causing RE-283's fighter texture/
 geometry defects. Fox's wrist node (local node 11 of graph `0x2938`, `dl
-0x22B8`) is now positively identified as the source of the golden's
-`(330,250)-(420,340)` crop defect — it renders a flat, uniformly wrong
-`#321d01` dark-brown blob where the adjacent cuff (node 10) and glove (node
-12) are correctly white/grey. Next step: determine whether this is a real
-pipeline bug (dump node 11's raw ROM `G_VTX` colour bytes — no existing
-`romtool` command does this yet, needs a small temporary diagnostic — to
-check for a `lit`/unlit misclassification, RE-240/RE-241's named bug class)
-or an authored shadow colour the original N64 keeps hidden behind
-overlapping geometry that this port's own per-node transform exposes (get a
-live original-N64 reference of Fox's wrist via the `n64-emulator` Skill,
-RE-276's own method). Once Fox's specific defect is resolved, the other
-eight fighters' symptoms (Mario/Luigi missing buttons, Samus/Link/Yoshi/
-Falcon/Ness speckle, Pikachu/Kirby face-colour mismatch) remain open and
-untraced. Physically confirming the PSP-1000 class remains the sole
-*physical*-matrix blocker (unchanged — no PSP-1000 unit available in this
-environment) but is secondary to RE-283 now that the renderer's own
-PPSSPP-software correctness is back in question. Do not start R3 or combat
-before both RE-283 and R2's physical matrix are closed.
+0x22B8`) — the `#321d01` colour itself is now fully explained (exact
+`PRIM * SHADE` arithmetic, `PRIM = [168,98,4]`, real "arm fur" colour) but
+*why* that `PRIM` value is still active at node 11's own triangle draw is
+not traced. Next step, in order of cost: (1) extend a diagnostic to trace
+state command-by-command (not list-by-list) across nodes 8/10/11 —
+specifically which `G_TRI` commands in node 10's two primitives (12
+triangles each) consume which vertex-cache slot, loaded under which
+`SetCombine`/`SetPrimColor`, to determine whether `plan_draw_order`/
+`convert_sequence`'s state model is even internally consistent with the
+raw command stream; if it's provably wrong there, that is a real,
+fixable bug independent of any ROM capture. (2) If that traces clean, get
+a live original-N64 reference of Fox's wrist via the `n64-emulator` Skill
+(RE-276's own method) to check whether real hardware draws this geometry
+visibly at all — this is the only way to confirm or rule out hypothesis
+(b) (an authored, normally-hidden shadow/fur sliver). Once Fox's specific
+defect is resolved, the other eight fighters' symptoms (Mario/Luigi
+missing buttons, Samus/Link/Yoshi/Falcon/Ness speckle, Pikachu/Kirby
+face-colour mismatch) remain open and untraced — check each against this
+same `PRIM`-carry mechanism first, since it may be a unifying cause.
+Physically confirming the PSP-1000 class remains the sole *physical*-matrix
+blocker (unchanged — no PSP-1000 unit available in this environment) but
+is secondary to RE-283 now that the renderer's own PPSSPP-software
+correctness is back in question. Do not start R3 or combat before both
+RE-283 and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
