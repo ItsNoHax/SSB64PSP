@@ -50,24 +50,29 @@ filter in `psp/src/main.rs`, both reverted with `git checkout --`
 immediately after use, matching this chain's established practice for
 throwaway diagnostics).
 
-**A residual, explicitly non-blocking gap:** costumes other than 0 and
-Kirby's per-copy-ability hat graphs were not captured or tested by this
-session (no golden scene exercises them yet), so a real defect could still
-exist in that untested surface if the user's original "weird ear texture"
-report referred to it. This is future golden-coverage work, not a standing
-R2 blocker — combat/copy-abilities are not implemented yet, so that content
-is not currently reachable in normal play either.
+**Follow-up in the same session: non-default costumes checked and clean.**
+A temporary `RE283_COSTUME_OVERRIDE` env-gated costume index (reverted after
+use) rendered all 4 of Kirby's and all 3 of Pikachu's non-default costumes.
+All 7 are clean — correct per-costume recolour, no scrambling, no new
+artifacts, and Pikachu's collar streak unchanged in severity across every
+costume (consistent with it being ROM-authored, not a costume-specific
+bug). The only remaining untested surface is Kirby's per-copy-ability hat
+graphs (separate small scene graphs, not reachable from the base body) —
+not currently reachable in normal play either, since combat/copy-abilities
+are not implemented yet. Not a standing R2 blocker.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
-the PSP-3000 tested so far is in that RAM class. No dedicated capture scenes
-exist yet for full stage/effect coverage, runs longer than 10 minutes, or
-non-default fighter costumes/copy-ability hats (see the Pikachu/Kirby note
-above). None of these block R2.2 (closed) — they gate the *physical* R2
-matrix (and, for the costume/ability gap, golden coverage) only, and are
-deliberately deferred until the game structure grows beyond the asset
-viewer. The USB-permission issue that blocked physical work earlier in
-RE-283's session history was resolved by reconnecting the PSP (new bus
+the PSP-3000 tested so far is in that RAM class; no PSP-1000 unit is
+available in this environment, so this item is parked rather than pursued.
+No dedicated capture scenes exist yet for full stage/effect coverage or
+runs longer than 10 minutes; Kirby's per-copy-ability hat graphs also
+remain untested (see the Pikachu/Kirby note above — non-default costumes
+are now checked and clean, so this is narrower than before). None of these
+block R2.2 (closed) — they gate physical-matrix/golden-coverage breadth
+only, deliberately deferred until the game structure grows beyond the
+asset viewer. The USB-permission issue that blocked physical work earlier
+in RE-283's session history was resolved by reconnecting the PSP (new bus
 address, correct `0666` device-node permissions) — not a standing blocker,
 but worth a replug first if a future session hits "Permission error while
 opening the USB device" again before assuming the udev rule itself needs
@@ -75,13 +80,13 @@ reinstalling.
 
 Required next action: RE-283's per-fighter chase is complete — all nine
 reported items are accounted for (eight fixed and hardware-confirmed, two
-traced to no reproducible defect). The next R2 physical-matrix work is
-confirming the PSP-1000 RAM class (sole remaining *physical*-matrix
-blocker, no PSP-1000 unit available in this environment) or building the
-dedicated capture scenes this session's residual gap and STATUS's
-longstanding note call out (full stage/effect coverage, long runs,
-non-default costumes/ability hats). Do not start R3 or combat before R2's
-physical matrix is closed.
+traced to no reproducible defect, including their non-default costumes).
+PSP-1000 confirmation is parked (no unit available). The next R2 work is
+building dedicated capture scenes for the coverage this STATUS's
+longstanding note calls out: full stage/effect coverage, runs longer than
+10 minutes, and (lowest priority, gated on copy-ability gameplay existing
+at all) Kirby's per-ability hat graphs. Do not start R3 or combat before
+R2's physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
