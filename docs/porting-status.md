@@ -113,11 +113,3 @@ Reproduce with `tools/run-ppsspp.sh`.
 6. **Extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest; the runtime loader that patches them at scene load
    does not exist yet. The *converter* already follows them (RE-037).
-
-7. **A fighter face texture renders as a repeating/aliased artifact, not the
-   clean source texture.** RE-272: Mario's eye/eyebrow texture (file 296) is
-   clean in the raw ROM dump but corrupted on both PPSSPP and physical PSP
-   hardware — the same renderer code path on both, so not hardware-specific.
-   Root cause open (UV/tile addressing, scale, and mip interaction are
-   candidates, not yet distinguished); not yet checked against other
-   fighters. `TODO.md` tracks it as a scoped follow-up.

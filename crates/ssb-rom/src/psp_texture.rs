@@ -602,10 +602,10 @@ fn pad_edge_repeat(
     }
 }
 
-/// [`pad_edge_repeat`]'s counterpart for `PsmT4`'s two texels per byte, high
-/// nibble first (this crate's own convention -- see [`pack_indexed`]'s doc
-/// comment) -- a padding boundary can fall mid-byte, so the byte-level copy
-/// above cannot address a single padding texel there.
+/// [`pad_edge_repeat`]'s counterpart for `PsmT4`'s two texels per byte, low
+/// nibble first (the PSP GE's convention, RE-280 -- see [`pack_indexed`]'s
+/// doc comment) -- a padding boundary can fall mid-byte, so the byte-level
+/// copy above cannot address a single padding texel there.
 fn pad_edge_repeat_nibbles(data: &mut [u8], stride: u32, padded_h: u32, width: u32, height: u32) {
     let (stride, width, height, padded_h) = (
         stride as usize,
@@ -620,17 +620,17 @@ fn pad_edge_repeat_nibbles(data: &mut [u8], stride: u32, padded_h: u32, width: u
     let get = |data: &[u8], x: usize, y: usize| -> u8 {
         let byte = data[y * stride_bytes + x / 2];
         if x.is_multiple_of(2) {
-            byte >> 4
-        } else {
             byte & 0x0F
+        } else {
+            byte >> 4
         }
     };
     let set = |data: &mut [u8], x: usize, y: usize, v: u8| {
         let idx = y * stride_bytes + x / 2;
         if x.is_multiple_of(2) {
-            data[idx] = (data[idx] & 0x0F) | (v << 4);
-        } else {
             data[idx] = (data[idx] & 0xF0) | (v & 0x0F);
+        } else {
+            data[idx] = (data[idx] & 0x0F) | (v << 4);
         }
     };
     if width < stride {
@@ -728,8 +728,15 @@ pub fn pack_indexed(
         data[d..d + src_row_bytes].copy_from_slice(&indices[s..s + src_row_bytes]);
     }
 
-    // The N64 stores the high nibble first within a byte, which is also what
-    // the PSP expects for PsmT4, so 4-bit data copies through unchanged.
+    // The N64 stores the high nibble first within a byte, but the PSP GE's
+    // PsmT4 reader wants the opposite (RE-280): swap each byte's nibbles so
+    // the low nibble carries the first (even-indexed) texel.
+    if format == Psm::PsmT4 {
+        for byte in &mut data {
+            *byte = (*byte << 4) | (*byte >> 4);
+        }
+    }
+
     let palette = palette.to_vec();
 
     // `PLAN.md` R2.0/P0d: see `pad_edge_repeat`'s doc comment.
@@ -785,9 +792,9 @@ mod mip_tests {
             img.put(i, [v, v, v, 255]);
         }
         let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
-        // Row 0 cycles through all sixteen entries, high nibble first.
-        assert_eq!(tex.data[0], 0x01);
-        assert_eq!(tex.data[7], 0xEF);
+        // Row 0 cycles through all sixteen entries, low nibble first (RE-280).
+        assert_eq!(tex.data[0], 0x10);
+        assert_eq!(tex.data[7], 0xFE);
     }
 
     /// The point of the chain: averaging a dithered pair lands between palette
@@ -840,11 +847,12 @@ mod mip_tests {
         }
         let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
         assert_eq!(tex.stride, 4, "3 pads to a 4-texel stride");
-        // Level 0: byte 0 = texels (0,5), byte 1 = texels (10, padding).
-        assert_eq!(tex.data[0], 0x05, "texels 0 and 1 unchanged");
+        // Level 0: byte 0 = texels (0,5), byte 1 = texels (10, padding),
+        // low nibble first (RE-280).
+        assert_eq!(tex.data[0], 0x50, "texels 0 and 1 unchanged");
         assert_eq!(
             tex.data[1], 0xAA,
-            "padding texel (low nibble) repeats the edge texel (entry 10 = 0xA), not index 0"
+            "padding texel (high nibble) repeats the edge texel (entry 10 = 0xA), not index 0"
         );
     }
 }
@@ -1212,18 +1220,18 @@ mod tests {
     }
 
     /// The 4-bit counterpart: a 3-wide, 1-tall CI4 row (two texels per byte,
-    /// high nibble first) padded to a 4-texel stride repeats the last real
-    /// texel's nibble into the padding nibble, not the neighbouring byte's
-    /// unrelated data.
+    /// low nibble first, RE-280) padded to a 4-texel stride repeats the last
+    /// real texel's nibble into the padding nibble, not the neighbouring
+    /// byte's unrelated data.
     #[test]
     fn pad_edge_repeat_nibbles_fills_column_padding_with_the_last_real_texel() {
-        // Texel 0=0x9 (byte0 high), 1=0x8 (byte0 low), 2=0x7 (byte1 high);
-        // byte1 low nibble (texel 3) is padding, currently zero.
-        let mut data = alloc::vec![0x98u8, 0x70];
+        // Texel 0=0x9 (byte0 low), 1=0x8 (byte0 high), 2=0x7 (byte1 low);
+        // byte1 high nibble (texel 3) is padding, currently zero.
+        let mut data = alloc::vec![0x89u8, 0x07];
         pad_edge_repeat_nibbles(&mut data, 4, 1, 3, 1);
         assert_eq!(
             data,
-            [0x98, 0x77],
+            [0x89, 0x77],
             "padding texel 3 repeats texel 2's value (0x7)"
         );
     }
@@ -1325,8 +1333,8 @@ mod tests {
         for y in 0..tex.height as usize {
             for x in 0..tex.width as usize {
                 let byte = linear[y * stride_bytes + x / 2];
-                // The N64 stores the first texel in the high nibble.
-                let idx = if x % 2 == 0 { byte >> 4 } else { byte & 0x0F } as usize;
+                // The PSP GE stores the first texel in the low nibble (RE-280).
+                let idx = if x % 2 == 0 { byte & 0x0F } else { byte >> 4 } as usize;
                 let entry = tex.palette[idx];
                 out.push([
                     entry as u8,
@@ -1717,12 +1725,13 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
                 Psm::PsmT4 => {
                     let i = nearest_entry(palette, px) & 0xF;
                     let at = y * stride_bytes + x / 2;
-                    // High nibble first, matching the N64 order the
-                    // straight-copy path relies on.
+                    // Low nibble first: PPSSPP's PsmT4 reader (RE-280) reads
+                    // the even-indexed texel from the low nibble, not the
+                    // high nibble the N64 source uses.
                     if x % 2 == 0 {
-                        data[at] = (data[at] & 0x0F) | (i << 4);
-                    } else {
                         data[at] = (data[at] & 0xF0) | i;
+                    } else {
+                        data[at] = (data[at] & 0x0F) | (i << 4);
                     }
                 }
                 Psm::PsmT8 => data[y * stride_bytes + x] = nearest_entry(palette, px),
