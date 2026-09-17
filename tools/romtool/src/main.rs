@@ -2481,7 +2481,22 @@ fn convert_texture(
     let is_yoshi_head = src.home.id == 338
         && t.data_file.is_none()
         && (t.data_offset == 0x9518 || t.data_offset == 0x9BD0);
-    let psm = if (src.home.id == 317 || is_link_boot || is_link_shin || is_yoshi_head)
+    // RE-283 (Captain Falcon follow-up): file 332's shoulder-pad node (node
+    // 10, graph 0x3BE0) binds an 8x8 CI4 dither texture at offset 0xC508 --
+    // a prior session misidentified this node's content via a desynced raw
+    // `dlraw` command dump (offsets 0xC128/0xBBB0, neither real) and ruled
+    // out this same bypass class against those wrong textures. Node-isolating
+    // the *correct* offset (recovered from the authoritative pack()/
+    // plan_draw_order pipeline) reproduces the user's "heavily scrambled
+    // yellow/orange/black patch" exactly, and this bypass alone clears it
+    // completely -- same small-paletted-texture (8-byte-row-or-narrower
+    // PsmT4) GE quirk as Link's boot/shin-cuff and Yoshi's head.
+    let is_falcon_shoulder = src.home.id == 332 && t.data_file.is_none() && t.data_offset == 0xC508;
+    let psm = if (src.home.id == 317
+        || is_link_boot
+        || is_link_shin
+        || is_yoshi_head
+        || is_falcon_shoulder)
         && psp::choose_psm(t.format, t.size).is_paletted()
     {
         psp::Psm::Psm8888
