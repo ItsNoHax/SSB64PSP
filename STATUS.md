@@ -9,42 +9,44 @@ user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
 RE-272's now-closed Mario-face artifact. Fox's wrist-node defect colour is
-now fully explained mathematically (see "Last completed" below), but
-whether that explanation matches real N64 hardware is not yet settled, and
-the other eight fighters' symptoms remain untraced. This blocks resuming
-the physical R2 matrix (which was otherwise down to only the
+now fully explained and traced to its exact ROM-authored source (see "Last
+completed" below); the only remaining question for Fox specifically is
+whether real N64 hardware also draws it, which needs a live original-N64
+capture. The other eight fighters' symptoms remain untraced. This blocks
+resuming the physical R2 matrix (which was otherwise down to only the
 PSP-1000-availability blocker below) — do not treat R2's rendering gate as
 closed until RE-283 concludes.
 
-Last completed: `RE-283` (this session's third follow-up) — **ruled out
-the `lit`/unlit-misclassification hypothesis and found the exact
-arithmetic source of Fox's wrist-node `#321d01` defect colour**, using a
-temporary `romtool vtxdump` diagnostic (added and reverted this session)
-with two modes: a raw static `G_VTX` byte dump, and a real-pipeline trace
-running `plan_draw_order`/`convert_sequence` (the same code `pack()`
-uses). Node 11's (wrist) five raw vertex normals are legitimate unit
-vectors (magnitude ~127), not miscoded colour bytes — ruling out
-byte-level corruption outright. The real pipeline resolves node 11's
-triangle material to `prim_color = [168, 98, 4]` (`#A86204`, Fox's "arm
-fur" colour, identical to the value node 5 — the mirrored right-arm
-equivalent — sets explicitly), via the same `PRIM * SHADE` "arms" combiner
-shape this codebase's own Mario test fixture already names. Both scene
-lights are achromatic (`#FFFFFF` directional, `#4C4C4C` ambient), so
-`76/255 × [168, 98, 4]` truncates to exactly `[50, 29, 1] = #321d01` —
-an exact, not approximate, reconstruction of the golden's defect colour.
-This is real, correctly-combinered math, not a decode bug — but *why*
-that specific `PRIM` value is still active by the time node 11's own
-triangles draw is not fully traced: `plan_draw_order`'s `Gfx *dls[2]`
-pre/post-pair mechanism (RE-225/T1) is ruled out (every node in this
-graph resolves as a single `Direct` entry), and a plain
-"last-state-of-the-previous-node's-list" model already fails to predict
-node 10's own first primitive's `prim_color`, so the real mechanism runs
-through per-triangle-command state and cross-node vertex-cache reuse this
-session did not fully unravel. Two possibilities remain: (a) a real
-state-threading defect in `plan_draw_order`/`convert_sequence`, or (b) the
-ROM's own DL and vertex-cache reuse produce this same result on real
-hardware too, for a sliver the original keeps hidden behind overlapping
-cuff/glove geometry that this port's per-node transform exposes. See
+Last completed: `RE-283` (this session's fourth follow-up) — **traced
+state command-by-command across Fox's nodes 8/10/11 and found node 11 has
+its own real, ROM-authored `G_SETCOMBINE`/`G_SETPRIMCOLOR([168,98,4])`,
+refuting the state-threading-bug hypothesis.** Added temporary env-gated
+`eprintln!` instrumentation in `mesh::walk`/`emit_tri`/`State::apply_mobj`
+and a raw-command dump in `pack()` (both reverted after use,
+`git checkout --`), run through the same production conversion path
+`pack()` itself uses. Confirmed the node↔item mapping (`plan_draw_order`
+space 6/7/8/9 = nodes 8/10/11/12) and traced every `SetCombine`/
+`SetPrimColor`/`G_VTX`/`G_TRI`/`MObj`-material-call in order: node 8 ends
+its list on `PRIM=[168,98,4]` (matching the prior session's finding); node
+10 opens with its own fresh `SetCombine` and an `MObj` call
+(`state.apply_mobj`, a previously untraced colour-state path) that
+explicitly sets `PRIM=[239,239,165]`, not inherited from node 8; **node
+11's own raw display list at file 313 offset `0x22B8` — independently
+re-decoded from scratch this session, bypassing `convert_sequence`
+entirely — contains `SetCombine{hi:0x00327e05,lo:0xff17f7ff}` and
+`SetPrimColor{rgba:[168,98,4,255]}` before its `G_VTX`/triangles**,
+directly contradicting the prior session's raw-dump-based claim that node
+11 "never sets its own SetPrimColor/SetCombine" (that claim was wrong —
+either a bug in that session's throwaway diagnostic or a misread of its
+output). `plan_draw_order`/`convert_sequence`'s state model is internally
+consistent with the raw ROM command stream at every node checked; this is
+not a porting bug. The `#321d01` defect colour is exactly what the ROM's
+own authored display list, converted correctly, produces. Only hypothesis
+(b) remains open: whether real N64 hardware draws this same brown wrist
+sliver too, hidden behind overlapping cuff/glove geometry at the original
+camera angle, or is culled some other way this port does not reproduce —
+answerable only by a live original-N64 reference capture (`n64-emulator`
+Skill, RE-276's own method), not further ROM-side diagnostics. See
 `docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
@@ -143,30 +145,31 @@ rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
 `assets/generated/ssb64.pak` are both back to their RE-281 state. This
 session's own follow-up (the `vtxdump` diagnostic and node 11 material
 trace) also made no surviving production-code change: `tools/romtool/src/
-main.rs`'s temporary subcommand was reverted (`git checkout --`) after use;
-only `docs/evidence/re/RE-283.md` and this file were updated.
+main.rs`'s temporary subcommand was reverted (`git checkout --`) after use.
+This session's own follow-up (the per-command state-trace instrumentation
+in `mesh.rs`/`main.rs` and the independent raw-command dump) likewise made
+no surviving production-code change — both reverted with `git checkout --`,
+`cargo test --workspace` reconfirmed 617/617 passing afterward; only
+`docs/evidence/re/RE-283.md` and this file were updated.
 
 Required next action: continue root-causing RE-283's fighter texture/
 geometry defects. Fox's wrist node (local node 11 of graph `0x2938`, `dl
-0x22B8`) — the `#321d01` colour itself is now fully explained (exact
-`PRIM * SHADE` arithmetic, `PRIM = [168,98,4]`, real "arm fur" colour) but
-*why* that `PRIM` value is still active at node 11's own triangle draw is
-not traced. Next step, in order of cost: (1) extend a diagnostic to trace
-state command-by-command (not list-by-list) across nodes 8/10/11 —
-specifically which `G_TRI` commands in node 10's two primitives (12
-triangles each) consume which vertex-cache slot, loaded under which
-`SetCombine`/`SetPrimColor`, to determine whether `plan_draw_order`/
-`convert_sequence`'s state model is even internally consistent with the
-raw command stream; if it's provably wrong there, that is a real,
-fixable bug independent of any ROM capture. (2) If that traces clean, get
-a live original-N64 reference of Fox's wrist via the `n64-emulator` Skill
-(RE-276's own method) to check whether real hardware draws this geometry
-visibly at all — this is the only way to confirm or rule out hypothesis
-(b) (an authored, normally-hidden shadow/fur sliver). Once Fox's specific
-defect is resolved, the other eight fighters' symptoms (Mario/Luigi
-missing buttons, Samus/Link/Yoshi/Falcon/Ness speckle, Pikachu/Kirby
-face-colour mismatch) remain open and untraced — check each against this
-same `PRIM`-carry mechanism first, since it may be a unifying cause.
+0x22B8`) is now fully traced on the ROM/pipeline side: it carries its own
+authored `SetCombine`/`SetPrimColor([168,98,4])`, and the conversion
+pipeline is confirmed internally consistent (state-threading-bug
+hypothesis refuted). The only remaining step for Fox specifically is a
+live original-N64 reference capture of the wrist via the `n64-emulator`
+Skill (RE-276's own method) to check whether real hardware draws this
+authored geometry visibly at all, or keeps it hidden behind overlapping
+cuff/glove geometry at the original camera angle — this is the only way
+left to confirm or rule out hypothesis (b), since no further ROM-side
+diagnostic can add information now that the conversion itself is proven
+correct. Once Fox's specific defect is resolved, the other eight fighters'
+symptoms (Mario/Luigi missing buttons, Samus/Link/Yoshi/Falcon/Ness
+speckle, Pikachu/Kirby face-colour mismatch) remain open and untraced —
+check each against this same "does the node carry its own authored
+PRIM*SHADE colour" pattern first, since it may be a unifying (and, per
+this session's finding, likely *not* a porting-bug) cause.
 Physically confirming the PSP-1000 class remains the sole *physical*-matrix
 blocker (unchanged — no PSP-1000 unit available in this environment) but
 is secondary to RE-283 now that the renderer's own PPSSPP-software
