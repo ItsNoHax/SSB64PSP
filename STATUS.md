@@ -8,45 +8,56 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Fox's wrist-node defect colour is
-now fully explained and traced to its exact ROM-authored source (see "Last
-completed" below); the only remaining question for Fox specifically is
-whether real N64 hardware also draws it, which needs a live original-N64
-capture. The other eight fighters' symptoms remain untraced. This blocks
-resuming the physical R2 matrix (which was otherwise down to only the
-PSP-1000-availability blocker below) — do not treat R2's rendering gate as
-closed until RE-283 concludes.
+RE-272's now-closed Mario-face artifact. Fox's item is now fully closed
+(see "Last completed" below): its wrist-node defect colour is real,
+ROM-authored, correctly converted, and confirmed visible on real N64
+hardware — not a porting bug, no code change needed. The other eight
+fighters' symptoms remain untraced. This blocks resuming the physical R2
+matrix (which was otherwise down to only the PSP-1000-availability blocker
+below) — do not treat R2's rendering gate as closed until RE-283 concludes
+for the remaining 8 fighters.
 
-Last completed: `RE-283` (this session's fourth follow-up) — **traced
-state command-by-command across Fox's nodes 8/10/11 and found node 11 has
-its own real, ROM-authored `G_SETCOMBINE`/`G_SETPRIMCOLOR([168,98,4])`,
-refuting the state-threading-bug hypothesis.** Added temporary env-gated
-`eprintln!` instrumentation in `mesh::walk`/`emit_tri`/`State::apply_mobj`
-and a raw-command dump in `pack()` (both reverted after use,
-`git checkout --`), run through the same production conversion path
-`pack()` itself uses. Confirmed the node↔item mapping (`plan_draw_order`
-space 6/7/8/9 = nodes 8/10/11/12) and traced every `SetCombine`/
-`SetPrimColor`/`G_VTX`/`G_TRI`/`MObj`-material-call in order: node 8 ends
-its list on `PRIM=[168,98,4]` (matching the prior session's finding); node
-10 opens with its own fresh `SetCombine` and an `MObj` call
-(`state.apply_mobj`, a previously untraced colour-state path) that
-explicitly sets `PRIM=[239,239,165]`, not inherited from node 8; **node
-11's own raw display list at file 313 offset `0x22B8` — independently
-re-decoded from scratch this session, bypassing `convert_sequence`
-entirely — contains `SetCombine{hi:0x00327e05,lo:0xff17f7ff}` and
-`SetPrimColor{rgba:[168,98,4,255]}` before its `G_VTX`/triangles**,
-directly contradicting the prior session's raw-dump-based claim that node
-11 "never sets its own SetPrimColor/SetCombine" (that claim was wrong —
-either a bug in that session's throwaway diagnostic or a misread of its
-output). `plan_draw_order`/`convert_sequence`'s state model is internally
-consistent with the raw ROM command stream at every node checked; this is
-not a porting bug. The `#321d01` defect colour is exactly what the ROM's
-own authored display list, converted correctly, produces. Only hypothesis
-(b) remains open: whether real N64 hardware draws this same brown wrist
-sliver too, hidden behind overlapping cuff/glove geometry at the original
-camera angle, or is culled some other way this port does not reproduce —
-answerable only by a live original-N64 reference capture (`n64-emulator`
-Skill, RE-276's own method), not further ROM-side diagnostics. See
+Last completed: `RE-283` (this session's fifth follow-up) — **live
+original-N64 capture confirms real hardware draws Fox's brown wrist band
+too, closing Fox's item in the defect catalog with no code change.** Used
+RE-276's own decomp-rebuild warp technique (`refs/ssb-decomp-re`, temporary
+edits to `scmanager.c`/`sc1ptrainingmode.c`, reverted after use via
+`git checkout --`, rebuild reconfirmed byte-identical to `baserom.us.z64`
+afterward), adapted to target Fox instead of Mario as the Training Mode
+Close-Up camera's subject. `tools/run-n64-headless.sh` (offscreen,
+`n64-emulator` Skill) captured Fox in his default idle pose with the wrist
+in frame (one `ADVANCE_FRAME` timeout flake, a documented retryable
+stall — a bare retry succeeded cleanly). The captured wrist shows a smooth
+brown gradient band (`(153,89,4)` down to `(64,37,2)`, sampled directly)
+between the white cuff and white glove, unobscured — the same `[168,98,4]`
+PRIM colour the prior session derived analytically from the PSP pipeline,
+confirming hypothesis (b) and ruling out hypothesis (a): this is a
+faithful reproduction of authored ROM geometry/combiner state, visible on
+original hardware exactly as designed, not a hidden ROM quirk this port
+fails to reproduce. See `docs/evidence/re/RE-283.md` for images and full
+pixel-level detail.
+
+Before that, `RE-283` (fourth follow-up) — **traced state
+command-by-command across Fox's nodes 8/10/11 and found node 11 has its own
+real, ROM-authored `G_SETCOMBINE`/`G_SETPRIMCOLOR([168,98,4])`, refuting the
+state-threading-bug hypothesis.** Added temporary env-gated `eprintln!`
+instrumentation in `mesh::walk`/`emit_tri`/`State::apply_mobj` and a
+raw-command dump in `pack()` (both reverted after use, `git checkout --`),
+run through the same production conversion path `pack()` itself uses.
+Confirmed the node↔item mapping (`plan_draw_order` space 6/7/8/9 = nodes
+8/10/11/12) and traced every `SetCombine`/`SetPrimColor`/`G_VTX`/`G_TRI`/
+`MObj`-material-call in order: node 8 ends its list on `PRIM=[168,98,4]`
+(matching the prior session's finding); node 10 opens with its own fresh
+`SetCombine` and an `MObj` call (`state.apply_mobj`, a previously untraced
+colour-state path) that explicitly sets `PRIM=[239,239,165]`, not inherited
+from node 8; node 11's own raw display list at file 313 offset `0x22B8` —
+independently re-decoded from scratch that session, bypassing
+`convert_sequence` entirely — contains `SetCombine{hi:0x00327e05,
+lo:0xff17f7ff}` and `SetPrimColor{rgba:[168,98,4,255]}` before its
+`G_VTX`/triangles, directly contradicting an earlier session's raw-dump-
+based claim to the contrary (that claim was wrong). `plan_draw_order`/
+`convert_sequence`'s state model is internally consistent with the raw ROM
+command stream at every node checked; not a porting bug. See
 `docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
@@ -149,32 +160,33 @@ main.rs`'s temporary subcommand was reverted (`git checkout --`) after use.
 This session's own follow-up (the per-command state-trace instrumentation
 in `mesh.rs`/`main.rs` and the independent raw-command dump) likewise made
 no surviving production-code change — both reverted with `git checkout --`,
-`cargo test --workspace` reconfirmed 617/617 passing afterward; only
-`docs/evidence/re/RE-283.md` and this file were updated.
+`cargo test --workspace` reconfirmed 617/617 passing afterward. This
+session's own further follow-up (the live original-N64 capture) touched no
+`ssb64` production code at all: it temporarily patched `refs/ssb-decomp-re`
+(`scmanager.c`, `sc1ptrainingmode.c`), reverted both with `git checkout --`,
+and reconfirmed `build/smashbrothers.us.z64` byte-identical to
+`baserom.us.z64` afterward — only `docs/evidence/re/RE-283.md`, two new
+images (`docs/images/re283-fox-*.png`), `docs/evidence/INDEX.md`,
+`plans/rendering/R2.md`, and this file were updated.
 
 Required next action: continue root-causing RE-283's fighter texture/
-geometry defects. Fox's wrist node (local node 11 of graph `0x2938`, `dl
-0x22B8`) is now fully traced on the ROM/pipeline side: it carries its own
-authored `SetCombine`/`SetPrimColor([168,98,4])`, and the conversion
-pipeline is confirmed internally consistent (state-threading-bug
-hypothesis refuted). The only remaining step for Fox specifically is a
-live original-N64 reference capture of the wrist via the `n64-emulator`
-Skill (RE-276's own method) to check whether real hardware draws this
-authored geometry visibly at all, or keeps it hidden behind overlapping
-cuff/glove geometry at the original camera angle — this is the only way
-left to confirm or rule out hypothesis (b), since no further ROM-side
-diagnostic can add information now that the conversion itself is proven
-correct. Once Fox's specific defect is resolved, the other eight fighters'
-symptoms (Mario/Luigi missing buttons, Samus/Link/Yoshi/Falcon/Ness
-speckle, Pikachu/Kirby face-colour mismatch) remain open and untraced —
-check each against this same "does the node carry its own authored
-PRIM*SHADE colour" pattern first, since it may be a unifying (and, per
-this session's finding, likely *not* a porting-bug) cause.
-Physically confirming the PSP-1000 class remains the sole *physical*-matrix
-blocker (unchanged — no PSP-1000 unit available in this environment) but
-is secondary to RE-283 now that the renderer's own PPSSPP-software
-correctness is back in question. Do not start R3 or combat before both
-RE-283 and R2's physical matrix are closed.
+geometry defects for the remaining 8 fighters. Fox's item is now fully
+closed — the wrist-node defect colour is real, ROM-authored, correctly
+converted by this project's pipeline, and confirmed visible on real N64
+hardware (live capture, `n64-emulator` Skill), so it needed and got no code
+change. The other eight fighters' symptoms (Mario/Luigi missing buttons,
+Samus/Link/Yoshi/Falcon/Ness speckle, Pikachu/Kirby face-colour mismatch)
+remain open and untraced — check each against the same "does the node
+carry its own authored PRIM*SHADE colour" pattern first (Fox's own
+mechanism), but do not assume the same "visible on real hardware, not a
+bug" conclusion generalizes; each needs its own trace and, if a colour/
+geometry source is found, potentially its own original-hardware visibility
+check the way Fox got. Physically confirming the PSP-1000 class remains the
+sole *physical*-matrix blocker (unchanged — no PSP-1000 unit available in
+this environment) but is secondary to RE-283 now that the renderer's own
+PPSSPP-software correctness is back in question for the remaining 8
+fighters. Do not start R3 or combat before both RE-283 and R2's physical
+matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
