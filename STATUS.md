@@ -8,123 +8,94 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Fox's item is now fully closed
-(see "Last completed" below): its wrist-node defect colour is real,
-ROM-authored, correctly converted, and confirmed visible on real N64
-hardware — not a porting bug, no code change needed. The other eight
-fighters' symptoms remain untraced. This blocks resuming the physical R2
-matrix (which was otherwise down to only the PSP-1000-availability blocker
-below) — do not treat R2's rendering gate as closed until RE-283 concludes
-for the remaining 8 fighters.
+RE-272's now-closed Mario-face artifact. Two of nine items are now closed:
+Fox's wrist-node defect colour is real, ROM-authored, correctly converted,
+and confirmed visible on real N64 hardware (live capture) — not a porting
+bug, no code change needed. Mario/Luigi's missing-button symptom is closed
+on source-fidelity grounds — the button exists in the raw ROM texture, but
+the ROM's own `G_SETTILESIZE` clamp window and vertex UVs clip nearly all
+of it away, matching this project's already-proven archive-wide addressing
+model; no live-hardware capture taken for this one (medium-high, not Fox's
+high, confidence). Samus's chest/thigh speckle is narrowed to two candidate
+ROM-authored CI4 textures (both decode cleanly from ROM, so not a decode
+bug) but not yet pinned to the exact defect pixels — still open. Six
+fighters (Samus, Link, Yoshi, Captain Falcon, Ness, Pikachu, Kirby) remain
+untraced. This blocks resuming the physical R2 matrix (which was otherwise
+down to only the PSP-1000-availability blocker below) — do not treat R2's
+rendering gate as closed until RE-283 concludes for the remaining 6+1
+(Samus partial) fighters.
 
-Last completed: `RE-283` (this session's fifth follow-up) — **live
-original-N64 capture confirms real hardware draws Fox's brown wrist band
-too, closing Fox's item in the defect catalog with no code change.** Used
-RE-276's own decomp-rebuild warp technique (`refs/ssb-decomp-re`, temporary
-edits to `scmanager.c`/`sc1ptrainingmode.c`, reverted after use via
-`git checkout --`, rebuild reconfirmed byte-identical to `baserom.us.z64`
-afterward), adapted to target Fox instead of Mario as the Training Mode
-Close-Up camera's subject. `tools/run-n64-headless.sh` (offscreen,
-`n64-emulator` Skill) captured Fox in his default idle pose with the wrist
-in frame (one `ADVANCE_FRAME` timeout flake, a documented retryable
-stall — a bare retry succeeded cleanly). The captured wrist shows a smooth
-brown gradient band (`(153,89,4)` down to `(64,37,2)`, sampled directly)
-between the white cuff and white glove, unobscured — the same `[168,98,4]`
-PRIM colour the prior session derived analytically from the PSP pipeline,
-confirming hypothesis (b) and ruling out hypothesis (a): this is a
-faithful reproduction of authored ROM geometry/combiner state, visible on
-original hardware exactly as designed, not a hidden ROM quirk this port
-fails to reproduce. See `docs/evidence/re/RE-283.md` for images and full
-pixel-level detail.
+Last completed: `RE-283` (this session's sixth follow-up) — **Mario/Luigi's
+"missing overalls buttons" item closed; Samus's "chest/thigh speckle" item
+narrowed but not concluded.** Built two small, scoped `tools/romtool`
+diagnostics (`dlraw`: raw display-list decode straight from file bytes,
+bypassing `convert_sequence`/segment resolution entirely; `vtxraw`: raw
+`Vtx` pos/uv/rgba dump), sanity-checked `dlraw` against Fox's
+already-published node 11 result before trusting it on new content, then
+reverted both (`git checkout --`) after use, matching this session's own
+established convention for exploratory instrumentation. Mario: found the
+button texture (`file 296 offset 0x65F0`, 32x24 CI4) genuinely contains a
+yellow disc, bound by the torso node's `SetTile`/`SetTileSize` (`uls:128
+ult:32 lrs:380 lrt:124` → texel window S:[32,95] T:[8,31], clamp on T),
+which clips away all but a ~6x2-texel sliver of the button (source rows
+0-7 of 0-9 are outside the clamped/loaded window) — a raw ROM-authored
+fact, not a decode bug, and consistent with the same tile-addressing model
+`R2.0`/P0b-P0d already proved archive-wide-zero-divergence for this exact
+shape (clamped, mirrored, non-zero-origin tile). Closed without a
+live-N64 capture (medium-high confidence, not Fox's high). Samus: her
+common-parts file is 320 (not her `FighterFile` model file 217, same
+"common parts file ≠ model file" shape as Fox's file 313); two raw CI4
+textures (`file 320` offsets `0xC9D8` — grey/red/green-checkerboard/blue,
+bound by the head/neck node 9 — and `0xC408` — olive-green camo, bound by
+the left-arm/cannon-chain node 12) are plausible sources for the
+chest-region "speckle" and both decode cleanly straight from ROM bytes
+(ruling out a corrupted-texel bug specifically), but which node's
+triangles actually paint the flagged screen pixels was not proven this
+session (the geometric reasoning used is circumstantial, unlike Fox's
+proven per-triangle trace) — left open with a concrete next step recorded
+in `docs/evidence/re/RE-283.md` (either a `mesh::walk` instrumentation pass
+like Fox's, or a marker-colour palette override + re-capture). No
+production code changed this session — only `docs/evidence/re/RE-283.md`,
+`docs/evidence/INDEX.md`, `plans/rendering/R2.md`, and this file were
+updated; `tools/romtool/src/main.rs`'s temporary `dlraw`/`vtxraw`
+subcommands were reverted after use, `assets/generated/ssb64.pak` and
+`crates/ssb-rom` are unchanged.
 
-Before that, `RE-283` (fourth follow-up) — **traced state
-command-by-command across Fox's nodes 8/10/11 and found node 11 has its own
-real, ROM-authored `G_SETCOMBINE`/`G_SETPRIMCOLOR([168,98,4])`, refuting the
-state-threading-bug hypothesis.** Added temporary env-gated `eprintln!`
-instrumentation in `mesh::walk`/`emit_tri`/`State::apply_mobj` and a
-raw-command dump in `pack()` (both reverted after use, `git checkout --`),
-run through the same production conversion path `pack()` itself uses.
-Confirmed the node↔item mapping (`plan_draw_order` space 6/7/8/9 = nodes
-8/10/11/12) and traced every `SetCombine`/`SetPrimColor`/`G_VTX`/`G_TRI`/
-`MObj`-material-call in order: node 8 ends its list on `PRIM=[168,98,4]`
-(matching the prior session's finding); node 10 opens with its own fresh
-`SetCombine` and an `MObj` call (`state.apply_mobj`, a previously untraced
-colour-state path) that explicitly sets `PRIM=[239,239,165]`, not inherited
-from node 8; node 11's own raw display list at file 313 offset `0x22B8` —
-independently re-decoded from scratch that session, bypassing
-`convert_sequence` entirely — contains `SetCombine{hi:0x00327e05,
-lo:0xff17f7ff}` and `SetPrimColor{rgba:[168,98,4,255]}` before its
-`G_VTX`/triangles, directly contradicting an earlier session's raw-dump-
-based claim to the contrary (that claim was wrong). `plan_draw_order`/
-`convert_sequence`'s state model is internally consistent with the raw ROM
-command stream at every node checked; not a porting bug. See
-`docs/evidence/re/RE-283.md`.
+Before that, `RE-283` (fifth follow-up) — **live original-N64 capture
+confirms real hardware draws Fox's brown wrist band too, closing Fox's item
+in the defect catalog with no code change.** Used RE-276's own decomp-rebuild
+warp technique (`refs/ssb-decomp-re`, temporary edits to `scmanager.c`/
+`sc1ptrainingmode.c`, reverted after use via `git checkout --`, rebuild
+reconfirmed byte-identical to `baserom.us.z64` afterward), adapted to target
+Fox instead of Mario as the Training Mode Close-Up camera's subject.
+`tools/run-n64-headless.sh` (offscreen, `n64-emulator` Skill) captured Fox
+in his default idle pose with the wrist in frame. The captured wrist shows a
+smooth brown gradient band (`(153,89,4)` down to `(64,37,2)`, sampled
+directly) between the white cuff and white glove, unobscured — the same
+`[168,98,4]` PRIM colour the prior session derived analytically from the PSP
+pipeline, confirming this is a faithful reproduction of authored ROM
+geometry/combiner state, visible on original hardware exactly as designed.
+See `docs/evidence/re/RE-283.md` for images and full pixel-level detail.
+
+Before that, `RE-283` (fourth follow-up) — traced state command-by-command
+across Fox's nodes 8/10/11 and found node 11 has its own real, ROM-authored
+`G_SETCOMBINE`/`G_SETPRIMCOLOR([168,98,4])`, refuting the
+state-threading-bug hypothesis. See `docs/evidence/re/RE-283.md`.
 
 Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
 nibble-order fix on real PSP hardware.** Built
 `cargo psp --release --features regression_capture_mario` (PRX SHA-256
 `dacdd5907d743fea5b478b73eb67018b2f3f01a4f0182d33bb257b45dc04219a`) against
 the unchanged RE-281 pack
-(`0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368`). Loaded
-on a PSP Slim (firmware 6.61, ARK/Infinity, PSPLink v3.2.1) via `host0:`
-(fixed a stale USB-permission issue first: the `50-psplink.rules` udev rule
-was present but hadn't applied to the already-enumerated device node; a
-cable replug re-triggered udev and fixed it, no rule change needed). `reset`
-issued before load per this project's own PSPLink convention. Zero
-exceptions (`exlist` empty, `main_thread` alive in `thlist`) after the
-240-tick deterministic-capture freeze. Native `scrshot` capture
-(SHA-256 `5e72668e314e3a3f25ec8711731e0a8c58312b7d3b9ea575b1216413fcd417e0`,
-not committed) shows Mario's cap "M" emblem rendering clean and
-correctly-rounded, with no repeating adjacent-texel-pair-swap artifact —
-RE-272's original named complaint. Quantitative diff against
-`tests/golden/r2-mario-fighter.png` (box-downsampled to the hardware
-capture's resolution, PSPLink overlay region excluded): 349/130,560 pixels
-(0.27%) exceed a 30-level threshold, consistent with this project's existing
-hardware-vs-PPSSPP antialiasing noise floor (RE-203/RE-207), not a new
-defect. This closes the one remaining item RE-281's own Confidence note
-named; the RE-272→RE-281 investigation chain is now fully closed on both
-PPSSPP and real hardware. Shut down cleanly (`kill`, `reset`,
-`usbhostfs_pc` stopped). No production code changed this session; only
-`docs/evidence/re/RE-282.md` added, `docs/evidence/INDEX.md` regenerated,
-and `plans/rendering/R2.md`/this file updated.
+(`0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368`). Zero
+exceptions after the 240-tick deterministic-capture freeze; native `scrshot`
+capture shows Mario's cap "M" emblem rendering clean, closing RE-272's
+chain fully on both PPSSPP and real hardware.
 
-Before that, `RE-281` — applied RE-280's identified `Ci4`/`PsmT4`
-nibble-order fix and closed RE-272's Mario-face bug on PPSSPP software
-rendering. Flipped all three coordinated sites in
-`crates/ssb-rom/src/psp_texture.rs` together (`encode_level`'s `PsmT4`
-branch, `pack_indexed`'s straight ROM-copy path — now swaps nibbles instead
-of copying unchanged — and `pad_edge_repeat_nibbles`'s `get`/`set`
-convention), and updated `ci4_packing_round_trips_through_swizzle_and_clut`'s
-`unpack_ci4` test helper plus four literal-byte-value test assertions to the
-corrected convention. `cargo test -p ssb-rom psp_texture`: 44/44 pass;
-`cargo test --workspace`: 617/617 pass; `cargo fmt --all --check`: clean.
-Rebuilt `assets/generated/ssb64.pak` from the verified local ROM (same
-28,531.3 KiB size, new hash `0065c65d...e277a368`, was `a79b0aa9...5935f`).
-Re-ran the full 22-scene deterministic regression matrix against the rebuilt
-pack: 18 goldens changed, 4 did not (`r1-catch-swirl-flat-color.png`,
-`r2-depth-mask-diagnostic.png`, `r2-dk-fighter.png`, `r2-kirby-fighter.png`
-— consistent with RE-280's own prediction that the bug is least visible on
-smoothly-shaded content or bytes whose two nibbles happen to be equal).
-Refreshed all 18 changed goldens; every changed pixel traces to the same
-single cause (corrected `Ci4` texel decode), not a rendering regression.
-
-Before that, `RE-280` found RE-272/274's Mario-face bug's actual root
-cause: `ssb_rom::psp_texture`'s `Ci4` (`PsmT4`) packing packed two 4-bit
-texels per byte high-nibble-first, "matching the N64 order" — but PPSSPP's
-`PsmT4` reader (the deterministic golden source this project already trusts
-for GE addressing) wants the opposite order, low nibble first. Before that,
-`RE-279` confirmed RE-274's real primitive is correctly routed through
-`meshdraw`'s signed-UV float path. Before that, `RE-278` built a permanent
-measurement rig ruling out "the GE mis-samples a known fixed coordinate near
-[the clamp] boundary" as RE-272's cause. Before that, `RE-277` ran a dense
-per-texel sweep ruling out the addressing *formula* itself. Before that,
-`RE-276` — a live N64 reference render of Mario's face renders clean, no
-repeating pattern — evidence for "real PSP-side addressing/scale bug" over
-"faithfully-reproduced ROM quirk". Before that, `RE-273` physically
-confirmed the renderer on a second hardware unit (PSP-3000): scene1,
-depth-mask diagnostic (RE-271's fix holds), Mario fighter capture,
-10-minute sustained run, zero exceptions throughout — and that Mario
-capture surfaced `RE-272`, now closed as described above.
+Before that, `RE-281` applied RE-280's identified `Ci4`/`PsmT4` nibble-order
+fix and closed RE-272's Mario-face bug on PPSSPP software rendering. Full
+detail of RE-272 through RE-280's root-causing chain: see
+`docs/evidence/re/RE-280.md` and `docs/evidence/re/RE-281.md`.
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
@@ -132,61 +103,41 @@ the PSP-3000 tested so far is in that RAM class. No dedicated capture scenes
 exist yet for full stage/effect coverage or runs longer than 10 minutes.
 None of these block R2.2 (closed) — they gate the *physical* R2 matrix only,
 and are deliberately deferred until the game structure grows beyond the
-asset viewer. RE-272's face-texture bug (root-caused by RE-280, fixed by
-RE-281, physically re-confirmed by RE-282) is now fully closed on both
-PPSSPP and real hardware — no longer part of the deferred physical-matrix
-follow-up.
+asset viewer. RE-272's face-texture bug is fully closed on both PPSSPP and
+real hardware — no longer part of the deferred physical-matrix follow-up.
 
 Current verification baseline: `cargo fmt --all --check` clean; `cargo test
 --workspace` 617 passed; all 22 deterministic goldens exact against the
-rebuilt pack (18 refreshed by RE-281, each with its semantic delta explained
-— see RE-281 and `docs/visual-regression/README.md`); effects 46/46 manager
-objects, 35/35 transform + 24/26 material animations, 160/160 particle
-scripts; 109 billboards, 0 anomalies; 11/11 framebuffer transitions; `romtool
-texgen --verify` pass; plain feature-free `cargo psp --release` pass; strict
-Clippy not clean (3 pre-existing `needless_range_loop` lints in
-`coord.rs`/`matanim.rs`/`objanim.rs`, unrelated to this work). This session
-(RE-282) made no production-code change; it built
-`--features regression_capture_mario` and `--release` PRXes for hardware
-loading only. `assets/generated/ssb64.pak` is unchanged from RE-281's
-rebuild. RE-283 also lands with no surviving production-code change: its one
-tested hypothesis (widen the CI4 swizzle-eligibility floor) was patched,
-measured (0-pixel-diff PPSSPPHeadless capture against the existing golden),
-rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
-`assets/generated/ssb64.pak` are both back to their RE-281 state. This
-session's own follow-up (the `vtxdump` diagnostic and node 11 material
-trace) also made no surviving production-code change: `tools/romtool/src/
-main.rs`'s temporary subcommand was reverted (`git checkout --`) after use.
-This session's own follow-up (the per-command state-trace instrumentation
-in `mesh.rs`/`main.rs` and the independent raw-command dump) likewise made
-no surviving production-code change — both reverted with `git checkout --`,
-`cargo test --workspace` reconfirmed 617/617 passing afterward. This
-session's own further follow-up (the live original-N64 capture) touched no
-`ssb64` production code at all: it temporarily patched `refs/ssb-decomp-re`
-(`scmanager.c`, `sc1ptrainingmode.c`), reverted both with `git checkout --`,
-and reconfirmed `build/smashbrothers.us.z64` byte-identical to
-`baserom.us.z64` afterward — only `docs/evidence/re/RE-283.md`, two new
-images (`docs/images/re283-fox-*.png`), `docs/evidence/INDEX.md`,
-`plans/rendering/R2.md`, and this file were updated.
+rebuilt pack; effects 46/46 manager objects, 35/35 transform + 24/26
+material animations, 160/160 particle scripts; 109 billboards, 0 anomalies;
+11/11 framebuffer transitions; `romtool texgen --verify` pass; plain
+feature-free `cargo psp --release` pass; strict Clippy not clean (3
+pre-existing `needless_range_loop` lints, unrelated to this work). This
+session (RE-283's sixth follow-up) made no surviving production-code
+change — `tools/romtool/src/main.rs`'s temporary `dlraw`/`vtxraw`
+subcommands were added, used, and reverted (`git checkout --`); `cargo
+build -p romtool` reconfirmed clean afterward. `assets/generated/ssb64.pak`
+and `crates/ssb-rom`/`crates/psp` are unchanged from RE-281's rebuild.
 
 Required next action: continue root-causing RE-283's fighter texture/
-geometry defects for the remaining 8 fighters. Fox's item is now fully
-closed — the wrist-node defect colour is real, ROM-authored, correctly
-converted by this project's pipeline, and confirmed visible on real N64
-hardware (live capture, `n64-emulator` Skill), so it needed and got no code
-change. The other eight fighters' symptoms (Mario/Luigi missing buttons,
-Samus/Link/Yoshi/Falcon/Ness speckle, Pikachu/Kirby face-colour mismatch)
-remain open and untraced — check each against the same "does the node
-carry its own authored PRIM*SHADE colour" pattern first (Fox's own
-mechanism), but do not assume the same "visible on real hardware, not a
-bug" conclusion generalizes; each needs its own trace and, if a colour/
-geometry source is found, potentially its own original-hardware visibility
-check the way Fox got. Physically confirming the PSP-1000 class remains the
-sole *physical*-matrix blocker (unchanged — no PSP-1000 unit available in
-this environment) but is secondary to RE-283 now that the renderer's own
-PPSSPP-software correctness is back in question for the remaining 8
-fighters. Do not start R3 or combat before both RE-283 and R2's physical
-matrix are closed.
+geometry defects for the remaining fighters. Fox and Mario/Luigi are now
+closed. Samus is narrowed (candidate nodes/textures identified, both
+confirmed not corrupted) but needs either a `mesh::walk`-style per-triangle
+instrumentation pass (Fox's own precedent) or a marker-colour palette
+override + `regression_capture_samus` re-capture to confirm which node
+paints the flagged pixels — see `docs/evidence/re/RE-283.md`'s Samus
+section for the exact next command. Link, Yoshi, Captain Falcon, Ness,
+Pikachu, Kirby remain fully untraced — check each against the same "does
+the node carry its own authored PRIM*SHADE colour, or a ROM-authored
+tile-addressing/UV quirk" pattern first (Fox's and Mario's own mechanisms),
+but do not assume either conclusion generalizes; each needs its own trace
+and, where a colour/geometry source is found, potentially its own
+original-hardware visibility check the way Fox got. Physically confirming
+the PSP-1000 class remains the sole *physical*-matrix blocker (unchanged —
+no PSP-1000 unit available in this environment) but is secondary to RE-283
+now that the renderer's own PPSSPP-software correctness is back in question
+for the remaining fighters. Do not start R3 or combat before both RE-283
+and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
