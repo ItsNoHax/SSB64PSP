@@ -4,18 +4,26 @@ Milestone: `R2 — Physical PSP Rendering Validation`
 Primary task: complete the remaining physical-hardware matrix
 Task state: `IN_PROGRESS`
 
-Current objective: physically confirm the parts of R2's matrix not yet
-covered on real hardware. All 12 playable fighters, the depth-mask
-diagnostic, and a 10-minute sustained run are confirmed on PSP Slim/6.6.1;
-the depth-mask diagnostic, a Mario fighter capture, and a second 10-minute
-sustained run are also confirmed on a second unit, PSP-3000. RE-281's
-`Ci4`/`PsmT4` nibble-order fix (closing RE-272's Mario-face bug) is now
-physically re-confirmed on the PSP Slim (RE-282). PSP-1000 coverage (32 MiB
-RAM, distinct from both units tested so far) remains the sole open item in
-the physical matrix, deliberately deferred until the game structure grows
-beyond the current asset viewer — no PSP-1000 unit is available.
+Current objective: `RE-283` reopened the fighter-texture quality gate —
+user-reported visual defects (missing Mario/Luigi overalls buttons, texture
+speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
+mismatch) are confirmed real on the current RE-281 pack, separate from
+RE-272's now-closed Mario-face artifact. Fox's forearm/glove speckle is
+confirmed pixel-level against the raw ROM texture (clean — the defect is
+pipeline-introduced); the CI4 swizzle-threshold hypothesis was tested
+(patched, rebuilt, re-captured, measured 0 pixel difference) and rejected,
+then cleanly reverted. Root cause not yet found for any of the nine
+symptoms; next step is RE-274-style per-draw-call DL tracing on Fox's
+glove/forearm primitive. This blocks resuming the physical R2 matrix (which
+was otherwise down to only the PSP-1000-availability blocker below) — do
+not treat R2's rendering gate as closed until RE-283 concludes.
 
-Last completed: `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
+Last completed: `RE-283` — **catalogued nine fighters' worth of
+user-reported texture/geometry defects, confirmed at least one (Fox) at
+pixel level against the raw ROM, and tested-and-rejected one hypothesis
+(CI4 swizzle-threshold).** See `docs/evidence/re/RE-283.md`.
+
+Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
 nibble-order fix on real PSP hardware.** Built
 `cargo psp --release --features regression_capture_mario` (PRX SHA-256
 `dacdd5907d743fea5b478b73eb67018b2f3f01a4f0182d33bb257b45dc04219a`) against
@@ -104,19 +112,26 @@ Clippy not clean (3 pre-existing `needless_range_loop` lints in
 (RE-282) made no production-code change; it built
 `--features regression_capture_mario` and `--release` PRXes for hardware
 loading only. `assets/generated/ssb64.pak` is unchanged from RE-281's
-rebuild.
+rebuild. RE-283 also lands with no surviving production-code change: its one
+tested hypothesis (widen the CI4 swizzle-eligibility floor) was patched,
+measured (0-pixel-diff PPSSPPHeadless capture against the existing golden),
+rejected, and reverted — `crates/ssb-rom/src/psp_texture.rs` and
+`assets/generated/ssb64.pak` are both back to their RE-281 state.
 
-Required next action: resume the physical R2 matrix if PSP-1000 hardware
-becomes available; otherwise record the concrete access blocker (unchanged
-from before — no PSP-1000 unit is available in this environment). No other
-item is currently open in the physical matrix. Do not start R3 or combat
-before R2's physical matrix is closed.
+Required next action: root-cause RE-283's fighter texture/geometry defects
+(start with Fox's forearm/glove speckle — the one already pixel-confirmed
+against the raw ROM — using RE-274's per-draw-call DL-trace method) before
+treating R2's rendering gate as closed. Physically confirming the PSP-1000
+class remains the sole *physical*-matrix blocker (unchanged — no PSP-1000
+unit available in this environment) but is secondary to RE-283 now that the
+renderer's own PPSSPP-software correctness is back in question. Do not
+start R3 or combat before both RE-283 and R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
 RE-273, RE-274, RE-275, RE-276, RE-277, RE-278, RE-279, RE-280, RE-281,
-RE-282 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full
-R2.2/physical chain, RE-240–282). Toolchain note: the global `cargo-psp`
+RE-282, RE-283 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the
+full R2.2/physical chain, RE-240–283). Toolchain note: the global `cargo-psp`
 install is a hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
