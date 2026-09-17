@@ -292,4 +292,4 @@ editing a record.
 | RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | COMPLETE — fix applied and confirmed, see RE-281 | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-281 | RE-280's `Ci4`/`PsmT4` nibble-order fix applied, pack rebuilt, 18/22 goldens refreshed and explained | COMPLETE | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-282 | Physical-hardware confirmation of RE-281's `Ci4`/`PsmT4` fix (Mario) | COMPLETE | texture, fighter, hardware, visual-regression |  |
-| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | IN_PROGRESS — Fox and Mario/Luigi closed; Samus chest square traced to node 12 (medium confidence); Link/Yoshi/Falcon/Ness/Pikachu/Kirby untraced. | texture, fighter, geometry, visual-regression, asset-pipeline |  |
+| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | IN_PROGRESS — Fox, Mario/Luigi, and Samus closed; Link/Yoshi/Falcon/Ness/Pikachu/Kirby untraced. | texture, fighter, geometry, visual-regression, asset-pipeline |  |

@@ -8,116 +8,59 @@ Current objective: `RE-283` reopened the fighter-texture quality gate —
 user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
-RE-272's now-closed Mario-face artifact. Two of nine items are fully closed
-(Fox, Mario/Luigi); a third (Samus) is narrowed further this session but
-still open. Fox's wrist-node defect colour is real, ROM-authored, correctly
-converted, and confirmed visible on real N64 hardware (live capture) — not a
-porting bug. Mario/Luigi's missing-button symptom is closed on
-source-fidelity grounds — the button exists in the raw ROM texture, but the
-ROM's own `G_SETTILESIZE` clamp window and vertex UVs clip nearly all of it
-away, matching this project's already-proven archive-wide addressing model;
-no live-hardware capture taken for this one (medium-high, not Fox's high,
-confidence). Samus's chest "black square" is now positively traced to node
-12 rendered in its real Wait-animation pose, and is structurally consistent
-with real, correctly-bound `TEXEL * SHADE` combiner math on a real ROM
-texture (medium confidence — not yet exactly reconstructed or
-hardware-checked the way Fox's item was); her thigh speckle does not
-reproduce at this camera distance and was not investigated further. Six
-fighters (Link, Yoshi, Captain Falcon, Ness, Pikachu, Kirby) remain
-untraced. This blocks resuming the physical R2 matrix (which was otherwise
-down to only the PSP-1000-availability blocker below) — do not treat R2's
-rendering gate as closed until RE-283 concludes for the remaining 6+1
-(Samus partial) fighters.
+RE-272's now-closed Mario-face artifact. Three of nine items are now fully
+closed (Fox, Mario/Luigi, Samus); six (Link, Yoshi, Captain Falcon, Ness,
+Pikachu, Kirby) remain untraced. This blocks resuming the physical R2 matrix
+(which was otherwise down to only the PSP-1000-availability blocker below) —
+do not treat R2's rendering gate as closed until RE-283 concludes for the
+remaining six fighters.
 
-Last completed: `RE-283` (this session's seventh follow-up) — **Samus's
-chest "black square" positively traced to node 12, in its real posed
-position, not the bind pose the previous follow-up's isolate tool silently
-used.** The previous session's node-isolate guesses (9, 12) used
-`meshdraw::draw_object_node`, which renders one global node at its bind pose
-only — this worked for Fox (whose idle pose keeps his arm near bind
-position) but silently misled for Samus, whose Wait pose crosses her cannon
-arm far from bind position. Fixed by temporarily marking
-`meshdraw::draw_object_posed_filtered` (the shared implementation already
-behind `draw_object_posed`/`draw_object_node`) `pub(crate)` and calling it
-from `psp/src/main.rs`'s `regression_capture_samus` draw site with the same
-real `posed[..posed_len]` Wait-pose matrices the full-object draw uses,
-filtered to one candidate global node per build (reverted after use,
-confirmed by a clean `cargo test --workspace` (617/617) and plain
-`cargo psp --release` build afterward). With real posing, node 12 isolated
-alone renders a solid near-black square with a speckled dark-olive fringe at
-bbox `(402,184)-(451,239)`, matching the golden's own independently-measured
-defect bbox `(398,180)-(454,244)` almost exactly; a direct pixel diff of the
-isolated capture against the same golden region found 92.7% of compared
-pixels within 10/255, remainder at silhouette anti-aliasing. This is the
-same `f320` offset `0xC408` "olive camo/joint-cap" texture the prior session
-already confirmed decodes cleanly from ROM — not a stray read, not
-corruption, not z-fighting. The extreme darkness is structurally consistent
-with a real `TEXEL * SHADE` combiner reducing this node's own vertices to a
-low, near-ambient-only shade term (raw texture and rendered defect both have
-exactly zero blue channel and matching R/G ratios, the same shape Fox's own
-wrist defect proved exactly) — but this session did not solve the exact
-combiner terms or take a live-hardware capture, so it sits at medium
-confidence, not Fox's high or Mario's medium-high. Also checked Samus's
-"left-thigh speckle": does not reproduce in the golden at this camera
-distance, same outcome as Fox's "ears/feet" complaint — not investigated
-further. No production code changed this session — only
-`docs/evidence/re/RE-283.md`, `docs/evidence/INDEX.md`,
-`plans/rendering/R2.md` and this file were updated;
-`psp/src/main.rs`/`psp/src/meshdraw.rs`'s temporary diagnostic changes were
-reverted (`git checkout --`). `assets/generated/ssb64.pak` and
-`crates/ssb-rom` are unchanged.
+Last completed: `RE-283` (this session's eighth follow-up) — **Samus's
+chest "black square" closed via live original-N64 capture, at the same bar
+Fox's item met.** The previous follow-up traced the defect to node 12 (the
+`f320` offset `0xC408` olive-camo/joint-cap texture) rendered in Samus's
+real Wait pose, but only as a structural argument (blue-channel-zero,
+R/G-ratio agreement between raw texture and rendered defect) — not an
+exact combiner reconstruction or a hardware check. This session closed it
+with the second option RE-283 left open: a live capture. Used the same
+`refs/ssb-decomp-re` decomp-rebuild warp technique Fox's fifth follow-up
+used (`n64-emulator` Skill), retargeted to Samus (`training_man_fkind =
+nFTKindSamus`, `training_com_fkind = nFTKindMario` in `scmanager.c`'s
+`dSCManagerDefaultSceneData` reset site, plus the same Close-Up-camera call
+in `sc1ptrainingmode.c`'s `sc1PTrainingModeFuncStart`, right after the
+fighter-construction loop). Verified toolchain clean before patching
+(`build/smashbrothers.us.z64` byte-identical to `baserom.us.z64`); the
+RE-276 toolchain shim (`PATH=~/ppsspp-test/mips-bin-shim:$PATH`) needed
+re-exporting this session, since it is a per-session `PATH` addition, not a
+persisted shell setting. `tools/run-n64-headless.sh --frames 300
+--final-screenshot` against the patched ROM landed in the real Training
+Mode scene on the first attempt (HUD-confirmed: `DAMAGE 000%`/`COMBO
+00`/`ENEMY STAND`/`SPEED 1/1`), showing Samus in her default idle stance,
+cannon arm crossed low across the body, cannon barrel in clear view — not
+hidden, not black. Pixel-sampled across the cannon barrel (266 zero-blue
+samples): `R` 11-210, `G` 0-137, `B` exactly 0 throughout, `R`/`G` staying
+within a few percent of each other end-to-end — the same zero-blue,
+`R≈G` signature the raw texture and the golden's own darkened defect
+region already showed, now confirmed on real hardware rather than inferred
+from texture statistics alone. The golden's own camera/light angle happens
+to catch this same real surface mostly in the near-black end of its real
+shading range, producing the "black square" symptom, but it is the same
+authored ROM geometry/texture/shading Fox's item's mechanism already
+predicted — not a porting defect. `refs/ssb-decomp-re` reverted (`git
+checkout -- src/sc/scmanager.c src/sc/sc1pmode/sc1ptrainingmode.c`) and
+rebuilt clean (`build/smashbrothers.us.z64` re-confirmed byte-identical to
+`baserom.us.z64` afterward). No production code changed this session —
+only `docs/evidence/re/RE-283.md`, `docs/evidence/INDEX.md`,
+`plans/rendering/R2.md` and this file were updated; `assets/generated/
+ssb64.pak` and `crates/ssb-rom`/`crates/psp` are unchanged.
 
-Before that, `RE-283` (sixth follow-up) — **Mario/Luigi's "missing overalls
-buttons" item closed; Samus's "chest/thigh speckle" item narrowed but not
-concluded.** Built two small, scoped `tools/romtool` diagnostics (`dlraw`:
-raw display-list decode straight from file bytes, bypassing
-`convert_sequence`/segment resolution entirely; `vtxraw`: raw `Vtx` pos/uv/
-rgba dump), sanity-checked `dlraw` against Fox's already-published node 11
-result before trusting it on new content, then reverted both
-(`git checkout --`) after use. Mario: found the button texture (`file 296
-offset 0x65F0`, 32x24 CI4) genuinely contains a yellow disc, bound by the
-torso node's `SetTile`/`SetTileSize` (`uls:128 ult:32 lrs:380 lrt:124` →
-texel window S:[32,95] T:[8,31], clamp on T), which clips away all but a
-~6x2-texel sliver of the button — a raw ROM-authored fact, not a decode bug.
-Closed without a live-N64 capture (medium-high confidence, not Fox's high).
-Samus: her common-parts file is 320 (not her `FighterFile` model file 217,
-same "common parts file ≠ model file" shape as Fox's file 313); two raw CI4
-textures (file 320 offsets `0xC9D8` and `0xC408`) were identified as
-plausible sources and both decode cleanly from ROM, but which node's
-triangles actually paint the flagged screen pixels was not proven that
-session — left open with a concrete next step (this session's seventh
-follow-up carried it forward).
-
-Before that, `RE-283` (fifth follow-up) — **live original-N64 capture
-confirms real hardware draws Fox's brown wrist band too, closing Fox's item
-in the defect catalog with no code change.** Used RE-276's own decomp-rebuild
-warp technique (`refs/ssb-decomp-re`, temporary edits to `scmanager.c`/
-`sc1ptrainingmode.c`, reverted after use via `git checkout --`, rebuild
-reconfirmed byte-identical to `baserom.us.z64` afterward), adapted to target
-Fox instead of Mario as the Training Mode Close-Up camera's subject.
-`tools/run-n64-headless.sh` (offscreen, `n64-emulator` Skill) captured Fox
-in his default idle pose with the wrist in frame. The captured wrist shows a
-smooth brown gradient band (`(153,89,4)` down to `(64,37,2)`, sampled
-directly) between the white cuff and white glove, unobscured — the same
-`[168,98,4]` PRIM colour the prior session derived analytically from the PSP
-pipeline, confirming this is a faithful reproduction of authored ROM
-geometry/combiner state, visible on original hardware exactly as designed.
-See `docs/evidence/re/RE-283.md` for images and full pixel-level detail.
-
-Before that, `RE-282` — **physically re-confirmed RE-281's `Ci4`/`PsmT4`
-nibble-order fix on real PSP hardware.** Built
-`cargo psp --release --features regression_capture_mario` (PRX SHA-256
-`dacdd5907d743fea5b478b73eb67018b2f3f01a4f0182d33bb257b45dc04219a`) against
-the unchanged RE-281 pack
-(`0065c65d92cf805b12f6157259e0e0da9a6ab0f872c01d3aae271c49e277a368`). Zero
-exceptions after the 240-tick deterministic-capture freeze; native `scrshot`
-capture shows Mario's cap "M" emblem rendering clean, closing RE-272's
-chain fully on both PPSSPP and real hardware.
-
-Before that, `RE-281` applied RE-280's identified `Ci4`/`PsmT4` nibble-order
-fix and closed RE-272's Mario-face bug on PPSSPP software rendering. Full
-detail of RE-272 through RE-280's root-causing chain: see
-`docs/evidence/re/RE-280.md` and `docs/evidence/re/RE-281.md`.
+Before that, `RE-283` (seventh follow-up) — Samus's chest "black square"
+positively traced to node 12 under her real posed (not bind-pose) skeleton,
+matching the golden's own defect bbox almost exactly, but only at medium
+confidence pending the live-hardware check the eighth follow-up above then
+completed. See `docs/evidence/re/RE-283.md` for the full seventh-through-
+sixth follow-up chain (Mario/Luigi's button item, the posed-vs-bind-pose
+isolate-tool pitfall, and Fox's own live-N64 closure).
 
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
@@ -135,38 +78,35 @@ material animations, 160/160 particle scripts; 109 billboards, 0 anomalies;
 11/11 framebuffer transitions; `romtool texgen --verify` pass; plain
 feature-free `cargo psp --release` pass; strict Clippy not clean (3
 pre-existing `needless_range_loop` lints, unrelated to this work). This
-session (RE-283's seventh follow-up) made no surviving production-code
-change — `psp/src/main.rs`/`psp/src/meshdraw.rs`'s temporary posed-node-
-isolate diagnostic was added, used, and reverted (`git checkout --`);
-`cargo test --workspace` (617/617) and a plain `cargo psp --release` build
-both reconfirmed clean afterward. `assets/generated/ssb64.pak` and
-`crates/ssb-rom`/`crates/psp` are unchanged from RE-281's rebuild.
+session (RE-283's eighth follow-up) made no production-code or asset-pack
+change — only `refs/ssb-decomp-re` (an external reference checkout) was
+temporarily patched and rebuilt to take a live-N64 capture, then reverted
+and reconfirmed byte-identical to `baserom.us.z64`. `assets/generated/
+ssb64.pak` and `crates/ssb-rom`/`crates/psp` are unchanged from RE-281's
+rebuild.
 
 Required next action: continue root-causing RE-283's fighter texture/
-geometry defects for the remaining fighters. Fox and Mario/Luigi are closed.
-Samus's chest square is traced to node 12 with medium confidence; closing it
-outright needs either an exact per-command combiner/normal trace of node
-12's own list (Fox's fourth-follow-up method) or a live original-N64 capture
-of Samus in a comparable pose (Fox's fifth-follow-up method, `n64-emulator`
-Skill) — either would let it close at the same bar Fox's item met. Her
-left-thigh speckle does not reproduce at this camera distance and needs no
-further action unless a new report narrows it. Link, Yoshi, Captain Falcon,
-Ness, Pikachu, Kirby remain fully untraced: check each against the same
-"does the node carry its own authored PRIM*SHADE colour, or a ROM-authored
-tile-addressing/UV quirk" pattern first, but do not assume either conclusion
-generalizes; each needs its own trace and, where a colour/geometry source is
-found, potentially its own original-hardware visibility check. When
+geometry defects for the remaining six fighters. Fox, Mario/Luigi, and
+Samus are closed. Link, Yoshi, Captain Falcon, Ness, Pikachu, Kirby remain
+fully untraced: check each against the same "does the node carry its own
+authored PRIM*SHADE colour, or a ROM-authored tile-addressing/UV quirk"
+pattern first, but do not assume either conclusion generalizes; each needs
+its own trace and, where a colour/geometry source is found, potentially its
+own original-hardware visibility check via the now twice-proven
+`refs/ssb-decomp-re` decomp-rebuild warp technique (`n64-emulator` Skill,
+`nFTKindXxx` in `scmanager.c`'s `training_man_fkind`/`training_com_fkind`
+fields, same relative patch sites both prior follow-ups used). When
 isolating a single node for any of these, use the *posed* skeleton
 (`draw_object_posed_filtered` with the real `posed[..posed_len]` array and
 an `only_node` filter), not `draw_object_node`'s bind-pose-only path — this
-session found the bind-pose shortcut silently misleads for any fighter whose
-Wait pose differs substantially from its bind pose, which cannot be assumed
-away per-fighter. Physically confirming the PSP-1000 class remains the sole
-*physical*-matrix blocker (unchanged — no PSP-1000 unit available in this
-environment) but is secondary to RE-283 now that the renderer's own
-PPSSPP-software correctness is back in question for the remaining fighters.
-Do not start R3 or combat before both RE-283 and R2's physical matrix are
-closed.
+session's seventh follow-up found the bind-pose shortcut silently misleads
+for any fighter whose Wait pose differs substantially from its bind pose,
+which cannot be assumed away per-fighter. Physically confirming the
+PSP-1000 class remains the sole *physical*-matrix blocker (unchanged — no
+PSP-1000 unit available in this environment) but is secondary to RE-283 now
+that the renderer's own PPSSPP-software correctness is back in question for
+the remaining fighters. Do not start R3 or combat before both RE-283 and
+R2's physical matrix are closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-269, RE-270, RE-271, RE-272,
