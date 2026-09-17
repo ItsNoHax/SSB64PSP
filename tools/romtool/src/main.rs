@@ -2448,7 +2448,19 @@ fn convert_texture(
     if (t.data_offset >> 24) != 0 || (t.data_offset == 0 && t.data_file.is_none()) {
         return None; // segmented, or a pointer nothing resolved
     }
-    let psm = if src.home.id == 317 && psp::choose_psm(t.format, t.size).is_paletted() {
+    // RE-283: file 324's boot texture (Link's, offset 0xCF18, 16x16 CI4)
+    // reproduces a genuine PSP GE rendering defect (a purple/black patch) on
+    // both PPSSPP and physical hardware, given a proven byte-correct
+    // texture/CLUT bind -- the same class of defect RE-267 already found and
+    // fixed for Donkey Kong's file 317 by bypassing PSP's paletted-texture
+    // transport entirely. Widening the row (RE-283's own stride experiment,
+    // rejected: the defect persisted byte-identical even once this texture
+    // was widened enough to actually swizzle) ruled out stride/swizzle as the
+    // mechanism, matching RE-267's own "swizzling... did not explain" finding.
+    let is_link_boot = src.home.id == 324 && t.data_file.is_none() && t.data_offset == 0xCF18;
+    let psm = if (src.home.id == 317 || is_link_boot)
+        && psp::choose_psm(t.format, t.size).is_paletted()
+    {
         psp::Psm::Psm8888
     } else {
         psp::choose_psm(t.format, t.size)
