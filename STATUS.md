@@ -9,58 +9,48 @@ user-reported visual defects (missing Mario/Luigi overalls buttons, texture
 speckle on Fox/Samus/Link/Yoshi/Falcon/Ness, Pikachu/Kirby face-colour
 mismatch) are confirmed real on the current RE-281 pack, separate from
 RE-272's now-closed Mario-face artifact. Three of nine items are now fully
-closed (Fox, Mario/Luigi, Samus); for Link, the whole `ssb-rom`/
-`tools/romtool` pipeline (combiner, env/prim colour, lighting, UV/tile
-addressing, palette, texture-cache dedup, CI4 packing, mat-anim attachment)
-*and* the PSP runtime GE bind itself (`psp/src/meshdraw.rs`'s
-`bind_texture`) are now all confirmed clean by live instrumentation, on the
-node-isolated primitive, across three sessions — root cause narrowed to a
-PPSSPP/GE-specific rendering quirk, not yet confirmed against physical PSP
-hardware; five (Yoshi, Captain Falcon, Ness, Pikachu, Kirby) remain fully
-untraced. This blocks resuming the physical R2 matrix (which was otherwise
-down to only the PSP-1000-availability blocker below) — do not treat R2's
-rendering gate as closed until RE-283 concludes for the remaining fighters.
+closed (Fox, Mario/Luigi, Samus); Link's boot defect is now fully traced:
+the whole `ssb-rom`/`tools/romtool` pipeline (combiner, env/prim colour,
+lighting, UV/tile addressing, palette, texture-cache dedup, CI4 packing,
+mat-anim attachment) and the PSP runtime GE bind itself
+(`psp/src/meshdraw.rs`'s `bind_texture`) are confirmed clean by live
+instrumentation, and a physical-hardware capture of the same node-isolated
+primitive confirms the purple/black patch **is** visible on real PSP
+hardware too — a genuine PSP GE rendering behavior for this texture's
+packed shape, not a PPSSPP-only quirk and not a bug in this project's own
+code. Whether it needs a fix (re-pack the shape differently) or an
+`ACCEPTED_DEVIATION` record is the next open question for Link's item.
+Five (Yoshi, Captain Falcon, Ness, Pikachu, Kirby) remain fully untraced.
+This blocks resuming the physical R2 matrix (which was otherwise down to
+only the PSP-1000-availability blocker below) — do not treat R2's rendering
+gate as closed until RE-283 concludes for the remaining fighters.
 
-Last completed: `RE-283` (this session's twelfth follow-up) — **live
-PSP-target instrumentation of `bind_texture` proves the runtime binds the
-pack's own byte-identical, correct texture/CLUT for Link's boot defect,
-closing the "stale or wrong bind" hypothesis; root cause narrowed to a
-PPSSPP/GE rendering behaviour for this texture's specific 8-byte-row/16×16
-`PsmT4` shape, not yet checked on physical hardware.** Followed the
-eleventh follow-up's own named next step, with two method corrections found
-along the way: (1) `psp::dprintln!` (the eleventh follow-up's own plan)
-writes straight to VRAM and is invisible to the GE-based headless
-screenshot hook — already established by this project's own RE-013/RE-255,
-missed when that plan was written; substituted real GE quad draws instead
-(not `sceGuDebugPrint`, which RE-123/RE-125 already found corrupts
-rendering under a `regression_capture`-family frozen build — hit that too,
-before switching to plain untextured `TRANSFORM_2D` sprites). (2)
-`RE283_ONLY_LOCAL_NODE`'s node id is object-relative (matching
-`romtool scene --nodes`'s own numbering), not the pack-global id
-`draw_object_posed_filtered`'s `only_node` parameter expects — needed
-`obj.first_node +` added at the call site to actually isolate node 30 again.
-Abandoned an initial pixel-exact byte-swatch HUD decode as unreliable (this
-build's screen-space sprite coordinates don't map to the captured PNG by a
-simple assumed scale) in favour of a coarser, robust pass/fail design:
-re-derived the pack's own known-good `TextureDesc`/CLUT for texture index
-1245 host-side (`tools/romtool`, temporary subcommand, reverted after use),
-cross-checked its two mauve CLUT entries against the eleventh follow-up's
-independent raw-ROM decode (exact match, confirming same texture), hardcoded
-them as PSP-side constants, and rendered a live match/mismatch verdict as
-big green/red GE quads. Result on the node-isolated boot primitive (no other
-primitive drawn that frame, so no earlier bind to have gone stale): **all
-four quadrants green** — `data_offset`, `palette_offset`, dims/format/wrap/
-mat-anim/palette-length, and all 16 CLUT entries are exactly the pack's own
-correct baked values, live. Combined with the isolation itself and the
-eleventh follow-up's neutral-light/single-cycle-combiner algebra, both
-remaining "stale bind" candidates are now closed: no wrong data bound, no
-earlier primitive in scope to have left a stale one. All scratch
-instrumentation reverted (`git checkout --` on `psp/src/main.rs`,
-`psp/src/meshdraw.rs`, `tools/romtool/src/main.rs`); `cargo fmt --all
---check` and `cargo test --workspace` reconfirmed clean after the revert.
-See `docs/evidence/re/RE-283.md`'s "twelfth follow-up" section; the tenth/
-eleventh follow-ups' own findings (node isolation, combiner correction,
-env/prim/lighting/UV/palette/cache/packing all clean) still stand unchanged.
+Last completed: `RE-283` (this session's thirteenth follow-up) — **physical
+PSP hardware capture of Link's node-isolated boot primitive confirms the
+purple/black patch reproduces on real hardware, closing the "PPSSPP-only
+emulation quirk" hypothesis the twelfth follow-up left open.** Reinstated
+the same node-isolate scratch (`draw_object_posed_filtered` `pub(crate)`,
+`RE283_ONLY_LOCAL_NODE` compile-time `option_env!` filter at the object-view
+fighter-draw call site, `obj.first_node +` unit correction), built with
+`RE283_ONLY_LOCAL_NODE=30 cargo psp --release --features
+"regression_capture,regression_capture_link"`, and ran it live over PSPLink
+(`usbhostfs_pc` + `ldstart` over `host0:`, `psp-hardware` Skill). `exlist`
+empty, `main_thread` alive; `scrshot` native capture shows the same isolated
+boot primitive the ninth/twelfth follow-ups captured in PPSSPP, with the
+purple/black collar patch clearly visible in the same location/shape.
+Combined with the twelfth follow-up's live-instrumented proof that the
+runtime bind loads byte-identical, correct texture/CLUT data, this is a
+genuine PSP GE rendering behavior for this texture's 8-byte-row/16×16
+`PsmT4` shape given correct data and a correct bind — not this project's own
+bug, and not specific to PPSSPP's emulation. All scratch instrumentation
+reverted (`git checkout --` on `psp/src/main.rs`, `psp/src/meshdraw.rs`);
+capture not committed (no captures in Git). `cargo fmt --all --check` and
+`cargo test --workspace` (424 passed) reconfirmed clean after the revert.
+PSPLink module killed, reset, shell closed, `usbhostfs_pc` stopped. See
+`docs/evidence/re/RE-283.md`'s "thirteenth follow-up" section; the tenth/
+eleventh/twelfth follow-ups' own findings (node isolation, combiner
+correction, env/prim/lighting/UV/palette/cache/packing/bind all clean) still
+stand unchanged.
 
 Before that, `RE-283` (eighth follow-up) — **Samus's chest "black square"
 closed via live original-N64 capture, at the same bar Fox's item met.** The
@@ -109,28 +99,26 @@ Required next action: Link's boot defect is now narrowed as far as PPSSPP-side
 tracing can take it — `crates/ssb-rom`'s conversion, `tools/romtool`'s
 `pack.rs`/`psp_texture.rs` packing, *and* `psp/src/meshdraw.rs`'s runtime GE
 bind (`bind_texture`) are all proven clean by live instrumentation across
-three sessions (tenth/eleventh/twelfth follow-ups) — do not re-check
+three sessions (tenth/eleventh/twelfth follow-ups), and the thirteenth
+follow-up confirmed the purple/black patch reproduces on physical PSP
+hardware on the same node-isolated primitive — do not re-check
 combiner/env/light/UV/palette, texture-cache collision, CI4 packing,
-`mat_anim` attachment, or the runtime-bound `TextureDesc`/CLUT bytes again;
-that ground is covered on the node-isolated primitive specifically (isolate
-via `obj.first_node + 30`, not raw `30` — `RE283_ONLY_LOCAL_NODE`/
+`mat_anim` attachment, the runtime-bound `TextureDesc`/CLUT bytes, or
+hardware visibility again; all of that ground is covered (isolate via
+`obj.first_node + 30`, not raw `30` — `RE283_ONLY_LOCAL_NODE`/
 `romtool scene --nodes` numbering is object-relative, `only_node` is
-pack-global, see RE-283.md's twelfth follow-up for the fuller explanation).
-The remaining candidate is a genuine PPSSPP/GE rendering behaviour specific
-to this texture's 8-byte-row/16×16 `PsmT4` shape, not a bug in this
-project's own code. Confirm or rule that out on physical PSP hardware next
-(`psp-hardware` Skill, PSPLink) — build with the same node-isolate technique
-(`draw_object_posed_filtered`'s `only_node`, temporarily exposed
-`pub(crate)`, threaded through a compile-time `option_env!`-read filter at
-the real fighter-view draw call since the PSP target has no runtime env
-access; revert after use) so only the boot primitive draws, and check
-whether the purple/black patch is visible on real hardware too. If it is
-not, this is a PPSSPP-only emulation quirk and Link's item can close without
-a code change; if it is, this needs its own hardware-specific investigation.
-Two PSP-target-tracing traps hit and worth avoiding next time: `psp::dprintln!`
-writes straight to VRAM, invisible to the GE-based headless screenshot hook
-(RE-013/RE-255) — use real GE draws instead; and `Gpu::debug_text`/
-`sceGuDebugPrint` corrupts rendering specifically under a
+pack-global, see RE-283.md's twelfth/thirteenth follow-ups for the fuller
+explanation). Link's boot defect is a genuine PSP GE rendering behaviour
+specific to this texture's 8-byte-row/16×16 `PsmT4` shape (confirmed on both
+PPSSPP and real hardware, given correct packed data and a correct bind), not
+a bug in this project's own code. Next for Link specifically: decide whether
+this shape is fixable (e.g. re-pack it differently — a wider/padded CI4 row,
+or a different tile size, so the GE no longer hits this shape) or needs an
+`ACCEPTED_DEVIATION` record with the measured defect; this has not been
+attempted yet. Two PSP-target-tracing traps hit and worth avoiding next
+time: `psp::dprintln!` writes straight to VRAM, invisible to the GE-based
+headless screenshot hook (RE-013/RE-255) — use real GE draws instead; and
+`Gpu::debug_text`/`sceGuDebugPrint` corrupts rendering specifically under a
 `regression_capture`-family frozen build (RE-123/RE-125) — untextured
 `TRANSFORM_2D` GE quads work under that same build where debug text does not.
 After Link, continue with the remaining five fighters. Yoshi, Captain
