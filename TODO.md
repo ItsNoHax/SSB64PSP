@@ -69,44 +69,6 @@ Reason: no fail-fast mode exists for unresolved texture/missing palette/
 unknown transform; would help catch regressions earlier than a silent
 fallback.
 
-### Fighter face texture repeats/corrupts (Mario, at least) — root cause found, fix not yet applied
-Target: R2 (blocks full confidence in "representative fighters render",
-already marked complete)
-Status: OPEN — root cause found (RE-280), fix not yet applied
-Evidence: RE-272, RE-274, RE-275, RE-276, RE-277, RE-278, RE-279, RE-280
-Reason: Mario's eye/eyebrow texture (file 296, `Ci4 32x32`) is clean in the
-raw ROM dump but renders as a repeating, aliased pattern with red patches
-near the ears on both PPSSPP and physical PSP hardware. RE-274 traced the
-exact draw call and ruled out cross-node leakage and mirror-bake corruption;
-RE-276 (live N64 reference render) ruled out a faithfully-reproduced ROM
-quirk; RE-277 (dense per-texel sweep) and RE-278 (permanent fixed-coordinate
-GE-sampling rig) ruled out the addressing formula and fixed-coordinate GE
-sampling, including the `Linear` clamp-boundary blend; RE-279 confirmed
-RE-274's real primitive is correctly routed through the signed-UV float path.
-**RE-280 then found the actual root cause**: `ssb_rom::psp_texture`'s `Ci4`
-(`PsmT4`) packing (`encode_level`, `pack_indexed`'s straight ROM-copy path,
-and `pad_edge_repeat_nibbles`) packs two 4-bit texels per byte high-nibble-
-first, "matching the N64 order" — but PPSSPP's `PsmT4` reader (and plausibly
-real hardware, since both consume the identically-packed byte stream) wants
-the opposite order, low nibble first. Confirmed decisively with a permanent
-rig (`psp/src/tri_addr_diag.rs`, `tri_addr_diag_probe` feature): swapping the
-nibble order made 12/12 fixed-`Ci4`-probe reads exact (was 2/12) and turned a
-corrupted interpolated readback into the same clean linear ramp a `Psm8888`
-control already showed. This explains RE-272 directly (adjacent-texel-pair
-swap reads as a repeating, aliased pattern, most visible on sharp
-high-contrast content like an eye/eyebrow outline) and why the
-regression-capture goldens never caught it (both the real PSP path and
-PPSSPP apply the identical wrong order, so they still agree with each other).
-**Next step**: apply the nibble-order fix at all three sites in
-`psp_texture.rs` together, update the self-consistent-but-non-validating
-`ci4_packing_round_trips_through_swizzle_and_clut` test and its `unpack_ci4`
-helper to the corrected convention, rebuild `assets/generated/ssb64.pak`, and
-refresh whichever of the 22 deterministic regression goldens change — with
-the semantic delta explained per-golden (texture corrected, not a
-regression), per the visual-regression skill's own rule. This is real,
-non-trivial scope (touches every `Ci4` texture in the archive) deserving its
-own dedicated pass.
-
 ---
 
 ## Deferred Work Behind the Rendering Gate (PLAN.md G1–G5)

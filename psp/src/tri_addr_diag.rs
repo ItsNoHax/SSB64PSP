@@ -24,32 +24,34 @@
 //!
 //! Root cause: `ssb_rom::psp_texture::encode_level`'s `PsmT4` branch (and
 //! `pack_indexed`'s straight ROM-copy path, and `pad_edge_repeat_nibbles`)
-//! all pack two 4-bit texels per byte "high nibble first, matching the N64
-//! order" (`encode_level`'s own comment) -- but PPSSPP's `PsmT4` texture
-//! reader (and, being unable to test the two independently here, plausibly
-//! real PSP hardware too, since this project already treats PPSSPP's
-//! software rasterizer as the deterministic golden source) reads the
-//! *opposite* order: **low nibble is the first (even-indexed) texel, high
-//! nibble is the second (odd-indexed) texel.** Confirmed decisively:
-//! rebuilding [`TEXTURE`] with nibbles swapped (`(lo << 4) | hi` instead of
-//! `(hi << 4) | lo`) made every one of [`PROBES`]' fixed-sample reads exact
-//! (12/12) and turned the interpolated Nearest row into the same clean ramp
-//! the `Psm8888` control shows -- see RE-280's evidence record for the full
-//! before/after readback table. The code in this file packs the
-//! *currently-shipping* (still-buggy) high-nibble-first order deliberately,
-//! so this rig keeps failing -- and therefore keeps proving the bug is
-//! real -- until `psp_texture.rs`'s three nibble-order sites are fixed
-//! together, at which point every assertion this rig's own evidence record
-//! describes should start passing.
+//! packed two 4-bit texels per byte "high nibble first, matching the N64
+//! order" -- but PPSSPP's `PsmT4` texture reader (and, being unable to test
+//! the two independently here, plausibly real PSP hardware too, since this
+//! project already treats PPSSPP's software rasterizer as the deterministic
+//! golden source) reads the *opposite* order: **low nibble is the first
+//! (even-indexed) texel, high nibble is the second (odd-indexed) texel.**
+//! Confirmed decisively: rebuilding [`TEXTURE`] with nibbles temporarily
+//! swapped (`(lo << 4) | hi` instead of the then-shipping `(hi << 4) | lo`)
+//! made every one of [`PROBES`]' fixed-sample reads exact (12/12) and turned
+//! the interpolated Nearest row into the same clean ramp the `Psm8888`
+//! control shows -- see RE-280's evidence record for the full before/after
+//! readback table.
 //!
-//! This plausibly explains RE-272 directly: adjacent-texel-pair corruption
-//! reads as exactly the "repeating, aliased pattern" RE-272 described, is
+//! **Fixed (RE-281).** `psp_texture.rs`'s three nibble-order sites now pack
+//! low nibble first, matching the PSP GE. [`TEXTURE`] below packs the same
+//! (now-correct) order permanently, so this rig now passes -- a standing
+//! regression guard on the real GE's nibble-read behavior, independent of
+//! `psp_texture.rs`'s own conversion path.
+//!
+//! This plausibly explained RE-272 directly: adjacent-texel-pair corruption
+//! reads as exactly the "repeating, aliased pattern" RE-272 described, was
 //! most visible on sharp high-contrast content (an eye/eyebrow outline) and
 //! least visible on smoothly-shaded content (why no other fighter's face
-//! triggered a visible complaint before), and is invisible to the
+//! triggered a visible complaint before), and was invisible to the
 //! regression-capture goldens by construction -- both the real PSP path and
-//! PPSSPP apply the identical wrong order, so they still agree with *each
-//! other* even though neither matches the source ROM texture.
+//! PPSSPP applied the identical wrong order, so they still agreed with *each
+//! other* even though neither matched the source ROM texture. RE-281 applied
+//! the fix, rebuilt the asset pack, and refreshed the affected goldens.
 
 use core::ffi::c_void;
 
@@ -86,8 +88,9 @@ impl TriVertex {
     );
 }
 
-/// `Ci4`, high nibble first (`psp_texture`'s documented convention): texel
-/// `2b` in byte `b`'s high nibble, texel `2b+1` in its low nibble.
+/// `Ci4`, low nibble first (RE-280/RE-281, `psp_texture`'s corrected
+/// convention): texel `2b` in byte `b`'s low nibble, texel `2b+1` in its
+/// high nibble.
 static mut TEXTURE: Align16<[u8; BAKED_WIDTH / 2]> = Align16([0u8; BAKED_WIDTH / 2]);
 static mut CLUT: Align16<[u8; CLUT_ENTRIES * 4]> = Align16([0u8; CLUT_ENTRIES * 4]);
 /// Control texture: the exact same `baked_index` pattern, same width, same
@@ -110,8 +113,8 @@ unsafe fn ensure_built() {
         return;
     }
     for b in 0..BAKED_WIDTH / 2 {
-        let hi = baked_index(2 * b);
-        let lo = baked_index(2 * b + 1);
+        let lo = baked_index(2 * b);
+        let hi = baked_index(2 * b + 1);
         TEXTURE.0[b] = (hi << 4) | lo;
     }
     for i in 0..CLUT_ENTRIES {

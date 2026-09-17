@@ -281,12 +281,13 @@ editing a record.
 | RE-269 | RDP tile origin is not a source-image offset | COMPLETE | texture, geometry, fighter, hardware, toolchain |  |
 | RE-270 | Physical confirmation of RE-262/264/269's Fox, Ness, Link and Donkey Kong fixes, and Dream Land's lighting... | COMPLETE | fighter, hardware, lighting, visual-regression, stage |  |
 | RE-271 | Exhaustive fighter physical matrix | COMPLETE | fighter, hardware, psp-ge, depth, visual-regression |  |
-| RE-272 | Fighter face textures show a repeating/aliased artifact absent from the raw ROM texture | OPEN | texture, fighter, hardware, visual-regression, geometry |  |
+| RE-272 | Fighter face textures show a repeating/aliased artifact absent from the raw ROM texture | COMPLETE — root cause found and fixed, see RE-280/RE-281 | texture, fighter, hardware, visual-regression, geometry |  |
 | RE-273 | First physical confirmation on a second hardware unit (PSP-3000) | COMPLETE | hardware, visual-regression, fighter, psp-ge, stage |  |
-| RE-274 | RE-272's forehead artifact traces to one self-contained, wide-UV draw call | OPEN | texture, fighter, geometry, hardware, visual-regression |  |
+| RE-274 | RE-272's forehead artifact traces to one self-contained, wide-UV draw call | COMPLETE — root cause found and fixed, see RE-280/RE-281 | texture, fighter, geometry, hardware, visual-regression |  |
 | RE-275 | angrylion-rdp-plus reference-render harness ported to RMG's sandbox, segfaults on plugin startup | CLOSED — superseded. Root cause found (below), but the path is | texture, fighter, hardware, visual-regression, toolchain |  |
 | RE-276 | Live N64 reference render clears Mario's face: a real PSP-side addressing bug, not a ROM quirk | COMPLETE | texture, fighter, hardware, visual-regression, toolchain |  |
-| RE-277 | Dense per-texel sweep clears the addressing formula itself | OPEN | texture, fighter, hardware, visual-regression |  |
-| RE-278 | Fixed-coordinate GE sampling matches the addressing model exactly, including the Linear clamp-boundary blend | OPEN | texture, fighter, hardware, visual-regression |  |
+| RE-277 | Dense per-texel sweep clears the addressing formula itself | COMPLETE — root cause found and fixed, see RE-280/RE-281 | texture, fighter, hardware, visual-regression |  |
+| RE-278 | Fixed-coordinate GE sampling matches the addressing model exactly, including the Linear clamp-boundary blend | COMPLETE — root cause found and fixed, see RE-280/RE-281 | texture, fighter, hardware, visual-regression |  |
 | RE-279 | RE-274's real primitive is correctly routed through the signed-UV float path | RESOLVED | texture, fighter, hardware, visual-regression |  |
-| RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | OPEN (root cause found and confirmed; fix not yet applied) | texture, fighter, hardware, visual-regression, asset-pipeline |  |
+| RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | COMPLETE — fix applied and confirmed, see RE-281 | texture, fighter, hardware, visual-regression, asset-pipeline |  |
+| RE-281 | RE-280's `Ci4`/`PsmT4` nibble-order fix applied, pack rebuilt, 18/22 goldens refreshed and explained | COMPLETE | texture, fighter, hardware, visual-regression, asset-pipeline |  |

@@ -247,8 +247,11 @@ pixels are unchanged. Two independent captures of that build were
 pixel-identical. RE-261 refreshes it once more for the source-authored
 costume-light-track correction: 24 stable pixels on Mario's lower body, with
 all stage pixels unchanged. RE-262 later corrects signed clamped UVs across
-the canopy and Mario, changing 23,852 pixels; its current SHA-256 is
-`06985d0fce8671b6cb1d66018834653b95380ff9a5e8164f429c9a29ebe9e60d`.
+the canopy and Mario, changing 23,852 pixels. RE-281 refreshes it once more
+after RE-280's `Ci4`/`PsmT4` nibble-order correction (every 4-bit paletted
+texture the archive packs, including the CI4 ground texture this scene
+draws), changing 26,100 pixels; its current SHA-256 is
+`5da0908599d32f4a9a4da04a096bfcf2a94824196a09e8427a781c87297aa98f`.
 
 RE-199 executed the same end-to-end procedure for the second scene
 (`regression_capture_scene2`, file 52's `mvopeningroom.c` graph). The first
@@ -279,6 +282,15 @@ pixel comparator reported 0 differing pixels. Goldens and SHA-256 values:
 
 After adding both feature-only paths, scene 2 and Dream Land were rebuilt and
 still matched their committed goldens with 0 differing pixels.
+
+RE-281 applied RE-280's `Ci4`/`PsmT4` nibble-order fix, rebuilt
+`assets/generated/ssb64.pak`, and re-ran the full 22-scene matrix against it:
+18 goldens changed (`r1-stage-sector.png`: 3,408 pixels; the 4 unchanged were
+`r1-catch-swirl-flat-color.png`, `r2-depth-mask-diagnostic.png`,
+`r2-dk-fighter.png`, `r2-kirby-fighter.png`), every changed pixel tracing to
+the same single cause (corrected `Ci4` texel decode, not a rendering
+regression). See RE-281 for the full per-scene differing-pixel table and the
+Mario-face visual confirmation this fix was built to resolve (RE-272).
 
 This satisfies `PLAN.md` R0.17's "at least one deterministic test scene",
 "methodology is actually run at least once end-to-end", and "captured
