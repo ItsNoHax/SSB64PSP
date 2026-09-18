@@ -245,12 +245,24 @@ impl Fighter {
     }
 
     /// Advances the per-frame timers. Returns whether hitlag ended this frame.
+    ///
+    /// The original bleeds `vel_knockback` off by friction every frame of
+    /// hitstun (`ftPhysicsSetGroundVelFriction`-shaped decay). No such curve
+    /// exists yet (`crate::attack`'s module docs), so knockback here is held
+    /// constant through hitstun and snapped to zero the instant it ends,
+    /// rather than decaying gradually — a fighter still slides at the hit's
+    /// full speed on the last hitstun frame and stops dead on the next.
     pub fn tick_timers(&mut self) -> bool {
         if self.hitlag > 0 {
             self.hitlag -= 1;
             return self.hitlag == 0;
         }
-        self.hitstun = self.hitstun.saturating_sub(1);
+        if self.hitstun > 0 {
+            self.hitstun -= 1;
+            if self.hitstun == 0 {
+                self.physics.vel_knockback = Vec3::ZERO;
+            }
+        }
         false
     }
 
@@ -545,6 +557,19 @@ mod tests {
         f.tick_timers();
         f.tick_timers();
         assert_eq!(f.hitstun, 9);
+    }
+
+    #[test]
+    fn knockback_holds_through_hitstun_then_snaps_to_zero() {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.hitstun = 2;
+        f.physics.vel_knockback = Vec3::new(17.0, 0.0, 0.0);
+        f.tick_timers();
+        assert_eq!(f.hitstun, 1);
+        assert_eq!(f.physics.vel_knockback, Vec3::new(17.0, 0.0, 0.0));
+        f.tick_timers();
+        assert_eq!(f.hitstun, 0);
+        assert_eq!(f.physics.vel_knockback, Vec3::ZERO);
     }
 
     #[test]

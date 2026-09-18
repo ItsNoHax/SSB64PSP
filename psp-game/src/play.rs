@@ -393,6 +393,7 @@ impl Play {
             LandingLight => "land    ",
             LandingHeavy => "land-hvy",
             Pass => "pass    ",
+            Attack11 => "jab     ",
         }
     }
 
@@ -447,6 +448,11 @@ pub struct Dummy {
     /// no model for this character (mirrors [`Play::object`]).
     pub object: u32,
     started: Option<Status>,
+    /// Whether the player's current `Attack11` has already connected. Cleared
+    /// as soon as the player leaves `Attack11`, so the next jab can hit again
+    /// -- the simplified stand-in for the original's per-attack
+    /// `GMAttackRecord` hit list (`ssb_game::attack`'s module docs).
+    hit_by_current_attack: bool,
 }
 
 impl Dummy {
@@ -471,6 +477,7 @@ impl Dummy {
             skeleton: ssb_rom::skeleton::Skeleton::new(),
             object: fighter_object(pack, kind as u32).unwrap_or(u32::MAX),
             started: None,
+            hit_by_current_attack: false,
         })
     }
 
@@ -495,5 +502,47 @@ impl Dummy {
             &mut self.skeleton,
             &mut self.started,
         );
+    }
+
+    /// `F1` criterion 5: tests `attacker`'s active hitbox against this dummy
+    /// and applies the hit -- `ssb_game::attack`'s formulas, called from here
+    /// rather than from `ssb-game` because this is the only place both
+    /// fighters exist together (`Play` and `Dummy` are separate structs).
+    ///
+    /// Only `Attack11`'s hitbox is ported (module docs), so anything else the
+    /// attacker is doing is a no-op call.
+    pub fn apply_hit_from(&mut self, attacker: &Fighter) {
+        if attacker.status.status != Status::Attack11 {
+            self.hit_by_current_attack = false;
+            return;
+        }
+        if self.hit_by_current_attack {
+            return;
+        }
+        if !ssb_game::attack::jab1_hitbox_active(attacker.status.anim_frame) {
+            return;
+        }
+        let hitbox = ssb_game::attack::MARIO_JAB1_HITBOX;
+        let hitbox_pos = attacker.pos + hitbox.offset;
+        if !ssb_game::attack::spheres_overlap(
+            hitbox_pos,
+            hitbox.radius,
+            self.fighter.pos,
+            ssb_game::attack::MARIO_HURTBOX_RADIUS,
+        ) {
+            return;
+        }
+        let result = ssb_game::attack::resolve_hit(
+            &hitbox,
+            attacker.pos,
+            self.fighter.pos,
+            self.fighter.damage,
+            self.fighter.attributes.weight,
+            !self.fighter.is_grounded(),
+        );
+        self.fighter.damage = self.fighter.damage.saturating_add(result.damage as u16);
+        self.fighter.physics.vel_knockback = result.knockback_vel;
+        self.fighter.hitstun = result.hitstun;
+        self.hit_by_current_attack = true;
     }
 }
