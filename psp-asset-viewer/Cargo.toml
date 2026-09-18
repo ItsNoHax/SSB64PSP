@@ -14,6 +14,7 @@ psp = "0.3.13"
 ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
+ssb-psp-runtime = { path = "../psp-runtime" }
 
 [features]
 # Freezes every per-frame mutation (physics, skeleton/stage/material

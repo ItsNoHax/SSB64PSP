@@ -97,6 +97,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ssb-psp-runtime"
+version = "0.1.0"
+
+[[package]]
 name = "ssb-rom"
 version = "0.1.0"
 dependencies = [
@@ -110,6 +114,7 @@ dependencies = [
  "psp",
  "ssb-engine",
  "ssb-game",
+ "ssb-psp-runtime",
  "ssb-rom",
 ]
 
