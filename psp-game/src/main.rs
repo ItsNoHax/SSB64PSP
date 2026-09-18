@@ -12,7 +12,7 @@
 //! booting second EBOOT) and the
 //! intro/menu navigation shape of criteria 2-3. Training Mode now loads the
 //! real pack, spawns a real fighter on a real stage, and draws both through
-//! `meshdraw`'s 3D pipeline and `play::Play`'s real physics/animation/camera
+//! `meshdraw`'s 3D pipeline and `play::FighterScene`'s real physics/animation/camera
 //! (`plans/gameplay/F1.md`'s "Scene loading" section) -- real hitbox/damage/
 //! knockback combat (criterion 5) and `sceFont` menu/select text are still
 //! outstanding, tracked there and in `TODO.md`.
@@ -242,9 +242,9 @@ unsafe fn run() -> ! {
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
-    // camera every frame this screen is active (`play::Play`, a verbatim
-    // copy of `psp-asset-viewer/`'s own gameplay-slice adapter).
-    let mut play_state: Option<play::Play> = None;
+    // camera every frame this screen is active (`play::FighterScene`, shared
+    // with `psp-asset-viewer/` via `ssb_psp_runtime::scene`).
+    let mut play_state: Option<play::FighterScene> = None;
     // The stationary dummy target (`play::Dummy`, `psp-game`-only -- see its
     // doc comment): spawned alongside `play_state` at the stage's second
     // spawn point, ticked with permanently neutral input.
@@ -285,8 +285,14 @@ unsafe fn run() -> ! {
                         screen = Screen::Training;
                         if play_state.is_none() {
                             play_state = pack.as_ref().and_then(|p| {
-                                p.stage(TRAINING_STAGE_INDEX)
-                                    .map(|s| play::Play::at_spawn(p, &s))
+                                p.stage(TRAINING_STAGE_INDEX).map(|s| {
+                                    play::FighterScene::at_spawn(
+                                        p,
+                                        &s,
+                                        ssb_game::fighter::FighterKind::Mario,
+                                        0,
+                                    )
+                                })
                             });
                             dummy_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX)
@@ -401,7 +407,7 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
 }
 
 /// Draws the training scene: the real stage and the real spawned fighter,
-/// through the real battle camera (`play::Play::camera`) -- the first
+/// through the real battle camera (`play::FighterScene::camera`) -- the first
 /// `psp-game` content built from `meshdraw`'s 3D pipeline rather than
 /// `gu::Gpu::draw_rect`'s flat placeholder rectangles.
 ///
@@ -415,7 +421,7 @@ unsafe fn draw_training(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
     pack: Option<&Pack<'_>>,
-    play_state: Option<&play::Play>,
+    play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
     no_pack_color: Color,
 ) {

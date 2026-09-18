@@ -1,20 +1,20 @@
 //! Viewer-only additions to the shared fighter scene: status-label overlay
 //! text.
 //!
-//! The pack-to-game bridge itself ([`Play`], [`FloorSegments`], ...) lives in
-//! `ssb_psp_runtime::scene`, shared with `psp-game`. This module only adds
-//! what belongs to the debug viewer's own diagnostic overlay -- keeping it
-//! here, not in `psp-runtime`, per the rule that status-label overlays are
-//! viewer diagnostics, not shared runtime.
+//! The pack-to-game bridge itself ([`FighterScene`], [`FloorSegments`], ...)
+//! lives in `ssb_psp_runtime::scene`, shared with `psp-game`. This module
+//! only adds what belongs to the debug viewer's own diagnostic overlay --
+//! keeping it here, not in `psp-runtime`, per the rule that status-label
+//! overlays are viewer diagnostics, not shared runtime.
 
-pub use ssb_psp_runtime::scene::{FloorSegments, Play};
+pub use ssb_psp_runtime::scene::{FighterScene, FloorSegments};
 
 use ssb_game::status::Status;
 
 /// The status a fighter is in, as a fixed-width label for the overlay.
-pub fn status_name(play: &Play) -> &'static str {
+pub fn status_name(scene: &FighterScene) -> &'static str {
     use Status::*;
-    match play.fighter.status.status {
+    match scene.fighter.status.status {
         Wait => "wait    ",
         WalkSlow => "walk-slw",
         WalkMiddle => "walk-mid",
@@ -40,6 +40,6 @@ pub fn status_name(play: &Play) -> &'static str {
 }
 
 /// The floor's material, or `None` while airborne.
-pub fn material(play: &Play) -> Option<u16> {
-    play.fighter.floor.map(|f| f.material())
+pub fn material(scene: &FighterScene) -> Option<u16> {
+    scene.fighter.floor.map(|f| f.material())
 }

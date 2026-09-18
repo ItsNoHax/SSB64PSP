@@ -222,12 +222,16 @@ pub fn tick_skeleton_animation(
     }
 }
 
-/// The on-device gameplay slice.
+/// The on-device gameplay slice: one fighter, connected end to end from
+/// `ssb-rom` `Pack` data through `ssb-game` physics/collision to skeleton
+/// animation and the battle camera.
 ///
-/// One fighter, no opponent, no match rules — the point is that the ported
-/// physics and the ported collision run together against real stage data at
-/// 60 Hz, which is the thing neither host tests nor a static render can show.
-pub struct Play {
+/// No opponent, no match rules — the point is that the ported physics and
+/// the ported collision run together against real stage data at 60 Hz, which
+/// is the thing neither host tests nor a static render can show. Owns only
+/// what connects those systems; it does not own menus, Training rules,
+/// viewer diagnostics, CPU logic, stocks, or match rules.
+pub struct FighterScene {
     pub fighter: Fighter,
     /// Whether the fighter found a floor when it was placed.
     pub placed: bool,
@@ -249,7 +253,7 @@ pub struct Play {
     /// no model for this character.
     pub object: u32,
     /// The real battle camera (RE-131), ticked alongside the fighter each
-    /// frame in [`Play::tick`].
+    /// frame in [`FighterScene::tick`].
     pub camera: ssb_game::camera::Camera,
     /// `FTAttributes.cam_offset_y` (`refs/ssb-decomp-re/src/ft/fttypes.h`) --
     /// deliberately *not* part of `PhysicsAttributes` (that struct's own doc
@@ -265,16 +269,28 @@ pub struct Play {
     started: Option<Status>,
 }
 
-impl Play {
-    /// Puts a fighter at a stage's first player spawn.
+impl FighterScene {
+    /// Puts a fighter of `kind` at a stage's `spawn_index`'th spawn point.
     ///
-    /// Deliberately *not* settled onto the surface: the spawn sits a few units
+    /// Deliberately *not* settled onto the surface: a spawn sits a few units
     /// up (RE-030) and letting it fall that distance is the first thing worth
-    /// watching. Returns a `Play` even when the stage has no spawn, so the
-    /// overlay can say so rather than the view going blank.
-    pub fn at_spawn(pack: &Pack<'_>, stage: &StageDesc) -> Play {
-        let kind = FighterKind::Mario;
-        let mut fighter = Fighter::new(kind, 0, 3);
+    /// watching. Returns a `FighterScene` even when the stage has no such
+    /// spawn, so a caller can say so (`placed`) rather than the view going
+    /// blank; a caller that needs to distinguish "no spawn point" from
+    /// "spawn point, but nothing to stand on" should check
+    /// `pack.spawn(stage, spawn_index)` itself before calling this.
+    pub fn at_spawn(
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        kind: FighterKind,
+        spawn_index: u16,
+    ) -> FighterScene {
+        // `Fighter::new`'s `port` and `pack.spawn`'s `player` are different
+        // concepts that happen to share the same value by this project's own
+        // convention (port N spawns at spawn N) -- the same convention the
+        // pre-generalization `Play`/`Dummy` split already baked in (ports 0
+        // and 1 for spawns 0 and 1).
+        let mut fighter = Fighter::new(kind, spawn_index as u8, 3);
 
         // Real constants if the pack has them: gravity 2.4 and terminal
         // velocity 44 rather than the 0.09 and 1.7 the first port guessed.
@@ -291,7 +307,7 @@ impl Play {
         }
 
         let mut placed = false;
-        if let Some(spawn) = pack.spawn(stage, 0) {
+        if let Some(spawn) = pack.spawn(stage, spawn_index) {
             fighter.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
             placed = ssb_game::collision::project_floor(
                 FloorSegments::new(pack, stage),
@@ -299,7 +315,7 @@ impl Play {
             )
             .is_some();
         }
-        Play {
+        FighterScene {
             fighter,
             placed,
             airborne_ticks: 0,
@@ -322,19 +338,23 @@ impl Play {
         }
     }
 
-    /// Advances one tick against the stage.
+    /// Advances fighter physics/collision and skeleton animation one tick,
+    /// without touching the battle camera.
     ///
-    /// `input` is the mapped N64 pad; `jump` is the jump button's state this
-    /// frame, from which the tap and release edges are derived. The status
-    /// machine wants edges rather than levels because a short hop is defined
-    /// by the button coming back *up* inside the jumpsquat.
-    pub fn tick(
+    /// `input` is the mapped N64 pad; `jump_held` is the jump button's state
+    /// this frame, from which the tap and release edges are derived. The
+    /// status machine wants edges rather than levels because a short hop is
+    /// defined by the button coming back *up* inside the jumpsquat.
+    ///
+    /// Used directly by scenes with no camera of their own (e.g. a
+    /// stationary training target); [`FighterScene::tick`] calls this then
+    /// also advances the camera, for scenes that own one.
+    pub fn tick_fighter(
         &mut self,
         pack: &Pack<'_>,
         stage: &StageDesc,
         input: ssb_engine::input::ControllerState,
         jump_held: bool,
-        additional_camera_interest: Option<ssb_game::camera::Interest>,
     ) {
         let tapped = jump_held && !self.jump_was_held;
         let released = !jump_held && self.jump_was_held;
@@ -348,7 +368,16 @@ impl Play {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
         self.tick_animation(pack);
+    }
 
+    /// Advances the battle camera one tick from the fighter's current
+    /// position. `additional_camera_interest` is a second interest point
+    /// (e.g. a training dummy) the camera should also try to frame.
+    pub fn tick_camera(
+        &mut self,
+        stage: &StageDesc,
+        additional_camera_interest: Option<ssb_game::camera::Interest>,
+    ) {
         let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
         let bounds = ssb_game::camera::Bounds {
             top: stage.camera.top as f32,
@@ -378,6 +407,23 @@ impl Play {
             stage.camera_light_angle_z,
             vw as f32 / vh as f32,
         );
+    }
+
+    /// Advances one tick against the stage: fighter physics/collision and
+    /// skeleton animation ([`FighterScene::tick_fighter`]), then the battle
+    /// camera ([`FighterScene::tick_camera`]). Convenience wrapper for
+    /// scenes that own a camera; a scene that does not (e.g. a stationary
+    /// training target) calls `tick_fighter` directly instead.
+    pub fn tick(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        input: ssb_engine::input::ControllerState,
+        jump_held: bool,
+        additional_camera_interest: Option<ssb_game::camera::Interest>,
+    ) {
+        self.tick_fighter(pack, stage, input, jump_held);
+        self.tick_camera(stage, additional_camera_interest);
     }
 
     /// Starts the animation the current status calls for, then advances it.
