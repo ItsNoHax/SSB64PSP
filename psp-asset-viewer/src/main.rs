@@ -18,11 +18,9 @@ extern crate alloc;
 
 #[cfg(feature = "addr_diag_probe")]
 mod addr_diag;
-mod assets;
 #[cfg(feature = "depth_mask_diagnostic")]
 mod depth_diag;
 mod gu;
-mod input;
 mod meshdraw;
 #[cfg(any(
     feature = "texgen_normal_diagnostic_0",
@@ -36,7 +34,6 @@ mod meshdraw;
 mod normal_diag;
 mod play;
 mod results_transition;
-mod timing;
 #[cfg(feature = "tri_addr_diag_probe")]
 mod tri_addr_diag;
 
@@ -53,9 +50,11 @@ use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 
 use ssb_rom::pack::{Pack, PackError};
 
+use ssb_psp_runtime::assets;
+use ssb_psp_runtime::input::PspInput;
+use ssb_psp_runtime::timing::{PspClock, Stopwatch};
+
 use gu::{Gpu, GuVertex};
-use input::PspInput;
-use timing::{PspClock, Stopwatch};
 
 /// R0.17's deterministic capture mode. Every per-frame mutation (physics,
 /// skeleton/stage/material animation) reads its own wall-clock-independent
@@ -597,7 +596,7 @@ unsafe fn run() -> ! {
     }
     // The sibling `StageMetalFile2` graph that actually carries the pack's
     // one `G_TEXTURE_GEN_LINEAR` primitive (RE-214 §10/B; see this feature's
-    // own comment in `psp/Cargo.toml`).
+    // own comment in `psp-asset-viewer/Cargo.toml`).
     if cfg!(feature = "regression_capture_scene8") {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
@@ -711,7 +710,7 @@ unsafe fn run() -> ! {
     // R2 stage-coverage sweep (`regression_capture_stage_index`): the
     // remaining 37 stage entries share this one parametrized feature instead
     // of a dedicated Cargo feature each -- see that feature's own comment in
-    // `psp/Cargo.toml`. Same deterministic whole-stage freeze as scenes 5/10.
+    // `psp-asset-viewer/Cargo.toml`. Same deterministic whole-stage freeze as scenes 5/10.
     if cfg!(feature = "regression_capture_stage_index") {
         stage_index = option_env!("SSB64_STAGE_INDEX")
             .and_then(|s| s.parse::<u32>().ok())

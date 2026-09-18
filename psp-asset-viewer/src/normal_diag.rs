@@ -16,7 +16,7 @@
 //! proof`, `AGENTS.md`).
 //!
 //! One quad, filling the whole viewport, replaces the entire normal scene
-//! (see the `texgen_normal_diagnostic_*` feature block in `psp/Cargo.toml`
+//! (see the `texgen_normal_diagnostic_*` feature block in `psp-asset-viewer/Cargo.toml`
 //! for exactly which case each build picks). Every vertex shares the same
 //! hand-picked `GU_NORMAL_8BIT` value, so the texture-matrix generator's
 //! output is constant across the quad; a 256x256 "coordinate ramp" texture

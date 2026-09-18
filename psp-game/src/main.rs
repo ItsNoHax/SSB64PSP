@@ -1,9 +1,9 @@
 //! Layer C: the PSP front-end/Training-Mode executable (F1).
 //!
 //! A second, independent PSP application alongside the existing debug asset
-//! viewer in `psp/` -- its own crate, its own EBOOT, sharing only the
+//! viewer in `psp-asset-viewer/` -- its own crate, its own EBOOT, sharing only the
 //! portable `crates/ssb-engine`/`ssb-rom`/`ssb-game` libraries (`AGENTS.md`'s
-//! F1 carve-out, `plans/gameplay/F1.md`). `psp/`'s own build and EBOOT are
+//! F1 carve-out, `plans/gameplay/F1.md`). `psp-asset-viewer/`'s own build and EBOOT are
 //! unmodified by this crate's existence.
 //!
 //! Intro screen and main menu still draw flat coloured rectangles (`gu.rs`),
@@ -21,9 +21,7 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
-mod assets;
 mod gu;
-mod input;
 mod meshdraw;
 mod play;
 
@@ -34,21 +32,23 @@ use ssb_engine::input::{newly_pressed, Input, N64Buttons};
 use ssb_engine::renderer::Color;
 use ssb_rom::pack::Pack;
 
+use ssb_psp_runtime::assets;
+use ssb_psp_runtime::input::PspInput;
+
 use gu::Gpu;
-use input::PspInput;
 
 /// Loop-iteration count since boot. `psp-game` has no fixed-timestep sim
-/// accumulator yet (unlike `psp/`'s `Clock`/`FixedClock`), so this is simply
+/// accumulator yet (unlike `psp-asset-viewer/`'s `Clock`/`FixedClock`), so this is simply
 /// the draw-loop tick -- deterministic regardless of host wall-clock speed,
 /// which is what `regression_capture`/`headless_capture` need. Only
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
-/// to maintain unconditionally (`psp/main.rs`'s own `sim_frame_index`
+/// to maintain unconditionally (`psp-asset-viewer/main.rs`'s own `sim_frame_index`
 /// comment).
 const DETERMINISTIC_CAPTURE_TICKS: u64 = 106;
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
 /// script and reached its capture tick; always `false` otherwise, so callers
-/// need one guard, not a cfg per call site (mirrors `psp/main.rs`'s function
+/// need one guard, not a cfg per call site (mirrors `psp-asset-viewer/main.rs`'s function
 /// of the same name).
 #[inline]
 fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
@@ -56,7 +56,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 }
 
 /// A fixed, tick-indexed button script standing in for real `sceCtrl` input
-/// under `regression_capture`. `psp/` has no precedent for this (its own
+/// under `regression_capture`. `psp-asset-viewer/` has no precedent for this (its own
 /// deterministic-capture features only ever freeze *output* -- physics,
 /// animation, camera -- never override input, because its viewer has no
 /// input-driven state machine to script); `psp-game`'s Intro -> Menu ->
@@ -132,7 +132,7 @@ const JUMP_BUTTON_MASK: u16 =
 /// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
 /// not implement the emulator-only devctl, so the same build remains safe to
 /// load on hardware (where the call simply returns an error). Verbatim copy
-/// of `psp/main.rs`'s function of the same name/behaviour.
+/// of `psp-asset-viewer/main.rs`'s function of the same name/behaviour.
 #[cfg(feature = "headless_capture")]
 fn emit_headless_screenshot() {
     const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
@@ -200,11 +200,11 @@ const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 
 /// Which packed stage Training Mode loads. Dream Land (file 104) -- stage
 /// index 0, matching every other build in this project's own default/unset
-/// convention (`psp/Cargo.toml`'s `regression_capture_stage_index` doc: "0
+/// convention (`psp-asset-viewer/Cargo.toml`'s `regression_capture_stage_index` doc: "0
 /// (Dream Land) if unset").
 const TRAINING_STAGE_INDEX: u32 = 0;
 
-/// `psp/src/main.rs`'s own helper of the same name: the packed models face
+/// `psp-asset-viewer/src/main.rs`'s own helper of the same name: the packed models face
 /// +Z, but a fighter faces along the simulation's X axis, so the model needs
 /// a quarter turn one way or the other (RE-038).
 fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
@@ -243,7 +243,7 @@ unsafe fn run() -> ! {
     // Created once, on first entry to Training Mode (below) -- a fighter
     // spawned on the training stage, ticked with real physics/animation/
     // camera every frame this screen is active (`play::Play`, a verbatim
-    // copy of `psp/`'s own gameplay-slice adapter).
+    // copy of `psp-asset-viewer/`'s own gameplay-slice adapter).
     let mut play_state: Option<play::Play> = None;
     // The stationary dummy target (`play::Dummy`, `psp-game`-only -- see its
     // doc comment): spawned alongside `play_state` at the stage's second
@@ -308,7 +308,7 @@ unsafe fn run() -> ! {
                 if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
                     // Real `sceCtrl` stick input drives real movement/physics/
                     // animation against the real stage collision, the same
-                    // `Play::tick` `psp/`'s own gameplay slice uses. Under
+                    // `Play::tick` `psp-asset-viewer/`'s own gameplay slice uses. Under
                     // `regression_capture`, real pad state is replaced by the
                     // scripted script (RE-295) rather than zeroed -- a
                     // deterministic capture of gameplay input (the jab, now
@@ -433,7 +433,7 @@ unsafe fn draw_training(
     gpu.set_viewport_pillarboxed();
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     // 38 degrees: the real battle camera's own default FOV
-    // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp/main.rs`'s
+    // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp-asset-viewer/main.rs`'s
     // own sourced value). Far plane fixed rather than bounds-fitted like the
     // debug viewer's `dbg_cam`: Training has one known stage, not an
     // arbitrary archive entry to frame sight-unseen.
@@ -463,7 +463,7 @@ unsafe fn draw_training(
         // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
         // light from the active stage's `MPGroundData.light_angle.x/y`
         // immediately before drawing each fighter (RE-164) -- matches
-        // `psp/main.rs`'s own real-camera fighter draw.
+        // `psp-asset-viewer/main.rs`'s own real-camera fighter draw.
         draw_state.configure_fighter_light(stage.light_angle_xy);
         meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
         draw_state.finish_fighter_light();
