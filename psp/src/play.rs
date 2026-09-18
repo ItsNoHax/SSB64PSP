@@ -397,6 +397,7 @@ impl Play {
             LandingLight => "land    ",
             LandingHeavy => "land-hvy",
             Pass => "pass    ",
+            Attack11 => "jab1    ",
         }
     }
 

@@ -183,6 +183,17 @@ const BG_TRAINING: Color = Color::rgba(20, 48, 24, 255);
 /// without `sceFont` text (`plans/gameplay/F1.md`'s "Scene loading" section
 /// -- real on-screen text is later F1 work, not this increment).
 const BG_TRAINING_NO_PACK: Color = Color::rgba(80, 16, 16, 255);
+/// `assets::LoadError::Empty` -- the file opened but reported zero length.
+const BG_TRAINING_PACK_EMPTY: Color = Color::rgba(160, 100, 0, 255);
+/// `assets::LoadError::OutOfMemory` -- the heap allocation for the pack
+/// buffer failed.
+const BG_TRAINING_OUT_OF_MEMORY: Color = Color::rgba(120, 0, 160, 255);
+/// `assets::LoadError::ShortRead` -- `sceIoRead` returned fewer bytes than
+/// the file's reported size (seen over PSPLink's `host0:`, RE-296).
+const BG_TRAINING_SHORT_READ: Color = Color::rgba(200, 200, 0, 255);
+/// The pack opened and read fully but `ssb_rom::pack::Pack::open` rejected
+/// its contents (bad magic/version/bounds).
+const BG_TRAINING_PARSE_FAILED: Color = Color::rgba(0, 90, 170, 255);
 const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
@@ -213,6 +224,19 @@ unsafe fn run() -> ! {
     let loaded = assets::load_pack();
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    // Which flat colour `draw_training` falls back to when there is no scene
+    // to draw -- distinguishes *why* (open/read failure vs. a rejected
+    // header) without needing `sceFont` text, extending the pixel-provable
+    // convention `plans/gameplay/F1.md`'s "Scene loading" section already
+    // established for the plain not-loaded case.
+    let no_pack_color = match (&loaded, &opened) {
+        (Err(assets::LoadError::NotFound), _) => BG_TRAINING_NO_PACK,
+        (Err(assets::LoadError::Empty), _) => BG_TRAINING_PACK_EMPTY,
+        (Err(assets::LoadError::OutOfMemory), _) => BG_TRAINING_OUT_OF_MEMORY,
+        (Err(assets::LoadError::ShortRead), _) => BG_TRAINING_SHORT_READ,
+        (Ok(_), Some(Err(_))) => BG_TRAINING_PARSE_FAILED,
+        (Ok(_), _) => BG_TRAINING_NO_PACK,
+    };
     let pack: Option<Pack<'_>> = opened.and_then(|r| r.ok());
 
     let mut draw_state = meshdraw::DrawState::default();
@@ -337,6 +361,7 @@ unsafe fn run() -> ! {
                     pack.as_ref(),
                     play_state.as_ref(),
                     dummy_state.as_ref(),
+                    no_pack_color,
                 );
             }
         }
@@ -380,17 +405,19 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
 /// `psp-game` content built from `meshdraw`'s 3D pipeline rather than
 /// `gu::Gpu::draw_rect`'s flat placeholder rectangles.
 ///
-/// Falls back to the flat [`BG_TRAINING_NO_PACK`] colour when the pack
-/// failed to load/parse or the stage isn't in it -- unchanged from before
-/// this increment, still the pixel-provable signal `plans/gameplay/F1.md`'s
-/// "Scene loading" section established (no `sceFont` text exists yet to say
-/// so in words).
+/// Falls back to a flat colour keyed to *why* (see the `BG_TRAINING_*`
+/// consts and `no_pack_color`'s computation in `run`) when the pack failed
+/// to load/parse or the stage isn't in it -- still the pixel-provable
+/// signal `plans/gameplay/F1.md`'s "Scene loading" section established (no
+/// `sceFont` text exists yet to say so in words), now distinguishing the
+/// failure reason too (RE-296).
 unsafe fn draw_training(
     gpu: &mut Gpu,
     draw_state: &mut meshdraw::DrawState,
     pack: Option<&Pack<'_>>,
     play_state: Option<&play::Play>,
     dummy_state: Option<&play::Dummy>,
+    no_pack_color: Color,
 ) {
     let scene = pack
         .zip(play_state)
@@ -398,7 +425,7 @@ unsafe fn draw_training(
 
     let Some((p, pl, stage)) = scene else {
         gpu.set_viewport_fullscreen();
-        gpu.begin_frame(BG_TRAINING_NO_PACK);
+        gpu.begin_frame(no_pack_color);
         return;
     };
 
