@@ -958,3 +958,23 @@ impl Gpu {
         }
     }
 }
+
+/// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
+/// not implement the emulator-only devctl, so the same build remains safe to
+/// load on hardware (where the call simply returns an error). Callers gate
+/// the call site behind their own `headless_capture` feature; this function
+/// itself is unconditional so both applications share one implementation.
+pub fn emit_headless_screenshot() {
+    const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
+
+    unsafe {
+        sys::sceIoDevctl(
+            b"emulator:\0".as_ptr(),
+            EMULATOR_DEVCTL_EMIT_SCREENSHOT,
+            core::ptr::null_mut(),
+            0,
+            core::ptr::null_mut(),
+            0,
+        );
+    }
+}

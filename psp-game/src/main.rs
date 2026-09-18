@@ -25,14 +25,13 @@ extern crate alloc;
 
 mod play;
 
-#[cfg(feature = "headless_capture")]
-use psp::sys;
-
 use ssb_engine::input::{newly_pressed, Input, N64Buttons};
 use ssb_engine::renderer::Color;
 use ssb_rom::pack::Pack;
 
 use ssb_psp_runtime::assets;
+#[cfg(feature = "headless_capture")]
+use ssb_psp_runtime::gu::emit_headless_screenshot;
 use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::input::PspInput;
 use ssb_psp_runtime::meshdraw;
@@ -129,26 +128,6 @@ fn scripted_stick_x(tick: u64) -> i8 {
 const JUMP_BUTTON_MASK: u16 =
     N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT;
 
-/// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
-/// not implement the emulator-only devctl, so the same build remains safe to
-/// load on hardware (where the call simply returns an error). Verbatim copy
-/// of `psp-asset-viewer/main.rs`'s function of the same name/behaviour.
-#[cfg(feature = "headless_capture")]
-fn emit_headless_screenshot() {
-    const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
-
-    unsafe {
-        sys::sceIoDevctl(
-            b"emulator:\0".as_ptr(),
-            EMULATOR_DEVCTL_EMIT_SCREENSHOT,
-            core::ptr::null_mut(),
-            0,
-            core::ptr::null_mut(),
-            0,
-        );
-    }
-}
-
 psp::module!("ssb64_psp_game", 1, 0);
 
 fn psp_main() {
@@ -203,16 +182,6 @@ const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 /// convention (`psp-asset-viewer/Cargo.toml`'s `regression_capture_stage_index` doc: "0
 /// (Dream Land) if unset").
 const TRAINING_STAGE_INDEX: u32 = 0;
-
-/// `psp-asset-viewer/src/main.rs`'s own helper of the same name: the packed models face
-/// +Z, but a fighter faces along the simulation's X axis, so the model needs
-/// a quarter turn one way or the other (RE-038).
-fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
-    match facing {
-        ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
-        ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
-    }
-}
 
 unsafe fn run() -> ! {
     let mut gpu = Gpu::init();
@@ -462,7 +431,7 @@ unsafe fn draw_training(
         let n = pl.skeleton.compose(p, &obj, &mut posed);
         gpu.model_transform(
             [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-            [0.0, facing_turn(pl.fighter.facing), 0.0],
+            [0.0, play::facing_turn(pl.fighter.facing), 0.0],
             meshdraw::MODEL_SCALE,
         );
         let m = gpu.model_matrix();
@@ -485,7 +454,7 @@ unsafe fn draw_training(
             let n = dummy.skeleton.compose(p, &obj, &mut posed);
             gpu.model_transform(
                 [dummy.fighter.pos.x, dummy.fighter.pos.y, dummy.fighter.pos.z],
-                [0.0, facing_turn(dummy.fighter.facing), 0.0],
+                [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
                 meshdraw::MODEL_SCALE,
             );
             let m = gpu.model_matrix();

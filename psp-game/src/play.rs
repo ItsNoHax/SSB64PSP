@@ -14,7 +14,7 @@ use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::status::Status;
 use ssb_rom::pack::{Pack, StageDesc};
 
-pub use ssb_psp_runtime::scene::FighterScene;
+pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
 
 /// A stationary, physics-ticked dummy target for Training Mode
 /// (`plans/gameplay/F1.md`: "One player-controlled fighter vs. one

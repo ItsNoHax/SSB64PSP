@@ -440,3 +440,15 @@ impl FighterScene {
         );
     }
 }
+
+/// Which way to turn a model so it faces the way the fighter does.
+///
+/// Fighter models are authored facing `+Z` — shoulders spanning X — while a
+/// match runs along X, so every one of them is a quarter turn off (RE-038).
+/// Feeds `Gpu::model_transform`'s `rot_radians` argument.
+pub fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
+    match facing {
+        ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
+        ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
+    }
+}
