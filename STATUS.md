@@ -65,11 +65,14 @@ regression captures against `tests/golden/`):
 9. Naming/tooling/architecture docs updated (`README.md`, this file,
    `docs/ssb-architecture.md`, tooling scripts, `.claude/skills/`) — `DONE`
    (this entry)
-10. Full acceptance gate: `cargo fmt --check`/`cargo clippy
+10. Full acceptance gate — `cargo fmt --check`/`cargo clippy
     --workspace --all-targets`/`cargo test --workspace`, both EBOOTs, the
-    full deterministic regression matrix, `psp-game`'s deterministic
-    Intro→Menu→Training→jump→jab flow, and a physical-hardware smoke test
-    of both EBOOTs — `NOT_STARTED`
+    deterministic regression matrix, `psp-game`'s deterministic
+    Intro→Menu→Training→jump→jab flow: all pass, `docs/evidence/re/RE-298.md`.
+    **Physical-hardware smoke test of both EBOOTs: `NOT_STARTED`** — this
+    session ran in a sandboxed environment with no physical PSP attached.
+    This is the one remaining manual step before F1 feature development
+    resumes.
 
 **Not yet physically hardware-tested:** the now-shared, unconditional
 `sceGuDebugFlush()` call in `psp-runtime::gu::Gpu::end_frame`. RE-202's own
@@ -89,10 +92,12 @@ function, since the decomp's check accepts any one C-button. PSP-1000
 compatibility (32 MiB, cannot use extended memory) remains a separate,
 long-standing open item.
 
-Current blocker(s): none. Next up: finish Step 10 (full acceptance gate,
-including the physical-hardware smoke test above), then resume F1 —
-`sceFont` (PGF glyph rasterisation), a real character/stage select UI, and
-the jab's second hitbox/per-bone hurtbox system are all eligible, no single
+Current blocker(s): the runtime refactor's Step 10 physical-hardware smoke
+test (needs a real PSP; this session had none) is the one thing standing
+between here and resuming F1. Once it passes (or a real bug is found and
+fixed), close `docs/evidence/re/RE-298.md` and resume F1 — `sceFont` (PGF
+glyph rasterisation), a real character/stage select UI, and the jab's
+second hitbox/per-bone hurtbox system are all eligible next, no single
 mandated order. `R3` (`plans/rendering/R3.md`) remains `NOT_STARTED` and
 eligible to resume any time — neither F1 nor this refactor block it.
 
@@ -107,20 +112,24 @@ installed-dir requirement origin), RE-255 (`memsize` key origin/
 `OutOfMemory` discovery), RE-164 (per-fighter directional light), RE-131
 (real battle camera) — see
 [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
-chain, RE-240–297. Toolchain note: the global `cargo-psp` install is a
+chain, RE-240–298. Toolchain note: the global `cargo-psp` install is a
 hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink),
 `visual-regression` Skill (PPSSPPHeadless)
 
 Current build: this session's refactor commits touch `psp-asset-viewer/`,
-`psp-game/` and the new `psp-runtime/` extensively (see the ten commits on
-`main` from the `psp/` → `psp-asset-viewer/` rename through the Step 8
-dedup); no changes to `crates/ssb-game`, `crates/ssb-rom`, `crates/ssb-engine`
-this session. EBOOT/PRX hashes were not re-recorded mid-refactor (they
-change with every step); Step 10 will record fresh hashes for both
-applications' plain and `regression_capture` builds once the acceptance
-gate passes. Pack unchanged this session (no asset-pipeline code touched):
+`psp-game/` and the new `psp-runtime/` extensively (ten commits on `main`
+from the `psp/` → `psp-asset-viewer/` rename through Step 10's acceptance
+gate); no changes to `crates/ssb-game`, `crates/ssb-rom`, `crates/ssb-engine`
+this session. Final plain-build hashes (`docs/evidence/re/RE-298.md`):
+`psp-asset-viewer` EBOOT
+`066e4b4939f62f7fecc800577edabda33c1f21e44066caecc95a90fcea95c713`;
+`psp-game` EBOOT
+`aa60fc94e546f5b0b4f6259017cd9d8944098ae442bfc3a79055522458c181e5`;
+`psp-game` `regression_capture` EBOOT (for hardware staging)
+`49e1f20e9f08c20441a663ac34a21cf3145f4dfe77ed5dc38253e449bb2a7447`. Pack
+unchanged this session (no asset-pipeline code touched):
 `256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`.
 Workspace test suite: `cargo test --workspace` — 425 passed, 0 failed
 throughout every step (no test-covered `crates/` logic touched, only
