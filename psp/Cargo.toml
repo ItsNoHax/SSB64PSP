@@ -161,6 +161,20 @@ regression_capture_scene9 = []
 # default.
 regression_capture_scene10 = []
 
+# R2 stage-coverage sweep: parametrized stage golden, stage index supplied at
+# compile time via the `SSB64_STAGE_INDEX` environment variable
+# (`option_env!`), rather than a dedicated Cargo feature per stage. Scenes 5
+# and 10 already prove the one-feature-per-stage pattern for two stages; the
+# archive's 41-stage block has 37 more entries (5 more real VS-mode battle
+# stages, Mushroom Kingdom, Beta Dream Land, the Test Stage, Duel Zone, Small
+# Yoshi's Island, the tutorial map, the Metal Mario stage, and 25 bonus maps),
+# and adding 37 near-identical named features would bloat this file for no
+# benefit a build-time parameter doesn't already give. Same deterministic
+# whole-stage freeze as scenes 5/10 (stays in `stage_view`, not the object
+# viewer). Off by default; `SSB64_STAGE_INDEX` defaults to 0 (Dream Land) if
+# unset while this feature is enabled.
+regression_capture_stage_index = []
+
 # `R2.2`/C3 measurement rig (RE-251): a synthetic, non-ROM diagnostic proving
 # `apply_material`'s `sceGuDepthMask` wiring, the same `texgen_normal_
 # diagnostic_*` shape as `normal_diag.rs` (one purpose-built scene replacing

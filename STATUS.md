@@ -4,7 +4,31 @@ Milestone: `R2 — Physical PSP Rendering Validation`
 Primary task: complete the remaining physical-hardware matrix
 Task state: `IN_PROGRESS`
 
-Current objective: `RE-283` (the reopened fighter-texture quality gate) is
+Current objective: **RE-286 (this session): all 41 stage entries now have a
+deterministic PPSSPP software golden** (4 pre-existing + 37 added this
+session — Zebes, Mushroom Kingdom, Kongo Jungle, Yoshi's Island, Hyrule
+Castle, Final Destination, the tutorial map, the Metal Mario stage, Beta
+Dream Land, the Test Stage, Small Yoshi's Island, Duel Zone, and all 25
+bonus maps). Corrected an undercount in this file's own prior text and in
+RE-285: the true remaining set was 37, not 33 — `refs/ssb-decomp-re/src/mp/
+mpcollision.c`'s `dMPCollisionGroundFileInfos` table (decomp ground truth)
+confirms Mushroom Kingdom (file 260) is a real selectable stage, not a test
+variant. Added one parametrized Cargo feature
+(`regression_capture_stage_index`, `SSB64_STAGE_INDEX` build-time env var)
+rather than 37 near-identical named features — see RE-286 for the full
+rationale. All 37 new goldens are deterministic (byte-identical across two
+capture timings) and zero regression on every pre-existing golden (spot-
+checked: default Dream Land, Peach's Castle, Saffron City gate, Kirby
+fighter, all 0 differing pixels); `cargo fmt`/`cargo test --workspace`
+(425 passed) clean; plain EBOOT rebuilt after (`2dbce3ee...818f47`); pack
+unchanged (`256d7661...42c17d`) since no asset-pipeline code changed.
+**Physical-PSP hardware confirmation for these 37 is explicitly deferred**
+(user's own choice this session, given the cost of 37 sequential PSPLink
+cycles) — tracked as open work below, not silently assumed passing. Stage
+coverage is 41/41 on software, 4/41 hardware-confirmed (the pre-existing
+Dream Land, Sector Z, Saffron City, Peach's Castle).
+
+Prior objective: `RE-283` (the reopened fighter-texture quality gate) is
 now fully traced — all nine user-reported items are accounted for. Eight
 are fixed and confirmed on both PPSSPP and physical PSP hardware: Fox,
 Mario/Luigi, Samus, Link's boot, Link's shin cuff, Yoshi, Captain Falcon,
@@ -94,35 +118,37 @@ reported items are accounted for (eight fixed and hardware-confirmed, two
 traced to no reproducible defect, including their non-default costumes).
 PSP-1000 confirmation is parked (no unit available, and out of scope per
 explicit instruction). The 30-minute sustained-run check (RE-284) is done
-and clean. **This session also added a fourth stage golden (RE-285):
-Peach's Castle** (`regression_capture_scene10`, stage 4/file 259) —
-deterministic on PPSSPP, zero regression on every other golden (all 12
-fighters + Dream Land + Saffron re-verified), and physically confirmed on
-the PSP Slim with zero exceptions, matching the software golden exactly.
-Stage coverage is now 4/41 (Dream Land, Sector Z, Saffron City, Peach's
-Castle). Remaining R2 coverage work, in rough priority order: continue
-adding one bounded stage golden at a time (5 more real battle stages —
-Zebes, Kongo Jungle, Yoshi's Island, Hyrule Castle, Final Destination —
-plus the Metal Mario stage, the tutorial map, and 26 bonus maps remain
-uncovered; do not attempt all of them in one sitting), then a second
-physical unit for the long-duration check (parity with the existing
-10-minute two-unit sample), and lastly (gated on copy-ability gameplay
-existing at all) Kirby's per-ability hat graphs. Do not start R3 or combat
-before R2's physical matrix is closed.
+and clean. **RE-286 (this session) closes the software side of stage
+coverage: all 41/41 stage entries now have a deterministic PPSSPP golden.**
+Remaining R2 coverage work, in rough priority order: (1) physically confirm
+the 37 new stage goldens on real PSP hardware (batched PSPLink sessions,
+deliberately deferred from this session per explicit user choice — do not
+assume they pass on hardware just because PPSSPP is clean, per this
+project's own repeated PPSSPP-vs-physical-PSP GE-quirk findings, e.g.
+RE-283's Link boot/shin/Yoshi/Falcon/Ness paletted-texture defects, none of
+which PPSSPP alone would have caught), (2) a second physical unit for the
+long-duration check (parity with the existing 10-minute two-unit sample),
+and (3) lastly (gated on copy-ability gameplay existing at all) Kirby's
+per-ability hat graphs. Do not start R3 or combat before R2's physical
+matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
 RE-272, RE-273, RE-274, RE-275, RE-276, RE-277, RE-278, RE-279, RE-280,
-RE-281, RE-282, RE-283 (see [docs/evidence/INDEX.md](docs/evidence/INDEX.md)
-for the full R2.2/physical chain, RE-240–283). Toolchain note: the global
-`cargo-psp` install is a hybrid build, see RE-256.
+RE-281, RE-282, RE-283, RE-284, RE-285, RE-286 (see
+[docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
+chain, RE-240–286). Toolchain note: the global `cargo-psp` install is a
+hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-283-eighteenth-follow-up pack/code (Ness shoulder-strap
-fix, confirmed on PPSSPP and physical PSP hardware) — unchanged this
-session; Pikachu/Kirby tracing needed no code fix. Pack
+Current build: RE-286 code (37 new stage-golden Cargo/main.rs wiring,
+software-only this session) on top of RE-283's eighteenth-follow-up fixes
+(Ness shoulder-strap, confirmed on PPSSPP and physical PSP hardware). Pack
+unchanged this session (no asset-pipeline code touched):
 `256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`
-(28,572.0 KiB). Plain feature-free EBOOT
-`9b9bfb8f94730a47ea04e50cb2a75a8d91536bd9b13f74682256a3ebe902ca8c`
-(unchanged since RE-281/the boot, shin-cuff, Yoshi, Falcon and Ness fixes).
+(28,572.0 KiB). Plain feature-free EBOOT rebuilt after RE-286's source
+changes (expected hash change from source-only edits, no behavior change —
+confirmed by the zero-differing-pixel regression checks in RE-286):
+`2dbce3ee1c718a5ebf374ef65291499d08d1429f49abc000a89dbc97b4818f47`. Not yet
+staged to physical hardware this session.
