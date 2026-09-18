@@ -71,6 +71,38 @@ fallback.
 
 ---
 
+## Deferred Hardware Acceptance (PLAN.md R2 — closed; revisit once F1 lands)
+
+Target: after `F1 — Front End & Training Mode` (title/menu/character-select/
+stage-select UI, real scene loading, `plans/gameplay/F1.md`) ships as its
+own PSP application alongside the current debug asset viewer. Revisit when
+F1's build exists or whenever it's next convenient to attach PSP hardware,
+whichever comes first.
+Status: DEFERRED (explicit user instruction, this session)
+Evidence: RE-284, RE-288
+
+### PSP-1000 real-content confirmation
+Reason: RE-288 confirmed the current ~25.6 MiB pack fails to fit in a
+PSP-1000's 32 MiB RAM (`MEMSIZE=1` is ignored on that hardware class) —
+`LoadError::OutOfMemory`, clean fallback to the placeholder tetrahedron, zero
+exceptions. This is a real, documented constraint, not an open question, but
+confirming the *renderer itself* on PSP-1000 needs a build that actually
+fits — e.g. a reduced-content or streaming pack — which doesn't exist yet.
+Revisit once a real game scene (not the whole 41-stage/12-fighter asset
+viewer) is what actually loads at runtime.
+
+### Second physical unit at the 30-minute sustained-run duration
+Reason: RE-284 sustained 30 minutes on one unit (PSP Slim) with zero
+exceptions; RE-273 sustained 10 minutes on a second unit (PSP-3000). No unit
+has run the full 30-minute duration with real pack content loaded on a
+second unit. RE-288 started this on a PSP-1000 but only the fallback
+tetrahedron runs there (pack doesn't fit — see above), so it was stopped
+after one clean 5-minute checkpoint as not representative of real play; a
+unit that can actually load the pack (Slim/2000/3000-class, 64 MiB) is
+needed to repeat RE-284's methodology properly on a second unit.
+
+---
+
 ## Deferred Work Behind the Rendering Gate (PLAN.md G1–G5)
 
 Blocked until R0, R1, R2 and R3 are all complete and G0 (first combat
@@ -85,7 +117,7 @@ milestone's scope; these are additional discovered items within that scope.
 
 ### G2 — Complete Match Systems
 - [ ] All original stages loadable in a match (41 including bonus/1P) — the viewer already browses stage data, a match does not yet select one
-- [ ] Game modes (VS, 1P, Training, etc.)
+- [ ] Game modes (VS, 1P, etc.) — Training mode itself is delivered early by F1 (`plans/gameplay/F1.md`)
 - [ ] Stocks, timers, win conditions, match transitions
 
 ### G3 — Menus and Persistence
@@ -142,7 +174,11 @@ Status: Setter (`sGCDetailLevel`) not traced. Likely tied to player count/option
 
 Recorded so the shape of the first combat slice isn't lost. None of this may
 start until `PLAN.md` R0–R3 are complete and `STATUS.md` records G0 as
-eligible.
+eligible. The single-target subset (grounded attack, hitbox/hurtbox, damage/
+knockback/hitstun, no opponent/stocks/match loop) is the one carved-out
+exception built early by `F1` (`plans/gameplay/F1.md`) — do not duplicate
+that work here; this list is the *full* slice, including the opponent and
+match loop F1 explicitly excludes.
 
 - [ ] Grounded attack end-to-end — input → hitbox → hurtbox → damage → knockback
 - [ ] Hitbox/hurtbox system from `FTAttributes` descriptors (RE-032, only 45 leading scalars decoded)
