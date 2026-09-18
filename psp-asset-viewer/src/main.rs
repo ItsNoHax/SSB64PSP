@@ -2119,12 +2119,12 @@ unsafe fn run() -> ! {
                     // The status, not just ground/air: which of the two a
                     // fighter is in follows from the status rather than the
                     // other way round, and "walk-fst" says more than "ground".
-                    pl.status_name()
+                    play::status_name(pl)
                 },
                 pl.fighter.pos.x as i32,
                 pl.fighter.pos.y as i32,
                 pl.fighter.floor.map_or(-1, |f| f.line as i32),
-                pl.material().unwrap_or(0),
+                play::material(pl).unwrap_or(0),
                 pl.airborne_ticks,
             ),
             _ => ("off     ", 0, 0, -1, 0, 0),
