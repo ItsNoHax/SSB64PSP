@@ -6,12 +6,14 @@
 //! F1 carve-out, `plans/gameplay/F1.md`). `psp/`'s own build and EBOOT are
 //! unmodified by this crate's existence.
 //!
-//! Current increment: intro screen -> main menu -> a Training-Mode
-//! placeholder, all drawn as flat coloured rectangles (`gu.rs`). No fighter,
-//! stage, hitbox, or damage code runs yet -- that is later F1 work, tracked
-//! in `plans/gameplay/F1.md`'s remaining acceptance criteria and `TODO.md`.
-//! What exists here proves criterion 1 (a real, independently booting
-//! second EBOOT) and the intro/menu navigation shape of criteria 2-3.
+//! Intro screen and main menu still draw flat coloured rectangles (`gu.rs`),
+//! proving criterion 1 (a real, independently booting second EBOOT) and the
+//! intro/menu navigation shape of criteria 2-3. Training Mode now loads the
+//! real pack, spawns a real fighter on a real stage, and draws both through
+//! `meshdraw`'s 3D pipeline and `play::Play`'s real physics/animation/camera
+//! (`plans/gameplay/F1.md`'s "Scene loading" section) -- real hitbox/damage/
+//! knockback combat (criterion 5) and `sceFont` menu/select text are still
+//! outstanding, tracked there and in `TODO.md`.
 
 #![no_std]
 #![no_main]
@@ -22,6 +24,8 @@ extern crate alloc;
 mod assets;
 mod gu;
 mod input;
+mod meshdraw;
+mod play;
 
 #[cfg(feature = "headless_capture")]
 use psp::sys;
@@ -112,9 +116,10 @@ fn psp_main() {
 enum Screen {
     Intro,
     Menu,
-    /// The Training-Mode placeholder. Not yet a real scene: no stage, no
-    /// fighter, no combat -- see `plans/gameplay/F1.md` acceptance criteria
-    /// 4-7 for what still has to land here.
+    /// Training Mode: a real stage and a real, physics-ticked fighter now
+    /// draw here (`draw_training`) -- no combat yet, see
+    /// `plans/gameplay/F1.md` acceptance criteria 5-7 for what still has to
+    /// land.
     Training,
 }
 
@@ -135,18 +140,40 @@ const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 
+/// Which packed stage Training Mode loads. Dream Land (file 104) -- stage
+/// index 0, matching every other build in this project's own default/unset
+/// convention (`psp/Cargo.toml`'s `regression_capture_stage_index` doc: "0
+/// (Dream Land) if unset").
+const TRAINING_STAGE_INDEX: u32 = 0;
+
+/// `psp/src/main.rs`'s own helper of the same name: the packed models face
+/// +Z, but a fighter faces along the simulation's X axis, so the model needs
+/// a quarter turn one way or the other (RE-038).
+fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
+    match facing {
+        ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
+        ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
+    }
+}
+
 unsafe fn run() -> ! {
     let mut gpu = Gpu::init();
     let mut pad = PspInput::init();
 
-    // Load the converted asset pack. Held for the whole program: the GE will
-    // read vertex and texture data out of it by DMA once the training scene
-    // draws real meshes (`plans/gameplay/F1.md`'s remaining "Scene loading"
-    // work -- this increment only proves the pack loads and parses).
+    // Load the converted asset pack. Held for the whole program: the GE
+    // reads vertex and texture data out of it by DMA once the training
+    // scene draws real meshes below.
     let loaded = assets::load_pack();
     let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
     let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
-    let pack_ok = matches!(opened, Some(Ok(_)));
+    let pack: Option<Pack<'_>> = opened.and_then(|r| r.ok());
+
+    let mut draw_state = meshdraw::DrawState::default();
+    // Created once, on first entry to Training Mode (below) -- a fighter
+    // spawned on the training stage, ticked with real physics/animation/
+    // camera every frame this screen is active (`play::Play`, a verbatim
+    // copy of `psp/`'s own gameplay-slice adapter).
+    let mut play_state: Option<play::Play> = None;
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -181,6 +208,12 @@ unsafe fn run() -> ! {
                         cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
                         screen = Screen::Training;
+                        if play_state.is_none() {
+                            play_state = pack.as_ref().and_then(|p| {
+                                p.stage(TRAINING_STAGE_INDEX)
+                                    .map(|s| play::Play::at_spawn(p, &s))
+                            });
+                        }
                     }
                 }
                 Screen::Training => {
@@ -191,18 +224,47 @@ unsafe fn run() -> ! {
                     }
                 }
             }
+
+            if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
+                if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
+                    // Real `sceCtrl` stick input drives real movement/physics/
+                    // animation against the real stage collision, the same
+                    // `Play::tick` `psp/`'s own gameplay slice uses. Frozen to
+                    // neutral input under `regression_capture` so a headless
+                    // capture cannot vary with incidental pad state.
+                    let controller = if cfg!(feature = "regression_capture") {
+                        ssb_engine::input::ControllerState::default()
+                    } else {
+                        pad.state(0)
+                    };
+                    // Jump is not wired yet: `psp/`'s own C_LEFT jump binding
+                    // is an explicit debug-viewer stand-in (its real controls
+                    // occupy the actual button), and the real SSB64 jump
+                    // binding has not been sourced from the decomp for this
+                    // front end yet. Declining rather than guessing a control
+                    // mapping.
+                    pl.tick(p, &stage, controller, false, None);
+                }
+            }
         }
 
         match screen {
             Screen::Intro => {
+                gpu.set_viewport_fullscreen();
                 gpu.begin_frame(BG_INTRO);
             }
             Screen::Menu => {
+                gpu.set_viewport_fullscreen();
                 gpu.begin_frame(BG_MENU);
                 draw_menu(&mut gpu, cursor);
             }
             Screen::Training => {
-                gpu.begin_frame(if pack_ok { BG_TRAINING } else { BG_TRAINING_NO_PACK });
+                draw_training(
+                    &mut gpu,
+                    &mut draw_state,
+                    pack.as_ref(),
+                    play_state.as_ref(),
+                );
             }
         }
         gpu.end_frame();
@@ -237,5 +299,72 @@ fn draw_menu(gpu: &mut Gpu, cursor: usize) {
             ENTRY_DISABLED
         };
         gpu.draw_rect(LEFT, y0, LEFT + ENTRY_WIDTH, y0 + ENTRY_HEIGHT, color);
+    }
+}
+
+/// Draws the training scene: the real stage and the real spawned fighter,
+/// through the real battle camera (`play::Play::camera`) -- the first
+/// `psp-game` content built from `meshdraw`'s 3D pipeline rather than
+/// `gu::Gpu::draw_rect`'s flat placeholder rectangles.
+///
+/// Falls back to the flat [`BG_TRAINING_NO_PACK`] colour when the pack
+/// failed to load/parse or the stage isn't in it -- unchanged from before
+/// this increment, still the pixel-provable signal `plans/gameplay/F1.md`'s
+/// "Scene loading" section established (no `sceFont` text exists yet to say
+/// so in words).
+unsafe fn draw_training(
+    gpu: &mut Gpu,
+    draw_state: &mut meshdraw::DrawState,
+    pack: Option<&Pack<'_>>,
+    play_state: Option<&play::Play>,
+) {
+    let scene = pack
+        .zip(play_state)
+        .and_then(|(p, pl)| p.stage(TRAINING_STAGE_INDEX).map(|s| (p, pl, s)));
+
+    let Some((p, pl, stage)) = scene else {
+        gpu.set_viewport_fullscreen();
+        gpu.begin_frame(BG_TRAINING_NO_PACK);
+        return;
+    };
+
+    gpu.begin_frame(BG_TRAINING);
+    gpu.set_viewport_pillarboxed();
+    let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+    // 38 degrees: the real battle camera's own default FOV
+    // (`refs/ssb-decomp-re/src/gm/gmcamera.c:1191`, matching `psp/main.rs`'s
+    // own sourced value). Far plane fixed rather than bounds-fitted like the
+    // debug viewer's `dbg_cam`: Training has one known stage, not an
+    // arbitrary archive entry to frame sight-unseen.
+    gpu.set_perspective(38.0, vw as f32 / vh as f32, 1.0, 10_000.0);
+    gpu.reset_modelview();
+    draw_state.begin_frame();
+
+    gpu.set_view(&ssb_engine::math::Mat4::look_at(
+        pl.camera.eye,
+        pl.camera.at,
+        ssb_engine::math::Vec3::Y,
+    ));
+    gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
+    let base = gpu.model_matrix();
+
+    meshdraw::draw_stage(p, &stage, &base, draw_state, None);
+
+    if let Some(obj) = p.object(pl.object) {
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+        let n = pl.skeleton.compose(p, &obj, &mut posed);
+        gpu.model_transform(
+            [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
+            [0.0, facing_turn(pl.fighter.facing), 0.0],
+            meshdraw::MODEL_SCALE,
+        );
+        let m = gpu.model_matrix();
+        // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
+        // light from the active stage's `MPGroundData.light_angle.x/y`
+        // immediately before drawing each fighter (RE-164) -- matches
+        // `psp/main.rs`'s own real-camera fighter draw.
+        draw_state.configure_fighter_light(stage.light_angle_xy);
+        meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
+        draw_state.finish_fighter_light();
     }
 }
