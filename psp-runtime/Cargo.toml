@@ -1,0 +1,25 @@
+[package]
+name = "ssb-psp-runtime"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Layer C: shared PSP platform/rendering/runtime library used by psp-asset-viewer and psp-game."
+
+# Deliberately outside the root workspace, for the same reason as
+# `psp-asset-viewer/` and `psp-game/`: this crate targets mipsel-sony-psp, is
+# no_std, and is built with `cargo psp`. See the root Cargo.toml. It has no
+# rust-toolchain.toml of its own: both applications pull it in as a path
+# dependency, and the invoking application's own pinned nightly governs the
+# whole build, including this crate.
+[workspace]
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = true
+
+[profile.dev]
+opt-level = 1
