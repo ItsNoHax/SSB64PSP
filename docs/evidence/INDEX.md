@@ -305,3 +305,4 @@ editing a record.
 | RE-293 | `psp-game`'s Training Mode spawns a real, physics-ticked stationary dummy target | COMPLETE | front-end, physics |  |
 | RE-294 | Training Mode's first real attack: Mario's jab, hitbox to hitstun | COMPLETE (numeric slice) — see "Still open" below | front-end, physics, gameplay |  |
 | RE-295 | Real jump binding reaches the dummy's real spawn point | COMPLETE | front-end, physics, gameplay, input |  |
+| RE-296 | First physical-PSP confirmation of `psp-game` | COMPLETE | front-end, hardware, memory, toolchain, visual-regression |  |
