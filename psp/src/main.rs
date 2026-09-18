@@ -101,6 +101,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene8")
             || cfg!(feature = "regression_capture_scene9")
             || cfg!(feature = "regression_capture_scene10")
+            || cfg!(feature = "regression_capture_stage_index")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
@@ -706,6 +707,15 @@ unsafe fn run() -> ! {
     // freeze as scene 5.
     if cfg!(feature = "regression_capture_scene10") {
         stage_index = 4;
+    }
+    // R2 stage-coverage sweep (`regression_capture_stage_index`): the
+    // remaining 37 stage entries share this one parametrized feature instead
+    // of a dedicated Cargo feature each -- see that feature's own comment in
+    // `psp/Cargo.toml`. Same deterministic whole-stage freeze as scenes 5/10.
+    if cfg!(feature = "regression_capture_stage_index") {
+        stage_index = option_env!("SSB64_STAGE_INDEX")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(0);
     }
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.
