@@ -292,12 +292,13 @@ editing a record.
 | RE-280 | Root cause found: `Ci4`/`PsmT4` packing uses the wrong nibble order for the PSP GE | COMPLETE — fix applied and confirmed, see RE-281 | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-281 | RE-280's `Ci4`/`PsmT4` nibble-order fix applied, pack rebuilt, 18/22 goldens refreshed and explained | COMPLETE | texture, fighter, hardware, visual-regression, asset-pipeline |  |
 | RE-282 | Physical-hardware confirmation of RE-281's `Ci4`/`PsmT4` fix (Mario) | COMPLETE | texture, fighter, hardware, visual-regression |  |
-| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | COMPLETE (software-traced) — 8/9 items fixed (Fox, Mario/Luigi, Samus, Link boot, Link shin, Yoshi, Captain Falcon, Ness) via `Psm8888` bypass; Pikachu/Kirby traced and found to have no reproducible defect | texture, fighter, geometry, visual-regression, asset-pipeline |  |
+| RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | COMPLETE (software-traced) — Fox's wrist defect, Samus's chest "black square", and |  |  |
 | RE-284 | 30-minute physical-hardware sustained run, extending past the prior 10-minute sample | COMPLETE | hardware, visual-regression |  |
 | RE-285 | New stage golden: Peach's Castle (scene 10), physically confirmed | COMPLETE | stage, visual-regression, hardware |  |
-| RE-286 | Remaining 37 stage goldens added in one batch (software-only; hardware confirmation deferred) | COMPLETE (software); hardware confirmation deferred | stage, visual-regression |  |
-| RE-287 | Physical-PSP confirmation of RE-286's 37 new stage goldens: zero exceptions on all 37, 8 spot-checked pixel-exact | COMPLETE | stage, visual-regression, hardware |  |
-| RE-288 | PSP-1000 physically tested: pack fails to fit in 32 MiB RAM, clean `OutOfMemory` fallback, zero exceptions; second-unit 30-min sustained run stopped early (fallback-only, not representative), deferred to a future hardware-acceptance pass | COMPLETE | hardware, visual-regression, asset-pipeline |  |
-| RE-289 | F1's `psp-game/` crate scaffolded: a second, independent EBOOT boots to an intro/menu state machine | COMPLETE (this increment) — scene loading, text, Training Mode combat remain | front-end, toolchain, hardware, visual-regression |  |
-| RE-290 | `psp-game`'s Menu -> Training confirm transition, pixel-confirmed via PPSSPPHeadless (closes RE-289's open item) | COMPLETE | front-end, toolchain, visual-regression |  |
-| RE-291 | `psp-game` loads and parses the real asset pack; `Psp.toml` was missing RE-255's `memsize` key | COMPLETE | front-end, toolchain, asset-pipeline, visual-regression |  |
+| RE-286 | Remaining 37 stage goldens added in one batch (software-only | COMPLETE (software); physical-PSP confirmation deferred as a follow-up batch | stage, visual-regression |  |
+| RE-287 | Physical-PSP confirmation of RE-286's 37 new stage goldens | COMPLETE | stage, visual-regression, hardware |  |
+| RE-288 | Physical PSP-1000 test: pack-load compatibility and an aborted second-unit 30-minute sustained run | COMPLETE | hardware, visual-regression, asset-pipeline |  |
+| RE-289 | F1's `psp-game/` crate scaffolded: a second, independent EBOOT boots to an intro/menu state machine | COMPLETE (this increment) — scene loading, real text and Training Mode's combat sandbox remain, see `plans/gameplay/F1.md` | front-end, toolchain, hardware, visual-regression |  |
+| RE-290 | `psp-game`'s Menu -> Training confirm transition, pixel-confirmed via PPSSPPHeadless (closes RE-289's open... | COMPLETE | front-end, toolchain, visual-regression |  |
+| RE-291 | `psp-game` loads and parses the real asset pack | COMPLETE | front-end, toolchain, asset-pipeline, visual-regression |  |
+| RE-292 | `psp-game`'s 3D pipeline, mesh drawing and real gameplay slice ported from `psp/` | COMPLETE | front-end, toolchain, visual-regression, physics, animation |  |

@@ -52,7 +52,7 @@ remains.
 | Stages | 65% | All 41 `MPGroundData` headers recovered; collision decoded and packed for all 41; all 100 render layers resolve to a packed object; automated audit captures all 41 at 60 FPS | RE-028, RE-029, RE-170 | No stage *loader* — viewer browses stages, a match does not select one | G2 |
 | Items | 0% | Not started | — | — | G1 |
 | CPU AI | 0% | Not started | — | — | G1 |
-| Menus | 15% | `psp-game/`, a second independent EBOOT, scaffolded; Intro→Menu state machine navigable (D-pad + confirm), pixel-confirmed in PPSSPP | RE-289 | Colour-block placeholder only — no text (`sceFont` pending), no pack/stage/fighter loading yet | F1, G3 |
+| Menus | 30% | `psp-game/`, a second independent EBOOT; Intro→Menu state machine navigable; Training spawns a real, physics-ticked Mario on a real stage (Dream Land) and draws both through the real battle camera | RE-289–292 | Menu/select labels are still colour blocks, no `sceFont` text; character/stage select feed a hardcoded default, not a real selection UI | F1, G3 |
 | Save data | 0% | Not started | — | — | G3 |
 | Debug/profiler | 20% | Frame timing sections defined; on-screen text overlay working | — | — | — |
 | CI | COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required | — | — | — |
