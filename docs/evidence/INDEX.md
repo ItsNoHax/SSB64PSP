@@ -297,3 +297,4 @@ editing a record.
 | RE-285 | New stage golden: Peach's Castle (scene 10), physically confirmed | COMPLETE | stage, visual-regression, hardware |  |
 | RE-286 | Remaining 37 stage goldens added in one batch (software-only; hardware confirmation deferred) | COMPLETE (software); hardware confirmation deferred | stage, visual-regression |  |
 | RE-287 | Physical-PSP confirmation of RE-286's 37 new stage goldens: zero exceptions on all 37, 8 spot-checked pixel-exact | COMPLETE | stage, visual-regression, hardware |  |
+| RE-288 | PSP-1000 physically tested: pack fails to fit in 32 MiB RAM, clean `OutOfMemory` fallback, zero exceptions; second-unit 30-min sustained run stopped early (fallback-only, not representative), deferred to a future hardware-acceptance pass | COMPLETE | hardware, visual-regression, asset-pipeline |  |
