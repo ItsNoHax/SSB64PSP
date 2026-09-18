@@ -302,3 +302,4 @@ editing a record.
 | RE-290 | `psp-game`'s Menu -> Training confirm transition, pixel-confirmed via PPSSPPHeadless (closes RE-289's open... | COMPLETE | front-end, toolchain, visual-regression |  |
 | RE-291 | `psp-game` loads and parses the real asset pack | COMPLETE | front-end, toolchain, asset-pipeline, visual-regression |  |
 | RE-292 | `psp-game`'s 3D pipeline, mesh drawing and real gameplay slice ported from `psp/` | COMPLETE | front-end, toolchain, visual-regression, physics, animation |  |
+| RE-293 | `psp-game`'s Training Mode spawns a real, physics-ticked stationary dummy target | COMPLETE | front-end, physics |  |

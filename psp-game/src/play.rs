@@ -360,22 +360,13 @@ impl Play {
         if self.object == u32::MAX {
             return;
         }
-        let status = self.fighter.status.status;
-        let slot = status.anim_slot() as u32;
-        if self.started != Some(status) {
-            self.started = Some(status);
-            if let Some(anim) = pack.fighter_anim(self.fighter.kind as u32, slot) {
-                self.skeleton.start(pack, &anim, 0.0, status.anim_speed());
-            }
-        }
-        // The slot is read back rather than remembered, so a status whose
-        // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
-        // the pose it had.
-        if let Some(anim) = pack.fighter_anim(self.fighter.kind as u32, slot) {
-            if let Some(script) = pack.anim_script(&anim) {
-                let _ = self.skeleton.tick(script);
-            }
-        }
+        tick_skeleton_animation(
+            pack,
+            self.fighter.kind as u32,
+            self.fighter.status.status,
+            &mut self.skeleton,
+            &mut self.started,
+        );
     }
 
     /// The status the fighter is in, as a fixed-width label for the overlay.
@@ -408,5 +399,101 @@ impl Play {
     /// The floor's material, or `None` while airborne.
     pub fn material(&self) -> Option<u16> {
         self.fighter.floor.map(|f| f.material())
+    }
+}
+
+/// Advances a fighter's skeleton pose for `status`. Shared by [`Play`] and
+/// [`Dummy`] -- both need the same animation-restart-on-status-change logic
+/// `Play::tick_animation` originally had inline; factored out once `Dummy`
+/// needed it too, rather than duplicated.
+fn tick_skeleton_animation(
+    pack: &Pack<'_>,
+    kind: u32,
+    status: Status,
+    skeleton: &mut ssb_rom::skeleton::Skeleton,
+    started: &mut Option<Status>,
+) {
+    let slot = status.anim_slot() as u32;
+    if *started != Some(status) {
+        *started = Some(status);
+        if let Some(anim) = pack.fighter_anim(kind, slot) {
+            skeleton.start(pack, &anim, 0.0, status.anim_speed());
+        }
+    }
+    // The slot is read back rather than remembered, so a status whose
+    // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
+    // the pose it had.
+    if let Some(anim) = pack.fighter_anim(kind, slot) {
+        if let Some(script) = pack.anim_script(&anim) {
+            let _ = skeleton.tick(script);
+        }
+    }
+}
+
+/// A stationary, physics-ticked dummy target for Training Mode
+/// (`plans/gameplay/F1.md`: "One player-controlled fighter vs. one
+/// stationary/dummy target, no AI"). `psp/` has no equivalent -- the debug
+/// viewer has no training combat -- so unlike the rest of this file, `Dummy`
+/// is `psp-game`-only, not a verbatim port.
+///
+/// "Stationary" means no player/AI control, not "unsimulated": `Fighter` has
+/// no separate idle/no-op mode, so standing still is real physics/animation
+/// ticked every frame against permanently neutral input, the same as `Play`'s
+/// fighter minus the input source.
+pub struct Dummy {
+    pub fighter: Fighter,
+    pub skeleton: ssb_rom::skeleton::Skeleton,
+    /// Object whose nodes the skeleton drives, or `u32::MAX` when the pack has
+    /// no model for this character (mirrors [`Play::object`]).
+    pub object: u32,
+    started: Option<Status>,
+}
+
+impl Dummy {
+    /// Puts a fighter at the stage's second player spawn (`pack.spawn(stage,
+    /// 1)`), distinct from [`Play::at_spawn`]'s spawn 0. Returns `None` when
+    /// the stage has no second spawn point rather than guessing a position.
+    pub fn at_spawn(pack: &Pack<'_>, stage: &StageDesc) -> Option<Dummy> {
+        let kind = FighterKind::Mario;
+        let mut fighter = Fighter::new(kind, 1, 3);
+
+        if let Some(d) = pack.fighter(kind as u32) {
+            fighter.attributes = physics_of(&d);
+            fighter.coll = body_of(&d);
+            fighter.anim = anim_of(&d);
+        }
+
+        let spawn = pack.spawn(stage, 1)?;
+        fighter.pos = ssb_engine::math::Vec3::new(spawn.x as f32, spawn.y as f32, 0.0);
+
+        Some(Dummy {
+            fighter,
+            skeleton: ssb_rom::skeleton::Skeleton::new(),
+            object: fighter_object(pack, kind as u32).unwrap_or(u32::MAX),
+            started: None,
+        })
+    }
+
+    /// Advances one tick: permanently neutral input (no AI, no player
+    /// control), real physics/animation against the real stage collision --
+    /// the same `Fighter::tick` path [`Play::tick`] drives, just with no
+    /// input source and no camera.
+    pub fn tick(&mut self, pack: &Pack<'_>, stage: &StageDesc) {
+        self.fighter.set_input(
+            ssb_engine::input::ControllerState::default(),
+            false,
+            false,
+        );
+        self.fighter.tick(|| FloorSegments::new(pack, stage));
+        if self.object == u32::MAX {
+            return;
+        }
+        tick_skeleton_animation(
+            pack,
+            self.fighter.kind as u32,
+            self.fighter.status.status,
+            &mut self.skeleton,
+            &mut self.started,
+        );
     }
 }
