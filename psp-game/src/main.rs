@@ -19,11 +19,79 @@
 mod gu;
 mod input;
 
+#[cfg(feature = "headless_capture")]
+use psp::sys;
+
 use ssb_engine::input::{newly_pressed, Input, N64Buttons};
 use ssb_engine::renderer::Color;
 
 use gu::Gpu;
 use input::PspInput;
+
+/// Loop-iteration count since boot. `psp-game` has no fixed-timestep sim
+/// accumulator yet (unlike `psp/`'s `Clock`/`FixedClock`), so this is simply
+/// the draw-loop tick -- deterministic regardless of host wall-clock speed,
+/// which is what `regression_capture`/`headless_capture` need. Only
+/// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
+/// to maintain unconditionally (`psp/main.rs`'s own `sim_frame_index`
+/// comment).
+const DETERMINISTIC_CAPTURE_TICKS: u64 = 16;
+
+/// `true` once `regression_capture`'s scripted input has run past its fixed
+/// script and reached its capture tick; always `false` otherwise, so callers
+/// need one guard, not a cfg per call site (mirrors `psp/main.rs`'s function
+/// of the same name).
+#[inline]
+fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
+    sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS && cfg!(feature = "regression_capture")
+}
+
+/// A fixed, tick-indexed button script standing in for real `sceCtrl` input
+/// under `regression_capture`. `psp/` has no precedent for this (its own
+/// deterministic-capture features only ever freeze *output* -- physics,
+/// animation, camera -- never override input, because its viewer has no
+/// input-driven state machine to script); `psp-game`'s Intro -> Menu ->
+/// Training navigation does, so this is what actually lets
+/// PPSSPPHeadless drive and pixel-confirm the Menu -> Training confirm
+/// transition deterministically. That transition was RE-289's one open item:
+/// synthetic X11 key injection into a windowed PPSSPP instance (tried with
+/// both the project's Xlib fallback and `xdotool`) raced this desktop's
+/// Wayland/XWayland compositor focus arbitration and could not reliably
+/// deliver the key, independent of which injection tool sent it -- and it
+/// also takes over real keyboard focus on the developer's desktop while it
+/// runs. Headless capture has neither problem.
+///
+/// Tick 4 confirms past the Intro screen. Tick 8 confirms Training: the menu
+/// cursor starts on `TRAINING_ENTRY` (`cursor: usize = 0` below), so no
+/// D-pad navigation is needed first. Only consulted when
+/// `deterministic_capture_frozen` reads `regression_capture` as enabled;
+/// harmless to keep unconditionally.
+fn scripted_buttons(tick: u64) -> N64Buttons {
+    match tick {
+        4 | 8 => N64Buttons(N64Buttons::A),
+        _ => N64Buttons(0),
+    }
+}
+
+/// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
+/// not implement the emulator-only devctl, so the same build remains safe to
+/// load on hardware (where the call simply returns an error). Verbatim copy
+/// of `psp/main.rs`'s function of the same name/behaviour.
+#[cfg(feature = "headless_capture")]
+fn emit_headless_screenshot() {
+    const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
+
+    unsafe {
+        sys::sceIoDevctl(
+            b"emulator:\0".as_ptr(),
+            EMULATOR_DEVCTL_EMIT_SCREENSHOT,
+            core::ptr::null_mut(),
+            0,
+            core::ptr::null_mut(),
+            0,
+        );
+    }
+}
 
 psp::module!("ssb64_psp_game", 1, 0);
 
@@ -63,33 +131,45 @@ unsafe fn run() -> ! {
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
+    let mut sim_frame_index: u64 = 0;
+    #[cfg(feature = "headless_capture")]
+    let mut headless_capture_sent = false;
 
     loop {
+        sim_frame_index = sim_frame_index.saturating_add(1);
         pad.poll();
-        let curr = pad.state(0).buttons;
-        let prev = pad.previous(0).buttons;
+        let (prev, curr) = if cfg!(feature = "regression_capture") {
+            (
+                scripted_buttons(sim_frame_index.saturating_sub(1)),
+                scripted_buttons(sim_frame_index),
+            )
+        } else {
+            (pad.previous(0).buttons, pad.state(0).buttons)
+        };
         let pressed = newly_pressed(prev, curr);
 
-        match screen {
-            Screen::Intro => {
-                if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
-                    screen = Screen::Menu;
+        if !deterministic_capture_frozen(sim_frame_index) {
+            match screen {
+                Screen::Intro => {
+                    if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
+                        screen = Screen::Menu;
+                    }
                 }
-            }
-            Screen::Menu => {
-                if pressed.contains(N64Buttons::D_DOWN) {
-                    cursor = (cursor + 1) % MENU_ENTRIES;
-                } else if pressed.contains(N64Buttons::D_UP) {
-                    cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
-                } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
-                    screen = Screen::Training;
+                Screen::Menu => {
+                    if pressed.contains(N64Buttons::D_DOWN) {
+                        cursor = (cursor + 1) % MENU_ENTRIES;
+                    } else if pressed.contains(N64Buttons::D_UP) {
+                        cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
+                    } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
+                        screen = Screen::Training;
+                    }
                 }
-            }
-            Screen::Training => {
-                // No combat yet -- B returns to the menu so the placeholder
-                // is at least navigable end to end.
-                if pressed.contains(N64Buttons::B) {
-                    screen = Screen::Menu;
+                Screen::Training => {
+                    // No combat yet -- B returns to the menu so the placeholder
+                    // is at least navigable end to end.
+                    if pressed.contains(N64Buttons::B) {
+                        screen = Screen::Menu;
+                    }
                 }
             }
         }
@@ -107,6 +187,12 @@ unsafe fn run() -> ! {
             }
         }
         gpu.end_frame();
+
+        #[cfg(feature = "headless_capture")]
+        if !headless_capture_sent && deterministic_capture_frozen(sim_frame_index) {
+            emit_headless_screenshot();
+            headless_capture_sent = true;
+        }
     }
 }
 

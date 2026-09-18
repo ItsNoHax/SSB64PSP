@@ -16,6 +16,20 @@ ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 
+[features]
+# Replaces real `sceCtrl` input with a fixed, tick-indexed button script
+# (`scripted_buttons` in `main.rs`) so the Intro -> Menu -> Training state
+# machine can be driven deterministically under PPSSPPHeadless, with no real
+# controller and no windowed PPSSPP/X11 input injection. Off by default: an
+# interactive build must read the real pad. Named to match `psp/`'s
+# `regression_capture` feature for tooling symmetry
+# (`tools/run-ppsspp-headless.sh --crate psp-game`); the two features are
+# otherwise unrelated (`psp/`'s freezes render state, this one scripts input).
+regression_capture = []
+# Requests one framebuffer capture from PPSSPPHeadless after the scripted
+# input above reaches its frozen tick. The devctl is ignored by real PSPs.
+headless_capture = []
+
 [profile.release]
 opt-level = 3
 lto = true
