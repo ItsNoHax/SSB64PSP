@@ -1,13 +1,15 @@
 //! Layer C: the PSP front-end/Training-Mode executable (F1).
 //!
 //! A second, independent PSP application alongside the existing debug asset
-//! viewer in `psp-asset-viewer/` -- its own crate, its own EBOOT, sharing only the
-//! portable `crates/ssb-engine`/`ssb-rom`/`ssb-game` libraries (`AGENTS.md`'s
-//! F1 carve-out, `plans/gameplay/F1.md`). `psp-asset-viewer/`'s own build and EBOOT are
+//! viewer in `psp-asset-viewer/` -- its own crate, its own EBOOT, sharing the
+//! portable `crates/ssb-engine`/`ssb-rom`/`ssb-game` libraries and the shared
+//! `psp-runtime` platform/rendering layer (`AGENTS.md`'s F1 carve-out,
+//! `plans/gameplay/F1.md`). `psp-asset-viewer/`'s own build and EBOOT are
 //! unmodified by this crate's existence.
 //!
-//! Intro screen and main menu still draw flat coloured rectangles (`gu.rs`),
-//! proving criterion 1 (a real, independently booting second EBOOT) and the
+//! Intro screen and main menu still draw flat coloured rectangles
+//! (`ssb_psp_runtime::gu`), proving criterion 1 (a real, independently
+//! booting second EBOOT) and the
 //! intro/menu navigation shape of criteria 2-3. Training Mode now loads the
 //! real pack, spawns a real fighter on a real stage, and draws both through
 //! `meshdraw`'s 3D pipeline and `play::Play`'s real physics/animation/camera
@@ -21,8 +23,6 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
-mod gu;
-mod meshdraw;
 mod play;
 
 #[cfg(feature = "headless_capture")]
@@ -33,9 +33,9 @@ use ssb_engine::renderer::Color;
 use ssb_rom::pack::Pack;
 
 use ssb_psp_runtime::assets;
+use ssb_psp_runtime::gu::Gpu;
 use ssb_psp_runtime::input::PspInput;
-
-use gu::Gpu;
+use ssb_psp_runtime::meshdraw;
 
 /// Loop-iteration count since boot. `psp-game` has no fixed-timestep sim
 /// accumulator yet (unlike `psp-asset-viewer/`'s `Clock`/`FixedClock`), so this is simply
@@ -347,11 +347,11 @@ unsafe fn run() -> ! {
         match screen {
             Screen::Intro => {
                 gpu.set_viewport_fullscreen();
-                gpu.begin_frame(BG_INTRO);
+                gpu.begin_frame(Some(BG_INTRO));
             }
             Screen::Menu => {
                 gpu.set_viewport_fullscreen();
-                gpu.begin_frame(BG_MENU);
+                gpu.begin_frame(Some(BG_MENU));
                 draw_menu(&mut gpu, cursor);
             }
             Screen::Training => {
@@ -425,11 +425,11 @@ unsafe fn draw_training(
 
     let Some((p, pl, stage)) = scene else {
         gpu.set_viewport_fullscreen();
-        gpu.begin_frame(no_pack_color);
+        gpu.begin_frame(Some(no_pack_color));
         return;
     };
 
-    gpu.begin_frame(BG_TRAINING);
+    gpu.begin_frame(Some(BG_TRAINING));
     gpu.set_viewport_pillarboxed();
     let (_, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
     // 38 degrees: the real battle camera's own default FOV

@@ -61,7 +61,7 @@ use psp::sys::{
 };
 use psp::Align16;
 
-use crate::gu::Gpu;
+use ssb_psp_runtime::gu::Gpu;
 
 /// RE-274's `drawn_width` for this exact mirror+clamp axis.
 const BAKED_WIDTH: usize = 64;

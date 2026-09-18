@@ -20,8 +20,6 @@ extern crate alloc;
 mod addr_diag;
 #[cfg(feature = "depth_mask_diagnostic")]
 mod depth_diag;
-mod gu;
-mod meshdraw;
 #[cfg(any(
     feature = "texgen_normal_diagnostic_0",
     feature = "texgen_normal_diagnostic_1",
@@ -51,10 +49,10 @@ use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 use ssb_rom::pack::{Pack, PackError};
 
 use ssb_psp_runtime::assets;
+use ssb_psp_runtime::gu::{Gpu, GuVertex};
 use ssb_psp_runtime::input::PspInput;
+use ssb_psp_runtime::meshdraw;
 use ssb_psp_runtime::timing::{PspClock, Stopwatch};
-
-use gu::{Gpu, GuVertex};
 
 /// R0.17's deterministic capture mode. Every per-frame mutation (physics,
 /// skeleton/stage/material animation) reads its own wall-clock-independent
@@ -1284,6 +1282,15 @@ unsafe fn run() -> ! {
 
         // ---- render: display cadence -------------------------------------
         gpu.begin_frame(Some(Color::rgba(0x20, 0x28, 0x38, 0xFF)));
+        // `Gpu::init` defaults to a full-screen viewport (shared with
+        // `psp-game`, which also needs a flat 2D intro/menu). This viewer
+        // always renders 3D content, so it switches to the N64-aspect
+        // pillarbox every frame, inside the open display list `begin_frame`
+        // just started -- `sceGuViewport`/`sceGuScissor` outside an open
+        // `sceGuStart`/`sceGuSync` block are silently dropped, never reaching
+        // the GE (same reason `psp-game` sets this right after its own
+        // `begin_frame`, not once at startup).
+        gpu.set_viewport_pillarboxed();
         // Far plane follows the camera: meshes range from a few units across to
         // tens of thousands, and a fixed far plane clips the large ones entirely.
         //

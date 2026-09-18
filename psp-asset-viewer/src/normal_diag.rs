@@ -66,7 +66,7 @@ use psp::sys::{
 };
 use psp::Align16;
 
-use crate::gu::Gpu;
+use ssb_psp_runtime::gu::Gpu;
 
 const RAMP_DIM: usize = 256;
 

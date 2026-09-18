@@ -3,6 +3,15 @@
 //! All the `unsafe` needed to talk to the GE lives here, behind a safe
 //! `Gpu` type, per the project's rule that unsafe is isolated rather than
 //! sprinkled through gameplay.
+//!
+//! `Gpu::init` brings up a full-screen viewport/scissor. Callers that need
+//! the N64-aspect pillarbox (`ssb_engine::coord::pillarboxed_viewport`) for
+//! real 3D content call [`Gpu::set_viewport_pillarboxed`] explicitly and
+//! [`Gpu::set_viewport_fullscreen`] to go back -- e.g. for a flat 2D
+//! intro/menu around a pillarboxed training scene. A caller that only ever
+//! draws 3D content (no flat 2D screens) can call
+//! [`Gpu::set_viewport_pillarboxed`] once, immediately after `init`, before
+//! the first `begin_frame`.
 
 use core::ffi::c_void;
 
@@ -88,6 +97,40 @@ impl SpriteVertex {
             | VertexType::VERTEX_16BIT.bits()
             | VertexType::TRANSFORM_2D.bits(),
     );
+}
+
+/// A flat-shaded rectangle vertex in `GU_TRANSFORM_2D` screen space: raw pixel
+/// coordinates, no MVP transform, no texture. Field order (colour, then
+/// position) is dictated by hardware -- the GE reads whatever components
+/// `VertexType` declares in a fixed order, texture first if present, then
+/// colour, then position.
+#[repr(C, align(4))]
+#[derive(Clone, Copy)]
+struct RectVertex {
+    /// Packed ABGR, matching [`Color::to_abgr`].
+    color: u32,
+    x: i16,
+    y: i16,
+    z: i16,
+    _pad: i16,
+}
+
+impl RectVertex {
+    const FORMAT: VertexType = VertexType::from_bits_truncate(
+        VertexType::COLOR_8888.bits()
+            | VertexType::VERTEX_16BIT.bits()
+            | VertexType::TRANSFORM_2D.bits(),
+    );
+
+    const fn new(x: i16, y: i16, color: u32) -> Self {
+        RectVertex {
+            color,
+            x,
+            y,
+            z: 0,
+            _pad: 0,
+        }
+    }
 }
 
 /// A stack-allocated, NUL-terminated string builder.
@@ -271,6 +314,10 @@ impl Gpu {
     /// Initialises the display, allocates framebuffers in VRAM, and sets the
     /// pipeline state the game runs under.
     ///
+    /// Brings up a full-screen viewport/scissor; a caller that needs the N64
+    /// pillarbox for real 3D content calls [`Gpu::set_viewport_pillarboxed`]
+    /// explicitly (see the module doc comment).
+    ///
     /// # Safety
     ///
     /// Must be called exactly once, before any other GU use.
@@ -312,20 +359,11 @@ impl Gpu {
         // The GE's screen space is centred on 2048; this offsets it so that
         // (0,0) is the top-left of the visible area.
         sys::sceGuOffset(2048 - (SCREEN_WIDTH / 2), 2048 - (SCREEN_HEIGHT / 2));
-
-        // Pillarbox to 4:3. The projection is built with the *N64's* aspect
-        // (`coord::pillarboxed_viewport`, 362x272), so the GE viewport has to
-        // be that same 362 wide or the image is stretched across the full 480
-        // -- a horizontal exaggeration of 480/362 = 1.33x that makes every
-        // character a third too wide.
-        //
-        // This was measured, not guessed: Mario's collision diamond is 300
-        // units across and 320 tall, so it should render very slightly taller
-        // than wide. On device it came out 27 px wide against 22 px tall, a
-        // width/height of 1.23 where 0.94 was expected. The ratio between
-        // those, 1.31, is 480/362.
-        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
-        sys::sceGuViewport(2048, 2048, vw as i32, vh as i32);
+        // Full-screen by default -- see this method's doc comment and
+        // `set_viewport_pillarboxed`.
+        sys::sceGuViewport(2048, 2048, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+        sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+        sys::sceGuEnable(GuState::ScissorTest);
 
         // The PSP's depth buffer is inverted relative to what you'd expect:
         // near maps to 65535, far to 0, so the depth test is GreaterOrEqual.
@@ -333,14 +371,13 @@ impl Gpu {
         sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
         sys::sceGuEnable(GuState::DepthTest);
 
-        // Scissor to the same region, so nothing bleeds into the black bars.
-        sys::sceGuScissor(vx as i32, 0, (vx + vw) as i32, vh as i32);
-        sys::sceGuEnable(GuState::ScissorTest);
-
         sys::sceGuFrontFace(FrontFaceDirection::Clockwise);
         sys::sceGuShadeModel(ShadingModel::Smooth);
         sys::sceGuEnable(GuState::CullFace);
         sys::sceGuEnable(GuState::ClipPlanes);
+
+        sys::sceGuDisable(GuState::Texture2D);
+        sys::sceGuDisable(GuState::Lighting);
 
         sys::sceGuFinish();
         sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
@@ -357,6 +394,29 @@ impl Gpu {
             draw_is_fbp0: true,
             capture_requested: false,
             wallpaper_capture_requested: false,
+        }
+    }
+
+    /// Switches to the N64-aspect pillarboxed viewport/scissor real 3D
+    /// content needs -- a full-width 480px viewport stretches every
+    /// character about a third too wide relative to the N64's 4:3
+    /// projection (measured, not guessed: see `set_viewport_fullscreen`'s
+    /// sibling call sites). Call once when entering a real 3D scene.
+    pub fn set_viewport_pillarboxed(&mut self) {
+        let (vx, _, vw, vh) = ssb_engine::coord::pillarboxed_viewport();
+        unsafe {
+            sys::sceGuViewport(2048, 2048, vw as i32, vh as i32);
+            sys::sceGuScissor(vx as i32, 0, (vx + vw) as i32, vh as i32);
+        }
+    }
+
+    /// Restores the full-screen viewport/scissor `init` set up, for flat 2D
+    /// content (RE-289/290's pixel-confirmed evidence assumes this shape).
+    /// Call when leaving a real 3D scene.
+    pub fn set_viewport_fullscreen(&mut self) {
+        unsafe {
+            sys::sceGuViewport(2048, 2048, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
+            sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
         }
     }
 
@@ -492,10 +552,10 @@ impl Gpu {
     /// vertices. [`GuPrimitive::Sprites`] plus [`VertexType::TRANSFORM_2D`]
     /// is the PSP GE's own native equivalent of that same shape, so this
     /// deliberately does not reuse `crate::meshdraw`'s 3D quad-through-a-
-    /// camera technique the way [`results_transition::ResultsTransition`]'s
-    /// LB-transition quad does -- that mechanism has a real ROM display list
-    /// binding a `ROLE_FRAMEBUFFER` `MObj` texture, but the wallpaper has no
-    /// such display list at all; the real ROM draws it as a 2D sprite, never
+    /// camera technique the way `ResultsTransition`'s LB-transition quad
+    /// does -- that mechanism has a real ROM display list binding a
+    /// `ROLE_FRAMEBUFFER` `MObj` texture, but the wallpaper has no such
+    /// display list at all; the real ROM draws it as a 2D sprite, never
     /// through `MObj`/`DObj`.
     ///
     /// Reproduces exactly the one real draw call's own fixed parameters,
@@ -624,6 +684,14 @@ impl Gpu {
             // writes glyphs straight into the draw buffer rather than queueing
             // a GE command, so flushing before the sync would just get erased
             // by the sceGuClear that is still sitting in the display list.
+            //
+            // Called unconditionally, with no glyphs queued unless a caller
+            // used `debug_text` this frame: RE-202 found the real hardware
+            // crash lives in `sceGuDebugPrint`/`sceGuDebugFlush`'s own state
+            // once glyphs are actually written, not in an unconditional
+            // `sceGuDebugFlush` call against an empty buffer -- the fix
+            // gates the `debug_text` call (`debug_overlay` feature), not
+            // this one.
             sys::sceGuDebugFlush();
             if self.capture_requested {
                 self.capture_requested = false;
@@ -775,6 +843,12 @@ impl Gpu {
     /// The text is copied immediately, so the caller's buffer need not outlive
     /// the call. It is painted onto the draw buffer by [`Gpu::end_frame`],
     /// after the GE has finished — see there for why.
+    ///
+    /// RE-202: sustained per-frame use of this method reliably crashes real
+    /// PSP hardware, content-independent. Callers must gate it behind an
+    /// off-by-default feature the way `psp-asset-viewer`'s `debug_overlay`
+    /// does; a front end shipping this unconditionally would carry the same
+    /// fault.
     pub fn debug_text(&mut self, x: i32, y: i32, color: u32, args: core::fmt::Arguments<'_>) {
         let mut text: FixedStr<512> = FixedStr::new();
         // Truncated diagnostics beat a panic in a no_std frame loop.
@@ -853,5 +927,34 @@ impl Gpu {
             core::ptr::null(),
             dynamic as *const c_void,
         );
+    }
+
+    /// Draws one filled, axis-aligned rectangle in screen-pixel coordinates.
+    /// `GuPrimitive::Sprites` fills the box between two opposite corners, the
+    /// same primitive [`Gpu::draw_wallpaper_sprite`]'s 2D drawing uses.
+    ///
+    /// Brackets depth test and culling off around the draw and restores them
+    /// after: `Gpu::init` defaults both on for real 3D content, and a
+    /// `TRANSFORM_2D` primitive must neither be depth-tested against stale
+    /// buffer contents nor culled by a winding order that has no meaning in
+    /// screen space.
+    pub fn draw_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
+        let verts = [
+            RectVertex::new(x0 as i16, y0 as i16, color.to_abgr()),
+            RectVertex::new(x1 as i16, y1 as i16, color.to_abgr()),
+        ];
+        unsafe {
+            sys::sceGuDisable(GuState::DepthTest);
+            sys::sceGuDisable(GuState::CullFace);
+            sys::sceGuDrawArray(
+                GuPrimitive::Sprites,
+                RectVertex::FORMAT,
+                2,
+                core::ptr::null(),
+                verts.as_ptr() as *const c_void,
+            );
+            sys::sceGuEnable(GuState::DepthTest);
+            sys::sceGuEnable(GuState::CullFace);
+        }
     }
 }
