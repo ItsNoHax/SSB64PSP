@@ -7,7 +7,7 @@
 //! keeping it here, not in `psp-runtime`, per the rule that status-label
 //! overlays are viewer diagnostics, not shared runtime.
 
-pub use ssb_psp_runtime::scene::{FighterScene, FloorSegments};
+pub use ssb_psp_runtime::scene::{facing_turn, FighterScene, FloorSegments};
 
 use ssb_game::status::Status;
 

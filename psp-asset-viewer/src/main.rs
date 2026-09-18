@@ -37,8 +37,6 @@ mod tri_addr_diag;
 
 use core::f32::consts::PI;
 
-#[cfg(feature = "headless_capture")]
-use psp::sys;
 use psp::Align16;
 
 use ssb_engine::coord;
@@ -49,6 +47,8 @@ use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 use ssb_rom::pack::{Pack, PackError};
 
 use ssb_psp_runtime::assets;
+#[cfg(feature = "headless_capture")]
+use ssb_psp_runtime::gu::emit_headless_screenshot;
 use ssb_psp_runtime::gu::{Gpu, GuVertex};
 use ssb_psp_runtime::input::PspInput;
 use ssb_psp_runtime::meshdraw;
@@ -110,25 +110,6 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "texgen_normal_diagnostic_4")
             || cfg!(feature = "texgen_normal_diagnostic_5")
             || cfg!(feature = "texgen_normal_diagnostic_6"))
-}
-
-/// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
-/// not implement the emulator-only devctl, so the same build remains safe to
-/// load on hardware (where the call simply returns an error).
-#[cfg(feature = "headless_capture")]
-fn emit_headless_screenshot() {
-    const EMULATOR_DEVCTL_EMIT_SCREENSHOT: u32 = 0x20;
-
-    unsafe {
-        sys::sceIoDevctl(
-            b"emulator:\0".as_ptr(),
-            EMULATOR_DEVCTL_EMIT_SCREENSHOT,
-            core::ptr::null_mut(),
-            0,
-            core::ptr::null_mut(),
-            0,
-        );
-    }
 }
 
 psp::module!("ssb64_psp", 1, 0);
@@ -257,17 +238,6 @@ fn object_owning_node(
         (node >= object.first_node && node < object.first_node + object.node_count)
             .then_some((i, object))
     })
-}
-
-/// Which way to turn a model so it faces the way the fighter does.
-///
-/// Fighter models are authored facing `+Z` — shoulders spanning X — while a
-/// match runs along X, so every one of them is a quarter turn off (RE-038).
-fn facing_turn(facing: ssb_game::fighter::Facing) -> f32 {
-    match facing {
-        ssb_game::fighter::Facing::Right => core::f32::consts::FRAC_PI_2,
-        ssb_game::fighter::Facing::Left => -core::f32::consts::FRAC_PI_2,
-    }
 }
 
 /// One playable fighter's neutral-model regression setup.
@@ -1753,7 +1723,7 @@ unsafe fn run() -> ! {
                                     // The models face +Z; a fighter faces
                                     // along X, so it is turned a quarter turn
                                     // one way or the other (RE-038).
-                                    [0.0, facing_turn(pl.fighter.facing), 0.0],
+                                    [0.0, play::facing_turn(pl.fighter.facing), 0.0],
                                     sc,
                                 );
                                 let m = gpu.model_matrix();
