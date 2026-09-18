@@ -353,13 +353,13 @@ bytes and RE-255 proved it cannot coexist with the application in the default
 | `sys/scheduler.c` | 1319 | **dropped** — no RCP to schedule |
 | `sys/taskman.c` | 1377 | partly dropped; heap logic → `engine/memory` |
 | `sys/objman.c` | 2442 | `ssb-game` scene graph |
-| `sys/objdisplay.c` | 3394 | split: traversal → `ssb-game`, emission → `psp/renderer` |
+| `sys/objdisplay.c` | 3394 | split: traversal → `ssb-game`, emission → `psp-runtime::meshdraw`/`psp-runtime::gu` |
 | `sys/objanim.c` | 3028 | `ssb-game/animation` |
 | `sys/matrix.c`, `vector.c` | 1888 | `ssb-engine/math` (+ VFPU later) |
 | `sys/dma.c` | 631 | `ssb-rom/vpk0` + resource loading |
-| `sys/controller.c` | 494 | `ssb-engine/input` + `psp/input` |
-| `sys/audio.c` | 1506 | `ssb-engine/audio` + `psp/audio` |
-| `sys/video.c`, `rdp.c` | 291 | `psp/gu` |
+| `sys/controller.c` | 494 | `ssb-engine/input` + `psp-runtime::input` |
+| `sys/audio.c` | 1506 | `ssb-engine/audio` + (no PSP audio backend yet) |
+| `sys/video.c`, `rdp.c` | 291 | `psp-runtime::gu` |
 | `lb/lbreloc.c` | 449 | `ssb-rom/archive` ✅ **done** |
 | `ft/*` | ~20k | `ssb-game/fighter`, `physics`, … |
 | `gr/*` | — | `ssb-game/stage` |

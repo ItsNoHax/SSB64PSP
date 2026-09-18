@@ -9,17 +9,17 @@ repeatedly throughout `docs/reverse-engineering.md`, e.g. RE-031/RE-034:
 "stage 0/41 file 255 @0x14").
 
 **Fighter:** Mario, placed at the stage's own spawn 0
-(`psp/src/play.rs::Play::at_spawn` hardcodes `FighterKind::Mario` and
+(`psp-runtime/src/scene.rs::FighterScene::at_spawn` hardcodes `FighterKind::Mario` and
 `pack.spawn(stage, 0)` — no debug-viewer state affects this choice).
 
 **Camera:** the debug viewer's own boot defaults — `cam_distance =
 CAM_FIT`, `spin = 0.0`, no button input. Dream Land's stage-view camera is
 "face-on, always" or `sim_fighter`-follow only past a zoom threshold this
-scene never crosses at default zoom (`psp/src/main.rs`, stage-view camera
+scene never crosses at default zoom (`psp-asset-viewer/src/main.rs`, stage-view camera
 comment), so no additional pinning was needed.
 
 **Animation/frame:** pinned by a new `regression_capture` Cargo feature on
-the `ssb64-psp` crate (`psp/Cargo.toml`), off by default. When enabled, once
+the `ssb64-psp-asset-viewer` crate (`psp-asset-viewer/Cargo.toml`), off by default. When enabled, once
 240 simulation ticks have run (`DETERMINISTIC_CAPTURE_TICKS`, 4 real seconds at
 the sim's fixed 60 Hz — comfortably past Mario's fall from Dream Land's
 spawn height), every per-frame mutation freezes: the fighter physics tick

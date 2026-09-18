@@ -309,9 +309,11 @@ Latest evidence: none yet
 Builds the intro screen, main menu, minimal character/stage select, and a
 Training Mode combat sandbox (single stationary dummy target, real hitbox/
 damage/knockback, no stocks/KO/CPU AI/items) as a **new, separate PSP
-application** from the existing debug asset viewer (`psp/`). This is the one
-explicit, scoped exception to the rendering-gate-before-combat rule — see
-`AGENTS.md` and `plans/gameplay/F1.md` for the exact boundary.
+application** (`psp-game/`) from the existing debug asset viewer
+(`psp-asset-viewer/`), both built on the shared `psp-runtime/` platform
+library. This is the one explicit, scoped exception to the
+rendering-gate-before-combat rule — see `AGENTS.md` and
+`plans/gameplay/F1.md` for the exact boundary.
 
 ---
 
