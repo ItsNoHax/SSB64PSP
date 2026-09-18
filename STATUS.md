@@ -93,15 +93,22 @@ Required next action: RE-283's per-fighter chase is complete — all nine
 reported items are accounted for (eight fixed and hardware-confirmed, two
 traced to no reproducible defect, including their non-default costumes).
 PSP-1000 confirmation is parked (no unit available, and out of scope per
-this session's instruction). The 30-minute sustained-run check (RE-284) is
-done and clean. Remaining R2 coverage work, in rough priority order: a
-second physical unit for the long-duration check (parity with the existing
-10-minute two-unit sample), then dedicated capture scenes for stage/effect
-coverage (the large, deliberately deferred item — pick one additional
-stage as a bounded first increment rather than attempting all 41 at once
-if resumed), and lastly (gated on copy-ability gameplay existing at all)
-Kirby's per-ability hat graphs. Do not start R3 or combat before R2's
-physical matrix is closed.
+explicit instruction). The 30-minute sustained-run check (RE-284) is done
+and clean. **This session also added a fourth stage golden (RE-285):
+Peach's Castle** (`regression_capture_scene10`, stage 4/file 259) —
+deterministic on PPSSPP, zero regression on every other golden (all 12
+fighters + Dream Land + Saffron re-verified), and physically confirmed on
+the PSP Slim with zero exceptions, matching the software golden exactly.
+Stage coverage is now 4/41 (Dream Land, Sector Z, Saffron City, Peach's
+Castle). Remaining R2 coverage work, in rough priority order: continue
+adding one bounded stage golden at a time (5 more real battle stages —
+Zebes, Kongo Jungle, Yoshi's Island, Hyrule Castle, Final Destination —
+plus the Metal Mario stage, the tutorial map, and 26 bonus maps remain
+uncovered; do not attempt all of them in one sitting), then a second
+physical unit for the long-duration check (parity with the existing
+10-minute two-unit sample), and lastly (gated on copy-ability gameplay
+existing at all) Kirby's per-ability hat graphs. Do not start R3 or combat
+before R2's physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,

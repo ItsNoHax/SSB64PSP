@@ -294,3 +294,4 @@ editing a record.
 | RE-282 | Physical-hardware confirmation of RE-281's `Ci4`/`PsmT4` fix (Mario) | COMPLETE | texture, fighter, hardware, visual-regression |  |
 | RE-283 | Post-RE-281 texture/geometry defects survive across most playable fighters | COMPLETE (software-traced) — 8/9 items fixed (Fox, Mario/Luigi, Samus, Link boot, Link shin, Yoshi, Captain Falcon, Ness) via `Psm8888` bypass; Pikachu/Kirby traced and found to have no reproducible defect | texture, fighter, geometry, visual-regression, asset-pipeline |  |
 | RE-284 | 30-minute physical-hardware sustained run, extending past the prior 10-minute sample | COMPLETE | hardware, visual-regression |  |
+| RE-285 | New stage golden: Peach's Castle (scene 10), physically confirmed | COMPLETE | stage, visual-regression, hardware |  |
