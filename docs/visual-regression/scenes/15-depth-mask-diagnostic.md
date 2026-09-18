@@ -11,7 +11,7 @@ screen position — not even stage 7 (Sector Z), whose render-layer 1 has more
 other stage's layer 1 except one: a whole-stage capture of it is
 byte-identical before and after RE-251's `apply_material` wiring change. A
 regression relying only on existing golden scenes would not catch a broken
-`sceGuDepthMask` wire, so `depth_mask_diagnostic` (`psp/src/depth_diag.rs`)
+`sceGuDepthMask` wire, so `depth_mask_diagnostic` (`psp-asset-viewer/src/depth_diag.rs`)
 adds a synthetic, non-ROM scene, the same shape `normal_diag.rs`'s
 `texgen_normal_diagnostic_*` rig uses for a different GE-contract question
 this crate has no other way to exercise.

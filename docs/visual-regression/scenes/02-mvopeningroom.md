@@ -18,7 +18,7 @@ RE-199 adds a second Cargo feature, `regression_capture_scene2`, on the same
   `cfg!(any(...))` list `animation_audit_capture`/`effect_audit_capture`/etc.
   already use to do this);
 * overrides the object viewer's normal "deepest hierarchy" boot heuristic
-  (`psp/src/main.rs`, object_index selection) to file 52's own graph
+  (`psp-asset-viewer/src/main.rs`, object_index selection) to file 52's own graph
   (`mvopeningroom.c`'s "MVCommon" scene) by matching `ObjectDesc.source_file
   == 52` — the same graph the depth/triangle heuristic already found and
   rejected for the *first* golden scene, because its 38 flat cutscene panels

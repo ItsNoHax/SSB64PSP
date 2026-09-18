@@ -15,7 +15,7 @@ cannot fold into a vertex-shade scale: `(PRIM-ENV)*TEXEL+ENV`, a
 texture-driven blend with no shade dependence, on 28 files including
 three fighters' own base models (RE-073). Detected
 (`combiner_texture_blend`, packed via `pack.rs`'s `TEXTURE_BLEND` flag),
-consumed by `psp/src/meshdraw.rs` via the GE's native `TextureEffect::Blend`,
+consumed by `psp-runtime/src/meshdraw.rs` via the GE's native `TextureEffect::Blend`,
 and visually confirmed against Link's own model (RE-074) — see `PLAN.md`
 R0.6.
 

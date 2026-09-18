@@ -6,7 +6,7 @@ Part of [docs/rendering.md](../rendering.md). Describes the current model; see `
 
 The PSP's depth buffer is **inverted** relative to the intuitive setup: near
 maps to 65535 and far to 0, so `sceGuDepthRange(65535, 0)` pairs with
-`DepthFunc::GreaterOrEqual`. This is already set up in `psp/src/gu.rs` and is a
+`DepthFunc::GreaterOrEqual`. This is already set up in `psp-runtime/src/gu.rs` and is a
 classic source of "everything renders in the wrong order" bugs.
 
 

@@ -209,17 +209,26 @@ The PSP executable loads this runtime asset pack.
 cargo test
 ```
 
-### 6. Build the PSP executable
+### 6. Build the PSP executables
+
+There are two independent PSP applications, each its own `cargo psp` crate
+and EBOOT:
 
 ```bash
-cd psp
+cd psp-asset-viewer   # developer/debug/rendering-validation application
 cargo psp --release
 ```
 
-The resulting executable is:
+```bash
+cd psp-game           # player-facing game/front-end/Training application
+cargo psp --release
+```
+
+The resulting executables are:
 
 ```text
-psp/target/mipsel-sony-psp/release/EBOOT.PBP
+psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
+psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
 ### 7. Run under PPSSPPHeadless (visual verification)
@@ -236,7 +245,9 @@ cd /path/to/SSB64PSP
 tools/run-ppsspp-headless.sh --feature regression_capture
 ```
 
-The screenshot and log are written to `~/ppsspp-headless-test/`. See
+Defaults to `psp-asset-viewer`; pass `--crate psp-game` to capture the
+player-facing application instead. The screenshot and log are written to
+`~/ppsspp-headless-test/`. See
 [`docs/visual-regression.md`](docs/visual-regression.md) for scene selection,
 golden comparison, and alternate checkout paths.
 
@@ -246,7 +257,9 @@ golden comparison, and alternate checkout paths.
 tools/run-ppsspp.sh
 ```
 
-The script stages the generated asset pack next to the executable before launching.
+Also defaults to `psp-asset-viewer`; pass `--crate psp-game` for the
+player-facing application. The script stages the generated asset pack next
+to the executable before launching.
 
 > `tools/run-ppsspp.sh` is retained for interactive inspection. Automated
 > visual verification uses `tools/run-ppsspp-headless.sh` instead.
@@ -261,7 +274,8 @@ captures, and evidence.
 
 ## Architecture
 
-The project is divided into three primary layers.
+The project is divided into three primary portable layers, plus a shared PSP
+platform layer and two independent PSP applications built on top of it.
 
 ```text
               Layer A — Game
@@ -280,28 +294,52 @@ The project is divided into three primary layers.
                     │
                     ▼
               Layer C — PSP
-                   psp/
+                psp-runtime/
        sceGu, sceCtrl, sceAudio,
-       VFPU, timing, PSP runtime
+       VFPU, timing, mesh drawing,
+       pack-to-game scene bridge
 ```
 
 Game logic should not directly depend on PSP APIs.
 
-The PSP backend should not contain fighter-specific game logic.
+The PSP runtime layer should not contain fighter-specific game logic.
 
-`crates/ssb-rom` sits beside these layers because it provides ROM parsing, extraction and runtime resource handling for both host tooling and the PSP executable.
+`crates/ssb-rom` sits beside these layers because it provides ROM parsing, extraction and runtime resource handling for both host tooling and the PSP applications.
+
+`psp-runtime/` is a library, not an executable. Two independent PSP
+applications depend on it and on the three portable crates above:
+
+```text
+psp-asset-viewer ─┐
+                  ├──> psp-runtime ──┬──> crates/ssb-engine
+psp-game ─────────┘                  ├──> crates/ssb-rom
+                                      └──> crates/ssb-game
+```
+
+* **`psp-asset-viewer/`** — the developer/debug/rendering-validation
+  application: asset/object/stage browsing, diagnostic overlays, and the
+  deterministic rendering-regression scenes goldens are captured from.
+* **`psp-game/`** — the player-facing game/front-end/Training application:
+  intro, menu, and Training Mode's deterministic combat sandbox.
+
+`crates/ssb-engine`, `crates/ssb-rom` and `crates/ssb-game` must never
+depend on `psp-runtime` — portable game logic stays portable, PSP hardware
+code lives in `psp-runtime`, and the two applications orchestrate behavior
+without duplicating the PSP backend between them.
 
 ### Crates
 
-| Crate               | Purpose                                                                        |     `no_std` | Target            |
-| ------------------- | ------------------------------------------------------------------------------ | -----------: | ----------------- |
-| `crates/ssb-rom`    | ROM validation, archive handling, N64 formats, animation data and runtime pack | Yes (+alloc) | Host + PSP        |
-| `crates/ssb-engine` | Engine traits, math and coordinate conversion                                  |          Yes | Host + PSP        |
-| `crates/ssb-game`   | Game logic, fighters, stages, physics and animation                            |          Yes | Host + PSP        |
-| `tools/romtool`     | ROM verification, extraction, conversion and asset-pack generation             |           No | Host              |
-| `psp/`              | PSP backend and executable                                                     |          Yes | `mipsel-sony-psp` |
+| Crate                | Purpose                                                                        |     `no_std` | Target            |
+| -------------------- | ------------------------------------------------------------------------------ | -----------: | ----------------- |
+| `crates/ssb-rom`     | ROM validation, archive handling, N64 formats, animation data and runtime pack | Yes (+alloc) | Host + PSP        |
+| `crates/ssb-engine`  | Engine traits, math and coordinate conversion                                  |          Yes | Host + PSP        |
+| `crates/ssb-game`    | Game logic, fighters, stages, physics and animation                            |          Yes | Host + PSP        |
+| `tools/romtool`      | ROM verification, extraction, conversion and asset-pack generation             |           No | Host              |
+| `psp-runtime/`       | Shared PSP platform/rendering/runtime library (assets, input, timing, GE/GU rendering, pack-to-game scene bridge) |          Yes | `mipsel-sony-psp` |
+| `psp-asset-viewer/`  | Debug/rendering-validation PSP application                                    |          Yes | `mipsel-sony-psp` |
+| `psp-game/`          | Player-facing game/front-end/Training PSP application                         |          Yes | `mipsel-sony-psp` |
 
-`psp/` is intentionally outside the root Cargo workspace because the PSP target uses a pinned nightly toolchain and `-Z build-std`.
+`psp-runtime/`, `psp-asset-viewer/` and `psp-game/` are intentionally outside the root Cargo workspace because the PSP target uses a pinned nightly toolchain and `-Z build-std`.
 
 ---
 
