@@ -174,6 +174,10 @@ unsafe fn run() -> ! {
     // camera every frame this screen is active (`play::Play`, a verbatim
     // copy of `psp/`'s own gameplay-slice adapter).
     let mut play_state: Option<play::Play> = None;
+    // The stationary dummy target (`play::Dummy`, `psp-game`-only -- see its
+    // doc comment): spawned alongside `play_state` at the stage's second
+    // spawn point, ticked with permanently neutral input.
+    let mut dummy_state: Option<play::Dummy> = None;
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -213,6 +217,10 @@ unsafe fn run() -> ! {
                                 p.stage(TRAINING_STAGE_INDEX)
                                     .map(|s| play::Play::at_spawn(p, &s))
                             });
+                            dummy_state = pack.as_ref().and_then(|p| {
+                                p.stage(TRAINING_STAGE_INDEX)
+                                    .and_then(|s| play::Dummy::at_spawn(p, &s))
+                            });
                         }
                     }
                 }
@@ -244,6 +252,9 @@ unsafe fn run() -> ! {
                     // front end yet. Declining rather than guessing a control
                     // mapping.
                     pl.tick(p, &stage, controller, false, None);
+                    if let Some(dummy) = dummy_state.as_mut() {
+                        dummy.tick(p, &stage);
+                    }
                 }
             }
         }
@@ -264,6 +275,7 @@ unsafe fn run() -> ! {
                     &mut draw_state,
                     pack.as_ref(),
                     play_state.as_ref(),
+                    dummy_state.as_ref(),
                 );
             }
         }
@@ -317,6 +329,7 @@ unsafe fn draw_training(
     draw_state: &mut meshdraw::DrawState,
     pack: Option<&Pack<'_>>,
     play_state: Option<&play::Play>,
+    dummy_state: Option<&play::Dummy>,
 ) {
     let scene = pack
         .zip(play_state)
@@ -366,5 +379,25 @@ unsafe fn draw_training(
         draw_state.configure_fighter_light(stage.light_angle_xy);
         meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
         draw_state.finish_fighter_light();
+    }
+
+    // The stationary dummy target (`play::Dummy`), drawn the same way as the
+    // player's fighter -- its own pose, its own per-fighter light rebuild
+    // (RE-164) -- just with no camera interest of its own (F1's target
+    // doesn't move, so it never influences framing).
+    if let Some(dummy) = dummy_state {
+        if let Some(obj) = p.object(dummy.object) {
+            let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+            let n = dummy.skeleton.compose(p, &obj, &mut posed);
+            gpu.model_transform(
+                [dummy.fighter.pos.x, dummy.fighter.pos.y, dummy.fighter.pos.z],
+                [0.0, facing_turn(dummy.fighter.facing), 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+            let m = gpu.model_matrix();
+            draw_state.configure_fighter_light(stage.light_angle_xy);
+            meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
+            draw_state.finish_fighter_light();
+        }
     }
 }
