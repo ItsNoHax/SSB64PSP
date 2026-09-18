@@ -1,107 +1,87 @@
 # Current State
 
 Milestone: `F1 — Front End & Training Mode`
-Primary task: not yet started
-Task state: `TODO`
+Primary task: in progress
+Task state: `IN_PROGRESS`
 
-`F1` (`plans/gameplay/F1.md`) is the current primary task, selected this
-session per user instruction: build the intro screen, main menu and Training
-Mode next, as a new separate PSP application from the existing debug asset
-viewer (`psp/`). It runs parallel to `R3` (rendering performance, still
-`NOT_STARTED`, not currently active) — `R3` is not blocked by this choice,
-just not the task in progress. `F1`'s training-mode combat sandbox (single
-stationary dummy target; real hitbox/hurtbox/damage/knockback/hitstun; no
-stocks/KO/match loop/CPU AI/items) is a scoped, explicit exception to the
-rendering-gate-before-combat rule — see `AGENTS.md`'s non-negotiable
-constraints. Full match combat (`G0`–`G2`) remains `BLOCKED_BY_R3`.
+`F1` (`plans/gameplay/F1.md`) is the current primary task: build the intro
+screen, main menu and Training Mode next, as a new separate PSP application
+from the existing debug asset viewer (`psp/`). It runs parallel to `R3`
+(rendering performance, still `NOT_STARTED`, not currently active) — `R3` is
+not blocked by this choice, just not the task in progress. `F1`'s
+training-mode combat sandbox (single stationary dummy target; real
+hitbox/hurtbox/damage/knockback/hitstun; no stocks/KO/match loop/CPU
+AI/items) is a scoped, explicit exception to the rendering-gate-before-combat
+rule — see `AGENTS.md`'s non-negotiable constraints. Full match combat
+(`G0`–`G2`) remains `BLOCKED_BY_R3`.
 
-Current objective: **RE-288 (this session): PSP-1000 physically tested,
-closing R2.** The attached PSP-1000 (firmware 6.61, ARK/Infinity, PSPLink
-v3.2.1) cleanly fails to load the ~25.6 MiB pack: `assets::load_pack`'s
-`AlignedBuf::new` allocation fails, returning `LoadError::OutOfMemory`
-(`psp/src/assets.rs:122-125`), and the game falls back to its built-in
-placeholder tetrahedron — zero exceptions, not a crash. Root cause is
-`MEMSIZE=1` being ignored on this hardware class (32 MiB total RAM, vs the
-64 MiB PSP-3000/Slim already tested), documented but not previously
-hardware-confirmed. Confirmed via a new one-shot, GU-free diagnostic Cargo
-feature added this session, `pack_status_overlay` (`psp/src/main.rs`,
-`psp/Cargo.toml`) — it prints `pack_status` with `psp::dprintln!` (a raw
-framebuffer text path) rather than the existing `debug_overlay` HUD, whose
-`sceGuDebugFlush`-based rendering was suspected of a hardware-only crash on
-this unit. That suspicion was a false alarm: the observed exception was
-stale PSPLink module-manager state left over from a `kill` that wasn't
-followed by `reset` (this project's own documented trap, `psp-hardware`
-Skill), not a real fault — resetting and reloading cleanly reproduced no
-exception at all. This closes the "is PSP-1000 pack compatibility
-unresolved" question definitively: it fails to fit, cleanly, with a known
-cause — not an open question, and not a rendering bug.
+Current objective: **RE-289 (this session): F1's `psp-game/` crate
+scaffolded — acceptance criterion 1 (independent EBOOT, `psp/` unmodified)
+done, criteria 2-3's Intro/Menu navigation shape done and pixel-confirmed.**
+New crate `psp-game/` (own `Cargo.toml`/`Psp.toml`/`rust-toolchain.toml`,
+mirroring `psp/`'s `cargo psp` setup, added to the workspace `exclude` list)
+implements an `Intro` → `Menu` → `Training`(placeholder) state machine using
+the shared `ssb_engine::input` edge-detection helpers. The menu is three
+colour-coded rectangle entries (`Training` selectable, two inert
+placeholders per F1's explicit allowance) navigated with the D-pad and
+confirmed with Cross; `psp-game/src/gu.rs` is a deliberately smaller,
+separate copy of `psp/`'s GU glue (flat 2D rectangles only, no 3D pipeline
+yet) — kept as its own file rather than a shared refactor, since `psp/`'s
+own build/EBOOT must stay unmodified and the two are separate out-of-
+workspace `cargo psp` crates. No on-screen text yet: `sceGuDebugPrint`/
+`sceGuDebugFlush` reliably crashes real hardware (RE-202), so menu entries
+are colour-only until a `sceFont`-based text renderer lands (tracked in
+`plans/gameplay/F1.md`'s new "Scene loading — still to build" section,
+alongside real pack/stage/fighter loading to replace the current
+placeholder colour screens).
 
-A 30-minute sustained-run attempt on this same PSP-1000 (parity with
-RE-284's single-unit sample) was started on the fallback-tetrahedron path
-(the only thing that runs, since the pack doesn't load) and reached the
-5-minute checkpoint clean (zero exceptions, `main_thread` alive, USB
-stable) before being stopped on explicit user instruction: testing a
-placeholder path for 30 minutes doesn't validate anything a real game
-session would exercise. Per that instruction, PSP-1000 real-content
-confirmation and a second unit at the 30-minute duration are both moved out
-of R2 and deferred to a future hardware-acceptance pass once real game
-UI/scene loading replaces the current debug asset viewer — see `TODO.md`.
-**R2 is now `COMPLETE`**; all of its own acceptance criteria
-(`plans/rendering/R2.md`) are met, and neither deferred item blocks R3.
+`tools/run-ppsspp.sh` gained a `--crate psp|psp-game` flag (default `psp`,
+every existing invocation unchanged) so the same harness drives both EBOOTs
+rather than duplicating an 800-line script.
 
-**Operational note:** the PSP-1000 dropped off USB mid-session (`lsusb`
-stopped listing `054c:01c9`) while a `kill`/`reset` was in flight to shut
-the game down cleanly; `usbhostfs_pc` was left spinning "waiting for
-device" and was killed. The unit's last known state is running the
-fallback tetrahedron (harmless) or powered off — **replug and check it**
-before assuming a clean shutdown. This is the same class of USB flakiness
-RE-287 already noted (worth a replug before assuming the udev rule itself
-is broken), not a new failure mode.
+**Verification this session:** automated PPSSPPHeadless-style capture via
+`tools/run-ppsspp.sh --crate psp-game` confirmed a non-blank intro screen at
+the exact expected background colour. A manually driven PPSSPP instance
+(X11 key injection, the same fallback the project's exhaustive audits use)
+pixel-confirmed Intro→Menu, D-pad cursor movement (including wraparound),
+and confirm-is-a-no-op-on-a-stubbed-entry, each via exact RGB sampling, not
+visual impression. **Not confirmed this session:** the final Menu→Training
+confirm transition — code-reviewed as using the identical, already-proven
+edge-detection pattern, but repeated manual attempts against a fresh
+instance could not reliably deliver the key press, most likely XTEST
+injection racing this desktop's Wayland/XWayland compositor focus
+arbitration rather than a code defect. Flagged as the next verification
+item, not assumed passing. No physical-PSP evidence for `psp-game` yet.
 
-Prior objective: `RE-287` confirmed all 41 stage goldens on physical PSP
-hardware, closing stage-coverage. `RE-283` (the reopened fighter-texture
-quality gate) is fully traced — all nine user-reported items accounted for.
+Prior objective: `RE-288` physically confirmed PSP-1000 pack-load
+incompatibility (32 MiB RAM, clean `OutOfMemory` fallback), closing `R2`.
 
-Current blocker(s): none for R2 (closed this session). R3 has not started;
-no blockers recorded yet. Kirby's per-copy-ability hat graphs remain
-untested (separate small scene graphs, unreachable until copy-ability
-gameplay exists) — not an R2 or R3 blocker, tracked in `TODO.md`.
-
-If `pspsh -e ver` returns "connection refused" despite the PSP showing
-`054c:01c9` on USB and PSPLink visibly launched, start
-`usbhostfs_pc -v "$PWD"` first — it bridges the USB link `pspsh` actually
-connects to. `scrshot host0:<path>` only resolves under the repo root
-`usbhostfs_pc` was launched from — an absolute host path after `host0:`
-silently fails to write while the PSP still prints a success-looking
-`frame_addr ... output host0:/...` line. **After any `kill`, always
-`reset` before the next `ldstart`** — RE-288 hit a case where a stale
-post-`kill` module-manager state produced a convincing but fake exception
-report on the *next* load, wasting a full diagnostic detour before RE-288
-traced it back to the missing `reset`.
-
-Required next action: begin F1 (`plans/gameplay/F1.md`) — scaffold the new
-`psp-game` crate (separate Cargo.toml/EBOOT from `psp/`), then intro screen,
-main menu, and the training-mode combat sandbox. R3 (`plans/rendering/R3.md`)
-remains `NOT_STARTED` and eligible to resume any time — F1 does not block it.
-PSP-1000 real-content confirmation and a second-unit 30-minute sustained run
-are deferred to a future hardware-acceptance pass, now gated on F1 (real
-game UI/scene loading) existing (see `TODO.md`); do not resume them before
-then.
+Current blocker(s): none. Next up for F1: pixel-confirm the Menu→Training
+transition (retry the manual PPSSPP input round-trip, or install `xdotool`
+for more reliable key injection than the Xlib fallback used this session),
+then build real scene loading (`assets.rs`, a full 3D `gu.rs`/`meshdraw.rs`
+port, fighter/stage instantiation through `ssb-game`) and `sceFont` text
+rendering to replace the current placeholder colour-block UI — both detailed
+in `plans/gameplay/F1.md`'s "Scene loading — still to build" section. R3
+(`plans/rendering/R3.md`) remains `NOT_STARTED` and eligible to resume any
+time — F1 does not block it.
 
 Relevant PLAN task: [plans/gameplay/F1.md](plans/gameplay/F1.md) (active),
 [plans/rendering/R2.md](plans/rendering/R2.md) (closed),
 [plans/rendering/R3.md](plans/rendering/R3.md) (parallel, not started)
-Relevant evidence: RE-282, RE-283, RE-284, RE-285, RE-286, RE-287, RE-288
-(see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full
-R2.2/physical chain, RE-240–288). Toolchain note: the global `cargo-psp`
-install is a hybrid build, see RE-256.
+Relevant evidence: RE-289 (this session), RE-288, RE-287, RE-202 (why menu
+text can't use `sceGuDebugPrint`) — see
+[docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
+chain, RE-240–289. Toolchain note: the global `cargo-psp` install is a
+hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink)
 
-Current build: RE-288 (this session) adds one new Cargo feature
-(`pack_status_overlay`, off by default) and its `#[cfg]`-gated call site in
-`psp/src/main.rs`; the plain feature-free build is otherwise unchanged.
-Plain feature-free EBOOT hash (PRX):
+Current build: RE-289 (this session) adds the new `psp-game/` crate; `psp/`
+is untouched (verified via `git status`/`git diff`). `psp-game` EBOOT
+(PRX) SHA-256: `b7948c0c1895981785037c9adbe6f59b53c0b127baf07bfdb8d7ac9af331d6c9`.
+`psp/`'s own last-recorded EBOOT hash is unchanged from RE-288:
 `81abb86233772aed57bc61c0d3ccefd3c2f09d24746993b41f7fd54de630b62e`. Pack
-unchanged this session (no asset-pipeline code touched):
+unchanged this session (no asset-pipeline code touched, and `psp-game`
+doesn't load it yet):
 `256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`.

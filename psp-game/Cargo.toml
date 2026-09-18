@@ -1,0 +1,27 @@
+[package]
+name = "ssb64-psp-game"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Layer C: the SSB64PSP game -- the front end and Training Mode players actually run, a separate EBOOT from the debug asset viewer in `psp/`."
+
+# Deliberately outside the root workspace, for the same reason as `psp/`: this
+# crate targets mipsel-sony-psp, is no_std, and is built with `cargo psp`. See
+# the root Cargo.toml.
+[workspace]
+
+[dependencies]
+psp = "0.3.13"
+ssb-engine = { path = "../crates/ssb-engine", default-features = false }
+ssb-rom = { path = "../crates/ssb-rom", default-features = false }
+ssb-game = { path = "../crates/ssb-game", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# Debug symbols cost nothing at runtime and make psplink/psp-gdb usable.
+debug = true
+
+[profile.dev]
+opt-level = 1

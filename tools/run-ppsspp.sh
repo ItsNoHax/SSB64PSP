@@ -2,12 +2,17 @@
 #
 # Build and run the PSP executable under PPSSPP, capturing a screenshot.
 #
-#   tools/run-ppsspp.sh [--no-build] [--backend software|opengl] [--seconds N]
+#   tools/run-ppsspp.sh [--no-build] [--crate psp|psp-game]
+#                        [--backend software|opengl] [--seconds N]
 #                        [--audit-stages N] [--audit-animations N]
 #                        [--audit-effects N]
 #                        [--audit-effect-animations N]
 #                        [--audit-effect-materials N]
 #                        [--audit-particles N]
+#
+# --crate selects which `cargo psp` crate to build and run; default `psp`
+# (the debug asset viewer). `psp-game` (F1's front end/Training Mode) is a
+# second, independent EBOOT and has none of the audit features below.
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -81,6 +86,11 @@ OUT="${PPSSPP_TEST_DIR:-$HOME/ppsspp-test}"
 BACKEND=software
 SECONDS_TO_RUN=12
 BUILD=1
+# Which `cargo psp` crate to build/run. `psp` (the debug asset viewer) is the
+# default and the only one the audit-feature flags below apply to; F1's
+# `psp-game/` front end is a second, independent EBOOT with no such features
+# (--crate psp-game --no-build after a plain `cargo psp --release` there).
+CRATE=psp
 AUDIT_STAGES=0
 AUDIT_ANIMATIONS=0
 AUDIT_EFFECTS=0
@@ -91,6 +101,7 @@ AUDIT_PARTICLES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
+    --crate)    CRATE="$2"; shift 2 ;;
     --backend)  BACKEND="$2"; shift 2 ;;
     --seconds)  SECONDS_TO_RUN="$2"; shift 2 ;;
     --audit-stages) AUDIT_STAGES="$2"; shift 2 ;;
@@ -194,26 +205,34 @@ capture() {
 }
 
 if [ "$BUILD" = 1 ]; then
-  echo "==> building EBOOT"
+  echo "==> building EBOOT ($CRATE)"
+  if [ "$CRATE" != psp ] && [ "$ACTIVE_AUDITS" -gt 0 ]; then
+    echo "audit features are $CRATE=psp only" >&2
+    exit 2
+  fi
   if [ "$AUDIT_PARTICLES" -gt 0 ]; then
-    ( cd "$REPO/psp" && cargo psp --release --features particle_render_audit_capture )
+    ( cd "$REPO/$CRATE" && cargo psp --release --features particle_render_audit_capture )
   elif [ "$AUDIT_EFFECT_MATERIALS" -gt 0 ]; then
-    ( cd "$REPO/psp" && cargo psp --release --features effect_material_audit_capture )
+    ( cd "$REPO/$CRATE" && cargo psp --release --features effect_material_audit_capture )
   elif [ "$AUDIT_EFFECT_ANIMATIONS" -gt 0 ]; then
-    ( cd "$REPO/psp" && cargo psp --release --features effect_animation_audit_capture )
+    ( cd "$REPO/$CRATE" && cargo psp --release --features effect_animation_audit_capture )
   elif [ "$AUDIT_EFFECTS" -gt 0 ]; then
-    ( cd "$REPO/psp" && cargo psp --release --features effect_audit_capture )
+    ( cd "$REPO/$CRATE" && cargo psp --release --features effect_audit_capture )
   elif [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
-    ( cd "$REPO/psp" && cargo psp --release --features animation_audit_capture )
-  else
+    ( cd "$REPO/$CRATE" && cargo psp --release --features animation_audit_capture )
+  elif [ "$CRATE" = psp ]; then
     # `debug_overlay` is off by default (RE-202: crashes real hardware) but
     # this interactive PPSSPP workflow relies on the on-screen HUD, and
-    # PPSSPP itself never reproduces the hardware fault.
-    ( cd "$REPO/psp" && cargo psp --release --features debug_overlay )
+    # PPSSPP itself never reproduces the hardware fault. `psp-game` has no
+    # such feature (`gu.rs`'s module doc): it never calls the crashing path,
+    # so there is nothing to opt into here.
+    ( cd "$REPO/$CRATE" && cargo psp --release --features debug_overlay )
+  else
+    ( cd "$REPO/$CRATE" && cargo psp --release )
   fi
 fi
 
-EBOOT="$REPO/psp/target/mipsel-sony-psp/release/EBOOT.PBP"
+EBOOT="$REPO/$CRATE/target/mipsel-sony-psp/release/EBOOT.PBP"
 [ -f "$EBOOT" ] || { echo "EBOOT not found: $EBOOT" >&2; exit 1; }
 
 mkdir -p "$OUT"
