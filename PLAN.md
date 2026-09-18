@@ -26,7 +26,11 @@ Full game systems
 
 **Rendering is a hard gate.**
 
-Combat does not begin until the rendering gate has been explicitly passed.
+Match combat (`G0`–`G2`) does not begin until the rendering gate has been
+explicitly passed. `F1` (§6.5) is the one explicit, scoped exception: a
+training-mode combat sandbox against a single stationary dummy target, with
+no stocks/KO/match loop/CPU AI, built in parallel with `R3`. See
+`AGENTS.md`'s non-negotiable constraints and `plans/gameplay/F1.md`.
 
 ---
 
@@ -271,21 +275,43 @@ Latest evidence: RE-026–RE-261 (30 records)
 
 ## R2 — Physical PSP Rendering Validation
 
-Status: `IN_PROGRESS`
+Status: `COMPLETE` — PSP-1000 real-content confirmation and a second unit at
+the 30-minute sustained-run duration are deferred to a future hardware-
+acceptance pass once real game UI/scene loading replaces the current debug
+asset viewer (see `TODO.md`); they do not block R2's own acceptance
+criteria, all of which are met.
 Dependencies: R0, R1
 Task spec: [plans/rendering/R2.md](plans/rendering/R2.md)
 Current state: [STATUS.md](STATUS.md)
-Latest evidence: RE-021–RE-271 (79 records)
+Latest evidence: RE-021–RE-288
 
 ---
 
 ## R3 — Rendering Performance
 
-Status: `BLOCKED_BY_R2`
+Status: `NOT_STARTED`
 Dependencies: R0, R1, R2 (leads from R0.18's reference-port audit; not yet actioned)
 Task spec: [plans/rendering/R3.md](plans/rendering/R3.md)
 Current state: [STATUS.md](STATUS.md)
 Latest evidence: RE-124
+
+---
+
+## 6.5 F1 — Front End & Training Mode
+
+Status: `TODO` — current active task (see `STATUS.md`)
+Dependencies: R2 (`COMPLETE`). Explicitly independent of R3 — runs in
+parallel, must not block or be blocked by it.
+Task spec: [plans/gameplay/F1.md](plans/gameplay/F1.md)
+Current state: [STATUS.md](STATUS.md)
+Latest evidence: none yet
+
+Builds the intro screen, main menu, minimal character/stage select, and a
+Training Mode combat sandbox (single stationary dummy target, real hitbox/
+damage/knockback, no stocks/KO/CPU AI/items) as a **new, separate PSP
+application** from the existing debug asset viewer (`psp/`). This is the one
+explicit, scoped exception to the rendering-gate-before-combat rule — see
+`AGENTS.md` and `plans/gameplay/F1.md` for the exact boundary.
 
 ---
 
@@ -295,7 +321,9 @@ Status: `BLOCKED_BY_R3`
 Dependencies: R0, R1, R2, R3
 Task spec: [plans/gameplay/G0.md](plans/gameplay/G0.md)
 
-Combat becomes eligible only after R0, R1, R2 and R3 are complete.
+Full match combat (opponent, stocks, match loop, CPU) becomes eligible only
+after R0, R1, R2 and R3 are complete. `F1`'s training-mode sandbox is a
+separate, already-scoped exception (§6.5) and does not advance this gate.
 
 ---
 
@@ -310,6 +338,12 @@ After G0:
 | **G3** | Menus and Persistence | `TODO` | [plans/gameplay/G3.md](plans/gameplay/G3.md) |
 | **G4** | Audio | `TODO` | [plans/gameplay/G4.md](plans/gameplay/G4.md) |
 | **G5** | Final Optimization | `TODO` | [plans/gameplay/G5.md](plans/gameplay/G5.md) |
+
+`G3`'s title/menu screens are delivered early by `F1`; `G3`'s remaining
+scope after `F1` is options, save/persistence, results screen and credits
+(see `plans/gameplay/G3.md`). `G2`'s Training mode entry is delivered early
+by `F1`; `G2` still owns VS/1P mode selection, stocks, timers and match
+transitions built on `F1`'s combat core.
 
 ---
 

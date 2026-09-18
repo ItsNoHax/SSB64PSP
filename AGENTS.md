@@ -75,8 +75,13 @@ genuine blocker.
 
 ## Non-negotiable constraints
 
-- Rendering gate must pass before combat. No attacks, hitboxes, damage,
-  knockback, stocks, KO logic, CPU combat, or combat interactions before it.
+- Rendering gate must pass before match combat (`G0`–`G2`): no CPU combat,
+  stocks, KO logic, multiplayer/match combat interactions before it.
+  Exception: `F1`'s training-mode sandbox (attacks/hitboxes/hurtboxes/
+  damage/knockback/hitstun against a single stationary dummy target, no
+  stocks/KO/match loop/CPU AI/items) is explicitly carved out — see
+  `plans/gameplay/F1.md`. Do not widen this exception without updating this
+  file.
 - Use original decompilation, ROM, BattleShip, `sf64-psp`, `oot-PSP`,
   `n64psp`, implementation, then assumptions—in that order.
 - No unsupported rendering heuristics. Document and measure unavoidable PSP
