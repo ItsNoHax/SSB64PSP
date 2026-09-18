@@ -296,3 +296,4 @@ editing a record.
 | RE-284 | 30-minute physical-hardware sustained run, extending past the prior 10-minute sample | COMPLETE | hardware, visual-regression |  |
 | RE-285 | New stage golden: Peach's Castle (scene 10), physically confirmed | COMPLETE | stage, visual-regression, hardware |  |
 | RE-286 | Remaining 37 stage goldens added in one batch (software-only; hardware confirmation deferred) | COMPLETE (software); hardware confirmation deferred | stage, visual-regression |  |
+| RE-287 | Physical-PSP confirmation of RE-286's 37 new stage goldens: zero exceptions on all 37, 8 spot-checked pixel-exact | COMPLETE | stage, visual-regression, hardware |  |
