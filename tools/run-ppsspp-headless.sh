@@ -67,9 +67,10 @@ MEMSTICK_NAME=ssb64_regression
 MEMSTICK="${PPSSPP_MEMSTICK_DIR:-$HOME/.ppsspp/PSP/GAME}/$MEMSTICK_NAME"
 mkdir -p "$OUT" "$MEMSTICK"
 cp -f "$EBOOT" "$MEMSTICK/EBOOT.PBP"
-# psp-game does not load the pack yet (`plans/gameplay/F1.md`'s "Scene
-# loading" section); stage it when present so the same script keeps working
-# once it does, but don't fail the run over it.
+# psp-game now loads the pack too (`assets.rs`, `plans/gameplay/F1.md`'s
+# "Scene loading" section), but its Training screen only recolours the
+# background on a missing/bad pack rather than failing to boot, so staging
+# it stays best-effort here, same as for psp.
 if [ -f "$PACK" ]; then
   cp -f "$PACK" "$MEMSTICK/ssb64.pak"
 elif [ "$CRATE" != psp-game ]; then

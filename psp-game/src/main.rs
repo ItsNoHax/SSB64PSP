@@ -16,6 +16,10 @@
 #![no_std]
 #![no_main]
 
+// The asset pack is loaded into a heap buffer; `psp` provides the allocator.
+extern crate alloc;
+
+mod assets;
 mod gu;
 mod input;
 
@@ -24,6 +28,7 @@ use psp::sys;
 
 use ssb_engine::input::{newly_pressed, Input, N64Buttons};
 use ssb_engine::renderer::Color;
+use ssb_rom::pack::Pack;
 
 use gu::Gpu;
 use input::PspInput;
@@ -121,6 +126,11 @@ const TRAINING_ENTRY: usize = 0;
 const BG_INTRO: Color = Color::rgba(24, 32, 64, 255);
 const BG_MENU: Color = Color::rgba(16, 16, 24, 255);
 const BG_TRAINING: Color = Color::rgba(20, 48, 24, 255);
+/// Training background when the asset pack failed to load or parse. Distinct
+/// from `BG_TRAINING` so pack status is pixel-provable under PPSSPPHeadless
+/// without `sceFont` text (`plans/gameplay/F1.md`'s "Scene loading" section
+/// -- real on-screen text is later F1 work, not this increment).
+const BG_TRAINING_NO_PACK: Color = Color::rgba(80, 16, 16, 255);
 const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
@@ -128,6 +138,15 @@ const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 unsafe fn run() -> ! {
     let mut gpu = Gpu::init();
     let mut pad = PspInput::init();
+
+    // Load the converted asset pack. Held for the whole program: the GE will
+    // read vertex and texture data out of it by DMA once the training scene
+    // draws real meshes (`plans/gameplay/F1.md`'s remaining "Scene loading"
+    // work -- this increment only proves the pack loads and parses).
+    let loaded = assets::load_pack();
+    let pack_buf = loaded.as_ref().ok().map(|(b, _)| b);
+    let opened = pack_buf.map(|b| Pack::open(b.as_slice()));
+    let pack_ok = matches!(opened, Some(Ok(_)));
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -183,7 +202,7 @@ unsafe fn run() -> ! {
                 draw_menu(&mut gpu, cursor);
             }
             Screen::Training => {
-                gpu.begin_frame(BG_TRAINING);
+                gpu.begin_frame(if pack_ok { BG_TRAINING } else { BG_TRAINING_NO_PACK });
             }
         }
         gpu.end_frame();
