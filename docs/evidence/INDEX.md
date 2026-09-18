@@ -306,3 +306,4 @@ editing a record.
 | RE-294 | Training Mode's first real attack: Mario's jab, hitbox to hitstun | COMPLETE (numeric slice) — see "Still open" below | front-end, physics, gameplay |  |
 | RE-295 | Real jump binding reaches the dummy's real spawn point | COMPLETE | front-end, physics, gameplay, input |  |
 | RE-296 | First physical-PSP confirmation of `psp-game` | COMPLETE | front-end, hardware, memory, toolchain, visual-regression |  |
+| RE-297 | Shared PSP GE renderer extracted into `psp-runtime` | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
