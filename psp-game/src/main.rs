@@ -44,7 +44,7 @@ use input::PspInput;
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
 /// to maintain unconditionally (`psp/main.rs`'s own `sim_frame_index`
 /// comment).
-const DETERMINISTIC_CAPTURE_TICKS: u64 = 16;
+const DETERMINISTIC_CAPTURE_TICKS: u64 = 106;
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
 /// script and reached its capture tick; always `false` otherwise, so callers
@@ -72,15 +72,62 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 ///
 /// Tick 4 confirms past the Intro screen. Tick 8 confirms Training: the menu
 /// cursor starts on `TRAINING_ENTRY` (`cursor: usize = 0` below), so no
-/// D-pad navigation is needed first. Only consulted when
-/// `deterministic_capture_frozen` reads `regression_capture` as enabled;
-/// harmless to keep unconditionally.
+/// D-pad navigation is needed first. Training's first fighter tick is that
+/// same tick 8 (`play_state`/`dummy_state` are created and ticked once
+/// within the same loop iteration as the confirm), so every tick below this
+/// point is expressed relative to that: "local tick N" (from
+/// `tools/romtool`'s `jumptest` subcommand, run against the real
+/// pack's Dream Land floor data, RE-295) is real tick `8 + N`.
+///
+/// Ticks 13/33 (local 5/25) are C-button jump taps (`ftCommonKneeBendCheck
+/// ButtonTap`'s `R_CBUTTONS|L_CBUTTONS|D_CBUTTONS|U_CBUTTONS`, real bitwise
+/// C-buttons, not a debug stand-in -- see [`JUMP_BUTTON_MASK`]): the first is
+/// a vertical button jump (jumpsquat only, no stick) so it clears the real
+/// second spawn point's 660-unit single-jump ceiling by height alone; the
+/// second is a midair jump timed to reset onto the platform's line rather
+/// than overshoot it. Ticks 34-89 hold the stick left (toward spawn 1,
+/// `-30`) for the horizontal carry a button jump's own velocity formula
+/// (`ftCommonJumpGetJumpForceButton`) does not supply; releasing at 90 stops
+/// Mario dashing off the platform's far edge before he can act. Tick 98 is
+/// the jab's own A tap, timed to land once `LandingLight`'s lag has cleared
+/// (real tick 89) and the jab's hitbox window (`anim_frame` 2..4) has swept
+/// past the dummy while grounded next to it -- `jumptest`'s trace confirmed
+/// the hit with `ssb_game::attack::spheres_overlap` at ticks 100-101 against
+/// the real pack's Mario collision width and spawn-1 position, not a guess.
+/// Only consulted when `deterministic_capture_frozen` reads
+/// `regression_capture` as enabled; harmless to keep unconditionally.
 fn scripted_buttons(tick: u64) -> N64Buttons {
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
+        13 | 33 => N64Buttons(N64Buttons::C_UP),
+        98 => N64Buttons(N64Buttons::A),
         _ => N64Buttons(0),
     }
 }
+
+/// The scripted stick under `regression_capture`, alongside
+/// [`scripted_buttons`] -- see that function's docs for the tick schedule's
+/// derivation. Held left (toward the dummy at spawn 1) only for the carry
+/// phase of the scripted jump; neutral otherwise, including during both
+/// jumpsquats, so a button jump's height is not traded away for horizontal
+/// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
+/// full-deflection-trades-height-for-distance curve).
+fn scripted_stick_x(tick: u64) -> i8 {
+    if (34..90).contains(&tick) {
+        -30
+    } else {
+        0
+    }
+}
+
+/// Any N64 C-button, real `FTCOMMON_KNEEBEND` jump-by-button input
+/// (`ftCommonKneeBendCheckButtonTap`'s `R_CBUTTONS|L_CBUTTONS|D_CBUTTONS|
+/// U_CBUTTONS`) -- not a debug stand-in. `ssb_engine::input::DEFAULT_MAPPING`
+/// already assigns the PSP's Triangle/Square to `C_UP`/`C_DOWN`, so this is a
+/// real, already-established control, just not previously read by any
+/// gameplay code.
+const JUMP_BUTTON_MASK: u16 =
+    N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT;
 
 /// Ask PPSSPPHeadless to save the current display framebuffer. Real PSPs do
 /// not implement the emulator-only devctl, so the same build remains safe to
@@ -237,23 +284,37 @@ unsafe fn run() -> ! {
                 if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
                     // Real `sceCtrl` stick input drives real movement/physics/
                     // animation against the real stage collision, the same
-                    // `Play::tick` `psp/`'s own gameplay slice uses. Frozen to
-                    // neutral input under `regression_capture` so a headless
-                    // capture cannot vary with incidental pad state.
+                    // `Play::tick` `psp/`'s own gameplay slice uses. Under
+                    // `regression_capture`, real pad state is replaced by the
+                    // scripted script (RE-295) rather than zeroed -- a
+                    // deterministic capture of gameplay input (the jab, now
+                    // the jump) needs to actually *drive* that input, not
+                    // discard it; only the source is scripted, not the game
+                    // logic it feeds.
                     let controller = if cfg!(feature = "regression_capture") {
-                        ssb_engine::input::ControllerState::default()
+                        ssb_engine::input::ControllerState {
+                            buttons: scripted_buttons(sim_frame_index),
+                            stick_x: scripted_stick_x(sim_frame_index),
+                            stick_y: 0,
+                            connected: true,
+                        }
                     } else {
                         pad.state(0)
                     };
-                    // Jump is not wired yet: `psp/`'s own C_LEFT jump binding
-                    // is an explicit debug-viewer stand-in (its real controls
-                    // occupy the actual button), and the real SSB64 jump
-                    // binding has not been sourced from the decomp for this
-                    // front end yet. Declining rather than guessing a control
-                    // mapping.
-                    pl.tick(p, &stage, controller, false, None);
+                    // Real jump binding (RE-295): any N64 C-button tap is a
+                    // real `FTCOMMON_KNEEBEND` button-jump input
+                    // (`ftCommonKneeBendCheckButtonTap`), and
+                    // `ssb_engine::input::DEFAULT_MAPPING` already assigns
+                    // the PSP's Triangle/Square to `C_UP`/`C_DOWN` -- an
+                    // established mapping, not a new guess. An upward stick
+                    // flick is the game's other real jump input and needs no
+                    // separate wiring here: `Fighter::tick`'s own status
+                    // machine reads `stick_y` directly.
+                    let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+                    pl.tick(p, &stage, controller, jump_held, None);
                     if let Some(dummy) = dummy_state.as_mut() {
                         dummy.tick(p, &stage);
+                        dummy.apply_hit_from(&pl.fighter);
                     }
                 }
             }

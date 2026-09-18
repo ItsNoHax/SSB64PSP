@@ -39,12 +39,12 @@ remains.
 | VFPU optimization | 0% | Deliberately not started | — | — | R3/G5 |
 | Engine traits (Layer B) | 70% | Renderer / Audio / Input / Timing / Clock traits defined | — | — | M3 |
 | Timing / fixed clock | COMPLETE | Catch-up cap, backwards-clock, 60-ticks-per-second all unit-tested | — | — | M3 |
-| Input mapping | 75% | Mapping + nub scaling unit-tested | — | Deadzone and C-button mapping unresolved | TODO (RE-008, RE-009) |
+| Input mapping | 75% | Mapping + nub scaling unit-tested; C-button jump function confirmed against decomp and wired in `psp-game` | RE-008, RE-295 | Deadzone unresolved; taunt/camera C-button functions still unconfirmed | TODO (RE-008, RE-009) |
 | PSP GU backend | VERIFYING (89%) | Init/frame lifecycle, matrices, indexed textured mesh draws, CLUT upload, mip upload, filtering, addressing, alpha test/blend, depth/culling, billboards, runtime fighter lighting all implemented | RE-251, RE-254, RE-262, RE-264 | — | R2.2 |
 | PSP input backend | 70% | `sceCtrl` analog read wired to the shared mapping | — | — | M3 |
 | PSP audio backend | 0% | Not started | — | Mixer thread, VADPCM decode, sequencing all open | G4 |
 | Physics | 60% | 16 functions ported with original addresses cited, driven every tick against real per-character constants (all 27 fighters) extracted from ROM and verified field-by-field against decomp | RE-032 | — | M3 |
-| Fighter state | 60% | Movement status machine (Wait/walks/Dash/Run/Turn/Jump/Fall/Squat/Landing/Pass) with original interrupt-chain + tap-counter model; all statuses end on their own via figatree-derived duration | RE-033, RE-035 | No attacks, specials, grabs, shields or damage states (blocked behind rendering gate) | M3, G0 |
+| Fighter state | 60% | Movement status machine (Wait/walks/Dash/Run/Turn/Jump/Fall/Squat/Landing/Pass) with original interrupt-chain + tap-counter model; all statuses end on their own via figatree-derived duration. Plus, under `F1`'s scoped Training-only exception (`AGENTS.md`): Mario's neutral jab (`Attack11`), input to hitstun, pixel-confirmed landing on the real dummy target | RE-033, RE-035, RE-294, RE-295 | No specials, grabs, shields or damage *statuses* (blocked behind rendering gate outside `F1`'s carve-out); jab's second hitbox, per-bone hurtboxes and a real `Damage` status are documented gaps within the carve-out | M3, G0 |
 | Collision | 60% | Geometry extracted/packed for all 41 stages; swept + projected floor solvers agree on 158/158 spawn tests | RE-030, RE-031 | No ceiling/wall queries; moving groups tested at rest only | M3 |
 | Animation | 90% | Figatree scripts decode to per-joint transforms and are packed; 189 movement animations, 4709 joint entries, all poses match ROM exactly; skeleton ticks at 60 FPS on device; all 532 sparse fighter/slot entries replay correctly | RE-036, RE-038, RE-171 | No `translate_scales`; viewer camera frames on rest bounds only | M3 |
 | Scene graph (DObj) | 87% | All 363 discovered `DObjDesc` arrays + 11 direct effects packed as 374 objects; `MObj` chains cover all 127 graphs requiring them, 0 mismatches | RE-172 | `GObj` layer and general animation remain absent | R0.7 |
@@ -52,16 +52,20 @@ remains.
 | Stages | 65% | All 41 `MPGroundData` headers recovered; collision decoded and packed for all 41; all 100 render layers resolve to a packed object; automated audit captures all 41 at 60 FPS | RE-028, RE-029, RE-170 | No stage *loader* — viewer browses stages, a match does not select one | G2 |
 | Items | 0% | Not started | — | — | G1 |
 | CPU AI | 0% | Not started | — | — | G1 |
-| Menus | 32% | `psp-game/`, a second independent EBOOT; Intro→Menu state machine navigable; Training spawns a real, physics-ticked Mario and a stationary dummy target on a real stage (Dream Land) and draws both through the real battle camera | RE-289–293 | Menu/select labels are still colour blocks, no `sceFont` text; character/stage select feed a hardcoded default, not a real selection UI; no combat against the dummy target yet | F1, G3 |
+| Menus | 35% | `psp-game/`, a second independent EBOOT; Intro→Menu state machine navigable; Training spawns a real, physics-ticked Mario and a stationary dummy target on a real stage (Dream Land), draws both through the real battle camera; a real, decomp-sourced jump binding lets the player reach the dummy's real spawn point, and the jab connecting is pixel-confirmed via PPSSPPHeadless | RE-289–295 | Menu/select labels are still colour blocks, no `sceFont` text; character/stage select feed a hardcoded default, not a real selection UI | F1, G3 |
 | Save data | 0% | Not started | — | — | G3 |
 | Debug/profiler | 20% | Frame timing sections defined; on-screen text overlay working | — | — | — |
 | CI | COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required | — | — | — |
 
-**Per-fighter combat progress: all 12 at 0%.** Correctly so — combat
-(`PLAN.md` G0) is blocked behind the rendering gate (R0–R3) and has not
-started. Fighter *models*, *animation* and *movement physics* are
-implemented and tracked above; only combat-specific state (attacks,
-hitboxes, damage) is unstarted.
+**Per-fighter combat progress: all 12 at 0%, except Mario's jab under `F1`'s
+Training-only exception.** General match combat (`PLAN.md` G0) is correctly
+blocked behind the rendering gate (R0–R3) and has not started for any
+fighter. Fighter *models*, *animation* and *movement physics* are
+implemented and tracked above. `F1`'s scoped carve-out (`AGENTS.md`) ported
+one grounded attack — Mario's neutral jab, `RE-294` — against a stationary
+Training-mode dummy target only; no other fighter, attack, special, grab,
+shield or damage *status* exists, and none may until R0–R3 close except
+within that same carve-out.
 
 ## Test coverage
 
@@ -105,10 +109,14 @@ Reproduce with `tools/run-ppsspp.sh`.
    hurtbox descriptors, sound IDs and joint indices further into the struct
    are untouched.
 
-5. **The movement animation pipeline is far along; combat does not exist.**
-   No attacks, hitboxes, hurtboxes, damage, knockback, hitstun, opponent,
-   stocks or match loop — per the rendering gate, none of that may start
-   until R0–R3 are complete. See `TODO.md` "Combat Vertical Slice".
+5. **The movement animation pipeline is far along; general match combat does
+   not exist.** No opponent AI, stocks or match loop, and no attacks for any
+   fighter besides Mario's jab — per the rendering gate, none of that may
+   start until R0–R3 are complete, except `F1`'s scoped Training-only
+   exception (`AGENTS.md`), which ported Mario's jab end to end (hitbox,
+   hurtbox, damage, knockback, hitstun — `RE-294`) against a stationary
+   dummy target, now pixel-confirmed connecting via a real jump binding
+   (`RE-295`). See `TODO.md` "Combat Vertical Slice".
 
 6. **Extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest; the runtime loader that patches them at scene load

@@ -15,66 +15,101 @@ AI/items) is a scoped, explicit exception to the rendering-gate-before-combat
 rule — see `AGENTS.md`'s non-negotiable constraints. Full match combat
 (`G0`–`G2`) remains `BLOCKED_BY_R3`.
 
-Current objective: **RE-293 (this session): a real, physics-ticked stationary
-dummy target in Training Mode (`play::Dummy`).** Spawns at the stage's second
-spawn point (`pack.spawn(stage, 1)`), no player/AI control — permanently
-neutral input, so it stands on the real ground under real physics/animation
-alongside the player's fighter, realizing the "single stationary dummy
-target only" line `plans/gameplay/F1.md`'s Known Limitations named.
+Current objective: **RE-295 (this session): a real jump binding, and the
+first pixel-confirmed jab.** RE-294 (prior session) built Mario's jab
+(`Attack11`) end to end but could not pixel-confirm it landing: the training
+dummy sits at the real stage's second spawn point, `~1664` units from the
+player (mostly vertical, on a side platform), and `psp-game` had no jump
+input wired at all. This session found that the jump binding was not an open
+design question — `ft/ftcommon/ftcommonkneebend.c`'s
+`ftCommonKneeBendCheckButtonTap` treats any N64 C-button tap as a real
+jump-by-button input, and `ssb_engine::input::DEFAULT_MAPPING` already
+assigns the PSP's Triangle/Square to `C_UP`/`C_DOWN` — so wiring it was one
+`controller.buttons.contains(JUMP_BUTTON_MASK)` check into `Play::tick`'s
+already-fully-ported jump physics (`crates/ssb-game/src/status.rs`), not new
+physics. This also resolved part of the long-`OPEN` `RE-008` (C-button
+mapping): the jump function is now decomp-confirmed, though taunt/camera
+C-button uses remain unconfirmed.
 
-`psp-game/src/play.rs` gained a `Dummy` struct (fighter, skeleton, object,
-started), mirroring `Play::at_spawn`/`tick` but with no camera and no input
-source; `Play::tick_animation`'s status-change animation-restart logic was
-factored into a shared free function, `tick_skeleton_animation`, so `Dummy`
-reuses it rather than duplicating it. `Dummy` has no `psp/` equivalent (the
-debug viewer has no training combat), so unlike the rest of `play.rs` — a
-verbatim port — it is `psp-game`-only, documented as such. `main.rs` spawns
-`dummy_state` alongside `play_state` on first Training entry, ticks it every
-frame, and draws it through `meshdraw::draw_object_posed` exactly like the
-player fighter (own pose, own per-fighter light bracket, RE-164), with no
-camera interest of its own.
+A new `romtool jumptest` subcommand (`tools/romtool/src/main.rs`) ticks the
+real `ssb_game::fighter::Fighter` against a stage's real floor segments
+natively (no PSP/emulator), which is how the working input schedule was
+actually derived rather than guessed: a single grounded jump's apex measured
+`~660` units (short of the platform regardless of stick, since
+`ftCommonJumpGetJumpForceButton` trades height for horizontal distance and
+grounded speed does not carry into a jump's `vel_air.x`, both confirmed
+against the decomp), so the schedule uses a vertical button jump followed by
+a midair jump timed to reset the arc onto the platform, landing within `2.2`
+units of the dummy's real settled position and connecting the jab
+(`ssb_game::attack::spheres_overlap` true at ticks 92-93 of the trace).
 
-**Still open, unchanged from RE-289–292:** no physical-PSP evidence for
-`psp-game` yet. `sceFont` text for real menu/select labels, and all of
-criterion 5's actual combat (real hitbox/hurtbox from `FTAttributes`,
-damage, knockback/hitstun against the now-real dummy target, per
-`ftphysics.c`) remain.
+`psp-game/src/main.rs`'s `regression_capture` deterministic-capture script
+now drives this full schedule (`scripted_buttons`/`scripted_stick_x`,
+`DETERMINISTIC_CAPTURE_TICKS` raised from 16 to 106 to cover it), and the
+`regression_capture` branch of the Training tick call now feeds the game its
+scripted controller state instead of discarding it as neutral — needed once
+there was real input-driven movement (the jump) to capture, not just a
+button tap. The real (non-capture) jump binding applies unconditionally, not
+just under capture.
 
-Prior objective: `RE-292` ported `psp-game/src/gu.rs`'s 3D pipeline,
-`meshdraw.rs` and `play.rs` from `psp/`; Training started spawning a real
-Mario on a real stage (Dream Land) drawn through the real battle camera.
+**Pixel-confirmed.** `tools/run-ppsspp-headless.sh --crate psp-game
+--seconds 10` captured at the new deterministic tick:
+`docs/images/re295-jab-connects-dummy-platform.png` shows both Marios
+standing together on the real side platform under Dream Land's tree, in
+melee range, with the camera zoomed to the close battle framing — the first
+`psp-game` capture where the player's fighter is not sitting at its spawn
+position, i.e. the jump traversal is visibly working, not just a static
+scene.
 
-Current blocker(s): none. Next up for F1: Training combat (input → hitbox →
-hurtbox → damage → knockback → hitstun, `FTAttributes`/`ftphysics.c`,
-criterion 5, now that a real target exists to hit); `sceFont` (PGF glyph
-rasterisation) for real on-screen menu/select text; a real, sourced
-jump-button binding; real character/stage select UI. Once combat lands,
-physical-PSP confirmation of `psp-game` (still entirely outstanding) becomes
-worth doing. R3 (`plans/rendering/R3.md`) remains `NOT_STARTED` and eligible
-to resume any time — F1 does not block it.
+**Still open, unchanged from RE-289–294 except where noted:** no
+physical-PSP evidence for `psp-game`. `sceFont` text for real menu/select
+labels. Criterion 5's remaining documented gaps (`crates/ssb-game/src/
+attack.rs`'s module docs): the jab's second (joint-9) hitbox, per-bone
+hurtboxes, the friction-based knockback decay curve, and a real `Damage`
+status/animation for the target. Real character/stage select UI. C-Left/
+C-Right remain unmapped (`RE-008`) — not needed for the jump function, since
+the decomp's check accepts any one C-button.
+
+Current blocker(s): none. Next up for F1 (no single mandated order — pick
+by what's most load-bearing): `sceFont` (PGF glyph rasterisation) for real
+on-screen menu/select text, still entirely outstanding since RE-289; a real
+character/stage select UI (currently a hardcoded default); the jab's second
+hitbox and a per-bone hurtbox system, if/when justified; physical-PSP
+confirmation of `psp-game` (still entirely outstanding, and now more
+worth doing with a pixel-confirmed combat loop to validate). `R3`
+(`plans/rendering/R3.md`) remains `NOT_STARTED` and eligible to resume any
+time — `F1` does not block it.
 
 Relevant PLAN task: [plans/gameplay/F1.md](plans/gameplay/F1.md) (active),
 [plans/rendering/R2.md](plans/rendering/R2.md) (closed),
 [plans/rendering/R3.md](plans/rendering/R3.md) (parallel, not started)
-Relevant evidence: RE-293 (this session), RE-292, RE-291, RE-290, RE-289,
-RE-255 (`memsize` key origin), RE-256 (`MEMSIZE`/installed-dir headless
-requirement), RE-164 (per-fighter directional light), RE-131 (real battle
-camera) — see [docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full
-R2.2/physical chain, RE-240–293. Toolchain note: the global `cargo-psp`
-install is a hybrid build, see RE-256.
+Relevant evidence: RE-295, RE-008 (this session), RE-294, RE-293, RE-292,
+RE-291, RE-290, RE-289, RE-255 (`memsize` key origin), RE-256 (`MEMSIZE`/
+installed-dir headless requirement), RE-164 (per-fighter directional light),
+RE-131 (real battle camera) — see
+[docs/evidence/INDEX.md](docs/evidence/INDEX.md) for the full R2.2/physical
+chain, RE-240–295. Toolchain note: the global `cargo-psp` install is a
+hybrid build, see RE-256.
 Relevant subsystem docs: [docs/porting-status.md](docs/porting-status.md),
 [docs/rendering.md](docs/rendering.md), `psp-hardware` Skill (PSPLink),
 `visual-regression` Skill (PPSSPPHeadless)
 
-Current build: RE-293 (this session) adds `Dummy` to `psp-game/src/play.rs`
-and wires it into `psp-game/src/main.rs`; `psp/` is untouched (verified via
-`git status`/`git diff --stat -- psp/`). `psp-game`'s plain-build (no
+Current build: RE-295 (this session) touches `psp-game/src/main.rs` (jump
+wiring, capture-script schedule) and `tools/romtool/src/main.rs` (new
+`jumptest` subcommand) — no further changes to `crates/ssb-game`,
+`crates/ssb-rom`, `crates/ssb-engine` beyond RE-294's, which remain
+uncommitted from the prior session alongside this one (`git status`: nothing
+in either session's work has been committed yet). `psp/` is untouched by
+both sessions (`git diff --stat -- psp/` empty). `psp-game`'s plain-build (no
 features, normal interactive) EBOOT SHA-256:
-`34dd8aaf3110d3f25e05e9c4994b66ced28e93888225e0b2e2f24335e3a65c1a`. `psp/`'s
-own tree and build are untouched this session (not rebuilt — Rust release
-builds are not bit-reproducible across runs even with identical source, so
-recomputing its hash without a source change would be a spurious diff; last
-recorded value remains RE-288's
+`3c289dfccc45a6a0700e0d0f812d956ae700c7c5751b7c49baddc1054d4609d4` (changed
+from RE-294's, as expected — this session changed `psp-game`'s own source).
+`psp/`'s own tree and build are untouched this session (last recorded value
+remains RE-288's
 `81abb86233772aed57bc61c0d3ccefd3c2f09d24746993b41f7fd54de630b62e`). Pack
 unchanged this session (no asset-pipeline code touched):
 `256d7661bb1dc7266ea8928bc8f341cbb121f83c330a4d3821466192ea42c17d`.
+Workspace test suite: `cargo test --workspace` — 425 passed, 0 failed (this
+session touched no `ssb-game`/`ssb-rom`/`ssb-engine` code, only `psp-game`
+input wiring and the new `romtool` subcommand, so the count is unchanged
+from RE-294).

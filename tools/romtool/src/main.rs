@@ -16,6 +16,9 @@
 //! romtool stages   <rom>          recover MPGroundData headers and collision
 //! romtool collide  <pack>         run the collision query on every stage
 //! romtool simulate <pack>         drop a real fighter on every stage's spawns
+//! romtool jumptest <pack>         script a jump/attack input schedule against
+//!                                 a stage's real floor data and report where
+//!                                 it lands and whether a jab connects
 //! romtool fighters <rom>          extract every character's FTAttributes
 //! romtool anims    <rom>          read every fighter's animation lengths
 //! romtool effects  <pack>         verify source-named manager effect objects
@@ -46,6 +49,7 @@ fn main() -> ExitCode {
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
+        ["jumptest", pack_path, rest @ ..] => jumptest(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["effects", pack_path] => effects(pack_path.as_ref()),
         ["particles", rom_path] => particles(rom_path.as_ref()),
@@ -90,6 +94,9 @@ USAGE:
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
+    romtool jumptest <pack.pak> [--stage <n>] [--jump-tick <n>] [--jump2-tick <n>]
+                                 [--stick-x <n>] [--stick-switch-tick <n>]
+                                 [--stick-release-tick <n>] [--attack-tick <n>] [--ticks <n>]
     romtool effects  <pack.pak>
     romtool particles <rom.z64>
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
@@ -4861,6 +4868,175 @@ fn parse_c_float(s: &str) -> Result<f32, Box<dyn std::error::Error>> {
 /// * **It cannot be launched through the stage.** Dropped from 3000 units up
 ///   at maximum knockback velocity, one tick's movement is longer than most
 ///   stages are wide. Only `mpProcessUpdateMain`'s substepping catches that.
+/// Scripts a button-jump + held-stick input schedule against a stage's real
+/// floor segments (native, no PSP/emulator needed) and reports where the
+/// fighter lands each tick, plus whether a scripted jab connects
+/// (`ssb_game::attack::spheres_overlap`) against a second fighter placed at
+/// spawn 1. Built for RE-295 (`psp-game`'s Training-mode jump wiring, so the
+/// jab could reach the real dummy spawn point on its platform) — deriving
+/// the exact tick/stick schedule this way, against the same `Fighter::tick`/
+/// collision code the PSP build uses, is what made a working headless
+/// capture script tractable rather than a guess-and-check loop against the
+/// emulator itself.
+fn jumptest(path: &Path, opts: &[&str]) -> Res {
+    use ssb_engine::input::ControllerState;
+    use ssb_game::fighter::{Fighter, FighterKind};
+
+    let mut stage_index = 0u32;
+    let mut jump_tick = 10u32;
+    let mut jump2_tick: Option<u32> = None;
+    let mut attack_tick: Option<u32> = None;
+    let mut stick_switch_tick = 0u32;
+    let mut stick_release_tick = u32::MAX;
+    let mut stick_x: i8 = -80;
+    let mut ticks = 120u32;
+    let mut it = opts.iter();
+    while let Some(o) = it.next() {
+        match *o {
+            "--stage" => stage_index = parse_id(it.next().ok_or("--stage needs an index")?)?,
+            "--jump-tick" => {
+                jump_tick = it
+                    .next()
+                    .ok_or("--jump-tick needs a value")?
+                    .parse()
+                    .map_err(|_| "bad --jump-tick")?
+            }
+            "--jump2-tick" => {
+                jump2_tick = Some(
+                    it.next()
+                        .ok_or("--jump2-tick needs a value")?
+                        .parse()
+                        .map_err(|_| "bad --jump2-tick")?,
+                )
+            }
+            "--stick-switch-tick" => {
+                stick_switch_tick = it
+                    .next()
+                    .ok_or("--stick-switch-tick needs a value")?
+                    .parse()
+                    .map_err(|_| "bad --stick-switch-tick")?
+            }
+            "--stick-x" => {
+                stick_x = it
+                    .next()
+                    .ok_or("--stick-x needs a value")?
+                    .parse()
+                    .map_err(|_| "bad --stick-x")?
+            }
+            "--attack-tick" => {
+                attack_tick = Some(
+                    it.next()
+                        .ok_or("--attack-tick needs a value")?
+                        .parse()
+                        .map_err(|_| "bad --attack-tick")?,
+                )
+            }
+            "--stick-release-tick" => {
+                stick_release_tick = it
+                    .next()
+                    .ok_or("--stick-release-tick needs a value")?
+                    .parse()
+                    .map_err(|_| "bad --stick-release-tick")?
+            }
+            "--ticks" => {
+                ticks = it
+                    .next()
+                    .ok_or("--ticks needs a value")?
+                    .parse()
+                    .map_err(|_| "bad --ticks")?
+            }
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+    let stage = pack
+        .stage(stage_index)
+        .ok_or_else(|| format!("no stage {stage_index}"))?;
+    let segments = floor_segments(&pack, &stage);
+    let floors = || segments.iter().copied();
+
+    // Matches `Play::at_spawn`: deliberately *not* settled onto the surface,
+    // so the first couple of ticks are the real spawn-height fall, keeping
+    // this scratch simulation's tick numbering aligned with psp-game's.
+    let p1 = pack.spawn(&stage, 0).ok_or("no spawn 0")?;
+    let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+    f.pos = ssb_engine::math::Vec3::new(p1.x as f32, p1.y as f32, 0.0);
+
+    let p2 = pack.spawn(&stage, 1).ok_or("no spawn 1")?;
+    let mut dummy = Fighter::new(FighterKind::Mario, 1, 3);
+    dummy.pos = ssb_engine::math::Vec3::new(p2.x as f32, p2.y as f32, 0.0);
+    dummy.place_on_stage(floors());
+    println!(
+        "target (dummy spawn 1, settled): x={} y={}",
+        dummy.pos.x, dummy.pos.y
+    );
+    for (id, seg) in &segments {
+        if (seg.y1 as i32 - p2.y as i32).abs() < 60 || (seg.y2 as i32 - p2.y as i32).abs() < 60 {
+            println!(
+                "  floor line {id}: ({},{}) -> ({},{})",
+                seg.x1, seg.y1, seg.x2, seg.y2
+            );
+        }
+    }
+
+    let mut jump_was_held = false;
+    for tick in 0..ticks {
+        let jump_held = tick == jump_tick || jump2_tick == Some(tick);
+        let tapped = jump_held && !jump_was_held;
+        let released = !jump_held && jump_was_held;
+        jump_was_held = jump_held;
+
+        let cur_stick_x = if tick >= stick_switch_tick && tick < stick_release_tick {
+            stick_x
+        } else {
+            0
+        };
+        let mut buttons = ssb_engine::input::N64Buttons::default();
+        if attack_tick == Some(tick) {
+            buttons.set(ssb_engine::input::N64Buttons::A, true);
+        }
+        let input = ControllerState {
+            buttons,
+            stick_x: cur_stick_x,
+            stick_y: 0,
+            connected: true,
+        };
+        f.set_input(input, tapped, released);
+        f.tick(floors);
+
+        let hitbox_active = ssb_game::attack::jab1_hitbox_active(f.status.anim_frame)
+            && f.status.status == ssb_game::status::Status::Attack11;
+        let hitbox_pos = f.pos + ssb_game::attack::MARIO_JAB1_HITBOX.offset;
+        let overlap = hitbox_active
+            && ssb_game::attack::spheres_overlap(
+                hitbox_pos,
+                ssb_game::attack::MARIO_JAB1_HITBOX.radius,
+                dummy.pos,
+                ssb_game::attack::MARIO_HURTBOX_RADIUS,
+            );
+
+        let dx = f.pos.x - dummy.pos.x;
+        let dy = f.pos.y - dummy.pos.y;
+        let dist = (dx * dx + dy * dy).sqrt();
+        if overlap {
+            println!("  *** HIT: jab connects at tick {tick} ***");
+        }
+        println!(
+            "tick {tick:3}  pos=({:8.1},{:8.1})  grounded={:5}  dist={:7.1}  status={:?} anim_frame={:.1}",
+            f.pos.x,
+            f.pos.y,
+            f.is_grounded(),
+            dist,
+            f.status.status,
+            f.status.anim_frame,
+        );
+    }
+
+    Ok(())
+}
+
 fn simulate(path: &Path, opts: &[&str]) -> Res {
     use ssb_engine::math::Vec2;
     use ssb_game::fighter::{Fighter, FighterKind};

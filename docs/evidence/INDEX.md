@@ -303,3 +303,5 @@ editing a record.
 | RE-291 | `psp-game` loads and parses the real asset pack | COMPLETE | front-end, toolchain, asset-pipeline, visual-regression |  |
 | RE-292 | `psp-game`'s 3D pipeline, mesh drawing and real gameplay slice ported from `psp/` | COMPLETE | front-end, toolchain, visual-regression, physics, animation |  |
 | RE-293 | `psp-game`'s Training Mode spawns a real, physics-ticked stationary dummy target | COMPLETE | front-end, physics |  |
+| RE-294 | Training Mode's first real attack: Mario's jab, hitbox to hitstun | COMPLETE (numeric slice) — see "Still open" below | front-end, physics, gameplay |  |
+| RE-295 | Real jump binding reaches the dummy's real spawn point | COMPLETE | front-end, physics, gameplay, input |  |

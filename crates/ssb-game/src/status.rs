@@ -42,6 +42,8 @@
 //! animation running out, because animation data is not extracted — see
 //! [`StatusTiming`].
 
+use ssb_engine::input::{newly_pressed, N64Buttons};
+
 use crate::fighter::{Facing, Fighter, Situation};
 use crate::physics::{self, PhysicsAttributes, PhysicsState};
 
@@ -136,6 +138,9 @@ pub enum Status {
     LandingHeavy = 32,
     /// Dropping through a passable platform.
     Pass = 33,
+    /// Neutral jab — `nFTCommonStatusAttack11`. `F1` criterion 5's grounded
+    /// attack; see `crate::attack` for the hitbox/knockback/hitstun it drives.
+    Attack11 = 190,
 }
 
 impl Status {
@@ -173,6 +178,13 @@ impl Status {
             Status::Fall => 17,
             Status::FallAerial => 18,
             Status::SquatWait => 19,
+            // No `Attack11` (jab) animation is extracted yet — `crate::attack`'s
+            // module docs cover why. Standing in with Wait's slot keeps the
+            // pose rather than guessing a clip; `tick_skeleton_animation`
+            // already treats "the pack lacks this slot's data" as "keep the
+            // current pose", so this is the same fallback other unextracted
+            // animations get, not a special case.
+            Status::Attack11 => Status::Wait.anim_slot(),
         }
     }
 
@@ -716,6 +728,19 @@ pub fn set_pass(f: &mut Fighter) {
     f.stick.tap_y = STICKBUFFER_MAX;
 }
 
+/// `ftCommonAttack11SetStatus` @ `ftcommonattack1.c:127`, reduced to the
+/// no-item, no-combo-followup case: `F1`'s slice ends the jab on its own
+/// animation rather than chaining into `Attack12`/`Attack13` on a repeated
+/// tap (`crate::attack`'s module docs).
+pub fn set_attack11(f: &mut Fighter) {
+    set_status(
+        f,
+        Status::Attack11,
+        0.0,
+        StatusTiming::frames(crate::attack::MARIO_ATTACK11_LENGTH_FRAMES),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Interrupt checks
 // ---------------------------------------------------------------------------
@@ -795,6 +820,17 @@ pub fn check_pass(f: &mut Fighter) -> bool {
     false
 }
 
+/// `ftCommonAttack1CheckInterruptCommon` @ `ftcommonattack1.c:244`, restricted
+/// to the no-item case (`fp->item_gobj == NULL`), which is every fighter in
+/// this slice — Training has no items.
+pub fn check_attack1(f: &mut Fighter) -> bool {
+    if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        set_attack11(f);
+        return true;
+    }
+    false
+}
+
 /// `ftCommonSquatCheckInterruptCommon` @ 0x8014310C.
 ///
 /// Two units below the pass threshold — the pass check runs first, so squat
@@ -860,11 +896,15 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// The ground interrupt chain — `ftCommonGroundCheckInterrupt` in
 /// `src/ft/fighter.h`, restricted to the ported statuses.
 ///
-/// The order is the original's, with the unported entries (specials, attacks,
-/// grab, shield, taunt, pipe) removed rather than reordered around. Returns
+/// The order is the original's, with the unported entries (specials, grab,
+/// shield, taunt, pipe) removed rather than reordered around. `Attack1`
+/// (`check_attack1`) is the one attack this slice ports, and it sits exactly
+/// where the original's macro puts it: after every unported attack/special
+/// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
-    check_kneebend(f)
+    check_attack1(f)
+        || check_kneebend(f)
         || check_dash(f)
         || check_pass(f)
         || check_squat(f)
@@ -923,6 +963,15 @@ pub fn update(f: &mut Fighter) {
         // animation at half speed, so it takes twice as many frames to reach
         // the same length — the real cost of a fastfall.
         Status::RunBrake => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        // `ftCommonAttack11ProcUpdate` @ `ftcommonattack1.c:29`, reduced to
+        // its `else` branch: no combo followup is ported (`crate::attack`'s
+        // module docs), so the jab always ends in `ftAnimEndSetWait` rather
+        // than checking for a buffered second tap.
+        Status::Attack11 => {
             if f.status.animation_ended() {
                 set_wait(f);
             }
@@ -1132,6 +1181,7 @@ mod tests {
         assert_eq!(Status::KneeBend as u16, 20);
         assert_eq!(Status::Fall as u16, 26);
         assert_eq!(Status::Pass as u16, 33);
+        assert_eq!(Status::Attack11 as u16, 190);
     }
 
     #[test]
@@ -1706,5 +1756,49 @@ mod tests {
         assert_eq!(f.status.timing.anim_length, None);
         f.status.anim_frame = 10_000.0;
         assert!(!f.status.animation_ended());
+    }
+
+    /// Taps the N64 A button for one frame.
+    fn tap_a(f: &mut Fighter) {
+        f.prev_input = f.input;
+        f.input.buttons = N64Buttons(N64Buttons::A);
+    }
+
+    #[test]
+    fn tapping_a_from_wait_enters_the_jab() {
+        let mut f = mario();
+        assert!(!check_attack1(&mut f));
+        assert_eq!(f.status.status, Status::Wait); // no tap fed in yet
+        tap_a(&mut f);
+        assert!(check_attack1(&mut f));
+        assert_eq!(f.status.status, Status::Attack11);
+    }
+
+    #[test]
+    fn the_jab_is_not_interruptible_through_the_ground_chain() {
+        // Attack1's own interrupt handling (item-throw branches, the Attack100
+        // rapid-jab check) is not ported (`crate::attack`'s module docs); what
+        // matters here is that the ordinary per-frame dispatch — which is what
+        // actually gates `ground_interrupt` — cannot cut a jab short with a
+        // dash input, because `Attack11` is not `is_actionable_on_ground`.
+        let mut f = mario();
+        tap_a(&mut f);
+        update(&mut f); // Wait's dispatch runs the ground chain, entering the jab
+        assert_eq!(f.status.status, Status::Attack11);
+        hold(&mut f, 80, 0); // a full-stick dash input, mid-jab
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Attack11);
+    }
+
+    #[test]
+    fn the_jab_returns_to_wait_when_its_animation_ends() {
+        let mut f = mario();
+        set_attack11(&mut f);
+        for _ in 0..(crate::attack::MARIO_ATTACK11_LENGTH_FRAMES as i32 - 1) {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::Attack11);
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
     }
 }
