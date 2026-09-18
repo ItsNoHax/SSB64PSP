@@ -21,7 +21,7 @@ ROM="${2:-$REPO/rom/Super Smash Bros. (USA).z64}"
 GAME_ROOT="$MOUNT_ROOT/PSP/GAME"
 DEST="$GAME_ROOT/ssb64"
 PACK="$REPO/assets/generated/ssb64.pak"
-EBOOT="$REPO/psp/target/mipsel-sony-psp/release/EBOOT.PBP"
+EBOOT="$REPO/psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP"
 
 [ -d "$GAME_ROOT" ] || {
   echo "not a PSP mount root (missing $GAME_ROOT)" >&2
@@ -34,7 +34,7 @@ echo "==> rebuilding asset pack from the verified local ROM"
 
 echo "==> rebuilding deterministic regression EBOOT"
 rm -f "$EBOOT"
-(cd "$REPO/psp" && cargo psp --release --features regression_capture)
+(cd "$REPO/psp-asset-viewer" && cargo psp --release --features regression_capture)
 [ -s "$EBOOT" ] || { echo "build did not produce $EBOOT" >&2; exit 1; }
 [ -s "$PACK" ] || { echo "pack build did not produce $PACK" >&2; exit 1; }
 

@@ -7,12 +7,13 @@ members = [
     "tools/romtool",
 ]
 
-# The two PSP binaries -- `psp/` (the debug asset viewer) and `psp-game/`
-# (F1's front end/Training Mode, a separate EBOOT) -- are deliberately NOT
-# workspace members: both target `mipsel-sony-psp`, are `no_std`, and are
-# built with `cargo psp` (which needs nightly + `-Z build-std`). Keeping them
-# out lets `cargo test` at the root run on stable for every host-side crate.
-exclude = ["psp", "psp-game"]
+# The two PSP binaries -- `psp-asset-viewer/` (the debug/rendering-validation
+# application) and `psp-game/` (F1's front end/Training Mode, a separate
+# EBOOT) -- are deliberately NOT workspace members: both target
+# `mipsel-sony-psp`, are `no_std`, and are built with `cargo psp` (which needs
+# nightly + `-Z build-std`). Keeping them out lets `cargo test` at the root
+# run on stable for every host-side crate.
+exclude = ["psp-asset-viewer", "psp-game"]
 
 [workspace.package]
 version = "0.1.0"

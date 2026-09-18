@@ -2,7 +2,7 @@
 #
 # Build and run the PSP executable under PPSSPP, capturing a screenshot.
 #
-#   tools/run-ppsspp.sh [--no-build] [--crate psp|psp-game]
+#   tools/run-ppsspp.sh [--no-build] [--crate psp-asset-viewer|psp-game]
 #                        [--backend software|opengl] [--seconds N]
 #                        [--audit-stages N] [--audit-animations N]
 #                        [--audit-effects N]
@@ -10,9 +10,11 @@
 #                        [--audit-effect-materials N]
 #                        [--audit-particles N]
 #
-# --crate selects which `cargo psp` crate to build and run; default `psp`
-# (the debug asset viewer). `psp-game` (F1's front end/Training Mode) is a
-# second, independent EBOOT and has none of the audit features below.
+# --crate selects which `cargo psp` crate to build and run; default
+# `psp-asset-viewer` (the debug/rendering-validation application; `psp` is
+# accepted as a backwards-compatible alias). `psp-game` (F1's front
+# end/Training Mode) is a second, independent EBOOT and has none of the audit
+# features below.
 #
 # Everything here is defensive against a specific failure that actually
 # happened. Do not simplify without reading the reasons.
@@ -86,11 +88,13 @@ OUT="${PPSSPP_TEST_DIR:-$HOME/ppsspp-test}"
 BACKEND=software
 SECONDS_TO_RUN=12
 BUILD=1
-# Which `cargo psp` crate to build/run. `psp` (the debug asset viewer) is the
-# default and the only one the audit-feature flags below apply to; F1's
-# `psp-game/` front end is a second, independent EBOOT with no such features
-# (--crate psp-game --no-build after a plain `cargo psp --release` there).
-CRATE=psp
+# Which `cargo psp` crate to build/run. `psp-asset-viewer` (the debug/
+# rendering-validation application) is the default and the only one the
+# audit-feature flags below apply to; F1's `psp-game/` front end is a second,
+# independent EBOOT with no such features (--crate psp-game --no-build after
+# a plain `cargo psp --release` there). `psp` is accepted as a
+# backwards-compatible alias for `psp-asset-viewer`.
+CRATE=psp-asset-viewer
 AUDIT_STAGES=0
 AUDIT_ANIMATIONS=0
 AUDIT_EFFECTS=0
@@ -113,6 +117,9 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+
+# `psp` is a backwards-compatible alias for the renamed `psp-asset-viewer`.
+[ "$CRATE" = psp ] && CRATE=psp-asset-viewer
 
 case "$AUDIT_STAGES" in
   ''|*[!0-9]*) echo "--audit-stages needs a non-negative integer" >&2; exit 2 ;;
@@ -206,8 +213,8 @@ capture() {
 
 if [ "$BUILD" = 1 ]; then
   echo "==> building EBOOT ($CRATE)"
-  if [ "$CRATE" != psp ] && [ "$ACTIVE_AUDITS" -gt 0 ]; then
-    echo "audit features are $CRATE=psp only" >&2
+  if [ "$CRATE" != psp-asset-viewer ] && [ "$ACTIVE_AUDITS" -gt 0 ]; then
+    echo "audit features are psp-asset-viewer only" >&2
     exit 2
   fi
   if [ "$AUDIT_PARTICLES" -gt 0 ]; then
@@ -220,7 +227,7 @@ if [ "$BUILD" = 1 ]; then
     ( cd "$REPO/$CRATE" && cargo psp --release --features effect_audit_capture )
   elif [ "$AUDIT_ANIMATIONS" -gt 0 ]; then
     ( cd "$REPO/$CRATE" && cargo psp --release --features animation_audit_capture )
-  elif [ "$CRATE" = psp ]; then
+  elif [ "$CRATE" = psp-asset-viewer ]; then
     # `debug_overlay` is off by default (RE-202: crashes real hardware) but
     # this interactive PPSSPP workflow relies on the on-screen HUD, and
     # PPSSPP itself never reproduces the hardware fault. `psp-game` has no
@@ -238,10 +245,11 @@ EBOOT="$REPO/$CRATE/target/mipsel-sony-psp/release/EBOOT.PBP"
 mkdir -p "$OUT"
 cp "$EBOOT" "$OUT/"
 
-# Report what is actually being run. `cargo psp` only works from psp/; invoked
-# from the repo root it exits 0 without rebuilding, so a hand-run build can
-# leave a stale EBOOT that the next --no-build run happily screenshots. Two
-# consecutive runs then "prove" a change that was never compiled.
+# Report what is actually being run. `cargo psp` only works from the crate
+# directory; invoked from the repo root it exits 0 without rebuilding, so a
+# hand-run build can leave a stale EBOOT that the next --no-build run happily
+# screenshots. Two consecutive runs then "prove" a change that was never
+# compiled.
 echo "==> staged EBOOT $(du -h "$EBOOT" | cut -f1) ($(date -r "$EBOOT" '+%H:%M:%S'))"
 
 # Stage the asset pack alongside the EBOOT.

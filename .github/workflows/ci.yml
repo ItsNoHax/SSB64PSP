@@ -15,7 +15,8 @@ env:
   # and failed four existing call sites. Bump this on purpose, not by surprise.
   RUST_STABLE: "1.98.0"
   # `rust-psp` depends on nightly core internals. Keep both values in step with
-  # psp/rust-toolchain.toml and update only after an EBOOT is validated.
+  # psp-asset-viewer/rust-toolchain.toml and update only after an EBOOT is
+  # validated.
   PSP_NIGHTLY: "nightly-2026-08-01"
   # `cargo-psp` is part of the PSP release toolchain, not an unbounded build
   # dependency. Pin it with the nightly above so a crates.io release cannot
@@ -85,8 +86,8 @@ jobs:
           cargo build -p ssb-game   --no-default-features --target thumbv7em-none-eabi
           cargo build -p ssb-rom    --no-default-features --target thumbv7em-none-eabi
 
-  psp:
-    name: PSP build (EBOOT.PBP)
+  psp_asset_viewer:
+    name: PSP asset-viewer build (EBOOT.PBP)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,13 +103,13 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: psp
+          workspaces: psp-asset-viewer
 
       - name: Install pinned cargo-psp
         run: cargo +${{ env.PSP_NIGHTLY }} install cargo-psp --version "=$CARGO_PSP_VERSION" --locked
 
       - name: Build EBOOT.PBP
-        working-directory: psp
+        working-directory: psp-asset-viewer
         # rust-psp's linker emits benign abicalls warnings, so -D warnings
         # would fail the build for no reason here.
         env:
@@ -116,7 +117,7 @@ jobs:
         run: cargo +${{ env.PSP_NIGHTLY }} psp --release
 
       - name: Verify the artifact is a real PBP
-        working-directory: psp
+        working-directory: psp-asset-viewer
         run: |
           PBP=target/mipsel-sony-psp/release/EBOOT.PBP
           test -f "$PBP" || { echo "::error::EBOOT.PBP not produced"; exit 1; }
@@ -130,8 +131,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: EBOOT.PBP
-          path: psp/target/mipsel-sony-psp/release/EBOOT.PBP
+          name: psp-asset-viewer-EBOOT.PBP
+          path: psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
           if-no-files-found: error
 
   # Guard against ever committing copyrighted material.

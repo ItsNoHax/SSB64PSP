@@ -4,5 +4,5 @@ title = "SSB64PSP"
 # partition. MEMSIZE=1 requests full memory access (64MB total RAM instead
 # of 32MB) on PSP-2000/3000 (Slim/Brite) hardware -- ignored on PSP-1000
 # (Fat). Standard PSP homebrew SDK PARAM.SFO key. `psp-game` now loads the
-# same pack as `psp/` (`assets.rs`), so it needs the same key.
+# same pack as `psp-asset-viewer/` (`assets.rs`), so it needs the same key.
 memsize = 1

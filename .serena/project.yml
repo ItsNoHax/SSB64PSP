@@ -113,7 +113,7 @@ ls_additional_workspace_folders: []
 # Note: global ignored_paths from serena_config.yml are also applied additively.
 ignored_paths:
 - "target/**"
-- "psp/target/**"
+- "psp-asset-viewer/target/**"
 - "assets/generated/**"
 - "rom/**"
 - "*.z64"

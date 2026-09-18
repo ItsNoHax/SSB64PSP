@@ -1,9 +1,9 @@
 [package]
-name = "ssb64-psp"
+name = "ssb64-psp-asset-viewer"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Layer C: the PSP backend and executable for the SSB64 port."
+description = "Layer C: the PSP debug/rendering-validation asset viewer for the SSB64 port."
 
 # Deliberately outside the root workspace: this crate targets mipsel-sony-psp,
 # is no_std, and is built with `cargo psp`. See the root Cargo.toml.

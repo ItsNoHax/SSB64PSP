@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Build and run a deterministic PSP scene through PPSSPPHeadless.
 #
-#   tools/run-ppsspp-headless.sh [--no-build] [--crate psp|psp-game]
+#   tools/run-ppsspp-headless.sh [--no-build] [--crate psp-asset-viewer|psp-game]
 #                                [--feature FEATURE] [--backend software]
 #                                [--seconds N]
 #
-# --crate selects which `cargo psp` crate to build and run; default `psp`
-# (the debug asset viewer's `regression_capture` scenes). `psp-game` (F1's
-# front end/Training Mode) uses the same `regression_capture`/
-# `headless_capture` feature names for its own, unrelated deterministic
-# scripted-menu-input capture (see `psp-game/src/main.rs`).
+# --crate selects which `cargo psp` crate to build and run; default
+# `psp-asset-viewer` (the debug/rendering-validation application's
+# `regression_capture` scenes; `psp` is accepted as a backwards-compatible
+# alias). `psp-game` (F1's front end/Training Mode) uses the same
+# `regression_capture`/`headless_capture` feature names for its own,
+# unrelated deterministic scripted-menu-input capture (see
+# `psp-game/src/main.rs`).
 
 set -euo pipefail
 
@@ -20,7 +22,7 @@ FEATURE=regression_capture
 BACKEND=software
 SECONDS_TO_RUN=8
 BUILD=1
-CRATE=psp
+CRATE=psp-asset-viewer
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -33,9 +35,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# `psp` is a backwards-compatible alias for the renamed `psp-asset-viewer`.
+[ "$CRATE" = psp ] && CRATE=psp-asset-viewer
+
 case "$CRATE" in
-  psp|psp-game) ;;
-  *) echo "--crate must be psp or psp-game" >&2; exit 2 ;;
+  psp-asset-viewer|psp-game) ;;
+  *) echo "--crate must be psp-asset-viewer or psp-game" >&2; exit 2 ;;
 esac
 
 [ -x "$HEADLESS_BIN" ] || {
@@ -60,8 +65,8 @@ PACK="$REPO/assets/generated/ssb64.pak"
 # into PPSSPP's own memstick directory (~/.ppsspp/PSP/GAME) rather than a
 # scratch directory. A dedicated, always-overwritten subfolder keeps this
 # from colliding with any real installed homebrew there, and each crate gets
-# its own subfolder so a `psp` and a `psp-game` capture can't clobber each
-# other's staged EBOOT.
+# its own subfolder so a `psp-asset-viewer` and a `psp-game` capture can't
+# clobber each other's staged EBOOT.
 MEMSTICK_NAME=ssb64_regression
 [ "$CRATE" = psp-game ] && MEMSTICK_NAME=ssb64_game_regression
 MEMSTICK="${PPSSPP_MEMSTICK_DIR:-$HOME/.ppsspp/PSP/GAME}/$MEMSTICK_NAME"
@@ -70,7 +75,7 @@ cp -f "$EBOOT" "$MEMSTICK/EBOOT.PBP"
 # psp-game now loads the pack too (`assets.rs`, `plans/gameplay/F1.md`'s
 # "Scene loading" section), but its Training screen only recolours the
 # background on a missing/bad pack rather than failing to boot, so staging
-# it stays best-effort here, same as for psp.
+# it stays best-effort here, same as for psp-asset-viewer.
 if [ -f "$PACK" ]; then
   cp -f "$PACK" "$MEMSTICK/ssb64.pak"
 elif [ "$CRATE" != psp-game ]; then

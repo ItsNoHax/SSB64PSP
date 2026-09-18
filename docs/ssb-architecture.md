@@ -349,7 +349,7 @@ bytes and RE-255 proved it cannot coexist with the application in the default
 
 | Original | Lines | Port destination |
 |---|---|---|
-| `sys/main.c` | 235 | `psp/src/main.rs` — rewritten, not ported |
+| `sys/main.c` | 235 | `psp-asset-viewer/src/main.rs` — rewritten, not ported |
 | `sys/scheduler.c` | 1319 | **dropped** — no RCP to schedule |
 | `sys/taskman.c` | 1377 | partly dropped; heap logic → `engine/memory` |
 | `sys/objman.c` | 2442 | `ssb-game` scene graph |
