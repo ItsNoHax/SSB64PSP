@@ -299,3 +299,4 @@ editing a record.
 | RE-287 | Physical-PSP confirmation of RE-286's 37 new stage goldens: zero exceptions on all 37, 8 spot-checked pixel-exact | COMPLETE | stage, visual-regression, hardware |  |
 | RE-288 | PSP-1000 physically tested: pack fails to fit in 32 MiB RAM, clean `OutOfMemory` fallback, zero exceptions; second-unit 30-min sustained run stopped early (fallback-only, not representative), deferred to a future hardware-acceptance pass | COMPLETE | hardware, visual-regression, asset-pipeline |  |
 | RE-289 | F1's `psp-game/` crate scaffolded: a second, independent EBOOT boots to an intro/menu state machine | COMPLETE (this increment) — scene loading, text, Training Mode combat remain | front-end, toolchain, hardware, visual-regression |  |
+| RE-290 | `psp-game`'s Menu -> Training confirm transition, pixel-confirmed via PPSSPPHeadless (closes RE-289's open item) | COMPLETE | front-end, toolchain, visual-regression |  |
