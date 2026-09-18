@@ -100,6 +100,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene7")
             || cfg!(feature = "regression_capture_scene8")
             || cfg!(feature = "regression_capture_scene9")
+            || cfg!(feature = "regression_capture_scene10")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
@@ -695,6 +696,16 @@ unsafe fn run() -> ! {
     // so the whole-stage framing below shows the gate in its posed position.
     if cfg!(feature = "regression_capture_scene5") {
         stage_index = 9;
+    }
+    // R2 stage-coverage scene: stage 4 is Peach's Castle (file 259,
+    // `259_GRCastleMap.c`) -- a real VS-mode battle stage, not one of the
+    // 26 single-fighter bonus maps or the tutorial/test maps also present
+    // in the archive's 41-stage block. Its two animated joint layers give
+    // this a second stage-animation data point beside Saffron City's gate
+    // (scene 5), on different source data. Same deterministic whole-stage
+    // freeze as scene 5.
+    if cfg!(feature = "regression_capture_scene10") {
+        stage_index = 4;
     }
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per frame beside the fighter's own skeleton.

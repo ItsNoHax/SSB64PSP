@@ -152,6 +152,15 @@ regression_capture_scene8 = []
 # Off by default.
 regression_capture_scene9 = []
 
+# R2 stage-coverage scene: Peach's Castle (stage 4, file 259,
+# `259_GRCastleMap.c`) -- a real VS-mode battle stage, distinct from the 26
+# single-fighter bonus maps and the tutorial/test maps that make up most of
+# the archive's 41-stage block. Two animated joint layers give this a
+# second, independent stage-animation data point beside Saffron City's gate
+# (scene 5). Same deterministic whole-stage freeze as scene 5. Off by
+# default.
+regression_capture_scene10 = []
+
 # `R2.2`/C3 measurement rig (RE-251): a synthetic, non-ROM diagnostic proving
 # `apply_material`'s `sceGuDepthMask` wiring, the same `texgen_normal_
 # diagnostic_*` shape as `normal_diag.rs` (one purpose-built scene replacing
