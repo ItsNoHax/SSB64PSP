@@ -64,29 +64,44 @@ are not implemented yet. Not a standing R2 blocker.
 Current blocker(s): PSP-1000's 32 MiB RAM can't use `MEMSIZE=1`, so pack
 compatibility there is unresolved rather than assumed — neither the Slim nor
 the PSP-3000 tested so far is in that RAM class; no PSP-1000 unit is
-available in this environment, so this item is parked rather than pursued.
-No dedicated capture scenes exist yet for full stage/effect coverage or
-runs longer than 10 minutes; Kirby's per-copy-ability hat graphs also
-remain untested (see the Pikachu/Kirby note above — non-default costumes
-are now checked and clean, so this is narrower than before). None of these
-block R2.2 (closed) — they gate physical-matrix/golden-coverage breadth
-only, deliberately deferred until the game structure grows beyond the
-asset viewer. The USB-permission issue that blocked physical work earlier
-in RE-283's session history was resolved by reconnecting the PSP (new bus
-address, correct `0666` device-node permissions) — not a standing blocker,
-but worth a replug first if a future session hits "Permission error while
-opening the USB device" again before assuming the udev rule itself needs
-reinstalling.
+available in this environment, so **this item is parked, not pursued, per
+explicit instruction this session.** No dedicated capture scenes exist yet
+for full stage/effect coverage (41 stages, most uncovered — this is a large,
+deliberately deferred effort, not a bounded next step); Kirby's
+per-copy-ability hat graphs also remain untested (see the Pikachu/Kirby
+note above — non-default costumes are now checked and clean). **The
+"runs longer than 10 minutes" gap is now narrowed:** RE-284 (this session)
+ran the plain feature-free EBOOT 30 continuous real-time minutes on the
+PSP Slim — zero exceptions at six 5-minute checkpoints, `main_thread` alive
+throughout, t=0/t=30 native captures differing only in a tiny
+Mario-idle-pose region (43 px, no corruption/leak). Only one unit and one
+duration tier tested; a second unit and longer/real-play-length runs remain
+open. None of these block R2.2 (closed) — they gate physical-matrix/golden-
+coverage breadth only, deliberately deferred until the game structure grows
+beyond the asset viewer. The USB-permission issue that blocked physical
+work earlier in RE-283's session history was resolved by reconnecting the
+PSP (new bus address, correct `0666` device-node permissions) — not a
+standing blocker, but worth a replug first if a future session hits
+"Permission error while opening the USB device" again before assuming the
+udev rule itself needs reinstalling. **New note (RE-284): if `pspsh -e ver`
+returns "connection refused" despite the PSP showing `054c:01c9` on USB and
+PSPLink visibly launched, start `usbhostfs_pc -v "$PWD"` first** — it
+bridges the USB link `pspsh` actually connects to; this isn't spelled out
+in the `psp-hardware` Skill's own connectivity-check step.
 
 Required next action: RE-283's per-fighter chase is complete — all nine
 reported items are accounted for (eight fixed and hardware-confirmed, two
 traced to no reproducible defect, including their non-default costumes).
-PSP-1000 confirmation is parked (no unit available). The next R2 work is
-building dedicated capture scenes for the coverage this STATUS's
-longstanding note calls out: full stage/effect coverage, runs longer than
-10 minutes, and (lowest priority, gated on copy-ability gameplay existing
-at all) Kirby's per-ability hat graphs. Do not start R3 or combat before
-R2's physical matrix is closed.
+PSP-1000 confirmation is parked (no unit available, and out of scope per
+this session's instruction). The 30-minute sustained-run check (RE-284) is
+done and clean. Remaining R2 coverage work, in rough priority order: a
+second physical unit for the long-duration check (parity with the existing
+10-minute two-unit sample), then dedicated capture scenes for stage/effect
+coverage (the large, deliberately deferred item — pick one additional
+stage as a bounded first increment rather than attempting all 41 at once
+if resumed), and lastly (gated on copy-ability gameplay existing at all)
+Kirby's per-ability hat graphs. Do not start R3 or combat before R2's
+physical matrix is closed.
 
 Relevant PLAN task: [plans/rendering/R2.md](plans/rendering/R2.md)
 Relevant evidence: RE-260, RE-262, RE-264, RE-267, RE-269, RE-270, RE-271,
