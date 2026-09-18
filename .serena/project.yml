@@ -55,7 +55,7 @@ activation_command:
 
 # maximum time in seconds to wait for activation_command to complete before killing it (default 180s).
 # must be a positive number.
-activation_command_timeout: 180
+activation_command_timeout: 180.0
 
 # line ending convention to use when writing source files.
 # Possible values: unset (use global setting), "lf", "crlf", or "native" (platform default)
@@ -70,10 +70,6 @@ line_ending:
 language_backend:
 
 # whether to use project's .gitignore files to ignore files
-# false here (not the generated default) because /refs/ is gitignored but is
-# a reference tree we intentionally want Serena to search/read for
-# reverse-engineering work — see ignored_paths below for the explicit
-# large/generated exclusions instead.
 ignore_all_files_in_gitignore: false
 
 # advanced configuration option allowing to configure language server-specific options.
@@ -91,7 +87,8 @@ ls_specific_settings: {}
 #   ls_workspace_folders:
 #     - "./subproject1"
 #     - "./subproject2"
-ls_workspace_folders: ["."]
+ls_workspace_folders:
+- "."
 
 # list of additional workspace folder paths for cross-package reference support.
 # Paths can be absolute or relative to the project root.
@@ -114,26 +111,21 @@ ls_additional_workspace_folders: []
 #     - "**/bin/**"
 #     - "**/obj/**"
 # Note: global ignored_paths from serena_config.yml are also applied additively.
-# Excluded deliberately: build output, generated/derived ROM assets, ROM
-# dumps themselves, committed golden PNGs (binary regression fixtures), and
-# PSP build artifacts. /refs/ is NOT excluded here even though it is
-# gitignored — it is the decompilation reference tree and this project's
-# reverse-engineering workflow intentionally uses Serena to search it.
 ignored_paths:
-  - "target/**"
-  - "psp/target/**"
-  - "assets/generated/**"
-  - "rom/**"
-  - "*.z64"
-  - "*.n64"
-  - "*.v64"
-  - "*.rom"
-  - "build/**"
-  - "tests/golden/**"
-  - "refs/ssb-decomp-re/build/**"
-  - "EBOOT.PBP"
-  - "PARAM.SFO"
-  - "*.prx"
+- "target/**"
+- "psp/target/**"
+- "assets/generated/**"
+- "rom/**"
+- "*.z64"
+- "*.n64"
+- "*.v64"
+- "*.rom"
+- "build/**"
+- "tests/golden/**"
+- "refs/ssb-decomp-re/build/**"
+- "EBOOT.PBP"
+- "PARAM.SFO"
+- "*.prx"
 
 # whether the project is in read-only mode
 # If set to true, all editing tools will be disabled and attempts to use them will result in an error
@@ -191,3 +183,17 @@ read_only_memory_patterns: []
 # Extends the list from the global configuration, merging the two lists.
 # Example: ["_archive/.*", "_episodes/.*"]
 ignored_memory_patterns: []
+
+# list of APIs (facades or facade methods, e.g. "lsp" or "lsp.get_diagnostics_for_symbol") to include in the REPL
+# that would otherwise be disabled (particularly optional methods, which are disabled by default).
+# This extends the existing inclusions (e.g. from the global configuration).
+included_apis: []
+
+# list of APIs (facades or facade methods, e.g. "lsp" or "lsp.find_symbol") to exclude from the REPL.
+# This extends the existing exclusions (e.g. from the global configuration).
+excluded_apis: []
+
+# The interface through which the agent (LLM) accesses Serena's functionality (overrides the global setting).
+# Valid values: tools, REPL (see the global configuration for details); leave empty to use the global setting.
+# Note: the interface is fixed at startup. If a project is activated post-init, its setting is not applied.
+agent_interface:
