@@ -8,8 +8,8 @@
 # Keep this in step with RUST_STABLE in .github/workflows/ci.yml and
 # `rust-version` in Cargo.toml.
 #
-# `psp/` has its own rust-toolchain.toml pinning a nightly; that one wins inside
-# that directory, which is what we want.
+# `psp-asset-viewer/` has its own rust-toolchain.toml pinning a nightly; that
+# one wins inside that directory, which is what we want.
 [toolchain]
 channel = "1.98.0"
 components = ["rustfmt", "clippy"]

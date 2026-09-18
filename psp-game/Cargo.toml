@@ -3,11 +3,11 @@ name = "ssb64-psp-game"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Layer C: the SSB64PSP game -- the front end and Training Mode players actually run, a separate EBOOT from the debug asset viewer in `psp/`."
+description = "Layer C: the SSB64PSP game -- the front end and Training Mode players actually run, a separate EBOOT from the debug asset viewer in `psp-asset-viewer/`."
 
-# Deliberately outside the root workspace, for the same reason as `psp/`: this
-# crate targets mipsel-sony-psp, is no_std, and is built with `cargo psp`. See
-# the root Cargo.toml.
+# Deliberately outside the root workspace, for the same reason as
+# `psp-asset-viewer/`: this crate targets mipsel-sony-psp, is no_std, and is
+# built with `cargo psp`. See the root Cargo.toml.
 [workspace]
 
 [dependencies]
@@ -21,10 +21,11 @@ ssb-game = { path = "../crates/ssb-game", default-features = false }
 # (`scripted_buttons` in `main.rs`) so the Intro -> Menu -> Training state
 # machine can be driven deterministically under PPSSPPHeadless, with no real
 # controller and no windowed PPSSPP/X11 input injection. Off by default: an
-# interactive build must read the real pad. Named to match `psp/`'s
-# `regression_capture` feature for tooling symmetry
+# interactive build must read the real pad. Named to match
+# `psp-asset-viewer/`'s `regression_capture` feature for tooling symmetry
 # (`tools/run-ppsspp-headless.sh --crate psp-game`); the two features are
-# otherwise unrelated (`psp/`'s freezes render state, this one scripts input).
+# otherwise unrelated (`psp-asset-viewer/`'s freezes render state, this one
+# scripts input).
 regression_capture = []
 # Requests one framebuffer capture from PPSSPPHeadless after the scripted
 # input above reaches its frozen tick. The devctl is ignored by real PSPs.

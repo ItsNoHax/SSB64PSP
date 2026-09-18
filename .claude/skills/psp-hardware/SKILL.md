@@ -25,7 +25,8 @@ Routing:
 4. `docs/evidence/INDEX.md` filtered to the `hardware` topic tag for prior
    hardware-only bugs found (GE races, PSPLink module-manager state, etc.).
 5. For code, prefer Serena symbol search over reading whole files
-   (`psp/src/gu.rs`, `psp/src/depth_diag.rs`, PSPLink-related PRX code).
+   (`psp-asset-viewer/src/gu.rs`, `psp-asset-viewer/src/depth_diag.rs`,
+   PSPLink-related PRX code).
 
 After a `kill` in a PSPLink session, `reset` before the next `ldstart` — a
 stale module-manager state can silently break the next pack load while
@@ -108,13 +109,13 @@ build-output symlink after pack rebuild:
 
 ```bash
 ln -s ../../../../assets/generated/ssb64.pak \
-  psp/target/mipsel-sony-psp/release/ssb64.pak
+  psp-asset-viewer/target/mipsel-sony-psp/release/ssb64.pak
 ```
 
 Load game:
 
 ```bash
-pspsh -e 'ldstart host0:/psp/target/mipsel-sony-psp/release/ssb64-psp.prx'
+pspsh -e 'ldstart host0:/psp-asset-viewer/target/mipsel-sony-psp/release/ssb64-psp-asset-viewer.prx'
 ```
 
 For Memory Stick runs use `tools/stage-psp-regression.sh`; it does not provide
@@ -158,11 +159,11 @@ offset = EPC - TextAddr
 ```
 
 ```bash
-psp-addr2line -e psp/target/mipsel-sony-psp/release/ssb64-psp.prx \
+psp-addr2line -e psp-asset-viewer/target/mipsel-sony-psp/release/ssb64-psp-asset-viewer.prx \
   -f -C -i 0x<offset>
 psp-objdump -d --start-address=0x<nearby-offset> \
   --stop-address=0x<end-offset> \
-  psp/target/mipsel-sony-psp/release/ssb64-psp.prx
+  psp-asset-viewer/target/mipsel-sony-psp/release/ssb64-psp-asset-viewer.prx
 ```
 
 Record exception code, EPC, TextAddr, module/thread IDs, symbol mapping, PRX

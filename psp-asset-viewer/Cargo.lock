@@ -104,7 +104,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssb64-psp"
+name = "ssb64-psp-asset-viewer"
 version = "0.1.0"
 dependencies = [
  "psp",

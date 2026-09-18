@@ -24,7 +24,8 @@ Routing:
 4. For the active rendering task's acceptance criteria, read the one
    `plans/rendering/R0.x.md` / `R1.md` / `R2.md` / `R3.md` file that owns it.
 5. For code, prefer Serena symbol search over reading whole renderer files
-   (`crates/ssb-rom/src/{mesh,pack,psp_texture}.rs`, `psp/src/{gu,meshdraw}.rs`).
+   (`crates/ssb-rom/src/{mesh,pack,psp_texture}.rs`,
+   `psp-asset-viewer/src/{gu,meshdraw}.rs`).
 
 Do not guess materials, palettes, texture formats/filtering, LOD, mipmaps,
 transforms, animation timing, lighting, combiner, alpha, or depth behavior —

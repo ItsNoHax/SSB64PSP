@@ -1120,7 +1120,7 @@ fn pack_mesh(
         if let (Some(texture), Some(mat_anim)) = (texture_index, mat_anim_index_resolved) {
             // Kept alongside `PrimDesc.mat_anim` for the texture-only
             // palette-cycling case (RE-089/RE-090/RE-091): `bind_texture`
-            // (`psp/src/meshdraw.rs`) still reads a texture's own resolved
+            // (`psp-asset-viewer/src/meshdraw.rs`) still reads a texture's own resolved
             // palette off `TextureDesc.mat_anim`, independent of which
             // primitive happens to be drawing it.
             writer.set_texture_mat_anim(texture, mat_anim);
@@ -8637,7 +8637,7 @@ mod tests {
     /// `Z_CMP`/`Z_UPD`/`ZMODE` render-mode bits against `G_ZBUFFER`
     /// (`MeshMaterial::z_buffer`), the geometry-mode bit the pre-C3 PSP
     /// renderer used alone as its only depth-test signal
-    /// (`psp/src/meshdraw.rs`'s `apply_material`, RE-068). Answers whether
+    /// (`psp-asset-viewer/src/meshdraw.rs`'s `apply_material`, RE-068). Answers whether
     /// that single-flag heuristic already matched the real independent RDP
     /// bits archive-wide, or whether primitives exist where they diverge --
     /// the concrete number `R2.2`/C3's data model change needs before this
