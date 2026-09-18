@@ -4,8 +4,8 @@ use ssb_rom::pack::{AnimDesc, ObjectDesc, Pack};
 use ssb_rom::scene::Mat4;
 use ssb_rom::skeleton::{StageAnimator, MAX_NODES};
 
-use crate::gu::Gpu;
-use crate::meshdraw::{self, DrawState};
+use ssb_psp_runtime::gu::Gpu;
+use ssb_psp_runtime::meshdraw::{self, DrawState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Phase {

@@ -39,7 +39,7 @@
 use psp::sys::{self, BlendFactor, BlendOp, ClearBuffer, GuState};
 use psp::Align16;
 
-use crate::gu::{Gpu, GuVertex};
+use ssb_psp_runtime::gu::{Gpu, GuVertex};
 
 /// One quad's two triangles, `Align16` per the GE's DMA alignment
 /// requirement (`normal_diag.rs`'s own doc comment names this hazard).

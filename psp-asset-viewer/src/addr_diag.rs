@@ -40,7 +40,7 @@ use psp::sys::{
 };
 use psp::Align16;
 
-use crate::gu::Gpu;
+use ssb_psp_runtime::gu::Gpu;
 
 /// The mirror+clamp bake RE-221/RE-274 describe for a 32-texel period with
 /// `mirror=true, clamp=true, drawn=64`: the first period unflipped (`0..31`),
