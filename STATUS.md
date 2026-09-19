@@ -4,16 +4,15 @@ Milestone: `F1 — Front End & Training Mode`
 Primary task: in progress
 Task state: `IN_PROGRESS`
 
-`F1` (`plans/gameplay/F1.md`) remains the milestone, but the immediate work
-this session is the **PSP runtime architecture refactor**: `psp-asset-viewer/`
-(the debug/rendering-validation application, renamed from `psp/`) and
-`psp-game/` (the player-facing front end/Training application) duplicated
-their entire PSP backend. That backend is being consolidated into a new
-shared library, `psp-runtime/`, so both applications orchestrate behavior
-without duplicating the PSP backend between them. Per this project's own
-rule ("do not begin additional F1 feature work while the runtime extraction
-is half-complete" — see `AGENTS.md`), F1 feature work is paused until the
-refactor's Step 10 acceptance gate passes.
+`F1` (`plans/gameplay/F1.md`) is the milestone. This session completed the
+**PSP runtime architecture refactor**: `psp-asset-viewer/` (the
+debug/rendering-validation application, renamed from `psp/`) and
+`psp-game/` (the player-facing front end/Training application) used to
+duplicate their entire PSP backend. That backend is now one shared library,
+`psp-runtime/`, so both applications orchestrate behavior without
+duplicating the PSP backend between them. All ten steps are `DONE`,
+including the Step 10 acceptance gate's physical-hardware smoke test —
+F1 feature development is unblocked again.
 
 Target dependency direction (`docs/ssb-architecture.md`, `README.md`):
 
@@ -68,20 +67,17 @@ regression captures against `tests/golden/`):
 10. Full acceptance gate — `cargo fmt --check`/`cargo clippy
     --workspace --all-targets`/`cargo test --workspace`, both EBOOTs, the
     deterministic regression matrix, `psp-game`'s deterministic
-    Intro→Menu→Training→jump→jab flow: all pass, `docs/evidence/re/RE-298.md`.
-    **Physical-hardware smoke test of both EBOOTs: `NOT_STARTED`** — this
-    session ran in a sandboxed environment with no physical PSP attached.
-    This is the one remaining manual step before F1 feature development
-    resumes.
+    Intro→Menu→Training→jump→jab flow, **and a physical-hardware smoke test
+    of both EBOOTs** (PSP Slim/6.61/ARK, PSPLink `ldstart`, zero exceptions,
+    native `scrshot` captures matching the PPSSPP goldens for both apps,
+    `psp-game` sustained 28+ seconds with no crash) — `DONE`,
+    `docs/evidence/re/RE-298.md`
 
-**Not yet physically hardware-tested:** the now-shared, unconditional
-`sceGuDebugFlush()` call in `psp-runtime::gu::Gpu::end_frame`. RE-202's own
-root cause (the hardware crash lives in `sceGuDebugPrint`/`sceGuDebugFlush`'s
-state once glyphs are queued, not in a bare `Flush` against an empty buffer)
-means this should be safe for `psp-game` too, matching years of
-`psp-asset-viewer`'s own shipped behavior, but `psp-game` itself has never
-been the subject of that specific hardware proof. Step 10's physical smoke
-test covers this.
+The refactor's one specific residual risk — `psp-runtime::gu::Gpu::end_frame`
+now calls `sceGuDebugFlush()` unconditionally for `psp-game` too, which
+never called it before — is confirmed safe on real hardware (RE-298),
+matching RE-202's own prediction that the crash requires actually queuing
+glyphs via `sceGuDebugPrint`, not a bare `Flush`.
 
 **Unchanged by the refactor, still open from RE-289–296:** `sceFont` text
 for real menu/select labels; the jab's second (joint-9) hitbox; per-bone
@@ -92,21 +88,20 @@ function, since the decomp's check accepts any one C-button. PSP-1000
 compatibility (32 MiB, cannot use extended memory) remains a separate,
 long-standing open item.
 
-Current blocker(s): the runtime refactor's Step 10 physical-hardware smoke
-test (needs a real PSP; this session had none) is the one thing standing
-between here and resuming F1. Once it passes (or a real bug is found and
-fixed), close `docs/evidence/re/RE-298.md` and resume F1 — `sceFont` (PGF
-glyph rasterisation), a real character/stage select UI, and the jab's
-second hitbox/per-bone hurtbox system are all eligible next, no single
-mandated order. `R3` (`plans/rendering/R3.md`) remains `NOT_STARTED` and
-eligible to resume any time — neither F1 nor this refactor block it.
+Current blocker(s): none. The runtime refactor is complete and
+hardware-confirmed (`docs/evidence/re/RE-298.md`). Next up for F1, no
+single mandated order: `sceFont` (PGF glyph rasterisation) for real
+on-screen menu/select text, a real character/stage select UI, and the
+jab's second hitbox/per-bone hurtbox system. `R3` (`plans/rendering/R3.md`)
+remains `NOT_STARTED` and eligible to resume any time — neither F1 nor
+this refactor block it.
 
-Relevant PLAN task: [plans/gameplay/F1.md](plans/gameplay/F1.md) (active,
-paused for this refactor), [plans/rendering/R2.md](plans/rendering/R2.md)
-(closed), [plans/rendering/R3.md](plans/rendering/R3.md) (parallel, not
-started)
-Relevant evidence: RE-297 (this refactor's renderer-parity record), RE-296,
-RE-295, RE-008, RE-294, RE-293, RE-292, RE-291, RE-290, RE-289, RE-259,
+Relevant PLAN task: [plans/gameplay/F1.md](plans/gameplay/F1.md) (active),
+[plans/rendering/R2.md](plans/rendering/R2.md) (closed),
+[plans/rendering/R3.md](plans/rendering/R3.md) (parallel, not started)
+Relevant evidence: RE-298 (this refactor's acceptance gate, software +
+hardware), RE-297 (renderer-parity record), RE-296, RE-295, RE-008, RE-294,
+RE-293, RE-292, RE-291, RE-290, RE-289, RE-259,
 RE-260 (installed-EBOOT `MEMSIZE` proof mechanism), RE-256 (`MEMSIZE`/
 installed-dir requirement origin), RE-255 (`memsize` key origin/
 `OutOfMemory` discovery), RE-164 (per-fighter directional light), RE-131
