@@ -107,19 +107,36 @@ fn psm_of(v: u8) -> TexturePixelFormat {
     }
 }
 
+/// The GE texture-function state a primitive needs: plain `Modulate`, or
+/// `TEXTURE_BLEND`'s `Blend` with a given `sceGuTexEnvColor` target
+/// (RE-073).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextureFuncState {
+    Modulate,
+    Blend(u32),
+}
+
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
     last_texture: Option<u32>,
     last_flags: Option<u32>,
-    /// `Some(target)` while `TEXTURE_BLEND` is the active texture function,
-    /// `None` while it's the ordinary `Modulate` (RE-073). Tracked
-    /// independently of `last_flags`/`last_texture`: two primitives can share
-    /// identical `flags` (both `TEXTURE_BLEND`) but different target colours,
-    /// or identical flags but a texture change that would otherwise silently
-    /// reset the texture function back to `Modulate` — either alone would
-    /// under-count a real state change if this piggybacked on those fields.
-    last_texture_blend: Option<u32>,
+    /// The texture function last actually issued to the GE, or `None` while
+    /// it is genuinely unknown (frame start, or after [`DrawState::invalidate_all`]).
+    /// `None` must never be treated as "known to already be `Modulate`": the
+    /// GE's own post-reset/post-raw-call default texture function only
+    /// modulates the RGB channels, not RGBA, so trusting `None` as
+    /// equivalent to `Modulate`+`Rgba` would skip the first primitive's
+    /// `sceGuTexFunc` call and silently drop texture alpha (RE-300) — the
+    /// exact bug this explicit "unknown" state exists to prevent.
+    ///
+    /// Tracked independently of `last_flags`/`last_texture`: two primitives
+    /// can share identical `flags` (both `TEXTURE_BLEND`) but different
+    /// target colours, or identical flags but a texture change that would
+    /// otherwise silently reset the texture function back to `Modulate` —
+    /// either alone would under-count a real state change if this
+    /// piggybacked on those fields.
+    last_texture_func: Option<TextureFuncState>,
     /// Last complete pair of original `G_MW_LIGHTCOL` register values applied
     /// during the current fighter-light scope. This is deliberately separate
     /// from `last_flags`: light-colour writes are independent RSP state, so
@@ -237,7 +254,7 @@ impl DrawState {
     pub fn begin_frame(&mut self) {
         self.last_texture = None;
         self.last_flags = None;
-        self.last_texture_blend = None;
+        self.last_texture_func = None;
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
         self.last_texture_mapping = None;
@@ -364,7 +381,7 @@ impl DrawState {
     pub fn invalidate_all(&mut self) {
         self.last_texture = None;
         self.last_flags = None;
-        self.last_texture_blend = None;
+        self.last_texture_func = None;
         self.last_fighter_light_colors = None;
         self.last_fighter_material_color = None;
         self.last_texture_mapping = None;
@@ -1012,15 +1029,19 @@ unsafe fn apply_material(
             .and_then(|c| c.packed_prim())
             .unwrap_or(p.texture_blend_target),
     );
-    if st.last_texture_blend != blend_target {
-        st.last_texture_blend = blend_target;
+    let desired_texture_func = match blend_target {
+        Some(target) => TextureFuncState::Blend(target),
+        None => TextureFuncState::Modulate,
+    };
+    if st.last_texture_func != Some(desired_texture_func) {
+        st.last_texture_func = Some(desired_texture_func);
         st.state_changes += 1;
-        match blend_target {
-            Some(target) => {
+        match desired_texture_func {
+            TextureFuncState::Blend(target) => {
                 sys::sceGuTexFunc(sys::TextureEffect::Blend, sys::TextureColorComponent::Rgba);
                 sys::sceGuTexEnvColor(target);
             }
-            None => {
+            TextureFuncState::Modulate => {
                 sys::sceGuTexFunc(
                     sys::TextureEffect::Modulate,
                     sys::TextureColorComponent::Rgba,

@@ -6,12 +6,14 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: **Mario Fireball presentation/map integration**
-(paused at user request). Mario's ground+aerial moveset is complete through
-Fireball, Super Jump Punch, and Tornado. The portable joint attachment, full
-map rebound sweep, direct weapon mesh extraction, and Training input routing
-are implemented. Final direct-display-list rendering verification found and
-fixed a real classification bug (RE-300) but surfaced a second, still-open
-on-device rendering gap — see "Immediate next batch" below.
+is complete. Mario's ground+aerial moveset is complete through Fireball,
+Super Jump Punch, and Tornado. The portable joint attachment, full map
+rebound sweep, direct weapon mesh extraction, and Training input routing are
+implemented. Final direct-display-list rendering verification found and
+fixed two real bugs, a classification bug and a `psp-runtime` GE-state-cache
+bug (RE-300, both resolved, confirmed on PPSSPP and real PSP hardware,
+`tests/golden/f1-training-fireball.png` committed) — see "Immediate next
+batch" below for what's next.
 The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
 phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
@@ -104,10 +106,10 @@ through a portable runtime-to-gameplay bridge.
   collision, physics, movement-state machine) predates formal batch mode but
   is usable foundation, tracked per-subsystem in `docs/porting-status.md`.
 
-## Immediate next batch
+## Mario Fireball presentation/map integration (complete)
 
-This session ran the paused **Mario Fireball presentation/map integration**
-batch's final verification step and found two distinct things (RE-300):
+This batch's final verification step found and fixed two distinct things
+(RE-300):
 
 1. **Fixed and landed:** `InitialMaterial` had no way to seed `alpha_blend`,
    so `WEAPON_EXTERNAL`'s `translucent: true` never actually enabled GE
@@ -145,18 +147,33 @@ texture addressing as the cause entirely. Neither of this project's two
 N64→PSP prior-art references (`refs/sf64-psp`, `refs/oot-PSP`) ever exercises
 the GE's real CLUT path for game art either — both always pre-decode to
 direct colour formats, a pattern worth adopting as policy separately from
-this bug. A blunt "force every alpha-relevant GE state unconditionally"
-experiment corrupted the whole frame instead of fixing anything, ruling out
-(without proving) a simple state-caching bug in this project's own code.
-Full trace, including what's still unexplored (interactive PPSSPP GE-debugger
-tracing), in RE-300.
+this bug.
 
-Next batch options: (a) interactive GE-level tracing (PPSSPP's windowed GE
-debugger, not headless) to see the actual per-draw-call GE state and output —
-not yet attempted, needs manual UI stepping, or (b) accept the Fireball's
-opaque-card appearance as a known, tracked visual gap and move on to auditing
-Super Jump Punch integration on a real Training dummy, returning to RE-300
-later. User directive needed to pick between these.
+**Fixed (2026-09-20, follow-up session):** root cause was a `DrawState`
+cache bug in `psp-runtime/src/meshdraw.rs`, unrelated to CLUT/texture format
+entirely. `last_texture_blend: Option<u32>` used `None` for both "GE
+texture-function state unknown" and "known `Modulate`", so the first
+`Modulate`-function primitive of a frame (or after any `invalidate_all`)
+skipped its `sceGuTexFunc(Modulate, Rgba)` call, leaving the GE's own
+RGB-only default texture function active and silently dropping texture
+alpha — exactly what a `TexelOnly` translucent sprite like the Fireball
+depends on. Replaced with an explicit `enum TextureFuncState { Modulate,
+Blend(u32) }` where the cache's outer `None` means only "unknown", never
+"known Modulate". `regression_capture_fireball` (PPSSPPHeadless, software)
+now shows the Fireball as a translucent flame, not an opaque card, and real
+PSP hardware (PSP Slim, 6.61, ARK/Infinity, PSPLink) confirms the same fix.
+`tests/golden/f1-training-fireball.png` is the visual-regression matrix's
+first committed `psp-game` golden. RE-300 is closed. Full trace there.
+
+## Immediate next batch
+
+Mario's moveset (ground+aerial normals, specials, Fireball's full
+presentation/map integration) is complete. Next: continue the `P1`-`P4`
+gameplay source-port batch sequence — auditing Super Jump Punch's and
+Tornado's integration against a real Training dummy (hit confirmation,
+damage/knockback, the same live-target verification RE-294 did for Mario's
+jab) is the natural next step, or move to the next fighter if the user
+directs otherwise. User directive needed to pick the next fighter/system.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position
@@ -165,11 +182,10 @@ equivalent for. Revisit alongside a fighter's other moves.
 
 ## Real blockers
 
-No blocker on gameplay work. RE-300's CLUT-alpha rendering gap (Fireball's
-background renders opaque instead of transparent) is a genuine open
-question needing tools this session did not have (GE tracing or physical
-PSP); rendering performance (`P5`) is separately not a blocker for any
-gameplay batch.
+No blocker on gameplay work. RE-300's Fireball opaque-card rendering bug is
+fixed (`DrawState` texture-function cache in `psp-runtime/src/meshdraw.rs`)
+and closed, confirmed on PPSSPP and real PSP hardware. Rendering performance
+(`P5`) is separately not a blocker for any gameplay batch.
 
 ---
 

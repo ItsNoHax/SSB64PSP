@@ -155,6 +155,7 @@ pixel oracle.
 | Clamp texture mode | RE-200: file 109 graph `0x44C8`, 8 clamp-bound primitives with neither mirror axis set. This replaces file 22 as the clean on-screen citation while retaining RE-198's archive-wide evidence | Yes — scene 3, `tests/golden/r1-stage-sector.png` |
 | Untextured / vertex-coloured geometry | RE-198: file 52, mesh index 4, primitive 0 (14 triangles, unlit, opaque non-degenerate vertex colour `[145,213,213,255]`) | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | Particles | RE-180–189: all 160 real `LBParticle` scripts plus one live manager-effect `LBGenerator` spawn event | Audited separately on device; dynamic particle coverage is not one of the static golden scenes |
+| `psp-game`/Training weapon rendering (`TEXTURE_BLEND`-adjacent `AlphaBlend::TexelOnly`) | RE-300: Mario's Fireball (`WEAPON_EXTERNAL` material, file 297), the first `psp-game` scene added to this matrix | Yes — `tests/golden/f1-training-fireball.png` (`regression_capture_fireball` feature) |
 | Shadows | `FighterDesc`'s shadow fields are parsed but "no subsystem reads them yet" (`docs/reverse-engineering.md`) | Blocked — not yet implemented |
 | UI / HUD | No in-game menu/HUD system exists yet (Layer C's debug viewer is a developer tool, not the game's own UI) | Blocked — not yet implemented |
 
@@ -301,3 +302,17 @@ representative comparison. RE-200 extends deterministic PPSSPP coverage to
 every specifically targeted open static row. Dynamic particles retain their
 separate RE-180–189 device audits. Shadows and real UI remain blocked on later
 subsystems rather than being treated as covered.
+
+RE-300 added this matrix's first `psp-game` golden,
+`tests/golden/f1-training-fireball.png` (`f1-` prefix for the `psp-game`
+crate's own `F1` milestone, distinct from `psp-asset-viewer`'s `r0`/`r1`/`r2`
+roadmap-increment prefixes). Captured with `tools/run-ppsspp-headless.sh
+--crate psp-game --feature "regression_capture,regression_capture_fireball"`;
+two captures 8 and 30 real seconds apart (both past the tick-167 freeze) were
+byte-identical (SHA-256
+`724e4fa7dc282c5b8e098448432d54623b417f4cbe42d8a3e9688103a74a4d19`). Also
+confirmed on real PSP hardware (PSP Slim, 6.61, ARK/Infinity, PSPLink
+v3.2.1) via a direct `scrshot` capture showing the same translucent flame,
+qualitative evidence only per this file's own hardware-tier rule — not
+diffed against the exact pixel comparator. See RE-300 for the underlying
+`DrawState` GE-texture-function cache bug this scene regresses against.
