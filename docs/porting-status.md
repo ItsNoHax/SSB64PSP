@@ -1,6 +1,11 @@
 # Porting Status
 
-Per `PLAN.md` §12/13. Percentages are of *intended scope for that subsystem*,
+`PLAN.md`'s active roadmap is milestones `P0`–`P5`. The `Task` column below
+still cites legacy pre-batch-mode codes (`M`/`R0.x`/`F1`/`G0`–`G5`) recorded
+when each row was last updated — read them as history, archived in
+`plans/rendering/*.md`/`plans/gameplay/*.md`, not as the current tracker.
+
+Percentages are of *intended scope for that subsystem*,
 not of the original's line count. A subsystem is only `COMPLETE` when it has
 been functionally validated, not merely compiled.
 
