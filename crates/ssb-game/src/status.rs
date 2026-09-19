@@ -122,6 +122,24 @@ const ATTACKS3_3ANGLE_TAN_17: f32 = 0.305_730_7;
 /// this on both axes, an aerial attack reads as neutral.
 pub const ATTACKAIR_DIRECTION_STICK_RANGE_MIN: i32 = 20;
 
+/// `FTCOMMON_ATTACKS4_*`/`FTCOMMON_ATTACKHI4_*`/`FTCOMMON_ATTACKLW4_*` —
+/// `ft/ftcommon.h`. Smashes need a hard flick (`56`/`53` units) inside a
+/// short tap window (`tap_x`/`tap_y < 3`/`4`), unlike a tilt's plain
+/// magnitude gate — this, checked first in the real interrupt chain, is
+/// what makes a fast flick a smash and a slow push a tilt.
+pub const ATTACKS4_STICK_RANGE_MIN: i32 = 56;
+pub const ATTACKS4_BUFFER_TICS_MAX: u8 = 3;
+pub const ATTACKHI4_STICK_RANGE_MIN: i32 = 53;
+pub const ATTACKHI4_BUFFER_TICS_MAX: u8 = 4;
+pub const ATTACKLW4_STICK_RANGE_MIN: i32 = -53;
+pub const ATTACKLW4_BUFFER_TICS_MAX: u8 = 4;
+/// `tan(21°)`/`tan(7°)`, from `ftCommonAttackS4SetStatus`'s 5-way angle
+/// split (`FTCOMMON_ATTACKS4_5ANGLE_{HI,HIS,LW,LWS}_MIN`) — Mario has all
+/// five forward-smash motion files, unlike his forward tilt's three, so his
+/// forward smash really does use this branch rather than the 3-way one.
+const ATTACKS4_5ANGLE_TAN_21: f32 = 0.383_864_04;
+const ATTACKS4_5ANGLE_TAN_7: f32 = 0.122_784_56;
+
 /// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
 /// the complete common table (0..=219), transcribed from
 /// `ft/ftcommon/ftcommonstatus.h`'s own `// Status N (0x..): Name` comments.
@@ -1656,6 +1674,39 @@ pub fn set_air_attack(f: &mut Fighter, status: Status) {
     set_status(f, status, 0.0, StatusTiming::frames(len));
 }
 
+/// `ftCommonAttackS4SetStatus` @ `ftcommonattacks4.c:70`, reduced to the
+/// 5-angle branch (Mario has all five `FSmash*` motion files, unlike his
+/// forward tilt's three — see the module docs).
+pub fn set_fsmash(f: &mut Fighter) {
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    let status = if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
+        Status::AttackS4Hi
+    } else if y > ATTACKS4_5ANGLE_TAN_7 * x.abs() {
+        Status::AttackS4HiS
+    } else if y < -ATTACKS4_5ANGLE_TAN_21 * x.abs() {
+        Status::AttackS4Lw
+    } else if y < -ATTACKS4_5ANGLE_TAN_7 * x.abs() {
+        Status::AttackS4LwS
+    } else {
+        Status::AttackS4
+    };
+    let len = attack_length(f, status);
+    set_status(f, status, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackHi4SetStatus` @ `ftcommonattackhi4.c:10`.
+pub fn set_usmash(f: &mut Fighter) {
+    let len = attack_length(f, Status::AttackHi4);
+    set_status(f, Status::AttackHi4, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackLw4SetStatus` @ `ftcommonattacklw4.c:10`.
+pub fn set_dsmash(f: &mut Fighter) {
+    let len = attack_length(f, Status::AttackLw4);
+    set_status(f, Status::AttackLw4, 0.0, StatusTiming::frames(len));
+}
+
 /// `ftCommonDamageFallSetStatusFromDamage` @ `ftcommondamagefall.c:53`,
 /// reduced to the status change: hitstun over an airborne Damage/Fly status
 /// ends into `DamageFall`, a plain fall the fighter is not yet fighting out
@@ -1751,6 +1802,49 @@ pub fn check_attack_dash(f: &mut Fighter) -> bool {
         return true;
     }
     false
+}
+
+/// `ftCommonAttackS4CheckInterruptCommon` @ `ftcommonattacks4.c:216`, minus
+/// the item branches.
+pub fn check_fsmash(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    if (f.stick.x as i32).abs() < ATTACKS4_STICK_RANGE_MIN
+        || f.stick.tap_x >= ATTACKS4_BUFFER_TICS_MAX
+    {
+        return false;
+    }
+    set_fsmash(f);
+    true
+}
+
+/// `ftCommonAttackHi4CheckInterruptCommon` @ `ftcommonattackhi4.c:60`, minus
+/// the light-throw branch.
+pub fn check_usmash(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    if (f.stick.y as i32) < ATTACKHI4_STICK_RANGE_MIN || f.stick.tap_y >= ATTACKHI4_BUFFER_TICS_MAX
+    {
+        return false;
+    }
+    set_usmash(f);
+    true
+}
+
+/// `ftCommonAttackLw4CheckInterruptCommon` @ `ftcommonattacklw4.c:60`, minus
+/// the light-throw branch.
+pub fn check_dsmash(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    if (f.stick.y as i32) > ATTACKLW4_STICK_RANGE_MIN || f.stick.tap_y >= ATTACKLW4_BUFFER_TICS_MAX
+    {
+        return false;
+    }
+    set_dsmash(f);
+    true
 }
 
 /// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:39`, minus
@@ -1923,7 +2017,10 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
-    check_ftilt(f)
+    check_fsmash(f)
+        || check_usmash(f)
+        || check_dsmash(f)
+        || check_ftilt(f)
         || check_utilt(f)
         || check_dtilt(f)
         || check_attack1(f)
@@ -1957,7 +2054,10 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 /// out of a walk did nothing), not a deliberate original difference, now
 /// closed alongside adding the tilts themselves.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
-    check_ftilt(f)
+    check_fsmash(f)
+        || check_usmash(f)
+        || check_dsmash(f)
+        || check_ftilt(f)
         || check_utilt(f)
         || check_dtilt(f)
         || check_attack1(f)
@@ -2018,11 +2118,22 @@ pub fn update(f: &mut Fighter) {
         // all reduce to `ftAnimEndSetWait` once combo-followup handling is
         // out of scope (`Attack11`'s own precedent) — none of these three
         // have a followup.
+        // `ftCommonAttackS4ProcUpdate` @ `ftcommonattacks4.c:11` also reduces
+        // to this for Mario — its Pikachu/Ness-specific reflector handling
+        // doesn't apply. `AttackHi4`/`AttackLw4` have no `ProcUpdate`
+        // override at all, so the default is the same.
         Status::AttackDash
         | Status::AttackS3Hi
         | Status::AttackS3
         | Status::AttackS3Lw
-        | Status::AttackHi3 => {
+        | Status::AttackHi3
+        | Status::AttackS4Hi
+        | Status::AttackS4HiS
+        | Status::AttackS4
+        | Status::AttackS4LwS
+        | Status::AttackS4Lw
+        | Status::AttackHi4
+        | Status::AttackLw4 => {
             if f.status.animation_ended() {
                 set_wait(f);
             }
@@ -2399,6 +2510,15 @@ mod tests {
         f.input.stick_x = x;
         f.input.stick_y = y;
         f.stick.step(x, y, false, false);
+    }
+
+    /// Holds the stick at `(x, y)` long enough for `tap_x`/`tap_y` to age
+    /// past a smash's tap window — a slow push rather than a fresh flick, so
+    /// a tilt check fires instead of a smash one for the same deflection.
+    fn hold_stale(f: &mut Fighter, x: i8, y: i8) {
+        for _ in 0..5 {
+            hold(f, x, y);
+        }
     }
 
     #[test]
@@ -3047,7 +3167,7 @@ mod tests {
     #[test]
     fn neutral_forward_tap_does_a_mid_forward_tilt() {
         let mut f = mario();
-        hold(&mut f, 80, 0);
+        hold_stale(&mut f, 80, 0);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackS3);
@@ -3056,7 +3176,7 @@ mod tests {
     #[test]
     fn forward_and_up_tap_does_a_high_forward_tilt() {
         let mut f = mario();
-        hold(&mut f, 80, 40);
+        hold_stale(&mut f, 80, 40);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackS3Hi);
@@ -3065,7 +3185,7 @@ mod tests {
     #[test]
     fn forward_and_down_tap_does_a_low_forward_tilt() {
         let mut f = mario();
-        hold(&mut f, 80, -40);
+        hold_stale(&mut f, 80, -40);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackS3Lw);
@@ -3075,14 +3195,14 @@ mod tests {
     fn a_facing_left_fighter_needs_the_stick_pointed_left_for_a_forward_tilt() {
         let mut f = mario();
         f.facing = Facing::Left;
-        hold(&mut f, 80, 0); // pointed right = away from facing
+        hold_stale(&mut f, 80, 0); // pointed right = away from facing
         tap_a(&mut f);
         update(&mut f);
         assert_ne!(f.status.status, Status::AttackS3);
 
         let mut f = mario();
         f.facing = Facing::Left;
-        hold(&mut f, -80, 0);
+        hold_stale(&mut f, -80, 0);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackS3);
@@ -3091,7 +3211,7 @@ mod tests {
     #[test]
     fn straight_up_tap_does_an_up_tilt() {
         let mut f = mario();
-        hold(&mut f, 0, 80);
+        hold_stale(&mut f, 0, 80);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackHi3);
@@ -3100,7 +3220,7 @@ mod tests {
     #[test]
     fn straight_down_tap_does_a_down_tilt_and_ends_in_squat_wait() {
         let mut f = mario();
-        hold(&mut f, 0, -80);
+        hold_stale(&mut f, 0, -80);
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackLw3);
@@ -3114,6 +3234,77 @@ mod tests {
         }
         update(&mut f);
         assert_eq!(f.status.status, Status::SquatWait);
+    }
+
+    #[test]
+    fn a_fresh_flick_forward_smashes_rather_than_tilts() {
+        // Same magnitude as the tilt tests, but a fresh crossing (tap_x ==
+        // 1) instead of a held one — this is the real distinction between a
+        // tilt and a smash, `check_fsmash`'s own doc comment.
+        let mut f = mario();
+        hold(&mut f, 80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4);
+    }
+
+    #[test]
+    fn a_forward_smash_picks_one_of_five_angles() {
+        let mut f = mario();
+        hold(&mut f, 80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4);
+
+        let mut f = mario();
+        hold(&mut f, 80, 40); // steep enough for the full Hi, not just HiS
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4Hi);
+
+        let mut f = mario();
+        hold(&mut f, 80, 12); // shallow: the mid-high "S" variant
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4HiS);
+
+        let mut f = mario();
+        hold(&mut f, 80, -40);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4Lw);
+
+        let mut f = mario();
+        hold(&mut f, 80, -12);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4LwS);
+    }
+
+    #[test]
+    fn straight_up_flick_does_an_up_smash() {
+        let mut f = mario();
+        hold(&mut f, 0, 80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackHi4);
+        assert!(!f.status.animation_ended());
+        for _ in 0..30 {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn straight_down_flick_does_a_down_smash() {
+        let mut f = mario();
+        hold(&mut f, 0, -80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackLw4);
     }
 
     #[test]
