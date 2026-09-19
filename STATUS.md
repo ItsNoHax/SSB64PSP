@@ -3,8 +3,8 @@
 Milestone: `P0 — Architecture cleanup` (closing out) → `P1 — Decomp
 compatibility layer` (next)
 
-Current subsystem/batch: none open. Development process just switched to
-batch mode (`AGENTS.md`); no batch has run under the new process yet.
+Current subsystem/batch: none open. One pre-`P1` cleanup batch (ownership
+fix + stale-doc fix) just ran; see below.
 
 ## What was completed
 
@@ -12,6 +12,16 @@ batch mode (`AGENTS.md`); no batch has run under the new process yet.
   `psp-game` and `psp-asset-viewer` depend on it instead of duplicating a
   PSP backend. Verified with workspace tests, both EBOOTs, PPSSPP regression
   captures, and a physical-hardware smoke test (`docs/evidence/re/RE-298.md`).
+- Cleanup batch: `Dummy::apply_hit_from`'s hit detection, damage, knockback,
+  hitstun and hit-suppression logic moved out of `psp-game` into
+  `ssb_game::attack::apply_hit_from` (`crates/ssb-game/src/attack.rs`);
+  `psp-game`'s `Dummy::apply_hit_from` is now a thin call-through, matching
+  the crate-ownership rule in `AGENTS.md`. Training-mode Mario-jab behavior
+  preserved exactly (workspace tests, `psp-game` release build, PPSSPP
+  headless Training capture all pass). Also corrected `README.md` and
+  `docs/porting-status.md` claims that rendering blocks gameplay — the
+  active process is `P0`–`P5` (parallel tracks), not the archived
+  `R0`–`R3` rendering-gate model; archived plans/evidence left untouched.
 - Pre-batch-mode work (rendering pipeline, asset pipeline, animation,
   collision, physics, movement-state machine, one scoped training-mode
   attack) exists and is tracked per-subsystem in `docs/porting-status.md`.
