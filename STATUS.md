@@ -6,7 +6,7 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Mario's ground+aerial moveset is
-complete through the real Super Jump Punch and Tornado. The shared `FallSpecial` recovery
+complete through the real Fireball, Super Jump Punch, and Tornado. The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
 phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
 through a portable runtime-to-gameplay bridge.
@@ -74,8 +74,18 @@ through a portable runtime-to-gameplay bridge.
   sourced ground stick-clamp primitive and the two animation-table slots;
   rebuilt the ignored local `assets/generated/ssb64.pak` from the supplied
   ROM, which verifies all 189 decompilation-derived animation lengths.
-- Verified for everything above together: 215 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 713 tests) green, `cargo psp
+- **Mario Fireball (`SpecialN`/`SpecialAirN`)** (this batch): neutral-B now
+  preserves the source's direction-reversal gate, 46-frame ground/air clips,
+  frame-16 one-shot spawn event, map-state transitions, and end-to-Wait/Fall.
+  The portable, fixed-capacity weapon pool owns each Fireball after that event:
+  its sourced 140-frame lifetime, -5° 50-unit launch, gravity/terminal fall,
+  floor rebound/minimum-speed expiry, 7-damage hitbox, self-hit exclusion, and
+  shield/damage resolution are all live in Training Mode. The source's
+  joint-16 spawn position, projectile rendering, and wall/ceiling rebound
+  directions remain shared runtime/collision follow-up work; they are not
+  approximated as fighter-local state.
+- Verified for everything above together: 219 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 717 tests) green, `cargo psp
   --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
   PPSSPP headless Training boot shows no panic/crash with a real rendered
   frame.
@@ -87,10 +97,10 @@ through a portable runtime-to-gameplay bridge.
 
 Two real options, both blocked-open rather than blocked-shut:
 
-1. **Mario's fireball (`SpecialN`)**. It needs a projectile/spawned-object
-   concept in `ssb-game` (`Items` is 0% in `docs/porting-status.md`), so it
-   is a discrete infrastructure-first batch rather than another fighter-only
-   move translation.
+1. **Complete the shared Fireball presentation/map path.** Feed Mario's
+   runtime-sampled joint 16 into the portable spawn request, draw the packed
+   weapon object, and extend shared map collision from floors to walls and
+   ceilings so all source rebound directions are represented.
 2. **Audit Super Jump Punch integration on a real Training dummy.** The
    source hitbox windows and portable root motion are wired, but the existing
    single-target combat harness has no move-specific capture yet. Add one

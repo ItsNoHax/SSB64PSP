@@ -1598,28 +1598,40 @@ pub fn apply_hit_from(
             hitbox.offset.y,
             hitbox.offset.z,
         );
+    if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
+        *hit_by_current_attack = true;
+    }
+}
+
+/// Applies an already-positioned hitbox to a defender. Fighter moves obtain
+/// their position from a joint-relative offset; a weapon owns its world
+/// position directly. Keeping collision resolution here preserves one damage,
+/// shield, knockback, and invincibility path for both.
+///
+/// Returns whether the hit registered. An invincible target returns `false`,
+/// so a live weapon may contact it again when its invincibility ends.
+pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fighter) -> bool {
     if !spheres_overlap(
-        hitbox_pos,
+        attacker_pos,
         hitbox.radius,
         defender.pos,
         MARIO_HURTBOX_RADIUS,
     ) {
-        return;
+        return false;
     }
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // `hit_by_current_attack` is left alone so the same active window
         // can still connect once invincibility ends.
-        return;
+        return false;
     }
     if is_shielding(defender.status.status) {
-        apply_shield_hit(&hitbox, attacker, defender);
-        *hit_by_current_attack = true;
-        return;
+        apply_shield_hit_at(hitbox, attacker_pos, defender);
+        return true;
     }
     let result = resolve_hit(
-        &hitbox,
-        attacker.pos,
+        hitbox,
+        attacker_pos,
         defender.pos,
         defender.damage,
         defender.attributes.weight,
@@ -1637,7 +1649,7 @@ pub fn apply_hit_from(
     defender.physics.vel_air = Vec3::ZERO;
     defender.physics.vel_knockback = result.knockback_vel;
     defender.hitstun = result.hitstun;
-    *hit_by_current_attack = true;
+    true
 }
 
 /// Whether a hit landing on this status should be redirected into
@@ -1657,7 +1669,12 @@ pub fn is_shielding(status: AnyStatus) -> bool {
 /// accumulation) — a hit landing on a shield deals no damage/knockback/
 /// hitstun at all, only shield health loss and a `GuardSetOff` pushback.
 pub fn apply_shield_hit(hitbox: &Hitbox, attacker: &Fighter, defender: &mut Fighter) {
-    let shield_lr = damage_lr(defender.pos, attacker.pos);
+    apply_shield_hit_at(hitbox, attacker.pos, defender);
+}
+
+/// [`apply_shield_hit`] for a world-space attack source such as a weapon.
+pub fn apply_shield_hit_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fighter) {
+    let shield_lr = damage_lr(defender.pos, attacker_pos);
     status::set_guard_set_off(defender, hitbox.damage as f32, shield_lr);
     defender.guard.shield_health -= hitbox.damage as f32;
 }

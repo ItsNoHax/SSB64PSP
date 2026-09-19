@@ -218,6 +218,10 @@ unsafe fn run() -> ! {
     // doc comment): spawned alongside `play_state` at the stage's second
     // spawn point, ticked with permanently neutral input.
     let mut dummy_state: Option<play::Dummy> = None;
+    // Match-owned spawned weapons. Fighter statuses emit portable requests;
+    // Training owns the pool because it is the layer that has both fighters
+    // and the stage collision iterator.
+    let mut weapons = ssb_game::weapon::WeaponPool::default();
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -253,6 +257,7 @@ unsafe fn run() -> ! {
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
                         screen = Screen::Training;
                         if play_state.is_none() {
+                            weapons = ssb_game::weapon::WeaponPool::default();
                             play_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX).map(|s| {
                                     play::FighterScene::at_spawn(
@@ -311,8 +316,17 @@ unsafe fn run() -> ! {
                     // machine reads `stick_y` directly.
                     let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
                     pl.tick(p, &stage, controller, jump_held, None);
+                    if let Some(spawn) = pl.fighter.take_weapon_spawn() {
+                        weapons.spawn(spawn);
+                    }
                     if let Some(dummy) = dummy_state.as_mut() {
                         dummy.tick(p, &stage);
+                        if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
+                            weapons.spawn(spawn);
+                        }
+                        weapons.tick(|| ssb_psp_runtime::scene::FloorSegments::new(p, &stage));
+                        weapons.apply_hits(&mut pl.fighter);
+                        weapons.apply_hits(&mut dummy.fighter);
                         dummy.apply_hit_from(&pl.fighter);
                     }
                 }
