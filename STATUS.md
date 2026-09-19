@@ -6,7 +6,7 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Just-finished batch below; next batch is
-combat systems (shield/guard).
+combat systems (grabs/throws).
 
 ## What was completed
 
@@ -14,31 +14,40 @@ combat systems (shield/guard).
   `psp-game` and `psp-asset-viewer` depend on it. Verified with workspace
   tests, both EBOOTs, PPSSPP regression captures, and a physical-hardware
   smoke test (`docs/evidence/re/RE-298.md`).
-- **Fighter-common status table + Damage/hitstun family** (this batch):
-  `crate::status::Status` now carries the complete `FTCommonStatus` ordinal
-  table (0..=219, `ft/ftcommon/ftcommonstatus.h`) instead of just the 21
-  movement/jab variants — every common status (Damage, Guard/shield, Escape,
-  ShieldBreak, FuraFura/Sleep, Catch/Throw/Capture/Thrown, cliff/ledge,
-  item pickup/throw/weapon-swing, hammer, base moveset tilts/smashes/aerials)
-  now has its real decomp ordinal, even though most have no callback
-  behaviour yet — that is what lets later batches attach behaviour without
-  renumbering. Behaviourally, the Damage/hitstun family is now wired: a
-  landed hit picks `DamageHi/N/Lw1-3`, `DamageAir1-3`, `DamageFlyN`/`FlyTop`
-  by `ftCommonDamageGetDamageLevel`'s hitstun tiers and the defender's
-  ground/air situation (`crate::attack::damage_level`/`damage_status`), the
-  defender's status actually changes on a hit (previously only the numeric
-  damage/knockback/hitstun fields moved), and hitstun running out returns to
-  `Wait` (grounded) or `DamageFall` (airborne) — `crate::status::update`'s
-  new Damage-family arms. `crate::attack::apply_hit_from` (Mario's jab, the
-  `F1` Training slice) now drives this instead of a bare knockback push.
-  Documented simplifications: no hit-location Hi/Lw index (every hit is "N"),
-  no `DamageFlyRoll` (needs an RNG source that does not exist yet), and the
-  ground-hit-still-launches-airborne angle branch is dropped in favour of a
-  static per-status grounded/airborne classification (`Status::is_grounded`'s
-  doc comment). Verified: 139 `ssb-game` tests (12 new), full workspace
-  (`cargo test --workspace`, 637 tests) green, `cargo psp --release` builds
-  clean for `psp-game`, and a PPSSPP headless Training boot shows no
-  panic/crash in the log with a real (non-blank) rendered frame.
+- **Fighter-common status table + Damage/hitstun family**: `crate::status::Status`
+  now carries the complete `FTCommonStatus` ordinal table (0..=219,
+  `ft/ftcommon/ftcommonstatus.h`) instead of just the 21 movement/jab
+  variants, so later batches attach behaviour without renumbering. A landed
+  hit now moves the defender into a real Damage-family status
+  (`DamageHi/N/Lw1-3`, `DamageAir1-3`, `DamageFlyN`/`FlyTop`) chosen by
+  `ftCommonDamageGetDamageLevel`'s hitstun tiers and the defender's ground/air
+  situation, instead of only pushing numeric fields; hitstun running out
+  returns to `Wait` or `DamageFall`.
+- **Shield/guard** (this batch): `crate::status::GuardState` plus the
+  `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff` state machine
+  (`ft/ftcommon/ftcommonguard{1,2}.c`) — shield health decay while held
+  (`FTCOMMON_GUARD_DECAY_INT` = 16-frame ticks), release-lag-gated recovery
+  into `GuardOff`, and shield break into `ShieldBreakFly` (health resets to
+  30). Entry is wired into both `ground_interrupt` and `walk_interrupt` at
+  the same point the decomp macros put it (right after `Attack1`, ahead of
+  `KneeBend`/`Dash`/etc). A hit landing on a shielding fighter is now
+  redirected (`crate::attack::is_shielding`/`apply_shield_hit`) into
+  `GuardSetOff`'s pushback instead of the normal Damage path — blocking
+  takes no damage or hitstun, only shield-health loss, matching
+  `ftMainUpdateShieldStatFighter`'s single-hit case. Documented
+  simplifications: no extracted animation lengths for `GuardOn`/`GuardOff`
+  (they resolve in ~1 tick / on a release-lag counter instead of a real
+  clip), no shield-bubble visual scaling (rendering, out of scope), no
+  `shield_damage_total` multi-hit-per-frame accumulation (this codebase
+  still resolves one hitbox at a time), `ShieldBreakFly`'s
+  fly→fall→down/stand→`FuraFura` chain is ordinal-only with no behaviour
+  yet, and dash-into-shield/Yoshi's hurtbox swap are not ported. Verified:
+  144 `ssb-game` tests (5 new), full workspace (`cargo test --workspace`,
+  642 tests) green, `cargo psp --release` builds clean for `psp-game`, and
+  a PPSSPP headless Training boot (built with the proper
+  `regression_capture,headless_capture` features — a plain release build
+  never reaches the deterministic screenshot hook and reads as a hang, not
+  a regression) shows no panic/crash with a real rendered frame.
 - Earlier cleanup batch: `Dummy::apply_hit_from` hit-resolution logic moved
   from `psp-game` into `ssb_game::attack::apply_hit_from`, matching the
   crate-ownership rule in `AGENTS.md`.
@@ -48,14 +57,12 @@ combat systems (shield/guard).
 
 ## Immediate next batch
 
-Combat systems, continuing in decomp dependency order: shield/guard
-(`GuardOn`/`Guard`/`GuardOff`/`GuardSetOff`, `ft/ftcommon/ftcommonguard1.c`,
-`ftcommonguard2.c`) — shield HP, perfect-shield window, shield break
-(`ShieldBreakFly`/`Fall`/`Down*`/`Stand*`, already ordinal-only in `Status`).
-After that: grabs/throws (`Catch`/`CatchPull`/`CatchWait`/`ThrowF`/`ThrowB`),
-ledges (`Cliff*`), then KO/death/respawn (`Dead*`/`Rebirth*`). Each is a
-self-contained decomp subsystem per the user's batch-mode directive — do not
-wait for a full `P1` audit before starting them.
+Combat systems, continuing in decomp dependency order: grabs/throws
+(`Catch`/`CatchPull`/`CatchWait`/`ThrowF`/`ThrowB`, `ft/ftcommon/ftcommoncatch*.c`,
+`ftcommonthrow*.c`) — standing grab, break-free, forward/back throw. After
+that: ledges (`Cliff*`), then KO/death/respawn (`Dead*`/`Rebirth*`). Each is
+a self-contained decomp subsystem per the user's batch-mode directive — do
+not wait for a full `P1` audit before starting them.
 
 ## Real blockers
 
