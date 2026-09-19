@@ -132,14 +132,31 @@ batch's final verification step and found two distinct things (RE-300):
    this session did not have; not attempted-and-guessed-around per this
    project's own rule against unsupported rendering heuristics.
 
-Next batch options: (a) pursue the CLUT-alpha gap with a physical-PSP
-capture of `regression_capture_fireball` (would confirm/rule out a
-PPSSPP-only limitation) or PPSSPP GE-debugger tracing, or (b) accept the
-Fireball's opaque-card appearance as a known, tracked visual gap and move on
-to auditing Super Jump Punch integration on a real Training dummy, returning
-to RE-300 later. User directive needed to pick between these — both are
-legitimate, and (a) is speculative debugging time with no guaranteed
-resolution.
+**Update (2026-09-20):** the physical-PSP capture in option (a) below has now
+been run, plus two follow-up hardware experiments. Real PSP hardware (PSP
+Slim, 6.61, ARK/Infinity, PSPLink) reproduces the identical opaque-black-card
+bug — confirmed **not** a PPSSPP-only limitation. The classic PSP
+CLUT-DMA-alignment pitfall was checked and ruled out. Bypassing the CLUT
+entirely (the Fireball's texture forced to direct `Psm8888`, RE-283's proven
+pattern for other narrow-CI4 defects) changed nothing — same byte-identical
+opaque card, with the packed RGBA texel data independently verified correct
+(159/256 transparent background texels). This rules out CLUT/palette/narrow-
+texture addressing as the cause entirely. Neither of this project's two
+N64→PSP prior-art references (`refs/sf64-psp`, `refs/oot-PSP`) ever exercises
+the GE's real CLUT path for game art either — both always pre-decode to
+direct colour formats, a pattern worth adopting as policy separately from
+this bug. A blunt "force every alpha-relevant GE state unconditionally"
+experiment corrupted the whole frame instead of fixing anything, ruling out
+(without proving) a simple state-caching bug in this project's own code.
+Full trace, including what's still unexplored (interactive PPSSPP GE-debugger
+tracing), in RE-300.
+
+Next batch options: (a) interactive GE-level tracing (PPSSPP's windowed GE
+debugger, not headless) to see the actual per-draw-call GE state and output —
+not yet attempted, needs manual UI stepping, or (b) accept the Fireball's
+opaque-card appearance as a known, tracked visual gap and move on to auditing
+Super Jump Punch integration on a real Training dummy, returning to RE-300
+later. User directive needed to pick between these.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position
