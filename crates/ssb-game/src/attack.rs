@@ -56,7 +56,7 @@
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::fighter::Fighter;
-use crate::status::{self, Status, StatusTiming};
+use crate::status::{self, AnyStatus, MarioStatus, Status, StatusTiming};
 
 /// A hitbox descriptor, transcribed field-for-field from a
 /// `ftMotionCommandMakeAttackColl(aid, gid, jid, dmg, reb, elem, sz, ox, oy,
@@ -390,6 +390,62 @@ pub static MARIO_JAB2: MoveData = MoveData {
         ),
     ],
     length_frames: 14.0,
+    landing_lag_percent: None,
+};
+
+/// Mario's jab-combo finisher — `dMarioMainMotion_Jab3`
+/// (`nFTMarioStatusAttack13`, [`crate::status::MarioStatus::Attack13`]). No
+/// further `SetFlag1` combo window — this is the end of the chain, matching
+/// `ftCommonAttack13ProcUpdate` never checking `is_goto_followup` for
+/// non-Captain fighters. Both hitboxes' `SetAttackCollSize` calls at frame 5
+/// only change hitbox 0's radius (`150` → `180`); hitbox 1's call sets it to
+/// the same `280` it already had, so it is one unchanging window here.
+/// `WaitAsync(3)` then two `MakeAttackColl`s, `Wait(2)` then the
+/// `SetAttackCollSize` calls, `Wait(3)` then `ClearAttackCollAll` — total
+/// `3 + 2 + 3 = 8`.
+pub static MARIO_JAB3: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 4,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 150.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            3.0,
+            5.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 4,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 180.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            5.0,
+            8.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 4,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 280.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            3.0,
+            8.0,
+        ),
+    ],
+    length_frames: 8.0,
     landing_lag_percent: None,
 };
 
@@ -813,29 +869,33 @@ pub static MARIO_DSMASH: MoveData = MoveData {
 /// for any status/fighter this codebase has not extracted moveset data for
 /// yet, which is everything except the Mario moves listed here (`P2`'s bulk
 /// port scope).
-pub fn move_data(kind: crate::fighter::FighterKind, status: Status) -> Option<&'static MoveData> {
+pub fn move_data(
+    kind: crate::fighter::FighterKind,
+    status: AnyStatus,
+) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
-        (FighterKind::Mario, Status::Attack11) => Some(&MARIO_JAB1),
-        (FighterKind::Mario, Status::Attack12) => Some(&MARIO_JAB2),
-        (FighterKind::Mario, Status::AttackDash) => Some(&MARIO_DASH_ATTACK),
-        (FighterKind::Mario, Status::AttackS3Hi) => Some(&MARIO_FTILT_HI),
-        (FighterKind::Mario, Status::AttackS3) => Some(&MARIO_FTILT),
-        (FighterKind::Mario, Status::AttackS3Lw) => Some(&MARIO_FTILT_LOW),
-        (FighterKind::Mario, Status::AttackHi3) => Some(&MARIO_UTILT),
-        (FighterKind::Mario, Status::AttackLw3) => Some(&MARIO_DTILT),
-        (FighterKind::Mario, Status::AttackAirN) => Some(&MARIO_AIR_N),
-        (FighterKind::Mario, Status::AttackAirF) => Some(&MARIO_AIR_F),
-        (FighterKind::Mario, Status::AttackAirB) => Some(&MARIO_AIR_B),
-        (FighterKind::Mario, Status::AttackAirHi) => Some(&MARIO_AIR_HI),
-        (FighterKind::Mario, Status::AttackAirLw) => Some(&MARIO_AIR_LW),
-        (FighterKind::Mario, Status::AttackS4Hi) => Some(&MARIO_FSMASH_HI),
-        (FighterKind::Mario, Status::AttackS4HiS) => Some(&MARIO_FSMASH_HI_S),
-        (FighterKind::Mario, Status::AttackS4) => Some(&MARIO_FSMASH),
-        (FighterKind::Mario, Status::AttackS4LwS) => Some(&MARIO_FSMASH_LOW_S),
-        (FighterKind::Mario, Status::AttackS4Lw) => Some(&MARIO_FSMASH_LOW),
-        (FighterKind::Mario, Status::AttackHi4) => Some(&MARIO_USMASH),
-        (FighterKind::Mario, Status::AttackLw4) => Some(&MARIO_DSMASH),
+        (FighterKind::Mario, AnyStatus::Common(Status::Attack11)) => Some(&MARIO_JAB1),
+        (FighterKind::Mario, AnyStatus::Common(Status::Attack12)) => Some(&MARIO_JAB2),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackDash)) => Some(&MARIO_DASH_ATTACK),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3Hi)) => Some(&MARIO_FTILT_HI),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3)) => Some(&MARIO_FTILT),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3Lw)) => Some(&MARIO_FTILT_LOW),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackHi3)) => Some(&MARIO_UTILT),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackLw3)) => Some(&MARIO_DTILT),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirN)) => Some(&MARIO_AIR_N),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirF)) => Some(&MARIO_AIR_F),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirB)) => Some(&MARIO_AIR_B),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirHi)) => Some(&MARIO_AIR_HI),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirLw)) => Some(&MARIO_AIR_LW),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4Hi)) => Some(&MARIO_FSMASH_HI),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4HiS)) => Some(&MARIO_FSMASH_HI_S),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4)) => Some(&MARIO_FSMASH),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4LwS)) => Some(&MARIO_FSMASH_LOW_S),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4Lw)) => Some(&MARIO_FSMASH_LOW),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackHi4)) => Some(&MARIO_USMASH),
+        (FighterKind::Mario, AnyStatus::Common(Status::AttackLw4)) => Some(&MARIO_DSMASH),
+        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::Attack13)) => Some(&MARIO_JAB3),
         _ => None,
     }
 }
@@ -1101,10 +1161,10 @@ pub fn apply_hit_from(
 /// statuses `ftMainUpdateShieldStatFighter`'s caller treats as "currently
 /// shielding" (`ftmain.c`'s hit-search gates a shield hit on `fp->is_shield`,
 /// which these three statuses hold for the whole time they are active).
-pub fn is_shielding(status: Status) -> bool {
+pub fn is_shielding(status: AnyStatus) -> bool {
     matches!(
         status,
-        Status::GuardOn | Status::Guard | Status::GuardSetOff
+        AnyStatus::Common(Status::GuardOn | Status::Guard | Status::GuardSetOff)
     )
 }
 
@@ -1335,8 +1395,12 @@ mod tests {
 
     #[test]
     fn move_data_is_none_for_an_unported_fighter_or_status() {
-        assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11).is_none());
-        assert!(move_data(crate::fighter::FighterKind::Mario, Status::HammerWait).is_none());
+        assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11.into()).is_none());
+        assert!(move_data(
+            crate::fighter::FighterKind::Mario,
+            Status::HammerWait.into()
+        )
+        .is_none());
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
@@ -1417,5 +1481,46 @@ mod tests {
         assert_eq!(weak.len(), 2);
         assert!(strong.iter().all(|h| h.hitbox.damage == 14));
         assert!(weak.iter().all(|h| h.hitbox.damage == 11));
+    }
+
+    /// `move_data` finds `Attack13`'s data through the extended-status path
+    /// too, not just common ones — `MARIO_JAB3`'s doc comment.
+    #[test]
+    fn attack13_hitbox_grows_mid_swing_without_a_damage_change() {
+        let data = move_data(
+            crate::fighter::FighterKind::Mario,
+            AnyStatus::Mario(MarioStatus::Attack13),
+        )
+        .expect("Mario's Attack13 has real MoveData");
+        assert!(data.hitboxes.iter().all(|h| h.hitbox.damage == 4));
+        let small: Vec<_> = data.hitboxes.iter().filter(|h| h.is_active(4.0)).collect();
+        let grown: Vec<_> = data.hitboxes.iter().filter(|h| h.is_active(6.0)).collect();
+        assert!(small.iter().any(|h| h.hitbox.radius == 75.0));
+        assert!(grown.iter().all(|h| h.hitbox.radius != 75.0));
+    }
+
+    /// A jab that connects, chains into `Attack12`, and would chain into
+    /// `Attack13` still resolves each hit through the same generic
+    /// `apply_hit_from` — the extended status is just another key into
+    /// `move_data`.
+    #[test]
+    fn attack13_lands_a_real_hit_through_apply_hit_from() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::new(0.0, 0.0, 0.0);
+        defender.pos = Vec3::new(0.0, 0.0, 0.0);
+        defender.situation = crate::fighter::Situation::Ground;
+        status::set_any_status(
+            &mut attacker,
+            AnyStatus::Mario(MarioStatus::Attack13),
+            4.0,
+            StatusTiming::unknown(),
+        );
+
+        let mut hit_by_current_attack = false;
+        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+
+        assert!(hit_by_current_attack);
+        assert_eq!(defender.damage, 4);
     }
 }

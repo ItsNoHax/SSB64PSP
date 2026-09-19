@@ -9,12 +9,16 @@
 
 pub use ssb_psp_runtime::scene::{facing_turn, FighterScene, FloorSegments};
 
-use ssb_game::status::Status;
+use ssb_game::status::{AnyStatus, MarioStatus, Status};
 
 /// The status a fighter is in, as a fixed-width label for the overlay.
 pub fn status_name(scene: &FighterScene) -> &'static str {
     use Status::*;
-    match scene.fighter.status.status {
+    let current = match scene.fighter.status.status {
+        AnyStatus::Common(s) => s,
+        AnyStatus::Mario(MarioStatus::Attack13) => return "jab3    ",
+    };
+    match current {
         Wait => "wait    ",
         WalkSlow => "walk-slw",
         WalkMiddle => "walk-mid",

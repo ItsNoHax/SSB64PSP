@@ -28,6 +28,7 @@ use ssb_game::fighter::{Fighter, FighterKind};
 use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
 use ssb_game::status::AnimLengths;
+use ssb_game::status::AnyStatus;
 use ssb_game::status::Status;
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, Pack, StageDesc};
 
@@ -201,9 +202,9 @@ pub fn body_of(d: &FighterDesc) -> BodyColl {
 pub fn tick_skeleton_animation(
     pack: &Pack<'_>,
     kind: u32,
-    status: Status,
+    status: AnyStatus,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
-    started: &mut Option<Status>,
+    started: &mut Option<AnyStatus>,
 ) {
     let slot = status.anim_slot() as u32;
     if *started != Some(status) {
@@ -266,7 +267,7 @@ pub struct FighterScene {
     /// Initial `FTStruct.camera_zoom_frame`, copied from the fighter's real
     /// `FTAttributes.camera_zoom` value.
     pub camera_zoom_frame: f32,
-    started: Option<Status>,
+    started: Option<AnyStatus>,
 }
 
 impl FighterScene {
