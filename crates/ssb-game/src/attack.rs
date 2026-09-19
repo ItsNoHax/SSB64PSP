@@ -154,6 +154,13 @@ impl ActiveHitbox {
 pub struct MoveData {
     pub hitboxes: &'static [ActiveHitbox],
     pub length_frames: f32,
+    /// For an aerial attack only: if this fighter has no dedicated
+    /// `LandingAirX` motion file for it, landing mid-move instead takes
+    /// `LandingAirNull` for this percentage of the fighter's normal landing
+    /// lag (`ftCommonAttackAirProcMap`'s `F_PCT_TO_DEC(flag1)` branch) —
+    /// `None` when a dedicated landing clip exists (or for a non-aerial
+    /// move, where this is meaningless).
+    pub landing_lag_percent: Option<u8>,
 }
 
 /// Mario's `DashAttack` — `dMarioMainMotion_DashAttack`,
@@ -194,6 +201,7 @@ pub static MARIO_DASH_ATTACK: MoveData = MoveData {
         ),
     ],
     length_frames: 28.0,
+    landing_lag_percent: None,
 };
 
 /// Mario's forward tilt, one of three angle variants
@@ -241,6 +249,7 @@ macro_rules! mario_ftilt {
                 ),
             ],
             length_frames: 18.0,
+            landing_lag_percent: None,
         }
     };
 }
@@ -285,6 +294,7 @@ pub static MARIO_UTILT: MoveData = MoveData {
         ),
     ],
     length_frames: 17.0,
+    landing_lag_percent: None,
 };
 
 /// Mario's down tilt — `dMarioMainMotion_DTilt`. `WaitAsync(5)` + two
@@ -319,6 +329,7 @@ pub static MARIO_DTILT: MoveData = MoveData {
         ),
     ],
     length_frames: 12.0,
+    landing_lag_percent: None,
 };
 
 /// Mario's `Attack11` (neutral jab), now both real hitboxes
@@ -338,7 +349,307 @@ pub static MARIO_JAB1: MoveData = MoveData {
         ),
     ],
     length_frames: MARIO_ATTACK11_LENGTH_FRAMES,
+    landing_lag_percent: None,
 };
+
+/// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
+/// simultaneous hitboxes (`jid` 25/20/5 — foot, shin, and a wider late
+/// sweetspot), each with a weaker second phase after frame 11.
+/// `WaitAsync(3)` + 3×`MakeAttackColl`, `Wait(8)` + 3× weaker
+/// `MakeAttackColl`, `Wait(26)` + `ClearAttackCollAll` — total
+/// `3 + 8 + 26 = 37`.
+pub static MARIO_AIR_N: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 14,
+                offset: Vec3::new(10.0, 0.0, 0.0),
+                radius: 240.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 15,
+            },
+            3.0,
+            11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 14,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 260.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 15,
+            },
+            3.0,
+            11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 11,
+                offset: Vec3::new(10.0, 0.0, 0.0),
+                radius: 240.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            11.0,
+            37.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 11,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 260.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            11.0,
+            37.0,
+        ),
+    ],
+    length_frames: 37.0,
+    landing_lag_percent: Some(50),
+};
+
+/// Mario's forward aerial — `dMarioMainMotion_AttackAirF`. Two hitboxes
+/// (`jid` 25 twice, different `oy`), weaker after frame 15.
+/// `WaitAsync(11)` then two `MakeAttackColl`s, `Wait(4)` then two weaker
+/// ones, `Wait(12)` then `ClearAttackCollAll` — total `11 + 4 + 12 = 27`.
+pub static MARIO_AIR_F: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 16,
+                offset: Vec3::new(-30.0, 45.0, 0.0),
+                radius: 220.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            11.0,
+            15.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 16,
+                offset: Vec3::new(80.0, 30.0, 0.0),
+                radius: 270.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            11.0,
+            15.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(-30.0, 45.0, 0.0),
+                radius: 220.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            15.0,
+            27.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(80.0, 30.0, 0.0),
+                radius: 270.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            15.0,
+            27.0,
+        ),
+    ],
+    length_frames: 27.0,
+    landing_lag_percent: None,
+};
+
+/// Mario's back aerial — `dMarioMainMotion_AttackAirB`. Weaker phase also
+/// shrinks the hitboxes (`220`/`270` vs `240`/`290`), not just damage/KBB.
+/// `WaitAsync(10)` + 2×`MakeAttackColl`, `Wait(4)` + 2× weaker, `Wait(6)` +
+/// `ClearAttackCollAll` — total `10 + 4 + 6 = 20`.
+pub static MARIO_AIR_B: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 16,
+                offset: Vec3::new(-30.0, 45.0, 0.0),
+                radius: 240.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            10.0,
+            14.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 16,
+                offset: Vec3::new(80.0, 30.0, 0.0),
+                radius: 290.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            10.0,
+            14.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(-30.0, 45.0, 0.0),
+                radius: 220.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            14.0,
+            20.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(80.0, 30.0, 0.0),
+                radius: 270.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            14.0,
+            20.0,
+        ),
+    ],
+    length_frames: 20.0,
+    landing_lag_percent: None,
+};
+
+/// Mario's up aerial — `dMarioMainMotion_AttackAirU`. A literal (non-Sakurai)
+/// launch angle, `80°` then `70°` in the weaker phase. `WaitAsync(2)` +
+/// 2×`MakeAttackColl`, `Wait(3)` + 2× weaker, `Wait(7)` +
+/// `ClearAttackCollAll` — total `2 + 3 + 7 = 12`.
+pub static MARIO_AIR_HI: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 12,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 220.0 / 2.0,
+                angle: 80,
+                kb_scale: 120,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            2.0,
+            5.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 12,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 250.0 / 2.0,
+                angle: 80,
+                kb_scale: 120,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            2.0,
+            5.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 9,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 220.0 / 2.0,
+                angle: 70,
+                kb_scale: 120,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            12.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 9,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 250.0 / 2.0,
+                angle: 70,
+                kb_scale: 120,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            12.0,
+        ),
+    ],
+    length_frames: 12.0,
+    landing_lag_percent: None,
+};
+
+/// Mario's down aerial — `dMarioMainMotion_AttackAirD`. A literal `-70°`
+/// downward launch, and a real *pulsing* hitbox: `MakeAttackColl` at frame
+/// 10, then `LoopBegin(7) { Wait(2); ClearAttackCollAll(); Wait(1);
+/// RefreshAttackCollID }`, so it is on for 2 frames and off for 1, eight
+/// times over (the initial hit plus seven refreshes), before a final
+/// `Wait(2)` and `ClearAttackCollAll`. Windows: `[10,12)`, `[13,15)`,
+/// `[16,18)`, `[19,21)`, `[22,24)`, `[25,27)`, `[28,30)`, `[31,33)` — total
+/// `10 + 8×3 + 2 = 33`. Not simplified to one wide window: landing during a
+/// 1-frame gap between pulses is a real way to avoid this hitbox in the
+/// original, and collapsing the gaps would take that away.
+pub static MARIO_AIR_LW: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 10.0, 12.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 10.0, 12.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 13.0, 15.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 13.0, 15.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 16.0, 18.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 16.0, 18.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 19.0, 21.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 19.0, 21.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 22.0, 24.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 22.0, 24.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 25.0, 27.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 25.0, 27.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 28.0, 30.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 28.0, 30.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 31.0, 33.0),
+        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 31.0, 33.0),
+    ],
+    length_frames: 33.0,
+    landing_lag_percent: None,
+};
+
+const fn mario_air_lw_hitbox(ox: f32, oy: f32) -> Hitbox {
+    Hitbox {
+        damage: 3,
+        offset: Vec3::new(ox, oy, 0.0),
+        radius: 350.0 / 2.0,
+        angle: -70,
+        kb_scale: 100,
+        kb_weight: 30,
+        kb_base: 0,
+    }
+}
 
 /// The attack data for `status`, under `kind` — every per-character motion
 /// script's `MakeAttackColl` argument list, transcribed field-for-field (see
@@ -356,6 +667,11 @@ pub fn move_data(kind: crate::fighter::FighterKind, status: Status) -> Option<&'
         (FighterKind::Mario, Status::AttackS3Lw) => Some(&MARIO_FTILT_LOW),
         (FighterKind::Mario, Status::AttackHi3) => Some(&MARIO_UTILT),
         (FighterKind::Mario, Status::AttackLw3) => Some(&MARIO_DTILT),
+        (FighterKind::Mario, Status::AttackAirN) => Some(&MARIO_AIR_N),
+        (FighterKind::Mario, Status::AttackAirF) => Some(&MARIO_AIR_F),
+        (FighterKind::Mario, Status::AttackAirB) => Some(&MARIO_AIR_B),
+        (FighterKind::Mario, Status::AttackAirHi) => Some(&MARIO_AIR_HI),
+        (FighterKind::Mario, Status::AttackAirLw) => Some(&MARIO_AIR_LW),
         _ => None,
     }
 }
@@ -901,5 +1217,41 @@ mod tests {
         // far-hitbox radius.
         assert!(hit_by_current_attack);
         assert_eq!(defender.damage, 13);
+    }
+
+    /// `AttackAirD`'s pulsing hitbox is on 2 frames, off 1, eight times —
+    /// `MARIO_AIR_LW`'s own doc comment. Landing in a gap is a real way to
+    /// dodge it, so the windows must not merge into one wide range.
+    #[test]
+    fn down_aerial_pulses_on_and_off_rather_than_staying_active() {
+        // Boundaries of the first two windows: [10,12) on, [12,13) off, [13,15) on.
+        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(10.0)));
+        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(11.9)));
+        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(12.0)));
+        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(12.9)));
+        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(13.0)));
+        // Last window ends exactly at the move's own length.
+        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(32.9)));
+        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(33.0)));
+    }
+
+    /// Neutral aerial's three simultaneous hitboxes all weaken together
+    /// after frame 11 — `MARIO_AIR_N`'s own doc comment.
+    #[test]
+    fn neutral_aerial_has_three_hitboxes_that_weaken_together() {
+        let strong: Vec<_> = MARIO_AIR_N
+            .hitboxes
+            .iter()
+            .filter(|h| h.is_active(5.0))
+            .collect();
+        let weak: Vec<_> = MARIO_AIR_N
+            .hitboxes
+            .iter()
+            .filter(|h| h.is_active(20.0))
+            .collect();
+        assert_eq!(strong.len(), 2); // the two ox=10/ox=0 hitboxes share a window
+        assert_eq!(weak.len(), 2);
+        assert!(strong.iter().all(|h| h.hitbox.damage == 14));
+        assert!(weak.iter().all(|h| h.hitbox.damage == 11));
     }
 }
