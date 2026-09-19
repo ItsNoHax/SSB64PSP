@@ -651,6 +651,121 @@ const fn mario_air_lw_hitbox(ox: f32, oy: f32) -> Hitbox {
     }
 }
 
+/// Builds one of Mario's five forward-smash `MoveData`s
+/// (`dMarioMainMotion_FSmashHigh`/`MidHigh`/`FSmash`/`MidLow`/`Low`). Same
+/// macro-not-`const-fn` reason as [`mario_ftilt`]. `MidLow` and `Low` are
+/// numerically identical in the original (`FSmashMidLow`'s and `FSmashLow`'s
+/// `MakeAttackColl` calls have the same arguments) — not a transcription
+/// mistake here, the decomp source really does repeat them.
+/// `WaitAsync(4)` then `WaitAsync(16)` then two `MakeAttackColl`s,
+/// `Wait(5)` then `ClearAttackCollAll` — total `4 + 16 + 5 = 25`.
+macro_rules! mario_fsmash {
+    ($damage:expr, $ox2:expr) => {
+        MoveData {
+            hitboxes: &[
+                ActiveHitbox::new(
+                    Hitbox {
+                        damage: $damage,
+                        offset: Vec3::new(0.0, 0.0, 0.0),
+                        radius: 180.0 / 2.0,
+                        angle: 361,
+                        kb_scale: 100,
+                        kb_weight: 0,
+                        kb_base: 30,
+                    },
+                    20.0,
+                    25.0,
+                ),
+                ActiveHitbox::new(
+                    Hitbox {
+                        damage: $damage,
+                        offset: Vec3::new($ox2, 0.0, 0.0),
+                        radius: 240.0 / 2.0,
+                        angle: 361,
+                        kb_scale: 100,
+                        kb_weight: 0,
+                        kb_base: 30,
+                    },
+                    20.0,
+                    25.0,
+                ),
+            ],
+            length_frames: 25.0,
+            landing_lag_percent: None,
+        }
+    };
+}
+/// `dMarioMainMotion_FSmashHigh`.
+pub static MARIO_FSMASH_HI: MoveData = mario_fsmash!(18, 60.0);
+/// `dMarioMainMotion_FSmashMidHigh`.
+pub static MARIO_FSMASH_HI_S: MoveData = mario_fsmash!(18, 50.0);
+/// `dMarioMainMotion_FSmash`.
+pub static MARIO_FSMASH: MoveData = mario_fsmash!(17, 50.0);
+/// `dMarioMainMotion_FSmashMidLow`.
+pub static MARIO_FSMASH_LOW_S: MoveData = mario_fsmash!(16, 50.0);
+/// `dMarioMainMotion_FSmashLow`.
+pub static MARIO_FSMASH_LOW: MoveData = mario_fsmash!(16, 50.0);
+
+/// Mario's up smash — `dMarioMainMotion_USmash`. A literal `85°` launch
+/// angle. `WaitAsync(7)` + `MakeAttackColl`, `Wait(4)` + `Wait(5)` then
+/// `ClearAttackCollAll` — total `7 + 4 + 5 = 16`.
+pub static MARIO_USMASH: MoveData = MoveData {
+    hitboxes: &[ActiveHitbox::new(
+        Hitbox {
+            damage: 19,
+            offset: Vec3::new(0.0, 100.0, 0.0),
+            radius: 380.0 / 2.0,
+            angle: 85,
+            kb_scale: 120,
+            kb_weight: 0,
+            kb_base: 26,
+        },
+        7.0,
+        16.0,
+    )],
+    length_frames: 16.0,
+    landing_lag_percent: None,
+};
+
+/// Mario's down smash — `dMarioMainMotion_DSmash`. Two hitboxes (each
+/// spawned twice under different `jid`s with identical other arguments, so
+/// two `ActiveHitbox`es cover all four `MakeAttackColl` calls).
+/// `WaitAsync(4)` then `WaitAsync(8)` then two `MakeAttackColl`s,
+/// `Wait(15)` then `Wait(7)` then `ClearAttackCollAll` — total
+/// `4 + 8 + 15 + 7 = 34`.
+pub static MARIO_DSMASH: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 17,
+                offset: Vec3::new(0.0, 0.0, 20.0),
+                radius: 170.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 20,
+            },
+            12.0,
+            34.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 17,
+                offset: Vec3::new(120.0, 0.0, 50.0),
+                radius: 210.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 20,
+            },
+            12.0,
+            34.0,
+        ),
+    ],
+    length_frames: 34.0,
+    landing_lag_percent: None,
+};
+
 /// The attack data for `status`, under `kind` — every per-character motion
 /// script's `MakeAttackColl` argument list, transcribed field-for-field (see
 /// each `MoveData` constant's own doc comment for its source line). `None`
@@ -672,6 +787,13 @@ pub fn move_data(kind: crate::fighter::FighterKind, status: Status) -> Option<&'
         (FighterKind::Mario, Status::AttackAirB) => Some(&MARIO_AIR_B),
         (FighterKind::Mario, Status::AttackAirHi) => Some(&MARIO_AIR_HI),
         (FighterKind::Mario, Status::AttackAirLw) => Some(&MARIO_AIR_LW),
+        (FighterKind::Mario, Status::AttackS4Hi) => Some(&MARIO_FSMASH_HI),
+        (FighterKind::Mario, Status::AttackS4HiS) => Some(&MARIO_FSMASH_HI_S),
+        (FighterKind::Mario, Status::AttackS4) => Some(&MARIO_FSMASH),
+        (FighterKind::Mario, Status::AttackS4LwS) => Some(&MARIO_FSMASH_LOW_S),
+        (FighterKind::Mario, Status::AttackS4Lw) => Some(&MARIO_FSMASH_LOW),
+        (FighterKind::Mario, Status::AttackHi4) => Some(&MARIO_USMASH),
+        (FighterKind::Mario, Status::AttackLw4) => Some(&MARIO_DSMASH),
         _ => None,
     }
 }
@@ -1172,7 +1294,7 @@ mod tests {
     #[test]
     fn move_data_is_none_for_an_unported_fighter_or_status() {
         assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11).is_none());
-        assert!(move_data(crate::fighter::FighterKind::Mario, Status::AttackHi4).is_none());
+        assert!(move_data(crate::fighter::FighterKind::Mario, Status::Attack12).is_none());
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —

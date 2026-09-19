@@ -7,8 +7,8 @@ large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Combat systems' self-contained
 subsystems (shield, KO/death/respawn, ledges) are done; grabs/throws stays
-deferred. `P2`'s fighter bulk port is underway, Mario-first: jab, dash
-attack, all three tilts, and all five aerials are in, on a real generalized
+deferred. Mario's ground+aerial, no-combo moveset is complete: jab, dash
+attack, all tilts, all smashes, all aerials, on a real generalized
 per-fighter hit-data table.
 
 ## What was completed
@@ -31,41 +31,44 @@ per-fighter hit-data table.
   primitive plus the real corner-proximity tolerance and cliff-flag test.
 - **Mario's ground moveset**: `AttackDash`, all three `AttackS3*` forward-tilt
   angle variants, `AttackHi3`, `AttackLw3` — plus the architectural change
-  that made them cheap to add: `crate::attack`'s hit resolution is no longer
-  Attack11-specific. `ActiveHitbox`/`MoveData` and a per-`(FighterKind,
-  Status)` `move_data` lookup replace the old one-hitbox/one-window special
-  case, and a hitbox's `ox` offset now mirrors with facing.
-- **Mario's aerials** (this batch): `AttackAirN`/`F`/`B`/`Hi`/`Lw`, ported
-  field-for-field from their motion scripts. This is where the `MoveData`
-  generalization from the ground-moveset batch really pays for itself:
-  neutral aerial has 3 simultaneous hitboxes, four of the five aerials have
-  a weakening second phase, and down aerial has a genuinely *pulsing*
-  hitbox — on 2 frames, off 1, eight times over — modelled as 16 real
-  disjoint `ActiveHitbox` windows rather than one merged range, so landing
-  in an actual gap between pulses still dodges it, matching the original.
-  Landing mid-aerial is real too: `Fighter::tick_air` now calls
-  `crate::status::set_landing_or_landing_air`, which takes a dedicated
-  `LandingAirX` status where Mario has one, or scales `LandingAirNull`'s
-  length by the real extracted landing-lag percentage where he doesn't
-  (his neutral aerial) — using `f.anim.landing`, real per-character data
-  already in the codebase, not an invented number. Entry is the same real
-  stick-angle dispatch as the ground tilts (`tan(50°)` slope comparison,
-  since `ssb_engine::math` has no `atan2`), and attacking now correctly
-  outranks a second jump in the air (`ftCommonFallProcInterrupt`'s real
-  order).
-- Documented gaps: smashes (need a charge-mechanic subsystem — holding the
-  attack button scales knockback over time), specials, the
-  `Attack12`/`Attack13`/`Attack100` jab-combo extension (its real trigger
-  logic is its own substantial subsystem — per-character follow-up windows,
-  a rapid-jab loop, a per-character finisher only some fighters have),
-  grabs/throws (needs per-character throw motion data), `DTilt`'s
-  repeated-tap extension, `LandingAirF`/`Hi`/`B`/`Lw` collapsing to one tick
-  (no extracted animation length for them), the real auto-cancel/
-  already-recovered landing branches (dropped since the real `SetFlag1`
-  window brackets nearly all of every aerial ported so far), and every
-  fighter besides Mario having zero moveset data.
-- Verified for everything above together: 186 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 684 tests) green, `cargo psp
+  that made every later move cheap to add: `crate::attack`'s hit resolution
+  is no longer Attack11-specific. `ActiveHitbox`/`MoveData` and a
+  per-`(FighterKind, Status)` `move_data` lookup replace the old
+  one-hitbox/one-window special case, and a hitbox's `ox` offset mirrors
+  with facing.
+- **Mario's aerials**: `AttackAirN`/`F`/`B`/`Hi`/`Lw`, including a genuinely
+  pulsing down-aerial hitbox (16 real disjoint windows) and real
+  landing-lag handling (`Fighter::tick_air` → `set_landing_or_landing_air`,
+  a dedicated `LandingAirX` status or a `LandingAirNull` scaled by the real
+  extracted percentage).
+- **Mario's smashes** (this batch): `AttackS4Hi`/`HiS`/`AttackS4`/`LwS`/`Lw`
+  (all five forward-smash angles), `AttackHi4`, `AttackLw4` — ported
+  field-for-field from `dMarioMainMotion_FSmash*`/`USmash`/`DSmash`.
+  **Real discovery made while researching this batch: SSB64 smashes have no
+  charge mechanic at all** — that is a Melee addition. A smash is just a
+  hard flick (`|stick| >= 56`, inside a short tap window — `tap_x < 3`,
+  `ftCommonAttackS4CheckInterruptCommon`) versus a tilt's plain magnitude
+  push; the deferral note from the last two batches ("smashes need a
+  charge-mechanic subsystem") was wrong, and smashes turned out to be the
+  same shape as tilts. This also means a fast flick and a slow push now
+  correctly diverge into a smash vs. a tilt via the tap-window check
+  (`check_fsmash`/`check_usmash`/`check_dsmash`, checked before the tilt
+  checks in `ground_interrupt`/`walk_interrupt`, matching the real macro
+  order) — a few existing tilt tests had to be corrected because they were
+  unknowingly using smash-shaped inputs (a fresh full flick), not tilt
+  ones; the *implementation* was right, the *tests* needed a stick held
+  for several frames before tapping `A` to simulate a genuine push.
+- Documented gaps: specials, the `Attack12`/`Attack13`/`Attack100`
+  jab-combo extension (its own substantial subsystem — per-character
+  follow-up windows, a rapid-jab loop, a per-character finisher only some
+  fighters have), grabs/throws (needs per-character throw motion data),
+  `DTilt`'s repeated-tap extension, the narrow `anim_frame <= 5`
+  pivot-smash-out-of-dash-startup window, `LandingAirF`/`Hi`/`B`/`Lw`
+  collapsing to one tick, the real aerial auto-cancel/already-recovered
+  landing branches, and every fighter besides Mario having zero moveset
+  data.
+- Verified for everything above together: 190 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 688 tests) green, `cargo psp
   --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
   PPSSPP headless Training boot (built with `regression_capture,
   headless_capture` — a plain release build never reaches the deterministic
@@ -80,18 +83,17 @@ per-fighter hit-data table.
 
 ## Immediate next batch
 
-Mario's smashes (`AttackS4Hi`/`AttackS4`/`AttackS4Lw`, `AttackHi4`,
-`AttackLw4`) — the natural next base-moveset piece, and the first real
-charge-mechanic subsystem: holding `A`/`B` charges knockback growth over
-time (capped, released on button-up or after a max hold), which every other
-fighter's smashes will reuse once ported. `dMarioMainMotion_FSmash*`/
-`USmash`/`DSmash` already have the real hitbox data sitting in
-`relocData/202_MarioMainMotion.c`, same as the moves already ported.
+The jab-combo extension (`Attack12`→`Attack13`/`Attack100`) is the natural
+next base-moveset piece: a real, self-contained state machine (follow-up
+timing window via `attack1_followup_frames`, per-character branching —
+`ftCommonAttack13CheckFighterKind` gates which fighters even have a
+`Attack13` finisher — and an `Attack100` rapid-jab loop for the rest).
 
-After that, the jab-combo extension (`Attack12`→`Attack13`/`Attack100`) is
-worth doing as its own batch — it is a real, self-contained state machine
-(follow-up timing window, per-character branching, a rapid-jab loop), not a
-quick add-on to whichever batch happens to be running.
+After that, specials (`SpecialN`/`Hi`/`Lw`/`AirN` etc.) are the last piece
+of Mario's individual moveset, though each special is closer to its own
+mini-subsystem (fireball projectile, cape reflect, up-B recovery with its
+own physics, tornado multi-hit) than a uniform group the way tilts/smashes/
+aerials were.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position
