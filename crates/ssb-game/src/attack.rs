@@ -38,16 +38,23 @@
 //!   movement does. Until that exists, [`crate::fighter::Fighter::tick_timers`]
 //!   holds knockback constant for the hit's hitstun duration and then snaps it
 //!   to zero the frame hitstun ends, rather than bleeding it off gradually.
-//! * **No `Damage` status.** The target does not enter a hit-reaction status
-//!   or animation; only the numeric state (`damage`, `physics.vel_knockback`,
-//!   `hitstun`) is real and decomp-accurate. Playing a real damage animation
-//!   needs a `Damage` status family (`ftcommondamage.c`'s twelve status IDs)
-//!   this slice does not add.
+//! * **`Damage` status entered, but not fully.** A landed hit now moves the
+//!   defender into the real `DamageHi/N/Lw1-3`/`DamageAir1-3`/`DamageFlyN`/
+//!   `FlyTop` status (`damage_status`), matching `ftCommonDamageGetDamageLevel`'s
+//!   hitstun tiers and the defender's ground/air situation. Still missing:
+//!   the hit-location Hi/Lw index (every hit reads as "N", the middle
+//!   column — no system yet computes where on the target's body a hitbox
+//!   landed), `DamageFlyRoll` (its selection is a coin flip, and there is no
+//!   shared RNG source to drive it), and the "a shallow hit's upward
+//!   knockback launches the target airborne anyway" angle branch (dropped —
+//!   see [`crate::status::Status::is_grounded`]'s doc comment). No animation
+//!   plays for any of these yet — `Status::anim_slot`'s catch-all keeps the
+//!   current pose, same as `Attack11`.
 
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::fighter::Fighter;
-use crate::status::Status;
+use crate::status::{self, Status, StatusTiming};
 
 /// A hitbox descriptor, transcribed field-for-field from a
 /// `ftMotionCommandMakeAttackColl(aid, gid, jid, dmg, reb, elem, sz, ox, oy,
@@ -179,6 +186,56 @@ pub fn damage_lr(defender_pos: Vec3, attacker_pos: Vec3) -> f32 {
     }
 }
 
+/// `FTCOMMON_DAMAGE_LEVEL_HITSTUN_*` — `ft/ftcommon.h`. Which of the four
+/// damage tiers (`DamageX1`/`X2`/`X3`/tumble) a hit's hitstun falls into —
+/// `ftCommonDamageGetDamageLevel` @ `ftcommondamage.c:314`.
+const DAMAGE_LEVEL_HITSTUN_LOW: f32 = 12.0;
+const DAMAGE_LEVEL_HITSTUN_MID: f32 = 24.0;
+const DAMAGE_LEVEL_HITSTUN_HIGH: f32 = 32.0;
+
+/// `ftCommonDamageGetDamageLevel` @ `ftcommondamage.c:314`. `3` is the
+/// "tumble" tier: the hit always launches the defender airborne regardless of
+/// where it landed.
+pub fn damage_level(hitstun: f32) -> u8 {
+    if hitstun < DAMAGE_LEVEL_HITSTUN_LOW {
+        0
+    } else if hitstun < DAMAGE_LEVEL_HITSTUN_MID {
+        1
+    } else if hitstun < DAMAGE_LEVEL_HITSTUN_HIGH {
+        2
+    } else {
+        3
+    }
+}
+
+/// `FTCOMMON_DAMAGE_FIGHTER_FLYTOP_ANGLE_{LOW,HIGH}` — `ft/ftcommon.h`.
+const FLYTOP_ANGLE_LOW: f32 = 1.221_730_6; // 70 degrees
+const FLYTOP_ANGLE_HIGH: f32 = 1.919_862_2; // 110 degrees
+
+/// `ftCommonDamageInitDamageVars`'s status-table lookup
+/// (`ftcommondamage.c:473`), restricted to the `damage_index == N` ("hit the
+/// middle of the target") column — no hit-location-relative Hi/Lw index
+/// exists yet, so every hit reads as a middle hit — and dropping the
+/// ground-hit-still-launches-airborne branch (see [`Status::is_grounded`]'s
+/// docs). `DamageFlyRoll`'s random branch is not ported: it needs a shared
+/// RNG source this module does not have, so a tumble always reads as
+/// `DamageFlyN`/`DamageFlyTop`.
+pub fn damage_status(level: u8, defender_was_airborne: bool, angle: f32) -> Status {
+    if level == 3 {
+        return if angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
+            Status::DamageFlyTop
+        } else {
+            Status::DamageFlyN
+        };
+    }
+    let table = if defender_was_airborne {
+        [Status::DamageAir1, Status::DamageAir2, Status::DamageAir3]
+    } else {
+        [Status::DamageN1, Status::DamageN2, Status::DamageN3]
+    };
+    table[level as usize]
+}
+
 /// The outcome of a hit landing, ready to apply to the defending
 /// [`crate::fighter::Fighter`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -186,6 +243,8 @@ pub struct HitResult {
     pub damage: i32,
     pub knockback_vel: Vec3,
     pub hitstun: u16,
+    /// The Damage-family status the defender enters — see [`damage_status`].
+    pub status: Status,
 }
 
 /// `ftCommonDamageInitDamageVars`'s knockback-vector construction
@@ -206,11 +265,13 @@ pub fn resolve_hit(
     let (sin, cos) = sin_cos(angle);
     let vel_x = cos * knockback;
     let vel_y = sin * knockback;
-    let hitstun = (hitstun_frames(knockback) as u16).max(1);
+    let hitstun_f = hitstun_frames(knockback);
+    let level = damage_level(hitstun_f);
     HitResult {
         damage: hitbox.damage,
         knockback_vel: Vec3::new(-vel_x * lr, vel_y, 0.0),
-        hitstun,
+        hitstun: (hitstun_f as u16).max(1),
+        status: damage_status(level, defender_airborne, angle),
     }
 }
 
@@ -236,7 +297,11 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 ///
 /// Only `Attack11`'s hitbox is ported (module docs), so anything else the
 /// attacker is doing is a no-op call.
-pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_by_current_attack: &mut bool) {
+pub fn apply_hit_from(
+    attacker: &Fighter,
+    defender: &mut Fighter,
+    hit_by_current_attack: &mut bool,
+) {
     if attacker.status.status != Status::Attack11 {
         *hit_by_current_attack = false;
         return;
@@ -249,7 +314,12 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_by_current
     }
     let hitbox = MARIO_JAB1_HITBOX;
     let hitbox_pos = attacker.pos + hitbox.offset;
-    if !spheres_overlap(hitbox_pos, hitbox.radius, defender.pos, MARIO_HURTBOX_RADIUS) {
+    if !spheres_overlap(
+        hitbox_pos,
+        hitbox.radius,
+        defender.pos,
+        MARIO_HURTBOX_RADIUS,
+    ) {
         return;
     }
     let result = resolve_hit(
@@ -261,6 +331,15 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_by_current
         !defender.is_grounded(),
     );
     defender.damage = defender.damage.saturating_add(result.damage as u16);
+    // `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the
+    // fighter's normal ground/air velocity outright before writing the
+    // knockback vector — a hit fully overrides existing movement rather than
+    // adding to it. `status::set_status` runs first because it is what moves
+    // `vel_ground` into `vel_air` on a ground-to-air transition, and that
+    // transferred value must not survive the zeroing below.
+    status::set_status(defender, result.status, 0.0, StatusTiming::unknown());
+    defender.physics.vel_ground = Vec3::ZERO;
+    defender.physics.vel_air = Vec3::ZERO;
     defender.physics.vel_knockback = result.knockback_vel;
     defender.hitstun = result.hitstun;
     *hit_by_current_attack = true;
@@ -335,6 +414,8 @@ mod tests {
         assert!(result.knockback_vel.x > 0.0);
         assert_eq!(result.knockback_vel.y, 0.0);
         assert_eq!(result.hitstun, 9); // floor(17.0 / 1.875) == 9
+                                       // hitstun 9 < DAMAGE_LEVEL_HITSTUN_LOW (12): level 0, grounded -> N1.
+        assert_eq!(result.status, Status::DamageN1);
     }
 
     #[test]
@@ -351,5 +432,74 @@ mod tests {
         let b = Vec3::new(10.0, 0.0, 0.0);
         assert!(spheres_overlap(a, 5.0, b, 5.0));
         assert!(!spheres_overlap(a, 4.0, b, 5.0));
+    }
+
+    #[test]
+    fn damage_level_thresholds_match_ftcommon_h() {
+        assert_eq!(damage_level(11.999), 0);
+        assert_eq!(damage_level(12.0), 1);
+        assert_eq!(damage_level(23.999), 1);
+        assert_eq!(damage_level(24.0), 2);
+        assert_eq!(damage_level(31.999), 2);
+        assert_eq!(damage_level(32.0), 3);
+    }
+
+    #[test]
+    fn damage_status_picks_the_grounded_or_airborne_table_by_prior_situation() {
+        assert_eq!(damage_status(0, false, 0.0), Status::DamageN1);
+        assert_eq!(damage_status(1, false, 0.0), Status::DamageN2);
+        assert_eq!(damage_status(2, false, 0.0), Status::DamageN3);
+        assert_eq!(damage_status(0, true, 0.0), Status::DamageAir1);
+        assert_eq!(damage_status(2, true, 0.0), Status::DamageAir3);
+    }
+
+    #[test]
+    fn damage_status_tumble_is_flytop_only_within_the_near_vertical_window() {
+        // Level 3 always tumbles airborne, regardless of prior situation.
+        assert_eq!(damage_status(3, false, 0.0), Status::DamageFlyN);
+        assert_eq!(
+            damage_status(3, true, 90.0f32.to_radians()),
+            Status::DamageFlyTop
+        );
+        assert_eq!(
+            damage_status(3, true, 69.0f32.to_radians()),
+            Status::DamageFlyN
+        );
+        assert_eq!(
+            damage_status(3, true, 111.0f32.to_radians()),
+            Status::DamageFlyN
+        );
+    }
+
+    /// End-to-end through `apply_hit_from`: a grounded jab at 0% enters
+    /// `DamageN1`, not just a bare knockback push (module docs' formerly-open
+    /// "no Damage status" gap).
+    #[test]
+    fn a_landed_jab_puts_the_defender_into_a_damage_status() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::new(0.0, 0.0, 0.0);
+        defender.pos = Vec3::new(10.0, 0.0, 0.0);
+        defender.situation = crate::fighter::Situation::Ground;
+        status::set_status(
+            &mut attacker,
+            Status::Attack11,
+            3.0,
+            StatusTiming::unknown(),
+        );
+
+        let mut hit_by_current_attack = false;
+        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+
+        assert_eq!(defender.status.status, Status::DamageN1);
+        assert!(hit_by_current_attack);
+        assert!(defender.hitstun > 0);
+
+        // Hitstun running out returns the defender to Wait.
+        for _ in 0..defender.hitstun {
+            defender.tick_timers();
+        }
+        crate::status::update(&mut defender);
+        assert_eq!(defender.status.status, Status::Wait);
     }
 }
