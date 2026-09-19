@@ -186,6 +186,10 @@ pub struct Fighter {
     pub hitlag: u16,
     /// Frames of hitstun remaining.
     pub hitstun: u16,
+    /// Frames of hit-invincibility remaining — `ftParamSetTimedHitStatusInvincible`,
+    /// set after a rebirth. A hit landing while this is nonzero is a no-op
+    /// (`crate::attack`'s `apply_hit_from`/`apply_shield_hit` both check it).
+    pub invincible_frames: u16,
     pub input: ControllerState,
     pub prev_input: ControllerState,
     /// Collision offsets — `MPObjectColl`.
@@ -222,6 +226,7 @@ impl Fighter {
             stocks,
             hitlag: 0,
             hitstun: 0,
+            invincible_frames: 0,
             input: ControllerState::default(),
             prev_input: ControllerState::default(),
             coll: BodyColl::default(),
@@ -265,6 +270,9 @@ impl Fighter {
             if self.hitstun == 0 {
                 self.physics.vel_knockback = Vec3::ZERO;
             }
+        }
+        if self.invincible_frames > 0 {
+            self.invincible_frames -= 1;
         }
         false
     }

@@ -6,7 +6,7 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Just-finished batch below; next batch is
-combat systems (grabs/throws).
+ledges (`Cliff*`) — grabs/throws was queued next but is deferred (see below).
 
 ## What was completed
 
@@ -16,38 +16,53 @@ combat systems (grabs/throws).
   smoke test (`docs/evidence/re/RE-298.md`).
 - **Fighter-common status table + Damage/hitstun family**: `crate::status::Status`
   now carries the complete `FTCommonStatus` ordinal table (0..=219,
-  `ft/ftcommon/ftcommonstatus.h`) instead of just the 21 movement/jab
-  variants, so later batches attach behaviour without renumbering. A landed
-  hit now moves the defender into a real Damage-family status
-  (`DamageHi/N/Lw1-3`, `DamageAir1-3`, `DamageFlyN`/`FlyTop`) chosen by
-  `ftCommonDamageGetDamageLevel`'s hitstun tiers and the defender's ground/air
-  situation, instead of only pushing numeric fields; hitstun running out
-  returns to `Wait` or `DamageFall`.
-- **Shield/guard** (this batch): `crate::status::GuardState` plus the
-  `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff` state machine
-  (`ft/ftcommon/ftcommonguard{1,2}.c`) — shield health decay while held
-  (`FTCOMMON_GUARD_DECAY_INT` = 16-frame ticks), release-lag-gated recovery
-  into `GuardOff`, and shield break into `ShieldBreakFly` (health resets to
-  30). Entry is wired into both `ground_interrupt` and `walk_interrupt` at
-  the same point the decomp macros put it (right after `Attack1`, ahead of
-  `KneeBend`/`Dash`/etc). A hit landing on a shielding fighter is now
-  redirected (`crate::attack::is_shielding`/`apply_shield_hit`) into
-  `GuardSetOff`'s pushback instead of the normal Damage path — blocking
-  takes no damage or hitstun, only shield-health loss, matching
-  `ftMainUpdateShieldStatFighter`'s single-hit case. Documented
-  simplifications: no extracted animation lengths for `GuardOn`/`GuardOff`
-  (they resolve in ~1 tick / on a release-lag counter instead of a real
-  clip), no shield-bubble visual scaling (rendering, out of scope), no
-  `shield_damage_total` multi-hit-per-frame accumulation (this codebase
-  still resolves one hitbox at a time), `ShieldBreakFly`'s
-  fly→fall→down/stand→`FuraFura` chain is ordinal-only with no behaviour
-  yet, and dash-into-shield/Yoshi's hurtbox swap are not ported. Verified:
-  144 `ssb-game` tests (5 new), full workspace (`cargo test --workspace`,
-  642 tests) green, `cargo psp --release` builds clean for `psp-game`, and
-  a PPSSPP headless Training boot (built with the proper
-  `regression_capture,headless_capture` features — a plain release build
-  never reaches the deterministic screenshot hook and reads as a hang, not
-  a regression) shows no panic/crash with a real rendered frame.
+  `ft/ftcommon/ftcommonstatus.h`). A landed hit moves the defender into a real
+  Damage-family status (`DamageHi/N/Lw1-3`, `DamageAir1-3`, `DamageFlyN`/`FlyTop`)
+  chosen by `ftCommonDamageGetDamageLevel`'s hitstun tiers and the defender's
+  ground/air situation; hitstun running out returns to `Wait` or `DamageFall`.
+- **Shield/guard**: `crate::status::GuardState` plus the
+  `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff` state machine — shield health
+  decay while held, release-lag-gated recovery, shield break into
+  `ShieldBreakFly`. A hit landing on a shielding fighter redirects into
+  `GuardSetOff`'s pushback instead of the Damage path (no damage/hitstun,
+  only shield-health loss).
+- **KO/death/respawn** (this batch): blast-zone crossing
+  (`crate::status::check_dead`, `ftCommonDeadCheckInterruptCommon`) enters
+  `DeadDown`/`DeadLeftRight`/`DeadUpStar` in the original's bottom→right→
+  left→top priority and decrements a stock immediately, matching
+  `ftCommonDeadUpdateScore`'s timing. `BlastZone` is a plain Layer-A struct
+  the caller fills from `ssb_rom::pack::StageDesc::bounds` — Layer A still
+  doesn't depend on the pack format. After the real
+  `FTCOMMON_DEAD_WAIT`/`DEADUP_WAIT`-derived wait, a new caller-invoked
+  `try_rebirth` (it needs the stage's respawn point, which the plain
+  per-frame `update` has no way to receive — same reason `apply_hit_from` is
+  caller-invoked rather than automatic) enters `Sleep` if stocks are
+  exhausted, or `RebirthDown`→`RebirthStand`→`RebirthWait` otherwise. The
+  real total respawn duration (390 frames) is preserved even though the
+  halo-drop flight animation itself is not rendered — ends in `Fall` with a
+  genuine 120-frame invincibility window. Added `Fighter::invincible_frames`,
+  now respected by both `apply_hit_from` and `apply_shield_hit` (an
+  invincible fighter's hitbox test is skipped outright, matching
+  `nGMHitStatusInvincible`). Damage resets to 0 on respawn
+  (`dFTManagerDefaultFighterDesc`'s reset). Documented gaps: no 1-in-6
+  `DeadUpFall` branch (needs an RNG source — same class of gap as
+  `DamageFlyRoll`), no halo visuals/camera-mode switches/1P-team-respawn
+  branches (rendering/scene-manager scope).
+- Fixed a real regression this batch's status-table growth caused:
+  `psp-asset-viewer/src/play.rs`'s `status_name` was an exhaustive match over
+  `Status` and failed to build (E0004, 199 variants uncovered) once `Status`
+  grew past its original 21 variants — added the new wired statuses' labels
+  plus a wildcard fallback for the rest. Caught by building **both** PSP
+  EBOOTs at the batch boundary, not just `psp-game`'s — `cargo test
+  --workspace` cannot see this because `psp-asset-viewer` is a
+  `mipsel-sony-psp`-only target crate.
+- Verified for all three batches above together: 152 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 650 tests) green, `cargo psp --release`
+  builds clean for both `psp-game` and `psp-asset-viewer`, and a PPSSPP
+  headless Training boot (built with `regression_capture,headless_capture` —
+  a plain release build never reaches the deterministic screenshot hook and
+  reads as a hang, not a regression) shows no panic/crash with a real
+  rendered frame.
 - Earlier cleanup batch: `Dummy::apply_hit_from` hit-resolution logic moved
   from `psp-game` into `ssb_game::attack::apply_hit_from`, matching the
   crate-ownership rule in `AGENTS.md`.
@@ -57,12 +72,21 @@ combat systems (grabs/throws).
 
 ## Immediate next batch
 
-Combat systems, continuing in decomp dependency order: grabs/throws
-(`Catch`/`CatchPull`/`CatchWait`/`ThrowF`/`ThrowB`, `ft/ftcommon/ftcommoncatch*.c`,
-`ftcommonthrow*.c`) — standing grab, break-free, forward/back throw. After
-that: ledges (`Cliff*`), then KO/death/respawn (`Dead*`/`Rebirth*`). Each is
-a self-contained decomp subsystem per the user's batch-mode directive — do
-not wait for a full `P1` audit before starting them.
+Ledges (`Cliff*` — `CliffCatch`/`CliffWait`/`Quick`/`Slow`/`Climb*`/`Attack*`/
+`Escape*`, already ordinal-only in `Status`): edge-grab detection, ledge
+hang, climb/attack/roll-up options, ledge-hog.
+
+Grabs/throws (`Catch`/`CatchPull`/`CatchWait`/`ThrowF`/`ThrowB`) was queued
+here previously but is deferred: unlike Damage/Guard/Dead-Rebirth, a real
+throw's actual damage/knockback is baked into each character's own motion
+script (`ftCommonThrowSetStatus` reads `attr->thrown_status[victim_kind]`,
+the same place `Attack11`'s jab numbers came from for Mario), and the
+grabbed-fighter hold position is joint-attachment matrix math this codebase
+has no gameplay-facing equivalent for. Porting the grab *mechanism* without
+real throw numbers would mean inventing damage/knockback data, which
+`AGENTS.md` and this codebase's existing precedent (Attack11's documented
+gaps) both rule out. Revisit grabs when doing per-fighter work (`P2`'s bulk
+port), where a fighter's throw data is extracted alongside its other moves.
 
 ## Real blockers
 
