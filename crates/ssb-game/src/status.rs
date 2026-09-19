@@ -1105,6 +1105,36 @@ fn end_rebirth(f: &mut Fighter) {
 }
 
 // ---------------------------------------------------------------------------
+// Jab combo
+// ---------------------------------------------------------------------------
+
+/// `FTCOMMON_ATTACK1_FOLLOWUP_FRAMES_DEFAULT` — `ft/ftcommon.h`. Every
+/// fighter this codebase covers uses the same default.
+pub const ATTACK1_FOLLOWUP_FRAMES_DEFAULT: f32 = 24.0;
+
+/// `FTStruct::attack1_followup_frames`/`status_vars.common.attack1.is_goto_followup`.
+///
+/// The original tests these across two separate callbacks per frame
+/// (`ftCommonAttack11ProcUpdate` then `ftCommonAttack11ProcInterrupt` →
+/// `ftCommonAttack12CheckGoto`): a tap while the window is open either
+/// chains immediately (if the current hit's animation has already ended —
+/// the motion script's own `SetFlag1(1)`) or sets `is_goto_followup` so the
+/// very next frame that ends the animation chains instead of going to
+/// `Wait`. Since `Jab1`/`Jab2`'s `SetFlag1(1)` always lands exactly at the
+/// script's own total length (`crate::attack::MARIO_JAB2`'s doc comment),
+/// `StatusState::animation_ended` already *is* that flag — no separate one
+/// is needed, and `update`'s `Attack11` arm collapses both original
+/// callbacks into a single per-frame check without changing the outcome in
+/// any case that isn't a same-frame status-transition race neither engine's
+/// callback order is possible to fully pin down without the original binary
+/// running.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Attack1State {
+    pub followup_frames: f32,
+    pub is_goto_followup: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Ledges
 // ---------------------------------------------------------------------------
 
@@ -1602,9 +1632,11 @@ pub fn set_pass(f: &mut Fighter) {
 }
 
 /// `ftCommonAttack11SetStatus` @ `ftcommonattack1.c:127`, reduced to the
-/// no-item, no-combo-followup case: `F1`'s slice ends the jab on its own
-/// animation rather than chaining into `Attack12`/`Attack13` on a repeated
-/// tap (`crate::attack`'s module docs).
+/// no-item case. Chains into `Attack12` on a well-timed repeated tap (see
+/// [`Attack1State`] and `update`'s `Attack11` arm); `Attack12`'s own
+/// further chain into `Attack13` is still not ported, since `Attack13` is a
+/// per-character status beyond the common 0..=219 table this codebase does
+/// not have an extension point for yet.
 pub fn set_attack11(f: &mut Fighter) {
     set_status(
         f,
@@ -1612,6 +1644,23 @@ pub fn set_attack11(f: &mut Fighter) {
         0.0,
         StatusTiming::frames(crate::attack::MARIO_ATTACK11_LENGTH_FRAMES),
     );
+    f.attack1 = Attack1State {
+        followup_frames: ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
+        is_goto_followup: false,
+    };
+}
+
+/// `ftCommonAttack12SetStatus` @ `ftcommonattack1.c:152`, reduced to the
+/// no-item case (`attack1_followup_frames` is the same default for every
+/// fighter this batch covers, so the original's per-`fkind` `switch` that
+/// all resolves to the same constant is not reproduced as one).
+pub fn set_attack12(f: &mut Fighter) {
+    let len = attack_length(f, Status::Attack12);
+    set_status(f, Status::Attack12, 0.0, StatusTiming::frames(len));
+    f.attack1 = Attack1State {
+        followup_frames: ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
+        is_goto_followup: false,
+    };
 }
 
 /// Frame length for a status from `crate::attack::move_data`, or `0.0` if
@@ -2109,7 +2158,36 @@ pub fn update(f: &mut Fighter) {
         // its `else` branch: no combo followup is ported (`crate::attack`'s
         // module docs), so the jab always ends in `ftAnimEndSetWait` rather
         // than checking for a buffered second tap.
+        // `ftCommonAttack11ProcUpdate` @ `ftcommonattack1.c:31` and
+        // `ftCommonAttack11ProcInterrupt` → `ftCommonAttack12CheckGoto` @
+        // `ftcommonattack1.c:75,349`, collapsed into one check — see
+        // `Attack1State`'s doc comment for why that is safe.
         Status::Attack11 => {
+            if f.attack1.followup_frames > 0.0 {
+                f.attack1.followup_frames -= f.status.timing.anim_speed;
+                if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+                    f.attack1.is_goto_followup = true;
+                }
+            }
+            if f.status.animation_ended() {
+                if f.attack1.is_goto_followup {
+                    set_attack12(f);
+                } else {
+                    set_wait(f);
+                }
+            }
+        }
+        // `ftCommonAttack12ProcUpdate` @ `ftcommonattack1.c:47`, minus the
+        // `Attack100`/`Attack13` follow-up: `Attack13` needs a per-character
+        // status this codebase has no extension point for yet
+        // (`set_attack11`'s doc comment), and `Attack100` doesn't apply to
+        // Mario at all (`ftCommonAttack100CheckFighterKind` — he isn't in
+        // it). `followup_frames` still counts down for realism/testability,
+        // it just never has anywhere to chain to.
+        Status::Attack12 => {
+            if f.attack1.followup_frames > 0.0 {
+                f.attack1.followup_frames -= f.status.timing.anim_speed;
+            }
             if f.status.animation_ended() {
                 set_wait(f);
             }
@@ -3161,6 +3239,55 @@ mod tests {
             assert_eq!(f.status.status, Status::Attack11);
         }
         update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn a_repeated_tap_mid_jab_chains_into_attack12() {
+        let mut f = mario();
+        set_attack11(&mut f);
+        update(&mut f); // frame 1, well before Jab1's own animation end
+        tap_a(&mut f);
+        update(&mut f); // buffers is_goto_followup; Jab1 hasn't ended yet
+        assert_eq!(f.status.status, Status::Attack11);
+        assert!(f.attack1.is_goto_followup);
+
+        for _ in 0..(crate::attack::MARIO_ATTACK11_LENGTH_FRAMES as i32) {
+            if f.status.status != Status::Attack11 {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Attack12);
+    }
+
+    #[test]
+    fn no_tap_during_jab1_still_ends_in_wait() {
+        let mut f = mario();
+        set_attack11(&mut f);
+        for _ in 0..30 {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn attack12_does_not_chain_further_and_ends_in_wait() {
+        let mut f = mario();
+        set_attack12(&mut f);
+        // Jab2's own follow-up window is real (`followup_frames` still
+        // counts down — `update`'s `Attack12` arm docs) even though there
+        // is nowhere ported to chain to yet.
+        tap_a(&mut f);
+        for _ in 0..30 {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
         assert_eq!(f.status.status, Status::Wait);
     }
 

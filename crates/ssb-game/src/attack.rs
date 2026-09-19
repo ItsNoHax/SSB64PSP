@@ -352,6 +352,47 @@ pub static MARIO_JAB1: MoveData = MoveData {
     landing_lag_percent: None,
 };
 
+/// Mario's `Attack12` (jab2) — `dMarioMainMotion_Jab2`. A literal (non-Sakurai)
+/// `70°` launch angle, like `Jab1`'s follow-up hit usually is across the
+/// cast. `WaitAsync(3)` then two `MakeAttackColl`s, `Wait(3)` then
+/// `ClearAttackCollAll`, `WaitAsync(8)` then `SetFlag1(1)` — total
+/// `3 + 3 + 8 = 14`. The `SetFlag1(1)` at the very end is what
+/// `crate::status`'s jab-combo window reads as `animation_ended()`: for
+/// both `Jab1` and `Jab2`, the flag flips at exactly the script's own
+/// total length, so no separate flag state is needed.
+pub static MARIO_JAB2: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 2,
+                offset: Vec3::new(16.0, 0.0, 0.0),
+                radius: 180.0 / 2.0,
+                angle: 70,
+                kb_scale: 50,
+                kb_weight: 0,
+                kb_base: 8,
+            },
+            3.0,
+            6.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 2,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 180.0 / 2.0,
+                angle: 70,
+                kb_scale: 50,
+                kb_weight: 0,
+                kb_base: 8,
+            },
+            3.0,
+            6.0,
+        ),
+    ],
+    length_frames: 14.0,
+    landing_lag_percent: None,
+};
+
 /// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
 /// simultaneous hitboxes (`jid` 25/20/5 — foot, shin, and a wider late
 /// sweetspot), each with a weaker second phase after frame 11.
@@ -776,6 +817,7 @@ pub fn move_data(kind: crate::fighter::FighterKind, status: Status) -> Option<&'
     use crate::fighter::FighterKind;
     match (kind, status) {
         (FighterKind::Mario, Status::Attack11) => Some(&MARIO_JAB1),
+        (FighterKind::Mario, Status::Attack12) => Some(&MARIO_JAB2),
         (FighterKind::Mario, Status::AttackDash) => Some(&MARIO_DASH_ATTACK),
         (FighterKind::Mario, Status::AttackS3Hi) => Some(&MARIO_FTILT_HI),
         (FighterKind::Mario, Status::AttackS3) => Some(&MARIO_FTILT),
@@ -1294,7 +1336,7 @@ mod tests {
     #[test]
     fn move_data_is_none_for_an_unported_fighter_or_status() {
         assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11).is_none());
-        assert!(move_data(crate::fighter::FighterKind::Mario, Status::Attack12).is_none());
+        assert!(move_data(crate::fighter::FighterKind::Mario, Status::HammerWait).is_none());
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —

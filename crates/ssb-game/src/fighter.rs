@@ -215,6 +215,8 @@ pub struct Fighter {
     /// Frames before this fighter can grab a ledge again —
     /// `FTStruct::cliffcatch_wait`, set after letting go or falling from one.
     pub cliffcatch_wait: u16,
+    /// Jab-combo follow-up window — `crate::status::Attack1State`.
+    pub attack1: crate::status::Attack1State,
 }
 
 impl Fighter {
@@ -243,6 +245,7 @@ impl Fighter {
             guard: crate::status::GuardState::default(),
             cliff: crate::status::CliffState::default(),
             cliffcatch_wait: 0,
+            attack1: crate::status::Attack1State::default(),
         }
     }
 
