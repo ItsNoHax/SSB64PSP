@@ -118,6 +118,10 @@ pub const ATTACKLW3_STICK_RANGE_MIN: i32 = -20;
 /// `atan2` in `ssb_engine::math`).
 const ATTACKS3_3ANGLE_TAN_17: f32 = 0.305_730_7;
 
+/// `FTCOMMON_ATTACKAIR_DIRECTION_STICK_RANGE_MIN` — `ft/ftcommon.h`: below
+/// this on both axes, an aerial attack reads as neutral.
+pub const ATTACKAIR_DIRECTION_STICK_RANGE_MIN: i32 = 20;
+
 /// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
 /// the complete common table (0..=219), transcribed from
 /// `ft/ftcommon/ftcommonstatus.h`'s own `// Status N (0x..): Name` comments.
@@ -490,6 +494,11 @@ impl Status {
                 | Status::CliffAttackSlow1
                 | Status::CliffEscapeQuick1
                 | Status::CliffEscapeSlow1
+                | Status::AttackAirN
+                | Status::AttackAirF
+                | Status::AttackAirB
+                | Status::AttackAirHi
+                | Status::AttackAirLw
         )
     }
 
@@ -1511,6 +1520,55 @@ pub fn set_landing(f: &mut Fighter) {
     set_status(f, status, 0.0, StatusTiming::animation(len, speed));
 }
 
+/// `ftCommonLandingAirSetStatus`, for a fighter with a dedicated
+/// `LandingAirX` motion file for the aerial they landed out of. No
+/// animation length is extracted for it (module docs), so — like
+/// [`set_guard_on`] — it resolves into `Wait` on its very next update tick
+/// rather than holding for its real multi-frame recovery.
+fn set_landing_air(f: &mut Fighter, status: Status) {
+    set_status(f, status, 0.0, StatusTiming::unknown());
+}
+
+/// `ftCommonLandingAirNullSetStatus`, for a fighter with no dedicated
+/// `LandingAirX` motion file for the aerial they landed out of —
+/// `F_PCT_TO_DEC(flag1)` scales the fighter's own normal landing-lag length
+/// (`f.anim.landing`), which is real, extracted data, unlike
+/// [`set_landing_air`]'s case.
+fn set_landing_air_null(f: &mut Fighter, percent: u8) {
+    let len = f.anim.landing * (percent as f32 / 100.0);
+    set_status(f, Status::LandingAirNull, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackAirProcMap` @ `ftcommonattackair.c:50`, reduced to its
+/// "still mid-move" branch: the original also has a `vel_air.y >
+/// FTCOMMON_ATTACKAIR_SKIPLANDING_VEL_Y_MAX` branch that skips landing lag
+/// entirely (falling too slowly to have "committed" to the swing) and a
+/// third branch for landing after the move's own landing-lag window has
+/// already closed (plain [`set_landing`]). Both need the motion script's
+/// `SetFlag1`/`SetFlag1(0)` timing, which — for every Mario aerial ported so
+/// far — brackets almost the entire move (on a few frames in, off right at
+/// the very end), so landing while still in the attack status is the
+/// overwhelmingly common real case this collapses to.
+///
+/// Falls back to the plain [`set_landing`] for any status/fighter this
+/// isn't ported for yet, or that has no aerial `MoveData` (its
+/// `landing_lag_percent` is only meaningful there).
+pub fn set_landing_or_landing_air(f: &mut Fighter) {
+    match f.status.status {
+        Status::AttackAirF => set_landing_air(f, Status::LandingAirF),
+        Status::AttackAirB => set_landing_air(f, Status::LandingAirB),
+        Status::AttackAirHi => set_landing_air(f, Status::LandingAirHi),
+        Status::AttackAirLw => set_landing_air(f, Status::LandingAirLw),
+        Status::AttackAirN => {
+            let percent = crate::attack::move_data(f.kind, Status::AttackAirN)
+                .and_then(|m| m.landing_lag_percent)
+                .unwrap_or(100);
+            set_landing_air_null(f, percent);
+        }
+        _ => set_landing(f),
+    }
+}
+
 /// `ftCommonPassSetStatusParam` @ 0x80141DA0.
 ///
 /// Dropping through: the fighter goes airborne with its vertical velocity
@@ -1585,6 +1643,17 @@ pub fn set_utilt(f: &mut Fighter) {
 pub fn set_dtilt(f: &mut Fighter) {
     let len = attack_length(f, Status::AttackLw3);
     set_status(f, Status::AttackLw3, 0.0, StatusTiming::frames(len));
+}
+
+/// The status-setting half of `ftCommonAttackAirCheckInterruptCommon` @
+/// `ftcommonattackair.c:71` (the direction dispatch lives in
+/// [`check_attack_air`]) — `ftMainSetStatus(..., FTSTATUS_PRESERVE_FASTFALL)`
+/// needs no explicit handling here: an already-airborne fighter entering
+/// another airborne status is a no-op for [`set_status`]'s own ground/air
+/// transfer, which is the only thing that ever touches `is_fastfall`.
+pub fn set_air_attack(f: &mut Fighter, status: Status) {
+    let len = attack_length(f, status);
+    set_status(f, status, 0.0, StatusTiming::frames(len));
 }
 
 /// `ftCommonDamageFallSetStatusFromDamage` @ `ftcommondamagefall.c:53`,
@@ -1737,6 +1806,37 @@ pub fn check_dtilt(f: &mut Fighter) -> bool {
         return false;
     }
     set_dtilt(f);
+    true
+}
+
+/// `ftCommonAttackAirCheckInterruptCommon` @ `ftcommonattackair.c:71`, minus
+/// the item/hammer branches. Neutral (both axes under the range minimum)
+/// goes to `AttackAirN`; otherwise the same `tan(50°)` angle split as the
+/// ground tilts picks up/down, and forward-relative-to-facing picks
+/// forward/back.
+pub fn check_attack_air(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    let status = if x.abs() < ATTACKAIR_DIRECTION_STICK_RANGE_MIN as f32
+        && y.abs() < ATTACKAIR_DIRECTION_STICK_RANGE_MIN as f32
+    {
+        Status::AttackAirN
+    } else if y > CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+        Status::AttackAirHi
+    } else if y < -CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+        Status::AttackAirLw
+    } else if x * f.facing.sign() >= 0.0 {
+        Status::AttackAirF
+    } else {
+        Status::AttackAirB
+    };
+    if crate::attack::move_data(f.kind, status).is_none() {
+        return false;
+    }
+    set_air_attack(f, status);
     true
 }
 
@@ -2079,8 +2179,41 @@ pub fn update(f: &mut Fighter) {
                 set_damage_fall(f);
             }
         }
+        // `ftAnimEndSetFall`: an aerial attack that runs out without landing
+        // first drops the fighter into a plain fall — landing mid-move is
+        // handled separately, in `Fighter::tick_air` via
+        // `set_landing_or_landing_air`.
+        Status::AttackAirN
+        | Status::AttackAirF
+        | Status::AttackAirB
+        | Status::AttackAirHi
+        | Status::AttackAirLw => {
+            if f.status.animation_ended() {
+                set_fall(f);
+            }
+        }
+        // `LandingAirF`/`Hi`/`B`/`Lw` have no extracted animation length
+        // (`set_landing_air`'s docs), so they collapse to `Wait` on the tick
+        // after they are entered.
+        Status::LandingAirF | Status::LandingAirB | Status::LandingAirHi | Status::LandingAirLw => {
+            set_wait(f);
+        }
+        // `LandingAirNull`'s length is real (`set_landing_air_null`'s docs).
+        Status::LandingAirNull => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        // `ftCommonFallProcInterrupt` @ `ftcommonfall.c:10`: attack outranks
+        // a second jump.
+        // `check_attack_air` needs `&mut Fighter`, which a match guard on
+        // `f.status.status` can't borrow alongside — clippy's
+        // `collapsible_match` suggestion for this doesn't compile.
+        #[allow(clippy::collapsible_match)]
         s if !s.is_grounded() => {
-            check_jump_aerial(f);
+            if !check_attack_air(f) {
+                check_jump_aerial(f);
+            }
         }
         _ => {}
     }
@@ -2251,6 +2384,13 @@ mod tests {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.situation = Situation::Ground;
         f.status.status = Status::Wait;
+        f
+    }
+
+    fn airborne_mario() -> Fighter {
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.situation = Situation::Air;
+        f.status.status = Status::Fall;
         f
     }
 
@@ -3000,6 +3140,102 @@ mod tests {
         tap_a(&mut f);
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackDash);
+    }
+
+    #[test]
+    fn a_neutral_tap_in_the_air_does_a_neutral_aerial() {
+        let mut f = airborne_mario();
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirN);
+    }
+
+    #[test]
+    fn a_forward_tap_in_the_air_does_a_forward_aerial() {
+        let mut f = airborne_mario();
+        hold(&mut f, 80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirF);
+    }
+
+    #[test]
+    fn a_back_tap_in_the_air_does_a_back_aerial() {
+        let mut f = airborne_mario();
+        f.facing = Facing::Right;
+        hold(&mut f, -80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirB);
+    }
+
+    #[test]
+    fn an_up_tap_in_the_air_does_an_up_aerial() {
+        let mut f = airborne_mario();
+        hold(&mut f, 0, 80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirHi);
+    }
+
+    #[test]
+    fn a_down_tap_in_the_air_does_a_down_aerial() {
+        let mut f = airborne_mario();
+        hold(&mut f, 0, -80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirLw);
+    }
+
+    #[test]
+    fn attacking_outranks_a_second_jump_in_the_air() {
+        let mut f = airborne_mario();
+        f.stick.jump_tapped = true; // would otherwise double-jump
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackAirN);
+    }
+
+    #[test]
+    fn an_aerial_that_runs_out_without_landing_falls() {
+        let mut f = airborne_mario();
+        set_air_attack(&mut f, Status::AttackAirF);
+        let len = crate::attack::move_data(f.kind, Status::AttackAirF)
+            .unwrap()
+            .length_frames;
+        for _ in 0..(len as i32 - 1) {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::AttackAirF);
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Fall);
+    }
+
+    #[test]
+    fn landing_mid_aerial_with_a_dedicated_clip_takes_landing_air_then_wait() {
+        let mut f = airborne_mario();
+        set_air_attack(&mut f, Status::AttackAirF);
+        set_landing_or_landing_air(&mut f);
+        assert_eq!(f.status.status, Status::LandingAirF);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn landing_mid_neutral_aerial_scales_the_real_landing_lag_by_percent() {
+        let mut f = airborne_mario();
+        set_air_attack(&mut f, Status::AttackAirN);
+        set_landing_or_landing_air(&mut f);
+        assert_eq!(f.status.status, Status::LandingAirNull);
+        let expected = f.anim.landing * 0.5; // AttackAirN's landing_lag_percent
+        assert_eq!(f.status.timing.anim_length, Some(expected));
+        for _ in 0..10 {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
     }
 
     fn hold_z(f: &mut Fighter, held: bool) {

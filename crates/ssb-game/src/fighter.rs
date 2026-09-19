@@ -475,8 +475,10 @@ impl Fighter {
                 self.ignore_line = None;
                 // The landing status is chosen from the velocity *before*
                 // `land` clears it — a fastfall still at terminal velocity on
-                // contact is what earns the heavy landing.
-                crate::status::set_landing(self);
+                // contact is what earns the heavy landing. Landing mid-aerial
+                // takes its own landing-lag status instead of the plain one —
+                // `crate::status::set_landing_or_landing_air`.
+                crate::status::set_landing_or_landing_air(self);
                 self.land(moved.pos.y);
             }
             None => {
