@@ -43,8 +43,9 @@
 //! [`StatusTiming`].
 
 use ssb_engine::input::{newly_pressed, N64Buttons};
-use ssb_engine::math::Vec3;
+use ssb_engine::math::{Vec2, Vec3};
 
+use crate::collision::{self, Segment};
 use crate::fighter::{Facing, Fighter, Situation};
 use crate::physics::{self, PhysicsAttributes, PhysicsState};
 
@@ -468,6 +469,14 @@ impl Status {
                 | Status::DamageFall
                 | Status::ShieldBreakFly
                 | Status::ShieldBreakFall
+                | Status::CliffCatch
+                | Status::CliffWait
+                | Status::CliffClimbQuick1
+                | Status::CliffClimbSlow1
+                | Status::CliffAttackQuick1
+                | Status::CliffAttackSlow1
+                | Status::CliffEscapeQuick1
+                | Status::CliffEscapeSlow1
         )
     }
 
@@ -1056,6 +1065,212 @@ fn end_rebirth(f: &mut Fighter) {
 }
 
 // ---------------------------------------------------------------------------
+// Ledges
+// ---------------------------------------------------------------------------
+
+/// `FTCOMMON_CLIFF_*` — `ft/ftcommon.h`.
+pub const CLIFF_CATCH_WAIT: u16 = 30;
+pub const CLIFF_DAMAGE_HIGH: u16 = 100;
+pub const CLIFF_FALL_WAIT_DAMAGE_LOW: i32 = 1080;
+pub const CLIFF_FALL_WAIT_DAMAGE_HIGH: i32 = 480;
+pub const CLIFF_MOTION_STICK_RANGE_MIN: i32 = 20;
+/// The real `800.0F` corner-proximity tolerance from
+/// `mpProcessCheckTestLCliffCollision`/`RCliffCollision` @ `mpprocess.c:1031,1082`.
+const CLIFF_CATCH_CORNER_RANGE: f32 = 800.0;
+/// `tan(50°)`. `ftCommonCliffClimbOrFallCheckInterruptCommon`'s real test is
+/// `ftParamGetStickAngleRads(fp) > F_CST_DTOR32(50.0F)`, where the angle is
+/// `atan2(stick_y, |stick_x|)` — reframed here as the equivalent slope
+/// comparison (`stick_y > tan(50°) * |stick_x|`) so it needs no `atan2`
+/// (`ssb_engine::math` has none).
+const CLIFF_MOTION_ANGLE_TAN_50: f32 = 1.191_753_6;
+
+/// `FTStruct::status_vars.common.cliffwait`/`cliffmotion`, plus which floor
+/// line's edge is held (`coll_data.cliff_id`).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct CliffState {
+    pub line: u16,
+    /// Frames left before letting go automatically —
+    /// `ftCommonCliffWaitSetStatus`'s damage-dependent `fall_wait`.
+    pub fall_wait: i32,
+    /// A climb/drop input only counts once the stick has passed back through
+    /// neutral since the catch — `ftCommonCliffClimbOrFallCheckInterruptCommon`'s
+    /// own `is_allow_interrupt` latch.
+    pub is_allow_interrupt: bool,
+}
+
+/// `mpProcessCheckTestLCliffCollision`/`RCliffCollision` @
+/// `mpprocess.c:1031,1082`, wrapped by `mpCommonProcFighterCliff` @
+/// `mpcommon.c:584`, restricted to `cliffcatch_coll == (0, 0)` — the
+/// per-character hand-reach offset (`FTAttributes.cliffcatch_coll`) is not in
+/// the extracted attribute range yet, the same class of gap as
+/// `crate::attack`'s hitbox-offset simplifications — and dropping the
+/// material-4 exemption the original's left-side test has.
+///
+/// `from`/`to` are the fighter's position before/after the movement being
+/// tested; the caller supplies both because, like [`try_rebirth`]'s respawn
+/// point, this needs data external to a single `Fighter`. Returns the caught
+/// line and the exact corner point to hang from, or `None`. The caller still
+/// owns ledge-hog exclusivity (the original's loop over every other
+/// fighter checking `is_cliff_hold && same cliff_id && same lr`) — that
+/// needs match-wide fighter awareness no function taking one `Fighter` can
+/// have, so it is a filter the caller applies to this function's result
+/// before calling [`set_cliff_catch`], not part of this function.
+pub fn cliff_catch_candidate<I, F>(
+    facing: Facing,
+    cliffcatch_wait: u16,
+    from: Vec3,
+    to: Vec3,
+    floors: F,
+) -> Option<(u16, Vec2)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = (u16, Segment)>,
+{
+    if cliffcatch_wait != 0 {
+        return None;
+    }
+    let hit = collision::check_floor(floors(), Vec2::new(from.x, from.y), Vec2::new(to.x, to.y))?;
+    if hit.flags & collision::flags::CLIFF == 0 {
+        return None;
+    }
+    let seg = floors().into_iter().find(|(id, _)| *id == hit.line)?.1;
+    let (left, right) = if seg.x1 <= seg.x2 {
+        (
+            Vec2::new(seg.x1 as f32, seg.y1 as f32),
+            Vec2::new(seg.x2 as f32, seg.y2 as f32),
+        )
+    } else {
+        (
+            Vec2::new(seg.x2 as f32, seg.y2 as f32),
+            Vec2::new(seg.x1 as f32, seg.y1 as f32),
+        )
+    };
+    // `lr == +1` tests the left corner (`mpCollisionGetFloorEdgeL`), `lr ==
+    // -1` the right — see the module docs' offset simplification for why
+    // this collapses the original's two separate L/R sweeps into one.
+    let corner = if facing == Facing::Right { left } else { right };
+    if (hit.point.x - corner.x).abs() >= CLIFF_CATCH_CORNER_RANGE {
+        return None;
+    }
+    Some((hit.line, corner))
+}
+
+/// `ftCommonCliffCatchSetStatus` @ `ftcommoncliffcatchwait.c:39`, minus the
+/// capture-immunity mask and Samus-effect side cases. The fighter hangs
+/// exactly at `corner` — no per-character reach offset exists yet (module
+/// docs), so there is no arm's-length gap the way a real hang has one.
+pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
+    f.cliff.line = line;
+    f.pos = Vec3::new(corner.x, corner.y, f.pos.z);
+    f.situation = Situation::Air;
+    f.physics = crate::physics::PhysicsState::default();
+    set_status(f, Status::CliffCatch, 0.0, StatusTiming::unknown());
+}
+
+/// `ftCommonCliffWaitSetStatus` @ `ftcommoncliffcatchwait.c:98`.
+pub fn set_cliff_wait(f: &mut Fighter) {
+    set_status(f, Status::CliffWait, 0.0, StatusTiming::unknown());
+    f.cliff.is_allow_interrupt = false;
+    f.cliff.fall_wait = if f.damage < CLIFF_DAMAGE_HIGH {
+        CLIFF_FALL_WAIT_DAMAGE_LOW
+    } else {
+        CLIFF_FALL_WAIT_DAMAGE_HIGH
+    };
+}
+
+/// `ftCommonCliffQuickOrSlowSetStatus` @ `ftcommoncliffclimb.c:58`, jumping
+/// straight to the requested action's `Quick1`/`Slow1` status rather than
+/// passing through the intermediate `CliffQuick`/`CliffSlow` dispatch
+/// status — that status has no extracted animation length either, so it
+/// would resolve on the very next tick regardless (same collapse as
+/// [`set_guard_on`]). The real, damage-dependent Quick/Slow choice this
+/// makes is preserved exactly.
+fn set_cliff_action(f: &mut Fighter, quick1: Status, slow1: Status) {
+    let status = if f.damage < CLIFF_DAMAGE_HIGH {
+        quick1
+    } else {
+        slow1
+    };
+    set_status(f, status, 0.0, StatusTiming::unknown());
+}
+
+/// `ftCommonCliffClimbOrFallCheckInterruptCommon` @ `ftcommoncliffclimb.c:84`.
+fn check_cliff_climb_or_fall(f: &mut Fighter) -> bool {
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    if x.abs() < CLIFF_MOTION_STICK_RANGE_MIN as f32
+        && y.abs() < CLIFF_MOTION_STICK_RANGE_MIN as f32
+    {
+        f.cliff.is_allow_interrupt = true;
+        return false;
+    }
+    if !f.cliff.is_allow_interrupt {
+        return false;
+    }
+    let steep_up = y > CLIFF_MOTION_ANGLE_TAN_50 * x.abs();
+    let forward = x * f.facing.sign() >= 0.0;
+    let not_steep_down = y > -CLIFF_MOTION_ANGLE_TAN_50 * x.abs();
+    if steep_up || (not_steep_down && forward) {
+        set_cliff_action(f, Status::CliffClimbQuick1, Status::CliffClimbSlow1);
+    } else {
+        // Holding away and down lets go outright — `ftCommonFallSetStatus`,
+        // not `DamageFall`; that one is only the wait-timeout's exit.
+        f.cliffcatch_wait = CLIFF_CATCH_WAIT;
+        set_fall(f);
+    }
+    true
+}
+
+/// `ftCommonCliffWaitProcInterrupt` @ `ftcommoncliffcatchwait.c:89`, in the
+/// original's own priority order: attack, then escape, then climb-or-fall,
+/// then the auto-release timeout ([`ftCommonCliffWaitCheckFall`]).
+fn update_cliff_wait(f: &mut Fighter) {
+    let tapped = newly_pressed(f.prev_input.buttons, f.input.buttons);
+    if tapped.contains(N64Buttons::A | N64Buttons::B) {
+        set_cliff_action(f, Status::CliffAttackQuick1, Status::CliffAttackSlow1);
+    } else if tapped.contains(N64Buttons::Z) {
+        set_cliff_action(f, Status::CliffEscapeQuick1, Status::CliffEscapeSlow1);
+    } else if !check_cliff_climb_or_fall(f) {
+        f.cliff.fall_wait -= 1;
+        if f.cliff.fall_wait <= 0 {
+            f.cliffcatch_wait = CLIFF_CATCH_WAIT;
+            set_damage_fall(f);
+        }
+    }
+}
+
+/// `ftCommonCliffClimbQuick1ProcUpdate`/`...Slow1ProcUpdate`/the matching
+/// `Attack`/`Escape` pairs @ `ftcommoncliffclimb.c:117,123`, `ftcommoncliffattack.c:24,30`,
+/// `ftcommoncliffescape.c:24,30` — no extracted animation length for any of
+/// them, so each resolves into its own `...2` status on the next tick,
+/// collapsing what is a real multi-frame climb/attack/dodge animation into
+/// one tick (same class of gap as [`set_guard_on`]).
+fn cliff_phase1_to_2(status: Status) -> Status {
+    match status {
+        Status::CliffClimbQuick1 => Status::CliffClimbQuick2,
+        Status::CliffClimbSlow1 => Status::CliffClimbSlow2,
+        Status::CliffAttackQuick1 => Status::CliffAttackQuick2,
+        Status::CliffAttackSlow1 => Status::CliffAttackSlow2,
+        Status::CliffEscapeQuick1 => Status::CliffEscapeQuick2,
+        Status::CliffEscapeSlow1 => Status::CliffEscapeSlow2,
+        _ => unreachable!("only called with a cliff phase-1 status"),
+    }
+}
+
+/// `ftCommonCliffCommon2UpdateCollData` @ `ftcommoncliffclimb.c:231`, reduced
+/// to the position it always leaves the fighter at (the ledge corner plus
+/// five units back onto the stage) — the per-character
+/// `attr->cliff_status_ga` table that lets some recovery options end
+/// airborne is not extracted, so every option here ends grounded, matching
+/// the common case (climbing/attacking/rolling up all land on stage).
+fn end_cliff_recovery(f: &mut Fighter) {
+    f.pos.x += 5.0 * f.facing.sign();
+    f.situation = Situation::Ground;
+    f.physics = crate::physics::PhysicsState::default();
+    set_wait(f);
+}
+
+// ---------------------------------------------------------------------------
 // Status entry
 // ---------------------------------------------------------------------------
 
@@ -1634,6 +1849,26 @@ pub fn update(f: &mut Fighter) {
             } else if f.status.animation_ended() {
                 end_rebirth(f);
             }
+        }
+        // `ftCommonCliffCatchProcUpdate` @ `ftcommoncliffcatchwait.c:10`: see
+        // `set_cliff_catch`'s docs for the collapse.
+        Status::CliffCatch => set_cliff_wait(f),
+        Status::CliffWait => update_cliff_wait(f),
+        s @ (Status::CliffClimbQuick1
+        | Status::CliffClimbSlow1
+        | Status::CliffAttackQuick1
+        | Status::CliffAttackSlow1
+        | Status::CliffEscapeQuick1
+        | Status::CliffEscapeSlow1) => {
+            set_status(f, cliff_phase1_to_2(s), 0.0, StatusTiming::unknown());
+        }
+        Status::CliffClimbQuick2
+        | Status::CliffClimbSlow2
+        | Status::CliffAttackQuick2
+        | Status::CliffAttackSlow2
+        | Status::CliffEscapeQuick2
+        | Status::CliffEscapeSlow2 => {
+            end_cliff_recovery(f);
         }
         s if s.is_actionable_on_ground() => {
             if matches!(s, Status::LandingLight | Status::LandingHeavy)
@@ -2678,5 +2913,155 @@ mod tests {
         update(&mut f);
         assert_eq!(f.status.status, Status::Attack11);
         assert_eq!(f.invincible_frames, REBIRTH_INVINCIBLE_FRAMES);
+    }
+
+    /// A level, ledge-grabbable line from -2318 to 2318 — the same shape as
+    /// Dream Land's main platform (`crate::collision`'s own test fixture).
+    const LEDGE: Segment = Segment {
+        x1: -2318,
+        y1: 0,
+        x2: 2318,
+        y2: 0,
+        flags: collision::flags::CLIFF,
+    };
+
+    fn floors() -> [(u16, Segment); 1] {
+        [(3, LEDGE)]
+    }
+
+    #[test]
+    fn falling_near_the_right_edge_while_facing_left_is_caught() {
+        let from = Vec3::new(2300.0, 50.0, 0.0);
+        let to = Vec3::new(2300.0, -50.0, 0.0);
+        let caught = cliff_catch_candidate(Facing::Left, 0, from, to, floors);
+        assert_eq!(caught, Some((3, Vec2::new(2318.0, 0.0))));
+    }
+
+    #[test]
+    fn a_line_without_the_cliff_flag_cannot_be_caught() {
+        let plain = Segment { flags: 0, ..LEDGE };
+        let from = Vec3::new(2300.0, 50.0, 0.0);
+        let to = Vec3::new(2300.0, -50.0, 0.0);
+        let caught = cliff_catch_candidate(Facing::Left, 0, from, to, || [(3u16, plain)]);
+        assert_eq!(caught, None);
+    }
+
+    #[test]
+    fn still_on_cliffcatch_cooldown_cannot_be_caught() {
+        let from = Vec3::new(2300.0, 50.0, 0.0);
+        let to = Vec3::new(2300.0, -50.0, 0.0);
+        let caught = cliff_catch_candidate(Facing::Left, 1, from, to, floors);
+        assert_eq!(caught, None);
+    }
+
+    #[test]
+    fn too_far_from_the_corner_is_not_caught() {
+        // The right corner is at x=2318; 800 units short of it is x=1518,
+        // so 1500 is just outside the real corner-proximity tolerance.
+        let from = Vec3::new(1500.0, 50.0, 0.0);
+        let to = Vec3::new(1500.0, -50.0, 0.0);
+        let caught = cliff_catch_candidate(Facing::Left, 0, from, to, floors);
+        assert_eq!(caught, None);
+    }
+
+    #[test]
+    fn catching_a_ledge_hangs_exactly_at_its_corner() {
+        let mut f = mario();
+        f.situation = Situation::Air;
+        set_cliff_catch(&mut f, 3, Vec2::new(2318.0, 0.0));
+        assert_eq!(f.status.status, Status::CliffCatch);
+        assert_eq!(f.pos.x, 2318.0);
+        assert_eq!(f.pos.y, 0.0);
+        assert_eq!(f.situation, Situation::Air);
+
+        update(&mut f); // CliffCatch collapses straight to CliffWait
+        assert_eq!(f.status.status, Status::CliffWait);
+    }
+
+    #[test]
+    fn low_damage_gets_the_long_fall_wait_high_damage_the_short_one() {
+        let mut f = mario();
+        set_cliff_catch(&mut f, 3, Vec2::ZERO);
+        update(&mut f);
+        assert_eq!(f.cliff.fall_wait, CLIFF_FALL_WAIT_DAMAGE_LOW);
+
+        let mut hurt = mario();
+        hurt.damage = CLIFF_DAMAGE_HIGH;
+        set_cliff_catch(&mut hurt, 3, Vec2::ZERO);
+        update(&mut hurt);
+        assert_eq!(hurt.cliff.fall_wait, CLIFF_FALL_WAIT_DAMAGE_HIGH);
+    }
+
+    #[test]
+    fn holding_the_ledge_past_the_fall_wait_drops_into_damage_fall() {
+        let mut f = mario();
+        set_cliff_catch(&mut f, 3, Vec2::ZERO);
+        update(&mut f); // -> CliffWait
+        for _ in 0..(CLIFF_FALL_WAIT_DAMAGE_LOW - 1) {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::CliffWait);
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::DamageFall);
+        assert_eq!(f.cliffcatch_wait, CLIFF_CATCH_WAIT);
+    }
+
+    #[test]
+    fn tapping_attack_from_the_ledge_climbs_up_attacking() {
+        let mut f = mario();
+        f.facing = Facing::Right;
+        set_cliff_catch(&mut f, 3, Vec2::new(100.0, 0.0));
+        update(&mut f); // -> CliffWait
+        let x_before = f.pos.x;
+
+        tap_a(&mut f);
+        update(&mut f); // -> CliffAttackQuick1 (0% damage)
+        assert_eq!(f.status.status, Status::CliffAttackQuick1);
+        update(&mut f); // -> CliffAttackQuick2
+        assert_eq!(f.status.status, Status::CliffAttackQuick2);
+        update(&mut f); // -> Wait, standing on stage
+        assert_eq!(f.status.status, Status::Wait);
+        assert_eq!(f.situation, Situation::Ground);
+        assert_eq!(f.pos.x, x_before + 5.0);
+    }
+
+    #[test]
+    fn holding_toward_the_stage_climbs_back_up() {
+        let mut f = mario();
+        f.facing = Facing::Right;
+        set_cliff_catch(&mut f, 3, Vec2::ZERO);
+        update(&mut f); // -> CliffWait
+        update(&mut f); // arms is_allow_interrupt (neutral stick this frame)
+
+        hold(&mut f, 80, 0); // forward, same side as facing
+        update(&mut f);
+        assert_eq!(f.status.status, Status::CliffClimbQuick1);
+    }
+
+    #[test]
+    fn holding_away_and_down_lets_go_of_the_ledge() {
+        let mut f = mario();
+        f.facing = Facing::Right;
+        set_cliff_catch(&mut f, 3, Vec2::ZERO);
+        update(&mut f); // -> CliffWait
+        update(&mut f); // arms is_allow_interrupt
+
+        hold(&mut f, -80, -80); // away from facing and down
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Fall);
+        assert_eq!(f.cliffcatch_wait, CLIFF_CATCH_WAIT);
+    }
+
+    #[test]
+    fn holding_straight_up_always_climbs_regardless_of_facing() {
+        let mut f = mario();
+        f.facing = Facing::Left;
+        set_cliff_catch(&mut f, 3, Vec2::ZERO);
+        update(&mut f);
+        update(&mut f); // arm the latch
+
+        hold(&mut f, 0, 80); // straight up
+        update(&mut f);
+        assert_eq!(f.status.status, Status::CliffClimbQuick1);
     }
 }

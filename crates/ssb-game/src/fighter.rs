@@ -210,6 +210,11 @@ pub struct Fighter {
     pub stick: crate::status::StickState,
     /// Shield health/decay/release-lag state — `crate::status::GuardState`.
     pub guard: crate::status::GuardState,
+    /// Ledge-hang working state — `crate::status::CliffState`.
+    pub cliff: crate::status::CliffState,
+    /// Frames before this fighter can grab a ledge again —
+    /// `FTStruct::cliffcatch_wait`, set after letting go or falling from one.
+    pub cliffcatch_wait: u16,
 }
 
 impl Fighter {
@@ -236,6 +241,8 @@ impl Fighter {
             status: crate::status::StatusState::default(),
             stick: crate::status::StickState::new(),
             guard: crate::status::GuardState::default(),
+            cliff: crate::status::CliffState::default(),
+            cliffcatch_wait: 0,
         }
     }
 
@@ -273,6 +280,9 @@ impl Fighter {
         }
         if self.invincible_frames > 0 {
             self.invincible_frames -= 1;
+        }
+        if self.cliffcatch_wait > 0 {
+            self.cliffcatch_wait -= 1;
         }
         false
     }
