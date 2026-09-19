@@ -222,6 +222,8 @@ pub struct Fighter {
     pub fall_special: crate::status::FallSpecialState,
     /// Per-use flags from Mario's Super Jump Punch motion script.
     pub mario_special_hi: crate::status::MarioSpecialHiState,
+    /// Per-use flags from Mario's Tornado motion script.
+    pub mario_special_lw: crate::status::MarioSpecialLwState,
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -257,6 +259,7 @@ impl Fighter {
             attack1: crate::status::Attack1State::default(),
             fall_special: crate::status::FallSpecialState::default(),
             mario_special_hi: crate::status::MarioSpecialHiState::default(),
+            mario_special_lw: crate::status::MarioSpecialLwState::default(),
             root_motion: RootMotion::default(),
         }
     }
@@ -453,6 +456,13 @@ impl Fighter {
                 self.root_motion,
                 self.facing.sign(),
             );
+        } else if self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
+        {
+            if crate::status::apply_mario_special_lw_ground_physics(self) {
+                self.floor = None;
+                return;
+            }
         } else {
             crate::status::apply_status_physics(
                 &mut self.physics,
@@ -484,8 +494,14 @@ impl Fighter {
             // with no ground under it.
             None => {
                 self.floor = None;
-                self.become_airborne();
-                crate::status::set_fall(self);
+                if self.status.status
+                    == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
+                {
+                    crate::status::switch_mario_tornado_air(self);
+                } else {
+                    self.become_airborne();
+                    crate::status::set_fall(self);
+                }
             }
         }
     }
@@ -500,11 +516,15 @@ impl Fighter {
         // airborne tick does regardless of status.
         let special_air_hi = self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirHi);
-        if !special_air_hi {
+        let special_air_lw = self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirLw);
+        if !special_air_hi && !special_air_lw {
             crate::status::check_set_fast_fall(self);
         }
         if special_air_hi {
             crate::status::apply_mario_special_air_hi_physics(self);
+        } else if special_air_lw {
+            crate::status::apply_mario_special_lw_air_physics(self);
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of

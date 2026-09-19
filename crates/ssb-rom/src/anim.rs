@@ -48,7 +48,7 @@ use crate::archive::{Archive, File};
 use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 22;
+pub const SLOT_COUNT: usize = 24;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -80,6 +80,10 @@ pub const SLOT_SQUAT_WAIT: usize = 19;
 pub const SLOT_MARIO_SPECIAL_HI: usize = 20;
 /// Mario's aerial `SpecialHi` / Super Jump Punch pose.
 pub const SLOT_MARIO_SPECIAL_AIR_HI: usize = 21;
+/// Mario's grounded `SpecialLw` / Tornado pose.
+pub const SLOT_MARIO_SPECIAL_LW: usize = 22;
+/// Mario's aerial `SpecialLw` / Tornado pose.
+pub const SLOT_MARIO_SPECIAL_AIR_LW: usize = 23;
 
 /// Slots whose animation ends on its own, so a length means something.
 pub const TIMED_SLOTS: usize = 7;
@@ -438,6 +442,8 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_SQUAT_WAIT], "SquatWait");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_HI], "MarioSpecialHi");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_AIR_HI], "MarioSpecialAirHi");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_LW], "MarioSpecialLw");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_AIR_LW], "MarioSpecialAirLw");
     }
 
     #[test]
@@ -455,17 +461,21 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        assert_eq!(missing, 60, "only Mario has the two special slots");
+        assert_eq!(missing, 112, "only Mario has the four special slots");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
             .expect("Mario is in FTKind order");
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_HI], 637);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_HI], 637);
+        assert_eq!(mario.files[SLOT_MARIO_SPECIAL_LW], 638);
+        assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_LW], 639);
         assert_eq!(
             EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_HI], 40,
             "Super Jump Punch is a 40-frame figatree"
         );
+        assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_LW], 87);
+        assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_AIR_LW], 83);
         for fighter in FIGHTER_ANIMS {
             let has_mario_specials = fighter.name == "Mario";
             assert_eq!(
@@ -474,6 +484,14 @@ mod tests {
             );
             assert_eq!(
                 fighter.files[SLOT_MARIO_SPECIAL_AIR_HI] != 0,
+                has_mario_specials
+            );
+            assert_eq!(
+                fighter.files[SLOT_MARIO_SPECIAL_LW] != 0,
+                has_mario_specials
+            );
+            assert_eq!(
+                fighter.files[SLOT_MARIO_SPECIAL_AIR_LW] != 0,
                 has_mario_specials
             );
         }

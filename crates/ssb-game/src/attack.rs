@@ -722,6 +722,204 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
     landing_lag_percent: None,
 };
 
+// `dMarioMainMotion_MarioTornadoGround` and `dMarioMainMotion_0x1884` use
+// thirteen one-frame multihit pulses, three frames apart. Constructing the
+// repeated windows here keeps their event-script cadence explicit without
+// maintaining a hand-copied list of 78 near-identical entries.
+const TORNADO_GROUND_SIDE_START: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 300.0, 150.0),
+    radius: 70.0,
+    angle: 180,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 70,
+};
+const TORNADO_GROUND_CENTER_START: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::ZERO,
+    radius: 110.0,
+    angle: 90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 10,
+};
+const TORNADO_GROUND_SIDE_LOOP: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 280.0, 150.0),
+    radius: 80.0,
+    angle: 180,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 70,
+};
+const TORNADO_GROUND_SIDE_FINISH: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 300.0, 150.0),
+    radius: 100.0,
+    angle: 90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 120,
+};
+const TORNADO_AIR_SIDE_START: Hitbox = TORNADO_GROUND_SIDE_START;
+const TORNADO_AIR_CENTER_START: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::ZERO,
+    radius: 90.0,
+    angle: 90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 10,
+};
+const TORNADO_AIR_SIDE_LOOP: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 260.0, 150.0),
+    radius: 70.0,
+    angle: 180,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 70,
+};
+const TORNADO_AIR_LOW_LOOP: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 80.0, 0.0),
+    radius: 80.0,
+    angle: -90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 10,
+};
+const TORNADO_AIR_HIGH_LOOP: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 420.0, 0.0),
+    radius: 50.0,
+    angle: -90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 70,
+};
+const TORNADO_AIR_SIDE_FINISH: Hitbox = TORNADO_GROUND_SIDE_FINISH;
+const TORNADO_AIR_LOW_FINISH: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 80.0, 0.0),
+    radius: 110.0,
+    angle: -90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 120,
+};
+const TORNADO_AIR_HIGH_FINISH: Hitbox = Hitbox {
+    damage: 1,
+    offset: Vec3::new(0.0, 420.0, 0.0),
+    radius: 45.0,
+    angle: -90,
+    kb_scale: 0,
+    kb_weight: 1,
+    kb_base: 120,
+};
+const TORNADO_PLACEHOLDER: ActiveHitbox = ActiveHitbox::new(TORNADO_GROUND_SIDE_START, 0.0, 0.0);
+
+const fn tornado_ground_hitboxes() -> [ActiveHitbox; 31] {
+    let mut out = [TORNADO_PLACEHOLDER; 31];
+    out[0] = ActiveHitbox::new(TORNADO_GROUND_SIDE_START, 0.0, 4.0);
+    out[1] = ActiveHitbox::new(
+        Hitbox {
+            offset: Vec3::new(0.0, 300.0, -150.0),
+            ..TORNADO_GROUND_SIDE_START
+        },
+        0.0,
+        4.0,
+    );
+    out[2] = ActiveHitbox::new(TORNADO_GROUND_CENTER_START, 0.0, 4.0);
+    let mut i = 0;
+    while i < 13 {
+        let start = 4.0 + i as f32 * 3.0;
+        let first = 3 + i * 2;
+        out[first] = ActiveHitbox::new(TORNADO_GROUND_SIDE_LOOP, start, start + 1.0);
+        out[first + 1] = ActiveHitbox::new(
+            Hitbox {
+                offset: Vec3::new(0.0, 280.0, -150.0),
+                ..TORNADO_GROUND_SIDE_LOOP
+            },
+            start,
+            start + 1.0,
+        );
+        i += 1;
+    }
+    out[29] = ActiveHitbox::new(TORNADO_GROUND_SIDE_FINISH, 43.0, 45.0);
+    out[30] = ActiveHitbox::new(
+        Hitbox {
+            offset: Vec3::new(0.0, 300.0, -150.0),
+            ..TORNADO_GROUND_SIDE_FINISH
+        },
+        43.0,
+        45.0,
+    );
+    out
+}
+
+const fn tornado_air_hitboxes() -> [ActiveHitbox; 60] {
+    let mut out = [TORNADO_PLACEHOLDER; 60];
+    out[0] = ActiveHitbox::new(TORNADO_AIR_SIDE_START, 0.0, 4.0);
+    out[1] = ActiveHitbox::new(
+        Hitbox {
+            offset: Vec3::new(0.0, 300.0, -150.0),
+            ..TORNADO_AIR_SIDE_START
+        },
+        0.0,
+        4.0,
+    );
+    out[2] = ActiveHitbox::new(TORNADO_AIR_CENTER_START, 0.0, 4.0);
+    out[3] = ActiveHitbox::new(TORNADO_AIR_HIGH_LOOP, 0.0, 4.0);
+    let mut i = 0;
+    while i < 13 {
+        let start = 4.0 + i as f32 * 3.0;
+        let first = 4 + i * 4;
+        out[first] = ActiveHitbox::new(TORNADO_AIR_SIDE_LOOP, start, start + 1.0);
+        out[first + 1] = ActiveHitbox::new(
+            Hitbox {
+                offset: Vec3::new(0.0, 260.0, -150.0),
+                ..TORNADO_AIR_SIDE_LOOP
+            },
+            start,
+            start + 1.0,
+        );
+        out[first + 2] = ActiveHitbox::new(TORNADO_AIR_LOW_LOOP, start, start + 1.0);
+        out[first + 3] = ActiveHitbox::new(TORNADO_AIR_HIGH_LOOP, start, start + 1.0);
+        i += 1;
+    }
+    out[56] = ActiveHitbox::new(TORNADO_AIR_SIDE_FINISH, 43.0, 47.0);
+    out[57] = ActiveHitbox::new(
+        Hitbox {
+            offset: Vec3::new(0.0, 300.0, -150.0),
+            ..TORNADO_AIR_SIDE_FINISH
+        },
+        43.0,
+        47.0,
+    );
+    out[58] = ActiveHitbox::new(TORNADO_AIR_LOW_FINISH, 43.0, 47.0);
+    out[59] = ActiveHitbox::new(TORNADO_AIR_HIGH_FINISH, 43.0, 47.0);
+    out
+}
+
+pub static MARIO_TORNADO_GROUND_HITBOXES: [ActiveHitbox; 31] = tornado_ground_hitboxes();
+pub static MARIO_TORNADO_AIR_HITBOXES: [ActiveHitbox; 60] = tornado_air_hitboxes();
+
+/// Mario's grounded and aerial Tornado scripts. Their hitbox sequences
+/// differ after the opening, while the grounded one is selected only after a
+/// landing transition preserves the action's current animation frame.
+pub static MARIO_TORNADO_GROUND: MoveData = MoveData {
+    hitboxes: &MARIO_TORNADO_GROUND_HITBOXES,
+    length_frames: crate::status::MARIO_TORNADO_GROUND_LENGTH_FRAMES,
+    landing_lag_percent: None,
+};
+pub static MARIO_TORNADO_AIR: MoveData = MoveData {
+    hitboxes: &MARIO_TORNADO_AIR_HITBOXES,
+    length_frames: crate::status::MARIO_TORNADO_AIR_LENGTH_FRAMES,
+    landing_lag_percent: None,
+};
+
 /// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
 /// simultaneous hitboxes (`jid` 25/20/5 — foot, shin, and a wider late
 /// sweetspot), each with a weaker second phase after frame 11.
@@ -1173,6 +1371,12 @@ pub fn move_data(
             FighterKind::Mario,
             AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi),
         ) => Some(&MARIO_SUPERJUMP),
+        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::SpecialLw)) => {
+            Some(&MARIO_TORNADO_GROUND)
+        }
+        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::SpecialAirLw)) => {
+            Some(&MARIO_TORNADO_AIR)
+        }
         _ => None,
     }
 }
@@ -1711,6 +1915,28 @@ mod tests {
             data.length_frames,
             crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES
         );
+    }
+
+    #[test]
+    fn tornado_motion_scripts_keep_their_thirteen_one_frame_pulses() {
+        let ground = move_data(
+            crate::fighter::FighterKind::Mario,
+            AnyStatus::Mario(MarioStatus::SpecialLw),
+        )
+        .unwrap();
+        let air = move_data(
+            crate::fighter::FighterKind::Mario,
+            AnyStatus::Mario(MarioStatus::SpecialAirLw),
+        )
+        .unwrap();
+        assert_eq!(ground.hitboxes.len(), 31);
+        assert_eq!(air.hitboxes.len(), 60);
+        assert!(ground.hitboxes.iter().any(|h| h.is_active(4.0)));
+        assert!(!ground.hitboxes.iter().any(|h| h.is_active(5.0)));
+        assert!(ground.hitboxes.iter().any(|h| h.is_active(40.0)));
+        assert!(ground.hitboxes.iter().any(|h| h.is_active(43.0)));
+        assert!(air.hitboxes.iter().any(|h| h.is_active(46.0)));
+        assert!(!air.hitboxes.iter().any(|h| h.is_active(47.0)));
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
