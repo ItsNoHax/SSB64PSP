@@ -9,7 +9,7 @@ use ssb_engine::math::Vec3;
 
 use crate::collision::{self, Segment};
 use crate::ground::{self, BodyColl, Standing};
-use crate::physics::{PhysicsAttributes, PhysicsState};
+use crate::physics::{PhysicsAttributes, PhysicsState, RootMotion};
 
 /// Fighter identity, matching `FTKind` ordinals exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -220,6 +220,12 @@ pub struct Fighter {
     /// Shared "helpless fall" working state, used by `Status::FallSpecial`
     /// — `crate::status::FallSpecialState`.
     pub fall_special: crate::status::FallSpecialState,
+    /// Per-use flags from Mario's Super Jump Punch motion script.
+    pub mario_special_hi: crate::status::MarioSpecialHiState,
+    /// This tick's runtime-sampled TransN motion. It is data, not a renderer
+    /// handle, so host gameplay tests can provide it directly and `ssb-game`
+    /// remains runtime-independent.
+    pub root_motion: RootMotion,
 }
 
 impl Fighter {
@@ -250,6 +256,8 @@ impl Fighter {
             cliffcatch_wait: 0,
             attack1: crate::status::Attack1State::default(),
             fall_special: crate::status::FallSpecialState::default(),
+            mario_special_hi: crate::status::MarioSpecialHiState::default(),
+            root_motion: RootMotion::default(),
         }
     }
 
@@ -367,6 +375,13 @@ impl Fighter {
             .step(input.stick_x, input.stick_y, jump_tapped, jump_released);
     }
 
+    /// Supplies the TransN displacement sampled by the outer animation
+    /// runtime for the frame about to run. A caller that has no skeleton (host
+    /// tests, for example) may leave this at its default zero motion.
+    pub fn set_root_motion(&mut self, motion: RootMotion) {
+        self.root_motion = motion;
+    }
+
     /// Advances one tick against a stage.
     ///
     /// The order is the original's, and it is the order the four per-status
@@ -399,6 +414,9 @@ impl Fighter {
             Situation::Ground => self.tick_ground(floors),
             Situation::Air => self.tick_air(floors),
         }
+        // Root motion is an input sample, not persistent fighter state. This
+        // prevents a missed runtime sample from replaying an old displacement.
+        self.root_motion = RootMotion::default();
     }
 
     fn tick_ground<I, F>(&mut self, floors: F)
@@ -427,14 +445,24 @@ impl Fighter {
             crate::status::AnyStatus::Common(s) => s,
             crate::status::AnyStatus::Mario(_) => crate::status::Status::Wait,
         };
-        crate::status::apply_status_physics(
-            &mut self.physics,
-            &self.attributes,
-            physics_status,
-            self.status.anim_frame,
-            self.input.stick_x,
-            friction,
-        );
+        if self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
+        {
+            crate::physics::apply_ground_vel_transn(
+                &mut self.physics,
+                self.root_motion,
+                self.facing.sign(),
+            );
+        } else {
+            crate::status::apply_status_physics(
+                &mut self.physics,
+                &self.attributes,
+                physics_status,
+                self.status.anim_frame,
+                self.input.stick_x,
+                friction,
+            );
+        }
 
         // A walk's speed is a magnitude; the facing decides its sign.
         if self.status.status.is_walk() {
@@ -470,8 +498,14 @@ impl Fighter {
         // `ftPhysicsCheckSetFastFall` runs from every airborne status's own
         // `proc_physics` in the original; here it is the one thing every
         // airborne tick does regardless of status.
-        crate::status::check_set_fast_fall(self);
-        if self.status.status == crate::status::Status::FallSpecial {
+        let special_air_hi = self.status.status
+            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirHi);
+        if !special_air_hi {
+            crate::status::check_set_fast_fall(self);
+        }
+        if special_air_hi {
+            crate::status::apply_mario_special_air_hi_physics(self);
+        } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
             // the generic ones below.

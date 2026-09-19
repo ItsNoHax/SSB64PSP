@@ -17,6 +17,15 @@
 
 use ssb_engine::math::Vec3;
 
+/// Per-frame displacement and pitch from a fighter animation's hidden TransN
+/// joint. The renderer/runtime supplies this; gameplay deliberately owns only
+/// the portable sampled result, never a skeleton or pack dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RootMotion {
+    pub delta: Vec3,
+    pub rotate_z: f32,
+}
+
 /// The subset of `FTAttributes` the physics functions read.
 ///
 /// The full struct (`src/ft/fttypes.h`) also carries animation lengths, SFX
@@ -140,6 +149,24 @@ pub struct PhysicsState {
 /// within ±60 units. Smash is a 2D fighter staged in a 3D scene, and this is
 /// what keeps it that way.
 pub const Z_LIMIT: f32 = 60.0;
+
+/// `ftPhysicsApplyGroundVelTransN` @ 0x800D8C14, reduced to the port's
+/// X-only ground plane. Mario's model-forward axis is animation Z; facing
+/// turns that local displacement into the stage's X axis.
+pub fn apply_ground_vel_transn(p: &mut PhysicsState, motion: RootMotion, facing: f32) {
+    p.vel_ground.x = motion.delta.z * facing;
+}
+
+/// `ftPhysicsApplyAirVelTransNAll` @ 0x800D93E4 via
+/// `ftPhysicsGetAirVelTransN` @ 0x800D9260. The original's local Z/Y climb is
+/// rotated by TransN's pitch, while local X remains the shallow stage axis.
+pub fn apply_air_vel_transn_all(p: &mut PhysicsState, motion: RootMotion, facing: f32) {
+    let (sin, cos) = ssb_engine::math::sin_cos(motion.rotate_z);
+    let local_forward = motion.delta.z * facing;
+    p.vel_air.x = local_forward * cos - motion.delta.y * sin;
+    p.vel_air.y = local_forward * sin + motion.delta.y * cos;
+    p.vel_air.z = -motion.delta.x * facing;
+}
 
 /// `ftPhysicsSetGroundVelTransferAir` @ 0x800D8880 (Z clamp portion).
 ///
@@ -578,5 +605,35 @@ mod tests {
         };
 
         assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn transn_air_velocity_rotates_the_sampled_forward_and_up_delta() {
+        let mut p = PhysicsState::default();
+        apply_air_vel_transn_all(
+            &mut p,
+            RootMotion {
+                delta: Vec3::new(3.0, 5.0, 10.0),
+                rotate_z: core::f32::consts::FRAC_PI_2,
+            },
+            1.0,
+        );
+        assert!((p.vel_air.x + 5.0).abs() < 0.001);
+        assert!((p.vel_air.y - 10.0).abs() < 0.001);
+        assert_eq!(p.vel_air.z, -3.0);
+    }
+
+    #[test]
+    fn transn_ground_motion_follows_facing() {
+        let mut p = PhysicsState::default();
+        apply_ground_vel_transn(
+            &mut p,
+            RootMotion {
+                delta: Vec3::new(0.0, 0.0, 12.0),
+                rotate_z: 0.0,
+            },
+            -1.0,
+        );
+        assert_eq!(p.vel_ground.x, -12.0);
     }
 }

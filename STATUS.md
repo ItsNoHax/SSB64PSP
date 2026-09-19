@@ -6,11 +6,10 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Mario's ground+aerial moveset is
-complete through the real jab finisher. The shared `FallSpecial` recovery
+complete through the real Super Jump Punch. The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
-phase) is ported; Mario's `SpecialHi` now has its sourced status slots and
-ROM-verified TransN clip, but not its gameplay callbacks — see "Immediate
-next batch".
+phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
+through a portable runtime-to-gameplay bridge.
 
 ## What was completed
 
@@ -54,12 +53,22 @@ next batch".
   reachable: the game has no portable input path for that sampled joint yet.
   `cargo test -p ssb-rom`, `cargo test -p ssb-game`, ROM animation
   verification, pack rebuild, and 40-frame Mario figatree replay all pass.
-- Verified for everything above together: 204 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 702 tests) green, `cargo psp
+- **Mario Super Jump Punch gameplay/runtime bridge** (this batch): B+up now
+  enters sourced ground or aerial `SpecialHi`; `psp-runtime` records the
+  hidden TransN pose before each skeleton advance and supplies its exact delta
+  and pitch to the portable `RootMotion` input on the next gameplay tick.
+  `ftPhysicsApplyGroundVelTransN` and `ftPhysicsApplyAirVelTransNAll` are
+  ported against that input, including the source script's frame-9 physics
+  handoff and 0.95 air damping. The 40-frame figure tree ends in the shared
+  `FallSpecial` with the source `.6` drift and `.28` landing lag. The real
+  motion script's strong opening, eight coin-hit pulses, and finisher windows
+  are in generic `MoveData`; cleared pulse windows reset the existing target
+  hit latch. See RE-299.
+- Verified for everything above together: 211 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 709 tests) green, `cargo psp
   --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
   PPSSPP headless Training boot shows no panic/crash with a real rendered
-  frame — same pixel count as before, confirming the fastfall fix doesn't
-  disturb the existing pixel-confirmed jab-connection capture.
+  frame.
 - Pre-batch-mode work (rendering pipeline, asset pipeline, animation,
   collision, physics, movement-state machine) predates formal batch mode but
   is usable foundation, tracked per-subsystem in `docs/porting-status.md`.
@@ -68,13 +77,7 @@ next batch".
 
 Two real options, both blocked-open rather than blocked-shut:
 
-1. **Port Mario's `SpecialHi` end to end.** Add a portable root-motion sample
-   interface from the runtime's hidden TransN skeleton pose to `ssb-game`,
-   then translate the sourced move callbacks and motion-event timing. The
-   40-frame ROM clip is already packed and verified (RE-299); do not replace
-   it with a guessed velocity arc. This is now gameplay/runtime integration,
-   not an asset-extraction batch.
-2. **Mario's down-B (`SpecialLw`, Tornado)** and/or fireball (`SpecialN`)
+1. **Mario's down-B (`SpecialLw`, Tornado)** and/or fireball (`SpecialN`)
    instead, since neither is blocked on root-motion data the way `SpecialHi`
    is — but both were flagged in the previous batch's scoping as needing
    their own new infrastructure first: `SpecialLw` needs new ground/air
@@ -82,6 +85,10 @@ Two real options, both blocked-open rather than blocked-shut:
    not yet in `physics.rs`; `SpecialN` needs a projectile/spawned-object
    concept `ssb-game` does not have at all yet (`Items` is 0% in
    `docs/porting-status.md`). Worth scoping each on its own before picking.
+2. **Audit Super Jump Punch integration on a real Training dummy.** The
+   source hitbox windows and portable root motion are wired, but the existing
+   single-target combat harness has no move-specific capture yet. Add one
+   only if emulator observation finds timing or attachment discrepancies.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position
@@ -90,10 +97,8 @@ equivalent for. Revisit alongside a fighter's other moves.
 
 ## Real blockers
 
-None outright. `SpecialHi` needs its remaining portable-gameplay/runtime
-bridge and motion-event implementation, not further ROM or asset access.
-Rendering performance (`P5`) is not a blocker for this or any gameplay
-batch.
+None outright. Rendering performance (`P5`) is not a blocker for this or any
+gameplay batch.
 
 ---
 

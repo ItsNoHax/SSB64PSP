@@ -449,6 +449,279 @@ pub static MARIO_JAB3: MoveData = MoveData {
     landing_lag_percent: None,
 };
 
+/// Mario's Super Jump Punch — `dMarioMainMotion_SuperJumpPunchAir_0x16CC`.
+/// The event script opens an initial strong two-hit window at frame 2 for one
+/// frame, then, after its frame-9 `SetFlag1/2`, eight two-frame coin-hit
+/// windows with one-frame gaps, followed by a two-frame finishing pair.
+/// The status remains live through the ROM's 40-frame figatree, so its motion
+/// and its hitbox script intentionally have different end times.
+pub static MARIO_SUPERJUMP: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 5,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 190.0,
+                angle: 70,
+                kb_scale: 100,
+                kb_weight: 110,
+                kb_base: 0,
+            },
+            2.0,
+            3.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 5,
+                offset: Vec3::new(160.0, 0.0, 0.0),
+                radius: 130.0,
+                angle: 90,
+                kb_scale: 100,
+                kb_weight: 110,
+                kb_base: 0,
+            },
+            2.0,
+            3.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            9.0,
+            11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            9.0,
+            11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            11.0,
+            13.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            11.0,
+            13.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            13.0,
+            15.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            13.0,
+            15.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            15.0,
+            17.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            15.0,
+            17.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            17.0,
+            19.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            17.0,
+            19.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            19.0,
+            21.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            19.0,
+            21.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            21.0,
+            23.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            21.0,
+            23.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(0.0, 0.0, 60.0),
+                radius: 155.0,
+                angle: 75,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            23.0,
+            25.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 1,
+                offset: Vec3::new(150.0, 0.0, 60.0),
+                radius: 130.0,
+                angle: 80,
+                kb_scale: 100,
+                kb_weight: 100,
+                kb_base: 0,
+            },
+            23.0,
+            25.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 3,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 225.0,
+                angle: 50,
+                kb_scale: 170,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            25.0,
+            27.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 3,
+                offset: Vec3::new(150.0, 0.0, 0.0),
+                radius: 100.0,
+                angle: 50,
+                kb_scale: 170,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            25.0,
+            27.0,
+        ),
+    ],
+    length_frames: crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES,
+    landing_lag_percent: None,
+};
+
 /// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
 /// simultaneous hitboxes (`jid` 25/20/5 — foot, shin, and a wider late
 /// sweetspot), each with a weaker second phase after frame 11.
@@ -896,6 +1169,10 @@ pub fn move_data(
         (FighterKind::Mario, AnyStatus::Common(Status::AttackHi4)) => Some(&MARIO_USMASH),
         (FighterKind::Mario, AnyStatus::Common(Status::AttackLw4)) => Some(&MARIO_DSMASH),
         (FighterKind::Mario, AnyStatus::Mario(MarioStatus::Attack13)) => Some(&MARIO_JAB3),
+        (
+            FighterKind::Mario,
+            AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi),
+        ) => Some(&MARIO_SUPERJUMP),
         _ => None,
     }
 }
@@ -1100,6 +1377,9 @@ pub fn apply_hit_from(
         .iter()
         .find(|h| h.is_active(attacker.status.anim_frame))
     else {
+        // `ClearAttackCollAll` ends the current attack record in the source.
+        // A later pulse in a multi-hit script is a new collision opportunity.
+        *hit_by_current_attack = false;
         return;
     };
     let hitbox = active.hitbox;
@@ -1401,6 +1681,36 @@ mod tests {
             Status::HammerWait.into()
         )
         .is_none());
+    }
+
+    #[test]
+    fn super_jump_motion_script_has_its_real_open_close_and_finish_windows() {
+        let data = move_data(
+            crate::fighter::FighterKind::Mario,
+            AnyStatus::Mario(MarioStatus::SpecialAirHi),
+        )
+        .expect("Mario Super Jump Punch has sourced motion data");
+        assert!(data
+            .hitboxes
+            .iter()
+            .any(|h| h.is_active(2.0) && h.hitbox.damage == 5));
+        assert!(!data.hitboxes.iter().any(|h| h.is_active(3.0)));
+        assert!(data
+            .hitboxes
+            .iter()
+            .any(|h| h.is_active(9.0) && h.hitbox.damage == 1));
+        assert!(!data
+            .hitboxes
+            .iter()
+            .any(|h| h.is_active(25.0) && h.hitbox.damage == 1));
+        assert!(data
+            .hitboxes
+            .iter()
+            .any(|h| h.is_active(25.0) && h.hitbox.damage == 3));
+        assert_eq!(
+            data.length_frames,
+            crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES
+        );
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
