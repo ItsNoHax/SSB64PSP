@@ -5,85 +5,100 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: none open. Just-finished batch below. Combat
-systems' self-contained subsystems (shield, KO/death/respawn, ledges) are
-now done; grabs/throws stays deferred (see below). Next batch starts `P2`'s
-fighter-common gameplay/attack-table audit ahead of the 12-fighter bulk port.
+Current subsystem/batch: none open. Combat systems' self-contained
+subsystems (shield, KO/death/respawn, ledges) are done; grabs/throws stays
+deferred. `P2`'s fighter bulk port has started, Mario-first: base moveset
+(jab, dash attack, tilts) is in, generalized to a real per-fighter hit-data
+table rather than staying Attack11-only.
 
 ## What was completed
 
-- `P0`: `psp-runtime` split out as the shared PSP-specific library; both
-  `psp-game` and `psp-asset-viewer` depend on it. Verified with workspace
-  tests, both EBOOTs, PPSSPP regression captures, and a physical-hardware
-  smoke test (`docs/evidence/re/RE-298.md`).
+- `P0`: `psp-runtime` split out as the shared PSP-specific library. Verified
+  with workspace tests, both EBOOTs, PPSSPP regression captures, and a
+  physical-hardware smoke test (`docs/evidence/re/RE-298.md`).
 - **Fighter-common status table + Damage/hitstun family**: `crate::status::Status`
   carries the complete `FTCommonStatus` ordinal table (0..=219). A landed hit
-  moves the defender into a real Damage-family status chosen by
-  `ftCommonDamageGetDamageLevel`'s hitstun tiers and ground/air situation.
-- **Shield/guard**: `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff` — shield
-  health decay, release-lag recovery, break into `ShieldBreakFly`, and a hit
-  landing on a shield redirects into pushback instead of damage.
+  moves the defender into a real Damage-family status chosen by hitstun
+  tier and ground/air situation.
+- **Shield/guard**: full `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff` state
+  machine; a hit landing on a shield redirects into pushback instead of
+  damage.
 - **KO/death/respawn**: blast-zone crossing into `Dead*`, immediate stock
-  decrement, `Rebirth*` sequence with real total timing (390 frames) and a
-  genuine 120-frame post-respawn invincibility window
-  (`Fighter::invincible_frames`, now respected everywhere a hit resolves).
-- **Ledges** (this batch): `crate::status::CliffState` plus the full
-  `CliffCatch`→`CliffWait`→(`Climb`/`Attack`/`Escape`)`Quick1/2`|`Slow1/2`→`Wait`
-  state machine (`ft/ftcommon/ftcommoncliffcatchwait.c`, `ftcommoncliffclimb.c`,
-  `ftcommoncliffattack.c`, `ftcommoncliffescape.c`). Catch detection
-  (`cliff_catch_candidate`) reuses the existing `crate::collision::check_floor`
-  swept-segment primitive — the same one floor-landing already uses — plus
-  the real `800.0`-unit corner-proximity tolerance and `MAP_VERTEX_COLL_CLIFF`
-  flag test from `mpProcessCheckTestLCliffCollision`/`RCliffCollision`.
-  `CliffWait`'s three exits are all real: attack/escape button taps, the
-  climb-or-drop stick-angle test (`ftCommonCliffClimbOrFallCheckInterruptCommon`,
-  reframed as a `tan(50°)` slope comparison since `ssb_engine::math` has no
-  `atan2`), and the damage-dependent auto-release timeout into `DamageFall`
-  with the real 30-frame `cliffcatch_wait` re-grab cooldown. Because catch
-  detection needs external floor data and stage-respawn-point-style
-  information a single `Fighter` can't hold, it follows the same
-  caller-invoked contract as `apply_hit_from`/`try_rebirth`: the caller
-  snapshots the fighter's position before/after a tick and passes both in,
-  plus resolves ledge-hog exclusivity itself (this codebase doesn't have a
-  multi-fighter match loop yet to test that against). Documented gaps: no
-  per-character `cliffcatch_coll` hand-reach offset (not in the extracted
-  attribute range — same gap class as `Attack11`'s hitbox offset), so a
-  fighter hangs exactly at the corner rather than at arm's length; no
-  extracted animation lengths, so each climb/attack/escape phase collapses
-  to one tick; no per-character `cliff_status_ga` table, so every recovery
-  option ends grounded.
-- Verified for all five batches above together: 163 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 661 tests) green, `cargo psp --release`
-  builds clean for both `psp-game` and `psp-asset-viewer`, and a PPSSPP
-  headless Training boot (built with `regression_capture,headless_capture` —
-  a plain release build never reaches the deterministic screenshot hook and
-  reads as a hang, not a regression) shows no panic/crash with a real
-  rendered frame.
+  decrement, `Rebirth*` sequence with real total timing and a genuine
+  120-frame post-respawn invincibility window, now respected everywhere a
+  hit resolves.
+- **Ledges**: full `CliffCatch`→`CliffWait`→(`Climb`/`Attack`/`Escape`)→`Wait`
+  state machine, catch detection reusing the existing floor-collision
+  primitive plus the real corner-proximity tolerance and cliff-flag test.
+- **Mario's base moveset** (this batch): `AttackDash` (dash attack),
+  `AttackS3Hi`/`AttackS3`/`AttackS3Lw` (forward tilt's three angle
+  variants), `AttackHi3` (up tilt), `AttackLw3` (down tilt) — all
+  transcribed field-for-field from `dMarioMainMotion_DashAttack`/`FTiltHigh`/
+  `FTilt`/`FTiltLow`/`UTilt`/`DTilt` (`relocData/202_MarioMainMotion.c`).
+  Closed `Attack11`'s own "one hitbox, not two" gap along the way — its
+  second hitbox has a zero offset like the first, so adding it was free.
+  The real architectural change: `crate::attack` is no longer
+  Attack11-specific. `ActiveHitbox`/`MoveData` and a per-`(FighterKind,
+  Status)` `move_data` lookup replace the old one-hitbox/one-window special
+  case; `apply_hit_from` now walks every hitbox a move throws out and picks
+  whichever is active this frame, which is what dash attack's real
+  sweetspot/sourspot (same hitbox slot, weaker numbers after frame 11) and
+  the tilts' two-hitbox reach both need. A hitbox's `ox` offset is now
+  mirrored by the attacker's facing (`oy`/`oz` are not — matches the
+  original's joint-space convention closely enough for a world-space
+  offset), closing part of the "no joint attachment" gap for any move with
+  a nonzero reach offset, not just Mario's. Entry conditions are real:
+  each attack's stick-angle/magnitude gate, the tilt-vs-jab dispatch
+  priority (`AttackS3`/`Hi3`/`Lw3` outrank `Attack1` in the real interrupt
+  chain), and dash attack's `A`-tap from `Dash` (within its real ≤20-frame
+  window) or `Run`. Angle tests are reframed as `tan()` slope comparisons,
+  same trick ledges' climb-or-drop check already used, since
+  `ssb_engine::math` has no `atan2`. Fixed a real pre-existing gap found
+  while wiring this in: `walk_interrupt` was missing `Attack1`/the tilts
+  entirely even though the decomp macro has them — attacking out of a walk
+  previously did nothing.
+- Documented gaps for this batch: smashes (need a charge-mechanic
+  subsystem — holding the attack button scales knockback over time, not
+  built yet), aerials, specials, the `Attack12`/`Attack13`/`Attack100`
+  jab-combo extension (its real trigger logic — per-character follow-up
+  windows, an `Attack100` rapid-jab loop, a per-character `Attack13`
+  finisher only some fighters have — is its own substantial subsystem,
+  deliberately not folded into this batch), `DTilt`'s repeated-tap
+  extension (always exits to `SquatWait` after one hit here), and every
+  fighter besides Mario having zero moveset data.
+- Verified for everything above together: 175 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 673 tests) green, `cargo psp
+  --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
+  PPSSPP headless Training boot (built with `regression_capture,
+  headless_capture` — a plain release build never reaches the deterministic
+  screenshot hook and reads as a hang, not a regression) shows no
+  panic/crash with a real rendered frame.
 - Earlier: `Dummy::apply_hit_from` hit-resolution logic moved from
-  `psp-game` into `ssb_game::attack::apply_hit_from`
-  (crate-ownership rule); `psp-asset-viewer/src/play.rs`'s `status_name`
-  fixed for the grown `Status` table (was an exhaustive match, broke once
-  `Status` passed 21 variants — caught by building both EBOOTs).
+  `psp-game` into `ssb_game::attack::apply_hit_from`; `psp-asset-viewer`'s
+  `status_name` overlay fixed for the grown `Status` table.
 - Pre-batch-mode work (rendering pipeline, asset pipeline, animation,
   collision, physics, movement-state machine) predates formal batch mode but
   is usable foundation, tracked per-subsystem in `docs/porting-status.md`.
 
 ## Immediate next batch
 
-Grabs/throws (deferred, not skipped): a real throw's damage/knockback is
-baked into each character's own motion script
-(`attr->thrown_status[victim_kind]`, the same place `Attack11`'s jab numbers
-came from for Mario), and the grabbed-fighter hold position is
-joint-attachment matrix math this codebase has no gameplay-facing
-equivalent for. Porting the grab *mechanism* without real throw numbers
-would mean inventing damage/knockback data. Revisit when doing per-fighter
-work (`P2`'s bulk port), where a fighter's throw data is extracted alongside
-its other moves — that is also naturally where `P2` starts next: audit each
-of the 12 fighters' status tables, attacks/specials, and motion-script
-hitbox data (`Attack11`'s `MARIO_JAB1_HITBOX` is the template for how a
-single hitbox gets ported; the bulk port scales that pattern out to full
-movesets) before this codebase's `Status`/`Hitbox`/`GuardState`/`CliffState`
-machinery gets its first full test against more than one attack.
+Two reasonable directions, either is a valid next self-contained batch:
+
+1. Mario's smashes (needs a real charge-mechanic subsystem: `A`/`B`-hold
+   charges knockback growth over time, capped, released on button-up or
+   after a max hold) — the next base-moveset piece, and the first
+   opportunity to build charge as shared machinery other fighters' smashes
+   reuse.
+2. Mario's aerials (`AttackAirN`/`F`/`B`/`Hi`/`Lw` + their `LandingAirX`
+   lag statuses) — airborne hitboxes interacting with the existing
+   `tick_air`/landing-detection code, plus each aerial's own landing-lag
+   status.
+
+Grabs/throws stays deferred: a real throw's damage/knockback is baked into
+each character's own motion script (`attr->thrown_status[victim_kind]`),
+and the grabbed-fighter hold position is joint-attachment matrix math this
+codebase has no gameplay-facing equivalent for. Revisit alongside a
+fighter's other moves, not as its own isolated mechanism batch.
 
 ## Real blockers
 

@@ -16,10 +16,12 @@
 //!
 //! ## What is simplified here, and why
 //!
-//! * **One hitbox, not five.** `Jab1` actually spawns two hitboxes (joints 9
-//!   and 10, the fist and forearm). Only the primary one (joint 10, the arg
-//!   set `MakeAttackColl(0, ...)`) is ported; the secondary is a documented
-//!   gap, not a guess, until per-bone attachment exists.
+//! * **No per-bone joint attachment.** A hitbox's `ox`/`oy`/`oz` offset is
+//!   from an attachment joint in the original; here it is just added to the
+//!   attacker's root position (`oy`/`oz` as-is, `ox` mirrored by facing —
+//!   see [`apply_hit_from`]). `Jab1`'s own offset is `(0, 0, 0)`, so it is
+//!   unaffected; moves with a real reach offset (the tilts, the dash attack)
+//!   are approximated by this, not modelled exactly.
 //! * **A sphere hurtbox, not a per-bone capsule set.** The original tests a
 //!   hitbox sphere against eleven `FTDamageColl` capsules per fighter
 //!   (`gmCollisionCheckFighterInFighterRange`). No per-bone hurtbox system
@@ -110,9 +112,253 @@ pub const MARIO_JAB1_HITBOX_END: f32 = 4.0;
 /// docs) — but a real number read off the motion script, not a guess.
 pub const MARIO_ATTACK11_LENGTH_FRAMES: f32 = 14.0;
 
+/// Mario's second `Jab1` hitbox (joint 9, the forearm) — closing the module
+/// docs' former "one hitbox, not five" gap for `Jab1` specifically: with
+/// both hitboxes' `ox, oy, oz` already `(0, 0, 0)`, adding the second one
+/// costs nothing numerically (it lands exactly on top of the first) but
+/// completes the pair the motion script actually spawns.
+/// `ftMotionCommandMakeAttackColl(1, 0, 9, 2, 1, 0, 160, 0, 0, 0, 361, 50, 0,
+/// 3, 0, 0, 0, 8)`.
+pub const MARIO_JAB1_HITBOX_2: Hitbox = MARIO_JAB1_HITBOX;
+
 /// Mario's hurtbox radius stand-in — half of `dMarioMain_attr.map_coll`'s
 /// `150.0` width. See the module docs' "sphere hurtbox" simplification.
 pub const MARIO_HURTBOX_RADIUS: f32 = 150.0 / 2.0;
+
+/// One hitbox and the half-open frame window it is active —
+/// `MakeAttackColl`/`WaitAsync`/`Wait`/`ClearAttackCollAll` baked into a
+/// single value instead of the timing living apart from the data the way
+/// [`MARIO_JAB1_HITBOX_START`]/`_END` used to for `Jab1` alone.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActiveHitbox {
+    pub hitbox: Hitbox,
+    pub start: f32,
+    pub end: f32,
+}
+
+impl ActiveHitbox {
+    pub const fn new(hitbox: Hitbox, start: f32, end: f32) -> Self {
+        ActiveHitbox { hitbox, start, end }
+    }
+
+    pub fn is_active(&self, anim_frame: f32) -> bool {
+        (self.start..self.end).contains(&anim_frame)
+    }
+}
+
+/// A full attack: every hitbox its motion script throws out, and the
+/// attack's total length in frames (every `WaitAsync`/`Wait` in the script
+/// summed, including any after the last `ClearAttackCollAll` — the same
+/// methodology [`MARIO_ATTACK11_LENGTH_FRAMES`]'s doc comment used).
+#[derive(Debug, Clone, Copy)]
+pub struct MoveData {
+    pub hitboxes: &'static [ActiveHitbox],
+    pub length_frames: f32,
+}
+
+/// Mario's `DashAttack` — `dMarioMainMotion_DashAttack`,
+/// `relocData/202_MarioMainMotion.c`. One hitbox slot reused with weaker
+/// numbers after frame 11 (`aid` 0 both times) — a real "sourspot" the
+/// original expresses as the same slot getting overwritten mid-swing, not
+/// two hitboxes: `hit_by_current_attack`'s suppression already means only
+/// one of the two windows can ever connect. `WaitAsync(7)` +
+/// `MakeAttackColl(...16)`, `Wait(4)` + `MakeAttackColl(...10)`, `Wait(17)` +
+/// `ClearAttackCollAll` — total `7 + 4 + 17 = 28`.
+pub static MARIO_DASH_ATTACK: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 12,
+                offset: Vec3::new(40.0, 0.0, 0.0),
+                radius: 250.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 16,
+            },
+            7.0,
+            11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(40.0, 0.0, 0.0),
+                radius: 250.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            11.0,
+            28.0,
+        ),
+    ],
+    length_frames: 28.0,
+};
+
+/// Mario's forward tilt, one of three angle variants
+/// (`dMarioMainMotion_FTiltHigh`/`FTilt`/`FTiltLow`) chosen by stick angle —
+/// see `crate::status::set_ftilt`. All three share this shape (only `jid`
+/// differs, which this codebase does not use — module docs), so one
+/// constructor builds all three `MoveData`s from their real, distinct
+/// damage/knockback numbers. `WaitAsync(8)` + two `MakeAttackColl`s,
+/// `Wait(10)` + `ClearAttackCollAll` — total `8 + 10 = 18`.
+/// Builds one of the three `FTilt*` `MoveData`s. A macro rather than a
+/// `const fn` because a `const fn` returning a `&'static [ActiveHitbox]`
+/// built from a local array literal does not get the `'static` promotion a
+/// literal `static` item's own initializer gets — the array would be freed
+/// at the end of the function body. Expanding at each `static`'s own
+/// definition site keeps the promotion working.
+macro_rules! mario_ftilt {
+    ($damage:expr) => {
+        MoveData {
+            hitboxes: &[
+                ActiveHitbox::new(
+                    Hitbox {
+                        damage: $damage,
+                        offset: Vec3::new(20.0, 0.0, 0.0),
+                        radius: 180.0 / 2.0,
+                        angle: 361,
+                        kb_scale: 100,
+                        kb_weight: 0,
+                        kb_base: 10,
+                    },
+                    8.0,
+                    18.0,
+                ),
+                ActiveHitbox::new(
+                    Hitbox {
+                        damage: $damage,
+                        offset: Vec3::new(90.0, 0.0, 0.0),
+                        radius: 230.0 / 2.0,
+                        angle: 361,
+                        kb_scale: 100,
+                        kb_weight: 0,
+                        kb_base: 10,
+                    },
+                    8.0,
+                    18.0,
+                ),
+            ],
+            length_frames: 18.0,
+        }
+    };
+}
+/// `dMarioMainMotion_FTiltHigh`: `MakeAttackColl(0,0,24,14,...)`/`(1,0,25,14,...)`.
+pub static MARIO_FTILT_HI: MoveData = mario_ftilt!(14);
+/// `dMarioMainMotion_FTilt`: `MakeAttackColl(0,0,24,13,...)`/`(1,0,25,13,...)`.
+pub static MARIO_FTILT: MoveData = mario_ftilt!(13);
+/// `dMarioMainMotion_FTiltLow`: `MakeAttackColl(0,0,24,12,...)`/`(1,0,25,12,...)`.
+pub static MARIO_FTILT_LOW: MoveData = mario_ftilt!(12);
+
+/// Mario's up tilt — `dMarioMainMotion_UTilt`. A literal (non-Sakurai)
+/// `86`-degree launch angle, unlike every other move ported so far.
+/// `WaitAsync(5)` + two `MakeAttackColl`s, `Wait(12)` + `ClearAttackCollAll`
+/// — total `5 + 12 = 17`.
+pub static MARIO_UTILT: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(0.0, 0.0, 0.0),
+                radius: 180.0 / 2.0,
+                angle: 86,
+                kb_scale: 150,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            17.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(60.0, 0.0, 0.0),
+                radius: 290.0 / 2.0,
+                angle: 86,
+                kb_scale: 150,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            17.0,
+        ),
+    ],
+    length_frames: 17.0,
+};
+
+/// Mario's down tilt — `dMarioMainMotion_DTilt`. `WaitAsync(5)` + two
+/// `MakeAttackColl`s, `Wait(7)` + `ClearAttackCollAll` — total `5 + 7 = 12`.
+pub static MARIO_DTILT: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 12,
+                offset: Vec3::new(20.0, 0.0, 0.0),
+                radius: 180.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            12.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 12,
+                offset: Vec3::new(140.0, 0.0, 0.0),
+                radius: 260.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            5.0,
+            12.0,
+        ),
+    ],
+    length_frames: 12.0,
+};
+
+/// Mario's `Attack11` (neutral jab), now both real hitboxes
+/// ([`MARIO_JAB1_HITBOX`], [`MARIO_JAB1_HITBOX_2`]) instead of the one the
+/// module docs used to note as a gap.
+pub static MARIO_JAB1: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            MARIO_JAB1_HITBOX,
+            MARIO_JAB1_HITBOX_START,
+            MARIO_JAB1_HITBOX_END,
+        ),
+        ActiveHitbox::new(
+            MARIO_JAB1_HITBOX_2,
+            MARIO_JAB1_HITBOX_START,
+            MARIO_JAB1_HITBOX_END,
+        ),
+    ],
+    length_frames: MARIO_ATTACK11_LENGTH_FRAMES,
+};
+
+/// The attack data for `status`, under `kind` — every per-character motion
+/// script's `MakeAttackColl` argument list, transcribed field-for-field (see
+/// each `MoveData` constant's own doc comment for its source line). `None`
+/// for any status/fighter this codebase has not extracted moveset data for
+/// yet, which is everything except the Mario moves listed here (`P2`'s bulk
+/// port scope).
+pub fn move_data(kind: crate::fighter::FighterKind, status: Status) -> Option<&'static MoveData> {
+    use crate::fighter::FighterKind;
+    match (kind, status) {
+        (FighterKind::Mario, Status::Attack11) => Some(&MARIO_JAB1),
+        (FighterKind::Mario, Status::AttackDash) => Some(&MARIO_DASH_ATTACK),
+        (FighterKind::Mario, Status::AttackS3Hi) => Some(&MARIO_FTILT_HI),
+        (FighterKind::Mario, Status::AttackS3) => Some(&MARIO_FTILT),
+        (FighterKind::Mario, Status::AttackS3Lw) => Some(&MARIO_FTILT_LOW),
+        (FighterKind::Mario, Status::AttackHi3) => Some(&MARIO_UTILT),
+        (FighterKind::Mario, Status::AttackLw3) => Some(&MARIO_DTILT),
+        _ => None,
+    }
+}
 
 /// `FTCOMMON_DAMAGE_SAKURAI_*` — `ft/ftcommon.h`.
 const SAKURAI_KNOCKBACK_LOW: f32 = 32.0;
@@ -302,18 +548,32 @@ pub fn apply_hit_from(
     defender: &mut Fighter,
     hit_by_current_attack: &mut bool,
 ) {
-    if attacker.status.status != Status::Attack11 {
+    let Some(move_data) = move_data(attacker.kind, attacker.status.status) else {
         *hit_by_current_attack = false;
         return;
-    }
+    };
     if *hit_by_current_attack {
         return;
     }
-    if !jab1_hitbox_active(attacker.status.anim_frame) {
+    let Some(active) = move_data
+        .hitboxes
+        .iter()
+        .find(|h| h.is_active(attacker.status.anim_frame))
+    else {
         return;
-    }
-    let hitbox = MARIO_JAB1_HITBOX;
-    let hitbox_pos = attacker.pos + hitbox.offset;
+    };
+    let hitbox = active.hitbox;
+    // `ox` mirrors with facing (a joint-space X offset rotated by the
+    // fighter's own transform in the original); `oy`/`oz` do not need that,
+    // matching decomp's own attachment convention. This closes the "offset
+    // not yet observable" gap `Jab1` used to have — `Jab1`'s own offset is
+    // `(0, 0, 0)` so it is unaffected.
+    let hitbox_pos = attacker.pos
+        + Vec3::new(
+            hitbox.offset.x * attacker.facing.sign(),
+            hitbox.offset.y,
+            hitbox.offset.z,
+        );
     if !spheres_overlap(
         hitbox_pos,
         hitbox.radius,
@@ -591,5 +851,55 @@ mod tests {
         assert_eq!(defender.status.status, Status::Wait);
         assert_eq!(defender.damage, 0);
         assert!(!hit_by_current_attack);
+    }
+
+    #[test]
+    fn move_data_is_none_for_an_unported_fighter_or_status() {
+        assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11).is_none());
+        assert!(move_data(crate::fighter::FighterKind::Mario, Status::AttackHi4).is_none());
+    }
+
+    /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
+    /// `MARIO_DASH_ATTACK`'s own doc comment.
+    #[test]
+    fn dash_attack_is_stronger_in_its_first_window_than_its_second() {
+        let sweet = &MARIO_DASH_ATTACK.hitboxes[0];
+        let sour = &MARIO_DASH_ATTACK.hitboxes[1];
+        assert_eq!(sweet.hitbox.damage, 12);
+        assert_eq!(sweet.hitbox.kb_base, 16);
+        assert_eq!(sour.hitbox.damage, 10);
+        assert_eq!(sour.hitbox.kb_base, 10);
+        assert!(sweet.is_active(10.0));
+        assert!(!sour.is_active(10.0));
+        assert!(!sweet.is_active(15.0));
+        assert!(sour.is_active(15.0));
+    }
+
+    /// A forward tilt's second hitbox reaches further out along the swing
+    /// (`ox = 90`, vs. the first's `20`) — mirrored by facing, since it is a
+    /// joint-space offset in the original, not a world-space one.
+    #[test]
+    fn a_forward_tilts_far_hitbox_mirrors_with_facing() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::ZERO;
+        attacker.facing = crate::fighter::Facing::Left;
+        defender.pos = Vec3::new(-90.0, 0.0, 0.0);
+        defender.situation = crate::fighter::Situation::Ground;
+        status::set_status(
+            &mut attacker,
+            Status::AttackS3,
+            10.0,
+            StatusTiming::unknown(),
+        );
+
+        let mut hit_by_current_attack = false;
+        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+
+        // Only reachable if the offset flipped to -90 with facing; at +90 the
+        // defender at x=-90 would be 180 units away, past even the 115-unit
+        // far-hitbox radius.
+        assert!(hit_by_current_attack);
+        assert_eq!(defender.damage, 13);
     }
 }
