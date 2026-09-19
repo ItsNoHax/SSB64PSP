@@ -105,6 +105,19 @@ pub const SQUAT_BUFFER_TICS_MAX: u8 = 4;
 pub const PASS_STICK_MIN: i32 = -53;
 pub const PASS_BUFFER_TICS_MAX: u8 = 4;
 
+/// `FTCOMMON_ATTACKS3_STICK_RANGE_MIN`/`FTCOMMON_ATTACKHI3_STICK_RANGE_MIN`/
+/// `FTCOMMON_ATTACKLW3_STICK_RANGE_MIN` — `ft/ftcommon.h`. Forward deflection
+/// (relative to facing) `AttackS3` needs, and the up/down deflection
+/// `AttackHi3`/`AttackLw3` need, before their own angle test even runs.
+pub const ATTACKS3_STICK_RANGE_MIN: i32 = 20;
+pub const ATTACKHI3_STICK_RANGE_MIN: i32 = 20;
+pub const ATTACKLW3_STICK_RANGE_MIN: i32 = -20;
+/// `tan(17°)`, from `ftCommonAttackS3SetStatus`'s "3ANGLE" branch real test
+/// `ftParamGetStickAngleRads(fp) > F_CST_DTOR32(17.0F)` — reframed as a slope
+/// comparison for the same reason [`CLIFF_MOTION_ANGLE_TAN_50`] is (no
+/// `atan2` in `ssb_engine::math`).
+const ATTACKS3_3ANGLE_TAN_17: f32 = 0.305_730_7;
+
 /// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
 /// the complete common table (0..=219), transcribed from
 /// `ft/ftcommon/ftcommonstatus.h`'s own `// Status N (0x..): Name` comments.
@@ -1525,6 +1538,55 @@ pub fn set_attack11(f: &mut Fighter) {
     );
 }
 
+/// Frame length for a status from `crate::attack::move_data`, or `0.0` if
+/// this fighter/status has no ported moveset data — the same "no length
+/// known" fallback [`StatusTiming::unknown`] already covers for statuses
+/// with no known length.
+fn attack_length(f: &Fighter, status: Status) -> f32 {
+    crate::attack::move_data(f.kind, status)
+        .map(|m| m.length_frames)
+        .unwrap_or(0.0)
+}
+
+/// `ftCommonAttackDashSetStatus` @ `ftcommonattackdash.c:10`.
+pub fn set_dash_attack(f: &mut Fighter) {
+    let len = attack_length(f, Status::AttackDash);
+    set_status(f, Status::AttackDash, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:10`, reduced to the
+/// "3ANGLE" branch: Mario has no `AttackS3HiS`/`LwS` motion files (the
+/// 5-angle branch is for characters that do), so this is the exact
+/// original behaviour for Mario, not a simplification for him specifically.
+pub fn set_ftilt(f: &mut Fighter) {
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    let status = if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
+        Status::AttackS3Hi
+    } else if y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() {
+        Status::AttackS3Lw
+    } else {
+        Status::AttackS3
+    };
+    let len = attack_length(f, status);
+    set_status(f, status, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackHi3SetStatus` @ `ftcommonattackhi3.c:10`, reduced to the
+/// no-`Hi3F`/`Hi3B` case — Mario has no forward/backward-leaning up-tilt
+/// motion files, so (as with [`set_ftilt`]) this is exactly Mario's real
+/// behaviour, not a cut-down version of it.
+pub fn set_utilt(f: &mut Fighter) {
+    let len = attack_length(f, Status::AttackHi3);
+    set_status(f, Status::AttackHi3, 0.0, StatusTiming::frames(len));
+}
+
+/// `ftCommonAttackLw3SetStatus` @ `ftcommonattacklw3.c:59`.
+pub fn set_dtilt(f: &mut Fighter) {
+    let len = attack_length(f, Status::AttackLw3);
+    set_status(f, Status::AttackLw3, 0.0, StatusTiming::frames(len));
+}
+
 /// `ftCommonDamageFallSetStatusFromDamage` @ `ftcommondamagefall.c:53`,
 /// reduced to the status change: hitstun over an airborne Damage/Fly status
 /// ends into `DamageFall`, a plain fall the fighter is not yet fighting out
@@ -1612,6 +1674,72 @@ pub fn check_pass(f: &mut Fighter) -> bool {
     false
 }
 
+/// `ftCommonAttackDashCheckInterruptCommon` @ `ftcommonattackdash.c:24`,
+/// minus the item-swing/light-throw branches (no items yet).
+pub fn check_attack_dash(f: &mut Fighter) -> bool {
+    if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        set_dash_attack(f);
+        return true;
+    }
+    false
+}
+
+/// `ftCommonAttackS3CheckInterruptCommon` @ `ftcommonattacks3.c:39`, minus
+/// the item branches. `ftParamGetStickAngleRads`'s `atan2(y, |x|)` gate
+/// (`|angle| <= 50°`) is reframed as `|y| <= tan(50°) * |x|`, the same
+/// slope-comparison trick [`CLIFF_MOTION_ANGLE_TAN_50`] uses.
+pub fn check_ftilt(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    if x * f.facing.sign() < ATTACKS3_STICK_RANGE_MIN as f32 {
+        return false;
+    }
+    if y.abs() > CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+        return false;
+    }
+    set_ftilt(f);
+    true
+}
+
+/// `ftCommonAttackHi3CheckInterruptCommon` @ `ftcommonattackhi3.c:29`, minus
+/// the light-throw branch.
+pub fn check_utilt(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    if (f.stick.y as i32) < ATTACKHI3_STICK_RANGE_MIN {
+        return false;
+    }
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    if y <= CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+        return false;
+    }
+    set_utilt(f);
+    true
+}
+
+/// `ftCommonAttackLw3CheckInterruptCommon` @ `ftcommonattacklw3.c:70`, minus
+/// the light-throw branch.
+pub fn check_dtilt(f: &mut Fighter) -> bool {
+    if !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+        return false;
+    }
+    if (f.stick.y as i32) > ATTACKLW3_STICK_RANGE_MIN {
+        return false;
+    }
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    if y >= -CLIFF_MOTION_ANGLE_TAN_50 * x.abs() {
+        return false;
+    }
+    set_dtilt(f);
+    true
+}
+
 /// `ftCommonAttack1CheckInterruptCommon` @ `ftcommonattack1.c:244`, restricted
 /// to the no-item case (`fp->item_gobj == NULL`), which is every fighter in
 /// this slice — Training has no items.
@@ -1695,7 +1823,10 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
-    check_attack1(f)
+    check_ftilt(f)
+        || check_utilt(f)
+        || check_dtilt(f)
+        || check_attack1(f)
         || check_guard_on(f)
         || check_kneebend(f)
         || check_dash(f)
@@ -1719,8 +1850,22 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 ///   goes to Wait; Wait's chain then turns on the following frame. A walking
 ///   turnaround therefore costs one frame of standing that a standing
 ///   turnaround does not.
+///
+/// `check_attack1`/the tilt checks were missing here before the base-moveset
+/// batch even though `ftCommonWalkCheckInterrupt`'s real macro has the same
+/// attack prefix `ftCommonGroundCheckInterrupt` does — a real gap (attacking
+/// out of a walk did nothing), not a deliberate original difference, now
+/// closed alongside adding the tilts themselves.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
-    check_guard_on(f) || check_kneebend(f) || check_dash(f) || check_squat(f) || check_wait(f)
+    check_ftilt(f)
+        || check_utilt(f)
+        || check_dtilt(f)
+        || check_attack1(f)
+        || check_guard_on(f)
+        || check_kneebend(f)
+        || check_dash(f)
+        || check_squat(f)
+        || check_wait(f)
 }
 
 // ---------------------------------------------------------------------------
@@ -1739,7 +1884,7 @@ pub fn update(f: &mut Fighter) {
         Status::KneeBend => update_kneebend(f),
         Status::Dash => update_dash(f),
         Status::Run => {
-            if !(check_kneebend_run(f) || check_run_brake(f)) {
+            if !(check_attack_dash(f) || check_kneebend_run(f) || check_run_brake(f)) {
                 // Runs do not end on their own; they are held.
             }
         }
@@ -1767,6 +1912,27 @@ pub fn update(f: &mut Fighter) {
         Status::Attack11 => {
             if f.status.animation_ended() {
                 set_wait(f);
+            }
+        }
+        // `ftCommonAttackDashProcUpdate`/`AttackS3ProcUpdate`/`AttackHi3ProcUpdate`
+        // all reduce to `ftAnimEndSetWait` once combo-followup handling is
+        // out of scope (`Attack11`'s own precedent) — none of these three
+        // have a followup.
+        Status::AttackDash
+        | Status::AttackS3Hi
+        | Status::AttackS3
+        | Status::AttackS3Lw
+        | Status::AttackHi3 => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        // `ftCommonAttackLw3ProcUpdate` @ `ftcommonattacklw3.c:10`, minus the
+        // repeated-tap extension (`is_goto_attacklw3`) — down tilt is
+        // performed from a crouch and ends back in it, not in `Wait`.
+        Status::AttackLw3 => {
+            if f.status.animation_ended() {
+                set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
             }
         }
         // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a
@@ -1956,6 +2122,10 @@ fn update_dash(f: &mut Fighter) {
     if f.status.animation_ended() {
         f.physics.vel_ground.x *= DASH_END_VEL_MUL;
         set_wait(f);
+        return;
+    }
+    // `ftCommonDashProcInterrupt`'s `anim_frame <= 20.0` window.
+    if f.status.anim_frame <= 20.0 && check_attack_dash(f) {
         return;
     }
     let to_run = f.attributes.dash_to_run;
@@ -2732,6 +2902,104 @@ mod tests {
         }
         update(&mut f);
         assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn neutral_forward_tap_does_a_mid_forward_tilt() {
+        let mut f = mario();
+        hold(&mut f, 80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS3);
+    }
+
+    #[test]
+    fn forward_and_up_tap_does_a_high_forward_tilt() {
+        let mut f = mario();
+        hold(&mut f, 80, 40);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS3Hi);
+    }
+
+    #[test]
+    fn forward_and_down_tap_does_a_low_forward_tilt() {
+        let mut f = mario();
+        hold(&mut f, 80, -40);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS3Lw);
+    }
+
+    #[test]
+    fn a_facing_left_fighter_needs_the_stick_pointed_left_for_a_forward_tilt() {
+        let mut f = mario();
+        f.facing = Facing::Left;
+        hold(&mut f, 80, 0); // pointed right = away from facing
+        tap_a(&mut f);
+        update(&mut f);
+        assert_ne!(f.status.status, Status::AttackS3);
+
+        let mut f = mario();
+        f.facing = Facing::Left;
+        hold(&mut f, -80, 0);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackS3);
+    }
+
+    #[test]
+    fn straight_up_tap_does_an_up_tilt() {
+        let mut f = mario();
+        hold(&mut f, 0, 80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackHi3);
+    }
+
+    #[test]
+    fn straight_down_tap_does_a_down_tilt_and_ends_in_squat_wait() {
+        let mut f = mario();
+        hold(&mut f, 0, -80);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackLw3);
+
+        let len = crate::attack::move_data(f.kind, Status::AttackLw3)
+            .unwrap()
+            .length_frames;
+        for _ in 0..(len as i32 - 1) {
+            update(&mut f);
+            assert_eq!(f.status.status, Status::AttackLw3);
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, Status::SquatWait);
+    }
+
+    #[test]
+    fn a_neutral_a_tap_still_jabs_instead_of_tilting() {
+        let mut f = mario();
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Attack11);
+    }
+
+    #[test]
+    fn tapping_attack_while_dashing_does_a_dash_attack() {
+        let mut f = mario();
+        set_status(&mut f, Status::Dash, 0.0, StatusTiming::unknown());
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackDash);
+    }
+
+    #[test]
+    fn tapping_attack_while_running_does_a_dash_attack() {
+        let mut f = mario();
+        set_status(&mut f, Status::Run, 0.0, StatusTiming::unknown());
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::AttackDash);
     }
 
     fn hold_z(f: &mut Fighter, held: bool) {
