@@ -3066,12 +3066,11 @@ fn update_extended(f: &mut Fighter) {
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind: crate::weapon::WeaponKind::MarioFireball,
                     owner_port: f.port,
-                    // The original uses joint 16. This portable request is
-                    // rooted at the fighter until the runtime-to-gameplay
-                    // joint-position bridge is introduced alongside weapon
-                    // rendering; it keeps game logic independent of a
-                    // skeleton/pack handle.
-                    position: f.pos,
+                    // `ftMarioSpecialNProcAccessory` asks the runtime for
+                    // Mario joint 16's world position. Host-only gameplay
+                    // stays usable without a skeleton by honestly falling
+                    // back to the fighter root.
+                    position: f.weapon_spawn_anchor.unwrap_or(f.pos),
                     facing: f.facing.sign(),
                 });
             }

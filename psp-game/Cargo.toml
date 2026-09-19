@@ -28,6 +28,10 @@ ssb-psp-runtime = { path = "../psp-runtime" }
 # otherwise unrelated (`psp-asset-viewer/`'s freezes render state, this one
 # scripts input).
 regression_capture = []
+# Extends the scripted Training capture with a neutral-B input after the
+# existing jump/jab sequence, keeping the default capture's established
+# composition while providing a focused Fireball integration smoke.
+regression_capture_fireball = ["regression_capture"]
 # Requests one framebuffer capture from PPSSPPHeadless after the scripted
 # input above reaches its frozen tick. The devctl is ignored by real PSPs.
 headless_capture = []

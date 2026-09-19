@@ -43,7 +43,11 @@ use ssb_psp_runtime::meshdraw;
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
 /// to maintain unconditionally (`psp-asset-viewer/main.rs`'s own `sim_frame_index`
 /// comment).
-const DETERMINISTIC_CAPTURE_TICKS: u64 = 106;
+const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_fireball") {
+    167
+} else {
+    106
+};
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
 /// script and reached its capture tick; always `false` otherwise, so callers
@@ -94,8 +98,15 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 /// the hit with `ssb_game::attack::spheres_overlap` at ticks 100-101 against
 /// the real pack's Mario collision width and spawn-1 position, not a guess.
 /// Only consulted when `deterministic_capture_frozen` reads
-/// `regression_capture` as enabled; harmless to keep unconditionally.
+/// `regression_capture` as enabled; harmless to keep unconditionally. The
+/// `regression_capture_fireball` variant adds a neutral-B tap at tick 150,
+/// after that jab has completed, and freezes at tick 167 so the source
+/// frame-16 Fireball spawn is visible.
 fn scripted_buttons(tick: u64) -> N64Buttons {
+    if cfg!(feature = "regression_capture_fireball") && tick == 150 {
+        return N64Buttons(N64Buttons::B);
+    }
+
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
         13 | 33 => N64Buttons(N64Buttons::C_UP),
@@ -276,9 +287,9 @@ unsafe fn run() -> ! {
                     }
                 }
                 Screen::Training => {
-                    // No combat yet -- B returns to the menu so the placeholder
-                    // is at least navigable end to end.
-                    if pressed.contains(N64Buttons::B) {
+                    // START is navigation-only here. B belongs to the fighter's
+                    // source special-input path and must reach `pl.tick` below.
+                    if pressed.contains(N64Buttons::START) {
                         screen = Screen::Menu;
                     }
                 }
@@ -324,7 +335,7 @@ unsafe fn run() -> ! {
                         if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
                             weapons.spawn(spawn);
                         }
-                        weapons.tick(|| ssb_psp_runtime::scene::FloorSegments::new(p, &stage));
+                        weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
                         dummy.apply_hit_from(&pl.fighter);
@@ -350,6 +361,7 @@ unsafe fn run() -> ! {
                     pack.as_ref(),
                     play_state.as_ref(),
                     dummy_state.as_ref(),
+                    &weapons,
                     no_pack_color,
                 );
             }
@@ -406,6 +418,7 @@ unsafe fn draw_training(
     pack: Option<&Pack<'_>>,
     play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
+    weapons: &ssb_game::weapon::WeaponPool,
     no_pack_color: Color,
 ) {
     let scene = pack
@@ -439,6 +452,29 @@ unsafe fn draw_training(
     let base = gpu.model_matrix();
 
     meshdraw::draw_stage(p, &stage, &base, draw_state, None);
+
+    if let Some(fireball_mesh) = ssb_psp_runtime::scene::mario_fireball_mesh(p) {
+        for fireball in weapons.fireballs() {
+            // `wpMainVelSetModelPitch` uses +/-90 degrees around Y from
+            // horizontal velocity; the packed direct-display-list mesh gets
+            // that same model orientation here.
+            let yaw = if fireball.velocity.x >= 0.0 {
+                core::f32::consts::FRAC_PI_2
+            } else {
+                -core::f32::consts::FRAC_PI_2
+            };
+            gpu.model_transform(
+                [
+                    fireball.position.x,
+                    fireball.position.y,
+                    fireball.position.z,
+                ],
+                [0.0, yaw, 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+            meshdraw::draw_mesh(p, &fireball_mesh, draw_state, None, None);
+        }
+    }
 
     if let Some(obj) = p.object(pl.object) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];

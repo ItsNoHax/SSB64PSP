@@ -30,7 +30,23 @@ use ssb_game::physics::PhysicsAttributes;
 use ssb_game::status::AnimLengths;
 use ssb_game::status::AnyStatus;
 use ssb_game::status::Status;
-use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, Pack, StageDesc};
+use ssb_game::weapon::{MapSurface, MapSurfaceKind};
+use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
+
+/// Mario Special1's direct weapon display list. Unlike fighters and stages,
+/// the source descriptor names geometry directly instead of through a graph.
+pub const MARIO_FIREBALL_SOURCE_FILE: u32 = 297;
+pub const MARIO_FIREBALL_SOURCE_OFFSET: u32 = 0x1D8;
+
+/// Finds the packed Mario Fireball mesh by its stable source identity.
+pub fn mario_fireball_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    (0..pack.mesh_count())
+        .filter_map(|i| pack.mesh(i))
+        .find(|mesh| {
+            mesh.source_file == MARIO_FIREBALL_SOURCE_FILE
+                && mesh.source_offset == MARIO_FIREBALL_SOURCE_OFFSET
+        })
+}
 
 /// Walks a stage's floor polylines as the `(line_id, segment)` pairs the
 /// collision query consumes.
@@ -48,6 +64,84 @@ pub struct FloorSegments<'a, 'p> {
     point: u16,
     /// The previous point, which is the segment's start.
     prev: Option<(i16, i16, u16)>,
+}
+
+/// Walks every static stage collision segment with its authored one-sided
+/// kind. Fighters still deliberately consume [`FloorSegments`] alone; live
+/// weapons require all four kinds for `wpMapTestAll`/rebound behavior.
+pub struct MapSegments<'a, 'p> {
+    pack: &'a Pack<'p>,
+    stage: &'a StageDesc,
+    line: u32,
+    current: Option<LineDesc>,
+    point: u16,
+    prev: Option<(i16, i16, u16)>,
+}
+
+impl<'a, 'p> MapSegments<'a, 'p> {
+    pub fn new(pack: &'a Pack<'p>, stage: &'a StageDesc) -> Self {
+        Self {
+            pack,
+            stage,
+            line: 0,
+            current: None,
+            point: 0,
+            prev: None,
+        }
+    }
+}
+
+impl Iterator for MapSegments<'_, '_> {
+    type Item = MapSurface;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let Some(line) = self.current else {
+                if self.line >= self.stage.line_count {
+                    return None;
+                }
+                let candidate = self.pack.line(self.stage.first_line + self.line);
+                self.line += 1;
+                if let Some(candidate) = candidate.filter(|line| line.vertex_count >= 2) {
+                    self.current = Some(candidate);
+                    self.point = 0;
+                    self.prev = None;
+                }
+                continue;
+            };
+
+            if self.point >= line.vertex_count {
+                self.current = None;
+                continue;
+            }
+            let vertex = self.pack.coll_vertex(line.first_vertex + self.point as u32);
+            self.point += 1;
+            let Some(vertex) = vertex else {
+                self.current = None;
+                continue;
+            };
+            let Some((x1, y1, flags)) = self.prev.replace((vertex.x, vertex.y, vertex.flags)) else {
+                continue;
+            };
+            let kind = match line.kind {
+                line_kind::FLOOR => MapSurfaceKind::Floor,
+                line_kind::CEILING => MapSurfaceKind::Ceiling,
+                line_kind::RIGHT_WALL => MapSurfaceKind::RightWall,
+                line_kind::LEFT_WALL => MapSurfaceKind::LeftWall,
+                _ => continue,
+            };
+            return Some(MapSurface {
+                kind,
+                segment: Segment {
+                    x1,
+                    y1,
+                    x2: vertex.x,
+                    y2: vertex.y,
+                    flags,
+                },
+            });
+        }
+    }
 }
 
 impl<'a, 'p> FloorSegments<'a, 'p> {
@@ -372,6 +466,17 @@ impl FighterScene {
         if matches!(
             self.fighter.status.status,
             AnyStatus::Mario(
+                ssb_game::status::MarioStatus::SpecialN
+                    | ssb_game::status::MarioStatus::SpecialAirN
+            )
+        ) {
+            if let Some(anchor) = self.mario_fireball_anchor(pack) {
+                self.fighter.set_weapon_spawn_anchor(anchor);
+            }
+        }
+        if matches!(
+            self.fighter.status.status,
+            AnyStatus::Mario(
                 ssb_game::status::MarioStatus::SpecialHi
                     | ssb_game::status::MarioStatus::SpecialAirHi
             )
@@ -466,6 +571,32 @@ impl FighterScene {
             &mut self.skeleton,
             &mut self.started,
         );
+    }
+
+    /// `gmCollisionGetFighterPartsWorldPosition(fp->joints[16])`, mapped from
+    /// the portable skeleton matrix before this frame's status callback can
+    /// consume the frame-16 Fireball event. The model is authored facing +Z;
+    /// [`facing_turn`] rotates that axis onto the match X axis at render time,
+    /// so apply the same mapping here rather than guessing an attachment
+    /// offset in gameplay code.
+    fn mario_fireball_anchor(&self, pack: &Pack<'_>) -> Option<ssb_engine::math::Vec3> {
+        const FIREBALL_SPAWN_JOINT: usize = 16;
+        let object = pack.object(self.object)?;
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+        let count = self.skeleton.compose(pack, &object, &mut posed);
+        let node = self.skeleton.joint_node(FIREBALL_SPAWN_JOINT)?;
+        let local_index = node.checked_sub(object.first_node)? as usize;
+        if local_index >= count {
+            return None;
+        }
+        let local = posed[local_index].translation();
+        let scale = ssb_rom::pack::MODEL_SCALE;
+        let facing = self.fighter.facing.sign();
+        Some(ssb_engine::math::Vec3::new(
+            self.fighter.pos.x + local[2] * scale * facing,
+            self.fighter.pos.y + local[1] * scale,
+            self.fighter.pos.z - local[0] * scale * facing,
+        ))
     }
 }
 
