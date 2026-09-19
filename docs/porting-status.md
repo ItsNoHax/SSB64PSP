@@ -49,7 +49,7 @@ remains.
 | PSP input backend | 70% | `sceCtrl` analog read wired to the shared mapping | — | — | M3 |
 | PSP audio backend | 0% | Not started | — | Mixer thread, VADPCM decode, sequencing all open | G4 |
 | Physics | 60% | 16 functions ported with original addresses cited, driven every tick against real per-character constants (all 27 fighters) extracted from ROM and verified field-by-field against decomp | RE-032 | — | M3 |
-| Fighter state | 60% | Movement status machine (Wait/walks/Dash/Run/Turn/Jump/Fall/Squat/Landing/Pass) with original interrupt-chain + tap-counter model; all statuses end on their own via figatree-derived duration. Plus, under `F1`'s scoped Training-only exception (`AGENTS.md`): Mario's neutral jab (`Attack11`), input to hitstun, pixel-confirmed landing on the real dummy target | RE-033, RE-035, RE-294, RE-295 | No specials, grabs, shields or damage *statuses* (blocked behind rendering gate outside `F1`'s carve-out); jab's second hitbox, per-bone hurtboxes and a real `Damage` status are documented gaps within the carve-out | M3, G0 |
+| Fighter state | 60% | Movement status machine (Wait/walks/Dash/Run/Turn/Jump/Fall/Squat/Landing/Pass) with original interrupt-chain + tap-counter model; all statuses end on their own via figatree-derived duration. Plus, under `F1`'s scoped Training-only exception (`AGENTS.md`): Mario's neutral jab (`Attack11`), input to hitstun, pixel-confirmed landing on the real dummy target | RE-033, RE-035, RE-294, RE-295 | No specials, grabs, shields or damage *statuses* yet outside `F1`'s carve-out (`P2` scope); jab's second hitbox, per-bone hurtboxes and a real `Damage` status are documented gaps within the carve-out | M3, G0 |
 | Collision | 60% | Geometry extracted/packed for all 41 stages; swept + projected floor solvers agree on 158/158 spawn tests | RE-030, RE-031 | No ceiling/wall queries; moving groups tested at rest only | M3 |
 | Animation | 90% | Figatree scripts decode to per-joint transforms and are packed; 189 movement animations, 4709 joint entries, all poses match ROM exactly; skeleton ticks at 60 FPS on device; all 532 sparse fighter/slot entries replay correctly | RE-036, RE-038, RE-171 | No `translate_scales`; viewer camera frames on rest bounds only | M3 |
 | Scene graph (DObj) | 87% | All 363 discovered `DObjDesc` arrays + 11 direct effects packed as 374 objects; `MObj` chains cover all 127 graphs requiring them, 0 mismatches | RE-172 | `GObj` layer and general animation remain absent | R0.7 |
@@ -63,14 +63,15 @@ remains.
 | CI | COMPLETE | fmt, clippy, host tests, PSP build, EBOOT artifact — no ROM required | — | — | — |
 
 **Per-fighter combat progress: all 12 at 0%, except Mario's jab under `F1`'s
-Training-only exception.** General match combat (`PLAN.md` G0) is correctly
-blocked behind the rendering gate (R0–R3) and has not started for any
-fighter. Fighter *models*, *animation* and *movement physics* are
-implemented and tracked above. `F1`'s scoped carve-out (`AGENTS.md`) ported
-one grounded attack — Mario's neutral jab, `RE-294` — against a stationary
+Training-only exception.** General match combat (`PLAN.md` `P2`) has not
+started for any fighter yet — `P1` (decomp compatibility layer) is current.
+Fighter *models*, *animation* and *movement physics* are implemented and
+tracked above. `F1`'s scoped carve-out (`AGENTS.md`) ported one grounded
+attack ahead of `P2` — Mario's neutral jab, `RE-294` — against a stationary
 Training-mode dummy target only; no other fighter, attack, special, grab,
-shield or damage *status* exists, and none may until R0–R3 close except
-within that same carve-out.
+shield or damage *status* exists yet. Rendering fidelity/performance (`P5`)
+runs in parallel with gameplay work, not as a precondition for it
+(`AGENTS.md`).
 
 ## Test coverage
 
@@ -115,13 +116,13 @@ Reproduce with `tools/run-ppsspp.sh`.
    are untouched.
 
 5. **The movement animation pipeline is far along; general match combat does
-   not exist.** No opponent AI, stocks or match loop, and no attacks for any
-   fighter besides Mario's jab — per the rendering gate, none of that may
-   start until R0–R3 are complete, except `F1`'s scoped Training-only
-   exception (`AGENTS.md`), which ported Mario's jab end to end (hitbox,
-   hurtbox, damage, knockback, hitstun — `RE-294`) against a stationary
-   dummy target, now pixel-confirmed connecting via a real jump binding
-   (`RE-295`). See `TODO.md` "Combat Vertical Slice".
+   not exist yet.** No opponent AI, stocks or match loop, and no attacks for
+   any fighter besides Mario's jab — that is `P2`'s scope, and `P1` (decomp
+   compatibility layer) is current. Ahead of `P2`, `F1`'s scoped
+   Training-only exception (`AGENTS.md`) ported Mario's jab end to end
+   (hitbox, hurtbox, damage, knockback, hitstun — `RE-294`) against a
+   stationary dummy target, now pixel-confirmed connecting via a real jump
+   binding (`RE-295`). See `TODO.md` "Combat Vertical Slice".
 
 6. **Extern relocation slots are zeroed, not resolved.** `romtool` records
    them in the manifest; the runtime loader that patches them at scene load

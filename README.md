@@ -4,7 +4,7 @@ A native Rust port of **Super Smash Bros. (N64)** to the **Sony PSP**.
 
 This is **not an emulator**. It is a reimplementation of the game for PSP hardware, using the [Super Smash Bros. decompilation][decomp] as the primary reference for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
 
-> **Status: rendering-focused engine prototype.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate at a locked 60 FPS under PPSSPP, which is the project's primary validated environment today. The project has been smoke-tested on physical PSP hardware earlier in development, but the formal physical-PSP rendering validation milestone (`PLAN.md` R2) has not yet been completed — see [`STATUS.md`](STATUS.md) §8. The current development priority is completing rendering fidelity and coverage before combat implementation.
+> **Status: engine prototype, gameplay port underway.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate at a locked 60 FPS under PPSSPP, which is the project's primary validated environment today. The project has been smoke-tested on physical PSP hardware, including a Training-mode combat slice (Mario's neutral jab). Rendering fidelity/performance (`PLAN.md` milestone `P5`) and gameplay (`P1`–`P4`) now proceed in parallel, not gated on each other — see [`STATUS.md`](STATUS.md) for current work.
 
 ![Dream Land rendering on PSP](docs/images/m4-stage-textured.png)
 
@@ -14,25 +14,23 @@ This is **not an emulator**. It is a reimplementation of the game for PSP hardwa
 
 ## Project Goals
 
-The project follows this order:
+Original SSB64 behavior (from the decompilation and ROM) is the source of
+truth for every system. Beyond that, rendering and gameplay are parallel,
+independent tracks (`PLAN.md` milestones `P0`–`P5`), not a serial pipeline:
 
 ```text
 Original SSB64 behavior
         ↓
-Rendering correctness
-        ↓
-Rendering completeness
-        ↓
-Physical PSP validation
-        ↓
-Rendering performance
-        ↓
-Combat
+   ┌────┴────┐
+Gameplay   Rendering
+(P1–P4)    fidelity/performance (P5)
+   └────┬────┘
         ↓
 Full game systems
 ```
 
-The renderer is a **hard gate** for gameplay development.
+Rendering performance/fidelity is not a blocker for gameplay development —
+see `AGENTS.md`'s non-negotiable constraints and `PLAN.md`.
 
 The goal is not to produce a game that merely looks similar to SSB64. The implementation should reproduce the original game's behavior wherever the original decompilation and ROM provide sufficient evidence.
 
@@ -112,15 +110,17 @@ These are tracked individually in `PLAN.md` (see R0.1–R0.18).
 
 ### Not yet implemented
 
-Combat and higher-level game systems are intentionally blocked until rendering has passed its acceptance gate.
+General match combat has not started for any fighter yet (`PLAN.md` `P2`,
+after `P1`'s decomp compatibility layer). One grounded attack exists ahead
+of that milestone as a scoped Training-only exception: Mario's neutral jab
+(input → hitbox → damage/knockback/hitstun) against a stationary dummy
+target, verified on PPSSPP and physical PSP (`docs/porting-status.md`).
 
 Not yet implemented include:
 
-* attacks
-* hitboxes and hurtboxes
-* damage
-* knockback
-* hitstun
+* attacks besides Mario's neutral jab
+* hitboxes and hurtboxes besides Mario's neutral jab's
+* specials, grabs, shields, a real `Damage` status
 * opponents
 * CPU combat AI
 * stocks and KO handling
@@ -391,51 +391,26 @@ These checks are intended to establish correctness against the recovered N64 dat
 
 ## Development Roadmap
 
-The development roadmap is maintained in [`PLAN.md`](PLAN.md).
+The development roadmap is maintained in [`PLAN.md`](PLAN.md). Development
+now runs in milestones `P0`–`P5`, tracked/resumed via `STATUS.md`:
 
-The major phases are:
+* `P0` — architecture cleanup (substantially complete)
+* `P1` — decomp compatibility layer (current)
+* `P2` — fighter/gameplay bulk port: movement, attacks, specials,
+  grabs/throws, shield, damage/hitstun/hitlag, knockback, ledges, tech/roll,
+  death/respawn
+* `P3` — match: stage loading, spawning, stocks, blast zones, KO, match
+  state, character/stage select, result/restart
+* `P4` — remaining game systems: items, CPU AI, effects integration, menus,
+  UI, audio, remaining modes
+* `P5` — fidelity/performance: profiling on physical PSP, optimization,
+  final visual regression, physical PSP acceptance matrix
 
-### Foundation
-
-* research
-* PSP bootstrap
-* resource pipeline
-* core game/scene infrastructure
-
-### Rendering
-
-* rendering correctness
-* rendering completeness
-* physical PSP validation
-* rendering performance
-
-### Gameplay
-
-Combat is unlocked only after the rendering gate has passed.
-
-The first gameplay milestone will be a complete combat vertical slice:
-
-```text
-Input
-  ↓
-Attack
-  ↓
-Hitbox
-  ↓
-Collision
-  ↓
-Damage
-  ↓
-Knockback
-  ↓
-Hitstun
-  ↓
-KO
-  ↓
-Stock / Match loop
-```
-
-After that, the project will progress toward complete combat, match systems, menus, save data, audio and final optimization.
+`P5` runs in parallel with `P1`–`P4`, not before them — rendering
+performance is not a gate for gameplay work (`AGENTS.md`). The older
+research/PSP-bootstrap/rendering-correctness/rendering-gate process is
+archived in `plans/rendering/*.md` and `plans/gameplay/*.md` as history, not
+the active tracker.
 
 ---
 

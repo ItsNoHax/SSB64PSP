@@ -11,7 +11,6 @@
 use core::ops::{Deref, DerefMut};
 
 use ssb_game::fighter::{Fighter, FighterKind};
-use ssb_game::status::Status;
 use ssb_rom::pack::{Pack, StageDesc};
 
 pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
@@ -80,46 +79,16 @@ impl Dummy {
         );
     }
 
-    /// `F1` criterion 5: tests `attacker`'s active hitbox against this dummy
-    /// and applies the hit -- `ssb_game::attack`'s formulas, called from here
-    /// rather than from `ssb-game` because this is the only place both
-    /// fighters exist together (the player's own scene and `Dummy` are
-    /// separate values).
-    ///
-    /// Only `Attack11`'s hitbox is ported (module docs), so anything else the
-    /// attacker is doing is a no-op call.
+    /// `F1` criterion 5: orchestration only -- hit detection, damage,
+    /// knockback, hitstun and hit-suppression are `ssb_game::attack`'s
+    /// [`apply_hit_from`](ssb_game::attack::apply_hit_from). Called from here
+    /// because this is the only place both fighters exist together (the
+    /// player's own scene and `Dummy` are separate values).
     pub fn apply_hit_from(&mut self, attacker: &Fighter) {
-        if attacker.status.status != Status::Attack11 {
-            self.hit_by_current_attack = false;
-            return;
-        }
-        if self.hit_by_current_attack {
-            return;
-        }
-        if !ssb_game::attack::jab1_hitbox_active(attacker.status.anim_frame) {
-            return;
-        }
-        let hitbox = ssb_game::attack::MARIO_JAB1_HITBOX;
-        let hitbox_pos = attacker.pos + hitbox.offset;
-        if !ssb_game::attack::spheres_overlap(
-            hitbox_pos,
-            hitbox.radius,
-            self.fighter.pos,
-            ssb_game::attack::MARIO_HURTBOX_RADIUS,
-        ) {
-            return;
-        }
-        let result = ssb_game::attack::resolve_hit(
-            &hitbox,
-            attacker.pos,
-            self.fighter.pos,
-            self.fighter.damage,
-            self.fighter.attributes.weight,
-            !self.fighter.is_grounded(),
+        ssb_game::attack::apply_hit_from(
+            attacker,
+            &mut self.scene.fighter,
+            &mut self.hit_by_current_attack,
         );
-        self.fighter.damage = self.fighter.damage.saturating_add(result.damage as u16);
-        self.fighter.physics.vel_knockback = result.knockback_vel;
-        self.fighter.hitstun = result.hitstun;
-        self.hit_by_current_attack = true;
     }
 }

@@ -46,6 +46,9 @@
 
 use ssb_engine::math::{sin_cos, Vec3};
 
+use crate::fighter::Fighter;
+use crate::status::Status;
+
 /// A hitbox descriptor, transcribed field-for-field from a
 /// `ftMotionCommandMakeAttackColl(aid, gid, jid, dmg, reb, elem, sz, ox, oy,
 /// oz, ang, kbs, kbw, ga, sd, fl, fk, kbb)` call, so it can be checked against
@@ -223,6 +226,44 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
     let d = a_pos - b_pos;
     let r = a_radius + b_radius;
     d.length_squared() <= r * r
+}
+
+/// `F1` criterion 5: tests `attacker`'s active hitbox against `defender` and
+/// applies the hit. `hit_by_current_attack` is the caller's per-target
+/// hit-suppression state — the simplified stand-in for the original's
+/// per-attack `GMAttackRecord` hit list (module docs) — cleared as soon as
+/// the attacker leaves `Attack11` so the next jab can hit again.
+///
+/// Only `Attack11`'s hitbox is ported (module docs), so anything else the
+/// attacker is doing is a no-op call.
+pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_by_current_attack: &mut bool) {
+    if attacker.status.status != Status::Attack11 {
+        *hit_by_current_attack = false;
+        return;
+    }
+    if *hit_by_current_attack {
+        return;
+    }
+    if !jab1_hitbox_active(attacker.status.anim_frame) {
+        return;
+    }
+    let hitbox = MARIO_JAB1_HITBOX;
+    let hitbox_pos = attacker.pos + hitbox.offset;
+    if !spheres_overlap(hitbox_pos, hitbox.radius, defender.pos, MARIO_HURTBOX_RADIUS) {
+        return;
+    }
+    let result = resolve_hit(
+        &hitbox,
+        attacker.pos,
+        defender.pos,
+        defender.damage,
+        defender.attributes.weight,
+        !defender.is_grounded(),
+    );
+    defender.damage = defender.damage.saturating_add(result.damage as u16);
+    defender.physics.vel_knockback = result.knockback_vel;
+    defender.hitstun = result.hitstun;
+    *hit_by_current_attack = true;
 }
 
 #[cfg(test)]
