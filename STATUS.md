@@ -8,8 +8,9 @@ large coherent batches rather than per-function).
 Current subsystem/batch: none open. Mario's ground+aerial moveset is
 complete through the real jab finisher. The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
-phase) is now ported and real-tested, but Mario's own `SpecialHi` is not
-wired on top yet — see "Immediate next batch" for why.
+phase) is ported; Mario's `SpecialHi` now has its sourced status slots and
+ROM-verified TransN clip, but not its gameplay callbacks — see "Immediate
+next batch".
 
 ## What was completed
 
@@ -42,18 +43,17 @@ wired on top yet — see "Immediate next batch" for why.
   Landing correctly distinguishes "skip landing lag entirely" from a real
   `LandingFallSpecial` pose by `is_goto_landing`/fall speed, same shape as
   the aerial-landing dispatch from an earlier batch.
-- **Mario's `SpecialHi` (up-B) is deliberately not wired on top of
-  `FallSpecial` this batch.** Investigation found why it looked
-  straightforward but isn't: the actual rise/launch velocity for Mario's
-  up-B comes from the *animation clip's own root-motion data*
-  (`ftPhysicsApplyAirVelTransNAll`/`...GroundVelTransN`, which read
-  per-frame translation baked into the animation file), not from a
-  physics formula. This codebase's animation pipeline does not extract
-  that data yet (`docs/porting-status.md`'s Animation row already lists
-  "No `translate_scales`" as a known gap). Inventing a velocity arc instead
-  of extracting the real one would be exactly the kind of unsupported
-  heuristic `AGENTS.md` rules out, so `SpecialHi` itself waits on that
-  animation-extraction prerequisite rather than shipping a guessed number.
+- **Mario Super Jump Punch animation extraction** (this batch): corrected
+  the preceding claim. Mario has no `translate_scales`; its up-B root motion
+  is the hidden TransN entry in the 40-frame figatree (archive file 637).
+  The legacy decompilation flag macros are named opposite to the runtime
+  bitfield, which is why the motion descriptor's apparent `XRotN` label was
+  misleading. The generated table now carries ground and aerial up-B slots,
+  the pack retains the hidden runtime joint, and `MarioStatus` selects the
+  real clip. See RE-299. This deliberately does **not** make the status
+  reachable: the game has no portable input path for that sampled joint yet.
+  `cargo test -p ssb-rom`, `cargo test -p ssb-game`, ROM animation
+  verification, pack rebuild, and 40-frame Mario figatree replay all pass.
 - Verified for everything above together: 204 `ssb-game` tests, full
   workspace (`cargo test --workspace`, 702 tests) green, `cargo psp
   --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
@@ -68,12 +68,12 @@ wired on top yet — see "Immediate next batch" for why.
 
 Two real options, both blocked-open rather than blocked-shut:
 
-1. **Extract `translate_scales`/root-motion animation data** (asset-pipeline
-   work, not gameplay code) so Mario's `SpecialHi` — and likely other
-   fighters' recovery/root-motion-driven moves — can be ported for real
-   instead of guessed. Check `docs/porting-status.md`'s Animation row and
-   the `asset-pipeline` skill before starting; this is a different kind of
-   work than the last several gameplay batches.
+1. **Port Mario's `SpecialHi` end to end.** Add a portable root-motion sample
+   interface from the runtime's hidden TransN skeleton pose to `ssb-game`,
+   then translate the sourced move callbacks and motion-event timing. The
+   40-frame ROM clip is already packed and verified (RE-299); do not replace
+   it with a guessed velocity arc. This is now gameplay/runtime integration,
+   not an asset-extraction batch.
 2. **Mario's down-B (`SpecialLw`, Tornado)** and/or fireball (`SpecialN`)
    instead, since neither is blocked on root-motion data the way `SpecialHi`
    is — but both were flagged in the previous batch's scoping as needing
@@ -90,9 +90,10 @@ equivalent for. Revisit alongside a fighter's other moves.
 
 ## Real blockers
 
-None outright, but `SpecialHi` specifically is blocked on animation-data
-extraction (see above) rather than gameplay-code work. Rendering
-performance (`P5`) is not a blocker for this or any gameplay batch.
+None outright. `SpecialHi` needs its remaining portable-gameplay/runtime
+bridge and motion-event implementation, not further ROM or asset access.
+Rendering performance (`P5`) is not a blocker for this or any gameplay
+batch.
 
 ---
 
