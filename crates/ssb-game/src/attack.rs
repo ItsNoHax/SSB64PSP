@@ -322,6 +322,12 @@ pub fn apply_hit_from(
     ) {
         return;
     }
+    if defender.invincible_frames > 0 {
+        // `nGMHitStatusInvincible`: the hitbox simply does not register —
+        // `hit_by_current_attack` is left alone so the same active window
+        // can still connect once invincibility ends.
+        return;
+    }
     if is_shielding(defender.status.status) {
         apply_shield_hit(&hitbox, attacker, defender);
         *hit_by_current_attack = true;
@@ -560,5 +566,30 @@ mod tests {
             starting_health - MARIO_JAB1_HITBOX.damage as f32
         );
         assert_ne!(defender.physics.vel_ground.x, 0.0);
+    }
+
+    /// `nGMHitStatusInvincible`: a post-respawn invincible defender takes no
+    /// hit at all, not even the shield-block path.
+    #[test]
+    fn an_invincible_defender_is_not_hit() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::new(0.0, 0.0, 0.0);
+        defender.pos = Vec3::new(10.0, 0.0, 0.0);
+        defender.situation = crate::fighter::Situation::Ground;
+        defender.invincible_frames = 10;
+        status::set_status(
+            &mut attacker,
+            Status::Attack11,
+            3.0,
+            StatusTiming::unknown(),
+        );
+
+        let mut hit_by_current_attack = false;
+        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+
+        assert_eq!(defender.status.status, Status::Wait);
+        assert_eq!(defender.damage, 0);
+        assert!(!hit_by_current_attack);
     }
 }

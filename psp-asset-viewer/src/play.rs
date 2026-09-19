@@ -36,6 +36,32 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         LandingHeavy => "land-hvy",
         Pass => "pass    ",
         Attack11 => "jab1    ",
+        DamageN1 => "dmg-n1  ",
+        DamageN2 => "dmg-n2  ",
+        DamageN3 => "dmg-n3  ",
+        DamageAir1 => "dmg-air1",
+        DamageAir2 => "dmg-air2",
+        DamageAir3 => "dmg-air3",
+        DamageFlyN => "dmg-fly ",
+        DamageFlyTop => "dmg-flyt",
+        DamageFall => "dmg-fall",
+        GuardOn => "guard-on",
+        Guard => "guard   ",
+        GuardOff => "guard-of",
+        GuardSetOff => "guard-so",
+        ShieldBreakFly => "shld-brk",
+        DeadDown => "dead-dn ",
+        DeadLeftRight => "dead-lr ",
+        DeadUpStar => "dead-up ",
+        RebirthDown => "rebrth-d",
+        RebirthStand => "rebrth-s",
+        RebirthWait => "rebrth-w",
+        Sleep => "sleep   ",
+        // Every other status is not wired with any behaviour yet
+        // (`Status`'s own doc comment) — this overlay just needs a fallback,
+        // not real per-status behaviour, so a wildcard is fine here even
+        // though the rest of this codebase avoids them on `Status` matches.
+        _ => "?       ",
     }
 }
 
