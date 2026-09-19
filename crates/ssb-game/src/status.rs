@@ -103,27 +103,50 @@ pub const SQUAT_BUFFER_TICS_MAX: u8 = 4;
 pub const PASS_STICK_MIN: i32 = -53;
 pub const PASS_BUFFER_TICS_MAX: u8 = 4;
 
-/// A fighter's status, with `FTCommonStatus` ordinals preserved exactly.
+/// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
+/// the complete common table (0..=219), transcribed from
+/// `ft/ftcommon/ftcommonstatus.h`'s own `// Status N (0x..): Name` comments.
 ///
 /// The ordinals index per-character status tables in the ROM, so renumbering
-/// would silently mis-associate every fighter's data. Only the statuses this
-/// module implements are listed; the gaps are the unported ones and the
-/// discriminants leave room for them.
+/// would silently mis-associate every fighter's data. Statuses above 219
+/// (`nFTCommonStatusSpecialStart`) are per-character specials/grabs and are
+/// not part of this common table; they belong to each fighter's own status
+/// enum (`P2`/fighter-bulk-port scope).
+///
+/// Behaviour (`proc_update`/`proc_interrupt`/`proc_physics`) is wired for a
+/// growing subset only — movement (module docs) and the [`Status::DamageHi1`]
+/// family (`crate::attack`). Every other variant exists so the ordinal space
+/// is correct and future batches can attach behaviour without renumbering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum Status {
+    DeadDown = 0,
+    /// The original's single status for both directions of a "star KO":
+    /// `nFTCommonStatusDeadLeftRight`.
+    DeadLeftRight = 1,
+    DeadUpStar = 2,
+    DeadUpFall = 3,
+    Sleep = 4,
+    Entry = 5,
+    EntryNull = 6,
+    RebirthDown = 7,
+    RebirthStand = 8,
+    RebirthWait = 9,
     /// Standing still. `nFTCommonStatusControlStart` — the first status a
     /// player can act out of.
     Wait = 10,
     WalkSlow = 11,
     WalkMiddle = 12,
     WalkFast = 13,
+    WalkEnd = 14,
     Dash = 15,
     Run = 16,
     RunBrake = 17,
     Turn = 18,
+    TurnRun = 19,
     /// Jumpsquat. The original's name is literal: the knees bend.
     KneeBend = 20,
+    GuardKneeBend = 21,
     JumpF = 22,
     JumpB = 23,
     JumpAerialF = 24,
@@ -134,13 +157,220 @@ pub enum Status {
     FallAerial = 27,
     Squat = 28,
     SquatWait = 29,
+    SquatRv = 30,
     LandingLight = 31,
     LandingHeavy = 32,
     /// Dropping through a passable platform.
     Pass = 33,
+    GuardPass = 34,
+    OttottoWait = 35,
+    Ottotto = 36,
+
+    // -- Damage/hitstun family (`ft/ftcommon/ftcommondamage.c`) -------------
+    DamageHi1 = 37,
+    DamageHi2 = 38,
+    DamageHi3 = 39,
+    DamageN1 = 40,
+    DamageN2 = 41,
+    DamageN3 = 42,
+    DamageLw1 = 43,
+    DamageLw2 = 44,
+    DamageLw3 = 45,
+    DamageAir1 = 46,
+    DamageAir2 = 47,
+    DamageAir3 = 48,
+    DamageE1 = 49,
+    DamageE2 = 50,
+    DamageFlyHi = 51,
+    DamageFlyN = 52,
+    DamageFlyLw = 53,
+    DamageFlyTop = 54,
+    DamageFlyRoll = 55,
+    WallDamage = 56,
+    DamageFall = 57,
+    FallSpecial = 58,
+    LandingFallSpecial = 59,
+    Twister = 60,
+    TaruCann = 61,
+
+    // -- Barrel/warp pipe, ceiling stick ------------------------------------
+    DokanStart = 62,
+    DokanWait = 63,
+    DokanEnd = 64,
+    DokanWalk = 65,
+    StopCeil = 66,
+
+    // -- Knockdown / tech / meteor-passive ----------------------------------
+    DownBounceD = 67,
+    DownBounceU = 68,
+    DownWaitD = 69,
+    DownWaitU = 70,
+    DownStandD = 71,
+    DownStandU = 72,
+    PassiveStandF = 73,
+    PassiveStandB = 74,
+    DownForwardD = 75,
+    DownForwardU = 76,
+    DownBackD = 77,
+    DownBackU = 78,
+    DownAttackD = 79,
+    DownAttackU = 80,
+    Passive = 81,
+    ReboundWait = 82,
+    Rebound = 83,
+
+    // -- Ledge (`mpCommonProcFighterOnCliffEdge`) ---------------------------
+    CliffCatch = 84,
+    CliffWait = 85,
+    CliffQuick = 86,
+    CliffClimbQuick1 = 87,
+    CliffClimbQuick2 = 88,
+    CliffSlow = 89,
+    CliffClimbSlow1 = 90,
+    CliffClimbSlow2 = 91,
+    CliffAttackQuick1 = 92,
+    CliffAttackQuick2 = 93,
+    CliffAttackSlow1 = 94,
+    CliffAttackSlow2 = 95,
+    CliffEscapeQuick1 = 96,
+    CliffEscapeQuick2 = 97,
+    CliffEscapeSlow1 = 98,
+    CliffEscapeSlow2 = 99,
+
+    // -- Item pickup/carry/throw ---------------------------------------------
+    LightGet = 100,
+    HeavyGet = 101,
+    LiftWait = 102,
+    LiftTurn = 103,
+    LightThrowDrop = 104,
+    LightThrowDash = 105,
+    LightThrowF = 106,
+    LightThrowB = 107,
+    LightThrowHi = 108,
+    LightThrowLw = 109,
+    LightThrowF4 = 110,
+    LightThrowB4 = 111,
+    LightThrowHi4 = 112,
+    LightThrowLw4 = 113,
+    LightThrowAirF = 114,
+    LightThrowAirB = 115,
+    LightThrowAirHi = 116,
+    LightThrowAirLw = 117,
+    LightThrowAirF4 = 118,
+    LightThrowAirB4 = 119,
+    LightThrowAirHi4 = 120,
+    LightThrowAirLw4 = 121,
+    HeavyThrowF = 122,
+    HeavyThrowB = 123,
+    HeavyThrowF4 = 124,
+    HeavyThrowB4 = 125,
+
+    // -- Item-weapon swings (sword/bat/harisen/star rod, all shared forms) --
+    SwordSwing1 = 126,
+    SwordSwing3 = 127,
+    SwordSwing4 = 128,
+    SwordSwingDash = 129,
+    BatSwing1 = 130,
+    BatSwing3 = 131,
+    BatSwing4 = 132,
+    BatSwingDash = 133,
+    HarisenSwing1 = 134,
+    HarisenSwing3 = 135,
+    HarisenSwing4 = 136,
+    HarisenSwingDash = 137,
+    StarRodSwing1 = 138,
+    StarRodSwing3 = 139,
+    StarRodSwing4 = 140,
+    StarRodSwingDash = 141,
+    LGunShoot = 142,
+    LGunShootAir = 143,
+    FireFlowerShoot = 144,
+    FireFlowerShootAir = 145,
+
+    // -- Hammer item ----------------------------------------------------------
+    HammerWait = 146,
+    HammerWalk = 147,
+    HammerTurn = 148,
+    HammerKneeBend = 149,
+    HammerFall = 150,
+    HammerLanding = 151,
+
+    // -- Shield ---------------------------------------------------------------
+    GuardOn = 152,
+    Guard = 153,
+    GuardOff = 154,
+    GuardSetOff = 155,
+    EscapeF = 156,
+    EscapeB = 157,
+    ShieldBreakFly = 158,
+    ShieldBreakFall = 159,
+    ShieldBreakDownD = 160,
+    ShieldBreakDownU = 161,
+    ShieldBreakStandD = 162,
+    ShieldBreakStandU = 163,
+    FuraFura = 164,
+    FuraSleep = 165,
+
+    // -- Grabs/throws (`ft/ftcommon/ftcommoncatch*.c`, `ftcommonthrow*.c`) --
+    Catch = 166,
+    CatchPull = 167,
+    CatchWait = 168,
+    ThrowF = 169,
+    ThrowB = 170,
+    CapturePulled = 171,
+    CaptureWait = 172,
+    CaptureKirby = 173,
+    CaptureWaitKirby = 174,
+    ThrownKirbyStar = 175,
+    ThrownCopyStar = 176,
+    CaptureYoshi = 177,
+    YoshiEgg = 178,
+    CaptureCaptain = 179,
+    ThrownDonkeyUnk = 180,
+    ThrownDonkeyF = 181,
+    ThrownMarioB1 = 182,
+    ThrownUnk1 = 183,
+    Shouldered = 184,
+    ThrownMarioB2 = 185,
+    ThrownCommon = 186,
+    ThrownUnk2 = 187,
+    ThrownUnk3 = 188,
+
+    Appeal = 189,
+
+    // -- Base moveset (`ft/ftcommon/ftcommonattack*.c`) ------------------------
     /// Neutral jab — `nFTCommonStatusAttack11`. `F1` criterion 5's grounded
     /// attack; see `crate::attack` for the hitbox/knockback/hitstun it drives.
     Attack11 = 190,
+    Attack12 = 191,
+    AttackDash = 192,
+    AttackS3Hi = 193,
+    AttackS3HiS = 194,
+    AttackS3 = 195,
+    AttackS3LwS = 196,
+    AttackS3Lw = 197,
+    AttackHi3F = 198,
+    AttackHi3 = 199,
+    AttackHi3B = 200,
+    AttackLw3 = 201,
+    AttackS4Hi = 202,
+    AttackS4HiS = 203,
+    AttackS4 = 204,
+    AttackS4LwS = 205,
+    AttackS4Lw = 206,
+    AttackHi4 = 207,
+    AttackLw4 = 208,
+    AttackAirN = 209,
+    AttackAirF = 210,
+    AttackAirB = 211,
+    AttackAirHi = 212,
+    AttackAirLw = 213,
+    LandingAirN = 214,
+    LandingAirF = 215,
+    LandingAirB = 216,
+    LandingAirHi = 217,
+    LandingAirLw = 218,
+    LandingAirNull = 219,
 }
 
 impl Status {
@@ -185,6 +415,11 @@ impl Status {
             // current pose", so this is the same fallback other unextracted
             // animations get, not a special case.
             Status::Attack11 => Status::Wait.anim_slot(),
+            // Every other status (the bulk of the just-added common table,
+            // `Status` doc comment): no animation is extracted for it yet.
+            // Same fallback as `Attack11` — keep the current pose rather than
+            // guess a clip.
+            _ => Status::Wait.anim_slot(),
         }
     }
 
@@ -203,6 +438,14 @@ impl Status {
 
     /// Whether this status is a grounded one — the `ga` field, which the
     /// original sets through `mpCommonSetFighterGround` / `...Air`.
+    ///
+    /// The Damage/Fly family is a documented simplification
+    /// (`crate::attack`'s module docs): the original can put a
+    /// [`Status::DamageHi1`]-table status in the air too, when a shallow hit's
+    /// knockback still has an upward component (`ftCommonDamageInitDamageVars`'s
+    /// `angle_diff < 90deg` branch). That branch is not ported, so here the
+    /// Hi/N/Lw statuses are always grounded and only the dedicated
+    /// Air/Fly/Fall statuses are airborne.
     pub fn is_grounded(self) -> bool {
         !matches!(
             self,
@@ -213,6 +456,15 @@ impl Status {
                 | Status::Fall
                 | Status::FallAerial
                 | Status::Pass
+                | Status::DamageAir1
+                | Status::DamageAir2
+                | Status::DamageAir3
+                | Status::DamageFlyHi
+                | Status::DamageFlyN
+                | Status::DamageFlyLw
+                | Status::DamageFlyTop
+                | Status::DamageFlyRoll
+                | Status::DamageFall
         )
     }
 
@@ -741,6 +993,14 @@ pub fn set_attack11(f: &mut Fighter) {
     );
 }
 
+/// `ftCommonDamageFallSetStatusFromDamage` @ `ftcommondamagefall.c:53`,
+/// reduced to the status change: hitstun over an airborne Damage/Fly status
+/// ends into `DamageFall`, a plain fall the fighter is not yet fighting out
+/// of — this is what [`update`]'s airborne-Damage arm calls.
+pub fn set_damage_fall(f: &mut Fighter) {
+    set_status(f, Status::DamageFall, 0.0, StatusTiming::unknown());
+}
+
 // ---------------------------------------------------------------------------
 // Interrupt checks
 // ---------------------------------------------------------------------------
@@ -996,6 +1256,38 @@ pub fn update(f: &mut Fighter) {
                 ground_interrupt(f);
             }
         }
+        // `ftCommonDamageCommonProcInterrupt` @ `ftcommondamage.c:166`,
+        // restricted to the no-hammer case: hitstun ends the status into
+        // `Wait` (module docs: the grounded Damage statuses are always
+        // grounded here, so this always takes the `ga != Air` branch).
+        Status::DamageHi1
+        | Status::DamageHi2
+        | Status::DamageHi3
+        | Status::DamageN1
+        | Status::DamageN2
+        | Status::DamageN3
+        | Status::DamageLw1
+        | Status::DamageLw2
+        | Status::DamageLw3 => {
+            if f.hitstun == 0 {
+                set_wait(f);
+            }
+        }
+        // `ftCommonDamageAirCommonProcInterrupt` @ `ftcommondamage.c:191`:
+        // an airborne hit reaction ends into `DamageFall`, not directly back
+        // under player control — `crate::attack::set_damage_fall`.
+        Status::DamageAir1
+        | Status::DamageAir2
+        | Status::DamageAir3
+        | Status::DamageFlyHi
+        | Status::DamageFlyN
+        | Status::DamageFlyLw
+        | Status::DamageFlyTop
+        | Status::DamageFlyRoll => {
+            if f.hitstun == 0 {
+                set_damage_fall(f);
+            }
+        }
         s if !s.is_grounded() => {
             check_jump_aerial(f);
         }
@@ -1182,6 +1474,21 @@ mod tests {
         assert_eq!(Status::Fall as u16, 26);
         assert_eq!(Status::Pass as u16, 33);
         assert_eq!(Status::Attack11 as u16, 190);
+
+        // Spot-check the full common table added for the Damage/Guard/Cliff/
+        // Catch/base-moveset batch, one per section, against
+        // `ftcommonstatus.h`'s own numbering comments.
+        assert_eq!(Status::DeadDown as u16, 0);
+        assert_eq!(Status::RebirthWait as u16, 9);
+        assert_eq!(Status::DamageHi1 as u16, 37);
+        assert_eq!(Status::DamageFlyRoll as u16, 55);
+        assert_eq!(Status::DamageFall as u16, 57);
+        assert_eq!(Status::CliffCatch as u16, 84);
+        assert_eq!(Status::HeavyThrowB4 as u16, 125);
+        assert_eq!(Status::GuardOn as u16, 152);
+        assert_eq!(Status::Catch as u16, 166);
+        assert_eq!(Status::Appeal as u16, 189);
+        assert_eq!(Status::LandingAirNull as u16, 219);
     }
 
     #[test]
