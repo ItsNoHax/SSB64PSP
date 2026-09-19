@@ -307,4 +307,4 @@ editing a record.
 | RE-295 | Real jump binding reaches the dummy's real spawn point | COMPLETE | front-end, physics, gameplay, input |  |
 | RE-296 | First physical-PSP confirmation of `psp-game` | COMPLETE | front-end, hardware, memory, toolchain, visual-regression |  |
 | RE-297 | Shared PSP GE renderer extracted into `psp-runtime` | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
-| RE-298 | PSP runtime refactor acceptance gate (software-side complete | OPEN — software checks complete, physical-hardware smoke test not yet run | front-end, toolchain, visual-regression, hardware |  |
+| RE-298 | PSP runtime refactor acceptance gate: software checks and physical-hardware smoke test both pass | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
