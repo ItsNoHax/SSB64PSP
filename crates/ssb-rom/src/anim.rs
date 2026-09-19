@@ -48,7 +48,7 @@ use crate::archive::{Archive, File};
 use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 24;
+pub const SLOT_COUNT: usize = 26;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -76,14 +76,18 @@ pub const SLOT_JUMP_AERIAL_B: usize = 16;
 pub const SLOT_FALL: usize = 17;
 pub const SLOT_FALL_AERIAL: usize = 18;
 pub const SLOT_SQUAT_WAIT: usize = 19;
+/// Mario's grounded `SpecialN` / Fireball pose.
+pub const SLOT_MARIO_SPECIAL_N: usize = 20;
+/// Mario's aerial `SpecialN` / Fireball pose.
+pub const SLOT_MARIO_SPECIAL_AIR_N: usize = 21;
 /// Mario's `SpecialHi` / Super Jump Punch pose.
-pub const SLOT_MARIO_SPECIAL_HI: usize = 20;
+pub const SLOT_MARIO_SPECIAL_HI: usize = 22;
 /// Mario's aerial `SpecialHi` / Super Jump Punch pose.
-pub const SLOT_MARIO_SPECIAL_AIR_HI: usize = 21;
+pub const SLOT_MARIO_SPECIAL_AIR_HI: usize = 23;
 /// Mario's grounded `SpecialLw` / Tornado pose.
-pub const SLOT_MARIO_SPECIAL_LW: usize = 22;
+pub const SLOT_MARIO_SPECIAL_LW: usize = 24;
 /// Mario's aerial `SpecialLw` / Tornado pose.
-pub const SLOT_MARIO_SPECIAL_AIR_LW: usize = 23;
+pub const SLOT_MARIO_SPECIAL_AIR_LW: usize = 25;
 
 /// Slots whose animation ends on its own, so a length means something.
 pub const TIMED_SLOTS: usize = 7;
@@ -440,6 +444,8 @@ mod tests {
         assert_eq!(SLOT_NAMES[SLOT_JUMP_F], "JumpF");
         assert_eq!(SLOT_NAMES[SLOT_FALL], "Fall");
         assert_eq!(SLOT_NAMES[SLOT_SQUAT_WAIT], "SquatWait");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_N], "MarioSpecialN");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_AIR_N], "MarioSpecialAirN");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_HI], "MarioSpecialHi");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_AIR_HI], "MarioSpecialAirHi");
         assert_eq!(SLOT_NAMES[SLOT_MARIO_SPECIAL_LW], "MarioSpecialLw");
@@ -461,11 +467,13 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        assert_eq!(missing, 112, "only Mario has the four special slots");
+        assert_eq!(missing, 164, "only Mario has the six special slots");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
             .expect("Mario is in FTKind order");
+        assert_eq!(mario.files[SLOT_MARIO_SPECIAL_N], 635);
+        assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_N], 636);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_HI], 637);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_HI], 637);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_LW], 638);

@@ -107,6 +107,13 @@ pub const PASS_BUFFER_TICS_MAX: u8 = 4;
 /// `FTCOMMON_SPECIALHI_STICK_RANGE_MIN` — holding this much up while tapping
 /// B selects a fighter's up-special from either standard interrupt chain.
 pub const SPECIALHI_STICK_MIN: i32 = 53;
+/// `FTCOMMON_SPECIALN_TURN_STICK_RANGE_MIN` — a neutral-B reverses Mario
+/// when the stick is held this far behind his current facing.
+pub const SPECIALN_TURN_STICK_MIN: i32 = -20;
+/// The ROM-verified Fireball ground and air figatree duration (files 635 and
+/// 636). The shared motion script emits its weapon event at frame 16.
+pub const MARIO_FIREBALL_LENGTH_FRAMES: f32 = 46.0;
+pub const MARIO_FIREBALL_SPAWN_FRAME: f32 = 16.0;
 /// `dMarioMainMotion_SuperJumpPunchAir`: two frames to the initial hit, one
 /// frame through its cleanup, then six to `SetFlag1(1)`/`SetFlag2(1)`.
 pub const MARIO_SUPERJUMP_LAUNCH_FRAME: f32 = 9.0;
@@ -590,6 +597,10 @@ impl Status {
 pub enum MarioStatus {
     /// `nFTMarioStatusAttack13` — the jab combo's third-hit finisher.
     Attack13 = 220,
+    /// `nFTMarioStatusSpecialN` — Fireball from the ground.
+    SpecialN = 223,
+    /// `nFTMarioStatusSpecialAirN` — Fireball in the air.
+    SpecialAirN = 224,
     /// `nFTMarioStatusSpecialHi` — Super Jump Punch from the ground.
     SpecialHi = 225,
     /// `nFTMarioStatusSpecialAirHi` — Super Jump Punch in the air.
@@ -615,11 +626,16 @@ impl AnyStatus {
     pub fn is_grounded(self) -> bool {
         match self {
             AnyStatus::Common(s) => s.is_grounded(),
-            // `Attack13` and ground Super Jump Punch are grounded variants.
+            // `Attack13` and Mario's ground specials are grounded variants.
             AnyStatus::Mario(
-                MarioStatus::Attack13 | MarioStatus::SpecialHi | MarioStatus::SpecialLw,
+                MarioStatus::Attack13
+                | MarioStatus::SpecialN
+                | MarioStatus::SpecialHi
+                | MarioStatus::SpecialLw,
             ) => true,
-            AnyStatus::Mario(MarioStatus::SpecialAirHi | MarioStatus::SpecialAirLw) => false,
+            AnyStatus::Mario(
+                MarioStatus::SpecialAirN | MarioStatus::SpecialAirHi | MarioStatus::SpecialAirLw,
+            ) => false,
         }
     }
 
@@ -643,10 +659,12 @@ impl AnyStatus {
     pub fn anim_slot(self) -> usize {
         match self {
             AnyStatus::Common(s) => s.anim_slot(),
-            AnyStatus::Mario(MarioStatus::SpecialHi) => 20,
-            AnyStatus::Mario(MarioStatus::SpecialAirHi) => 21,
-            AnyStatus::Mario(MarioStatus::SpecialLw) => 22,
-            AnyStatus::Mario(MarioStatus::SpecialAirLw) => 23,
+            AnyStatus::Mario(MarioStatus::SpecialN) => 20,
+            AnyStatus::Mario(MarioStatus::SpecialAirN) => 21,
+            AnyStatus::Mario(MarioStatus::SpecialHi) => 22,
+            AnyStatus::Mario(MarioStatus::SpecialAirHi) => 23,
+            AnyStatus::Mario(MarioStatus::SpecialLw) => 24,
+            AnyStatus::Mario(MarioStatus::SpecialAirLw) => 25,
             AnyStatus::Mario(MarioStatus::Attack13) => Status::Wait.anim_slot(),
         }
     }
@@ -1296,6 +1314,14 @@ pub struct MarioSpecialHiState {
     pub launch_started: bool,
 }
 
+/// `ftMarioSpecialNInitStatusVars`: the accessory callback consumes motion
+/// script flag 0 once, so a ground/air map transition must preserve this flag
+/// rather than creating another Fireball at the same animation frame.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MarioSpecialNState {
+    pub spawned: bool,
+}
+
 /// `ftMarioSpecialLwStatusVars` plus the persistent tornado-rise expenditure.
 /// Flag 3 gates B-tap rises; flag 1 starts reducing the horizontal clamp at
 /// the finisher; flag 2 permanently spends the aerial rise until the fighter
@@ -1344,6 +1370,70 @@ pub fn set_fall_special(
         is_allow_interrupt,
         is_fall_accelerate,
     };
+}
+
+/// `ftMarioSpecialNSetStatus` @ 0x80156014.
+pub fn set_mario_special_n(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialN),
+        0.0,
+        StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
+    );
+    f.mario_special_n = MarioSpecialNState::default();
+}
+
+/// `ftMarioSpecialAirNSetStatus` @ 0x80156054.
+pub fn set_mario_special_air_n(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirN),
+        0.0,
+        StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
+    );
+    f.mario_special_n = MarioSpecialNState::default();
+}
+
+/// `ftMarioSpecialAirNSwitchStatusGround` @ 0x80155F4C.
+pub fn switch_mario_fireball_ground(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialN),
+        f.status.anim_frame,
+        StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
+    );
+}
+
+/// `ftMarioSpecialNSwitchStatusAir` @ 0x80155FA0.
+pub fn switch_mario_fireball_air(f: &mut Fighter) {
+    f.become_airborne();
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirN),
+        f.status.anim_frame,
+        StatusTiming::frames(MARIO_FIREBALL_LENGTH_FRAMES),
+    );
+    physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+}
+
+/// `ftCommonSpecialNCheckInterruptCommon` @ 0x80151098, restricted to
+/// Mario. Neutral B is strictly between the up/down-special thresholds.
+pub fn check_special_n(f: &mut Fighter) -> bool {
+    if f.kind != crate::fighter::FighterKind::Mario
+        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+        || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
+    {
+        return false;
+    }
+    if f.stick.forward(f.facing) < SPECIALN_TURN_STICK_MIN {
+        f.facing = f.facing.flipped();
+    }
+    if f.situation == Situation::Ground {
+        set_mario_special_n(f);
+    } else {
+        set_mario_special_air_n(f);
+    }
+    true
 }
 
 /// `ftMarioSpecialHiSetStatus` @ 0x80156428.
@@ -2085,6 +2175,9 @@ fn set_landing_air_null(f: &mut Fighter, percent: u8) {
 /// isn't ported for yet, or that has no aerial `MoveData` (its
 /// `landing_lag_percent` is only meaningful there).
 pub fn set_landing_or_landing_air(f: &mut Fighter) {
+    if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirN) {
+        return switch_mario_fireball_ground(f);
+    }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirLw) {
         return switch_mario_tornado_ground(f);
     }
@@ -2570,7 +2663,8 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
-    check_special_hi(f)
+    check_special_n(f)
+        || check_special_hi(f)
         || check_special_lw(f)
         || check_fsmash(f)
         || check_usmash(f)
@@ -2609,7 +2703,8 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 /// out of a walk did nothing), not a deliberate original difference, now
 /// closed alongside adding the tilts themselves.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
-    check_special_hi(f)
+    check_special_n(f)
+        || check_special_hi(f)
         || check_special_lw(f)
         || check_fsmash(f)
         || check_usmash(f)
@@ -2938,7 +3033,11 @@ pub fn update(f: &mut Fighter) {
         // `collapsible_match` suggestion for this doesn't compile.
         #[allow(clippy::collapsible_match)]
         s if !s.is_grounded() => {
-            if !check_special_hi(f) && !check_special_lw(f) && !check_attack_air(f) {
+            if !check_special_n(f)
+                && !check_special_hi(f)
+                && !check_special_lw(f)
+                && !check_attack_air(f)
+            {
                 check_jump_aerial(f);
             }
         }
@@ -2956,6 +3055,32 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Mario(MarioStatus::Attack13) => {
             if f.status.animation_ended() {
                 set_wait(f);
+            }
+        }
+        AnyStatus::Mario(MarioStatus::SpecialN | MarioStatus::SpecialAirN) => {
+            // `dMarioMainMotion_0x1688`: WaitAsync(16), then SetFlag0(1).
+            // The source accessory callback consumes that flag exactly once
+            // and hands weapon creation to `wpManager` after fighter update.
+            if f.status.anim_frame >= MARIO_FIREBALL_SPAWN_FRAME && !f.mario_special_n.spawned {
+                f.mario_special_n.spawned = true;
+                f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
+                    kind: crate::weapon::WeaponKind::MarioFireball,
+                    owner_port: f.port,
+                    // The original uses joint 16. This portable request is
+                    // rooted at the fighter until the runtime-to-gameplay
+                    // joint-position bridge is introduced alongside weapon
+                    // rendering; it keeps game logic independent of a
+                    // skeleton/pack handle.
+                    position: f.pos,
+                    facing: f.facing.sign(),
+                });
+            }
+            if f.status.animation_ended() {
+                if f.situation == Situation::Ground {
+                    set_wait(f);
+                } else {
+                    set_fall(f);
+                }
             }
         }
         AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi) => {
@@ -4634,6 +4759,52 @@ mod tests {
         assert!(check_special_hi(&mut f));
         assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialAirHi));
         assert_eq!(f.physics.vel_air, Vec3::new(20.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn neutral_b_reverses_then_queues_one_fireball_on_source_frame_sixteen() {
+        let mut f = mario();
+        hold(&mut f, -30, 0);
+        f.prev_input.buttons = N64Buttons::default();
+        f.input.buttons = N64Buttons(N64Buttons::B);
+
+        assert!(check_special_n(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialN));
+        assert_eq!(f.facing, Facing::Left);
+        assert_eq!(
+            f.status.timing.anim_length,
+            Some(MARIO_FIREBALL_LENGTH_FRAMES)
+        );
+
+        for _ in 0..15 {
+            update(&mut f);
+            assert_eq!(f.take_weapon_spawn(), None);
+        }
+        update(&mut f);
+        assert_eq!(
+            f.take_weapon_spawn(),
+            Some(crate::weapon::WeaponSpawn {
+                kind: crate::weapon::WeaponKind::MarioFireball,
+                owner_port: 0,
+                position: Vec3::ZERO,
+                facing: -1.0,
+            })
+        );
+        update(&mut f);
+        assert_eq!(f.take_weapon_spawn(), None);
+    }
+
+    #[test]
+    fn fireball_map_transition_keeps_the_pending_spawn_and_animation_frame() {
+        let mut f = airborne_mario();
+        set_mario_special_air_n(&mut f);
+        f.status.anim_frame = 15.0;
+        switch_mario_fireball_ground(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialN));
+        assert_eq!(f.status.anim_frame, 15.0);
+        assert!(!f.mario_special_n.spawned);
+        update(&mut f);
+        assert!(f.mario_special_n.spawned);
     }
 
     #[test]

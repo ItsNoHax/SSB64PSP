@@ -17,6 +17,8 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
     let current = match scene.fighter.status.status {
         AnyStatus::Common(s) => s,
         AnyStatus::Mario(MarioStatus::Attack13) => return "jab3    ",
+        AnyStatus::Mario(MarioStatus::SpecialN) => return "sp-n    ",
+        AnyStatus::Mario(MarioStatus::SpecialAirN) => return "sp-airn ",
         AnyStatus::Mario(MarioStatus::SpecialHi) => return "sp-hi   ",
         AnyStatus::Mario(MarioStatus::SpecialAirHi) => return "sp-airhi",
         AnyStatus::Mario(MarioStatus::SpecialLw) => return "sp-lw   ",

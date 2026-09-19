@@ -224,6 +224,11 @@ pub struct Fighter {
     pub mario_special_hi: crate::status::MarioSpecialHiState,
     /// Per-use flags from Mario's Tornado motion script.
     pub mario_special_lw: crate::status::MarioSpecialLwState,
+    /// Per-use flags from Mario's Fireball motion script.
+    pub mario_special_n: crate::status::MarioSpecialNState,
+    /// One weapon creation requested by this fighter's current status. The
+    /// match-owned weapon pool consumes it after fighter callbacks finish.
+    pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -260,6 +265,8 @@ impl Fighter {
             fall_special: crate::status::FallSpecialState::default(),
             mario_special_hi: crate::status::MarioSpecialHiState::default(),
             mario_special_lw: crate::status::MarioSpecialLwState::default(),
+            mario_special_n: crate::status::MarioSpecialNState::default(),
+            weapon_spawn: None,
             root_motion: RootMotion::default(),
         }
     }
@@ -385,6 +392,12 @@ impl Fighter {
         self.root_motion = motion;
     }
 
+    /// Takes the one weapon creation emitted by this fighter's motion script.
+    /// The request is one-shot until a later animation event queues another.
+    pub fn take_weapon_spawn(&mut self) -> Option<crate::weapon::WeaponSpawn> {
+        self.weapon_spawn.take()
+    }
+
     /// Advances one tick against a stage.
     ///
     /// The order is the original's, and it is the order the four per-status
@@ -495,6 +508,10 @@ impl Fighter {
             None => {
                 self.floor = None;
                 if self.status.status
+                    == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialN)
+                {
+                    crate::status::switch_mario_fireball_air(self);
+                } else if self.status.status
                     == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
                 {
                     crate::status::switch_mario_tornado_air(self);

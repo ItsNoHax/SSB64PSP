@@ -86,6 +86,8 @@ SLOTS = [
 # motion-script entry points are gameplay data, while their skeletal pose is
 # the same.
 SPECIAL_SLOTS = [
+    ("MarioSpecialN", "Mario", "FTMarioAnimFireballGround"),
+    ("MarioSpecialAirN", "Mario", "FTMarioAnimFireballAir"),
     ("MarioSpecialHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
     ("MarioSpecialAirHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
     ("MarioSpecialLw", "Mario", "FTMarioAnimMarioTornadoGround"),
