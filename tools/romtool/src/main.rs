@@ -834,8 +834,8 @@ fn plan_draw_order(
 /// Joint entries in a built pack that name both a script and a node.
 ///
 /// The gap between this and the total is the two ways a joint can be inert: an
-/// animation that does not move it, and the spare `TransN` entry a table
-/// carries when its motion uses one (RE-036).
+/// animation that does not move it, and a spare runtime-joint entry a table
+/// carries for one of `TransN`, `XRotN`, or `YRotN` (RE-036).
 fn pack_anim_joints_bound(pack: &ssb_rom::pack::Pack<'_>) -> usize {
     (0..pack.anim_joint_count())
         .filter_map(|i| pack.anim_joint(i))
@@ -1987,7 +1987,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     let mut packed_anims = 0usize;
     let mut anim_joints_packed = 0usize;
     let mut anims_failed: Vec<String> = Vec::new();
-    let mut transn_anims = 0usize;
+    let mut hidden_joint_anims = 0usize;
     for (kind, entry) in ssb_rom::anim::FIGHTER_ANIMS.iter().enumerate() {
         let file_entry = ssb_rom::fighter::FIGHTER_FILES[kind];
         let nodes = loaded.files[file_entry.file as usize]
@@ -2034,19 +2034,19 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .ok()
                 .and_then(|l| l.frames())
                 .unwrap_or(0);
-            // One script more than the fighter has joints means the motion
-            // uses TransN: a runtime joint, not a model one, spliced in as
-            // TopN's child. The attach walk reaches it first, so it takes
-            // script 0 and pushes every model joint down by one (RE-036).
-            // Getting this wrong puts each joint's rotation on its neighbour,
-            // which still yields a rigid skeleton and so is invisible to every
-            // check but looking at it.
-            let transn = table.len() == nodes.len() + 1;
+            // One script more than the fighter has model joints means the
+            // motion carries one runtime joint (`TransN`, `XRotN`, or
+            // `YRotN`) before the model tree. It has no packed model node,
+            // so script 0 is retained as a no-node entry and every model
+            // script follows it. The motion descriptor tells the original
+            // which runtime joint it is; a bare figatree table does not, so
+            // do not mislabel every such entry TransN (RE-036).
+            let hidden_joint = table.len() == nodes.len() + 1;
             let joints: Vec<(Option<u32>, Option<u32>)> = table
                 .iter()
                 .enumerate()
                 .map(|(j, &at)| {
-                    let node = if transn {
+                    let node = if hidden_joint {
                         j.checked_sub(1).and_then(|k| nodes.get(k).copied())
                     } else {
                         nodes.get(j).copied()
@@ -2054,8 +2054,8 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     ((at != 0).then_some(at), node)
                 })
                 .collect();
-            if transn {
-                transn_anims += 1;
+            if hidden_joint {
+                hidden_joint_anims += 1;
             }
             anim_joints_packed += joints.len();
             writer.add_anim(
@@ -2274,7 +2274,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         );
     }
     println!(
-        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node, {transn_anims} using TransN)",
+        "  animations  {packed_anims} ({anim_joints_packed} joint entries, {} joints bound to a node, {hidden_joint_anims} with a runtime joint)",
         pack_anim_joints_bound(&pack)
     );
     if !anims_failed.is_empty() {

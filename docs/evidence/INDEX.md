@@ -308,3 +308,4 @@ editing a record.
 | RE-296 | First physical-PSP confirmation of `psp-game` | COMPLETE | front-end, hardware, memory, toolchain, visual-regression |  |
 | RE-297 | Shared PSP GE renderer extracted into `psp-runtime` | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
 | RE-298 | PSP runtime refactor acceptance gate: software checks and physical-hardware smoke test both pass | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
+| RE-299 | Mario Super Jump Punch uses TransN root motion | COMPLETE | fighter, animation, asset-pipeline, gameplay |  |

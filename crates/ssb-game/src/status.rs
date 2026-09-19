@@ -559,6 +559,10 @@ impl Status {
 pub enum MarioStatus {
     /// `nFTMarioStatusAttack13` — the jab combo's third-hit finisher.
     Attack13 = 220,
+    /// `nFTMarioStatusSpecialHi` — Super Jump Punch from the ground.
+    SpecialHi = 225,
+    /// `nFTMarioStatusSpecialAirHi` — Super Jump Punch in the air.
+    SpecialAirHi = 226,
 }
 
 /// A fighter's current status: the shared common one, or one of a specific
@@ -576,10 +580,9 @@ impl AnyStatus {
     pub fn is_grounded(self) -> bool {
         match self {
             AnyStatus::Common(s) => s.is_grounded(),
-            // `Attack13` is a grounded finisher for every fighter that has
-            // one (`ftCommonAttack13CheckFighterKind`'s list is all ground
-            // jab combos).
-            AnyStatus::Mario(MarioStatus::Attack13) => true,
+            // `Attack13` and ground Super Jump Punch are grounded variants.
+            AnyStatus::Mario(MarioStatus::Attack13 | MarioStatus::SpecialHi) => true,
+            AnyStatus::Mario(MarioStatus::SpecialAirHi) => false,
         }
     }
 
@@ -597,13 +600,15 @@ impl AnyStatus {
         }
     }
 
-    /// See `Status::anim_slot`'s docs — every extended status falls back to
-    /// the same "keep the current pose" default, since none has an
-    /// extracted animation slot either.
+    /// See `Status::anim_slot`'s docs. Mario's Super Jump Punch pair has
+    /// dedicated extracted slots; other extended statuses keep the current
+    /// pose until their clip is added to the pack.
     pub fn anim_slot(self) -> usize {
         match self {
             AnyStatus::Common(s) => s.anim_slot(),
-            AnyStatus::Mario(_) => Status::Wait.anim_slot(),
+            AnyStatus::Mario(MarioStatus::SpecialHi) => 20,
+            AnyStatus::Mario(MarioStatus::SpecialAirHi) => 21,
+            AnyStatus::Mario(MarioStatus::Attack13) => Status::Wait.anim_slot(),
         }
     }
 
@@ -2656,6 +2661,11 @@ fn update_extended(f: &mut Fighter) {
                 set_wait(f);
             }
         }
+        // These ordinals and animation slots are present so the asset
+        // pipeline can replay the real clip. Their gameplay callbacks are
+        // intentionally not ported until the hidden-joint physics mapping is
+        // evidenced.
+        AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi) => {}
         AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
     }
 }
