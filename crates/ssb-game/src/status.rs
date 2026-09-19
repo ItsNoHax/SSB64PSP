@@ -545,6 +545,98 @@ impl Status {
     }
 }
 
+/// A per-character status, starting at `nFTCommonStatusSpecialStart` (220) —
+/// outside the shared common table (`Status`, 0..=219). The original numbers
+/// every fighter's own extended statuses independently from 220, so Mario's
+/// 220 and, say, Fox's 220 are different moves entirely; a flat shared enum
+/// would either collide them or need artificial renumbering that breaks
+/// ordinal fidelity with the ROM. Each fighter that needs one gets its own
+/// enum like this; [`AnyStatus`] is what actually gets stored on a
+/// [`crate::fighter::Fighter`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum MarioStatus {
+    /// `nFTMarioStatusAttack13` — the jab combo's third-hit finisher.
+    Attack13 = 220,
+}
+
+/// A fighter's current status: the shared common one, or one of a specific
+/// fighter's own extended ones. Nothing here ties a variant to a particular
+/// [`crate::fighter::FighterKind`] — same as the original, where a status ID
+/// is just a number and its meaning depends on which fighter's status table
+/// it is read against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnyStatus {
+    Common(Status),
+    Mario(MarioStatus),
+}
+
+impl AnyStatus {
+    pub fn is_grounded(self) -> bool {
+        match self {
+            AnyStatus::Common(s) => s.is_grounded(),
+            // `Attack13` is a grounded finisher for every fighter that has
+            // one (`ftCommonAttack13CheckFighterKind`'s list is all ground
+            // jab combos).
+            AnyStatus::Mario(MarioStatus::Attack13) => true,
+        }
+    }
+
+    pub fn is_actionable_on_ground(self) -> bool {
+        match self {
+            AnyStatus::Common(s) => s.is_actionable_on_ground(),
+            AnyStatus::Mario(_) => false,
+        }
+    }
+
+    pub fn is_walk(self) -> bool {
+        match self {
+            AnyStatus::Common(s) => s.is_walk(),
+            AnyStatus::Mario(_) => false,
+        }
+    }
+
+    /// See `Status::anim_slot`'s docs — every extended status falls back to
+    /// the same "keep the current pose" default, since none has an
+    /// extracted animation slot either.
+    pub fn anim_slot(self) -> usize {
+        match self {
+            AnyStatus::Common(s) => s.anim_slot(),
+            AnyStatus::Mario(_) => Status::Wait.anim_slot(),
+        }
+    }
+
+    /// See `Status::anim_speed`'s docs.
+    pub fn anim_speed(self) -> f32 {
+        match self {
+            AnyStatus::Common(s) => s.anim_speed(),
+            AnyStatus::Mario(_) => 1.0,
+        }
+    }
+}
+
+impl From<Status> for AnyStatus {
+    fn from(status: Status) -> Self {
+        AnyStatus::Common(status)
+    }
+}
+
+/// Lets existing code compare a fighter's current status against a bare
+/// common `Status` (`f.status.status == Status::Wait`) without wrapping it
+/// on every call site — the overwhelming majority of this module's status
+/// comparisons are against common statuses, and only the handful that deal
+/// with an extended one need to match on [`AnyStatus`] directly.
+impl PartialEq<Status> for AnyStatus {
+    fn eq(&self, other: &Status) -> bool {
+        matches!(self, AnyStatus::Common(s) if s == other)
+    }
+}
+impl PartialEq<AnyStatus> for Status {
+    fn eq(&self, other: &AnyStatus) -> bool {
+        other == self
+    }
+}
+
 /// How long a status's animation runs, when that is known.
 ///
 /// `None` means the length lives in animation data (`AnimJoint` /
@@ -750,7 +842,7 @@ fn step_tap(current: u8, now: i32, prev: i32) -> u8 {
 /// a union would save 20 bytes and cost the ability to assert on them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StatusState {
-    pub status: Status,
+    pub status: AnyStatus,
     /// Frames of animation elapsed, counting up by `anim_speed`.
     pub anim_frame: f32,
     pub timing: StatusTiming,
@@ -766,7 +858,7 @@ pub struct StatusState {
 impl Default for StatusState {
     fn default() -> Self {
         StatusState {
-            status: Status::Wait,
+            status: AnyStatus::Common(Status::Wait),
             anim_frame: 0.0,
             timing: StatusTiming::unknown(),
             jump_input: JumpInput::None,
@@ -1043,7 +1135,7 @@ pub fn set_dead_up_star(f: &mut Fighter) {
 pub fn try_rebirth(f: &mut Fighter, respawn_pos: Vec3) -> bool {
     let in_dead_family = matches!(
         f.status.status,
-        Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar
+        AnyStatus::Common(Status::DeadDown | Status::DeadLeftRight | Status::DeadUpStar)
     );
     if !in_dead_family || !f.status.animation_ended() {
         return false;
@@ -1350,6 +1442,17 @@ fn end_cliff_recovery(f: &mut Fighter) {
 /// does not want that is walk-to-walk, which passes a computed
 /// `anim_frame_begin` to keep the legs in phase.
 pub fn set_status(f: &mut Fighter, status: Status, anim_frame_begin: f32, timing: StatusTiming) {
+    set_any_status(f, AnyStatus::Common(status), anim_frame_begin, timing);
+}
+
+/// [`set_status`], generalized to also accept an extended
+/// ([`AnyStatus::Mario`]-style) status — see [`AnyStatus`]'s docs.
+pub fn set_any_status(
+    f: &mut Fighter,
+    status: AnyStatus,
+    anim_frame_begin: f32,
+    timing: StatusTiming,
+) {
     // `mpCommonSetFighterGround` / `...Air`: the situation follows the status,
     // and leaving the ground has to move the velocity across.
     match (f.situation, status.is_grounded()) {
@@ -1602,13 +1705,16 @@ fn set_landing_air_null(f: &mut Fighter, percent: u8) {
 /// isn't ported for yet, or that has no aerial `MoveData` (its
 /// `landing_lag_percent` is only meaningful there).
 pub fn set_landing_or_landing_air(f: &mut Fighter) {
-    match f.status.status {
+    let AnyStatus::Common(current) = f.status.status else {
+        return set_landing(f);
+    };
+    match current {
         Status::AttackAirF => set_landing_air(f, Status::LandingAirF),
         Status::AttackAirB => set_landing_air(f, Status::LandingAirB),
         Status::AttackAirHi => set_landing_air(f, Status::LandingAirHi),
         Status::AttackAirLw => set_landing_air(f, Status::LandingAirLw),
         Status::AttackAirN => {
-            let percent = crate::attack::move_data(f.kind, Status::AttackAirN)
+            let percent = crate::attack::move_data(f.kind, Status::AttackAirN.into())
                 .and_then(|m| m.landing_lag_percent)
                 .unwrap_or(100);
             set_landing_air_null(f, percent);
@@ -1668,7 +1774,7 @@ pub fn set_attack12(f: &mut Fighter) {
 /// known" fallback [`StatusTiming::unknown`] already covers for statuses
 /// with no known length.
 fn attack_length(f: &Fighter, status: Status) -> f32 {
-    crate::attack::move_data(f.kind, status)
+    crate::attack::move_data(f.kind, status.into())
         .map(|m| m.length_frames)
         .unwrap_or(0.0)
 }
@@ -1976,7 +2082,7 @@ pub fn check_attack_air(f: &mut Fighter) -> bool {
     } else {
         Status::AttackAirB
     };
-    if crate::attack::move_data(f.kind, status).is_none() {
+    if crate::attack::move_data(f.kind, status.into()).is_none() {
         return false;
     }
     set_air_attack(f, status);
@@ -2129,7 +2235,16 @@ pub fn walk_interrupt(f: &mut Fighter) -> bool {
 pub fn update(f: &mut Fighter) {
     f.status.anim_frame += f.status.timing.anim_speed;
 
-    match f.status.status {
+    // Every extended (`AnyStatus::Mario`-style) status is handled
+    // separately, in `update_extended` — unwrapping to a bare `Status` here
+    // means the common-table match below needs no changes at all to stay
+    // exactly what it was before `AnyStatus` existed.
+    let AnyStatus::Common(current) = f.status.status else {
+        update_extended(f);
+        return;
+    };
+
+    match current {
         Status::KneeBend => update_kneebend(f),
         Status::Dash => update_dash(f),
         Status::Run => {
@@ -2178,18 +2293,24 @@ pub fn update(f: &mut Fighter) {
             }
         }
         // `ftCommonAttack12ProcUpdate` @ `ftcommonattack1.c:47`, minus the
-        // `Attack100`/`Attack13` follow-up: `Attack13` needs a per-character
-        // status this codebase has no extension point for yet
-        // (`set_attack11`'s doc comment), and `Attack100` doesn't apply to
-        // Mario at all (`ftCommonAttack100CheckFighterKind` — he isn't in
-        // it). `followup_frames` still counts down for realism/testability,
-        // it just never has anywhere to chain to.
+        // `Attack100` branch: it doesn't apply to Mario at all
+        // (`ftCommonAttack100CheckFighterKind` — he isn't in it). The
+        // `Attack13` chain itself now works, via [`attack13_status`] —
+        // gating on which fighters have one the same way
+        // `ftCommonAttack13CheckFighterKind` does, rather than assuming
+        // every fighter does.
         Status::Attack12 => {
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
+                if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+                    f.attack1.is_goto_followup = true;
+                }
             }
             if f.status.animation_ended() {
-                set_wait(f);
+                match (f.attack1.is_goto_followup, attack13_status(f.kind)) {
+                    (true, Some(status)) => set_attack13(f, status),
+                    _ => set_wait(f),
+                }
             }
         }
         // `ftCommonAttackDashProcUpdate`/`AttackS3ProcUpdate`/`AttackHi3ProcUpdate`
@@ -2408,6 +2529,45 @@ pub fn update(f: &mut Fighter) {
     }
 }
 
+/// The extended-status counterpart of `update`'s common-table match, for
+/// whichever fighter-specific status a [`Fighter`] is currently in — see
+/// [`AnyStatus`].
+fn update_extended(f: &mut Fighter) {
+    match f.status.status {
+        // `ftCommonAttack13ProcUpdate` @ `ftcommonattack1.c:63`, minus the
+        // Captain-only `Attack100` branch (doesn't apply to Mario).
+        AnyStatus::Mario(MarioStatus::Attack13) => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
+    }
+}
+
+/// `ftCommonAttack13CheckFighterKind` @ `ftcommonattack1.c:9` — which
+/// fighters have a jab-combo finisher at all, and which extended status it
+/// is. `None` for a fighter with no `Attack13` (most of them; the original
+/// falls back to `Attack100`'s rapid-jab loop instead for a different,
+/// smaller set — not ported, `crate::attack`'s module docs).
+pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
+    match kind {
+        crate::fighter::FighterKind::Mario => Some(AnyStatus::Mario(MarioStatus::Attack13)),
+        _ => None,
+    }
+}
+
+/// `ftCommonAttack13SetStatus` @ `ftcommonattack1.c:199`, reduced to Mario's
+/// own branch (every fighter with an `Attack13` maps to a different
+/// per-character status in the original; [`attack13_status`] is this
+/// codebase's equivalent of that `switch`).
+pub fn set_attack13(f: &mut Fighter, status: AnyStatus) {
+    let len = crate::attack::move_data(f.kind, status)
+        .map(|m| m.length_frames)
+        .unwrap_or(0.0);
+    set_any_status(f, status, 0.0, StatusTiming::frames(len));
+}
+
 /// `ftCommonKneeBendProcUpdate` @ 0x8013F2A0 and `...ProcInterrupt` @ 0x8013F334.
 ///
 /// Two things accumulate during a jumpsquat: the best upward stick deflection
@@ -2495,9 +2655,14 @@ fn update_walk(f: &mut Fighter) {
     if walk_interrupt(f) {
         return;
     }
+    // Only ever called while already in one of the (common-table) walk
+    // statuses, so this always matches.
+    let AnyStatus::Common(current) = f.status.status else {
+        return;
+    };
     let want = walk_status_for(f.input.stick_x);
-    if want != f.status.status {
-        let old = walk_anim_length(&f.attributes, f.status.status);
+    if want != current {
+        let old = walk_anim_length(&f.attributes, current);
         let new = walk_anim_length(&f.attributes, want);
         let phase = if old > 0.0 {
             (f.status.anim_frame / old) * new
@@ -2572,14 +2737,14 @@ mod tests {
     fn mario() -> Fighter {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.situation = Situation::Ground;
-        f.status.status = Status::Wait;
+        f.status.status = Status::Wait.into();
         f
     }
 
     fn airborne_mario() -> Fighter {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.situation = Situation::Air;
-        f.status.status = Status::Fall;
+        f.status.status = Status::Fall.into();
         f
     }
 
@@ -3275,14 +3440,39 @@ mod tests {
     }
 
     #[test]
-    fn attack12_does_not_chain_further_and_ends_in_wait() {
+    fn no_tap_during_jab2_ends_in_wait() {
         let mut f = mario();
         set_attack12(&mut f);
-        // Jab2's own follow-up window is real (`followup_frames` still
-        // counts down — `update`'s `Attack12` arm docs) even though there
-        // is nowhere ported to chain to yet.
-        tap_a(&mut f);
         for _ in 0..30 {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn a_repeated_tap_mid_jab2_chains_into_the_attack13_finisher() {
+        let mut f = mario();
+        set_attack12(&mut f);
+        update(&mut f); // frame 1, well before Jab2's own animation end
+        tap_a(&mut f);
+        update(&mut f); // buffers is_goto_followup; Jab2 hasn't ended yet
+        assert_eq!(f.status.status, Status::Attack12);
+        assert!(f.attack1.is_goto_followup);
+
+        for _ in 0..20 {
+            if f.status.status != Status::Attack12 {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::Attack13));
+
+        // And it plays out and ends back in Wait on its own, same as any
+        // other attack.
+        for _ in 0..20 {
             if f.status.status == Status::Wait {
                 break;
             }
@@ -3352,7 +3542,7 @@ mod tests {
         update(&mut f);
         assert_eq!(f.status.status, Status::AttackLw3);
 
-        let len = crate::attack::move_data(f.kind, Status::AttackLw3)
+        let len = crate::attack::move_data(f.kind, Status::AttackLw3.into())
             .unwrap()
             .length_frames;
         for _ in 0..(len as i32 - 1) {
@@ -3518,7 +3708,7 @@ mod tests {
     fn an_aerial_that_runs_out_without_landing_falls() {
         let mut f = airborne_mario();
         set_air_attack(&mut f, Status::AttackAirF);
-        let len = crate::attack::move_data(f.kind, Status::AttackAirF)
+        let len = crate::attack::move_data(f.kind, Status::AttackAirF.into())
             .unwrap()
             .length_frames;
         for _ in 0..(len as i32 - 1) {

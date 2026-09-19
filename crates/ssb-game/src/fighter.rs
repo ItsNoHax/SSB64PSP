@@ -414,10 +414,19 @@ impl Fighter {
         // after frame 7, a run holds. Friction is the default, and the floor's
         // material scales it (`ftPhysicsApplyGroundVelFriction`).
         let friction = collision::material_friction(standing.flags);
+        // `apply_status_physics` only special-cases a handful of common
+        // statuses and falls back to plain friction for everything else —
+        // an extended status (`crate::status::AnyStatus::Mario`-style) has
+        // no special-cased ground physics of its own either, so any common
+        // status stands in for "use the default friction branch".
+        let physics_status = match self.status.status {
+            crate::status::AnyStatus::Common(s) => s,
+            crate::status::AnyStatus::Mario(_) => crate::status::Status::Wait,
+        };
         crate::status::apply_status_physics(
             &mut self.physics,
             &self.attributes,
-            self.status.status,
+            physics_status,
             self.status.anim_frame,
             self.input.stick_x,
             friction,
