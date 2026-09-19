@@ -204,6 +204,8 @@ pub struct Fighter {
     /// all. Kept beside `input` rather than inside it because `ControllerState`
     /// is the raw pad and this is what `ftMainProcessInput` makes of it.
     pub stick: crate::status::StickState,
+    /// Shield health/decay/release-lag state — `crate::status::GuardState`.
+    pub guard: crate::status::GuardState,
 }
 
 impl Fighter {
@@ -228,6 +230,7 @@ impl Fighter {
             anim: crate::status::AnimLengths::default(),
             status: crate::status::StatusState::default(),
             stick: crate::status::StickState::new(),
+            guard: crate::status::GuardState::default(),
         }
     }
 

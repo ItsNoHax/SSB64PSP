@@ -465,6 +465,8 @@ impl Status {
                 | Status::DamageFlyTop
                 | Status::DamageFlyRoll
                 | Status::DamageFall
+                | Status::ShieldBreakFly
+                | Status::ShieldBreakFall
         )
     }
 
@@ -736,6 +738,162 @@ impl StatusState {
             None => false,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Shield/guard
+// ---------------------------------------------------------------------------
+
+/// `FTCOMMON_GUARD_*` — `ft/ftcommon.h`. `SETOFF_MUL` is the `REGION_US`
+/// value; the JP/EU build uses 1.75 instead.
+pub const GUARD_HEALTH_MAX: f32 = 55.0;
+/// The value shield health is reset to after a break —
+/// `ftMainProcParams` @ `ftmain.c:3852` (also `ftCommonFuraFura`'s own
+/// reset once the break's fly/fall/down chain lands there, which this batch
+/// does not port — see [`set_shield_break_fly`]).
+pub const GUARD_HEALTH_BREAK_RESPAWN: f32 = 30.0;
+pub const GUARD_RELEASE_LAG: i32 = 8;
+pub const GUARD_DECAY_INT: i32 = 16;
+pub const GUARD_SETOFF_MUL: f32 = 1.62;
+pub const GUARD_SETOFF_ADD: f32 = 4.0;
+pub const GUARD_VEL_MUL: f32 = 2.0;
+/// `ftMainProcParams` @ `ftmain.c:3838`: frames between passive shield-health
+/// regen ticks while not shielding and below max.
+pub const GUARD_HEAL_INTERVAL: f32 = 10.0;
+
+/// `FTStruct`'s shield fields: `shield_health`/`shield_damage` live directly
+/// on `FTStruct` in the original (they persist across Guard's own statuses,
+/// unlike `status_vars.common.guard`'s `release_lag`/`decay_wait`/
+/// `is_release`, which really is part of the status union) — grouped here
+/// instead because nothing else needs them split.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuardState {
+    pub shield_health: f32,
+    /// The damage of the hit that last triggered `GuardSetOff` — drives its
+    /// pushback and stun length. `shield_damage_total`'s per-frame
+    /// multi-hit accumulation (`ftmain.c:2069`) is not ported: this codebase
+    /// resolves one hitbox at a time (`crate::attack`'s module docs), so the
+    /// single triggering hit's damage stands in for the accumulated total.
+    pub shield_damage: f32,
+    pub release_lag: i32,
+    pub decay_wait: i32,
+    /// Set the frame the shield button comes up; the shield keeps ticking
+    /// until `release_lag` also reaches zero.
+    pub is_release: bool,
+    pub setoff_frames: f32,
+    /// Frames until the next point of passive regen while not shielding.
+    pub heal_wait: f32,
+}
+
+impl Default for GuardState {
+    fn default() -> Self {
+        GuardState {
+            shield_health: GUARD_HEALTH_MAX,
+            shield_damage: 0.0,
+            release_lag: 0,
+            decay_wait: 0,
+            is_release: false,
+            setoff_frames: 0.0,
+            heal_wait: GUARD_HEAL_INTERVAL,
+        }
+    }
+}
+
+/// `ftCommonGuardCheckScheduleRelease` @ `ftcommonguard1.c:25`: the shield
+/// button coming up schedules the release; it does not drop the shield
+/// itself, which is [`guard_update_shield_vars`]'s job.
+pub fn guard_check_schedule_release(f: &mut Fighter) {
+    if !f.input.buttons.contains(ssb_engine::input::N64Buttons::Z) {
+        f.guard.is_release = true;
+    }
+}
+
+/// `ftCommonGuardUpdateShieldVars` @ `ftcommonguard1.c:72`, minus the Yoshi
+/// hurtbox-collision special case and the visual/effect side (model
+/// hide/show, particle effects) — module docs' usual "no rendering fidelity
+/// this batch" scope cut. Returns whether the shield has now fully lowered
+/// (`release_lag` spent and the button already up), which is what the
+/// caller uses in place of the original's `is_shield` flag to know when to
+/// leave `GuardOff`.
+pub fn guard_update_shield_vars(f: &mut Fighter) -> bool {
+    if f.guard.decay_wait != 0 {
+        f.guard.decay_wait -= 1;
+        if f.guard.decay_wait == 0 {
+            f.guard.shield_health -= 1.0;
+            if f.guard.shield_health > 0.0 {
+                f.guard.decay_wait = GUARD_DECAY_INT;
+            }
+        }
+    }
+    if f.guard.release_lag != 0 {
+        f.guard.release_lag -= 1;
+    }
+    f.guard.release_lag == 0 && f.guard.is_release
+}
+
+/// `ftCommonGuardOnSetStatus` @ `ftcommonguard1.c:415`, restricted to
+/// `slide_tics == 0` (the plain, no-dash-into-shield entry — `check_dash`'s
+/// `ftCommonGuardOnCheckInterruptDashRun` case is not ported).
+pub fn set_guard_on(f: &mut Fighter) {
+    set_status(f, Status::GuardOn, 0.0, StatusTiming::unknown());
+    f.guard.release_lag = GUARD_RELEASE_LAG;
+    f.guard.decay_wait = GUARD_DECAY_INT;
+    f.guard.is_release = false;
+}
+
+/// `ftCommonGuardOnCheckInterruptCommon` @ `ftcommonguard1.c:460`. Sits
+/// exactly where `ftCommonGroundCheckInterrupt` (`fighter.h`) puts it: right
+/// after `Attack1`, before every other ground check.
+pub fn check_guard_on(f: &mut Fighter) -> bool {
+    if f.input.buttons.contains(ssb_engine::input::N64Buttons::Z) && f.guard.shield_health > 0.0 {
+        set_guard_on(f);
+        return true;
+    }
+    false
+}
+
+/// `ftCommonGuardSetStatus` @ `ftcommonguard1.c:491`.
+pub fn set_guard(f: &mut Fighter) {
+    set_status(f, Status::Guard, 0.0, StatusTiming::unknown());
+}
+
+/// `ftCommonGuardOffSetStatus` @ `ftcommonguard2.c:78`.
+pub fn set_guard_off(f: &mut Fighter) {
+    set_status(f, Status::GuardOff, 0.0, StatusTiming::unknown());
+}
+
+/// `ftCommonShieldBreakFlyCommonSetStatus`, restricted to the status change
+/// and the shield-health respawn value it eventually settles on
+/// (`ftmain.c:3852`). The fly → fall → down/stand → `FuraFura` mash-out
+/// chain itself is a documented gap: `Status::ShieldBreakFly` has no
+/// `update` arm yet, so a broken shield currently just stops there rather
+/// than playing out the real vulnerable-flail sequence.
+pub fn set_shield_break_fly(f: &mut Fighter) {
+    set_status(f, Status::ShieldBreakFly, 0.0, StatusTiming::unknown());
+    f.guard.shield_health = GUARD_HEALTH_BREAK_RESPAWN;
+}
+
+/// `ftCommonGuardSetOffSetStatus` @ `ftcommonguard2.c:113`: a hit landing on
+/// a shielding fighter pushes them back instead of dealing damage/hitstun —
+/// [`crate::attack::apply_shield_hit`] is what decides to call this instead
+/// of the normal Damage-family entry.
+///
+/// `shield_lr`/`fp->lr` decide the pushback's direction: away from the
+/// fighter's own facing when the hit came from the side already faced (the
+/// ordinary case), toward it otherwise. Ground-only: shields are a grounded
+/// status, so this only ever writes `vel_ground`, matching the original's
+/// `fp->physics.vel_ground.x` write.
+pub fn set_guard_set_off(f: &mut Fighter, hit_damage: f32, shield_lr: f32) {
+    set_status(f, Status::GuardSetOff, 0.0, StatusTiming::unknown());
+    f.guard.shield_damage = hit_damage;
+    let setoff_frames = hit_damage * GUARD_SETOFF_MUL + GUARD_SETOFF_ADD;
+    f.guard.setoff_frames = setoff_frames;
+    let dir = if f.facing.sign() == shield_lr {
+        -1.0
+    } else {
+        1.0
+    };
+    f.physics.vel_ground.x = dir * setoff_frames * GUARD_VEL_MUL;
 }
 
 // ---------------------------------------------------------------------------
@@ -1164,6 +1322,7 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
     check_attack1(f)
+        || check_guard_on(f)
         || check_kneebend(f)
         || check_dash(f)
         || check_pass(f)
@@ -1187,7 +1346,7 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 ///   turnaround therefore costs one frame of standing that a standing
 ///   turnaround does not.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
-    check_kneebend(f) || check_dash(f) || check_squat(f) || check_wait(f)
+    check_guard_on(f) || check_kneebend(f) || check_dash(f) || check_squat(f) || check_wait(f)
 }
 
 // ---------------------------------------------------------------------------
@@ -1243,6 +1402,55 @@ pub fn update(f: &mut Fighter) {
                 set_fall(f);
             } else {
                 check_jump_aerial(f);
+            }
+        }
+        // `ftCommonGuardOnProcUpdate` @ `ftcommonguard1.c:362`, minus the
+        // Yoshi/effects side (module docs). No animation length is extracted
+        // for the shield-raise, so — unlike a real multi-frame startup —
+        // `GuardOn` resolves into `Guard` (or straight back out, or into a
+        // break) on its very first update tick; see the `GuardState` docs.
+        Status::GuardOn => {
+            guard_check_schedule_release(f);
+            guard_update_shield_vars(f);
+            if f.guard.shield_health <= 0.0 {
+                set_shield_break_fly(f);
+            } else if f.guard.is_release {
+                set_guard_off(f);
+            } else {
+                set_guard(f);
+            }
+        }
+        // `ftCommonGuardProcUpdate` @ `ftcommonguard1.c:472`.
+        Status::Guard => {
+            guard_check_schedule_release(f);
+            guard_update_shield_vars(f);
+            if f.guard.shield_health <= 0.0 {
+                set_shield_break_fly(f);
+            } else if f.guard.is_release {
+                set_guard_off(f);
+            }
+        }
+        // `ftCommonGuardOffProcUpdate` @ `ftcommonguard2.c:60`, using
+        // `guard_update_shield_vars`'s "fully lowered" return in place of the
+        // original's unextracted animation length (`GuardState` docs).
+        Status::GuardOff => {
+            let fully_released = guard_update_shield_vars(f);
+            if f.guard.shield_health <= 0.0 {
+                set_shield_break_fly(f);
+            } else if fully_released {
+                set_wait(f);
+            }
+        }
+        // `ftCommonGuardSetOffProcUpdate` @ `ftcommonguard2.c:93`.
+        Status::GuardSetOff => {
+            guard_check_schedule_release(f);
+            f.guard.setoff_frames -= 1.0;
+            if f.guard.setoff_frames <= 0.0 {
+                if f.guard.is_release {
+                    set_guard_off(f);
+                } else {
+                    set_guard(f);
+                }
             }
         }
         s if s.is_actionable_on_ground() => {
@@ -2106,6 +2314,74 @@ mod tests {
             assert_eq!(f.status.status, Status::Attack11);
         }
         update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    fn hold_z(f: &mut Fighter, held: bool) {
+        f.input.buttons.set(ssb_engine::input::N64Buttons::Z, held);
+    }
+
+    #[test]
+    fn holding_z_from_wait_shields_then_settles_into_guard() {
+        let mut f = mario();
+        hold_z(&mut f, true);
+        update(&mut f); // Wait's ground chain sees Z held -> GuardOn
+        assert_eq!(f.status.status, Status::GuardOn);
+        update(&mut f); // GuardOn resolves same tick it is entered (module docs)
+        assert_eq!(f.status.status, Status::Guard);
+    }
+
+    #[test]
+    fn releasing_z_leaves_guard_through_guard_off_and_back_to_wait() {
+        let mut f = mario();
+        hold_z(&mut f, true);
+        update(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Guard);
+
+        hold_z(&mut f, false);
+        update(&mut f); // schedules the release, straight into GuardOff
+        assert_eq!(f.status.status, Status::GuardOff);
+
+        // `release_lag` was already ticking down during GuardOn/Guard, so
+        // `GuardOff` clears it in at most `GUARD_RELEASE_LAG` more updates.
+        for _ in 0..GUARD_RELEASE_LAG {
+            if f.status.status == Status::Wait {
+                break;
+            }
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn a_shield_held_long_enough_decays_and_eventually_breaks() {
+        let mut f = mario();
+        hold_z(&mut f, true);
+        update(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Guard);
+        let starting_health = f.guard.shield_health;
+
+        for _ in 0..GUARD_DECAY_INT {
+            update(&mut f);
+        }
+        assert_eq!(f.guard.shield_health, starting_health - 1.0);
+
+        // Enough decay ticks to exhaust the whole bar breaks the shield.
+        for _ in 0..(GUARD_DECAY_INT * (starting_health as i32 - 1)) {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::ShieldBreakFly);
+        assert_eq!(f.guard.shield_health, GUARD_HEALTH_BREAK_RESPAWN);
+    }
+
+    #[test]
+    fn guard_on_requires_shield_health() {
+        let mut f = mario();
+        f.guard.shield_health = 0.0;
+        hold_z(&mut f, true);
+        assert!(!check_guard_on(&mut f));
         assert_eq!(f.status.status, Status::Wait);
     }
 }

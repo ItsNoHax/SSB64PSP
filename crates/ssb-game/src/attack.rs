@@ -322,6 +322,11 @@ pub fn apply_hit_from(
     ) {
         return;
     }
+    if is_shielding(defender.status.status) {
+        apply_shield_hit(&hitbox, attacker, defender);
+        *hit_by_current_attack = true;
+        return;
+    }
     let result = resolve_hit(
         &hitbox,
         attacker.pos,
@@ -343,6 +348,28 @@ pub fn apply_hit_from(
     defender.physics.vel_knockback = result.knockback_vel;
     defender.hitstun = result.hitstun;
     *hit_by_current_attack = true;
+}
+
+/// Whether a hit landing on this status should be redirected into
+/// [`apply_shield_hit`] rather than the normal Damage-family path — the
+/// statuses `ftMainUpdateShieldStatFighter`'s caller treats as "currently
+/// shielding" (`ftmain.c`'s hit-search gates a shield hit on `fp->is_shield`,
+/// which these three statuses hold for the whole time they are active).
+pub fn is_shielding(status: Status) -> bool {
+    matches!(
+        status,
+        Status::GuardOn | Status::Guard | Status::GuardSetOff
+    )
+}
+
+/// `ftMainUpdateShieldStatFighter` @ `ftmain.c:2059`, reduced to the
+/// single-hit case (module docs: no `shield_damage_total` multi-hit
+/// accumulation) — a hit landing on a shield deals no damage/knockback/
+/// hitstun at all, only shield health loss and a `GuardSetOff` pushback.
+pub fn apply_shield_hit(hitbox: &Hitbox, attacker: &Fighter, defender: &mut Fighter) {
+    let shield_lr = damage_lr(defender.pos, attacker.pos);
+    status::set_guard_set_off(defender, hitbox.damage as f32, shield_lr);
+    defender.guard.shield_health -= hitbox.damage as f32;
 }
 
 #[cfg(test)]
@@ -501,5 +528,37 @@ mod tests {
         }
         crate::status::update(&mut defender);
         assert_eq!(defender.status.status, Status::Wait);
+    }
+
+    /// A jab landing on a shielding defender blocks entirely: no damage, no
+    /// hitstun, just shield-health loss and a `GuardSetOff` pushback —
+    /// `is_shielding`/`apply_shield_hit`'s module docs.
+    #[test]
+    fn a_jab_landing_on_a_shield_pushes_back_instead_of_damaging() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::new(0.0, 0.0, 0.0);
+        defender.pos = Vec3::new(10.0, 0.0, 0.0);
+        defender.situation = crate::fighter::Situation::Ground;
+        status::set_status(&mut defender, Status::Guard, 0.0, StatusTiming::unknown());
+        let starting_health = defender.guard.shield_health;
+        status::set_status(
+            &mut attacker,
+            Status::Attack11,
+            3.0,
+            StatusTiming::unknown(),
+        );
+
+        let mut hit_by_current_attack = false;
+        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+
+        assert_eq!(defender.status.status, Status::GuardSetOff);
+        assert_eq!(defender.damage, 0);
+        assert_eq!(defender.hitstun, 0);
+        assert_eq!(
+            defender.guard.shield_health,
+            starting_health - MARIO_JAB1_HITBOX.damage as f32
+        );
+        assert_ne!(defender.physics.vel_ground.x, 0.0);
     }
 }
