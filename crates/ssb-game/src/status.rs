@@ -517,6 +517,7 @@ impl Status {
                 | Status::AttackAirB
                 | Status::AttackAirHi
                 | Status::AttackAirLw
+                | Status::FallSpecial
         )
     }
 
@@ -1197,6 +1198,90 @@ fn end_rebirth(f: &mut Fighter) {
 }
 
 // ---------------------------------------------------------------------------
+// Fastfall / FallSpecial
+// ---------------------------------------------------------------------------
+
+/// `FTCOMMON_FASTFALL_STICK_RANGE_MIN`/`_BUFFER_TICS_MAX` — `ft/ftcommon.h`.
+pub const FASTFALL_STICK_RANGE_MIN: i32 = -53;
+pub const FASTFALL_BUFFER_TICS_MAX: u8 = 4;
+
+/// `ftPhysicsCheckSetFastFall` @ `ftphysics.c:231`, minus the
+/// collision-animation side effect (rendering, out of scope). A one-shot
+/// per-airtime latch — `is_fastfall` only clears again on landing
+/// (`Fighter::land`) — so this only ever fires once per fall. Was
+/// previously never called from anywhere in this codebase: `Fighter::tick_air`
+/// read `physics.is_fastfall` but nothing ever set it from a real input,
+/// so a downward flick while falling did nothing. Now called from
+/// `tick_air` every airborne tick, same as the original calls it from every
+/// airborne status's own `proc_physics`.
+pub fn check_set_fast_fall(f: &mut Fighter) {
+    if !f.physics.is_fastfall
+        && f.physics.vel_air.y < 0.0
+        && (f.stick.y as i32) <= FASTFALL_STICK_RANGE_MIN
+        && f.stick.tap_y < FASTFALL_BUFFER_TICS_MAX
+    {
+        f.physics.is_fastfall = true;
+        f.stick.tap_y = STICKBUFFER_MAX;
+    }
+}
+
+/// `ftCommonFallSpecialSetStatus`/status_vars, minus `is_allow_pass`'s
+/// drop-through-platform nuance during the fall (module docs on
+/// [`set_fall_special`]).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct FallSpecialState {
+    /// Air-drift clamp for this particular use, already multiplied by
+    /// `attr.air_speed_max_x` — a recovery move's own drift multiplier,
+    /// not the fighter's normal one.
+    pub drift: f32,
+    pub is_goto_landing: bool,
+    pub landing_lag: f32,
+    pub is_allow_interrupt: bool,
+    /// `false` selects the terminal-velocity-clamped fall
+    /// `ftCommonFallSpecialProcPhysics` uses by default; `true` selects
+    /// plain default gravity instead (used by moves that keep accelerating
+    /// rather than settling immediately).
+    pub is_fall_accelerate: bool,
+}
+
+/// `FTCOMMON_FALLSPECIAL_SKIPLANDING_VEL_Y_MAX` — `ft/ftcommon.h`.
+pub const FALLSPECIAL_SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
+
+/// `ftCommonFallSpecialSetStatus` @ `ftcommonfallspecial.c:72`, minus the
+/// collision-animation/rumble side effects and `is_allow_pass` (module docs).
+/// This is the shared "helpless fall" a recovery move lands in after its own
+/// launch phase — every fighter's up-special that has one calls into this
+/// same status rather than defining its own.
+pub fn set_fall_special(
+    f: &mut Fighter,
+    drift_mul: f32,
+    is_fall_accelerate: bool,
+    is_goto_landing: bool,
+    landing_lag: f32,
+    is_allow_interrupt: bool,
+) {
+    let drift = f.attributes.air_speed_max_x * drift_mul;
+    set_status(f, Status::FallSpecial, 0.0, StatusTiming::unknown());
+    physics::clamp_air_vel_x(&mut f.physics, drift);
+    f.physics.jumps_used = f.attributes.jumps_max;
+    f.fall_special = FallSpecialState {
+        drift,
+        is_goto_landing,
+        landing_lag,
+        is_allow_interrupt,
+        is_fall_accelerate,
+    };
+}
+
+/// `ftCommonLandingFallSpecialSetStatus` @ `ftcommonlanding.c:89`. No
+/// extracted animation length (module docs elsewhere on collapsed landing
+/// statuses — `set_guard_on`'s doc comment covers the pattern), so this
+/// resolves into `Wait` on its very next update tick.
+pub fn set_landing_fall_special(f: &mut Fighter) {
+    set_status(f, Status::LandingFallSpecial, 0.0, StatusTiming::unknown());
+}
+
+// ---------------------------------------------------------------------------
 // Jab combo
 // ---------------------------------------------------------------------------
 
@@ -1718,6 +1803,21 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
                 .and_then(|m| m.landing_lag_percent)
                 .unwrap_or(100);
             set_landing_air_null(f, percent);
+        }
+        // `ftCommonFallSpecialProcMap` @ `ftcommonfallspecial.c:51`, minus
+        // the cliff-catch branch — no status in this codebase auto-catches
+        // a ledge yet, ledge detection is caller-invoked
+        // (`cliff_catch_candidate`'s own docs), so this is the same
+        // pre-existing gap, not a new one — and `is_allow_pass`'s
+        // drop-through nuance (`FallSpecialState`'s docs).
+        Status::FallSpecial => {
+            if f.fall_special.is_goto_landing
+                || f.physics.vel_air.y < FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
+            {
+                set_landing_fall_special(f);
+            } else {
+                set_wait(f);
+            }
         }
         _ => set_landing(f),
     }
@@ -2514,6 +2614,21 @@ pub fn update(f: &mut Fighter) {
                 set_wait(f);
             }
         }
+        // `ftCommonFallSpecialProcInterrupt` @ `ftcommonfallspecial.c:10`:
+        // unlike a plain `Fall`, only a jump cancel is checked here — no
+        // aerial attack. In practice `check_jump_aerial` never succeeds
+        // either, since `set_fall_special` already spends every jump
+        // (`jumps_used = jumps_max`), matching the real "helpless" recovery
+        // fall. The physics (gravity/drift/fastfall) run in `Fighter::tick_air`,
+        // not here — same split as every other status.
+        Status::FallSpecial => {
+            check_jump_aerial(f);
+        }
+        // `ftCommonLandingFallSpecialSetStatus`'s status has no extracted
+        // animation length either (`set_landing_fall_special`'s docs).
+        Status::LandingFallSpecial => {
+            set_wait(f);
+        }
         // `ftCommonFallProcInterrupt` @ `ftcommonfall.c:10`: attack outranks
         // a second jump.
         // `check_attack_air` needs `&mut Fighter`, which a match guard on
@@ -2746,6 +2861,41 @@ mod tests {
         f.situation = Situation::Air;
         f.status.status = Status::Fall.into();
         f
+    }
+
+    #[test]
+    fn holding_down_while_falling_triggers_fast_fall_once() {
+        let mut f = airborne_mario();
+        f.physics.vel_air.y = -1.0; // already falling
+        hold(&mut f, 0, -80);
+        check_set_fast_fall(&mut f);
+        assert!(f.physics.is_fastfall);
+
+        // A one-shot latch: it does not re-trigger or reset itself just by
+        // holding the stick again.
+        f.physics.is_fastfall = false;
+        check_set_fast_fall(&mut f);
+        // tap_y was pinned to STICKBUFFER_MAX on the first trigger, so the
+        // buffer-window gate now fails even though the stick is still down.
+        assert!(!f.physics.is_fastfall);
+    }
+
+    #[test]
+    fn fast_fall_does_not_trigger_while_rising() {
+        let mut f = airborne_mario();
+        f.physics.vel_air.y = 5.0; // still going up
+        hold(&mut f, 0, -80);
+        check_set_fast_fall(&mut f);
+        assert!(!f.physics.is_fastfall);
+    }
+
+    #[test]
+    fn fast_fall_does_not_trigger_on_a_shallow_push() {
+        let mut f = airborne_mario();
+        f.physics.vel_air.y = -1.0;
+        hold(&mut f, 0, -30); // short of FASTFALL_STICK_RANGE_MIN (-53)
+        check_set_fast_fall(&mut f);
+        assert!(!f.physics.is_fastfall);
     }
 
     /// Holds the stick at `(x, y)` for one frame.
@@ -3717,6 +3867,57 @@ mod tests {
         }
         update(&mut f);
         assert_eq!(f.status.status, Status::Fall);
+    }
+
+    #[test]
+    fn set_fall_special_spends_every_jump_and_clamps_drift() {
+        let mut f = airborne_mario();
+        f.physics.jumps_used = 0;
+        f.physics.vel_air.x = 999.0;
+        set_fall_special(&mut f, 0.5, false, false, 0.0, true);
+
+        assert_eq!(f.status.status, Status::FallSpecial);
+        assert_eq!(f.physics.jumps_used, f.attributes.jumps_max);
+        assert_eq!(f.fall_special.drift, f.attributes.air_speed_max_x * 0.5);
+        assert_eq!(f.physics.vel_air.x, f.fall_special.drift);
+    }
+
+    #[test]
+    fn fall_special_cannot_jump_cancel_since_its_jumps_are_already_spent() {
+        let mut f = airborne_mario();
+        set_fall_special(&mut f, 1.0, false, false, 0.0, true);
+        hold(&mut f, 0, 80); // a stick-jump input
+        update(&mut f);
+        assert_eq!(f.status.status, Status::FallSpecial);
+    }
+
+    #[test]
+    fn fall_special_landing_goes_to_wait_when_not_falling_fast() {
+        let mut f = airborne_mario();
+        set_fall_special(&mut f, 1.0, false, false, 0.0, true);
+        f.physics.vel_air.y = -5.0; // above FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
+        set_landing_or_landing_air(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn fall_special_landing_takes_the_real_status_when_falling_fast() {
+        let mut f = airborne_mario();
+        set_fall_special(&mut f, 1.0, false, false, 0.0, true);
+        f.physics.vel_air.y = -50.0; // past FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
+        set_landing_or_landing_air(&mut f);
+        assert_eq!(f.status.status, Status::LandingFallSpecial);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn fall_special_landing_is_forced_when_is_goto_landing_is_set() {
+        let mut f = airborne_mario();
+        set_fall_special(&mut f, 1.0, false, true, 0.0, true);
+        f.physics.vel_air.y = 0.0; // would otherwise skip landing
+        set_landing_or_landing_air(&mut f);
+        assert_eq!(f.status.status, Status::LandingFallSpecial);
     }
 
     #[test]
