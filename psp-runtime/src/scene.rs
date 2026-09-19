@@ -205,7 +205,7 @@ pub fn tick_skeleton_animation(
     status: AnyStatus,
     skeleton: &mut ssb_rom::skeleton::Skeleton,
     started: &mut Option<AnyStatus>,
-) {
+) -> Option<ssb_rom::figatree::JointPose> {
     let slot = status.anim_slot() as u32;
     if *started != Some(status) {
         *started = Some(status);
@@ -216,11 +216,13 @@ pub fn tick_skeleton_animation(
     // The slot is read back rather than remembered, so a status whose
     // animation the pack lacks -- Kirby has no aerial jump -- simply keeps
     // the pose it had.
+    let root_before = skeleton.pose(0).copied();
     if let Some(anim) = pack.fighter_anim(kind, slot) {
         if let Some(script) = pack.anim_script(&anim) {
             let _ = skeleton.tick(script);
         }
     }
+    root_before
 }
 
 /// The on-device gameplay slice: one fighter, connected end to end from
@@ -268,6 +270,10 @@ pub struct FighterScene {
     /// `FTAttributes.camera_zoom` value.
     pub camera_zoom_frame: f32,
     started: Option<AnyStatus>,
+    /// TransN pose immediately before the last animation parser advance. On
+    /// the next fighter tick it pairs with the current hidden pose to recover
+    /// the exact `transn - anim_vel` delta the original physics reads.
+    root_motion_before_tick: Option<ssb_rom::figatree::JointPose>,
 }
 
 impl FighterScene {
@@ -336,6 +342,7 @@ impl FighterScene {
             cam_offset_y,
             camera_zoom_frame,
             started: None,
+            root_motion_before_tick: None,
         }
     }
 
@@ -362,6 +369,26 @@ impl FighterScene {
         self.jump_was_held = jump_held;
 
         self.fighter.set_input(input, tapped, released);
+        if matches!(
+            self.fighter.status.status,
+            AnyStatus::Mario(
+                ssb_game::status::MarioStatus::SpecialHi
+                    | ssb_game::status::MarioStatus::SpecialAirHi
+            )
+        ) {
+            if let (Some(before), Some(current)) =
+                (self.root_motion_before_tick, self.skeleton.pose(0))
+            {
+                self.fighter.set_root_motion(ssb_game::physics::RootMotion {
+                    delta: ssb_engine::math::Vec3::new(
+                        current.translate[0] - before.translate[0],
+                        current.translate[1] - before.translate[1],
+                        current.translate[2] - before.translate[2],
+                    ),
+                    rotate_z: current.rotate[2],
+                });
+            }
+        }
         self.fighter.tick(|| FloorSegments::new(pack, stage));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
@@ -432,7 +459,7 @@ impl FighterScene {
         if self.object == u32::MAX {
             return;
         }
-        tick_skeleton_animation(
+        self.root_motion_before_tick = tick_skeleton_animation(
             pack,
             self.fighter.kind as u32,
             self.fighter.status.status,

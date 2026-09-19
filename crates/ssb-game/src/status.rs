@@ -104,6 +104,23 @@ pub const SQUAT_BUFFER_TICS_MAX: u8 = 4;
 /// Downward deflection that drops through a passable floor.
 pub const PASS_STICK_MIN: i32 = -53;
 pub const PASS_BUFFER_TICS_MAX: u8 = 4;
+/// `FTCOMMON_SPECIALHI_STICK_RANGE_MIN` — holding this much up while tapping
+/// B selects a fighter's up-special from either standard interrupt chain.
+pub const SPECIALHI_STICK_MIN: i32 = 53;
+/// `dMarioMainMotion_SuperJumpPunchAir`: two frames to the initial hit, one
+/// frame through its cleanup, then six to `SetFlag1(1)`/`SetFlag2(1)`.
+pub const MARIO_SUPERJUMP_LAUNCH_FRAME: f32 = 9.0;
+/// The ROM-verified Super Jump Punch figatree duration. Its motion-event
+/// script ends after 27 frames, but `ftMarioSpecialHiProcUpdate` waits for
+/// the 40-frame skeleton animation itself to end before entering FallSpecial.
+pub const MARIO_SUPERJUMP_LENGTH_FRAMES: f32 = 40.0;
+/// `FTMARIO_SUPERJUMP_AIR_DRIFT` and `_LANDING_LAG` from `ftmario.h`.
+pub const MARIO_SUPERJUMP_AIR_DRIFT: f32 = 0.6;
+pub const MARIO_SUPERJUMP_LANDING_LAG: f32 = 0.28;
+/// `FTMARIO_SUPERJUMP_STICK_RANGE_MIN` and the narrower post-launch facing
+/// threshold in `ftMarioSpecialHiProcInterrupt`.
+pub const MARIO_SUPERJUMP_TURN_STICK_MIN: i32 = 50;
+pub const MARIO_SUPERJUMP_FACING_STICK_MIN: i32 = 20;
 
 /// `FTCOMMON_ATTACKS3_STICK_RANGE_MIN`/`FTCOMMON_ATTACKHI3_STICK_RANGE_MIN`/
 /// `FTCOMMON_ATTACKLW3_STICK_RANGE_MIN` — `ft/ftcommon.h`. Forward deflection
@@ -1249,6 +1266,14 @@ pub struct FallSpecialState {
     pub is_fall_accelerate: bool,
 }
 
+/// Motion-script state used by `ftMarioSpecialHiProcInterrupt`. The script's
+/// flag 2 is a one-shot: it selects Mario's launch-facing direction once, at
+/// the same frame flag 1 enables TransN motion.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MarioSpecialHiState {
+    pub launch_started: bool,
+}
+
 /// `FTCOMMON_FALLSPECIAL_SKIPLANDING_VEL_Y_MAX` — `ft/ftcommon.h`.
 pub const FALLSPECIAL_SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
 
@@ -1276,6 +1301,91 @@ pub fn set_fall_special(
         is_allow_interrupt,
         is_fall_accelerate,
     };
+}
+
+/// `ftMarioSpecialHiSetStatus` @ 0x80156428.
+pub fn set_mario_special_hi(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialHi),
+        0.0,
+        StatusTiming::frames(MARIO_SUPERJUMP_LENGTH_FRAMES),
+    );
+    f.mario_special_hi = MarioSpecialHiState::default();
+}
+
+/// `ftMarioSpecialAirHiSetStatus` @ 0x80156478.
+pub fn set_mario_special_air_hi(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirHi),
+        0.0,
+        StatusTiming::frames(MARIO_SUPERJUMP_LENGTH_FRAMES),
+    );
+    f.mario_special_hi = MarioSpecialHiState::default();
+    f.physics.vel_air.y = 0.0;
+    f.physics.vel_air.x /= 1.5;
+}
+
+/// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160, limited to Mario:
+/// B edge plus an upward stick. Every other fighter remains unported here.
+pub fn check_special_hi(f: &mut Fighter) -> bool {
+    if f.kind != crate::fighter::FighterKind::Mario
+        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+        || (f.stick.y as i32) < SPECIALHI_STICK_MIN
+    {
+        return false;
+    }
+    if f.situation == Situation::Ground {
+        set_mario_special_hi(f);
+    } else {
+        set_mario_special_air_hi(f);
+    }
+    true
+}
+
+/// `ftMarioSpecialHiProcPhysics` @ 0x80156240, aerial branch. Before the
+/// source motion script raises flag1 the move uses capped gravity and normal
+/// air friction; from frame 9 onward it consumes TransN and damps all axes.
+pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
+    if f.status.anim_frame >= MARIO_SUPERJUMP_LAUNCH_FRAME {
+        physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
+        f.physics.vel_air = f.physics.vel_air * 0.95;
+    } else {
+        physics::apply_gravity_clamp_tvel(&mut f.physics, 0.5, f.attributes.tvel_base);
+        if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {
+            physics::apply_air_friction(&mut f.physics, &f.attributes);
+        }
+    }
+}
+
+/// `ftMarioSpecialHiProcInterrupt` @ `ftmariospecialhi.c:64`. Before launch,
+/// a strong horizontal stick may increase the TransN root's Z rotation; at
+/// launch, flag 2 selects the facing direction exactly once. The runtime
+/// supplies the sampled root motion, while this portable callback preserves
+/// the original's player-input semantics.
+pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
+    let stick_x = f.stick.x as i32;
+    if f.status.anim_frame < MARIO_SUPERJUMP_LAUNCH_FRAME {
+        if stick_x.abs() >= MARIO_SUPERJUMP_TURN_STICK_MIN {
+            let clamped = stick_x.signum() * MARIO_SUPERJUMP_TURN_STICK_MIN;
+            let desired_rotation =
+                -((stick_x - clamped) as f32 * MARIO_SUPERJUMP_AIR_DRIFT * core::f32::consts::PI
+                    / 180.0);
+            if f.root_motion.rotate_z.abs() < desired_rotation.abs() {
+                f.root_motion.rotate_z = desired_rotation;
+            }
+        }
+    } else if !f.mario_special_hi.launch_started {
+        f.mario_special_hi.launch_started = true;
+        if stick_x.abs() >= MARIO_SUPERJUMP_FACING_STICK_MIN {
+            f.facing = if stick_x < 0 {
+                Facing::Left
+            } else {
+                Facing::Right
+            };
+        }
+    }
 }
 
 /// `ftCommonLandingFallSpecialSetStatus` @ `ftcommonlanding.c:89`. No
@@ -2277,7 +2387,8 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// check, before `GuardOn`/`Appeal` (also unported) and `KneeBend`. Returns
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
-    check_fsmash(f)
+    check_special_hi(f)
+        || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
         || check_ftilt(f)
@@ -2314,7 +2425,8 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 /// out of a walk did nothing), not a deliberate original difference, now
 /// closed alongside adding the tilts themselves.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
-    check_fsmash(f)
+    check_special_hi(f)
+        || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
         || check_ftilt(f)
@@ -2641,7 +2753,7 @@ pub fn update(f: &mut Fighter) {
         // `collapsible_match` suggestion for this doesn't compile.
         #[allow(clippy::collapsible_match)]
         s if !s.is_grounded() => {
-            if !check_attack_air(f) {
+            if !check_special_hi(f) && !check_attack_air(f) {
                 check_jump_aerial(f);
             }
         }
@@ -2661,11 +2773,20 @@ fn update_extended(f: &mut Fighter) {
                 set_wait(f);
             }
         }
-        // These ordinals and animation slots are present so the asset
-        // pipeline can replay the real clip. Their gameplay callbacks are
-        // intentionally not ported until the hidden-joint physics mapping is
-        // evidenced.
-        AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi) => {}
+        AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi) => {
+            if f.status.animation_ended() {
+                set_fall_special(
+                    f,
+                    MARIO_SUPERJUMP_AIR_DRIFT,
+                    true,
+                    true,
+                    MARIO_SUPERJUMP_LANDING_LAG,
+                    false,
+                );
+            } else {
+                apply_mario_special_hi_interrupt(f);
+            }
+        }
         AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
     }
 }
@@ -4286,5 +4407,70 @@ mod tests {
         hold(&mut f, 0, 80); // straight up
         update(&mut f);
         assert_eq!(f.status.status, Status::CliffClimbQuick1);
+    }
+
+    #[test]
+    fn tapping_b_up_starts_ground_super_jump_punch() {
+        let mut f = mario();
+        hold(&mut f, 0, 80);
+        f.prev_input.buttons = N64Buttons::default();
+        f.input.buttons = N64Buttons(N64Buttons::B);
+
+        assert!(check_special_hi(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialHi));
+        assert_eq!(
+            f.status.timing.anim_length,
+            Some(MARIO_SUPERJUMP_LENGTH_FRAMES)
+        );
+    }
+
+    #[test]
+    fn aerial_super_jump_preserves_the_sourced_entry_velocity_rule() {
+        let mut f = airborne_mario();
+        f.physics.vel_air = Vec3::new(30.0, -12.0, 0.0);
+        hold(&mut f, 0, 80);
+        f.prev_input.buttons = N64Buttons::default();
+        f.input.buttons = N64Buttons(N64Buttons::B);
+
+        assert!(check_special_hi(&mut f));
+        assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialAirHi));
+        assert_eq!(f.physics.vel_air, Vec3::new(20.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn super_jump_steers_before_launch_then_selects_facing_once() {
+        let mut f = mario();
+        set_mario_special_hi(&mut f);
+        hold(&mut f, 80, 0);
+
+        update(&mut f);
+        assert!(f.root_motion.rotate_z < 0.0);
+        assert!(!f.mario_special_hi.launch_started);
+
+        f.status.anim_frame = MARIO_SUPERJUMP_LAUNCH_FRAME;
+        hold(&mut f, -80, 0);
+        update(&mut f);
+        assert_eq!(f.facing, Facing::Left);
+        assert!(f.mario_special_hi.launch_started);
+
+        hold(&mut f, 80, 0);
+        update(&mut f);
+        assert_eq!(f.facing, Facing::Left);
+    }
+
+    #[test]
+    fn super_jump_enters_fall_special_only_after_the_40_frame_figatree() {
+        let mut f = airborne_mario();
+        set_mario_special_air_hi(&mut f);
+        for _ in 0..(MARIO_SUPERJUMP_LENGTH_FRAMES as usize - 1) {
+            update(&mut f);
+            assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialAirHi));
+        }
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::FallSpecial));
+        assert_eq!(f.fall_special.drift, f.attributes.air_speed_max_x * 0.6);
+        assert!(f.fall_special.is_goto_landing);
+        assert!(f.fall_special.is_fall_accelerate);
+        assert_eq!(f.fall_special.landing_lag, 0.28);
     }
 }

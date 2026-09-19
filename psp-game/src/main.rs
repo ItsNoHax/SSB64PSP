@@ -453,7 +453,11 @@ unsafe fn draw_training(
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
             let n = dummy.skeleton.compose(p, &obj, &mut posed);
             gpu.model_transform(
-                [dummy.fighter.pos.x, dummy.fighter.pos.y, dummy.fighter.pos.z],
+                [
+                    dummy.fighter.pos.x,
+                    dummy.fighter.pos.y,
+                    dummy.fighter.pos.z,
+                ],
                 [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
                 meshdraw::MODEL_SCALE,
             );
