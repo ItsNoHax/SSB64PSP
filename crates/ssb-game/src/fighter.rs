@@ -217,6 +217,9 @@ pub struct Fighter {
     pub cliffcatch_wait: u16,
     /// Jab-combo follow-up window — `crate::status::Attack1State`.
     pub attack1: crate::status::Attack1State,
+    /// Shared "helpless fall" working state, used by `Status::FallSpecial`
+    /// — `crate::status::FallSpecialState`.
+    pub fall_special: crate::status::FallSpecialState,
 }
 
 impl Fighter {
@@ -246,6 +249,7 @@ impl Fighter {
             cliff: crate::status::CliffState::default(),
             cliffcatch_wait: 0,
             attack1: crate::status::Attack1State::default(),
+            fall_special: crate::status::FallSpecialState::default(),
         }
     }
 
@@ -463,12 +467,48 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = (u16, Segment)>,
     {
-        if self.physics.is_fastfall {
-            crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
+        // `ftPhysicsCheckSetFastFall` runs from every airborne status's own
+        // `proc_physics` in the original; here it is the one thing every
+        // airborne tick does regardless of status.
+        crate::status::check_set_fast_fall(self);
+        if self.status.status == crate::status::Status::FallSpecial {
+            // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
+            // its own fall-speed rule and its own drift clamp, instead of
+            // the generic ones below.
+            if self.physics.is_fastfall {
+                crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
+            } else if self.fall_special.is_fall_accelerate {
+                crate::physics::apply_gravity_default(&mut self.physics, &self.attributes);
+            } else {
+                crate::physics::apply_gravity_clamp_tvel(
+                    &mut self.physics,
+                    self.attributes.gravity,
+                    self.attributes.tvel_fast,
+                );
+            }
+            let drift = self.fall_special.drift;
+            if !crate::physics::check_clamp_air_vel_x_dec(&mut self.physics, drift) {
+                crate::physics::clamp_air_vel_x_stick_range(
+                    &mut self.physics,
+                    self.input.stick_x,
+                    crate::physics::AIRDRIFT_STICK_MIN,
+                    self.attributes.air_accel,
+                    drift,
+                );
+                crate::physics::apply_air_friction(&mut self.physics, &self.attributes);
+            }
         } else {
-            crate::physics::apply_gravity_default(&mut self.physics, &self.attributes);
+            if self.physics.is_fastfall {
+                crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
+            } else {
+                crate::physics::apply_gravity_default(&mut self.physics, &self.attributes);
+            }
+            crate::physics::apply_air_drift(
+                &mut self.physics,
+                &self.attributes,
+                self.input.stick_x,
+            );
         }
-        crate::physics::apply_air_drift(&mut self.physics, &self.attributes, self.input.stick_x);
 
         let v = crate::physics::total_velocity(&self.physics, false);
         let want = Vec3::new(
