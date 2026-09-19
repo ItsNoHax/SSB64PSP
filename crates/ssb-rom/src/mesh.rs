@@ -241,6 +241,13 @@ pub struct InitialMaterial {
     pub depth_test: bool,
     pub depth_write: bool,
     pub depth_mode: ZMode,
+    pub translucent: bool,
+    /// Alpha-blend shape to assume for as long as no item's own list ever
+    /// issues a `G_SETCOMBINE` (RE-300): `MeshMaterial::alpha_blend`
+    /// otherwise always derives from `State::combiner`, which stays `None`
+    /// -- and this seed with it -- forever once any real `Cmd::SetCombine`
+    /// is seen, exactly like every other `InitialMaterial` field.
+    pub alpha_blend: Option<AlphaBlend>,
 }
 
 impl InitialMaterial {
@@ -258,6 +265,8 @@ impl InitialMaterial {
         depth_test: true,
         depth_write: true,
         depth_mode: ZMode::Opaque,
+        translucent: false,
+        alpha_blend: None,
     };
 
     /// `grDisplayLayer1PriProcDisplay`/`SecProcDisplay` (`refs/ssb-decomp-re/
@@ -288,6 +297,8 @@ impl InitialMaterial {
         depth_test: true,
         depth_write: true,
         depth_mode: ZMode::Opaque,
+        translucent: false,
+        alpha_blend: None,
     };
 
     /// A third, structurally different external-seed mechanism (RE-246):
@@ -322,6 +333,42 @@ impl InitialMaterial {
         depth_test: true,
         depth_write: true,
         depth_mode: ZMode::Opaque,
+        translucent: false,
+        alpha_blend: None,
+    };
+
+    /// `wpDisplayDrawNormal` clears `G_ZBUFFER` and sets
+    /// `G_RM_AA_XLU_SURF` before `wpDisplayDLHead1` draws a weapon's direct
+    /// display list. Mario's Fireball list inherits that state rather than
+    /// setting it itself (RE-300 confirmed both facts straight from the
+    /// ROM: `wpDisplayDrawNormal` sets no `G_SETCOMBINE` of its own, and
+    /// file 297's own display list -- decoded from the real archive, not a
+    /// stale/reconstructed copy -- never issues one either. `render_mode`
+    /// alone therefore cannot resolve `alpha_blend`, whose derivation is
+    /// deliberately combiner-only elsewhere (`State::combiner`'s own doc
+    /// comment: "a list that draws before setting one is a list whose
+    /// colour cannot be resolved").
+    ///
+    /// Left unresolved, this made `translucent` alone a dead seed: RE-130's
+    /// own gate never enables GE blending without both `TRANSLUCENT` and a
+    /// resolved `alpha_blend`, so the Fireball rendered as a fully opaque
+    /// quad -- its unlit background texels included -- despite this
+    /// constant's `translucent: true`. `alpha_blend` seeds
+    /// `AlphaBlend::TexelOnly` for the same reason no other shape is
+    /// plausible here, not a guess: the packed quad's own baked vertex
+    /// alpha bytes are all `0` (`push_vertex`'s general note that most
+    /// vertices are not a real coverage value applies here too), so
+    /// `AlphaBlend::Shade` -- which trusts that byte verbatim -- would
+    /// multiply every pixel to fully transparent, while `TexelOnly` forces
+    /// it to opaque and lets the CI4 flame texture's own alpha drive
+    /// visibility, matching the sprite's real in-game appearance.
+    pub const WEAPON_EXTERNAL: InitialMaterial = InitialMaterial {
+        lit: false,
+        depth_test: false,
+        depth_write: false,
+        depth_mode: ZMode::Translucent,
+        translucent: true,
+        alpha_blend: Some(AlphaBlend::TexelOnly),
     };
 }
 
@@ -1204,6 +1251,10 @@ struct State {
     /// draws before setting one is a list whose colour cannot be resolved, and
     /// leaving the shade alone is the safe answer.
     combiner: Option<(u32, u32)>,
+    /// `InitialMaterial::alpha_blend`, applied by [`State::material_now`]
+    /// for as long as `combiner` stays `None` -- see that field's own doc
+    /// comment.
+    initial_alpha_blend: Option<AlphaBlend>,
     /// Whether `G_SETOTHERMODE_H` put the RDP in two-cycle mode. Cycle 1 is
     /// only run when it did — applying it in one-cycle mode would invent a
     /// multiply the hardware never performs.
@@ -1228,6 +1279,7 @@ impl State {
                 depth_test: initial.depth_test,
                 depth_write: initial.depth_write,
                 depth_mode: initial.depth_mode,
+                translucent: initial.translucent,
                 ..MeshMaterial::rdp_default()
             },
             geometry_mode: RDP_DEFAULT_GEOMETRY_MODE,
@@ -1248,6 +1300,7 @@ impl State {
             tex_scale: (0xFFFF, 0xFFFF),
             framebuffer_capture: false,
             combiner: None,
+            initial_alpha_blend: initial.alpha_blend,
             two_cycle: false,
             mobjs: Vec::new(),
             mat_anims: Vec::new(),
@@ -1441,9 +1494,15 @@ impl State {
             // stray `Some` on an opaque or untextured primitive is inert
             // (`psp/src/meshdraw.rs` only ever reads it alongside
             // `flags::TRANSLUCENT`).
+            // `initial_alpha_blend` (`InitialMaterial::alpha_blend`, RE-300)
+            // only ever applies in place of a real classification, never
+            // alongside one: once any `Cmd::SetCombine` has been seen,
+            // `combiner` is no longer `None` and the seed stops mattering,
+            // exactly like every other `InitialMaterial` field.
             alpha_blend: self
                 .combiner
-                .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle)),
+                .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle))
+                .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none())),
             texture_blend,
             // Unlike `alpha_test`/`translucent`, not gated on `texture`: an
             // effect script can drive untextured primitive/environment/blend
@@ -5456,6 +5515,47 @@ mod tests {
         assert!(m.depth_test, "Z_CMP must be seeded on");
         assert!(m.depth_write, "Z_UPD must be seeded on");
         assert_eq!(m.depth_mode, ZMode::Opaque);
+    }
+
+    #[test]
+    fn convert_sequence_weapon_external_seeds_alpha_blend_with_no_in_list_combine() {
+        // RE-300: Mario's Fireball display list (file 297, real ROM) never
+        // issues its own `G_SETCOMBINE`, so `alpha_blend` cannot be
+        // classified from `State::combiner` the way every other translucent
+        // primitive in the archive is. Without `InitialMaterial::alpha_blend`
+        // this seeded `translucent: true` but never a resolved `alpha_blend`,
+        // and `psp/src/meshdraw.rs` only enables GE blending when both are
+        // set -- so the Fireball rendered as a fully opaque quad despite the
+        // seed's own `translucent` field.
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let mut cmds = alloc::vec![vtx(3)];
+        cmds.extend(bind_a_texture());
+        cmds.push(Cmd::Tri1([0, 1, 2]));
+        cmds.push(Cmd::End);
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+            depth_seed: None,
+        }];
+        let mesh = convert_sequence(
+            &items,
+            Source::bare(&file),
+            InitialMaterial::WEAPON_EXTERNAL,
+        )
+        .pop()
+        .unwrap()
+        .unwrap();
+        let m = mesh.primitives[0].material;
+        assert!(m.translucent, "WEAPON_EXTERNAL must seed translucent");
+        assert_eq!(
+            m.alpha_blend,
+            Some(AlphaBlend::TexelOnly),
+            "no in-list G_SETCOMBINE means the seed must supply alpha_blend"
+        );
     }
 
     #[test]

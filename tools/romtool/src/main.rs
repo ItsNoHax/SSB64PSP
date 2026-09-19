@@ -1779,6 +1779,59 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             triangles += m.triangle_count();
         }
 
+        // Mario's Fireball graphic is not attached to a `DObjDesc` tree: the
+        // weapon descriptor points straight at file 297's vertex/display-list
+        // pair and separately supplies the one-entry MObj table at 0xD8.
+        // Generic graph discovery correctly finds no object there, so retain
+        // this explicit, source-proven asset instead of inventing a PSP-side
+        // substitute primitive.
+        if id == 297 {
+            const FIREBALL_MOBJ_TABLE: u32 = 0xD8;
+            const FIREBALL_DISPLAY_LIST: u32 = 0x1D8;
+            if let (Some(materials), Ok(cmds)) = (
+                ssb_rom::mobj::read_table(file, FIREBALL_MOBJ_TABLE, 1),
+                ssb_rom::dl::decode_list_at(
+                    &file.data[FIREBALL_DISPLAY_LIST as usize..],
+                    FIREBALL_DISPLAY_LIST,
+                ),
+            ) {
+                let item = mesh::SequenceItem {
+                    cmds: &cmds,
+                    world: ssb_rom::scene::Mat4::IDENTITY,
+                    mobjs: &materials.nodes[0],
+                    mat_anims: &[],
+                    depth_seed: None,
+                };
+                if let Some(Ok(fireball)) = mesh::convert_sequence(
+                    &[item],
+                    mesh::Source::of(file),
+                    mesh::InitialMaterial::WEAPON_EXTERNAL,
+                )
+                .into_iter()
+                .next()
+                {
+                    if fireball.triangle_count() != 0 {
+                        pack_mesh(
+                            &mut writer,
+                            &mut tex_index,
+                            &mut mat_anim_index,
+                            &mat_anim_data,
+                            Texels {
+                                home: file,
+                                all: &loaded.files,
+                            },
+                            id,
+                            FIREBALL_DISPLAY_LIST,
+                            &fireball,
+                            swizzle,
+                        );
+                        meshes += 1;
+                        triangles += fireball.triangle_count();
+                    }
+                }
+            }
+        }
+
         for (gi, graph) in graphs.iter().enumerate() {
             node_dls += graph.display_lists().count();
             placed_meshes += node_mesh[gi].iter().filter(|m| m.is_some()).count();

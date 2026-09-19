@@ -5,8 +5,14 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: none open. Mario's ground+aerial moveset is
-complete through the real Fireball, Super Jump Punch, and Tornado. The shared `FallSpecial` recovery
+Current subsystem/batch: **Mario Fireball presentation/map integration**
+(paused at user request). Mario's ground+aerial moveset is complete through
+Fireball, Super Jump Punch, and Tornado. The portable joint attachment, full
+map rebound sweep, direct weapon mesh extraction, and Training input routing
+are implemented. Final direct-display-list rendering verification found and
+fixed a real classification bug (RE-300) but surfaced a second, still-open
+on-device rendering gap — see "Immediate next batch" below.
+The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
 phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
 through a portable runtime-to-gameplay bridge.
@@ -80,31 +86,60 @@ through a portable runtime-to-gameplay bridge.
   The portable, fixed-capacity weapon pool owns each Fireball after that event:
   its sourced 140-frame lifetime, -5° 50-unit launch, gravity/terminal fall,
   floor rebound/minimum-speed expiry, 7-damage hitbox, self-hit exclusion, and
-  shield/damage resolution are all live in Training Mode. The source's
-  joint-16 spawn position, projectile rendering, and wall/ceiling rebound
-  directions remain shared runtime/collision follow-up work; they are not
-  approximated as fighter-local state.
-- Verified for everything above together: 219 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 717 tests) green, `cargo psp
-  --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
-  PPSSPP headless Training boot shows no panic/crash with a real rendered
-  frame.
+  shield/damage resolution are all live in Training Mode. The paused follow-up
+  samples source joint 16 at spawn, packs file 297's direct display list,
+  draws the weapon mesh, and sweeps its authored diamond map collider against
+  floors, ceilings, and directional walls with the real rebound/minimum-speed
+  expiry. Training previously intercepted N64 B before fighter processing;
+  START now owns that navigation action instead.
+- Latest verification: `cargo test -p ssb-rom -p romtool` (450 tests) and
+  `cargo test -p romtool -p ssb-game` (245 tests) pass; the local pack was
+  rebuilt and contains the file-297/0x1D8 Fireball mesh. A focused
+  PPSSPPHeadless script now spawns and displays it. The initial capture showed
+  an opaque sprite rectangle because Fireball inherits `wpDisplayDrawNormal`'s
+  translucent/no-depth wrapper; `InitialMaterial::WEAPON_EXTERNAL` now models
+  that source state, but the rebuilt-pack visual recheck and full end-of-batch
+  gates have not yet been run. Existing PSP linker warnings remain non-fatal.
 - Pre-batch-mode work (rendering pipeline, asset pipeline, animation,
   collision, physics, movement-state machine) predates formal batch mode but
   is usable foundation, tracked per-subsystem in `docs/porting-status.md`.
 
 ## Immediate next batch
 
-Two real options, both blocked-open rather than blocked-shut:
+This session ran the paused **Mario Fireball presentation/map integration**
+batch's final verification step and found two distinct things (RE-300):
 
-1. **Complete the shared Fireball presentation/map path.** Feed Mario's
-   runtime-sampled joint 16 into the portable spawn request, draw the packed
-   weapon object, and extend shared map collision from floors to walls and
-   ceilings so all source rebound directions are represented.
-2. **Audit Super Jump Punch integration on a real Training dummy.** The
-   source hitbox windows and portable root motion are wired, but the existing
-   single-target combat harness has no move-specific capture yet. Add one
-   only if emulator observation finds timing or attachment discrepancies.
+1. **Fixed and landed:** `InitialMaterial` had no way to seed `alpha_blend`,
+   so `WEAPON_EXTERNAL`'s `translucent: true` never actually enabled GE
+   blending (`psp-runtime`'s gate requires both `TRANSLUCENT` and
+   `ALPHA_BLEND`). Added `InitialMaterial::alpha_blend`, seeded
+   `WEAPON_EXTERNAL` with `AlphaBlend::TexelOnly`, and added a regression
+   test. Verified against the real ROM (not a stale dump) and against the
+   rebuilt pack's own `PrimDesc.flags`. `cargo test -p ssb-rom -p ssb-game
+   -p ssb-engine -p romtool` (426 tests), both release PSP EBOOT builds, and
+   the full 23-scene deterministic regression matrix (0 differing pixels
+   against every existing golden, including `r0-dream-land-default.png`)
+   all pass — additive, no regression.
+2. **Still open:** the `regression_capture_fireball` capture still shows the
+   Fireball as an opaque black card, not a transparent flame, even though
+   the ROM palette, the packed PSP CLUT, and the blend/alpha-test enable
+   logic are all now individually confirmed correct. Two on-device
+   experiments (forcing `Blend` on, forcing cutout `AlphaTest` on, for every
+   primitive) both had a visible effect elsewhere in the same frame but
+   neither made the Fireball's background transparent — narrowing this to
+   the GE/PPSSPP CLUT-alpha path itself. See RE-300 for the full trace.
+   Diagnosing further needs GE-level tracing or a physical-PSP comparison
+   this session did not have; not attempted-and-guessed-around per this
+   project's own rule against unsupported rendering heuristics.
+
+Next batch options: (a) pursue the CLUT-alpha gap with a physical-PSP
+capture of `regression_capture_fireball` (would confirm/rule out a
+PPSSPP-only limitation) or PPSSPP GE-debugger tracing, or (b) accept the
+Fireball's opaque-card appearance as a known, tracked visual gap and move on
+to auditing Super Jump Punch integration on a real Training dummy, returning
+to RE-300 later. User directive needed to pick between these — both are
+legitimate, and (a) is speculative debugging time with no guaranteed
+resolution.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position
@@ -113,7 +148,10 @@ equivalent for. Revisit alongside a fighter's other moves.
 
 ## Real blockers
 
-None outright. Rendering performance (`P5`) is not a blocker for this or any
+No blocker on gameplay work. RE-300's CLUT-alpha rendering gap (Fireball's
+background renders opaque instead of transparent) is a genuine open
+question needing tools this session did not have (GE tracing or physical
+PSP); rendering performance (`P5`) is separately not a blocker for any
 gameplay batch.
 
 ---

@@ -309,3 +309,4 @@ editing a record.
 | RE-297 | Shared PSP GE renderer extracted into `psp-runtime` | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
 | RE-298 | PSP runtime refactor acceptance gate: software checks and physical-hardware smoke test both pass | COMPLETE | front-end, toolchain, visual-regression, hardware |  |
 | RE-299 | Mario Super Jump Punch uses TransN root motion | COMPLETE | fighter, animation, asset-pipeline, gameplay |  |
+| RE-300 | Mario Fireball's `WEAPON_EXTERNAL` translucency: `alpha_blend` seed fixed, CLUT-alpha runtime rendering sti... | PARTIAL — `alpha_blend` classification bug found and fixed (tested); on-device transparency still does not appear, root cause narrowed to the PSP GE/PPSSPP CLUT-alpha path | fighter, rendering, texture, weapon, visual-regression |  |

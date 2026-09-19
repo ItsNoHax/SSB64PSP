@@ -229,6 +229,11 @@ pub struct Fighter {
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
+    /// This frame's runtime-sampled world position for a fighter motion's
+    /// weapon attachment joint. `ssb-game` deliberately stores plain data,
+    /// never a skeleton or pack handle; callers without a renderer fall back
+    /// to the fighter root when it is absent.
+    pub weapon_spawn_anchor: Option<Vec3>,
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -267,6 +272,7 @@ impl Fighter {
             mario_special_lw: crate::status::MarioSpecialLwState::default(),
             mario_special_n: crate::status::MarioSpecialNState::default(),
             weapon_spawn: None,
+            weapon_spawn_anchor: None,
             root_motion: RootMotion::default(),
         }
     }
@@ -392,6 +398,13 @@ impl Fighter {
         self.root_motion = motion;
     }
 
+    /// Supplies a motion attachment sampled by the outer animation runtime
+    /// for the frame about to run. This is consumed only by a status event
+    /// that needs it, then cleared with the other per-frame runtime input.
+    pub fn set_weapon_spawn_anchor(&mut self, anchor: Vec3) {
+        self.weapon_spawn_anchor = Some(anchor);
+    }
+
     /// Takes the one weapon creation emitted by this fighter's motion script.
     /// The request is one-shot until a later animation event queues another.
     pub fn take_weapon_spawn(&mut self) -> Option<crate::weapon::WeaponSpawn> {
@@ -433,6 +446,7 @@ impl Fighter {
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();
+        self.weapon_spawn_anchor = None;
     }
 
     fn tick_ground<I, F>(&mut self, floors: F)
