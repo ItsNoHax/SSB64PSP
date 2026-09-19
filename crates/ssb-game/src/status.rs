@@ -121,6 +121,20 @@ pub const MARIO_SUPERJUMP_LANDING_LAG: f32 = 0.28;
 /// threshold in `ftMarioSpecialHiProcInterrupt`.
 pub const MARIO_SUPERJUMP_TURN_STICK_MIN: i32 = 50;
 pub const MARIO_SUPERJUMP_FACING_STICK_MIN: i32 = 20;
+/// `FTCOMMON_SPECIALLW_STICK_RANGE_MIN` — holding this much down while
+/// tapping B selects Mario's Tornado.
+pub const SPECIALLW_STICK_MIN: i32 = -53;
+pub const MARIO_TORNADO_VEL_X_GROUND: f32 = 0.025;
+pub const MARIO_TORNADO_VEL_X_AIR: f32 = 0.03;
+pub const MARIO_TORNADO_VEL_X_CLAMP: f32 = 17.0;
+pub const MARIO_TORNADO_VEL_Y_CLAMP: f32 = 40.0;
+pub const MARIO_TORNADO_VEL_Y_BASE: f32 = 15.0;
+pub const MARIO_TORNADO_VEL_Y_TAP: f32 = 22.0;
+/// The ground and air scripts both set flags 1/2 and clear flag 3 after the
+/// thirteenth one-frame pulse, at frame 43.
+pub const MARIO_TORNADO_FINISH_FRAME: f32 = 43.0;
+pub const MARIO_TORNADO_GROUND_LENGTH_FRAMES: f32 = 87.0;
+pub const MARIO_TORNADO_AIR_LENGTH_FRAMES: f32 = 83.0;
 
 /// `FTCOMMON_ATTACKS3_STICK_RANGE_MIN`/`FTCOMMON_ATTACKHI3_STICK_RANGE_MIN`/
 /// `FTCOMMON_ATTACKLW3_STICK_RANGE_MIN` — `ft/ftcommon.h`. Forward deflection
@@ -580,6 +594,10 @@ pub enum MarioStatus {
     SpecialHi = 225,
     /// `nFTMarioStatusSpecialAirHi` — Super Jump Punch in the air.
     SpecialAirHi = 226,
+    /// `nFTMarioStatusSpecialLw` — grounded Tornado continuation.
+    SpecialLw = 227,
+    /// `nFTMarioStatusSpecialAirLw` — Tornado's airborne phase and entry.
+    SpecialAirLw = 228,
 }
 
 /// A fighter's current status: the shared common one, or one of a specific
@@ -598,8 +616,10 @@ impl AnyStatus {
         match self {
             AnyStatus::Common(s) => s.is_grounded(),
             // `Attack13` and ground Super Jump Punch are grounded variants.
-            AnyStatus::Mario(MarioStatus::Attack13 | MarioStatus::SpecialHi) => true,
-            AnyStatus::Mario(MarioStatus::SpecialAirHi) => false,
+            AnyStatus::Mario(
+                MarioStatus::Attack13 | MarioStatus::SpecialHi | MarioStatus::SpecialLw,
+            ) => true,
+            AnyStatus::Mario(MarioStatus::SpecialAirHi | MarioStatus::SpecialAirLw) => false,
         }
     }
 
@@ -625,6 +645,8 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.anim_slot(),
             AnyStatus::Mario(MarioStatus::SpecialHi) => 20,
             AnyStatus::Mario(MarioStatus::SpecialAirHi) => 21,
+            AnyStatus::Mario(MarioStatus::SpecialLw) => 22,
+            AnyStatus::Mario(MarioStatus::SpecialAirLw) => 23,
             AnyStatus::Mario(MarioStatus::Attack13) => Status::Wait.anim_slot(),
         }
     }
@@ -1274,6 +1296,27 @@ pub struct MarioSpecialHiState {
     pub launch_started: bool,
 }
 
+/// `ftMarioSpecialLwStatusVars` plus the persistent tornado-rise expenditure.
+/// Flag 3 gates B-tap rises; flag 1 starts reducing the horizontal clamp at
+/// the finisher; flag 2 permanently spends the aerial rise until the fighter
+/// is reset, just as `passive_vars.mario.is_expend_tornado` does.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarioSpecialLwState {
+    pub friction: f32,
+    pub rise_enabled: bool,
+    pub rise_exhausted: bool,
+}
+
+impl Default for MarioSpecialLwState {
+    fn default() -> Self {
+        MarioSpecialLwState {
+            friction: 0.0,
+            rise_enabled: false,
+            rise_exhausted: false,
+        }
+    }
+}
+
 /// `FTCOMMON_FALLSPECIAL_SKIPLANDING_VEL_Y_MAX` — `ft/ftcommon.h`.
 pub const FALLSPECIAL_SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
 
@@ -1386,6 +1429,143 @@ pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
             };
         }
     }
+}
+
+fn init_mario_tornado_status(f: &mut Fighter) {
+    f.mario_special_lw.friction = 0.0;
+    // Both source motion scripts run SetFlag3(1) at frame zero. A ground ↔
+    // air map transition deliberately does not call this helper, preserving
+    // `ftMarioSpecialAirLwSetDisableRise`'s one-way gate.
+    f.mario_special_lw.rise_enabled = true;
+}
+
+/// `ftMarioSpecialLwSetStatus` @ 0x8015688C. Counterintuitively, a grounded
+/// down-B begins in the aerial Tornado status with its sourced -7 Y velocity;
+/// the ground status is selected only when the move subsequently lands.
+pub fn set_mario_special_lw(f: &mut Fighter) {
+    f.become_airborne();
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirLw),
+        0.0,
+        StatusTiming::frames(MARIO_TORNADO_AIR_LENGTH_FRAMES),
+    );
+    f.physics.vel_air.y = -7.0;
+    physics::clamp_air_vel_x(&mut f.physics, MARIO_TORNADO_VEL_X_CLAMP);
+    init_mario_tornado_status(f);
+}
+
+/// `ftMarioSpecialAirLwSetStatus` @ 0x80156910.
+pub fn set_mario_special_air_lw(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirLw),
+        0.0,
+        StatusTiming::frames(MARIO_TORNADO_AIR_LENGTH_FRAMES),
+    );
+    f.physics.vel_air.y = MARIO_TORNADO_VEL_Y_BASE
+        - if f.mario_special_lw.rise_exhausted {
+            0.0
+        } else {
+            MARIO_TORNADO_VEL_Y_TAP
+        };
+    physics::clamp_air_vel_x(&mut f.physics, MARIO_TORNADO_VEL_X_CLAMP);
+    init_mario_tornado_status(f);
+}
+
+/// `ftMarioSpecialAirLwSwitchStatusGround` @ 0x801567B0. Keep the current
+/// animation frame while replacing the aerial figatree with the ground one.
+pub fn switch_mario_tornado_ground(f: &mut Fighter) {
+    f.mario_special_lw.rise_enabled = false;
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialLw),
+        f.status.anim_frame,
+        StatusTiming::frames(MARIO_TORNADO_GROUND_LENGTH_FRAMES),
+    );
+    physics::clamp_ground_vel(&mut f.physics, MARIO_TORNADO_VEL_X_CLAMP);
+}
+
+/// `ftMarioSpecialLwSwitchStatusAir` @ 0x80156808.
+pub fn switch_mario_tornado_air(f: &mut Fighter) {
+    f.mario_special_lw.rise_enabled = false;
+    f.become_airborne();
+    set_any_status(
+        f,
+        AnyStatus::Mario(MarioStatus::SpecialAirLw),
+        f.status.anim_frame,
+        StatusTiming::frames(MARIO_TORNADO_AIR_LENGTH_FRAMES),
+    );
+    f.physics.vel_air.y = f.physics.vel_air.y.min(MARIO_TORNADO_VEL_Y_CLAMP);
+    physics::clamp_air_vel_x(&mut f.physics, MARIO_TORNADO_VEL_X_CLAMP);
+}
+
+/// `ftCommonSpecialLwCheckInterruptCommon`, restricted to Mario.
+pub fn check_special_lw(f: &mut Fighter) -> bool {
+    if f.kind != crate::fighter::FighterKind::Mario
+        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+        || (f.stick.y as i32) > SPECIALLW_STICK_MIN
+    {
+        return false;
+    }
+    if f.situation == Situation::Ground {
+        set_mario_special_lw(f);
+    } else {
+        set_mario_special_air_lw(f);
+    }
+    true
+}
+
+fn mario_tornado_clamp(f: &mut Fighter) -> f32 {
+    let mut clamp = MARIO_TORNADO_VEL_X_CLAMP;
+    if f.status.anim_frame >= MARIO_TORNADO_FINISH_FRAME {
+        f.mario_special_lw.friction -= 2.0;
+        clamp += f.mario_special_lw.friction;
+    }
+    clamp.max(0.0)
+}
+
+/// `ftMarioSpecialLwProcPhysics` @ 0x80156630. Returns true when a sourced
+/// B-tap transitions from the ground phase to the aerial phase this tick.
+pub fn apply_mario_special_lw_ground_physics(f: &mut Fighter) -> bool {
+    let clamp = mario_tornado_clamp(f);
+    physics::apply_clamp_ground_vel_stick_range(
+        &mut f.physics,
+        f.input.stick_x,
+        0,
+        MARIO_TORNADO_VEL_X_GROUND,
+        f.facing.sign(),
+        clamp,
+    );
+    if f.mario_special_lw.rise_enabled
+        && newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+    {
+        f.physics.vel_air.y += MARIO_TORNADO_VEL_Y_TAP;
+        switch_mario_tornado_air(f);
+        true
+    } else {
+        false
+    }
+}
+
+/// `ftMarioSpecialAirLwProcPhysics` @ 0x801566C4.
+pub fn apply_mario_special_lw_air_physics(f: &mut Fighter) {
+    if !f.mario_special_lw.rise_exhausted
+        && f.mario_special_lw.rise_enabled
+        && newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+    {
+        f.physics.vel_air.y =
+            (f.physics.vel_air.y + MARIO_TORNADO_VEL_Y_TAP).min(MARIO_TORNADO_VEL_Y_CLAMP);
+    }
+    physics::apply_gravity_default(&mut f.physics, &f.attributes);
+    let clamp = mario_tornado_clamp(f);
+    physics::clamp_air_vel_x_stick_range(
+        &mut f.physics,
+        f.input.stick_x,
+        0,
+        MARIO_TORNADO_VEL_X_AIR,
+        clamp,
+    );
 }
 
 /// `ftCommonLandingFallSpecialSetStatus` @ `ftcommonlanding.c:89`. No
@@ -1905,6 +2085,9 @@ fn set_landing_air_null(f: &mut Fighter, percent: u8) {
 /// isn't ported for yet, or that has no aerial `MoveData` (its
 /// `landing_lag_percent` is only meaningful there).
 pub fn set_landing_or_landing_air(f: &mut Fighter) {
+    if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirLw) {
+        return switch_mario_tornado_ground(f);
+    }
     let AnyStatus::Common(current) = f.status.status else {
         return set_landing(f);
     };
@@ -2388,6 +2571,7 @@ pub fn check_run_brake(f: &mut Fighter) -> bool {
 /// whether any check took the frame.
 pub fn ground_interrupt(f: &mut Fighter) -> bool {
     check_special_hi(f)
+        || check_special_lw(f)
         || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
@@ -2426,6 +2610,7 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
 /// closed alongside adding the tilts themselves.
 pub fn walk_interrupt(f: &mut Fighter) -> bool {
     check_special_hi(f)
+        || check_special_lw(f)
         || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
@@ -2753,7 +2938,7 @@ pub fn update(f: &mut Fighter) {
         // `collapsible_match` suggestion for this doesn't compile.
         #[allow(clippy::collapsible_match)]
         s if !s.is_grounded() => {
-            if !check_special_hi(f) && !check_attack_air(f) {
+            if !check_special_hi(f) && !check_special_lw(f) && !check_attack_air(f) {
                 check_jump_aerial(f);
             }
         }
@@ -2785,6 +2970,20 @@ fn update_extended(f: &mut Fighter) {
                 );
             } else {
                 apply_mario_special_hi_interrupt(f);
+            }
+        }
+        AnyStatus::Mario(MarioStatus::SpecialLw) => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        AnyStatus::Mario(MarioStatus::SpecialAirLw) => {
+            if f.status.anim_frame >= MARIO_TORNADO_FINISH_FRAME {
+                f.mario_special_lw.rise_enabled = false;
+                f.mario_special_lw.rise_exhausted = true;
+            }
+            if f.status.animation_ended() {
+                set_fall(f);
             }
         }
         AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
@@ -4435,6 +4634,44 @@ mod tests {
         assert!(check_special_hi(&mut f));
         assert_eq!(f.status.status, AnyStatus::Mario(MarioStatus::SpecialAirHi));
         assert_eq!(f.physics.vel_air, Vec3::new(20.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn down_b_starts_the_sourced_aerial_tornado_phase_from_ground_or_air() {
+        let mut grounded = mario();
+        hold(&mut grounded, 0, -80);
+        grounded.prev_input.buttons = N64Buttons::default();
+        grounded.input.buttons = N64Buttons(N64Buttons::B);
+        assert!(check_special_lw(&mut grounded));
+        assert_eq!(
+            grounded.status.status,
+            AnyStatus::Mario(MarioStatus::SpecialAirLw)
+        );
+        assert_eq!(grounded.situation, Situation::Air);
+        assert_eq!(grounded.physics.vel_air.y, -7.0);
+
+        let mut airborne = airborne_mario();
+        hold(&mut airborne, 0, -80);
+        airborne.prev_input.buttons = N64Buttons::default();
+        airborne.input.buttons = N64Buttons(N64Buttons::B);
+        assert!(check_special_lw(&mut airborne));
+        assert_eq!(
+            airborne.status.status,
+            AnyStatus::Mario(MarioStatus::SpecialAirLw)
+        );
+        assert_eq!(airborne.physics.vel_air.y, -7.0);
+    }
+
+    #[test]
+    fn tornado_finisher_spends_its_rise_and_reduces_horizontal_clamp() {
+        let mut f = airborne_mario();
+        set_mario_special_air_lw(&mut f);
+        f.status.anim_frame = MARIO_TORNADO_FINISH_FRAME;
+        update(&mut f);
+        assert!(f.mario_special_lw.rise_exhausted);
+        assert!(!f.mario_special_lw.rise_enabled);
+        apply_mario_special_lw_air_physics(&mut f);
+        assert_eq!(f.mario_special_lw.friction, -2.0);
     }
 
     #[test]

@@ -6,7 +6,7 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: none open. Mario's ground+aerial moveset is
-complete through the real Super Jump Punch. The shared `FallSpecial` recovery
+complete through the real Super Jump Punch and Tornado. The shared `FallSpecial` recovery
 state machine (every fighter's up-special lands in this after its launch
 phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
 through a portable runtime-to-gameplay bridge.
@@ -64,8 +64,18 @@ through a portable runtime-to-gameplay bridge.
   motion script's strong opening, eight coin-hit pulses, and finisher windows
   are in generic `MoveData`; cleared pulse windows reset the existing target
   hit latch. See RE-299.
-- Verified for everything above together: 211 `ssb-game` tests, full
-  workspace (`cargo test --workspace`, 709 tests) green, `cargo psp
+- **Mario Tornado (`SpecialLw`/`SpecialAirLw`)** (this batch): down+B now
+  enters the source's aerial Tornado entry from either situation (including
+  its counterintuitive grounded `-7` vertical velocity), switches between
+  the 87-frame ground and 83-frame air clips on map contact, and preserves
+  the real B-tap rise, frame-43 rise expenditure, and diminishing horizontal
+  clamp. Its distinct ground/air scripts carry the opening, thirteen
+  one-frame multihit pulses, and finishing hitboxes. Added the reusable
+  sourced ground stick-clamp primitive and the two animation-table slots;
+  rebuilt the ignored local `assets/generated/ssb64.pak` from the supplied
+  ROM, which verifies all 189 decompilation-derived animation lengths.
+- Verified for everything above together: 215 `ssb-game` tests, full
+  workspace (`cargo test --workspace`, 713 tests) green, `cargo psp
   --release` builds clean for both `psp-game` and `psp-asset-viewer`, and a
   PPSSPP headless Training boot shows no panic/crash with a real rendered
   frame.
@@ -77,14 +87,10 @@ through a portable runtime-to-gameplay bridge.
 
 Two real options, both blocked-open rather than blocked-shut:
 
-1. **Mario's down-B (`SpecialLw`, Tornado)** and/or fireball (`SpecialN`)
-   instead, since neither is blocked on root-motion data the way `SpecialHi`
-   is — but both were flagged in the previous batch's scoping as needing
-   their own new infrastructure first: `SpecialLw` needs new ground/air
-   velocity-clamp mechanics (a mash-to-rise input, its own friction curve)
-   not yet in `physics.rs`; `SpecialN` needs a projectile/spawned-object
-   concept `ssb-game` does not have at all yet (`Items` is 0% in
-   `docs/porting-status.md`). Worth scoping each on its own before picking.
+1. **Mario's fireball (`SpecialN`)**. It needs a projectile/spawned-object
+   concept in `ssb-game` (`Items` is 0% in `docs/porting-status.md`), so it
+   is a discrete infrastructure-first batch rather than another fighter-only
+   move translation.
 2. **Audit Super Jump Punch integration on a real Training dummy.** The
    source hitbox windows and portable root motion are wired, but the existing
    single-target combat harness has no move-specific capture yet. Add one

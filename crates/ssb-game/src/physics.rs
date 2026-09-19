@@ -188,6 +188,23 @@ pub fn clamp_ground_vel(p: &mut PhysicsState, clamp: f32) {
     p.vel_ground.x = p.vel_ground.x.clamp(-clamp, clamp);
 }
 
+/// `ftPhysicsApplyClampGroundVelStickRange` @ 0x800D89E0. Like the aerial
+/// counterpart, this is an acceleration scaled by the full stick range; the
+/// ground-facing sign is applied by the caller's fighter orientation.
+pub fn apply_clamp_ground_vel_stick_range(
+    p: &mut PhysicsState,
+    stick_x: i8,
+    stick_min: i32,
+    vel: f32,
+    facing: f32,
+    clamp: f32,
+) {
+    if (stick_x as i32).abs() >= stick_min {
+        p.vel_ground.x += stick_x as f32 * vel * facing;
+        clamp_ground_vel(p, clamp);
+    }
+}
+
 /// `ftPhysicsSetGroundVelFriction` @ 0x800D8978.
 ///
 /// Decays X toward zero by `friction`, stopping exactly at zero rather than
@@ -635,5 +652,14 @@ mod tests {
             -1.0,
         );
         assert_eq!(p.vel_ground.x, -12.0);
+    }
+
+    #[test]
+    fn ground_stick_clamp_uses_full_deflection_and_facing() {
+        let mut p = PhysicsState::default();
+        apply_clamp_ground_vel_stick_range(&mut p, 80, 0, 0.025, -1.0, 17.0);
+        assert_eq!(p.vel_ground.x, -2.0);
+        apply_clamp_ground_vel_stick_range(&mut p, -80, 0, 0.025, -1.0, 17.0);
+        assert_eq!(p.vel_ground.x, 0.0);
     }
 }

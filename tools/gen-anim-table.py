@@ -88,6 +88,8 @@ SLOTS = [
 SPECIAL_SLOTS = [
     ("MarioSpecialHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
     ("MarioSpecialAirHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
+    ("MarioSpecialLw", "Mario", "FTMarioAnimMarioTornadoGround"),
+    ("MarioSpecialAirLw", "Mario", "FTMarioAnimMarioTornadoAir"),
 ]
 
 ALL_SLOTS = SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
