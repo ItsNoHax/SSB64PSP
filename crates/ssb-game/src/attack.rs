@@ -134,16 +134,44 @@ pub struct ActiveHitbox {
     pub hitbox: Hitbox,
     pub start: f32,
     pub end: f32,
+    /// The `MakeAttackColl` generation within one motion. A source
+    /// `ClearAttackCollAll` followed by a new `MakeAttackColl` starts a new
+    /// generation even when the two frame windows touch; the original's
+    /// per-attack hit record is cleared with the old collision object.
+    pub hit_generation: u8,
 }
 
 impl ActiveHitbox {
     pub const fn new(hitbox: Hitbox, start: f32, end: f32) -> Self {
-        ActiveHitbox { hitbox, start, end }
+        ActiveHitbox {
+            hitbox,
+            start,
+            end,
+            hit_generation: 0,
+        }
+    }
+
+    /// Marks an independently-created source collision generation. Most
+    /// moves use generation zero throughout: replacing a hitbox without a
+    /// preceding `ClearAttackCollAll` must not re-hit a target.
+    pub const fn with_hit_generation(mut self, hit_generation: u8) -> Self {
+        self.hit_generation = hit_generation;
+        self
     }
 
     pub fn is_active(&self, anim_frame: f32) -> bool {
         (self.start..self.end).contains(&anim_frame)
     }
+}
+
+/// A single target's record for an attacker's currently live collision
+/// generation. This is the fixed-size Training equivalent of the original
+/// `GMAttackRecord` target list: it suppresses repeated contacts inside one
+/// `MakeAttackColl` lifetime, but a later `ClearAttackCollAll` generation can
+/// hit the target again.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct HitRecord {
+    hit_generation: Option<u8>,
 }
 
 /// A full attack: every hitbox its motion script throws out, and the
@@ -167,7 +195,7 @@ pub struct MoveData {
 /// `relocData/202_MarioMainMotion.c`. One hitbox slot reused with weaker
 /// numbers after frame 11 (`aid` 0 both times) — a real "sourspot" the
 /// original expresses as the same slot getting overwritten mid-swing, not
-/// two hitboxes: `hit_by_current_attack`'s suppression already means only
+/// two hitboxes: `HitRecord` suppression already means only
 /// one of the two windows can ever connect. `WaitAsync(7)` +
 /// `MakeAttackColl(...16)`, `Wait(4)` + `MakeAttackColl(...10)`, `Wait(17)` +
 /// `ClearAttackCollAll` — total `7 + 4 + 17 = 28`.
@@ -451,8 +479,9 @@ pub static MARIO_JAB3: MoveData = MoveData {
 
 /// Mario's Super Jump Punch — `dMarioMainMotion_SuperJumpPunchAir_0x16CC`.
 /// The event script opens an initial strong two-hit window at frame 2 for one
-/// frame, then, after its frame-9 `SetFlag1/2`, eight two-frame coin-hit
-/// windows with one-frame gaps, followed by a two-frame finishing pair.
+/// frame, then, after its frame-9 `SetFlag1/2`, eight adjacent two-frame
+/// coin-hit windows. Each loop clears and recreates the collision objects
+/// between its windows, followed by a two-frame finishing pair.
 /// The status remains live through the ROM's 40-frame figatree, so its motion
 /// and its hitbox script intentionally have different end times.
 pub static MARIO_SUPERJUMP: MoveData = MoveData {
@@ -495,7 +524,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             9.0,
             11.0,
-        ),
+        )
+        .with_hit_generation(1),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -508,7 +538,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             9.0,
             11.0,
-        ),
+        )
+        .with_hit_generation(1),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -521,7 +552,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             11.0,
             13.0,
-        ),
+        )
+        .with_hit_generation(2),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -534,7 +566,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             11.0,
             13.0,
-        ),
+        )
+        .with_hit_generation(2),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -547,7 +580,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             13.0,
             15.0,
-        ),
+        )
+        .with_hit_generation(3),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -560,7 +594,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             13.0,
             15.0,
-        ),
+        )
+        .with_hit_generation(3),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -573,7 +608,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             15.0,
             17.0,
-        ),
+        )
+        .with_hit_generation(4),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -586,7 +622,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             15.0,
             17.0,
-        ),
+        )
+        .with_hit_generation(4),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -599,7 +636,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             17.0,
             19.0,
-        ),
+        )
+        .with_hit_generation(5),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -612,7 +650,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             17.0,
             19.0,
-        ),
+        )
+        .with_hit_generation(5),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -625,7 +664,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             19.0,
             21.0,
-        ),
+        )
+        .with_hit_generation(6),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -638,7 +678,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             19.0,
             21.0,
-        ),
+        )
+        .with_hit_generation(6),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -651,7 +692,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             21.0,
             23.0,
-        ),
+        )
+        .with_hit_generation(7),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -664,7 +706,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             21.0,
             23.0,
-        ),
+        )
+        .with_hit_generation(7),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -677,7 +720,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             23.0,
             25.0,
-        ),
+        )
+        .with_hit_generation(8),
         ActiveHitbox::new(
             Hitbox {
                 damage: 1,
@@ -690,7 +734,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             23.0,
             25.0,
-        ),
+        )
+        .with_hit_generation(8),
         ActiveHitbox::new(
             Hitbox {
                 damage: 3,
@@ -703,7 +748,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             25.0,
             27.0,
-        ),
+        )
+        .with_hit_generation(9),
         ActiveHitbox::new(
             Hitbox {
                 damage: 3,
@@ -716,7 +762,8 @@ pub static MARIO_SUPERJUMP: MoveData = MoveData {
             },
             25.0,
             27.0,
-        ),
+        )
+        .with_hit_generation(9),
     ],
     length_frames: crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES,
     landing_lag_percent: None,
@@ -1557,25 +1604,16 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 }
 
 /// `F1` criterion 5: tests `attacker`'s active hitbox against `defender` and
-/// applies the hit. `hit_by_current_attack` is the caller's per-target
-/// hit-suppression state — the simplified stand-in for the original's
-/// per-attack `GMAttackRecord` hit list (module docs) — cleared as soon as
-/// the attacker leaves `Attack11` so the next jab can hit again.
-///
-/// Only `Attack11`'s hitbox is ported (module docs), so anything else the
-/// attacker is doing is a no-op call.
-pub fn apply_hit_from(
-    attacker: &Fighter,
-    defender: &mut Fighter,
-    hit_by_current_attack: &mut bool,
-) {
+/// applies the hit. `hit_record` is the caller's per-target hit-suppression
+/// state — the fixed-size Training stand-in for the original's per-attack
+/// `GMAttackRecord` hit list. It is re-armed at a sourced
+/// `ClearAttackCollAll`, including a clear/recreate boundary with no idle
+/// animation frame between them.
+pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &mut HitRecord) {
     let Some(move_data) = move_data(attacker.kind, attacker.status.status) else {
-        *hit_by_current_attack = false;
+        *hit_record = HitRecord::default();
         return;
     };
-    if *hit_by_current_attack {
-        return;
-    }
     let Some(active) = move_data
         .hitboxes
         .iter()
@@ -1583,9 +1621,12 @@ pub fn apply_hit_from(
     else {
         // `ClearAttackCollAll` ends the current attack record in the source.
         // A later pulse in a multi-hit script is a new collision opportunity.
-        *hit_by_current_attack = false;
+        *hit_record = HitRecord::default();
         return;
     };
+    if hit_record.hit_generation == Some(active.hit_generation) {
+        return;
+    }
     let hitbox = active.hitbox;
     // `ox` mirrors with facing (a joint-space X offset rotated by the
     // fighter's own transform in the original); `oy`/`oz` do not need that,
@@ -1599,7 +1640,7 @@ pub fn apply_hit_from(
             hitbox.offset.z,
         );
     if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
-        *hit_by_current_attack = true;
+        hit_record.hit_generation = Some(active.hit_generation);
     }
 }
 
@@ -1621,7 +1662,7 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     }
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
-        // `hit_by_current_attack` is left alone so the same active window
+        // the hit record is left alone so the same active window
         // can still connect once invincibility ends.
         return false;
     }
@@ -1822,11 +1863,11 @@ mod tests {
             StatusTiming::unknown(),
         );
 
-        let mut hit_by_current_attack = false;
-        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::DamageN1);
-        assert!(hit_by_current_attack);
+        assert!(hit_record.hit_generation.is_some());
         assert!(defender.hitstun > 0);
 
         // Hitstun running out returns the defender to Wait.
@@ -1856,8 +1897,8 @@ mod tests {
             StatusTiming::unknown(),
         );
 
-        let mut hit_by_current_attack = false;
-        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::GuardSetOff);
         assert_eq!(defender.damage, 0);
@@ -1886,12 +1927,12 @@ mod tests {
             StatusTiming::unknown(),
         );
 
-        let mut hit_by_current_attack = false;
-        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::Wait);
         assert_eq!(defender.damage, 0);
-        assert!(!hit_by_current_attack);
+        assert!(hit_record.hit_generation.is_none());
     }
 
     #[test]
@@ -1934,6 +1975,36 @@ mod tests {
         );
     }
 
+    /// Every `SuperJumpPunch` loop body clears its old attack collisions
+    /// before recreating them. The windows meet at their frame boundary, so a
+    /// plain "currently hit" bool never observes an inactive frame to reset.
+    #[test]
+    fn super_jump_clear_rearms_the_next_coin_hit_generation() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::ZERO;
+        attacker.status.status = AnyStatus::Mario(MarioStatus::SpecialAirHi);
+        defender.pos = Vec3::new(0.0, 0.0, 60.0);
+
+        let mut hit_record = HitRecord::default();
+        attacker.status.anim_frame = 9.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 1);
+        assert_eq!(hit_record.hit_generation, Some(1));
+
+        // Still inside the same `MakeAttackColl` lifetime: one target once.
+        attacker.status.anim_frame = 10.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 1);
+
+        // Frame 11 is the immediately recreated next loop collision, not a
+        // gap, and is therefore a distinct legal hit.
+        attacker.status.anim_frame = 11.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 2);
+        assert_eq!(hit_record.hit_generation, Some(2));
+    }
+
     #[test]
     fn tornado_motion_scripts_keep_their_thirteen_one_frame_pulses() {
         let ground = move_data(
@@ -1956,6 +2027,30 @@ mod tests {
         assert!(!air.hitboxes.iter().any(|h| h.is_active(47.0)));
     }
 
+    #[test]
+    fn tornado_clear_gap_rearms_its_next_pulse() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.status.status = AnyStatus::Mario(MarioStatus::SpecialLw);
+        // The loop's side hitbox at frame 4 is rooted at this exact
+        // authored offset; the root hurtbox approximation then exercises the
+        // same Training bridge as the live dummy.
+        defender.pos = Vec3::new(0.0, 280.0, 150.0);
+
+        let mut hit_record = HitRecord::default();
+        attacker.status.anim_frame = 4.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 1);
+
+        attacker.status.anim_frame = 5.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(hit_record, HitRecord::default());
+
+        attacker.status.anim_frame = 7.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 2);
+    }
+
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
     /// `MARIO_DASH_ATTACK`'s own doc comment.
     #[test]
@@ -1970,6 +2065,24 @@ mod tests {
         assert!(!sour.is_active(10.0));
         assert!(!sweet.is_active(15.0));
         assert!(sour.is_active(15.0));
+    }
+
+    #[test]
+    fn a_sourspot_replacement_without_clear_does_not_rearm_a_target() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::ZERO;
+        attacker.status.status = Status::AttackDash.into();
+        defender.pos = Vec3::new(40.0, 0.0, 0.0);
+
+        let mut hit_record = HitRecord::default();
+        attacker.status.anim_frame = 10.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 12);
+
+        attacker.status.anim_frame = 15.0;
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 12);
     }
 
     /// A forward tilt's second hitbox reaches further out along the swing
@@ -1990,13 +2103,13 @@ mod tests {
             StatusTiming::unknown(),
         );
 
-        let mut hit_by_current_attack = false;
-        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
 
         // Only reachable if the offset flipped to -90 with facing; at +90 the
         // defender at x=-90 would be 180 units away, past even the 115-unit
         // far-hitbox radius.
-        assert!(hit_by_current_attack);
+        assert!(hit_record.hit_generation.is_some());
         assert_eq!(defender.damage, 13);
     }
 
@@ -2070,10 +2183,10 @@ mod tests {
             StatusTiming::unknown(),
         );
 
-        let mut hit_by_current_attack = false;
-        apply_hit_from(&attacker, &mut defender, &mut hit_by_current_attack);
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
 
-        assert!(hit_by_current_attack);
+        assert!(hit_record.hit_generation.is_some());
         assert_eq!(defender.damage, 4);
     }
 }

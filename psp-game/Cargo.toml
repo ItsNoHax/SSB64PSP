@@ -32,6 +32,10 @@ regression_capture = []
 # existing jump/jab sequence, keeping the default capture's established
 # composition while providing a focused Fireball integration smoke.
 regression_capture_fireball = ["regression_capture"]
+# Extends the scripted Training capture with B+up after the established
+# jump/jab sequence, exercising Mario's Super Jump Punch against the live
+# dummy through the regular Training hit bridge.
+regression_capture_superjump = ["regression_capture"]
 # Captures Training at the first jump's apex: player airborne above Dream
 # Land while the stationary dummy remains grounded.  This is the deterministic
 # fighter-shadow regression scene.

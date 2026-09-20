@@ -50,6 +50,10 @@ const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_s
     22
 } else if cfg!(feature = "regression_capture_fireball") {
     167
+} else if cfg!(feature = "regression_capture_superjump") {
+    // B+up is pressed at tick 150; frame 2's strong opening hit has resolved
+    // by this point while the source TransN launch is still clearly visible.
+    156
 } else {
     106
 };
@@ -106,9 +110,14 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 /// `regression_capture` as enabled; harmless to keep unconditionally. The
 /// `regression_capture_fireball` variant adds a neutral-B tap at tick 150,
 /// after that jab has completed, and freezes at tick 167 so the source
-/// frame-16 Fireball spawn is visible.
+/// frame-16 Fireball spawn is visible. `regression_capture_superjump` uses
+/// the same B edge plus an upward stick at tick 150 and freezes after its
+/// opening hit window.
 fn scripted_buttons(tick: u64) -> N64Buttons {
     if cfg!(feature = "regression_capture_fireball") && tick == 150 {
+        return N64Buttons(N64Buttons::B);
+    }
+    if cfg!(feature = "regression_capture_superjump") && tick == 150 {
         return N64Buttons(N64Buttons::B);
     }
 
@@ -130,6 +139,17 @@ fn scripted_buttons(tick: u64) -> N64Buttons {
 fn scripted_stick_x(tick: u64) -> i8 {
     if (34..90).contains(&tick) {
         -30
+    } else {
+        0
+    }
+}
+
+/// The Super Jump Punch input shares the source `check_special_hi` gate with
+/// live play: a B edge and an upward raw N64 stick value, not a capture-only
+/// shortcut. Every other regression scene remains neutral vertically.
+fn scripted_stick_y(tick: u64) -> i8 {
+    if cfg!(feature = "regression_capture_superjump") && tick == 150 {
+        80
     } else {
         0
     }
@@ -323,7 +343,7 @@ unsafe fn run() -> ! {
                         ssb_engine::input::ControllerState {
                             buttons: scripted_buttons(sim_frame_index),
                             stick_x: scripted_stick_x(sim_frame_index),
-                            stick_y: 0,
+                            stick_y: scripted_stick_y(sim_frame_index),
                             connected: true,
                         }
                     } else {
