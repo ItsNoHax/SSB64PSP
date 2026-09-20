@@ -1483,7 +1483,7 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
 pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
     if f.status.anim_frame >= MARIO_SUPERJUMP_LAUNCH_FRAME {
         physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
-        f.physics.vel_air = f.physics.vel_air * 0.95;
+        f.physics.vel_air *= 0.95;
     } else {
         physics::apply_gravity_clamp_tvel(&mut f.physics, 0.5, f.attributes.tvel_base);
         if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {

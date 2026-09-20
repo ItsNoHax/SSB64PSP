@@ -1337,6 +1337,9 @@ const MAT_ANIM_REPLAY_FRAMES: u32 = 600;
 /// MObj-chain-position)` to its `MObjSub`'s own file offset and CLUT entry
 /// width -- the only source-backed bound on `palettes[]`/`sprites[]`;
 /// `None` declines rather than guessing a table length.
+// The independent source fields deliberately remain explicit here: callers
+// resolve them at different stages of mesh/material extraction.
+#[allow(clippy::too_many_arguments)]
 fn resolve_one_mat_anim(
     file: &ssb_rom::archive::File,
     node: usize,
@@ -4994,6 +4997,7 @@ fn parse_c_float(s: &str) -> Result<f32, Box<dyn std::error::Error>> {
 /// * **It cannot be launched through the stage.** Dropped from 3000 units up
 ///   at maximum knockback velocity, one tick's movement is longer than most
 ///   stages are wide. Only `mpProcessUpdateMain`'s substepping catches that.
+///
 /// Scripts a button-jump + held-stick input schedule against a stage's real
 /// floor segments (native, no PSP/emulator needed) and reports where the
 /// fighter lands each tick, plus whether a scripted jab connects
