@@ -190,6 +190,14 @@ pub struct Fighter {
     /// set after a rebirth. A hit landing while this is nonzero is a no-op
     /// (`crate::attack`'s `apply_hit_from`/`apply_shield_hit` both check it).
     pub invincible_frames: u16,
+    /// Source display gate (`FTStruct::is_invisible`). This is intentionally
+    /// distinct from invincibility: `ftShadowProcDisplay` hides only the
+    /// former.
+    pub is_invisible: bool,
+    /// Source shadow-specific display gate (`FTStruct::is_shadow_hide`).
+    /// Common lifecycle transitions maintain it; capture/other visual systems
+    /// can also set it without acquiring renderer knowledge.
+    pub is_shadow_hidden: bool,
     pub input: ControllerState,
     pub prev_input: ControllerState,
     /// Collision offsets — `MPObjectColl`.
@@ -255,6 +263,8 @@ impl Fighter {
             hitlag: 0,
             hitstun: 0,
             invincible_frames: 0,
+            is_invisible: false,
+            is_shadow_hidden: false,
             input: ControllerState::default(),
             prev_input: ControllerState::default(),
             coll: BodyColl::default(),

@@ -32,6 +32,10 @@ regression_capture = []
 # existing jump/jab sequence, keeping the default capture's established
 # composition while providing a focused Fireball integration smoke.
 regression_capture_fireball = ["regression_capture"]
+# Captures Training at the first jump's apex: player airborne above Dream
+# Land while the stationary dummy remains grounded.  This is the deterministic
+# fighter-shadow regression scene.
+regression_capture_shadows = ["regression_capture"]
 # Requests one framebuffer capture from PPSSPPHeadless after the scripted
 # input above reaches its frozen tick. The devctl is ignored by real PSPs.
 headless_capture = []

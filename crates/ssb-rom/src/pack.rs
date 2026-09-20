@@ -535,7 +535,8 @@ pub struct TextureDesc {
     /// CLUT for one of `MatAnimDesc`'s resolved variants instead of reading
     /// these two fields, but they stay meaningful as the frame-0 fallback.
     pub mat_anim: u32,
-    /// [`TextureDesc::ROLE_NORMAL`] or [`TextureDesc::ROLE_FRAMEBUFFER`]
+    /// [`TextureDesc::ROLE_NORMAL`], [`TextureDesc::ROLE_FRAMEBUFFER`], or
+    /// [`TextureDesc::ROLE_FIGHTER_SHADOW`]
     /// (RE-099/RE-100, `VERSION` 14). A framebuffer-role entry has
     /// `data_len`/`palette_len` of 0 by construction — there is no ROM data
     /// to bake, only `width`/`height`/`psm` describing the small buffer the
@@ -574,6 +575,10 @@ impl TextureDesc {
     /// capture the first time it is needed (RE-099/RE-100). `data_offset`/
     /// `data_len`/`palette_offset`/`palette_len` are all 0 for this role.
     pub const ROLE_FRAMEBUFFER: u32 = 1;
+    /// The one `ftShadowProcDisplay` texture, extracted from file 84 at
+    /// `0x3A68`.  A semantic role avoids a runtime dependency on incidental
+    /// texture-table order.
+    pub const ROLE_FIGHTER_SHADOW: u32 = 2;
     /// `wrap` bit for `G_TX_CLAMP` on the S axis (RE-102).
     pub const CLAMP_S: u8 = 1 << 0;
     /// `wrap` bit for `G_TX_CLAMP` on the T axis (RE-102).
@@ -1404,6 +1409,13 @@ impl PackWriter {
             wrap,
         });
         (self.textures.len() - 1) as u32
+    }
+
+    /// Adds the source fighter-shadow texture with a stable semantic role.
+    pub fn add_fighter_shadow_texture(&mut self, tex: &crate::psp_texture::PspTexture) -> u32 {
+        let index = self.add_texture(tex, false, false);
+        self.textures[index as usize].role = TextureDesc::ROLE_FIGHTER_SHADOW;
+        index
     }
 
     /// Adds a "framebuffer capture" texture entry: no baked bytes at all, a
@@ -4053,6 +4065,28 @@ mod tests {
         let pal = pack.palette_data(&t).unwrap();
         assert_eq!(pal.len(), 64);
         assert_eq!(u32_at(pal, 0), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn fighter_shadow_texture_keeps_its_semantic_role() {
+        let mut w = PackWriter::new();
+        let texture = PspTexture {
+            width: 32,
+            height: 32,
+            stride: 32,
+            format: Psm::Psm8888,
+            data: alloc::vec![0xA5; 32 * 32 * 4],
+            swizzled: true,
+            palette: alloc::vec![],
+            levels: 1,
+        };
+        w.add_fighter_shadow_texture(&texture);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(
+            pack.texture(0).unwrap().role,
+            TextureDesc::ROLE_FIGHTER_SHADOW
+        );
     }
 
     #[test]

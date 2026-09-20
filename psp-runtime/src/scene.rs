@@ -287,6 +287,49 @@ pub fn body_of(d: &FighterDesc) -> BodyColl {
     }
 }
 
+/// Resolves one fighter's source floor shadow from the live fighter and the
+/// stage map.  `ftShadowProcDisplay` uses the standing floor while grounded;
+/// otherwise it calls `mpCollisionCheckProjectFloor` from the fighter's root
+/// straight down.  It does *not* shrink or fade for altitude.
+///
+/// The portable fighter carries the source `is_invisible` and
+/// `is_shadow_hide` gates. Common lifecycle statuses maintain the latter;
+/// capture/other visual systems can set it without knowing PSP draw details.
+/// Invincibility alone is deliberately not a hide condition — the original
+/// keeps its shadow.
+pub fn fighter_shadow(
+    pack: &Pack<'_>,
+    stage: &StageDesc,
+    fighter: &Fighter,
+    shadow_size: f32,
+) -> ssb_game::shadow::ShadowGeometry {
+    if !ssb_game::shadow::visible_for(
+        fighter.status.status,
+        fighter.is_invisible,
+        fighter.is_shadow_hidden,
+    ) {
+        return ssb_game::shadow::ShadowGeometry::EMPTY;
+    }
+
+    let line = fighter.floor.map(|f| f.line).or_else(|| {
+        ssb_game::collision::project_floor(
+            FloorSegments::new(pack, stage),
+            ssb_engine::math::Vec2::new(fighter.pos.x, fighter.pos.y),
+        )
+        .map(|f| f.line)
+    });
+    let Some(line) = line else {
+        return ssb_game::shadow::ShadowGeometry::EMPTY;
+    };
+    ssb_game::shadow::build(
+        fighter.pos,
+        shadow_size,
+        FloorSegments::new(pack, stage)
+            .filter(move |(candidate, _)| *candidate == line)
+            .map(|(_, segment)| segment),
+    )
+}
+
 /// Advances a fighter's skeleton pose for `status`. Shared by every fighter
 /// scene that owns a skeleton: restarted on a status *change* rather than
 /// every tick, since an animation carries its own clock and re-seeding it
@@ -363,6 +406,9 @@ pub struct FighterScene {
     /// Initial `FTStruct.camera_zoom_frame`, copied from the fighter's real
     /// `FTAttributes.camera_zoom` value.
     pub camera_zoom_frame: f32,
+    /// `FTAttributes::shadow_size`, preserved separately from physics because
+    /// it feeds `ftShadowProcDisplay`, not a gameplay calculation.
+    pub shadow_size: f32,
     started: Option<AnyStatus>,
     /// TransN pose immediately before the last animation parser advance. On
     /// the next fighter tick it pairs with the current hidden pose to recover
@@ -399,12 +445,14 @@ impl FighterScene {
         let from_pack = desc.is_some();
         let mut cam_offset_y = 0.0;
         let mut camera_zoom_frame = 1.0;
+        let mut shadow_size = 200.0;
         if let Some(d) = desc {
             fighter.attributes = physics_of(&d);
             fighter.coll = body_of(&d);
             fighter.anim = anim_of(&d);
             cam_offset_y = d.cam_offset_y;
             camera_zoom_frame = d.camera_zoom;
+            shadow_size = d.shadow_size;
         }
 
         let mut placed = false;
@@ -435,6 +483,7 @@ impl FighterScene {
             camera: ssb_game::camera::Camera::default(),
             cam_offset_y,
             camera_zoom_frame,
+            shadow_size,
             started: None,
             root_motion_before_tick: None,
         }

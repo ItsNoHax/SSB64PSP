@@ -43,7 +43,12 @@ use ssb_psp_runtime::meshdraw;
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
 /// to maintain unconditionally (`psp-asset-viewer/main.rs`'s own `sim_frame_index`
 /// comment).
-const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_fireball") {
+const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_shadows") {
+    // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this lands
+    // in the rising portion of Mario's real button jump while the dummy is
+    // still on Dream Land's main floor.
+    22
+} else if cfg!(feature = "regression_capture_fireball") {
     167
 } else {
     106
@@ -462,6 +467,40 @@ unsafe fn draw_training(
     let base = gpu.model_matrix();
 
     meshdraw::draw_stage(p, &stage, &base, draw_state, material_anim);
+
+    // The N64 puts shadows on their own display link between the stage and
+    // fighters.  Resolve each independently from its live floor/air state;
+    // the fixed scratch is copied into GE memory by the renderer, so it is
+    // safe to reuse for both players without a per-frame allocation.
+    let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
+    let player_shadow = ssb_psp_runtime::scene::fighter_shadow(
+        p,
+        &stage,
+        &pl.fighter,
+        pl.shadow_size,
+    );
+    meshdraw::draw_fighter_shadow(
+        p,
+        &player_shadow,
+        [0x00, 0x00, 0x00, 0xA0],
+        &mut shadow_verts,
+        draw_state,
+    );
+    if let Some(dummy) = dummy_state {
+        let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
+            p,
+            &stage,
+            &dummy.fighter,
+            dummy.shadow_size,
+        );
+        meshdraw::draw_fighter_shadow(
+            p,
+            &dummy_shadow,
+            [0x00, 0x00, 0x00, 0xA0],
+            &mut shadow_verts,
+            draw_state,
+        );
+    }
 
     if let Some(fireball_mesh) = ssb_psp_runtime::scene::mario_fireball_mesh(p) {
         for fireball in weapons.fireballs() {

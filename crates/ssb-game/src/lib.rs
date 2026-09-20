@@ -17,5 +17,6 @@ pub mod collision;
 pub mod fighter;
 pub mod ground;
 pub mod physics;
+pub mod shadow;
 pub mod status;
 pub mod weapon;

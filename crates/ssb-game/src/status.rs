@@ -1936,6 +1936,10 @@ pub fn set_any_status(
         _ => {}
     }
     f.status.status = status;
+    // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
+    // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
+    // so rendering has one display gate and capture systems can use it too.
+    f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
     f.status.anim_frame = anim_frame_begin;
     f.status.timing = timing;
 }

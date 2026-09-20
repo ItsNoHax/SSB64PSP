@@ -58,11 +58,26 @@ RE-172–189 cover manager descriptors, transforms, material/texture/colour anim
 
 ### Shadows
 
-Status: NOT STARTED
+Status: COMPLETE for the current fighter-runtime scope
 
-Only `shadow_size` — a fighter attribute constant extracted from `FTAttributes` — exists; nothing renders a shadow
+`ftShadowProcDisplay` is a runtime-generated, floor-conforming strip — not a
+blob/decal. The shared PSP runtime projects each live fighter onto its
+standing floor (or the nearest floor below while airborne), clips
+`x ± FTAttributes::shadow_size` to that line's ends, and follows up to two
+polyline bends with the source's fixed eight-vertex capacity. It extracts the
+source file-84 `0x3A68` 16×16 I4 image, pre-bakes its mirror-repeat period,
+and applies the source black `(0,0,0,0xA0)` material with `AA_XLU_SURF`
+depth-test/no-write, alpha threshold `0x0F`, blending, flat/no-light/no-cull
+state. The pass is after stage geometry and before fighter objects.
 
-**Remaining work:** No design exists; not yet a numbered R0.x task
+There is deliberately no altitude fade, scale change, rotation, or
+invincibility exception: the original uses height only to choose the floor.
+Entry, KO/sleep, and rebirth states hide the shadow; multiple players own
+independent fixed scratch submissions. Team-colour shadows and dynamic map
+groups remain match/stage-system work outside the current Training runtime.
+
+Evidence: RE-302. Deterministic coverage:
+`tests/golden/f1-training-shadows.png`.
 
 
 ### Framebuffer effects
