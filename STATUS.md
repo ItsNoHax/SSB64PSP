@@ -24,6 +24,14 @@ through a portable runtime-to-gameplay bridge.
 
 ## What was completed
 
+- **Player-facing PSP controller layout** (2026-09-20): `psp-game` now
+  selects its own raw PSP→N64 table at the shared `sceCtrl` backend boundary,
+  without changing the asset viewer's legacy controls. The analog nub stays
+  analog, D-pad directions are the four independent C-buttons, and all
+  requested face/shoulder/Start bindings feed the normal controller state
+  consumed by the game. The temporary front-end menu now reads that mapped
+  N64 stick rather than the D-pad bits repurposed for C-button jumping.
+
 - **Fighter shadows** (2026-09-20): source-traced `ftShadowProcDisplay`, not
   a generic blob. The runtime projects each fighter onto its standing or
   nearest-below floor line, clips and contours the source's `shadow_size`
