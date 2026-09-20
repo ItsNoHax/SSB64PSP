@@ -22,18 +22,28 @@ projectile sub-objects). The one confirmed instance (Link's boomerang) has
 `p_mobjsubs = NULL` by design, so there is no known live bug — revisit only
 if a new `WPAttributes` instance with real sub-objects is found.
 
-### Material animation — stage texture-frame/UV tracks and costume PaletteID
-Status: IN_PROGRESS (partial)
-Evidence: RE-086, RE-089–095, RE-211
-Reason: 33 palette-cycling scripts are resolved, packed and ticked. Stage
-texture-frame/UV tracks and the 200/441 fighter costume scripts carrying
-`PaletteID` remain unconsumed.
+### Material animation — RDP fractional-image blend
+Status: DEFERRED (documented PSP limitation)
+Evidence: RE-086, RE-301
+Reason: `SetLFrac`/`TextureIDNext` require the N64 RDP's two-tile fractional
+image blend. `TextureIDCurrent` and tile-0 UV tracks are packed and applied;
+`ScrU`/`ScrV` are tile-1-only and have no converted `TEXEL1` consumer. The
+GE has no equivalent one-pass blend, so this needs a measured multipass
+design rather than a heuristic.
+
+### Material animation — stage dynamic colour registers
+Status: DEFERRED (documented PSP limitation)
+Evidence: RE-301
+Reason: two stage `PrimColor` and two stage light-track attachments change
+state that the converter bakes into vertex colour or lacks a stage GE-light
+context for. A future implementation needs source-measured dynamic vertex or
+combiner lowering; the current renderer does not fake a live update.
 
 ### Fighter costume palettes beyond costume 0
 Status: DEFERRED
 Evidence: RE-096, RE-261
-Reason: costume zero resolves palette ID and all five colour/light tracks.
-Runtime costume selection and packing all costumes is future asset work.
+Reason: all costume palette variants are packed and the asset viewer can
+select them, but the player-facing select flow still hardcodes costume zero.
 
 ### Independent fighter animation validation
 Status: DEFERRED

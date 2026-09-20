@@ -27,3 +27,11 @@ after RE-262's later signed-clamp correction restored the second eye. RE-264
 supersedes it with hash `1d5ff77266e193e7012ec4842af4da1305281d781d87c7bf701a743b2a6f0733`
 after enabling the directional light channel that this scene was already
 configured to use.
+
+RE-301 adds `regression_capture_link_costume_1`, which selects costume 1
+through the normal `draw_object_posed` override path (not a separate costume
+renderer). Its deterministic golden is `tests/golden/r2-link-costume-1.png`,
+SHA-256 `90274b23cb3d05108056e036c05d6fdcec0717f2505803a53c83f4ce842dd656`.
+It differs from Link costume 0 by 4,640 pixels and two captures compare at
+zero pixels, proving a non-zero packed `PaletteID`/colour/light set reaches
+the PSP renderer.

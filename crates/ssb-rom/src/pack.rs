@@ -163,7 +163,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 ///    coordinate on a clamped axis becomes a large positive value and clamps
 ///    to the wrong edge. Marking the affected primitive selects the exact
 ///    float-UV draw path on device; a v28 pack cannot identify those draws.
-pub const VERSION: u32 = 29;
+// `MatAnimDesc` grew its per-material MObj rest state in version 30.  This
+// cannot be read compatibly by an older runtime because the following table
+// starts at a different byte offset.
+pub const VERSION: u32 = 30;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -779,12 +782,21 @@ pub struct MatAnimDesc {
     /// Runtime-selectable sprites indexed by `TextureIDCurrent`.
     pub texture_count: u32,
     pub textures: [u32; Self::MAX_TEXTURES],
+    /// Initial material-track values, preserved as raw `f32` bits.  A live
+    /// joint replaces only the tracks it drives; the renderer uses these as
+    /// the source-faithful rest transform for UV animation.
+    pub base_tracks: [u32; 10],
+    /// See [`crate::mobj::MObjMaterial::mat_anim_uv_mode`].
+    pub uv_mode: u32,
+    /// `MObjSub::{unk0A,unk0C,unk0E}` promoted to `u32`; needed for the
+    /// source tile-window equations while UV tracks are live.
+    pub uv_tile_params: [u32; 3],
 }
 
 impl MatAnimDesc {
     /// Measured maximum across manager-effect material streams.
     pub const MAX_TEXTURES: usize = 8;
-    pub const SIZE: usize = 64;
+    pub const SIZE: usize = 120;
 }
 
 /// One resolved palette variant of an animated texture — the same shape as
@@ -1501,6 +1513,9 @@ impl PackWriter {
         source_offset: u32,
         palettes: &[Vec<u32>],
         textures: &[u32],
+        base_tracks: [u32; 10],
+        uv_mode: u8,
+        uv_tile_params: [u16; 3],
     ) -> u32 {
         let (file_offset, file_len) = match self.mat_anim_files.get(&source_file) {
             Some(&at) => at,
@@ -1546,6 +1561,9 @@ impl PackWriter {
             source_offset,
             texture_count: texture_count as u32,
             textures: packed_textures,
+            base_tracks,
+            uv_mode: u32::from(uv_mode),
+            uv_tile_params: uv_tile_params.map(u32::from),
         });
         (self.mat_anims.len() - 1) as u32
     }
@@ -2408,6 +2426,13 @@ impl PackWriter {
             for texture in a.textures {
                 out.extend_from_slice(&texture.to_le_bytes());
             }
+            for track in a.base_tracks {
+                out.extend_from_slice(&track.to_le_bytes());
+            }
+            out.extend_from_slice(&a.uv_mode.to_le_bytes());
+            for param in a.uv_tile_params {
+                out.extend_from_slice(&param.to_le_bytes());
+            }
         }
         for p in &self.mat_anim_palettes {
             out.extend_from_slice(&p.palette_offset.to_le_bytes());
@@ -2885,6 +2910,10 @@ impl<'a> Pack<'a> {
         for (j, texture) in textures.iter_mut().enumerate() {
             *texture = u32_at(self.data, at + 32 + j * 4);
         }
+        let mut base_tracks = [0; 10];
+        for (j, track) in base_tracks.iter_mut().enumerate() {
+            *track = u32_at(self.data, at + 64 + j * 4);
+        }
         Some(MatAnimDesc {
             file_offset: u32_at(self.data, at),
             file_len: u32_at(self.data, at + 4),
@@ -2895,6 +2924,13 @@ impl<'a> Pack<'a> {
             source_offset: u32_at(self.data, at + 24),
             texture_count: u32_at(self.data, at + 28),
             textures,
+            base_tracks,
+            uv_mode: u32_at(self.data, at + 104),
+            uv_tile_params: [
+                u32_at(self.data, at + 108),
+                u32_at(self.data, at + 112),
+                u32_at(self.data, at + 116),
+            ],
         })
     }
 
@@ -4912,7 +4948,17 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(117, &file_bytes, 0x30, 0x2AA8, &palettes, &[]);
+        let mat_anim = w.add_mat_anim(
+            117,
+            &file_bytes,
+            0x30,
+            0x2AA8,
+            &palettes,
+            &[],
+            [0; 10],
+            1,
+            [3, 64, 32],
+        );
         w.set_texture_mat_anim(texture, mat_anim);
         let bytes = w.finish();
 
@@ -4928,6 +4974,8 @@ mod tests {
         assert_eq!(a.palette_count, 3);
         assert_eq!(a.source_file, 117);
         assert_eq!(a.source_offset, 0x2AA8);
+        assert_eq!(a.uv_mode, 1);
+        assert_eq!(a.uv_tile_params, [3, 64, 32]);
         assert_eq!(pack.mat_anim_file(&a), Some(&file_bytes[..]));
 
         let got: alloc::vec::Vec<u32> = (0..a.palette_count)
@@ -4971,8 +5019,28 @@ mod tests {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x22u8; 512];
         let one = alloc::vec![alloc::vec![0xAAAA_AAAAu32; 16]];
-        w.add_mat_anim(114, &file_bytes, 0x100, 0x4F54, &one, &[]);
-        w.add_mat_anim(114, &file_bytes, 0x200, 0x5098, &one, &[]);
+        w.add_mat_anim(
+            114,
+            &file_bytes,
+            0x100,
+            0x4F54,
+            &one,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
+        w.add_mat_anim(
+            114,
+            &file_bytes,
+            0x200,
+            0x5098,
+            &one,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -4992,7 +5060,17 @@ mod tests {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x33u8; 64];
         let textures: alloc::vec::Vec<u32> = (10..18).collect();
-        let mat_anim = w.add_mat_anim(120, &file_bytes, 0x10, 0x2000, &[], &textures);
+        let mat_anim = w.add_mat_anim(
+            120,
+            &file_bytes,
+            0x10,
+            0x2000,
+            &[],
+            &textures,
+            [0; 10],
+            0,
+            [0; 3],
+        );
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -5008,7 +5086,7 @@ mod tests {
     fn a_mat_anim_with_no_textures_round_trips_as_zero_count() {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x44u8; 32];
-        let mat_anim = w.add_mat_anim(121, &file_bytes, 0x10, 0x2000, &[], &[]);
+        let mat_anim = w.add_mat_anim(121, &file_bytes, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
         let bytes = w.finish();
 
         let pack = Pack::open(&bytes).unwrap();
@@ -5027,7 +5105,17 @@ mod tests {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x55u8; 32];
         let textures: alloc::vec::Vec<u32> = (0..9).collect();
-        w.add_mat_anim(122, &file_bytes, 0x10, 0x2000, &[], &textures);
+        w.add_mat_anim(
+            122,
+            &file_bytes,
+            0x10,
+            0x2000,
+            &[],
+            &textures,
+            [0; 10],
+            0,
+            [0; 3],
+        );
     }
 
     /// RE-175: a primitive's own `mat_anim` (untextured effect colour/UV
@@ -5037,7 +5125,7 @@ mod tests {
     fn a_primitive_mat_anim_round_trips_independent_of_its_texture() {
         let mut w = PackWriter::new();
         let file_bytes = alloc::vec![0x66u8; 32];
-        let mat_anim = w.add_mat_anim(123, &file_bytes, 0x10, 0x2000, &[], &[]);
+        let mat_anim = w.add_mat_anim(123, &file_bytes, 0x10, 0x2000, &[], &[], [0; 10], 0, [0; 3]);
         let m = sample_mesh();
         assert!(m.primitives[0].material.texture.is_none(), "untextured");
         w.add_mesh(&m, 0, 0, |_| None, |_| Some(mat_anim));

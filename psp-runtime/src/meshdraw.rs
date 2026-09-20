@@ -504,6 +504,7 @@ unsafe fn bind_texture(
     pack: &Pack<'_>,
     t: &TextureDesc,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    palette_anim: Option<u32>,
 ) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099/RE-100)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
@@ -553,9 +554,9 @@ unsafe fn bind_texture(
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
     }
 
-    if t.mat_anim != TextureDesc::NO_ANIM {
+    if palette_anim.unwrap_or(t.mat_anim) != TextureDesc::NO_ANIM {
         if let Some(animated) = mat_anim
-            .and_then(|m| m.resolved_palette(pack, t.mat_anim))
+            .and_then(|m| m.resolved_palette(pack, palette_anim.unwrap_or(t.mat_anim)))
             .and_then(|i| pack.mat_anim_palette(i))
             .and_then(|p| pack.mat_anim_palette_data(&p))
         {
@@ -688,7 +689,11 @@ unsafe fn bind_texture(
 /// this function installs for `environment == false` -- see [`draw_mesh`]'s
 /// dynamic-vertex branch. So a linear-texgen primitive is *not* `environment`
 /// here even though its geometry mode has `G_TEXTURE_GEN` set.
-unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32) {
+unsafe fn apply_texture_mapping(
+    pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32,
+    uv: Option<ssb_rom::skeleton::MaterialUv>,
+) {
+    let affine = UvAffine::from_material(uv);
     let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
     let key = TextureMapping {
         environment,
@@ -697,6 +702,10 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
         scale_t: p.texgen_scale_t,
         origin_s: p.texgen_origin_s,
         origin_t: p.texgen_origin_t,
+        scale_s_bits: affine.scale_s.to_bits(),
+        scale_t_bits: affine.scale_t.to_bits(),
+        offset_s_bits: affine.offset_s.to_bits(),
+        offset_t_bits: affine.offset_t.to_bits(),
     };
     if st.last_texture_mapping == Some(key) {
         return;
@@ -708,8 +717,8 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     // nothing; leave the generator off and the scale neutral.
     let Some(t) = pack.texture(texture) else {
         sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
-        sys::sceGuTexScale(1.0, 1.0);
-        sys::sceGuTexOffset(0.0, 0.0);
+        sys::sceGuTexScale(affine.scale_s, affine.scale_t);
+        sys::sceGuTexOffset(affine.offset_s, affine.offset_t);
         return;
     };
     // Exactly the dimensions handed to `sceGuTexImage`, for both roles: the
@@ -721,11 +730,11 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     if !environment {
         sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);
         sys::sceGuTexScale(
-            ssb_rom::psp_texture::authored_uv_tex_scale(w),
-            ssb_rom::psp_texture::authored_uv_tex_scale(h),
+            ssb_rom::psp_texture::authored_uv_tex_scale(w) * affine.scale_s,
+            ssb_rom::psp_texture::authored_uv_tex_scale(h) * affine.scale_t,
         );
         // Authored UVs already had the tile origin baked out at pack time.
-        sys::sceGuTexOffset(0.0, 0.0);
+        sys::sceGuTexOffset(affine.offset_s, affine.offset_t);
         return;
     }
 
@@ -761,8 +770,8 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
     // `q` is pinned to 1 so the generator's perspective divide is a no-op and
     // the mapping stays exactly affine.
     let column = |i: usize| ScePspFVector4 {
-        x: a_s * basis_s[i],
-        y: a_t * basis_t[i],
+        x: a_s * affine.scale_s * basis_s[i],
+        y: a_t * affine.scale_t * basis_t[i],
         z: 0.0,
         w: 0.0,
     };
@@ -773,8 +782,8 @@ unsafe fn apply_texture_mapping(pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawStat
             y: column(1),
             z: column(2),
             w: ScePspFVector4 {
-                x: b_s,
-                y: b_t,
+                x: b_s * affine.scale_s + affine.offset_s,
+                y: b_t * affine.scale_t + affine.offset_t,
                 z: 1.0,
                 w: 1.0,
             },
@@ -798,6 +807,52 @@ struct TextureMapping {
     scale_t: u16,
     origin_s: u16,
     origin_t: u16,
+    scale_s_bits: u32,
+    scale_t_bits: u32,
+    offset_s_bits: u32,
+    offset_t_bits: u32,
+}
+
+#[derive(Clone, Copy)]
+struct UvAffine { scale_s: f32, scale_t: f32, offset_s: f32, offset_t: f32 }
+
+impl UvAffine {
+    const IDENTITY: Self = Self { scale_s: 1.0, scale_t: 1.0, offset_s: 0.0, offset_t: 0.0 };
+    fn from_material(uv: Option<ssb_rom::skeleton::MaterialUv>) -> Self {
+        let Some(uv) = uv else { return Self::IDENTITY };
+        const EPS: f32 = 1.0 / 65535.0;
+        if uv.scau.abs() <= EPS || uv.scav.abs() <= EPS || uv.base_scau.abs() <= EPS || uv.base_scav.abs() <= EPS { return Self::IDENTITY; }
+        let scale_s = uv.base_scau / uv.scau;
+        let scale_t = uv.base_scav / uv.scav;
+        // `gcDrawMObjForDObj` changes both `gSPTexture` and the render-tile
+        // window.  The source window is expressed as an origin divided by
+        // scale; applying `base_scale * base_origin - current_origin` after
+        // the GE scale exactly maps the already-packed rest pose to the live
+        // one.  The normal branch includes MObjSub::unk0A, while `unk10 ==
+        // 2` does not; see objdisplay.c:1353-1382.
+        let tile0 = uv.mode & 3;
+        let (base_s, current_s, base_t, current_t) = match tile0 {
+            2 => (
+                uv.base_trau / uv.base_scau,
+                uv.trau / uv.scau,
+                uv.base_trav / uv.base_scav,
+                uv.trav / uv.scav,
+            ),
+            1 if uv.tile_width > 0.0 && uv.tile_height > 0.0 => (
+                (uv.tile_width * uv.base_trau + uv.tile_bias) / (uv.tile_width * uv.base_scau),
+                (uv.tile_width * uv.trau + uv.tile_bias) / (uv.tile_width * uv.scau),
+                (((1.0 - uv.base_scav - uv.base_trav) * uv.tile_height + uv.tile_bias) / (uv.tile_height * uv.base_scav)),
+                (((1.0 - uv.scav - uv.trav) * uv.tile_height + uv.tile_bias) / (uv.tile_height * uv.scav)),
+            ),
+            _ => (0.0, 0.0, 0.0, 0.0),
+        };
+        Self {
+            scale_s,
+            scale_t,
+            offset_s: scale_s * base_s - current_s,
+            offset_t: scale_t * base_t - current_t,
+        }
+    }
 }
 
 /// Applies a primitive's material state.
@@ -809,7 +864,11 @@ unsafe fn apply_material(
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
     let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
-        .then(|| effect_mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+        .then(|| {
+            effect_mat_anim
+                .and_then(|m| m.resolved_colors(p.mat_anim))
+                .or_else(|| mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+        })
         .flatten();
 
     if st.last_flags != Some(p.flags) {
@@ -989,24 +1048,29 @@ unsafe fn apply_material(
     // `TextureDesc.mat_anim`'s texture-keyed palette cycling above -- this
     // one is keyed by the primitive, since an untextured colour script and a
     // sprite-swapping one can both attach to the same `MatAnimDesc` index.
+    let stage_texture = (p.mat_anim != TextureDesc::NO_ANIM)
+        .then(|| mat_anim.and_then(|m| m.resolved_texture(pack, p.mat_anim)))
+        .flatten();
     let effective_texture = if p.mat_anim != TextureDesc::NO_ANIM {
         effect_mat_anim
             .and_then(|m| m.resolved_texture(pack, p.mat_anim))
+            .or(stage_texture)
             .unwrap_or(p.texture)
-    } else {
-        p.texture
-    };
+    } else { p.texture };
 
     if st.last_texture != Some(effective_texture) {
         st.last_texture = Some(effective_texture);
         st.state_changes += 1;
         match pack.texture(effective_texture) {
-            Some(t) => bind_texture(pack, &t, mat_anim),
+            Some(t) => bind_texture(pack, &t, mat_anim, (stage_texture.is_some()).then_some(p.mat_anim)),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
 
-    apply_texture_mapping(pack, p, st, effective_texture);
+    let uv = (p.mat_anim != TextureDesc::NO_ANIM)
+        .then(|| mat_anim.and_then(|m| m.resolved_uv(pack, p.mat_anim)))
+        .flatten();
+    apply_texture_mapping(pack, p, st, effective_texture, uv);
 
     // `TEXTURE_BLEND` (RE-073): `(PRIM-ENV)*TEXEL+ENV`, a texture-driven
     // blend from a base colour (ENV, baked into the vertex by
@@ -1085,7 +1149,11 @@ pub unsafe fn draw_mesh(
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
 
         let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
-            .then(|| effect_mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+            .then(|| {
+                effect_mat_anim
+                    .and_then(|m| m.resolved_colors(p.mat_anim))
+                    .or_else(|| mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
+            })
             .flatten()
             .filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
@@ -1645,7 +1713,7 @@ pub unsafe fn draw_texture_quad(
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(index) else { return };
-    bind_texture(pack, &t, None);
+    bind_texture(pack, &t, None, None);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
     // always wants the plain, unblended sample.
     sys::sceGuTexFunc(
@@ -1736,7 +1804,7 @@ pub unsafe fn draw_particle(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, None);
+    bind_texture(pack, &t, None, None);
 
     let color = match envcolor {
         Some(env) => {

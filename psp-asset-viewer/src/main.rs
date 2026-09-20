@@ -631,7 +631,14 @@ unsafe fn run() -> ! {
     // out-of-range values are impossible by construction (`% ...max(1)`), and
     // a fresh object with fewer costumes than the previous one silently
     // clamps rather than drawing with a stale, meaningless index.
-    let mut costume_index: u32 = 0;
+    // Keep the normal viewer default at costume 0, but make one real
+    // non-zero costume reproducible in the deterministic matrix. This uses
+    // the existing object override path -- no second costume renderer.
+    let mut costume_index: u32 = if cfg!(feature = "regression_capture_link_costume_1") {
+        1
+    } else {
+        0
+    };
 
     // Stage view: a whole stage -- its render layers assembled, with its
     // collision polylines drawn over them. This is the default when the pack

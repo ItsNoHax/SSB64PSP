@@ -62,3 +62,24 @@ Status: COMPLETE for measured static content
 RE-194 measures all 665 real `MObjMaterial`s and implements default substitution, texture scale, and tile-0 window state. `MOBJ_FLAG_FRAC` has 0 real static occurrences; tile-1 scroll is inert because all 12 inputs equal tile 0 and no `TEXEL1` consumer exists
 
 **Remaining work:** Future runtime gameplay can revisit dynamic-only state if a real caller requires it; no R1 renderer gap remains
+
+### Runtime material animation
+
+Status: IMPLEMENTED for stage palette, frame, and tile-0 UV tracks; one
+documented PSP limitation
+
+RE-301 carries each animated MObj's rest `TraU`/`TraV`/`ScaU`/`ScaV` values
+and tile parameters through the pack, then applies the original
+`gcDrawMObjForDObj` tile-window delta via the GE texture mapping. A live
+`TextureIDCurrent` picks an explicitly packed `TextureDesc`; a concurrent
+`PaletteID` still selects that texture's CLUT. Mapping cache identity includes
+the live affine transform, so no frame or UV state leaks into a later
+material. `ScrU`/`ScrV` only alter tile 1 and are inert because this renderer
+has no `TEXEL1` consumer. `SetLFrac`/`TextureIDNext` need the RDP's two-tile
+fractional blend and remain a documented GE limitation, not a guessed
+substitute (RE-301).
+
+The sparse live stage `PrimColor`/`Light1Color`/`Light2Color` tracks are also
+explicitly limited: those values feed baked stage shade scale or an absent
+stage GE-light context. They are not falsely replayed as static colour;
+future support requires dynamic vertex/combiner lowering (RE-301).

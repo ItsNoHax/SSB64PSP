@@ -72,7 +72,10 @@ const F_SCAU: u32 = 0x1C;
 const F_SCAV: u32 = 0x20;
 const F_PALETTES: u32 = 0x2C;
 const F_FLAGS: u32 = 0x30;
+const F_SCROLLU: u32 = 0x3C;
+const F_SCROLLV: u32 = 0x40;
 const F_PRIMCOLOR: u32 = 0x50;
+const F_PRIM_L: u32 = 0x54;
 const F_ENVCOLOR: u32 = 0x58;
 const F_BLENDCOLOR: u32 = 0x5C;
 const F_LIGHT1COLOR: u32 = 0x60;
@@ -167,6 +170,21 @@ pub struct MObjMaterial {
     /// `State::tile0_origin`/`tile_dims` the same way a real display-list
     /// `G_SETTILESIZE(0, ...)` would.
     pub tile0_uv: Option<(u16, u16, u16, u16)>,
+    /// The initial values of the ten material-animation tracks.  They are
+    /// kept as IEEE-754 bits so this otherwise structural, `Eq` material
+    /// record does not lose the source values to a pack-time approximation.
+    /// A runtime material joint substitutes only the tracks it actually
+    /// drives (RE-086/RE-211).
+    pub mat_anim_tracks: [u32; 10],
+    /// Tile-0 transform form used by `gcDrawMObjForDObj`: 0 means this MObj
+    /// does not emit a tile-0 window, 1 is the normal formula and 2 is its
+    /// special `unk10 == 2` form.  The renderer needs this distinction to
+    /// preserve the source's V-axis sign/one-minus-scale convention.
+    pub mat_anim_uv_mode: u8,
+    /// `unk0A` plus the tile-0 width/height used by the original dynamic
+    /// `gDPSetTileSize` equations.  These are needed to preserve the
+    /// non-zero source tile origin while a track changes `Tra*`/`Sca*`.
+    pub mat_anim_tile_params: [u16; 3],
 }
 
 impl MObjMaterial {
@@ -460,6 +478,30 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         light2_color: flagged(MOBJ_FLAG_LIGHT2, F_LIGHT2COLOR),
         tex_scale,
         tile0_uv,
+        mat_anim_tracks: [
+            0.0f32.to_bits(),
+            trau.to_bits(),
+            trav.to_bits(),
+            scau.to_bits(),
+            scav.to_bits(),
+            0.0f32.to_bits(),
+            read_f32(data, at + F_SCROLLU)?.to_bits(),
+            read_f32(data, at + F_SCROLLV)?.to_bits(),
+            (data.get((at + F_PRIM_L) as usize).copied().unwrap_or(0) as f32 / 255.0).to_bits(),
+            0.0f32.to_bits(),
+        ],
+        mat_anim_uv_mode: if flags & MOBJ_FLAG_TILE0 == 0 {
+            if flags & MOBJ_FLAG_TEXTURE == 0 {
+                0
+            } else {
+                4
+            }
+        } else if unk10 == 2 {
+            2 | if flags & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 }
+        } else {
+            1 | if flags & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 }
+        },
+        mat_anim_tile_params: [unk0a as u16, unk0c, unk0e],
     })
 }
 

@@ -545,6 +545,11 @@ pub struct MatAnimRef {
     pub source_file: u32,
     /// Byte offset of the driving script within that file.
     pub script: u32,
+    /// `MObjSub` that owns this joint.  A script may be attached to more
+    /// than one material, whose rest UV transform is part of the original
+    /// animation state.  It is therefore part of the packed-animation
+    /// identity, even when the instruction stream itself is shared.
+    pub source_mobj: u32,
 }
 
 impl MeshMaterial {
@@ -2801,6 +2806,7 @@ mod tests {
         let animated = MatAnimRef {
             source_file: 104,
             script: 0x3098,
+            source_mobj: 0x200,
         };
         let mat_anims = [None, Some(animated)];
         let items = [SequenceItem {
@@ -2838,6 +2844,7 @@ mod tests {
         let animated = MatAnimRef {
             source_file: 353,
             script: 0x12F0,
+            source_mobj: 0x200,
         };
         let mat_anims = [Some(animated)];
         let items = [SequenceItem {
@@ -2939,6 +2946,7 @@ mod tests {
         let animated = MatAnimRef {
             source_file: 104,
             script: 0x3098,
+            source_mobj: 0x200,
         };
         let mat_anims = [Some(animated), None];
         let items = [SequenceItem {

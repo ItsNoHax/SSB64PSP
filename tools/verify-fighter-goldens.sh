@@ -18,6 +18,7 @@ scenes=(
   'Samus:regression_capture_samus:r2-samus-fighter.png'
   'Luigi:regression_capture_luigi:r2-luigi-fighter.png'
   'Link:regression_capture_link:r2-link-fighter.png'
+  'Link costume 1:regression_capture_link_costume_1:r2-link-costume-1.png'
   'Yoshi:regression_capture_yoshi:r2-yoshi-fighter.png'
   'Captain Falcon:regression_capture_captain_falcon:r2-falcon-fighter.png'
   'Kirby:regression_capture_kirby:r2-kirby-fighter.png'
