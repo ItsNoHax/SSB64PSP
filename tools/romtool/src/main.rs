@@ -2295,6 +2295,20 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         particle_textures += textures.len();
     }
 
+    // `ftShadowProcDisplay` is not a DObj/display-list mesh: it loads this
+    // I4 image directly and writes its own four-to-eight vertices every
+    // frame.  Extract its first 16x16 frame explicitly rather than hoping an
+    // effect bank happens to retain the same bytes.  The N64 uses mirror+wrap
+    // on both axes; bake one mirrored 32x32 period so the PSP can repeat it
+    // with ordinary `sceGuTexWrap(Repeat)` without changing the source UVs.
+    let shadow_file = loaded
+        .files
+        .get(84)
+        .and_then(Option::as_ref)
+        .ok_or("fighter shadow source file 84 missing")?;
+    let shadow = fighter_shadow_texture(&shadow_file.data, swizzle)?;
+    writer.add_fighter_shadow_texture(&shadow);
+
     let bytes = writer.finish();
     if let Some(dir) = out_path.parent() {
         fs::create_dir_all(dir)?;
@@ -2434,6 +2448,37 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         println!("    object {i:<4} file {f:<5} {t} triangles");
     }
     Ok(())
+}
+
+/// Extracts the 16x16 I4 frame `ftShadowProcDisplay` loads from
+/// `dEFCommonEffects2_Shadow_TextureImage` (file 84, `0x3A68`).  The trailing
+/// 5,152 bytes are other frames in the shared effect pool; the fighter path
+/// names the base address and `gDPLoadTextureBlock_4b` reads only 128 bytes.
+fn fighter_shadow_texture(
+    file: &[u8],
+    swizzle: bool,
+) -> Result<ssb_rom::psp_texture::PspTexture, Box<dyn std::error::Error>> {
+    use ssb_rom::psp_texture::{self, Psm};
+    use ssb_rom::texture::{self, Rgba8};
+
+    const OFFSET: usize = 0x3A68;
+    const WIDTH: u32 = 16;
+    const HEIGHT: u32 = 16;
+    let bytes = file
+        .get(OFFSET..OFFSET + (WIDTH * HEIGHT / 2) as usize)
+        .ok_or("fighter shadow image is truncated")?;
+    let mut image = Rgba8::new(WIDTH, HEIGHT);
+    for (byte_index, &byte) in bytes.iter().enumerate() {
+        for (nibble_index, nibble) in [byte >> 4, byte & 0x0F].into_iter().enumerate() {
+            let intensity = nibble * 17;
+            image.put(
+                byte_index * 2 + nibble_index,
+                [intensity, intensity, intensity, intensity],
+            );
+        }
+    }
+    let mirrored = texture::mirror_extend(&image, true, true, false, false, WIDTH, HEIGHT);
+    Ok(psp_texture::pack_rgba(&mirrored, Psm::Psm8888, swizzle))
 }
 
 fn convert_particle_frame(

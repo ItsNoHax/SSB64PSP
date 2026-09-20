@@ -156,7 +156,7 @@ pixel oracle.
 | Untextured / vertex-coloured geometry | RE-198: file 52, mesh index 4, primitive 0 (14 triangles, unlit, opaque non-degenerate vertex colour `[145,213,213,255]`) | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | Particles | RE-180–189: all 160 real `LBParticle` scripts plus one live manager-effect `LBGenerator` spawn event | Audited separately on device; dynamic particle coverage is not one of the static golden scenes |
 | `psp-game`/Training weapon rendering (`TEXTURE_BLEND`-adjacent `AlphaBlend::TexelOnly`) | RE-300: Mario's Fireball (`WEAPON_EXTERNAL` material, file 297), the first `psp-game` scene added to this matrix | Yes — `tests/golden/f1-training-fireball.png` (`regression_capture_fireball` feature) |
-| Shadows | `FighterDesc`'s shadow fields are parsed but "no subsystem reads them yet" (`docs/reverse-engineering.md`) | Blocked — not yet implemented |
+| Shadows | `ftShadowProcDisplay` floor strip, file-84 I4 texture and source translucent/depth state | Yes — `tests/golden/f1-training-shadows.png` (`psp-game` `regression_capture_shadows`: one grounded and one airborne Mario on Dream Land platforms) |
 | UI / HUD | No in-game menu/HUD system exists yet (Layer C's debug viewer is a developer tool, not the game's own UI) | Blocked — not yet implemented |
 
 Rows blocked on not-yet-implemented gameplay systems remain explicit future
@@ -300,7 +300,7 @@ capture procedure is fully documented; source 1 has an exact golden and source
 4 now has RE-151's same-input numerical camera trace and normalized
 representative comparison. RE-200 extends deterministic PPSSPP coverage to
 every specifically targeted open static row. Dynamic particles retain their
-separate RE-180–189 device audits. Shadows and real UI remain blocked on later
+separate RE-180–189 device audits. Real UI remains blocked on later
 subsystems rather than being treated as covered.
 
 RE-300 added this matrix's first `psp-game` golden,

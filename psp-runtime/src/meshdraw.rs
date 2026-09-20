@@ -1870,6 +1870,93 @@ pub struct TexQuadVertex {
     pub z: f32,
 }
 
+pub use ssb_game::shadow::{RenderState as FighterShadowMaterial, RENDER_STATE as FIGHTER_SHADOW_MATERIAL};
+
+/// Draws the runtime-generated `ftShadowProcDisplay` strip.
+///
+/// The source draws this after stage geometry and before fighter objects. Its
+/// 16px I4 image is packed as a 32px mirrored repeat period; dividing the
+/// source's 0..62 texel coordinates by 32 preserves `G_TX_MIRROR|WRAP` while
+/// using the GE's ordinary repeat address mode. `verts` is caller-owned fixed
+/// scratch (at most three quads / six triangles), and is copied into the GE
+/// display-list arena before submission, so four players never allocate and
+/// cannot race the asynchronous GE.
+pub unsafe fn draw_fighter_shadow(
+    pack: &Pack<'_>,
+    geometry: &ssb_game::shadow::ShadowGeometry,
+    color: [u8; 4],
+    verts: &mut [TexQuadVertex; 18],
+    draw_state: &mut DrawState,
+) {
+    if !geometry.visible() {
+        return;
+    }
+    let Some(texture_index) = (0..pack.texture_count()).find(|&i| {
+        pack.texture(i)
+            .is_some_and(|t| t.role == TextureDesc::ROLE_FIGHTER_SHADOW)
+    }) else {
+        return;
+    };
+    let Some(texture) = pack.texture(texture_index) else { return };
+    bind_texture(pack, &texture, None, None);
+    sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    sys::sceGuTexScale(1.0, 1.0);
+    sys::sceGuDisable(GuState::CullFace);
+    sys::sceGuDisable(GuState::Lighting);
+    sys::sceGuShadeModel(sys::ShadingModel::Flat);
+    sys::sceGuEnable(GuState::DepthTest);
+    sys::sceGuDepthMask(1);
+    sys::sceGuEnable(GuState::AlphaTest);
+    sys::sceGuAlphaFunc(
+        sys::AlphaFunc::Greater,
+        FIGHTER_SHADOW_MATERIAL.alpha_test_greater as i32,
+        0xFF,
+    );
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::SrcAlpha,
+        sys::BlendFactor::OneMinusSrcAlpha,
+        0,
+        0,
+    );
+
+    let packed = ssb_rom::psp_texture::pack_abgr(color);
+    let mut count = 0usize;
+    for pair in geometry.points[..geometry.point_count].windows(2) {
+        let [a, b] = [pair[0], pair[1]];
+        // 62 source texels over a pre-mirrored 32px PSP period.
+        let va = a.v / 32.0;
+        let vb = b.v / 32.0;
+        let q = [
+            (a.x, a.y, ssb_game::shadow::HALF_DEPTH, 0.0, va),
+            (a.x, a.y, -ssb_game::shadow::HALF_DEPTH, ssb_game::shadow::SOURCE_TEX_SPAN / 32.0, va),
+            (b.x, b.y, ssb_game::shadow::HALF_DEPTH, 0.0, vb),
+            (b.x, b.y, -ssb_game::shadow::HALF_DEPTH, ssb_game::shadow::SOURCE_TEX_SPAN / 32.0, vb),
+        ];
+        for (x, y, z, u, v) in [q[0], q[1], q[3], q[0], q[3], q[2]] {
+            verts[count] = TexQuadVertex { u, v, color: packed, x, y, z };
+            count += 1;
+        }
+    }
+    let bytes = count * core::mem::size_of::<TexQuadVertex>();
+    let dynamic = sys::sceGuGetMemory(bytes as i32) as *mut TexQuadVertex;
+    core::ptr::copy_nonoverlapping(verts.as_ptr(), dynamic, count);
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        VertexType::TEXTURE_32BITF
+            | VertexType::COLOR_8888
+            | VertexType::VERTEX_32BITF
+            | VertexType::TRANSFORM_3D,
+        count as i32,
+        core::ptr::null(),
+        dynamic as *const c_void,
+    );
+    // Every state above bypasses the material cache.  The next packed stage,
+    // weapon, or fighter primitive must reissue its complete source state.
+    draw_state.invalidate_all();
+}
+
 /// Computes a mesh's bounding box in game units, for framing the camera.
 ///
 /// Smash's meshes are authored at wildly different scales — a stage is

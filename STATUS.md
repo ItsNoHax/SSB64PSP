@@ -5,8 +5,11 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **Mario Fireball presentation/map integration**
-is complete. Mario's ground+aerial moveset is complete through Fireball,
+Current subsystem/batch: **fighter shadows** are complete for the shared
+Training/runtime renderer (RE-302). The source floor-strip path, texture,
+render state, lifecycle conditions, fixed-capacity multi-fighter submission,
+pack rebuild and deterministic PPSSPP capture are all implemented. Mario's
+ground+aerial moveset is complete through Fireball,
 Super Jump Punch, and Tornado. The portable joint attachment, full map
 rebound sweep, direct weapon mesh extraction, and Training input routing are
 implemented. Final direct-display-list rendering verification found and
@@ -20,6 +23,17 @@ phase) is ported; Mario's `SpecialHi` samples its ROM-verified TransN clip
 through a portable runtime-to-gameplay bridge.
 
 ## What was completed
+
+- **Fighter shadows** (2026-09-20): source-traced `ftShadowProcDisplay`, not
+  a generic blob. The runtime projects each fighter onto its standing or
+  nearest-below floor line, clips and contours the source's `shadow_size`
+  strip over slopes/edges, extracts file 84's I4 texture, preserves the
+  translucent alpha/depth/cull state and draw ordering, and uses no per-frame
+  heap allocation. The new Training regression freezes one Mario airborne and
+  one grounded on Dream Land; `tests/golden/f1-training-shadows.png` is
+  deterministic. The current-pack PSPLink smoke had no exceptions and a live
+  `main_thread`; its native capture shows the grounded+airborne scene. RE-302
+  records the exact source path and scope boundary.
 
 - **Material-animation blocker repair** (2026-09-20): stage
   `TextureIDCurrent` frame tables and tile-0 UV tracks now flow from MObj

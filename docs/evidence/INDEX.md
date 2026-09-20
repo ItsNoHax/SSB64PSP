@@ -311,3 +311,4 @@ editing a record.
 | RE-299 | Mario Super Jump Punch uses TransN root motion | COMPLETE | fighter, animation, asset-pipeline, gameplay |  |
 | RE-300 | Mario Fireball's `WEAPON_EXTERNAL` translucency: `alpha_blend` seed fixed, CLUT-alpha runtime rendering roo... | COMPLETE — `alpha_blend` classification bug found and fixed (tested); root cause of the opaque-black-card rendering, an uninitialised-cache bug in `DrawState`'s GE texture-function tracking (`psp-runtime/src/meshdraw.rs`), found and fixed; confirmed on PPSSPP (`tests/golden/f1-training-fireball.png`) and real PSP hardware | fighter, rendering, texture, weapon, visual-regression |  |
 | RE-301 | Stage material-track replay and pack identity correction | COMPLETE | material, animation, texture, pack, stage, psp-ge |  |
+| RE-302 | Fighter floor shadows: source strip, I4 texture, floor projection and PSP GE pass | COMPLETE | fighter, rendering, texture, collision, psp-ge, visual-regression |  |
