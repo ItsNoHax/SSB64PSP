@@ -32,6 +32,13 @@ through a portable runtime-to-gameplay bridge.
   consumed by the game. The temporary front-end menu now reads that mapped
   N64 stick rather than the D-pad bits repurposed for C-button jumping.
 
+- **Real-PSP face-button input repair** (2026-09-20): corrected the shared
+  `sceCtrl` masks for Triangle, Circle, Cross, and Square in `ssb-engine`;
+  they had each been shifted four bits too high, making `psp-game` miss the
+  physical PSP face buttons. The existing application-specific mapping table
+  is unchanged, and a literal-mask regression test now covers the four ABI
+  values.
+
 - **Fighter shadows** (2026-09-20): source-traced `ftShadowProcDisplay`, not
   a generic blob. The runtime projects each fighter onto its standing or
   nearest-below floor line, clips and contours the source's `shadow_size`

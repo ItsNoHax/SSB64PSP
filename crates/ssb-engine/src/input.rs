@@ -72,10 +72,10 @@ impl PspButtons {
     pub const LEFT: u32 = 0x0000_0080;
     pub const LTRIGGER: u32 = 0x0000_0100;
     pub const RTRIGGER: u32 = 0x0000_0200;
-    pub const TRIANGLE: u32 = 0x0001_0000;
-    pub const CIRCLE: u32 = 0x0002_0000;
-    pub const CROSS: u32 = 0x0004_0000;
-    pub const SQUARE: u32 = 0x0008_0000;
+    pub const TRIANGLE: u32 = 0x0000_1000;
+    pub const CIRCLE: u32 = 0x0000_2000;
+    pub const CROSS: u32 = 0x0000_4000;
+    pub const SQUARE: u32 = 0x0000_8000;
 
     pub fn contains(self, mask: u32) -> bool {
         self.0 & mask != 0
@@ -287,6 +287,14 @@ mod tests {
     fn nub_center_is_dead() {
         assert_eq!(nub_axis_to_n64(128), 0);
         assert_eq!(nub_axis_to_n64(128 + NUB_DEADZONE as u8), 0);
+    }
+
+    #[test]
+    fn face_button_masks_match_sce_ctrl() {
+        assert_eq!(PspButtons::TRIANGLE, 0x0000_1000);
+        assert_eq!(PspButtons::CIRCLE, 0x0000_2000);
+        assert_eq!(PspButtons::CROSS, 0x0000_4000);
+        assert_eq!(PspButtons::SQUARE, 0x0000_8000);
     }
 
     #[test]
