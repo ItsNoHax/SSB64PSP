@@ -193,12 +193,14 @@ first committed `psp-game` golden. RE-300 is closed. Full trace there.
 ## Immediate next batch
 
 Mario's moveset (ground+aerial normals, specials, Fireball's full
-presentation/map integration) is complete. Next: continue the `P1`-`P4`
-gameplay source-port batch sequence — auditing Super Jump Punch's and
-Tornado's integration against a real Training dummy (hit confirmation,
-damage/knockback, the same live-target verification RE-294 did for Mario's
-jab) is the natural next step, or move to the next fighter if the user
-directs otherwise. User directive needed to pick the next fighter/system.
+presentation/map integration) is complete. The follow-up Training combat
+audit is also complete: generic `MoveData` hit application reaches Super Jump
+Punch and Tornado; source `ClearAttackCollAll` boundaries re-arm a fixed-size
+per-target hit record even when adjacent windows never leave an idle frame,
+while a sourspot replacement without a clear remains one hit. Focused host
+tests cover both cases, and deterministic PPSSPP B+up input exercises the
+rendered Training path. Next: begin the next complete fighter under `P2`
+(Fox in roster order), including its full moveset rather than isolated moves.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position

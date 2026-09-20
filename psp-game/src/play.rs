@@ -30,11 +30,12 @@ pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
 /// player's own fighter minus the input source and the camera.
 pub struct Dummy {
     scene: FighterScene,
-    /// Whether the player's current `Attack11` has already connected. Cleared
-    /// as soon as the player leaves `Attack11`, so the next jab can hit again
-    /// -- the simplified stand-in for the original's per-attack
-    /// `GMAttackRecord` hit list (`ssb_game::attack`'s module docs).
-    hit_by_current_attack: bool,
+    /// The player's live collision generation that has already connected.
+    /// This is the fixed-size Training stand-in for the original's
+    /// per-attack `GMAttackRecord` hit list (`ssb_game::attack`'s module
+    /// docs), including the clear/recreate pulse boundaries in Mario's
+    /// Super Jump Punch.
+    hit_record: ssb_game::attack::HitRecord,
 }
 
 impl Deref for Dummy {
@@ -61,7 +62,7 @@ impl Dummy {
         pack.spawn(stage, 1)?;
         Some(Dummy {
             scene: FighterScene::at_spawn(pack, stage, FighterKind::Mario, 1),
-            hit_by_current_attack: false,
+            hit_record: ssb_game::attack::HitRecord::default(),
         })
     }
 
@@ -88,7 +89,7 @@ impl Dummy {
         ssb_game::attack::apply_hit_from(
             attacker,
             &mut self.scene.fighter,
-            &mut self.hit_by_current_attack,
+            &mut self.hit_record,
         );
     }
 }
