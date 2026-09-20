@@ -231,6 +231,26 @@ psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
 psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
+#### `psp-game` controls
+
+These controls apply only to the player-facing `psp-game` EBOOT; the debug
+asset viewer retains its own established controls.
+
+| PSP control | Raw N64 input delivered to the game |
+| --- | --- |
+| Analog nub | Control Stick (analog magnitude and direction preserved) |
+| D-pad Up / Down / Left / Right | C-Up / C-Down / C-Left / C-Right |
+| X / Square | A / B |
+| L / R | Z / R |
+| Circle | L |
+| Start | Start |
+| Triangle / Select | Unbound |
+
+The backend only creates this N64 controller state. Gameplay continues to
+interpret it through the normal Smash 64 input path, so combinations such as
+Z+A and each independent C-button are preserved. In the current front end,
+move the analog nub up/down to navigate the menu.
+
 ### 7. Run under PPSSPPHeadless (visual verification)
 
 Build PPSSPP's headless target once, then use the deterministic capture

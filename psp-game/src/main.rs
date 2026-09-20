@@ -25,7 +25,7 @@ extern crate alloc;
 
 mod play;
 
-use ssb_engine::input::{newly_pressed, Input, N64Buttons};
+use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
 use ssb_engine::renderer::Color;
 use ssb_rom::pack::Pack;
 
@@ -157,12 +157,24 @@ fn scripted_stick_y(tick: u64) -> i8 {
 
 /// Any N64 C-button, real `FTCOMMON_KNEEBEND` jump-by-button input
 /// (`ftCommonKneeBendCheckButtonTap`'s `R_CBUTTONS|L_CBUTTONS|D_CBUTTONS|
-/// U_CBUTTONS`) -- not a debug stand-in. `ssb_engine::input::DEFAULT_MAPPING`
-/// already assigns the PSP's Triangle/Square to `C_UP`/`C_DOWN`, so this is a
-/// real, already-established control, just not previously read by any
-/// gameplay code.
+/// U_CBUTTONS`) -- not a debug stand-in. `SSB64_GAME_MAPPING` maps each PSP
+/// D-pad direction to one of these raw N64 C-button bits.
 const JUMP_BUTTON_MASK: u16 =
     N64Buttons::C_UP | N64Buttons::C_DOWN | N64Buttons::C_LEFT | N64Buttons::C_RIGHT;
+
+/// N64-stick deflection used by the temporary front end for a single menu
+/// move.  This is deliberately a raw N64-stick threshold: the PSP layer has
+/// already converted the nub and neither this screen nor gameplay knows PSP
+/// button identities.
+const MENU_STICK_NAV_MIN: i8 = 40;
+
+fn menu_stick_down_pressed(previous: ControllerState, current: ControllerState) -> bool {
+    previous.stick_y > -MENU_STICK_NAV_MIN && current.stick_y <= -MENU_STICK_NAV_MIN
+}
+
+fn menu_stick_up_pressed(previous: ControllerState, current: ControllerState) -> bool {
+    previous.stick_y < MENU_STICK_NAV_MIN && current.stick_y >= MENU_STICK_NAV_MIN
+}
 
 psp::module!("ssb64_psp_game", 1, 0);
 
@@ -221,7 +233,9 @@ const TRAINING_STAGE_INDEX: u32 = 0;
 
 unsafe fn run() -> ! {
     let mut gpu = Gpu::init();
-    let mut pad = PspInput::init();
+    // Select this application’s layout at the PSP backend boundary.  The
+    // asset viewer keeps PspInput::init() and therefore its legacy controls.
+    let mut pad = PspInput::init_with_mapping(SSB64_GAME_MAPPING);
 
     // Load the converted asset pack. Held for the whole program: the GE
     // reads vertex and texture data out of it by DMA once the training
@@ -275,15 +289,25 @@ unsafe fn run() -> ! {
     loop {
         sim_frame_index = sim_frame_index.saturating_add(1);
         pad.poll();
-        let (prev, curr) = if cfg!(feature = "regression_capture") {
+        let (previous_controller, controller) = if cfg!(feature = "regression_capture") {
             (
-                scripted_buttons(sim_frame_index.saturating_sub(1)),
-                scripted_buttons(sim_frame_index),
+                ControllerState {
+                    buttons: scripted_buttons(sim_frame_index.saturating_sub(1)),
+                    stick_x: scripted_stick_x(sim_frame_index.saturating_sub(1)),
+                    stick_y: scripted_stick_y(sim_frame_index.saturating_sub(1)),
+                    connected: true,
+                },
+                ControllerState {
+                    buttons: scripted_buttons(sim_frame_index),
+                    stick_x: scripted_stick_x(sim_frame_index),
+                    stick_y: scripted_stick_y(sim_frame_index),
+                    connected: true,
+                },
             )
         } else {
-            (pad.previous(0).buttons, pad.state(0).buttons)
+            (pad.previous(0), pad.state(0))
         };
-        let pressed = newly_pressed(prev, curr);
+        let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
         if !deterministic_capture_frozen(sim_frame_index) {
             match screen {
@@ -293,9 +317,9 @@ unsafe fn run() -> ! {
                     }
                 }
                 Screen::Menu => {
-                    if pressed.contains(N64Buttons::D_DOWN) {
+                    if menu_stick_down_pressed(previous_controller, controller) {
                         cursor = (cursor + 1) % MENU_ENTRIES;
-                    } else if pressed.contains(N64Buttons::D_UP) {
+                    } else if menu_stick_up_pressed(previous_controller, controller) {
                         cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
                         screen = Screen::Training;
@@ -339,22 +363,9 @@ unsafe fn run() -> ! {
                     // the jump) needs to actually *drive* that input, not
                     // discard it; only the source is scripted, not the game
                     // logic it feeds.
-                    let controller = if cfg!(feature = "regression_capture") {
-                        ssb_engine::input::ControllerState {
-                            buttons: scripted_buttons(sim_frame_index),
-                            stick_x: scripted_stick_x(sim_frame_index),
-                            stick_y: scripted_stick_y(sim_frame_index),
-                            connected: true,
-                        }
-                    } else {
-                        pad.state(0)
-                    };
                     // Real jump binding (RE-295): any N64 C-button tap is a
                     // real `FTCOMMON_KNEEBEND` button-jump input
-                    // (`ftCommonKneeBendCheckButtonTap`), and
-                    // `ssb_engine::input::DEFAULT_MAPPING` already assigns
-                    // the PSP's Triangle/Square to `C_UP`/`C_DOWN` -- an
-                    // established mapping, not a new guess. An upward stick
+                    // (`ftCommonKneeBendCheckButtonTap`). An upward stick
                     // flick is the game's other real jump input and needs no
                     // separate wiring here: `Fighter::tick`'s own status
                     // machine reads `stick_y` directly.
@@ -507,12 +518,12 @@ unsafe fn draw_training(
         draw_state,
     );
     if let Some(dummy) = dummy_state {
-        let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
-            p,
-            &stage,
-            &dummy.fighter,
-            dummy.shadow_size,
-        );
+    let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
+        p,
+        &stage,
+        &dummy.fighter,
+        dummy.shadow_size,
+    );
         meshdraw::draw_fighter_shadow(
             p,
             &dummy_shadow,

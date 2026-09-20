@@ -1,4 +1,4 @@
-//! Controller abstraction and the N64 → PSP button mapping.
+//! Controller abstraction and PSP → N64 button mappings.
 //!
 //! The game reasons in N64 buttons. The backend reports PSP buttons. This
 //! module owns the translation, so remapping later means editing one table.
@@ -89,7 +89,12 @@ pub struct ButtonMapping {
     pub n64: u16,
 }
 
-/// The default mapping.
+/// Legacy mapping used by the asset viewer.
+///
+/// This remains the default for PSP-backend callers which do not select an
+/// application-specific layout. In particular, it preserves the asset
+/// viewer's established debug controls. The player-facing game selects
+/// [`SSB64_GAME_MAPPING`] instead.
 ///
 /// Reasoning behind the non-obvious choices:
 ///
@@ -104,8 +109,7 @@ pub struct ButtonMapping {
 /// * **D-pad stays D-pad.** It is used for menu navigation and for the debug
 ///   menu, and the PSP D-pad maps one-to-one.
 ///
-/// This is a starting point, not a finding: which C-button functions matter is
-/// flagged as an open question in `docs/reverse-engineering.md`.
+/// This is deliberately not the player-facing layout.
 pub const DEFAULT_MAPPING: &[ButtonMapping] = &[
     ButtonMapping {
         psp: PspButtons::CROSS,
@@ -159,6 +163,56 @@ pub const DEFAULT_MAPPING: &[ButtonMapping] = &[
     ButtonMapping {
         psp: PspButtons::SELECT,
         n64: N64Buttons::L,
+    },
+];
+
+/// PSP layout for the player-facing SSB64PSP game.
+///
+/// The table translates only into raw N64 controller bits.  Gameplay still
+/// decides what A, B, Z, L/R, and the C-buttons mean, exactly as it would for
+/// an N64 pad.  In particular, every D-pad direction stays an independent
+/// C-button so simultaneous C-button combinations survive the translation.
+/// Triangle and Select are intentionally absent (unbound).
+pub const SSB64_GAME_MAPPING: &[ButtonMapping] = &[
+    ButtonMapping {
+        psp: PspButtons::CROSS,
+        n64: N64Buttons::A,
+    },
+    ButtonMapping {
+        psp: PspButtons::SQUARE,
+        n64: N64Buttons::B,
+    },
+    ButtonMapping {
+        psp: PspButtons::LTRIGGER,
+        n64: N64Buttons::Z,
+    },
+    ButtonMapping {
+        psp: PspButtons::RTRIGGER,
+        n64: N64Buttons::R,
+    },
+    ButtonMapping {
+        psp: PspButtons::CIRCLE,
+        n64: N64Buttons::L,
+    },
+    ButtonMapping {
+        psp: PspButtons::START,
+        n64: N64Buttons::START,
+    },
+    ButtonMapping {
+        psp: PspButtons::UP,
+        n64: N64Buttons::C_UP,
+    },
+    ButtonMapping {
+        psp: PspButtons::DOWN,
+        n64: N64Buttons::C_DOWN,
+    },
+    ButtonMapping {
+        psp: PspButtons::LEFT,
+        n64: N64Buttons::C_LEFT,
+    },
+    ButtonMapping {
+        psp: PspButtons::RIGHT,
+        n64: N64Buttons::C_RIGHT,
     },
 ];
 
@@ -252,16 +306,74 @@ mod tests {
     }
 
     #[test]
-    fn maps_cross_to_a_and_circle_to_b() {
+    fn game_mapping_translates_every_bound_button_and_leaves_unbound_buttons_idle() {
         let s = map_psp_to_n64(
-            PspButtons(PspButtons::CROSS | PspButtons::CIRCLE),
+            PspButtons(
+                PspButtons::CROSS
+                    | PspButtons::SQUARE
+                    | PspButtons::LTRIGGER
+                    | PspButtons::RTRIGGER
+                    | PspButtons::CIRCLE
+                    | PspButtons::START
+                    | PspButtons::UP
+                    | PspButtons::DOWN
+                    | PspButtons::LEFT
+                    | PspButtons::RIGHT
+                    | PspButtons::TRIANGLE
+                    | PspButtons::SELECT,
+            ),
             128,
             128,
-            DEFAULT_MAPPING,
+            SSB64_GAME_MAPPING,
         );
-        assert!(s.buttons.contains(N64Buttons::A));
-        assert!(s.buttons.contains(N64Buttons::B));
-        assert!(!s.buttons.contains(N64Buttons::Z));
+        assert_eq!(
+            s.buttons.0,
+            N64Buttons::A
+                | N64Buttons::B
+                | N64Buttons::Z
+                | N64Buttons::R
+                | N64Buttons::L
+                | N64Buttons::START
+                | N64Buttons::C_UP
+                | N64Buttons::C_DOWN
+                | N64Buttons::C_LEFT
+                | N64Buttons::C_RIGHT,
+        );
+    }
+
+    #[test]
+    fn game_mapping_preserves_simultaneous_z_and_a() {
+        let s = map_psp_to_n64(
+            PspButtons(PspButtons::LTRIGGER | PspButtons::CROSS),
+            128,
+            128,
+            SSB64_GAME_MAPPING,
+        );
+        assert_eq!(s.buttons.0, N64Buttons::Z | N64Buttons::A);
+    }
+
+    #[test]
+    fn game_mapping_keeps_dpad_c_buttons_independent() {
+        for (psp, n64) in [
+            (PspButtons::UP, N64Buttons::C_UP),
+            (PspButtons::DOWN, N64Buttons::C_DOWN),
+            (PspButtons::LEFT, N64Buttons::C_LEFT),
+            (PspButtons::RIGHT, N64Buttons::C_RIGHT),
+        ] {
+            let s = map_psp_to_n64(PspButtons(psp), 128, 128, SSB64_GAME_MAPPING);
+            assert_eq!(s.buttons.0, n64);
+        }
+    }
+
+    #[test]
+    fn game_mapping_preserves_partial_analog_stick_deflection() {
+        // These are deliberately neither neutral nor full deflection. The
+        // mapping must carry their raw N64 magnitudes through unchanged.
+        let s = map_psp_to_n64(PspButtons(0), 160, 96, SSB64_GAME_MAPPING);
+        assert_eq!(s.stick_x, nub_axis_to_n64(160));
+        assert_eq!(s.stick_y, -nub_axis_to_n64(96));
+        assert!((1..80).contains(&s.stick_x));
+        assert!((1..80).contains(&s.stick_y));
     }
 
     #[test]
@@ -284,10 +396,12 @@ mod tests {
 
     #[test]
     fn every_psp_button_maps_to_a_distinct_n64_button() {
-        for (i, a) in DEFAULT_MAPPING.iter().enumerate() {
-            for b in &DEFAULT_MAPPING[i + 1..] {
-                assert_ne!(a.psp, b.psp, "psp button mapped twice");
-                assert_ne!(a.n64, b.n64, "n64 button mapped twice");
+        for mapping in [DEFAULT_MAPPING, SSB64_GAME_MAPPING] {
+            for (i, a) in mapping.iter().enumerate() {
+                for b in &mapping[i + 1..] {
+                    assert_ne!(a.psp, b.psp, "psp button mapped twice");
+                    assert_ne!(a.n64, b.n64, "n64 button mapped twice");
+                }
             }
         }
     }
