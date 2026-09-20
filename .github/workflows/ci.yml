@@ -14,14 +14,11 @@ env:
   # which is exactly what happened when 1.98 added `chunks_exact_to_as_chunks`
   # and failed four existing call sites. Bump this on purpose, not by surprise.
   RUST_STABLE: "1.98.0"
-  # `rust-psp` depends on nightly core internals. Keep both values in step with
-  # psp-asset-viewer/rust-toolchain.toml and update only after an EBOOT is
-  # validated.
-  PSP_NIGHTLY: "nightly-2026-08-01"
-  # `cargo-psp` is part of the PSP release toolchain, not an unbounded build
-  # dependency. Pin it with the nightly above so a crates.io release cannot
-  # silently change how EBOOT.PBP is produced.
-  CARGO_PSP_VERSION: "0.2.9"
+  # Keep this synchronized with both PSP application toolchain files.
+  PSP_NIGHTLY: "nightly-2026-08-26"
+  # The project consumes its fork at one immutable revision, including the
+  # matching cargo-psp that writes the required MEMSIZE PARAM.SFO key.
+  RUST_PSP_REV: "a89142b237f3014fc15425d3549e44d3aa07d1c6"
 
 jobs:
   # Host-side crates and tools. No ROM required -- every test either uses
@@ -105,8 +102,8 @@ jobs:
         with:
           workspaces: psp-asset-viewer
 
-      - name: Install pinned cargo-psp
-        run: cargo +${{ env.PSP_NIGHTLY }} install cargo-psp --version "=$CARGO_PSP_VERSION" --locked
+      - name: Install pinned cargo-psp from the project fork
+        run: cargo +${{ env.PSP_NIGHTLY }} install --git https://github.com/ItsNoHax/rust-psp --rev "$RUST_PSP_REV" cargo-psp --locked
 
       - name: Build EBOOT.PBP
         working-directory: psp-asset-viewer
