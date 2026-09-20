@@ -1517,6 +1517,10 @@ impl PackWriter {
     /// MaterialJoint::tick`] is already built to run against a whole file's
     /// bytes rather than a pre-sliced script, and a script's own end is not
     /// knowable without decoding it.
+    // This mirrors the serialized material-animation record. Grouping the
+    // fields just to satisfy a lint would make the pack writer's callers less
+    // explicit without changing the on-disk representation.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_mat_anim(
         &mut self,
         source_file: u32,

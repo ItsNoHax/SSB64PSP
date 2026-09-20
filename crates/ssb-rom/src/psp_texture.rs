@@ -733,7 +733,7 @@ pub fn pack_indexed(
     // the low nibble carries the first (even-indexed) texel.
     if format == Psm::PsmT4 {
         for byte in &mut data {
-            *byte = (*byte << 4) | (*byte >> 4);
+            *byte = (*byte).rotate_right(4);
         }
     }
 
