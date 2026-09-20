@@ -104,6 +104,9 @@ regression_capture_donkey_kong = ["fighter_regression_capture"]
 # Link's material-light-tinted tunic is not reduced to the generic viewer's
 # gray fallback (RE-261). Off by default.
 regression_capture_link = ["fighter_regression_capture"]
+# RE-301: exercises a real non-zero costume through the same packed
+# colour/light/palette override path as normal object-view selection.
+regression_capture_link_costume_1 = ["regression_capture_link"]
 
 # Every playable fighter has a deterministic neutral-model regression scene.
 # The original game supplies a stage-directional light immediately before

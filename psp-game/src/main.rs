@@ -218,6 +218,13 @@ unsafe fn run() -> ! {
         (Ok(_), _) => BG_TRAINING_NO_PACK,
     };
     let pack: Option<Pack<'_>> = opened.and_then(|r| r.ok());
+    // Stage MObj material joints are process-lifetime clocks in the original
+    // layer setup. Start once with this pack and advance in the same simulation
+    // branch as the stage/fighter tick; draw only reads the resulting state.
+    let mut material_anim = ssb_rom::skeleton::MaterialAnimator::new();
+    if let Some(p) = pack.as_ref() {
+        material_anim.start(p);
+    }
 
     let mut draw_state = meshdraw::DrawState::default();
     // Created once, on first entry to Training Mode (below) -- a fighter
@@ -296,6 +303,7 @@ unsafe fn run() -> ! {
             }
 
             if let (Screen::Training, Some(p), Some(pl)) = (screen, &pack, play_state.as_mut()) {
+                material_anim.tick(p);
                 if let Some(stage) = p.stage(TRAINING_STAGE_INDEX) {
                     // Real `sceCtrl` stick input drives real movement/physics/
                     // animation against the real stage collision, the same
@@ -362,6 +370,7 @@ unsafe fn run() -> ! {
                     play_state.as_ref(),
                     dummy_state.as_ref(),
                     &weapons,
+                    Some(&material_anim),
                     no_pack_color,
                 );
             }
@@ -419,6 +428,7 @@ unsafe fn draw_training(
     play_state: Option<&play::FighterScene>,
     dummy_state: Option<&play::Dummy>,
     weapons: &ssb_game::weapon::WeaponPool,
+    material_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     no_pack_color: Color,
 ) {
     let scene = pack
@@ -451,7 +461,7 @@ unsafe fn draw_training(
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
 
-    meshdraw::draw_stage(p, &stage, &base, draw_state, None);
+    meshdraw::draw_stage(p, &stage, &base, draw_state, material_anim);
 
     if let Some(fireball_mesh) = ssb_psp_runtime::scene::mario_fireball_mesh(p) {
         for fireball in weapons.fireballs() {

@@ -21,6 +21,17 @@ through a portable runtime-to-gameplay bridge.
 
 ## What was completed
 
+- **Material-animation blocker repair** (2026-09-20): stage
+  `TextureIDCurrent` frame tables and tile-0 UV tracks now flow from MObj
+  rest state through pack v30 to the shared PSP renderer without disturbing
+  palette cycling. A `(file, script, MObjSub)` identity prevents UV state
+  leaking between materials; the GE mapping cache keys the live affine state.
+  The current ROM census is 61 resolvable attachments, not the stale 172
+  historical claim (RE-301); `ScrU`/`ScrV` are verified tile-1 inert,
+  `SetLFrac` is the RDP two-tile limitation, and sparse stage colour/light
+  tracks have an explicit dynamic-lowering limitation. Host tests, archive
+  replay, both PSP release builds, targeted deterministic PPSSPP captures,
+  and the full 13-fighter golden matrix pass; R0.10 is complete.
 - `P0`, the fighter-common status table, shield/guard, KO/death/respawn,
   ledges, Mario's full ground+aerial moveset (jab through `Attack13`,
   dash attack, tilts, smashes, aerials), and the `AnyStatus` per-character

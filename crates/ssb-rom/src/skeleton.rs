@@ -428,6 +428,24 @@ pub struct MaterialAnimator {
     count: usize,
 }
 
+/// The live material UV state before the renderer converts the original
+/// tile-window equations to the GE's scale/offset registers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MaterialUv {
+    pub trau: f32,
+    pub trav: f32,
+    pub scau: f32,
+    pub scav: f32,
+    pub base_trau: f32,
+    pub base_trav: f32,
+    pub base_scau: f32,
+    pub base_scav: f32,
+    pub mode: u32,
+    pub tile_bias: f32,
+    pub tile_width: f32,
+    pub tile_height: f32,
+}
+
 impl Default for MaterialAnimator {
     fn default() -> Self {
         MaterialAnimator::new()
@@ -502,6 +520,82 @@ impl MaterialAnimator {
         // rounding already uses).
         let index = ((v.max(0.0) + 0.5) as u32).min(a.palette_count - 1);
         Some(a.first_palette + index)
+    }
+
+    /// The current `TextureIDCurrent` sprite frame. This is deliberately not
+    /// step-gated: the original assigns every live interpolation kind before
+    /// truncating it to the `u16` texture index in the draw path.
+    pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
+        let j = self.joints.get(mat_anim as usize)?;
+        if mat_anim as usize >= self.count {
+            return None;
+        }
+        let a = pack.mat_anim(mat_anim)?;
+        let value = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
+        if a.texture_count == 0 {
+            return None;
+        }
+        // `texture_id_curr` is a u16 in the original MObj, so its assignment
+        // from the live float truncates toward zero.  PaletteID is different
+        // (`f32`) and keeps its established round-to-nearest resolver.
+        let index = (value.max(0.0) as u32).min(a.texture_count - 1);
+        let texture = a.textures[index as usize];
+        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
+    }
+
+    /// Resolves `TraU`/`TraV`/`ScaU`/`ScaV`, retaining the MObjSub rest
+    /// values for tracks the script leaves untouched. `ScrU`/`ScrV` target
+    /// tile 1 and `SetLFrac` is a two-frame RDP blend; neither aliases these
+    /// tile-0 coordinates (RE-086/RE-211).
+    pub fn resolved_uv(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<MaterialUv> {
+        let j = self.joints.get(mat_anim as usize)?;
+        if mat_anim as usize >= self.count {
+            return None;
+        }
+        let a = pack.mat_anim(mat_anim)?;
+        if a.uv_mode == 0
+            || !(crate::matanim::TRACK_TRA_U..=crate::matanim::TRACK_SCA_V)
+                .any(|i| j.track_value(i).is_some())
+        {
+            return None;
+        }
+        let base = |i| f32::from_bits(a.base_tracks[i]);
+        Some(MaterialUv {
+            trau: j
+                .track_value(crate::matanim::TRACK_TRA_U)
+                .unwrap_or_else(|| base(1)),
+            trav: j
+                .track_value(crate::matanim::TRACK_TRA_V)
+                .unwrap_or_else(|| base(2)),
+            scau: j
+                .track_value(crate::matanim::TRACK_SCA_U)
+                .unwrap_or_else(|| base(3)),
+            scav: j
+                .track_value(crate::matanim::TRACK_SCA_V)
+                .unwrap_or_else(|| base(4)),
+            base_trau: base(1),
+            base_trav: base(2),
+            base_scau: base(3),
+            base_scav: base(4),
+            mode: a.uv_mode,
+            tile_bias: a.uv_tile_params[0] as f32,
+            tile_width: a.uv_tile_params[1] as f32,
+            tile_height: a.uv_tile_params[2] as f32,
+        })
+    }
+
+    /// The material colour registers driven by a stage script.  This is the
+    /// same original `gcPlayMObjMatAnim` colour window as manager effects;
+    /// stages merely own a pack-lifetime clock instead of a spawn-local one.
+    pub fn resolved_colors(&self, mat_anim: u32) -> Option<EffectColors> {
+        let j = self.joints.get(mat_anim as usize)?;
+        ((mat_anim as usize) < self.count).then(|| EffectColors {
+            prim: j.track_color(crate::matanim::TRACK_PRIM_COLOR),
+            env: j.track_color(crate::matanim::TRACK_ENV_COLOR),
+            blend: j.track_color(crate::matanim::TRACK_BLEND_COLOR),
+            light1: j.track_color(crate::matanim::TRACK_LIGHT1_COLOR),
+            light2: j.track_color(crate::matanim::TRACK_LIGHT2_COLOR),
+        })
     }
 }
 
@@ -983,7 +1077,17 @@ mod tests {
             alloc::vec![0x2222_2222u32; 16],
             alloc::vec![0x3333_3333u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
+        let mat_anim = w.add_mat_anim(
+            105,
+            &file_bytes,
+            0,
+            0x1000,
+            &palettes,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
         w.set_texture_mat_anim(texture, mat_anim);
         (w.finish(), mat_anim)
     }
@@ -1057,7 +1161,17 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16]
         ];
-        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
+        let mat_anim = w.add_mat_anim(
+            105,
+            &file_bytes,
+            0,
+            0x1000,
+            &palettes,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
         w.set_texture_mat_anim(texture, mat_anim);
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
@@ -1070,6 +1184,104 @@ mod tests {
             m.resolved_palette(&pack, mat_anim),
             Some(a.first_palette + 1),
             "clamped to the last real variant, not read past it"
+        );
+    }
+
+    #[test]
+    fn material_animator_loops_texture_frames_and_keeps_its_palette() {
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_SET_ANIM: u32 = 14;
+        const TEXTURE: u32 = crate::matanim::TRACK_TEXTURE_ID_CURRENT as u32;
+        const PALETTE: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        use crate::psp_texture::{Psm, PspTexture};
+
+        let mut w = PackWriter::new();
+        let image = |byte| PspTexture {
+            width: 16,
+            height: 8,
+            stride: 16,
+            format: Psm::PsmT4,
+            data: alloc::vec![byte; 64],
+            swizzled: true,
+            palette: alloc::vec![0xFF00_00FF; 16],
+            levels: 1,
+        };
+        let frame0 = w.add_texture(&image(0x11), false, false);
+        let frame1 = w.add_texture(&image(0x22), false, false);
+        let script = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, (1 << TEXTURE) | (1 << PALETTE), 1),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, (1 << TEXTURE) | (1 << PALETTE), 1),
+            1.0f32.to_bits(),
+            1.0f32.to_bits(),
+            mat_cmd(OP_SET_ANIM, 0, 0),
+            0,
+        ]);
+        let palettes = alloc::vec![alloc::vec![0x1111_1111; 16], alloc::vec![0x2222_2222; 16],];
+        let anim = w.add_mat_anim(
+            104,
+            &script,
+            0,
+            0x1200,
+            &palettes,
+            &[frame0, frame1],
+            [0; 10],
+            0,
+            [0; 3],
+        );
+        let pack_bytes = w.finish();
+        let pack = Pack::open(&pack_bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+        let mut pairs = alloc::collections::BTreeSet::new();
+        for _ in 0..12 {
+            animator.tick(&pack);
+            pairs.insert((
+                animator.resolved_texture(&pack, anim),
+                animator.resolved_palette(&pack, anim),
+            ));
+        }
+        let a = pack.mat_anim(anim).unwrap();
+        assert!(pairs.contains(&(Some(frame0), Some(a.first_palette))));
+        assert!(pairs.contains(&(Some(frame1), Some(a.first_palette + 1))));
+    }
+
+    #[test]
+    fn material_animator_uses_rest_uv_for_untouched_tracks_and_resets() {
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_WAIT: u32 = 2;
+        const TRAU: u32 = crate::matanim::TRACK_TRA_U as u32;
+        let script = mat_script(&[
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRAU, 1),
+            0.5f32.to_bits(),
+            mat_cmd(OP_WAIT, 0, 10),
+        ]);
+        let mut base = [0u32; 10];
+        base[1] = 0.25f32.to_bits();
+        base[2] = 0.125f32.to_bits();
+        base[3] = 1.0f32.to_bits();
+        base[4] = 0.5f32.to_bits();
+        let mut w = PackWriter::new();
+        let anim = w.add_mat_anim(104, &script, 0, 0x2200, &[], &[], base, 1, [2, 64, 32]);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+        animator.tick(&pack);
+        let uv = animator.resolved_uv(&pack, anim).unwrap();
+        assert_eq!(uv.trau, 0.5);
+        assert_eq!(uv.trav, 0.125);
+        assert_eq!(uv.scau, 1.0);
+        assert_eq!(uv.scav, 0.5);
+        assert_eq!(
+            (uv.tile_bias, uv.tile_width, uv.tile_height),
+            (2.0, 64.0, 32.0)
+        );
+        animator.start(&pack);
+        assert!(
+            animator.resolved_uv(&pack, anim).is_none(),
+            "restart clears live track state"
         );
     }
 
@@ -1104,7 +1316,17 @@ mod tests {
             alloc::vec![0x1111_1111u32; 16],
             alloc::vec![0x2222_2222u32; 16],
         ];
-        let mat_anim = w.add_mat_anim(105, &file_bytes, 0, 0x1000, &palettes, &[]);
+        let mat_anim = w.add_mat_anim(
+            105,
+            &file_bytes,
+            0,
+            0x1000,
+            &palettes,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
         let a = pack.mat_anim(mat_anim).unwrap();
@@ -1154,7 +1376,17 @@ mod tests {
             mat_cmd(OP_END, 0, 0),
         ]);
         let textures = alloc::vec![7u32, 9u32];
-        let mat_anim = w.add_mat_anim(83, &file_bytes, 0, 0x90C0, &[], &textures);
+        let mat_anim = w.add_mat_anim(
+            83,
+            &file_bytes,
+            0,
+            0x90C0,
+            &[],
+            &textures,
+            [0; 10],
+            0,
+            [0; 3],
+        );
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
 
@@ -1193,7 +1425,7 @@ mod tests {
             mat_cmd(OP_WAIT, 0, 97),
             mat_cmd(OP_END, 0, 0),
         ]);
-        let mat_anim = w.add_mat_anim(353, &file_bytes, 0, 0x12F0, &[], &[]);
+        let mat_anim = w.add_mat_anim(353, &file_bytes, 0, 0x12F0, &[], &[], [0; 10], 0, [0; 3]);
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();
 
@@ -1218,7 +1450,7 @@ mod tests {
         let mut indices = alloc::vec::Vec::new();
         for i in 0..MAX_EFFECT_MAT_ANIMS as u32 + 3 {
             let file_bytes = mat_script(&[0]);
-            indices.push(w.add_mat_anim(200 + i, &file_bytes, 0, 0, &[], &[]));
+            indices.push(w.add_mat_anim(200 + i, &file_bytes, 0, 0, &[], &[], [0; 10], 0, [0; 3]));
         }
         let bytes = w.finish();
         let pack = crate::pack::Pack::open(&bytes).unwrap();

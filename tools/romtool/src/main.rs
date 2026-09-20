@@ -955,6 +955,9 @@ struct MatAnimData {
     palette_entries: u16,
     palettes: Vec<ssb_rom::mobj::Ptr>,
     sprites: Vec<ssb_rom::mobj::Ptr>,
+    base_tracks: [u32; 10],
+    uv_mode: u8,
+    uv_tile_params: [u16; 3],
 }
 
 fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
@@ -983,8 +986,8 @@ fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
 fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
     tex_index: &mut BTreeMap<TexKey, u32>,
-    mat_anim_index: &mut BTreeMap<(u32, u32), u32>,
-    mat_anim_data: &BTreeMap<(u32, u32), MatAnimData>,
+    mat_anim_index: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, u32>,
+    mat_anim_data: &BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
     src: Texels<'_>,
     id: u32,
     offset: u32,
@@ -1051,7 +1054,7 @@ fn pack_mesh(
         // environment/blend colour with no palette or sprite involved
         // (RE-175, `mesh.rs`'s `apply_mobj`/`material_now`).
         let mat_anim_index_resolved = prim.material.mat_anim.and_then(|anim| {
-            let key = (anim.source_file, anim.script);
+            let key = anim;
             match mat_anim_index.get(&key) {
                 Some(&i) => Some(i),
                 None => mat_anim_data.get(&key).and_then(|anim_data| {
@@ -1111,6 +1114,9 @@ fn pack_mesh(
                         anim_data.source_offset,
                         &palettes,
                         &sprites,
+                        anim_data.base_tracks,
+                        anim_data.uv_mode,
+                        anim_data.uv_tile_params,
                     );
                     mat_anim_index.insert(key, i);
                     Some(i)
@@ -1289,7 +1295,7 @@ fn convert_graph_at(
     graph_offset: u32,
     plan: &[PlannedList],
     materials: &[ssb_rom::mobj::NodeMaterials],
-    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
     initial: ssb_rom::mesh::InitialMaterial,
 ) -> Vec<Result<ssb_rom::mesh::Mesh, ssb_rom::mesh::MeshError>> {
     use ssb_rom::mesh;
@@ -1337,11 +1343,15 @@ fn resolve_one_mat_anim(
     m: usize,
     script: u32,
     sub_at: &impl Fn(usize, usize) -> Option<(u32, u16)>,
+    base_tracks: [u32; 10],
+    uv_mode: u8,
+    uv_tile_params: [u16; 3],
 ) -> Option<(ssb_rom::mesh::MatAnimRef, MatAnimData)> {
     let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
     let mut max_palette = 0.0f32;
     let mut max_texture = 0.0f32;
     let mut frames = 0u32;
+    let mut seen_material = false;
     loop {
         // A decoder error means this script is not something this resolver
         // can trust the replay of -- decline it outright rather than attach
@@ -1357,6 +1367,7 @@ fn resolve_one_mat_anim(
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT) {
             max_texture = max_texture.max(v);
         }
+        seen_material |= (0..10).any(|track| j.track_value(track).is_some());
         if j.ended() || j.looped() || frames >= MAT_ANIM_REPLAY_FRAMES {
             break;
         }
@@ -1383,7 +1394,7 @@ fn resolve_one_mat_anim(
         j.track_color(ssb_rom::matanim::TICK_EXT_START + i)
             .is_some()
     });
-    if !has_palette && !has_texture && !has_color {
+    if !has_palette && !has_texture && !has_color && !seen_material {
         return None;
     }
 
@@ -1412,7 +1423,7 @@ fn resolve_one_mat_anim(
     // `PaletteID` stepped once to 0 and never touched again) resolved no
     // array and is not real cycling on its own -- decline unless something
     // else on this script is worth attaching.
-    if palettes.is_empty() && sprites.is_empty() && !has_color {
+    if palettes.is_empty() && sprites.is_empty() && !has_color && !seen_material {
         return None;
     }
 
@@ -1420,12 +1431,16 @@ fn resolve_one_mat_anim(
         ssb_rom::mesh::MatAnimRef {
             source_file: file.id,
             script,
+            source_mobj: sub_offset,
         },
         MatAnimData {
             source_offset: sub_offset,
             palette_entries,
             palettes,
             sprites,
+            base_tracks,
+            uv_mode,
+            uv_tile_params,
         },
     ))
 }
@@ -1446,7 +1461,7 @@ fn resolve_mat_anims(
     matanim_table: u32,
     materials: &[ssb_rom::mobj::NodeMaterials],
     sub_at: impl Fn(usize, usize) -> Option<(u32, u16)>,
-    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
 ) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let scripts = ssb_rom::matanim::resolve_scripts(file, matanim_table, materials.len(), |n| {
         materials[n].len()
@@ -1456,15 +1471,28 @@ fn resolve_mat_anims(
     for (node, chain) in scripts.iter().enumerate() {
         for (m, script) in chain.iter().enumerate() {
             let Some(script) = *script else { continue };
-            let key = (file.id, script);
+            let Some(material) = materials.get(node).and_then(|chain| chain.get(m)) else {
+                continue;
+            };
+            let key = ssb_rom::mesh::MatAnimRef {
+                source_file: file.id,
+                script,
+                source_mobj: material.at,
+            };
             if mat_anim_data.contains_key(&key) {
-                refs[node][m] = Some(ssb_rom::mesh::MatAnimRef {
-                    source_file: file.id,
-                    script,
-                });
+                refs[node][m] = Some(key);
                 continue;
             }
-            let Some((r, data)) = resolve_one_mat_anim(file, node, m, script, &sub_at) else {
+            let Some((r, data)) = resolve_one_mat_anim(
+                file,
+                node,
+                m,
+                script,
+                &sub_at,
+                material.mat_anim_tracks,
+                material.mat_anim_uv_mode,
+                material.mat_anim_tile_params,
+            ) else {
                 continue;
             };
             refs[node][m] = Some(r);
@@ -1492,7 +1520,7 @@ fn resolve_layer_mat_anims(
     file: &ssb_rom::archive::File,
     graph_offset: u32,
     materials: &[ssb_rom::mobj::NodeMaterials],
-    mat_anim_data: &mut BTreeMap<(u32, u32), MatAnimData>,
+    mat_anim_data: &mut BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData>,
 ) -> Vec<Vec<Option<ssb_rom::mesh::MatAnimRef>>> {
     let empty = || materials.iter().map(|c| vec![None; c.len()]).collect();
 
@@ -1587,12 +1615,12 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     // The same material animation script drives many primitives; upload
     // each once. Keyed the same way `resolve_layer_mat_anims` resolves a
     // script's identity: (source archive file, script offset) (RE-091).
-    let mut mat_anim_index: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    let mut mat_anim_index: BTreeMap<ssb_rom::mesh::MatAnimRef, u32> = BTreeMap::new();
     // Every real, script-verified palette animation found so far, keyed by
     // the same `(source_file, script)` identity `mesh::MatAnimRef` carries
     // -- populated per stage layer as its graph is reached, consumed by
     // `pack_mesh` the moment a primitive names one (RE-089/090/091).
-    let mut mat_anim_data: BTreeMap<(u32, u32), MatAnimData> = BTreeMap::new();
+    let mut mat_anim_data: BTreeMap<ssb_rom::mesh::MatAnimRef, MatAnimData> = BTreeMap::new();
     let mut meshes = 0usize;
     let mut triangles = 0usize;
     let mut objects = 0usize;
