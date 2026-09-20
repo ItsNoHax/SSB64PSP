@@ -24,6 +24,14 @@ through a portable runtime-to-gameplay bridge.
 
 ## What was completed
 
+- **rust-psp fork/toolchain migration** (2026-09-20): all PSP projects and
+  CI now pin `ItsNoHax/rust-psp` commit `a89142b` plus
+  `nightly-2026-08-26`. The fork is current with upstream master, includes
+  upstream's `PanicPayload` compatibility repair and the committed project
+  `MEMSIZE` support in `cargo-psp`; its unused Rust-source submodule is
+  skipped during Cargo dependency resolution. Host checks and real release
+  EBOOT builds pass for both `psp-game` and `psp-asset-viewer`.
+
 - **Player-facing PSP controller layout** (2026-09-20): `psp-game` now
   selects its own raw PSP→N64 table at the shared `sceCtrl` backend boundary,
   without changing the asset viewer's legacy controls. The analog nub stays
