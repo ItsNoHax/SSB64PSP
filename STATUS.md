@@ -5,16 +5,23 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **PSP texture sampling alignment (complete,
-RE-304)**. A deterministic synthetic 2x2/4x4 GE rig measured point and
+Current subsystem/batch: **build-time N64 3-point texture compensation
+(complete in software/PPSSPP, RE-305; physical spot check unavailable)**.
+The real-UV/archive pipeline emits 406 immutable variants, keeps 274 in CI4,
+promotes 132 to RGBA8888 under a measured cost gate, and reduces selected
+variants' average error from 1.947/255 to 0.876/255. The pack grows 2.67%; all
+selected variants have non-increasing max error, and animated indexed palette
+semantics remain untouched. The prerequisite sampling work (RE-304) used a
+deterministic synthetic 2x2/4x4 GE rig measuring point and
 filtered sampling at centres, halves, odd S10.5 steps, diagonals, and
 clamp/repeat/pre-baked-mirror boundaries. PPSSPP software and real PSP agree
 on all 96 interior readbacks: point needs no bias; filtered coordinates need
 `+0.5` texel, then the GE uses four-bit truncated bilinear weights and
 truncating channel arithmetic. The host `sample_bilinear()` and shared PSP
 runtime lowering are corrected. Authored UVs, animated MObj UVs, ordinary
-texgen and CPU linear texgen now receive the convention exactly once. No
-N64 3-point compensation was implemented.
+texgen and CPU linear texgen now receive the convention exactly once.
+N64 3-point compensation uses that verified reference entirely at build
+time; runtime remains ordinary `GU_LINEAR`.
 
 Previous gameplay subsystem/batch: **Fox full moveset (complete)**. Fox's US normal
 attack motion scripts (jab 1/2, dash, five forward tilts, up/down tilt,

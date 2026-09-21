@@ -41,16 +41,6 @@ fn split_q5(coord: i32) -> (i32, i32) {
     (coord.div_euclid(32), coord.rem_euclid(32))
 }
 
-/// Fetches a texel with simple edge-clamp addressing (not the real N64
-/// tile-addressing model; see the module docs).
-fn fetch(img: &Rgba8, x: i32, y: i32) -> [i32; 4] {
-    let cx = x.clamp(0, img.width as i32 - 1) as u32;
-    let cy = y.clamp(0, img.height as i32 - 1) as u32;
-    let idx = (cy * img.width + cx) as usize;
-    let p = img.get(idx);
-    [p[0] as i32, p[1] as i32, p[2] as i32, p[3] as i32]
-}
-
 /// Addressing performed by the PSP texture unit after pack-time mirror
 /// expansion.  Mirroring is represented by the expanded image plus Repeat,
 /// exactly as the runtime lowers it.
@@ -80,16 +70,26 @@ fn fetch_addressed(img: &Rgba8, x: i32, y: i32, s: GeAddressMode, t: GeAddressMo
 /// `s_q5`/`t_q5` are texel-space coordinates in 1/32-texel fixed point
 /// (the RDP's own `TC` precision).
 pub fn sample_3point(img: &Rgba8, s_q5: i32, t_q5: i32) -> [u8; 4] {
+    sample_3point_addressed(img, s_q5, t_q5, GeAddressMode::Clamp, GeAddressMode::Clamp)
+}
+
+pub fn sample_3point_addressed(
+    img: &Rgba8,
+    s_q5: i32,
+    t_q5: i32,
+    address_s: GeAddressMode,
+    address_t: GeAddressMode,
+) -> [u8; 4] {
     let (s0, sfrac) = split_q5(s_q5);
     let (t0, tfrac) = split_q5(t_q5);
 
     // t0/t1/t2/t3 in `angrylion-rdp-plus`'s own naming (`tex.c`,
     // `fetch_texel_quadro`): t0 = (s0,t0), t1 = (s0+1,t0), t2 =
     // (s0,t0+1), t3 = (s0+1,t0+1).
-    let c00 = fetch(img, s0, t0);
-    let c10 = fetch(img, s0 + 1, t0);
-    let c01 = fetch(img, s0, t0 + 1);
-    let c11 = fetch(img, s0 + 1, t0 + 1);
+    let c00 = fetch_addressed(img, s0, t0, address_s, address_t);
+    let c10 = fetch_addressed(img, s0 + 1, t0, address_s, address_t);
+    let c01 = fetch_addressed(img, s0, t0 + 1, address_s, address_t);
+    let c11 = fetch_addressed(img, s0 + 1, t0 + 1, address_s, address_t);
 
     // `upper = (sfrac + tfrac) & 0x20` in the real hardware: the lower/
     // right triangle (anchored at the diagonal texel c11) is picked once
