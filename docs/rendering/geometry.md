@@ -42,8 +42,11 @@ See `docs/reverse-engineering.md` RE-004 and RE-005. Summary:
 * **No matrix transpose.** N64 row-major/row-vector and PSP
   column-major/column-vector cancel out; only the s15.16 → `f32` widening is
   real work.
-* **UVs** are S10.5 fixed point: divide by 32 for texels, then by the texture
-  dimension to normalize.
+* **UVs** are S10.5 fixed point: divide by 32 for texels, then by the uploaded
+  texture dimension to normalize. The PSP GE's filtered kernel is centred on
+  half-integer coordinates, so the runtime adds `+0.5 / uploaded_dim` after
+  all tile-origin and material-animation transforms; point sampling adds no
+  offset. RE-304 measured this on PPSSPP software and real PSP hardware.
 * **Aspect ratio.** The game renders 320x240 (4:3); the PSP is 480x272.
   Stretching would distort every character, so the default is a pillarboxed
   362x272 viewport, centred. `coord::pillarboxed_viewport()` computes it, and

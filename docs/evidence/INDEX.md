@@ -313,3 +313,4 @@ editing a record.
 | RE-301 | Stage material-track replay and pack identity correction | COMPLETE | material, animation, texture, pack, stage, psp-ge |  |
 | RE-302 | Fighter floor shadows: source strip, I4 texture, floor projection and PSP GE pass | COMPLETE | fighter, rendering, texture, collision, psp-ge, visual-regression |  |
 | RE-303 | Motion `AsyncWait(n)` targets animation frame `n`, affecting Fox and prior Mario timing transcriptions | SOURCE VERIFIED; Fox data corrected, Mario audit pending | fighter, animation, gameplay |  |
+| RE-304 | PSP GE sample alignment: filtered coordinates require +0.5 texel and use 4-bit truncated bilinear weights | COMPLETE | texture, psp-ge, hardware, texgen, material |  |

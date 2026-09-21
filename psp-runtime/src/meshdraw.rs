@@ -734,7 +734,10 @@ unsafe fn apply_texture_mapping(
             ssb_rom::psp_texture::authored_uv_tex_scale(h) * affine.scale_t,
         );
         // Authored UVs already had the tile origin baked out at pack time.
-        sys::sceGuTexOffset(affine.offset_s, affine.offset_t);
+        sys::sceGuTexOffset(
+            affine.offset_s + ssb_rom::psp_texture::ge_sample_offset(true, w),
+            affine.offset_t + ssb_rom::psp_texture::ge_sample_offset(true, h),
+        );
         return;
     }
 
@@ -782,8 +785,10 @@ unsafe fn apply_texture_mapping(
             y: column(1),
             z: column(2),
             w: ScePspFVector4 {
-                x: b_s * affine.scale_s + affine.offset_s,
-                y: b_t * affine.scale_t + affine.offset_t,
+                x: b_s * affine.scale_s + affine.offset_s
+                    + ssb_rom::psp_texture::ge_sample_offset(true, w),
+                y: b_t * affine.scale_t + affine.offset_t
+                    + ssb_rom::psp_texture::ge_sample_offset(true, h),
                 z: 1.0,
                 w: 1.0,
             },
