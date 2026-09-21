@@ -36,6 +36,9 @@ regression_capture_fireball = ["regression_capture"]
 # jump/jab sequence, exercising Mario's Super Jump Punch against the live
 # dummy through the regular Training hit bridge.
 regression_capture_superjump = ["regression_capture"]
+# Selects Fox in Training and fires one grounded Blaster shot, exercising
+# Fox's status, animation, weapon spawn, packed direct mesh, and draw path.
+regression_capture_fox = ["regression_capture"]
 # Captures Training at the first jump's apex: player airborne above Dream
 # Land while the stationary dummy remains grounded.  This is the deterministic
 # fighter-shadow regression scene.

@@ -234,6 +234,11 @@ pub struct Fighter {
     pub mario_special_lw: crate::status::MarioSpecialLwState,
     /// Per-use flags from Mario's Fireball motion script.
     pub mario_special_n: crate::status::MarioSpecialNState,
+    /// One-shot Blaster motion-event state.
+    pub fox_special_n: crate::status::FoxSpecialNState,
+    /// Fire Fox startup, charge, and travel counters.
+    pub fox_special_hi: crate::status::FoxSpecialHiState,
+    pub fox_special_lw: crate::status::FoxSpecialLwState,
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
@@ -281,6 +286,9 @@ impl Fighter {
             mario_special_hi: crate::status::MarioSpecialHiState::default(),
             mario_special_lw: crate::status::MarioSpecialLwState::default(),
             mario_special_n: crate::status::MarioSpecialNState::default(),
+            fox_special_n: crate::status::FoxSpecialNState::default(),
+            fox_special_hi: crate::status::FoxSpecialHiState::default(),
+            fox_special_lw: crate::status::FoxSpecialLwState::default(),
             weapon_spawn: None,
             weapon_spawn_anchor: None,
             root_motion: RootMotion::default(),
@@ -484,6 +492,7 @@ impl Fighter {
         let physics_status = match self.status.status {
             crate::status::AnyStatus::Common(s) => s,
             crate::status::AnyStatus::Mario(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Fox(_) => crate::status::Status::Wait,
         };
         if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -500,6 +509,13 @@ impl Fighter {
                 self.floor = None;
                 return;
             }
+        } else if matches!(
+            self.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialHi | crate::status::FoxStatus::SpecialHiEnd
+            )
+        ) {
+            crate::status::apply_fox_special_hi_ground_physics(self);
         } else {
             crate::status::apply_status_physics(
                 &mut self.physics,
@@ -539,6 +555,27 @@ impl Fighter {
                     == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialLw)
                 {
                     crate::status::switch_mario_tornado_air(self);
+                } else if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Fox(
+                        crate::status::FoxStatus::SpecialHiStart
+                            | crate::status::FoxStatus::SpecialHiHold
+                            | crate::status::FoxStatus::SpecialHi
+                            | crate::status::FoxStatus::SpecialHiEnd
+                    )
+                ) {
+                    crate::status::switch_fox_special_hi_air(self);
+                } else if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Fox(
+                        crate::status::FoxStatus::SpecialLwStart
+                            | crate::status::FoxStatus::SpecialLwLoop
+                            | crate::status::FoxStatus::SpecialLwHit
+                            | crate::status::FoxStatus::SpecialLwEnd
+                            | crate::status::FoxStatus::SpecialLwTurn
+                    )
+                ) {
+                    crate::status::switch_fox_special_lw_air(self);
                 } else {
                     self.become_airborne();
                     crate::status::set_fall(self);
@@ -559,13 +596,37 @@ impl Fighter {
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirHi);
         let special_air_lw = self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialAirLw);
-        if !special_air_hi && !special_air_lw {
+        let fox_special_hi = matches!(
+            self.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialAirHiStart
+                    | crate::status::FoxStatus::SpecialAirHiHold
+                    | crate::status::FoxStatus::SpecialAirHi
+                    | crate::status::FoxStatus::SpecialAirHiEnd
+                    | crate::status::FoxStatus::SpecialAirHiBound
+            )
+        );
+        let fox_special_lw = matches!(
+            self.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialAirLwStart
+                    | crate::status::FoxStatus::SpecialAirLwHit
+                    | crate::status::FoxStatus::SpecialAirLwEnd
+                    | crate::status::FoxStatus::SpecialAirLwLoop
+                    | crate::status::FoxStatus::SpecialAirLwTurn
+            )
+        );
+        if !special_air_hi && !special_air_lw && !fox_special_hi && !fox_special_lw {
             crate::status::check_set_fast_fall(self);
         }
         if special_air_hi {
             crate::status::apply_mario_special_air_hi_physics(self);
         } else if special_air_lw {
             crate::status::apply_mario_special_lw_air_physics(self);
+        } else if fox_special_hi {
+            crate::status::apply_fox_special_hi_air_physics(self);
+        } else if fox_special_lw {
+            crate::status::apply_fox_special_lw_air_physics(self);
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
@@ -620,6 +681,9 @@ impl Fighter {
             Some(f) => {
                 self.floor = Some(f);
                 self.ignore_line = None;
+                if crate::status::fox_fire_fox_floor_contact(self, f.normal, moved.pos.y) {
+                    return;
+                }
                 // The landing status is chosen from the velocity *before*
                 // `land` clears it — a fastfall still at terminal velocity on
                 // contact is what earns the heavy landing. Landing mid-aerial

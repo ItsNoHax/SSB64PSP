@@ -54,6 +54,8 @@ const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_s
     // B+up is pressed at tick 150; frame 2's strong opening hit has resolved
     // by this point while the source TransN launch is still clearly visible.
     156
+} else if cfg!(feature = "regression_capture_fox") {
+    46
 } else {
     106
 };
@@ -114,6 +116,9 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(tick: u64) -> N64Buttons {
+    if cfg!(feature = "regression_capture_fox") && tick == 20 {
+        return N64Buttons(N64Buttons::B);
+    }
     if cfg!(feature = "regression_capture_fireball") && tick == 150 {
         return N64Buttons(N64Buttons::B);
     }
@@ -330,7 +335,11 @@ unsafe fn run() -> ! {
                                     play::FighterScene::at_spawn(
                                         p,
                                         &s,
-                                        ssb_game::fighter::FighterKind::Mario,
+                                        if cfg!(feature = "regression_capture_fox") {
+                                            ssb_game::fighter::FighterKind::Fox
+                                        } else {
+                                            ssb_game::fighter::FighterKind::Mario
+                                        },
                                         0,
                                     )
                                 })
@@ -553,6 +562,48 @@ unsafe fn draw_training(
                 meshdraw::MODEL_SCALE,
             );
             meshdraw::draw_mesh(p, &fireball_mesh, draw_state, None, None);
+        }
+    }
+
+    if let Some(blaster_mesh) = ssb_psp_runtime::scene::fox_blaster_mesh(p) {
+        for shot in weapons.blasters() {
+            let pitch = ssb_engine::math::atan2(shot.velocity.y, shot.velocity.x);
+            gpu.model_transform_xyz(
+                [shot.position.x, shot.position.y, shot.position.z],
+                [0.0, 0.0, pitch],
+                [
+                    meshdraw::MODEL_SCALE * shot.scale_x,
+                    meshdraw::MODEL_SCALE,
+                    meshdraw::MODEL_SCALE,
+                ],
+            );
+            meshdraw::draw_mesh(p, &blaster_mesh, draw_state, None, None);
+        }
+    }
+
+    if matches!(
+        pl.fighter.status.status,
+        ssb_game::status::AnyStatus::Fox(
+            ssb_game::status::FoxStatus::SpecialLwStart
+                | ssb_game::status::FoxStatus::SpecialLwLoop
+                | ssb_game::status::FoxStatus::SpecialLwTurn
+                | ssb_game::status::FoxStatus::SpecialLwHit
+                | ssb_game::status::FoxStatus::SpecialLwEnd
+                | ssb_game::status::FoxStatus::SpecialAirLwStart
+                | ssb_game::status::FoxStatus::SpecialAirLwLoop
+                | ssb_game::status::FoxStatus::SpecialAirLwTurn
+                | ssb_game::status::FoxStatus::SpecialAirLwHit
+                | ssb_game::status::FoxStatus::SpecialAirLwEnd
+        )
+    ) {
+        if let Some(reflector) = ssb_psp_runtime::scene::fox_reflector_object(p) {
+            gpu.model_transform(
+                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
+                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+            let base = gpu.model_matrix();
+            meshdraw::draw_object(p, &reflector, &base, draw_state, None, 0);
         }
     }
 

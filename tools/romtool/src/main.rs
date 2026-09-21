@@ -55,6 +55,7 @@ fn main() -> ExitCode {
         ["particles", rom_path] => particles(rom_path.as_ref()),
         ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
         ["anims", rom_path, rest @ ..] => anims(rom_path.as_ref(), rest),
+        ["anim-length", rom_path, rest @ ..] => anim_length(rom_path.as_ref(), rest),
         ["figatree", rom_path, rest @ ..] => figatree(rom_path.as_ref(), rest),
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
@@ -101,6 +102,7 @@ USAGE:
     romtool particles <rom.z64>
     romtool fighters <rom.z64> [--verify] [--refs <relocData dir>]
     romtool anims    <rom.z64> [--verify]
+    romtool anim-length <rom.z64> <file-id> [file-id ...]
     romtool figatree <rom.z64> [--fighter <name>] [--slot <name>] [--frames <n>]
                                [--pack <pack.pak>]
     romtool extract  <rom.z64> [--out <dir>] [--limit <n>]
@@ -1859,6 +1861,53 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                         meshes += 1;
                         triangles += fireball.triangle_count();
                     }
+                }
+            }
+        }
+
+        // Fox Special1's `WPAttributes.data` relocates to file 316 + 0x40.
+        // Like Mario's Fireball, this weapon has a direct display list and
+        // no DObj graph for generic scene discovery to place.
+        if id == 316 {
+            const BLASTER_DISPLAY_LIST: u32 = 0x40;
+            if let Some(Ok(blaster)) = file
+                .data
+                .get(BLASTER_DISPLAY_LIST as usize..)
+                .and_then(|data| ssb_rom::dl::decode_list_at(data, BLASTER_DISPLAY_LIST).ok())
+                .map(|cmds| {
+                    mesh::convert_sequence(
+                        &[mesh::SequenceItem {
+                            cmds: &cmds,
+                            world: ssb_rom::scene::Mat4::IDENTITY,
+                            mobjs: &[],
+                            mat_anims: &[],
+                            depth_seed: None,
+                        }],
+                        mesh::Source::of(file),
+                        mesh::InitialMaterial::WEAPON_EXTERNAL,
+                    )
+                    .into_iter()
+                    .next()
+                })
+                .flatten()
+            {
+                if blaster.triangle_count() != 0 {
+                    pack_mesh(
+                        &mut writer,
+                        &mut tex_index,
+                        &mut mat_anim_index,
+                        &mat_anim_data,
+                        Texels {
+                            home: file,
+                            all: &loaded.files,
+                        },
+                        id,
+                        BLASTER_DISPLAY_LIST,
+                        &blaster,
+                        swizzle,
+                    );
+                    meshes += 1;
+                    triangles += blaster.triangle_count();
                 }
             }
         }
@@ -6697,6 +6746,20 @@ fn extract(path: &Path, opts: &[&str]) -> Res {
 /// joint, and `decode_length` requires all of them to agree. `--verify` adds
 /// the second, independent reading — the lengths `tools/gen-anim-table.py`
 /// computed from the decompilation's hand-written C sources.
+/// Inspect selected figatree file durations without adding temporary
+/// fighter slots to the pack (useful when porting character statuses).
+fn anim_length(path: &Path, ids: &[&str]) -> Res {
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    for raw in ids {
+        let id: u32 = raw.parse()?;
+        let file = archive.load(id)?;
+        let length = ssb_rom::anim::decode_length(id, &file)?;
+        println!("{id}: {length:?}");
+    }
+    Ok(())
+}
+
 fn anims(path: &Path, opts: &[&str]) -> Res {
     use ssb_rom::anim;
 

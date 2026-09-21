@@ -42,7 +42,7 @@
 //! animation running out, because animation data is not extracted — see
 //! [`StatusTiming`].
 
-use ssb_engine::input::{newly_pressed, N64Buttons};
+use ssb_engine::input::{newly_pressed, newly_released, N64Buttons};
 use ssb_engine::math::{Vec2, Vec3};
 
 use crate::collision::{self, Segment};
@@ -177,6 +177,9 @@ pub const ATTACKLW4_BUFFER_TICS_MAX: u8 = 4;
 /// forward smash really does use this branch rather than the 3-way one.
 const ATTACKS4_5ANGLE_TAN_21: f32 = 0.383_864_04;
 const ATTACKS4_5ANGLE_TAN_7: f32 = 0.122_784_56;
+/// Fox has all five forward-tilt motion files; source thresholds are ±30° and ±10°.
+const ATTACKS3_5ANGLE_TAN_30: f32 = 0.577_350_26;
+const ATTACKS3_5ANGLE_TAN_10: f32 = 0.176_326_98;
 
 /// A fighter's status, with `FTCommonStatus` ordinals preserved exactly —
 /// the complete common table (0..=219), transcribed from
@@ -611,6 +614,36 @@ pub enum MarioStatus {
     SpecialAirLw = 228,
 }
 
+/// Fox's extended statuses (`ftfox.h`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum FoxStatus {
+    Attack100Start = 220,
+    Attack100Loop = 221,
+    Attack100End = 222,
+    SpecialN = 225,
+    SpecialAirN = 226,
+    SpecialHiStart = 227,
+    SpecialAirHiStart = 228,
+    SpecialHiHold = 229,
+    SpecialAirHiHold = 230,
+    SpecialHi = 231,
+    SpecialAirHi = 232,
+    SpecialHiEnd = 233,
+    SpecialAirHiEnd = 234,
+    SpecialAirHiBound = 235,
+    SpecialLwStart = 236,
+    SpecialLwHit = 237,
+    SpecialLwEnd = 238,
+    SpecialLwLoop = 239,
+    SpecialLwTurn = 240,
+    SpecialAirLwStart = 241,
+    SpecialAirLwHit = 242,
+    SpecialAirLwEnd = 243,
+    SpecialAirLwLoop = 244,
+    SpecialAirLwTurn = 245,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -620,6 +653,7 @@ pub enum MarioStatus {
 pub enum AnyStatus {
     Common(Status),
     Mario(MarioStatus),
+    Fox(FoxStatus),
 }
 
 impl AnyStatus {
@@ -636,6 +670,20 @@ impl AnyStatus {
             AnyStatus::Mario(
                 MarioStatus::SpecialAirN | MarioStatus::SpecialAirHi | MarioStatus::SpecialAirLw,
             ) => false,
+            AnyStatus::Fox(
+                FoxStatus::SpecialAirN
+                | FoxStatus::SpecialAirHiStart
+                | FoxStatus::SpecialAirHiHold
+                | FoxStatus::SpecialAirHi
+                | FoxStatus::SpecialAirHiEnd
+                | FoxStatus::SpecialAirHiBound
+                | FoxStatus::SpecialAirLwStart
+                | FoxStatus::SpecialAirLwHit
+                | FoxStatus::SpecialAirLwEnd
+                | FoxStatus::SpecialAirLwLoop
+                | FoxStatus::SpecialAirLwTurn,
+            ) => false,
+            AnyStatus::Fox(_) => true,
         }
     }
 
@@ -643,6 +691,7 @@ impl AnyStatus {
         match self {
             AnyStatus::Common(s) => s.is_actionable_on_ground(),
             AnyStatus::Mario(_) => false,
+            AnyStatus::Fox(_) => false,
         }
     }
 
@@ -650,6 +699,7 @@ impl AnyStatus {
         match self {
             AnyStatus::Common(s) => s.is_walk(),
             AnyStatus::Mario(_) => false,
+            AnyStatus::Fox(_) => false,
         }
     }
 
@@ -666,6 +716,32 @@ impl AnyStatus {
             AnyStatus::Mario(MarioStatus::SpecialLw) => 24,
             AnyStatus::Mario(MarioStatus::SpecialAirLw) => 25,
             AnyStatus::Mario(MarioStatus::Attack13) => Status::Wait.anim_slot(),
+            AnyStatus::Fox(s) => match s {
+                FoxStatus::Attack100Start => 28,
+                FoxStatus::Attack100Loop => 29,
+                FoxStatus::Attack100End => 30,
+                FoxStatus::SpecialN => 47,
+                FoxStatus::SpecialAirN => 48,
+                FoxStatus::SpecialHiStart => 49,
+                FoxStatus::SpecialAirHiStart => 50,
+                FoxStatus::SpecialHiHold => 51,
+                FoxStatus::SpecialAirHiHold => 52,
+                FoxStatus::SpecialHi => 53,
+                FoxStatus::SpecialAirHi => 54,
+                FoxStatus::SpecialHiEnd => 55,
+                FoxStatus::SpecialAirHiEnd => 56,
+                FoxStatus::SpecialAirHiBound => 57,
+                FoxStatus::SpecialLwStart => 58,
+                FoxStatus::SpecialLwTurn => 59,
+                FoxStatus::SpecialLwHit => 60,
+                FoxStatus::SpecialLwLoop => 61,
+                FoxStatus::SpecialAirLwStart => 62,
+                FoxStatus::SpecialAirLwTurn => 63,
+                FoxStatus::SpecialAirLwHit => 64,
+                FoxStatus::SpecialAirLwLoop => 65,
+                FoxStatus::SpecialLwEnd => 66,
+                FoxStatus::SpecialAirLwEnd => 67,
+            },
         }
     }
 
@@ -674,6 +750,7 @@ impl AnyStatus {
         match self {
             AnyStatus::Common(s) => s.anim_speed(),
             AnyStatus::Mario(_) => 1.0,
+            AnyStatus::Fox(_) => 1.0,
         }
     }
 }
@@ -1322,6 +1399,32 @@ pub struct MarioSpecialNState {
     pub spawned: bool,
 }
 
+/// Fox's Blaster event flags: each status entry fires once, then B can
+/// restart the move after the source script's flag-1 gate.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FoxSpecialNState {
+    pub spawned: bool,
+}
+
+/// `ftFoxSpecialHiStatusVars`, retained across ground/air switches.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct FoxSpecialHiState {
+    pub gravity_delay: u8,
+    pub launch_delay: u8,
+    pub travel_frames: u8,
+    pub decelerate_wait: u8,
+    pub angle: f32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FoxSpecialLwState {
+    pub release_lag: u8,
+    pub released: bool,
+    pub gravity_delay: u8,
+    pub turn_frames: u8,
+    pub turned: bool,
+}
+
 /// `ftMarioSpecialLwStatusVars` plus the persistent tornado-rise expenditure.
 /// Flag 3 gates B-tap rises; flag 1 starts reducing the horizontal clamp at
 /// the finisher; flag 2 permanently spends the aerial rise until the fighter
@@ -1394,6 +1497,300 @@ pub fn set_mario_special_air_n(f: &mut Fighter) {
     f.mario_special_n = MarioSpecialNState::default();
 }
 
+/// `ftFoxSpecialNSetStatus` / `ftFoxSpecialAirNSetStatus`; durations from
+/// US ROM figatree files 779 and 780.
+pub fn set_fox_special_n(f: &mut Fighter) {
+    let (status, length) = if f.situation == Situation::Ground {
+        (FoxStatus::SpecialN, 55.0)
+    } else {
+        (FoxStatus::SpecialAirN, 45.0)
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(length));
+    f.fox_special_n = FoxSpecialNState::default();
+}
+
+/// `ftFoxSpecialLwStartSetStatus` and aerial counterpart.
+pub fn set_fox_special_lw_start(f: &mut Fighter) {
+    let ground = f.situation == Situation::Ground;
+    let status = if ground {
+        FoxStatus::SpecialLwStart
+    } else {
+        FoxStatus::SpecialAirLwStart
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(4.0));
+    f.fox_special_lw = FoxSpecialLwState {
+        release_lag: 18,
+        gravity_delay: 4,
+        ..Default::default()
+    };
+    if !ground {
+        f.physics.vel_air.y = 0.0;
+        f.physics.vel_air.x /= 2.0;
+    }
+}
+
+fn set_fox_special_lw_phase(f: &mut Fighter, phase: u8) {
+    let ground = f.situation == Situation::Ground;
+    let (status, timing) = match (phase, ground) {
+        (0, true) => (FoxStatus::SpecialLwLoop, StatusTiming::unknown()),
+        (0, false) => (FoxStatus::SpecialAirLwLoop, StatusTiming::unknown()),
+        (1, true) => (FoxStatus::SpecialLwTurn, StatusTiming::unknown()),
+        (1, false) => (FoxStatus::SpecialAirLwTurn, StatusTiming::unknown()),
+        (2, true) => (FoxStatus::SpecialLwEnd, StatusTiming::frames(18.0)),
+        (_, false) => (FoxStatus::SpecialAirLwEnd, StatusTiming::frames(18.0)),
+        _ => unreachable!(),
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, timing);
+    if phase == 1 {
+        f.fox_special_lw.turn_frames = 4;
+        f.fox_special_lw.turned = false;
+    }
+}
+
+/// Reflector's hit response, entered by the match weapon collision pass.
+pub fn set_fox_special_lw_hit(f: &mut Fighter) {
+    let status = if f.situation == Situation::Ground {
+        FoxStatus::SpecialLwHit
+    } else {
+        FoxStatus::SpecialAirLwHit
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(6.0));
+}
+
+/// `ftFoxSpecialAirLwCommonProcPhysics`.
+pub fn apply_fox_special_lw_air_physics(f: &mut Fighter) {
+    if f.fox_special_lw.gravity_delay > 0 {
+        f.fox_special_lw.gravity_delay -= 1;
+    } else {
+        physics::apply_gravity_clamp_tvel(&mut f.physics, 0.8, f.attributes.tvel_base);
+    }
+    if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {
+        physics::apply_air_friction(&mut f.physics, &f.attributes);
+    }
+}
+
+/// `ftFoxSpecialHiStartSetStatus` and aerial counterpart.
+pub fn set_fox_special_hi_start(f: &mut Fighter) {
+    let ground = f.situation == Situation::Ground;
+    let status = if ground {
+        FoxStatus::SpecialHiStart
+    } else {
+        FoxStatus::SpecialAirHiStart
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(8.0));
+    f.fox_special_hi = FoxSpecialHiState {
+        gravity_delay: 15,
+        ..Default::default()
+    };
+    if ground {
+        f.physics.vel_ground.x /= 2.0;
+    } else {
+        f.physics.vel_air.y = 0.0;
+        f.physics.vel_air.x /= 2.0;
+    }
+}
+
+fn set_fox_special_hi_hold(f: &mut Fighter) {
+    let status = if f.situation == Situation::Ground {
+        FoxStatus::SpecialHiHold
+    } else {
+        FoxStatus::SpecialAirHiHold
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::unknown());
+    f.fox_special_hi.launch_delay = 35;
+}
+
+fn set_fox_special_hi_travel(f: &mut Fighter) {
+    let x = f.stick.x as f32;
+    let y = f.stick.y as f32;
+    let angled = x.abs() + y.abs() >= 45.0;
+    let ground_normal = f
+        .floor
+        .map(|floor| floor.normal)
+        .unwrap_or(Vec2::new(0.0, 1.0));
+    // The ground branch is selected when the stick points into the floor.
+    let on_ground = f.situation == Situation::Ground
+        && angled
+        && ground_normal.x * x + ground_normal.y * y <= 0.0;
+    if angled && x.abs() >= 11.0 {
+        f.facing = if x < 0.0 { Facing::Left } else { Facing::Right };
+    }
+    let angle = if on_ground {
+        ssb_engine::math::atan2(-ground_normal.x * f.facing.sign(), ground_normal.y)
+    } else if angled {
+        ssb_engine::math::atan2(y, x * f.facing.sign())
+    } else {
+        core::f32::consts::FRAC_PI_2
+    };
+    let status = if on_ground {
+        FoxStatus::SpecialHi
+    } else {
+        FoxStatus::SpecialAirHi
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::unknown());
+    f.fox_special_hi.angle = angle;
+    f.fox_special_hi.travel_frames = 30;
+    f.fox_special_hi.decelerate_wait = 0;
+    if on_ground {
+        f.physics.vel_ground.x = 115.0 * f.facing.sign();
+    } else {
+        let (sin, cos) = ssb_engine::math::sin_cos(angle);
+        f.physics.vel_air.x = cos * 115.0 * f.facing.sign();
+        f.physics.vel_air.y = sin * 115.0;
+        f.physics.jumps_used = f.attributes.jumps_max;
+    }
+}
+
+fn set_fox_special_hi_end(f: &mut Fighter) {
+    let status = if f.situation == Situation::Ground {
+        FoxStatus::SpecialHiEnd
+    } else {
+        FoxStatus::SpecialAirHiEnd
+    };
+    let length = if f.situation == Situation::Ground {
+        29.0
+    } else {
+        20.0
+    };
+    set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(length));
+}
+
+/// Floor-only portion of `ftFoxSpecialAirHiProcMap`. The source redirects a
+/// shallow collision along the surface and keeps the travel status airborne.
+/// Steeper contact enters bound if its approach exceeds 110 degrees from the
+/// surface normal; other contacts finish on the ground.
+pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -> bool {
+    if f.status.status != AnyStatus::Fox(FoxStatus::SpecialAirHi) {
+        return false;
+    }
+    let velocity = f.physics.vel_air;
+    let speed = ssb_engine::math::sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+    if speed <= 0.0 {
+        f.land(floor_y);
+        set_fox_special_hi_end(f);
+        return true;
+    }
+    let dot = normal.x * velocity.x + normal.y * velocity.y;
+    let similarity = dot / (1.0 + speed);
+    if similarity <= 0.0 && similarity >= -0.342_020_15 {
+        let orientation = if normal.x * velocity.y - normal.y * velocity.x < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        f.physics.vel_air.x = -normal.y * speed * orientation;
+        f.physics.vel_air.y = normal.x * speed * orientation;
+        f.facing = if f.physics.vel_air.x >= 0.0 {
+            Facing::Right
+        } else {
+            Facing::Left
+        };
+        f.fox_special_hi.angle =
+            ssb_engine::math::atan2(f.physics.vel_air.y, f.physics.vel_air.x * f.facing.sign());
+        f.pos.y = floor_y;
+        return true;
+    }
+    if dot / speed < -0.342_020_15 {
+        f.land(floor_y);
+        set_any_status(
+            f,
+            AnyStatus::Fox(FoxStatus::SpecialAirHiBound),
+            0.0,
+            StatusTiming::frames(20.0),
+        );
+    } else {
+        f.land(floor_y);
+        set_fox_special_hi_end(f);
+    }
+    true
+}
+
+/// Fire Fox's own physics callbacks; the launched phase has no normal gravity.
+pub fn apply_fox_special_hi_air_physics(f: &mut Fighter) {
+    match f.status.status {
+        AnyStatus::Fox(FoxStatus::SpecialAirHiStart | FoxStatus::SpecialAirHiHold) => {
+            if f.fox_special_hi.gravity_delay > 0 {
+                f.fox_special_hi.gravity_delay -= 1;
+            } else {
+                physics::apply_gravity_clamp_tvel(&mut f.physics, 0.5, f.attributes.tvel_base);
+            }
+            if !physics::check_clamp_air_vel_x_dec(&mut f.physics, f.attributes.air_speed_max_x) {
+                physics::apply_air_friction(&mut f.physics, &f.attributes);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirHi) => {
+            f.fox_special_hi.decelerate_wait = f.fox_special_hi.decelerate_wait.saturating_add(1);
+            if f.fox_special_hi.decelerate_wait >= 2 {
+                let (sin, cos) = ssb_engine::math::sin_cos(f.fox_special_hi.angle);
+                f.physics.vel_air.x -= 3.035_714_4 * cos * f.facing.sign();
+                f.physics.vel_air.y -= 3.035_714_4 * sin;
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound) => {
+            physics::apply_gravity_default(&mut f.physics, &f.attributes);
+            physics::apply_air_friction(&mut f.physics, &f.attributes);
+        }
+        _ => {}
+    }
+}
+
+pub fn apply_fox_special_hi_ground_physics(f: &mut Fighter) {
+    if f.status.status == AnyStatus::Fox(FoxStatus::SpecialHi) {
+        f.fox_special_hi.decelerate_wait = f.fox_special_hi.decelerate_wait.saturating_add(1);
+        if f.fox_special_hi.decelerate_wait >= 2 {
+            physics::apply_ground_friction(&mut f.physics, 3.035_714_4);
+        }
+    } else {
+        physics::apply_ground_friction(&mut f.physics, 1.5);
+    }
+}
+
+/// Ground-to-air map callback for Fire Fox's corresponding phases.
+pub fn switch_fox_special_hi_air(f: &mut Fighter) {
+    let (status, timing) = match f.status.status {
+        AnyStatus::Fox(FoxStatus::SpecialHiStart) => {
+            (FoxStatus::SpecialAirHiStart, StatusTiming::frames(8.0))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHiHold) => {
+            (FoxStatus::SpecialAirHiHold, StatusTiming::unknown())
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHi) => (FoxStatus::SpecialAirHi, StatusTiming::unknown()),
+        AnyStatus::Fox(FoxStatus::SpecialHiEnd) => {
+            (FoxStatus::SpecialAirHiEnd, StatusTiming::frames(20.0))
+        }
+        _ => return,
+    };
+    set_any_status(f, AnyStatus::Fox(status), f.status.anim_frame, timing);
+    if matches!(
+        status,
+        FoxStatus::SpecialAirHiStart | FoxStatus::SpecialAirHiHold
+    ) {
+        physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+    }
+}
+
+pub fn switch_fox_special_lw_air(f: &mut Fighter) {
+    let (status, timing) = match f.status.status {
+        AnyStatus::Fox(FoxStatus::SpecialLwStart) => {
+            (FoxStatus::SpecialAirLwStart, StatusTiming::frames(4.0))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwLoop) => {
+            (FoxStatus::SpecialAirLwLoop, StatusTiming::unknown())
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwHit) => {
+            (FoxStatus::SpecialAirLwHit, StatusTiming::frames(6.0))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwEnd) => {
+            (FoxStatus::SpecialAirLwEnd, StatusTiming::frames(18.0))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwTurn) => {
+            (FoxStatus::SpecialAirLwTurn, StatusTiming::unknown())
+        }
+        _ => return,
+    };
+    set_any_status(f, AnyStatus::Fox(status), f.status.anim_frame, timing);
+}
+
 /// `ftMarioSpecialAirNSwitchStatusGround` @ 0x80155F4C.
 pub fn switch_mario_fireball_ground(f: &mut Fighter) {
     set_any_status(
@@ -1416,11 +1813,13 @@ pub fn switch_mario_fireball_air(f: &mut Fighter) {
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
-/// `ftCommonSpecialNCheckInterruptCommon` @ 0x80151098, restricted to
-/// Mario. Neutral B is strictly between the up/down-special thresholds.
+/// `ftCommonSpecialNCheckInterruptCommon` @ 0x80151098 for Mario and Fox.
+/// Neutral B is strictly between the up/down-special thresholds.
 pub fn check_special_n(f: &mut Fighter) -> bool {
-    if f.kind != crate::fighter::FighterKind::Mario
-        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+    if !matches!(
+        f.kind,
+        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+    ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
         return false;
@@ -1428,10 +1827,16 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
     if f.stick.forward(f.facing) < SPECIALN_TURN_STICK_MIN {
         f.facing = f.facing.flipped();
     }
-    if f.situation == Situation::Ground {
-        set_mario_special_n(f);
-    } else {
-        set_mario_special_air_n(f);
+    match f.kind {
+        crate::fighter::FighterKind::Mario => {
+            if f.situation == Situation::Ground {
+                set_mario_special_n(f);
+            } else {
+                set_mario_special_air_n(f);
+            }
+        }
+        crate::fighter::FighterKind::Fox => set_fox_special_n(f),
+        _ => unreachable!(),
     }
     true
 }
@@ -1463,13 +1868,17 @@ pub fn set_mario_special_air_hi(f: &mut Fighter) {
 /// `ftCommonSpecialHiCheckInterruptCommon` @ 0x80151160, limited to Mario:
 /// B edge plus an upward stick. Every other fighter remains unported here.
 pub fn check_special_hi(f: &mut Fighter) -> bool {
-    if f.kind != crate::fighter::FighterKind::Mario
-        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+    if !matches!(
+        f.kind,
+        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+    ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.situation == Situation::Ground {
+    if f.kind == crate::fighter::FighterKind::Fox {
+        set_fox_special_hi_start(f);
+    } else if f.situation == Situation::Ground {
         set_mario_special_hi(f);
     } else {
         set_mario_special_air_hi(f);
@@ -1592,13 +2001,17 @@ pub fn switch_mario_tornado_air(f: &mut Fighter) {
 
 /// `ftCommonSpecialLwCheckInterruptCommon`, restricted to Mario.
 pub fn check_special_lw(f: &mut Fighter) -> bool {
-    if f.kind != crate::fighter::FighterKind::Mario
-        || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+    if !matches!(
+        f.kind,
+        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+    ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.situation == Situation::Ground {
+    if f.kind == crate::fighter::FighterKind::Fox {
+        set_fox_special_lw_start(f);
+    } else if f.situation == Situation::Ground {
         set_mario_special_lw(f);
     } else {
         set_mario_special_air_lw(f);
@@ -1694,6 +2107,10 @@ pub const ATTACK1_FOLLOWUP_FRAMES_DEFAULT: f32 = 24.0;
 pub struct Attack1State {
     pub followup_frames: f32,
     pub is_goto_followup: bool,
+    /// Fox rapid-jab input count. Source counts both A taps and releases.
+    pub rapid_input_count: u8,
+    pub rapid_requested: bool,
+    pub rapid_keep_loop: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -2179,6 +2596,52 @@ fn set_landing_air_null(f: &mut Fighter, percent: u8) {
 /// isn't ported for yet, or that has no aerial `MoveData` (its
 /// `landing_lag_percent` is only meaningful there).
 pub fn set_landing_or_landing_air(f: &mut Fighter) {
+    let fox_reflector_ground = match f.status.status {
+        AnyStatus::Fox(FoxStatus::SpecialAirLwStart) => {
+            Some((FoxStatus::SpecialLwStart, StatusTiming::frames(4.0)))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirLwLoop) => {
+            Some((FoxStatus::SpecialLwLoop, StatusTiming::unknown()))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirLwHit) => {
+            Some((FoxStatus::SpecialLwHit, StatusTiming::frames(6.0)))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirLwEnd) => {
+            Some((FoxStatus::SpecialLwEnd, StatusTiming::frames(18.0)))
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirLwTurn) => {
+            Some((FoxStatus::SpecialLwTurn, StatusTiming::unknown()))
+        }
+        _ => None,
+    };
+    if let Some((status, timing)) = fox_reflector_ground {
+        set_any_status(f, AnyStatus::Fox(status), f.status.anim_frame, timing);
+        return;
+    }
+    let fox_ground = match f.status.status {
+        AnyStatus::Fox(FoxStatus::SpecialAirHiStart) => Some((FoxStatus::SpecialHiStart, 8.0)),
+        AnyStatus::Fox(FoxStatus::SpecialAirHiHold) => Some((FoxStatus::SpecialHiHold, 0.0)),
+        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd) => Some((FoxStatus::SpecialHiEnd, 29.0)),
+        _ => None,
+    };
+    if let Some((status, length)) = fox_ground {
+        let timing = if length == 0.0 {
+            StatusTiming::unknown()
+        } else {
+            StatusTiming::frames(length)
+        };
+        set_any_status(f, AnyStatus::Fox(status), f.status.anim_frame, timing);
+        return;
+    }
+    if f.status.status == AnyStatus::Fox(FoxStatus::SpecialAirHi) {
+        set_any_status(
+            f,
+            AnyStatus::Fox(FoxStatus::SpecialHiEnd),
+            0.0,
+            StatusTiming::frames(29.0),
+        );
+        return;
+    }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirN) {
         return switch_mario_fireball_ground(f);
     }
@@ -2191,6 +2654,12 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
     match current {
         Status::AttackAirF => set_landing_air(f, Status::LandingAirF),
         Status::AttackAirB => set_landing_air(f, Status::LandingAirB),
+        Status::AttackAirHi | Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Fox => {
+            let percent = crate::attack::move_data(f.kind, current.into())
+                .and_then(|m| m.landing_lag_percent)
+                .unwrap_or(100);
+            set_landing_air_null(f, percent);
+        }
         Status::AttackAirHi => set_landing_air(f, Status::LandingAirHi),
         Status::AttackAirLw => set_landing_air(f, Status::LandingAirLw),
         Status::AttackAirN => {
@@ -2243,11 +2712,12 @@ pub fn set_attack11(f: &mut Fighter) {
         f,
         Status::Attack11,
         0.0,
-        StatusTiming::frames(crate::attack::MARIO_ATTACK11_LENGTH_FRAMES),
+        StatusTiming::frames(attack_length(f, Status::Attack11)),
     );
     f.attack1 = Attack1State {
         followup_frames: ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
         is_goto_followup: false,
+        ..Attack1State::default()
     };
 }
 
@@ -2258,10 +2728,61 @@ pub fn set_attack11(f: &mut Fighter) {
 pub fn set_attack12(f: &mut Fighter) {
     let len = attack_length(f, Status::Attack12);
     set_status(f, Status::Attack12, 0.0, StatusTiming::frames(len));
+    let rapid_input_count = f.attack1.rapid_input_count;
+    let rapid_requested = f.attack1.rapid_requested;
     f.attack1 = Attack1State {
         followup_frames: ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
         is_goto_followup: false,
+        rapid_input_count,
+        rapid_requested,
+        rapid_keep_loop: false,
     };
+}
+
+fn fox_rapid_input(f: &mut Fighter) {
+    if f.kind != crate::fighter::FighterKind::Fox {
+        return;
+    }
+    if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
+        || newly_released(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
+    {
+        f.attack1.rapid_input_count = f.attack1.rapid_input_count.saturating_add(1);
+        if f.attack1.rapid_input_count >= 4 {
+            f.attack1.rapid_requested = true;
+        }
+    }
+}
+
+fn set_fox_rapid_start(f: &mut Fighter) {
+    // ROM figatree file 753, `FTFoxAnimJabLoopStart`: 8 frames.
+    set_any_status(
+        f,
+        AnyStatus::Fox(FoxStatus::Attack100Start),
+        0.0,
+        StatusTiming::frames(8.0),
+    );
+    f.attack1.rapid_keep_loop = false;
+}
+
+fn set_fox_rapid_loop(f: &mut Fighter) {
+    // File 754 loops; its motion script has five pulse windows over 32 frames.
+    set_any_status(
+        f,
+        AnyStatus::Fox(FoxStatus::Attack100Loop),
+        0.0,
+        StatusTiming::frames(32.0),
+    );
+    f.attack1.rapid_keep_loop = false;
+}
+
+fn set_fox_rapid_end(f: &mut Fighter) {
+    // ROM figatree file 755, `FTFoxAnimJabLoopEnd`: 8 frames.
+    set_any_status(
+        f,
+        AnyStatus::Fox(FoxStatus::Attack100End),
+        0.0,
+        StatusTiming::frames(8.0),
+    );
 }
 
 /// Frame length for a status from `crate::attack::move_data`, or `0.0` if
@@ -2287,7 +2808,17 @@ pub fn set_dash_attack(f: &mut Fighter) {
 pub fn set_ftilt(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
-    let status = if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
+    let status = if f.kind == crate::fighter::FighterKind::Fox
+        && y > ATTACKS3_5ANGLE_TAN_30 * x.abs()
+    {
+        Status::AttackS3Hi
+    } else if f.kind == crate::fighter::FighterKind::Fox && y > ATTACKS3_5ANGLE_TAN_10 * x.abs() {
+        Status::AttackS3HiS
+    } else if f.kind == crate::fighter::FighterKind::Fox && y < -ATTACKS3_5ANGLE_TAN_30 * x.abs() {
+        Status::AttackS3Lw
+    } else if f.kind == crate::fighter::FighterKind::Fox && y < -ATTACKS3_5ANGLE_TAN_10 * x.abs() {
+        Status::AttackS3LwS
+    } else if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
         Status::AttackS3Hi
     } else if y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() {
         Status::AttackS3Lw
@@ -2330,7 +2861,9 @@ pub fn set_air_attack(f: &mut Fighter, status: Status) {
 pub fn set_fsmash(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
-    let status = if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
+    let status = if f.kind == crate::fighter::FighterKind::Fox {
+        Status::AttackS4
+    } else if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
         Status::AttackS4Hi
     } else if y > ATTACKS4_5ANGLE_TAN_7 * x.abs() {
         Status::AttackS4HiS
@@ -2779,6 +3312,7 @@ pub fn update(f: &mut Fighter) {
         // `ftcommonattack1.c:75,349`, collapsed into one check — see
         // `Attack1State`'s doc comment for why that is safe.
         Status::Attack11 => {
+            fox_rapid_input(f);
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
                 if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
@@ -2801,6 +3335,7 @@ pub fn update(f: &mut Fighter) {
         // `ftCommonAttack13CheckFighterKind` does, rather than assuming
         // every fighter does.
         Status::Attack12 => {
+            fox_rapid_input(f);
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
                 if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
@@ -2808,9 +3343,13 @@ pub fn update(f: &mut Fighter) {
                 }
             }
             if f.status.animation_ended() {
-                match (f.attack1.is_goto_followup, attack13_status(f.kind)) {
-                    (true, Some(status)) => set_attack13(f, status),
-                    _ => set_wait(f),
+                if f.kind == crate::fighter::FighterKind::Fox && f.attack1.rapid_requested {
+                    set_fox_rapid_start(f);
+                } else {
+                    match (f.attack1.is_goto_followup, attack13_status(f.kind)) {
+                        (true, Some(status)) => set_attack13(f, status),
+                        _ => set_wait(f),
+                    }
                 }
             }
         }
@@ -2824,7 +3363,9 @@ pub fn update(f: &mut Fighter) {
         // override at all, so the default is the same.
         Status::AttackDash
         | Status::AttackS3Hi
+        | Status::AttackS3HiS
         | Status::AttackS3
+        | Status::AttackS3LwS
         | Status::AttackS3Lw
         | Status::AttackHi3
         | Status::AttackS4Hi
@@ -3112,6 +3653,160 @@ fn update_extended(f: &mut Fighter) {
             }
             if f.status.animation_ended() {
                 set_fall(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::Attack100Start) => {
+            if f.status.animation_ended() {
+                set_fox_rapid_loop(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::Attack100Loop) => {
+            // `ftCommonAttack100LoopProcInterrupt` records either A edge.
+            if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
+                || newly_released(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
+            {
+                f.attack1.rapid_keep_loop = true;
+            }
+            if f.status.animation_ended() {
+                if f.attack1.rapid_keep_loop {
+                    set_fox_rapid_loop(f);
+                } else {
+                    set_fox_rapid_end(f);
+                }
+            }
+        }
+        AnyStatus::Fox(FoxStatus::Attack100End) => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialN | FoxStatus::SpecialAirN) => {
+            let spawn_frame = if f.status.status == AnyStatus::Fox(FoxStatus::SpecialN) {
+                25.0
+            } else {
+                15.0
+            };
+            if f.status.anim_frame >= spawn_frame && !f.fox_special_n.spawned {
+                f.fox_special_n.spawned = true;
+                f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
+                    kind: crate::weapon::WeaponKind::FoxBlaster,
+                    owner_port: f.port,
+                    position: f.weapon_spawn_anchor.unwrap_or(ssb_engine::math::Vec3::new(
+                        f.pos.x + 60.0 * f.facing.sign(),
+                        f.pos.y,
+                        f.pos.z,
+                    )),
+                    facing: f.facing.sign(),
+                });
+            }
+            let repeat_frame = if f.status.status == AnyStatus::Fox(FoxStatus::SpecialN) {
+                29.0
+            } else {
+                15.0
+            };
+            if f.status.anim_frame >= repeat_frame
+                && newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
+            {
+                set_fox_special_n(f);
+            } else if f.status.animation_ended() {
+                if f.situation == Situation::Ground {
+                    set_wait(f);
+                } else {
+                    set_fall(f);
+                }
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHiStart | FoxStatus::SpecialAirHiStart) => {
+            if f.status.animation_ended() {
+                set_fox_special_hi_hold(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHiHold | FoxStatus::SpecialAirHiHold) => {
+            if f.fox_special_hi.launch_delay > 0 {
+                f.fox_special_hi.launch_delay -= 1;
+            }
+            if f.fox_special_hi.launch_delay == 0 {
+                set_fox_special_hi_travel(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHi | FoxStatus::SpecialAirHi) => {
+            if f.fox_special_hi.travel_frames > 0 {
+                f.fox_special_hi.travel_frames -= 1;
+            }
+            if f.fox_special_hi.travel_frames == 0 {
+                set_fox_special_hi_end(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialHiEnd) => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialAirHiEnd | FoxStatus::SpecialAirHiBound) => {
+            if f.status.animation_ended() {
+                set_fall_special(f, 1.0, false, true, 0.34, true);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart) => {
+            if !f.input.buttons.contains(N64Buttons::B) {
+                f.fox_special_lw.released = true;
+            }
+            if f.status.animation_ended() {
+                set_fox_special_lw_phase(f, 0);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwLoop | FoxStatus::SpecialAirLwLoop) => {
+            if !f.input.buttons.contains(N64Buttons::B) {
+                f.fox_special_lw.released = true;
+            }
+            f.fox_special_lw.release_lag = f.fox_special_lw.release_lag.saturating_sub(1);
+            if f.fox_special_lw.released && f.fox_special_lw.release_lag == 0 {
+                set_fox_special_lw_phase(f, 2);
+            } else if f.stick.forward(f.facing) <= TURN_STICK_MIN {
+                set_fox_special_lw_phase(f, 1);
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwTurn | FoxStatus::SpecialAirLwTurn) => {
+            if !f.input.buttons.contains(N64Buttons::B) {
+                f.fox_special_lw.released = true;
+            }
+            f.fox_special_lw.release_lag = f.fox_special_lw.release_lag.saturating_sub(1);
+            f.fox_special_lw.turn_frames = f.fox_special_lw.turn_frames.saturating_sub(1);
+            if !f.fox_special_lw.turned {
+                f.facing = f.facing.flipped();
+                f.fox_special_lw.turned = true;
+            }
+            if f.fox_special_lw.turn_frames == 0 {
+                if f.fox_special_lw.released && f.fox_special_lw.release_lag == 0 {
+                    set_fox_special_lw_phase(f, 2);
+                } else {
+                    set_fox_special_lw_phase(f, 0);
+                }
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwHit | FoxStatus::SpecialAirLwHit) => {
+            if !f.input.buttons.contains(N64Buttons::B) {
+                f.fox_special_lw.released = true;
+            }
+            f.fox_special_lw.release_lag = f.fox_special_lw.release_lag.saturating_sub(1);
+            if f.status.animation_ended() {
+                set_fox_special_lw_phase(
+                    f,
+                    if f.fox_special_lw.released && f.fox_special_lw.release_lag == 0 {
+                        2
+                    } else {
+                        0
+                    },
+                );
+            }
+        }
+        AnyStatus::Fox(FoxStatus::SpecialLwEnd | FoxStatus::SpecialAirLwEnd) => {
+            if f.status.animation_ended() {
+                if f.situation == Situation::Ground {
+                    set_wait(f);
+                } else {
+                    set_fall(f);
+                }
             }
         }
         AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
@@ -3985,6 +4680,154 @@ mod tests {
         tap_a(&mut f);
         assert!(check_attack1(&mut f));
         assert_eq!(f.status.status, Status::Attack11);
+    }
+
+    #[test]
+    fn fox_jab_uses_fox_script_length_and_five_angle_tilt() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        set_attack11(&mut f);
+        assert_eq!(f.status.timing.anim_length, Some(10.0));
+        f.stick.x = 80;
+        f.stick.y = 20;
+        set_ftilt(&mut f);
+        assert_eq!(f.status.status, Status::AttackS3HiS);
+        assert_eq!(f.status.timing.anim_length, Some(14.0));
+        set_fsmash(&mut f);
+        assert_eq!(f.status.status, Status::AttackS4);
+    }
+
+    #[test]
+    fn fire_fox_floor_contact_redirects_shallow_and_bounds_steep() {
+        let normal = Vec2::new(0.0, 1.0);
+        let mut fox = Fighter::new(FighterKind::Fox, 0, 3);
+        fox.situation = Situation::Air;
+        fox.status.status = AnyStatus::Fox(FoxStatus::SpecialAirHi);
+        fox.physics.vel_air.x = 100.0;
+        fox.physics.vel_air.y = -10.0;
+        assert!(fox_fire_fox_floor_contact(&mut fox, normal, 0.0));
+        assert_eq!(fox.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHi));
+        assert!(fox.physics.vel_air.x > 100.0);
+        assert_eq!(fox.physics.vel_air.y, 0.0);
+        assert_eq!(fox.situation, Situation::Air);
+
+        fox.physics.vel_air.x = 10.0;
+        fox.physics.vel_air.y = -100.0;
+        assert!(fox_fire_fox_floor_contact(&mut fox, normal, 0.0));
+        assert_eq!(
+            fox.status.status,
+            AnyStatus::Fox(FoxStatus::SpecialAirHiBound)
+        );
+        assert_eq!(fox.situation, Situation::Air);
+    }
+
+    #[test]
+    fn fox_rapid_jab_counts_press_and_release_then_exits_after_idle_cycle() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        set_attack11(&mut f);
+        for held in [true, false, true, false] {
+            f.prev_input = f.input;
+            f.input.buttons.set(N64Buttons::A, held);
+            fox_rapid_input(&mut f);
+        }
+        assert_eq!(f.attack1.rapid_input_count, 4);
+        assert!(f.attack1.rapid_requested);
+        set_attack12(&mut f);
+        assert_eq!(f.attack1.rapid_input_count, 4);
+        f.prev_input = f.input;
+        f.status.anim_frame = 10.0;
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Start));
+        f.status.anim_frame = 8.0;
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100Loop));
+        f.status.anim_frame = 32.0;
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::Attack100End));
+        f.status.anim_frame = 8.0;
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Wait);
+    }
+
+    #[test]
+    fn fox_fire_fox_charges_then_launches_and_enters_freefall() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        f.situation = Situation::Air;
+        f.stick.x = 0;
+        f.stick.y = 80;
+        set_fox_special_hi_start(&mut f);
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Fox(FoxStatus::SpecialAirHiStart)
+        );
+        assert_eq!(f.fox_special_hi.gravity_delay, 15);
+        for _ in 0..8 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHiHold));
+        for _ in 0..34 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHiHold));
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHi));
+        assert!((f.physics.vel_air.y - 115.0).abs() < 0.01);
+        for _ in 0..30 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialAirHiEnd));
+        for _ in 0..20 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Common(Status::FallSpecial));
+        assert_eq!(f.fall_special.landing_lag, 0.34);
+    }
+
+    #[test]
+    fn fox_reflector_holds_until_release_lag_then_ends() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        f.situation = Situation::Ground;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        set_fox_special_lw_start(&mut f);
+        for _ in 0..4 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwLoop));
+        f.input.buttons = N64Buttons::default();
+        for _ in 0..17 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwLoop));
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialLwEnd));
+    }
+
+    #[test]
+    fn fox_neutral_b_spawns_once_and_tap_restarts_after_gate() {
+        let mut f = Fighter::new(FighterKind::Fox, 0, 3);
+        f.situation = Situation::Ground;
+        set_fox_special_n(&mut f);
+        f.status.anim_frame = 23.0;
+        update(&mut f);
+        assert!(f.weapon_spawn.is_none());
+        f.status.anim_frame = 24.0;
+        update(&mut f);
+        let shot = f.weapon_spawn.take().unwrap();
+        assert_eq!(shot.kind, crate::weapon::WeaponKind::FoxBlaster);
+        assert_eq!(shot.position.x, 60.0);
+        f.status.anim_frame = 27.0;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        update(&mut f);
+        assert_eq!(f.status.anim_frame, 28.0);
+        f.prev_input = f.input;
+        f.input.buttons = N64Buttons::default();
+        f.status.anim_frame = 28.0;
+        update(&mut f);
+        f.prev_input = f.input;
+        f.input.buttons = N64Buttons(N64Buttons::B);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Fox(FoxStatus::SpecialN));
+        assert_eq!(f.status.anim_frame, 0.0);
+        assert!(!f.fox_special_n.spawned);
     }
 
     #[test]

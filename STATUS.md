@@ -5,7 +5,34 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **fighter shadows** are complete for the shared
+Current subsystem/batch: **Fox full moveset (complete)**. Fox's US normal
+attack motion scripts (jab 1/2, dash, five forward tilts, up/down tilt,
+forward/up/down smash, and five aerials) are transcribed into portable
+`MoveData`, including replacement and rearmed multi-hit windows. Fox's
+five-angle forward tilt and single-angle forward smash now select the
+source's available motions. The decomp's `ftMainParseMotionEvent` confirmed
+that `WaitAsync(n)` targets animation frame `n` (it does not add `n` frames;
+RE-303), and the Fox transcription uses that rule. Targeted `ssb-game` tests pass.
+Fox's rapid jab now has its own start/loop/end statuses, counts both A press
+and release toward the source's four-edge threshold, and uses ROM-verified
+8-frame start/end clips and five sourced loop hit pulses. Neutral B has
+ROM-verified 55/45-frame ground/air clips, frame-25/15 shot events,
+repeat-on-B gate, joint-17 plus 60 attachment sampling, and a match-owned
+Blaster with sourced US damage, speed, and map/hit deletion. Fire Fox now has
+start/hold/travel/end phases, sourced launch delays, angle selection, travel
+deceleration, and common freefall exit. Reflector has start/loop/turn/hit/end
+phases, release lag, ground/air transitions, a sourced two-frame startup
+hitbox, the packed source effect hierarchy, and match-owned Fireball/Blaster
+reflection with ownership and US damage scaling. Fire Fox redirects shallow
+floor contacts and enters its bound state on steep impacts. All 42 Fox move
+clips are packed and selected by status; Training renders the match-owned
+Blaster's source display list with its authored X-scale growth. Workspace
+tests, both release PSP EBOOT builds, exact ROM/pack animation replay, and a
+PPSSPPHeadless Fox Training smoke pass. Fighter collision still has no
+wall/ceiling solver, so Fire Fox's corresponding map callbacks remain a
+shared collision limitation.
+
+Previously, **fighter shadows** were completed for the shared
 Training/runtime renderer (RE-302). The source floor-strip path, texture,
 render state, lifecycle conditions, fixed-capacity multi-fighter submission,
 pack rebuild and deterministic PPSSPP capture are all implemented. Mario's
@@ -222,8 +249,8 @@ Punch and Tornado; source `ClearAttackCollAll` boundaries re-arm a fixed-size
 per-target hit record even when adjacent windows never leave an idle frame,
 while a sourspot replacement without a clear remains one hit. Focused host
 tests cover both cases, and deterministic PPSSPP B+up input exercises the
-rendered Training path. Next: begin the next complete fighter under `P2`
-(Fox in roster order), including its full moveset rather than isolated moves.
+rendered Training path. Next: port Donkey Kong under `P2` as the next complete
+fighter batch.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position

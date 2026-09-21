@@ -32,6 +32,7 @@ use ssb_game::status::AnyStatus;
 use ssb_game::status::Status;
 use ssb_game::weapon::{MapSurface, MapSurfaceKind};
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
+use ssb_rom::pack::ObjectDesc;
 
 /// Mario Special1's direct weapon display list. Unlike fighters and stages,
 /// the source descriptor names geometry directly instead of through a graph.
@@ -46,6 +47,26 @@ pub fn mario_fireball_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
             mesh.source_file == MARIO_FIREBALL_SOURCE_FILE
                 && mesh.source_offset == MARIO_FIREBALL_SOURCE_OFFSET
         })
+}
+
+/// Fox Special1's `WPAttributes.data` resolves to this direct weapon list.
+pub const FOX_BLASTER_SOURCE_FILE: u32 = 316;
+pub const FOX_BLASTER_SOURCE_OFFSET: u32 = 0x40;
+
+pub fn fox_blaster_mesh(pack: &Pack<'_>) -> Option<MeshDesc> {
+    (0..pack.mesh_count())
+        .filter_map(|i| pack.mesh(i))
+        .find(|mesh| {
+            mesh.source_file == FOX_BLASTER_SOURCE_FILE
+                && mesh.source_offset == FOX_BLASTER_SOURCE_OFFSET
+        })
+}
+
+/// Fox Special2's three-entry Reflector effect hierarchy.
+pub fn fox_reflector_object(pack: &Pack<'_>) -> Option<ObjectDesc> {
+    (0..pack.object_count())
+        .filter_map(|i| pack.object(i))
+        .find(|object| object.source_file == 346 && object.source_offset == 0x2B0)
 }
 
 /// Walks a stage's floor polylines as the `(line_id, segment)` pairs the
@@ -343,7 +364,31 @@ pub fn tick_skeleton_animation(
     skeleton: &mut ssb_rom::skeleton::Skeleton,
     started: &mut Option<AnyStatus>,
 ) -> Option<ssb_rom::figatree::JointPose> {
-    let slot = status.anim_slot() as u32;
+    let slot = if kind == FighterKind::Fox as u32 {
+        match status {
+            AnyStatus::Common(Status::Attack11) => 26,
+            AnyStatus::Common(Status::Attack12) => 27,
+            AnyStatus::Common(Status::AttackDash) => 31,
+            AnyStatus::Common(Status::AttackS3Hi) => 32,
+            AnyStatus::Common(Status::AttackS3HiS) => 33,
+            AnyStatus::Common(Status::AttackS3) => 34,
+            AnyStatus::Common(Status::AttackS3LwS) => 35,
+            AnyStatus::Common(Status::AttackS3Lw) => 36,
+            AnyStatus::Common(Status::AttackHi3) => 37,
+            AnyStatus::Common(Status::AttackLw3) => 38,
+            AnyStatus::Common(Status::AttackS4) => 39,
+            AnyStatus::Common(Status::AttackHi4) => 40,
+            AnyStatus::Common(Status::AttackLw4) => 41,
+            AnyStatus::Common(Status::AttackAirN) => 42,
+            AnyStatus::Common(Status::AttackAirF) => 43,
+            AnyStatus::Common(Status::AttackAirB) => 44,
+            AnyStatus::Common(Status::AttackAirHi) => 45,
+            AnyStatus::Common(Status::AttackAirLw) => 46,
+            _ => status.anim_slot(),
+        }
+    } else {
+        status.anim_slot()
+    } as u32;
     if *started != Some(status) {
         *started = Some(status);
         if let Some(anim) = pack.fighter_anim(kind, slot) {
@@ -519,7 +564,18 @@ impl FighterScene {
                     | ssb_game::status::MarioStatus::SpecialAirN
             )
         ) {
-            if let Some(anchor) = self.mario_fireball_anchor(pack) {
+            if let Some(anchor) = self.weapon_anchor(pack, 16, 0.0) {
+                self.fighter.set_weapon_spawn_anchor(anchor);
+            }
+        }
+        if matches!(
+            self.fighter.status.status,
+            AnyStatus::Fox(
+                ssb_game::status::FoxStatus::SpecialN
+                    | ssb_game::status::FoxStatus::SpecialAirN
+            )
+        ) {
+            if let Some(anchor) = self.weapon_anchor(pack, 17, 60.0) {
                 self.fighter.set_weapon_spawn_anchor(anchor);
             }
         }
@@ -622,18 +678,19 @@ impl FighterScene {
         );
     }
 
-    /// `gmCollisionGetFighterPartsWorldPosition(fp->joints[16])`, mapped from
-    /// the portable skeleton matrix before this frame's status callback can
-    /// consume the frame-16 Fireball event. The model is authored facing +Z;
-    /// [`facing_turn`] rotates that axis onto the match X axis at render time,
-    /// so apply the same mapping here rather than guessing an attachment
-    /// offset in gameplay code.
-    fn mario_fireball_anchor(&self, pack: &Pack<'_>) -> Option<ssb_engine::math::Vec3> {
-        const FIREBALL_SPAWN_JOINT: usize = 16;
+    /// Maps an authored weapon attachment joint and forward offset into
+    /// match coordinates before the fighter's motion event consumes it.
+    /// Mario's Fireball uses joint 16; Fox's Blaster uses joint 17 plus 60.
+    fn weapon_anchor(
+        &self,
+        pack: &Pack<'_>,
+        joint: usize,
+        offset_x: f32,
+    ) -> Option<ssb_engine::math::Vec3> {
         let object = pack.object(self.object)?;
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let count = self.skeleton.compose(pack, &object, &mut posed);
-        let node = self.skeleton.joint_node(FIREBALL_SPAWN_JOINT)?;
+        let node = self.skeleton.joint_node(joint)?;
         let local_index = node.checked_sub(object.first_node)? as usize;
         if local_index >= count {
             return None;
@@ -642,7 +699,7 @@ impl FighterScene {
         let scale = ssb_rom::pack::MODEL_SCALE;
         let facing = self.fighter.facing.sign();
         Some(ssb_engine::math::Vec3::new(
-            self.fighter.pos.x + local[2] * scale * facing,
+            self.fighter.pos.x + (local[2] * scale + offset_x) * facing,
             self.fighter.pos.y + local[1] * scale,
             self.fighter.pos.z - local[0] * scale * facing,
         ))

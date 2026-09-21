@@ -365,6 +365,45 @@ pub fn sin_cos(v: f32) -> (f32, f32) {
     (sin_poly(v), sin_poly(v + core::f32::consts::FRAC_PI_2))
 }
 
+/// Four-quadrant arctangent for gameplay directions on host and PSP.
+#[cfg(feature = "std")]
+#[inline]
+pub fn atan2(y: f32, x: f32) -> f32 {
+    y.atan2(x)
+}
+
+#[cfg(not(feature = "std"))]
+pub fn atan2(y: f32, x: f32) -> f32 {
+    if x == 0.0 {
+        return if y < 0.0 {
+            -core::f32::consts::FRAC_PI_2
+        } else {
+            core::f32::consts::FRAC_PI_2
+        };
+    }
+    // Approximate atan on [-1, 1], with the larger axis factored out to
+    // avoid large ratios.
+    let ax = x.abs();
+    let ay = y.abs();
+    let z = ax.min(ay) / ax.max(ay);
+    let angle = z * (core::f32::consts::FRAC_PI_4 + 0.273 * (1.0 - z));
+    let angle = if ay > ax {
+        core::f32::consts::FRAC_PI_2 - angle
+    } else {
+        angle
+    };
+    let angle = if x < 0.0 {
+        core::f32::consts::PI - angle
+    } else {
+        angle
+    };
+    if y < 0.0 {
+        -angle
+    } else {
+        angle
+    }
+}
+
 /// Tangent (radians). Public for the same reason as [`sin_cos`].
 #[cfg(feature = "std")]
 #[inline]

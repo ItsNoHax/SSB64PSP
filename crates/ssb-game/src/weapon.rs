@@ -40,6 +40,8 @@ pub struct MapSurface {
 pub enum WeaponKind {
     /// `nWPKindFireball`, created by Mario's `SpecialN` accessory callback.
     MarioFireball,
+    /// `nWPKindBlaster`, created by Fox's neutral special.
+    FoxBlaster,
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -83,12 +85,74 @@ pub const MARIO_FIREBALL_HITBOX: Hitbox = Hitbox {
     kb_base: 10,
 };
 
+/// Fox Special1's US `WPAttributes` and `WPBLASTER_VEL_X`.
+pub const FOX_BLASTER_SPEED: f32 = 160.0;
+pub const FOX_BLASTER_HITBOX: Hitbox = Hitbox {
+    damage: 6,
+    offset: Vec3::ZERO,
+    radius: 40.0,
+    angle: 10,
+    kb_scale: 100,
+    kb_weight: 1,
+    kb_base: 0,
+};
+pub const FOX_BLASTER_MAP_COLL: BodyColl = BodyColl {
+    top: 10.0,
+    center: 0.0,
+    bottom: -10.0,
+    width: 10.0,
+};
+
+/// Source `wpFoxBlaster`: horizontal velocity and a display scale that grows
+/// by `16/3` per tick to `160/3` (the scale is presentation data only).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FoxBlaster {
+    pub owner_port: u8,
+    pub damage: i32,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub scale_x: f32,
+}
+
+impl FoxBlaster {
+    fn new(spawn: WeaponSpawn) -> Self {
+        Self {
+            owner_port: spawn.owner_port,
+            damage: FOX_BLASTER_HITBOX.damage,
+            position: spawn.position,
+            velocity: Vec3::new(spawn.facing * FOX_BLASTER_SPEED, 0.0, 0.0),
+            scale_x: 1.0,
+        }
+    }
+
+    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        self.scale_x = (self.scale_x + 16.0 / 3.0).min(160.0 / 3.0);
+        let wanted = self.position + self.velocity;
+        if map_contact(surfaces(), self.position, wanted, FOX_BLASTER_MAP_COLL).is_some() {
+            return false;
+        }
+        self.position = wanted;
+        true
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Weapon {
+    Fireball(MarioFireball),
+    Blaster(FoxBlaster),
+}
+
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
 /// the owner port survives long enough to exclude self-hits while the object
 /// has its own position, velocity, lifetime, and collision result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarioFireball {
     pub owner_port: u8,
+    pub damage: i32,
     pub position: Vec3,
     pub velocity: Vec3,
     pub lifetime: u16,
@@ -99,6 +163,7 @@ impl MarioFireball {
         let (sin, cos) = sin_cos(MARIO_FIREBALL_ANGLE);
         MarioFireball {
             owner_port: spawn.owner_port,
+            damage: MARIO_FIREBALL_HITBOX.damage,
             position: spawn.position,
             velocity: Vec3::new(
                 MARIO_FIREBALL_SPEED * cos * spawn.facing,
@@ -131,7 +196,7 @@ impl MarioFireball {
         self.velocity.y =
             (self.velocity.y - MARIO_FIREBALL_GRAVITY).max(-MARIO_FIREBALL_TERMINAL_VELOCITY);
         let wanted = self.position + self.velocity;
-        if let Some(hit) = map_contact(surfaces(), self.position, wanted) {
+        if let Some(hit) = map_contact(surfaces(), self.position, wanted, MARIO_FIREBALL_MAP_COLL) {
             self.position = hit.position;
             let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
             self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * MARIO_FIREBALL_REBOUND;
@@ -148,13 +213,13 @@ impl MarioFireball {
 
 /// The portable stand-in for `wpManager`'s live-object list. It is fixed-size
 /// so PSP gameplay stays allocation-free; a full four-player game has room
-/// for sixteen simultaneous weapons while the first Fireball batch consumes
-/// only one slot per use.
+/// for sixteen simultaneous weapons while Fireball and Blaster each consume
+/// one slot per shot.
 pub const MAX_WEAPONS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
-    slots: [Option<MarioFireball>; MAX_WEAPONS],
+    slots: [Option<Weapon>; MAX_WEAPONS],
 }
 
 impl Default for WeaponPool {
@@ -174,37 +239,88 @@ impl WeaponPool {
             return false;
         };
         *slot = Some(match spawn.kind {
-            WeaponKind::MarioFireball => MarioFireball::new(spawn),
+            WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn)),
+            WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
         });
         true
     }
 
-    /// Advances lifetime, gravity, movement, and the portable stage rebound
-    /// path once. Call this once per match frame, before [`Self::apply_hits`].
+    /// Advances each weapon's source physics and map callback once. Call this
+    /// once per match frame, before [`Self::apply_hits`].
     pub fn tick<I, F>(&mut self, surfaces: F)
     where
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
     {
         for slot in &mut self.slots {
-            if let Some(fireball) = slot.as_mut() {
-                if !fireball.tick(surfaces) {
+            if let Some(weapon) = slot.as_mut() {
+                let alive = match weapon {
+                    Weapon::Fireball(fireball) => fireball.tick(surfaces),
+                    Weapon::Blaster(blaster) => blaster.tick(surfaces),
+                };
+                if !alive {
                     *slot = None;
                 }
             }
         }
     }
 
-    /// Resolves every eligible Fireball against one fighter. A collision
-    /// deletes the projectile through `wpMarioFireballProcHit`; invincibility
-    /// leaves it live, exactly like a non-registered source hitbox.
+    /// Resolves every eligible weapon against one fighter. Fireball and
+    /// Blaster both delete on registered contact; invincibility leaves the
+    /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
         for slot in &mut self.slots {
-            let Some(fireball) = slot else { continue };
-            if fireball.owner_port == defender.port {
+            let Some(weapon) = slot else { continue };
+            let (owner, mut hitbox, position) = match weapon {
+                Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
+                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
+            };
+            if owner == defender.port {
                 continue;
             }
-            if attack::apply_hitbox_at(&MARIO_FIREBALL_HITBOX, fireball.position, defender) {
+            if defender.kind == crate::fighter::FighterKind::Fox
+                && matches!(
+                    defender.status.status,
+                    crate::status::AnyStatus::Fox(
+                        crate::status::FoxStatus::SpecialLwLoop
+                            | crate::status::FoxStatus::SpecialLwTurn
+                            | crate::status::FoxStatus::SpecialAirLwLoop
+                            | crate::status::FoxStatus::SpecialAirLwTurn
+                    )
+                )
+            {
+                let dx = position.x - defender.pos.x;
+                let dy = position.y - (defender.pos.y + 60.0);
+                if dx * dx + dy * dy <= 350.0 * 350.0 {
+                    // `wpMainReflectorSetLR`: turn X toward Fox's facing,
+                    // transfer ownership, and apply the US 1.8x + 0.99 bonus.
+                    match weapon {
+                        Weapon::Fireball(f) => {
+                            f.owner_port = defender.port;
+                            if f.velocity.x * defender.facing.sign() < 0.0 {
+                                f.velocity.x = -f.velocity.x;
+                            }
+                            f.lifetime = MARIO_FIREBALL_LIFETIME;
+                            f.damage = ((f.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                        }
+                        Weapon::Blaster(b) => {
+                            b.owner_port = defender.port;
+                            if b.velocity.x * defender.facing.sign() < 0.0 {
+                                b.velocity.x = -b.velocity.x;
+                            }
+                            b.scale_x = 1.0;
+                            b.damage = ((b.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                        }
+                    }
+                    crate::status::set_fox_special_lw_hit(defender);
+                    continue;
+                }
+            }
+            hitbox.damage = match weapon {
+                Weapon::Fireball(f) => f.damage,
+                Weapon::Blaster(b) => b.damage,
+            };
+            if attack::apply_hitbox_at(&hitbox, position, defender) {
                 *slot = None;
             }
         }
@@ -215,13 +331,23 @@ impl WeaponPool {
     }
 
     pub fn first_fireball(&self) -> Option<MarioFireball> {
-        self.slots.iter().flatten().copied().next()
+        self.fireballs().next()
     }
 
     /// Every live Fireball, for the runtime presentation layer. The pool
     /// remains the sole owner of weapon state; renderers receive snapshots.
     pub fn fireballs(&self) -> impl Iterator<Item = MarioFireball> + '_ {
-        self.slots.iter().flatten().copied()
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Fireball(f) => Some(*f),
+            Weapon::Blaster(_) => None,
+        })
+    }
+
+    pub fn blasters(&self) -> impl Iterator<Item = FoxBlaster> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Blaster(b) => Some(*b),
+            Weapon::Fireball(_) => None,
+        })
     }
 }
 
@@ -232,11 +358,11 @@ struct MapContact {
     time: f32,
 }
 
-/// Finds the first one-sided contact of Mario's authored map-collision
-/// diamond. `mpProcessUpdateMain` performs this before `wpMapCheckAllRebound`;
+/// Finds the first one-sided contact of a weapon's authored map-collision
+/// diamond. `mpProcessUpdateMain` performs this before weapon map callbacks;
 /// support-point sweeping is the allocation-free equivalent of its individual
 /// bottom/top/side probes for a weapon that has one symmetric diamond.
-fn map_contact<I>(surfaces: I, from: Vec3, to: Vec3) -> Option<MapContact>
+fn map_contact<I>(surfaces: I, from: Vec3, to: Vec3, coll: BodyColl) -> Option<MapContact>
 where
     I: IntoIterator<Item = MapSurface>,
 {
@@ -251,7 +377,7 @@ where
         if delta.x * normal.x + delta.y * normal.y >= 0.0 {
             continue;
         }
-        let support = diamond_support_toward_surface(normal);
+        let support = diamond_support_toward_surface(normal, coll);
         let probe_from = Vec2::new(from.x + support.x, from.y + support.y);
         let probe_to = Vec2::new(to.x + support.x, to.y + support.y);
         let Some(time) = swept_segment_intersection(probe_from, probe_to, surface.segment) else {
@@ -271,18 +397,12 @@ where
 
 /// The diamond point farthest *into* a surface, matching the source map
 /// collision extents `(top, center, bottom, width)`.
-fn diamond_support_toward_surface(normal: Vec2) -> Vec2 {
+fn diamond_support_toward_surface(normal: Vec2, coll: BodyColl) -> Vec2 {
     let candidates = [
-        Vec2::new(0.0, MARIO_FIREBALL_MAP_COLL.top),
-        Vec2::new(
-            MARIO_FIREBALL_MAP_COLL.width,
-            MARIO_FIREBALL_MAP_COLL.center,
-        ),
-        Vec2::new(0.0, MARIO_FIREBALL_MAP_COLL.bottom),
-        Vec2::new(
-            -MARIO_FIREBALL_MAP_COLL.width,
-            MARIO_FIREBALL_MAP_COLL.center,
-        ),
+        Vec2::new(0.0, coll.top),
+        Vec2::new(coll.width, coll.center),
+        Vec2::new(0.0, coll.bottom),
+        Vec2::new(-coll.width, coll.center),
     ];
     candidates
         .into_iter()
@@ -375,6 +495,63 @@ mod tests {
     }
 
     #[test]
+    fn fox_blaster_moves_straight_and_hits_once() {
+        let mut weapons = WeaponPool::default();
+        assert!(weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::FoxBlaster,
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        }));
+        assert_eq!(weapons.blasters().next().unwrap().velocity.x, 160.0);
+        weapons.tick(open_air);
+        let shot = weapons.blasters().next().unwrap();
+        assert_eq!(shot.position.x, 160.0);
+        assert_eq!(shot.scale_x, 1.0 + 16.0 / 3.0);
+        let mut owner = Fighter::new(FighterKind::Fox, 0, 3);
+        owner.pos = shot.position;
+        weapons.apply_hits(&mut owner);
+        assert_eq!(weapons.active_count(), 1);
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.pos = shot.position;
+        target.situation = Situation::Ground;
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 6);
+        assert_eq!(weapons.active_count(), 0);
+    }
+
+    #[test]
+    fn fox_reflector_transfers_fireball_ownership_and_reverses_it() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::MarioFireball,
+            owner_port: 0,
+            position: Vec3::new(100.0, 60.0, 0.0),
+            facing: -1.0,
+        });
+        let mut fox = Fighter::new(FighterKind::Fox, 1, 3);
+        fox.pos = Vec3::ZERO;
+        fox.situation = Situation::Ground;
+        crate::status::set_fox_special_lw_start(&mut fox);
+        crate::status::set_any_status(
+            &mut fox,
+            crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwLoop),
+            0.0,
+            crate::status::StatusTiming::unknown(),
+        );
+        weapons.apply_hits(&mut fox);
+        let fireball = weapons.first_fireball().unwrap();
+        assert_eq!(fireball.owner_port, fox.port);
+        assert!(fireball.velocity.x > 0.0);
+        assert_eq!(fireball.damage, 13);
+        assert_eq!(fox.damage, 0);
+        assert_eq!(
+            fox.status.status,
+            crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialLwHit)
+        );
+    }
+
+    #[test]
     fn a_fireball_hits_an_opponent_once_and_never_its_owner() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
@@ -441,7 +618,8 @@ mod tests {
         for (surface, delta, normal) in cases {
             let from = Vec3::ZERO;
             let to = from + delta;
-            let hit = map_contact([surface], from, to).expect("the diamond reaches the map line");
+            let hit = map_contact([surface], from, to, MARIO_FIREBALL_MAP_COLL)
+                .expect("the diamond reaches the map line");
             assert_eq!(hit.position, Vec3::ZERO);
             assert_eq!(hit.normal, Vec2::new(normal.x, normal.y));
             let dot = delta.x * hit.normal.x + delta.y * hit.normal.y;
