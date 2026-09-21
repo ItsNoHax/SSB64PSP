@@ -79,6 +79,12 @@ has no `TEXEL1` consumer. `SetLFrac`/`TextureIDNext` need the RDP's two-tile
 fractional blend and remain a documented GE limitation, not a guessed
 substitute (RE-301).
 
+RE-304 pins sampling alignment after this affine transform: the live MObj
+scale/translation is evaluated in N64 texture space first, then the GE linear
+kernel's `+0.5 / uploaded_dim` centre correction is added. Animation therefore
+cannot scale or translate the correction, and animated and static materials
+share one convention.
+
 The sparse live stage `PrimColor`/`Light1Color`/`Light2Color` tracks are also
 explicitly limited: those values feed baked stage shade scale or an absent
 stage GE-light context. They are not falsely replayed as static colour;

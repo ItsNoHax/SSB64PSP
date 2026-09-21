@@ -125,6 +125,18 @@ pub fn authored_uv_tex_scale(uploaded_dim: u32) -> f32 {
     (VERTEX_16BIT_DIVISOR / 32.0) / uploaded_dim.max(1) as f32
 }
 
+/// Normalised GE coordinate correction which makes an integer N64 texel
+/// coordinate land on that texel's centre.  Measured by RE-304: point mode
+/// already selects the integer texel and needs no correction; linear mode's
+/// kernel is centred on half-integers and needs +0.5 texel.
+pub fn ge_sample_offset(linear: bool, uploaded_dim: u32) -> f32 {
+    if linear {
+        0.5 / uploaded_dim.max(1) as f32
+    } else {
+        0.0
+    }
+}
+
 /// `sceGuTexScale` factor for one axis of a `G_TEXTURE_GEN` primitive drawn
 /// through the GE's environment-map coordinate generator.
 ///
@@ -930,6 +942,13 @@ mod tests {
         assert!((u - 1.0 / 64.0).abs() < 1e-6, "{u}");
         // Never divides by zero.
         assert!(authored_uv_tex_scale(0).is_finite());
+    }
+
+    #[test]
+    fn ge_sample_offset_distinguishes_point_and_filtered_alignment() {
+        assert_eq!(ge_sample_offset(false, 4), 0.0);
+        assert_eq!(ge_sample_offset(true, 4), 0.125);
+        assert_eq!(ge_sample_offset(true, 16), 0.03125);
     }
 
     /// Every real `G_TEXTURE` scale/tile pairing `romtool texgen` measured in

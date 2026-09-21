@@ -346,9 +346,29 @@ Status: COMPLETE for ROM-backed assets
 
 ### Texture filtering
 
-Status: `ACCEPTED_DEVIATION` (RE-219), bounded corrections (RE-263/264)
+Status: `ACCEPTED_DEVIATION` (RE-219), sampling alignment verified (RE-304), bounded corrections (RE-263/264)
 
-RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`, matching the PSP path's `Linear` filter *mode* only; RE-219 built a host-side 3-point reference sampler (`crates/ssb-rom/src/n64_filter.rs`, transcribed from `angrylion-rdp-plus`) and measured it against PSP's symmetric four-tap bilinear archive-wide: 684 real textures, 5.73% of interior sample points differ by ≥8/255, 1.19% by ≥32/255; the already-flagged Dream Land canopy highlight texture (file 103 offset `0x5F0`) reaches the maximum 128/255 diff with a 6.4/255 mean across its own interior. RE-263/264 tie Kirby's and Ness's false eye spikes to the same fixed-function gap and pin mild reconstruction corrections to their exact neutral-face texture keys
+RE-304 separates coordinate alignment from the still-deferred 3-point
+reconstruction problem. A deterministic GE rig samples unique-colour 2x2 and
+4x4 RGBA textures at centres, halves, odd 1/32 steps, diagonals, and
+clamp/repeat/pre-baked-mirror boundaries. Both PPSSPP software and a PSP Slim
+produce the same interior probe values. The measured convention is:
+
+* point: N64 texel coordinate `n` is submitted as `n` (no bias);
+* linear: submit `n + 0.5`, equivalently add 16 S10.5 units or
+  `0.5 / uploaded_dim` to the normalized GE coordinate;
+* the GE truncates bilinear fractions to four bits (`31/32 -> 15/16`) and
+  truncates the final channel result.
+
+This explains the `filter_bias = 16.0f` used by the SM64-derived PSP renderer
+also present in `refs/oot-PSP`, but the value is adopted here from the SSB64
+S10.5 derivation and direct measurements, not by copying that renderer.
+`sample_bilinear()` now models the measured GE precision. The runtime adds the
+linear correction after authored-UV normalization, after live MObj UV affine
+state, and in the regular texgen texture matrix; CPU-generated linear texgen
+uses the authored path and therefore receives the same correction once.
+
+RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`, matching the PSP path's `Linear` filter *mode* only; RE-219 built a host-side 3-point reference sampler (`crates/ssb-rom/src/n64_filter.rs`, transcribed from `angrylion-rdp-plus`) and measured it against PSP's symmetric four-tap bilinear archive-wide. RE-304 corrects that sampler's former idealized 5-bit/rounded GE arithmetic; this changes the precise error census and it must be rerun before reusing RE-219's old percentages. The qualitative fixed-function deviation remains. RE-263/264 tie Kirby's and Ness's false eye spikes to the same gap and pin mild reconstruction corrections to their exact neutral-face texture keys
 
 **Remaining work:** The PSP GE has only `Nearest`/`Linear` and no programmable shader stage, so exact archive-wide three-point filtering still requires abandoning hardware texturing. `Linear` remains the general approximation; only evidence-backed, file+offset-scoped prefilters are permitted for visibly material outliers
 

@@ -5,7 +5,18 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **Fox full moveset (complete)**. Fox's US normal
+Current subsystem/batch: **PSP texture sampling alignment (complete,
+RE-304)**. A deterministic synthetic 2x2/4x4 GE rig measured point and
+filtered sampling at centres, halves, odd S10.5 steps, diagonals, and
+clamp/repeat/pre-baked-mirror boundaries. PPSSPP software and real PSP agree
+on all 96 interior readbacks: point needs no bias; filtered coordinates need
+`+0.5` texel, then the GE uses four-bit truncated bilinear weights and
+truncating channel arithmetic. The host `sample_bilinear()` and shared PSP
+runtime lowering are corrected. Authored UVs, animated MObj UVs, ordinary
+texgen and CPU linear texgen now receive the convention exactly once. No
+N64 3-point compensation was implemented.
+
+Previous gameplay subsystem/batch: **Fox full moveset (complete)**. Fox's US normal
 attack motion scripts (jab 1/2, dash, five forward tilts, up/down tilt,
 forward/up/down smash, and five aerials) are transcribed into portable
 `MoveData`, including replacement and rearmed multi-hit windows. Fox's
