@@ -11,7 +11,9 @@ The real-UV/archive pipeline emits 406 immutable variants, keeps 274 in CI4,
 promotes 132 to RGBA8888 under a measured cost gate, and reduces selected
 variants' average error from 1.947/255 to 0.876/255. The pack grows 2.67%; all
 selected variants have non-increasing max error, and animated indexed palette
-semantics remain untouched. The prerequisite sampling work (RE-304) used a
+semantics remain untouched. The full 13-fighter deterministic PPSSPP matrix
+was rebaselined for the intentional filter change and passes at zero differing
+pixels. The prerequisite sampling work (RE-304) used a
 deterministic synthetic 2x2/4x4 GE rig measuring point and
 filtered sampling at centres, halves, odd S10.5 steps, diagonals, and
 clamp/repeat/pre-baked-mirror boundaries. PPSSPP software and real PSP agree
