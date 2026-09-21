@@ -346,9 +346,9 @@ Status: COMPLETE for ROM-backed assets
 
 ### Texture filtering
 
-Status: `ACCEPTED_DEVIATION` (RE-219), sampling alignment verified (RE-304), bounded corrections (RE-263/264)
+Status: COMPENSATED where measured-material (RE-305); exact fixed-function deviation remains (RE-219); sampling alignment verified (RE-304)
 
-RE-304 separates coordinate alignment from the still-deferred 3-point
+RE-304 separates coordinate alignment from the 3-point
 reconstruction problem. A deterministic GE rig samples unique-colour 2x2 and
 4x4 RGBA textures at centres, halves, odd 1/32 steps, diagonals, and
 clamp/repeat/pre-baked-mirror boundaries. Both PPSSPP software and a PSP Slim
@@ -368,9 +368,11 @@ linear correction after authored-UV normalization, after live MObj UV affine
 state, and in the regular texgen texture matrix; CPU-generated linear texgen
 uses the authored path and therefore receives the same correction once.
 
-RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`, matching the PSP path's `Linear` filter *mode* only; RE-219 built a host-side 3-point reference sampler (`crates/ssb-rom/src/n64_filter.rs`, transcribed from `angrylion-rdp-plus`) and measured it against PSP's symmetric four-tap bilinear archive-wide. RE-304 corrects that sampler's former idealized 5-bit/rounded GE arithmetic; this changes the precise error census and it must be rerun before reusing RE-219's old percentages. The qualitative fixed-function deviation remains. RE-263/264 tie Kirby's and Ness's false eye spikes to the same gap and pin mild reconstruction corrections to their exact neutral-face texture keys
+RE-124 measured all 151/151 real `G_MDSFT_TEXTFILT` commands as `G_TF_BILERP`, matching the PSP path's `Linear` filter *mode* only; RE-219 built a host-side 3-point reference sampler (`crates/ssb-rom/src/n64_filter.rs`, transcribed from `angrylion-rdp-plus`) and measured it against PSP's symmetric four-tap bilinear archive-wide. The post-RE-304 census covers 684 textures and 11,288,880 samples: 5.647% differ by >=8/255 and 1.057% by >=32/255.
 
-**Remaining work:** The PSP GE has only `Nearest`/`Linear` and no programmable shader stage, so exact archive-wide three-point filtering still requires abandoning hardware texturing. `Linear` remains the general approximation; only evidence-backed, file+offset-scoped prefilters are permitted for visibly material outliers
+RE-305 replaces the four old hand-authored blur exceptions with one measured build-time solve. Authored triangles supply real S10.5 barycentric UV coverage; texgen conservatively uses dense tile coverage. Candidates must reduce exact integer-sampler SSE and threshold counts without increasing max error. CI4/CI8 first retain their existing palette; promotion to RGBA8888 requires >=25% SSE improvement and <=64 KiB level-0 cost. Animated indexed textures are deliberately unchanged so duplicate palette entries cannot silently acquire different meanings in another animation frame. The final US pack selects 406 variants (274 CI4, 132 RGBA8888), reducing their average mean error 1.947 -> 0.876/255 for 494,368 bytes level-zero cost and 783,280 bytes total pack growth.
+
+**Remaining work:** The PSP GE has only `Nearest`/`Linear` and no programmable shader stage, so a texture-only inverse cannot equal the RDP's piecewise triangular surface everywhere. Alpha preservation, animated palette semantics, and conservative texgen coverage intentionally leave residual error. RE-305 has PPSSPP/host validation but no physical-PSP spot check.
 
 
 ### Texture addressing

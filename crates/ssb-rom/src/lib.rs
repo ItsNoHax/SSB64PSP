@@ -18,6 +18,7 @@ pub mod dl;
 pub mod effect;
 pub mod figatree;
 pub mod fighter;
+pub mod filter_compensation;
 pub mod matanim;
 pub mod mesh;
 pub mod mobj;

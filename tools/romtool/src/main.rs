@@ -949,6 +949,9 @@ struct TexKey {
     mirror_t: bool,
     clamp_s: bool,
     clamp_t: bool,
+    compensation_version: u8,
+    coverage_hash: u64,
+    animated_relationship: bool,
 }
 
 #[derive(Default)]
@@ -962,7 +965,12 @@ struct MatAnimData {
     uv_tile_params: [u16; 3],
 }
 
-fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
+fn texture_cache_key(
+    id: u32,
+    t: &ssb_rom::mesh::TextureRef,
+    coverage_hash: u64,
+    animated_relationship: bool,
+) -> TexKey {
     TexKey {
         data_file: t.data_file.map_or(id, u32::from),
         data_offset: t.data_offset,
@@ -981,7 +989,49 @@ fn texture_cache_key(id: u32, t: &ssb_rom::mesh::TextureRef) -> TexKey {
         mirror_t: t.mirror_t,
         clamp_s: t.clamp_s,
         clamp_t: t.clamp_t,
+        compensation_version: ssb_rom::filter_compensation::ALGORITHM_VERSION,
+        coverage_hash,
+        animated_relationship,
     }
+}
+
+fn primitive_filter_coverage(
+    m: &ssb_rom::mesh::Mesh,
+    prim: &ssb_rom::mesh::Primitive,
+) -> Vec<[i32; 2]> {
+    let mut out = Vec::new();
+    // Ordinary authored UVs: deterministic barycentric coverage over every
+    // real triangle. Texgen coordinates depend on live normals/matrices, so
+    // the converter deliberately falls back to the conservative full-tile
+    // census for those rather than inventing coverage.
+    if prim.material.texgen_scale.is_some() {
+        return out;
+    }
+    const N: i32 = 8;
+    for tri in prim.indices.chunks_exact(3) {
+        let uv = [tri[0], tri[1], tri[2]].map(|i| m.vertices[i as usize].uv.map(i32::from));
+        for a in 0..=N {
+            for b in 0..=N - a {
+                let c = N - a - b;
+                out.push([
+                    (uv[0][0] * a + uv[1][0] * b + uv[2][0] * c) / N,
+                    (uv[0][1] * a + uv[1][1] * b + uv[2][1] * c) / N,
+                ]);
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn coverage_hash(coverage: &[[i32; 2]]) -> u64 {
+    coverage
+        .iter()
+        .flatten()
+        .fold(0xcbf29ce484222325u64, |h, &v| {
+            (h ^ v as u64).wrapping_mul(0x100000001b3)
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1031,6 +1081,9 @@ fn pack_mesh(
                     mirror_t: false,
                     clamp_s: false,
                     clamp_t: false,
+                    compensation_version: 0,
+                    coverage_hash: 0,
+                    animated_relationship: false,
                 };
                 Some(
                     *tex_index
@@ -1039,13 +1092,32 @@ fn pack_mesh(
                 )
             }
             Some(t) => {
-                let key = texture_cache_key(id, &t);
+                let coverage = primitive_filter_coverage(m, prim);
+                let animated = prim.material.mat_anim.is_some();
+                let key = texture_cache_key(id, &t, coverage_hash(&coverage), animated);
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
-                    convert_texture(src, &t, swizzle).map(|tex| {
+                    let mut compensated = false;
+                    convert_texture(
+                        src,
+                        &t,
+                        &coverage,
+                        swizzle,
+                        animated,
+                        Some(&mut compensated),
+                    )
+                    .map(|tex| {
+                        let final_key = if compensated {
+                            key
+                        } else {
+                            texture_cache_key(id, &t, 0, animated)
+                        };
+                        if let Some(&i) = tex_index.get(&final_key) {
+                            return i;
+                        }
                         let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
-                        tex_index.insert(key, i);
+                        tex_index.insert(final_key, i);
                         i
                     })
                 }
@@ -1179,7 +1251,7 @@ fn convert_mat_anim_sprite(
         data_offset: p.offset,
         ..*base
     };
-    convert_texture(src, &variant, swizzle)
+    convert_texture(src, &variant, &[], swizzle, true, None)
 }
 
 /// Every `(model_file, graph_offset)` pair either of a fighter's two
@@ -2623,7 +2695,10 @@ fn palette_bank_offset(palette_offset: u32, palette_entries: u16, palette: u8) -
 fn convert_texture(
     src: Texels<'_>,
     t: &ssb_rom::mesh::TextureRef,
+    coverage: &[[i32; 2]],
     swizzle: bool,
+    preserve_palette_semantics: bool,
+    mut compensated_out: Option<&mut bool>,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     use ssb_rom::psp_texture as psp;
     use ssb_rom::texture;
@@ -2737,47 +2812,86 @@ fn convert_texture(
         ))
     };
 
-    let source_file = t.data_file.map_or(src.home.id, u32::from);
-    let correction = texture_filter_correction(source_file, t.data_offset);
-    if let Some(filter) = correction {
-        // RE-070/RE-263/RE-264: named, evidence-based exceptions, not a general
-        // texture-content heuristic -- see `TEXTURE_FILTER_CORRECTIONS`.
-        //
-        // RE-075: blur *before* mirroring, not after. Both canopy textures
-        // mirror on both axes (RE-067). `box_blur_wrapped` wraps its 3x3
-        // sample toroidally on whatever image it's handed, so blurring after
-        // mirroring (the old order) blends each edge row/column against its
-        // own mirrored reflection rather than the texture's real periodic
-        // neighbour -- a boundary-condition difference confirmed to change
-        // real packed bytes (6724 of ~131 KiB across the two textures, i.e.
-        // only the seam-adjacent texels, not the interior), but *not*
-        // confirmed to be visible on screen at the debug viewer's default
-        // camera distance (before/after screenshots of Dream Land's canopy
-        // were pixel-identical there). Kept anyway: it costs nothing extra
-        // and the periodic order is the one that actually matches
-        // `sceGuTexWrap(Repeat, Repeat)`'s real addressing, but this is a
-        // correctness cleanup, not a claimed fix for RE-053/RE-070's
-        // still-open dithering discrepancy.
-        let img = decode_texture(file, t, (!tlut.is_empty()).then_some(tlut.as_slice()))?;
-        let blurred = match filter {
-            TextureFilterCorrection::Box => texture::box_blur_wrapped(&img),
-            TextureFilterCorrection::Mild => texture::mild_filter_wrapped(&img),
-        };
-        let mirrored = texture::mirror_extend(
-            &blurred,
-            t.mirror_s,
-            t.mirror_t,
-            t.clamp_s,
-            t.clamp_t,
-            t.drawn_width as u32,
-            t.drawn_height as u32,
-        );
-        return Some(psp::pack_mipped(&mirrored, psp::Psm::Psm8888, &[], swizzle));
-    }
-
-    let mipped = |palette: Vec<u32>| {
+    let mut mipped = |palette: Vec<u32>| {
         let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
-        Some(psp::pack_mipped(&img, psm, &palette, swizzle))
+        if psm.is_paletted() && preserve_palette_semantics {
+            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        }
+        let solved = if coverage.is_empty() {
+            ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t)
+        } else {
+            ssb_rom::filter_compensation::solve_samples(&img, t.clamp_s, t.clamp_t, coverage)
+        };
+        let Some(solved) = solved else {
+            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        };
+        let mut chosen = &solved.rgba;
+        let mut format = psm;
+        let quantized;
+        if psm.is_paletted() {
+            quantized = ssb_rom::filter_compensation::quantize_to_palette(&solved.rgba, &palette);
+            let qm = if coverage.is_empty() {
+                ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
+            } else {
+                ssb_rom::filter_compensation::measure_samples(
+                    &img, &quantized, t.clamp_s, t.clamp_t, coverage,
+                )
+            };
+            if qm.squared_error * 100 <= solved.baseline.squared_error * 95
+                && qm.above_8 < solved.baseline.above_8
+            {
+                chosen = &quantized;
+            } else {
+                // Promotion requires >=25% measured SSE improvement and is
+                // capped at 64 KiB extra per immutable variant.
+                let old_bytes = (img.width * img.height * psm.bits() as u32 / 8) as i64
+                    + (palette.len() * 4) as i64;
+                let new_bytes = (img.width * img.height * 4) as i64;
+                if solved.compensated.squared_error * 4 > solved.baseline.squared_error * 3
+                    || new_bytes - old_bytes > 65536
+                {
+                    return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+                }
+                format = psp::Psm::Psm8888;
+            }
+        } else if psm == psp::Psm::Psm5551 {
+            quantized = ssb_rom::filter_compensation::quantize_rgba5551(&solved.rgba);
+            let qm = if coverage.is_empty() {
+                ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
+            } else {
+                ssb_rom::filter_compensation::measure_samples(
+                    &img, &quantized, t.clamp_s, t.clamp_t, coverage,
+                )
+            };
+            if qm.squared_error * 100 <= solved.baseline.squared_error * 95
+                && qm.above_8 < solved.baseline.above_8
+                && qm.max <= solved.baseline.max.saturating_add(8)
+            {
+                chosen = &quantized;
+            } else {
+                let delta = (img.width * img.height * 2) as i64;
+                if solved.compensated.squared_error * 4 > solved.baseline.squared_error * 3
+                    || delta > 65536
+                {
+                    return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+                }
+                format = psp::Psm::Psm8888;
+            }
+        }
+        eprintln!("filter-comp file={} offset={:#X} {}x{} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% format={:?} memory_delta={}",
+            t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,
+            solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
+            solved.compensated.mean,solved.compensated.max,solved.compensated.percent_above_8(),solved.compensated.percent_above_32(),format,
+            (img.width*img.height*format.bits() as u32/8) as i64-(img.width*img.height*psm.bits() as u32/8) as i64);
+        if let Some(out) = compensated_out.as_deref_mut() {
+            *out = true;
+        }
+        Some(psp::pack_mipped(
+            chosen,
+            format,
+            if format.is_paletted() { &palette } else { &[] },
+            swizzle,
+        ))
     };
 
     if psm.is_paletted() && !tlut.is_empty() {
@@ -2833,58 +2947,6 @@ fn decode_texture(
         }
     }
     Some(tile)
-}
-
-/// Exact, evidence-backed texture reconstruction exceptions for PSP output.
-///
-/// The two Dream Land textures need a full box average because their dithered
-/// CI4 palette relies on the analog blur of composite video (RE-053/070).
-/// Kirby's and Ness's neutral faces instead need the milder centre-weighted
-/// filter: the source's single-texel stair steps reconstruct as smooth eyes on
-/// the original N64 render, while PSP linear magnification exposes them as
-/// false inward spikes (RE-263/264). Each corrected texture is decoded and
-/// packed unquantized as `Psm8888`; the match includes the resolved archive
-/// file so an unrelated local offset cannot receive the same correction.
-///
-/// Do not add an entry without an original-render comparison and a PSP A/B.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextureFilterCorrection {
-    Box,
-    Mild,
-}
-
-const TEXTURE_FILTER_CORRECTIONS: &[(u32, u32, TextureFilterCorrection, &str)] = &[
-    (
-        103,
-        0xE20,
-        TextureFilterCorrection::Box,
-        "Dream Land canopy gradient",
-    ),
-    (
-        103,
-        0x5F0,
-        TextureFilterCorrection::Box,
-        "Dream Land canopy highlight",
-    ),
-    (
-        328,
-        0x1CF60,
-        TextureFilterCorrection::Mild,
-        "Kirby neutral face",
-    ),
-    (
-        335,
-        0xB7A0,
-        TextureFilterCorrection::Mild,
-        "Ness neutral face",
-    ),
-];
-
-fn texture_filter_correction(file: u32, offset: u32) -> Option<TextureFilterCorrection> {
-    TEXTURE_FILTER_CORRECTIONS
-        .iter()
-        .find(|&&(f, o, _, _)| file == f && offset == o)
-        .map(|&(_, _, filter, _)| filter)
 }
 
 /// The whole archive, read once.
@@ -6501,7 +6563,10 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         all: &loaded.files,
                     },
                     &t,
+                    &[],
                     true,
+                    false,
+                    None,
                 );
                 if tex.is_none() {
                     let reason = match texture::decode(
@@ -8296,25 +8361,11 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 #[cfg(test)]
 mod tests {
     use super::{
-        normal_transform_equivalent, palette_bank_offset, texture_filter_correction, verify_texgen,
-        TexgenCensus, TextureFilterCorrection, TileState, DIRECT_MANAGER_EFFECT_ASSETS,
-        DIRECT_MANAGER_EFFECT_MOBJ_PAIRS, EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
+        normal_transform_equivalent, palette_bank_offset, verify_texgen, TexgenCensus, TileState,
+        DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
+        EF_COMMON_EFFECTS2_MOBJ_PAIRS, MANAGER_EFFECT_ASSETS,
     };
     use std::collections::BTreeSet;
-
-    #[test]
-    fn face_filter_corrections_are_scoped_to_exact_texture_sources() {
-        assert_eq!(
-            texture_filter_correction(328, 0x1CF60),
-            Some(TextureFilterCorrection::Mild)
-        );
-        assert_eq!(
-            texture_filter_correction(335, 0xB7A0),
-            Some(TextureFilterCorrection::Mild)
-        );
-        assert_eq!(texture_filter_correction(334, 0xB7A0), None);
-        assert_eq!(texture_filter_correction(335, 0xB7A4), None);
-    }
 
     /// `PLAN.md` R2.1/T10: `verify_texgen`'s failure branches, exercised
     /// synthetically so they're host-testable without `SSB64_ROM` -- the
@@ -10547,7 +10598,8 @@ mod tests {
         };
         let expect_abgr = |v: u16| ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(v));
 
-        let packed = super::convert_texture(texels, &base, false).expect("CI4 texture converts");
+        let packed = super::convert_texture(texels, &base, &[], false, false, None)
+            .expect("CI4 texture converts");
         assert_eq!(
             packed.palette[0],
             expect_abgr(0xFFFF),
@@ -10555,7 +10607,8 @@ mod tests {
         );
 
         let bank0 = TextureRef { palette: 0, ..base };
-        let packed0 = super::convert_texture(texels, &bank0, false).expect("CI4 texture converts");
+        let packed0 = super::convert_texture(texels, &bank0, &[], false, false, None)
+            .expect("CI4 texture converts");
         assert_eq!(
             packed0.palette[0],
             expect_abgr(0x0001),
@@ -10567,7 +10620,7 @@ mod tests {
         // out of bounds -- falls back to bank 0 rather than losing the
         // palette entirely.
         let out_of_range = TextureRef { palette: 5, ..base };
-        let packed_guard = super::convert_texture(texels, &out_of_range, false)
+        let packed_guard = super::convert_texture(texels, &out_of_range, &[], false, false, None)
             .expect("an out-of-range bank must not panic");
         assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
     }
