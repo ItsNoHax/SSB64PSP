@@ -15,6 +15,7 @@ pub mod attack;
 pub mod camera;
 pub mod collision;
 pub mod fighter;
+mod fox_attack;
 pub mod ground;
 pub mod physics;
 pub mod shadow;

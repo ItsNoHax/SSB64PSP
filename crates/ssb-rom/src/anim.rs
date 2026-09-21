@@ -48,7 +48,7 @@ use crate::archive::{Archive, File};
 use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 26;
+pub const SLOT_COUNT: usize = 68;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -467,7 +467,7 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        assert_eq!(missing, 164, "only Mario has the six special slots");
+        assert_eq!(missing, 1256, "only Mario and Fox have character slots");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")

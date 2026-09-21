@@ -56,7 +56,7 @@
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::fighter::Fighter;
-use crate::status::{self, AnyStatus, MarioStatus, Status, StatusTiming};
+use crate::status::{self, AnyStatus, FoxStatus, MarioStatus, Status, StatusTiming};
 
 /// A hitbox descriptor, transcribed field-for-field from a
 /// `ftMotionCommandMakeAttackColl(aid, gid, jid, dmg, reb, elem, sz, ox, oy,
@@ -1384,15 +1384,76 @@ pub static MARIO_DSMASH: MoveData = MoveData {
 /// The attack data for `status`, under `kind` — every per-character motion
 /// script's `MakeAttackColl` argument list, transcribed field-for-field (see
 /// each `MoveData` constant's own doc comment for its source line). `None`
-/// for any status/fighter this codebase has not extracted moveset data for
-/// yet, which is everything except the Mario moves listed here (`P2`'s bulk
-/// port scope).
+/// for a status/fighter whose motion data has not been ported. Fox's normal
+/// attacks are in `fox_attack`; the fighter's extended statuses are still
+/// being translated as part of the current `P2` batch.
 pub fn move_data(
     kind: crate::fighter::FighterKind,
     status: AnyStatus,
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (
+            FighterKind::Fox,
+            AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart),
+        ) => Some(&crate::fox_attack::FOX_REFLECTOR_START),
+        (FighterKind::Fox, AnyStatus::Fox(FoxStatus::Attack100Loop)) => {
+            Some(&crate::fox_attack::FOX_JABLOOP)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::Attack11)) => {
+            Some(&crate::fox_attack::FOX_JAB1)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::Attack12)) => {
+            Some(&crate::fox_attack::FOX_JAB2)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackDash)) => {
+            Some(&crate::fox_attack::FOX_DASHATTACK)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3Hi)) => {
+            Some(&crate::fox_attack::FOX_FTILTHIGH)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3HiS)) => {
+            Some(&crate::fox_attack::FOX_FTILTMIDHIGH)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3)) => {
+            Some(&crate::fox_attack::FOX_FTILT)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3LwS)) => {
+            Some(&crate::fox_attack::FOX_FTILTMIDLOW)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3Lw)) => {
+            Some(&crate::fox_attack::FOX_FTILTLOW)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackHi3)) => {
+            Some(&crate::fox_attack::FOX_UTILT)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackLw3)) => {
+            Some(&crate::fox_attack::FOX_DTILT)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackS4)) => {
+            Some(&crate::fox_attack::FOX_FSMASH)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackHi4)) => {
+            Some(&crate::fox_attack::FOX_USMASH)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackLw4)) => {
+            Some(&crate::fox_attack::FOX_DSMASH)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirN)) => {
+            Some(&crate::fox_attack::FOX_ATTACKAIRN)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirF)) => {
+            Some(&crate::fox_attack::FOX_ATTACKAIRF)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirB)) => {
+            Some(&crate::fox_attack::FOX_ATTACKAIRB)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirHi)) => {
+            Some(&crate::fox_attack::FOX_ATTACKAIRU)
+        }
+        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirLw)) => {
+            Some(&crate::fox_attack::FOX_ATTACKAIRD)
+        }
         (FighterKind::Mario, AnyStatus::Common(Status::Attack11)) => Some(&MARIO_JAB1),
         (FighterKind::Mario, AnyStatus::Common(Status::Attack12)) => Some(&MARIO_JAB2),
         (FighterKind::Mario, AnyStatus::Common(Status::AttackDash)) => Some(&MARIO_DASH_ATTACK),
@@ -1937,12 +1998,39 @@ mod tests {
 
     #[test]
     fn move_data_is_none_for_an_unported_fighter_or_status() {
-        assert!(move_data(crate::fighter::FighterKind::Fox, Status::Attack11.into()).is_none());
+        assert!(move_data(crate::fighter::FighterKind::Fox, Status::HammerWait.into()).is_none());
         assert!(move_data(
             crate::fighter::FighterKind::Mario,
             Status::HammerWait.into()
         )
         .is_none());
+    }
+
+    #[test]
+    fn fox_reflector_startup_hitbox_expires_after_two_frames() {
+        for status in [FoxStatus::SpecialLwStart, FoxStatus::SpecialAirLwStart] {
+            let move_data = move_data(crate::fighter::FighterKind::Fox, AnyStatus::Fox(status))
+                .expect("Reflector startup has a sourced hitbox");
+            assert_eq!(move_data.hitboxes.len(), 1);
+            assert_eq!(move_data.hitboxes[0].hitbox.damage, 5);
+            assert_eq!(move_data.hitboxes[0].hitbox.radius, 180.0);
+            assert!(move_data.hitboxes[0].is_active(1.0));
+            assert!(!move_data.hitboxes[0].is_active(2.0));
+        }
+    }
+
+    #[test]
+    fn fox_down_air_rearms_each_source_pulse() {
+        let data = move_data(crate::fighter::FighterKind::Fox, Status::AttackAirLw.into())
+            .expect("Fox down air is ported");
+        assert_eq!(data.hitboxes.len(), 14);
+        assert_eq!(data.length_frames, 24.0);
+        for (pulse, pair) in data.hitboxes.chunks_exact(2).enumerate() {
+            assert_eq!(pair[0].hit_generation, pulse as u8);
+            assert_eq!(pair[1].hit_generation, pulse as u8);
+            assert_eq!(pair[0].start, 4.0 + 3.0 * pulse as f32);
+            assert_eq!(pair[0].end, 6.0 + 3.0 * pulse as f32);
+        }
     }
 
     #[test]

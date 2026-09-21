@@ -780,6 +780,17 @@ impl Gpu {
     /// Calls post-multiply, so the effective transform is `T * R * S`:
     /// vertices are scaled first, then rotated, then translated.
     pub fn model_transform(&mut self, pos: [f32; 3], rot_radians: [f32; 3], scale: f32) {
+        self.model_transform_xyz(pos, rot_radians, [scale; 3]);
+    }
+
+    /// Sets a model transform with independent axis scales, used by source
+    /// weapons whose `DObj` animates only its X scale.
+    pub fn model_transform_xyz(
+        &mut self,
+        pos: [f32; 3],
+        rot_radians: [f32; 3],
+        scale: [f32; 3],
+    ) {
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::Model);
             sys::sceGumLoadIdentity();
@@ -794,9 +805,9 @@ impl Gpu {
                 z: rot_radians[2],
             });
             sys::sceGumScale(&sys::ScePspFVector3 {
-                x: scale,
-                y: scale,
-                z: scale,
+                x: scale[0],
+                y: scale[1],
+                z: scale[2],
             });
         }
     }
