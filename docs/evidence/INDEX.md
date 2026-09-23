@@ -317,3 +317,4 @@ editing a record.
 | RE-305 | Build-time N64 3-point texture compensation | COMPLETE (software and PPSSPP; physical-PSP capture unavailable this batch) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
 | RE-306 | Material-aware alpha compensation (RE-305 follow-up) | COMPLETE (software and PPSSPP; physical-PSP capture unavailable this batch) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
 | RE-307 | Filter-aware palette-index optimization (RE-305/RE-306 follow-up) | COMPLETE (software; PPSSPP/physical-PSP visual capture not run this batch) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
+| RE-308 | Animated indexed N64 filter compensation (RE-305 follow-up) | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, material-animation, asset-pipeline, pack, psp-ge |  |

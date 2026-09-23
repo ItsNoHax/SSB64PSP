@@ -792,6 +792,27 @@ mod mip_tests {
             .collect()
     }
 
+    #[test]
+    fn animated_indices_keep_duplicate_colour_identity_and_palette_order() {
+        let a = vec![pack_abgr([0, 0, 0, 255]), pack_abgr([0, 0, 0, 255])];
+        let b = vec![pack_abgr([255, 0, 0, 255]), pack_abgr([0, 0, 255, 255])];
+        let states = vec![a.clone(), b.clone()];
+        let mut image = Rgba8::new(2, 2);
+        for i in 0..4 {
+            image.put(i, [0, 0, 0, 255]);
+        }
+        let packed = pack_mipped_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states);
+        assert_eq!(packed.data[0], 0x10);
+        assert_eq!(packed.data[1], 0x01);
+        assert_eq!(states[1][(packed.data[0] & 0xf) as usize], b[0]);
+        assert_eq!(states[1][(packed.data[0] >> 4) as usize], b[1]);
+        assert_eq!(
+            packed,
+            pack_mipped_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states)
+        );
+        assert_eq!(states, vec![a, b]);
+    }
+
     /// Level 0 must survive the round trip through RGBA and back to indices.
     /// It is regenerated rather than copied, and that is only safe because the
     /// nearest palette entry to a decoded texel is the entry it came from.
@@ -1793,17 +1814,71 @@ fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
 /// display the dither instead aliases into moiré, which is what made Dream
 /// Land's tree canopy read as green noise (RE-053).
 ///
-/// Level 0 is regenerated from `rgba` rather than copied. For a paletted
-/// texture that is lossless: `rgba` was decoded through this same palette, so
-/// the nearest entry to each texel is the entry it came from.
+/// Level 0 is regenerated from `rgba` for ordinary textures. Animated CI
+/// textures use `pack_mipped_indices` so equal-colour entries keep their
+/// separate index identities across palette changes.
 ///
 /// Swizzling is all-or-nothing across the chain, because the GE's swizzle flag
 /// is per texture and not per level.
 pub fn pack_mipped(rgba: &Rgba8, format: Psm, palette: &[u32], swizzle_it: bool) -> PspTexture {
+    pack_mipped_with_indices(rgba, format, palette, swizzle_it, None)
+}
+
+/// Preserve the exact level-zero index field when animated palettes give
+/// identical colours different meanings. Lower mips choose indices against
+/// all reachable palette states rather than quantizing frame-zero colours.
+pub fn pack_mipped_indices(
+    rgba: &Rgba8,
+    format: Psm,
+    palette: &[u32],
+    swizzle_it: bool,
+    indices: &[u8],
+    states: &[Vec<u32>],
+) -> PspTexture {
+    assert!(format.is_paletted());
+    assert_eq!(indices.len(), (rgba.width * rgba.height) as usize);
+    assert!(!states.is_empty());
+    pack_mipped_with_indices(rgba, format, palette, swizzle_it, Some((indices, states)))
+}
+
+fn pack_mipped_with_indices(
+    rgba: &Rgba8,
+    format: Psm,
+    palette: &[u32],
+    swizzle_it: bool,
+    indexed: Option<(&[u8], &[Vec<u32>])>,
+) -> PspTexture {
     let mut levels: Vec<(Vec<u8>, u32, u32)> = Vec::new(); // data, stride, padded height
     let mut img = rgba.clone();
+    let mut level_indices = indexed.map(|(indices, _)| indices.to_vec());
     loop {
-        let (data, stride) = encode_level(&img, format, palette);
+        let (mut data, stride) = encode_level(&img, format, palette);
+        {
+            if let Some(indices) = level_indices.as_deref() {
+                let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
+                for y in 0..img.height as usize {
+                    for x in 0..img.width as usize {
+                        let value = indices[y * img.width as usize + x];
+                        if format == Psm::PsmT4 {
+                            let at = y * stride_bytes + x / 2;
+                            if x & 1 == 0 {
+                                data[at] = (data[at] & 0xf0) | value;
+                            } else {
+                                data[at] = (data[at] & 0x0f) | (value << 4);
+                            }
+                        } else {
+                            data[y * stride_bytes + x] = value;
+                        }
+                    }
+                }
+                let padded_h = pad_to_power_of_two(img.height);
+                if format == Psm::PsmT4 {
+                    pad_edge_repeat_nibbles(&mut data, stride, padded_h, img.width, img.height);
+                } else {
+                    pad_edge_repeat(&mut data, stride, padded_h, img.width, img.height, 1);
+                }
+            }
+        }
         let padded_h = pad_to_power_of_two(img.height);
         let stride_bytes = data.len() / (padded_h as usize).max(1);
         // The GE's swizzle flag is per texture, not per level, so a chain
@@ -1817,6 +1892,15 @@ pub fn pack_mipped(rgba: &Rgba8, format: Psm, palette: &[u32], swizzle_it: bool)
         levels.push((data, stride, padded_h));
         if levels.len() == MAX_MIP_LEVELS || (img.width == 1 && img.height == 1) {
             break;
+        }
+        if let (Some((_, states)), Some(indices)) = (indexed, level_indices.as_deref()) {
+            level_indices = Some(halve_indices(
+                indices,
+                img.width,
+                img.height,
+                states,
+                if format == Psm::PsmT4 { 16 } else { 256 },
+            ));
         }
         img = halve(&img);
     }
@@ -1847,4 +1931,55 @@ pub fn pack_mipped(rgba: &Rgba8, format: Psm, palette: &[u32], swizzle_it: bool)
         palette: palette.to_vec(),
         levels: levels.len() as u32,
     }
+}
+
+/// Downsample an animated index field by comparing the four source colours
+/// to each candidate under every palette, with equal weight per state.
+fn halve_indices(
+    indices: &[u8],
+    width: u32,
+    height: u32,
+    states: &[Vec<u32>],
+    limit: usize,
+) -> Vec<u8> {
+    let w = (width / 2).max(1);
+    let h = (height / 2).max(1);
+    let valid = limit.min(states.iter().map(Vec::len).min().unwrap());
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let xs = [x * 2, (x * 2 + 1).min(width - 1)];
+            let ys = [y * 2, (y * 2 + 1).min(height - 1)];
+            let taps = [
+                indices[(ys[0] * width + xs[0]) as usize],
+                indices[(ys[0] * width + xs[1]) as usize],
+                indices[(ys[1] * width + xs[0]) as usize],
+                indices[(ys[1] * width + xs[1]) as usize],
+            ];
+            let mut best = (u64::MAX, 0u8);
+            for candidate in 0..valid {
+                let mut error = 0u64;
+                for palette in states {
+                    let target: [i32; 4] = core::array::from_fn(|c| {
+                        taps.iter()
+                            .map(|&i| ((palette[i as usize] >> (c * 8)) & 255) as i32)
+                            .sum::<i32>()
+                            / 4
+                    });
+                    let color = palette[candidate];
+                    error += (0..4)
+                        .map(|c| {
+                            let d = ((color >> (c * 8)) & 255) as i32 - target[c];
+                            (d * d) as u64
+                        })
+                        .sum::<u64>();
+                }
+                if error < best.0 {
+                    best = (error, candidate as u8);
+                }
+            }
+            out.push(best.1);
+        }
+    }
+    out
 }
