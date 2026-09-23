@@ -5,7 +5,31 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **critical authored-UV coverage and independent
+Current subsystem/batch: **real-normal texgen coverage for 3-point
+compensation (complete, RE-311)**. Texgen primitives no longer train on the
+whole tile. Their real `i8` normals go through 360 icosahedral-quadrature
+poses and the exact runtime generator (`regular_texgen_uv`/`linear_texgen_uv`,
+`/127`, `gSPTexture` scale, clamp origin, S10.5 truncation), plus the full
+disk one vertex can reach and RE-310's per-cell critical probes. A
+pose-independent S10.5 box (Cauchy-Schwarz on the normalised look-at rows)
+bounds every pose, including non-orthogonal bases. Camera look-at is rebuilt
+from live eye/at every frame, so no pose is statically enumerable and none is
+assumed. Budgets are 16 samples per reachable texel (a fixed 8,192 overfit:
+train -36%, holdout -15%..+2%); critical probes take at most 25%, and a
+one-point-per-texel full-box regularization is added. Candidates must pass
+the disjoint-pose holdout and a conservative lattice over the whole box.
+Material-animated texgen keeps the full-tile fallback. US archive: Metal
+Mario's 48x42 body texture goes from 0/14 to 14/14 accepted variants
+(real-holdout SSE -26.7%, box -20.8%, `>=32` stays 0); no conversion regresses
+against full-tile on any set. The shared metal reflection map (file 302
+`0x30`) fails the solver gate on both coverages; Link's 8x8 texgen texture is
+rejected by the conservative box gate. Pack is 29,627,552 bytes (+298,768,
+13 per-primitive Metal Mario variants). `ROMTOOL_TEXGEN_COVERAGE=full-tile`
+reproduces the RE-310 pack byte for byte. Runtime rendering is unchanged. No
+physical PSP capture this batch. Next gameplay batch remains Donkey Kong under
+`P2`.
+
+Previous rendering subsystem/batch: **critical authored-UV coverage and independent
 3-point compensation validation (complete, RE-310)**. The N=8 barycentric
 base now has targeted S10.5 diagonal, half-texel, GE-boundary, UV-extremum,
 clamp/repeat and prebaked-mirror seam probes per touched cell. Sorted and
@@ -18,9 +42,9 @@ summed per-variant maxima 2,111 to 1,842. None of 74 animated candidates
 passes the combined gates. The pack is 29,328,784 bytes and loads back;
 ROM-gated workspace tests, both PSP builds, and one PPSSPPHeadless Dream Land
 smoke pass. Runtime rendering is unchanged. No physical PSP capture this
-batch. Next gameplay batch remains Donkey Kong under `P2`.
+batch.
 
-Previous rendering subsystem/batch: **GE-exact integer refinement after floating 3-point
+Earlier rendering subsystem/batch: **GE-exact integer refinement after floating 3-point
 compensation (complete, RE-309)**. A deterministic bounded coordinate search
 tests legal +/-1 and +/-2 stored values, recomputing only GE coverage samples
 affected by each texel. RGBA8888 and promoted direct-colour variants use byte

@@ -320,3 +320,4 @@ editing a record.
 | RE-308 | Animated indexed N64 filter compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, material-animation, asset-pipeline, pack, psp-ge |  |
 | RE-309 | GE-exact integer refinement after 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-310 | Critical authored-UV coverage and independent filter validation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |
+| RE-311 | Real-normal texgen coverage for 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, texgen, asset-pipeline, pack, psp-ge |  |

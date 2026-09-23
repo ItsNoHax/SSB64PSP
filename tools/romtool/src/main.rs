@@ -1007,10 +1007,9 @@ fn primitive_filter_coverage(
     prim: &ssb_rom::mesh::Primitive,
 ) -> filter_coverage::Coverage {
     // Authored UVs: the N=8 barycentric base plus bounded, cell-local filter
-    // boundaries and a separate denser holdout. Texgen coordinates depend on
-    // live normals/matrices, so the converter uses full-tile shifted grids.
-    if prim.material.texgen_scale.is_some() {
-        return filter_coverage::Coverage::default();
+    // boundaries and a separate denser holdout.
+    if let Some(scale) = prim.material.texgen_scale {
+        return texgen_filter_coverage(m, prim, scale);
     }
     let triangles: Vec<_> = prim
         .indices
@@ -1018,6 +1017,67 @@ fn primitive_filter_coverage(
         .map(|tri| [tri[0], tri[1], tri[2]].map(|i| m.vertices[i as usize].uv.map(i32::from)))
         .collect();
     filter_coverage::build(&triangles)
+}
+
+/// Texgen coverage from the primitive's real normals (RE-311).
+///
+/// Generated coordinates depend on the live look-at basis and node
+/// transform. Neither is statically enumerable: `gmCameraLookAtFuncMatrix`
+/// rebuilds the look-at from the camera's live eye/at every frame, and a
+/// fighter's joint animation rotates the node freely. The real normals, the
+/// `/127` dot, `gSPTexture` scale, tile origin/clamp and S10.5 truncation
+/// are all static, so coverage runs them through an orientation quadrature
+/// (`filter_coverage::build_texgen`) and bounds every pose by
+/// `filter_coverage::TexgenBound`.
+///
+/// Falls back to the pre-RE-311 full-tile coverage when the generated
+/// footprint cannot be bounded from static data: an animated material may
+/// apply a live UV affine (`MaterialUv`) on top of the generated coordinates.
+fn texgen_filter_coverage(
+    m: &ssb_rom::mesh::Mesh,
+    prim: &ssb_rom::mesh::Primitive,
+    scale: (u16, u16),
+) -> filter_coverage::Coverage {
+    let Some(t) = prim.material.texture else {
+        return filter_coverage::Coverage::default();
+    };
+    if prim.material.mat_anim.is_some() || prim.indices.is_empty() {
+        return filter_coverage::Coverage::default();
+    }
+    let normals: Vec<[[i8; 3]; 3]> = prim
+        .indices
+        .chunks_exact(3)
+        .map(|tri| {
+            [tri[0], tri[1], tri[2]].map(|i| {
+                let rgba = m.vertices[i as usize].rgba;
+                [rgba[0] as i8, rgba[1] as i8, rgba[2] as i8]
+            })
+        })
+        .collect();
+    let input = filter_coverage::TexgenPrimitive {
+        linear: prim.material.texture_gen == ssb_rom::mesh::TextureGen::Linear,
+        normals: &normals,
+        scale: [scale.0, scale.1],
+        origin: [t.origin_s, t.origin_t],
+        clamp: [t.clamp_s, t.clamp_t],
+    };
+    let coverage = filter_coverage::build_texgen(&input);
+    let mode = std::env::var("ROMTOOL_TEXGEN_COVERAGE").unwrap_or_default();
+    if mode == "full-tile" || mode == "full-tile-per-primitive" {
+        // Measurement only: reproduce the pre-RE-311 optimisation and gate
+        // exactly, keeping the real sets for the report line. `full-tile`
+        // reproduces the pre-RE-311 pack byte for byte.
+        return filter_coverage::Coverage {
+            train: Vec::new(),
+            validation: Vec::new(),
+            texgen: coverage.texgen.map(|meta| filter_coverage::TexgenMeta {
+                legacy: true,
+                per_primitive: mode == "full-tile-per-primitive",
+                ..meta
+            }),
+        };
+    }
+    coverage
 }
 
 fn coverage_hash(coverage: &[[i32; 2]]) -> u64 {
@@ -1113,7 +1173,12 @@ fn pack_mesh(
                     id,
                     &t,
                     coverage_hash(&coverage.train)
-                        ^ coverage_hash(&coverage.validation).rotate_left(1),
+                        ^ coverage_hash(&coverage.validation).rotate_left(1)
+                        ^ coverage
+                            .texgen
+                            .as_ref()
+                            .filter(|meta| meta.per_primitive)
+                            .map_or(0, |meta| coverage_hash(&meta.holdout).rotate_left(2)),
                     animated,
                     alpha_policy,
                 );
@@ -2965,10 +3030,112 @@ fn convert_texture(
 
     let mut mipped = |palette: Vec<u32>| {
         let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
-        // A shifted full-tile grid is the holdout for texgen, whose live UVs
-        // cannot be inferred from authored vertices. Authored UVs use the
-        // separate cell-local holdout built from their actual triangles.
-        let validation_dense: Vec<[i32; 2]> = if coverage.train.is_empty() {
+        // RE-311: a bounded texgen primitive trains on its real-normal pose
+        // coverage plus a one-point-per-texel regularization over the whole
+        // reachable box, and must pass two holdouts: the disjoint-pose
+        // real-normal set and the conservative old-density lattice over that
+        // box (every point of which some pose can generate).
+        let texgen_meta = coverage.texgen.as_ref();
+        let active_texgen = texgen_meta.filter(|meta| !meta.legacy);
+        let merged_train: Vec<[i32; 2]>;
+        let train_samples: &[[i32; 2]] = match active_texgen {
+            Some(meta) => {
+                let mut merged = coverage.train.clone();
+                merged.extend(meta.bound.regularization());
+                merged.sort_unstable();
+                merged.dedup();
+                merged_train = merged;
+                &merged_train
+            }
+            None => &coverage.train,
+        };
+        let conservative: Vec<[i32; 2]> = texgen_meta
+            .map(|meta| meta.bound.lattice(4))
+            .unwrap_or_default();
+        let conservative_gate = |candidate: &ssb_rom::texture::Rgba8| {
+            active_texgen.is_none() || {
+                let before = ssb_rom::filter_compensation::measure_samples_policy(
+                    &img,
+                    &img,
+                    t.clamp_s,
+                    t.clamp_t,
+                    &conservative,
+                    alpha_policy,
+                );
+                let after = ssb_rom::filter_compensation::measure_samples_policy(
+                    &img,
+                    candidate,
+                    t.clamp_s,
+                    t.clamp_t,
+                    &conservative,
+                    alpha_policy,
+                );
+                validation_preserved(before, after, alpha_policy)
+            }
+        };
+        let texgen_report = |candidate: &ssb_rom::texture::Rgba8,
+                             accepted: bool,
+                             outcome: &str,
+                             solve_sse: Option<(u64, u64)>| {
+            let Some(meta) = texgen_meta else { return };
+            let full_tile: Vec<[i32; 2]> = (4..img.height as i32 * 32)
+                .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                .flat_map(|v| {
+                    (4..img.width as i32 * 32)
+                        .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                        .map(move |u| [u, v])
+                })
+                .collect();
+            let mut fields = String::new();
+            for (name, set) in [
+                ("real", meta.holdout.as_slice()),
+                ("box", conservative.as_slice()),
+                ("tile", full_tile.as_slice()),
+            ] {
+                let a = ssb_rom::filter_compensation::measure_samples_policy(
+                    &img,
+                    &img,
+                    t.clamp_s,
+                    t.clamp_t,
+                    set,
+                    alpha_policy,
+                );
+                let b = ssb_rom::filter_compensation::measure_samples_policy(
+                    &img,
+                    candidate,
+                    t.clamp_s,
+                    t.clamp_t,
+                    set,
+                    alpha_policy,
+                );
+                fields.push_str(&format!(
+                    " {name}_samples={} {name}_source_sse={} {name}_final_sse={} {name}_source_above32={} {name}_final_above32={} {name}_source_max={} {name}_final_max={}",
+                    a.samples, a.squared_error, b.squared_error, a.above_32, b.above_32, a.max, b.max
+                ));
+            }
+            eprintln!(
+                "texgen-filter-comp file={} offset={:#X} {}x{} mode={} linear={} box={:?}..{:?} train={} regularization={} accepted={} outcome={} solve_baseline_sse={} solve_compensated_sse={}{}",
+                t.data_file.map_or(src.home.id, u32::from),
+                t.data_offset,
+                img.width,
+                img.height,
+                if meta.legacy { "full-tile" } else { "real" },
+                meta.linear,
+                meta.bound.min,
+                meta.bound.max,
+                coverage.train.len(),
+                if meta.legacy { 0 } else { meta.bound.regularization().len() },
+                accepted,
+                outcome,
+                solve_sse.map_or(-1, |s| s.0 as i64),
+                solve_sse.map_or(-1, |s| s.1 as i64),
+                fields
+            );
+        };
+        // A shifted full-tile grid is the holdout for unbounded texgen (the
+        // fallback). Authored UVs use the separate cell-local holdout built
+        // from their actual triangles.
+        let validation_dense: Vec<[i32; 2]> = if train_samples.is_empty() {
             (4..img.height as i32 * 32)
                 .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
                 .flat_map(|v| {
@@ -2997,7 +3164,7 @@ fn convert_texture(
                 };
                 if states.iter().all(|p| p.len() >= limit) {
                     let dense: Vec<[i32; 2]>;
-                    let samples = if coverage.train.is_empty() {
+                    let samples = if train_samples.is_empty() {
                         dense = (0..img.height as i32 * 32)
                             .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
                             .flat_map(|v| {
@@ -3008,7 +3175,7 @@ fn convert_texture(
                             .collect();
                         dense.as_slice()
                     } else {
-                        &coverage.train
+                        train_samples
                     };
                     let optimized = ssb_rom::filter_compensation::optimize_animated_indices(
                         &source, img.width, img.height, states, limit, t.clamp_s, t.clamp_t,
@@ -3131,18 +3298,19 @@ fn convert_texture(
                 }
             }
         }
-        let solved = if coverage.train.is_empty() {
+        let solved = if train_samples.is_empty() {
             ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t, alpha_policy)
         } else {
             ssb_rom::filter_compensation::solve_samples(
                 &img,
                 t.clamp_s,
                 t.clamp_t,
-                &coverage.train,
+                train_samples,
                 alpha_policy,
             )
         };
         let Some(solved) = solved else {
+            texgen_report(&img, false, "no-solve", None);
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
         };
         // Requirement 4: quantizing to the nearest existing palette/5551
@@ -3161,7 +3329,7 @@ fn convert_texture(
         // Texgen falls back to dense full-tile coverage the same way
         // `solve`/`measure` do internally when given no explicit coverage.
         let dense_coverage: Vec<[i32; 2]>;
-        let mismatch_coverage: &[[i32; 2]] = if coverage.train.is_empty() {
+        let mismatch_coverage: &[[i32; 2]] = if train_samples.is_empty() {
             dense_coverage = (0..img.height as i32 * 32)
                 .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
                 .flat_map(|tq| {
@@ -3172,7 +3340,7 @@ fn convert_texture(
                 .collect();
             &dense_coverage
         } else {
-            &coverage.train
+            train_samples
         };
         let silhouette_preserved = |candidate: &ssb_rom::texture::Rgba8| {
             cutout_gate.is_none_or(|(greater_or_equal, threshold)| {
@@ -3319,6 +3487,15 @@ fn convert_texture(
                 if solved.compensated.squared_error * 4 > solved.baseline.squared_error * 3
                     || new_bytes - old_bytes > 65536
                 {
+                    texgen_report(
+                        &img,
+                        false,
+                        "no-promotion",
+                        Some((
+                            solved.baseline.squared_error,
+                            solved.compensated.squared_error,
+                        )),
+                    );
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
@@ -3351,7 +3528,7 @@ fn convert_texture(
                 t.clamp_t,
                 mismatch_coverage,
             ));
-            let qm = if coverage.train.is_empty() {
+            let qm = if train_samples.is_empty() {
                 ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
             } else {
                 ssb_rom::filter_compensation::measure_samples(
@@ -3359,7 +3536,7 @@ fn convert_texture(
                     &quantized,
                     t.clamp_s,
                     t.clamp_t,
-                    &coverage.train,
+                    train_samples,
                 )
             };
             integer_after_metrics = Some(qm);
@@ -3374,6 +3551,15 @@ fn convert_texture(
                 if solved.compensated.squared_error * 4 > solved.baseline.squared_error * 3
                     || delta > 65536
                 {
+                    texgen_report(
+                        &img,
+                        false,
+                        "no-promotion",
+                        Some((
+                            solved.baseline.squared_error,
+                            solved.compensated.squared_error,
+                        )),
+                    );
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
@@ -3455,7 +3641,17 @@ fn convert_texture(
                     greater_or_equal,
                     threshold,
                 ) == 0
-            });
+            })
+            && conservative_gate(chosen);
+        texgen_report(
+            chosen,
+            validation_accepted,
+            "holdout-gate",
+            Some((
+                solved.baseline.squared_error,
+                solved.compensated.squared_error,
+            )),
+        );
         eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={} integer_before_sse={} integer_after_sse={} integer_before_above32={} integer_after_above32={} integer_before_above8={} integer_after_above8={} integer_before_max={} integer_after_max={} train_samples={} train_baseline_sse={} train_candidate_sse={} train_baseline_above32={} train_candidate_above32={} train_baseline_max={} train_candidate_max={} validation_samples={} validation_baseline_sse={} validation_candidate_sse={} validation_baseline_above32={} validation_candidate_above32={} validation_baseline_max={} validation_candidate_max={} validation_accepted={}",
             t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,alpha_policy,
             solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
