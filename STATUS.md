@@ -33,6 +33,11 @@ Captain Falcon's glove cuff. The old golden showed red and beige stripes there,
 colors absent from the source CI4 texture `332:0xBFF8`. The new capture shows
 the source brown, olive and yellow stripes. `tools/verify-fighter-goldens.sh`
 passes.
+All 42 stage and scene goldens (the `stage_index` sweep, Dream Land, Sector,
+catch swirl, Peach's Castle and Saffron) were also rebaselined. They were stale
+because of the RE-307 border fix and later renderer changes. The content
+changes (for example, Zebes' yellow walls) were not bisected, see
+`docs/visual-regression/README.md`.
 Runtime rendering is unchanged. No physical PSP capture this batch. Next gameplay batch remains Donkey Kong under
 `P2`.
 
