@@ -5,25 +5,32 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **build-time N64 3-point texture compensation
-(complete in software/PPSSPP, RE-305; physical spot check unavailable)**.
-The real-UV/archive pipeline emits 406 immutable variants, keeps 274 in CI4,
-promotes 132 to RGBA8888 under a measured cost gate, and reduces selected
-variants' average error from 1.947/255 to 0.876/255. The pack grows 2.67%; all
-selected variants have non-increasing max error, and animated indexed palette
-semantics remain untouched. The full 13-fighter deterministic PPSSPP matrix
-was rebaselined for the intentional filter change and passes at zero differing
-pixels. The prerequisite sampling work (RE-304) used a
-deterministic synthetic 2x2/4x4 GE rig measuring point and
-filtered sampling at centres, halves, odd S10.5 steps, diagonals, and
-clamp/repeat/pre-baked-mirror boundaries. PPSSPP software and real PSP agree
-on all 96 interior readbacks: point needs no bias; filtered coordinates need
-`+0.5` texel, then the GE uses four-bit truncated bilinear weights and
-truncating channel arithmetic. The host `sample_bilinear()` and shared PSP
-runtime lowering are corrected. Authored UVs, animated MObj UVs, ordinary
-texgen and CPU linear texgen now receive the convention exactly once.
-N64 3-point compensation uses that verified reference entirely at build
-time; runtime remains ordinary `GU_LINEAR`.
+Current subsystem/batch: **material-aware alpha compensation (complete in
+software/PPSSPP, RE-306; physical spot check unavailable)**, extending
+RE-305's build-time N64 3-point/PSP-bilinear compensation. RE-305 optimized
+only RGB and held alpha exact; RE-306 classifies each texture's real runtime
+alpha state (`filter_compensation::AlphaPolicy`: Opaque/Cutout/Translucent,
+derived from `pack::material_alpha_state`/`alpha_gate`, the same logic the GE
+draw path uses) and optimizes alpha too where safe -- Opaque forces alpha to
+255 and excludes it from the acceptance gate, Cutout only moves alpha where
+the real runtime threshold's pass/fail classification is proven unchanged at
+every sample, Translucent optimizes alpha through the same objective as RGB
+gated additionally on a non-regressing premultiplied "visible" SSE. The
+US-ROM pack now emits 404 variants (267 CI4, 137 RGBA8888; 364 Opaque/27
+Cutout/13 Translucent) in a smaller pack than RE-305's own 406-variant
+build (30,158,688 vs 30,172,496 bytes); all 13 Translucent variants and all
+30 baseline alpha-dominated variants improve with no max regression. All 13
+fighter goldens pass at zero differing pixels (no fighter texture is in
+this batch's affected set); Dream Land and `mvopeningroom` goldens were
+refreshed with an explained, localized delta (own-build determinism
+verified). See RE-306 for the full design, and its own record for a flagged
+(not fixed, pre-existing, unrelated to this batch) PPSSPP-capture-timing
+drift found on stage-material-animation scenes while validating this work.
+RE-305 itself (406 variants, 274 CI4/132 RGBA8888, mean 1.947 -> 0.876/255,
+alpha held exact) and its RE-304 sampling prerequisite (measured GE
+point/linear bias and four-bit truncated bilinear weights, `sample_bilinear()`
+and shared PSP runtime lowering corrected) remain accurate history; runtime
+still uses ordinary `GU_LINEAR`, no new runtime pass.
 
 Previous gameplay subsystem/batch: **Fox full moveset (complete)**. Fox's US normal
 attack motion scripts (jab 1/2, dash, five forward tilts, up/down tilt,

@@ -409,6 +409,30 @@ pub fn alpha_gate(prim_flags: u32, alpha_compare_ref: u32) -> AlphaGate {
     AlphaGate::Off
 }
 
+/// Resolves a primitive's pre-pack material into the same [`AlphaGate`]
+/// `alpha_gate` computes from packed `PrimDesc` flags, plus whether the GE
+/// blend unit will actually be enabled for it -- so build-time texture
+/// compensation (`filter_compensation`) can ask "what will the GE really
+/// alpha-test/blend against" without assuming a threshold or duplicating the
+/// composition rule `alpha_gate` already owns.
+pub fn material_alpha_state(m: &crate::mesh::MeshMaterial) -> (AlphaGate, bool) {
+    let mut f = 0u32;
+    if m.alpha_test {
+        f |= flags::ALPHA_TEST;
+    }
+    let alpha_compare_ref = if m.alpha_compare_threshold {
+        f |= flags::ALPHA_COMPARE_THRESHOLD;
+        m.blend_color.map_or(0, crate::psp_texture::pack_abgr)
+    } else {
+        0
+    };
+    // Mirrors `add_mesh`'s own `flags::ALPHA_BLEND` gate (RE-129/RE-130):
+    // `translucent` alone never enables real GE blending without a
+    // classified alpha-blend formula to bake vertices for.
+    let translucent_blend = m.translucent && m.alpha_blend.is_some();
+    (alpha_gate(f, alpha_compare_ref), translucent_blend)
+}
+
 /// One draw: a range of indices plus the state to draw them under.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

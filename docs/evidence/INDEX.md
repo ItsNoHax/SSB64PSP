@@ -23,7 +23,7 @@ editing a record.
 | RE-009 | PSP nub deadzone | OPEN |  |  |
 | RE-010 | `MObjSub` unknown fields | OPEN | material, animation, lighting, texture |  |
 | RE-011 | Level of detail selection | OPEN | camera |  |
-| RE-012 | Nightly toolchain pin | COMPLETE | toolchain |  |
+| RE-012 | Nightly toolchain pin | SUPERSEDED | toolchain |  |
 | RE-013 | `psp::dprintln!` is a 30x performance trap | COMPLETE | framebuffer, geometry, psp-ge |  |
 | RE-014 | GU debug text is invisible under PPSSPP's hardware backends | COMPLETE | psp-ge, framebuffer, hardware, effects |  |
 | RE-015 | Unexplained horizontal drift *(RESOLVED — earlier hypothesis was wrong)* | COMPLETE |  |  |
@@ -311,7 +311,8 @@ editing a record.
 | RE-299 | Mario Super Jump Punch uses TransN root motion | COMPLETE | fighter, animation, asset-pipeline, gameplay |  |
 | RE-300 | Mario Fireball's `WEAPON_EXTERNAL` translucency: `alpha_blend` seed fixed, CLUT-alpha runtime rendering roo... | COMPLETE — `alpha_blend` classification bug found and fixed (tested); root cause of the opaque-black-card rendering, an uninitialised-cache bug in `DrawState`'s GE texture-function tracking (`psp-runtime/src/meshdraw.rs`), found and fixed; confirmed on PPSSPP (`tests/golden/f1-training-fireball.png`) and real PSP hardware | fighter, rendering, texture, weapon, visual-regression |  |
 | RE-301 | Stage material-track replay and pack identity correction | COMPLETE | material, animation, texture, pack, stage, psp-ge |  |
-| RE-302 | Fighter floor shadows: source strip, I4 texture, floor projection and PSP GE pass | COMPLETE | fighter, rendering, texture, collision, psp-ge, visual-regression |  |
-| RE-303 | Motion `AsyncWait(n)` targets animation frame `n`, affecting Fox and prior Mario timing transcriptions | SOURCE VERIFIED; Fox data corrected, Mario audit pending | fighter, animation, gameplay |  |
-| RE-304 | PSP GE sample alignment: filtered coordinates require +0.5 texel and use 4-bit truncated bilinear weights | COMPLETE | texture, psp-ge, hardware, texgen, material |  |
-| RE-305 | Build-time N64 3-point texture compensation | COMPLETE (software and PPSSPP; physical spot check unavailable) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
+| RE-302 | Fighter floor shadows | COMPLETE for the current fighter-runtime scope | fighter, rendering, texture, collision, psp-ge, visual-regression |  |
+| RE-303 | Motion-script async waits target animation frames | source verified; Fox normal-attack transcription uses this rule. |  |  |
+| RE-304 | PSP GE sampling alignment measured and runtime lowering corrected | COMPLETE | texture, psp-ge, hardware, texgen, material |  |
+| RE-305 | Build-time N64 3-point texture compensation | COMPLETE (software and PPSSPP; physical-PSP capture unavailable this batch) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
+| RE-306 | Material-aware alpha compensation (RE-305 follow-up) | COMPLETE (software and PPSSPP; physical-PSP capture unavailable this batch) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
