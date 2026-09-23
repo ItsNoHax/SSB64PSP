@@ -5,27 +5,58 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **material-aware alpha compensation (complete in
-software/PPSSPP, RE-306; physical spot check unavailable)**, extending
-RE-305's build-time N64 3-point/PSP-bilinear compensation. RE-305 optimized
-only RGB and held alpha exact; RE-306 classifies each texture's real runtime
-alpha state (`filter_compensation::AlphaPolicy`: Opaque/Cutout/Translucent,
-derived from `pack::material_alpha_state`/`alpha_gate`, the same logic the GE
-draw path uses) and optimizes alpha too where safe -- Opaque forces alpha to
-255 and excludes it from the acceptance gate, Cutout only moves alpha where
-the real runtime threshold's pass/fail classification is proven unchanged at
-every sample, Translucent optimizes alpha through the same objective as RGB
-gated additionally on a non-regressing premultiplied "visible" SSE. The
-US-ROM pack now emits 404 variants (267 CI4, 137 RGBA8888; 364 Opaque/27
-Cutout/13 Translucent) in a smaller pack than RE-305's own 406-variant
-build (30,158,688 vs 30,172,496 bytes); all 13 Translucent variants and all
-30 baseline alpha-dominated variants improve with no max regression. All 13
-fighter goldens pass at zero differing pixels (no fighter texture is in
-this batch's affected set); Dream Land and `mvopeningroom` goldens were
+Current subsystem/batch: **filter-aware CI4/CI8 palette-index optimization
+(complete, host- and PPSSPP-verified; 11 refreshed goldens; no physical-PSP
+capture this batch, RE-307)**, extending RE-305/RE-306's build-time N64
+3-point/PSP-bilinear compensation. The optimizer coordinate-descends over
+legal palette indices against the exact measured filtered-output objective,
+seeded from nearest-color quantization and capped at 8 sweeps. Each coverage
+sample informs only its dominant bilinear corner; this restriction fixed a
+user-reported Dream Land canopy-ornament fragmentation regression caused by
+low-weight samples justifying extreme texel changes. The optimized result is
+accepted only when it does not regress nearest quantization on SSE, max
+error, `>=8/255`, and `>=32/255` (plus translucent visible SSE). The census
+shows this gate rejected all 49 raw candidates that regressed on any metric.
+Two independent US-ROM builds are byte-identical; the baseline pack matches
+RE-306's recorded pack. Compensated variants rose 404 -> 405 (305 CI4,
+100 RGBA8888, no CI8): 37 fewer variants require RGBA8888 promotion, and the
+pack shrank 30,158,688 -> 29,920,832 bytes (-0.79%). Across 305 final indexed
+variants, summed SSE fell 7.44% versus nearest quantization. Runtime texel
+bit width is unchanged for variants remaining CI4/CI8. Workspace tests pass
+(787 tests with `SSB64_ROM` set), and both release PSP builds succeed.
+
+The PPSSPP capture pass also exposed and fixed a pre-existing
+`psp-runtime` double-buffer clear bug: `Gpu::begin_frame` cleared while the
+previous frame's pillarbox scissor was still active, leaving one swap-chain
+buffer's border uncleared. It now resets the scissor before clearing. Eleven
+goldens (Dream Land, `mvopeningroom`, and 9 fighters) were refreshed and
+verified deterministic; DK, Kirby, Ness, and Yoshi remain unchanged. Two
+stage-animation goldens still show RE-306's previously documented,
+pack-independent capture-timing drift and were left untouched. See RE-307
+for the full design, regression trace, census, and renderer bug details.
+
+Previous rendering subsystem/batch: **material-aware alpha compensation
+(complete in software/PPSSPP, RE-306; physical spot check unavailable)**,
+extending RE-305's build-time N64 3-point/PSP-bilinear compensation. RE-305
+optimized only RGB and held alpha exact; RE-306 classifies each texture's
+real runtime alpha state (`filter_compensation::AlphaPolicy`:
+Opaque/Cutout/Translucent, derived from
+`pack::material_alpha_state`/`alpha_gate`, the same logic the GE draw path
+uses) and optimizes alpha too where safe -- Opaque forces alpha to 255 and
+excludes it from the acceptance gate, Cutout only moves alpha where the real
+runtime threshold's pass/fail classification is proven unchanged at every
+sample, Translucent optimizes alpha through the same objective as RGB gated
+additionally on a non-regressing premultiplied "visible" SSE. The US-ROM
+pack emitted 404 variants (267 CI4, 137 RGBA8888; 364 Opaque/27 Cutout/13
+Translucent) in a smaller pack than RE-305's own 406-variant build
+(30,158,688 vs 30,172,496 bytes); all 13 Translucent variants and all 30
+baseline alpha-dominated variants improved with no max regression. All 13
+fighter goldens passed at zero differing pixels (no fighter texture was in
+that batch's affected set); Dream Land and `mvopeningroom` goldens were
 refreshed with an explained, localized delta (own-build determinism
 verified). See RE-306 for the full design, and its own record for a flagged
-(not fixed, pre-existing, unrelated to this batch) PPSSPP-capture-timing
-drift found on stage-material-animation scenes while validating this work.
+(not fixed, pre-existing, unrelated to that batch) PPSSPP-capture-timing
+drift found on stage-material-animation scenes while validating that work.
 RE-305 itself (406 variants, 274 CI4/132 RGBA8888, mean 1.947 -> 0.876/255,
 alpha held exact) and its RE-304 sampling prerequisite (measured GE
 point/linear bias and four-bit truncated bilinear weights, `sample_bilinear()`
@@ -199,11 +230,10 @@ through a portable runtime-to-gameplay bridge.
 - Latest verification: `cargo test -p ssb-rom -p romtool` (450 tests) and
   `cargo test -p romtool -p ssb-game` (245 tests) pass; the local pack was
   rebuilt and contains the file-297/0x1D8 Fireball mesh. A focused
-  PPSSPPHeadless script now spawns and displays it. The initial capture showed
-  an opaque sprite rectangle because Fireball inherits `wpDisplayDrawNormal`'s
-  translucent/no-depth wrapper; `InitialMaterial::WEAPON_EXTERNAL` now models
-  that source state, but the rebuilt-pack visual recheck and full end-of-batch
-  gates have not yet been run. Existing PSP linker warnings remain non-fatal.
+  PPSSPPHeadless script now spawns and displays it. The opaque-card rendering
+  defect was later traced to the GE texture-function cache and fixed; PPSSPP
+  and physical PSP both show the translucent flame (see RE-300 below).
+  Existing PSP linker warnings remain non-fatal.
 - Pre-batch-mode work (rendering pipeline, asset pipeline, animation,
   collision, physics, movement-state machine) predates formal batch mode but
   is usable foundation, tracked per-subsystem in `docs/porting-status.md`.
@@ -224,17 +254,10 @@ This batch's final verification step found and fixed two distinct things
    the full 23-scene deterministic regression matrix (0 differing pixels
    against every existing golden, including `r0-dream-land-default.png`)
    all pass — additive, no regression.
-2. **Still open:** the `regression_capture_fireball` capture still shows the
-   Fireball as an opaque black card, not a transparent flame, even though
-   the ROM palette, the packed PSP CLUT, and the blend/alpha-test enable
-   logic are all now individually confirmed correct. Two on-device
-   experiments (forcing `Blend` on, forcing cutout `AlphaTest` on, for every
-   primitive) both had a visible effect elsewhere in the same frame but
-   neither made the Fireball's background transparent — narrowing this to
-   the GE/PPSSPP CLUT-alpha path itself. See RE-300 for the full trace.
-   Diagnosing further needs GE-level tracing or a physical-PSP comparison
-   this session did not have; not attempted-and-guessed-around per this
-   project's own rule against unsupported rendering heuristics.
+2. **Initially unresolved, later fixed (see follow-up below):** the first
+   `regression_capture_fireball` capture showed an opaque black card. The
+   investigation below records the eliminated CLUT hypotheses and the actual
+   `DrawState` texture-function cache root cause.
 
 **Update (2026-09-20):** the physical-PSP capture in option (a) below has now
 been run, plus two follow-up hardware experiments. Real PSP hardware (PSP
@@ -277,7 +300,11 @@ per-target hit record even when adjacent windows never leave an idle frame,
 while a sourspot replacement without a clear remains one hit. Focused host
 tests cover both cases, and deterministic PPSSPP B+up input exercises the
 rendered Training path. Next: port Donkey Kong under `P2` as the next complete
-fighter batch.
+fighter batch -- this session's RE-307 palette-index-optimization batch is a
+rendering side-task and does not change that. RE-307's own PPSSPP capture
+pass and `psp-runtime` double-buffer-clear bug fix are both complete (see
+above); its remaining follow-up is a physical-PSP spot check, not blocking
+gameplay work.
 
 Grabs/throws stays deferred: a real throw's damage/knockback is baked into
 each character's own motion script, and the grabbed-fighter hold position

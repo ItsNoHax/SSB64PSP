@@ -346,7 +346,7 @@ Status: COMPLETE for ROM-backed assets
 
 ### Texture filtering
 
-Status: COMPENSATED where measured-material, now including material-aware alpha (RE-306, RE-305); exact fixed-function deviation remains (RE-219); sampling alignment verified (RE-304)
+Status: COMPENSATED where measured-material, now including material-aware alpha (RE-306, RE-305) and filter-aware CI4/CI8 palette-index optimization (RE-307); exact fixed-function deviation remains (RE-219); sampling alignment verified (RE-304)
 
 RE-304 separates coordinate alignment from the 3-point
 reconstruction problem. A deterministic GE rig samples unique-colour 2x2 and
@@ -374,7 +374,55 @@ RE-305 replaces the four old hand-authored blur exceptions with one measured bui
 
 RE-306 makes alpha compensation material-aware instead of always-exact, classifying each texture's real runtime alpha state (`filter_compensation::AlphaPolicy`, derived from `pack::material_alpha_state`/`pack::alpha_gate`, the same logic the GE draw path itself uses) into Opaque (alpha forced to 255, no solver effort spent, and excluded from the acceptance gate since nothing samples it), Cutout (alpha optimized only where the real runtime threshold's pass/fail classification is proven unchanged at every measured sample, re-checked again after any palette/5551 quantization), or Translucent (alpha optimized through the same objective as RGB, gated additionally on a premultiplied "visible" SSE -- `rgb * alpha / 255` -- that cannot regress, so invisible near-zero-alpha texels' raw RGB error can never dominate the decision). The texture-variant cache now keys on this policy, since a shared physical texture used both opaquely and translucently needs two immutable variants, not one shared guess. Rebuilding the same US ROM: 404 variants (267 CI4, 137 RGBA8888; 364 Opaque, 27 Cutout, 13 Translucent), a *smaller* pack (30,158,688 vs 30,172,496 bytes) since excluding alpha from the Opaque gate is net-cheaper than the old always-4-channel gate. All 13 Translucent variants improve, including the Dream Land canopy blossoms RE-305 could only partially fix (`103:0x5F0`'s three variants: 5.154/7.995/4.309 -> 0.974/1.930/1.037 mean, versus RE-305's 2.062-5.195 floor). All 30 baseline-alpha-dominated variants improve with no max regression. See RE-306 for the full per-policy design, test coverage, and a flagged pre-existing PPSSPP-capture-timing drift on stage-animation scenes found (not fixed) while validating this batch.
 
-**Remaining work:** The PSP GE has only `Nearest`/`Linear` and no programmable shader stage, so a texture-only inverse cannot equal the RDP's piecewise triangular surface everywhere. Alpha preservation, animated palette semantics, and conservative texgen coverage intentionally leave residual error. RE-305 has PPSSPP/host validation but no physical-PSP spot check.
+RE-307 replaces `quantize_to_palette`'s per-texel nearest-color CI4/CI8
+assignment with `filter_compensation::optimize_palette_indices`: coordinate
+descent over the exact measured 3-point-vs-GE-bilinear objective (the same
+`compose_bilinear` arithmetic the runtime sampler models, now factored out of
+`n64_filter::sample_bilinear_addressed` so there is one blend formula, not
+two), seeded from the same nearest assignment and capped at 8 sweeps. Each
+coverage sample counts as evidence only for its *dominant* (highest-weight)
+corner, not all four taps it geometrically touches -- an earlier version
+attributed every sample to all four corners regardless of weight, which let
+a texel with only a thin, low-weight sample swing to a visually wrong
+extreme value chasing a marginal aggregate win nothing else could veto; a
+user-caught rendering regression on Dream Land's canopy ornaments (a
+fragmented, speckled sprite where the reference showed a clean silhouette)
+traced to exactly this, and the fix is the dominant-corner restriction (see
+RE-307 for the full per-texel trace). The optimized candidate is kept over
+plain nearest only when it measures no worse on SSE, max error, `>=8/255`,
+and `>=32/255` simultaneously, and (for `Translucent` policy) the
+premultiplied visible SSE does not regress either (RE-306's requirement 5,
+carried into this second place alpha can move). Rebuilding the same US ROM
+(two independent builds byte-identical, before-build byte-identical to
+RE-306's own recorded pack): compensated variants rose 404 -> 405 (305 CI4,
+100 RGBA8888, versus 267 CI4/137 RGBA8888 before) — **37 fewer variants need
+RGBA8888 promotion**, and the full pack **shrinks** 30,158,688 -> 29,920,832
+bytes (-0.79%). Among the 305 final CI4/CI8 variants, summed SSE against the
+plain nearest-palette result falls 7.44% (268/305 strict improvements, 23
+exact ties where no legal index helped, 0 regressions in the selected
+candidates -- 49 raw-optimizer outputs that did regress were all correctly
+rejected in favor of nearest). Runtime VRAM per texel is unaffected for any
+variant that stays CI4/CI8 (same bit width, same GE format); the effect is a
+build-time pack-size reduction plus fewer textures paying RGBA8888's
+8x-per-texel runtime cost at all. Its own PPSSPP capture pass separately
+found and fixed an unrelated, pre-existing `psp-runtime` bug: `Gpu::
+begin_frame`'s per-frame clear ran under whatever scissor the *previous*
+frame's `set_viewport_pillarboxed` had narrowed to, so only whichever of the
+two swap-chain buffers the very first presented frame landed on ever
+received a full-screen clear -- the other buffer's pillarbox border was
+never repainted again. This batch's smaller pack shifted load timing enough
+to flip that parity and expose it as a deterministic black border on every
+scene; `begin_frame` now resets the scissor to full-screen before clearing.
+11 goldens (Dream Land, `mvopeningroom`, 9 of 13 fighters) were refreshed
+and reverified at 0 differing pixels after both fixes; DK, Kirby, Ness and
+Yoshi are unchanged against the true pre-batch reference (Kirby and Ness had
+shown diffs under the pre-fix buggy algorithm, correctly reverting to
+no-change once the regression was fixed); `r1-stage-sector.png`/
+`r1-catch-swirl-flat-color.png` reproduce RE-306's own already-flagged
+pre-existing stage-material-animation capture-timing drift (isolated as
+pack-independent) and were left untouched. See RE-307.
+
+**Remaining work:** The PSP GE has only `Nearest`/`Linear` and no programmable shader stage, so a texture-only inverse cannot equal the RDP's piecewise triangular surface everywhere. Alpha preservation, animated palette semantics, and conservative texgen coverage intentionally leave residual error. RE-305 has PPSSPP/host validation but no physical-PSP spot check; RE-307 has PPSSPP validation (13 refreshed goldens) but no physical-PSP capture this batch.
 
 
 ### Texture addressing

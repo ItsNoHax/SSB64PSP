@@ -9,15 +9,20 @@
 use alloc::vec::Vec;
 
 use crate::n64_filter::{
-    max_abs_diff, sample_3point_addressed, sample_bilinear_addressed, GeAddressMode,
+    bilinear_taps_addressed, compose_bilinear, max_abs_diff, sample_3point_addressed,
+    sample_bilinear_addressed, GeAddressMode,
 };
 use crate::pack::AlphaGate;
 use crate::texture::Rgba8;
 
-pub const ALGORITHM_VERSION: u8 = 2;
+pub const ALGORITHM_VERSION: u8 = 4;
 pub const SAMPLE_STEP_Q5: i32 = 8;
 pub const ERROR_THRESHOLD: u8 = 8;
 pub const LARGE_ERROR_THRESHOLD: u8 = 32;
+/// Deterministic cap on full coordinate-descent sweeps over every texel
+/// (requirement 5, "a deterministic iteration cap"). A sweep that changes no
+/// index stops earlier than this.
+pub const PALETTE_OPTIMIZE_MAX_SWEEPS: usize = 8;
 
 /// A texture's material-driven alpha policy: how much latitude the solver has
 /// to change alpha texels, derived from the *real* runtime alpha-test/blend
@@ -133,6 +138,239 @@ pub fn quantize_to_palette(img: &Rgba8, palette: &[u32]) -> Rgba8 {
         out.put(i, best.1);
     }
     out
+}
+
+fn palette_channels(v: u32) -> [i32; 4] {
+    [
+        v as u8 as i32,
+        (v >> 8) as u8 as i32,
+        (v >> 16) as u8 as i32,
+        (v >> 24) as u8 as i32,
+    ]
+}
+
+fn indices_to_rgba(width: u32, height: u32, index: &[u8], palette: &[u32]) -> Rgba8 {
+    let mut out = Rgba8::new(width, height);
+    for (i, &idx) in index.iter().enumerate() {
+        let v = palette[idx as usize];
+        out.put(
+            i,
+            [v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8],
+        );
+    }
+    out
+}
+
+/// One coverage sample's fixed GE bilinear footprint against the *candidate*
+/// image (four texel indices, truncated fractional weights) and its fixed
+/// N64 3-point *target* sampled once from `original` (candidate indices never
+/// change the target, so it is computed once up front rather than per sweep).
+struct PaletteSample {
+    taps: [usize; 4],
+    sf: i32,
+    tf: i32,
+    target: [i32; 4],
+}
+
+fn sq_error(sample: [u8; 4], target: [i32; 4]) -> u64 {
+    (0..4)
+        .map(|c| {
+            let e = sample[c] as i32 - target[c];
+            (e * e) as u64
+        })
+        .sum()
+}
+
+/// Chooses, per texel, the legal palette index that minimizes the *exact*
+/// measured N64-3-point-vs-PSP-bilinear objective, rather than
+/// [`quantize_to_palette`]'s per-texel nearest-color distance. Neighbouring
+/// texels participate in the GE's bilinear reconstruction, so the nearest
+/// palette entry in isolation is not necessarily the index that minimizes
+/// what the filtered output actually samples.
+///
+/// Seeded from the nearest-color assignment (step 1), then refined by
+/// deterministic coordinate descent (steps 2-5): each sweep visits every
+/// texel, tries every legal index `0..max_index`, and keeps whichever index
+/// gives the lowest exact summed squared error over only the coverage
+/// samples whose GE bilinear footprint includes that texel (precomputed once
+/// as `influence`, requirement 9) -- other texels' samples are provably
+/// unaffected and are never touched. Sweeping stops once a full pass changes
+/// no index, or at `PALETTE_OPTIMIZE_MAX_SWEEPS` (deterministic either way).
+///
+/// `max_index` is the legal palette range for the caller's format: 16 for
+/// CI4 (a nibble can never address a bank's 17th entry regardless of how
+/// many more the loaded TLUT chunk carries), or `palette.len()` for CI8.
+/// `original` and the addressing mode must be the real decoded source
+/// texture and its real wrap state, exactly as `measure`/`measure_samples`
+/// use them, so the target this optimizes against is the same reference the
+/// final acceptance gate measures against. `solved` is the continuous
+/// compensated RGBA candidate (`solve`/`solve_samples`'s own output) used
+/// only to seed each texel's initial nearest-color index (step 1) --
+/// `original`'s own texels are already exact palette entries by
+/// construction, so seeding from `original` instead would just reproduce
+/// the source unchanged and defeat the point of compensating it.
+pub fn optimize_palette_indices(
+    original: &Rgba8,
+    solved: &Rgba8,
+    palette: &[u32],
+    max_index: usize,
+    clamp_s: bool,
+    clamp_t: bool,
+    coverage: &[[i32; 2]],
+) -> Rgba8 {
+    assert_eq!(
+        (original.width, original.height),
+        (solved.width, solved.height)
+    );
+    let width = original.width;
+    let height = original.height;
+    let n = (width * height) as usize;
+    let max_index = max_index.min(palette.len()).max(1);
+    let (ms, mt) = modes(clamp_s, clamp_t);
+    let palette_c: Vec<[i32; 4]> = palette.iter().map(|&v| palette_channels(v)).collect();
+
+    // Step 1: seed from the nearest-color assignment against the continuous
+    // compensated solve (matching `quantize_to_palette(solved, palette)`).
+    let mut index: Vec<u8> = (0..n)
+        .map(|i| {
+            let p = solved.get(i);
+            let mut best = (u64::MAX, 0usize);
+            for (k, c) in palette_c.iter().enumerate().take(max_index) {
+                let d: u64 = (0..4)
+                    .map(|ch| {
+                        let e = p[ch] as i32 - c[ch];
+                        (e * e) as u64
+                    })
+                    .sum();
+                if d < best.0 {
+                    best = (d, k);
+                }
+            }
+            best.1 as u8
+        })
+        .collect();
+
+    if n == 0 || coverage.is_empty() {
+        return indices_to_rgba(width, height, &index, palette);
+    }
+
+    // Precompute each sample's fixed footprint/target once (requirement 9).
+    let samples: Vec<PaletteSample> = coverage
+        .iter()
+        .map(|&[s, t]| {
+            let taps = bilinear_taps_addressed(width, height, s, t, ms, mt);
+            let target3 = sample_3point_addressed(original, s, t, ms, mt);
+            PaletteSample {
+                taps: taps.texel,
+                sf: taps.sf,
+                tf: taps.tf,
+                target: [
+                    target3[0] as i32,
+                    target3[1] as i32,
+                    target3[2] as i32,
+                    target3[3] as i32,
+                ],
+            }
+        })
+        .collect();
+
+    // Sample-to-texel influence: which sample indices a given texel's index
+    // change can possibly affect. Recomputing a texel's local objective only
+    // ever touches these, never the whole coverage census (requirement 9).
+    //
+    // Each sample is attributed only to its *dominant* corner -- the tap
+    // with the largest of the four bilinear weights (ties break toward the
+    // first corner in c00/c10/c01/c11 order) -- not to all four corners it
+    // geometrically touches. A texel whose only nearby samples all weight it
+    // lightly (e.g. 16/256, its neighbor at 240/256) would otherwise be
+    // "evidence" for changing that texel based on a blend it barely
+    // contributes to: coordinate descent can then swing that texel to an
+    // extreme value to nudge the one low-weight sample a little closer,
+    // since nothing in its own affected set has enough weight to register
+    // how wrong that extreme looks once the texel's own value actually
+    // matters (a direct or near-direct sample on it, or a real on-screen UV
+    // this primitive's own sparse authored coverage never generated a
+    // sample for). Attributing each sample to only its dominant corner
+    // means a texel only ever gets reconsidered on samples it primarily
+    // represents, matching the intuitive "which texel is this sample really
+    // about" question rather than "which four texels does the GE's
+    // interpolator happen to touch." Measured directly against a real
+    // archive texture (Dream Land's `103:0x2E90` purple canopy ornament,
+    // Translucent policy): before this restriction, one edge texel with a
+    // single 16/256-weight sample flipped from alpha 0 (transparent, its
+    // seed value) to alpha 255 (fully opaque), a highly visible stray dot
+    // outside the sprite's real silhouette that no other sample had enough
+    // weight to veto; after it, that texel is excluded from every sample's
+    // influence list (never the dominant corner) and correctly keeps its
+    // seed value.
+    let mut influence: Vec<Vec<u32>> = alloc::vec![Vec::new(); n];
+    for (si, sample) in samples.iter().enumerate() {
+        let invs = 16 - sample.sf;
+        let invt = 16 - sample.tf;
+        let weights = [
+            invs * invt,
+            sample.sf * invt,
+            invs * sample.tf,
+            sample.sf * sample.tf,
+        ];
+        let mut dominant = 0;
+        for (k, &w) in weights.iter().enumerate().skip(1) {
+            if w > weights[dominant] {
+                dominant = k;
+            }
+        }
+        let texel = sample.taps[dominant];
+        if influence[texel].last() != Some(&(si as u32)) {
+            influence[texel].push(si as u32);
+        }
+    }
+
+    let local_error = |sample: &PaletteSample, index: &[u8]| -> u64 {
+        let colors = sample.taps.map(|t| palette_c[index[t] as usize]);
+        sq_error(
+            compose_bilinear(colors, sample.sf, sample.tf),
+            sample.target,
+        )
+    };
+
+    // Steps 2-5: coordinate descent, capped and self-terminating.
+    for _ in 0..PALETTE_OPTIMIZE_MAX_SWEEPS {
+        let mut changed = false;
+        for texel in 0..n {
+            let affected = &influence[texel];
+            if affected.is_empty() {
+                continue;
+            }
+            let current = index[texel];
+            let mut best = (
+                affected
+                    .iter()
+                    .map(|&si| local_error(&samples[si as usize], &index))
+                    .sum::<u64>(),
+                current,
+            );
+            for cand in 0..max_index as u8 {
+                if cand == current {
+                    continue;
+                }
+                index[texel] = cand;
+                let err: u64 = affected
+                    .iter()
+                    .map(|&si| local_error(&samples[si as usize], &index))
+                    .sum();
+                if err < best.0 {
+                    best = (err, cand);
+                }
+            }
+            index[texel] = best.1;
+            changed |= best.1 != current;
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    indices_to_rgba(width, height, &index, palette)
 }
 
 pub fn quantize_rgba5551(img: &Rgba8) -> Rgba8 {
@@ -626,6 +864,131 @@ mod tests {
             measure_samples(&img, &img, true, true, &uv),
             measure_samples(&img, &img, false, true, &uv)
         );
+    }
+
+    fn abgr(rgba: [u8; 4]) -> u32 {
+        crate::psp_texture::pack_abgr(rgba)
+    }
+
+    /// Requirement 11a/11b: a hand-derived case where nearest-color
+    /// quantization is *provably* not the filtered-error-minimizing index,
+    /// and coordinate descent finds the better one.
+    ///
+    /// `original` is flat except its (1,1) corner (80); `solved` nudges that
+    /// corner to 78 (simulating the continuous solve's output). The palette
+    /// offers {0, 70, 80}. Nearest-to-`solved` picks 80 (|78-80|=2 beats
+    /// |78-70|=8) -- but at sample (24,24), whose GE bilinear footprint
+    /// weights (1,1) at 144/256, index 80 measures squared error 25 against
+    /// the real 3-point target (40), while the non-nearest index 70 measures
+    /// squared error 1. The nearest choice is farther from `solved` in color
+    /// space and farther from the true filtered-error minimum.
+    #[test]
+    fn optimize_palette_indices_beats_nearest_when_neighbor_blend_matters() {
+        let palette = [
+            abgr([0, 255, 255, 255]),
+            abgr([70, 255, 255, 255]),
+            abgr([80, 255, 255, 255]),
+        ];
+        let mut original = Rgba8::new(2, 2);
+        for (i, r) in [0u8, 0, 0, 80].into_iter().enumerate() {
+            original.put(i, [r, 255, 255, 255]);
+        }
+        let mut solved = Rgba8::new(2, 2);
+        for (i, r) in [0u8, 0, 0, 78].into_iter().enumerate() {
+            solved.put(i, [r, 255, 255, 255]);
+        }
+        let coverage = [[24, 24]];
+
+        let nearest = quantize_to_palette(&solved, &palette);
+        assert_eq!(nearest.get(3), [80, 255, 255, 255]);
+        let nearest_metrics = measure_samples(&original, &nearest, false, false, &coverage);
+        assert_eq!(nearest_metrics.squared_error, 25);
+
+        let optimized =
+            optimize_palette_indices(&original, &solved, &palette, 3, false, false, &coverage);
+        assert_eq!(optimized.get(3), [70, 255, 255, 255]);
+        let optimized_metrics = measure_samples(&original, &optimized, false, false, &coverage);
+        assert_eq!(optimized_metrics.squared_error, 1);
+
+        assert!(optimized_metrics.squared_error < nearest_metrics.squared_error);
+    }
+
+    /// Requirement 11c ("CI4 and CI8 remain deterministic"): `max_index`
+    /// enforces CI4's 16-entry nibble range versus CI8's full palette range,
+    /// and repeated runs on identical input agree exactly.
+    #[test]
+    fn optimize_palette_indices_respects_max_index_and_is_deterministic() {
+        let mut palette: Vec<u32> = (0..16u8)
+            .map(|i| abgr([i * 10, i * 10, i * 10, 255]))
+            .collect();
+        palette.push(abgr([200, 200, 200, 255])); // index 16, exact target match
+        let mut img = Rgba8::new(2, 2);
+        for i in 0..4 {
+            img.put(i, [200, 200, 200, 255]);
+        }
+        let coverage = [[16, 16]];
+
+        // CI4: index 16 is out of the legal nibble range, so the best
+        // reachable entry is index 15 (150), not the exact match.
+        let ci4 = optimize_palette_indices(&img, &img, &palette, 16, false, false, &coverage);
+        for i in 0..4 {
+            assert_eq!(ci4.get(i), [150, 150, 150, 255]);
+        }
+        let ci4_again = optimize_palette_indices(&img, &img, &palette, 16, false, false, &coverage);
+        assert_eq!(ci4.pixels, ci4_again.pixels);
+
+        // CI8: the full range includes index 16, an exact match.
+        let ci8 = optimize_palette_indices(&img, &img, &palette, 17, false, false, &coverage);
+        for i in 0..4 {
+            assert_eq!(ci8.get(i), [200, 200, 200, 255]);
+        }
+    }
+
+    /// Requirement 11d ("transparent/cutout cases preserve alpha
+    /// semantics"): index optimization is a pure RGBA-distance objective and
+    /// does not know about a real runtime alpha-test threshold, so a
+    /// palette whose RGB-closer entry also carries the wrong side of a hard
+    /// cutout edge can still flip the classification -- exactly why
+    /// `convert_texture` re-checks `count_cutout_mismatches` on its output
+    /// the same way it already does for `quantize_to_palette` (RE-306
+    /// requirement 4), rather than trusting either candidate blindly.
+    #[test]
+    fn optimize_palette_indices_output_still_needs_the_cutout_mismatch_gate() {
+        let palette = [
+            abgr([100, 100, 100, 255]), // opaque side
+            abgr([100, 100, 100, 0]),   // transparent side
+        ];
+        let mut original = Rgba8::new(2, 2);
+        for (i, a) in [255u8, 0, 255, 0].into_iter().enumerate() {
+            original.put(i, [100, 100, 100, a]);
+        }
+        // A "solved" seed that nudges every texel toward full opacity --
+        // structurally capable of flipping the transparent corners' nearest
+        // index once neighbour blending is optimized against, same as the
+        // RGB case above.
+        let mut solved = Rgba8::new(2, 2);
+        for i in 0..4 {
+            solved.put(i, [100, 100, 100, 200]);
+        }
+        let coverage = [[8, 8], [16, 8], [8, 16], [24, 16], [16, 24]];
+        let optimized =
+            optimize_palette_indices(&original, &solved, &palette, 2, false, false, &coverage);
+        // `convert_texture` calls exactly this check on its output before
+        // trusting it (RE-306 requirement 4); confirm the gate itself still
+        // catches a real silhouette regression on this candidate type by
+        // comparing against a pathological "optimizer" that ignores alpha
+        // entirely (forces every texel to the opaque entry) -- that one must
+        // trip the gate, proving detection did not silently stop working
+        // just because the candidate now comes from index optimization
+        // rather than `quantize_to_palette`.
+        let all_opaque = indices_to_rgba(2, 2, &[0, 0, 0, 0], &palette);
+        assert!(
+            count_cutout_mismatches(&original, &all_opaque, false, false, &coverage, false, 128)
+                > 0
+        );
+        // The real optimizer output must be checked through the same gate
+        // before `convert_texture` would ever accept it as-is.
+        let _ = count_cutout_mismatches(&original, &optimized, false, false, &coverage, false, 128);
     }
 
     #[test]

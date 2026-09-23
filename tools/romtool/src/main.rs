@@ -2900,15 +2900,91 @@ fn convert_texture(
         let mut chosen = &solved.rgba;
         let mut format = psm;
         let quantized;
+        let mut used_index_optimization = false;
+        let mut nearest_sse_dbg: i64 = -1;
+        let mut optimized_sse_dbg: i64 = -1;
+        let mut nearest_max_dbg: i64 = -1;
+        let mut optimized_max_dbg: i64 = -1;
+        let mut nearest_above8_dbg: i64 = -1;
+        let mut optimized_above8_dbg: i64 = -1;
+        let mut nearest_above32_dbg: i64 = -1;
+        let mut optimized_above32_dbg: i64 = -1;
         if psm.is_paletted() {
-            quantized = ssb_rom::filter_compensation::quantize_to_palette(&solved.rgba, &palette);
-            let qm = if coverage.is_empty() {
-                ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
+            // Nearest-palette-color quantization minimizes per-texel color
+            // distance, not the actual filtered output error: neighbouring
+            // texels participate in the GE's bilinear reconstruction, so the
+            // nearest entry in isolation is not necessarily the index that
+            // minimizes what a sample actually reads. `optimize_palette_indices`
+            // coordinate-descends over the exact measured objective instead,
+            // seeded from this same nearest assignment; it is only kept if it
+            // measures no worse on every metric (requirement 10 -- never trade
+            // away a metric the plain nearest quantization already had).
+            let nearest = ssb_rom::filter_compensation::quantize_to_palette(&solved.rgba, &palette);
+            let nearest_metrics = ssb_rom::filter_compensation::measure_samples(
+                &img,
+                &nearest,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+            );
+            let max_index = if psm == psp::Psm::PsmT4 {
+                16
             } else {
-                ssb_rom::filter_compensation::measure_samples(
-                    &img, &quantized, t.clamp_s, t.clamp_t, coverage,
-                )
+                palette.len()
             };
+            let optimized = ssb_rom::filter_compensation::optimize_palette_indices(
+                &img,
+                &solved.rgba,
+                &palette,
+                max_index,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+            );
+            let optimized_metrics = ssb_rom::filter_compensation::measure_samples(
+                &img,
+                &optimized,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+            );
+            nearest_sse_dbg = nearest_metrics.squared_error as i64;
+            optimized_sse_dbg = optimized_metrics.squared_error as i64;
+            nearest_max_dbg = nearest_metrics.max as i64;
+            optimized_max_dbg = optimized_metrics.max as i64;
+            nearest_above8_dbg = nearest_metrics.above_8 as i64;
+            optimized_above8_dbg = optimized_metrics.above_8 as i64;
+            nearest_above32_dbg = nearest_metrics.above_32 as i64;
+            optimized_above32_dbg = optimized_metrics.above_32 as i64;
+            // Requirement 5 (RE-306), carried into index optimization: raw
+            // RGBA SSE treats alpha and RGB as equally-weighted channels, so
+            // a Translucent candidate can hold or improve raw SSE while
+            // making the alpha-weighted *visible* result worse -- e.g.
+            // trading a solid opaque-looking edge texel for one whose alpha
+            // drops, fragmenting a small sprite's silhouette into holes
+            // against the background even though nothing in the raw metric
+            // caught it. `solve_samples` already gates its own continuous
+            // solve on this; the index-optimization stage needs the same
+            // gate, since it is a second, independent place alpha can move.
+            let visible_ok = match alpha_policy {
+                ssb_rom::filter_compensation::AlphaPolicy::Translucent => {
+                    optimized_metrics.visible_squared_error <= nearest_metrics.visible_squared_error
+                }
+                _ => true,
+            };
+            let optimized_not_worse = optimized_metrics.squared_error
+                <= nearest_metrics.squared_error
+                && optimized_metrics.max <= nearest_metrics.max
+                && optimized_metrics.above_8 <= nearest_metrics.above_8
+                && optimized_metrics.above_32 <= nearest_metrics.above_32
+                && visible_ok;
+            let (qm, candidate) = if optimized_not_worse {
+                used_index_optimization = true;
+                (optimized_metrics, optimized)
+            } else {
+                (nearest_metrics, nearest)
+            };
+            quantized = candidate;
             if qm.squared_error * 100 <= solved.baseline.squared_error * 95
                 && qm.above_8 < solved.baseline.above_8
                 && silhouette_preserved(&quantized)
@@ -2952,13 +3028,16 @@ fn convert_texture(
                 format = psp::Psm::Psm8888;
             }
         }
-        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={}",
+        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={}",
             t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,alpha_policy,
             solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
             solved.baseline.visible_mean,solved.baseline.visible_max,
             solved.compensated.mean,solved.compensated.max,solved.compensated.percent_above_8(),solved.compensated.percent_above_32(),
             solved.compensated.visible_mean,solved.compensated.visible_max,format,
-            (img.width*img.height*format.bits() as u32/8) as i64-(img.width*img.height*psm.bits() as u32/8) as i64);
+            (img.width*img.height*format.bits() as u32/8) as i64-(img.width*img.height*psm.bits() as u32/8) as i64,
+            used_index_optimization, nearest_sse_dbg, optimized_sse_dbg,
+            nearest_max_dbg, optimized_max_dbg, nearest_above8_dbg, optimized_above8_dbg,
+            nearest_above32_dbg, optimized_above32_dbg);
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
         }

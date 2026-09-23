@@ -659,12 +659,29 @@ impl Gpu {
     }
 
     /// Opens a frame and optionally clears.
+    ///
+    /// The clear always covers the full screen, regardless of whichever
+    /// scissor a *previous* frame's [`Gpu::set_viewport_pillarboxed`] left
+    /// active: the GE's scissor register is not reset by `sceGuStart`, so a
+    /// pillarboxed caller's own narrowing call (made *after* `begin_frame`
+    /// returns, once per frame) would otherwise leave this frame's clear
+    /// scissored to last frame's narrow rectangle too. With two swap-chain
+    /// buffers, only the very first presented frame ever ran under the
+    /// full-screen scissor `init` sets up -- every later frame narrows the
+    /// scissor before the *next* frame's clear runs, so the buffer that
+    /// first frame did *not* land on never received a full clear at all,
+    /// and its pillarbox border kept whatever was in that VRAM region at
+    /// allocation time for the rest of the program's life. Resetting the
+    /// scissor here first makes every clear -- on both buffers, every frame
+    /// -- actually cover the screen; the caller's own narrowing call right
+    /// after this one still applies to that frame's subsequent 3D draws.
     pub fn begin_frame(&mut self, clear: Option<Color>) {
         debug_assert!(!self.frame_open, "begin_frame called twice");
         self.frame_open = true;
         unsafe {
             sys::sceGuStart(GuContextType::Direct, Self::list_ptr());
             if let Some(c) = clear {
+                sys::sceGuScissor(0, 0, SCREEN_WIDTH as i32, SCREEN_HEIGHT as i32);
                 sys::sceGuClearColor(c.to_abgr());
                 sys::sceGuClearDepth(0);
                 sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT | ClearBuffer::DEPTH_BUFFER_BIT);
