@@ -25,6 +25,7 @@ scenes=(
   'Pikachu:regression_capture_pikachu:r2-pikachu-fighter.png'
   'Jigglypuff:regression_capture_purin:r2-purin-fighter.png'
   'Ness:regression_capture_ness:r2-ness-fighter.png'
+  'Metal Mario:regression_capture_metal_mario:r2-metal-mario-fighter.png'
 )
 
 for scene in "${scenes[@]}"; do

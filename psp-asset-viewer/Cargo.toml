@@ -120,6 +120,11 @@ regression_capture_luigi = ["fighter_regression_capture"]
 regression_capture_yoshi = ["fighter_regression_capture"]
 regression_capture_pikachu = ["fighter_regression_capture"]
 regression_capture_purin = ["fighter_regression_capture"]
+# RE-311: Metal Mario (kind 13), the high-detail FTCommonPart graph at file
+# 300 0x1E08. The only fighter golden whose body draws `G_TEXTURE_GEN`, and so
+# the only one that shows the real-normal texgen filter compensation of its
+# 48x42 body texture (file 300 0x2490).
+regression_capture_metal_mario = ["fighter_regression_capture"]
 
 # Fidelity probe: StageMetalFile2's first two-node graph (file 117, graph
 # 0x1B10). Exercises real ordinary `G_TEXTURE_GEN` material state without item

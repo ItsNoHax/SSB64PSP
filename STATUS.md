@@ -25,8 +25,15 @@ against full-tile on any set. The shared metal reflection map (file 302
 `0x30`) fails the solver gate on both coverages; Link's 8x8 texgen texture is
 rejected by the conservative box gate. Pack is 29,627,552 bytes (+298,768,
 13 per-primitive Metal Mario variants). `ROMTOOL_TEXGEN_COVERAGE=full-tile`
-reproduces the RE-310 pack byte for byte. Runtime rendering is unchanged. No
-physical PSP capture this batch. Next gameplay batch remains Donkey Kong under
+reproduces the RE-310 pack byte for byte. New exact-pixel golden
+`r2-metal-mario-fighter.png` (`regression_capture_metal_mario`, file 300 graph
+`0x1E08`) is the first fighter golden that draws texgen. Known blocker:
+`tools/verify-fighter-goldens.sh` already fails before RE-311. Mario 1,344,
+Fox 644, Samus 2,476, Luigi 1,552, Link 12, Captain Falcon 6,156, Kirby 324,
+Pikachu 340, Jigglypuff 1,532 and Ness 8,012 pixels differ with the RE-310 pack
+too. The RE-310 and RE-311 packs give identical captures for Mario and Ness.
+The goldens were last rebaselined at RE-307 and need a deliberate rebaseline.
+Runtime rendering is unchanged. No physical PSP capture this batch. Next gameplay batch remains Donkey Kong under
 `P2`.
 
 Previous rendering subsystem/batch: **critical authored-UV coverage and independent

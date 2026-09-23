@@ -36,3 +36,7 @@ Link, Yoshi, Captain Falcon, Kirby, Pikachu, Jigglypuff, and Ness. The twelve
 2026-09-14 PPSSPP-software captures compare at zero differing pixels; their
 individual SHA-256 values are the committed image hashes. This is an expanded
 software regression suite, not a claim of new physical-PSP coverage.
+
+RE-311 adds Metal Mario (`regression_capture_metal_mario`,
+`r2-metal-mario-fighter.png`). It is the first fighter golden that draws
+`G_TEXTURE_GEN`. See [fighter-metal-mario.md](fighter-metal-mario.md).

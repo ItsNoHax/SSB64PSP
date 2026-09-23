@@ -294,6 +294,8 @@ fn fighter_regression_scene() -> Option<FighterRegressionScene> {
         FighterRegressionScene { fighter_kind: 10, model_file: 330, graph: 0x2028, light_stage: FighterLightStage::DreamLand }
     } else if cfg!(feature = "regression_capture_ness") {
         FighterRegressionScene { fighter_kind: 11, model_file: 335, graph: 0x26B0, light_stage: FighterLightStage::DreamLand }
+    } else if cfg!(feature = "regression_capture_metal_mario") {
+        FighterRegressionScene { fighter_kind: 13, model_file: 300, graph: 0x1E08, light_stage: FighterLightStage::DreamLand }
     } else {
         return None;
     };
