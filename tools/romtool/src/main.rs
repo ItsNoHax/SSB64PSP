@@ -952,6 +952,7 @@ struct TexKey {
     compensation_version: u8,
     coverage_hash: u64,
     animated_relationship: bool,
+    alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 }
 
 #[derive(Default)]
@@ -970,6 +971,7 @@ fn texture_cache_key(
     t: &ssb_rom::mesh::TextureRef,
     coverage_hash: u64,
     animated_relationship: bool,
+    alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 ) -> TexKey {
     TexKey {
         data_file: t.data_file.map_or(id, u32::from),
@@ -992,6 +994,7 @@ fn texture_cache_key(
         compensation_version: ssb_rom::filter_compensation::ALGORITHM_VERSION,
         coverage_hash,
         animated_relationship,
+        alpha_policy,
     }
 }
 
@@ -1084,6 +1087,7 @@ fn pack_mesh(
                     compensation_version: 0,
                     coverage_hash: 0,
                     animated_relationship: false,
+                    alpha_policy: ssb_rom::filter_compensation::AlphaPolicy::Opaque,
                 };
                 Some(
                     *tex_index
@@ -1094,7 +1098,12 @@ fn pack_mesh(
             Some(t) => {
                 let coverage = primitive_filter_coverage(m, prim);
                 let animated = prim.material.mat_anim.is_some();
-                let key = texture_cache_key(id, &t, coverage_hash(&coverage), animated);
+                let (gate, translucent_blend) =
+                    ssb_rom::pack::material_alpha_state(&prim.material);
+                let alpha_policy =
+                    ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
+                let key =
+                    texture_cache_key(id, &t, coverage_hash(&coverage), animated, alpha_policy);
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
@@ -1105,13 +1114,20 @@ fn pack_mesh(
                         &coverage,
                         swizzle,
                         animated,
+                        alpha_policy,
                         Some(&mut compensated),
                     )
                     .map(|tex| {
                         let final_key = if compensated {
                             key
                         } else {
-                            texture_cache_key(id, &t, 0, animated)
+                            texture_cache_key(
+                                id,
+                                &t,
+                                0,
+                                animated,
+                                ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+                            )
                         };
                         if let Some(&i) = tex_index.get(&final_key) {
                             return i;
@@ -1168,11 +1184,17 @@ fn pack_mesh(
                         Vec::new()
                     } else {
                         let base = prim.material.texture.or(prim.material.texture_shape)?;
+                        let (gate, translucent_blend) =
+                            ssb_rom::pack::material_alpha_state(&prim.material);
+                        let alpha_policy = ssb_rom::filter_compensation::AlphaPolicy::classify(
+                            gate,
+                            translucent_blend,
+                        );
                         let converted: Vec<u32> = anim_data
                             .sprites
                             .iter()
                             .filter_map(|p| {
-                                convert_mat_anim_sprite(src, *p, &base, swizzle)
+                                convert_mat_anim_sprite(src, *p, &base, swizzle, alpha_policy)
                                     .map(|tex| writer.add_texture(&tex, base.clamp_s, base.clamp_t))
                             })
                             .collect();
@@ -1245,13 +1267,14 @@ fn convert_mat_anim_sprite(
     p: ssb_rom::mobj::Ptr,
     base: &ssb_rom::mesh::TextureRef,
     swizzle: bool,
+    alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     let variant = ssb_rom::mesh::TextureRef {
         data_file: p.file,
         data_offset: p.offset,
         ..*base
     };
-    convert_texture(src, &variant, &[], swizzle, true, None)
+    convert_texture(src, &variant, &[], swizzle, true, alpha_policy, None)
 }
 
 /// Every `(model_file, graph_offset)` pair either of a fighter's two
@@ -2698,6 +2721,7 @@ fn convert_texture(
     coverage: &[[i32; 2]],
     swizzle: bool,
     preserve_palette_semantics: bool,
+    alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
     mut compensated_out: Option<&mut bool>,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     use ssb_rom::psp_texture as psp;
@@ -2818,12 +2842,60 @@ fn convert_texture(
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
         }
         let solved = if coverage.is_empty() {
-            ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t)
+            ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t, alpha_policy)
         } else {
-            ssb_rom::filter_compensation::solve_samples(&img, t.clamp_s, t.clamp_t, coverage)
+            ssb_rom::filter_compensation::solve_samples(
+                &img,
+                t.clamp_s,
+                t.clamp_t,
+                coverage,
+                alpha_policy,
+            )
         };
         let Some(solved) = solved else {
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        };
+        // Requirement 4: quantizing to the nearest existing palette/5551
+        // entry can move a texel's alpha byte again (to whatever the
+        // nearest immutable entry happens to carry) even though
+        // `solve_samples` already proved the pre-quantization candidate
+        // silhouette-safe -- so a cutout texture needs this checked again
+        // against the actual final representation, not just the float solve.
+        let cutout_gate = match alpha_policy {
+            ssb_rom::filter_compensation::AlphaPolicy::Cutout {
+                greater_or_equal,
+                threshold,
+            } => Some((greater_or_equal, threshold)),
+            _ => None,
+        };
+        // Texgen falls back to dense full-tile coverage the same way
+        // `solve`/`measure` do internally when given no explicit coverage.
+        let dense_coverage: Vec<[i32; 2]>;
+        let mismatch_coverage: &[[i32; 2]] = if coverage.is_empty() {
+            dense_coverage = (0..img.height as i32 * 32)
+                .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                .flat_map(|tq| {
+                    (0..img.width as i32 * 32)
+                        .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                        .map(move |sq| [sq, tq])
+                })
+                .collect();
+            &dense_coverage
+        } else {
+            coverage
+        };
+        let silhouette_preserved = |candidate: &ssb_rom::texture::Rgba8| {
+            cutout_gate.is_none_or(|(greater_or_equal, threshold)| {
+                ssb_rom::filter_compensation::count_cutout_mismatches(
+                    &img,
+                    candidate,
+                    t.clamp_s,
+                    t.clamp_t,
+                    mismatch_coverage,
+                    greater_or_equal,
+                    threshold,
+                ) == 0
+            })
         };
         let mut chosen = &solved.rgba;
         let mut format = psm;
@@ -2839,6 +2911,7 @@ fn convert_texture(
             };
             if qm.squared_error * 100 <= solved.baseline.squared_error * 95
                 && qm.above_8 < solved.baseline.above_8
+                && silhouette_preserved(&quantized)
             {
                 chosen = &quantized;
             } else {
@@ -2866,6 +2939,7 @@ fn convert_texture(
             if qm.squared_error * 100 <= solved.baseline.squared_error * 95
                 && qm.above_8 < solved.baseline.above_8
                 && qm.max <= solved.baseline.max.saturating_add(8)
+                && silhouette_preserved(&quantized)
             {
                 chosen = &quantized;
             } else {
@@ -2878,10 +2952,12 @@ fn convert_texture(
                 format = psp::Psm::Psm8888;
             }
         }
-        eprintln!("filter-comp file={} offset={:#X} {}x{} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% format={:?} memory_delta={}",
-            t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,
+        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={}",
+            t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,alpha_policy,
             solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
-            solved.compensated.mean,solved.compensated.max,solved.compensated.percent_above_8(),solved.compensated.percent_above_32(),format,
+            solved.baseline.visible_mean,solved.baseline.visible_max,
+            solved.compensated.mean,solved.compensated.max,solved.compensated.percent_above_8(),solved.compensated.percent_above_32(),
+            solved.compensated.visible_mean,solved.compensated.visible_max,format,
             (img.width*img.height*format.bits() as u32/8) as i64-(img.width*img.height*psm.bits() as u32/8) as i64);
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
@@ -6557,6 +6633,9 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                 // figure with no mip levels in it while the pack shipped them
                 // (RE-053). The classification above still explains *why*
                 // something fails; this decides whether it does.
+                let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
+                let alpha_policy =
+                    ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
                 let tex = convert_texture(
                     Texels {
                         home: file,
@@ -6566,6 +6645,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     &[],
                     true,
                     false,
+                    alpha_policy,
                     None,
                 );
                 if tex.is_none() {
@@ -10598,7 +10678,15 @@ mod tests {
         };
         let expect_abgr = |v: u16| ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(v));
 
-        let packed = super::convert_texture(texels, &base, &[], false, false, None)
+        let packed = super::convert_texture(
+            texels,
+            &base,
+            &[],
+            false,
+            false,
+            ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            None,
+        )
             .expect("CI4 texture converts");
         assert_eq!(
             packed.palette[0],
@@ -10607,7 +10695,15 @@ mod tests {
         );
 
         let bank0 = TextureRef { palette: 0, ..base };
-        let packed0 = super::convert_texture(texels, &bank0, &[], false, false, None)
+        let packed0 = super::convert_texture(
+            texels,
+            &bank0,
+            &[],
+            false,
+            false,
+            ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            None,
+        )
             .expect("CI4 texture converts");
         assert_eq!(
             packed0.palette[0],
@@ -10620,7 +10716,15 @@ mod tests {
         // out of bounds -- falls back to bank 0 rather than losing the
         // palette entirely.
         let out_of_range = TextureRef { palette: 5, ..base };
-        let packed_guard = super::convert_texture(texels, &out_of_range, &[], false, false, None)
+        let packed_guard = super::convert_texture(
+            texels,
+            &out_of_range,
+            &[],
+            false,
+            false,
+            ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            None,
+        )
             .expect("an out-of-range bank must not panic");
         assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
     }
