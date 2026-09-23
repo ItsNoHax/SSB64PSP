@@ -952,6 +952,7 @@ struct TexKey {
     compensation_version: u8,
     coverage_hash: u64,
     animated_relationship: bool,
+    animated_source: Option<ssb_rom::mesh::MatAnimRef>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 }
 
@@ -970,7 +971,7 @@ fn texture_cache_key(
     id: u32,
     t: &ssb_rom::mesh::TextureRef,
     coverage_hash: u64,
-    animated_relationship: bool,
+    animated_relationship: Option<ssb_rom::mesh::MatAnimRef>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 ) -> TexKey {
     TexKey {
@@ -993,7 +994,8 @@ fn texture_cache_key(
         clamp_t: t.clamp_t,
         compensation_version: ssb_rom::filter_compensation::ALGORITHM_VERSION,
         coverage_hash,
-        animated_relationship,
+        animated_relationship: animated_relationship.is_some(),
+        animated_source: animated_relationship,
         alpha_policy,
     }
 }
@@ -1087,6 +1089,7 @@ fn pack_mesh(
                     compensation_version: 0,
                     coverage_hash: 0,
                     animated_relationship: false,
+                    animated_source: None,
                     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy::Opaque,
                 };
                 Some(
@@ -1097,9 +1100,8 @@ fn pack_mesh(
             }
             Some(t) => {
                 let coverage = primitive_filter_coverage(m, prim);
-                let animated = prim.material.mat_anim.is_some();
-                let (gate, translucent_blend) =
-                    ssb_rom::pack::material_alpha_state(&prim.material);
+                let animated = prim.material.mat_anim;
+                let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
                 let alpha_policy =
                     ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
                 let key =
@@ -1108,12 +1110,17 @@ fn pack_mesh(
                     Some(i)
                 } else {
                     let mut compensated = false;
+                    let animated_palettes = animated.and_then(|key| {
+                        mat_anim_data
+                            .get(&key)
+                            .and_then(|data| reachable_palettes(src, key, data, None))
+                    });
                     convert_texture(
                         src,
                         &t,
                         &coverage,
                         swizzle,
-                        animated,
+                        animated_palettes.as_deref(),
                         alpha_policy,
                         Some(&mut compensated),
                     )
@@ -1121,13 +1128,15 @@ fn pack_mesh(
                         let final_key = if compensated {
                             key
                         } else {
-                            texture_cache_key(
+                            let mut key = texture_cache_key(
                                 id,
                                 &t,
                                 0,
                                 animated,
                                 ssb_rom::filter_compensation::AlphaPolicy::Opaque,
-                            )
+                            );
+                            key.animated_source = None;
+                            key
                         };
                         if let Some(&i) = tex_index.get(&final_key) {
                             return i;
@@ -1190,12 +1199,23 @@ fn pack_mesh(
                             gate,
                             translucent_blend,
                         );
+                        let coverage = primitive_filter_coverage(m, prim);
                         let converted: Vec<u32> = anim_data
                             .sprites
                             .iter()
-                            .filter_map(|p| {
-                                convert_mat_anim_sprite(src, *p, &base, swizzle, alpha_policy)
-                                    .map(|tex| writer.add_texture(&tex, base.clamp_s, base.clamp_t))
+                            .enumerate()
+                            .filter_map(|(slot, p)| {
+                                let states = reachable_palettes(src, anim, anim_data, Some(slot));
+                                convert_mat_anim_sprite(
+                                    src,
+                                    *p,
+                                    &base,
+                                    &coverage,
+                                    states.as_deref(),
+                                    swizzle,
+                                    alpha_policy,
+                                )
+                                .map(|tex| writer.add_texture(&tex, base.clamp_s, base.clamp_t))
                             })
                             .collect();
                         if converted.len() != anim_data.sprites.len() {
@@ -1256,6 +1276,45 @@ fn convert_mat_anim_palette(
     )
 }
 
+/// Replay the real script to retain only PaletteID slots that can coincide
+/// with this texture selection. `sprite_slot == None` means the primitive's
+/// static texture before a TextureIDCurrent track takes over.
+fn reachable_palettes(
+    src: Texels<'_>,
+    key: ssb_rom::mesh::MatAnimRef,
+    data: &MatAnimData,
+    sprite_slot: Option<usize>,
+) -> Option<Vec<Vec<u32>>> {
+    if data.palettes.is_empty() {
+        return None;
+    }
+    let file = src.bytes(if key.source_file == src.home.id {
+        None
+    } else {
+        Some(key.source_file as u16)
+    })?;
+    let mut joint = ssb_rom::matanim::MaterialJoint::start(key.script, 0.0);
+    let mut reached = std::collections::BTreeSet::new();
+    for _ in 0..MAT_ANIM_REPLAY_FRAMES {
+        joint.tick(file, 1.0).ok()?;
+        let texture = joint
+            .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
+            .map(|v| (v.max(0.0) as usize).min(data.sprites.len().saturating_sub(1)));
+        if texture == sprite_slot && joint.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID) {
+            if let Some(value) = joint.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
+                reached.insert(((value.max(0.0) + 0.5) as usize).min(data.palettes.len() - 1));
+            }
+        }
+        if joint.ended() || joint.looped() {
+            break;
+        }
+    }
+    reached
+        .into_iter()
+        .map(|id| convert_mat_anim_palette(src, data.palettes[id], data.palette_entries))
+        .collect()
+}
+
 /// Converts one resolved sprite (texture-id) variant, reusing a primitive's
 /// own authored format/dimensions/wrap (`base`) -- a material animation's
 /// `TextureIDCurrent`/`TextureIDNext` track only ever swaps *which* texel
@@ -1266,6 +1325,8 @@ fn convert_mat_anim_sprite(
     src: Texels<'_>,
     p: ssb_rom::mobj::Ptr,
     base: &ssb_rom::mesh::TextureRef,
+    coverage: &[[i32; 2]],
+    palettes: Option<&[Vec<u32>]>,
     swizzle: bool,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
@@ -1274,7 +1335,62 @@ fn convert_mat_anim_sprite(
         data_offset: p.offset,
         ..*base
     };
-    convert_texture(src, &variant, &[], swizzle, true, alpha_policy, None)
+    convert_texture(
+        src,
+        &variant,
+        coverage,
+        swizzle,
+        palettes,
+        alpha_policy,
+        None,
+    )
+}
+
+/// Read the source CI field before colour decoding so equal RGB entries keep
+/// their distinct PaletteID meanings. Mirror/clamp expansion follows the
+/// same path as `decode_mirrored` in `convert_texture`.
+fn decode_index_field(file: &[u8], t: &ssb_rom::mesh::TextureRef) -> Option<Vec<u8>> {
+    use ssb_rom::texture::{self, BitSize};
+    let source_width = u32::from(t.source_width.max(t.width));
+    let width = u32::from(t.width);
+    let height = u32::from(t.height);
+    let row = texture::data_len(source_width, 1, t.size);
+    let bytes = file.get(t.data_offset as usize..t.data_offset as usize + row * height as usize)?;
+    let mut img = texture::Rgba8::new(width, height);
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let at = y * row
+                + match t.size {
+                    BitSize::Bits4 => x / 2,
+                    _ => x,
+                };
+            let index = match t.size {
+                BitSize::Bits4 => {
+                    if x & 1 == 0 {
+                        bytes[at] >> 4
+                    } else {
+                        bytes[at] & 0xf
+                    }
+                }
+                _ => bytes[at],
+            };
+            img.put(y * width as usize + x, [index, 0, 0, 255]);
+        }
+    }
+    let mirrored = texture::mirror_extend(
+        &img,
+        t.mirror_s,
+        t.mirror_t,
+        t.clamp_s,
+        t.clamp_t,
+        t.drawn_width as u32,
+        t.drawn_height as u32,
+    );
+    Some(
+        (0..(mirrored.width * mirrored.height) as usize)
+            .map(|i| mirrored.get(i)[0])
+            .collect(),
+    )
 }
 
 /// Every `(model_file, graph_offset)` pair either of a fighter's two
@@ -2720,7 +2836,7 @@ fn convert_texture(
     t: &ssb_rom::mesh::TextureRef,
     coverage: &[[i32; 2]],
     swizzle: bool,
-    preserve_palette_semantics: bool,
+    animated_palettes: Option<&[Vec<u32>]>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
     mut compensated_out: Option<&mut bool>,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
@@ -2838,8 +2954,117 @@ fn convert_texture(
 
     let mut mipped = |palette: Vec<u32>| {
         let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
-        if psm.is_paletted() && preserve_palette_semantics {
-            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        if psm.is_paletted() && t.format == texture::Format::Ci {
+            if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
+                let source = decode_index_field(file, t)?;
+                let limit = if psm == psp::Psm::PsmT4 {
+                    16
+                } else {
+                    palette.len()
+                };
+                if states.iter().all(|p| p.len() >= limit) {
+                    let dense: Vec<[i32; 2]>;
+                    let samples = if coverage.is_empty() {
+                        dense = (0..img.height as i32 * 32)
+                            .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                            .flat_map(|v| {
+                                (0..img.width as i32 * 32)
+                                    .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                                    .map(move |u| [u, v])
+                            })
+                            .collect();
+                        dense.as_slice()
+                    } else {
+                        coverage
+                    };
+                    let optimized = ssb_rom::filter_compensation::optimize_animated_indices(
+                        &source, img.width, img.height, states, limit, t.clamp_s, t.clamp_t,
+                        samples,
+                    );
+                    let mut before = 0u64;
+                    let mut after = 0u64;
+                    let mut better_large = false;
+                    let mut nonregressing = true;
+                    let mut baseline_large = 0u64;
+                    let mut baseline_samples = 0u64;
+                    let mut baseline_max = 0u8;
+                    for state in states {
+                        let original = ssb_rom::filter_compensation::indices_to_rgba(
+                            img.width, img.height, &source, state,
+                        );
+                        let candidate = ssb_rom::filter_compensation::indices_to_rgba(
+                            img.width, img.height, &optimized, state,
+                        );
+                        let a = ssb_rom::filter_compensation::measure_samples(
+                            &original, &original, t.clamp_s, t.clamp_t, samples,
+                        );
+                        let b = ssb_rom::filter_compensation::measure_samples(
+                            &original, &candidate, t.clamp_s, t.clamp_t, samples,
+                        );
+                        before += a.squared_error;
+                        after += b.squared_error;
+                        baseline_large += a.above_8;
+                        baseline_samples += a.samples;
+                        baseline_max = baseline_max.max(a.max);
+                        better_large |= b.above_8 < a.above_8;
+                        nonregressing &=
+                            b.max <= a.max.saturating_add(8) && b.above_32 <= a.above_32;
+                    }
+                    let accepted =
+                        before > 0 && after * 100 <= before * 95 && better_large && nonregressing;
+                    let high_error = baseline_samples > 0
+                        && baseline_large * 100 >= baseline_samples
+                        && baseline_max >= 16;
+                    let direct_sse = if !accepted && high_error {
+                        let mut sum = 0u64;
+                        for state in states {
+                            let original = ssb_rom::filter_compensation::indices_to_rgba(
+                                img.width, img.height, &source, state,
+                            );
+                            let baseline = ssb_rom::filter_compensation::measure_samples(
+                                &original, &original, t.clamp_s, t.clamp_t, samples,
+                            )
+                            .squared_error;
+                            sum += ssb_rom::filter_compensation::solve_samples(
+                                &original,
+                                t.clamp_s,
+                                t.clamp_t,
+                                samples,
+                                alpha_policy,
+                            )
+                            .map_or(baseline, |s| s.compensated.squared_error.min(baseline));
+                        }
+                        Some(sum)
+                    } else {
+                        None
+                    };
+                    let pixels = img.width as i64 * img.height as i64;
+                    let direct_extra_level0 = pixels * 4 * states.len() as i64
+                        - (pixels * psm.bits() as i64).div_euclid(8);
+                    eprintln!("animated-filter-comp file={} offset={:#X} palettes={} baseline_sse={} indexed_sse={} accepted={} high_error={} direct_sse={:?} direct_extra_level0={} format={:?} memory_delta=0", t.data_file.map_or(src.home.id,u32::from), t.data_offset, states.len(), before, after, accepted, high_error, direct_sse, direct_extra_level0, psm);
+                    let indices = if accepted { &optimized } else { &source };
+                    if accepted {
+                        if let Some(out) = compensated_out.as_deref_mut() {
+                            *out = true;
+                        }
+                    }
+                    return Some(psp::pack_mipped_indices(
+                        &img, psm, &palette, swizzle, indices, states,
+                    ));
+                } else {
+                    // An incomplete table cannot define a safe joint legal
+                    // index set. Retain the source indices exactly instead
+                    // of falling through to frame-zero RGB quantization.
+                    return Some(psp::pack_mipped_indices(
+                        &img,
+                        psm,
+                        &palette,
+                        swizzle,
+                        &source,
+                        &[palette.clone()],
+                    ));
+                }
+            }
         }
         let solved = if coverage.is_empty() {
             ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t, alpha_policy)
@@ -6723,7 +6948,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     &t,
                     &[],
                     true,
-                    false,
+                    None,
                     alpha_policy,
                     None,
                 );
@@ -10762,11 +10987,11 @@ mod tests {
             &base,
             &[],
             false,
-            false,
+            None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
             None,
         )
-            .expect("CI4 texture converts");
+        .expect("CI4 texture converts");
         assert_eq!(
             packed.palette[0],
             expect_abgr(0xFFFF),
@@ -10779,11 +11004,11 @@ mod tests {
             &bank0,
             &[],
             false,
-            false,
+            None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
             None,
         )
-            .expect("CI4 texture converts");
+        .expect("CI4 texture converts");
         assert_eq!(
             packed0.palette[0],
             expect_abgr(0x0001),
@@ -10800,11 +11025,11 @@ mod tests {
             &out_of_range,
             &[],
             false,
-            false,
+            None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
             None,
         )
-            .expect("an out-of-range bank must not panic");
+        .expect("an out-of-range bank must not panic");
         assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
     }
 

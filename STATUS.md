@@ -5,7 +5,21 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **filter-aware CI4/CI8 palette-index optimization
+Current subsystem/batch: **animated indexed N64 filter compensation (complete,
+RE-308)**. The former 114-texture blanket material-animation skip is removed.
+Replay of the real `PaletteID`/`TextureIDCurrent` script pairs 74 CI4 conversion
+variants with reachable palette states; seven accept a jointly optimized
+shared index field. Their combined SSE falls 30.44%, and the 74-variant
+aggregate falls 5.67%. Palette tables and runtime `GU_LINEAR` are unchanged;
+duplicate-colour indices retain identity at level zero and across mips. The
+pack is 137,984 bytes larger with one additional texture entry, and accepted
+CI4 variants have no per-variant level-zero VRAM increase. A measured direct-
+colour fallback for six remaining high-error variants would cost at least
+2.95 MiB level-zero texture data for 16.36% SSE reduction, so it was not
+integrated. ROM-gated workspace tests, both release PSP builds, pack loadback,
+and one PPSSPPHeadless smoke capture pass. No physical PSP capture this batch.
+
+Previous rendering subsystem/batch: **filter-aware CI4/CI8 palette-index optimization
 (complete, host- and PPSSPP-verified; 11 refreshed goldens; no physical-PSP
 capture this batch, RE-307)**, extending RE-305/RE-306's build-time N64
 3-point/PSP-bilinear compensation. The optimizer coordinate-descends over
@@ -300,8 +314,8 @@ per-target hit record even when adjacent windows never leave an idle frame,
 while a sourspot replacement without a clear remains one hit. Focused host
 tests cover both cases, and deterministic PPSSPP B+up input exercises the
 rendered Training path. Next: port Donkey Kong under `P2` as the next complete
-fighter batch -- this session's RE-307 palette-index-optimization batch is a
-rendering side-task and does not change that. RE-307's own PPSSPP capture
+fighter batch -- RE-308 is a rendering side-task and does not change that.
+RE-307's own PPSSPP capture
 pass and `psp-runtime` double-buffer-clear bug fix are both complete (see
 above); its remaining follow-up is a physical-PSP spot check, not blocking
 gameplay work.

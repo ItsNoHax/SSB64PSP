@@ -15,7 +15,7 @@ use crate::n64_filter::{
 use crate::pack::AlphaGate;
 use crate::texture::Rgba8;
 
-pub const ALGORITHM_VERSION: u8 = 4;
+pub const ALGORITHM_VERSION: u8 = 5;
 pub const SAMPLE_STEP_Q5: i32 = 8;
 pub const ERROR_THRESHOLD: u8 = 8;
 pub const LARGE_ERROR_THRESHOLD: u8 = 32;
@@ -149,7 +149,7 @@ fn palette_channels(v: u32) -> [i32; 4] {
     ]
 }
 
-fn indices_to_rgba(width: u32, height: u32, index: &[u8], palette: &[u32]) -> Rgba8 {
+pub fn indices_to_rgba(width: u32, height: u32, index: &[u8], palette: &[u32]) -> Rgba8 {
     let mut out = Rgba8::new(width, height);
     for (i, &idx) in index.iter().enumerate() {
         let v = palette[idx as usize];
@@ -159,6 +159,116 @@ fn indices_to_rgba(width: u32, height: u32, index: &[u8], palette: &[u32]) -> Rg
         );
     }
     out
+}
+
+/// Optimize one shared index field against every palette that the material
+/// animation can bind to this texture. The caller supplies the source index
+/// field, preserving identity even where two entries have identical RGB in
+/// the initial palette. Each state has equal weight.
+pub fn optimize_animated_indices(
+    source: &[u8],
+    width: u32,
+    height: u32,
+    palettes: &[Vec<u32>],
+    max_index: usize,
+    clamp_s: bool,
+    clamp_t: bool,
+    coverage: &[[i32; 2]],
+) -> Vec<u8> {
+    assert!(!palettes.is_empty());
+    assert_eq!(source.len(), (width * height) as usize);
+    let max_index = max_index
+        .min(palettes.iter().map(Vec::len).min().unwrap())
+        .min(256);
+    assert!(max_index > 0);
+    assert!(source.iter().all(|&i| (i as usize) < max_index));
+    let (ms, mt) = modes(clamp_s, clamp_t);
+    let colors: Vec<Vec<[i32; 4]>> = palettes
+        .iter()
+        .map(|p| p.iter().map(|&c| palette_channels(c)).collect())
+        .collect();
+    let originals: Vec<Rgba8> = palettes
+        .iter()
+        .map(|p| indices_to_rgba(width, height, source, p))
+        .collect();
+    let samples: Vec<Vec<PaletteSample>> = originals
+        .iter()
+        .map(|original| {
+            coverage
+                .iter()
+                .map(|&[s, t]| {
+                    let taps = bilinear_taps_addressed(width, height, s, t, ms, mt);
+                    let target = sample_3point_addressed(original, s, t, ms, mt);
+                    PaletteSample {
+                        taps: taps.texel,
+                        sf: taps.sf,
+                        tf: taps.tf,
+                        target: target.map(i32::from),
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let mut influence = alloc::vec![Vec::<u32>::new(); source.len()];
+    if let Some(first) = samples.first() {
+        for (si, sample) in first.iter().enumerate() {
+            let a = 16 - sample.sf;
+            let b = 16 - sample.tf;
+            let weights = [a * b, sample.sf * b, a * sample.tf, sample.sf * sample.tf];
+            let dominant = (0..4).max_by_key(|&k| (weights[k], 4 - k)).unwrap();
+            let texel = sample.taps[dominant];
+            if influence[texel].last() != Some(&(si as u32)) {
+                influence[texel].push(si as u32);
+            }
+        }
+    }
+    let local_error = |si: usize, indices: &[u8]| -> u64 {
+        samples
+            .iter()
+            .zip(&colors)
+            .map(|(state, palette)| {
+                let sample = &state[si];
+                let taps = sample.taps.map(|t| palette[indices[t] as usize]);
+                sq_error(compose_bilinear(taps, sample.sf, sample.tf), sample.target)
+            })
+            .sum()
+    };
+    let mut indices = source.to_vec();
+    for _ in 0..PALETTE_OPTIMIZE_MAX_SWEEPS {
+        let mut changed = false;
+        for texel in 0..indices.len() {
+            if influence[texel].is_empty() {
+                continue;
+            }
+            let current = indices[texel];
+            let mut best = (
+                influence[texel]
+                    .iter()
+                    .map(|&si| local_error(si as usize, &indices))
+                    .sum::<u64>(),
+                current,
+            );
+            for candidate in 0..max_index {
+                if candidate as u8 == current {
+                    continue;
+                }
+                indices[texel] = candidate as u8;
+                let error = influence[texel]
+                    .iter()
+                    .map(|&si| local_error(si as usize, &indices))
+                    .sum();
+                if error < best.0 {
+                    best = (error, candidate as u8);
+                }
+            }
+            indices[texel] = best.1;
+            changed |= best.1 != current;
+        }
+        if !changed {
+            break;
+        }
+    }
+    indices
 }
 
 /// One coverage sample's fixed GE bilinear footprint against the *candidate*
@@ -630,7 +740,11 @@ pub fn solve_samples(
         // Opaque textures spend no solver effort on alpha (requirement 2);
         // cutout/translucent optimize it through the same measured-sampler
         // objective as RGB, gated afterwards rather than left unexplored.
-        let channels = if policy == AlphaPolicy::Opaque { 0..3 } else { 0..4 };
+        let channels = if policy == AlphaPolicy::Opaque {
+            0..3
+        } else {
+            0..4
+        };
         for i in 0..n {
             for c in channels.clone() {
                 values[i * 4 + c] = (values[i * 4 + c] - 0.72 * grad[i * 4 + c] / norm[i].max(1.0))
@@ -1017,5 +1131,54 @@ mod tests {
             AlphaPolicy::classify(AlphaGate::Greater(0), true),
             AlphaPolicy::Translucent
         );
+    }
+
+    #[test]
+    fn animated_index_optimization_uses_one_field_for_conflicting_palettes() {
+        let p = |r, g, b| crate::psp_texture::pack_abgr([r, g, b, 255]);
+        let palettes = alloc::vec![
+            alloc::vec![p(0, 0, 0), p(70, 0, 0), p(80, 0, 0)],
+            alloc::vec![p(255, 255, 255), p(185, 255, 255), p(175, 255, 255)],
+        ];
+        let unchanged = palettes.clone();
+        let source = [0, 0, 0, 2];
+        let coverage = [[24, 24]];
+        let result =
+            optimize_animated_indices(&source, 2, 2, &palettes, 3, false, false, &coverage);
+        assert_eq!(result, [0, 0, 0, 1]);
+        assert_eq!(
+            result,
+            optimize_animated_indices(&source, 2, 2, &palettes, 3, false, false, &coverage)
+        );
+        for palette in &palettes {
+            let original = indices_to_rgba(2, 2, &source, palette);
+            let candidate = indices_to_rgba(2, 2, &result, palette);
+            assert!(
+                measure_samples(&original, &candidate, false, false, &coverage).squared_error
+                    < measure_samples(&original, &original, false, false, &coverage).squared_error
+            );
+        }
+        assert_eq!(
+            palettes, unchanged,
+            "optimization must not alter palette tables"
+        );
+    }
+
+    #[test]
+    fn animated_ci8_tests_valid_entries_beyond_ci4_range() {
+        let mut palette = alloc::vec![abgr([0, 0, 0, 255]); 17];
+        palette[15] = abgr([80, 0, 0, 255]);
+        palette[16] = abgr([70, 0, 0, 255]);
+        let result = optimize_animated_indices(
+            &[0, 0, 0, 15],
+            2,
+            2,
+            &[palette],
+            17,
+            false,
+            false,
+            &[[24, 24]],
+        );
+        assert_eq!(result, [0, 0, 0, 16]);
     }
 }
