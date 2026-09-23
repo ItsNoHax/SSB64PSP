@@ -122,22 +122,67 @@ pub fn sample_bilinear_addressed(
     address_s: GeAddressMode,
     address_t: GeAddressMode,
 ) -> [u8; 4] {
+    let taps = bilinear_taps_addressed(img.width, img.height, s_q5, t_q5, address_s, address_t);
+    let colors = taps.texel.map(|i| {
+        let p = img.get(i);
+        [p[0] as i32, p[1] as i32, p[2] as i32, p[3] as i32]
+    });
+    compose_bilinear(colors, taps.sf, taps.tf)
+}
+
+/// The four texel offsets (flat `y*width+x` indices, c00/c10/c01/c11 order)
+/// a GE bilinear sample reads, plus its truncated 4-bit fractional weights.
+///
+/// Factored out of [`sample_bilinear_addressed`] so a caller that needs to
+/// test many candidate colors for one texel (`filter_compensation`'s
+/// palette-index optimizer) can recompute only the specific samples whose
+/// footprint includes that texel, without re-walking a whole image per
+/// candidate -- while still going through the same [`compose_bilinear`]
+/// arithmetic the ordinary sampler uses, so there is no second, driftable
+/// copy of the blend formula.
+#[derive(Debug, Clone, Copy)]
+pub struct BilinearTaps {
+    pub texel: [usize; 4],
+    pub sf: i32,
+    pub tf: i32,
+}
+
+pub fn bilinear_taps_addressed(
+    width: u32,
+    height: u32,
+    s_q5: i32,
+    t_q5: i32,
+    address_s: GeAddressMode,
+    address_t: GeAddressMode,
+) -> BilinearTaps {
     let (s0, sfrac) = split_q5(s_q5);
     let (t0, tfrac) = split_q5(t_q5);
+    let x0 = address(s0, width, address_s);
+    let x1 = address(s0 + 1, width, address_s);
+    let y0 = address(t0, height, address_t);
+    let y1 = address(t0 + 1, height, address_t);
+    BilinearTaps {
+        texel: [
+            (y0 * width + x0) as usize,
+            (y0 * width + x1) as usize,
+            (y1 * width + x0) as usize,
+            (y1 * width + x1) as usize,
+        ],
+        // The GE's measured bilinear accumulator has four fractional bits.
+        // N64 coordinates have five, so odd 1/32 steps truncate to the
+        // preceding 1/16 step (31/32 -> 15/16, for example).
+        sf: sfrac >> 1,
+        tf: tfrac >> 1,
+    }
+}
 
-    let c00 = fetch_addressed(img, s0, t0, address_s, address_t);
-    let c10 = fetch_addressed(img, s0 + 1, t0, address_s, address_t);
-    let c01 = fetch_addressed(img, s0, t0 + 1, address_s, address_t);
-    let c11 = fetch_addressed(img, s0 + 1, t0 + 1, address_s, address_t);
-
-    // The GE's measured bilinear accumulator has four fractional bits.  N64
-    // coordinates have five, so odd 1/32 steps truncate to the preceding
-    // 1/16 step (31/32 -> 15/16, for example).
-    let sf = sfrac >> 1;
-    let tf = tfrac >> 1;
+/// Composes the GE's exact truncated bilinear blend from four already-fetched
+/// corner colors (c00/c10/c01/c11 order) and [`BilinearTaps`]' fractional
+/// weights. This is the one place the blend arithmetic is written.
+pub fn compose_bilinear(colors: [[i32; 4]; 4], sf: i32, tf: i32) -> [u8; 4] {
+    let [c00, c10, c01, c11] = colors;
     let invs = 16 - sf;
     let invt = 16 - tf;
-
     let mut out = [0u8; 4];
     for c in 0..4 {
         let top = c00[c] * invs + c10[c] * sf;
