@@ -15,7 +15,7 @@ use crate::n64_filter::{
 use crate::pack::AlphaGate;
 use crate::texture::Rgba8;
 
-pub const ALGORITHM_VERSION: u8 = 6;
+pub const ALGORITHM_VERSION: u8 = 7;
 pub const SAMPLE_STEP_Q5: i32 = 8;
 pub const ERROR_THRESHOLD: u8 = 8;
 pub const LARGE_ERROR_THRESHOLD: u8 = 32;
@@ -546,6 +546,26 @@ pub fn measure_samples(
     coverage: &[[i32; 2]],
 ) -> Metrics {
     measure_samples_impl(original, candidate, clamp_s, clamp_t, coverage, true)
+}
+
+/// Policy-scoped measurement for an independent pack-time validation set.
+/// Opaque alpha is not read by the GE material and must not gate RGB changes.
+pub fn measure_samples_policy(
+    original: &Rgba8,
+    candidate: &Rgba8,
+    clamp_s: bool,
+    clamp_t: bool,
+    coverage: &[[i32; 2]],
+    policy: AlphaPolicy,
+) -> Metrics {
+    measure_samples_impl(
+        original,
+        candidate,
+        clamp_s,
+        clamp_t,
+        coverage,
+        policy != AlphaPolicy::Opaque,
+    )
 }
 
 /// Shared implementation. `include_alpha` gates whether the alpha channel
