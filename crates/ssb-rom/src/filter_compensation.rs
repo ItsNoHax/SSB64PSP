@@ -15,7 +15,7 @@ use crate::n64_filter::{
 use crate::pack::AlphaGate;
 use crate::texture::Rgba8;
 
-pub const ALGORITHM_VERSION: u8 = 5;
+pub const ALGORITHM_VERSION: u8 = 6;
 pub const SAMPLE_STEP_Q5: i32 = 8;
 pub const ERROR_THRESHOLD: u8 = 8;
 pub const LARGE_ERROR_THRESHOLD: u8 = 32;
@@ -23,6 +23,13 @@ pub const LARGE_ERROR_THRESHOLD: u8 = 32;
 /// (requirement 5, "a deterministic iteration cap"). A sweep that changes no
 /// index stops earlier than this.
 pub const PALETTE_OPTIMIZE_MAX_SWEEPS: usize = 8;
+pub const INTEGER_OPTIMIZE_MAX_SWEEPS: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegerFormat {
+    Rgba8888,
+    Rgba5551,
+}
 
 /// A texture's material-driven alpha policy: how much latitude the solver has
 /// to change alpha texels, derived from the *real* runtime alpha-test/blend
@@ -643,6 +650,271 @@ pub fn count_cutout_mismatches(
         .count() as u64
 }
 
+#[derive(Clone, Copy, Default)]
+struct IntegerSampleError {
+    sse: u64,
+    above_8: u64,
+    above_32: u64,
+    max: u8,
+    visible_sse: u64,
+    cutout_mismatch: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct IntegerTotals {
+    sse: u64,
+    above_8: u64,
+    above_32: u64,
+    visible_sse: u64,
+}
+
+impl IntegerTotals {
+    fn add(&mut self, e: IntegerSampleError) {
+        self.sse += e.sse;
+        self.above_8 += e.above_8;
+        self.above_32 += e.above_32;
+        self.visible_sse += e.visible_sse;
+    }
+
+    fn replace(self, old: Self, new: Self) -> Self {
+        Self {
+            sse: self.sse - old.sse + new.sse,
+            above_8: self.above_8 - old.above_8 + new.above_8,
+            above_32: self.above_32 - old.above_32 + new.above_32,
+            visible_sse: self.visible_sse - old.visible_sse + new.visible_sse,
+        }
+    }
+}
+
+/// Refines a rounded direct-colour solve against the exact GE sampler.
+/// Each coordinate tries +/-1 and +/-2 in the stored channel's integer
+/// domain (0..255 or 0..31, with a 1-bit alpha for 5551). Only coverage
+/// samples with a nonzero-weight tap on that texel are recomputed. The
+/// lexicographic objective is SSE, count >=32, count >=8, maximum error,
+/// distance from the rounded seed, then lower stored value. Opaque alpha is
+/// fixed; translucent visible SSE cannot exceed the seed's; every cutout
+/// sample keeps the seed's pass/fail classification. A strict improvement is required for every
+/// move, and the sweep cap makes the result deterministic.
+pub fn refine_integer(
+    original: &Rgba8,
+    seed: &Rgba8,
+    format: IntegerFormat,
+    clamp_s: bool,
+    clamp_t: bool,
+    coverage: &[[i32; 2]],
+    policy: AlphaPolicy,
+) -> Rgba8 {
+    assert_eq!((original.width, original.height), (seed.width, seed.height));
+    if coverage.is_empty() {
+        return seed.clone();
+    }
+    let (ms, mt) = modes(clamp_s, clamp_t);
+    let samples: Vec<_> = coverage
+        .iter()
+        .map(|&[s, t]| {
+            (
+                bilinear_taps_addressed(original.width, original.height, s, t, ms, mt),
+                sample_3point_addressed(original, s, t, ms, mt),
+            )
+        })
+        .collect();
+    let mut influence = alloc::vec![Vec::<usize>::new(); (seed.width * seed.height) as usize];
+    for (si, (taps, _)) in samples.iter().enumerate() {
+        let weights = [
+            (16 - taps.sf) * (16 - taps.tf),
+            taps.sf * (16 - taps.tf),
+            (16 - taps.sf) * taps.tf,
+            taps.sf * taps.tf,
+        ];
+        for k in 0..4 {
+            let texel = taps.texel[k];
+            if weights[k] != 0 && influence[texel].last() != Some(&si) {
+                influence[texel].push(si);
+            }
+        }
+    }
+    let error = |si: usize, img: &Rgba8| -> IntegerSampleError {
+        let (taps, target) = &samples[si];
+        let colors = taps.texel.map(|i| img.get(i).map(i32::from));
+        let actual = compose_bilinear(colors, taps.sf, taps.tf);
+        let channels = if policy == AlphaPolicy::Opaque { 3 } else { 4 };
+        let d = (0..channels)
+            .map(|c| target[c].abs_diff(actual[c]))
+            .max()
+            .unwrap_or(0);
+        let sse = (0..channels)
+            .map(|c| {
+                let e = target[c] as i32 - actual[c] as i32;
+                (e * e) as u64
+            })
+            .sum();
+        let av = premultiply(*target);
+        let bv = premultiply(actual);
+        let visible_sse = (0..3)
+            .map(|c| {
+                let e = av[c] as i32 - bv[c] as i32;
+                (e * e) as u64
+            })
+            .sum();
+        let cutout_mismatch = match policy {
+            AlphaPolicy::Cutout {
+                greater_or_equal,
+                threshold,
+            } => {
+                let passes = |a: u8| {
+                    if greater_or_equal {
+                        a >= threshold
+                    } else {
+                        a > threshold
+                    }
+                };
+                u64::from(passes(target[3]) != passes(actual[3]))
+            }
+            _ => 0,
+        };
+        IntegerSampleError {
+            sse,
+            above_8: u64::from(d >= ERROR_THRESHOLD),
+            above_32: u64::from(d >= LARGE_ERROR_THRESHOLD),
+            max: d,
+            visible_sse,
+            cutout_mismatch,
+        }
+    };
+    let mut image = seed.clone();
+    let mut cache: Vec<_> = (0..samples.len()).map(|si| error(si, &image)).collect();
+    let mut totals = IntegerTotals::default();
+    let mut histogram = [0u32; 256];
+    for &e in &cache {
+        totals.add(e);
+        histogram[e.max as usize] += 1;
+    }
+    let visible_limit = totals.visible_sse;
+    for _ in 0..INTEGER_OPTIMIZE_MAX_SWEEPS {
+        let mut changed = false;
+        for texel in 0..influence.len() {
+            let affected = &influence[texel];
+            if affected.is_empty() {
+                continue;
+            }
+            for channel in 0..if policy == AlphaPolicy::Opaque { 3 } else { 4 } {
+                let offset = texel * 4 + channel;
+                let current = image.pixels[offset];
+                let seed_value = seed.pixels[offset];
+                let code = |v: u8| -> i16 {
+                    if format == IntegerFormat::Rgba5551 {
+                        if channel == 3 {
+                            i16::from(v != 0)
+                        } else {
+                            (v >> 3) as i16
+                        }
+                    } else {
+                        v as i16
+                    }
+                };
+                let expand = |v: i16| -> u8 {
+                    if format == IntegerFormat::Rgba5551 {
+                        if channel == 3 {
+                            if v != 0 {
+                                255
+                            } else {
+                                0
+                            }
+                        } else {
+                            let v = v as u8;
+                            (v << 3) | (v >> 2)
+                        }
+                    } else {
+                        v as u8
+                    }
+                };
+                let old_local = affected
+                    .iter()
+                    .fold(IntegerTotals::default(), |mut a, &si| {
+                        a.add(cache[si]);
+                        a
+                    });
+                let current_max = histogram.iter().rposition(|&v| v != 0).unwrap_or(0) as u8;
+                let distance = |v: u8| code(v).abs_diff(code(seed_value));
+                let mut best = (
+                    totals.sse,
+                    totals.above_32,
+                    totals.above_8,
+                    current_max,
+                    distance(current),
+                    code(current),
+                );
+                let mut best_value = current;
+                let max_code = if format == IntegerFormat::Rgba5551 {
+                    if channel == 3 {
+                        1
+                    } else {
+                        31
+                    }
+                } else {
+                    255
+                };
+                for delta in [-2, -1, 1, 2] {
+                    let candidate = expand((code(current) + delta).clamp(0, max_code));
+                    if candidate == current {
+                        continue;
+                    }
+                    image.pixels[offset] = candidate;
+                    let mut new_local = IntegerTotals::default();
+                    let mut hist = histogram;
+                    let mut cutout_preserved = true;
+                    for &si in affected {
+                        let next = error(si, &image);
+                        if matches!(policy, AlphaPolicy::Cutout { .. })
+                            && next.cutout_mismatch != cache[si].cutout_mismatch
+                        {
+                            cutout_preserved = false;
+                        }
+                        new_local.add(next);
+                        hist[cache[si].max as usize] -= 1;
+                        hist[next.max as usize] += 1;
+                    }
+                    let next = totals.replace(old_local, new_local);
+                    if (policy != AlphaPolicy::Translucent || next.visible_sse <= visible_limit)
+                        && cutout_preserved
+                    {
+                        let max = hist.iter().rposition(|&v| v != 0).unwrap_or(0) as u8;
+                        let score = (
+                            next.sse,
+                            next.above_32,
+                            next.above_8,
+                            max,
+                            distance(candidate),
+                            code(candidate),
+                        );
+                        if score < best {
+                            best = score;
+                            best_value = candidate;
+                        }
+                    }
+                }
+                image.pixels[offset] = best_value;
+                if best_value != current {
+                    let mut new_local = IntegerTotals::default();
+                    for &si in affected {
+                        histogram[cache[si].max as usize] -= 1;
+                        let next = error(si, &image);
+                        histogram[next.max as usize] += 1;
+                        cache[si] = next;
+                        new_local.add(next);
+                    }
+                    totals = totals.replace(old_local, new_local);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    image
+}
+
 /// Solves a least-squares RGBA image with deterministic projected gradient
 /// descent.  The gradient uses the GE's measured 4-bit bilinear weights; each
 /// iteration is projected to [0,255], and the final integer image is accepted
@@ -846,6 +1118,137 @@ mod tests {
         let coverage = [[16, 16], [15, 16], [16, 15], [17, 16], [16, 17]];
         let c = solve_samples(&img, false, false, &coverage, AlphaPolicy::Opaque).unwrap();
         assert!(c.compensated.squared_error < c.baseline.squared_error);
+    }
+
+    #[test]
+    fn integer_refinement_beats_rounded_float_solve_on_exact_ge() {
+        let mut img = Rgba8::new(2, 2);
+        for (i, c) in [
+            [0, 0, 0, 255],
+            [255, 10, 20, 255],
+            [250, 20, 10, 255],
+            [0, 0, 0, 255],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            img.put(i, c);
+        }
+        let coverage = [[16, 16], [15, 16], [16, 15], [17, 16], [16, 17]];
+        let rounded = solve_samples(&img, false, false, &coverage, AlphaPolicy::Opaque).unwrap();
+        let refined = refine_integer(
+            &img,
+            &rounded.rgba,
+            IntegerFormat::Rgba8888,
+            false,
+            false,
+            &coverage,
+            AlphaPolicy::Opaque,
+        );
+        let after = measure_samples_impl(&img, &refined, false, false, &coverage, false);
+        let before = measure_samples_impl(&img, &rounded.rgba, false, false, &coverage, false);
+        assert!(after.squared_error < before.squared_error);
+        assert_eq!(
+            refined,
+            refine_integer(
+                &img,
+                &rounded.rgba,
+                IntegerFormat::Rgba8888,
+                false,
+                false,
+                &coverage,
+                AlphaPolicy::Opaque,
+            )
+        );
+        assert!((0..4).all(|i| refined.get(i)[3] == 255));
+    }
+
+    #[test]
+    fn integer_5551_refinement_stays_representable() {
+        let mut img = Rgba8::new(2, 2);
+        for (i, r) in [0, 0, 0, 80].into_iter().enumerate() {
+            img.put(i, [r, 255, 255, 255]);
+        }
+        let rounded = quantize_rgba5551(&img);
+        let coverage = [[24, 24]];
+        let refined = refine_integer(
+            &img,
+            &rounded,
+            IntegerFormat::Rgba5551,
+            false,
+            false,
+            &coverage,
+            AlphaPolicy::Opaque,
+        );
+        assert!(
+            measure_samples(&img, &refined, false, false, &coverage).squared_error
+                < measure_samples(&img, &rounded, false, false, &coverage).squared_error
+        );
+        assert_eq!(quantize_rgba5551(&refined), refined);
+    }
+
+    #[test]
+    fn integer_refinement_preserves_alpha_policies() {
+        let mut img = Rgba8::new(2, 2);
+        for (i, alpha) in [0, 255, 255, 0].into_iter().enumerate() {
+            img.put(i, [100, 100, 100, alpha]);
+        }
+        let coverage = [[16, 16]];
+        let mut cutout_seed = img.clone();
+        cutout_seed.pixels[3 * 4 + 3] = 2;
+        let cutout = AlphaPolicy::Cutout {
+            greater_or_equal: true,
+            threshold: 128,
+        };
+        assert_eq!(
+            count_cutout_mismatches(&img, &cutout_seed, false, false, &coverage, true, 128),
+            0
+        );
+        let cutout_result = refine_integer(
+            &img,
+            &cutout_seed,
+            IntegerFormat::Rgba8888,
+            false,
+            false,
+            &coverage,
+            cutout,
+        );
+        assert_eq!(
+            count_cutout_mismatches(&img, &cutout_result, false, false, &coverage, true, 128),
+            0
+        );
+        let multiple_samples = [[16, 16], [24, 16], [16, 24], [24, 24]];
+        let cutout_result = refine_integer(
+            &img,
+            &cutout_seed,
+            IntegerFormat::Rgba8888,
+            false,
+            false,
+            &multiple_samples,
+            cutout,
+        );
+        for [s, t] in multiple_samples {
+            let (ms, mt) = modes(false, false);
+            assert_eq!(
+                sample_bilinear_addressed(&cutout_seed, s, t, ms, mt)[3] >= 128,
+                sample_bilinear_addressed(&cutout_result, s, t, ms, mt)[3] >= 128,
+            );
+        }
+
+        let translucent = refine_integer(
+            &img,
+            &img,
+            IntegerFormat::Rgba8888,
+            false,
+            false,
+            &coverage,
+            AlphaPolicy::Translucent,
+        );
+        assert!(
+            measure_samples(&img, &translucent, false, false, &coverage).visible_squared_error
+                <= measure_samples(&img, &img, false, false, &coverage).visible_squared_error
+        );
+        assert!((0..4).any(|i| translucent.get(i)[3] != img.get(i)[3]));
     }
 
     #[test]

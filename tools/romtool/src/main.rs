@@ -3122,9 +3122,22 @@ fn convert_texture(
                 ) == 0
             })
         };
-        let mut chosen = &solved.rgba;
+        let mut direct_refined = (psm == psp::Psm::Psm8888).then(|| {
+            ssb_rom::filter_compensation::refine_integer(
+                &img,
+                &solved.rgba,
+                ssb_rom::filter_compensation::IntegerFormat::Rgba8888,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+                alpha_policy,
+            )
+        });
+        let mut chosen = direct_refined.as_ref().unwrap_or(&solved.rgba);
         let mut format = psm;
         let quantized;
+        let mut integer_before_metrics = None;
+        let mut integer_after_metrics = None;
         let mut used_index_optimization = false;
         let mut nearest_sse_dbg: i64 = -1;
         let mut optimized_sse_dbg: i64 = -1;
@@ -3227,9 +3240,35 @@ fn convert_texture(
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
+                direct_refined = Some(ssb_rom::filter_compensation::refine_integer(
+                    &img,
+                    &solved.rgba,
+                    ssb_rom::filter_compensation::IntegerFormat::Rgba8888,
+                    t.clamp_s,
+                    t.clamp_t,
+                    mismatch_coverage,
+                    alpha_policy,
+                ));
+                chosen = direct_refined.as_ref().unwrap();
             }
         } else if psm == psp::Psm::Psm5551 {
-            quantized = ssb_rom::filter_compensation::quantize_rgba5551(&solved.rgba);
+            let rounded = ssb_rom::filter_compensation::quantize_rgba5551(&solved.rgba);
+            quantized = ssb_rom::filter_compensation::refine_integer(
+                &img,
+                &rounded,
+                ssb_rom::filter_compensation::IntegerFormat::Rgba5551,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+                alpha_policy,
+            );
+            integer_before_metrics = Some(ssb_rom::filter_compensation::measure_samples(
+                &img,
+                &rounded,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+            ));
             let qm = if coverage.is_empty() {
                 ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
             } else {
@@ -3237,6 +3276,7 @@ fn convert_texture(
                     &img, &quantized, t.clamp_s, t.clamp_t, coverage,
                 )
             };
+            integer_after_metrics = Some(qm);
             if qm.squared_error * 100 <= solved.baseline.squared_error * 95
                 && qm.above_8 < solved.baseline.above_8
                 && qm.max <= solved.baseline.max.saturating_add(8)
@@ -3251,9 +3291,41 @@ fn convert_texture(
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
+                direct_refined = Some(ssb_rom::filter_compensation::refine_integer(
+                    &img,
+                    &solved.rgba,
+                    ssb_rom::filter_compensation::IntegerFormat::Rgba8888,
+                    t.clamp_s,
+                    t.clamp_t,
+                    mismatch_coverage,
+                    alpha_policy,
+                ));
+                chosen = direct_refined.as_ref().unwrap();
             }
         }
-        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={}",
+        if format == psp::Psm::Psm8888 {
+            integer_before_metrics = Some(solved.compensated);
+            integer_after_metrics = Some(ssb_rom::filter_compensation::measure_samples(
+                &img,
+                chosen,
+                t.clamp_s,
+                t.clamp_t,
+                mismatch_coverage,
+            ));
+        }
+        let integer_fields = |m: Option<ssb_rom::filter_compensation::Metrics>| {
+            m.map_or([-1; 4], |m| {
+                [
+                    m.squared_error as i64,
+                    m.above_32 as i64,
+                    m.above_8 as i64,
+                    m.max as i64,
+                ]
+            })
+        };
+        let integer_before = integer_fields(integer_before_metrics);
+        let integer_after = integer_fields(integer_after_metrics);
+        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={} integer_before_sse={} integer_after_sse={} integer_before_above32={} integer_after_above32={} integer_before_above8={} integer_after_above8={} integer_before_max={} integer_after_max={}",
             t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,alpha_policy,
             solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
             solved.baseline.visible_mean,solved.baseline.visible_max,
@@ -3262,7 +3334,9 @@ fn convert_texture(
             (img.width*img.height*format.bits() as u32/8) as i64-(img.width*img.height*psm.bits() as u32/8) as i64,
             used_index_optimization, nearest_sse_dbg, optimized_sse_dbg,
             nearest_max_dbg, optimized_max_dbg, nearest_above8_dbg, optimized_above8_dbg,
-            nearest_above32_dbg, optimized_above32_dbg);
+            nearest_above32_dbg, optimized_above32_dbg,
+            integer_before[0], integer_after[0], integer_before[1], integer_after[1],
+            integer_before[2], integer_after[2], integer_before[3], integer_after[3]);
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
         }

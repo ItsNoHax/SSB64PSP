@@ -5,8 +5,21 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **animated indexed N64 filter compensation (complete,
-RE-308)**. The former 114-texture blanket material-animation skip is removed.
+Current subsystem/batch: **GE-exact integer refinement after floating 3-point
+compensation (complete, RE-309)**. A deterministic bounded coordinate search
+tests legal +/-1 and +/-2 stored values, recomputing only GE coverage samples
+affected by each texel. RGBA8888 and promoted direct-colour variants use byte
+channels; RGBA5551 uses representable 5/1-bit codes; CI4/CI8 retain their
+separate index optimizer. Alpha policy and cutout gates remain enforced. On
+the US archive, 109 final direct variants fall from 276,336 to 248,507 exact
+SSE (-10.07%); >=8 samples fall 534 to 503, >=32 stays 17, and the summed
+per-variant maximum falls 1,676 to 1,643. The pack remains 30,058,816 bytes,
+and two independent builds are byte-identical. ROM-gated workspace tests,
+both PSP builds, pack loadback, and one PPSSPPHeadless smoke pass. No physical
+PSP capture this batch. Next gameplay batch remains Donkey Kong under `P2`.
+
+Previous rendering subsystem/batch: **animated indexed N64 filter compensation
+(complete, RE-308)**. The former 114-texture blanket material-animation skip is removed.
 Replay of the real `PaletteID`/`TextureIDCurrent` script pairs 74 CI4 conversion
 variants with reachable palette states; seven accept a jointly optimized
 shared index field. Their combined SSE falls 30.44%, and the 74-variant
@@ -19,7 +32,7 @@ colour fallback for six remaining high-error variants would cost at least
 integrated. ROM-gated workspace tests, both release PSP builds, pack loadback,
 and one PPSSPPHeadless smoke capture pass. No physical PSP capture this batch.
 
-Previous rendering subsystem/batch: **filter-aware CI4/CI8 palette-index optimization
+Earlier rendering subsystem/batch: **filter-aware CI4/CI8 palette-index optimization
 (complete, host- and PPSSPP-verified; 11 refreshed goldens; no physical-PSP
 capture this batch, RE-307)**, extending RE-305/RE-306's build-time N64
 3-point/PSP-bilinear compensation. The optimizer coordinate-descends over
