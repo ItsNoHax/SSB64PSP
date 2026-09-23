@@ -319,3 +319,4 @@ editing a record.
 | RE-307 | Filter-aware palette-index optimization (RE-305/RE-306 follow-up) | COMPLETE (software and PPSSPP; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
 | RE-308 | Animated indexed N64 filter compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, material-animation, asset-pipeline, pack, psp-ge |  |
 | RE-309 | GE-exact integer refinement after 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |
+| RE-310 | Critical authored-UV coverage and independent filter validation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |

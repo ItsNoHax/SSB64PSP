@@ -5,7 +5,22 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **GE-exact integer refinement after floating 3-point
+Current subsystem/batch: **critical authored-UV coverage and independent
+3-point compensation validation (complete, RE-310)**. The N=8 barycentric
+base now has targeted S10.5 diagonal, half-texel, GE-boundary, UV-extremum,
+clamp/repeat and prebaked-mirror seam probes per touched cell. Sorted and
+deduplicated training/holdout sets target 4,096/16,384 points per primitive,
+always retaining the barycentric base. The final texture must pass
+an independent holdout gate on SSE, maximum, >=8 and >=32 counts, visible
+translucent SSE, and cutout classification. On the US archive, 63 of 1,119
+static candidates pass; their holdout >=32 count falls 1,599 to 805 and
+summed per-variant maxima 2,111 to 1,842. None of 74 animated candidates
+passes the combined gates. The pack is 29,328,784 bytes and loads back;
+ROM-gated workspace tests, both PSP builds, and one PPSSPPHeadless Dream Land
+smoke pass. Runtime rendering is unchanged. No physical PSP capture this
+batch. Next gameplay batch remains Donkey Kong under `P2`.
+
+Previous rendering subsystem/batch: **GE-exact integer refinement after floating 3-point
 compensation (complete, RE-309)**. A deterministic bounded coordinate search
 tests legal +/-1 and +/-2 stored values, recomputing only GE coverage samples
 affected by each texel. RGBA8888 and promoted direct-colour variants use byte
@@ -18,7 +33,7 @@ and two independent builds are byte-identical. ROM-gated workspace tests,
 both PSP builds, pack loadback, and one PPSSPPHeadless smoke pass. No physical
 PSP capture this batch. Next gameplay batch remains Donkey Kong under `P2`.
 
-Previous rendering subsystem/batch: **animated indexed N64 filter compensation
+Earlier rendering subsystem/batch: **animated indexed N64 filter compensation
 (complete, RE-308)**. The former 114-texture blanket material-animation skip is removed.
 Replay of the real `PaletteID`/`TextureIDCurrent` script pairs 74 CI4 conversion
 variants with reachable palette states; seven accept a jointly optimized

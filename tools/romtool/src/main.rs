@@ -33,6 +33,8 @@ use std::process::ExitCode;
 use ssb_rom::archive::Archive;
 use ssb_rom::rom;
 
+mod filter_coverage;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -1003,31 +1005,19 @@ fn texture_cache_key(
 fn primitive_filter_coverage(
     m: &ssb_rom::mesh::Mesh,
     prim: &ssb_rom::mesh::Primitive,
-) -> Vec<[i32; 2]> {
-    let mut out = Vec::new();
-    // Ordinary authored UVs: deterministic barycentric coverage over every
-    // real triangle. Texgen coordinates depend on live normals/matrices, so
-    // the converter deliberately falls back to the conservative full-tile
-    // census for those rather than inventing coverage.
+) -> filter_coverage::Coverage {
+    // Authored UVs: the N=8 barycentric base plus bounded, cell-local filter
+    // boundaries and a separate denser holdout. Texgen coordinates depend on
+    // live normals/matrices, so the converter uses full-tile shifted grids.
     if prim.material.texgen_scale.is_some() {
-        return out;
+        return filter_coverage::Coverage::default();
     }
-    const N: i32 = 8;
-    for tri in prim.indices.chunks_exact(3) {
-        let uv = [tri[0], tri[1], tri[2]].map(|i| m.vertices[i as usize].uv.map(i32::from));
-        for a in 0..=N {
-            for b in 0..=N - a {
-                let c = N - a - b;
-                out.push([
-                    (uv[0][0] * a + uv[1][0] * b + uv[2][0] * c) / N,
-                    (uv[0][1] * a + uv[1][1] * b + uv[2][1] * c) / N,
-                ]);
-            }
-        }
-    }
-    out.sort_unstable();
-    out.dedup();
-    out
+    let triangles: Vec<_> = prim
+        .indices
+        .chunks_exact(3)
+        .map(|tri| [tri[0], tri[1], tri[2]].map(|i| m.vertices[i as usize].uv.map(i32::from)))
+        .collect();
+    filter_coverage::build(&triangles)
 }
 
 fn coverage_hash(coverage: &[[i32; 2]]) -> u64 {
@@ -1037,6 +1027,21 @@ fn coverage_hash(coverage: &[[i32; 2]]) -> u64 {
         .fold(0xcbf29ce484222325u64, |h, &v| {
             (h ^ v as u64).wrapping_mul(0x100000001b3)
         })
+}
+
+fn validation_preserved(
+    baseline: ssb_rom::filter_compensation::Metrics,
+    candidate: ssb_rom::filter_compensation::Metrics,
+    policy: ssb_rom::filter_compensation::AlphaPolicy,
+) -> bool {
+    baseline.samples > 0
+        && candidate.samples == baseline.samples
+        && candidate.squared_error <= baseline.squared_error
+        && candidate.above_8 <= baseline.above_8
+        && candidate.above_32 <= baseline.above_32
+        && candidate.max <= baseline.max.saturating_add(8)
+        && (policy != ssb_rom::filter_compensation::AlphaPolicy::Translucent
+            || candidate.visible_squared_error <= baseline.visible_squared_error)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1104,8 +1109,14 @@ fn pack_mesh(
                 let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
                 let alpha_policy =
                     ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
-                let key =
-                    texture_cache_key(id, &t, coverage_hash(&coverage), animated, alpha_policy);
+                let key = texture_cache_key(
+                    id,
+                    &t,
+                    coverage_hash(&coverage.train)
+                        ^ coverage_hash(&coverage.validation).rotate_left(1),
+                    animated,
+                    alpha_policy,
+                );
                 if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
@@ -1325,7 +1336,7 @@ fn convert_mat_anim_sprite(
     src: Texels<'_>,
     p: ssb_rom::mobj::Ptr,
     base: &ssb_rom::mesh::TextureRef,
-    coverage: &[[i32; 2]],
+    coverage: &filter_coverage::Coverage,
     palettes: Option<&[Vec<u32>]>,
     swizzle: bool,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
@@ -2834,7 +2845,7 @@ fn palette_bank_offset(palette_offset: u32, palette_entries: u16, palette: u8) -
 fn convert_texture(
     src: Texels<'_>,
     t: &ssb_rom::mesh::TextureRef,
-    coverage: &[[i32; 2]],
+    coverage: &filter_coverage::Coverage,
     swizzle: bool,
     animated_palettes: Option<&[Vec<u32>]>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
@@ -2954,6 +2965,28 @@ fn convert_texture(
 
     let mut mipped = |palette: Vec<u32>| {
         let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
+        // A shifted full-tile grid is the holdout for texgen, whose live UVs
+        // cannot be inferred from authored vertices. Authored UVs use the
+        // separate cell-local holdout built from their actual triangles.
+        let validation_dense: Vec<[i32; 2]> = if coverage.train.is_empty() {
+            (4..img.height as i32 * 32)
+                .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                .flat_map(|v| {
+                    (4..img.width as i32 * 32)
+                        .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
+                        .map(move |u| [u, v])
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let validation_samples = if !coverage.validation.is_empty() {
+            coverage.validation.as_slice()
+        } else if !validation_dense.is_empty() {
+            validation_dense.as_slice()
+        } else {
+            &[]
+        };
         if psm.is_paletted() && t.format == texture::Format::Ci {
             if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
                 let source = decode_index_field(file, t)?;
@@ -2964,7 +2997,7 @@ fn convert_texture(
                 };
                 if states.iter().all(|p| p.len() >= limit) {
                     let dense: Vec<[i32; 2]>;
-                    let samples = if coverage.is_empty() {
+                    let samples = if coverage.train.is_empty() {
                         dense = (0..img.height as i32 * 32)
                             .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
                             .flat_map(|v| {
@@ -2975,7 +3008,7 @@ fn convert_texture(
                             .collect();
                         dense.as_slice()
                     } else {
-                        coverage
+                        &coverage.train
                     };
                     let optimized = ssb_rom::filter_compensation::optimize_animated_indices(
                         &source, img.width, img.height, states, limit, t.clamp_s, t.clamp_t,
@@ -2988,6 +3021,12 @@ fn convert_texture(
                     let mut baseline_large = 0u64;
                     let mut baseline_samples = 0u64;
                     let mut baseline_max = 0u8;
+                    let mut validation_before = 0u64;
+                    let mut validation_after = 0u64;
+                    let mut validation_before_32 = 0u64;
+                    let mut validation_after_32 = 0u64;
+                    let mut validation_before_max = 0u8;
+                    let mut validation_after_max = 0u8;
                     for state in states {
                         let original = ssb_rom::filter_compensation::indices_to_rgba(
                             img.width, img.height, &source, state,
@@ -3009,9 +3048,35 @@ fn convert_texture(
                         better_large |= b.above_8 < a.above_8;
                         nonregressing &=
                             b.max <= a.max.saturating_add(8) && b.above_32 <= a.above_32;
+                        let va = ssb_rom::filter_compensation::measure_samples_policy(
+                            &original,
+                            &original,
+                            t.clamp_s,
+                            t.clamp_t,
+                            validation_samples,
+                            alpha_policy,
+                        );
+                        let vb = ssb_rom::filter_compensation::measure_samples_policy(
+                            &original,
+                            &candidate,
+                            t.clamp_s,
+                            t.clamp_t,
+                            validation_samples,
+                            alpha_policy,
+                        );
+                        validation_before += va.squared_error;
+                        validation_after += vb.squared_error;
+                        validation_before_32 += va.above_32;
+                        validation_after_32 += vb.above_32;
+                        validation_before_max = validation_before_max.max(va.max);
+                        validation_after_max = validation_after_max.max(vb.max);
+                        nonregressing &= validation_preserved(va, vb, alpha_policy);
                     }
-                    let accepted =
-                        before > 0 && after * 100 <= before * 95 && better_large && nonregressing;
+                    let accepted = !validation_samples.is_empty()
+                        && before > 0
+                        && after * 100 <= before * 95
+                        && better_large
+                        && nonregressing;
                     let high_error = baseline_samples > 0
                         && baseline_large * 100 >= baseline_samples
                         && baseline_max >= 16;
@@ -3041,7 +3106,7 @@ fn convert_texture(
                     let pixels = img.width as i64 * img.height as i64;
                     let direct_extra_level0 = pixels * 4 * states.len() as i64
                         - (pixels * psm.bits() as i64).div_euclid(8);
-                    eprintln!("animated-filter-comp file={} offset={:#X} palettes={} baseline_sse={} indexed_sse={} accepted={} high_error={} direct_sse={:?} direct_extra_level0={} format={:?} memory_delta=0", t.data_file.map_or(src.home.id,u32::from), t.data_offset, states.len(), before, after, accepted, high_error, direct_sse, direct_extra_level0, psm);
+                    eprintln!("animated-filter-comp file={} offset={:#X} palettes={} baseline_sse={} indexed_sse={} accepted={} high_error={} direct_sse={:?} direct_extra_level0={} format={:?} memory_delta=0 train_samples={} validation_samples={} validation_baseline_sse={} validation_candidate_sse={} validation_baseline_above32={} validation_candidate_above32={} validation_baseline_max={} validation_candidate_max={}", t.data_file.map_or(src.home.id,u32::from), t.data_offset, states.len(), before, after, accepted, high_error, direct_sse, direct_extra_level0, psm, samples.len(), validation_samples.len(), validation_before, validation_after, validation_before_32, validation_after_32, validation_before_max, validation_after_max);
                     let indices = if accepted { &optimized } else { &source };
                     if accepted {
                         if let Some(out) = compensated_out.as_deref_mut() {
@@ -3066,14 +3131,14 @@ fn convert_texture(
                 }
             }
         }
-        let solved = if coverage.is_empty() {
+        let solved = if coverage.train.is_empty() {
             ssb_rom::filter_compensation::solve(&img, t.clamp_s, t.clamp_t, alpha_policy)
         } else {
             ssb_rom::filter_compensation::solve_samples(
                 &img,
                 t.clamp_s,
                 t.clamp_t,
-                coverage,
+                &coverage.train,
                 alpha_policy,
             )
         };
@@ -3096,7 +3161,7 @@ fn convert_texture(
         // Texgen falls back to dense full-tile coverage the same way
         // `solve`/`measure` do internally when given no explicit coverage.
         let dense_coverage: Vec<[i32; 2]>;
-        let mismatch_coverage: &[[i32; 2]] = if coverage.is_empty() {
+        let mismatch_coverage: &[[i32; 2]] = if coverage.train.is_empty() {
             dense_coverage = (0..img.height as i32 * 32)
                 .step_by(ssb_rom::filter_compensation::SAMPLE_STEP_Q5 as usize)
                 .flat_map(|tq| {
@@ -3107,7 +3172,7 @@ fn convert_texture(
                 .collect();
             &dense_coverage
         } else {
-            coverage
+            &coverage.train
         };
         let silhouette_preserved = |candidate: &ssb_rom::texture::Rgba8| {
             cutout_gate.is_none_or(|(greater_or_equal, threshold)| {
@@ -3186,6 +3251,22 @@ fn convert_texture(
                 t.clamp_t,
                 mismatch_coverage,
             );
+            let nearest_validation = ssb_rom::filter_compensation::measure_samples_policy(
+                &img,
+                &nearest,
+                t.clamp_s,
+                t.clamp_t,
+                validation_samples,
+                alpha_policy,
+            );
+            let optimized_validation = ssb_rom::filter_compensation::measure_samples_policy(
+                &img,
+                &optimized,
+                t.clamp_s,
+                t.clamp_t,
+                validation_samples,
+                alpha_policy,
+            );
             nearest_sse_dbg = nearest_metrics.squared_error as i64;
             optimized_sse_dbg = optimized_metrics.squared_error as i64;
             nearest_max_dbg = nearest_metrics.max as i64;
@@ -3215,6 +3296,7 @@ fn convert_texture(
                 && optimized_metrics.max <= nearest_metrics.max
                 && optimized_metrics.above_8 <= nearest_metrics.above_8
                 && optimized_metrics.above_32 <= nearest_metrics.above_32
+                && validation_preserved(nearest_validation, optimized_validation, alpha_policy)
                 && visible_ok;
             let (qm, candidate) = if optimized_not_worse {
                 used_index_optimization = true;
@@ -3269,11 +3351,15 @@ fn convert_texture(
                 t.clamp_t,
                 mismatch_coverage,
             ));
-            let qm = if coverage.is_empty() {
+            let qm = if coverage.train.is_empty() {
                 ssb_rom::filter_compensation::measure(&img, &quantized, t.clamp_s, t.clamp_t)
             } else {
                 ssb_rom::filter_compensation::measure_samples(
-                    &img, &quantized, t.clamp_s, t.clamp_t, coverage,
+                    &img,
+                    &quantized,
+                    t.clamp_s,
+                    t.clamp_t,
+                    &coverage.train,
                 )
             };
             integer_after_metrics = Some(qm);
@@ -3325,7 +3411,52 @@ fn convert_texture(
         };
         let integer_before = integer_fields(integer_before_metrics);
         let integer_after = integer_fields(integer_after_metrics);
-        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={} integer_before_sse={} integer_after_sse={} integer_before_above32={} integer_after_above32={} integer_before_above8={} integer_after_above8={} integer_before_max={} integer_after_max={}",
+        let train_before = ssb_rom::filter_compensation::measure_samples_policy(
+            &img,
+            &img,
+            t.clamp_s,
+            t.clamp_t,
+            mismatch_coverage,
+            alpha_policy,
+        );
+        let train_after = ssb_rom::filter_compensation::measure_samples_policy(
+            &img,
+            chosen,
+            t.clamp_s,
+            t.clamp_t,
+            mismatch_coverage,
+            alpha_policy,
+        );
+        let validation_before = ssb_rom::filter_compensation::measure_samples_policy(
+            &img,
+            &img,
+            t.clamp_s,
+            t.clamp_t,
+            validation_samples,
+            alpha_policy,
+        );
+        let validation_after = ssb_rom::filter_compensation::measure_samples_policy(
+            &img,
+            chosen,
+            t.clamp_s,
+            t.clamp_t,
+            validation_samples,
+            alpha_policy,
+        );
+        let validation_accepted = !validation_samples.is_empty()
+            && validation_preserved(validation_before, validation_after, alpha_policy)
+            && cutout_gate.is_none_or(|(greater_or_equal, threshold)| {
+                ssb_rom::filter_compensation::count_cutout_mismatches(
+                    &img,
+                    chosen,
+                    t.clamp_s,
+                    t.clamp_t,
+                    validation_samples,
+                    greater_or_equal,
+                    threshold,
+                ) == 0
+            });
+        eprintln!("filter-comp file={} offset={:#X} {}x{} policy={:?} baseline mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} compensated mean={:.3} max={} >=8={:.2}% >=32={:.2}% visible_mean={:.3} visible_max={} format={:?} memory_delta={} index_opt={} nearest_sse={} optimized_sse={} nearest_max={} optimized_max={} nearest_above8={} optimized_above8={} nearest_above32={} optimized_above32={} integer_before_sse={} integer_after_sse={} integer_before_above32={} integer_after_above32={} integer_before_above8={} integer_after_above8={} integer_before_max={} integer_after_max={} train_samples={} train_baseline_sse={} train_candidate_sse={} train_baseline_above32={} train_candidate_above32={} train_baseline_max={} train_candidate_max={} validation_samples={} validation_baseline_sse={} validation_candidate_sse={} validation_baseline_above32={} validation_candidate_above32={} validation_baseline_max={} validation_candidate_max={} validation_accepted={}",
             t.data_file.map_or(src.home.id,u32::from),t.data_offset,img.width,img.height,alpha_policy,
             solved.baseline.mean,solved.baseline.max,solved.baseline.percent_above_8(),solved.baseline.percent_above_32(),
             solved.baseline.visible_mean,solved.baseline.visible_max,
@@ -3336,7 +3467,15 @@ fn convert_texture(
             nearest_max_dbg, optimized_max_dbg, nearest_above8_dbg, optimized_above8_dbg,
             nearest_above32_dbg, optimized_above32_dbg,
             integer_before[0], integer_after[0], integer_before[1], integer_after[1],
-            integer_before[2], integer_after[2], integer_before[3], integer_after[3]);
+            integer_before[2], integer_after[2], integer_before[3], integer_after[3],
+            train_before.samples, train_before.squared_error, train_after.squared_error,
+            train_before.above_32, train_after.above_32, train_before.max, train_after.max,
+            validation_before.samples, validation_before.squared_error, validation_after.squared_error,
+            validation_before.above_32, validation_after.above_32, validation_before.max,
+            validation_after.max, validation_accepted);
+        if !validation_accepted {
+            return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
+        }
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
         }
@@ -7020,7 +7159,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                         all: &loaded.files,
                     },
                     &t,
-                    &[],
+                    &filter_coverage::Coverage::default(),
                     true,
                     None,
                     alpha_policy,
@@ -8818,6 +8957,70 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn holdout_rejects_a_training_only_saddle_improvement() {
+        use ssb_rom::{filter_compensation as fc, texture::Rgba8};
+
+        let mut original = Rgba8::new(2, 2);
+        for (i, c) in [0, 255, 255, 0].into_iter().enumerate() {
+            original.put(i, [c, c, c, 255]);
+        }
+        let mut candidate = original.clone();
+        candidate.put(3, [255, 255, 255, 255]);
+        let train = [[16, 16]];
+        let validation = [[31, 31]];
+        let baseline_train = fc::measure_samples_policy(
+            &original,
+            &original,
+            true,
+            true,
+            &train,
+            fc::AlphaPolicy::Opaque,
+        );
+        let candidate_train = fc::measure_samples_policy(
+            &original,
+            &candidate,
+            true,
+            true,
+            &train,
+            fc::AlphaPolicy::Opaque,
+        );
+        assert!(candidate_train.squared_error < baseline_train.squared_error);
+        let baseline_validation = fc::measure_samples_policy(
+            &original,
+            &original,
+            true,
+            true,
+            &validation,
+            fc::AlphaPolicy::Opaque,
+        );
+        let candidate_validation = fc::measure_samples_policy(
+            &original,
+            &candidate,
+            true,
+            true,
+            &validation,
+            fc::AlphaPolicy::Opaque,
+        );
+        assert!(!super::validation_preserved(
+            baseline_validation,
+            candidate_validation,
+            fc::AlphaPolicy::Opaque,
+        ));
+        let empty = fc::measure_samples_policy(
+            &original,
+            &original,
+            true,
+            true,
+            &[],
+            fc::AlphaPolicy::Opaque,
+        );
+        assert!(!super::validation_preserved(
+            empty,
+            empty,
+            fc::AlphaPolicy::Opaque
+        ));
+    }
     use super::{
         normal_transform_equivalent, palette_bank_offset, verify_texgen, TexgenCensus, TileState,
         DIRECT_MANAGER_EFFECT_ASSETS, DIRECT_MANAGER_EFFECT_MOBJ_PAIRS,
@@ -11059,7 +11262,7 @@ mod tests {
         let packed = super::convert_texture(
             texels,
             &base,
-            &[],
+            &super::filter_coverage::Coverage::default(),
             false,
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
@@ -11076,7 +11279,7 @@ mod tests {
         let packed0 = super::convert_texture(
             texels,
             &bank0,
-            &[],
+            &super::filter_coverage::Coverage::default(),
             false,
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
@@ -11097,7 +11300,7 @@ mod tests {
         let packed_guard = super::convert_texture(
             texels,
             &out_of_range,
-            &[],
+            &super::filter_coverage::Coverage::default(),
             false,
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
