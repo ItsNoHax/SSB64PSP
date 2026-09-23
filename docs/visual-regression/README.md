@@ -316,3 +316,28 @@ v3.2.1) via a direct `scrshot` capture showing the same translucent flame,
 qualitative evidence only per this file's own hardware-tier rule — not
 diffed against the exact pixel comparator. See RE-300 for the underlying
 `DrawState` GE-texture-function cache bug this scene regresses against.
+
+## 2026-09-24 stage/scene golden rebaseline
+
+42 goldens were rebaselined together with pack SHA-256 `622d20e4...`:
+the 37 `r2-stage-*` sweep goldens, `r0-dream-land-default`, `r1-stage-sector`,
+`r1-catch-swirl-flat-color`, `r2-peach-castle` and `r2-saffron-city-gate`.
+The user chose to rebaseline all 42 without bisecting. Two things changed:
+
+* The old goldens, except Dream Land, carried the 236-column black border
+  from the `Gpu::begin_frame` scissor-clear bug. RE-307 fixed that bug.
+* The content inside the border changed after RE-286 and RE-297. The
+  candidate commits are RE-300's texture-alpha cache fix, the
+  material-animation runtime, the texture-sampling alignment, and the
+  RE-305 to RE-311 filter compensation. The largest changes (count of
+  pixels that differ by more than 32/255) are Kongo Jungle 24,352, Zebes
+  22,892, bonus2 Donkey Kong 19,572, Beta Dream Land 16,004, bonus2 Mario
+  15,832, Mushroom Kingdom 15,376, Metal Mario stage 14,548 and Race to the
+  Finish 11,496.
+
+Zebes visibly lost its flat yellow walls and blocks. Kongo Jungle's backdrop
+changed. No one has checked whether these content changes are fixes or
+regressions, so these goldens pin the current output, not verified
+correctness. Two repeated captures (Zebes and Kongo Jungle) differed by 0
+pixels.
+
