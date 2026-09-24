@@ -108,6 +108,30 @@ pub fn pad_to_power_of_two(v: u32) -> u32 {
     v.max(1).next_power_of_two()
 }
 
+/// Largest texture dimension the GE can address: `TSIZE` holds a log2 of at
+/// most 9, and PPSSPP clamps/wraps every texel coordinate to 511 regardless.
+pub const GE_MAX_TEXTURE_DIM: u32 = 512;
+
+/// The `(width, height)` a packed texture is declared to the GE with via
+/// `sceGuTexImage`, and therefore also what `sceGuTexScale`/`TexOffset` must
+/// normalise against: the padded buffer size, capped at
+/// [`GE_MAX_TEXTURE_DIM`]. The buffer width (`tbw`) stays `stride`.
+///
+/// RE-314: rust-psp's `sceGuTexImage` encodes each dimension as
+/// `31 - ctlz(dim & 0x3FF)`, so a 1024 dimension becomes `-1` and the GE
+/// sees log2 15 (32768). Every texel coordinate then lands far outside the
+/// texture and the GE samples whatever pack bytes follow it -- which is how
+/// packing a different, later texture as RGBA8888 turned an unrelated
+/// 576x64 primitive magenta. Capping keeps every read inside the first
+/// 512x512 texels of the buffer; texels past 512 stay unreachable on the GE
+/// (TODO "Textures above the GE 512-texel limit").
+pub fn ge_texture_dims(stride: u32, height: u32) -> (u32, u32) {
+    (
+        pad_to_power_of_two(stride).min(GE_MAX_TEXTURE_DIM),
+        pad_to_power_of_two(height).min(GE_MAX_TEXTURE_DIM),
+    )
+}
+
 /// Divisor a packed 16-bit vertex texture coordinate is normalised by before
 /// `sceGuTexScale` is applied (`GU_TEXTURE_16BIT`).
 const VERTEX_16BIT_DIVISOR: f32 = 32768.0;
@@ -950,6 +974,27 @@ mod tests {
         // R=0x11 must land in the low byte, not the high one.
         assert_eq!(pack_abgr([0x11, 0x22, 0x33, 0x44]), 0x4433_2211);
         assert_eq!(pack_abgr([255, 0, 0, 255]), 0xFF00_00FF);
+    }
+
+    /// rust-psp's `sceGuTexImage` `TSIZE` encoding, bit for bit.
+    fn rust_psp_tsize_log2(dim: u32) -> i32 {
+        31 - (dim & 0x3FF).leading_zeros() as i32
+    }
+
+    #[test]
+    fn ge_texture_dims_never_exceed_the_encodable_512() {
+        // RE-314: 797 (576x64, stride 1024) and 791 (16x576) in Board the
+        // Platforms (Fox). Uncapped, 1024 encodes as log2 -1 (GE: 15).
+        assert_eq!(rust_psp_tsize_log2(1024), -1);
+        assert_eq!(ge_texture_dims(1024, 64), (512, 64));
+        assert_eq!(ge_texture_dims(16, 576), (16, 512));
+        assert_eq!(ge_texture_dims(512, 288), (512, 512));
+        for dim in 1..=4096 {
+            let (w, h) = ge_texture_dims(dim, dim);
+            assert_eq!(w, h);
+            assert!(w.is_power_of_two() && w <= GE_MAX_TEXTURE_DIM);
+            assert_eq!(1 << rust_psp_tsize_log2(w), w);
+        }
     }
 
     #[test]

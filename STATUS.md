@@ -14,6 +14,7 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| GE texture size cap | RE-312's "large RGBA8888 state leak" was no leak: 1024-padded textures overflowed rust-psp's `TSIZE` encoding and sampled neighbouring pack bytes. Declared size now capped at 512; 11 stage goldens refreshed. Stage-35 pixels traced to per-render-frame animation ticks (`TODO.md`) | RE-314 |
 | RE-312 manual fixes and visual review | v766 exact-site RGBA8888 override deployed (U2 −47.4%, flips 8→4, +1,728 B); 12 review candidates A/B-captured, all `ACCEPT_CURRENT`; found a large-RGBA8888 state leak and 48 textures over 512 texels (`TODO.md`) | RE-312, [visual review](docs/rendering/three-point-visual-review.md) |
 | RE-312 final census and manual-fix triage | 0 deployable 5a rows left; cross-phase triage of 189 hand-edit candidates | RE-312 |
 | RE-312 residual deployment | 7 per-primitive UV phases + 4 dense RGBA8888 variants; pack v31 | RE-312 |
@@ -30,8 +31,10 @@ Replacement snapshot, not a journal. History lives in git and
 - Residual report: 0 suspected bugs, 0 level-0 or padded-addressing
   mismatches, 0 unattempted formats; section 11: 0 recommended, 12 review,
   177 accept.
-- PPSSPPHeadless: 14 fighter goldens and all 38 stage goldens pass after
-  refreshing `r2-stage-bonus2-mario` (v766). The eight known-failing
+- PPSSPPHeadless: 11 stage goldens refreshed for RE-314 (repeat captures
+  identical). The cap is the identity for every other texture (all strides
+  are powers of two ≤ 512 there), so the other goldens bind nothing it
+  changes; stage 1 was re-run as a control and matches. The eight known-failing
   goldens are unchanged; see
   [docs/visual-regression/README.md](docs/visual-regression/README.md#known-failing-goldens).
 - No physical-PSP capture of the current pack.

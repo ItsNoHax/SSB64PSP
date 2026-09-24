@@ -15,8 +15,9 @@ or evidence record covers it.
 | Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
 | Scene dependency graph | No explicit `scene → nodes → materials → textures → palettes` graph yet | — |
 | Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
-| Large RGBA8888 bind changes other primitives | RE-312 review: binding v799/v800 (448-wide `Psm8888`, mesh `138:0x1DB8`) turns two other primitives magenta; v901/v902 change the same 23 px of another primitive. Reproduced with unfitted source texels. Blocks any large RGBA8888 variant | RE-312 |
-| Textures above the GE 512-texel limit | 48 packed textures pad past 512 on one axis (e.g. `121:0x30` 576/928/1024 variants); GE behaviour there is undefined | RE-312 |
+| Textures above the GE 512-texel limit | 48 packed textures pad past 512 on one axis (e.g. `121:0x30` 576/928/1024 variants). The runtime now declares them as 512 (RE-314), so texels at 512 and above clamp or wrap inside the first 512 (texture 797 loses u 512–575). Needs a pack-side split or rescale | RE-312, RE-314 |
+| Buffer rows under 16 bytes | 300 non-swizzled T4 textures use stride 16 or 8 (8- or 4-byte rows). PPSSPP rounds the buffer width up to 16 bytes, so it reads them with the wrong row pitch. From PPSSPP source only; measure, then pad the stride to 16 bytes | RE-314 |
+| Viewer animation ticks per render frame | `psp-asset-viewer` ticks `stage_anim`/`material_anim` once per render frame, not per 60 Hz simulation tick. Capture poses depend on load timing, so a pack-size change alone moves stage-35 pixels. Fixing it shifts every animated stage golden | RE-314 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
 ## Hardware acceptance

@@ -323,3 +323,4 @@ editing a record.
 | RE-311 | Real-normal texgen coverage for 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, texgen, asset-pipeline, pack, psp-ge |  |
 | RE-312 | Final 3-point residual census | COMPLETE (census plus post-RE-313 deployment; host and PPSSPP verified, no physical PSP capture) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-313 | Texture-LUT semantics, short TLUTs and format-agnostic 3-point compensation | COMPLETE (host measurement, original-game frame capture replayed through `angrylion-rdp-plus`, PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge, rdp |  |
+| RE-314 | Texture dimensions over 512 overflow the GE `TSIZE` encoding | COMPLETE (host test, PPSSPP software A/B captures, 11 stage goldens refreshed; physical PSP not captured) | texture, psp-ge, pack, visual-regression |  |

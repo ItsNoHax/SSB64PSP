@@ -520,9 +520,14 @@ unsafe fn bind_texture(
         // Matches the general path below: the GE addresses `t.stride`
         // (padded power of two), never `t.width`, and `sceGuTexScale`'s
         // denominators must be exactly what was handed to `sceGuTexImage`.
-        let w = t.stride as i32;
-        let h = (t.height as u32).next_power_of_two() as i32;
-        sys::sceGuTexImage(mip_level(0), w, h, w, data.as_ptr() as *const c_void);
+        let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.stride as u32, t.height as u32);
+        sys::sceGuTexImage(
+            mip_level(0),
+            w as i32,
+            h as i32,
+            t.stride as i32,
+            data.as_ptr() as *const c_void,
+        );
         sys::sceGuTexFilter(sys::TextureFilter::Linear, sys::TextureFilter::Linear);
         // Coordinate scaling and offset are *not* set here; see
         // `apply_texture_mapping`.
@@ -579,10 +584,14 @@ unsafe fn bind_texture(
         let Some(slice) = data.get(offset..offset + size) else {
             break;
         };
+        // RE-314: the buffer keeps its full stride, but the declared size
+        // is capped at 512 -- a 1024 dimension would encode as log2 15 and
+        // sample far past this texture's bytes into its pack neighbours.
+        let (ge_w, ge_h) = ssb_rom::psp_texture::ge_texture_dims(w, h);
         sys::sceGuTexImage(
             mip_level(level),
-            w as i32,
-            h as i32,
+            ge_w as i32,
+            ge_h as i32,
             w as i32,
             slice.as_ptr() as *const c_void,
         );
@@ -727,10 +736,10 @@ unsafe fn apply_texture_mapping(
         return;
     };
     // Exactly the dimensions handed to `sceGuTexImage`, for both roles: the
-    // padded stride and the padded height. Using the logical height stretches
-    // whichever axis is not already a power of two.
-    let w = t.stride as u32;
-    let h = ssb_rom::psp_texture::pad_to_power_of_two(t.height as u32);
+    // padded stride and the padded height, each capped at 512 (RE-314).
+    // Using the logical height stretches whichever axis is not already a
+    // power of two.
+    let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.stride as u32, t.height as u32);
 
     if !environment {
         sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);

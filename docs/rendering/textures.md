@@ -70,6 +70,10 @@ addressing, transcribed from `angrylion-rdp-plus`.
   (RE-102, RE-152).
 - **Power-of-two padding**: filled with repeated edge texels, not zeros, so
   linear filtering at the logical edge matches (RE-222).
+- **512 cap**: the GE addresses at most 512 texels per axis, and rust-psp's
+  `sceGuTexImage` encodes 1024 as log2 15. `psp_texture::ge_texture_dims`
+  declares padded sizes capped at 512 and the UV scale uses the same size
+  (RE-314). Texels at 512 and above are unreachable (48 textures; `TODO.md`).
 - `mask == 0`, `shift_s`/`shift_t` and `tmem` never occur in the archive;
   `line` is unused because texels are read straight from ROM (RE-223).
 
