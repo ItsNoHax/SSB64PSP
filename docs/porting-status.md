@@ -20,7 +20,7 @@ unless a physical PSP is named.
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
 | Mesh / model conversion | VERIFYING | 0 conversion failures; all 127 material graphs paired; PRIM ownership, lighting provenance, independent depth state | Physical-PSP confirmation | RE-163, RE-240–261 |
 | Scene graph (DObj) | 87% | 363 `DObjDesc` arrays + 11 effects packed as 374 objects | `GObj` layer | RE-172 |
-| Asset pack | COMPLETE | v32, zero-copy, 16-byte aligned | — | RE-301, RE-312, RE-319 |
+| Asset pack | COMPLETE | v32, zero-copy, 16-byte aligned; Donkey attack/special animation slots packed | — | RE-301, RE-312, RE-319 |
 
 ## Rendering
 
@@ -60,12 +60,12 @@ Detail per domain: [`rendering.md`](rendering.md).
 | Collision | 65% | All 41 stages packed; swept floor queries; weapon diamond collider vs floors, ceilings, walls | Fighter wall/ceiling solver; moving groups tested at rest | RE-030, RE-031 |
 | Animation | 95% | Figatree playback at 60 Hz; joint attachments and TransN root motion feed gameplay | Reflector effect phases | RE-036, RE-038, RE-171, RE-299 |
 | Status machine | 68% | Full `FTCommonStatus` table (0–219); movement, Damage/hitstun, per-character `AnyStatus` | Most statuses beyond those listed are ordinals only | RE-033, RE-035, RE-294 |
-| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes, `ClearAttackCollAll` hit generations, damage, knockback, hitstun | Multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG) | RE-294, RE-299 |
+| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; Donkey normal/special windows | Gameplay joint transforms, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG) | RE-294, RE-299 |
 | Shield / guard | 40% | `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff`, decay, shield break | Clip lengths, bubble visual, break mash-out chain | — |
 | Ledges | 45% | `CliffCatch` → `CliffWait` → climb/attack/escape, re-grab cooldown | Hand-reach offset, ledge-hog, clip lengths | — |
 | KO / respawn | 45% | Blast zones, stock loss, rebirth sequence, 120-frame invincibility | `DeadUpFall` (RNG), halo visuals, team/1P branches | — |
 | Recovery (`FallSpecial`) | 25% | Shared helpless fall and landing; driven by Mario up-B | Drop-through, ledge auto-catch | RE-299 |
-| Grabs / throws | 0% | — | Throw motion data, gameplay joint attachment | — |
+| Grabs / throws | 0% | — | Shared capture/throw system, Donkey cargo states and motion data, gameplay joint attachment | — |
 | Weapons | 18% | Fixed pool: Mario Fireball, Fox Blaster; reflection | General item system | RE-300, RE-303 |
 | Stages | 65% | Headers, collision, render layers for all 41 | No match stage loader | RE-028, RE-029, RE-170 |
 | CPU AI | 0% | — | — | — |
@@ -77,7 +77,8 @@ Detail per domain: [`rendering.md`](rendering.md).
 |---|---|---|
 | Mario | Normals and specials | No `Attack100` by design; `DTilt` repeat, `LandingAir*` clips, aerial auto-cancel missing |
 | Fox | Normals and specials | Fire Fox wall/ceiling response waits on the collision solver |
-| Other 10 | Not started | Movement and models work for all |
+| Donkey Kong | Normals and three specials | Cargo carry/throws remain; hitbox reach still uses root offsets |
+| Other 9 | Not started | Movement and models work for all |
 
 ## Known caveats
 

@@ -1394,6 +1394,52 @@ pub fn move_data(
     use crate::fighter::FighterKind;
     match (kind, status) {
         (
+            FighterKind::Donkey,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNEnd
+                | crate::status::DonkeyStatus::SpecialAirNEnd,
+            ),
+        ) => Some(&crate::donkey_attack::PUNCH),
+        (
+            FighterKind::Donkey,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNFull
+                | crate::status::DonkeyStatus::SpecialAirNFull,
+            ),
+        ) => Some(&crate::donkey_attack::PUNCH_FULL),
+        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialHi)) => {
+            Some(&crate::donkey_attack::SPIN_GROUND)
+        }
+        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi)) => {
+            Some(&crate::donkey_attack::SPIN_AIR)
+        }
+        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialLwLoop)) => {
+            Some(&crate::donkey_attack::HAND_SLAP)
+        }
+        (FighterKind::Donkey, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::donkey_attack::JAB1),
+            Status::Attack12 => Some(&crate::donkey_attack::JAB2),
+            Status::AttackDash => Some(&crate::donkey_attack::DASH),
+            Status::AttackS3Hi => Some(&crate::donkey_attack::FTILT_HI),
+            Status::AttackS3 => Some(&crate::donkey_attack::FTILT),
+            Status::AttackS3Lw => Some(&crate::donkey_attack::FTILT_LW),
+            Status::AttackHi3 => Some(&crate::donkey_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::donkey_attack::DTILT),
+            Status::AttackS4Hi => Some(&crate::donkey_attack::FSMASH_HI),
+            Status::AttackS4HiS => Some(&crate::donkey_attack::FSMASH_HI_S),
+            Status::AttackS4 => Some(&crate::donkey_attack::FSMASH),
+            Status::AttackS4LwS => Some(&crate::donkey_attack::FSMASH_LW_S),
+            Status::AttackS4Lw => Some(&crate::donkey_attack::FSMASH_LW),
+            Status::AttackHi4 => Some(&crate::donkey_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::donkey_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::donkey_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::donkey_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::donkey_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::donkey_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::donkey_attack::AIR_LW),
+            _ => None,
+        },
+        (
             FighterKind::Fox,
             AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart),
         ) => Some(&crate::fox_attack::FOX_REFLECTOR_START),
@@ -1664,7 +1710,7 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
     d.length_squared() <= r * r
 }
 
-/// `F1` criterion 5: tests `attacker`'s active hitbox against `defender` and
+/// `F1` criterion 5: tests `attacker`'s active hitboxes against `defender` and
 /// applies the hit. `hit_record` is the caller's per-target hit-suppression
 /// state — the fixed-size Training stand-in for the original's per-attack
 /// `GMAttackRecord` hit list. It is re-armed at a sourced
@@ -1675,33 +1721,44 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         *hit_record = HitRecord::default();
         return;
     };
-    let Some(active) = move_data
+    let mut has_active_hitbox = false;
+    for active in move_data
         .hitboxes
         .iter()
-        .find(|h| h.is_active(attacker.status.anim_frame))
-    else {
+        .filter(|h| h.is_active(attacker.status.anim_frame))
+    {
+        has_active_hitbox = true;
+        if hit_record.hit_generation == Some(active.hit_generation) {
+            continue;
+        }
+        let mut hitbox = active.hitbox;
+        if matches!(
+            attacker.status.status,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNEnd
+                    | crate::status::DonkeyStatus::SpecialAirNEnd
+            )
+        ) {
+            hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
+        }
+        // `ox` mirrors with facing (a joint-space X offset rotated by the
+        // fighter's own transform in the original); `oy`/`oz` do not need that,
+        // matching decomp's own attachment convention.
+        let hitbox_pos = attacker.pos
+            + Vec3::new(
+                hitbox.offset.x * attacker.facing.sign(),
+                hitbox.offset.y,
+                hitbox.offset.z,
+            );
+        if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
+            hit_record.hit_generation = Some(active.hit_generation);
+            return;
+        }
+    }
+    if !has_active_hitbox {
         // `ClearAttackCollAll` ends the current attack record in the source.
         // A later pulse in a multi-hit script is a new collision opportunity.
         *hit_record = HitRecord::default();
-        return;
-    };
-    if hit_record.hit_generation == Some(active.hit_generation) {
-        return;
-    }
-    let hitbox = active.hitbox;
-    // `ox` mirrors with facing (a joint-space X offset rotated by the
-    // fighter's own transform in the original); `oy`/`oz` do not need that,
-    // matching decomp's own attachment convention. This closes the "offset
-    // not yet observable" gap `Jab1` used to have — `Jab1`'s own offset is
-    // `(0, 0, 0)` so it is unaffected.
-    let hitbox_pos = attacker.pos
-        + Vec3::new(
-            hitbox.offset.x * attacker.facing.sign(),
-            hitbox.offset.y,
-            hitbox.offset.z,
-        );
-    if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
-        hit_record.hit_generation = Some(active.hit_generation);
     }
 }
 
@@ -1739,6 +1796,9 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
         defender.attributes.weight,
         !defender.is_grounded(),
     );
+    if defender.kind == crate::fighter::FighterKind::Donkey {
+        defender.donkey_special_n.charge_level = 0;
+    }
     defender.damage = defender.damage.saturating_add(result.damage as u16);
     // `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the
     // fighter's normal ground/air velocity outright before writing the
@@ -2276,5 +2336,89 @@ mod tests {
 
         assert!(hit_record.hit_generation.is_some());
         assert_eq!(defender.damage, 4);
+    }
+
+    #[test]
+    fn donkey_motion_windows_and_charge_damage_feed_hit_resolution() {
+        let normal = move_data(
+            crate::fighter::FighterKind::Donkey,
+            Status::AttackAirLw.into(),
+        )
+        .unwrap();
+        assert_eq!(normal.length_frames, 60.0);
+        assert_eq!(
+            normal
+                .hitboxes
+                .iter()
+                .find(|h| h.is_active(6.0))
+                .unwrap()
+                .hitbox
+                .damage,
+            13
+        );
+        assert_eq!(
+            normal
+                .hitboxes
+                .iter()
+                .find(|h| h.is_active(12.0))
+                .unwrap()
+                .hitbox
+                .damage,
+            10
+        );
+
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::ZERO;
+        defender.pos = Vec3::ZERO;
+        attacker.donkey_special_n.attack_charge = 4;
+        status::set_any_status(
+            &mut attacker,
+            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialNEnd),
+            9.0,
+            StatusTiming::frames(80.0),
+        );
+        apply_hit_from(&attacker, &mut defender, &mut HitRecord::default());
+        assert_eq!(defender.damage, 22); // script base 14 + 4 * 2
+        let spin = move_data(
+            crate::fighter::FighterKind::Donkey,
+            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi),
+        )
+        .unwrap();
+        assert_eq!(spin.hitboxes.iter().filter(|h| h.is_active(3.0)).count(), 2);
+        assert_eq!(
+            spin.hitboxes.iter().filter(|h| h.is_active(17.0)).count(),
+            3
+        );
+        assert_eq!(
+            spin.hitboxes.iter().filter(|h| h.is_active(49.0)).count(),
+            3
+        );
+        assert!(spin
+            .hitboxes
+            .iter()
+            .filter(|h| h.is_active(49.0))
+            .all(|h| h.hitbox.damage == 3));
+    }
+
+    #[test]
+    fn donkey_punch_reaches_with_its_second_hitbox_when_the_first_misses() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.pos = Vec3::ZERO;
+        defender.pos = Vec3::new(400.0, 0.0, 0.0);
+        status::set_any_status(
+            &mut attacker,
+            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialNEnd),
+            9.0,
+            StatusTiming::frames(80.0),
+        );
+        let mut hit_record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 14);
+        assert_eq!(hit_record.hit_generation, Some(0));
+
+        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        assert_eq!(defender.damage, 14);
     }
 }
