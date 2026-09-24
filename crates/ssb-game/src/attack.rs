@@ -2085,7 +2085,7 @@ mod tests {
             .expect("Fox down air is ported");
         assert_eq!(data.hitboxes.len(), 14);
         assert_eq!(data.length_frames, 24.0);
-        for (pulse, pair) in data.hitboxes.chunks_exact(2).enumerate() {
+        for (pulse, pair) in data.hitboxes.as_chunks::<2>().0.iter().enumerate() {
             assert_eq!(pair[0].hit_generation, pulse as u8);
             assert_eq!(pair[1].hit_generation, pulse as u8);
             assert_eq!(pair[0].start, 4.0 + 3.0 * pulse as f32);

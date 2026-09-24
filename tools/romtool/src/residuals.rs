@@ -594,12 +594,12 @@ fn silhouette_search(
     };
     for _ in 0..4 {
         let mut changed = false;
-        for i in 0..n {
-            if touching[i].is_empty() {
+        for (i, near) in touching.iter().enumerate() {
+            if near.is_empty() {
                 continue;
             }
             let original = img.pixels[i * 4 + 3];
-            let mut best = (cost(&img, &touching[i]), original);
+            let mut best = (cost(&img, near), original);
             for cand in [
                 0,
                 threshold,
@@ -611,7 +611,7 @@ fn silhouette_search(
                     continue;
                 }
                 img.pixels[i * 4 + 3] = cand;
-                let c = cost(&img, &touching[i]);
+                let c = cost(&img, near);
                 if c < best.0 {
                     best = (c, cand);
                 }
@@ -1341,9 +1341,9 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     };
 
     let alpha_only = (!alpha_only_imgs.is_empty()).then(|| {
-        let colours: BTreeSet<&[u8]> = alpha_only_imgs
+        let colours: BTreeSet<&[u8; 4]> = alpha_only_imgs
             .iter()
-            .flat_map(|img| img.pixels.chunks_exact(4))
+            .flat_map(|img| img.pixels.as_chunks::<4>().0)
             .collect();
         (
             Candidate {
@@ -1627,8 +1627,8 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
             let cutout = matches!(policy, AlphaPolicy::Cutout { .. });
             let colours = alpha_only_imgs
                 .iter()
-                .flat_map(|img| img.pixels.chunks_exact(4))
-                .collect::<BTreeSet<&[u8]>>()
+                .flat_map(|img| img.pixels.as_chunks::<4>().0)
+                .collect::<BTreeSet<&[u8; 4]>>()
                 .len();
             CrossPhase {
                 current: cur,
@@ -2539,7 +2539,7 @@ fn png(w: u32, h: u32, rgb: &[u8]) -> Vec<u8> {
 
 /// Composites one sample for display under the variant's alpha policy.
 fn display(policy: AlphaPolicy, c: [u8; 4], x: u32, y: u32) -> [u8; 3] {
-    let checker = if ((x / 8) + (y / 8)) % 2 == 0 {
+    let checker = if ((x / 8) + (y / 8)).is_multiple_of(2) {
         96u32
     } else {
         160
@@ -3190,7 +3190,7 @@ pub(super) fn run(opts: &Options) -> Result<(), Box<dyn std::error::Error>> {
                 let a = analyze(*i, v, s, opts.refine);
                 *results[order[k]].lock().unwrap() = Some(a);
                 let n = done.fetch_add(1, Ordering::Relaxed) + 1;
-                if n % 100 == 0 {
+                if n.is_multiple_of(100) {
                     eprintln!("residuals: {n}/{} variants analysed", order.len());
                 }
             });
@@ -3309,9 +3309,9 @@ pub(super) fn run(opts: &Options) -> Result<(), Box<dyn std::error::Error>> {
 
     // JSON, one record per variant in pack order.
     let mut json = String::new();
-    let _ = write!(
+    let _ = writeln!(
         json,
-        "{{\"schema\":1,\"rom\":{},\"pack_sha256\":{},\"thresholds\":{{\"material\":\"(pct_ge8>=1 && max>=16) || pct_ge32>=0.1 on the visible error\",\"none\":\"visible max < 8\"}},\"severity\":\"weight * (4*pct_ge32 + 2*pct_ge16 + pct_ge8 + mean)\",\"variants\":[\n",
+        "{{\"schema\":1,\"rom\":{},\"pack_sha256\":{},\"thresholds\":{{\"material\":\"(pct_ge8>=1 && max>=16) || pct_ge32>=0.1 on the visible error\",\"none\":\"visible max < 8\"}},\"severity\":\"weight * (4*pct_ge32 + 2*pct_ge16 + pct_ge8 + mean)\",\"variants\":[",
         json_str(&opts.rom_path),
         json_str(&opts.pack_sha256)
     );

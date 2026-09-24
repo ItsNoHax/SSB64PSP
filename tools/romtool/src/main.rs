@@ -25,6 +25,9 @@
 //! romtool particles <rom>         validate LBParticle script/texture banks
 //! ```
 
+// Research tables and report aggregations use ad-hoc tuples on purpose.
+#![allow(clippy::type_complexity)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1026,7 +1029,9 @@ fn primitive_filter_coverage(
     }
     let triangles: Vec<_> = prim
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| [tri[0], tri[1], tri[2]].map(|i| m.vertices[i as usize].uv.map(i32::from)))
         .collect();
     filter_coverage::build(&triangles)
@@ -1059,7 +1064,9 @@ fn texgen_filter_coverage(
     }
     let normals: Vec<[[i8; 3]; 3]> = prim
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| {
             [tri[0], tri[1], tri[2]].map(|i| {
                 let rgba = m.vertices[i as usize].rgba;
@@ -2414,7 +2421,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .data
                 .get(BLASTER_DISPLAY_LIST as usize..)
                 .and_then(|data| ssb_rom::dl::decode_list_at(data, BLASTER_DISPLAY_LIST).ok())
-                .map(|cmds| {
+                .and_then(|cmds| {
                     mesh::convert_sequence(
                         &[mesh::SequenceItem {
                             cmds: &cmds,
@@ -2430,7 +2437,6 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     .into_iter()
                     .next()
                 })
-                .flatten()
             {
                 if blaster.triangle_count() != 0 {
                     pack_mesh(
@@ -3707,7 +3713,7 @@ fn convert_texture(
                         &palette,
                         swizzle,
                         &source,
-                        &[palette.clone()],
+                        std::slice::from_ref(&palette),
                     ));
                 }
             }

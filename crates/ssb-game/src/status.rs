@@ -1732,7 +1732,7 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
     }
     let dot = normal.x * velocity.x + normal.y * velocity.y;
     let similarity = dot / (1.0 + speed);
-    if similarity <= 0.0 && similarity >= -0.342_020_15 {
+    if (-0.342_020_15..=0.0).contains(&similarity) {
         let orientation = if normal.x * velocity.y - normal.y * velocity.x < 0.0 {
             -1.0
         } else {
