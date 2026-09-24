@@ -180,7 +180,7 @@ item renders, not exact pixels. Output stays outside Git under
    observations.
 
 See the `psp-hardware` skill for PSPLink. Existing hardware captures (PSP
-Slim, 6.61) predate pack v31 and several golden refreshes.
+Slim, 6.61) predate pack v32 and several golden refreshes.
 
 ## Original game
 
@@ -242,3 +242,12 @@ rebaselined: `r2-stage-kongo-jungle`, `r2-stage-hyrule-castle`,
 eleven affected stages are byte-identical; stage 35 needs the 2,048 bytes
 after one 8-byte-row T4 texture made equal, because PPSSPP reads that
 texture with a 16-byte pitch. `verify --twice` passes 67/67.
+
+## 2026-09-24 RE-319 short texture rows
+
+Pack v32 widens 304 short `PsmT4` texture rows to the GE's 16-byte minimum
+without changing their declared size. Against the RE-318 baseline, 44 of 67
+goldens changed (56 to 17,092 pixels at 2×), including Dream Land, Captain
+Falcon, and Bonus 1/2 stage surfaces. Each changed golden was rebaselined
+after two matching captures; `verify --twice` passes 67/67. See RE-319 for
+the texture census, stripe diagnostic, and visual attribution.

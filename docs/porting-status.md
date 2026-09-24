@@ -20,7 +20,7 @@ unless a physical PSP is named.
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
 | Mesh / model conversion | VERIFYING | 0 conversion failures; all 127 material graphs paired; PRIM ownership, lighting provenance, independent depth state | Physical-PSP confirmation | RE-163, RE-240–261 |
 | Scene graph (DObj) | 87% | 363 `DObjDesc` arrays + 11 effects packed as 374 objects | `GObj` layer | RE-172 |
-| Asset pack | COMPLETE | v31, zero-copy, 16-byte aligned | — | RE-301, RE-312 |
+| Asset pack | COMPLETE | v32, zero-copy, 16-byte aligned | — | RE-301, RE-312, RE-319 |
 
 ## Rendering
 
@@ -42,7 +42,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 | Subsystem | Status | Capability | Gap | Evidence |
 |---|---|---|---|---|
-| PSP asset loading | COMPLETE on PSP-2000 and later | `MEMSIZE=1` 64 MiB mode, physically proven with pack v29 | PSP-1000 (32 MiB); no hardware run of v31 | RE-256, RE-260, RE-288 |
+| PSP asset loading | COMPLETE on PSP-2000 and later | `MEMSIZE=1` 64 MiB mode, physically proven with pack v29 | PSP-1000 (32 MiB); no hardware run of v32 | RE-256, RE-260, RE-288 |
 | Timing | COMPLETE | Fixed 60 Hz with catch-up cap | — | — |
 | Input | 80% | `psp-game` PSP→N64 layout (see README); viewer keeps its own | Nub deadzone unmeasured | RE-008, RE-009, RE-295 |
 | Engine traits | 70% | Renderer, audio, input, timing, clock | — | — |

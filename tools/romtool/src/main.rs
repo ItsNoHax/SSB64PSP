@@ -9236,11 +9236,8 @@ fn report_packed_texgen(path: &Path) -> Res {
         let linear = p.flags & ssb_rom::pack::flags::TEXTURE_GEN_LINEAR != 0;
         let t = pack.texture(p.texture);
         let dims = t.as_ref().map_or("none".to_string(), |t| {
-            format!(
-                "{}x{}",
-                t.stride,
-                ssb_rom::psp_texture::pad_to_power_of_two(t.height as u32)
-            )
+            let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
+            format!("{w}x{h}")
         });
         println!(
             "  {:>6}  {:>5}  {:>5}  {:>6}  {:>4}  {:>7}  {:#06x}/{:#06x}  {:>4}/{:<4}",
