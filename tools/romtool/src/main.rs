@@ -975,6 +975,9 @@ struct MatAnimData {
     base_tracks: [u32; 10],
     uv_mode: u8,
     uv_tile_params: [u16; 3],
+    /// RE-318: the script can never move `TraU`/`TraV`/`ScaU`/`ScaV` off
+    /// their rest values, so the primitive samples exactly its authored UVs.
+    uv_static: bool,
 }
 
 fn texture_cache_key(
@@ -1114,6 +1117,15 @@ fn validation_preserved(
             || candidate.visible_squared_error <= baseline.visible_squared_error)
 }
 
+/// `--hide-wide-tiles`: see its option comment in [`pack`].
+static HIDE_WIDE_TILES: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+thread_local! {
+    /// RE-318 census for the pack summary: source primitives lowered,
+    /// triangles split, primitives emitted.
+    static WIDE_TILE_STATS: std::cell::RefCell<(usize, usize, usize)> = const { std::cell::RefCell::new((0, 0, 0)) };
+}
+
 #[allow(clippy::too_many_arguments)]
 fn pack_mesh(
     writer: &mut ssb_rom::pack::PackWriter,
@@ -1123,13 +1135,43 @@ fn pack_mesh(
     src: Texels<'_>,
     id: u32,
     offset: u32,
-    m: &ssb_rom::mesh::Mesh,
+    source: &ssb_rom::mesh::Mesh,
     swizzle: bool,
 ) -> u32 {
+    // RE-318: split tiles whose bake would exceed the GE's 512-texel limit
+    // into equivalent repeat/window tiles before anything is converted.
+    // `source_prim` keeps residual fixes and report sites keyed by the
+    // display list's own primitive order.
+    let lowered = ssb_rom::wide_tile::lower(source, |i| {
+        source.primitives[i]
+            .material
+            .mat_anim
+            .is_none_or(|a| mat_anim_data.get(&a).is_none_or(|d| d.uv_static))
+    })
+    .unwrap_or_else(|e| panic!("RE-318 wide tile in file {id} list 0x{offset:X}: {e:?}"));
+    if lowered.stats.primitives > 0 {
+        WIDE_TILE_STATS.with(|s| {
+            let mut s = s.borrow_mut();
+            s.0 += lowered.stats.primitives;
+            s.1 += lowered.stats.split_triangles;
+            s.2 += lowered.stats.emitted;
+        });
+    }
+    let mut lowered = lowered;
+    if HIDE_WIDE_TILES.get().copied().unwrap_or(false) {
+        for (k, prim) in lowered.mesh.primitives.iter_mut().enumerate() {
+            // A lowered piece always differs from its source in texture.
+            if prim.material.texture != source.primitives[lowered.source_prim[k]].material.texture {
+                prim.indices.clear();
+            }
+        }
+    }
+    let m = &lowered.mesh;
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_phase = Vec::with_capacity(m.primitives.len());
-    for (prim_index, prim) in m.primitives.iter().enumerate() {
+    for (packed_index, prim) in m.primitives.iter().enumerate() {
+        let prim_index = lowered.source_prim[packed_index];
         let fix = prim
             .material
             .texture
@@ -1737,6 +1779,10 @@ fn resolve_one_mat_anim(
     let mut max_texture = 0.0f32;
     let mut frames = 0u32;
     let mut seen_material = false;
+    // RE-318: tile-0 UV tracks against their rest values, per replayed frame.
+    let uv_rest: [f32; 4] = core::array::from_fn(|k| f32::from_bits(base_tracks[k + 1]));
+    let mut uv_seen = [false; 4];
+    let mut uv_replay_holds = true;
     loop {
         // A decoder error means this script is not something this resolver
         // can trust the replay of -- decline it outright rather than attach
@@ -1753,6 +1799,12 @@ fn resolve_one_mat_anim(
             max_texture = max_texture.max(v);
         }
         seen_material |= (0..10).any(|track| j.track_value(track).is_some());
+        for (k, seen) in uv_seen.iter_mut().enumerate() {
+            if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TRA_U + k) {
+                *seen = true;
+                uv_replay_holds &= v == uv_rest[k];
+            }
+        }
         if j.ended() || j.looped() || frames >= MAT_ANIM_REPLAY_FRAMES {
             break;
         }
@@ -1826,6 +1878,16 @@ fn resolve_one_mat_anim(
             base_tracks,
             uv_mode,
             uv_tile_params,
+            // Every reachable write holds the rest value, and each written
+            // track reached it in the replay without a transient: from then
+            // on nothing can move it.
+            uv_static: uv_replay_holds
+                && ssb_rom::matanim::uv_writes_hold(&file.data, script, uv_rest)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|written| {
+                        written.iter().zip(uv_seen).all(|(&w, seen)| !w || seen)
+                    }),
         },
     ))
 }
@@ -2077,6 +2139,11 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // Report-only: zero the alpha of every packed direct override
             // (cutout sites) to capture the frame without them.
             "--residual-hide-probe" => residual_fixes::enable_hide_probe(),
+            // Report-only (RE-318): draw nothing for primitives the wide-tile
+            // lowering produced, so a capture shows the frame without them.
+            "--hide-wide-tiles" => {
+                let _ = HIDE_WIDE_TILES.set(true);
+            }
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -2915,6 +2982,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
         "  mipmaps     {mipped} of {} texture(s) carry extra levels",
         pack.texture_count()
     );
+    let (wide_prims, wide_split, wide_emitted) = WIDE_TILE_STATS.with(|s| *s.borrow());
+    println!(
+        "  wide tiles  {wide_prims} primitive(s) over the GE's 512-texel limit lowered to {wide_emitted} (RE-318, {wide_split} triangle(s) split)"
+    );
     println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
     println!(
@@ -3109,7 +3180,6 @@ fn convert_texture(
     use ssb_rom::texture;
 
     let file = src.bytes(t.data_file)?;
-
     if (t.data_offset >> 24) != 0 || (t.data_offset == 0 && t.data_file.is_none()) {
         return None; // segmented, or a pointer nothing resolved
     }

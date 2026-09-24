@@ -228,3 +228,17 @@ RE-313 were attributed commit by commit and rebaselined to current output:
 sampling alignment, RE-305 to RE-310 compensation packs, and the
 pillarbox clear that RE-307's commit made cover both swap buffers. All 67
 goldens now pass.
+
+## 2026-09-24 RE-318 wide-tile lowering
+
+Pack changed (SHA-256 `af3236384d34fed25d8a441cdd700c555bb637791b2a6dbaebc6df8b11bcd835`,
+22,010,384 bytes). The 88 primitives whose tile baked past 512 texels now
+draw a repeating period plus a clamped far window. With the shipped pack all
+67 goldens matched; with the new pack exactly ten changed and were
+rebaselined: `r2-stage-kongo-jungle`, `r2-stage-hyrule-castle`,
+`r2-stage-bonus1-{kirby,ness}` and
+`r2-stage-bonus2-{fox,link,captain-falcon,kirby,pikachu,ness}` (516 to
+22,772 pixels at 2x). With the affected primitives hidden in both packs, all
+eleven affected stages are byte-identical; stage 35 needs the 2,048 bytes
+after one 8-byte-row T4 texture made equal, because PPSSPP reads that
+texture with a 16-byte pitch. `verify --twice` passes 67/67.

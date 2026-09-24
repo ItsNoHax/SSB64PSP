@@ -199,6 +199,78 @@ fn is_ext(opcode: u32) -> bool {
     )
 }
 
+/// RE-318: whether every command reachable from `script` that writes a
+/// tile-0 UV track (`TraU`, `TraV`, `ScaU`, `ScaV`, tracks 1..=4) writes the
+/// value in `rest` for that track, with no nonzero Hermite rate.
+///
+/// Returns which of the four tracks some reachable command writes, or `None`
+/// if any write could move one away from `rest`. Every branch is walked, not
+/// one replay, so a write behind a loop the replay never reaches still
+/// counts. A caller must still show that each written track holds `rest`
+/// from its first write on: [`MaterialJoint`] ramps from its previous
+/// target, which starts at zero.
+pub fn uv_writes_hold(
+    data: &[u8],
+    script: u32,
+    rest: [f32; 4],
+) -> Result<Option<[bool; 4]>, MatAnimError> {
+    let mut written = [false; 4];
+    let mut visited = alloc::collections::BTreeSet::new();
+    let mut pending = alloc::vec![script as usize];
+    while let Some(mut pc) = pending.pop() {
+        loop {
+            if !visited.insert(pc) {
+                break;
+            }
+            let word = u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?;
+            let opcode = word >> 25;
+            let flags = (word >> 15) & 0x3FF;
+            pc += 4;
+            match opcode {
+                OP_END => break,
+                OP_JUMP | OP_SET_ANIM => {
+                    let target = u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?;
+                    pending.push(target as usize);
+                    break;
+                }
+                OP_WAIT | OP_SET_FLAGS | OP_ADD_LENGTH => {}
+                OP_SET_INTERP => pc += 4,
+                _ => {
+                    let per = tick_values_per_track(opcode)
+                        .ok_or(MatAnimError::UnknownOpcode { opcode, at: pc - 4 })?;
+                    let tracks = if is_ext(opcode) {
+                        TRACK_COUNT
+                    } else {
+                        MAT_TRACK_COUNT
+                    };
+                    for i in (0..tracks).filter(|i| flags & (1 << i) != 0) {
+                        let value = f32::from_bits(
+                            u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?,
+                        );
+                        let rate = if per == 2 {
+                            f32::from_bits(
+                                u32_at(data, pc + 4)
+                                    .ok_or(MatAnimError::Truncated { at: pc + 4 })?,
+                            )
+                        } else {
+                            0.0
+                        };
+                        pc += 4 * per;
+                        if is_ext(opcode) || !(1..=4).contains(&i) {
+                            continue;
+                        }
+                        if opcode == OP_SET_TARGET_RATE || rate != 0.0 || value != rest[i - 1] {
+                            return Ok(None);
+                        }
+                        written[i - 1] = true;
+                    }
+                }
+            }
+        }
+    }
+    Ok(Some(written))
+}
+
 /// Runs a material animation to `frame` and reports the colours it leaves.
 ///
 /// `frame` is the costume index — see the module note. Faithful to
