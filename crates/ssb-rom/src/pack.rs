@@ -3457,6 +3457,7 @@ mod tests {
             mask_t: 5,
             drawn_width: 64,
             drawn_height: 32,
+            tlut: crate::texture::TextureLut::None,
         };
 
         let packed_flags = |texture, mode| {
@@ -3580,6 +3581,7 @@ mod tests {
             mask_t: 0,
             drawn_width: 16,
             drawn_height: 8,
+            tlut: crate::texture::TextureLut::None,
         };
         let mut mesh = sample_mesh();
         mesh.primitives[0].material.texture = Some(texture);

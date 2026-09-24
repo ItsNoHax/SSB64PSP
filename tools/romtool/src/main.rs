@@ -524,6 +524,7 @@ fn scene(path: &Path, args: &[&str]) -> Res {
                     mobjs: &materials[p.node],
                     mat_anims: &[],
                     depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
+                    stream: u8::from(p.list_id == Some(1)),
                 })
                 .collect();
 
@@ -949,6 +950,8 @@ struct TexKey {
     drawn_height: u16,
     palette_entries: u16,
     palette: u8,
+    /// `G_MDSFT_TEXTLUT` changes what the same bytes decode to (RE-313).
+    tlut: ssb_rom::texture::TextureLut,
     mirror_s: bool,
     mirror_t: bool,
     clamp_s: bool,
@@ -992,6 +995,7 @@ fn texture_cache_key(
         drawn_height: t.drawn_height,
         palette_entries: t.palette_entries,
         palette: t.palette,
+        tlut: t.tlut,
         mirror_s: t.mirror_s,
         mirror_t: t.mirror_t,
         clamp_s: t.clamp_s,
@@ -1153,6 +1157,7 @@ fn pack_mesh(
                     drawn_height: 0,
                     palette_entries: 0,
                     palette: 0,
+                    tlut: ssb_rom::texture::TextureLut::None,
                     mirror_s: false,
                     mirror_t: false,
                     clamp_s: false,
@@ -1653,6 +1658,7 @@ fn convert_graph_at(
             mobjs: &materials[p.node],
             mat_anims: &mat_anims[p.node],
             depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
+            stream: u8::from(p.list_id == Some(1)),
         })
         .collect();
     mesh::convert_sequence(&items, mesh::Source::of(file), initial)
@@ -2140,6 +2146,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     mobjs: &materials[p.node],
                     mat_anims: &mat_anims[p.node],
                     depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
+                    stream: u8::from(p.list_id == Some(1)),
                 })
                 .collect();
 
@@ -2237,6 +2244,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                     mobjs: &materials.nodes[0],
                     mat_anims: &[],
                     depth_seed: None,
+                    stream: 0,
                 };
                 if let Some(Ok(fireball)) = mesh::convert_sequence(
                     &[item],
@@ -2285,6 +2293,7 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                             mobjs: &[],
                             mat_anims: &[],
                             depth_seed: None,
+                            stream: 0,
                         }],
                         mesh::Source::of(file),
                         mesh::InitialMaterial::WEAPON_EXTERNAL,
@@ -3096,22 +3105,40 @@ fn convert_texture(
     // reproduced the user's "right shoulder strap area shows scrambled pixel
     // noise" exactly; this bypass alone clears it completely.
     let is_ness_shoulder = src.home.id == 335 && t.data_file.is_none() && t.data_offset == 0xBDE8;
+    // The natural PSP format. A 4- or 8-bit texel drawn with the TLUT on is a
+    // palette index whatever its N64 format says (RE-313), so it stays
+    // indexed; everything else follows `choose_psm`.
+    let natural = match (t.tlut.enabled(), t.size) {
+        (true, texture::BitSize::Bits4) => psp::Psm::PsmT4,
+        (true, texture::BitSize::Bits8) => psp::Psm::PsmT8,
+        _ => psp::choose_psm(t.format, t.size),
+    };
+    // The RE-283 bypass replaces only the paletted *transport*. The texels
+    // still enter the same compensation pipeline below as RGBA8888.
     let psm = if (src.home.id == 317
         || is_link_boot
         || is_link_shin
         || is_yoshi_head
         || is_falcon_shoulder
         || is_ness_shoulder)
-        && psp::choose_psm(t.format, t.size).is_paletted()
+        && natural.is_paletted()
     {
         psp::Psm::Psm8888
     } else {
-        psp::choose_psm(t.format, t.size)
+        natural
     };
 
-    let tlut: Vec<u16> = match t.palette_offset {
+    // A CI4 bank is a 16-entry window of the loaded TLUT; an 8-bit index
+    // ignores the bank (`fetch_texel_entlut_quadro`), and RE-223 found a
+    // nonzero bank only on CI4.
+    let bank = if t.size == texture::BitSize::Bits4 {
+        t.palette
+    } else {
+        0
+    };
+    let mut tlut: Vec<u16> = match t.palette_offset {
         Some(off) => {
-            let (off, n) = palette_bank_offset(off, t.palette_entries, t.palette);
+            let (off, n) = palette_bank_offset(off, t.palette_entries, bank);
             src.bytes(t.palette_file)
                 .and_then(|f| f.get(off as usize..off as usize + n * 2))
                 .map(texture::parse_tlut)
@@ -3119,6 +3146,47 @@ fn convert_texture(
         }
         None => Vec::new(),
     };
+    if t.tlut.enabled() && tlut.is_empty() {
+        // No TLUT the converter can resolve: nothing defined to sample.
+        return None;
+    }
+    if t.tlut.enabled() {
+        extend_short_tlut(src, file, t, &mut tlut);
+    }
+    // The colour each index value yields, for an indexed natural format.
+    let index_colours: Vec<u32> = if t.tlut.enabled() {
+        tlut.iter()
+            .map(|&e| psp::pack_abgr(t.tlut.entry_rgba(e)))
+            .collect()
+    } else if natural.is_paletted() && t.format == texture::Format::Ci {
+        // CI with the TLUT off reads the raw index as intensity (RE-313).
+        let n = if t.size == texture::BitSize::Bits4 {
+            16
+        } else {
+            256
+        };
+        (0..n)
+            .map(|i| {
+                let v = if n == 16 {
+                    (t.palette << 4) | i as u8
+                } else {
+                    i as u8
+                };
+                psp::pack_abgr([v, v, v, v])
+            })
+            .collect()
+    } else if natural.is_paletted() && t.format == texture::Format::I {
+        // An intensity texture carries no palette because on the N64 it needs
+        // none. Generating the ramp keeps it at 4 or 8 bits instead of letting
+        // it fall through to the 8888 path `choose_psm` picked `PsmT4` to
+        // avoid (RE-047).
+        psp::intensity_palette(t.size)
+    } else {
+        Vec::new()
+    };
+    if natural.is_paletted() && index_colours.is_empty() {
+        return None;
+    }
 
     // Mipmapped, because the N64's textures are frequently dithered and a
     // dithered gradient sampled near one texel per pixel aliases into moire
@@ -3131,7 +3199,7 @@ fn convert_texture(
     // data -- a plain `Repeat` wrap over the resulting wider/taller image
     // reproduces it exactly, since `sceGuTexScale` renormalises UVs against
     // whatever dimensions the packed texture actually reports (RE-067).
-    let decode_mirrored = |tlut: Option<&[u16]>| {
+    let decode_mirrored = |tlut: &[u16]| {
         let img = decode_texture(file, t, tlut)?;
         Some(texture::mirror_extend(
             &img,
@@ -3145,7 +3213,7 @@ fn convert_texture(
     };
 
     let mut mipped = |palette: Vec<u32>| {
-        let img = decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))?;
+        let img = decode_mirrored(&tlut)?;
         // RE-311: a bounded texgen primitive trains on its real-normal pose
         // coverage plus a one-point-per-texel regularization over the whole
         // reachable box, and must pass two holdouts: the disjoint-pose
@@ -3283,9 +3351,9 @@ fn convert_texture(
                     home: src.home.id,
                     source: img.clone(),
                     final_level0: final_img.clone(),
-                    source_psm: psm,
+                    source_psm: natural,
                     final_psm,
-                    palette: palette.clone(),
+                    palette: index_colours.clone(),
                     animated,
                     method,
                     attempted,
@@ -3420,7 +3488,11 @@ fn convert_texture(
                                 img.width, img.height, indices, &palette,
                             ),
                             psm,
-                            if accepted { "animated-joint-index" } else { "animated-rejected" },
+                            if accepted {
+                                "animated-joint-index"
+                            } else {
+                                "animated-rejected"
+                            },
                             true,
                             Some(residuals::Animated {
                                 source_indices: source.clone(),
@@ -3869,42 +3941,98 @@ fn convert_texture(
         ))
     };
 
-    if psm.is_paletted() && !tlut.is_empty() {
-        let palette: Vec<u32> = tlut
-            .iter()
-            .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
-            .collect();
-        mipped(palette)
-    } else if psm.is_paletted() && t.format == ssb_rom::texture::Format::I {
-        // An intensity texture carries no palette because on the N64 it needs
-        // none. Generating the ramp keeps it at 4 or 8 bits instead of letting
-        // it fall through to the 8888 path `choose_psm` picked `PsmT4` to
-        // avoid (RE-047).
-        mipped(psp::intensity_palette(t.size))
+    // Every format enters the same compensation pipeline (RE-313): indexed
+    // formats with their palette, direct ones -- RGBA16 as `Psm5551`, RGBA32
+    // and IA as `Psm8888`, and the RE-283 bypass as `Psm8888` -- without.
+    if psm.is_paletted() {
+        mipped(index_colours.clone())
     } else {
-        decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice())).map(|img| {
-            // Report-only: this branch packs direct colour without running
-            // the compensator (non-paletted sources and the RE-283 bypass).
-            if residuals::enabled() {
-                residuals::record_conversion(residuals::Conversion {
-                    texture: *t,
-                    home: src.home.id,
-                    source: img.clone(),
-                    final_level0: img.clone(),
-                    source_psm: psp::choose_psm(t.format, t.size),
-                    final_psm: psp::Psm::Psm8888,
-                    palette: tlut
-                        .iter()
-                        .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
-                        .collect(),
-                    animated: None,
-                    method: "not-attempted:direct-format",
-                    attempted: false,
-                    policy: alpha_policy,
-                });
-            }
-            psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle)
+        mipped(Vec::new())
+    }
+}
+
+/// TMEM contents past a short `G_LOADTLUT`, measured on the original game
+/// (RE-313).
+///
+/// `G_LOADTLUT` writes exactly `count` entries (`angrylion-rdp-plus`'s
+/// `loading_pipeline` advances one entry per span step). An index past them
+/// reads whatever an earlier load left in that TMEM slot. That depends on
+/// draw order, so no static rule gives it; RE-313 replayed the real frame
+/// display lists through `angrylion-rdp-plus`'s TMEM loader instead. Each
+/// row is `(palette file, palette offset, loaded entries, &[(slot, entry)])`.
+/// The entry is copy 0 of the slot's four TMEM copies: the RDP samples the
+/// other copies for other bilinear taps, which a per-texel palette cannot
+/// express.
+const STALE_TLUT_ENTRIES: &[(u32, u32, u16, &[(u8, u16)])] = &[
+    // Break the Targets direction arrows (Donkey Kong, Fox, Pikachu, Kirby):
+    // slot 3 holds background file 119's last strip, `1091 1091 114F 114F`,
+    // in every measured frame and camera position.
+    (120, 0x598, 3, &[(3, 0x1091)]),
+    (121, 0x6E0, 3, &[(3, 0x1091)]),
+    (122, 0x2C0, 3, &[(3, 0x1091)]),
+    (123, 0xAB8, 3, &[(3, 0x1091)]),
+    // Opening-room book: slot 255 holds file 52's `0x42F0` wall texture,
+    // `FE59 A391 FF9B FE59`, in every measured frame.
+    (52, 0x9958, 255, &[(255, 0xFE59)]),
+];
+
+/// Extends a TLUT shorter than the indices its texture uses (RE-313).
+///
+/// A slot [`STALE_TLUT_ENTRIES`] records gets its measured value. Any other
+/// slot is unresolved stale TMEM: it is filled with transparent black, the
+/// value the decoder already gives it, so the packed texels match the
+/// reference either way, and it is reported.
+fn extend_short_tlut(
+    src: Texels<'_>,
+    file: &[u8],
+    t: &ssb_rom::mesh::TextureRef,
+    tlut: &mut Vec<u16>,
+) {
+    if !matches!(
+        t.size,
+        ssb_rom::texture::BitSize::Bits4 | ssb_rom::texture::BitSize::Bits8
+    ) {
+        return;
+    }
+    let Some(max) = decode_index_field(file, t).and_then(|i| i.into_iter().max()) else {
+        return;
+    };
+    let need = max as usize + 1;
+    if need <= tlut.len() {
+        return;
+    }
+    let palette_file = t.palette_file.map_or(src.home.id, u32::from);
+    let known = STALE_TLUT_ENTRIES
+        .iter()
+        .find(|(f, off, n, _)| {
+            *f == palette_file && Some(*off) == t.palette_offset && *n == t.palette_entries
         })
+        .map_or(&[][..], |row| row.3);
+    let bank_base = if t.size == ssb_rom::texture::BitSize::Bits4 {
+        u32::from(t.palette) * 16
+    } else {
+        0
+    };
+    for slot in tlut.len()..need {
+        let absolute = bank_base + slot as u32;
+        match known.iter().find(|(s, _)| u32::from(*s) == absolute) {
+            Some(&(_, entry)) => tlut.push(entry),
+            None => {
+                eprintln!(
+                    "stale-tlut-unresolved file={} offset={:#X} format={:?}/{:?} tlut={:?} palette={}:{:#X} entries={} slot={}",
+                    t.data_file.map_or(src.home.id, u32::from),
+                    t.data_offset,
+                    t.format,
+                    t.size,
+                    t.tlut,
+                    palette_file,
+                    t.palette_offset.unwrap_or(0),
+                    t.palette_entries,
+                    absolute
+                );
+                tlut.push(0);
+            }
+        }
     }
 }
 
@@ -3919,7 +4047,7 @@ fn convert_texture(
 fn decode_texture(
     file: &[u8],
     t: &ssb_rom::mesh::TextureRef,
-    tlut: Option<&[u16]>,
+    tlut: &[u16],
 ) -> Option<ssb_rom::texture::Rgba8> {
     use ssb_rom::texture;
 
@@ -3929,7 +4057,20 @@ fn decode_texture(
     let source_row = texture::data_len(source_width, 1, t.size);
     let need = source_row.checked_mul(height as usize)?;
     let source = file.get(t.data_offset as usize..t.data_offset as usize + need)?;
-    let image = texture::decode(source, source_width, height, t.format, t.size, tlut).ok()?;
+    // `tlut` already starts at the CI4 bank; the bank only reaches the
+    // decoder for a CI texel read with the TLUT off (RE-313).
+    let palette = if t.tlut.enabled() { 0 } else { t.palette };
+    let image = texture::decode_lut(
+        source,
+        source_width,
+        height,
+        t.format,
+        t.size,
+        t.tlut,
+        tlut,
+        palette,
+    )
+    .ok()?;
     if source_width == width {
         return Some(image);
     }
@@ -5464,6 +5605,7 @@ fn file_meshes(loaded: &Loaded, file: &ssb_rom::archive::File) -> Vec<ssb_rom::m
                 mobjs: &materials[p.node],
                 mat_anims: &[],
                 depth_seed: ground_layer1_list1_depth_seed(initial, p.list_id),
+                stream: u8::from(p.list_id == Some(1)),
             })
             .collect();
         out.extend(
@@ -9847,6 +9989,7 @@ mod tests {
                         mobjs: &materials[p.node],
                         mat_anims: &[],
                         depth_seed: None,
+                        stream: 0,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
@@ -10081,6 +10224,7 @@ mod tests {
                     mobjs: &materials[p.node],
                     mat_anims: &[],
                     depth_seed: None,
+                    stream: 0,
                 })
                 .collect();
             let seeded = ssb_rom::mesh::convert_sequence(
@@ -10181,6 +10325,7 @@ mod tests {
                         mobjs: &materials[p.node],
                         mat_anims: &[],
                         depth_seed: None,
+                        stream: 0,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
@@ -10341,6 +10486,7 @@ mod tests {
                         mobjs: &materials[p.node],
                         mat_anims: &[],
                         depth_seed: super::ground_layer1_list1_depth_seed(initial, p.list_id),
+                        stream: u8::from(p.list_id == Some(1)),
                     })
                     .collect();
                 let meshes = ssb_rom::mesh::convert_sequence(
@@ -10423,6 +10569,7 @@ mod tests {
                         mobjs: &materials[p.node],
                         mat_anims: &[],
                         depth_seed: None,
+                        stream: 0,
                     })
                     .collect();
                 let seeded = ssb_rom::mesh::convert_sequence(
@@ -11659,6 +11806,7 @@ mod tests {
             mask_t: 0,
             drawn_width: 1,
             drawn_height: 1,
+            tlut: ssb_rom::texture::TextureLut::Rgba16,
         };
         let expect_abgr = |v: u16| ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(v));
 
@@ -11713,6 +11861,302 @@ mod tests {
         assert_eq!(packed_guard.palette[0], expect_abgr(0x0001));
     }
 
+    /// One `convert_texture` call on a synthetic file, with the residual
+    /// recorder on: the packed texture, whether a compensated result was
+    /// kept, and the recorder's `(method, attempted, natural, final)`.
+    fn convert_recorded(
+        home: u32,
+        data: Vec<u8>,
+        t: &ssb_rom::mesh::TextureRef,
+    ) -> (
+        ssb_rom::psp_texture::PspTexture,
+        bool,
+        (
+            &'static str,
+            bool,
+            ssb_rom::psp_texture::Psm,
+            ssb_rom::psp_texture::Psm,
+        ),
+    ) {
+        let file = ssb_rom::archive::File {
+            id: home,
+            data,
+            extern_relocs: Vec::new(),
+            intern_relocs: Vec::new(),
+        };
+        let texels = super::Texels {
+            home: &file,
+            all: &[],
+        };
+        super::residuals::enable();
+        let mut compensated = false;
+        let packed = super::convert_texture(
+            texels,
+            t,
+            &super::filter_coverage::Coverage::default(),
+            false,
+            None,
+            ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            Some(&mut compensated),
+        )
+        .expect("texture converts");
+        let recorded = super::residuals::take_pending().expect("conversion recorded");
+        (packed, compensated, recorded)
+    }
+
+    /// A `width` x `height` tile-0 texture at `data_offset`, drawn with the
+    /// given TLUT mode and no palette.
+    fn synthetic_texture(
+        format: ssb_rom::texture::Format,
+        size: ssb_rom::texture::BitSize,
+        width: u16,
+        height: u16,
+        data_offset: u32,
+    ) -> ssb_rom::mesh::TextureRef {
+        ssb_rom::mesh::TextureRef {
+            data_file: None,
+            data_offset,
+            format,
+            size,
+            width,
+            height,
+            source_width: width,
+            palette_file: None,
+            palette_offset: None,
+            palette_entries: 0,
+            palette: 0,
+            mirror_s: false,
+            mirror_t: false,
+            clamp_s: false,
+            clamp_t: false,
+            framebuffer: false,
+            origin_s: 0,
+            origin_t: 0,
+            mask_s: 0,
+            mask_t: 0,
+            drawn_width: width,
+            drawn_height: height,
+            tlut: ssb_rom::texture::TextureLut::None,
+        }
+    }
+
+    /// A 5-bit level per texel of a `width`-wide diagonal ridge: a
+    /// smooth shape whose diagonal slope is where 3-point and bilinear
+    /// filtering disagree, and where the compensator measurably helps.
+    fn ridge(width: usize, height: usize) -> Vec<u8> {
+        (0..width * height)
+            .map(|i| {
+                let (x, y) = ((i % width) as i32, (i / width) as i32);
+                ((x - y).abs() * 5).min(31) as u8
+            })
+            .collect()
+    }
+
+    fn widen5(l: u8) -> u8 {
+        (l << 3) | (l >> 2)
+    }
+
+    /// RE-313: an RGBA16 source enters the compensator and keeps its natural
+    /// `Psm5551` format when the 5551-quantized result passes the gates.
+    #[test]
+    fn rgba16_compensation_is_kept_as_psm5551() {
+        use ssb_rom::psp_texture::Psm;
+        use ssb_rom::texture::{BitSize, Format};
+        let data: Vec<u8> = ridge(8, 8)
+            .into_iter()
+            .map(|l| u16::from(l) << 11 | u16::from(l) << 6 | u16::from(l) << 1 | 1)
+            .flat_map(u16::to_be_bytes)
+            .collect();
+        let data = [vec![0; 8], data].concat();
+        let t = synthetic_texture(Format::Rgba, BitSize::Bits16, 8, 8, 8);
+        let (packed, compensated, (method, attempted, natural, final_psm)) =
+            convert_recorded(1, data, &t);
+        assert!(attempted, "{method}");
+        assert_eq!(natural, Psm::Psm5551);
+        assert!(compensated, "{method}");
+        assert_eq!(method, "direct-rgba5551");
+        assert_eq!(final_psm, Psm::Psm5551);
+        assert_eq!(packed.format, Psm::Psm5551);
+    }
+
+    /// RE-313: an RGBA16 texture the compensator cannot improve keeps its
+    /// natural 5551 format, bit-exact at level 0, instead of the old forced
+    /// RGBA8888 expansion.
+    #[test]
+    fn uncompensated_rgba16_is_not_promoted() {
+        use ssb_rom::psp_texture::Psm;
+        use ssb_rom::texture::{BitSize, Format};
+        let data: Vec<u8> = [0u16; 4]
+            .into_iter()
+            .chain([0x7BC1u16; 64])
+            .flat_map(u16::to_be_bytes)
+            .collect();
+        let t = synthetic_texture(Format::Rgba, BitSize::Bits16, 8, 8, 8);
+        let (packed, compensated, (_, attempted, _, final_psm)) = convert_recorded(1, data, &t);
+        assert!(attempted);
+        assert!(!compensated);
+        assert_eq!(final_psm, Psm::Psm5551);
+        assert_eq!(packed.format, Psm::Psm5551);
+        assert_eq!(
+            u16::from_le_bytes([packed.data[0], packed.data[1]]),
+            ssb_rom::psp_texture::pack_5551(ssb_rom::texture::rgba5551(0x7BC1))
+        );
+    }
+
+    /// RE-313: RGBA32 and IA16/IA8 sources enter the same compensator and
+    /// stay `Psm8888`, their natural PSP format.
+    #[test]
+    fn rgba32_and_ia_sources_enter_compensation() {
+        use ssb_rom::psp_texture::Psm;
+        use ssb_rom::texture::{BitSize, Format};
+        let rgba32: Vec<u8> = ridge(8, 8)
+            .into_iter()
+            .flat_map(|l| [widen5(l), widen5(l), widen5(l), 255])
+            .collect();
+        let ia16: Vec<u8> = ridge(8, 8)
+            .into_iter()
+            .flat_map(|l| [widen5(l), 255])
+            .collect();
+        let ia8: Vec<u8> = ridge(8, 8)
+            .into_iter()
+            .map(|l| (l >> 1) << 4 | 0xF)
+            .collect();
+        for (format, size, data) in [
+            (Format::Rgba, BitSize::Bits32, rgba32),
+            (Format::Ia, BitSize::Bits16, ia16),
+            (Format::Ia, BitSize::Bits8, ia8),
+        ] {
+            let t = synthetic_texture(format, size, 8, 8, 8);
+            let data = [vec![0; 8], data].concat();
+            let (packed, compensated, (method, attempted, natural, _)) =
+                convert_recorded(1, data, &t);
+            assert!(attempted, "{format:?}/{size:?}: {method}");
+            assert!(compensated, "{format:?}/{size:?}: {method}");
+            assert_eq!(natural, Psm::Psm8888);
+            assert_eq!(packed.format, Psm::Psm8888);
+        }
+    }
+
+    /// RE-313: the RE-283 bypass still avoids the paletted transport, but its
+    /// texels now go through the compensator instead of around it.
+    #[test]
+    fn re283_bypass_textures_are_compensated() {
+        use ssb_rom::psp_texture::Psm;
+        use ssb_rom::texture::{BitSize, Format};
+        const TEXELS: usize = 0xCF18;
+        const PALETTE: usize = TEXELS + 128;
+        let mut data = vec![0u8; PALETTE + 32];
+        for (i, l) in ridge(16, 16).into_iter().enumerate() {
+            let v = l >> 1;
+            data[TEXELS + i / 2] |= if i % 2 == 0 { v << 4 } else { v };
+        }
+        for i in 0..16u16 {
+            let l = i * 2 + 1;
+            let at = PALETTE + i as usize * 2;
+            data[at..at + 2].copy_from_slice(&(l << 11 | l << 6 | l << 1 | 1).to_be_bytes());
+        }
+        let t = ssb_rom::mesh::TextureRef {
+            palette_offset: Some(PALETTE as u32),
+            palette_entries: 16,
+            tlut: ssb_rom::texture::TextureLut::Rgba16,
+            ..synthetic_texture(Format::Ci, BitSize::Bits4, 16, 16, TEXELS as u32)
+        };
+        // File 324, offset 0xCF18: Link's boot, RE-283's first bypass.
+        let (packed, compensated, (method, attempted, natural, final_psm)) =
+            convert_recorded(324, data, &t);
+        assert_eq!(
+            natural,
+            Psm::PsmT4,
+            "the report still names the natural format"
+        );
+        assert_eq!(final_psm, Psm::Psm8888, "the bypass still avoids PsmT4");
+        assert_eq!(packed.format, Psm::Psm8888);
+        assert!(packed.palette.is_empty());
+        assert!(attempted, "{method}");
+        assert!(compensated, "{method}");
+    }
+
+    /// RE-313: an I4 texture drawn with the TLUT off packs the intensity ramp
+    /// even when a TLUT is loaded; drawn with it on, it packs the TLUT.
+    #[test]
+    fn intensity_textures_pack_the_tlut_only_when_it_is_enabled() {
+        use ssb_rom::texture::{BitSize, Format, TextureLut};
+        // Texels at 8, TLUT at 16.
+        let mut data = vec![0u8; 16 + 32];
+        data[8..16].fill(0x0F);
+        for i in 0..16u16 {
+            let at = 16 + i as usize * 2;
+            data[at..at + 2].copy_from_slice(&(0x0801 + i).to_be_bytes());
+        }
+        let off = synthetic_texture(Format::I, BitSize::Bits4, 4, 4, 8);
+        let (packed_off, _, _) = convert_recorded(1, data.clone(), &off);
+        assert_eq!(
+            packed_off.palette,
+            ssb_rom::psp_texture::intensity_palette(BitSize::Bits4)
+        );
+
+        let on = ssb_rom::mesh::TextureRef {
+            palette_offset: Some(16),
+            palette_entries: 16,
+            tlut: TextureLut::Rgba16,
+            ..off
+        };
+        let (packed_on, _, _) = convert_recorded(1, data, &on);
+        assert_eq!(
+            packed_on.palette[15],
+            ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(0x0801 + 15))
+        );
+    }
+
+    /// RE-313: an index past a short TLUT reads the TMEM slot's measured stale
+    /// value (`STALE_TLUT_ENTRIES`) in both the decoded reference and the
+    /// packed palette. The level-0 index field then matches the reference.
+    #[test]
+    fn short_tlut_indices_use_the_measured_stale_entry() {
+        use ssb_rom::texture::{BitSize, Format, TextureLut};
+        // File 120's Break the Targets arrow: 3 entries loaded from 0x598.
+        let mut data = vec![0u8; 0x5A8 + 8];
+        for (i, e) in [0x294Au16, 0xA50D, 0x0001, 0x7BC1].into_iter().enumerate() {
+            data[0x598 + i * 2..0x59A + i * 2].copy_from_slice(&e.to_be_bytes());
+        }
+        data[0x5A8..0x5A8 + 8].copy_from_slice(&[0x01, 0x23, 0x32, 0x10, 0x01, 0x23, 0x32, 0x10]);
+        let t = ssb_rom::mesh::TextureRef {
+            palette_offset: Some(0x598),
+            palette_entries: 3,
+            tlut: TextureLut::Rgba16,
+            ..synthetic_texture(Format::Ci, BitSize::Bits4, 4, 4, 0x5A8)
+        };
+        let (packed, _, _) = convert_recorded(120, data.clone(), &t);
+        assert_eq!(packed.palette.len(), 4);
+        assert_eq!(
+            packed.palette[3],
+            ssb_rom::psp_texture::pack_abgr(ssb_rom::texture::rgba5551(0x1091)),
+            "slot 3 is the measured stale TMEM entry, not the unloaded 0x7BC1"
+        );
+        // The same bytes under any other palette address have no measured
+        // value: the slot stays transparent black, matching the decoder.
+        let (unknown, _, _) = convert_recorded(7, data, &t);
+        assert_eq!(unknown.palette[3], 0);
+    }
+
+    /// Converting the same input twice packs identical bytes.
+    #[test]
+    fn texture_conversion_is_deterministic() {
+        use ssb_rom::texture::{BitSize, Format};
+        let data: Vec<u8> = ridge(8, 8)
+            .into_iter()
+            .map(|l| u16::from(l) << 11 | u16::from(l) << 6 | u16::from(l) << 1 | 1)
+            .flat_map(u16::to_be_bytes)
+            .collect();
+        let data = [vec![0; 8], data].concat();
+        let t = synthetic_texture(Format::Rgba, BitSize::Bits16, 8, 8, 8);
+        let (a, _, _) = convert_recorded(1, data.clone(), &t);
+        let (b, _, _) = convert_recorded(1, data, &t);
+        assert_eq!(a.data, b.data);
+        assert_eq!(a.palette, b.palette);
+        assert_eq!(a.format, b.format);
+    }
+
     #[test]
     fn padded_source_rows_do_not_apply_the_tile_origin_twice() {
         use ssb_rom::mesh::TextureRef;
@@ -11751,9 +12195,10 @@ mod tests {
             mask_t: 0,
             drawn_width: 2,
             drawn_height: 2,
+            tlut: ssb_rom::texture::TextureLut::None,
         };
 
-        let image = super::decode_texture(&source, &texture, None).expect("texture decodes");
+        let image = super::decode_texture(&source, &texture, &[]).expect("texture decodes");
         assert_eq!(
             image.pixels,
             vec![
