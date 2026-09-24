@@ -72,7 +72,7 @@ Shipped memory delta: +1,728 B level 0, +1,728 B pack.
   RE-314 resolved both: the magenta pillars are prim 7 (texture 797,
   576×64), whose 1024 stride overflowed `TSIZE` and sampled 799's bytes.
   The stage-35 pixels come from pack size changing the animation pose at
-  capture. Neither is caused by the candidates' binds.
+  capture (fixed by RE-315). Neither is caused by the candidates' binds.
 - **48 packed textures exceed the GE's 512-texel limit** after power-of-two
   padding, including `121:0x30`'s 576-texel variants (v902's texture is
   304×576). This predates RE-312. RE-314 caps their declared GE size at
