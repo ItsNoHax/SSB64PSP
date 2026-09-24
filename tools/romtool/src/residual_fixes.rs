@@ -31,6 +31,12 @@ pub(super) struct Case {
 
 /// The old pre-RE-313 list is deliberately absent. Each identity and phase
 /// below comes from the regenerated JSON's `manual-intervention` rows.
+///
+/// The report's three remaining dense rows (v6 `52:0x2EE8`, v109
+/// `71:0x4830`, v111 `71:0x6840`) were re-tested at their exact sites on
+/// 2026-09-24 and are deliberately absent: v6 has no solve, and v109/v111
+/// stay RGBA5551 through the promotion gate with only 5.7%/4.1% holdout
+/// gain against the shipped texels (bar: RGBA8888 and >= 25%).
 pub(super) const CASES: &[Case] = &[
     Case {
         variant: 64,
@@ -144,6 +150,38 @@ pub(super) const CASES: &[Case] = &[
     },
 ];
 
+/// Dense rows the report measures as deployable but the packer's own
+/// format/promotion/holdout gates reject at their exact sites (re-tested
+/// 2026-09-24). Keyed by source texture and report dimensions. The report
+/// keeps the measurement but no longer counts it as deployable.
+pub(super) const DENSE_GATE_REJECTED: &[(u32, u32, [u16; 2], &str)] = &[
+    (
+        52,
+        0x2EE8,
+        [32, 32],
+        "packer gates: no solve at the listed sites",
+    ),
+    (
+        71,
+        0x4830,
+        [64, 32],
+        "packer gates: stays RGBA5551 (no promotion), holdout -5.7% vs shipped",
+    ),
+    (
+        71,
+        0x6840,
+        [64, 32],
+        "packer gates: stays RGBA5551 (no promotion), holdout -4.1% vs shipped",
+    ),
+];
+
+pub(super) fn dense_gate_rejected(file: u32, offset: u32, dims: [u32; 2]) -> Option<&'static str> {
+    DENSE_GATE_REJECTED
+        .iter()
+        .find(|&&(f, o, d, _)| f == file && o == offset && [d[0] as u32, d[1] as u32] == dims)
+        .map(|&(_, _, _, why)| why)
+}
+
 pub(super) fn find(file: u32, dl: u32, prim: usize, tex: &TextureRef) -> Option<&'static Case> {
     let source = tex.data_file.map_or(file, u32::from);
     CASES.iter().find(|c| {
@@ -204,6 +242,19 @@ mod tests {
             .train
             .windows(2)
             .all(|w| (w[0][1], w[0][0]) < (w[1][1], w[1][0])));
+    }
+
+    #[test]
+    fn gate_rejected_dense_rows_are_not_deployed() {
+        for &(file, offset, dims, _) in DENSE_GATE_REJECTED {
+            assert!(!CASES
+                .iter()
+                .any(|c| c.source_file == file && c.source_offset == offset));
+            assert!(dense_gate_rejected(file, offset, [dims[0] as u32, dims[1] as u32]).is_some());
+            assert!(
+                dense_gate_rejected(file, offset, [dims[0] as u32 + 1, dims[1] as u32]).is_none()
+            );
+        }
     }
 
     #[test]

@@ -14,6 +14,7 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| RE-312 final census and manual-fix triage | 3 remaining dense rows fail packer gates (0 deployable left); out-of-sample cross-phase triage of 189 hand-edit candidates: 1 recommended, 12 visual review, 176 accept; pack unchanged | RE-312 |
 | RE-312 residual deployment | 7 per-primitive UV phases + 4 dense RGBA8888 variants; pack v31; 0 suspected bugs, 0 level-0 mismatches | RE-312 |
 | Texture-LUT semantics | Per-task-list RDP/RSP state, `G_MDSFT_TEXTLUT`, stale short TLUTs, every source format compensated | RE-313 |
 | Build-time 3-point filter compensation | Alpha-aware, palette-index, animated-CI, GE-exact refinement, critical-UV and texgen coverage | RE-305–311 |
