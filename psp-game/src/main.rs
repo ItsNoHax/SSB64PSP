@@ -23,6 +23,7 @@
 // The asset pack is loaded into a heap buffer; `psp` provides the allocator.
 extern crate alloc;
 
+mod capture;
 mod play;
 
 use ssb_engine::input::{newly_pressed, ControllerState, Input, N64Buttons, SSB64_GAME_MAPPING};
@@ -30,6 +31,8 @@ use ssb_engine::renderer::Color;
 use ssb_rom::pack::Pack;
 
 use ssb_psp_runtime::assets;
+
+use capture::GameScene;
 #[cfg(feature = "headless_capture")]
 use ssb_psp_runtime::gu::emit_headless_screenshot;
 use ssb_psp_runtime::gu::Gpu;
@@ -43,30 +46,29 @@ use ssb_psp_runtime::meshdraw;
 /// consulted by `deterministic_capture_frozen`/`scripted_buttons`; harmless
 /// to maintain unconditionally (`psp-asset-viewer/main.rs`'s own `sim_frame_index`
 /// comment).
-const DETERMINISTIC_CAPTURE_TICKS: u64 = if cfg!(feature = "regression_capture_shadows") {
-    // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this lands
-    // in the rising portion of Mario's real button jump while the dummy is
-    // still on Dream Land's main floor.
-    22
-} else if cfg!(feature = "regression_capture_fireball") {
-    167
-} else if cfg!(feature = "regression_capture_superjump") {
-    // B+up is pressed at tick 150; frame 2's strong opening hit has resolved
-    // by this point while the source TransN launch is still clearly visible.
-    156
-} else if cfg!(feature = "regression_capture_fox") {
-    46
-} else {
-    106
-};
+const fn capture_ticks(scene: GameScene) -> u64 {
+    match scene {
+        // Training starts at tick 8; C-Up at 13 enters jumpsquat, and this
+        // lands in the rising portion of Mario's real button jump while the
+        // dummy is still on Dream Land's main floor.
+        GameScene::Shadows => 22,
+        GameScene::Fireball => 167,
+        // B+up is pressed at tick 150; frame 2's strong opening hit has
+        // resolved by this point while the source TransN launch is still
+        // clearly visible.
+        GameScene::Superjump => 156,
+        GameScene::Fox => 46,
+        GameScene::Training => 106,
+    }
+}
 
 /// `true` once `regression_capture`'s scripted input has run past its fixed
 /// script and reached its capture tick; always `false` otherwise, so callers
 /// need one guard, not a cfg per call site (mirrors `psp-asset-viewer/main.rs`'s function
 /// of the same name).
 #[inline]
-fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
-    sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS && cfg!(feature = "regression_capture")
+fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) -> bool {
+    scene.is_some_and(|scene| sim_frame_index >= capture_ticks(scene))
 }
 
 /// A fixed, tick-indexed button script standing in for real `sceCtrl` input
@@ -115,14 +117,14 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
 /// frame-16 Fireball spawn is visible. `regression_capture_superjump` uses
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
-fn scripted_buttons(tick: u64) -> N64Buttons {
-    if cfg!(feature = "regression_capture_fox") && tick == 20 {
+fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    if scene == GameScene::Fox && tick == 20 {
         return N64Buttons(N64Buttons::B);
     }
-    if cfg!(feature = "regression_capture_fireball") && tick == 150 {
+    if scene == GameScene::Fireball && tick == 150 {
         return N64Buttons(N64Buttons::B);
     }
-    if cfg!(feature = "regression_capture_superjump") && tick == 150 {
+    if scene == GameScene::Superjump && tick == 150 {
         return N64Buttons(N64Buttons::B);
     }
 
@@ -152,8 +154,8 @@ fn scripted_stick_x(tick: u64) -> i8 {
 /// The Super Jump Punch input shares the source `check_special_hi` gate with
 /// live play: a B edge and an upward raw N64 stick value, not a capture-only
 /// shortcut. Every other regression scene remains neutral vertically.
-fn scripted_stick_y(tick: u64) -> i8 {
-    if cfg!(feature = "regression_capture_superjump") && tick == 150 {
+fn scripted_stick_y(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::Superjump && tick == 150 {
         80
     } else {
         0
@@ -180,6 +182,11 @@ fn menu_stick_down_pressed(previous: ControllerState, current: ControllerState) 
 fn menu_stick_up_pressed(previous: ControllerState, current: ControllerState) -> bool {
     previous.stick_y < MENU_STICK_NAV_MIN && current.stick_y >= MENU_STICK_NAV_MIN
 }
+
+/// Frames rendered after the screenshot request before a scene-file capture
+/// exits (`psp-asset-viewer/src/main.rs` has the same constant and reason).
+#[cfg(feature = "golden_capture")]
+const CAPTURE_EXIT_FRAMES: u32 = 2;
 
 psp::module!("ssb64_psp_game", 1, 0);
 
@@ -237,6 +244,9 @@ const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
 const TRAINING_STAGE_INDEX: u32 = 0;
 
 unsafe fn run() -> ! {
+    // The scripted scene this run captures; `None` reads the real pad.
+    let capture = capture::select();
+    let capture_scene = capture.map(|c| c.scene);
     let mut gpu = Gpu::init();
     // Select this application’s layout at the PSP backend boundary.  The
     // asset viewer keeps PspInput::init() and therefore its legacy controls.
@@ -290,22 +300,24 @@ unsafe fn run() -> ! {
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
+    #[cfg(feature = "golden_capture")]
+    let mut frames_after_capture = 0u32;
 
     loop {
         sim_frame_index = sim_frame_index.saturating_add(1);
         pad.poll();
-        let (previous_controller, controller) = if cfg!(feature = "regression_capture") {
+        let (previous_controller, controller) = if let Some(scene) = capture_scene {
             (
                 ControllerState {
-                    buttons: scripted_buttons(sim_frame_index.saturating_sub(1)),
+                    buttons: scripted_buttons(scene, sim_frame_index.saturating_sub(1)),
                     stick_x: scripted_stick_x(sim_frame_index.saturating_sub(1)),
-                    stick_y: scripted_stick_y(sim_frame_index.saturating_sub(1)),
+                    stick_y: scripted_stick_y(scene, sim_frame_index.saturating_sub(1)),
                     connected: true,
                 },
                 ControllerState {
-                    buttons: scripted_buttons(sim_frame_index),
+                    buttons: scripted_buttons(scene, sim_frame_index),
                     stick_x: scripted_stick_x(sim_frame_index),
-                    stick_y: scripted_stick_y(sim_frame_index),
+                    stick_y: scripted_stick_y(scene, sim_frame_index),
                     connected: true,
                 },
             )
@@ -314,7 +326,7 @@ unsafe fn run() -> ! {
         };
         let pressed = newly_pressed(previous_controller.buttons, controller.buttons);
 
-        if !deterministic_capture_frozen(sim_frame_index) {
+        if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
             match screen {
                 Screen::Intro => {
                     if pressed.contains(N64Buttons::A) || pressed.contains(N64Buttons::START) {
@@ -335,7 +347,7 @@ unsafe fn run() -> ! {
                                     play::FighterScene::at_spawn(
                                         p,
                                         &s,
-                                        if cfg!(feature = "regression_capture_fox") {
+                                        if capture_scene == Some(GameScene::Fox) {
                                             ssb_game::fighter::FighterKind::Fox
                                         } else {
                                             ssb_game::fighter::FighterKind::Mario
@@ -423,9 +435,16 @@ unsafe fn run() -> ! {
         gpu.end_frame();
 
         #[cfg(feature = "headless_capture")]
-        if !headless_capture_sent && deterministic_capture_frozen(sim_frame_index) {
+        if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
             headless_capture_sent = true;
+        }
+        #[cfg(feature = "golden_capture")]
+        if headless_capture_sent && capture.is_some_and(|c| c.from_file) {
+            frames_after_capture += 1;
+            if frames_after_capture > CAPTURE_EXIT_FRAMES {
+                psp::sys::sceKernelExitGame();
+            }
         }
     }
 }

@@ -16,8 +16,19 @@ ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 ssb-psp-runtime = { path = "../psp-runtime" }
+ssb-capture = { path = "../crates/ssb-capture" }
 
 [features]
+# One EBOOT for every scripted Training scene: the scene is read at startup
+# from `capture_scene.txt` beside the EBOOT (`src/capture.rs`), and the
+# program exits a few frames after its screenshot. The per-scene features
+# below still work; each now only names a default scene.
+golden_capture = ["capture_scene_file", "headless_capture"]
+# Reads `capture_scene.txt` like `golden_capture`, without the screenshot
+# request or the exit: the physical-PSP build of a golden scene
+# (`tools/stage-psp-regression.sh --golden NAME`).
+capture_scene_file = ["regression_capture"]
+
 # Replaces real `sceCtrl` input with a fixed, tick-indexed button script
 # (`scripted_buttons` in `main.rs`) so the Intro -> Menu -> Training state
 # machine can be driven deterministically under PPSSPPHeadless, with no real
