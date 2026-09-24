@@ -14,6 +14,7 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Known-failing goldens | All eight attributed commit by commit (RE-304–RE-310 sampling and compensation, pillarbox clear) and rebaselined; all 67 goldens pass | RE-317 |
 | Fast golden captures | One `golden_capture` build per crate; scene read from `capture_scene.txt`; exit after screenshot; parallel `tools/golden.sh verify` in 17 s vs 14 min 51 s. All 67 captures byte-identical to the old pipeline; manifest `tests/golden/scenes.tsv` | RE-316 |
 | Viewer animation per sim tick | `psp-asset-viewer` stage, material and effect-spawn animation now tick per 60 Hz simulation tick, not per render frame. Zero-padded packs no longer change any of the 67 golden captures; 27 animated goldens refreshed | RE-315 |
 | GE texture size cap | RE-312's "large RGBA8888 state leak" was no leak: 1024-padded textures overflowed rust-psp's `TSIZE` encoding and sampled neighbouring pack bytes. Declared size now capped at 512; 11 stage goldens refreshed. Stage-35 pixels traced to per-render-frame animation ticks (fixed in RE-315) | RE-314 |
@@ -33,10 +34,9 @@ Replacement snapshot, not a journal. History lives in git and
 - Residual report: 0 suspected bugs, 0 level-0 or padded-addressing
   mismatches, 0 unattempted formats; section 11: 0 recommended, 12 review,
   177 accept.
-- PPSSPPHeadless: `tools/golden.sh verify --twice` passes: 59 goldens match,
-  the eight `known-failing` rows of
-  [tests/golden/scenes.tsv](tests/golden/scenes.tsv) differ as before, and
-  every capture repeats exactly (RE-316).
+- PPSSPPHeadless: `tools/golden.sh verify --twice` passes: all 67 goldens
+  match and every capture repeats exactly; no `known-failing` rows
+  (RE-316, RE-317).
 - No physical-PSP capture of the current pack.
 
 ## Blockers

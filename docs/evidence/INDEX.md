@@ -326,3 +326,4 @@ editing a record.
 | RE-314 | Texture dimensions over 512 overflow the GE `TSIZE` encoding | COMPLETE (host test, PPSSPP software A/B captures, 11 stage goldens refreshed; physical PSP not captured) | texture, psp-ge, pack, visual-regression |  |
 | RE-315 | Viewer animators tick per simulation tick, not per render frame | COMPLETE (PPSSPP software captures of all 67 goldens with two padded packs, 27 goldens refreshed; physical PSP not captured) | animation, visual-regression |  |
 | RE-316 | One-build golden captures with exit-on-capture | COMPLETE (PPSSPP software: all 67 scenes byte-identical to the per-feature pipeline at -j 1 and -j 24; physical PSP not run) | visual-regression, tooling |  |
+| RE-317 | Attribution and rebaseline of the eight known-failing goldens | COMPLETE (PPSSPP software: commit-by-commit captures since a77e539; 8 goldens rebaselined, all 67 pass; physical PSP not captured) | visual-regression, texture |  |

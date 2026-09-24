@@ -10,23 +10,20 @@
 #               known-failing row starts matching; set it to pass then.
 #   evidence    RE records for the scene
 #
-# The eight known-failing rows already differed before RE-313 and are
-# identical between the RE-313 and prior packs.
-#
 # Stage-index rows map each SSB64_STAGE_INDEX value to the golden its capture
 # equals exactly (tools/golden-reference.sh, RE-316).
 golden	crate	scene_spec	status	evidence
 r0-dream-land-default	psp-asset-viewer	default	pass	RE-123 RE-125
-r1-mvopeningroom	psp-asset-viewer	scene2	known-failing	RE-198 RE-199
+r1-mvopeningroom	psp-asset-viewer	scene2	pass	RE-198 RE-199
 r1-stage-sector	psp-asset-viewer	scene3	pass	RE-200
 r1-catch-swirl-flat-color	psp-asset-viewer	scene4	pass	RE-200
 r2-saffron-city-gate	psp-asset-viewer	scene5	pass	RE-205
-r2-metal-texgen	psp-asset-viewer	scene6	known-failing	RE-214
-r2-metal-texgen-rotated	psp-asset-viewer	scene7	known-failing	RE-214
-r2-metal-texgen-linear	psp-asset-viewer	scene8	known-failing	RE-215 RE-259
-r2-metal-texgen-camera-rotated	psp-asset-viewer	scene9	known-failing	RE-237
+r2-metal-texgen	psp-asset-viewer	scene6	pass	RE-214
+r2-metal-texgen-rotated	psp-asset-viewer	scene7	pass	RE-214
+r2-metal-texgen-linear	psp-asset-viewer	scene8	pass	RE-215 RE-259
+r2-metal-texgen-camera-rotated	psp-asset-viewer	scene9	pass	RE-237
 r2-peach-castle	psp-asset-viewer	scene10	pass	RE-286
-r2-depth-mask-diagnostic	psp-asset-viewer	depth_mask	known-failing	RE-251
+r2-depth-mask-diagnostic	psp-asset-viewer	depth_mask	pass	RE-251
 r2-mario-fighter	psp-asset-viewer	fighter mario	pass	RE-265
 r2-fox-fighter	psp-asset-viewer	fighter fox	pass	RE-265
 r2-dk-fighter	psp-asset-viewer	fighter donkey_kong	pass	RE-265
@@ -43,8 +40,8 @@ r2-link-costume-1	psp-asset-viewer	link_costume_1	pass	RE-301
 r2-metal-mario-fighter	psp-asset-viewer	fighter metal_mario	pass	RE-311
 r2-mario-entry-pipe	psp-asset-viewer	mario_entry	pass	RE-312
 r2-bonus-platform-small	psp-asset-viewer	bonus_platform	pass	RE-312
-f1-training-fireball	psp-game	fireball	known-failing	RE-300
-f1-training-shadows	psp-game	shadows	known-failing	RE-302
+f1-training-fireball	psp-game	fireball	pass	RE-300
+f1-training-shadows	psp-game	shadows	pass	RE-302
 r2-stage-beta-dream-land	psp-asset-viewer	stage 1	pass	RE-286 RE-312
 r2-stage-zebes	psp-asset-viewer	stage 2	pass	RE-286 RE-312
 r2-stage-test-stage	psp-asset-viewer	stage 3	pass	RE-286 RE-312

@@ -144,10 +144,10 @@ Not covered by a golden: dynamic particles (device audits RE-180–189) and UI
 
 ### Known failing goldens
 
-The `known-failing` rows of
-[`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv) (eight). They
-already differed before RE-313, are identical between the RE-313 and prior
-packs, and have not been re-investigated or rebaselined.
+None. A golden that is known to differ from current output gets status
+`known-failing` in [`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv)
+until it is explained and rebaselined. The last eight were rebaselined in
+RE-317.
 
 The 2026-09-24 stage rebaseline (42 goldens) pinned content changes from
 RE-300 to RE-311 without bisecting them, for example Zebes' walls and Kongo
@@ -217,3 +217,14 @@ and `r2-peach-castle` (132 to 15,664 pixels at 2x). With the stage and
 material animator ticks disabled in both runtimes, old and new captures are
 byte-identical, so every change is animation timing. The six known-failing
 viewer goldens are identical between old and new code.
+
+## 2026-09-24 RE-317 known-failing rebaseline
+
+Runtime and pack unchanged. The eight goldens that had differed since before
+RE-313 were attributed commit by commit and rebaselined to current output:
+`r2-metal-texgen`, `-rotated`, `-linear`, `-camera-rotated`,
+`r2-depth-mask-diagnostic`, `r1-mvopeningroom`, `f1-training-fireball` and
+`f1-training-shadows` (1,000 to 393,384 pixels at 2x). Causes: RE-304
+sampling alignment, RE-305 to RE-310 compensation packs, and the
+pillarbox clear that RE-307's commit made cover both swap buffers. All 67
+goldens now pass.
