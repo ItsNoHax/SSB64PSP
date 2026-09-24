@@ -5,7 +5,25 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **real-normal texgen coverage for 3-point
+Current subsystem/batch: **final 3-point residual census (complete,
+RE-312, report only)**. `romtool residuals <rom>` rebuilds the pack with a
+report-only recorder, requires it to equal the shipped pack, and measures
+every mesh-texture variant on its independent holdout coverage against the
+exact 3-point reference and a fixed set of alternatives. It writes
+`docs/rendering/three-point-residuals.md`,
+`assets/generated/three-point-residuals.json` and diagnostics under
+`assets/generated/three-point-residuals/`. Two runs are byte-identical. US
+archive: 1,585 variants: 110 clean, 204 minor, 1,271 materially bad. Of the
+materially bad variants, 1,090 are proven `BILINEAR_SURFACE_LIMIT`, 12 have
+a deployable measured fix, 185 are hand-edit candidates and 1,062 are
+accepted. The 19 suspected bugs are: non-paletted and RE-283-bypass sources
+never enter the compensator (225 variants), and 9 variants pack texels that
+differ from the decoded N64 reference (I4/I8 drawn with a TLUT, and CI
+indices past a short TLUT). No fix is applied and the pack is unchanged. The
+next rendering step is to investigate those bugs from the decomp/ROM. The
+next gameplay batch remains Donkey Kong under `P2`.
+
+Previous rendering subsystem/batch: **real-normal texgen coverage for 3-point
 compensation (complete, RE-311)**. Texgen primitives no longer train on the
 whole tile. Their real `i8` normals go through 360 icosahedral-quadrature
 poses and the exact runtime generator (`regular_texgen_uv`/`linear_texgen_uv`,
