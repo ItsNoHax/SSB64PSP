@@ -3,7 +3,10 @@
 #
 #   tools/run-ppsspp-headless.sh [--no-build] [--crate psp-asset-viewer|psp-game]
 #                                [--feature FEATURE] [--backend software]
-#                                [--seconds N]
+#                                [--seconds N] [--pack PATH]
+#
+# --pack stages another pack instead of assets/generated/ssb64.pak (A/B
+# captures). The native 480x272 frame is also kept as screenshot-native.png.
 #
 # --crate selects which `cargo psp` crate to build and run; default
 # `psp-asset-viewer` (the debug/rendering-validation application's
@@ -31,6 +34,7 @@ while [ $# -gt 0 ]; do
     --feature) FEATURE="$2"; shift 2 ;;
     --backend) BACKEND="$2"; shift 2 ;;
     --seconds) SECONDS_TO_RUN="$2"; shift 2 ;;
+    --pack)    PACK_OVERRIDE="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -56,7 +60,7 @@ if [ "$BUILD" = 1 ]; then
 fi
 
 EBOOT="$REPO/$CRATE/target/mipsel-sony-psp/release/EBOOT.PBP"
-PACK="$REPO/assets/generated/ssb64.pak"
+PACK="${PACK_OVERRIDE:-$REPO/assets/generated/ssb64.pak}"
 [ -f "$EBOOT" ] || { echo "EBOOT not found: $EBOOT" >&2; exit 1; }
 
 # RE-255/RE-256: PPSSPPHeadless only reads PARAM.SFO's MEMSIZE key (needed
@@ -82,7 +86,7 @@ elif [ "$CRATE" != psp-game ]; then
   echo "asset pack not found: $PACK" >&2
   exit 1
 fi
-rm -f "$OUT/screenshot.bmp" "$OUT/screenshot.png" "$OUT/ppsspp-headless.log"
+rm -f "$OUT/screenshot.bmp" "$OUT/screenshot.png" "$OUT/screenshot-native.png" "$OUT/ppsspp-headless.log"
 
 # RE-256: booting an installed PSP_GAME directory (needed for MEMSIZE above)
 # also picks up PPSSPP's own "FPS: N.N" debug-stats overlay, which a loose
@@ -114,6 +118,8 @@ set -e
 ffmpeg -loglevel error -y -i "$OUT/screenshot.bmp" \
   -vf 'crop=480:272:0:0,scale=960:544:flags=neighbor' \
   "$OUT/screenshot.png"
+ffmpeg -loglevel error -y -i "$OUT/screenshot.bmp" -vf 'crop=480:272:0:0' \
+  "$OUT/screenshot-native.png"
 echo "==> screenshot: $OUT/screenshot.png"
 echo "==> log:        $OUT/ppsspp-headless.log"
 

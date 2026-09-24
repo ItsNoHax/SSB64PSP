@@ -287,6 +287,10 @@ regression_capture_mario_entry = ["effect_audit_capture"]
 # whose mesh includes the file-136 residual use site.
 regression_capture_bonus_platform = []
 
+# RE-312 visual review: one source graph chosen at build time by
+# SSB64_CAPTURE_OBJECT=<file>:<hex offset>, frozen like the other scenes.
+regression_capture_object = []
+
 # Captures frame 4 of each of the 35 manager effects with a source-declared
 # DObj AObjEvent32 transform animation (R1/RE-174).
 effect_animation_audit_capture = []

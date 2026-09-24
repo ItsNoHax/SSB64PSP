@@ -29,6 +29,10 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   960×544 PNG to `$PPSSPP_HEADLESS_TEST_DIR` (default `~/ppsspp-headless-test`).
 - Capture features freeze all simulation and animation at a fixed tick and
   hide the debug HUD, so the capture is independent of wall-clock timing.
+- `--pack PATH` stages another pack (A/B captures); the native 480×272 frame
+  is also written as `screenshot-native.png`. `tools/residual-ab-capture.sh`
+  uses both for the RE-312 visual review
+  ([three-point-visual-review.md](../rendering/three-point-visual-review.md)).
 - `compare-screenshot.sh` defaults to an exact match (0 differing pixels).
 - `tools/verify-fighter-goldens.sh` runs every fighter scene.
 - Capture features must not ship in interactive builds; rebuild without them
@@ -64,6 +68,7 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
 | `regression_capture_metal_mario` | `r2-metal-mario-fighter` | Texgen on a posed fighter; compensated body texture | RE-311 |
 | `regression_capture_mario_entry` | `r2-mario-entry-pipe` | File 356 graph `0x608`, dense compensation variant | RE-312 |
 | `regression_capture_bonus_platform` | `r2-bonus-platform-small` | File 136 graph `0x3DA8`, UV phase variant | RE-312 |
+| `regression_capture_object` | none (A/B only) | Any graph, chosen by `SSB64_CAPTURE_OBJECT=<file>:<hex graph>` | RE-312 |
 | `regression_capture_fireball` (`psp-game`) | `f1-training-fireball` | Translucent Fireball weapon in Training | RE-300 |
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
 
@@ -121,3 +126,8 @@ Slim, 6.61) predate pack v31 and several golden refreshes.
 RE-151 drives the original ROM through Mupen64Plus with frame-indexed inputs
 and compares camera state numerically from RDRAM. See the `n64-emulator`
 skill.
+
+## 2026-09-24 RE-312 v766 override
+
+Pack SHA-256 `de9f6c64679b7d42e7b9d35dace9115a13f1cd96c00923748b994e3f825acc08` differs from the previous pack only in texture 766 (Board the Platforms, Mario). Every stage, scene and fighter golden was recaptured: only `r2-stage-bonus2-mario` changed, by 308 pixels at 2x (77 native pixels, all inside the v766 site, maximum 5/255). It was refreshed; a repeat capture differs by 0 pixels. The 14 fighter goldens pass. The eight known-failing goldens bind no changed texture.
+

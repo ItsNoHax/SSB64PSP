@@ -1214,7 +1214,14 @@ fn pack_mesh(
                     animated,
                     alpha_policy,
                 );
-                if matches!(fix.map(|f| f.kind), Some(residual_fixes::Kind::Dense)) {
+                let direct_fit = match fix.map(|f| f.kind) {
+                    Some(residual_fixes::Kind::Direct(mode)) => Some(mode),
+                    _ => None,
+                };
+                if matches!(
+                    fix.map(|f| f.kind),
+                    Some(residual_fixes::Kind::Dense | residual_fixes::Kind::Direct(_))
+                ) {
                     key.residual_variant = fix.unwrap().variant;
                 }
                 let resolved = if let Some(&i) = tex_index.get(&key) {
@@ -1235,6 +1242,7 @@ fn pack_mesh(
                         animated_palettes.as_deref(),
                         alpha_policy,
                         Some(&mut compensated),
+                        direct_fit,
                     )
                     .map(|tex| {
                         let final_key = if compensated {
@@ -1501,6 +1509,7 @@ fn convert_mat_anim_sprite(
         swizzle,
         palettes,
         alpha_policy,
+        None,
         None,
     )
 }
@@ -2048,6 +2057,26 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
             // reordering, so if output changes with it off, the swizzler or the
             // GE's swizzle flag is at fault rather than the decode.
             "--no-swizzle" => swizzle = false,
+            // Report-only A/B packs: also apply the named section 11
+            // review-candidate overrides (`v397,v1004` or `all`). The
+            // shipped pack is built without this option.
+            "--residual-candidates" => {
+                let list = it.next().ok_or("--residual-candidates needs a list")?;
+                let variants: Vec<u16> = if *list == "all" {
+                    residual_fixes::REVIEW_CASES
+                        .iter()
+                        .map(|c| c.variant)
+                        .collect()
+                } else {
+                    list.split(',')
+                        .map(|v| v.trim_start_matches('v').parse::<u16>())
+                        .collect::<Result<_, _>>()?
+                };
+                residual_fixes::enable_candidates(variants)?;
+            }
+            // Report-only: zero the alpha of every packed direct override
+            // (cutout sites) to capture the frame without them.
+            "--residual-hide-probe" => residual_fixes::enable_hide_probe(),
             other => return Err(format!("unknown option {other}").into()),
         }
     }
@@ -3065,6 +3094,7 @@ fn palette_bank_offset(palette_offset: u32, palette_entries: u16, palette: u8) -
 /// The texels and the palette are looked up independently, because they need
 /// not be in the same file: a fighter's palette comes from its own file while
 /// a stage's texels come from a shared one.
+#[allow(clippy::too_many_arguments)]
 fn convert_texture(
     src: Texels<'_>,
     t: &ssb_rom::mesh::TextureRef,
@@ -3073,6 +3103,7 @@ fn convert_texture(
     animated_palettes: Option<&[Vec<u32>]>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
     mut compensated_out: Option<&mut bool>,
+    direct_fit: Option<residuals::CrossFit>,
 ) -> Option<ssb_rom::psp_texture::PspTexture> {
     use ssb_rom::psp_texture as psp;
     use ssb_rom::texture;
@@ -3394,6 +3425,49 @@ fn convert_texture(
                 });
             }
         };
+        // RE-312 exact-use-site override (`residual_fixes::Kind::Direct`):
+        // the section 11 cross-phase fit on this site's own phase-uniform
+        // set, shipped as an immutable RGBA8888 variant. Only listed
+        // authored-UV, single-palette sites reach here.
+        if let Some(mode) = direct_fit {
+            assert!(
+                animated_palettes.is_none() && coverage.texgen.is_none(),
+                "direct override needs a static authored-UV site"
+            );
+            assert!(
+                !coverage.validation.is_empty(),
+                "direct override needs a holdout"
+            );
+            let mut eval = coverage.validation.clone();
+            eval.sort_unstable_by_key(|p| (p[1], p[0]));
+            eval.dedup();
+            let u1 = residuals::phase_uniform_set(&eval);
+            let mut fitted =
+                residuals::cross_phase_fit(&img, [t.clamp_s, t.clamp_t], alpha_policy, &u1, mode);
+            if residual_fixes::hide_probe() {
+                assert!(matches!(
+                    alpha_policy,
+                    ssb_rom::filter_compensation::AlphaPolicy::Cutout { .. }
+                ));
+                fitted
+                    .pixels
+                    .as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .for_each(|p| p[3] = 0);
+            }
+            record(
+                &fitted,
+                psp::Psm::Psm8888,
+                "re312-direct-override",
+                true,
+                None,
+            );
+            if let Some(out) = compensated_out.as_deref_mut() {
+                *out = true;
+            }
+            return Some(psp::pack_mipped(&fitted, psp::Psm::Psm8888, &[], swizzle));
+        }
         if psm.is_paletted() && t.format == texture::Format::Ci {
             if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
                 let source = decode_index_field(file, t)?;
@@ -7742,6 +7816,7 @@ fn textures(path: &Path, opts: &[&str]) -> Res {
                     None,
                     alpha_policy,
                     None,
+                    None,
                 );
                 if tex.is_none() {
                     let reason = match texture::decode(
@@ -11851,6 +11926,7 @@ mod tests {
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
             None,
+            None,
         )
         .expect("CI4 texture converts");
         assert_eq!(
@@ -11867,6 +11943,7 @@ mod tests {
             false,
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            None,
             None,
         )
         .expect("CI4 texture converts");
@@ -11888,6 +11965,7 @@ mod tests {
             false,
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+            None,
             None,
         )
         .expect("an out-of-range bank must not panic");
@@ -11931,6 +12009,7 @@ mod tests {
             None,
             ssb_rom::filter_compensation::AlphaPolicy::Opaque,
             Some(&mut compensated),
+            None,
         )
         .expect("texture converts");
         let recorded = super::residuals::take_pending().expect("conversion recorded");
