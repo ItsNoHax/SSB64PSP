@@ -172,6 +172,7 @@ pub fn indices_to_rgba(width: u32, height: u32, index: &[u8], palette: &[u32]) -
 /// animation can bind to this texture. The caller supplies the source index
 /// field, preserving identity even where two entries have identical RGB in
 /// the initial palette. Each state has equal weight.
+#[allow(clippy::too_many_arguments)]
 pub fn optimize_animated_indices(
     source: &[u8],
     width: u32,
@@ -746,9 +747,8 @@ pub fn refine_integer(
             (16 - taps.sf) * taps.tf,
             taps.sf * taps.tf,
         ];
-        for k in 0..4 {
-            let texel = taps.texel[k];
-            if weights[k] != 0 && influence[texel].last() != Some(&si) {
+        for (&texel, &weight) in taps.texel.iter().zip(&weights) {
+            if weight != 0 && influence[texel].last() != Some(&si) {
                 influence[texel].push(si);
             }
         }
@@ -812,8 +812,7 @@ pub fn refine_integer(
     let visible_limit = totals.visible_sse;
     for _ in 0..INTEGER_OPTIMIZE_MAX_SWEEPS {
         let mut changed = false;
-        for texel in 0..influence.len() {
-            let affected = &influence[texel];
+        for (texel, affected) in influence.iter().enumerate() {
             if affected.is_empty() {
                 continue;
             }

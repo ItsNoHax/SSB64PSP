@@ -403,7 +403,7 @@ fn lut_index(data: &[u8], i: usize, size: BitSize, palette: u8) -> usize {
     match size {
         BitSize::Bits4 => {
             let b = data[i / 2];
-            let n = if i % 2 == 0 { b >> 4 } else { b & 0xF };
+            let n = if i.is_multiple_of(2) { b >> 4 } else { b & 0xF };
             ((palette as usize & 0xF) << 4) | n as usize
         }
         BitSize::Bits8 => data[i] as usize,
