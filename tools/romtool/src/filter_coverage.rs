@@ -1,7 +1,7 @@
 //! Authored-UV coverage for the build-time filter optimizer. All coordinates
 //! remain in the vertex stream's integer S10.5 domain.
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub(super) struct Coverage {
     pub train: Vec<[i32; 2]>,
     pub validation: Vec<[i32; 2]>,

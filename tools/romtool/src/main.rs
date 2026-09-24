@@ -34,6 +34,7 @@ use ssb_rom::archive::Archive;
 use ssb_rom::rom;
 
 mod filter_coverage;
+mod residuals;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -50,6 +51,7 @@ fn main() -> ExitCode {
         ["texgen", rom_path, rest @ ..] => texgen(rom_path.as_ref(), rest),
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
+        ["residuals", rom_path, rest @ ..] => residuals_cmd(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
         ["jumptest", pack_path, rest @ ..] => jumptest(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
@@ -1118,7 +1120,11 @@ fn pack_mesh(
 ) -> u32 {
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
-    for prim in &m.primitives {
+    for (prim_index, prim) in m.primitives.iter().enumerate() {
+        let texgen_site = prim
+            .material
+            .texgen_scale
+            .map(|_| prim.material.texture_gen == ssb_rom::mesh::TextureGen::Linear);
         let texture_index = match prim.material.texture {
             None => None,
             // RE-099/RE-100: no ROM bytes to convert -- the device fills
@@ -1182,9 +1188,10 @@ fn pack_mesh(
                     animated,
                     alpha_policy,
                 );
-                if let Some(&i) = tex_index.get(&key) {
+                let resolved = if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
+                    residuals::discard_conversion();
                     let mut compensated = false;
                     let animated_palettes = animated.and_then(|key| {
                         mat_anim_data
@@ -1215,13 +1222,32 @@ fn pack_mesh(
                             key
                         };
                         if let Some(&i) = tex_index.get(&final_key) {
+                            residuals::discard_conversion();
                             return i;
                         }
                         let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
+                        residuals::record_variant(i, &tex, t.clamp_s, t.clamp_t);
                         tex_index.insert(final_key, i);
                         i
                     })
+                };
+                // Report-only (`romtool residuals`): every primitive that
+                // binds a variant, with its real filter coverage.
+                if let (Some(i), true) = (resolved, residuals::enabled()) {
+                    residuals::record_site(residuals::UseSite {
+                        variant: i,
+                        file: id,
+                        dl: offset,
+                        prim: prim_index,
+                        sprite_slot: None,
+                        policy: alpha_policy,
+                        texgen: texgen_site,
+                        mat_anim: animated.is_some(),
+                        triangles: prim.triangle_count(),
+                        coverage,
+                    });
                 }
+                resolved
             }
         };
         // Unlike `texture_index`, not gated on the primitive having a bound
@@ -1282,6 +1308,7 @@ fn pack_mesh(
                             .enumerate()
                             .filter_map(|(slot, p)| {
                                 let states = reachable_palettes(src, anim, anim_data, Some(slot));
+                                residuals::discard_conversion();
                                 convert_mat_anim_sprite(
                                     src,
                                     *p,
@@ -1291,7 +1318,25 @@ fn pack_mesh(
                                     swizzle,
                                     alpha_policy,
                                 )
-                                .map(|tex| writer.add_texture(&tex, base.clamp_s, base.clamp_t))
+                                .map(|tex| {
+                                    let i = writer.add_texture(&tex, base.clamp_s, base.clamp_t);
+                                    residuals::record_variant(i, &tex, base.clamp_s, base.clamp_t);
+                                    if residuals::enabled() {
+                                        residuals::record_site(residuals::UseSite {
+                                            variant: i,
+                                            file: id,
+                                            dl: offset,
+                                            prim: prim_index,
+                                            sprite_slot: Some(slot),
+                                            policy: alpha_policy,
+                                            texgen: texgen_site,
+                                            mat_anim: true,
+                                            triangles: prim.triangle_count(),
+                                            coverage: coverage.clone(),
+                                        });
+                                    }
+                                    i
+                                })
                             })
                             .collect();
                         if converted.len() != anim_data.sprites.len() {
@@ -1877,6 +1922,77 @@ fn resolve_layer_mat_anims(
 
 /// Builds the runtime asset pack: converted geometry and textures in the
 /// layout the PSP consumes directly.
+/// Report-only residual census (`docs/rendering/three-point-residuals.md`).
+///
+/// Rebuilds the pack with the residual recorder enabled, requires it to be
+/// byte-identical to the reference pack, then measures every mesh texture
+/// variant against the exact N64 3-point reference. Nothing is fixed.
+fn residuals_cmd(path: &Path, opts: &[&str]) -> Res {
+    let mut o = residuals::Options {
+        json: "assets/generated/three-point-residuals.json".into(),
+        markdown: "docs/rendering/three-point-residuals.md".into(),
+        images: "assets/generated/three-point-residuals".into(),
+        top_images: 20,
+        refine: true,
+        threads: std::thread::available_parallelism().map_or(1, |n| n.get()),
+        pack_path: "assets/generated/three-point-residuals.pak".into(),
+        pack_sha256: String::new(),
+        rom_path: path.display().to_string(),
+    };
+    let mut reference = Some(PathBuf::from("assets/generated/ssb64.pak"));
+    let mut only_file: Option<String> = None;
+    let mut it = opts.iter();
+    while let Some(opt) = it.next() {
+        let mut value = || it.next().copied().ok_or(format!("{opt} needs a value"));
+        match *opt {
+            "--json" => o.json = value()?.into(),
+            "--markdown" => o.markdown = value()?.into(),
+            "--images" => o.images = value()?.into(),
+            "--pack-out" => o.pack_path = value()?.into(),
+            "--top-images" => o.top_images = value()?.parse()?,
+            "--threads" => o.threads = value()?.parse()?,
+            "--reference-pack" => {
+                let v = value()?;
+                reference = (v != "none").then(|| v.into());
+            }
+            "--no-refine" => o.refine = false,
+            // Development only: one file, no reference-pack check.
+            "--file" => {
+                only_file = Some(value()?.to_string());
+                reference = None;
+            }
+            other => return Err(format!("unknown option {other}").into()),
+        }
+    }
+    residuals::enable();
+    let pack_out = o.pack_path.display().to_string();
+    let mut pack_opts = vec!["--out", pack_out.as_str()];
+    if let Some(f) = only_file.as_deref() {
+        pack_opts.extend(["--file", f]);
+    }
+    if let Err(e) = pack(path, &pack_opts) {
+        // A single-file pack cannot resolve cross-file objects; its mesh
+        // textures are already recorded by then.
+        if only_file.is_none() {
+            return Err(e);
+        }
+        eprintln!("residuals: single-file pack stopped early: {e}");
+    }
+    let built = fs::read(&o.pack_path).unwrap_or_default();
+    if let Some(reference) = reference {
+        let expected = fs::read(&reference).map_err(|e| format!("{}: {e}", reference.display()))?;
+        if expected != built {
+            return Err(format!(
+                "recorded pack differs from {}: the report would not describe the shipped pack",
+                reference.display()
+            )
+            .into());
+        }
+    }
+    o.pack_sha256 = residuals::sha256_hex(&built);
+    residuals::run(&o)
+}
+
 fn pack(path: &Path, opts: &[&str]) -> Res {
     use ssb_rom::{mesh, pack as fmt};
 
@@ -3154,6 +3270,29 @@ fn convert_texture(
         } else {
             &[]
         };
+        // Report-only (`romtool residuals`): clones what this conversion
+        // packs; it never changes the result.
+        let record = |final_img: &ssb_rom::texture::Rgba8,
+                      final_psm: psp::Psm,
+                      method: &'static str,
+                      attempted: bool,
+                      animated: Option<residuals::Animated>| {
+            if residuals::enabled() {
+                residuals::record_conversion(residuals::Conversion {
+                    texture: *t,
+                    home: src.home.id,
+                    source: img.clone(),
+                    final_level0: final_img.clone(),
+                    source_psm: psm,
+                    final_psm,
+                    palette: palette.clone(),
+                    animated,
+                    method,
+                    attempted,
+                    policy: alpha_policy,
+                });
+            }
+        };
         if psm.is_paletted() && t.format == texture::Format::Ci {
             if let Some(states) = animated_palettes.filter(|states| !states.is_empty()) {
                 let source = decode_index_field(file, t)?;
@@ -3275,6 +3414,21 @@ fn convert_texture(
                         - (pixels * psm.bits() as i64).div_euclid(8);
                     eprintln!("animated-filter-comp file={} offset={:#X} palettes={} baseline_sse={} indexed_sse={} accepted={} high_error={} direct_sse={:?} direct_extra_level0={} format={:?} memory_delta=0 train_samples={} validation_samples={} validation_baseline_sse={} validation_candidate_sse={} validation_baseline_above32={} validation_candidate_above32={} validation_baseline_max={} validation_candidate_max={}", t.data_file.map_or(src.home.id,u32::from), t.data_offset, states.len(), before, after, accepted, high_error, direct_sse, direct_extra_level0, psm, samples.len(), validation_samples.len(), validation_before, validation_after, validation_before_32, validation_after_32, validation_before_max, validation_after_max);
                     let indices = if accepted { &optimized } else { &source };
+                    if residuals::enabled() {
+                        record(
+                            &ssb_rom::filter_compensation::indices_to_rgba(
+                                img.width, img.height, indices, &palette,
+                            ),
+                            psm,
+                            if accepted { "animated-joint-index" } else { "animated-rejected" },
+                            true,
+                            Some(residuals::Animated {
+                                source_indices: source.clone(),
+                                final_indices: indices.clone(),
+                                states: states.to_vec(),
+                            }),
+                        );
+                    }
                     if accepted {
                         if let Some(out) = compensated_out.as_deref_mut() {
                             *out = true;
@@ -3287,6 +3441,17 @@ fn convert_texture(
                     // An incomplete table cannot define a safe joint legal
                     // index set. Retain the source indices exactly instead
                     // of falling through to frame-zero RGB quantization.
+                    record(
+                        &img,
+                        psm,
+                        "animated-incomplete-table",
+                        false,
+                        Some(residuals::Animated {
+                            source_indices: source.clone(),
+                            final_indices: source.clone(),
+                            states: vec![palette.clone()],
+                        }),
+                    );
                     return Some(psp::pack_mipped_indices(
                         &img,
                         psm,
@@ -3311,6 +3476,7 @@ fn convert_texture(
         };
         let Some(solved) = solved else {
             texgen_report(&img, false, "no-solve", None);
+            record(&img, psm, "no-solve", true, None);
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
         };
         // Requirement 4: quantizing to the nearest existing palette/5551
@@ -3496,6 +3662,7 @@ fn convert_texture(
                             solved.compensated.squared_error,
                         )),
                     );
+                    record(&img, psm, "no-promotion", true, None);
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
@@ -3560,6 +3727,7 @@ fn convert_texture(
                             solved.compensated.squared_error,
                         )),
                     );
+                    record(&img, psm, "no-promotion", true, None);
                     return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
                 }
                 format = psp::Psm::Psm8888;
@@ -3670,8 +3838,26 @@ fn convert_texture(
             validation_before.above_32, validation_after.above_32, validation_before.max,
             validation_after.max, validation_accepted);
         if !validation_accepted {
+            record(&img, psm, "holdout-rejected", true, None);
             return Some(psp::pack_mipped(&img, psm, &palette, swizzle));
         }
+        record(
+            chosen,
+            format,
+            if format != psm {
+                "promoted-rgba8888"
+            } else if psm.is_paletted() && used_index_optimization {
+                "indexed-optimized"
+            } else if psm.is_paletted() {
+                "indexed-nearest"
+            } else if psm == psp::Psm::Psm5551 {
+                "direct-rgba5551"
+            } else {
+                "direct-rgba8888"
+            },
+            true,
+            None,
+        );
         if let Some(out) = compensated_out.as_deref_mut() {
             *out = true;
         }
@@ -3696,8 +3882,29 @@ fn convert_texture(
         // avoid (RE-047).
         mipped(psp::intensity_palette(t.size))
     } else {
-        decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice()))
-            .map(|img| psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle))
+        decode_mirrored((!tlut.is_empty()).then_some(tlut.as_slice())).map(|img| {
+            // Report-only: this branch packs direct colour without running
+            // the compensator (non-paletted sources and the RE-283 bypass).
+            if residuals::enabled() {
+                residuals::record_conversion(residuals::Conversion {
+                    texture: *t,
+                    home: src.home.id,
+                    source: img.clone(),
+                    final_level0: img.clone(),
+                    source_psm: psp::choose_psm(t.format, t.size),
+                    final_psm: psp::Psm::Psm8888,
+                    palette: tlut
+                        .iter()
+                        .map(|&e| psp::pack_abgr(texture::rgba5551(e)))
+                        .collect(),
+                    animated: None,
+                    method: "not-attempted:direct-format",
+                    attempted: false,
+                    policy: alpha_policy,
+                });
+            }
+            psp::pack_mipped(&img, psp::Psm::Psm8888, &[], swizzle)
+        })
     }
 }
 

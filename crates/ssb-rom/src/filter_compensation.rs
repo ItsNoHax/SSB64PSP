@@ -984,6 +984,51 @@ pub fn solve_samples(
     if gate_baseline.percent_above_8() < 1.0 || gate_baseline.max < 16 {
         return None;
     }
+    let rgba = solve_samples_ungated(original, clamp_s, clamp_t, coverage, policy);
+    let compensated = measure_samples(original, &rgba, clamp_s, clamp_t, coverage);
+    let gate_compensated = if alpha_matters {
+        compensated
+    } else {
+        measure_samples_impl(original, &rgba, clamp_s, clamp_t, coverage, false)
+    };
+    // Requirement 5: a translucent candidate must not trade a raw-RGBA win
+    // for a worse visible (alpha-weighted) result -- transparent RGB
+    // garbage must not be free to move at the expense of what is actually
+    // seen.
+    let visible_ok = match policy {
+        AlphaPolicy::Translucent => {
+            compensated.visible_squared_error <= baseline.visible_squared_error
+        }
+        _ => true,
+    };
+    // Material means at least 5% SSE reduction, fewer >=8 errors, and no
+    // meaningful max-error regression (8/255 is the evidence threshold).
+    // Opaque textures are gated on RGB alone (`gate_baseline`/
+    // `gate_compensated`) -- alpha noise nothing reads cannot veto or count
+    // toward a real RGB improvement.
+    (gate_compensated.squared_error * 100 <= gate_baseline.squared_error * 95
+        && gate_compensated.above_8 < gate_baseline.above_8
+        && gate_compensated.max <= gate_baseline.max.saturating_add(ERROR_THRESHOLD)
+        && visible_ok)
+        .then_some(Candidate {
+            rgba,
+            baseline,
+            compensated,
+        })
+}
+
+/// The continuous solve behind [`solve_samples`] without its admission and
+/// acceptance gates: 48 projected iterations, rounding, and the cutout
+/// silhouette revert. `romtool residuals` measures this candidate for every
+/// variant, including those the gates reject; the packer only ever reaches
+/// it through [`solve_samples`].
+pub fn solve_samples_ungated(
+    original: &Rgba8,
+    clamp_s: bool,
+    clamp_t: bool,
+    coverage: &[[i32; 2]],
+    policy: AlphaPolicy,
+) -> Rgba8 {
     let (ms, mt) = modes(clamp_s, clamp_t);
     let n = (original.width * original.height) as usize;
     let mut values: Vec<f64> = original.pixels.iter().map(|&v| v as f64).collect();
@@ -1085,36 +1130,7 @@ pub fn solve_samples(
             }
         }
     }
-    let compensated = measure_samples(original, &rgba, clamp_s, clamp_t, coverage);
-    let gate_compensated = if alpha_matters {
-        compensated
-    } else {
-        measure_samples_impl(original, &rgba, clamp_s, clamp_t, coverage, false)
-    };
-    // Requirement 5: a translucent candidate must not trade a raw-RGBA win
-    // for a worse visible (alpha-weighted) result -- transparent RGB
-    // garbage must not be free to move at the expense of what is actually
-    // seen.
-    let visible_ok = match policy {
-        AlphaPolicy::Translucent => {
-            compensated.visible_squared_error <= baseline.visible_squared_error
-        }
-        _ => true,
-    };
-    // Material means at least 5% SSE reduction, fewer >=8 errors, and no
-    // meaningful max-error regression (8/255 is the evidence threshold).
-    // Opaque textures are gated on RGB alone (`gate_baseline`/
-    // `gate_compensated`) -- alpha noise nothing reads cannot veto or count
-    // toward a real RGB improvement.
-    (gate_compensated.squared_error * 100 <= gate_baseline.squared_error * 95
-        && gate_compensated.above_8 < gate_baseline.above_8
-        && gate_compensated.max <= gate_baseline.max.saturating_add(ERROR_THRESHOLD)
-        && visible_ok)
-        .then_some(Candidate {
-            rgba,
-            baseline,
-            compensated,
-        })
+    rgba
 }
 
 #[cfg(test)]
