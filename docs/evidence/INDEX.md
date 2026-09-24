@@ -324,3 +324,4 @@ editing a record.
 | RE-312 | Final 3-point residual census | COMPLETE (census plus post-RE-313 deployment; host and PPSSPP verified, no physical PSP capture) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-313 | Texture-LUT semantics, short TLUTs and format-agnostic 3-point compensation | COMPLETE (host measurement, original-game frame capture replayed through `angrylion-rdp-plus`, PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge, rdp |  |
 | RE-314 | Texture dimensions over 512 overflow the GE `TSIZE` encoding | COMPLETE (host test, PPSSPP software A/B captures, 11 stage goldens refreshed; physical PSP not captured) | texture, psp-ge, pack, visual-regression |  |
+| RE-315 | Viewer animators tick per simulation tick, not per render frame | COMPLETE (PPSSPP software captures of all 67 goldens with two padded packs, 27 goldens refreshed; physical PSP not captured) | animation, visual-regression |  |

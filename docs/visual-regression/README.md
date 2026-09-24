@@ -28,10 +28,8 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   and the pack under PPSSPP's memstick (required for `MEMSIZE`), and writes a
   960×544 PNG to `$PPSSPP_HEADLESS_TEST_DIR` (default `~/ppsspp-headless-test`).
 - Capture features freeze all simulation and animation at a fixed tick and
-  hide the debug HUD. Exception: `psp-asset-viewer` ticks stage and material
-  animation once per render frame, so a pack whose size changes load timing
-  can move an animated pose by one tick (RE-314, `TODO.md`). Repeat captures
-  of one pack are byte-identical.
+  hide the debug HUD. Every animator advances per simulation tick, so a
+  capture does not depend on load timing or pack size (RE-315).
 - `--pack PATH` stages another pack (A/B captures); the native 480×272 frame
   is also written as `screenshot-native.png`. `tools/residual-ab-capture.sh`
   uses both for the RE-312 visual review
@@ -146,3 +144,16 @@ exceeds 512 are now declared to the GE as 512 instead of overflowing
 hidden, old and new captures of all eleven are byte-identical, so every
 change is inside those primitives. Each refreshed golden matched a repeat
 capture. Stage 1 (control) is unchanged.
+
+## 2026-09-24 RE-315 animation ticks per simulation tick
+
+Runtime only; the pack is unchanged. `psp-asset-viewer` now ticks stage,
+material and effect-spawn animation once per simulation tick instead of once
+per render frame. All 67 goldens were recaptured with the shipped pack, a
+repeat capture, and two zero-padded packs (+0x4A940 and +1,223,104 bytes):
+every repeat and padded capture matches its shipped capture. 27 goldens
+changed and were refreshed: 25 stage-index goldens, `r2-saffron-city-gate`
+and `r2-peach-castle` (132 to 15,664 pixels at 2x). With the stage and
+material animator ticks disabled in both runtimes, old and new captures are
+byte-identical, so every change is animation timing. The six known-failing
+viewer goldens are identical between old and new code.

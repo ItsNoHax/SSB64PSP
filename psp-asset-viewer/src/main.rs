@@ -747,9 +747,12 @@ unsafe fn run() -> ! {
             .unwrap_or(0);
     }
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
-    // and ticked once per frame beside the fighter's own skeleton.
+    // and ticked once per simulation tick beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut stage_anim_loaded: Option<u32> = None;
+    // Whether the last stage tick succeeded; a desynchronised script draws
+    // the scenery unanimated.
+    let mut stage_anim_ok = false;
     let mut effect_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut effect_anim_loaded: Option<u32> = None;
     let mut effect_anim_ticks = 0u32;
@@ -765,8 +768,9 @@ unsafe fn run() -> ! {
     // Material animation (RE-089-095): a `MatAnimDesc` entry is a property of
     // a *texture*, not a stage layer or a fighter, so unlike `stage_anim`
     // above there is no per-object "start" boundary to restart on -- it loads
-    // once here, when the pack loads, and ticks every frame for as long as
-    // the pack is loaded, independent of which stage or fighter is shown.
+    // once here, when the pack loads, and ticks every simulation tick for as
+    // long as the pack is loaded, independent of which stage or fighter is
+    // shown.
     let mut material_anim = ssb_rom::skeleton::MaterialAnimator::new();
     if let Some(p) = &pack {
         material_anim.start(p);
@@ -1313,6 +1317,93 @@ unsafe fn run() -> ! {
             if spin > 2.0 * PI {
                 spin -= 2.0 * PI;
             }
+
+            // Scenery, material and spawned-effect clocks advance once per
+            // simulation tick, after this tick's input, like the fighter.
+            // Ticking them per render frame made a capture's pose depend on
+            // how many frames ran before the freeze, which load timing (and
+            // so the pack's size) changes (RE-314, RE-315). Render only reads
+            // the resulting state.
+            if let Some(p) = &pack {
+                if !deterministic_capture_frozen(sim_frame_index) {
+                    material_anim.tick(p);
+                }
+                // The stage animator runs only while the stage view is what
+                // gets drawn; the arms ahead of it in the render match win.
+                let stage_drawn = stage_view
+                    && !effect_spawn_view
+                    && !particle_view
+                    && !billboard_view
+                    && !tex_view
+                    && p.stage(stage_index).is_some();
+                if stage_drawn {
+                    // (Re)load when the stage changes.
+                    if stage_anim_loaded != Some(stage_index) {
+                        stage_anim_loaded = Some(stage_index);
+                        match p.stage_anim(stage_index) {
+                            Some(a) => stage_anim.start(p, &a),
+                            None => stage_anim = ssb_rom::skeleton::StageAnimator::new(),
+                        }
+                        stage_anim_ok = true;
+                    }
+                    if !deterministic_capture_frozen(sim_frame_index) {
+                        // A script that desynchronises stops the scenery
+                        // rather than posing it from a garbage stream.
+                        stage_anim_ok = p
+                            .stage_anim(stage_index)
+                            .and_then(|a| p.anim_script(&a))
+                            .is_some_and(|script| stage_anim.tick(script).is_ok());
+                    }
+                }
+            }
+            // RE-189: one real simulation tick of the manager-effect
+            // spawn-event proof-of-concept. `generator_lifetime` is `1` and
+            // `update_rate` is deterministic (host regression pins this), so
+            // the generator spawns its one real particle on the very first
+            // tick after it is created, then immediately ejects; every
+            // following tick only advances that already-spawned particle.
+            // `freshly_spawned` exists so that particle is never ticked twice
+            // on its own spawn frame -- `Generator::tick`'s own
+            // `make_particle` already creation-ticks it once, the same "child
+            // ticks once this frame" shape RE-187/188 already established for
+            // `ParticleTree`/`Generator` -- an extra tick here would
+            // double-advance it.
+            if effect_spawn_view && !deterministic_capture_frozen(sim_frame_index) {
+                let gen_dead = effect_spawn_gen.as_ref().is_none_or(|g| !g.alive);
+                let particle_dead = effect_spawn_particle
+                    .as_ref()
+                    .is_none_or(|p| !p.state.alive);
+                if gen_dead && particle_dead {
+                    // The real ROM retriggers `efManagerRippleMakeEffect`
+                    // from a live gameplay event; this viewer has no such
+                    // event yet, so it retriggers itself once both the
+                    // generator and its one spawned particle have fully
+                    // finished, purely so this mode is never caught with
+                    // nothing live on screen no matter when a screenshot
+                    // happens to land (`tools/run-ppsspp.sh` has no way to
+                    // time one to a specific simulation tick).
+                    effect_spawn_gen = spawn_ripple(pack, effect_spawn_pos);
+                    effect_spawn_particle = None;
+                }
+                let mut freshly_spawned = false;
+                if let Some(gen) = &mut effect_spawn_gen {
+                    if gen.alive {
+                        if let Ok(spawned) = gen.tick(&mut effect_spawn_rng) {
+                            if let Some(first) = spawned.into_iter().next() {
+                                effect_spawn_particle = Some(first);
+                                freshly_spawned = true;
+                            }
+                        }
+                    }
+                }
+                if !freshly_spawned {
+                    if let Some(particle) = &mut effect_spawn_particle {
+                        if particle.state.alive {
+                            let _ = particle.tick(&mut effect_spawn_rng);
+                        }
+                    }
+                }
+            }
         }
 
         let cpu = Stopwatch::start();
@@ -1361,57 +1452,6 @@ unsafe fn run() -> ! {
         // `sceGumLoadIdentity` set) is correct for them, matching this
         // code's own behaviour before the real camera existed.
         draw_state.billboard_camera = None;
-        if let Some(p) = &pack {
-            if !deterministic_capture_frozen(sim_frame_index) {
-                material_anim.tick(p);
-            }
-        }
-        // RE-189: one real simulation tick of the manager-effect spawn-event
-        // proof-of-concept. `generator_lifetime` is `1` and `update_rate` is
-        // deterministic (host regression pins this), so the generator
-        // spawns its one real particle on the very first tick after it is
-        // created, then immediately ejects; every following tick only
-        // advances that already-spawned particle. `freshly_spawned` exists
-        // so that particle is never ticked twice on its own spawn frame --
-        // `Generator::tick`'s own `make_particle` already creation-ticks it
-        // once, the same "child ticks once this frame" shape RE-187/188
-        // already established for `ParticleTree`/`Generator` -- an extra
-        // tick here would double-advance it.
-        if effect_spawn_view && !deterministic_capture_frozen(sim_frame_index) {
-            let gen_dead = effect_spawn_gen.as_ref().is_none_or(|g| !g.alive);
-            let particle_dead = effect_spawn_particle
-                .as_ref()
-                .is_none_or(|p| !p.state.alive);
-            if gen_dead && particle_dead {
-                // The real ROM retriggers `efManagerRippleMakeEffect` from a
-                // live gameplay event; this viewer has no such event yet, so
-                // it retriggers itself once both the generator and its one
-                // spawned particle have fully finished, purely so this mode
-                // is never caught with nothing live on screen no matter when
-                // a screenshot happens to land (`tools/run-ppsspp.sh` has no
-                // way to time one to a specific simulation tick).
-                effect_spawn_gen = spawn_ripple(pack, effect_spawn_pos);
-                effect_spawn_particle = None;
-            }
-            let mut freshly_spawned = false;
-            if let Some(gen) = &mut effect_spawn_gen {
-                if gen.alive {
-                    if let Ok(spawned) = gen.tick(&mut effect_spawn_rng) {
-                        if let Some(first) = spawned.into_iter().next() {
-                            effect_spawn_particle = Some(first);
-                            freshly_spawned = true;
-                        }
-                    }
-                }
-            }
-            if !freshly_spawned {
-                if let Some(particle) = &mut effect_spawn_particle {
-                    if particle.state.alive {
-                        let _ = particle.tick(&mut effect_spawn_rng);
-                    }
-                }
-            }
-        }
         results_transition.queue_capture(&mut gpu);
 
         let mut shown = (0u32, 0u32, 0u32); // tris, verts, prims
@@ -1736,24 +1776,9 @@ unsafe fn run() -> ! {
                     };
                     gpu.model_transform(cam, [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
                     let base = gpu.model_matrix();
-                    // (Re)load when the stage changes, then tick and draw.
-                    if stage_anim_loaded != Some(stage_index) {
-                        stage_anim_loaded = Some(stage_index);
-                        match p.stage_anim(stage_index) {
-                            Some(a) => stage_anim.start(p, &a),
-                            None => stage_anim = ssb_rom::skeleton::StageAnimator::new(),
-                        }
-                    }
-                    let animated = p.stage_anim(stage_index).and_then(|a| {
-                        let script = p.anim_script(&a)?;
-                        // A script that desynchronises stops the scenery rather
-                        // than posing it from a garbage stream.
-                        if !deterministic_capture_frozen(sim_frame_index) {
-                            stage_anim.tick(script).ok()?;
-                        }
-                        Some(())
-                    });
-                    let scenery = animated.map(|()| &stage_anim);
+                    // Loaded and ticked in the simulation loop above.
+                    let scenery = (stage_anim_ok && p.stage_anim(stage_index).is_some())
+                        .then_some(&stage_anim);
                     let (mut tris, layers) = meshdraw::draw_stage_animated(
                         p,
                         &stage,
