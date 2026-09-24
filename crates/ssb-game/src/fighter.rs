@@ -239,6 +239,8 @@ pub struct Fighter {
     /// Fire Fox startup, charge, and travel counters.
     pub fox_special_hi: crate::status::FoxSpecialHiState,
     pub fox_special_lw: crate::status::FoxSpecialLwState,
+    pub donkey_special_n: crate::status::DonkeySpecialNState,
+    pub donkey_special_lw: crate::status::DonkeySpecialLwState,
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
@@ -289,6 +291,8 @@ impl Fighter {
             fox_special_n: crate::status::FoxSpecialNState::default(),
             fox_special_hi: crate::status::FoxSpecialHiState::default(),
             fox_special_lw: crate::status::FoxSpecialLwState::default(),
+            donkey_special_n: crate::status::DonkeySpecialNState::default(),
+            donkey_special_lw: crate::status::DonkeySpecialLwState::default(),
             weapon_spawn: None,
             weapon_spawn_anchor: None,
             root_motion: RootMotion::default(),
@@ -493,6 +497,7 @@ impl Fighter {
             crate::status::AnyStatus::Common(s) => s,
             crate::status::AnyStatus::Mario(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Fox(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Donkey(_) => crate::status::Status::Wait,
         };
         if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -516,6 +521,10 @@ impl Fighter {
             )
         ) {
             crate::status::apply_fox_special_hi_ground_physics(self);
+        } else if self.status.status
+            == crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialHi)
+        {
+            crate::status::apply_donkey_special_hi_ground_physics(self);
         } else {
             crate::status::apply_status_physics(
                 &mut self.physics,
@@ -576,6 +585,17 @@ impl Fighter {
                     )
                 ) {
                     crate::status::switch_fox_special_lw_air(self);
+                } else if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Donkey(
+                        crate::status::DonkeyStatus::SpecialNStart
+                            | crate::status::DonkeyStatus::SpecialNLoop
+                            | crate::status::DonkeyStatus::SpecialNEnd
+                            | crate::status::DonkeyStatus::SpecialNFull
+                            | crate::status::DonkeyStatus::SpecialHi
+                    )
+                ) {
+                    crate::status::switch_donkey_special_air(self);
                 } else {
                     self.become_airborne();
                     crate::status::set_fall(self);
@@ -616,7 +636,14 @@ impl Fighter {
                     | crate::status::FoxStatus::SpecialAirLwTurn
             )
         );
-        if !special_air_hi && !special_air_lw && !fox_special_hi && !fox_special_lw {
+        let donkey_special_hi = self.status.status
+            == crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi);
+        if !special_air_hi
+            && !special_air_lw
+            && !fox_special_hi
+            && !fox_special_lw
+            && !donkey_special_hi
+        {
             crate::status::check_set_fast_fall(self);
         }
         if special_air_hi {
@@ -627,6 +654,8 @@ impl Fighter {
             crate::status::apply_fox_special_hi_air_physics(self);
         } else if fox_special_lw {
             crate::status::apply_fox_special_lw_air_physics(self);
+        } else if donkey_special_hi {
+            crate::status::apply_donkey_special_hi_air_physics(self);
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
@@ -682,6 +711,20 @@ impl Fighter {
                 self.floor = Some(f);
                 self.ignore_line = None;
                 if crate::status::fox_fire_fox_floor_contact(self, f.normal, moved.pos.y) {
+                    return;
+                }
+                if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Donkey(
+                        crate::status::DonkeyStatus::SpecialAirNStart
+                            | crate::status::DonkeyStatus::SpecialAirNLoop
+                            | crate::status::DonkeyStatus::SpecialAirNEnd
+                            | crate::status::DonkeyStatus::SpecialAirNFull
+                            | crate::status::DonkeyStatus::SpecialAirHi
+                    )
+                ) {
+                    self.land(moved.pos.y);
+                    crate::status::switch_donkey_special_ground(self);
                     return;
                 }
                 // The landing status is chosen from the velocity *before*

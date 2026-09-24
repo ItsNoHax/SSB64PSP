@@ -48,7 +48,7 @@ use crate::archive::{Archive, File};
 use crate::figatree;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 68;
+pub const SLOT_COUNT: usize = 99;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -467,7 +467,7 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        assert_eq!(missing, 1256, "only Mario and Fox have character slots");
+        assert_eq!(missing, 2062, "Mario, Fox and Donkey have character slots");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
@@ -476,6 +476,12 @@ mod tests {
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_N], 636);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_HI], 637);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_HI], 637);
+        let donkey = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Donkey")
+            .expect("Donkey is in FTKind order");
+        assert_eq!(donkey.files[68], 907); // Jab1
+        assert_eq!(donkey.files[94], 940); // Spinning Kong ground
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_LW], 638);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_LW], 639);
         assert_eq!(

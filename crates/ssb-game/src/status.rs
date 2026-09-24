@@ -644,6 +644,25 @@ pub enum FoxStatus {
     SpecialAirLwTurn = 245,
 }
 
+/// Donkey Kong's character status table, `ftdonkey.h`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum DonkeyStatus {
+    SpecialNStart = 222,
+    SpecialAirNStart = 223,
+    SpecialNLoop = 224,
+    SpecialAirNLoop = 225,
+    SpecialNEnd = 226,
+    SpecialAirNEnd = 227,
+    SpecialNFull = 228,
+    SpecialAirNFull = 229,
+    SpecialHi = 230,
+    SpecialAirHi = 231,
+    SpecialLwStart = 232,
+    SpecialLwLoop = 233,
+    SpecialLwEnd = 234,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -654,6 +673,7 @@ pub enum AnyStatus {
     Common(Status),
     Mario(MarioStatus),
     Fox(FoxStatus),
+    Donkey(DonkeyStatus),
 }
 
 impl AnyStatus {
@@ -684,6 +704,14 @@ impl AnyStatus {
                 | FoxStatus::SpecialAirLwTurn,
             ) => false,
             AnyStatus::Fox(_) => true,
+            AnyStatus::Donkey(
+                DonkeyStatus::SpecialAirNStart
+                | DonkeyStatus::SpecialAirNLoop
+                | DonkeyStatus::SpecialAirNEnd
+                | DonkeyStatus::SpecialAirNFull
+                | DonkeyStatus::SpecialAirHi,
+            ) => false,
+            AnyStatus::Donkey(_) => true,
         }
     }
 
@@ -692,6 +720,7 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.is_actionable_on_ground(),
             AnyStatus::Mario(_) => false,
             AnyStatus::Fox(_) => false,
+            AnyStatus::Donkey(_) => false,
         }
     }
 
@@ -700,6 +729,7 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.is_walk(),
             AnyStatus::Mario(_) => false,
             AnyStatus::Fox(_) => false,
+            AnyStatus::Donkey(_) => false,
         }
     }
 
@@ -742,6 +772,19 @@ impl AnyStatus {
                 FoxStatus::SpecialLwEnd => 66,
                 FoxStatus::SpecialAirLwEnd => 67,
             },
+            AnyStatus::Donkey(s) => match s {
+                DonkeyStatus::SpecialNStart => 88,
+                DonkeyStatus::SpecialAirNStart => 89,
+                DonkeyStatus::SpecialNLoop => 90,
+                DonkeyStatus::SpecialAirNLoop => 91,
+                DonkeyStatus::SpecialNEnd | DonkeyStatus::SpecialNFull => 92,
+                DonkeyStatus::SpecialAirNEnd | DonkeyStatus::SpecialAirNFull => 93,
+                DonkeyStatus::SpecialHi => 94,
+                DonkeyStatus::SpecialAirHi => 95,
+                DonkeyStatus::SpecialLwStart => 96,
+                DonkeyStatus::SpecialLwLoop => 97,
+                DonkeyStatus::SpecialLwEnd => 98,
+            },
         }
     }
 
@@ -751,6 +794,7 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.anim_speed(),
             AnyStatus::Mario(_) => 1.0,
             AnyStatus::Fox(_) => 1.0,
+            AnyStatus::Donkey(_) => 1.0,
         }
     }
 }
@@ -1399,6 +1443,22 @@ pub struct MarioSpecialNState {
     pub spawned: bool,
 }
 
+/// Persistent charge and per-status flags from `FTDonkeyStatusVars::specialn`
+/// and `FTPassiveVars::donkey`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DonkeySpecialNState {
+    pub charge_level: u8,
+    pub attack_charge: u8,
+    pub release: bool,
+    pub charging: bool,
+    pub cancel: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DonkeySpecialLwState {
+    pub loop_requested: bool,
+}
+
 /// Fox's Blaster event flags: each status entry fires once, then B can
 /// restart the move after the source script's flag-1 gate.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -1813,12 +1873,175 @@ pub fn switch_mario_fireball_air(f: &mut Fighter) {
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
+/// `ftDonkeySpecialNStartSetStatus` and its aerial counterpart.
+pub fn set_donkey_special_n(f: &mut Fighter) {
+    let status = if f.is_grounded() {
+        DonkeyStatus::SpecialNStart
+    } else {
+        DonkeyStatus::SpecialAirNStart
+    };
+    set_any_status(f, AnyStatus::Donkey(status), 0.0, StatusTiming::frames(8.0));
+    let charge = f.donkey_special_n.charge_level;
+    f.donkey_special_n.release = charge == 10;
+    f.donkey_special_n.charging = false;
+    f.donkey_special_n.cancel = false;
+}
+
+fn donkey_charge_loop(f: &mut Fighter) {
+    let status = if f.is_grounded() {
+        DonkeyStatus::SpecialNLoop
+    } else {
+        DonkeyStatus::SpecialAirNLoop
+    };
+    // The figatree loops every 12 frames; its zero decoded length denotes
+    // that loop rather than a one-frame animation.
+    set_any_status(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        StatusTiming::frames(12.0),
+    );
+}
+
+fn donkey_charge_release(f: &mut Fighter) {
+    let full = f.donkey_special_n.charge_level == 10;
+    let status = match (f.is_grounded(), full) {
+        (true, false) => DonkeyStatus::SpecialNEnd,
+        (false, false) => DonkeyStatus::SpecialAirNEnd,
+        (true, true) => DonkeyStatus::SpecialNFull,
+        (false, true) => DonkeyStatus::SpecialAirNFull,
+    };
+    let charge = f.donkey_special_n.charge_level;
+    f.donkey_special_n.attack_charge = charge;
+    f.donkey_special_n.charge_level = 0;
+    set_any_status(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        StatusTiming::frames(80.0),
+    );
+    if f.is_grounded() {
+        f.physics.vel_ground.x = f32::from(charge) * 8.0 * f.facing.sign();
+    }
+}
+
+/// `ftDonkeySpecialHiSetStatus` / `ftDonkeySpecialAirHiSetStatus`.
+pub fn set_donkey_special_hi(f: &mut Fighter) {
+    let ground = f.is_grounded();
+    let status = if ground {
+        DonkeyStatus::SpecialHi
+    } else {
+        DonkeyStatus::SpecialAirHi
+    };
+    set_any_status(
+        f,
+        AnyStatus::Donkey(status),
+        0.0,
+        StatusTiming::frames(100.0),
+    );
+    f.physics.jumps_used = f.attributes.jumps_max;
+    if ground {
+        f.physics.vel_air.y = 0.0;
+    } else {
+        f.physics.vel_air.y = 20.3;
+    }
+    physics::clamp_air_vel_x(&mut f.physics, 38.0);
+}
+
+pub fn set_donkey_special_lw(f: &mut Fighter) {
+    set_any_status(
+        f,
+        AnyStatus::Donkey(DonkeyStatus::SpecialLwStart),
+        0.0,
+        StatusTiming::frames(3.0),
+    );
+    f.donkey_special_lw.loop_requested = false;
+}
+
+pub fn apply_donkey_special_hi_ground_physics(f: &mut Fighter) {
+    physics::apply_clamp_ground_vel_stick_range(
+        &mut f.physics,
+        f.input.stick_x,
+        0,
+        0.025,
+        f.facing.sign(),
+        26.0,
+    );
+}
+
+pub fn apply_donkey_special_hi_air_physics(f: &mut Fighter) {
+    // The aerial tail's first eight-frame loop sets motion flag1 at frame 57.
+    let gravity_mul = if f.status.anim_frame >= 57.0 {
+        1.0
+    } else {
+        0.07
+    };
+    physics::apply_gravity_clamp_tvel(
+        &mut f.physics,
+        f.attributes.gravity * gravity_mul,
+        f.attributes.tvel_base,
+    );
+    physics::clamp_air_vel_x_stick_range(&mut f.physics, f.input.stick_x, 0, 0.05, 38.0);
+}
+
+pub fn switch_donkey_special_air(f: &mut Fighter) {
+    let status = match f.status.status {
+        AnyStatus::Donkey(DonkeyStatus::SpecialNStart) => DonkeyStatus::SpecialAirNStart,
+        AnyStatus::Donkey(DonkeyStatus::SpecialNLoop) => DonkeyStatus::SpecialAirNLoop,
+        AnyStatus::Donkey(DonkeyStatus::SpecialNEnd) => DonkeyStatus::SpecialAirNEnd,
+        AnyStatus::Donkey(DonkeyStatus::SpecialNFull) => DonkeyStatus::SpecialAirNFull,
+        AnyStatus::Donkey(DonkeyStatus::SpecialHi) => DonkeyStatus::SpecialAirHi,
+        _ => {
+            f.become_airborne();
+            set_fall(f);
+            return;
+        }
+    };
+    f.become_airborne();
+    set_any_status(
+        f,
+        AnyStatus::Donkey(status),
+        f.status.anim_frame,
+        f.status.timing,
+    );
+    physics::clamp_air_vel_x(
+        &mut f.physics,
+        if status == DonkeyStatus::SpecialAirHi {
+            38.0
+        } else {
+            f.attributes.air_speed_max_x
+        },
+    );
+}
+
+pub fn switch_donkey_special_ground(f: &mut Fighter) {
+    let status = match f.status.status {
+        AnyStatus::Donkey(DonkeyStatus::SpecialAirNStart) => DonkeyStatus::SpecialNStart,
+        AnyStatus::Donkey(DonkeyStatus::SpecialAirNLoop) => DonkeyStatus::SpecialNLoop,
+        AnyStatus::Donkey(DonkeyStatus::SpecialAirNEnd) => DonkeyStatus::SpecialNEnd,
+        AnyStatus::Donkey(DonkeyStatus::SpecialAirNFull) => DonkeyStatus::SpecialNFull,
+        AnyStatus::Donkey(DonkeyStatus::SpecialAirHi) => DonkeyStatus::SpecialHi,
+        _ => return,
+    };
+    set_any_status(
+        f,
+        AnyStatus::Donkey(status),
+        f.status.anim_frame,
+        f.status.timing,
+    );
+    if status == DonkeyStatus::SpecialHi {
+        physics::clamp_ground_vel(&mut f.physics, 26.0);
+    }
+}
+
 /// `ftCommonSpecialNCheckInterruptCommon` @ 0x80151098 for Mario and Fox.
 /// Neutral B is strictly between the up/down-special thresholds.
 pub fn check_special_n(f: &mut Fighter) -> bool {
     if !matches!(
         f.kind,
-        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+        crate::fighter::FighterKind::Mario
+            | crate::fighter::FighterKind::Fox
+            | crate::fighter::FighterKind::Donkey
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -1836,6 +2059,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             }
         }
         crate::fighter::FighterKind::Fox => set_fox_special_n(f),
+        crate::fighter::FighterKind::Donkey => set_donkey_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -1870,13 +2094,17 @@ pub fn set_mario_special_air_hi(f: &mut Fighter) {
 pub fn check_special_hi(f: &mut Fighter) -> bool {
     if !matches!(
         f.kind,
-        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+        crate::fighter::FighterKind::Mario
+            | crate::fighter::FighterKind::Fox
+            | crate::fighter::FighterKind::Donkey
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Fox {
+    if f.kind == crate::fighter::FighterKind::Donkey {
+        set_donkey_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Fox {
         set_fox_special_hi_start(f);
     } else if f.situation == Situation::Ground {
         set_mario_special_hi(f);
@@ -2003,13 +2231,21 @@ pub fn switch_mario_tornado_air(f: &mut Fighter) {
 pub fn check_special_lw(f: &mut Fighter) -> bool {
     if !matches!(
         f.kind,
-        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Fox
+        crate::fighter::FighterKind::Mario
+            | crate::fighter::FighterKind::Fox
+            | crate::fighter::FighterKind::Donkey
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Fox {
+    if f.kind == crate::fighter::FighterKind::Donkey {
+        if f.is_grounded() {
+            set_donkey_special_lw(f);
+        } else {
+            return false;
+        }
+    } else if f.kind == crate::fighter::FighterKind::Fox {
         set_fox_special_lw_start(f);
     } else if f.situation == Situation::Ground {
         set_mario_special_lw(f);
@@ -3595,6 +3831,105 @@ pub fn update(f: &mut Fighter) {
 /// [`AnyStatus`].
 fn update_extended(f: &mut Fighter) {
     match f.status.status {
+        AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
+            let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
+            if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
+                f.donkey_special_n.release = true;
+            }
+            if f.status.animation_ended() {
+                donkey_charge_loop(f);
+            }
+        }
+        AnyStatus::Donkey(DonkeyStatus::SpecialNLoop | DonkeyStatus::SpecialAirNLoop) => {
+            let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
+            if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
+                f.donkey_special_n.release = true;
+            }
+            if taps.contains(N64Buttons::Z) {
+                f.donkey_special_n.cancel = true;
+            }
+            if f.status.animation_ended() {
+                if f.donkey_special_n.charging && f.donkey_special_n.charge_level < 10 {
+                    f.donkey_special_n.charge_level += 1;
+                    if f.donkey_special_n.charge_level == 10 {
+                        f.donkey_special_n.cancel = true;
+                    }
+                }
+                if f.donkey_special_n.cancel {
+                    if f.is_grounded() {
+                        set_wait(f);
+                    } else {
+                        set_fall(f);
+                    }
+                } else if f.donkey_special_n.release {
+                    donkey_charge_release(f);
+                } else {
+                    f.donkey_special_n.charging = true;
+                    donkey_charge_loop(f);
+                }
+            }
+        }
+        AnyStatus::Donkey(
+            DonkeyStatus::SpecialNEnd
+            | DonkeyStatus::SpecialAirNEnd
+            | DonkeyStatus::SpecialNFull
+            | DonkeyStatus::SpecialAirNFull,
+        ) => {
+            if f.status.animation_ended() {
+                if f.is_grounded() {
+                    set_wait(f);
+                } else {
+                    set_fall(f);
+                }
+            }
+        }
+        AnyStatus::Donkey(DonkeyStatus::SpecialHi | DonkeyStatus::SpecialAirHi) => {
+            if f.status.animation_ended() {
+                if f.is_grounded() {
+                    set_wait(f);
+                } else {
+                    set_fall_special(f, 1.0, false, true, 0.3, true);
+                }
+            }
+        }
+        AnyStatus::Donkey(DonkeyStatus::SpecialLwStart) => {
+            if f.status.animation_ended() {
+                set_any_status(
+                    f,
+                    AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop),
+                    0.0,
+                    StatusTiming::frames(28.0),
+                );
+            }
+        }
+        AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop) => {
+            if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B) {
+                f.donkey_special_lw.loop_requested = true;
+            }
+            if f.status.animation_ended() {
+                if f.donkey_special_lw.loop_requested {
+                    f.donkey_special_lw.loop_requested = false;
+                    set_any_status(
+                        f,
+                        AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop),
+                        0.0,
+                        StatusTiming::frames(28.0),
+                    );
+                } else {
+                    set_any_status(
+                        f,
+                        AnyStatus::Donkey(DonkeyStatus::SpecialLwEnd),
+                        0.0,
+                        StatusTiming::frames(5.0),
+                    );
+                }
+            }
+        }
+        AnyStatus::Donkey(DonkeyStatus::SpecialLwEnd) => {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
         // `ftCommonAttack13ProcUpdate` @ `ftcommonattack1.c:63`, minus the
         // Captain-only `Attack100` branch (doesn't apply to Mario).
         AnyStatus::Mario(MarioStatus::Attack13) => {
@@ -5726,5 +6061,64 @@ mod tests {
         assert!(f.fall_special.is_goto_landing);
         assert!(f.fall_special.is_fall_accelerate);
         assert_eq!(f.fall_special.landing_lag, 0.28);
+    }
+
+    #[test]
+    fn donkey_charge_cycles_store_ten_levels_then_cancel_without_spending_them() {
+        let mut f = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
+        f.situation = Situation::Ground;
+        set_donkey_special_n(&mut f);
+        for _ in 0..8 {
+            update(&mut f);
+        }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(DonkeyStatus::SpecialNLoop)
+        );
+        for _ in 0..11 {
+            update(&mut f);
+        }
+        assert_eq!(f.donkey_special_n.charge_level, 0);
+        for _ in 0..(12 * 11) {
+            update(&mut f);
+        }
+        assert_eq!(f.donkey_special_n.charge_level, 10);
+        assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
+        set_donkey_special_n(&mut f);
+        assert!(f.donkey_special_n.release);
+        for _ in 0..20 {
+            update(&mut f);
+        }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(DonkeyStatus::SpecialNFull)
+        );
+        assert_eq!(f.donkey_special_n.attack_charge, 10);
+        assert_eq!(f.donkey_special_n.charge_level, 0);
+    }
+
+    #[test]
+    fn donkey_hand_slap_enters_two_pulse_loop_then_finishes() {
+        let mut f = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
+        f.situation = Situation::Ground;
+        set_donkey_special_lw(&mut f);
+        for _ in 0..3 {
+            update(&mut f);
+        }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(DonkeyStatus::SpecialLwLoop)
+        );
+        for _ in 0..28 {
+            update(&mut f);
+        }
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Donkey(DonkeyStatus::SpecialLwEnd)
+        );
+        for _ in 0..5 {
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
     }
 }

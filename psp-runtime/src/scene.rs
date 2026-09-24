@@ -386,6 +386,30 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 46,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Donkey as u32 {
+        match status {
+            AnyStatus::Common(Status::Attack11) => 68,
+            AnyStatus::Common(Status::Attack12) => 69,
+            AnyStatus::Common(Status::AttackDash) => 70,
+            AnyStatus::Common(Status::AttackS3Hi) => 71,
+            AnyStatus::Common(Status::AttackS3) => 72,
+            AnyStatus::Common(Status::AttackS3Lw) => 73,
+            AnyStatus::Common(Status::AttackHi3) => 74,
+            AnyStatus::Common(Status::AttackLw3) => 75,
+            AnyStatus::Common(Status::AttackS4Hi) => 76,
+            AnyStatus::Common(Status::AttackS4HiS) => 77,
+            AnyStatus::Common(Status::AttackS4) => 78,
+            AnyStatus::Common(Status::AttackS4LwS) => 79,
+            AnyStatus::Common(Status::AttackS4Lw) => 80,
+            AnyStatus::Common(Status::AttackHi4) => 81,
+            AnyStatus::Common(Status::AttackLw4) => 82,
+            AnyStatus::Common(Status::AttackAirN) => 83,
+            AnyStatus::Common(Status::AttackAirF) => 84,
+            AnyStatus::Common(Status::AttackAirB) => 85,
+            AnyStatus::Common(Status::AttackAirHi) => 86,
+            AnyStatus::Common(Status::AttackAirLw) => 87,
+            _ => status.anim_slot(),
+        }
     } else {
         status.anim_slot()
     } as u32;
