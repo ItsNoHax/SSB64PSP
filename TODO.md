@@ -25,8 +25,7 @@ Deferred by user instruction.
 |---|---|---|
 | PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. RE-318 shrank it to 22,010,384 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
-| Re-capture current goldens on hardware | Physical captures predate pack v32 and several golden refreshes | — |
-| 16-byte texture row minimum on hardware | PPSSPP and pspautotests use it; the fix is correct with no minimum or a 16-byte one. Run RE-319's stripe diagnostic on a PSP | RE-319 |
+| Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, not the full current golden matrix | RE-320 |
 
 ## Open questions
 

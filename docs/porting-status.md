@@ -42,7 +42,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 | Subsystem | Status | Capability | Gap | Evidence |
 |---|---|---|---|---|
-| PSP asset loading | COMPLETE on PSP-2000 and later | `MEMSIZE=1` 64 MiB mode, physically proven with pack v29 | PSP-1000 (32 MiB); no hardware run of v32 | RE-256, RE-260, RE-288 |
+| PSP asset loading | COMPLETE on PSP-2000 and later | `MEMSIZE=1` 64 MiB mode; stock v32 pack loaded via PSPLink on PSP-2000 | PSP-1000 (32 MiB) | RE-256, RE-260, RE-288, RE-320 |
 | Timing | COMPLETE | Fixed 60 Hz with catch-up cap | — | — |
 | Input | 80% | `psp-game` PSP→N64 layout (see README); viewer keeps its own | Nub deadzone unmeasured | RE-008, RE-009, RE-295 |
 | Engine traits | 70% | Renderer, audio, input, timing, clock | — | — |
@@ -81,8 +81,8 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 ## Known caveats
 
-1. PPSSPP is not hardware proof. Physical captures (PSP Slim, 6.61) exist for
-   earlier packs only; see [`visual-regression/README.md`](visual-regression/README.md).
+1. PPSSPP is not hardware proof. RE-320 confirms v32's short-row texture
+   repair on PSP-2000; the full golden matrix remains software-only.
 2. The debug HUD (`sceGuDebugFlush`) shows only under PPSSPP's software
    rasterizer (RE-014) and faults on real hardware (RE-202). It is off by
    default (`debug_overlay` feature).

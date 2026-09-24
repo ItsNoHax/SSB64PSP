@@ -179,8 +179,9 @@ item renders, not exact pixels. Output stays outside Git under
 3. Record model, firmware, commit, manifest hashes, capture method and
    observations.
 
-See the `psp-hardware` skill for PSPLink. Existing hardware captures (PSP
-Slim, 6.61) predate pack v32 and several golden refreshes.
+See the `psp-hardware` skill for PSPLink. RE-320 captured the v32 stripe
+diagnostic and stock pack on a PSP-2000 Slim, firmware 6.61. The current
+golden matrix has not been recaptured on hardware.
 
 ## Original game
 
