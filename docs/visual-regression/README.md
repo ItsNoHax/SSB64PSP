@@ -341,3 +341,17 @@ regressions, so these goldens pin the current output, not verified
 correctness. Two repeated captures (Zebes and Kongo Jungle) differed by 0
 pixels.
 
+## 2026-09-24 RE-313 rebaseline
+
+27 goldens were rebaselined with pack SHA-256 `9c3efae3...223d9a3b`:
+`r2-dk-fighter`, `r1-stage-sector`, `r2-saffron-city-gate` and 24 `r2-stage-*`
+goldens. An A/B capture with the pre-RE-313 pack (runtime code unchanged)
+attributes every change to RE-313: compensated direct-format and RE-283
+bypass textures, the measured stale TLUT entry on the Break the Targets
+arrows, TLUT-off intensity textures, and per-task-display-list RDP state
+(Mushroom Kingdom's castle and pyramid, Zebes' underside, Sector's ship).
+Eight goldens already differed before RE-313 and are pixel-identical between
+the two packs: `f1-training-fireball`, `f1-training-shadows`,
+`r1-mvopeningroom`, `r2-depth-mask-diagnostic` and the four
+`r2-metal-texgen*`. They were not rebaselined and still fail.
+
