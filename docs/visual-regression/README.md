@@ -15,18 +15,74 @@ cmake -DHEADLESS=ON -DCMAKE_BUILD_TYPE=Release -B build-headless
 cmake --build build-headless --target PPSSPPHeadless
 ```
 
-Set `PPSSPP_HEADLESS_BIN` if the binary is elsewhere. `ffmpeg` is required.
+Set `PPSSPP_HEADLESS_BIN` if the binary is elsewhere. `ffmpeg` and
+ImageMagick (`magick`) are required.
 
-## Capture and compare
+## Verify and rebaseline
 
 ```bash
+tools/golden.sh verify [--filter REGEX] [-j N] [--twice] [--no-build]
+tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
+```
+
+- [`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv) lists every
+  golden: crate, scene spec, `pass` or `known-failing`, and evidence.
+- The driver builds each crate once with `golden_capture`, then captures
+  every selected scene from that EBOOT in parallel (default `nproc` jobs).
+  A full run of all 67 scenes takes about 17 s (RE-316).
+- Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
+  masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
+  of golden, candidate and mask with changed scenes first.
+- `verify` fails on a `pass` row that differs, a `known-failing` row that now
+  matches (set it to `pass`), a failed capture, and with `--twice` on two
+  captures of one scene that differ.
+- `rebaseline` always captures twice. It copies only changed candidates over
+  their goldens and prints a Markdown table (golden, pixel count, reason)
+  for the evidence record. It skips `known-failing` rows unless `--filter`
+  is given.
+- `tools/verify-fighter-goldens.sh` runs `verify --filter
+  'fighter|link-costume'`.
+- `tools/golden-reference.sh` captures every scene with the per-feature
+  pipeline (one build and one 8 s run each, about 15 minutes) into
+  `~/golden-reference/`. Use it as the byte-identity reference when changing
+  the capture pipeline itself.
+- Serve `index.html` over HTTP from the repository root (for example
+  `python3 -m http.server`); it loads goldens from `tests/golden/`.
+
+### How a scene is chosen
+
+A `golden_capture` EBOOT reads one line from `capture_scene.txt` beside it
+(`stage 17`, `fighter fox`, `scene3`, `depth_mask`; format in
+`crates/ssb-capture`). It freezes at tick 240, requests the screenshot, and
+exits two frames later. Without the file it renders the Dream Land default.
+
+The old per-scene features (`regression_capture_scene3`,
+`regression_capture_fox`, `regression_capture_stage_index` with
+`SSB64_STAGE_INDEX`, ...) still build. Each only sets a default scene; these
+builds never read the file and keep running until the runner's timeout, as
+before. Interactive and physical-PSP builds read no scene file.
+
+### Single captures
+
+```bash
+tools/run-ppsspp-headless.sh --scene 'stage 17' [--job NAME] [--no-build]
 tools/run-ppsspp-headless.sh [--crate psp-game] --feature <feature>
 tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/screenshot.png
 ```
 
-- The runner builds the EBOOT with `<feature>,headless_capture`, stages it
-  and the pack under PPSSPP's memstick (required for `MEMSIZE`), and writes a
-  960×544 PNG to `$PPSSPP_HEADLESS_TEST_DIR` (default `~/ppsspp-headless-test`).
+- The runner builds the EBOOT (`golden_capture` with `--scene`, otherwise
+  `<feature>,headless_capture`), stages it and the pack under PPSSPP's
+  memstick (required for `MEMSIZE`), and writes a 960×544 PNG to
+  `$PPSSPP_HEADLESS_TEST_DIR` (default `~/ppsspp-headless-test`).
+- With `--scene` the timeout defaults to 30 s and is a failure. PPSSPPHeadless
+  exits 0 on a timeout too; the runner reads the `TIMEOUT` line in its log.
+- `--job NAME` stages into `PSP/GAME/ssb64_regression_<NAME>` and writes to
+  `$PPSSPP_HEADLESS_TEST_DIR/<NAME>`, so parallel runs never share a game
+  directory or `no-status-overlay.ini`. PPSSPPHeadless keeps its memstick at
+  `$HOME/.ppsspp` and does not save `ppsspp.ini`, so no other state is
+  shared. `golden.sh` deletes each job's game directory afterwards.
+- The pack is hard-linked into the game directory (copied across
+  filesystems) and not restaged when it is already the same file.
 - Capture features freeze all simulation and animation at a fixed tick and
   hide the debug HUD. Every animator advances per simulation tick, so a
   capture does not depend on load timing or pack size (RE-315).
@@ -35,7 +91,7 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   uses both for the RE-312 visual review
   ([three-point-visual-review.md](../rendering/three-point-visual-review.md)).
 - `compare-screenshot.sh` defaults to an exact match (0 differing pixels).
-- `tools/verify-fighter-goldens.sh` runs every fighter scene.
+  It and `golden.sh` share `tools/lib/pixel-diff.sh`.
 - Capture features must not ship in interactive builds; rebuild without them
   afterwards.
 
@@ -49,7 +105,9 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
 
 ## Scenes
 
-`psp-asset-viewer` unless noted.
+`psp-asset-viewer` unless noted. The scene spec for each golden is in
+[`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv); the feature
+builds the same scene as its default.
 
 | Feature | Golden | Covers | Evidence |
 |---|---|---|---|
@@ -62,7 +120,7 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
 | `regression_capture_scene8` | `r2-metal-texgen-linear` | File 117 graph `0x2EE0`, linear texgen (crystal cluster) | RE-215, RE-259 |
 | `regression_capture_scene9` | `r2-metal-texgen-camera-rotated` | Ordinary texgen under a rotated camera basis | RE-237 |
 | `regression_capture_scene10` | `r2-peach-castle` | Stage 4, two animated joint layers | RE-286 |
-| `regression_capture_stage_index` | `r2-stage-<name>` (38) | Whole-stage view; stage chosen at build time by `SSB64_STAGE_INDEX` (1–3, 5–8, 10–40) | RE-286, RE-312 |
+| `regression_capture_stage_index` | `r2-stage-<name>` (38) | Whole-stage view; spec `stage N`, or `SSB64_STAGE_INDEX` at build time (1–3, 5–8, 10–40). Index → golden map in the manifest (RE-316) | RE-286, RE-312 |
 | `depth_mask_diagnostic` | `r2-depth-mask-diagnostic` | Synthetic quads: depth write ON → OFF → ON | RE-251 |
 | `regression_capture_<fighter>` | `r2-<fighter>-fighter` | High-detail model in `Wait` pose with stage fighter light; all 12 playable fighters | RE-265 |
 | `regression_capture_link_costume_1` | `r2-link-costume-1` | Non-zero costume palette, colour and light | RE-301 |
@@ -76,7 +134,7 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
 Stage sweep example:
 
 ```bash
-SSB64_STAGE_INDEX=5 tools/run-ppsspp-headless.sh --feature regression_capture_stage_index
+tools/golden.sh verify --filter '^r2-stage-'
 ```
 
 Not covered by a golden: dynamic particles (device audits RE-180–189) and UI
@@ -84,12 +142,10 @@ Not covered by a golden: dynamic particles (device audits RE-180–189) and UI
 
 ### Known failing goldens
 
-These eight already differed before RE-313 and are identical between the
-RE-313 and prior packs. They have not been re-investigated or rebaselined:
-
-`f1-training-fireball`, `f1-training-shadows`, `r1-mvopeningroom`,
-`r2-depth-mask-diagnostic`, `r2-metal-texgen`, `r2-metal-texgen-rotated`,
-`r2-metal-texgen-linear`, `r2-metal-texgen-camera-rotated`.
+The `known-failing` rows of
+[`tests/golden/scenes.tsv`](../../tests/golden/scenes.tsv) (eight). They
+already differed before RE-313, are identical between the RE-313 and prior
+packs, and have not been re-investigated or rebaselined.
 
 The 2026-09-24 stage rebaseline (42 goldens) pinned content changes from
 RE-300 to RE-311 without bisecting them, for example Zebes' walls and Kongo
@@ -111,9 +167,11 @@ item renders, not exact pixels. Output stays outside Git under
 ## Physical PSP
 
 1. Mount the PSP over USB and run
-   `tools/stage-psp-regression.sh /path/to/psp-mount [rom]`. It rebuilds the
-   pack, builds the capture EBOOT, installs both under `PSP/GAME/ssb64/` and
-   writes `regression-manifest.txt` (commit, build mode, hashes).
+   `tools/stage-psp-regression.sh [--golden NAME] /path/to/psp-mount [rom]`
+   (default `r0-dream-land-default`). It rebuilds the pack, builds the
+   manifest row's crate with `capture_scene_file`, installs the EBOOT, pack
+   and `capture_scene.txt` under `PSP/GAME/ssb64/` and writes
+   `regression-manifest.txt` (commit, build, golden, scene, hashes).
 2. Launch, wait past the freeze tick, then capture (PSPLink `scrshot` or a
    square-on photo with locked focus and exposure).
 3. Record model, firmware, commit, manifest hashes, capture method and
