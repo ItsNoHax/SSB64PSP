@@ -18,7 +18,8 @@ extern crate alloc;
 
 #[cfg(feature = "addr_diag_probe")]
 mod addr_diag;
-#[cfg(feature = "depth_mask_diagnostic")]
+mod capture;
+#[cfg(any(feature = "depth_mask_diagnostic", feature = "capture_scene_file"))]
 mod depth_diag;
 #[cfg(any(
     feature = "texgen_normal_diagnostic_0",
@@ -49,6 +50,8 @@ use ssb_engine::timing::{Clock, FixedClock, FRAME_BUDGET_US};
 use ssb_rom::pack::{Pack, PackError};
 
 use ssb_psp_runtime::assets;
+
+use capture::{CaptureScene, Fighter, SceneExt};
 #[cfg(feature = "headless_capture")]
 use ssb_psp_runtime::gu::emit_headless_screenshot;
 use ssb_psp_runtime::gu::{Gpu, GuVertex};
@@ -83,29 +86,16 @@ mod billboard_capture {
     pub const HOLD_TICKS: u64 = 60;
 }
 
-/// `true` once either deterministic scene-capture feature has frozen the sim;
-/// always `false` otherwise, so callers need one guard, not a cfg per call
+/// `true` once a capture scene, or one of the build-time audit and
+/// diagnostic features without a golden, has frozen the sim; always `false`
+/// in the interactive viewer, so callers need one guard, not a cfg per call
 /// site.
 #[inline]
-fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
+fn deterministic_capture_frozen(scene: Option<CaptureScene>, sim_frame_index: u64) -> bool {
     sim_frame_index >= DETERMINISTIC_CAPTURE_TICKS
-        && (cfg!(feature = "regression_capture")
-            || cfg!(feature = "regression_capture_scene2")
-            || cfg!(feature = "regression_capture_scene3")
-            || cfg!(feature = "regression_capture_scene4")
-            || cfg!(feature = "regression_capture_scene5")
-            || cfg!(feature = "fighter_regression_capture")
-            || cfg!(feature = "regression_capture_scene6")
-            || cfg!(feature = "regression_capture_scene7")
-            || cfg!(feature = "regression_capture_scene8")
-            || cfg!(feature = "regression_capture_scene9")
-            || cfg!(feature = "regression_capture_scene10")
-            || cfg!(feature = "regression_capture_stage_index")
-            || cfg!(feature = "regression_capture_mario_entry")
-            || cfg!(feature = "regression_capture_bonus_platform")
+        && (scene.is_some()
             || cfg!(feature = "regression_capture_object")
             || cfg!(feature = "camera_audit_capture")
-            || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
             || cfg!(feature = "tri_addr_diag_probe")
             || cfg!(feature = "texture_sampling_diag")
@@ -268,41 +258,27 @@ enum FighterLightStage {
     SectorZ,
 }
 
-/// The one fighter scene selected by this build.  Cargo features intentionally
-/// remain separate so every golden has one unambiguous model, light and camera
-/// configuration. Named features keep a fighter golden tied to its subject;
-/// numbered features are reserved for the contiguous non-fighter scene set.
-fn fighter_regression_scene() -> Option<FighterRegressionScene> {
-    let scene = if cfg!(feature = "regression_capture_mario") {
-        FighterRegressionScene { fighter_kind: 0, model_file: 296, graph: 0x2200, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_fox") {
-        FighterRegressionScene { fighter_kind: 1, model_file: 313, graph: 0x2938, light_stage: FighterLightStage::SectorZ }
-    } else if cfg!(feature = "regression_capture_donkey_kong") {
-        FighterRegressionScene { fighter_kind: 2, model_file: 317, graph: 0x39A8, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_samus") {
-        FighterRegressionScene { fighter_kind: 3, model_file: 320, graph: 0x3520, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_luigi") {
-        FighterRegressionScene { fighter_kind: 4, model_file: 323, graph: 0x2410, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_link") {
-        FighterRegressionScene { fighter_kind: 5, model_file: 324, graph: 0x3AE8, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_yoshi") {
-        FighterRegressionScene { fighter_kind: 6, model_file: 338, graph: 0x33A0, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_captain_falcon") {
-        FighterRegressionScene { fighter_kind: 7, model_file: 332, graph: 0x3BE0, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_kirby") {
-        FighterRegressionScene { fighter_kind: 8, model_file: 328, graph: 0x1448, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_pikachu") {
-        FighterRegressionScene { fighter_kind: 9, model_file: 341, graph: 0x2650, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_purin") {
-        FighterRegressionScene { fighter_kind: 10, model_file: 330, graph: 0x2028, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_ness") {
-        FighterRegressionScene { fighter_kind: 11, model_file: 335, graph: 0x26B0, light_stage: FighterLightStage::DreamLand }
-    } else if cfg!(feature = "regression_capture_metal_mario") {
-        FighterRegressionScene { fighter_kind: 13, model_file: 300, graph: 0x1E08, light_stage: FighterLightStage::DreamLand }
-    } else {
-        return None;
+/// The neutral-model setup of the scene's fighter, if it shows one. One row
+/// per fighter golden, so every golden has one unambiguous model, light and
+/// camera configuration.
+fn fighter_regression_scene(scene: Option<CaptureScene>) -> Option<FighterRegressionScene> {
+    use FighterLightStage::{DreamLand, SectorZ};
+    let (fighter_kind, model_file, graph, light_stage) = match scene.fighter()? {
+        Fighter::Mario => (0, 296, 0x2200, DreamLand),
+        Fighter::Fox => (1, 313, 0x2938, SectorZ),
+        Fighter::DonkeyKong => (2, 317, 0x39A8, DreamLand),
+        Fighter::Samus => (3, 320, 0x3520, DreamLand),
+        Fighter::Luigi => (4, 323, 0x2410, DreamLand),
+        Fighter::Link => (5, 324, 0x3AE8, DreamLand),
+        Fighter::Yoshi => (6, 338, 0x33A0, DreamLand),
+        Fighter::CaptainFalcon => (7, 332, 0x3BE0, DreamLand),
+        Fighter::Kirby => (8, 328, 0x1448, DreamLand),
+        Fighter::Pikachu => (9, 341, 0x2650, DreamLand),
+        Fighter::Purin => (10, 330, 0x2028, DreamLand),
+        Fighter::Ness => (11, 335, 0x26B0, DreamLand),
+        Fighter::MetalMario => (13, 300, 0x1E08, DreamLand),
     };
-    Some(scene)
+    Some(FighterRegressionScene { fighter_kind, model_file, graph, light_stage })
 }
 
 fn psp_main() {
@@ -311,6 +287,9 @@ fn psp_main() {
 }
 
 unsafe fn run() -> ! {
+    // The golden scene this run captures; `None` in the interactive viewer.
+    let capture = capture::select();
+    let capture_scene = capture.map(|c| c.scene);
     let mut gpu = Gpu::init();
     let mut pad = PspInput::init();
     let clock = PspClock;
@@ -505,7 +484,7 @@ unsafe fn run() -> ! {
     // panel mosaic is what makes it the concrete carrier of RE-198's CI8
     // (offset `0x2ee8`) and untextured/vertex-coloured (mesh index 4,
     // primitive 0) test-matrix rows.
-    if cfg!(feature = "regression_capture_scene2") {
+    if capture_scene.is(CaptureScene::OpeningRoom) {
         if let Some(p) = &pack {
             if let Some(i) =
                 (0..p.object_count()).find(|&i| p.object(i).is_some_and(|o| o.source_file == 52))
@@ -514,27 +493,18 @@ unsafe fn run() -> ! {
             }
         }
     }
-    // RE-200: one Stage Sector graph covers three remaining matrix rows with
-    // measured real primitives: texture blend, classified translucency, and
-    // non-mirrored clamp. Select the exact graph, not another file-109 object.
-    if cfg!(feature = "regression_capture_scene3") {
+    // Scenes that name their exact graph. RE-200: one Stage Sector graph
+    // (scene 3) covers texture blend, classified translucency and
+    // non-mirrored clamp, and EFCommonEffects2's CatchSwirl graph (scene 4)
+    // supplies four flat-colour primitives. StageMetalFile2's first two-node
+    // graph carries ordinary texgen (scenes 6, 7, 9) and its sibling the
+    // pack's one `G_TEXTURE_GEN_LINEAR` primitive (scene 8; RE-214 §10/B).
+    // The bonus platform is RE-312's file-136 residual use site.
+    if let Some((file, offset)) = capture_scene.object_graph() {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
                 p.object(i)
-                    .is_some_and(|o| o.source_file == 109 && o.source_offset == 0x44C8)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // RE-200: EFCommonEffects2's CatchSwirl graph supplies four flat-colour
-    // primitives. It is separate because no converted graph carries both a
-    // flat-colour primitive and any of scene 3's other categories.
-    if cfg!(feature = "regression_capture_scene4") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 84 && o.source_offset == 0x2760)
+                    .is_some_and(|o| o.source_file == file && o.source_offset == offset)
             }) {
                 object_index = i;
             }
@@ -544,40 +514,13 @@ unsafe fn run() -> ! {
     // named in `fighter_regression_scene`, rather than a browser-ranked
     // hierarchy.  The original game builds this graph at full detail before
     // its per-frame fighter light scope is applied below.
-    if let Some(scene) = fighter_regression_scene() {
+    if let Some(scene) = fighter_regression_scene(capture_scene) {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
                 p.object(i)
                     .is_some_and(|o| {
                         o.source_file == scene.model_file && o.source_offset == scene.graph
                     })
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    if cfg!(any(
-        feature = "regression_capture_scene6",
-        feature = "regression_capture_scene7",
-        feature = "regression_capture_scene9"
-    )) {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 117 && o.source_offset == 0x1B10)
-            }) {
-                object_index = i;
-            }
-        }
-    }
-    // The sibling `StageMetalFile2` graph that actually carries the pack's
-    // one `G_TEXTURE_GEN_LINEAR` primitive (RE-214 §10/B; see this feature's
-    // own comment in `psp-asset-viewer/Cargo.toml`).
-    if cfg!(feature = "regression_capture_scene8") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 117 && o.source_offset == 0x2EE0)
             }) {
                 object_index = i;
             }
@@ -629,10 +572,10 @@ unsafe fn run() -> ! {
     } else if cfg!(feature = "effect_material_audit_capture") && effect_material_count > 0 {
         effect_index = effect_material_slots[0];
         object_index = effect_objects[effect_index as usize];
-    } else if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
+    } else if capture_scene.effect_audit() && effect_count > 0 {
         object_index = effect_objects[0];
     }
-    if cfg!(feature = "regression_capture_mario_entry") {
+    if capture_scene.is(CaptureScene::MarioEntry) {
         if let Some(i) = ssb_rom::effect::MANAGER_EFFECT_KEYS
             .iter()
             .position(|&key| key == (356, 0x0608))
@@ -644,16 +587,6 @@ unsafe fn run() -> ! {
                     .is_some_and(|o| o.source_file == 356 && o.source_offset == 0x0608)
             }) {
                 object_index = object;
-            }
-        }
-    }
-    if cfg!(feature = "regression_capture_bonus_platform") {
-        if let Some(p) = &pack {
-            if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| o.source_file == 136 && o.source_offset == 0x3DA8)
-            }) {
-                object_index = i;
             }
         }
     }
@@ -687,7 +620,7 @@ unsafe fn run() -> ! {
     // Keep the normal viewer default at costume 0, but make one real
     // non-zero costume reproducible in the deterministic matrix. This uses
     // the existing object override path -- no second costume renderer.
-    let mut costume_index: u32 = if cfg!(feature = "regression_capture_link_costume_1") {
+    let mut costume_index: u32 = if capture_scene.is(CaptureScene::LinkCostume1) {
         1
     } else {
         0
@@ -704,48 +637,17 @@ unsafe fn run() -> ! {
     let mut stage_view = stage_count > 0
         && !cfg!(any(
             feature = "animation_audit_capture",
-            feature = "effect_audit_capture",
             feature = "effect_animation_audit_capture",
             feature = "effect_material_audit_capture",
-            feature = "regression_capture_bonus_platform",
-            feature = "regression_capture_object",
-            feature = "regression_capture_scene2",
-            feature = "regression_capture_scene3",
-            feature = "regression_capture_scene4",
-            feature = "fighter_regression_capture",
-            feature = "regression_capture_scene6",
-            feature = "regression_capture_scene7",
-            feature = "regression_capture_scene8",
-            feature = "regression_capture_scene9",
-            feature = "regression_capture_link"
-        ));
-    let mut stage_index: u32 = 0;
-    // R2's stage-animation scene: stage 9 is Saffron City (file 112), whose
-    // gate RE-142/RE-143 already proved moves under real joint animation.
-    // Stays in the default `stage_view` (unlike scenes 2-4's object viewer)
-    // so the whole-stage framing below shows the gate in its posed position.
-    if cfg!(feature = "regression_capture_scene5") {
-        stage_index = 9;
-    }
-    // R2 stage-coverage scene: stage 4 is Peach's Castle (file 259,
-    // `259_GRCastleMap.c`) -- a real VS-mode battle stage, not one of the
-    // 26 single-fighter bonus maps or the tutorial/test maps also present
-    // in the archive's 41-stage block. Its two animated joint layers give
-    // this a second stage-animation data point beside Saffron City's gate
-    // (scene 5), on different source data. Same deterministic whole-stage
-    // freeze as scene 5.
-    if cfg!(feature = "regression_capture_scene10") {
-        stage_index = 4;
-    }
-    // R2 stage-coverage sweep (`regression_capture_stage_index`): the
-    // remaining 37 stage entries share this one parametrized feature instead
-    // of a dedicated Cargo feature each -- see that feature's own comment in
-    // `psp-asset-viewer/Cargo.toml`. Same deterministic whole-stage freeze as scenes 5/10.
-    if cfg!(feature = "regression_capture_stage_index") {
-        stage_index = option_env!("SSB64_STAGE_INDEX")
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(0);
-    }
+            feature = "regression_capture_object"
+        ))
+        && !capture_scene.effect_audit()
+        && !capture_scene.object_view();
+    // Whole-stage scenes: stage 9 is Saffron City (file 112), whose gate
+    // RE-142/RE-143 proved moves under real joint animation; stage 4 is
+    // Peach's Castle (file 259), a second, independent stage-animation data
+    // point; `stage N` is the stage sweep. Every other scene keeps stage 0.
+    let mut stage_index: u32 = capture_scene.stage_index().unwrap_or(0);
     // Stage scenery animation (RE-051). Restarted whenever the stage changes,
     // and ticked once per simulation tick beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
@@ -839,7 +741,7 @@ unsafe fn run() -> ! {
     // path advance it until the capture freeze.  This keeps the golden's
     // camera framing, skeleton and material draw path identical to a real
     // neutral in-game fighter rather than using the browser's raw hierarchy.
-    if let (Some(scene), Some(p)) = (fighter_regression_scene(), &pack) {
+    if let (Some(scene), Some(p)) = (fighter_regression_scene(capture_scene), &pack) {
         if let Some((index, anim)) = (0..p.anim_count()).find_map(|index| {
             let anim = p.anim(index)?;
             (anim.fighter == u32::from(scene.fighter_kind)
@@ -868,7 +770,7 @@ unsafe fn run() -> ! {
         feature = "effect_material_audit_capture"
     )) {
         0.45f32
-    } else if cfg!(feature = "regression_capture_scene7") {
+    } else if capture_scene.is(CaptureScene::MetalTexgenRotated) {
         // Scene 7 is scene 6's object at a quarter turn (RE-214). A frozen
         // reflection is not evidence that the coordinate generator works: a
         // constant, a stuck basis and a correct basis all produce the same
@@ -996,7 +898,7 @@ unsafe fn run() -> ! {
 
             // One tick of every joint, at the simulation rate rather than the
             // frame rate -- animation timing is gameplay timing (RE-035).
-            if anim_playing && object_view && !deterministic_capture_frozen(sim_frame_index) {
+            if anim_playing && object_view && !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                 if let Some(p) = &pack {
                     if skeleton.ended() {
                         start_anim(p, anim_index, &mut skeleton);
@@ -1065,7 +967,7 @@ unsafe fn run() -> ! {
 
                 // The tick itself. Ordered after input so a respawn this frame
                 // starts falling this frame rather than next.
-                if sim_fighter && !deterministic_capture_frozen(sim_frame_index) {
+                if sim_fighter && !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                     if let (Some(p), Some(pl)) = (&pack, player.as_mut()) {
                         if let Some(s) = p.stage(stage_index) {
                             // C-left jumps. The original uses any C-button, but
@@ -1151,7 +1053,7 @@ unsafe fn run() -> ! {
                 if was != effect_material_index {
                     effect_mat_anim_loaded = None;
                 }
-            } else if object_view && cfg!(feature = "effect_audit_capture") && effect_count > 0 {
+            } else if object_view && capture_scene.effect_audit() && effect_count > 0 {
                 if pressed.contains(N64Buttons::D_RIGHT) {
                     effect_index = (effect_index + 1) % effect_count;
                 }
@@ -1295,17 +1197,9 @@ unsafe fn run() -> ! {
                 && !cfg!(any(
                     feature = "effect_animation_audit_capture",
                     feature = "effect_material_audit_capture",
-                    feature = "regression_capture_scene2",
-                    feature = "regression_capture_scene3",
-                    feature = "regression_capture_scene4",
-                    feature = "fighter_regression_capture",
-                    feature = "regression_capture_scene6",
-                    feature = "regression_capture_scene7",
-                    feature = "regression_capture_scene8",
-                    feature = "regression_capture_scene9",
-                    feature = "regression_capture_object",
-                    feature = "regression_capture_link"
+                    feature = "regression_capture_object"
                 ))
+                && !capture_scene.holds_spin()
             {
                 spin += 0.02;
             }
@@ -1325,7 +1219,7 @@ unsafe fn run() -> ! {
             // so the pack's size) changes (RE-314, RE-315). Render only reads
             // the resulting state.
             if let Some(p) = &pack {
-                if !deterministic_capture_frozen(sim_frame_index) {
+                if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                     material_anim.tick(p);
                 }
                 // The stage animator runs only while the stage view is what
@@ -1346,7 +1240,7 @@ unsafe fn run() -> ! {
                         }
                         stage_anim_ok = true;
                     }
-                    if !deterministic_capture_frozen(sim_frame_index) {
+                    if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                         // A script that desynchronises stops the scenery
                         // rather than posing it from a garbage stream.
                         stage_anim_ok = p
@@ -1368,7 +1262,7 @@ unsafe fn run() -> ! {
             // ticks once this frame" shape RE-187/188 already established for
             // `ParticleTree`/`Generator` -- an extra tick here would
             // double-advance it.
-            if effect_spawn_view && !deterministic_capture_frozen(sim_frame_index) {
+            if effect_spawn_view && !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                 let gen_dead = effect_spawn_gen.as_ref().is_none_or(|g| !g.alive);
                 let particle_dead = effect_spawn_particle
                     .as_ref()
@@ -1978,7 +1872,7 @@ unsafe fn run() -> ! {
                     // deriving a second convention. The object stays at its
                     // own real position (no recentring translate baked into
                     // the model matrix); the camera orbits it instead.
-                    let base = if cfg!(feature = "regression_capture_scene9") {
+                    let base = if capture_scene.is(CaptureScene::MetalTexgenCameraRotated) {
                         let at = ssb_engine::math::Vec3::new(centre[0], centre[1], centre[2]);
                         const YAW: f32 = 0.610_865_2; // 35 degrees
                         const PITCH: f32 = 0.349_065_85; // 20 degrees
@@ -2024,7 +1918,7 @@ unsafe fn run() -> ! {
                     // PSP directional-light channel.  Dream Land is the
                     // shared neutral context; Fox keeps Sector Z because the
                     // supplied original-game comparison uses that stage.
-                    let fighter_light = fighter_regression_scene().is_some_and(|scene| {
+                    let fighter_light = fighter_regression_scene(capture_scene).is_some_and(|scene| {
                         let stage = match scene.light_stage {
                             FighterLightStage::DreamLand => p.stage(0),
                             FighterLightStage::SectorZ => (0..p.stage_count())
@@ -2282,7 +2176,7 @@ unsafe fn run() -> ! {
                     shown.0,
                 ),
             );
-        } else if cfg!(feature = "effect_audit_capture") {
+        } else if capture_scene.effect_audit() {
             // Keep the fitted effect unobscured while retaining enough source
             // identity and draw evidence for the host capture manifest.
             gpu.debug_text(
@@ -2486,8 +2380,8 @@ unsafe fn run() -> ! {
             // drawn raw, bypassing `draw_state`.
             draw_state.invalidate_all();
         }
-        #[cfg(feature = "depth_mask_diagnostic")]
-        {
+        #[cfg(any(feature = "depth_mask_diagnostic", feature = "capture_scene_file"))]
+        if capture_scene.is(CaptureScene::DepthMask) {
             unsafe {
                 depth_diag::draw(&mut gpu, aspect);
             }
@@ -2516,7 +2410,7 @@ unsafe fn run() -> ! {
         }
         gpu.end_frame();
         #[cfg(feature = "headless_capture")]
-        if !headless_capture_sent && deterministic_capture_frozen(sim_frame_index) {
+        if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
             headless_capture_sent = true;
         }

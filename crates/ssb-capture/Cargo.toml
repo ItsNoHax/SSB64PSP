@@ -1,0 +1,10 @@
+[package]
+name = "ssb-capture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Golden-capture scene specs shared by the PSP binaries and the host golden tooling."
+
+[dependencies]

@@ -98,6 +98,31 @@ const SEARCH_PATHS: &[&str] = &[
     "ms0:/ssb64.pak\0",
 ];
 
+/// Where [`read_capture_scene`] looks for `capture_scene.txt`: the same
+/// three locations, in the same order, as the pack.
+const SCENE_SEARCH_PATHS: &[&str] = &[
+    "capture_scene.txt\0",
+    "ms0:/PSP/GAME/ssb64/capture_scene.txt\0",
+    "ms0:/capture_scene.txt\0",
+];
+
+/// Reads the golden-capture scene file into `buf`, returning the bytes read.
+/// `None` when no file exists or it is empty. A file longer than `buf` is
+/// truncated, which the spec parser then rejects or reads as its first line.
+pub fn read_capture_scene(buf: &mut [u8]) -> Option<usize> {
+    for path in SCENE_SEARCH_PATHS {
+        // SAFETY: path is a NUL-terminated literal.
+        let fd = unsafe { sys::sceIoOpen(path.as_ptr(), sys::IoOpenFlags::RD_ONLY, 0o777) };
+        if fd.0 < 0 {
+            continue;
+        }
+        let read = unsafe { sys::sceIoRead(fd, buf.as_mut_ptr() as *mut core::ffi::c_void, buf.len() as u32) };
+        unsafe { sys::sceIoClose(fd) };
+        return (read > 0).then_some(read as usize);
+    }
+    None
+}
+
 /// Human-readable form of a search path, without the C terminator.
 fn display_path(p: &'static str) -> &'static str {
     p.trim_end_matches('\0')

@@ -4,6 +4,7 @@ members = [
     "crates/ssb-rom",
     "crates/ssb-engine",
     "crates/ssb-game",
+    "crates/ssb-capture",
     "tools/romtool",
 ]
 
@@ -34,6 +35,7 @@ repository = "https://github.com/ItsNoHax/SSB64PSP"
 ssb-rom = { path = "crates/ssb-rom", default-features = false }
 ssb-engine = { path = "crates/ssb-engine", default-features = false }
 ssb-game = { path = "crates/ssb-game", default-features = false }
+ssb-capture = { path = "crates/ssb-capture" }
 
 [profile.release]
 opt-level = 3
