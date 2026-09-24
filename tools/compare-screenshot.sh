@@ -34,22 +34,9 @@ done
 
 command -v magick >/dev/null || { echo "missing required tool: magick (ImageMagick)" >&2; exit 2; }
 
-# ImageMagick 7's `compare -metric AE` reports accumulated channel error on
-# this host, despite the metric's historical "absolute-error pixel count"
-# name. RE-142 caught it reporting 9,835,820 for an image with only 836 changed
-# pixels. Build a binary per-pixel difference image instead; its mean times its
-# area is the actual number of pixels whose RGB value differs.
-GOLDEN_SIZE=$(magick identify -format '%wx%h' "$GOLDEN")
-CANDIDATE_SIZE=$(magick identify -format '%wx%h' "$CANDIDATE")
-if [ "$GOLDEN_SIZE" != "$CANDIDATE_SIZE" ]; then
-  echo "image sizes differ: golden=$GOLDEN_SIZE candidate=$CANDIDATE_SIZE" >&2
-  exit 2
-fi
-AE=$(magick "$GOLDEN" "$CANDIDATE" -compose difference -composite \
-  -threshold 0 -format '%[fx:mean*w*h]' info:)
-
-# Round defensively for ImageMagick builds which print a floating-point value.
-AE_INT=$(awk -v n="$AE" 'BEGIN { printf "%.0f", n }')
+# shellcheck source=lib/pixel-diff.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/pixel-diff.sh"
+AE_INT=$(pixel_diff_count "$GOLDEN" "$CANDIDATE") || exit 2
 echo "differing pixels: $AE_INT (threshold: $MAX_DIFF)"
 
 if [ "$AE_INT" -gt "$MAX_DIFF" ]; then
