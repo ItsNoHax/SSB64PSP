@@ -1247,10 +1247,6 @@ struct State {
     palette_entries: u16,
     /// `G_MDSFT_TEXTLUT`, once a command in this stream has set it (RE-313).
     texture_lut: LutState,
-    /// The mode each task display list was left in, and which one is live;
-    /// see [`SequenceItem::stream`].
-    stream_luts: [LutState; 2],
-    stream: u8,
     texture_enabled: bool,
     /// `G_TEXTURE`'s `scale_s`/`scale_t` (RE-101): an unsigned Q0.16
     /// multiplier the RSP applies to a vertex's raw ST the moment `G_VTX`
@@ -1349,11 +1345,6 @@ impl State {
             palette_file: None,
             palette_entries: 0,
             texture_lut: LutState::Unset,
-            stream_luts: [
-                LutState::Unset,
-                LutState::Known(crate::texture::TextureLut::None),
-            ],
-            stream: 0,
             texture_enabled: false,
             tex_scale: (0xFFFF, 0xFFFF),
             framebuffer_capture: false,
@@ -1975,13 +1966,14 @@ pub struct SequenceItem<'a> {
     /// The task display list (`gSYTaskmanDLHeads` index) this item's commands
     /// are emitted into: a `DObjDLLink`'s `list_id`, or 0.
     ///
-    /// Each head is its own command stream, so `G_MDSFT_TEXTLUT` inherits only
-    /// from earlier items on the same head (RE-313). Every list in the archive
-    /// that enables the TLUT disables it again before it ends, and the RDP
-    /// reset list sets `G_TT_NONE`; RE-313's frame captures entered head 1 with
-    /// `G_TT_NONE` every time. Head 1 therefore starts at `G_TT_NONE`, while
-    /// head 0 starts unset, since a graph converted alone may begin part-way
-    /// through a stream it shares with others.
+    /// Each head is its own command buffer, and the RDP runs a graph's head-1
+    /// commands only after its head-0 commands (RE-313). A head-1 list
+    /// therefore inherits RDP and vertex-cache state only from earlier head-1
+    /// items, never from a head-0 item that precedes it in node order:
+    /// [`convert_sequence`] keeps one [`State`] per head. Head 1 starts from
+    /// the same `initial` seed with `G_TT_NONE`: the lists that enable the
+    /// TLUT disable it again, and RE-313's frame captures entered head 1 with
+    /// `G_TT_NONE` every time.
     pub stream: u8,
 }
 
@@ -2024,11 +2016,17 @@ pub fn convert_sequence(
     src: Source<'_>,
     initial: InitialMaterial,
 ) -> Vec<Result<Mesh, MeshError>> {
-    let mut state = State::new(initial);
-    state.spaces = items.iter().map(|i| i.world).collect();
+    let spaces: Vec<crate::scene::Mat4> = items.iter().map(|i| i.world).collect();
+    let mut streams = [State::new(initial), State::new(initial)];
+    streams[1].texture_lut = LutState::Known(crate::texture::TextureLut::None);
+    for state in &mut streams {
+        state.spaces = spaces.clone();
+    }
 
     let mut out = Vec::with_capacity(items.len());
     for (i, item) in items.iter().enumerate() {
+        // One RDP/RSP state per task display list; see `SequenceItem::stream`.
+        let state = &mut streams[usize::from(item.stream.min(1))];
         state.space = i as u16;
         state.mobjs = item.mobjs.to_vec();
         state.mat_anims = item.mat_anims.to_vec();
@@ -2044,13 +2042,6 @@ pub fn convert_sequence(
         // commands, exactly like `initial` is for item 0, but per item and
         // regardless of what the previous item left behind -- see
         // `SequenceItem::depth_seed`'s own doc comment for why.
-        let stream = item.stream.min(1);
-        if stream != state.stream {
-            state.stream_luts[state.stream as usize] = state.texture_lut;
-            state.texture_lut = state.stream_luts[stream as usize];
-            state.stream = stream;
-        }
-
         if let Some((depth_test, depth_write, depth_mode)) = item.depth_seed {
             state.material.depth_test = depth_test;
             state.material.depth_write = depth_write;
@@ -2066,7 +2057,7 @@ pub fn convert_sequence(
             ..Builder::default()
         };
         let mut prims: Vec<Primitive> = Vec::new();
-        let result = walk(item.cmds, src, &mut state, &mut builder, &mut prims, 0);
+        let result = walk(item.cmds, src, state, &mut builder, &mut prims, 0);
         builder.flush(&mut prims);
 
         out.push(result.map(|()| Mesh {
@@ -2942,6 +2933,75 @@ mod tests {
         };
         assert_eq!(lut(1), TextureLut::None, "list 1 starts at G_TT_NONE");
         assert_eq!(lut(2), TextureLut::Rgba16, "list 0 keeps its own mode");
+    }
+
+    /// RE-313: the whole RDP/RSP state is per task display list, not only the
+    /// TLUT mode. A list-1 item turning texturing off must not untexture a
+    /// later list-0 continuation (`GRBonus2PurinFile2` `0x3060` before
+    /// `0x2110`), and a list-1 continuation draws with the texture an earlier
+    /// list-1 item bound, not a list-0 one (`GRBonus3File2` `0x5F10`/`0x5FC0`).
+    #[test]
+    fn rdp_state_is_tracked_per_task_display_list() {
+        use crate::scene::Mat4;
+        let file = vertex_data(3);
+        // `tlut_mode_list` binds its texels at 0x400; move them to `addr`.
+        let bind = |addr: u32, format: Format, size: BitSize| {
+            let mut cmds = tlut_mode_list(format, size, None);
+            for cmd in &mut cmds {
+                if let Cmd::SetTimg { addr: a, .. } = cmd {
+                    if *a == SegAddr(0x400) {
+                        *a = SegAddr(addr);
+                    }
+                }
+            }
+            cmds
+        };
+        let list0_texture = bind(0x400, Format::Ci, BitSize::Bits4);
+        let list1_texture = bind(0x800, Format::I, BitSize::Bits8);
+        let texture_off = [
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: false,
+                scale_s: 0,
+                scale_t: 0,
+            },
+            Cmd::End,
+        ];
+        let continuation = [vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End];
+        fn item(cmds: &[Cmd], stream: u8) -> SequenceItem<'_> {
+            SequenceItem {
+                cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: None,
+                stream,
+            }
+        }
+        let meshes = convert_sequence(
+            &[
+                item(&list0_texture, 0),
+                item(&list1_texture, 1),
+                item(&texture_off, 1),
+                item(&continuation, 0),
+                item(&list1_texture, 1),
+                item(&continuation, 1),
+            ],
+            Source::bare(&file),
+            InitialMaterial::default(),
+        );
+        let texture = |i: usize| meshes[i].as_ref().unwrap().primitives[0].material.texture;
+        assert_eq!(
+            texture(3).map(|t| t.data_offset),
+            Some(0x400),
+            "list 0 keeps its own texture through a list-1 texture-off"
+        );
+        assert_eq!(
+            texture(5).map(|t| (t.data_offset, t.format)),
+            Some((0x800, Format::I)),
+            "a list-1 continuation draws list 1's texture"
+        );
     }
 
     /// RE-177: several manager-effect sprite-cycling primitives (CommonSpark
