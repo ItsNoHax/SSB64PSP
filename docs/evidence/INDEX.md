@@ -321,5 +321,5 @@ editing a record.
 | RE-309 | GE-exact integer refinement after 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-310 | Critical authored-UV coverage and independent filter validation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-311 | Real-normal texgen coverage for 3-point compensation | COMPLETE (host and PPSSPP smoke; physical PSP not captured) | texture, texgen, asset-pipeline, pack, psp-ge |  |
-| RE-312 | Final 3-point residual census, post-RE-313 deployable fixes and manual-fix triage | COMPLETE (11 exact-use-site fixes, host and PPSSPP verified; physical PSP not captured; 0 deployable left; 1 of 189 hand-edit candidates recommended) | texture, asset-pipeline, pack, psp-ge, visual-regression |  |
+| RE-312 | Final 3-point residual census | COMPLETE (census plus post-RE-313 deployment; host and PPSSPP verified, no physical PSP capture) | texture, asset-pipeline, pack, psp-ge |  |
 | RE-313 | Texture-LUT semantics, short TLUTs and format-agnostic 3-point compensation | COMPLETE (host measurement, original-game frame capture replayed through `angrylion-rdp-plus`, PPSSPP smoke; physical PSP not captured) | texture, asset-pipeline, pack, psp-ge, rdp |  |

@@ -41,6 +41,7 @@ history.
 | Billboards, effects, shadows, framebuffer effects, UI | UI not started | [animation-effects.md](rendering/animation-effects.md) |
 | Submission order, GE state cache | Complete | [psp-lowering.md](rendering/psp-lowering.md) |
 | Filter residuals per texture | Generated report | [three-point-residuals.md](rendering/three-point-residuals.md) |
+| Section 11 visual review | A/B frame decisions | [three-point-visual-review.md](rendering/three-point-visual-review.md) |
 
 ## Validation
 

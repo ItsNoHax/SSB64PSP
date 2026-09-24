@@ -15,6 +15,8 @@ or evidence record covers it.
 | Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
 | Scene dependency graph | No explicit `scene → nodes → materials → textures → palettes` graph yet | — |
 | Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
+| Large RGBA8888 bind changes other primitives | RE-312 review: binding v799/v800 (448-wide `Psm8888`, mesh `138:0x1DB8`) turns two other primitives magenta; v901/v902 change the same 23 px of another primitive. Reproduced with unfitted source texels. Blocks any large RGBA8888 variant | RE-312 |
+| Textures above the GE 512-texel limit | 48 packed textures pad past 512 on one axis (e.g. `121:0x30` 576/928/1024 variants); GE behaviour there is undefined | RE-312 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
 ## Hardware acceptance

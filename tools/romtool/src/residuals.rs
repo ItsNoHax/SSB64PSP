@@ -626,6 +626,68 @@ fn silhouette_search(
     img
 }
 
+/// Phase-uniform set U1 over every texel cell `eval` touches: 16 samples
+/// per cell whose sub-texel phases cycle through all 32 residues across
+/// cells. U2 is the same set shifted by (4, 4)/32 texel.
+pub(super) fn phase_uniform_set(eval: &[[i32; 2]]) -> Vec<[i32; 2]> {
+    let cells: BTreeSet<(i32, i32)> = eval
+        .iter()
+        .map(|&[s, t]| (t.div_euclid(32), s.div_euclid(32)))
+        .collect();
+    let mut v = Vec::with_capacity(cells.len() * 16);
+    for (ty, tx) in cells {
+        let o = (tx * 5 + ty * 3).rem_euclid(8);
+        for j in 0..4 {
+            for i in 0..4 {
+                v.push([tx * 32 + 1 + 8 * i + o, ty * 32 + 1 + 8 * j + (o * 3) % 8]);
+            }
+        }
+    }
+    v
+}
+
+/// The cross-phase fits section 11 triages on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CrossFit {
+    /// RGBA8888, alpha free unless opaque.
+    Free,
+    /// RGB fitted, alpha held at the source.
+    AlphaHeld,
+    /// `AlphaHeld` plus the flip-minimizing cutout alpha search.
+    Silhouette,
+}
+
+/// Same-resolution RGBA8888 fit on U1 with GE-exact integer refinement:
+/// exactly the image the report's cross-phase bound scores on U2. RE-312
+/// also calls it at pack time for the listed exact-use-site overrides.
+pub(super) fn cross_phase_fit(
+    reference: &Rgba8,
+    clamp: [bool; 2],
+    policy: AlphaPolicy,
+    u1: &[[i32; 2]],
+    mode: CrossFit,
+) -> Rgba8 {
+    match mode {
+        CrossFit::Free => {
+            let refine_policy = if policy == AlphaPolicy::Opaque {
+                AlphaPolicy::Opaque
+            } else {
+                AlphaPolicy::Translucent
+            };
+            let o = fit(reference, reference, clamp, u1, free_channels(policy));
+            refine(reference, &o.image, clamp, u1, refine_policy)
+        }
+        CrossFit::AlphaHeld => {
+            let a = fit(reference, reference, clamp, u1, &[0, 1, 2]);
+            refine(reference, &a.image, clamp, u1, policy)
+        }
+        CrossFit::Silhouette => {
+            let held = cross_phase_fit(reference, clamp, policy, u1, CrossFit::AlphaHeld);
+            silhouette_search(reference, held, clamp, u1, policy)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pack decode and GE padded-addressing check
 // ---------------------------------------------------------------------------
@@ -869,6 +931,11 @@ struct Analysis {
     current_level0_bytes: u64,
     current_pack_bytes: u64,
     practical_image: Rgba8,
+    /// RE-312 deployed direct override (`re312-direct-override`): the
+    /// uncompensated source and the shipped fit on U1 (the set the fit was
+    /// made on) and on the disjoint U2: [source U1, shipped U1, source U2,
+    /// shipped U2].
+    deployed_override: Option<[Eval; 4]>,
 }
 
 impl Analysis {
@@ -1394,22 +1461,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     // Phase-uniform check: 16 samples per touched cell whose sub-texel
     // phases cycle through all 32 residues across cells, free of the
     // boundary-probe emphasis in the holdout.
-    let uniform_set: Vec<[i32; 2]> = {
-        let cells: BTreeSet<(i32, i32)> = eval
-            .iter()
-            .map(|&[s, t]| (t.div_euclid(32), s.div_euclid(32)))
-            .collect();
-        let mut v = Vec::with_capacity(cells.len() * 16);
-        for (ty, tx) in cells {
-            let o = (tx * 5 + ty * 3).rem_euclid(8);
-            for j in 0..4 {
-                for i in 0..4 {
-                    v.push([tx * 32 + 1 + 8 * i + o, ty * 32 + 1 + 8 * j + (o * 3) % 8]);
-                }
-            }
-        }
-        v
-    };
+    let uniform_set = phase_uniform_set(&eval);
     let uniform = {
         let cur_u = eval_current(&images, clamp, &uniform_set, policy, phase);
         let unc_u = eval_states(
@@ -1522,11 +1574,10 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                     k,
                     bilinear(now, clamp),
                 ));
-                let o = fit(r, r, clamp, &uniform_set, free);
                 let o_img = if refine_integer {
-                    refine(r, &o.image, clamp, &uniform_set, refine_policy)
+                    cross_phase_fit(r, clamp, policy, &uniform_set, CrossFit::Free)
                 } else {
-                    o.image
+                    fit(r, r, clamp, &uniform_set, free).image
                 };
                 rgba.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&o_img, clamp)));
                 in_sample[1].merge(&evaluate(
@@ -1538,14 +1589,14 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                     bilinear(&o_img, clamp),
                 ));
                 if policy != AlphaPolicy::Opaque {
-                    let a = fit(r, r, clamp, &uniform_set, &[0, 1, 2]);
                     let a_img = if refine_integer {
-                        refine(r, &a.image, clamp, &uniform_set, policy)
+                        cross_phase_fit(r, clamp, policy, &uniform_set, CrossFit::AlphaHeld)
                     } else {
-                        a.image
+                        fit(r, r, clamp, &uniform_set, &[0, 1, 2]).image
                     };
                     held.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&a_img, clamp)));
                     if matches!(policy, AlphaPolicy::Cutout { .. }) {
+                        // Same image as `CrossFit::Silhouette` without refitting.
                         let s_img = silhouette_search(r, a_img, clamp, &uniform_set, policy);
                         sil.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&s_img, clamp)));
                         in_sample[2].merge(&evaluate(
@@ -1593,6 +1644,12 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                 },
             }
         });
+    let deployed_override = (c.method == "re312-direct-override").then(|| {
+        let u2: Vec<[i32; 2]> = uniform_set.iter().map(|&[s, t]| [s + 4, t + 4]).collect();
+        let (r, now) = &images[0];
+        [(&uniform_set, r), (&uniform_set, now), (&u2, r), (&u2, now)]
+            .map(|(set, img)| evaluate(r, clamp, set, policy, 0, bilinear(img, clamp)))
+    });
     let uniform_transfer = UniformTransfer {
         rgba_oracle: on_uniform(&oracle_imgs),
         alpha_held_oracle: (!held_imgs.is_empty()).then(|| on_uniform(&held_imgs)),
@@ -1636,6 +1693,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         current_level0_bytes: cur_level0,
         current_pack_bytes: cur_pack,
         practical_image,
+        deployed_override,
     }
 }
 
@@ -2964,6 +3022,18 @@ fn row_json(r: &Row<'_>, names: &Names) -> String {
                 x.in_sample[1].as_ref().map_or("null".into(), eval_json),
                 x.in_sample[2].as_ref().map_or("null".into(), eval_json),
                 x.in_sample[3].as_ref().map_or("null".into(), eval_json),
+            ),
+        ));
+    }
+    if let Some([su1, cu1, su2, cu2]) = &a.deployed_override {
+        alts.push((
+            "deployed_override",
+            format!(
+                "{{\"source_u1\":{},\"shipped_u1\":{},\"source_u2\":{},\"shipped_u2\":{}}}",
+                eval_json(su1),
+                eval_json(cu1),
+                eval_json(su2),
+                eval_json(cu2),
             ),
         ));
     }

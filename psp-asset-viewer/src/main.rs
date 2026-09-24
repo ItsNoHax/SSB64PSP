@@ -103,6 +103,7 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_stage_index")
             || cfg!(feature = "regression_capture_mario_entry")
             || cfg!(feature = "regression_capture_bonus_platform")
+            || cfg!(feature = "regression_capture_object")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
@@ -656,6 +657,26 @@ unsafe fn run() -> ! {
             }
         }
     }
+    // RE-312 visual review: any one source graph, chosen at build time by
+    // `SSB64_CAPTURE_OBJECT=<file>:<hex offset>` (A/B captures of a
+    // residual use site in its real graph).
+    if cfg!(feature = "regression_capture_object") {
+        let key = option_env!("SSB64_CAPTURE_OBJECT").and_then(|v| {
+            let (file, offset) = v.split_once(':')?;
+            Some((
+                file.parse::<u32>().ok()?,
+                u32::from_str_radix(offset.trim_start_matches("0x"), 16).ok()?,
+            ))
+        });
+        if let (Some(p), Some((file, offset))) = (&pack, key) {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == file && o.source_offset == offset)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-098: no real costume-selection game system exists yet, so the only
     // way to see whether a fighter's alternate costumes actually render is
     // the same debug-viewer-cycle precedent `RE-095`'s `MaterialAnimator`
@@ -687,6 +708,7 @@ unsafe fn run() -> ! {
             feature = "effect_animation_audit_capture",
             feature = "effect_material_audit_capture",
             feature = "regression_capture_bonus_platform",
+            feature = "regression_capture_object",
             feature = "regression_capture_scene2",
             feature = "regression_capture_scene3",
             feature = "regression_capture_scene4",
@@ -1277,6 +1299,7 @@ unsafe fn run() -> ! {
                     feature = "regression_capture_scene7",
                     feature = "regression_capture_scene8",
                     feature = "regression_capture_scene9",
+                    feature = "regression_capture_object",
                     feature = "regression_capture_link"
                 ))
             {

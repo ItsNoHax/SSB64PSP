@@ -433,6 +433,10 @@ fn crop(r: &Row<'_>) -> String {
         .map_or("-".into(), |p| format!("`{}/`", p.display()))
 }
 
+fn arrow(now: u64, after: u64) -> String {
+    format!("{now} -> {after} ({})", pct(now, after))
+}
+
 fn pct(now: u64, after: u64) -> String {
     format!("{:.1}%", 100.0 * gain(now, after))
 }
@@ -920,4 +924,39 @@ pub(super) fn section(m: &mut String, rows: &[Row<'_>], ranked: &[usize], names:
         );
     }
     let _ = writeln!(m);
+
+    let deployed: Vec<&Row<'_>> = rows
+        .iter()
+        .filter(|r| r.a.deployed_override.is_some())
+        .collect();
+    let _ = writeln!(
+        m,
+        "## Deployed exact-use-site overrides ({})\n\nSection 11 rows shipped as immutable RGBA8888 variants (`residual_fixes::Kind::Direct`): the fix class's fit made at pack time on the site's own U1 and scored here on U1 and on the disjoint U2 against the uncompensated source (what a `no-solve` conversion ships). Holdout is the variant's independent holdout. Visual review decisions for the other section 11 rows are in [three-point-visual-review.md](three-point-visual-review.md).\n",
+        deployed.len()
+    );
+    if !deployed.is_empty() {
+        let _ = writeln!(
+            m,
+            "| Variant | Use | Holdout source -> shipped | U1 source -> shipped | U2 source -> shipped | U2 flips | U2 >=16 samples | Level-0 bytes | Pack bytes |\n|---|---|---|---|---|---|---|---:|---:|"
+        );
+        for r in deployed {
+            let [su1, cu1, su2, cu2] = r.a.deployed_override.as_ref().unwrap();
+            let _ = writeln!(
+                m,
+                "| {} | {} | {} | {} | {} | {} -> {} | {} -> {} | {} | {} |",
+                ident(r),
+                use_sites_text(r.a, names, 4),
+                arrow(r.a.uncompensated.eval.vis.sse, r.a.current.eval.vis.sse),
+                arrow(su1.vis.sse, cu1.vis.sse),
+                arrow(su2.vis.sse, cu2.vis.sse),
+                su2.cutout_mismatch,
+                cu2.cutout_mismatch,
+                su2.vis.ge16,
+                cu2.vis.ge16,
+                r.a.current_level0_bytes,
+                r.a.current_pack_bytes,
+            );
+        }
+        let _ = writeln!(m);
+    }
 }

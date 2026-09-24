@@ -5,15 +5,22 @@
 //! report's independent holdout and phase-uniform gates selected them.
 
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 use ssb_rom::mesh::TextureRef;
 
 use crate::filter_coverage;
+use crate::residuals::CrossFit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Phase([i16; 2]),
     Dense,
+    /// Section 11 `DIRECT_RGBA_OVERRIDE`/`USE_SITE_TEXTURE_VARIANT`: an
+    /// immutable RGBA8888 texture fitted at build time on the site's own
+    /// phase-uniform set U1 (`residuals::cross_phase_fit`), the fit whose
+    /// disjoint-U2 result justified the fix.
+    Direct(CrossFit),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,6 +155,18 @@ pub(super) const CASES: &[Case] = &[
         kind: Kind::Dense,
         sites: &[(356, 0x4C0, 1), (356, 0x560, 0)],
     },
+    // Section 11's single MANUAL_FIX_RECOMMENDED row (report at pack SHA-256
+    // 97b3f4d8...5707f216): CI4 cutout(a>0), clamp/clamp, one coverage
+    // shared by both entry points of the same list. Cross-phase U2 visible
+    // SSE 1708580 -> 898375 (47.4%), alpha-test flips 8 -> 4.
+    Case {
+        variant: 766,
+        source_file: 120,
+        source_offset: 0x418,
+        dimensions: [40, 8],
+        kind: Kind::Direct(CrossFit::Silhouette),
+        sites: &[(137, 0x28C8, 1), (137, 0x28D0, 1)],
+    },
 ];
 
 /// Dense rows the report measures as deployable but the packer's own
@@ -182,13 +201,166 @@ pub(super) fn dense_gate_rejected(file: u32, offset: u32, dims: [u32; 2]) -> Opt
         .map(|&(_, _, _, why)| why)
 }
 
+/// Section 11 `VISUAL_REVIEW_REQUIRED` rows as report-only candidate
+/// overrides. Never packed unless `romtool pack --residual-candidates`
+/// names them; the shipped pack carries none of these. Fit modes follow the
+/// triage's fix-class fit: the silhouette fit for alpha-constrained cutouts,
+/// otherwise the better of the free and alpha-held fits on U2.
+pub(super) const REVIEW_CASES: &[Case] = &[
+    review(
+        397,
+        107,
+        0x50,
+        [272, 256],
+        CrossFit::Free,
+        &[(107, 0x6A30, 2), (107, 0x6A30, 4)],
+    ),
+    review(
+        1004,
+        157,
+        0x6C0,
+        [384, 384],
+        CrossFit::AlphaHeld,
+        &[(157, 0x9D8, 0)],
+    ),
+    review(
+        404,
+        108,
+        0x6D40,
+        [192, 64],
+        CrossFit::Free,
+        &[(108, 0x7E90, 7)],
+    ),
+    review(
+        252,
+        86,
+        0x4C18,
+        [64, 64],
+        CrossFit::Silhouette,
+        &[(86, 0x5458, 0), (86, 0x5450, 0)],
+    ),
+    review(
+        837,
+        121,
+        0x30,
+        [288, 400],
+        CrossFit::Free,
+        &[(140, 0x10F0, 3)],
+    ),
+    review(
+        799,
+        121,
+        0x30,
+        [448, 288],
+        CrossFit::Free,
+        &[(138, 0x1DB8, 9)],
+    ),
+    review(
+        800,
+        121,
+        0x30,
+        [448, 400],
+        CrossFit::Free,
+        &[(138, 0x1DB8, 10)],
+    ),
+    review(
+        902,
+        121,
+        0x30,
+        [304, 576],
+        CrossFit::Free,
+        &[(144, 0x34E0, 33), (144, 0x34D8, 33)],
+    ),
+    review(
+        901,
+        121,
+        0x30,
+        [288, 112],
+        CrossFit::Free,
+        &[(144, 0x34E0, 32), (144, 0x34D8, 32)],
+    ),
+    review(
+        609,
+        117,
+        0x7A8,
+        [384, 192],
+        CrossFit::Free,
+        &[(117, 0x1708, 1)],
+    ),
+    review(
+        599,
+        116,
+        0x21C8,
+        [384, 384],
+        CrossFit::Free,
+        &[(116, 0x3AB0, 6)],
+    ),
+    review(
+        76,
+        52,
+        0x24228,
+        [32, 32],
+        CrossFit::Silhouette,
+        &[(52, 0x24660, 0)],
+    ),
+];
+
+const fn review(
+    variant: u16,
+    source_file: u32,
+    source_offset: u32,
+    dimensions: [u16; 2],
+    fit: CrossFit,
+    sites: &'static [(u32, u32, usize)],
+) -> Case {
+    Case {
+        variant,
+        source_file,
+        source_offset,
+        dimensions,
+        kind: Kind::Direct(fit),
+        sites,
+    }
+}
+
+static CANDIDATES: OnceLock<Vec<u16>> = OnceLock::new();
+
+/// Report-only: pack the named `REVIEW_CASES` variants too (A/B captures).
+pub(super) fn enable_candidates(variants: Vec<u16>) -> Result<(), String> {
+    for v in &variants {
+        if !REVIEW_CASES.iter().any(|c| c.variant == *v) {
+            return Err(format!("v{v} is not a review candidate"));
+        }
+    }
+    CANDIDATES
+        .set(variants)
+        .map_err(|_| "review candidates already set".to_string())
+}
+
+static HIDE_PROBE: OnceLock<bool> = OnceLock::new();
+
+/// Report-only silhouette probe: every packed `Kind::Direct` cutout texel
+/// gets alpha 0, so a capture shows the frame without those sites. Frame
+/// pixels that differ from this probe are pixels the site's texture drew.
+pub(super) fn enable_hide_probe() {
+    let _ = HIDE_PROBE.set(true);
+}
+
+pub(super) fn hide_probe() -> bool {
+    HIDE_PROBE.get().copied().unwrap_or(false)
+}
+
 pub(super) fn find(file: u32, dl: u32, prim: usize, tex: &TextureRef) -> Option<&'static Case> {
     let source = tex.data_file.map_or(file, u32::from);
-    CASES.iter().find(|c| {
-        c.source_file == source
-            && c.source_offset == tex.data_offset
-            && c.sites.contains(&(file, dl, prim))
-    })
+    let enabled = CANDIDATES.get().map_or(&[][..], Vec::as_slice);
+    CASES
+        .iter()
+        .chain(REVIEW_CASES.iter().filter(|c| enabled.contains(&c.variant)))
+        .find(|c| {
+            c.source_file == source
+                && c.source_offset == tex.data_offset
+                && c.sites.contains(&(file, dl, prim))
+        })
 }
 
 /// RE-312's measured method: four phase-varied samples in every cell touched
@@ -258,9 +430,20 @@ mod tests {
     }
 
     #[test]
+    fn review_candidates_are_off_unless_named() {
+        assert!(CANDIDATES.get().is_none());
+        assert!(REVIEW_CASES
+            .iter()
+            .all(|c| !CASES.iter().any(|d| d.variant == c.variant)));
+        assert!(REVIEW_CASES
+            .iter()
+            .all(|c| matches!(c.kind, Kind::Direct(_))));
+    }
+
+    #[test]
     fn manifest_sites_are_unique_and_phases_are_bounded() {
         let mut sites = BTreeSet::new();
-        for case in CASES {
+        for case in CASES.iter().chain(REVIEW_CASES) {
             assert!(case.dimensions[0] > 0 && case.dimensions[1] > 0);
             for site in case.sites {
                 assert!(sites.insert(*site), "duplicate residual fix site {site:?}");
