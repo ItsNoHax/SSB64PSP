@@ -68,8 +68,12 @@ Shipped memory delta: +1,728 B level 0, +1,728 B pack.
   magenta (494 shared pixels ≥ 32). Binding either v901 or v902 changes the
   same 23 pixels of another primitive in stage 35. An RGBA8888 texture with
   the source texels, unfitted, reproduces the v799 magenta, so the fit is
-  not the cause. v766's changed pixels all fall inside its own site. The
-  cause is not yet known; see `TODO.md`.
+  not the cause. v766's changed pixels all fall inside its own site.
+  RE-314 resolved both: the magenta pillars are prim 7 (texture 797,
+  576×64), whose 1024 stride overflowed `TSIZE` and sampled 799's bytes.
+  The stage-35 pixels come from pack size changing the animation pose at
+  capture. Neither is caused by the candidates' binds.
 - **48 packed textures exceed the GE's 512-texel limit** after power-of-two
   padding, including `121:0x30`'s 576-texel variants (v902's texture is
-  304×576). This predates RE-312; see `TODO.md`.
+  304×576). This predates RE-312. RE-314 caps their declared GE size at
+  512; texels past 512 remain unreachable (`TODO.md`).

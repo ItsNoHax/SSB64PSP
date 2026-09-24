@@ -28,7 +28,10 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   and the pack under PPSSPP's memstick (required for `MEMSIZE`), and writes a
   960×544 PNG to `$PPSSPP_HEADLESS_TEST_DIR` (default `~/ppsspp-headless-test`).
 - Capture features freeze all simulation and animation at a fixed tick and
-  hide the debug HUD, so the capture is independent of wall-clock timing.
+  hide the debug HUD. Exception: `psp-asset-viewer` ticks stage and material
+  animation once per render frame, so a pack whose size changes load timing
+  can move an animated pose by one tick (RE-314, `TODO.md`). Repeat captures
+  of one pack are byte-identical.
 - `--pack PATH` stages another pack (A/B captures); the native 480×272 frame
   is also written as `screenshot-native.png`. `tools/residual-ab-capture.sh`
   uses both for the RE-312 visual review
@@ -131,3 +134,15 @@ skill.
 
 Pack SHA-256 `de9f6c64679b7d42e7b9d35dace9115a13f1cd96c00923748b994e3f825acc08` differs from the previous pack only in texture 766 (Board the Platforms, Mario). Every stage, scene and fighter golden was recaptured: only `r2-stage-bonus2-mario` changed, by 308 pixels at 2x (77 native pixels, all inside the v766 site, maximum 5/255). It was refreshed; a repeat capture differs by 0 pixels. The 14 fighter goldens pass. The eight known-failing goldens bind no changed texture.
 
+## 2026-09-24 RE-314 texture size cap
+
+Runtime only; the pack is unchanged. Textures whose padded width or height
+exceeds 512 are now declared to the GE as 512 instead of overflowing
+`TSIZE`. Eleven stage goldens changed and were refreshed:
+`r2-stage-kongo-jungle`, `r2-stage-hyrule-castle`,
+`r2-stage-bonus1-{link,kirby,ness}` and
+`r2-stage-bonus2-{fox,link,captain-falcon,kirby,pikachu,ness}` (2,184 to
+53,200 pixels at 2x). With the 88 primitives that bind an over-512 texture
+hidden, old and new captures of all eleven are byte-identical, so every
+change is inside those primitives. Each refreshed golden matched a repeat
+capture. Stage 1 (control) is unchanged.
