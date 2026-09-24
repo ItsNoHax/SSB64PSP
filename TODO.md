@@ -15,7 +15,6 @@ or evidence record covers it.
 | Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
 | Scene dependency graph | No explicit `scene → nodes → materials → textures → palettes` graph yet | — |
 | Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
-| Buffer rows under 16 bytes | 300 non-swizzled T4 textures use stride 16 or 8 (8- or 4-byte rows). PPSSPP reads them with a 16-byte pitch, past their own bytes: measured on stage 35, where a 16×208 T4 texture samples the pack bytes after it (RE-318). Pad the stride to 16 bytes; check real-GE behaviour on hardware | RE-314, RE-318 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
 ## Hardware acceptance
@@ -26,7 +25,8 @@ Deferred by user instruction.
 |---|---|---|
 | PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. RE-318 shrank it to 22,010,384 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
-| Re-capture current goldens on hardware | Physical captures predate pack v31 and several golden refreshes | — |
+| Re-capture current goldens on hardware | Physical captures predate pack v32 and several golden refreshes | — |
+| 16-byte texture row minimum on hardware | PPSSPP and pspautotests use it; the fix is correct with no minimum or a 16-byte one. Run RE-319's stripe diagnostic on a PSP | RE-319 |
 
 ## Open questions
 

@@ -166,7 +166,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `MatAnimDesc` grew its per-material MObj rest state in version 30.  This
 // cannot be read compatibly by an older runtime because the following table
 // starts at a different byte offset.
-pub const VERSION: u32 = 31;
+//
+// 32 widens every texture row to at least 16 bytes (RE-319,
+// `psp_texture::ge_buffer_stride`), so `TextureDesc::stride` can exceed the
+// power of two of `width`. A v31 runtime declares the GE size from `stride`
+// and would double those textures' wrap period.
+pub const VERSION: u32 = 32;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -541,7 +546,10 @@ impl MeshDesc {
 pub struct TextureDesc {
     pub width: u16,
     pub height: u16,
-    /// Row stride in texels; a power of two, may exceed `width`.
+    /// Row stride in texels (`sceGuTexImage`'s buffer width); a power of
+    /// two, may exceed `width`, and at least 16 bytes of row
+    /// (`psp_texture::ge_buffer_stride`, RE-319). The declared GE size comes
+    /// from `width`/`height` (`psp_texture::ge_texture_dims`), not from this.
     pub stride: u16,
     /// `Psm` discriminant.
     pub psm: u8,
@@ -1457,9 +1465,9 @@ impl PackWriter {
         self.textures.push(TextureDesc {
             width,
             height,
-            // Matches every other `TextureDesc`'s convention: `stride` is the
-            // power-of-two the GE actually addresses (`sceGuTexImage`'s
-            // `bufferwidth`), `width` is metadata only.
+            // Matches every other `TextureDesc`'s convention: `stride` is
+            // `sceGuTexImage`'s `bufferwidth`; `width` gives the declared
+            // size. 8888 rows this wide are already over 16 bytes.
             stride: width.next_power_of_two(),
             psm: crate::psp_texture::Psm::Psm8888 as u8,
             swizzled: 0,

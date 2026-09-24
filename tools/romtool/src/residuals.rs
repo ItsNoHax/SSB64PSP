@@ -692,9 +692,12 @@ pub(super) fn cross_phase_fit(
 // Pack decode and GE padded-addressing check
 // ---------------------------------------------------------------------------
 
-/// Level 0 of a packed variant, including padding, as the GE addresses it.
+/// Level 0 of a packed variant, including padding, as the GE addresses it:
+/// the declared power-of-two width, read at the buffer `stride`, which may be
+/// wider (RE-319).
 fn decode_packed(t: &PspTexture, palette: &[u32]) -> Option<(Rgba8, Vec<u8>)> {
     let stride = t.stride as usize;
+    let pw = psp::pad_to_power_of_two(t.width) as usize;
     let ph = psp::pad_to_power_of_two(t.height) as usize;
     let bits = t.format.bits();
     let stride_bytes = (stride * bits).div_ceil(8);
@@ -704,11 +707,11 @@ fn decode_packed(t: &PspTexture, palette: &[u32]) -> Option<(Rgba8, Vec<u8>)> {
     } else {
         raw.to_vec()
     };
-    let mut img = Rgba8::new(stride as u32, ph as u32);
+    let mut img = Rgba8::new(pw as u32, ph as u32);
     let mut indices = Vec::new();
     let abgr = |v: u32| [v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8];
     for y in 0..ph {
-        for x in 0..stride {
+        for x in 0..pw {
             let px = match t.format {
                 Psm::Psm8888 => {
                     let o = y * stride_bytes + x * 4;
@@ -741,7 +744,7 @@ fn decode_packed(t: &PspTexture, palette: &[u32]) -> Option<(Rgba8, Vec<u8>)> {
                 }
                 _ => return None,
             };
-            img.put(y * stride + x, px);
+            img.put(y * pw + x, px);
         }
     }
     Some((img, indices))
@@ -954,7 +957,7 @@ impl Analysis {
 }
 
 fn level0_bytes(w: u32, h: u32, psm: Psm, palette: usize) -> u64 {
-    let stride = psp::pad_to_power_of_two(w) as u64;
+    let stride = psp::ge_buffer_stride(w, psm.bits()) as u64;
     let ph = psp::pad_to_power_of_two(h) as u64;
     (stride * psm.bits() as u64).div_ceil(8) * ph + palette as u64 * 4
 }
@@ -1101,10 +1104,10 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
             }
             let matched = match &c.animated {
                 Some(a) => {
-                    let stride = v.packed.stride as usize;
+                    let pw = psp::pad_to_power_of_two(v.packed.width) as usize;
                     (0..h as usize).all(|y| {
                         (0..w as usize)
-                            .all(|x| indices[y * stride + x] == a.final_indices[y * w as usize + x])
+                            .all(|x| indices[y * pw + x] == a.final_indices[y * w as usize + x])
                     })
                 }
                 None => logical.pixels == c.final_level0.pixels,
@@ -4554,6 +4557,21 @@ mod tests {
         let t = psp::pack_mipped(&img, Psm::Psm8888, &[], true);
         let (padded, _) = decode_packed(&t, &[]).unwrap();
         assert_eq!(crop(&padded, 8, 8).pixels, img.pixels);
+    }
+
+    /// RE-319: a 2-wide RGBA8888 texture is stored at a 4-texel (16-byte)
+    /// stride, but the GE still addresses and wraps it at 2.
+    #[test]
+    fn packed_level0_decodes_at_the_declared_width_not_the_stride() {
+        let mut img = Rgba8::new(2, 8);
+        for i in 0..16 {
+            img.put(i, [i as u8 * 9, 0, 255 - i as u8, 255]);
+        }
+        let t = psp::pack_mipped(&img, Psm::Psm8888, &[], true);
+        assert_eq!(t.stride, 4);
+        let (padded, _) = decode_packed(&t, &[]).unwrap();
+        assert_eq!((padded.width, padded.height), (2, 8));
+        assert_eq!(padded.pixels, img.pixels);
     }
 
     #[test]

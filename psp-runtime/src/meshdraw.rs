@@ -517,10 +517,10 @@ unsafe fn bind_texture(
         let psm = psm_of(t.psm);
         sys::sceGuTexMode(psm, 0, 0, 0);
         let data = crate::gu::transition_photo_data();
-        // Matches the general path below: the GE addresses `t.stride`
-        // (padded power of two), never `t.width`, and `sceGuTexScale`'s
+        // Matches the general path below: the buffer width is `t.stride`,
+        // the declared size is `ge_texture_dims`, and `sceGuTexScale`'s
         // denominators must be exactly what was handed to `sceGuTexImage`.
-        let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.stride as u32, t.height as u32);
+        let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
         sys::sceGuTexImage(
             mip_level(0),
             w as i32,
@@ -576,10 +576,17 @@ unsafe fn bind_texture(
     let top = 0;
     sys::sceGuTexMode(psm, top as i32, 0, t.swizzled as i32);
     let mut offset = 0usize;
-    let mut w = t.stride as u32;
+    let mut w = (t.width as u32).next_power_of_two();
     let mut h = (t.height as u32).next_power_of_two();
     for level in 0..=top {
-        let stride_bytes = (w as usize * psm_bits(psm)).div_ceil(8);
+        // RE-319: rows are stored at least 16 bytes wide, the GE's minimum
+        // buffer row, so the buffer width can exceed the declared width.
+        let bufw = if level == 0 {
+            t.stride as u32
+        } else {
+            ssb_rom::psp_texture::ge_buffer_stride(w, psm_bits(psm))
+        };
+        let stride_bytes = (bufw as usize * psm_bits(psm)).div_ceil(8);
         let size = stride_bytes * h as usize;
         let Some(slice) = data.get(offset..offset + size) else {
             break;
@@ -592,7 +599,7 @@ unsafe fn bind_texture(
             mip_level(level),
             ge_w as i32,
             ge_h as i32,
-            w as i32,
+            bufw as i32,
             slice.as_ptr() as *const c_void,
         );
         offset += size;
@@ -736,10 +743,11 @@ unsafe fn apply_texture_mapping(
         return;
     };
     // Exactly the dimensions handed to `sceGuTexImage`, for both roles: the
-    // padded stride and the padded height, each capped at 512 (RE-314).
+    // padded width and the padded height, each capped at 512 (RE-314).
     // Using the logical height stretches whichever axis is not already a
-    // power of two.
-    let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.stride as u32, t.height as u32);
+    // power of two; using the stride doubles a widened narrow texture's
+    // period (RE-319).
+    let (w, h) = ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32);
 
     if !environment {
         sys::sceGuTexMapMode(sys::TextureMapMode::TextureCoords, 0, 0);

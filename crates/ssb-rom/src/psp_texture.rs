@@ -108,14 +108,33 @@ pub fn pad_to_power_of_two(v: u32) -> u32 {
     v.max(1).next_power_of_two()
 }
 
+/// Smallest texture buffer row the GE addresses, in bytes. PPSSPP masks the
+/// buffer width (`tbw`) to a 16-byte multiple and turns anything smaller into
+/// 16 bytes (`GetTextureBufw`, `textureAlignMask16`), and pspautotests lay
+/// out every hardware test texture at no less than this. A texture stored
+/// with 4- or 8-byte rows is read at twice or four times its real row pitch
+/// (RE-319).
+pub const GE_MIN_BUFFER_ROW_BYTES: u32 = 16;
+
+/// The buffer stride, in texels, a level `width` texels wide is stored at:
+/// the power of two the GE addresses, widened so a row is at least
+/// [`GE_MIN_BUFFER_ROW_BYTES`] (32 texels for `PsmT4`, 16 for `PsmT8`).
+/// The extra columns are padding the GE never samples, because
+/// [`ge_texture_dims`] still declares the unwidened width.
+pub fn ge_buffer_stride(width: u32, bits_per_texel: usize) -> u32 {
+    pad_to_power_of_two(width).max(GE_MIN_BUFFER_ROW_BYTES * 8 / bits_per_texel as u32)
+}
+
 /// Largest texture dimension the GE can address: `TSIZE` holds a log2 of at
 /// most 9, and PPSSPP clamps/wraps every texel coordinate to 511 regardless.
 pub const GE_MAX_TEXTURE_DIM: u32 = 512;
 
 /// The `(width, height)` a packed texture is declared to the GE with via
 /// `sceGuTexImage`, and therefore also what `sceGuTexScale`/`TexOffset` must
-/// normalise against: the padded buffer size, capped at
-/// [`GE_MAX_TEXTURE_DIM`]. The buffer width (`tbw`) stays `stride`.
+/// normalise against: the logical width and height padded to powers of two,
+/// capped at [`GE_MAX_TEXTURE_DIM`]. Pass the texture's logical `width`, not
+/// its `stride`: the buffer width (`tbw`) stays `stride`, which
+/// [`ge_buffer_stride`] may have widened past the declared width (RE-319).
 ///
 /// RE-314: rust-psp's `sceGuTexImage` encodes each dimension as
 /// `31 - ctlz(dim & 0x3FF)`, so a 1024 dimension becomes `-1` and the GE
@@ -125,9 +144,9 @@ pub const GE_MAX_TEXTURE_DIM: u32 = 512;
 /// 576x64 primitive magenta. Capping keeps every read inside the first
 /// 512x512 texels of the buffer; texels past 512 stay unreachable on the GE
 /// (TODO "Textures above the GE 512-texel limit").
-pub fn ge_texture_dims(stride: u32, height: u32) -> (u32, u32) {
+pub fn ge_texture_dims(width: u32, height: u32) -> (u32, u32) {
     (
-        pad_to_power_of_two(stride).min(GE_MAX_TEXTURE_DIM),
+        pad_to_power_of_two(width).min(GE_MAX_TEXTURE_DIM),
         pad_to_power_of_two(height).min(GE_MAX_TEXTURE_DIM),
     )
 }
@@ -510,7 +529,7 @@ pub fn choose_psm(format: Format, size: BitSize) -> Psm {
 ///
 /// Non-paletted path. Pads to power-of-two dimensions and swizzles.
 pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
-    let stride = pad_to_power_of_two(img.width);
+    let stride = ge_buffer_stride(img.width, format.bits());
     let padded_h = pad_to_power_of_two(img.height);
 
     let mut data: Vec<u8> = match format {
@@ -581,9 +600,10 @@ pub fn pack_rgba(img: &Rgba8, format: Psm, swizzle_it: bool) -> PspTexture {
 
 /// Whether a texture's dimensions permit swizzling.
 ///
-/// Small textures whose rows are under 16 bytes cannot be swizzled; the GE
-/// wants whole 16x8-byte blocks. Returning false rather than padding further
-/// keeps tiny textures small.
+/// Rows under 16 bytes cannot be swizzled; the GE wants whole 16x8-byte
+/// blocks. Packed textures never have them since RE-319
+/// ([`ge_buffer_stride`]), but mip chains still stop at a level whose
+/// unwidened row would be one.
 pub fn can_swizzle(stride_bytes: usize, height: usize) -> bool {
     stride_bytes >= 16 && stride_bytes.is_multiple_of(16) && height.is_multiple_of(8)
 }
@@ -758,7 +778,7 @@ pub fn pack_indexed(
         });
     }
 
-    let stride = pad_to_power_of_two(width);
+    let stride = ge_buffer_stride(width, format.bits());
     let padded_h = pad_to_power_of_two(height);
     let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
     let src_row_bytes = (width as usize * format.bits()).div_ceil(8);
@@ -833,8 +853,9 @@ mod mip_tests {
             image.put(i, [0, 0, 0, 255]);
         }
         let packed = pack_mipped_indices(&image, Psm::PsmT4, &a, false, &[0, 1, 1, 0], &states);
+        // Rows are 16 bytes wide (RE-319): row 1 starts at byte 16.
         assert_eq!(packed.data[0], 0x10);
-        assert_eq!(packed.data[1], 0x01);
+        assert_eq!(packed.data[16], 0x01);
         assert_eq!(states[1][(packed.data[0] & 0xf) as usize], b[0]);
         assert_eq!(states[1][(packed.data[0] >> 4) as usize], b[1]);
         assert_eq!(
@@ -910,7 +931,10 @@ mod mip_tests {
             img.put(i, [v, v, v, 255]);
         }
         let tex = pack_mipped(&img, Psm::PsmT4, &pal, false);
-        assert_eq!(tex.stride, 4, "3 pads to a 4-texel stride");
+        assert_eq!(
+            tex.stride, 32,
+            "3 pads to 4 texels, widened to the GE's 16-byte row (RE-319)"
+        );
         // Level 0: byte 0 = texels (0,5), byte 1 = texels (10, padding),
         // low nibble first (RE-280).
         assert_eq!(tex.data[0], 0x50, "texels 0 and 1 unchanged");
@@ -995,6 +1019,47 @@ mod tests {
             assert!(w.is_power_of_two() && w <= GE_MAX_TEXTURE_DIM);
             assert_eq!(1 << rust_psp_tsize_log2(w), w);
         }
+    }
+
+    #[test]
+    fn buffer_rows_are_never_under_the_ge_16_byte_minimum() {
+        // RE-319: 790 (16x400) and 791 (16x576) in Board the Platforms (Fox)
+        // are CI4 with 8-byte rows. PPSSPP reads them at a 16-byte pitch.
+        assert_eq!(ge_buffer_stride(16, 4), 32);
+        assert_eq!(ge_buffer_stride(8, 4), 32);
+        assert_eq!(ge_buffer_stride(8, 8), 16);
+        assert_eq!(ge_buffer_stride(2, 16), 8);
+        assert_eq!(ge_buffer_stride(1, 32), 4);
+        assert_eq!(ge_buffer_stride(64, 4), 64, "wide rows are unchanged");
+        // The declared size keeps the logical width, so UVs and wrapping
+        // are unchanged: only the row pitch in memory grows.
+        assert_eq!(ge_texture_dims(16, 400), (16, 512));
+
+        let pal: Vec<u32> = (0..16)
+            .map(|i| pack_abgr([i * 17, i * 17, i * 17, 255]))
+            .collect();
+        let indices = alloc::vec![0u8; 16 * 400 / 2];
+        for format in [Psm::PsmT4, Psm::PsmT8, Psm::Psm5551, Psm::Psm8888] {
+            for width in [1, 3, 4, 8, 16, 64] {
+                let img = Rgba8::new(width, 8);
+                let bits = format.bits();
+                let mut packed = alloc::vec![pack_rgba(&img, format, false)];
+                if format.is_paletted() {
+                    packed.push(pack_mipped(&img, format, &pal, false));
+                }
+                for tex in packed {
+                    let row = (tex.stride as usize * bits).div_ceil(8);
+                    assert!(row >= 16, "{format:?} width {width}: {row}-byte row");
+                }
+            }
+        }
+        let tex = pack_indexed(&indices, 16, 400, BitSize::Bits4, &pal, true).unwrap();
+        assert_eq!(tex.stride, 32);
+        assert_eq!(
+            tex.data.len(),
+            16 * 512,
+            "16-byte rows, height padded to 512"
+        );
     }
 
     #[test]
@@ -1355,11 +1420,12 @@ mod tests {
         let indices = [10u8, 20, 30];
         let tlut: Vec<u16> = alloc::vec![0; 256];
         let tex = pack_paletted(&indices, 3, 1, BitSize::Bits8, &tlut, false).unwrap();
-        assert_eq!(tex.stride, 4);
-        assert_eq!(
-            &tex.data[..],
-            [10, 20, 30, 30],
-            "padding texel repeats the edge index (30)"
+        // Widened to the GE's 16-byte row (RE-319).
+        assert_eq!(tex.stride, 16);
+        assert_eq!(&tex.data[..3], [10, 20, 30]);
+        assert!(
+            tex.data[3..].iter().all(|&i| i == 30),
+            "padding texels repeat the edge index (30)"
         );
     }
 
@@ -1558,17 +1624,20 @@ mod tests {
     }
 
     #[test]
-    fn tiny_textures_are_left_unswizzled() {
-        // 4x8 at 8 bits = 4-byte rows, below the 16-byte block width.
+    fn tiny_textures_are_widened_and_swizzled() {
+        // 4x8 RGBA8888.
         let img = Rgba8::new(4, 8);
         let tex = pack_rgba(&img, Psm::Psm8888, true);
         // 4 texels * 4 bytes = 16 bytes/row, which *is* swizzlable.
         assert!(tex.swizzled);
 
-        // But a 2-wide 8888 texture has 8-byte rows.
+        // A 2-wide 8888 texture would have 8-byte rows, but the GE's
+        // 16-byte minimum widens it to 4 texels, which swizzle (RE-319).
         let img = Rgba8::new(2, 8);
         let tex = pack_rgba(&img, Psm::Psm8888, true);
-        assert!(!tex.swizzled, "rows under 16 bytes cannot swizzle");
+        assert_eq!(tex.stride, 4);
+        assert!(tex.swizzled);
+        assert!(!can_swizzle(8, 8), "rows under 16 bytes cannot swizzle");
     }
 
     /// Pure-math transcription of what the GE's texture-matrix multiply
@@ -1808,7 +1877,7 @@ fn nearest_entry(palette: &[u32], rgba: [u8; 4]) -> u8 {
 
 /// Encodes one level into the GE's padded stride, unswizzled.
 fn encode_level(img: &Rgba8, format: Psm, palette: &[u32]) -> (Vec<u8>, u32) {
-    let stride = pad_to_power_of_two(img.width);
+    let stride = ge_buffer_stride(img.width, format.bits());
     let padded_h = pad_to_power_of_two(img.height);
     let stride_bytes = (stride as usize * format.bits()).div_ceil(8);
     let mut data = alloc::vec![0u8; stride_bytes * padded_h as usize];
@@ -1941,13 +2010,17 @@ fn pack_mipped_with_indices(
             }
         }
         let padded_h = pad_to_power_of_two(img.height);
-        let stride_bytes = data.len() / (padded_h as usize).max(1);
         // The GE's swizzle flag is per texture, not per level, so a chain
         // containing one level too small to swizzle would cost the whole
         // texture its swizzling. Small levels are also the ones that matter
         // least — the dither is resolved by the first level or two — so the
         // chain stops where swizzling would, rather than the other way round.
-        if !levels.is_empty() && swizzle_it && !can_swizzle(stride_bytes, padded_h as usize) {
+        // Judged on the unwidened row: `ge_buffer_stride`'s 16-byte minimum
+        // (RE-319) would otherwise make every narrow level swizzlable and
+        // grow chains the runtime never samples (RE-127).
+        let natural_row_bytes =
+            (pad_to_power_of_two(img.width) as usize * format.bits()).div_ceil(8);
+        if !levels.is_empty() && swizzle_it && !can_swizzle(natural_row_bytes, padded_h as usize) {
             break;
         }
         levels.push((data, stride, padded_h));
