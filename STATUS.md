@@ -6,28 +6,28 @@ gameplay → combat systems → all 12 fighters → match gameplay, translated i
 large coherent batches rather than per-function).
 
 Current subsystem/batch: **texture-LUT semantics, short TLUTs and
-format-agnostic 3-point compensation (complete, RE-313)**. `mesh.rs` now
-tracks `G_MDSFT_TEXTLUT` per task display list (`SequenceItem::stream`) and
-carries it on `TextureRef::tlut`; a TLUT-off draw carries no palette.
-`texture::decode_lut` follows `angrylion-rdp-plus`: with the TLUT on, any
-4-/8-bit texel is a TLUT index, and the entry expands as RGBA16 or IA16. The
-four RE-312 I4/I8 cases all draw with `G_TT_NONE`; they had inherited a TLUT
-across task lists. `G_LOADTLUT` loads exactly `count` entries, and an index
-past them reads stale TMEM. The original game's frame lists, replayed
-through `angrylion-rdp-plus`, give slot 3 = `0x1091` for the four Break the
-Targets arrows and slot 255 = `0xFE59` for the opening-room book, in every
-measured frame (`STALE_TLUT_ENTRIES`). `convert_texture` sends every format
-through one compensator: RGBA16 keeps `Psm5551`, RGBA32/IA stay `Psm8888`,
-and the RE-283 bypass is compensated as `Psm8888`. Census rerun: suspected
-bugs 19 -> 0, level-0 mismatches 10 -> 0, never-attempted 225 -> 0; 18 of
-the 165 materially bad direct variants improve and none regress; the top
-residuals are unchanged. Pack 29,627,552 -> 29,362,880 bytes (three builds
-byte-identical). 805 ROM-gated workspace tests pass, both PSP release builds
-succeed, and the PPSSPPHeadless Dream Land smoke renders.
-`r2-dk-fighter.png` now differs (3,508 pixels, max 15/255, DK's compensated
-bypass textures); goldens were not rebaselined. No physical PSP capture. No
-manual 3-point override yet. The next gameplay batch remains Donkey Kong
-under `P2`.
+format-agnostic 3-point compensation (complete, RE-313)**. `mesh.rs` tracks
+`G_MDSFT_TEXTLUT` and carries it on `TextureRef::tlut`; a TLUT-off draw
+carries no palette. `convert_sequence` keeps one whole RDP/RSP state per task
+display list (`SequenceItem::stream`), since the RDP runs a graph's head-1
+commands after its head-0 commands; this also fixed state leaking between
+the lists (Mushroom Kingdom's castle and pyramid now draw, Zebes' underside is
+textured). `texture::decode_lut` follows `angrylion-rdp-plus`: with the TLUT
+on, any 4-/8-bit texel is a TLUT index. `G_LOADTLUT` loads exactly `count`
+entries; an index past them reads stale TMEM, measured on the original game
+through `angrylion-rdp-plus` (`STALE_TLUT_ENTRIES`: Break the Targets arrows
+slot 3 = `0x1091`, opening-room book slot 255 = `0xFE59`). Every format enters
+the one compensator: RGBA16 keeps `Psm5551`, RGBA32/IA stay `Psm8888`, and
+the RE-283 bypass is compensated as `Psm8888`. Census: suspected bugs
+19 -> 0, level-0 mismatches 10 -> 0, never-attempted 225 -> 0; 29 of the 165
+materially bad direct variants improve, none regress; top residuals
+unchanged. Pack 29,627,552 -> 29,363,360 bytes, byte-identical across builds.
+806 ROM-gated workspace tests pass and both PSP release builds succeed. 27
+goldens were rebaselined (DK and 26 stage/scene goldens); 8 goldens that
+already differed before this batch (`f1-training-*`, `r1-mvopeningroom`,
+`r2-depth-mask-diagnostic`, `r2-metal-texgen*`) are untouched and still
+fail. No physical PSP capture. No manual 3-point override yet. The next
+gameplay batch remains Donkey Kong under `P2`.
 
 Previous rendering subsystem/batch: **final 3-point residual census (complete,
 RE-312, report only)**. `romtool residuals <rom>` measures every mesh-texture
