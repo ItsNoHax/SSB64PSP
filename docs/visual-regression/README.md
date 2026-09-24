@@ -81,8 +81,10 @@ tools/compare-screenshot.sh tests/golden/<golden>.png ~/ppsspp-headless-test/scr
   directory or `no-status-overlay.ini`. PPSSPPHeadless keeps its memstick at
   `$HOME/.ppsspp` and does not save `ppsspp.ini`, so no other state is
   shared. `golden.sh` deletes each job's game directory afterwards.
-- The pack is hard-linked into the game directory (copied across
-  filesystems) and not restaged when it is already the same file.
+- The pack is hard-linked into `--job` game directories and copied into the
+  shared ones, and not restaged when it is already the same file. A hard
+  link in a shared directory would let an older checkout's runner, which
+  stages with `cp -f`, overwrite this repository's pack.
 - Capture features freeze all simulation and animation at a fixed tick and
   hide the debug HUD. Every animator advances per simulation tick, so a
   capture does not depend on load timing or pack size (RE-315).
