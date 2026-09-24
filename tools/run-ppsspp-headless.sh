@@ -109,9 +109,12 @@ MEMSTICK="${PPSSPP_MEMSTICK_DIR:-$HOME/.ppsspp/PSP/GAME}/$MEMSTICK_NAME"
 mkdir -p "$OUT" "$MEMSTICK"
 cp -f "$EBOOT" "$MEMSTICK/EBOOT.PBP"
 
-# Stage the 29 MB pack by hard link (copy across filesystems), and not at all
-# when the staged file is already the same inode, or has the same size and
-# mtime (a previous `cp -p` of the same pack).
+# Stage the 29 MB pack, and not at all when the staged file is already the
+# same inode, or has the same size and mtime (a previous `cp -p` of the same
+# pack). --job directories get a hard link (copy across filesystems). The
+# shared ssb64_regression directories always get a copy: an older checkout's
+# runner stages there with `cp -f`, which would write through a hard link
+# into this repository's pack.
 stage_pack() {
   local src="$1" dst="$2"
   if [ -f "$dst" ]; then
@@ -123,7 +126,10 @@ stage_pack() {
   # Unlink first: writing through an existing hard link would overwrite the
   # previously staged pack's source file.
   rm -f "$dst"
-  ln "$src" "$dst" 2>/dev/null || cp -p "$src" "$dst"
+  if [ -n "$JOB" ] && ln "$src" "$dst" 2>/dev/null; then
+    return 0
+  fi
+  cp -p "$src" "$dst"
 }
 
 # The scene file is written for --scene runs and removed otherwise, so a
