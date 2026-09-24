@@ -38,6 +38,13 @@ capture_scene_file = ["regression_capture"]
 # freezing it would break that.
 regression_capture = []
 
+# RE-321 diagnostics: draw only the current (pass 1) or only the next
+# (pass 2 at full weight) texture of the two-tile fractional blend, so a
+# capture of each can be checked per pixel against the RDP equation. Never
+# in a real build.
+lod_blend_current_only = []
+lod_blend_next_only = []
+
 # R1's second deterministic scene (`docs/visual-regression.md`'s test
 # matrix): boots straight into the object viewer on file 52's `mvopeningroom`
 # graph (RE-198's CI8 and untextured/vertex-coloured examples both live in

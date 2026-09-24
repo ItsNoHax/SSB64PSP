@@ -39,6 +39,7 @@
 //! ParticleBankDesc[particle_bank_count]
 //! ParticleScriptDesc[particle_script_count]
 //! ParticleTextureDesc[particle_texture_count]
+//! LodBlendDesc[lod_blend_count]
 //! ---- 16-byte aligned blob region ----
 //! vertex data | index data | texel data | palette data | animation scripts
 //! ```
@@ -171,7 +172,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `psp_texture::ge_buffer_stride`), so `TextureDesc::stride` can exceed the
 // power of two of `width`. A v31 runtime declares the GE size from `stride`
 // and would double those textures' wrap period.
-pub const VERSION: u32 = 32;
+//
+// 33 adds `flags::LOD_BLEND` and the `LodBlendDesc` table after the particle
+// textures (RE-321); the header grows by its count.
+pub const VERSION: u32 = 33;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -184,8 +188,8 @@ pub const VERTEX_SIZE: usize = 20;
 
 /// Header. 64 bytes through `VERSION` 11; `mat_anim_count`/
 /// `mat_anim_palette_count` (`VERSION` 12) extend it to 72, and
-/// `costume_override_count` (`VERSION` 13) to 76, and three particle counts
-/// (`VERSION` 25) to 88. The original 64 was a coincidence of having exactly
+/// `costume_override_count` (`VERSION` 13) to 76, three particle counts
+/// (`VERSION` 25) to 88, and `lod_blend_count` (`VERSION` 33) to 92. The original 64 was a coincidence of having exactly
 /// 16 `u32` fields, not a hard alignment requirement (only the blob region,
 /// computed separately via `blob_offset`, needs 16-byte alignment for GE DMA).
 #[repr(C)]
@@ -222,10 +226,12 @@ pub struct Header {
     pub particle_bank_count: u32,
     pub particle_script_count: u32,
     pub particle_texture_count: u32,
+    /// Two-tile fractional blend records (RE-321).
+    pub lod_blend_count: u32,
 }
 
 impl Header {
-    pub const SIZE: usize = 88;
+    pub const SIZE: usize = 92;
 }
 
 /// A vertex in the GE's expected layout.
@@ -359,6 +365,12 @@ pub mod flags {
     /// Repeat axes need no fallback: the unsigned reinterpretation adds 2048
     /// texels, an exact multiple of every power-of-two N64 mask period.
     pub const SIGNED_CLAMP_UV: u32 = 1 << 19;
+    /// RE-321: the RDP two-tile fractional image blend. The primitive's
+    /// [`super::PrimDesc::mat_anim`] names a [`super::LodBlendDesc`]; the
+    /// device draws `TEXEL1` in a second pass weighted by the live
+    /// `PRIM_LOD_FRAC`. Only set once the packer has verified the two-pass
+    /// decomposition is exact for this primitive.
+    pub const LOD_BLEND: u32 = 1 << 20;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -853,6 +865,28 @@ pub struct MatAnimPalette {
 
 impl MatAnimPalette {
     pub const SIZE: usize = 8;
+}
+
+/// The second texture of a two-tile fractional image blend (RE-321), keyed by
+/// the [`MatAnimDesc`] whose `SetLFrac`/`TextureIDNext`/`ScrU`/`ScrV` tracks
+/// drive it. Only primitives with [`flags::LOD_BLEND`] look one up.
+///
+/// `next_textures[i]` is `sprites[i]` converted through tile 1's own shape,
+/// indexed by `TextureIDNext`. When tile 1's shape equals tile 0's they are
+/// the same textures [`MatAnimDesc::textures`] already names.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LodBlendDesc {
+    pub mat_anim: u32,
+    pub next_count: u32,
+    pub next_textures: [u32; MatAnimDesc::MAX_TEXTURES],
+    /// `MObjSub::{unk0A, unk38, unk3A}`: tile 1's live window equation
+    /// inputs, the counterparts of [`MatAnimDesc::uv_tile_params`].
+    pub tile1_params: [u32; 3],
+}
+
+impl LodBlendDesc {
+    pub const SIZE: usize = 52;
 }
 
 /// A per-costume mesh substitution for one node (RE-098).
@@ -1396,6 +1430,7 @@ pub struct PackWriter {
     particle_banks: Vec<ParticleBankDesc>,
     particle_scripts: Vec<ParticleScriptDesc>,
     particle_textures: Vec<ParticleTextureDesc>,
+    lod_blends: Vec<LodBlendDesc>,
     blob: Vec<u8>,
 }
 
@@ -1943,6 +1978,33 @@ impl PackWriter {
         p.phase_t_q5 = phase[1];
     }
 
+    /// Records a two-tile fractional blend for `mat_anim`, once (RE-321).
+    /// Returns `false` when a different record already claims `mat_anim`:
+    /// one script cannot drive two tile-1 shapes through one key.
+    pub fn add_lod_blend(&mut self, desc: LodBlendDesc) -> bool {
+        match self.lod_blends.iter().find(|d| d.mat_anim == desc.mat_anim) {
+            Some(existing) => *existing == desc,
+            None => {
+                assert!(desc.next_count as usize <= MatAnimDesc::MAX_TEXTURES);
+                self.lod_blends.push(desc);
+                true
+            }
+        }
+    }
+
+    /// Marks one primitive for the two-tile blend's second pass (RE-321).
+    /// The caller must have added the [`LodBlendDesc`] its `mat_anim` names.
+    pub fn set_mesh_prim_lod_blend(&mut self, mesh: u32, prim: usize) {
+        let m = self.meshes[mesh as usize];
+        assert!(prim < m.prim_count as usize);
+        let p = &mut self.prims[m.first_prim as usize + prim];
+        assert!(
+            self.lod_blends.iter().any(|d| d.mat_anim == p.mat_anim),
+            "LOD_BLEND primitive without a LodBlendDesc"
+        );
+        p.flags |= flags::LOD_BLEND;
+    }
+
     /// Adds a scene graph, returning the object's index.
     ///
     /// `mesh_for` maps a node's index within `graph` to a mesh index already
@@ -2298,7 +2360,8 @@ impl PackWriter {
             + self.costume_overrides.len() * CostumeOverride::SIZE
             + self.particle_banks.len() * ParticleBankDesc::SIZE
             + self.particle_scripts.len() * ParticleScriptDesc::SIZE
-            + self.particle_textures.len() * ParticleTextureDesc::SIZE;
+            + self.particle_textures.len() * ParticleTextureDesc::SIZE
+            + self.lod_blends.len() * LodBlendDesc::SIZE;
         let blob_offset = align_up(Header::SIZE + table_bytes);
 
         // Sorted by (node, costume) so the reader can binary-search rather
@@ -2332,6 +2395,7 @@ impl PackWriter {
         out.extend_from_slice(&(self.particle_banks.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.particle_scripts.len() as u32).to_le_bytes());
         out.extend_from_slice(&(self.particle_textures.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(self.lod_blends.len() as u32).to_le_bytes());
         out.resize(Header::SIZE, 0);
 
         for m in &self.meshes {
@@ -2553,6 +2617,15 @@ impl PackWriter {
             out.extend_from_slice(&texture.height.to_le_bytes());
             out.extend_from_slice(&texture.flags.to_le_bytes());
         }
+        for lod in &self.lod_blends {
+            for v in [lod.mat_anim, lod.next_count]
+                .into_iter()
+                .chain(lod.next_textures)
+                .chain(lod.tile1_params)
+            {
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+        }
 
         out.resize(blob_offset, 0);
         out.extend_from_slice(&self.blob);
@@ -2614,6 +2687,7 @@ pub struct Pack<'a> {
     particle_bank_count: u32,
     particle_script_count: u32,
     particle_texture_count: u32,
+    lod_blend_count: u32,
     blob_offset: usize,
     blob_len: usize,
 }
@@ -2674,6 +2748,7 @@ impl<'a> Pack<'a> {
         let particle_bank_count = u32_at(data, 76);
         let particle_script_count = u32_at(data, 80);
         let particle_texture_count = u32_at(data, 84);
+        let lod_blend_count = u32_at(data, 88);
 
         let tables_end = Header::SIZE
             + mesh_count as usize * MeshDesc::SIZE
@@ -2693,7 +2768,8 @@ impl<'a> Pack<'a> {
             + costume_override_count as usize * CostumeOverride::SIZE
             + particle_bank_count as usize * ParticleBankDesc::SIZE
             + particle_script_count as usize * ParticleScriptDesc::SIZE
-            + particle_texture_count as usize * ParticleTextureDesc::SIZE;
+            + particle_texture_count as usize * ParticleTextureDesc::SIZE
+            + lod_blend_count as usize * LodBlendDesc::SIZE;
 
         if blob_offset < tables_end || blob_offset.saturating_add(blob_len) > data.len() {
             return Err(PackError::OutOfBounds);
@@ -2719,6 +2795,7 @@ impl<'a> Pack<'a> {
             particle_bank_count,
             particle_script_count,
             particle_texture_count,
+            lod_blend_count,
             blob_offset,
             blob_len,
         })
@@ -2829,6 +2906,10 @@ impl<'a> Pack<'a> {
     fn particle_texture_table(&self) -> usize {
         self.particle_script_table()
             + self.particle_script_count as usize * ParticleScriptDesc::SIZE
+    }
+    fn lod_blend_table(&self) -> usize {
+        self.particle_texture_table()
+            + self.particle_texture_count as usize * ParticleTextureDesc::SIZE
     }
     fn line_table(&self) -> usize {
         self.stage_table() + self.stage_count as usize * StageDesc::SIZE
@@ -3352,6 +3433,28 @@ impl<'a> Pack<'a> {
             width: u16_at(self.data, at + 8),
             height: u16_at(self.data, at + 10),
             flags: u32_at(self.data, at + 12),
+        })
+    }
+
+    pub fn lod_blend_count(&self) -> u32 {
+        self.lod_blend_count
+    }
+
+    /// The two-tile fractional blend record keyed by `mat_anim` (RE-321). A
+    /// linear scan: the ROM has two, and only [`flags::LOD_BLEND`] primitives
+    /// ask.
+    pub fn lod_blend(&self, mat_anim: u32) -> Option<LodBlendDesc> {
+        (0..self.lod_blend_count).find_map(|i| {
+            let at = self.lod_blend_table() + i as usize * LodBlendDesc::SIZE;
+            (u32_at(self.data, at) == mat_anim).then(|| {
+                let word = |k: usize| u32_at(self.data, at + 4 * k);
+                LodBlendDesc {
+                    mat_anim,
+                    next_count: word(1),
+                    next_textures: core::array::from_fn(|j| word(2 + j)),
+                    tile1_params: core::array::from_fn(|j| word(2 + MatAnimDesc::MAX_TEXTURES + j)),
+                }
+            })
         })
     }
 
@@ -5545,5 +5648,90 @@ mod tests {
         assert_eq!(n.rest_scale, [1.0, 2.0, 0.5]);
         // And the baked world matrix is still there for the static path.
         assert_eq!(n.world[12], 1.5 / MODEL_SCALE);
+    }
+
+    #[test]
+    fn lod_blend_records_round_trip_after_every_other_table() {
+        // RE-321: the table sits last, so a wrong `SIZE` would move the blob
+        // and misread the second record.
+        let mut w = PackWriter::new();
+        let mesh = w.add_mesh(&sample_mesh(), 104, 0x22C8, |_| None, |_| Some(7));
+        let first = LodBlendDesc {
+            mat_anim: 7,
+            next_count: 2,
+            next_textures: [
+                10,
+                11,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+            ],
+            tile1_params: [384, 128, 128],
+        };
+        let second = LodBlendDesc {
+            mat_anim: 9,
+            next_count: 1,
+            next_textures: [
+                12,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+            ],
+            tile1_params: [64, 32, 64],
+        };
+        assert!(w.add_lod_blend(first));
+        assert!(
+            w.add_lod_blend(first),
+            "an identical record is accepted once"
+        );
+        assert!(!w.add_lod_blend(LodBlendDesc {
+            next_count: 1,
+            ..first
+        }));
+        assert!(w.add_lod_blend(second));
+        w.set_mesh_prim_lod_blend(mesh, 0);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        assert_eq!(pack.lod_blend_count(), 2);
+        assert_eq!(pack.lod_blend(7), Some(first));
+        assert_eq!(pack.lod_blend(9), Some(second));
+        assert_eq!(pack.lod_blend(8), None);
+        let expected_tables =
+            Header::SIZE + MeshDesc::SIZE + PrimDesc::SIZE + 2 * LodBlendDesc::SIZE;
+        assert_eq!(pack.blob_offset, align_up(expected_tables));
+
+        let prim = pack.prim(0).unwrap();
+        assert_ne!(prim.flags & flags::LOD_BLEND, 0);
+        assert_eq!(prim.mat_anim, 7);
+    }
+
+    #[test]
+    fn lod_blend_is_zero_cost_for_a_pack_without_one() {
+        let mut w = PackWriter::new();
+        w.add_mesh(&sample_mesh(), 1, 2, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        assert_eq!(pack.lod_blend_count(), 0);
+        assert_eq!(pack.prim(0).unwrap().flags & flags::LOD_BLEND, 0);
+        assert_eq!(
+            pack.blob_offset,
+            align_up(Header::SIZE + MeshDesc::SIZE + PrimDesc::SIZE)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "LOD_BLEND primitive without a LodBlendDesc")]
+    fn a_lod_blend_flag_needs_its_record() {
+        let mut w = PackWriter::new();
+        let mesh = w.add_mesh(&sample_mesh(), 1, 2, |_| None, |_| Some(3));
+        w.set_mesh_prim_lod_blend(mesh, 0);
     }
 }

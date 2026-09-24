@@ -540,6 +540,30 @@ pub struct MeshMaterial {
     /// anim's own resolved sprite variants, which already have their own real
     /// per-frame addresses independent of this primitive's static state.
     pub texture_shape: Option<TextureRef>,
+    /// The RDP two-tile fractional image blend (RE-321): `SetLFrac`'s
+    /// `PRIM_LOD_FRAC` crossfading tile 0's image into tile 1's. `None` for
+    /// every primitive outside that classified shape.
+    pub lod_blend: Option<LodBlend>,
+}
+
+/// A primitive whose first combiner cycle is `(TEXEL1 - TEXEL0) *
+/// PRIM_LOD_FRAC + TEXEL0`, fed by an animated `MObj` (RE-321).
+///
+/// [`MeshMaterial::texture`] is `TEXEL0`; this carries `TEXEL1` and the
+/// static fraction. The live fraction, `TextureIDNext` and tile 1's window
+/// come from the material animation at draw time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LodBlend {
+    /// Tile 1's image as bound statically: `sprites[0]` through tile 1's own
+    /// format, window, mask, mirror/clamp and palette bank.
+    pub next: TextureRef,
+    /// `PRIM_LOD_FRAC` at the `MObj`'s initial `lfrac`.
+    pub frac: u8,
+    /// The constant the second cycle multiplies the blended alpha by:
+    /// `PRIMITIVE` alpha, or 255 when it passes `COMBINED_ALPHA` through.
+    pub prim_alpha: u8,
+    /// `unk0A`, `unk38`, `unk3A`: tile 1's live window equation inputs.
+    pub tile1_params: [u16; 3],
 }
 
 /// Identifies the material animation script driving a texture's active
@@ -1176,7 +1200,85 @@ fn combiner_flat_color(
     ])
 }
 
-/// Tracks RDP/RSP state while walking a display list./// Tracks RDP/RSP state while walking a display list.
+/// Tracks RDP/RSP state while walking a display list./// Whether the first cycle is `(TEXEL1 - TEXEL0) * PRIM_LOD_FRAC + TEXEL0`
+/// in both RGB and alpha: the RDP two-tile fractional image blend (RE-321).
+fn combiner_is_lod_lerp(hi: u32, lo: u32) -> bool {
+    const TEXEL0: u32 = 1;
+    const TEXEL1: u32 = 2;
+    const PRIM_LOD_FRAC: u32 = 14;
+    const ALPHA_PRIM_LOD_FRAC: u32 = 6;
+    let rgb = [
+        (hi >> 20) & 0xF,
+        (lo >> 28) & 0xF,
+        (hi >> 15) & 0x1F,
+        (lo >> 15) & 0x7,
+    ];
+    let alpha = [
+        (hi >> 12) & 0x7,
+        (lo >> 12) & 0x7,
+        (hi >> 9) & 0x7,
+        (lo >> 9) & 0x7,
+    ];
+    rgb == [TEXEL1, TEXEL0, PRIM_LOD_FRAC, TEXEL0]
+        && alpha == [TEXEL1, TEXEL0, ALPHA_PRIM_LOD_FRAC, TEXEL0]
+}
+
+/// The same combiner with its first RGB cycle replaced by a bare `TEXEL0`
+/// (`(0 - 0) * 0 + TEXEL0`), for classifying what the second cycle does to
+/// each pass's texel. Across the two GE passes the sampled texel *is* the
+/// blended `COMBINED` the second cycle reads (RE-321).
+fn lod_texel_combiner(hi: u32, lo: u32) -> (u32, u32) {
+    const ZERO_A: u32 = 15;
+    const ZERO_B: u32 = 15;
+    const ZERO_C: u32 = 31;
+    const TEXEL0: u32 = 1;
+    (
+        (hi & !(0xF << 20) & !(0x1F << 15)) | (ZERO_A << 20) | (ZERO_C << 15),
+        (lo & !(0xF << 28) & !(0x7 << 15)) | (ZERO_B << 28) | (TEXEL0 << 15),
+    )
+}
+
+/// What the second cycle's alpha does to the blended `COMBINED_ALPHA`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LodAlpha {
+    /// `(any - any) * 0 + COMBINED`.
+    Combined,
+    /// `(COMBINED - 0) * PRIM + 0`.
+    TimesPrim,
+}
+
+/// Classifies the second cycle's alpha for the two-tile blend, or declines a
+/// shape that reads anything per-vertex (RE-321).
+fn lod_cycle2_alpha(lo: u32) -> Option<LodAlpha> {
+    const COMBINED: u32 = 0;
+    const PRIM: u32 = 3;
+    const ZERO: u32 = 7;
+    let (a, b, c, d) = (
+        (lo >> 21) & 0x7,
+        (lo >> 3) & 0x7,
+        (lo >> 18) & 0x7,
+        lo & 0x7,
+    );
+    match (a, b, c, d) {
+        (_, _, ZERO, COMBINED) => Some(LodAlpha::Combined),
+        (COMBINED, ZERO, PRIM, ZERO) => Some(LodAlpha::TimesPrim),
+        _ => None,
+    }
+}
+
+/// One tile descriptor as [`State::tile_texture`] reads it.
+#[derive(Debug, Clone, Copy, Default)]
+struct TileView {
+    fmt: Option<(u8, u8)>,
+    dims: Option<(u16, u16)>,
+    origin: Option<(u16, u16)>,
+    mask: Option<(u8, u8)>,
+    cm: Option<(u8, u8)>,
+    palette: Option<u8>,
+    line: u16,
+}
+
+/// Tracks RDP/RSP state while walking a display list.
 struct State {
     cache: [Option<CacheEntry>; VTX_CACHE_SIZE as usize],
     /// The space `G_VTX` loads into and triangles are emitted in.
@@ -1272,6 +1374,22 @@ struct State {
     /// only run when it did — applying it in one-cycle mode would invent a
     /// multiply the hardware never performs.
     two_cycle: bool,
+    /// Tile 1, `TEXEL1`'s source in a two-cycle combiner (RE-321).
+    tile1: TileView,
+    /// `G_SETTILE`'s `tmem` word address per tile.
+    tile_tmem: [u16; 8],
+    /// `G_SETTILE`'s `shifts`/`shiftt` per tile.
+    tile_shifts: [(u8, u8); 8],
+    /// TMEM word address, offset and file of the image an `MObj` last
+    /// block-loaded through tile 6 for `texture_id_next`; cleared by any later
+    /// load to the same address.
+    next_block: Option<(u16, u32, Option<u16>)>,
+    /// `G_SETPRIMCOLOR`'s `PRIM_LOD_FRAC` byte and colour, from the list or
+    /// an `MObj` (RE-321). Kept apart from `material.prim_color`, whose
+    /// existing readers predate it.
+    prim_lod: Option<(u8, [u8; 4])>,
+    /// `unk0A`, `unk38`, `unk3A` of the `MObj` that last set tile 1's window.
+    tile1_params: Option<[u16; 3]>,
     /// The current node's `MObj` chain; see `SequenceItem::mobjs`.
     mobjs: Vec<crate::mobj::MObjMaterial>,
     /// Parallel to `mobjs`; see `SequenceItem::mat_anims`.
@@ -1351,6 +1469,12 @@ impl State {
             combiner: None,
             initial_alpha_blend: initial.alpha_blend,
             two_cycle: false,
+            tile1: TileView::default(),
+            tile_tmem: [0; 8],
+            tile_shifts: [(0, 0); 8],
+            next_block: None,
+            prim_lod: None,
+            tile1_params: None,
             mobjs: Vec::new(),
             mat_anims: Vec::new(),
         }
@@ -1451,6 +1575,30 @@ impl State {
             self.texture_enabled = true;
             self.tex_scale = (s, t);
         }
+        // RE-321: the two-tile blend's inputs, in `gcDrawMObjForDObj`'s
+        // order -- the primitive colour carrying `PRIM_LOD_FRAC`, the block
+        // load of `sprites[texture_id_next]` through tile 6, and tile 1's
+        // window.
+        if let Some(lod) = m.prim_lod {
+            self.prim_lod = Some(lod);
+        }
+        if m.loads_next_block {
+            if let Some(sprite) = m.sprite {
+                self.next_block = Some((self.tile_tmem[6], sprite.offset, sprite.file));
+            }
+        }
+        if let Some((uls, ult, lrs, lrt)) = m.tile1_uv {
+            self.tile1.dims = Some((
+                ((lrs.saturating_sub(uls)) >> 2) + 1,
+                ((lrt.saturating_sub(ult)) >> 2) + 1,
+            ));
+            self.tile1.origin = Some((uls, ult));
+            self.tile1_params = Some([
+                m.mat_anim_tile_params[0],
+                m.tile1_params[0],
+                m.tile1_params[1],
+            ]);
+        }
     }
 
     /// Drops the texture binding a call we cannot follow would have replaced.
@@ -1472,7 +1620,16 @@ impl State {
     /// combiner this model cannot follow leaves it `None`, and the shade is
     /// used unmodified, which is what the renderer did before any of this.
     fn material_now(&self) -> MeshMaterial {
-        let scale = self.combiner.and_then(|(hi, lo)| {
+        let texture = self.current_texture();
+        // RE-321: under the two-tile blend, each GE pass samples one of the
+        // two texels the first cycle interpolates, so the second cycle is
+        // classified against a bare `TEXEL0` first cycle.
+        let lod_blend = self.lod_blend_now(texture);
+        let combiner = match (self.combiner, lod_blend) {
+            (Some((hi, lo)), Some(_)) => Some(lod_texel_combiner(hi, lo)),
+            (combiner, _) => combiner,
+        };
+        let scale = combiner.and_then(|(hi, lo)| {
             combiner_shade_scale(
                 hi,
                 lo,
@@ -1484,8 +1641,7 @@ impl State {
         // Gated on a texture the same way `alpha_test`/`translucent` are:
         // the whole point of this shape is the texture driving the blend
         // (RE-073), so without one there is nothing for `TEXEL` to mean.
-        let texture = self.current_texture();
-        let texture_blend = texture.and(self.combiner).and_then(|(hi, lo)| {
+        let texture_blend = texture.and(combiner).and_then(|(hi, lo)| {
             combiner_texture_blend(
                 hi,
                 lo,
@@ -1494,7 +1650,7 @@ impl State {
                 self.material.env_color,
             )
         });
-        let flat_color = self.combiner.and_then(|(hi, lo)| {
+        let flat_color = combiner.and_then(|(hi, lo)| {
             combiner_flat_color(
                 hi,
                 lo,
@@ -1566,6 +1722,7 @@ impl State {
             // on a scale no non-texgen draw reads, since the walker already
             // baked the authored UVs at load time.
             texgen_scale: (self.material.texture_gen != TextureGen::None).then_some(self.tex_scale),
+            lod_blend,
             ..self.material
         }
     }
@@ -1575,8 +1732,37 @@ impl State {
         if !self.texture_enabled {
             return None;
         }
-        let (fmt, siz) = self.tile0_fmt?;
-        let (drawn_width, drawn_height) = self.tile_dims?;
+        let image = if self.framebuffer_capture {
+            None
+        } else {
+            Some((self.timg_addr?, self.timg_file))
+        };
+        self.tile_texture(self.tile0_view(), image)
+    }
+
+    /// Tile 0 as [`Self::tile_texture`] reads it.
+    fn tile0_view(&self) -> TileView {
+        TileView {
+            fmt: self.tile0_fmt,
+            dims: self.tile_dims,
+            origin: self.tile0_origin,
+            mask: self.tile0_mask,
+            cm: self.tile0_cm,
+            palette: self.tile0_palette,
+            line: self.tile_lines[RENDER_TILE as usize],
+        }
+    }
+
+    /// The texture one tile samples from `image` (`None`: the runtime
+    /// framebuffer capture). Shared by tile 0 and the two-tile blend's tile 1
+    /// (RE-321), so both go through one set of wrap/mask/pitch rules.
+    fn tile_texture(
+        &self,
+        tile: TileView,
+        image: Option<(u32, Option<u16>)>,
+    ) -> Option<TextureRef> {
+        let (fmt, siz) = tile.fmt?;
+        let (drawn_width, drawn_height) = tile.dims?;
         // `G_SETTILESIZE` gives the rectangle being *drawn*, which for a
         // wrapping texture is larger than the texture: Dream Land renders a
         // 64x32 tile across a 256x128 span. `masks`/`maskt` are what say how
@@ -1584,7 +1770,7 @@ impl State {
         // and taking the drawn rect instead asks for 16 KiB of texels out of a
         // 12 KiB file (RE-044). A mask of zero means no wrapping, so the drawn
         // rect is the texture.
-        let (mask_s, mask_t) = self.tile0_mask.unwrap_or((0, 0));
+        let (mask_s, mask_t) = tile.mask.unwrap_or((0, 0));
         let (w, h) = (
             if mask_s > 0 {
                 drawn_width.min(1 << mask_s)
@@ -1597,7 +1783,7 @@ impl State {
                 drawn_height
             },
         );
-        let (cm_s, cm_t) = self.tile0_cm.unwrap_or((0, 0));
+        let (cm_s, cm_t) = tile.cm.unwrap_or((0, 0));
         // `G_TX_MIRROR` is bit 0 of `cms`/`cmt`. Only meaningful with an
         // actual repeat period (RE-066: every real occurrence in this ROM
         // already has one), so gate on the mask too rather than trusting the
@@ -1621,26 +1807,25 @@ impl State {
         // into a jarring rainbow repeat instead of one held edge.
         let clamp_s = cm_s & 0x2 != 0;
         let clamp_t = cm_t & 0x2 != 0;
-        let palette = self.tile0_palette.unwrap_or(0);
+        let palette = tile.palette.unwrap_or(0);
         // `G_SETTILE.line` is measured in 64-bit words. The render tile's
         // pitch can be wider than its drawn rectangle; decoding it as that
         // narrower width shears every row after the first (RE-268).
         let source_width = BitSize::from_raw(siz)
             .and_then(|size| {
-                let width =
-                    u32::from(self.tile_lines[RENDER_TILE as usize]) * 64 / size.bits() as u32;
+                let width = u32::from(tile.line) * 64 / size.bits() as u32;
                 (width >= u32::from(w)).then_some(width as u16)
             })
             .unwrap_or(w);
 
-        if self.framebuffer_capture {
+        let Some((offset, data_file)) = image else {
             // No archive location: the real content is filled in on the
             // device from a runtime framebuffer capture (RE-099/RE-100).
             // `format`/`size`/`width`/`height` still describe the tile's real
             // decoded shape, taken from the same `G_SETTILE`/`G_SETTILESIZE`
             // commands as any other texture -- a pack-time converter uses
             // these to size the runtime buffer, just skips decoding texels.
-            let (origin_s, origin_t) = self.tile0_origin.unwrap_or((0, 0));
+            let (origin_s, origin_t) = tile.origin.unwrap_or((0, 0));
             return Some(TextureRef {
                 data_file: None,
                 data_offset: 0,
@@ -1666,14 +1851,13 @@ impl State {
                 drawn_height,
                 tlut: self.texture_lut_for(Format::from_raw(fmt)?),
             });
-        }
+        };
 
-        let offset = self.timg_addr?;
         let format = Format::from_raw(fmt)?;
         let tlut = self.texture_lut_for(format);
         let (palette_file, palette_offset, palette_entries) = self.palette_for(tlut);
         Some(TextureRef {
-            data_file: self.timg_file,
+            data_file,
             data_offset: offset,
             format,
             size: BitSize::from_raw(siz)?,
@@ -1689,13 +1873,65 @@ impl State {
             clamp_s,
             clamp_t,
             framebuffer: false,
-            origin_s: self.tile0_origin.map_or(0, |o| o.0),
-            origin_t: self.tile0_origin.map_or(0, |o| o.1),
+            origin_s: tile.origin.map_or(0, |o| o.0),
+            origin_t: tile.origin.map_or(0, |o| o.1),
             mask_s,
             mask_t,
             drawn_width,
             drawn_height,
             tlut,
+        })
+    }
+
+    /// The two-tile fractional image blend this primitive draws with, if the
+    /// state in force is the classified `SetLFrac`/`TextureIDNext` shape
+    /// (RE-321); `None` leaves every other primitive exactly as before.
+    ///
+    /// Requires the first cycle to be `(TEXEL1 - TEXEL0) * PRIM_LOD_FRAC +
+    /// TEXEL0` in RGB *and* alpha, an animated `MObj` that set the fraction
+    /// and block-loaded tile 1's image at the address tile 1 samples, and a
+    /// second cycle the GE can finish per pass. Tile 1 must share tile 0's
+    /// static window, shift and clamp axes: packed UVs had tile 0's origin
+    /// removed on clamped axes, and the second pass re-bases them onto tile
+    /// 1's live window from there.
+    fn lod_blend_now(&self, texture: Option<TextureRef>) -> Option<LodBlend> {
+        let (hi, lo) = self.combiner?;
+        if !self.two_cycle || !combiner_is_lod_lerp(hi, lo) {
+            return None;
+        }
+        self.material.mat_anim?;
+        let texture = texture.filter(|t| !t.framebuffer)?;
+        let (frac, prim) = self.prim_lod?;
+        let (tmem, offset, file) = self.next_block?;
+        if self.tile_tmem[1] != tmem || self.tile_shifts[1] != self.tile_shifts[0] {
+            return None;
+        }
+        let next = self.tile_texture(self.tile1, Some((offset, file)))?;
+        if (next.clamp_s, next.clamp_t) != (texture.clamp_s, texture.clamp_t)
+            || (next.origin_s, next.origin_t) != (texture.origin_s, texture.origin_t)
+        {
+            return None;
+        }
+        // Cycle 2 must reduce to a scale on the blended texel (RGB) and to
+        // `COMBINED_ALPHA` times a constant (alpha): each pass then applies
+        // the same vertex colour to its own texel.
+        let per_texel = lod_texel_combiner(hi, lo);
+        combiner_shade_scale(
+            per_texel.0,
+            per_texel.1,
+            true,
+            self.material.prim_color,
+            self.material.env_color,
+        )?;
+        let prim_alpha = match lod_cycle2_alpha(lo)? {
+            LodAlpha::Combined => 255,
+            LodAlpha::TimesPrim => prim[3],
+        };
+        Some(LodBlend {
+            next,
+            frac,
+            prim_alpha,
+            tile1_params: self.tile1_params?,
         })
     }
 
@@ -1868,6 +2104,12 @@ impl Builder {
             // alpha override, RE-106).
             Some(AlphaBlend::Shade) => v.rgba[3] = raw_alpha,
             None => {}
+        }
+        // RE-321: the two-tile blend's alpha is `COMBINED_ALPHA`, optionally
+        // times `PRIM_ALPHA`; it never reads the shade, so the vertex carries
+        // the constant for the GE's `Modulate` to apply to each pass's texel.
+        if let Some(lod) = self.material.lod_blend {
+            v.rgba[3] = lod.prim_alpha;
         }
         if let Some(t) = self.material.texture {
             // `origin_s`/`origin_t` are raw S10.2 (quarter-texel);
@@ -2224,9 +2466,20 @@ fn walk(
                 cm_s,
                 cm_t,
                 palette,
-                ..
+                tmem,
+                shift_s,
+                shift_t,
             } => {
                 state.tile_lines[tile as usize] = line;
+                state.tile_tmem[tile as usize] = tmem;
+                state.tile_shifts[tile as usize] = (shift_s, shift_t);
+                if tile == RENDER_TILE + 1 {
+                    state.tile1.fmt = Some((format, size));
+                    state.tile1.mask = Some((mask_s, mask_t));
+                    state.tile1.cm = Some((cm_s, cm_t));
+                    state.tile1.palette = Some(palette);
+                    state.tile1.line = line;
+                }
                 // Only tile 0 (G_TX_RENDERTILE) describes the texture actually
                 // sampled. A display list configures several tiles — tiles 5
                 // and 7 stage TLUT loads — and taking whichever came last
@@ -2254,6 +2507,47 @@ fn walk(
                 let h = ((lrt.saturating_sub(ult)) >> 2) + 1;
                 state.tile_dims = Some((w, h));
                 state.tile0_origin = Some((uls, ult));
+            }
+
+            // A tile-1 window a display list sets itself (RE-321); an
+            // `MObj`'s own `0x40` window arrives through `apply_mobj`.
+            Cmd::SetTileSize {
+                tile,
+                uls,
+                ult,
+                lrs,
+                lrt,
+            } if tile == RENDER_TILE + 1 => {
+                state.tile1.dims = Some((
+                    ((lrs.saturating_sub(uls)) >> 2) + 1,
+                    ((lrt.saturating_sub(ult)) >> 2) + 1,
+                ));
+                state.tile1.origin = Some((uls, ult));
+                state.tile1_params = None;
+            }
+
+            // A later load to the same TMEM address overwrites the image an
+            // `MObj` staged for tile 1 (RE-321).
+            Cmd::LoadBlock { tile, .. } => {
+                if state
+                    .next_block
+                    .is_some_and(|(tmem, ..)| state.tile_tmem[tile as usize & 7] == tmem)
+                {
+                    state.next_block = None;
+                }
+            }
+            Cmd::Other {
+                opcode: crate::dl::G_LOADTILE,
+                w1,
+                ..
+            } => {
+                let tile = ((w1 >> 24) & 0x7) as usize;
+                if state
+                    .next_block
+                    .is_some_and(|(tmem, ..)| state.tile_tmem[tile] == tmem)
+                {
+                    state.next_block = None;
+                }
             }
 
             Cmd::LoadTlut { count, .. } => {
@@ -2388,7 +2682,10 @@ fn walk(
                 state.material.alpha_compare_threshold = data & 0x3 == 1;
             }
 
-            Cmd::SetPrimColor { rgba, .. } => state.material.prim_color = Some(rgba),
+            Cmd::SetPrimColor { l, rgba, .. } => {
+                state.material.prim_color = Some(rgba);
+                state.prim_lod = Some((l, rgba));
+            }
             Cmd::SetEnvColor(c) => state.material.env_color = Some(c),
             Cmd::SetBlendColor(c) => state.material.blend_color = Some(c),
 
@@ -6620,5 +6917,262 @@ mod tests {
         // shape actually reads but the display list never set.
         let (hi, lo) = combine(ZERO_A, ZERO_A, ZERO_C, PRIM, 0, 0, 0, 0);
         assert_eq!(combiner_flat_color(hi, lo, false, None, None), None);
+    }
+
+    /// RE-321: Dream Land's water node, command for command (file 104,
+    /// list `0x22C8`): two-cycle `(TEXEL1 - TEXEL0) * PRIM_LOD_FRAC + TEXEL0`
+    /// then `COMBINED * SHADE` / `COMBINED * PRIM`, tile 0 mirrored and
+    /// clamped, tile 1 clamped at the TMEM address the `MObj`'s tile-6 block
+    /// load fills. `extra` runs after the heap call, before the triangle.
+    fn water_list(tile1_tmem: u16, tile1_palette: u8, extra: &[Cmd]) -> Vec<Cmd> {
+        let tile = |tile, format, size, line, tmem, palette, cm_s, cm_t| Cmd::SetTile {
+            format,
+            size,
+            line,
+            tmem,
+            tile,
+            palette,
+            cm_s,
+            cm_t,
+            mask_s: 5,
+            mask_t: 5,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let ci = Format::Ci as u8;
+        let mut cmds = alloc::vec![
+            Cmd::GeometryMode {
+                clear: G_SHADING_SMOOTH,
+                set: 0,
+            },
+            Cmd::SetOtherModeH {
+                shift: 20,
+                len: 2,
+                data: 1 << 20,
+            },
+            Cmd::SetOtherModeL {
+                shift: 0,
+                len: 2,
+                data: 1,
+            },
+            Cmd::SetOtherModeL {
+                shift: 3,
+                len: 29,
+                data: 0x0C19_3048,
+            },
+            Cmd::SetCombine {
+                hi: 0x0027_2C04,
+                lo: 0x1F0C_93FF,
+            },
+            tile(6, ci, BitSize::Bits16 as u8, 0, 64, 0, 0, 0),
+            tile(
+                1,
+                ci,
+                BitSize::Bits4 as u8,
+                2,
+                tile1_tmem,
+                tile1_palette,
+                2,
+                2
+            ),
+            tile(0, ci, BitSize::Bits4 as u8, 2, 0, 0, 3, 2),
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0x8000,
+                scale_t: 0x4000,
+            },
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            Cmd::LoadBlock {
+                tile: 7,
+                uls: 0,
+                ult: 0,
+                lrs: 255,
+                dxt: 1024,
+            },
+        ];
+        cmds.extend_from_slice(extra);
+        cmds.extend([vtx(3), Cmd::Tri1([0, 1, 2]), Cmd::End]);
+        cmds
+    }
+
+    /// The `MObjSub` at file 104 `0x1F78` (flags `0x6B`), shrunk to a 32x32
+    /// window: the `0x8` primitive colour, the tile-6 next-image load and
+    /// both tile windows.
+    fn water_mobj(prim_alpha: u8) -> crate::mobj::MObjMaterial {
+        crate::mobj::MObjMaterial {
+            sprite: Some(crate::mobj::Ptr {
+                file: Some(103),
+                offset: 0x1BE0,
+            }),
+            tile0_uv: Some((0, 0, 124, 124)),
+            tile1_uv: Some((0, 0, 124, 124)),
+            mat_anim_tile_params: [0, 32, 32],
+            tile1_params: [32, 32],
+            prim_lod: Some((114, [255, 255, 255, prim_alpha])),
+            loads_next_block: true,
+            ..crate::mobj::MObjMaterial::default()
+        }
+    }
+
+    fn convert_water(cmds: &[Cmd], mobj: crate::mobj::MObjMaterial, animated: bool) -> Mesh {
+        // Shade alpha zero, as Dream Land's water vertices carry it.
+        let mut file = vertex_data(3);
+        for v in file.as_chunks_mut::<16>().0 {
+            v[15] = 0;
+        }
+        let mobjs = [mobj];
+        let anims = [animated.then_some(MatAnimRef {
+            source_file: 104,
+            script: 0x2540,
+            source_mobj: 0x1F78,
+        })];
+        let items = [SequenceItem {
+            cmds,
+            world: crate::scene::Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &anims,
+            depth_seed: None,
+            stream: 0,
+        }];
+        convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+            .remove(0)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_water_list_is_classified_as_a_two_tile_blend() {
+        let mesh = convert_water(&water_list(64, 0, &[]), water_mobj(255), true);
+        let m = mesh.primitives[0].material;
+        let lod = m.lod_blend.expect("classified");
+        let t0 = m.texture.unwrap();
+        // TEXEL1 is the MObj's staged image through tile 1's own descriptor:
+        // tile 1 clamps without tile 0's mirror.
+        assert_eq!(
+            (lod.next.data_file, lod.next.data_offset),
+            (Some(103), 0x1BE0)
+        );
+        assert!(t0.mirror_s && !lod.next.mirror_s);
+        assert_eq!(
+            (lod.next.clamp_s, lod.next.clamp_t),
+            (t0.clamp_s, t0.clamp_t)
+        );
+        assert_eq!((lod.frac, lod.prim_alpha), (114, 255));
+        assert_eq!(lod.tile1_params, [0, 32, 32]);
+        // `COMBINED * SHADE` on the blended texel is the unscaled shade.
+        assert_eq!(m.prim_color, None);
+        // Cycle 2's alpha never reads the shade: the vertex carries PRIM_A.
+        assert!(mesh.vertices.iter().all(|v| v.rgba[3] == 255));
+        // The material's own framebuffer state is unchanged: an opaque
+        // TEX_EDGE cutout with no depth, not a translucent surface.
+        assert!(m.alpha_test && m.alpha_compare_threshold && !m.translucent);
+        assert!(!m.depth_test && !m.depth_write);
+    }
+
+    #[test]
+    fn the_two_tile_blend_keeps_each_tiles_palette_bank() {
+        let mesh = convert_water(&water_list(64, 3, &[]), water_mobj(255), true);
+        let m = mesh.primitives[0].material;
+        let lod = m.lod_blend.unwrap();
+        let t0 = m.texture.unwrap();
+        assert_eq!((t0.palette, lod.next.palette), (0, 3));
+        // One TLUT serves both tiles; only the bank differs.
+        assert_eq!(
+            (
+                lod.next.palette_file,
+                lod.next.palette_offset,
+                lod.next.palette_entries
+            ),
+            (t0.palette_file, t0.palette_offset, t0.palette_entries)
+        );
+    }
+
+    #[test]
+    fn the_two_tile_blend_alpha_carries_the_primitive_alpha() {
+        let mesh = convert_water(&water_list(64, 0, &[]), water_mobj(0x80), true);
+        assert_eq!(
+            mesh.primitives[0].material.lod_blend.unwrap().prim_alpha,
+            0x80
+        );
+        assert!(mesh.vertices.iter().all(|v| v.rgba[3] == 0x80));
+    }
+
+    #[test]
+    fn the_two_tile_blend_declines_outside_its_classified_state() {
+        let classic = |mesh: &Mesh| {
+            let m = mesh.primitives[0].material;
+            assert_eq!(m.lod_blend, None);
+            // Exactly the pre-RE-321 reading: the combiner stays unresolved
+            // and the shade alpha is untouched.
+            assert_eq!(m.prim_color, None);
+            assert!(mesh.vertices.iter().all(|v| v.rgba[3] == 0));
+        };
+        // No material animation drives the fraction.
+        classic(&convert_water(
+            &water_list(64, 0, &[]),
+            water_mobj(255),
+            false,
+        ));
+        // Tile 1 samples somewhere the block load did not fill.
+        classic(&convert_water(
+            &water_list(128, 0, &[]),
+            water_mobj(255),
+            true,
+        ));
+        // A later load overwrites the staged image.
+        let overwrite = [
+            Cmd::SetTile {
+                format: Format::Ci as u8,
+                size: BitSize::Bits16 as u8,
+                line: 0,
+                tmem: 64,
+                tile: 7,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 0,
+                mask_t: 0,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::LoadBlock {
+                tile: 7,
+                uls: 0,
+                ult: 0,
+                lrs: 255,
+                dxt: 1024,
+            },
+        ];
+        classic(&convert_water(
+            &water_list(64, 0, &overwrite),
+            water_mobj(255),
+            true,
+        ));
+        // One-cycle mode never runs the second cycle.
+        let one_cycle = [Cmd::SetOtherModeH {
+            shift: 20,
+            len: 2,
+            data: 0,
+        }];
+        classic(&convert_water(
+            &water_list(64, 0, &one_cycle),
+            water_mobj(255),
+            true,
+        ));
+        // No `PRIM_LOD_FRAC` was ever set.
+        let unset = crate::mobj::MObjMaterial {
+            prim_lod: None,
+            ..water_mobj(255)
+        };
+        classic(&convert_water(&water_list(64, 0, &[]), unset, true));
     }
 }

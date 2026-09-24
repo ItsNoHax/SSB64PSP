@@ -72,6 +72,8 @@ const F_SCAU: u32 = 0x1C;
 const F_SCAV: u32 = 0x20;
 const F_PALETTES: u32 = 0x2C;
 const F_FLAGS: u32 = 0x30;
+const F_UNK38: u32 = 0x38;
+const F_UNK3A: u32 = 0x3A;
 const F_SCROLLU: u32 = 0x3C;
 const F_SCROLLV: u32 = 0x40;
 const F_PRIMCOLOR: u32 = 0x50;
@@ -85,6 +87,10 @@ const F_LIGHT2COLOR: u32 = 0x64;
 const G_IM_SIZ_8B: u8 = 1;
 
 const MOBJ_FLAG_ALPHA: u16 = 1 << 0;
+/// `objdisplay.c`'s bare `0x8` literal: one of the three bits that make
+/// `gcDrawMObjForDObj` emit `gDPSetPrimColor` with the `lfrac`-derived
+/// `PRIM_LOD_FRAC` byte (RE-321). `objtypes.h` never names it.
+const MOBJ_FLAG_PRIM_LOD: u16 = 1 << 3;
 const MOBJ_FLAG_SPLIT: u16 = 1 << 1;
 const MOBJ_FLAG_PALETTE: u16 = 1 << 2;
 const MOBJ_FLAG_FRAC: u16 = 1 << 4;
@@ -98,18 +104,10 @@ const MOBJ_FLAG_ENVCOLOR: u16 = 1 << 10;
 const MOBJ_FLAG_BLENDCOLOR: u16 = 1 << 11;
 const MOBJ_FLAG_LIGHT1: u16 = 1 << 12;
 const MOBJ_FLAG_LIGHT2: u16 = 1 << 13;
-/// `gDPSetTileSize(1, ...)`, `MObjSub::scrollu`/`scrollv` — RE-194 confirms
-/// this is real (12 occurrences archive-wide) but never observably
-/// different from the same `MObj`'s own [`MOBJ_FLAG_TILE0`] window: every
-/// real occurrence has `scrollu == trau`, `scrollv == trav` and
-/// `unk38/unk3A == unk0C/unk0E` (byte-identical inputs, not merely similar
-/// outputs). This project's renderer only ever samples render tile 0
-/// (`mesh.rs`'s `RENDER_TILE`/`Cmd::SetTileSize` handling; no packed
-/// combiner shape reads `TEXEL1`, RE-130), so tile 1 has no consumer to
-/// feed. Not decoded into [`MObjMaterial`] for the same reason
-/// [`MOBJ_FLAG_FRAC`] is not: real, present in the ROM, and confirmed to
-/// have no distinct observable effect on anything this project renders.
-#[allow(dead_code)]
+/// `gDPSetTileSize(1, ...)`, `MObjSub::scrollu`/`scrollv`. RE-194 found the
+/// static inputs byte-identical to the same `MObj`'s [`MOBJ_FLAG_TILE0`]
+/// window, but a `ScrU`/`ScrV` script moves it independently at run time,
+/// and the two-tile fractional blend samples `TEXEL1` through it (RE-321).
 const MOBJ_FLAG_TILE1: u16 = 1 << 6;
 
 /// Where one entry of an `MObjSub` pointer table leads.
@@ -185,6 +183,28 @@ pub struct MObjMaterial {
     /// `gDPSetTileSize` equations.  These are needed to preserve the
     /// non-zero source tile origin while a track changes `Tra*`/`Sca*`.
     pub mat_anim_tile_params: [u16; 3],
+    /// `gDPSetPrimColor(prim_m, lfrac * 255.0F, primcolor)`, emitted when
+    /// `PRIMCOLOR`, `FRAC` or the bare `0x8` bit is set (RE-321): the
+    /// `PRIM_LOD_FRAC` byte at `lfrac`'s initial `prim_l / 255.0F`, and the
+    /// primitive colour the same command writes. `None` under
+    /// `MOBJ_FLAG_FRAC`, whose integer part also re-selects both texture ids;
+    /// no static `MObjSub` sets it (RE-194), so it is not modelled.
+    ///
+    /// Kept apart from [`Self::prim_color`], which predates this and is read
+    /// only under `PRIMCOLOR`; only the two-tile blend consumes this record.
+    pub prim_lod: Option<(u8, [u8; 4])>,
+    /// `gDPLoadBlock(6, ...)` of `sprites[texture_id_next]`, emitted when
+    /// `FRAC | SPLIT` and `FRAC | ALPHA` are both satisfied: the next image
+    /// lands at tile 6's TMEM address for tile 1 to sample (RE-321). The
+    /// image is entry 0 of the same table as [`Self::sprite`] statically,
+    /// since `gcAddMObjForDObj` zeroes `texture_id_next`.
+    pub loads_next_block: bool,
+    /// `gDPSetTileSize(1, uls, ult, lrs, lrt)` from [`MOBJ_FLAG_TILE1`], in
+    /// the same raw S10.2 form as [`Self::tile0_uv`].
+    pub tile1_uv: Option<(u16, u16, u16, u16)>,
+    /// `unk38`/`unk3A`: tile 1's width and height in the source equations,
+    /// the counterparts of [`Self::mat_anim_tile_params`]' last two entries.
+    pub tile1_params: [u16; 2],
 }
 
 impl MObjMaterial {
@@ -430,6 +450,43 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         )
     });
 
+    // `objdisplay.c:1386-1397`: tile 1 has no `unk10 == 2` form.
+    let unk38 = read_u16(data, at + F_UNK38)?;
+    let unk3a = read_u16(data, at + F_UNK3A)?;
+    let scrollu = read_f32(data, at + F_SCROLLU)?;
+    let scrollv = read_f32(data, at + F_SCROLLV)?;
+    let tile1_uv = (flags & MOBJ_FLAG_TILE1 != 0).then(|| {
+        let uls = if scau.abs() > SCALE_EPS {
+            (((unk38 as f32 * scrollu) + unk0a) / scau) * 4.0
+        } else {
+            0.0
+        };
+        let ult = if scav.abs() > SCALE_EPS {
+            (((((1.0 - scav) - scrollv) * unk3a as f32) + unk0a) / scav) * 4.0
+        } else {
+            0.0
+        };
+        let (uls, ult) = (uls as i32, ult as i32);
+        let lrs = ((unk38 as i32 - 1) << 2) + uls;
+        let lrt = ((unk3a as i32 - 1) << 2) + ult;
+        (
+            uls.clamp(0, 0xFFFF) as u16,
+            ult.clamp(0, 0xFFFF) as u16,
+            lrs.clamp(0, 0xFFFF) as u16,
+            lrt.clamp(0, 0xFFFF) as u16,
+        )
+    });
+    let prim_l = data.get((at + F_PRIM_L) as usize).copied().unwrap_or(0);
+    let prim_lod = (flags & (MOBJ_FLAG_PRIMCOLOR | MOBJ_FLAG_FRAC | MOBJ_FLAG_PRIM_LOD) != 0
+        && flags & MOBJ_FLAG_FRAC == 0)
+        // `prim_m`, the minimum LOD level, is not kept: SSB64 never enables
+        // RDP LOD (RE-127), so only `l` and the colour reach the combiner.
+        .then(|| {
+            read_rgba(data, at + F_PRIMCOLOR)
+                .map(|c| (crate::lod_blend::prim_lod_frac(prim_l as f32 / 255.0), c))
+        })
+        .flatten();
+
     // `objdisplay.c:1399-1420`.
     let tex_scale = (flags & MOBJ_FLAG_TEXTURE != 0).then(|| {
         let (s, t) = if unk10 == 2 {
@@ -485,9 +542,9 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
             scau.to_bits(),
             scav.to_bits(),
             0.0f32.to_bits(),
-            read_f32(data, at + F_SCROLLU)?.to_bits(),
-            read_f32(data, at + F_SCROLLV)?.to_bits(),
-            (data.get((at + F_PRIM_L) as usize).copied().unwrap_or(0) as f32 / 255.0).to_bits(),
+            scrollu.to_bits(),
+            scrollv.to_bits(),
+            (prim_l as f32 / 255.0).to_bits(),
             0.0f32.to_bits(),
         ],
         mat_anim_uv_mode: if flags & MOBJ_FLAG_TILE0 == 0 {
@@ -502,6 +559,12 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
             1 | if flags & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 }
         },
         mat_anim_tile_params: [unk0a as u16, unk0c, unk0e],
+        prim_lod,
+        loads_next_block: flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT) != 0
+            && flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0
+            && sprite.is_some(),
+        tile1_uv,
+        tile1_params: [unk38, unk3a],
     })
 }
 

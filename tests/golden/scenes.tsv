@@ -40,6 +40,7 @@ r2-link-costume-1	psp-asset-viewer	link_costume_1	pass	RE-301
 r2-metal-mario-fighter	psp-asset-viewer	fighter metal_mario	pass	RE-311
 r2-mario-entry-pipe	psp-asset-viewer	mario_entry	pass	RE-312
 r2-bonus-platform-small	psp-asset-viewer	bonus_platform	pass	RE-312
+r2-dream-land-water	psp-asset-viewer	dream_land_water	pass	RE-321
 f1-training-fireball	psp-game	fireball	pass	RE-300
 f1-training-shadows	psp-game	shadows	pass	RE-302
 r2-stage-beta-dream-land	psp-asset-viewer	stage 1	pass	RE-286 RE-312

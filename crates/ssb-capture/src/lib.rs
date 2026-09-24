@@ -122,6 +122,9 @@ pub enum ViewerScene {
     BonusPlatform,
     /// `depth_mask`: synthetic depth-write ON/OFF/ON quads.
     DepthMask,
+    /// `dream_land_water`: file 104 graph 0x2450, Dream Land's water layer,
+    /// seen from above: both two-tile fractional blend ponds (RE-321).
+    DreamLandWater,
 }
 
 impl ViewerScene {
@@ -150,6 +153,7 @@ impl ViewerScene {
             ("mario_entry", None) => ViewerScene::MarioEntry,
             ("bonus_platform", None) => ViewerScene::BonusPlatform,
             ("depth_mask", None) => ViewerScene::DepthMask,
+            ("dream_land_water", None) => ViewerScene::DreamLandWater,
             _ => return None,
         };
         Some(scene)
@@ -186,6 +190,21 @@ impl ViewerScene {
             | ViewerScene::MetalTexgenCameraRotated => Some((117, 0x1B10)),
             ViewerScene::MetalTexgenLinear => Some((117, 0x2EE0)),
             ViewerScene::BonusPlatform => Some((136, 0x3DA8)),
+            ViewerScene::DreamLandWater => Some((104, 0x2450)),
+            _ => None,
+        }
+    }
+
+    /// `(yaw, pitch, distance scale)`, angles in radians, of a real camera
+    /// orbiting the object's centre, for scenes that need a view the object
+    /// viewer's spin cannot give. `None` keeps the identity view.
+    pub const fn orbit_camera(self) -> Option<(f32, f32, f32)> {
+        match self {
+            // 35 and 20 degrees.
+            ViewerScene::MetalTexgenCameraRotated => Some((0.610_865_2, 0.349_065_85, 1.0)),
+            // 60 degrees down onto the ponds, facing the stage front, close
+            // enough that each pond spans a few hundred pixels.
+            ViewerScene::DreamLandWater => Some((0.0, core::f32::consts::FRAC_PI_3, 0.4)),
             _ => None,
         }
     }
@@ -205,6 +224,7 @@ impl ViewerScene {
                 | ViewerScene::LinkCostume1
                 | ViewerScene::MarioEntry
                 | ViewerScene::BonusPlatform
+                | ViewerScene::DreamLandWater
         )
     }
 
@@ -223,6 +243,7 @@ impl ViewerScene {
                 | ViewerScene::MetalTexgenCameraRotated
                 | ViewerScene::Fighter(_)
                 | ViewerScene::LinkCostume1
+                | ViewerScene::DreamLandWater
         )
     }
 }
@@ -246,6 +267,7 @@ impl fmt::Display for ViewerScene {
             ViewerScene::MarioEntry => f.write_str("mario_entry"),
             ViewerScene::BonusPlatform => f.write_str("bonus_platform"),
             ViewerScene::DepthMask => f.write_str("depth_mask"),
+            ViewerScene::DreamLandWater => f.write_str("dream_land_water"),
         }
     }
 }
