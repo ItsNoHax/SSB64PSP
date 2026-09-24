@@ -77,6 +77,8 @@ pub(super) struct UseSite {
     pub mat_anim: bool,
     pub triangles: usize,
     pub coverage: Coverage,
+    /// Packed primitive's RE-312 phase; zero for ordinary material state.
+    pub phase: [i16; 2],
 }
 
 #[derive(Default)]
@@ -778,6 +780,7 @@ struct Candidate {
 
 struct Analysis {
     index: u32,
+    applied_phase: [i16; 2],
     width: u32,
     height: u32,
     states: usize,
@@ -898,6 +901,23 @@ fn sample_linear(img: &Rgba8, clamp: [bool; 2], s: i32, t: i32) -> [u8; 4] {
     bilinear(img, clamp)(s, t)
 }
 
+fn eval_current(
+    images: &[(Rgba8, Rgba8)],
+    clamp: [bool; 2],
+    samples: &[[i32; 2]],
+    policy: AlphaPolicy,
+    phase: [i16; 2],
+) -> Eval {
+    let mut e = Eval::default();
+    for (k, (r, cur)) in images.iter().enumerate() {
+        let sample = bilinear(cur, clamp);
+        e.merge(&evaluate(r, clamp, samples, policy, k, |s, t| {
+            sample(s + phase[0] as i32, t + phase[1] as i32)
+        }));
+    }
+    e
+}
+
 fn sample_nearest(img: &Rgba8, clamp: [bool; 2], s: i32, t: i32) -> [u8; 4] {
     nearest(img, clamp)(s, t)
 }
@@ -907,6 +927,11 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     let (w, h) = (c.source.width, c.source.height);
     let clamp = v.clamp;
     let policy = c.policy;
+    let phase = sites.first().map_or([0, 0], |s| s.phase);
+    assert!(
+        sites.iter().all(|s| s.phase == phase),
+        "mixed phases on variant {index}"
+    );
 
     // Distinct coverage groups; identical coverage from several primitives
     // (costumes, repeated lists) is measured once.
@@ -1015,14 +1040,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     let direct_level0 = level0_bytes(w, h, Psm::Psm8888, 0);
 
     let current = candidate(
-        eval_states(
-            &images,
-            clamp,
-            &eval,
-            policy,
-            |_, _, cur| cur.clone(),
-            sample_linear,
-        ),
+        eval_current(&images, clamp, &eval, policy, phase),
         cur_level0,
         cur_pack,
     );
@@ -1241,16 +1259,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     // Use-site-specific oracles.
     let per_site_current: Vec<Eval> = groups
         .iter()
-        .map(|g| {
-            eval_states(
-                &images,
-                clamp,
-                &g.eval,
-                g.policy,
-                |_, _, cur| cur.clone(),
-                sample_linear,
-            )
-        })
+        .map(|g| eval_current(&images, clamp, &g.eval, g.policy, phase))
         .collect();
     let per_site_oracle_vis_sse = (groups.len() >= 2).then(|| {
         let mut own = 0u64;
@@ -1282,7 +1291,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                 for (k, (r, cur)) in images.iter().enumerate() {
                     let f = bilinear(cur, clamp);
                     e.merge(&evaluate(r, clamp, &eval, policy, k, |s, t| {
-                        f(s + ds, t + dt)
+                        f(s + phase[0] as i32 + ds, t + phase[1] as i32 + dt)
                     }));
                 }
                 if best.as_ref().is_none_or(|b| e.vis.sse < b.1.vis.sse) {
@@ -1315,14 +1324,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         v
     };
     let uniform = {
-        let cur_u = eval_states(
-            &images,
-            clamp,
-            &uniform_set,
-            policy,
-            |_, _, cur| cur.clone(),
-            sample_linear,
-        );
+        let cur_u = eval_current(&images, clamp, &uniform_set, policy, phase);
         let unc_u = eval_states(
             &images,
             clamp,
@@ -1336,7 +1338,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
             for (k, (r, cur)) in images.iter().enumerate() {
                 let f = bilinear(cur, clamp);
                 e.merge(&evaluate(r, clamp, &uniform_set, policy, k, |s, t| {
-                    f(s + ds, t + dt)
+                    f(s + phase[0] as i32 + ds, t + phase[1] as i32 + dt)
                 }));
             }
             e
@@ -1389,6 +1391,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
 
     Analysis {
         index,
+        applied_phase: phase,
         width: w,
         height: h,
         states,
@@ -2095,8 +2098,8 @@ fn interventions(a: &Analysis, v: &Variant, cl: &Classified) -> Vec<Intervention
             ),
             vram_delta: 0,
             pack_delta: 0,
-            runtime: "per-material sceGuTexOffset",
-            complexity: "low, but a global shift trades error elsewhere",
+            runtime: "packed per-primitive mapping offset",
+            complexity: "low: explicit primitive render state",
         });
     }
     out.push(Intervention {
@@ -2350,7 +2353,13 @@ fn write_images(
             let s = x0 * 32 + gx * (32 / SUB) + (32 / SUB) / 2;
             let t = y0 * 32 + gy * (32 / SUB) + (32 / SUB) / 2;
             let r = sample_3point_addressed(reference, s, t, ms, mt);
-            let p = sample_bilinear_addressed(current, s, t, ms, mt);
+            let p = sample_bilinear_addressed(
+                current,
+                s + a.applied_phase[0] as i32,
+                t + a.applied_phase[1] as i32,
+                ms,
+                mt,
+            );
             let n = sample_point(reference, s, t, ms, mt);
             let q = sample_bilinear_addressed(&rgba_img, s, t, ms, mt);
             let (_, _, _, _, _, _, vd, _) = sample_error(policy, r, p);
@@ -2617,6 +2626,11 @@ fn row_json(r: &Row<'_>, names: &Names) -> String {
         f4(r.weight),
         f4(r.severity),
         json_str(&r.primary_name),
+    );
+    let _ = write!(
+        s,
+        "\"applied_phase_q5\":[{},{}],",
+        a.applied_phase[0], a.applied_phase[1]
     );
     s.push_str("\"use_sites\":[");
     for (i, (g, e)) in a.groups.iter().zip(&a.per_site_current).enumerate() {
@@ -3740,7 +3754,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
     let _ = writeln!(m, "- RGBA8888 practical: the pipeline's own 48-iteration continuous solve without its admission/acceptance gates (`filter_compensation::solve_samples_ungated`, a pack-neutral refactor) on the union training coverage, then the pipeline's `refine_integer`, under the variant's real alpha policy. This is what the packer would ship with the palette, promotion and holdout gates removed.
 - RGBA8888 oracle: a report-only box-constrained least-squares fit of the GE 4-bit-weight bilinear model, iterated to convergence (<= 2000 iterations) *on the holdout itself*, then `refine_integer` on the same set; alpha free unless opaque. Because it is fitted on the samples it is scored on, it bounds what any same-resolution texture achieves there (up to solver convergence; the continuous lower bound is reported as `float_sse`). The alpha-held oracle repeats it with alpha fixed; the silhouette oracle (cutout only) adds a flip-minimizing per-texel alpha search.
 - Classification uses the best oracle's colour error (samples whose alpha-test result agrees) for `BILINEAR_SURFACE_LIMIT`; cutout alpha-test flips are judged separately against the silhouette oracle.
-- Tiny UV phase: the current texture sampled at a uniform (ds, dt)/32-texel offset, ds, dt in -2..2, best visible SSE. It needs a per-material `sceGuTexOffset`.
+- Tiny UV phase: the current texture sampled at an additional uniform (ds, dt)/32-texel offset, ds, dt in -2..2, best visible SSE. Any deployed phase is packed per primitive and composed into that primitive's mapping; the report's shift is relative to it.
 - Holdout sets include RE-310's targeted boundary probes (diagonal switch, half texel, GE 1/16 boundaries, seams), which over-represent the phases where 3-point and bilinear differ most. Absolute percentages are therefore pessimistic relative to uniformly distributed screen pixels; the ranking and the alternative comparisons use the same sets and are unaffected.");
     let _ = writeln!(
         m,
@@ -3910,6 +3924,13 @@ fn card(m: &mut String, rank: usize, r: &Row<'_>, names: &Names) {
         a.eval_samples
     );
     let _ = writeln!(m, "| Compensation | `{}` |", c.method);
+    if a.applied_phase != [0, 0] {
+        let _ = writeln!(
+            m,
+            "| Packed primitive phase | ({}, {})/32 texel |",
+            a.applied_phase[0], a.applied_phase[1]
+        );
+    }
     let _ = writeln!(
         m,
         "| Cost | level 0 {} B, pack {} B |",

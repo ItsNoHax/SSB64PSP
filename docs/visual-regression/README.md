@@ -156,6 +156,7 @@ pixel oracle.
 | Untextured / vertex-coloured geometry | RE-198: file 52, mesh index 4, primitive 0 (14 triangles, unlit, opaque non-degenerate vertex colour `[145,213,213,255]`) | Yes — RE-199's second scene, `tests/golden/r1-mvopeningroom.png` |
 | Particles | RE-180–189: all 160 real `LBParticle` scripts plus one live manager-effect `LBGenerator` spawn event | Audited separately on device; dynamic particle coverage is not one of the static golden scenes |
 | `psp-game`/Training weapon rendering (`TEXTURE_BLEND`-adjacent `AlphaBlend::TexelOnly`) | RE-300: Mario's Fireball (`WEAPON_EXTERNAL` material, file 297), the first `psp-game` scene added to this matrix | Yes — `tests/golden/f1-training-fireball.png` (`regression_capture_fireball` feature) |
+| RE-312 residual phases and dense variants | Mushroom Kingdom (file 107), Kongo Jungle (108), Sector Z (109), Hyrule Castle (113), bonus-stage small platform (136 graph `0x3DA8`), and Mario's entry pipe effect (356 graph `0x608`) | Yes — `r2-stage-mushroom-kingdom.png`, `r2-stage-kongo-jungle.png`, `r2-stage-sector-z.png`, `r2-stage-hyrule-castle.png`, `r2-bonus-platform-small.png`, and `r2-mario-entry-pipe.png` |
 | Shadows | `ftShadowProcDisplay` floor strip, file-84 I4 texture and source translucent/depth state | Yes — `tests/golden/f1-training-shadows.png` (`psp-game` `regression_capture_shadows`: one grounded and one airborne Mario on Dream Land platforms) |
 | UI / HUD | No in-game menu/HUD system exists yet (Layer C's debug viewer is a developer tool, not the game's own UI) | Blocked — not yet implemented |
 
@@ -355,3 +356,8 @@ the two packs: `f1-training-fireball`, `f1-training-shadows`,
 `r1-mvopeningroom`, `r2-depth-mask-diagnostic` and the four
 `r2-metal-texgen*`. They were not rebaselined and still fail.
 
+## 2026-09-24 RE-312 deployment captures
+
+With pack SHA-256 `97b3f4d86f32fff04e2d643ad9ad24cc686f33f7b2ed91defc4552695707f216`, the deterministic stage-index capture covered Mushroom Kingdom (index 5), Kongo Jungle (6), Sector Z (7), and Hyrule Castle (10). Against the RE-313 goldens, Mushroom Kingdom changed 500 pixels, Kongo Jungle 4,212, and Hyrule Castle 32; those three goldens were refreshed. Sector Z's whole-stage view gained `tests/golden/r2-stage-sector-z.png` (the existing `r1-stage-sector.png` is an object-view scene).
+
+`regression_capture_mario_entry` selects the source manager-effect object at file 356 graph `0x608`, which contains the selected dense variant, and freezes a new `tests/golden/r2-mario-entry-pipe.png`. `regression_capture_bonus_platform` selects file 136 graph `0x3DA8` for the largest validated phase gain and freezes `tests/golden/r2-bonus-platform-small.png`. Two independent PPSSPPHeadless software captures each of Mario's entry, the bonus platform and Sector Z differ by 0 pixels. The two Mushroom Kingdom captures made across the candidate and final packs were also pixel-identical. These are emulator captures, not physical PSP validation.

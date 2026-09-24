@@ -101,6 +101,8 @@ fn deterministic_capture_frozen(sim_frame_index: u64) -> bool {
             || cfg!(feature = "regression_capture_scene9")
             || cfg!(feature = "regression_capture_scene10")
             || cfg!(feature = "regression_capture_stage_index")
+            || cfg!(feature = "regression_capture_mario_entry")
+            || cfg!(feature = "regression_capture_bonus_platform")
             || cfg!(feature = "camera_audit_capture")
             || cfg!(feature = "depth_mask_diagnostic")
             || cfg!(feature = "addr_diag_probe")
@@ -629,6 +631,31 @@ unsafe fn run() -> ! {
     } else if cfg!(feature = "effect_audit_capture") && effect_count > 0 {
         object_index = effect_objects[0];
     }
+    if cfg!(feature = "regression_capture_mario_entry") {
+        if let Some(i) = ssb_rom::effect::MANAGER_EFFECT_KEYS
+            .iter()
+            .position(|&key| key == (356, 0x0608))
+        {
+            effect_index = i as u32;
+            if let Some(&object) = effect_objects.get(i).filter(|&&object| {
+                pack.as_ref()
+                    .and_then(|p| p.object(object))
+                    .is_some_and(|o| o.source_file == 356 && o.source_offset == 0x0608)
+            }) {
+                object_index = object;
+            }
+        }
+    }
+    if cfg!(feature = "regression_capture_bonus_platform") {
+        if let Some(p) = &pack {
+            if let Some(i) = (0..p.object_count()).find(|&i| {
+                p.object(i)
+                    .is_some_and(|o| o.source_file == 136 && o.source_offset == 0x3DA8)
+            }) {
+                object_index = i;
+            }
+        }
+    }
     // RE-098: no real costume-selection game system exists yet, so the only
     // way to see whether a fighter's alternate costumes actually render is
     // the same debug-viewer-cycle precedent `RE-095`'s `MaterialAnimator`
@@ -659,6 +686,7 @@ unsafe fn run() -> ! {
             feature = "effect_audit_capture",
             feature = "effect_animation_audit_capture",
             feature = "effect_material_audit_capture",
+            feature = "regression_capture_bonus_platform",
             feature = "regression_capture_scene2",
             feature = "regression_capture_scene3",
             feature = "regression_capture_scene4",

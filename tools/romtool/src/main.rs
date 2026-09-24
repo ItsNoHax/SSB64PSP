@@ -34,6 +34,7 @@ use ssb_rom::archive::Archive;
 use ssb_rom::rom;
 
 mod filter_coverage;
+mod residual_fixes;
 mod residuals;
 
 fn main() -> ExitCode {
@@ -961,6 +962,8 @@ struct TexKey {
     animated_relationship: bool,
     animated_source: Option<ssb_rom::mesh::MatAnimRef>,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
+    /// Exact RE-312 dense variant; zero is the ordinary conversion.
+    residual_variant: u16,
 }
 
 #[derive(Default)]
@@ -1005,6 +1008,7 @@ fn texture_cache_key(
         animated_relationship: animated_relationship.is_some(),
         animated_source: animated_relationship,
         alpha_policy,
+        residual_variant: 0,
     }
 }
 
@@ -1124,7 +1128,18 @@ fn pack_mesh(
 ) -> u32 {
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
+    let mut per_prim_phase = Vec::with_capacity(m.primitives.len());
     for (prim_index, prim) in m.primitives.iter().enumerate() {
+        let fix = prim
+            .material
+            .texture
+            .as_ref()
+            .and_then(|t| residual_fixes::find(id, offset, prim_index, t));
+        let phase = match fix.map(|f| f.kind) {
+            Some(residual_fixes::Kind::Phase(p)) => p,
+            _ => [0, 0],
+        };
+        per_prim_phase.push(phase);
         let texgen_site = prim
             .material
             .texgen_scale
@@ -1167,6 +1182,7 @@ fn pack_mesh(
                     animated_relationship: false,
                     animated_source: None,
                     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy::Opaque,
+                    residual_variant: 0,
                 };
                 Some(
                     *tex_index
@@ -1175,12 +1191,17 @@ fn pack_mesh(
                 )
             }
             Some(t) => {
-                let coverage = primitive_filter_coverage(m, prim);
+                let original_coverage = primitive_filter_coverage(m, prim);
+                let coverage = if matches!(fix.map(|f| f.kind), Some(residual_fixes::Kind::Dense)) {
+                    residual_fixes::dense_coverage(&original_coverage)
+                } else {
+                    original_coverage
+                };
                 let animated = prim.material.mat_anim;
                 let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
                 let alpha_policy =
                     ssb_rom::filter_compensation::AlphaPolicy::classify(gate, translucent_blend);
-                let key = texture_cache_key(
+                let mut key = texture_cache_key(
                     id,
                     &t,
                     coverage_hash(&coverage.train)
@@ -1193,6 +1214,9 @@ fn pack_mesh(
                     animated,
                     alpha_policy,
                 );
+                if matches!(fix.map(|f| f.kind), Some(residual_fixes::Kind::Dense)) {
+                    key.residual_variant = fix.unwrap().variant;
+                }
                 let resolved = if let Some(&i) = tex_index.get(&key) {
                     Some(i)
                 } else {
@@ -1224,6 +1248,7 @@ fn pack_mesh(
                                 ssb_rom::filter_compensation::AlphaPolicy::Opaque,
                             );
                             key.animated_source = None;
+                            key.residual_variant = 0;
                             key
                         };
                         if let Some(&i) = tex_index.get(&final_key) {
@@ -1250,6 +1275,7 @@ fn pack_mesh(
                         mat_anim: animated.is_some(),
                         triangles: prim.triangle_count(),
                         coverage,
+                        phase,
                     });
                 }
                 resolved
@@ -1338,6 +1364,7 @@ fn pack_mesh(
                                             mat_anim: true,
                                             triangles: prim.triangle_count(),
                                             coverage: coverage.clone(),
+                                            phase,
                                         });
                                     }
                                     i
@@ -1376,7 +1403,13 @@ fn pack_mesh(
         per_prim.push(texture_index);
         per_prim_mat_anim.push(mat_anim_index_resolved);
     }
-    writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i])
+    let mesh_index = writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i]);
+    for (i, &phase) in per_prim_phase.iter().enumerate() {
+        if phase != [0, 0] {
+            writer.set_mesh_prim_phase(mesh_index, i, phase);
+        }
+    }
+    mesh_index
 }
 
 /// Converts one resolved palette variant to the GE's ABGR8888 CLUT format,

@@ -278,6 +278,15 @@ animation_audit_capture = []
 # display-bearing EFDesc assets in source order (R1/RE-173).
 effect_audit_capture = []
 
+# RE-312 residual deployment: deterministic frame of Mario's original entry
+# pipe effect (file 356 graph 0x608), which uses a selected dense variant.
+# This remains a renderer-validation scene in the asset viewer.
+regression_capture_mario_entry = ["effect_audit_capture"]
+
+# RE-312's largest phase gain: the original bonus-stage small platform,
+# whose mesh includes the file-136 residual use site.
+regression_capture_bonus_platform = []
+
 # Captures frame 4 of each of the 35 manager effects with a source-declared
 # DObj AObjEvent32 transform animation (R1/RE-174).
 effect_animation_audit_capture = []

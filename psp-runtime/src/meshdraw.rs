@@ -690,7 +690,10 @@ unsafe fn bind_texture(
 /// dynamic-vertex branch. So a linear-texgen primitive is *not* `environment`
 /// here even though its geometry mode has `G_TEXTURE_GEN` set.
 unsafe fn apply_texture_mapping(
-    pack: &Pack<'_>, p: &PrimDesc, st: &mut DrawState, texture: u32,
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    texture: u32,
     uv: Option<ssb_rom::skeleton::MaterialUv>,
 ) {
     let affine = UvAffine::from_material(uv);
@@ -702,6 +705,8 @@ unsafe fn apply_texture_mapping(
         scale_t: p.texgen_scale_t,
         origin_s: p.texgen_origin_s,
         origin_t: p.texgen_origin_t,
+        phase_s_q5: p.phase_s_q5,
+        phase_t_q5: p.phase_t_q5,
         scale_s_bits: affine.scale_s.to_bits(),
         scale_t_bits: affine.scale_t.to_bits(),
         offset_s_bits: affine.offset_s.to_bits(),
@@ -735,8 +740,12 @@ unsafe fn apply_texture_mapping(
         );
         // Authored UVs already had the tile origin baked out at pack time.
         sys::sceGuTexOffset(
-            affine.offset_s + ssb_rom::psp_texture::ge_sample_offset(true, w),
-            affine.offset_t + ssb_rom::psp_texture::ge_sample_offset(true, h),
+            affine.offset_s
+                + ssb_rom::psp_texture::ge_sample_offset(true, w)
+                + ssb_rom::psp_texture::ge_phase_offset(p.phase_s_q5, w),
+            affine.offset_t
+                + ssb_rom::psp_texture::ge_sample_offset(true, h)
+                + ssb_rom::psp_texture::ge_phase_offset(p.phase_t_q5, h),
         );
         return;
     }
@@ -785,15 +794,23 @@ unsafe fn apply_texture_mapping(
             y: column(1),
             z: column(2),
             w: ScePspFVector4 {
-                x: b_s * affine.scale_s + affine.offset_s
-                    + ssb_rom::psp_texture::ge_sample_offset(true, w),
-                y: b_t * affine.scale_t + affine.offset_t
-                    + ssb_rom::psp_texture::ge_sample_offset(true, h),
+                x: b_s * affine.scale_s
+                    + affine.offset_s
+                    + ssb_rom::psp_texture::ge_sample_offset(true, w)
+                    + ssb_rom::psp_texture::ge_phase_offset(p.phase_s_q5, w),
+                y: b_t * affine.scale_t
+                    + affine.offset_t
+                    + ssb_rom::psp_texture::ge_sample_offset(true, h)
+                    + ssb_rom::psp_texture::ge_phase_offset(p.phase_t_q5, h),
                 z: 1.0,
                 w: 1.0,
             },
         },
     );
+    // A preceding authored-UV primitive may have installed a nonzero phase
+    // through TexOffset. The texture-matrix translation above owns the entire
+    // generated mapping, so clear that independent GE register on entry.
+    sys::sceGuTexOffset(0.0, 0.0);
     sys::sceGuTexMapMode(sys::TextureMapMode::TextureMatrix, 0, 0);
     sys::sceGuTexProjMapMode(sys::TextureProjectionMapMode::Normal);
 }
@@ -812,6 +829,8 @@ struct TextureMapping {
     scale_t: u16,
     origin_s: u16,
     origin_t: u16,
+    phase_s_q5: i16,
+    phase_t_q5: i16,
     scale_s_bits: u32,
     scale_t_bits: u32,
     offset_s_bits: u32,
