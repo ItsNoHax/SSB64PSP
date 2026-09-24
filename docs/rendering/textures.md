@@ -79,7 +79,8 @@ addressing, transcribed from `angrylion-rdp-plus`.
 - **16-byte row minimum**: the GE reads a buffer row under 16 bytes at a
   16-byte pitch. `psp_texture::ge_buffer_stride` stores every level at least
   16 bytes wide (32 texels for T4). The declared size stays the power of two
-  of the logical width, so UVs and wrapping are unchanged (RE-319).
+  of the logical width, so UVs and wrapping are unchanged. PSP-2000 stripe
+  captures confirm the T4 pitch and repair (RE-319, RE-320).
 - `mask == 0`, `shift_s`/`shift_t` and `tmem` never occur in the archive;
   `line` is unused because texels are read straight from ROM (RE-223).
 

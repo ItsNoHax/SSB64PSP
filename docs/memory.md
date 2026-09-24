@@ -9,8 +9,8 @@
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
 - The asset pack (v32) is 22.1 MB. It needs `PARAM.SFO` `MEMSIZE=1` (64 MiB
-  process mode); that mode was physically confirmed on PSP-2000/3000/Slim
-  with earlier packs (RE-255, RE-260).
+  process mode). The stock v32 pack loaded on a PSP-2000 via PSPLink
+  (RE-320); the mode was also confirmed with earlier packs (RE-255, RE-260).
 - PSP-1000 ignores `MEMSIZE=1`; the full pack does not fit (RE-288). Support
   needs a per-scene or reduced pack.
 - CPU time, not RAM, is the main constraint. Trade memory for CPU:
