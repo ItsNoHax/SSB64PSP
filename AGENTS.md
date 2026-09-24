@@ -25,6 +25,7 @@ assets or copyrighted data from reference projects
 | `crates/ssb-game` | Portable gameplay | PSP code |
 | `crates/ssb-engine` | Engine systems: math, animation, collision, traits | PSP code |
 | `crates/ssb-rom` | ROM, archive, formats, asset pack | PSP code |
+| `crates/ssb-capture` | Golden-capture scene specs shared by both PSP binaries and host tests | PSP code, scene behaviour |
 | `psp-runtime` | All shared PSP code: GE, input, timing, audio, memory, asset loading | Gameplay logic |
 | `psp-game` | Thin game application: orchestration only | Gameplay or PSP backend code |
 | `psp-asset-viewer` | Debug and render-validation tool | Game logic, match state, player features |
