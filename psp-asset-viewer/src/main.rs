@@ -108,6 +108,12 @@ fn deterministic_capture_frozen(scene: Option<CaptureScene>, sim_frame_index: u6
             || cfg!(feature = "texgen_normal_diagnostic_6"))
 }
 
+/// Frames rendered after the screenshot request before a scene-file capture
+/// exits. The emulator saves the framebuffer on a later flip, not inside the
+/// devctl; exiting on the same frame could lose the screenshot.
+#[cfg(feature = "golden_capture")]
+const CAPTURE_EXIT_FRAMES: u32 = 2;
+
 psp::module!("ssb64_psp", 1, 0);
 
 /// Scratch for the texture-inspection quad. Align16 because the GE DMAs it.
@@ -789,6 +795,8 @@ unsafe fn run() -> ! {
     let mut sim_frame_index = 0u64;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
+    #[cfg(feature = "golden_capture")]
+    let mut frames_after_capture = 0u32;
 
     loop {
         let frame = Stopwatch::start();
@@ -2413,6 +2421,13 @@ unsafe fn run() -> ! {
         if !headless_capture_sent && deterministic_capture_frozen(capture_scene, sim_frame_index) {
             emit_headless_screenshot();
             headless_capture_sent = true;
+        }
+        #[cfg(feature = "golden_capture")]
+        if headless_capture_sent && capture.is_some_and(|c| c.from_file) {
+            frames_after_capture += 1;
+            if frames_after_capture > CAPTURE_EXIT_FRAMES {
+                psp::sys::sceKernelExitGame();
+            }
         }
         results_transition.capture_completed();
         last_frame_us = frame.elapsed_us();
