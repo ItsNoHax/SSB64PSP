@@ -15,8 +15,21 @@ ssb-engine = { path = "../crates/ssb-engine", default-features = false }
 ssb-rom = { path = "../crates/ssb-rom", default-features = false }
 ssb-game = { path = "../crates/ssb-game", default-features = false }
 ssb-psp-runtime = { path = "../psp-runtime" }
+ssb-capture = { path = "../crates/ssb-capture" }
 
 [features]
+# One EBOOT for every golden scene: the scene is read at startup from
+# `capture_scene.txt` beside the EBOOT (`src/capture.rs`, spec format in
+# `crates/ssb-capture`), and the program exits a few frames after its
+# screenshot. `tools/golden.sh` builds this once and captures every scene
+# from it. Without the file it captures the Dream Land default. The
+# per-scene features below still work; each now only names a default scene.
+golden_capture = ["capture_scene_file", "headless_capture", "fighter_regression_capture"]
+# Reads `capture_scene.txt` like `golden_capture`, without the screenshot
+# request or the exit: the physical-PSP build of a golden scene
+# (`tools/stage-psp-regression.sh --golden NAME`).
+capture_scene_file = ["regression_capture"]
+
 # Freezes every per-frame mutation (physics, skeleton/stage/material
 # animation) once `regression::TARGET_TICKS` simulation ticks have run, so a
 # screenshot taken any time after that point is byte-identical regardless of
