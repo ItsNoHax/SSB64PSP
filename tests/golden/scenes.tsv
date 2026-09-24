@@ -1,0 +1,85 @@
+# Golden scene manifest, read by tools/golden.sh.
+#
+# Columns (tab-separated): golden crate scene_spec status evidence
+#   golden      tests/golden/<golden>.png
+#   crate       psp-asset-viewer or psp-game
+#   scene_spec  the line written to capture_scene.txt (crates/ssb-capture)
+#   status      pass, or known-failing: the golden is known to differ from
+#               current output and has not been re-investigated or
+#               rebaselined. `tools/golden.sh verify` fails if a
+#               known-failing row starts matching; set it to pass then.
+#   evidence    RE records for the scene
+#
+# The eight known-failing rows already differed before RE-313 and are
+# identical between the RE-313 and prior packs.
+#
+# Stage-index rows map each SSB64_STAGE_INDEX value to the golden its capture
+# equals exactly (tools/golden-reference.sh, RE-316).
+golden	crate	scene_spec	status	evidence
+r0-dream-land-default	psp-asset-viewer	default	pass	RE-123 RE-125
+r1-mvopeningroom	psp-asset-viewer	scene2	known-failing	RE-198 RE-199
+r1-stage-sector	psp-asset-viewer	scene3	pass	RE-200
+r1-catch-swirl-flat-color	psp-asset-viewer	scene4	pass	RE-200
+r2-saffron-city-gate	psp-asset-viewer	scene5	pass	RE-205
+r2-metal-texgen	psp-asset-viewer	scene6	known-failing	RE-214
+r2-metal-texgen-rotated	psp-asset-viewer	scene7	known-failing	RE-214
+r2-metal-texgen-linear	psp-asset-viewer	scene8	known-failing	RE-215 RE-259
+r2-metal-texgen-camera-rotated	psp-asset-viewer	scene9	known-failing	RE-237
+r2-peach-castle	psp-asset-viewer	scene10	pass	RE-286
+r2-depth-mask-diagnostic	psp-asset-viewer	depth_mask	known-failing	RE-251
+r2-mario-fighter	psp-asset-viewer	fighter mario	pass	RE-265
+r2-fox-fighter	psp-asset-viewer	fighter fox	pass	RE-265
+r2-dk-fighter	psp-asset-viewer	fighter donkey_kong	pass	RE-265
+r2-samus-fighter	psp-asset-viewer	fighter samus	pass	RE-265
+r2-luigi-fighter	psp-asset-viewer	fighter luigi	pass	RE-265
+r2-link-fighter	psp-asset-viewer	fighter link	pass	RE-265
+r2-yoshi-fighter	psp-asset-viewer	fighter yoshi	pass	RE-265
+r2-falcon-fighter	psp-asset-viewer	fighter captain_falcon	pass	RE-265
+r2-kirby-fighter	psp-asset-viewer	fighter kirby	pass	RE-265
+r2-pikachu-fighter	psp-asset-viewer	fighter pikachu	pass	RE-265
+r2-purin-fighter	psp-asset-viewer	fighter purin	pass	RE-265
+r2-ness-fighter	psp-asset-viewer	fighter ness	pass	RE-265
+r2-link-costume-1	psp-asset-viewer	link_costume_1	pass	RE-301
+r2-metal-mario-fighter	psp-asset-viewer	fighter metal_mario	pass	RE-311
+r2-mario-entry-pipe	psp-asset-viewer	mario_entry	pass	RE-312
+r2-bonus-platform-small	psp-asset-viewer	bonus_platform	pass	RE-312
+f1-training-fireball	psp-game	fireball	known-failing	RE-300
+f1-training-shadows	psp-game	shadows	known-failing	RE-302
+r2-stage-beta-dream-land	psp-asset-viewer	stage 1	pass	RE-286 RE-312
+r2-stage-zebes	psp-asset-viewer	stage 2	pass	RE-286 RE-312
+r2-stage-test-stage	psp-asset-viewer	stage 3	pass	RE-286 RE-312
+r2-stage-mushroom-kingdom	psp-asset-viewer	stage 5	pass	RE-286 RE-312
+r2-stage-kongo-jungle	psp-asset-viewer	stage 6	pass	RE-286 RE-312
+r2-stage-sector-z	psp-asset-viewer	stage 7	pass	RE-286 RE-312
+r2-stage-yoshis-island	psp-asset-viewer	stage 8	pass	RE-286 RE-312
+r2-stage-hyrule-castle	psp-asset-viewer	stage 10	pass	RE-286 RE-312
+r2-stage-final-destination	psp-asset-viewer	stage 11	pass	RE-286 RE-312
+r2-stage-how-to-play	psp-asset-viewer	stage 12	pass	RE-286 RE-312
+r2-stage-duel-zone	psp-asset-viewer	stage 13	pass	RE-286 RE-312
+r2-stage-metal-mario	psp-asset-viewer	stage 14	pass	RE-286 RE-312
+r2-stage-small-yoshis-island	psp-asset-viewer	stage 15	pass	RE-286 RE-312
+r2-stage-bonus1-mario	psp-asset-viewer	stage 16	pass	RE-286 RE-312
+r2-stage-bonus1-fox	psp-asset-viewer	stage 17	pass	RE-286 RE-312
+r2-stage-bonus1-donkey-kong	psp-asset-viewer	stage 18	pass	RE-286 RE-312
+r2-stage-bonus1-samus	psp-asset-viewer	stage 19	pass	RE-286 RE-312
+r2-stage-bonus1-luigi	psp-asset-viewer	stage 20	pass	RE-286 RE-312
+r2-stage-bonus1-link	psp-asset-viewer	stage 21	pass	RE-286 RE-312
+r2-stage-bonus1-yoshi	psp-asset-viewer	stage 22	pass	RE-286 RE-312
+r2-stage-bonus1-captain-falcon	psp-asset-viewer	stage 23	pass	RE-286 RE-312
+r2-stage-bonus1-kirby	psp-asset-viewer	stage 24	pass	RE-286 RE-312
+r2-stage-bonus1-pikachu	psp-asset-viewer	stage 25	pass	RE-286 RE-312
+r2-stage-bonus1-purin	psp-asset-viewer	stage 26	pass	RE-286 RE-312
+r2-stage-bonus1-ness	psp-asset-viewer	stage 27	pass	RE-286 RE-312
+r2-stage-bonus2-mario	psp-asset-viewer	stage 28	pass	RE-286 RE-312
+r2-stage-bonus2-fox	psp-asset-viewer	stage 29	pass	RE-286 RE-312
+r2-stage-bonus2-donkey-kong	psp-asset-viewer	stage 30	pass	RE-286 RE-312
+r2-stage-bonus2-samus	psp-asset-viewer	stage 31	pass	RE-286 RE-312
+r2-stage-bonus2-luigi	psp-asset-viewer	stage 32	pass	RE-286 RE-312
+r2-stage-bonus2-link	psp-asset-viewer	stage 33	pass	RE-286 RE-312
+r2-stage-bonus2-yoshi	psp-asset-viewer	stage 34	pass	RE-286 RE-312
+r2-stage-bonus2-captain-falcon	psp-asset-viewer	stage 35	pass	RE-286 RE-312
+r2-stage-bonus2-kirby	psp-asset-viewer	stage 36	pass	RE-286 RE-312
+r2-stage-bonus2-pikachu	psp-asset-viewer	stage 37	pass	RE-286 RE-312
+r2-stage-bonus2-purin	psp-asset-viewer	stage 38	pass	RE-286 RE-312
+r2-stage-bonus2-ness	psp-asset-viewer	stage 39	pass	RE-286 RE-312
+r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312

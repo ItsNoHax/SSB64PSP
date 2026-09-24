@@ -111,3 +111,46 @@ fn link_costume_scene_is_a_link_fighter_scene() {
     assert_eq!(scene.fighter(), Some(Fighter::Link));
     assert!(scene.object_view() && scene.holds_spin());
 }
+
+/// Every `tests/golden/scenes.tsv` row names a scene its crate can parse, and
+/// that spec is the scene's canonical spelling.
+#[test]
+fn manifest_specs_round_trip() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/scenes.tsv");
+    let manifest = std::fs::read_to_string(path).expect("read tests/golden/scenes.tsv");
+    let mut rows = 0;
+    let mut goldens = std::collections::BTreeSet::new();
+    for line in manifest.lines() {
+        if line.is_empty() || line.starts_with('#') || line.starts_with("golden\t") {
+            continue;
+        }
+        let cols: Vec<&str> = line.split('\t').collect();
+        assert_eq!(cols.len(), 5, "{line:?}");
+        let (golden, krate, spec, status) = (cols[0], cols[1], cols[2], cols[3]);
+        assert!(matches!(status, "pass" | "known-failing"), "{line:?}");
+        assert!(goldens.insert(golden), "duplicate golden {golden}");
+        let png = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden/");
+        assert!(
+            std::path::Path::new(&std::format!("{png}{golden}.png")).is_file(),
+            "{golden}.png missing"
+        );
+        let canonical = match krate {
+            "psp-asset-viewer" => ViewerScene::parse(spec).map(|s| s.to_string()),
+            "psp-game" => GameScene::parse(spec).map(|s| s.to_string()),
+            other => panic!("unknown crate {other}"),
+        };
+        assert_eq!(canonical.as_deref(), Some(spec), "{golden}");
+        rows += 1;
+    }
+    let pngs = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden"))
+        .unwrap()
+        .filter(|e| {
+            e.as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|x| x == "png")
+        })
+        .count();
+    assert_eq!(rows, pngs, "every golden PNG has exactly one manifest row");
+}
