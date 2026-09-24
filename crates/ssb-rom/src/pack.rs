@@ -166,7 +166,7 @@ pub const MAGIC: u32 = 0x5342_5350;
 // `MatAnimDesc` grew its per-material MObj rest state in version 30.  This
 // cannot be read compatibly by an older runtime because the following table
 // starts at a different byte offset.
-pub const VERSION: u32 = 30;
+pub const VERSION: u32 = 31;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -503,10 +503,15 @@ pub struct PrimDesc {
     pub texgen_origin_s: u16,
     /// The render tile's own `ult` origin; see [`Self::texgen_origin_s`].
     pub texgen_origin_t: u16,
+    /// RE-312: validated per-primitive sampling phase in S10.5 units.
+    /// Applied after tile-origin removal and material UV animation, without
+    /// changing shared source vertices or any other primitive's mapping.
+    pub phase_s_q5: i16,
+    pub phase_t_q5: i16,
 }
 
 impl PrimDesc {
-    pub const SIZE: usize = 60;
+    pub const SIZE: usize = 64;
     pub const NO_TEXTURE: u32 = u32::MAX;
 }
 
@@ -1903,6 +1908,8 @@ impl PackWriter {
                 // that function's own clamp rule, applied at draw time.
                 texgen_origin_s: texgen_origin.map_or(0, |t| t.origin_s),
                 texgen_origin_t: texgen_origin.map_or(0, |t| t.origin_t),
+                phase_s_q5: 0,
+                phase_t_q5: 0,
             });
         }
 
@@ -1915,6 +1922,17 @@ impl PackWriter {
             source_offset,
         });
         (self.meshes.len() - 1) as u32
+    }
+
+    /// Sets one mesh primitive's measured sampling phase after mesh packing.
+    /// The phase is render state, so shared vertices and texture data stay
+    /// byte-for-byte identical for other primitives using them.
+    pub fn set_mesh_prim_phase(&mut self, mesh: u32, prim: usize, phase: [i16; 2]) {
+        let m = self.meshes[mesh as usize];
+        assert!(prim < m.prim_count as usize);
+        let p = &mut self.prims[m.first_prim as usize + prim];
+        p.phase_s_q5 = phase[0];
+        p.phase_t_q5 = phase[1];
     }
 
     /// Adds a scene graph, returning the object's index.
@@ -2342,6 +2360,8 @@ impl PackWriter {
             out.extend_from_slice(&p.texgen_scale_t.to_le_bytes());
             out.extend_from_slice(&p.texgen_origin_s.to_le_bytes());
             out.extend_from_slice(&p.texgen_origin_t.to_le_bytes());
+            out.extend_from_slice(&p.phase_s_q5.to_le_bytes());
+            out.extend_from_slice(&p.phase_t_q5.to_le_bytes());
         }
         for t in &self.textures {
             out.extend_from_slice(&t.width.to_le_bytes());
@@ -3160,6 +3180,8 @@ impl<'a> Pack<'a> {
             texgen_scale_t: u16_at(self.data, at + 54),
             texgen_origin_s: u16_at(self.data, at + 56),
             texgen_origin_t: u16_at(self.data, at + 58),
+            phase_s_q5: i16_at(self.data, at + 60),
+            phase_t_q5: i16_at(self.data, at + 62),
         })
     }
 
@@ -3519,7 +3541,8 @@ mod tests {
         mesh.primitives.push(mesh.primitives[0].clone());
         mesh.primitives[1].material.texture_gen = crate::mesh::TextureGen::Regular;
         mesh.primitives[1].material.texgen_scale = Some((0x0400, 0x0200));
-        w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        let mesh_index = w.add_mesh(&mesh, 0, 0, |_| None, |_| None);
+        w.set_mesh_prim_phase(mesh_index, 1, [1, -2]);
         let bytes = w.finish();
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.prim_count, 2);
@@ -3528,7 +3551,16 @@ mod tests {
         let p1 = pack.prim(1).unwrap();
         assert_ne!(p1.flags & flags::TEXTURE_GEN, 0);
         assert_eq!((p1.texgen_scale_s, p1.texgen_scale_t), (0x0400, 0x0200));
-        assert_eq!(PrimDesc::SIZE, 60);
+        assert_eq!((p1.phase_s_q5, p1.phase_t_q5), (1, -2));
+        assert_eq!(
+            (
+                pack.prim(0).unwrap().phase_s_q5,
+                pack.prim(0).unwrap().phase_t_q5
+            ),
+            (0, 0)
+        );
+        assert_eq!(mesh.vertices[0].uv, [32, 64]);
+        assert_eq!(PrimDesc::SIZE, 64);
     }
 
     #[test]

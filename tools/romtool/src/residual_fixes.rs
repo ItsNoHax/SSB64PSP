@@ -1,0 +1,223 @@
+//! RE-312 deployment manifest, transcribed from the RE-313-regenerated
+//! `three-point-residuals.json` (pack SHA-256
+//! 9c3efae3e52bc20ffc80fc9057f0336fddd7f85ddf85a4735779e5cb223d9a3b). These
+//! are exact primitive use sites, not a source-texture-wide override. The
+//! report's independent holdout and phase-uniform gates selected them.
+
+use std::collections::BTreeSet;
+
+use ssb_rom::mesh::TextureRef;
+
+use crate::filter_coverage;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Phase([i16; 2]),
+    Dense,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Case {
+    pub variant: u16,
+    pub source_file: u32,
+    pub source_offset: u32,
+    /// Decoded/possibly mirror-extended dimensions in the report. The
+    /// converter's `TextureRef` can have a narrower source-tile dimension.
+    #[allow(dead_code)] // provenance only; mirror extension can change this width
+    pub dimensions: [u16; 2],
+    pub kind: Kind,
+    pub sites: &'static [(u32, u32, usize)],
+}
+
+/// The old pre-RE-313 list is deliberately absent. Each identity and phase
+/// below comes from the regenerated JSON's `manual-intervention` rows.
+pub(super) const CASES: &[Case] = &[
+    Case {
+        variant: 64,
+        source_file: 52,
+        source_offset: 0x1FCE8,
+        dimensions: [40, 8],
+        kind: Kind::Phase([1, 1]),
+        sites: &[(52, 0x21B50, 7)],
+    },
+    Case {
+        variant: 121,
+        source_file: 73,
+        source_offset: 0x820,
+        dimensions: [32, 32],
+        kind: Kind::Dense,
+        sites: &[
+            (73, 0xD080, 33),
+            (73, 0x5F70, 33),
+            (73, 0xD080, 35),
+            (73, 0x5F70, 35),
+        ],
+    },
+    Case {
+        variant: 378,
+        source_file: 107,
+        source_offset: 0x848,
+        dimensions: [64, 64],
+        kind: Kind::Phase([1, 0]),
+        sites: &[(107, 0x4758, 2)],
+    },
+    Case {
+        variant: 394,
+        source_file: 107,
+        source_offset: 0x3248,
+        dimensions: [160, 24],
+        kind: Kind::Phase([1, 1]),
+        sites: &[(107, 0x6A30, 0)],
+    },
+    Case {
+        variant: 395,
+        source_file: 107,
+        source_offset: 0x3248,
+        dimensions: [96, 24],
+        kind: Kind::Phase([1, 1]),
+        sites: &[(107, 0x6A30, 1)],
+    },
+    Case {
+        variant: 416,
+        source_file: 108,
+        source_offset: 0x46F0,
+        dimensions: [64, 64],
+        kind: Kind::Phase([1, 1]),
+        sites: &[
+            (108, 0x9360, 1),
+            (108, 0x9358, 1),
+            (108, 0x94C8, 1),
+            (108, 0xC480, 0),
+            (108, 0xC478, 0),
+            (108, 0xC480, 2),
+            (108, 0xC480, 4),
+            (108, 0xC478, 2),
+            (108, 0xC478, 4),
+        ],
+    },
+    Case {
+        variant: 439,
+        source_file: 109,
+        source_offset: 0x3000,
+        dimensions: [64, 32],
+        kind: Kind::Dense,
+        sites: &[(109, 0x7678, 9)],
+    },
+    Case {
+        variant: 440,
+        source_file: 109,
+        source_offset: 0x3000,
+        dimensions: [32, 32],
+        kind: Kind::Dense,
+        sites: &[(109, 0x7678, 10)],
+    },
+    Case {
+        variant: 564,
+        source_file: 113,
+        source_offset: 0x2EF0,
+        dimensions: [64, 16],
+        kind: Kind::Phase([0, 1]),
+        sites: &[(113, 0x5020, 14)],
+    },
+    Case {
+        variant: 759,
+        source_file: 136,
+        source_offset: 0x1010,
+        dimensions: [32, 32],
+        kind: Kind::Phase([0, 1]),
+        sites: &[
+            (136, 0x3A60, 2),
+            (136, 0x5210, 2),
+            (136, 0x42B0, 1),
+            (136, 0x5890, 1),
+            (136, 0x4AE0, 1),
+            (136, 0x5EF0, 1),
+        ],
+    },
+    Case {
+        variant: 1607,
+        source_file: 356,
+        source_offset: 0xA0,
+        dimensions: [32, 32],
+        kind: Kind::Dense,
+        sites: &[(356, 0x4C0, 1), (356, 0x560, 0)],
+    },
+];
+
+pub(super) fn find(file: u32, dl: u32, prim: usize, tex: &TextureRef) -> Option<&'static Case> {
+    let source = tex.data_file.map_or(file, u32::from);
+    CASES.iter().find(|c| {
+        c.source_file == source
+            && c.source_offset == tex.data_offset
+            && c.sites.contains(&(file, dl, prim))
+    })
+}
+
+/// RE-312's measured method: four phase-varied samples in every cell touched
+/// by training or independent validation. Validation points are excluded,
+/// then the set is sorted/deduplicated in the report's `(t, s)` order.
+pub(super) fn dense_coverage(base: &filter_coverage::Coverage) -> filter_coverage::Coverage {
+    let cells: BTreeSet<(i32, i32)> = base
+        .train
+        .iter()
+        .chain(&base.validation)
+        .map(|&[s, t]| (t.div_euclid(32), s.div_euclid(32)))
+        .collect();
+    let validation: BTreeSet<[i32; 2]> = base.validation.iter().copied().collect();
+    let mut train = base.train.clone();
+    for (ty, tx) in cells {
+        let o = (tx * 7 + ty * 11).rem_euclid(16);
+        for (i, j) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let p = [tx * 32 + 16 * i + o, ty * 32 + 16 * j + (o * 5 + 3) % 16];
+            if !validation.contains(&p) {
+                train.push(p);
+            }
+        }
+    }
+    train.sort_unstable_by_key(|p| (p[1], p[0]));
+    train.dedup();
+    filter_coverage::Coverage {
+        train,
+        validation: base.validation.clone(),
+        texgen: base.texgen.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dense_training_is_deterministic_and_disjoint_from_holdout() {
+        let base = filter_coverage::Coverage {
+            train: vec![[0, 0], [32, 0]],
+            validation: vec![[1, 1], [33, 1], [47, 16]],
+            texgen: None,
+        };
+        let a = dense_coverage(&base);
+        let b = dense_coverage(&base);
+        assert_eq!(a.train, b.train);
+        assert_eq!(a.validation, base.validation);
+        assert!(a.train.len() > base.train.len());
+        assert!(a.train.iter().all(|p| !a.validation.contains(p)));
+        assert!(a
+            .train
+            .windows(2)
+            .all(|w| (w[0][1], w[0][0]) < (w[1][1], w[1][0])));
+    }
+
+    #[test]
+    fn manifest_sites_are_unique_and_phases_are_bounded() {
+        let mut sites = BTreeSet::new();
+        for case in CASES {
+            assert!(case.dimensions[0] > 0 && case.dimensions[1] > 0);
+            for site in case.sites {
+                assert!(sites.insert(*site), "duplicate residual fix site {site:?}");
+            }
+            if let Kind::Phase([s, t]) = case.kind {
+                assert!((-2..=2).contains(&s) && (-2..=2).contains(&t));
+                assert!(s != 0 || t != 0);
+            }
+        }
+    }
+}

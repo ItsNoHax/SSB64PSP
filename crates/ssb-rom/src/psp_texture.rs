@@ -137,6 +137,13 @@ pub fn ge_sample_offset(linear: bool, uploaded_dim: u32) -> f32 {
     }
 }
 
+/// RE-312 per-primitive S10.5 phase, in the GE's normalized texture space.
+/// It is added after the +0.5 linear-sample correction and the material UV
+/// affine, so it shifts the final sample by exactly `q5 / 32` source texel.
+pub fn ge_phase_offset(q5: i16, uploaded_dim: u32) -> f32 {
+    q5 as f32 / (32.0 * uploaded_dim.max(1) as f32)
+}
+
 /// `sceGuTexScale` factor for one axis of a `G_TEXTURE_GEN` primitive drawn
 /// through the GE's environment-map coordinate generator.
 ///
@@ -943,6 +950,15 @@ mod tests {
         // R=0x11 must land in the low byte, not the high one.
         assert_eq!(pack_abgr([0x11, 0x22, 0x33, 0x44]), 0x4433_2211);
         assert_eq!(pack_abgr([255, 0, 0, 255]), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn primitive_phase_is_one_s10_5_step_after_linear_bias() {
+        let dim = 64;
+        assert_eq!(ge_phase_offset(0, dim), 0.0);
+        assert_eq!(ge_phase_offset(1, dim) * dim as f32, 1.0 / 32.0);
+        assert_eq!(ge_phase_offset(-2, dim) * dim as f32, -2.0 / 32.0);
+        assert_eq!(ge_sample_offset(true, dim) * dim as f32, 0.5);
     }
 
     /// Texels one axis spans on the PSP for a full sweep of the dot product,

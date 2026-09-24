@@ -5,36 +5,32 @@ directive 2026-09-19: fighter runtime/common state machinery → fighter-common
 gameplay → combat systems → all 12 fighters → match gameplay, translated in
 large coherent batches rather than per-function).
 
-Current subsystem/batch: **texture-LUT semantics, short TLUTs and
-format-agnostic 3-point compensation (complete, RE-313)**. `mesh.rs` tracks
-`G_MDSFT_TEXTLUT` and carries it on `TextureRef::tlut`; a TLUT-off draw
-carries no palette. `convert_sequence` keeps one whole RDP/RSP state per task
-display list (`SequenceItem::stream`), since the RDP runs a graph's head-1
-commands after its head-0 commands; this also fixed state leaking between
-the lists (Mushroom Kingdom's castle and pyramid now draw, Zebes' underside is
-textured). `texture::decode_lut` follows `angrylion-rdp-plus`: with the TLUT
-on, any 4-/8-bit texel is a TLUT index. `G_LOADTLUT` loads exactly `count`
-entries; an index past them reads stale TMEM, measured on the original game
-through `angrylion-rdp-plus` (`STALE_TLUT_ENTRIES`: Break the Targets arrows
-slot 3 = `0x1091`, opening-room book slot 255 = `0xFE59`). Every format enters
-the one compensator: RGBA16 keeps `Psm5551`, RGBA32/IA stay `Psm8888`, and
-the RE-283 bypass is compensated as `Psm8888`. Census: suspected bugs
-19 -> 0, level-0 mismatches 10 -> 0, never-attempted 225 -> 0; 29 of the 165
-materially bad direct variants improve, none regress; top residuals
-unchanged. Pack 29,627,552 -> 29,363,360 bytes, byte-identical across builds.
-806 ROM-gated workspace tests pass and both PSP release builds succeed. 27
-goldens were rebaselined (DK and 26 stage/scene goldens); 8 goldens that
-already differed before this batch (`f1-training-*`, `r1-mvopeningroom`,
-`r2-depth-mask-diagnostic`, `r2-metal-texgen*`) are untouched and still
-fail. No physical PSP capture. No manual 3-point override yet. The next
-gameplay batch remains Donkey Kong under `P2`.
+Current subsystem/batch: **RE-312 residual deployment after RE-313 (complete)**.
+The RE-313-regenerated report selected seven exact-use-site S10.5 UV phase
+shifts that pass both independent holdout and phase-uniform coverage, and four
+denser-training immutable RGBA8888 variants that pass the existing format,
+promotion, alpha and holdout gates. Three report candidates were rejected
+after those gates: no solve, or only 4–6% holdout improvement. Pack v31 stores
+phase per primitive and keys GE texture mapping on it; no shared UV mutation
+or global shift. Final pack SHA-256 `97b3f4d8...5707f216`, 29,425,312 bytes
+(+61,952); level-0 texture data +21,760 bytes. The 28 selected primitive
+uses cut independent visible SSE 75.5%, `>=32` samples 1,136 -> 510. Final
+RE-312: 1,607 variants, 0 suspected bugs, 0 level-0 mismatches. ROM-gated
+workspace tests (809) and both PSP release builds pass. PPSSPPHeadless
+captures refreshed Mushroom Kingdom, Kongo Jungle and Hyrule Castle goldens;
+new Sector Z, bonus-platform and Mario entry-pipe goldens are deterministic. No physical PSP
+capture. The next gameplay batch remains Donkey Kong under `P2`.
 
-Previous rendering subsystem/batch: **final 3-point residual census (complete,
-RE-312, report only)**. `romtool residuals <rom>` measures every mesh-texture
-variant on its independent holdout coverage against the exact 3-point
-reference and a fixed set of alternatives, and writes
-`docs/rendering/three-point-residuals.md`. RE-313 fixed the suspected bugs
-it found.
+Previous rendering subsystem/batch: **texture-LUT semantics and
+format-agnostic compensation (complete, RE-313)**. Per-task-list RDP/RSP
+state, `G_MDSFT_TEXTLUT`, measured stale short-TLUT entries, and compensation
+for every source format removed all 19 suspected bugs and 10 level-0
+mismatches from the original RE-312 census. See RE-313 for source evidence.
+
+Previous rendering subsystem/batch: **original RE-312 residual census
+(complete, report-only)**. `romtool residuals <rom>` measured independent
+holdouts and phase-uniform coverage against the exact 3-point reference. The
+post-RE-313 report and deployment follow-up are recorded in RE-312.
 
 Previous rendering subsystem/batch: **real-normal texgen coverage for 3-point
 compensation (complete, RE-311)**. Texgen primitives no longer train on the
