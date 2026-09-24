@@ -110,6 +110,18 @@ pub(super) fn record_conversion(c: Conversion) {
     });
 }
 
+/// The pending conversion's method, whether the compensator ran, and its
+/// natural and final formats; clears it. Tests only.
+#[cfg(test)]
+pub(super) fn take_pending() -> Option<(&'static str, bool, Psm, Psm)> {
+    STATE.with(|s| {
+        s.borrow_mut()
+            .as_mut()
+            .and_then(|r| r.pending.take())
+            .map(|c| (c.method, c.attempted, c.source_psm, c.final_psm))
+    })
+}
+
 /// The conversion was deduplicated into an existing variant, or failed.
 pub(super) fn discard_conversion() {
     STATE.with(|s| {
@@ -1473,15 +1485,16 @@ fn classify(a: &Analysis, v: &Variant) -> Classified {
                         ssb_rom::texture::BitSize::Bits4 => 16,
                         _ => 256,
                     };
-                    let hint = if t.format == ssb_rom::texture::Format::I && t.palette_offset.is_some() {
+                    let hint = if t.tlut.enabled() && t.format != ssb_rom::texture::Format::Ci {
                         format!(
-                            "{} texture drawn with a {}-entry TLUT loaded: the decoder ignores the TLUT (intensity), the packer quantizes that intensity image to the TLUT colours by nearest match, and `mesh.rs` does not track G_MDSFT_TEXTLUT, so neither N64 interpretation is packed",
+                            "{} texture drawn with G_MDSFT_TEXTLUT {:?} and a {}-entry TLUT: its texels are TLUT indices (RE-313), and the packed palette does not reproduce that lookup",
                             fmt_name(t.format, t.size),
+                            t.tlut,
                             t.palette_entries
                         )
-                    } else if t.format == ssb_rom::texture::Format::Ci && (t.palette_entries as usize) < full {
+                    } else if t.tlut.enabled() && (t.palette_entries as usize) < full {
                         format!(
-                            "{} texture with a {}-entry TLUT: indices past the loaded entries decode to (0,0,0,0) but pack to the nearest loaded entry",
+                            "{} texture with a {}-entry TLUT: an index past the loaded entries reads stale TMEM (RE-313); check `STALE_TLUT_ENTRIES` and the `stale-tlut-unresolved` log",
                             fmt_name(t.format, t.size),
                             t.palette_entries
                         )

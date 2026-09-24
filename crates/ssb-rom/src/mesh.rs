@@ -160,6 +160,12 @@ pub struct TextureRef {
     /// (`PLAN.md` R2.0/P0b's mirror+clamp-beyond-the-first-period question).
     pub drawn_width: u16,
     pub drawn_height: u16,
+    /// `G_MDSFT_TEXTLUT` in force when this texture is drawn (RE-313). It
+    /// decides whether texels index the TLUT at all -- an I4/I8 texture drawn
+    /// with the TLUT on is a palette lookup, and a CI texture drawn with it off
+    /// is not. When the mode is off, the `palette_*` fields are cleared: a
+    /// TLUT an earlier draw left loaded plays no part in this one.
+    pub tlut: crate::texture::TextureLut,
 }
 
 /// RSP texture-coordinate generation mode selected by geometry state.
@@ -1239,6 +1245,12 @@ struct State {
     palette_offset: Option<u32>,
     palette_file: Option<u16>,
     palette_entries: u16,
+    /// `G_MDSFT_TEXTLUT`, once a command in this stream has set it (RE-313).
+    texture_lut: LutState,
+    /// The mode each task display list was left in, and which one is live;
+    /// see [`SequenceItem::stream`].
+    stream_luts: [LutState; 2],
+    stream: u8,
     texture_enabled: bool,
     /// `G_TEXTURE`'s `scale_s`/`scale_t` (RE-101): an unsigned Q0.16
     /// multiplier the RSP applies to a vertex's raw ST the moment `G_VTX`
@@ -1270,7 +1282,42 @@ struct State {
     mat_anims: Vec<Option<MatAnimRef>>,
 }
 
+/// What the stream has said about `G_MDSFT_TEXTLUT`.
+///
+/// `Unset` is not `G_TT_NONE`: a list that draws before any texture-LUT
+/// command inherits the mode from whatever ran before it on the real RDP,
+/// which this converter cannot see. The two must stay distinct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LutState {
+    Unset,
+    Known(crate::texture::TextureLut),
+}
+
 impl State {
+    /// The TLUT mode a texture drawn now is sampled with.
+    ///
+    /// An unset mode keeps the converter's pre-RE-313 reading: CI through the
+    /// RGBA16 TLUT, every other format direct. RE-313 measured the US archive:
+    /// no I texture reaches a draw with the mode unset while a TLUT is
+    /// loaded, so the reading is ambiguous only for CI, where a TLUT-off
+    /// draw would show the raw index as grey.
+    fn texture_lut_for(&self, format: Format) -> crate::texture::TextureLut {
+        match self.texture_lut {
+            LutState::Known(mode) => mode,
+            LutState::Unset if format == Format::Ci => crate::texture::TextureLut::Rgba16,
+            LutState::Unset => crate::texture::TextureLut::None,
+        }
+    }
+
+    /// The loaded TLUT, as `(file, offset, entries)`, when `lut` reads one.
+    fn palette_for(&self, lut: crate::texture::TextureLut) -> (Option<u16>, Option<u32>, u16) {
+        if lut.enabled() {
+            (self.palette_file, self.palette_offset, self.palette_entries)
+        } else {
+            (None, None, 0)
+        }
+    }
+
     /// `initial` seeds `material` before any command runs — see
     /// [`InitialMaterial`].
     fn new(initial: InitialMaterial) -> Self {
@@ -1301,6 +1348,12 @@ impl State {
             palette_offset: None,
             palette_file: None,
             palette_entries: 0,
+            texture_lut: LutState::Unset,
+            stream_luts: [
+                LutState::Unset,
+                LutState::Known(crate::texture::TextureLut::None),
+            ],
+            stream: 0,
             texture_enabled: false,
             tex_scale: (0xFFFF, 0xFFFF),
             framebuffer_capture: false,
@@ -1620,21 +1673,25 @@ impl State {
                 mask_t,
                 drawn_width,
                 drawn_height,
+                tlut: self.texture_lut_for(Format::from_raw(fmt)?),
             });
         }
 
         let offset = self.timg_addr?;
+        let format = Format::from_raw(fmt)?;
+        let tlut = self.texture_lut_for(format);
+        let (palette_file, palette_offset, palette_entries) = self.palette_for(tlut);
         Some(TextureRef {
             data_file: self.timg_file,
             data_offset: offset,
-            format: Format::from_raw(fmt)?,
+            format,
             size: BitSize::from_raw(siz)?,
             width: w,
             height: h,
             source_width,
-            palette_file: self.palette_file,
-            palette_offset: self.palette_offset,
-            palette_entries: self.palette_entries,
+            palette_file,
+            palette_offset,
+            palette_entries,
             palette,
             mirror_s,
             mirror_t,
@@ -1647,6 +1704,7 @@ impl State {
             mask_t,
             drawn_width,
             drawn_height,
+            tlut,
         })
     }
 
@@ -1691,17 +1749,20 @@ impl State {
         let mirror_t = mask_t > 0 && cm_t & 0x1 != 0;
         let clamp_s = cm_s & 0x2 != 0;
         let clamp_t = cm_t & 0x2 != 0;
+        let format = Format::from_raw(fmt)?;
+        let tlut = self.texture_lut_for(format);
+        let (palette_file, palette_offset, palette_entries) = self.palette_for(tlut);
         Some(TextureRef {
             data_file: None,
             data_offset: 0,
-            format: Format::from_raw(fmt)?,
+            format,
             size: BitSize::from_raw(siz)?,
             width: w,
             height: h,
             source_width: w,
-            palette_file: self.palette_file,
-            palette_offset: self.palette_offset,
-            palette_entries: self.palette_entries,
+            palette_file,
+            palette_offset,
+            palette_entries,
             palette: self.tile0_palette.unwrap_or(0),
             mirror_s,
             mirror_t,
@@ -1714,6 +1775,7 @@ impl State {
             mask_t,
             drawn_width,
             drawn_height,
+            tlut,
         })
     }
 }
@@ -1910,6 +1972,17 @@ pub struct SequenceItem<'a> {
     /// `None` for every other item -- the normal case -- leaves inheritance
     /// exactly as before.
     pub depth_seed: Option<(bool, bool, ZMode)>,
+    /// The task display list (`gSYTaskmanDLHeads` index) this item's commands
+    /// are emitted into: a `DObjDLLink`'s `list_id`, or 0.
+    ///
+    /// Each head is its own command stream, so `G_MDSFT_TEXTLUT` inherits only
+    /// from earlier items on the same head (RE-313). Every list in the archive
+    /// that enables the TLUT disables it again before it ends, and the RDP
+    /// reset list sets `G_TT_NONE`; RE-313's frame captures entered head 1 with
+    /// `G_TT_NONE` every time. Head 1 therefore starts at `G_TT_NONE`, while
+    /// head 0 starts unset, since a graph converted alone may begin part-way
+    /// through a stream it shares with others.
+    pub stream: u8,
 }
 
 /// Converts display lists that share one RSP vertex cache, in draw order.
@@ -1971,6 +2044,13 @@ pub fn convert_sequence(
         // commands, exactly like `initial` is for item 0, but per item and
         // regardless of what the previous item left behind -- see
         // `SequenceItem::depth_seed`'s own doc comment for why.
+        let stream = item.stream.min(1);
+        if stream != state.stream {
+            state.stream_luts[state.stream as usize] = state.texture_lut;
+            state.texture_lut = state.stream_luts[stream as usize];
+            state.stream = stream;
+        }
+
         if let Some((depth_test, depth_write, depth_mode)) = item.depth_seed {
             state.material.depth_test = depth_test;
             state.material.depth_write = depth_write;
@@ -2267,6 +2347,25 @@ fn walk(
                 state.two_cycle = (data >> 20) & 0x3 == 1;
             }
 
+            // `G_MDSFT_TEXTLUT`, 2 bits at shift 14 (RE-313). `gDPSetTextureLUT`
+            // is the only form the archive uses, but any `G_SETOTHERMODE_H`
+            // whose field range covers either bit updates exactly the bits it
+            // covers, as the RSP's masked write does.
+            Cmd::SetOtherModeH { shift, len, data }
+                if u32::from(shift) < 16 && u32::from(shift) + u32::from(len) > 14 =>
+            {
+                let covered = (((1u64 << len) - 1) << shift) as u32 & 0xC000;
+                let old = match state.texture_lut {
+                    LutState::Known(mode) => mode.field() << 14,
+                    // Bits the command does not cover stay unknown; with
+                    // `G_TT_NONE` as the RDP reset default they read as 0.
+                    LutState::Unset => 0,
+                };
+                let word = (old & !covered) | (data & covered);
+                state.texture_lut =
+                    LutState::Known(crate::texture::TextureLut::from_field(word >> 14));
+            }
+
             // `G_MDSFT_RENDERMODE` is 29 bits starting at bit 3.
             Cmd::SetOtherModeL {
                 shift: 3,
@@ -2508,6 +2607,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -2515,6 +2615,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -2606,6 +2707,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2673,6 +2775,175 @@ mod tests {
         );
     }
 
+    /// A textured triangle drawn from tile 0 as `format`/`size`, after a
+    /// 16-entry TLUT load from 0x200, with `tt` (a raw `G_MDSFT_TEXTLUT`
+    /// value) set first when given.
+    fn tlut_mode_list(format: Format, size: BitSize, tt: Option<u32>) -> Vec<Cmd> {
+        let mut cmds = Vec::new();
+        if let Some(tt) = tt {
+            cmds.push(Cmd::SetOtherModeH {
+                shift: 14,
+                len: 2,
+                data: tt << 14,
+            });
+        }
+        cmds.extend([
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x200),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTimg {
+                format: format as u8,
+                size: size as u8,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+            Cmd::SetTile {
+                format: format as u8,
+                size: size as u8,
+                line: 2,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 2,
+                cm_t: 2,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::End,
+        ]);
+        cmds
+    }
+
+    /// RE-313: `G_MDSFT_TEXTLUT`, not the image format, decides whether a
+    /// texel reads the TLUT. An I4 texture drawn with `G_TT_NONE` must not
+    /// carry a TLUT an earlier load left behind (RE-312's I4/I8 cases), and
+    /// one drawn with `G_TT_RGBA16`/`G_TT_IA16` is a palette lookup.
+    #[test]
+    fn texture_lut_mode_decides_whether_a_texture_reads_the_tlut() {
+        use crate::texture::TextureLut;
+        let file = vertex_data(3);
+        let bound = |format, size, tt| {
+            let mesh = convert(&tlut_mode_list(format, size, tt), Source::bare(&file)).unwrap();
+            mesh.primitives[0].material.texture.expect("bound texture")
+        };
+
+        let off = bound(Format::I, BitSize::Bits4, Some(0));
+        assert_eq!(off.tlut, TextureLut::None);
+        assert_eq!(off.palette_offset, None, "a TLUT-off draw carries no TLUT");
+        assert_eq!(off.palette_entries, 0);
+
+        let rgba = bound(Format::I, BitSize::Bits8, Some(2));
+        assert_eq!(rgba.tlut, TextureLut::Rgba16);
+        assert_eq!(rgba.palette_offset, Some(0x200));
+        assert_eq!(rgba.palette_entries, 16);
+
+        let ia = bound(Format::I, BitSize::Bits4, Some(3));
+        assert_eq!(ia.tlut, TextureLut::Ia16);
+        assert_eq!(ia.palette_offset, Some(0x200));
+
+        // Value 1 sets only `tlut_type`; `en_tlut` stays clear.
+        assert_eq!(
+            bound(Format::I, BitSize::Bits4, Some(1)).tlut,
+            TextureLut::None
+        );
+
+        let ci_off = bound(Format::Ci, BitSize::Bits4, Some(0));
+        assert_eq!(ci_off.tlut, TextureLut::None);
+        assert_eq!(ci_off.palette_offset, None);
+
+        // No mode command at all keeps the pre-RE-313 reading.
+        assert_eq!(
+            bound(Format::Ci, BitSize::Bits4, None).tlut,
+            TextureLut::Rgba16
+        );
+        let i_unset = bound(Format::I, BitSize::Bits4, None);
+        assert_eq!(i_unset.tlut, TextureLut::None);
+        assert_eq!(i_unset.palette_offset, None);
+    }
+
+    /// RE-313: a `G_SETOTHERMODE_H` whose field range covers only one of the
+    /// two TLUT bits changes only that bit.
+    #[test]
+    fn a_partial_other_mode_write_changes_only_the_bits_it_covers() {
+        use crate::texture::TextureLut;
+        let file = vertex_data(3);
+        let mut cmds = vec![Cmd::SetOtherModeH {
+            shift: 14,
+            len: 2,
+            data: 2 << 14,
+        }];
+        // Bit 14 only (`tlut_type`): RGBA16 becomes IA16.
+        cmds.push(Cmd::SetOtherModeH {
+            shift: 14,
+            len: 1,
+            data: 1 << 14,
+        });
+        cmds.extend(tlut_mode_list(Format::Ci, BitSize::Bits4, None));
+        let mesh = convert(&cmds, Source::bare(&file)).unwrap();
+        let texture = mesh.primitives[0].material.texture.expect("bound texture");
+        assert_eq!(texture.tlut, TextureLut::Ia16);
+    }
+
+    /// RE-313: each task display list is its own RDP command stream. A list-1
+    /// item does not inherit the TLUT mode a list-0 item left enabled, and
+    /// list 0 resumes its own mode afterwards.
+    #[test]
+    fn texture_lut_mode_is_tracked_per_task_display_list() {
+        use crate::scene::Mat4;
+        use crate::texture::TextureLut;
+        let file = vertex_data(3);
+        let enable = [
+            Cmd::SetOtherModeH {
+                shift: 14,
+                len: 2,
+                data: 2 << 14,
+            },
+            Cmd::End,
+        ];
+        let draw = tlut_mode_list(Format::I, BitSize::Bits4, None);
+        fn item(cmds: &[Cmd], stream: u8) -> SequenceItem<'_> {
+            SequenceItem {
+                cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &[],
+                mat_anims: &[],
+                depth_seed: None,
+                stream,
+            }
+        }
+        let meshes = convert_sequence(
+            &[item(&enable, 0), item(&draw, 1), item(&draw, 0)],
+            Source::bare(&file),
+            InitialMaterial::default(),
+        );
+        let lut = |i: usize| {
+            meshes[i].as_ref().unwrap().primitives[0]
+                .material
+                .texture
+                .expect("bound texture")
+                .tlut
+        };
+        assert_eq!(lut(1), TextureLut::None, "list 1 starts at G_TT_NONE");
+        assert_eq!(lut(2), TextureLut::Rgba16, "list 0 keeps its own mode");
+    }
+
     /// RE-177: several manager-effect sprite-cycling primitives (CommonSpark
     /// and others) never carry a real pixel `G_SETTIMG` at all — real
     /// hardware supplies it at runtime from inside the same graphics-heap
@@ -2728,6 +2999,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2771,6 +3043,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2815,6 +3088,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2853,6 +3127,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -2955,6 +3230,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &mat_anims,
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -3064,6 +3340,7 @@ mod tests {
             mobjs: &mobjs,
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -3109,6 +3386,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -3193,6 +3471,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -3200,6 +3479,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3303,6 +3583,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -3310,6 +3591,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3380,6 +3662,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -3387,6 +3670,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3444,6 +3728,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -3451,6 +3736,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -3500,6 +3786,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &b,
@@ -3507,6 +3794,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let out = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
@@ -4903,6 +5191,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &node_b,
@@ -4910,6 +5199,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
         ];
         let meshes: Vec<_> =
@@ -5433,6 +5723,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()
@@ -5476,6 +5767,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let initial = InitialMaterial {
             lit: true,
@@ -5510,6 +5802,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5548,6 +5841,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5584,6 +5878,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5631,6 +5926,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: None,
+                stream: 0,
             },
             SequenceItem {
                 cmds: &list1,
@@ -5638,6 +5934,7 @@ mod tests {
                 mobjs: &[],
                 mat_anims: &[],
                 depth_seed: Some((true, false, ZMode::Translucent)),
+                stream: 1,
             },
         ];
         let meshes = convert_sequence(
@@ -5678,6 +5975,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(
             &items,
@@ -5714,6 +6012,7 @@ mod tests {
             mobjs: &[],
             mat_anims: &[],
             depth_seed: None,
+            stream: 0,
         }];
         let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
             .pop()

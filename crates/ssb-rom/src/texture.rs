@@ -5,7 +5,10 @@
 //! each into straight RGBA8888, which is the neutral form the PSP converter
 //! then packs down (see `docs/rendering.md`).
 //!
-//! Paletted (`CI`) formats decode against a TLUT of RGBA5551 entries.
+//! Paletted (`CI`) formats decode against a TLUT of RGBA5551 entries. The
+//! RDP's `G_MDSFT_TEXTLUT` other-mode field, not the image format alone,
+//! decides whether a texel goes through the TLUT at all ([`TextureLut`],
+//! RE-313).
 
 use alloc::vec::Vec;
 
@@ -60,6 +63,67 @@ impl BitSize {
             BitSize::Bits8 => 8,
             BitSize::Bits16 => 16,
             BitSize::Bits32 => 32,
+        }
+    }
+}
+
+/// The RDP's texture-LUT mode (`G_MDSFT_TEXTLUT`, other-mode-high bits 14-15).
+///
+/// Bit 15 is `en_tlut` and bit 14 `tlut_type` (`angrylion-rdp-plus`'s
+/// `rdp_set_other_modes`); `gbi.h` names the three meaningful values
+/// `G_TT_NONE` (0), `G_TT_RGBA16` (2) and `G_TT_IA16` (3). The value 1 sets
+/// only the type bit, so the TLUT stays disabled.
+///
+/// With the TLUT enabled, the texel *format* no longer decides how a 4- or
+/// 8-bit texel is interpreted: `fetch_texel_entlut_quadro` indexes the TLUT
+/// with `palette << 4 | nibble` for every 4-bit format (CI, IA, I and RGBA
+/// alike) and with the whole byte for every 8-bit one. A 16-bit texel indexes
+/// with its high byte, and a 32-bit texel with its red byte. Without it, a CI
+/// texel is not looked up: CI4 reads `palette << 4 | nibble` and CI8 the byte,
+/// replicated into all four channels (`fetch_texel`'s `TEXEL_CI4`/`TEXEL_CI8`).
+/// RE-313 has the derivation and the archive measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum TextureLut {
+    #[default]
+    None,
+    Rgba16,
+    Ia16,
+}
+
+impl TextureLut {
+    /// Decodes the two-bit `G_MDSFT_TEXTLUT` field.
+    pub fn from_field(field: u32) -> Self {
+        match field & 0x3 {
+            2 => TextureLut::Rgba16,
+            3 => TextureLut::Ia16,
+            _ => TextureLut::None,
+        }
+    }
+
+    /// The other-mode-high field value this mode is written as.
+    pub fn field(self) -> u32 {
+        match self {
+            TextureLut::None => 0,
+            TextureLut::Rgba16 => 2,
+            TextureLut::Ia16 => 3,
+        }
+    }
+
+    /// Whether texels pass through the TLUT.
+    pub fn enabled(self) -> bool {
+        self != TextureLut::None
+    }
+
+    /// Expands one 16-bit TLUT entry the way this mode reads it. `None`
+    /// never reads the TLUT and returns transparent black.
+    pub fn entry_rgba(self, entry: u16) -> [u8; 4] {
+        match self {
+            TextureLut::None => [0; 4],
+            TextureLut::Rgba16 => rgba5551(entry),
+            TextureLut::Ia16 => {
+                let i = (entry >> 8) as u8;
+                [i, i, i, entry as u8]
+            }
         }
     }
 }
@@ -299,14 +363,13 @@ pub fn data_len(width: u32, height: u32, size: BitSize) -> usize {
     (texels * size.bits()).div_ceil(8)
 }
 
-/// Decodes an N64 texture into RGBA8888.
+/// Decodes an N64 texture into RGBA8888, as drawn with `G_TT_RGBA16`.
 ///
 /// `tlut` is required for `Ci` formats and ignored otherwise. It is a slice of
-/// big-endian RGBA5551 entries.
-// The index does double duty here: it addresses the destination pixel *and*
-// derives the packed source offset (`i / 2` for 4bpp, `i * 2` for 16bpp).
-// Iterator adaptors would obscure that relationship rather than clarify it.
-#[allow(clippy::needless_range_loop)]
+/// big-endian RGBA5551 entries. This is [`decode_lut`] under the assumption
+/// every CI texture is drawn with the RGBA16 TLUT enabled and every other
+/// format with it disabled -- the common case, but a caller that knows the
+/// real `G_MDSFT_TEXTLUT` state must use [`decode_lut`].
 pub fn decode(
     data: &[u8],
     width: u32,
@@ -315,6 +378,59 @@ pub fn decode(
     size: BitSize,
     tlut: Option<&[u16]>,
 ) -> Result<Rgba8, TextureError> {
+    if format == Format::Ci {
+        let tlut = tlut.ok_or(TextureError::MissingPalette)?;
+        decode_lut(
+            data,
+            width,
+            height,
+            format,
+            size,
+            TextureLut::Rgba16,
+            tlut,
+            0,
+        )
+    } else {
+        decode_lut(data, width, height, format, size, TextureLut::None, &[], 0)
+    }
+}
+
+/// The TLUT index a texel of this size would look up, when the TLUT is on.
+///
+/// `i` is the texel number. `palette` is the render tile's bank; it only
+/// applies to 4-bit texels, as in `fetch_texel_entlut_quadro`.
+fn lut_index(data: &[u8], i: usize, size: BitSize, palette: u8) -> usize {
+    match size {
+        BitSize::Bits4 => {
+            let b = data[i / 2];
+            let n = if i % 2 == 0 { b >> 4 } else { b & 0xF };
+            ((palette as usize & 0xF) << 4) | n as usize
+        }
+        BitSize::Bits8 => data[i] as usize,
+        BitSize::Bits16 => data[i * 2] as usize,
+        BitSize::Bits32 => data[i * 4] as usize,
+    }
+}
+
+/// Decodes an N64 texture into RGBA8888 under an explicit TLUT mode.
+///
+/// `tlut` holds the whole loaded TLUT from index 0 (big-endian RGBA5551 or
+/// IA16 words); `palette` is the render tile's CI4 bank. An index past the end
+/// of `tlut` decodes as transparent black. The caller decides what that slot
+/// really holds: RE-313 found the RDP loads exactly `count` entries and a
+/// read past them returns stale TMEM, so a caller that knows the stale value
+/// must extend `tlut` with it.
+#[allow(clippy::too_many_arguments)]
+pub fn decode_lut(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    format: Format,
+    size: BitSize,
+    lut: TextureLut,
+    tlut: &[u16],
+    palette: u8,
+) -> Result<Rgba8, TextureError> {
     let need = data_len(width, height, size);
     if data.len() < need {
         return Err(TextureError::Truncated {
@@ -322,7 +438,46 @@ pub fn decode(
             have: data.len(),
         });
     }
+    if format == Format::Yuv {
+        return Err(TextureError::UnsupportedCombination(format, size));
+    }
+    let count = (width * height) as usize;
+    if lut.enabled() {
+        let mut out = Rgba8::new(width, height);
+        for i in 0..count {
+            let entry = tlut.get(lut_index(data, i, size, palette)).copied();
+            out.put(i, entry.map_or([0; 4], |e| lut.entry_rgba(e)));
+        }
+        return Ok(out);
+    }
+    if format == Format::Ci {
+        // `fetch_texel`'s `TEXEL_CI4`/`TEXEL_CI8` without the TLUT: the index
+        // itself (CI4 with the bank as its high nibble), in every channel.
+        if !matches!(size, BitSize::Bits4 | BitSize::Bits8) {
+            return Err(TextureError::UnsupportedCombination(format, size));
+        }
+        let mut out = Rgba8::new(width, height);
+        for i in 0..count {
+            let v = lut_index(data, i, size, palette) as u8;
+            out.put(i, [v, v, v, v]);
+        }
+        return Ok(out);
+    }
+    decode_direct(data, width, height, format, size)
+}
 
+/// Decodes a non-CI texture with the TLUT disabled.
+// The index does double duty here: it addresses the destination pixel *and*
+// derives the packed source offset (`i / 2` for 4bpp, `i * 2` for 16bpp).
+// Iterator adaptors would obscure that relationship rather than clarify it.
+#[allow(clippy::needless_range_loop)]
+fn decode_direct(
+    data: &[u8],
+    width: u32,
+    height: u32,
+    format: Format,
+    size: BitSize,
+) -> Result<Rgba8, TextureError> {
     let count = (width * height) as usize;
     let mut out = Rgba8::new(width, height);
 
@@ -379,21 +534,6 @@ pub fn decode(
                 let b = data[i / 2];
                 let v = nib(if i % 2 == 0 { b >> 4 } else { b & 0xF });
                 out.put(i, [v, v, v, v]);
-            }
-        }
-        (Format::Ci, BitSize::Bits8) => {
-            let tlut = tlut.ok_or(TextureError::MissingPalette)?;
-            for i in 0..count {
-                let idx = data[i] as usize;
-                out.put(i, rgba5551(tlut.get(idx).copied().unwrap_or(0)));
-            }
-        }
-        (Format::Ci, BitSize::Bits4) => {
-            let tlut = tlut.ok_or(TextureError::MissingPalette)?;
-            for i in 0..count {
-                let b = data[i / 2];
-                let idx = (if i % 2 == 0 { b >> 4 } else { b & 0xF }) as usize;
-                out.put(i, rgba5551(tlut.get(idx).copied().unwrap_or(0)));
             }
         }
         (f, s) => return Err(TextureError::UnsupportedCombination(f, s)),
@@ -679,5 +819,190 @@ mod tests {
         assert_eq!(data_len(3, 1, BitSize::Bits4), 2);
         assert_eq!(data_len(4, 1, BitSize::Bits4), 2);
         assert_eq!(data_len(4, 1, BitSize::Bits16), 8);
+    }
+
+    /// RE-313: with the TLUT off, I4/I8 are intensity in every channel; with
+    /// it on, the same bytes are TLUT indices (`fetch_texel_entlut_quadro`),
+    /// with the CI4 bank as the high nibble of a 4-bit index only.
+    #[test]
+    fn intensity_texels_read_the_tlut_only_when_it_is_enabled() {
+        let tlut: Vec<u16> = (0..32).map(|i| 0xF801 ^ (i << 1)).collect();
+        let i4 = [0x1F];
+        let off = decode_lut(
+            &i4,
+            2,
+            1,
+            Format::I,
+            BitSize::Bits4,
+            TextureLut::None,
+            &tlut,
+            0,
+        )
+        .unwrap();
+        assert_eq!(off.get(0), [0x11; 4]);
+        assert_eq!(off.get(1), [0xFF; 4]);
+
+        let on = decode_lut(
+            &i4,
+            2,
+            1,
+            Format::I,
+            BitSize::Bits4,
+            TextureLut::Rgba16,
+            &tlut,
+            0,
+        )
+        .unwrap();
+        assert_eq!(on.get(0), rgba5551(tlut[1]));
+        assert_eq!(on.get(1), rgba5551(tlut[15]));
+        let bank = decode_lut(
+            &i4,
+            2,
+            1,
+            Format::I,
+            BitSize::Bits4,
+            TextureLut::Rgba16,
+            &tlut,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            bank.get(0),
+            rgba5551(tlut[17]),
+            "4-bit index = bank << 4 | nibble"
+        );
+
+        let i8 = [0x1E];
+        let on8 = decode_lut(
+            &i8,
+            1,
+            1,
+            Format::I,
+            BitSize::Bits8,
+            TextureLut::Rgba16,
+            &tlut,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            on8.get(0),
+            rgba5551(tlut[0x1E]),
+            "an 8-bit index ignores the bank"
+        );
+        let off8 = decode_lut(
+            &i8,
+            1,
+            1,
+            Format::I,
+            BitSize::Bits8,
+            TextureLut::None,
+            &tlut,
+            0,
+        )
+        .unwrap();
+        assert_eq!(off8.get(0), [0x1E; 4]);
+    }
+
+    /// RE-313: `G_TT_IA16` reads an entry as intensity (high byte) and alpha
+    /// (low byte); `G_TT_RGBA16` as RGBA5551 with a one-bit alpha.
+    #[test]
+    fn tlut_type_decides_how_an_entry_expands() {
+        assert_eq!(
+            TextureLut::Ia16.entry_rgba(0x80C0),
+            [0x80, 0x80, 0x80, 0xC0]
+        );
+        assert_eq!(TextureLut::Rgba16.entry_rgba(0xFFFE), [255, 255, 255, 0]);
+        assert_eq!(TextureLut::Rgba16.entry_rgba(0x0001), [0, 0, 0, 255]);
+        assert_eq!(TextureLut::from_field(0), TextureLut::None);
+        assert_eq!(TextureLut::from_field(1), TextureLut::None);
+        assert_eq!(TextureLut::from_field(2), TextureLut::Rgba16);
+        assert_eq!(TextureLut::from_field(3), TextureLut::Ia16);
+        let ci = decode_lut(
+            &[0x01],
+            2,
+            1,
+            Format::Ci,
+            BitSize::Bits4,
+            TextureLut::Ia16,
+            &[0x10FF, 0x2080],
+            0,
+        )
+        .unwrap();
+        assert_eq!(ci.get(0), [0x10, 0x10, 0x10, 0xFF]);
+        assert_eq!(ci.get(1), [0x20, 0x20, 0x20, 0x80]);
+    }
+
+    /// RE-313: a CI texel drawn with the TLUT off is its raw index (CI4 with
+    /// the bank as high nibble) in all four channels, alpha included.
+    #[test]
+    fn ci_texels_with_the_tlut_off_read_the_raw_index() {
+        let ci4 = decode_lut(
+            &[0x3C],
+            2,
+            1,
+            Format::Ci,
+            BitSize::Bits4,
+            TextureLut::None,
+            &[],
+            2,
+        )
+        .unwrap();
+        assert_eq!(ci4.get(0), [0x23; 4]);
+        assert_eq!(ci4.get(1), [0x2C; 4]);
+        let ci8 = decode_lut(
+            &[0x9A],
+            1,
+            1,
+            Format::Ci,
+            BitSize::Bits8,
+            TextureLut::None,
+            &[],
+            2,
+        )
+        .unwrap();
+        assert_eq!(ci8.get(0), [0x9A; 4]);
+    }
+
+    /// RE-313: `decode_lut` reads an index past the supplied TLUT as
+    /// transparent black; the caller extends the TLUT with any measured
+    /// stale TMEM value first. `decode` keeps its RGBA16 reading of CI.
+    #[test]
+    fn an_index_past_the_supplied_tlut_is_transparent_black() {
+        let short = [0x294A, 0xA50D, 0x0001];
+        let img = decode_lut(
+            &[0x03],
+            2,
+            1,
+            Format::Ci,
+            BitSize::Bits4,
+            TextureLut::Rgba16,
+            &short,
+            0,
+        )
+        .unwrap();
+        assert_eq!(img.get(0), rgba5551(0x294A));
+        assert_eq!(img.get(1), [0, 0, 0, 0]);
+        let mut extended = short.to_vec();
+        extended.push(0x1091);
+        let img = decode_lut(
+            &[0x03],
+            2,
+            1,
+            Format::Ci,
+            BitSize::Bits4,
+            TextureLut::Rgba16,
+            &extended,
+            0,
+        )
+        .unwrap();
+        assert_eq!(img.get(1), rgba5551(0x1091));
+        assert_eq!(
+            decode(&[0x03], 2, 1, Format::Ci, BitSize::Bits4, Some(&extended)).unwrap(),
+            img
+        );
+        assert_eq!(
+            decode(&[0x03], 2, 1, Format::Ci, BitSize::Bits4, None),
+            Err(TextureError::MissingPalette)
+        );
     }
 }
