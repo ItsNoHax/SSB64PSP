@@ -1,11 +1,18 @@
 # Lighting
 
-Part of [docs/rendering.md](../rendering.md). Describes the current model; see `docs/evidence/re/` for how it was established.
+Part of [rendering.md](../rendering.md).
 
-### Lighting
+Status: complete; PPSSPP-validated.
 
-Status: COMPLETE; PPSSPP revalidated after RE-264
+- Fighters use runtime GE lighting from the active stage's directional light,
+  set up as the original does before `ftDisplayMainProcDisplay`
+  (RE-103, RE-105, RE-164–167).
+- Lit versus literal vertex colour is decided per vertex from `G_VTX`
+  load-time state, and primitive colour has a single owner (RE-240–243).
+- Costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks are preserved (RE-261;
+  [D-024](../decisions/D-024.md)).
+- `sceGuLight` does not enable its channel; `GU_LIGHT0` is enabled explicitly
+  (RE-264).
 
-RE-103/105 and RE-164–167 establish the runtime path; R2.2/C1–C2 (RE-240–243) prove single-source PRIM ownership and `G_VTX` load-time normal/colour provenance. RE-261 preserves fighter costume `LIGHT1COLOR`/`LIGHT2COLOR` tracks. RE-264 fixes the missing independent `GU_LIGHT0` enable that had left only ambient light active, and revalidates Mario, Fox and Link against refreshed deterministic captures
-
-**Remaining work:** Physical-PSP confirmation of the corrected light-channel state remains in R2; dynamic gameplay costume selection remains future gameplay integration
+Remaining: physical-PSP recheck of the corrected light channel; costume
+selection in `psp-game`.

@@ -1,506 +1,128 @@
 # SSB64PSP
 
-A native Rust port of **Super Smash Bros. (N64)** to the **Sony PSP**.
+A native Rust source port of **Super Smash Bros. (N64)** to the **Sony PSP**.
+Not an emulator: gameplay is translated from the
+[SSB64 decompilation][decomp], and N64 display lists are converted to PSP GE
+geometry at build time.
 
-This is **not an emulator**. It is a reimplementation of the game for PSP hardware, using the [Super Smash Bros. decompilation][decomp] as the primary reference for original behaviour and [`rust-psp`][rustpsp] for the platform layer.
+![Dream Land on PSP](docs/images/m4-stage-textured.png)
 
-> **Status: engine prototype, gameplay port underway.** The ROM/resource pipeline, scene graphs, textures, materials, fighter models, fighter animations, stage animations, collision data and core movement systems have been recovered and implemented. Fighters and stages render and animate at a locked 60 FPS under PPSSPP, which is the project's primary validated environment today. The project has been smoke-tested on physical PSP hardware, including a Training-mode combat slice (Mario's neutral jab). Rendering fidelity/performance (`PLAN.md` milestone `P5`) and gameplay (`P1`–`P4`) now proceed in parallel, not gated on each other — see [`STATUS.md`](STATUS.md) for current work.
-
-![Dream Land rendering on PSP](docs/images/m4-stage-textured.png)
-
-*Dream Land with geometry, textures and palettes extracted from the ROM, placed through the recovered scene graph and rendered through the PSP's Graphics Engine.*
-
----
-
-## Project Goals
-
-Original SSB64 behavior (from the decompilation and ROM) is the source of
-truth for every system. Beyond that, rendering and gameplay are parallel,
-independent tracks (`PLAN.md` milestones `P0`–`P5`), not a serial pipeline:
-
-```text
-Original SSB64 behavior
-        ↓
-   ┌────┴────┐
-Gameplay   Rendering
-(P1–P4)    fidelity/performance (P5)
-   └────┬────┘
-        ↓
-Full game systems
-```
-
-Rendering performance/fidelity is not a blocker for gameplay development —
-see `AGENTS.md`'s non-negotiable constraints and `PLAN.md`.
-
-The goal is not to produce a game that merely looks similar to SSB64. The implementation should reproduce the original game's behavior wherever the original decompilation and ROM provide sufficient evidence.
-
----
-
-## Current Status
-
-See [`PLAN.md`](PLAN.md) for the authoritative development roadmap and [`STATUS.md`](STATUS.md) for the current execution state.
-
-### Working and verified
-
-* ROM validation
-* VPK0 decompression
-* `relocData` archive processing
-* Asset extraction and conversion
-* Runtime asset-pack generation
-* N64 display-list parsing
-* F3DEX2-related rendering infrastructure
-* N64 texture decoding
-* Scene graph conversion
-* Fighter model conversion
-* Fighter animation extraction and playback
-* Stage animation extraction and playback
-* Stage collision extraction
-* Fighter movement infrastructure
-* Fixed timestep
-* PSP runtime asset loading
-* PSP mesh rendering
-* Textured and shaded fighters
-* Textured and shaded stages
-* Fighter costume colours currently represented by the runtime pack
-* Camera-facing/billboard rendering
-* Stage scenery animation
-* Fighter animation on hardware
-* Stage collision queries
-* Fighter movement and landing on extracted stage collision
-
-### Physical PSP hardware
-
-The current renderer has representative PSP Slim/6.61 captures recorded in
-RE-201–215, including fighters, stages, materials, framebuffer effects and
-texgen. Formal R2 coverage is still in progress: exhaustive failure coverage,
-the original-N64 Metal comparison and the R2.2 renderer-corrective regressions
-remain open. PPSSPP is still the primary day-to-day validation environment;
-see `STATUS.md` and `PLAN.md` R2.1/R2.2.
-
-### Current rendering work
-
-The remaining work is focused on reproducing the original N64 renderer more completely and accurately, including:
-
-* N64 rendering command coverage
-* texture conversion completeness
-* CI4/CI8 and TLUT behavior
-* texture filtering
-* texture addressing
-* LOD and mipmapping behavior
-* material tables
-* material/combiner state
-* lighting behavior
-* unresolved `MObj` fields
-* transform kind `0x8000`
-* stage material animation
-* additional fighter palettes/costumes
-* framebuffer rendering
-* screen wipes
-* camera/projection correctness
-* render-state isolation
-* N64 render-state model fidelity (the intermediate representation must not collapse to `mesh + texture + basic colour` before correctness is established)
-* deterministic visual-regression methodology (reference vs. PPSSPP software vs. PPSSPP hardware vs. physical PSP)
-* comparative audit against `sf64-psp` and `oot-PSP`
-* final texgen semantics and renderer-corrective validation (R2.1/R2.2)
-* rendering regression coverage
-* PSP VRAM usage
-* rendering performance
-
-These are tracked individually in `PLAN.md` (see R0.1–R0.18).
-
-### Not yet implemented
-
-General match combat has not started for any fighter yet (`PLAN.md` `P2`,
-after `P1`'s decomp compatibility layer). One grounded attack exists ahead
-of that milestone as a scoped Training-only exception: Mario's neutral jab
-(input → hitbox → damage/knockback/hitstun) against a stationary dummy
-target, verified on PPSSPP and physical PSP (`docs/porting-status.md`).
-
-Not yet implemented include:
-
-* attacks besides Mario's neutral jab
-* hitboxes and hurtboxes besides Mario's neutral jab's
-* specials, grabs, shields, a real `Damage` status
-* opponents
-* CPU combat AI
-* stocks and KO handling
-* complete match loop
-* complete stage-selection/loading flow
-* items
-* menus
-* save data
-* audio
-
----
+> **Status:** early development. Stages and fighters render at 60 FPS. Mario's
+> and Fox's movesets are ported and run in a Training sandbox against a dummy.
+> No full match, CPU AI, items, real menus or audio yet. See [`docs/porting-status.md`](docs/porting-status.md)
+> for per-subsystem detail and [`STATUS.md`](STATUS.md) for current work.
 
 ## Legal
 
-You must supply your own legally obtained ROM dump.
-
-This repository contains **no Nintendo code, ROM, copyrighted game assets, textures, models or audio**.
-
-Assets are extracted from the user's own ROM on their own machine during the build process. Generated assets are stored under:
-
-```text
-assets/generated/
-```
-
-and are gitignored.
-
-The `rom/` directory is also gitignored.
-
----
+This repository contains no Nintendo code, ROM or game assets. You must supply
+your own legally obtained ROM. Assets are extracted locally into
+`assets/generated/`, which is gitignored along with `rom/`.
 
 ## Requirements
 
-* Rust stable for host tools and tests
-* Rust nightly for the PSP target, pinned by the repository toolchain
-* [`cargo-psp`][rustpsp]
-* Your own `Super Smash Bros. (USA).z64` ROM
+- Rust stable for host tools and tests (pinned by `rust-toolchain.toml`)
+- Rust nightly for the PSP crates (pinned by their own `rust-toolchain.toml`)
+- `cargo-psp` from the project's `rust-psp` fork, at the revision CI pins:
+  `cargo +nightly-2026-08-26 install --git https://github.com/ItsNoHax/rust-psp --rev a89142b237f3014fc15425d3549e44d3aa07d1c6 cargo-psp --locked`
+- `Super Smash Bros. (USA).z64`:
 
-### Supported ROM
+| Game code | SHA-1 | MD5 |
+|---|---|---|
+| `NALE` | `e2929e10fccc0aa84e5776227e798abc07cedabf` | `f7c52568a31aadf26e14dc2b6416b2ed` |
 
-|           |                                            |
-| --------- | ------------------------------------------ |
-| Game code | `NALE` (US)                                |
-| SHA-1     | `e2929e10fccc0aa84e5776227e798abc07cedabf` |
-| MD5       | `f7c52568a31aadf26e14dc2b6416b2ed`         |
-
----
-
-## Quick Start
-
-### 1. Add your ROM
+## Build
 
 ```bash
-mkdir -p rom
-cp "/path/to/Super Smash Bros. (USA).z64" rom/
-```
-
-### 2. Verify the ROM
-
-```bash
+# 1. Verify the ROM and build the runtime asset pack
+mkdir -p rom && cp "/path/to/Super Smash Bros. (USA).z64" rom/
 cargo run -p romtool -- verify "rom/Super Smash Bros. (USA).z64"
-```
-
-### 3. Inspect the ROM archive
-
-```bash
-cargo run -p romtool -- info "rom/Super Smash Bros. (USA).z64"
-```
-
-### 4. Build the runtime asset pack
-
-```bash
 cargo run --release -p romtool -- pack "rom/Super Smash Bros. (USA).z64"
+#    -> assets/generated/ssb64.pak
+
+# 2. Host tests
+cargo test --workspace
+
+# 3. PSP applications (each is its own cargo-psp crate)
+(cd psp-game && cargo psp --release)          # the game
+(cd psp-asset-viewer && cargo psp --release)  # debug / render-validation viewer
+#    -> <crate>/target/mipsel-sony-psp/release/EBOOT.PBP
 ```
 
-This generates:
+Copy `EBOOT.PBP` and `ssb64.pak` into the same `PSP/GAME/<folder>/`. The pack
+needs the 64 MiB mode of a PSP-2000 or later; it does not fit on a PSP-1000.
 
-```text
-assets/generated/ssb64.pak
-```
-
-The PSP executable loads this runtime asset pack.
-
-### 5. Run the host test suite
+## Run
 
 ```bash
-cargo test
+tools/run-ppsspp.sh [--crate psp-game]                     # interactive PPSSPP
+tools/run-ppsspp-headless.sh [--crate psp-game] --feature F  # deterministic capture
 ```
 
-### 6. Build the PSP executables
+Both default to `psp-asset-viewer`. See
+[`docs/visual-regression/README.md`](docs/visual-regression/README.md) for
+PPSSPPHeadless setup and golden comparisons.
 
-There are two independent PSP applications, each its own `cargo psp` crate
-and EBOOT:
+### `psp-game` controls
 
-```bash
-cd psp-asset-viewer   # developer/debug/rendering-validation application
-cargo psp --release
-```
-
-```bash
-cd psp-game           # player-facing game/front-end/Training application
-cargo psp --release
-```
-
-The resulting executables are:
-
-```text
-psp-asset-viewer/target/mipsel-sony-psp/release/EBOOT.PBP
-psp-game/target/mipsel-sony-psp/release/EBOOT.PBP
-```
-
-#### `psp-game` controls
-
-These controls apply only to the player-facing `psp-game` EBOOT; the debug
-asset viewer retains its own established controls.
-
-| PSP control | Raw N64 input delivered to the game |
-| --- | --- |
-| Analog nub | Control Stick (analog magnitude and direction preserved) |
-| D-pad Up / Down / Left / Right | C-Up / C-Down / C-Left / C-Right |
-| X / Square | A / B |
+| PSP | N64 |
+|---|---|
+| Analog nub | Control Stick |
+| D-pad Up/Down/Left/Right | C-Up/C-Down/C-Left/C-Right |
+| Cross / Square | A / B |
 | L / R | Z / R |
 | Circle | L |
 | Start | Start |
-| Triangle / Select | Unbound |
 
-The backend only creates this N64 controller state. Gameplay continues to
-interpret it through the normal Smash 64 input path, so combinations such as
-Z+A and each independent C-button are preserved. In the current front end,
-move the analog nub up/down to navigate the menu.
+Triangle and Select are unbound.
 
-### 7. Run under PPSSPPHeadless (visual verification)
+## Layout
 
-Build PPSSPP's headless target once, then use the deterministic capture
-wrapper for visual verification:
+| Path | Role | Target |
+|---|---|---|
+| `crates/ssb-rom` | ROM validation, relocData archive, VPK0, N64 formats, asset pack | host + PSP |
+| `crates/ssb-engine` | Engine traits, math, coordinate conversion, timing | host + PSP |
+| `crates/ssb-game` | Portable gameplay: fighters, physics, collision, match logic | host + PSP |
+| `tools/romtool` | ROM verification, extraction, conversion, pack generation | host |
+| `psp-runtime/` | Shared PSP backend: GE rendering, input, timing, asset loading | PSP |
+| `psp-game/` | The game application (front end, Training) | PSP |
+| `psp-asset-viewer/` | Asset browser and deterministic render-regression scenes | PSP |
 
-```bash
-cd ~/.local/src/ppsspp
-cmake -DHEADLESS=ON -DCMAKE_BUILD_TYPE=Release -B build-headless
-cmake --build build-headless --target PPSSPPHeadless
-
-cd /path/to/SSB64PSP
-tools/run-ppsspp-headless.sh --feature regression_capture
-```
-
-Defaults to `psp-asset-viewer`; pass `--crate psp-game` to capture the
-player-facing application instead. The screenshot and log are written to
-`~/ppsspp-headless-test/`. See
-[`docs/visual-regression.md`](docs/visual-regression.md) for scene selection,
-golden comparison, and alternate checkout paths.
-
-### 8. Run the interactive viewer
-
-```bash
-tools/run-ppsspp.sh
-```
-
-Also defaults to `psp-asset-viewer`; pass `--crate psp-game` for the
-player-facing application. The script stages the generated asset pack next
-to the executable before launching.
-
-> `tools/run-ppsspp.sh` is retained for interactive inspection. Automated
-> visual verification uses `tools/run-ppsspp-headless.sh` instead.
-
-### 9. Debug physical PSP crashes
-
-See the `psp-hardware` Skill (`.claude/skills/psp-hardware/SKILL.md`) for
-PSPLink installation, `host0:` live loading, exception mapping, native
-captures, and evidence.
-
----
-
-## Architecture
-
-The project is divided into three primary portable layers, plus a shared PSP
-platform layer and two independent PSP applications built on top of it.
-
-```text
-              Layer A — Game
-              crates/ssb-game
-       fighters, physics, collision,
-       animation, stages, items,
-       AI, menus, match state
-                    │
-                    ▼
-              Layer B — Engine
-              crates/ssb-engine
-       Renderer, AudioBackend,
-       Input, Clock, math,
-       coordinate conversion,
-       fixed timestep
-                    │
-                    ▼
-              Layer C — PSP
-                psp-runtime/
-       sceGu, sceCtrl, sceAudio,
-       VFPU, timing, mesh drawing,
-       pack-to-game scene bridge
-```
-
-Game logic should not directly depend on PSP APIs.
-
-The PSP runtime layer should not contain fighter-specific game logic.
-
-`crates/ssb-rom` sits beside these layers because it provides ROM parsing, extraction and runtime resource handling for both host tooling and the PSP applications.
-
-`psp-runtime/` is a library, not an executable. Two independent PSP
-applications depend on it and on the three portable crates above:
-
-```text
-psp-asset-viewer ─┐
-                  ├──> psp-runtime ──┬──> crates/ssb-engine
-psp-game ─────────┘                  ├──> crates/ssb-rom
-                                      └──> crates/ssb-game
-```
-
-* **`psp-asset-viewer/`** — the developer/debug/rendering-validation
-  application: asset/object/stage browsing, diagnostic overlays, and the
-  deterministic rendering-regression scenes goldens are captured from.
-* **`psp-game/`** — the player-facing game/front-end/Training application:
-  intro, menu, and Training Mode's deterministic combat sandbox.
-
-`crates/ssb-engine`, `crates/ssb-rom` and `crates/ssb-game` must never
-depend on `psp-runtime` — portable game logic stays portable, PSP hardware
-code lives in `psp-runtime`, and the two applications orchestrate behavior
-without duplicating the PSP backend between them.
-
-### Crates
-
-| Crate                | Purpose                                                                        |     `no_std` | Target            |
-| -------------------- | ------------------------------------------------------------------------------ | -----------: | ----------------- |
-| `crates/ssb-rom`     | ROM validation, archive handling, N64 formats, animation data and runtime pack | Yes (+alloc) | Host + PSP        |
-| `crates/ssb-engine`  | Engine traits, math and coordinate conversion                                  |          Yes | Host + PSP        |
-| `crates/ssb-game`    | Game logic, fighters, stages, physics and animation                            |          Yes | Host + PSP        |
-| `tools/romtool`      | ROM verification, extraction, conversion and asset-pack generation             |           No | Host              |
-| `psp-runtime/`       | Shared PSP platform/rendering/runtime library (assets, input, timing, GE/GU rendering, pack-to-game scene bridge) |          Yes | `mipsel-sony-psp` |
-| `psp-asset-viewer/`  | Debug/rendering-validation PSP application                                    |          Yes | `mipsel-sony-psp` |
-| `psp-game/`          | Player-facing game/front-end/Training PSP application                         |          Yes | `mipsel-sony-psp` |
-
-`psp-runtime/`, `psp-asset-viewer/` and `psp-game/` are intentionally outside the root Cargo workspace because the PSP target uses a pinned nightly toolchain and `-Z build-std`.
-
----
-
-## Verification
-
-The project emphasizes evidence from the original ROM and decompilation rather than visual guesswork.
-
-### ROM integrity
-
-```bash
-cargo run --release -p romtool -- check "rom/Super Smash Bros. (USA).z64"
-```
-
-### Fighter constants
-
-```bash
-cargo run --release -p romtool -- fighters "rom/Super Smash Bros. (USA).z64" --verify
-```
-
-### Fighter animations
-
-```bash
-cargo run --release -p romtool -- anims "rom/Super Smash Bros. (USA).z64" --verify
-```
-
-### Animation/skeleton validation
-
-```bash
-cargo run --release -p romtool -- figatree "rom/Super Smash Bros. (USA).z64" --frames 40 \
-    --pack assets/generated/ssb64.pak
-```
-
-### Stage animation validation
-
-```bash
-cargo run --release -p romtool -- stages "rom/Super Smash Bros. (USA).z64" \
-    --pack assets/generated/ssb64.pak
-```
-
-### Texture conversion report
-
-```bash
-cargo run --release -p romtool -- textures "rom/Super Smash Bros. (USA).z64"
-```
-
-These checks are intended to establish correctness against the recovered N64 data, rather than simply proving that the code compiles.
-
----
-
-## Development Roadmap
-
-The development roadmap is maintained in [`PLAN.md`](PLAN.md). Development
-now runs in milestones `P0`–`P5`, tracked/resumed via `STATUS.md`:
-
-* `P0` — architecture cleanup (substantially complete)
-* `P1` — decomp compatibility layer (current)
-* `P2` — fighter/gameplay bulk port: movement, attacks, specials,
-  grabs/throws, shield, damage/hitstun/hitlag, knockback, ledges, tech/roll,
-  death/respawn
-* `P3` — match: stage loading, spawning, stocks, blast zones, KO, match
-  state, character/stage select, result/restart
-* `P4` — remaining game systems: items, CPU AI, effects integration, menus,
-  UI, audio, remaining modes
-* `P5` — fidelity/performance: profiling on physical PSP, optimization,
-  final visual regression, physical PSP acceptance matrix
-
-`P5` runs in parallel with `P1`–`P4`, not before them — rendering
-performance is not a gate for gameplay work (`AGENTS.md`). The older
-research/PSP-bootstrap/rendering-correctness/rendering-gate process is
-archived in `plans/rendering/*.md` and `plans/gameplay/*.md` as history, not
-the active tracker.
-
----
+The portable crates never depend on `psp-runtime`. The three PSP crates sit
+outside the Cargo workspace because they build with a pinned nightly and
+`-Z build-std` ([D-026](docs/decisions/D-026.md)).
 
 ## Documentation
 
-| Document                                                     | Contents                                                  |
-| ------------------------------------------------------------ | --------------------------------------------------------- |
-| [`AGENTS.md`](AGENTS.md)                                     | Agent operating rules and autonomous development protocol |
-| [`PLAN.md`](PLAN.md)                                         | Authoritative development roadmap                         |
-| [`STATUS.md`](STATUS.md)                                     | Current execution state and session continuity            |
-| [`docs/ssb-architecture.md`](docs/ssb-architecture.md)       | Recovered architecture of the original game               |
-| [`docs/reverse-engineering.md`](docs/reverse-engineering.md) | Reverse-engineering investigations and evidence           |
-| [`docs/rendering.md`](docs/rendering.md)                     | N64 → PSP rendering implementation                        |
-| [`docs/memory.md`](docs/memory.md)                           | Memory layout and allocation                              |
-| [`docs/porting-status.md`](docs/porting-status.md)           | Per-subsystem implementation status                       |
-| [`DECISIONS.md`](DECISIONS.md)                               | Permanent architectural decisions                         |
-| [`TODO.md`](TODO.md)                                         | Discovered future work not yet folded into `PLAN.md`      |
-
----
+| Document | Contents |
+|---|---|
+| [`STATUS.md`](STATUS.md) | Current batch and blockers |
+| [`PLAN.md`](PLAN.md) | Roadmap (milestones `P0`–`P5`) |
+| [`docs/porting-status.md`](docs/porting-status.md) | Per-subsystem status |
+| [`TODO.md`](TODO.md) | Deferred work |
+| [`DECISIONS.md`](DECISIONS.md) | Architectural decisions |
+| [`docs/ssb-architecture.md`](docs/ssb-architecture.md) | How the original game is structured |
+| [`docs/rendering.md`](docs/rendering.md) | N64 → PSP rendering |
+| [`docs/memory.md`](docs/memory.md) | Memory budget and layout |
+| [`docs/visual-regression/README.md`](docs/visual-regression/README.md) | Golden-capture methodology |
+| [`docs/evidence/INDEX.md`](docs/evidence/INDEX.md) | Reverse-engineering and investigation records |
+| [`AGENTS.md`](AGENTS.md) | Contributor and agent workflow |
 
 ## References
 
-These projects are used as technical and architectural references, not as sources for Nintendo assets or blindly copied implementations.
+Technical references only; none is an authority over the decompilation and
+ROM ([D-037](docs/decisions/D-037.md)).
 
-1. [ssb-decomp-re][decomp] — SSB64 decompilation
-2. [BattleShip](https://github.com/JRickey/BattleShip) — PC/Mac/Linux/Android SSB64 port based on the decompilation
-3. [sf64-psp](https://github.com/TheMrIron2/sf64-psp) — Star Fox 64 PSP port
-4. [oot-PSP](https://github.com/z2442/oot-PSP) — Ocarina of Time PSP port
-5. [n64psp](https://github.com/TheMrIron2/n64psp) — reusable N64 → PSP runtime
-6. [rust-psp][rustpsp] — Rust support for PSP
+- [ssb-decomp-re][decomp] — SSB64 decompilation (primary source)
+- [BattleShip](https://github.com/JRickey/BattleShip) — native PC SSB64 port
+- [sf64-psp](https://github.com/TheMrIron2/sf64-psp), [oot-PSP](https://github.com/z2442/oot-PSP), [n64psp](https://github.com/TheMrIron2/n64psp) — N64 → PSP ports
+- [rust-psp][rustpsp] — Rust PSP support
 
-References 2–5 are technical references, not authorities — see `DECISIONS.md` D-037.
-
-### Local reference setup
-
-The reference repositories can be cloned into the gitignored `refs/` directory:
-
-```bash
-mkdir -p refs
-cd refs
-
-git clone https://github.com/VetriTheRetri/ssb-decomp-re
-git clone https://github.com/JRickey/BattleShip
-git clone https://github.com/TheMrIron2/sf64-psp
-git clone https://github.com/z2442/oot-PSP
-git clone https://github.com/TheMrIron2/n64psp
-git clone https://github.com/overdrivenpotato/rust-psp
-```
-
----
-
-## Contributing / Agent Development
-
-This repository is designed to support autonomous AI-assisted development.
-
-The intended workflow is:
-
-> **Continue with the plan.**
-
-The agent reads `AGENTS.md`, `PLAN.md` and `STATUS.md`, resumes the current task, verifies its work, updates documentation and continues through the ordered roadmap.
-
-The repository should always contain enough state for a fresh agent session to continue without relying on previous conversation history.
-
----
+Clone them into the gitignored `refs/` directory for local use.
 
 ## License
 
-MIT OR Apache-2.0, for the code in this repository only.
-
-This license does not grant rights to Nintendo's intellectual property.
+MIT OR Apache-2.0, for the code in this repository only. No rights to
+Nintendo's intellectual property are granted.
 
 [decomp]: https://github.com/VetriTheRetri/ssb-decomp-re
 [rustpsp]: https://github.com/overdrivenpotato/rust-psp

@@ -1,98 +1,66 @@
 # Animation and Effects
 
-Part of [docs/rendering.md](../rendering.md). Describes the current model; see `docs/evidence/re/` for how it was established.
+Part of [rendering.md](../rendering.md).
 
-### Billboard rest-pose spin (RE-141)
+## Billboards
 
-The pack's billboard flags distinguish camera basis and spin independently.
-`FLAG_BILLBOARD_SPIN_Z` selects the authored Z angle only for ROM Kind46;
-Kind44/48/50 ignore authored rotation. Case45's X-angle convention belongs
-to runtime-created transforms, outside the ROM descriptor path. Pack version
-19 is required. `NodeDesc::billboard_rest_spin` supplies the PSP draw call;
-posed matrices do not supply animated spin angles yet. All shipped selected
-rest spin angles are zero; a synthetic nonzero-angle round-trip regression
-pins the distinction without claiming an observed visual improvement.
+Status: complete (109 nodes; RE-131–145).
 
+- Pack flags separate camera basis from spin. `FLAG_BILLBOARD_SPIN_Z` uses
+  the authored Z angle only for Kind46; Kind44/48/50 ignore authored rotation
+  (RE-141). All shipped rest spin angles are zero.
+- Six billboards are direct stage-animation joints and six more descend from
+  animated joints. `StageAnimator::compose` propagates the parent transform
+  (RE-142).
+- Scale follows `gcPrepDObjMatrix`: billboard X is `ancestor_x * scale.x`, Y
+  is `ancestor_x * scale.y`, and the signed X carries to children
+  (`StageAnimator::billboard_scales`, RE-143). Z follows the original X/Y/X
+  rule (RE-144).
 
-### Animated billboard hierarchy and scale (RE-142–143)
+## Transparency
 
-Every packed animation was intersected with the 109 billboard nodes. Six are
-direct stage-animation joints and none changes rotation in 240 frames; fighter
-animations reference none. Another six have null scripts but descend from an
-animated joint. `StageAnimator::compose` now propagates the parent transform
-through those rest-local children, matching the original DObj hierarchy.
+Status: complete for classified formulas. 25 of 35 translucent billboard
+primitives use the `ALPHA_BLEND` path; the other 10 are the declined
+`PRIM_ALPHA`/two-cycle cases (RE-135). See
+[depth-alpha-blending.md](depth-alpha-blending.md).
 
-The persistent `billboard_animation_inventory` example records the affected
-source graph/node, dynamic ranges, final scale, and first negative frame. All
-six direct joints animate scale. Three Kind44 nodes reach small negative
-uniform scales, which exposed the old unsigned matrix-column-length path.
+## Effects and particles
 
-RE-143 ports the original scale traversal directly. `gcPrepDObjMatrix`
-computes billboard X as `ancestor_x * node.scale.x`, billboard Y as
-`ancestor_x * node.scale.y`, then carries the new signed X value into children;
-the tree walker restores it before visiting siblings.
-`StageAnimator::billboard_scales` reproduces that calculation from current
-local poses. The PSP animated-stage draw path uses the signed pair with the
-model base scale, while static objects retain the already-verified
-composed-column path. A regression with a negative animated parent proves that
-both child axes inherit signed X, not the parent's Y. The scale acceptance item
-is closed; per-node visual and physical PSP checks remain open.
+Status: complete for renderer scope.
 
-### Transparency
+Manager descriptors, transforms, material/texture/colour animation, all 160
+`LBParticle` scripts, `LBGenerator` spawn trees and PSP drawing are
+implemented (RE-172–189). Remaining effect call sites belong to gameplay.
 
-Status: COMPLETE for classified formulas
+## Shadows
 
-RE-135 measured 25/35 translucent billboard primitives already carry RE-130's real `ALPHA_BLEND` path
+Status: complete for the Training runtime (RE-302).
 
-**Remaining work:** The remaining 10 are the same documented `PRIM_ALPHA`/two-cycle long tail, not a billboard-specific gap
+`ftShadowProcDisplay` draws a floor-conforming strip, not a blob:
 
+- Projects onto the standing floor, or the nearest floor below while airborne.
+- Clips `x ± FTAttributes::shadow_size` to the floor line and follows up to
+  two bends (eight-vertex capacity).
+- Texture: file 84 `0x3A68`, 16×16 I4, mirror-repeat pre-baked.
+- Material: black `(0,0,0,0xA0)`, `AA_XLU_SURF` depth test without write,
+  alpha threshold `0x0F`, blended, unlit, no cull.
+- Drawn after stage geometry, before fighters. No altitude fade.
+- Hidden during entry, KO/sleep and rebirth.
 
-### Effects / particles
+Remaining: team-colour shadows and moving map groups (match runtime).
 
-Status: COMPLETE for R1 renderer scope
+## Framebuffer effects
 
-RE-172–189 cover manager descriptors, transforms, material/texture/colour animation, all 160 particle scripts, pack serialization, host/device interpretation, spawn-tree execution, `LBGenerator`, PSP drawing, and one real manager-effect runtime spawn event
+Status: complete for renderer scope.
 
-**Remaining work:** Remaining manager-effect gameplay call sites belong to later gameplay integration, not renderer completeness
+LB-transition capture and all 11 wipes (RE-146–149); 1P wallpaper capture and
+its `SObj` sprite draw (RE-190–193). Results-screen and match-transition
+triggers belong to gameplay.
 
+The 26 segment-0x01 texture references are `sLBTransitionPhotoHeap`, a
+runtime framebuffer copy, not ROM data (RE-055).
 
-### Shadows
+## UI
 
-Status: COMPLETE for the current fighter-runtime scope
-
-`ftShadowProcDisplay` is a runtime-generated, floor-conforming strip — not a
-blob/decal. The shared PSP runtime projects each live fighter onto its
-standing floor (or the nearest floor below while airborne), clips
-`x ± FTAttributes::shadow_size` to that line's ends, and follows up to two
-polyline bends with the source's fixed eight-vertex capacity. It extracts the
-source file-84 `0x3A68` 16×16 I4 image, pre-bakes its mirror-repeat period,
-and applies the source black `(0,0,0,0xA0)` material with `AA_XLU_SURF`
-depth-test/no-write, alpha threshold `0x0F`, blending, flat/no-light/no-cull
-state. The pass is after stage geometry and before fighter objects.
-
-There is deliberately no altitude fade, scale change, rotation, or
-invincibility exception: the original uses height only to choose the floor.
-Entry, KO/sleep, and rebirth states hide the shadow; multiple players own
-independent fixed scratch submissions. Team-colour shadows and dynamic map
-groups remain match/stage-system work outside the current Training runtime.
-
-Evidence: RE-302. Deterministic coverage:
-`tests/golden/f1-training-shadows.png`.
-
-
-### Framebuffer effects
-
-Status: COMPLETE for R1 renderer scope
-
-R0.13/RE-146–149 cover LB-transition capture and all 11 wipes. RE-190–193 census all remaining framebuffer references, implement 1P wallpaper capture plus its real `SObj` 2D-sprite draw, and device-verify bounded output
-
-**Remaining work:** Real results-screen and match-transition triggers belong to G2 gameplay integration
-
-
-### UI
-
-Status: NOT STARTED
-
-Debug overlay only, via `sceGuDebugFlush` (software-rasterizer-dependent, RE-014) — not real GE geometry
-
-**Remaining work:** "Renderer 3" below is explicitly not started
+Status: not started. Only a developer overlay exists, built on
+`sceGuDebugFlush` (RE-014, RE-202). A real HUD needs GE geometry.

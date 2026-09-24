@@ -1,141 +1,45 @@
-# TODO — Discovered Future Work
+# TODO
 
-Work that is **discovered but not currently scheduled** as the active batch
-in `STATUS.md`, and not already represented by a `PLAN.md` milestone bullet.
-Completed items are not archived here — they live in
-`docs/porting-status.md` and their evidence record
-(`docs/evidence/re/RE-XXX.md`).
+Deferred work that is not the current batch ([`STATUS.md`](STATUS.md)) and not
+a milestone in [`PLAN.md`](PLAN.md). Unordered. Delete an entry once a batch
+or evidence record covers it.
 
-Do not duplicate `PLAN.md`'s roadmap or `STATUS.md`'s active-batch detail
-here. Milestone-shaped backlog (all fighters, all stages, items, CPU AI,
-audio, etc.) belongs to `PLAN.md` `P2`–`P4`, not this file.
+## Rendering
 
----
+| Item | Reason deferred | Evidence |
+|---|---|---|
+| RDP two-tile fractional blend (`SetLFrac`, `TextureIDNext`) | GE has no one-pass equivalent; needs a measured multipass design | RE-086, RE-301 |
+| Dynamic stage colour/light tracks (2 `PrimColor`, 2 light) | Values are baked into vertex colour or lack a stage GE-light context; needs dynamic vertex/combiner lowering | RE-301 |
+| Fighter costumes beyond 0 in `psp-game` | All palettes are packed and selectable in the viewer; the game still hardcodes costume 0 | RE-096, RE-261 |
+| Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
+| Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
+| Scene dependency graph | No explicit `scene → nodes → materials → textures → palettes` graph yet | — |
+| Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
+| `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
-## Rendering-Correctness Remainders
+## Hardware acceptance
 
-### WPAttributes pairing shape
-Status: DEFERRED
-Evidence: RE-058, RE-059
-Reason: `PartTables::scan` has no case for the `WPAttributes` shape (weapon/
-projectile sub-objects). The one confirmed instance (Link's boomerang) has
-`p_mobjsubs = NULL` by design, so there is no known live bug — revisit only
-if a new `WPAttributes` instance with real sub-objects is found.
+Deferred by user instruction.
 
-### Material animation — RDP fractional-image blend
-Status: DEFERRED (documented PSP limitation)
-Evidence: RE-086, RE-301
-Reason: `SetLFrac`/`TextureIDNext` require the N64 RDP's two-tile fractional
-image blend. `TextureIDCurrent` and tile-0 UV tracks are packed and applied;
-`ScrU`/`ScrV` are tile-1-only and have no converted `TEXEL1` consumer. The
-GE has no equivalent one-pass blend, so this needs a measured multipass
-design rather than a heuristic.
+| Item | Reason deferred | Evidence |
+|---|---|---|
+| PSP-1000 support | Pack does not fit in 32 MiB and `MEMSIZE=1` is ignored; needs a reduced or streaming pack | RE-288 |
+| 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
+| Re-capture current goldens on hardware | Physical captures predate pack v31 and several golden refreshes | — |
 
-### Material animation — stage dynamic colour registers
-Status: DEFERRED (documented PSP limitation)
-Evidence: RE-301
-Reason: two stage `PrimColor` and two stage light-track attachments change
-state that the converter bakes into vertex colour or lacks a stage GE-light
-context for. A future implementation needs source-measured dynamic vertex or
-combiner lowering; the current renderer does not fake a live update.
+## Open questions
 
-### Fighter costume palettes beyond costume 0
-Status: DEFERRED
-Evidence: RE-096, RE-261
-Reason: all costume palette variants are packed and the asset viewer can
-select them, but the player-facing select flow still hardcodes costume zero.
+| ID | Question | Next step |
+|---|---|---|
+| RE-008 | What each C-button does in-game (taunt, camera) | All four now pass through as raw N64 C-buttons; confirm uses against `ft/ftkey.c` |
+| RE-009 | PSP nub deadzone (20 units, linear rescale to ±80 is a guess) | Measure on hardware against decomp thresholds |
+| RE-010 | Unused `MObjSub` fields | Find readers in the decomp if a material looks wrong |
+| RE-011 | How `sGCDetailLevel` is chosen | Trace during `P5` profiling |
 
-### Independent fighter animation validation
-Status: DEFERRED
-Reason: stage animation already derives expected frame state from decomp/ROM
-(RE-050/051/052/142). Fighter costume/material animation does not yet have
-the equivalent independent check.
+## Technical debt
 
-### Texture streaming
-Status: DEFERRED
-Evidence: RE-076
-Reason: archive-wide packed textures measure 1170.9 KiB (1.7x the ~700 KiB
-budget), but a direct per-scene measurement found the worst realistic case
-(Dream Land + 4 largest fighters) at only 217.1 KiB — likely an undercount
-until remaining unpaired `MObj` graphs close. Re-measure then; the planned
-per-scene `AssetArena` (`docs/memory.md`) may already be sufficient but is
-untested.
-
-### Scene dependency graph
-Status: DEFERRED
-Reason: no explicit `scene → nodes → materials → textures → palettes`
-dependency graph exists yet; needed before texture streaming can be
-re-measured with confidence.
-
-### Strict rendering mode
-Status: DEFERRED
-Reason: no fail-fast mode exists for unresolved texture/missing palette/
-unknown transform; would help catch regressions earlier than a silent
-fallback.
-
----
-
-## Deferred Hardware Acceptance
-
-Status: DEFERRED (explicit user instruction)
-Evidence: RE-284, RE-288
-
-### PSP-1000 real-content confirmation
-Reason: RE-288 confirmed the current ~25.6 MiB pack fails to fit in a
-PSP-1000's 32 MiB RAM (`MEMSIZE=1` is ignored on that hardware class) —
-`LoadError::OutOfMemory`, clean fallback to the placeholder tetrahedron, zero
-exceptions. Confirming the *renderer itself* on PSP-1000 needs a build that
-actually fits (a reduced-content or streaming pack), which doesn't exist
-yet. Revisit once a real game scene, not the full asset-viewer content set,
-is what actually loads at runtime.
-
-### Second physical unit at the 30-minute sustained-run duration
-Reason: RE-284 sustained 30 minutes on one unit (PSP Slim) with zero
-exceptions; RE-273 sustained 10 minutes on a second unit (PSP-3000). No unit
-has run the full 30-minute duration with real pack content loaded on a
-second unit. A unit that can actually load the pack (Slim/2000/3000-class,
-64 MiB) is needed to repeat RE-284's methodology on a second unit.
-
----
-
-## RE-XXX Open Questions
-
-Investigations recorded in `docs/evidence/re/` with `Status: OPEN`. See
-`docs/evidence/INDEX.md` to confirm current status before trusting this list.
-
-### RE-008 — C-button mapping
-Status: Placeholder (C-Up→Triangle, C-Down→Square; C-Left/C-Right unmapped).
-Blocker: needs `ft/ftkey.c` and menu input paths read against the decomp.
-
-### RE-009 — PSP nub deadzone
-Status: Deadzone 20 nub units, linear rescale to ±80 — a guess, not measured.
-Blocker: needs measurement against real PSP nub and decomp thresholds.
-
-### RE-010 — MObjSub unknown fields
-Status: Not consumed; converter reads only named fields.
-Blocker: revisit if materials look wrong. Decomp can answer by finding readers.
-
-### RE-011 — Level of detail selection
-Status: Setter (`sGCDetailLevel`) not traced. Likely tied to player count/
-options. Revisit during `P5` profiling, not before.
-
----
-
-## Technical Debt / Refactoring
-
-- [ ] **Extern relocation runtime loader** — pack records them zeroed; need loader to patch at scene load
-- [ ] **AssetArena implementation** — contiguous per-scene block sized by dependency closure
-- [ ] **GameArena / FrameArena / ObjectPool** — explicit allocators (not implemented yet)
-- [ ] **VFPU math module** — after `P5` profiling identifies hot paths
-- [ ] **Coordinate conversion hardening** — on-hardware confirmation (RE-004, RE-005)
-- [ ] **PSP audio backend** — `sceAudio` mixer on dedicated thread (`P4`)
-
----
-
-## Notes
-
-- Items are **not prioritized** — this is a holding area, not a schedule.
-- Current focus and single active batch: `STATUS.md`.
-- When an item here becomes active work, reflect it in `STATUS.md`, not here.
-- Update this file when new work is discovered during a batch; remove an
-  item once it's covered by a completed batch or an evidence record.
+- Runtime extern-relocation loader (the pack stores them zeroed; [D-011](docs/decisions/D-011.md))
+- `AssetArena`, `GameArena`, `FrameArena`, `ObjectPool` allocators ([docs/memory.md](docs/memory.md))
+- VFPU math, after `P5` profiling ([D-032](docs/decisions/D-032.md))
+- `sceAudio` mixer thread (`P4`)
+- Debug HUD uses `sceGuDebugFlush`: software-rasterizer-only in PPSSPP (RE-014) and faults on real hardware (RE-202); replace with GE geometry
