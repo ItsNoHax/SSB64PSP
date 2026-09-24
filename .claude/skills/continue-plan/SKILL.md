@@ -5,26 +5,16 @@ description: Resume or continue SSB64PSP development from repository state. Acti
 
 # Continue plan
 
-Progressive-disclosure resume flow for this repository. Follow in order —
-do not skip ahead to reading the whole roadmap or evidence corpus.
+1. Read `AGENTS.md` and `STATUS.md`.
+2. Take the next batch from `STATUS.md`. If it names none, pick the next
+   subsystem under the current milestone in `PLAN.md`.
+3. Read only the `RE-XXX`/`D-XXX` records `STATUS.md` cites, via
+   `docs/evidence/INDEX.md` and `DECISIONS.md`.
+4. Check `git status` and recent commits for work in progress.
+5. If `STATUS.md` lists a blocker, confirm it still holds before resuming.
+6. Run the batch workflow in `AGENTS.md`.
+7. Before ending: replace `STATUS.md`, update the affected docs once, and
+   commit the batch.
 
-1. Read `AGENTS.md`.
-2. Read `STATUS.md`.
-3. Identify the active task ID from `STATUS.md` ("Relevant PLAN task").
-4. Read only that task's spec file (`plans/rendering/*.md` or `plans/gameplay/*.md`).
-5. Read only the evidence IDs `STATUS.md`/the task spec actually reference —
-   look them up in `docs/evidence/INDEX.md`, then open the specific
-   `docs/evidence/re/RE-XXX.md` file(s).
-6. Load additional individual evidence only if a specific claim needs its
-   derivation — never the whole `docs/evidence/re/` directory.
-7. Inspect `git status` and recent commits.
-8. Resume the `IN_PROGRESS` task if one exists; otherwise select the first
-   eligible `TODO` item from the active task's spec or `TODO.md`.
-9. Do not scan unrelated roadmap sections, other milestones, or historical
-   evidence not referenced by the current task.
-10. Before ending: update `STATUS.md` (replace, not append), update the
-    affected evidence/task-spec files, and commit focused completed work.
-
-If `STATUS.md` names a blocker, verify it's still real before resuming — do
-not silently re-attempt a task recorded as blocked without addressing the
-blocker.
+Do not scan unrelated milestones, `plans/` (archived) or evidence the batch
+does not need.

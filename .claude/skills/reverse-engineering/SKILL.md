@@ -12,13 +12,13 @@ description: Original SSB64 (N64) behavior needs to be established from the deco
 3. Load only the matching `docs/evidence/re/RE-XXX.md` record(s).
 4. If existing evidence doesn't answer the question, consult the decomp
    (`refs/ssb-decomp-re/`) or ROM directly — per the reference hierarchy in
-   `AGENTS.md`/`PLAN.md` §4: decompilation → ROM/data → BattleShip →
+   `AGENTS.md`: decompilation → ROM/data → BattleShip →
    `sf64-psp` → `oot-PSP` → `n64psp` → existing implementation → assumptions.
    If the question is about *runtime* behavior static code can't settle
    (camera settle timing, live struct values, reaching a specific menu/game
    state), use the [n64-emulator](../n64-emulator/SKILL.md) Skill instead of
    guessing from source alone.
-5. Record uncertainty rather than guessing (Rule 10) — an accepted deviation
+5. Record uncertainty rather than guessing — an accepted deviation
    needs measurement and documentation, not a plausible-looking default.
 6. Create a new `docs/evidence/re/RE-XXX.md` record only for genuinely new
    investigation (next unused ID). Follow the shape of an existing record

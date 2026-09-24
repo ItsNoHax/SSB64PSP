@@ -19,14 +19,16 @@ Routing:
    map exceptions, shutdown, fast crash-loop procedure.
 2. [docs/memory.md](../../docs/memory.md) — PSP memory layout, allocator
    plan, `MEMSIZE`/RAM constraints (PSP-1000's 32 MiB vs Slim/2000/3000).
-3. [plans/rendering/R2.md](../../plans/rendering/R2.md) — the physical
-   hardware validation task: current matrix, what's confirmed, what remains
-   (PSP-1000 coverage, exhaustive/long-duration runs).
+3. [TODO.md](../../TODO.md) "Hardware acceptance" — what remains
+   (PSP-1000, long-duration runs, re-capturing current goldens).
+   [docs/visual-regression/README.md](../../docs/visual-regression/README.md)
+   "Physical PSP" — staging a capture build. Historical matrix:
+   `plans/rendering/R2.md`.
 4. `docs/evidence/INDEX.md` filtered to the `hardware` topic tag for prior
    hardware-only bugs found (GE races, PSPLink module-manager state, etc.).
 5. For code, prefer Serena symbol search over reading whole files
-   (`psp-asset-viewer/src/gu.rs`, `psp-asset-viewer/src/depth_diag.rs`,
-   PSPLink-related PRX code).
+   (`psp-runtime/src/gu.rs`, `psp-runtime/src/meshdraw.rs`,
+   `psp-asset-viewer/src/depth_diag.rs`).
 
 After a `kill` in a PSPLink session, `reset` before the next `ldstart` — a
 stale module-manager state can silently break the next pack load while

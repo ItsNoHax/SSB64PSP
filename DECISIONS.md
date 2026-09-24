@@ -1,9 +1,8 @@
-# Technical Decisions
+# Decisions
 
-Permanent technical decisions recovered from the repository. Each is a short,
-addressable record under `docs/decisions/D-NNN.md` with the full decision,
-reasoning, implementation and references (including later amendments). Do not
-revisit a decision unless new evidence contradicts it.
+Permanent architectural decisions. Each record in `docs/decisions/D-NNN.md`
+holds the decision, reasoning and any later amendments. Revisit one only when
+new evidence contradicts it.
 
 ## Rendering Architecture
 
@@ -45,48 +44,21 @@ revisit a decision unless new evidence contradicts it.
 - [D-030](docs/decisions/D-030.md): Toolchain Pinning — Successful Compile ≠ Working
 - [D-044](docs/decisions/D-044.md): PSP Backend Split Into Shared psp-runtime + Two Applications
 
-## Architecture Comparison (From `docs/ssb-architecture.md` §11)
-
-| Concern | SSB64 (N64) | sf64-psp | n64psp | This Port |
-|---------|-------------|----------|--------|-----------|
-| Language | C (IDO) | C | C | **Rust** |
-| Approach | native | decomp + PSP backend | reusable N64→PSP runtime | decomp-informed rewrite |
-| Rendering | F3DEX2 → RDP | GU translation of N64 DLs | backend-registration only | **build-time DL → PSP mesh** |
-| Runtime DL translation | n/a | yes | n/a | **no — preconverted** |
-| Audio | RSP `aspMain` | PSP audio | not implemented | build-time convert + SW mixer |
-| Threading | libultra, 5 threads | PSPSDK | PSPSDK sema/threads | **2 threads (game + audio)** |
-| Layering | monolithic | game + compat layer | runtime / bridge / backend | **A game / B traits / C PSP** |
-
-**Key insight:** `n64psp` provides layering shape (runtime must not know game; graphics backend registered, not hardcoded) adopted as Layers A/B/C. `sf64-psp` is mature reference for N64→PSP rendering but translates at runtime — we preconvert because Smash geometry is static.
-
-
-## Unsafe Discipline
+## Engineering Process
 
 - [D-031](docs/decisions/D-031.md): Unsafe Only for PSP APIs / VFPU / GPU Memory
-
-## Profiling Before Optimizing
-
 - [D-032](docs/decisions/D-032.md): VFPU After Profiling
-
-## Version Control
-
 - [D-033](docs/decisions/D-033.md): ROM and Generated Assets Gitignored
-
-## Validation Philosophy
-
 - [D-034](docs/decisions/D-034.md): Two Independent Readings Must Agree
-
-## Milestone Validation
-
 - [D-035](docs/decisions/D-035.md): Functional Validation Required, Not Just Compile
+- [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
+- [D-041](docs/decisions/D-041.md): PPSSPPHeadless Is the Automated Visual-Verification Runner
 
 ## Rendering Fidelity
 
 - [D-036](docs/decisions/D-036.md): N64 Render-State Fidelity Must Precede Optimization
-- [D-037](docs/decisions/D-037.md): Reference Ports Are Technical References, Not Authorities
 - [D-038](docs/decisions/D-038.md): Generated Texture Coordinates Use the GE Texture Matrix, Not Environment Mapping
 - [D-039](docs/decisions/D-039.md): Texgen State Is Primitive-Level Because the Archive Says So
 - [D-040](docs/decisions/D-040.md): Exact Linear Texgen Is CPU-Generated into the Authored-UV Pipeline, Not a Second GE Mode or a Lookup Table
-- [D-041](docs/decisions/D-041.md): PPSSPPHeadless Is the Automated Visual-Verification Runner
 - [D-042](docs/decisions/D-042.md): Renderer correctness claims stay provisional until the corrective gate passes
 - [D-043](docs/decisions/D-043.md): Filtering and Tile-Addressing Equivalence Claims Remain Provisional Pending R2.0
