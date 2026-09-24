@@ -19,9 +19,9 @@ Disposition of every variant (JSON field `disposition`):
 | `clean` | 111 | visible max < 8/255 |
 | `minor` | 211 | some samples >= 8/255, below the material threshold |
 | `investigate-bug` | 0 | a measured implementation inconsistency (section 7); any tier above clean |
-| `manual-intervention` | 3 | materially bad; a deployable measured alternative meets the bar (section 5a) |
+| `manual-intervention` | 0 | materially bad; a deployable measured alternative meets the bar (section 5a) |
 | `hand-edit-candidate` | 189 | materially bad; only an oracle-level texture halves the error (section 5b) |
-| `accept` | 1093 | materially bad; nothing measured halves it (section 6) |
+| `accept` | 1096 | materially bad; nothing measured halves it (section 6) |
 
 Cause classes over materially bad variants (a variant can carry several):
 
@@ -1117,6 +1117,8 @@ Best uniform UV phase shift (1, 1)/32 texel: holdout visible SSE 51574982 (max 2
 | tiny UV phase adjustment | 51574982 | 21.4% | 0 | 0 | packed per-primitive mapping offset | low: explicit primitive render state | best uniform shift (1, 1)/32 texel; phase-uniform set 337463588 -> 332704026 |
 | selective geometry subdivision | 65579210 | 0.0% | 0 | 0 | more vertices | high | does not change the per-pixel filter formula; UVs are already interpolated per pixel on both machines |
 
+Diagnostics (16x16-texel crop around the worst sample, 8 samples/texel; panels: reference, current, diff, nearest, rgba, coverage): `assets/generated/three-point-residuals/021-v301-f105-0x1B28/strip.png`
+
 ### 22. v302 `105:0x1B28` - StageZebesFile2 (105) dl 0x4890 prim 4 (83.95)
 
 | Field | Value |
@@ -1347,6 +1349,8 @@ Best uniform UV phase shift (1, 1)/32 texel: holdout visible SSE 433551078 (max 
 | tiny UV phase adjustment | 433551078 | 49.9% | 0 | 0 | packed per-primitive mapping offset | low: explicit primitive render state | best uniform shift (1, 1)/32 texel; phase-uniform set 4283318003 -> 4594543586 |
 | selective geometry subdivision | 864709407 | 0.0% | 0 | 0 | more vertices | high | does not change the per-pixel filter formula; UVs are already interpolated per pixel on both machines |
 
+Diagnostics (16x16-texel crop around the worst sample, 8 samples/texel; panels: reference, current, diff, nearest, rgba, coverage): `assets/generated/three-point-residuals/026-v614-f117-0x7A8/strip.png`
+
 ### 27. v613 `117:0x7A8` - StageMetalFile2 (117) dl 0x2950 prim 4 (78.57)
 
 | Field | Value |
@@ -1392,6 +1396,8 @@ Best uniform UV phase shift (1, 1)/32 texel: holdout visible SSE 407329212 (max 
 | per-material GU_NEAREST | 9223146613 | -1000.7% | 0 | 0 | one sceGuTexFilter + texture offset change per material | low-medium: per-material flag and bias switch in meshdraw | point sampling without the +0.5 texel linear bias |
 | tiny UV phase adjustment | 407329212 | 51.4% | 0 | 0 | packed per-primitive mapping offset | low: explicit primitive render state | best uniform shift (1, 1)/32 texel; phase-uniform set 5606183338 -> 6105913371 |
 | selective geometry subdivision | 837964734 | 0.0% | 0 | 0 | more vertices | high | does not change the per-pixel filter formula; UVs are already interpolated per pixel on both machines |
+
+Diagnostics (16x16-texel crop around the worst sample, 8 samples/texel; panels: reference, current, diff, nearest, rgba, coverage): `assets/generated/three-point-residuals/027-v613-f117-0x7A8/strip.png`
 
 ### 28. v996 `152:0x30` - StagePupupuFile3 (152) dl 0x3120 prim 0 (76.72)
 
@@ -1717,6 +1723,8 @@ Best uniform UV phase shift (1, 1)/32 texel: holdout visible SSE 1049735777 (max
 | per-material GU_NEAREST | 10055226810 | -591.3% | 0 | 0 | one sceGuTexFilter + texture offset change per material | low-medium: per-material flag and bias switch in meshdraw | point sampling without the +0.5 texel linear bias |
 | tiny UV phase adjustment | 1049735777 | 27.8% | 0 | 0 | packed per-primitive mapping offset | low: explicit primitive render state | best uniform shift (1, 1)/32 texel; phase-uniform set 10375914684 -> 10323590323 |
 | selective geometry subdivision | 1454614293 | 0.0% | 0 | 0 | more vertices | high | does not change the per-pixel filter formula; UVs are already interpolated per pixel on both machines |
+
+Diagnostics (16x16-texel crop around the worst sample, 8 samples/texel; panels: reference, current, diff, nearest, rgba, coverage): `assets/generated/three-point-residuals/034-v616-f117-0x310/strip.png`
 
 ### 35. v994 `152:0x30` - StagePupupuFile3 (152) dl 0x2F30 prim 0 (72.75)
 
@@ -3512,19 +3520,16 @@ Summed holdout visible SSE: current 105127829, RGBA practical 246742160, RGBA or
 
 ## 5. Cases likely requiring manual intervention
 
-### 5a. A deployable alternative is measured (3)
+### 5a. A deployable alternative is measured (0)
 
 Materially bad variants where a deployable measured alternative (not an oracle) halves the holdout visible SSE, or cuts it by >= 25% and leaves the material tier. A UV phase shift counts only when the phase-uniform set confirms a >= 20% gain.
 
 | Rank | Variant | Use | Best alternative | SSE now | SSE after | Reduction | Tier after | Level-0 delta | Pack delta | Causes |
 |---:|---|---|---|---:|---:|---:|---|---:|---:|---|
-| 1192 | v111 `71:0x6840` | MVOpeningYamabuki (71) dl 0x8CE8 prim 5 | denser-training RGBA8888 variant | 198967 | 146923 | 26.2% | Minor | 4096 | 5376 | FORMAT_QUANTIZATION |
-| 1281 | v6 `52:0x2EE8` | MVCommon (52) dl 0x5F70 prim 0 | denser-training RGBA8888 variant | 276579 | 206123 | 25.5% | Minor | 3008 | 4032 | BILINEAR_SURFACE_LIMIT |
-| 1284 | v109 `71:0x4830` | MVOpeningYamabuki (71) dl 0x8CE8 prim 3 | denser-training RGBA8888 variant | 248256 | 169354 | 31.8% | Minor | 4096 | 5376 | FORMAT_QUANTIZATION |
 
 ### 5b. Hand-edit candidates: only an oracle-level texture reaches it (189)
 
-No deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA, alpha-held, or cutout silhouette search) at least halves the visible SSE, so a hand-authored or use-site-specific texture could. These oracles are fitted on the samples they are scored on: treat the figure as an upper bound on the gain. Top 40 by severity; the rest have `disposition == "hand-edit-candidate"` in the JSON.
+No deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA, alpha-held, or cutout silhouette search) at least halves the visible SSE, so a hand-authored or use-site-specific texture could. These oracles are fitted on the samples they are scored on: treat the figure as an upper bound on the gain. Section 11 re-scores every row out of sample (fit on one phase-uniform set, score on a disjoint one); most of these bounds do not survive it. Top 40 by severity; the rest have `disposition == "hand-edit-candidate"` in the JSON.
 
 | Rank | Variant | Use | SSE now | Oracle bound | Bound reduction | Alpha-test flips now -> bound | Causes |
 |---:|---|---|---:|---:|---:|---|---|
@@ -3571,11 +3576,11 @@ No deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA,
 
 ## 6. Cases safe to accept
 
-1093 materially bad variants have neither a deployable alternative nor an oracle that halves the error: no same-resolution texture edit buys back a material share, so the residual is accepted as the cost of `GU_LINEAR`. Also safe: 211 minor-tier and 111 clean variants. Breakdown by cause combination, then the 25 highest-severity accepted variants; every accepted variant has `disposition == "accept"` in the JSON.
+1096 materially bad variants have neither a deployable alternative nor an oracle that halves the error: no same-resolution texture edit buys back a material share, so the residual is accepted as the cost of `GU_LINEAR`. Also safe: 211 minor-tier and 111 clean variants. Breakdown by cause combination, then the 25 highest-severity accepted variants; every accepted variant has `disposition == "accept"` in the JSON.
 
 | Causes | Variants | Visible SSE | Oracle bound | Bound reduction |
 |---|---:|---:|---:|---:|
-| BILINEAR_SURFACE_LIMIT | 811 | 4185699157 | 3384249081 | 19.1% |
+| BILINEAR_SURFACE_LIMIT | 812 | 4185975736 | 3384422161 | 19.1% |
 | ALPHA_CONSTRAINT, BILINEAR_SURFACE_LIMIT | 206 | 8661870524 | 5565044448 | 35.8% |
 | ALPHA_CONSTRAINT | 18 | 786556364 | 531158752 | 32.5% |
 | BILINEAR_SURFACE_LIMIT, FORMAT_QUANTIZATION | 15 | 29257831 | 23365118 | 20.1% |
@@ -3586,6 +3591,7 @@ No deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA,
 | ALPHA_CONSTRAINT, ANIMATED_PALETTE_CONFLICT, BILINEAR_SURFACE_LIMIT | 2 | 1093207253 | 605994884 | 44.6% |
 | ALPHA_CONSTRAINT, BILINEAR_SURFACE_LIMIT, FORMAT_QUANTIZATION | 2 | 51708773 | 28529083 | 44.8% |
 | CONFLICTING_USE_SITES, BILINEAR_SURFACE_LIMIT | 2 | 6577664 | 4712683 | 28.4% |
+| FORMAT_QUANTIZATION | 2 | 447223 | 246401 | 44.9% |
 | ALPHA_CONSTRAINT, BILINEAR_SURFACE_LIMIT, SAMPLING_ALIGNMENT | 1 | 34152984 | 17397152 | 49.1% |
 | ALPHA_CONSTRAINT, CONFLICTING_USE_SITES, BILINEAR_SURFACE_LIMIT | 1 | 1574038 | 996271 | 36.7% |
 | ALPHA_CONSTRAINT, SAMPLING_ALIGNMENT | 1 | 15675297 | 11162055 | 28.8% |
@@ -3671,13 +3677,556 @@ Method notes:
 ## 10. Recommended next investigation order
 
 1. Decide whether direct-colour sources (RGBA16/RGBA32/IA and the RE-283 bypass) should enter the compensator: 0 materially bad variants never reached it; their per-variant gains are in the `rgba8888_practical`/`rgba8888_dense_training` JSON fields.
-2. Section 5a, in rank order (3 variants): deployable, measured, mostly free in memory.
+2. Section 5a, in rank order (0 variants): deployable, measured, mostly free in memory.
 3. `SAMPLING_ALIGNMENT` (3 variants): confirm on hardware that a per-material (ds, dt)/32 texture offset reproduces the host gain; the effect concentrates on threshold-0 cutouts, where the GE's 4-bit weights drop the small alpha the RDP's 5-bit weights keep.
 4. `ALPHA_CONSTRAINT` cutouts (301 variants): the cutout rule freezes alpha whenever any flip exists; the silhouette search bounds what an alpha-only edit can recover (section 2 flip totals).
 5. Training density (1 of the 116 `OTHER` variants): the shipped training coverage cannot reach an error the pipeline's own solve reaches with 4 more phase-varied samples per touched cell; the remaining `OTHER` variants matched no class and are listed with their measurements in section 4.
 6. `CONFLICTING_USE_SITES` (16), `PALETTE_CONSTRAINT` (12), `ANIMATED_PALETTE_CONFLICT` (9), `TEXGEN_COVERAGE` (5): per-variant decisions with the memory costs in the cards.
-7. Section 5b hand-edit candidates (189): only after the above, since their bound comes from oracles.
-8. Accept section 6 (1093 variants) unless a runtime filter change (not a texture change) is on the table.
+7. Section 5b hand-edit candidates (189): use section 11's out-of-sample triage and its MANUAL_FIX_RECOMMENDED list, not the holdout oracle bound.
+8. Accept section 6 (1096 variants) unless a runtime filter change (not a texture change) is on the table.
 
 Re-run this report after each step; it is deterministic and refuses to run on a pack that differs from the shipped one.
+
+## 11. Manual-fix triage of hand-edit candidates
+
+Only `disposition == "hand-edit-candidate"` rows (189). Section 5b's oracle is fitted on the sparse holdout it is scored on (typically 1-2 samples per touched texel cell), so its bound mixes real gain with overfit. Every decision below uses the **cross-phase bound** instead: the same same-resolution fit made on the phase-uniform set U1 (16 samples per holdout cell, all 32 sub-texel residues) and scored on U2, the same cells shifted by (4, 4)/32 texel, disjoint from U1. U2 approximates uniformly distributed screen pixels; a gain that survives there is a gain a real frame shows. JSON: `alternatives.cross_phase`, plus `phase_uniform_set.*` for the holdout-fitted images scored on U1.
+
+Buckets: **ACCEPT** when the cross-phase gain is below 25% or the current U2 error is not visible (< 1% of samples >= 16/255 and no alpha-test flip); **MANUAL_FIX_RECOMMENDED** when the gain is at least 40%, level-0 growth is at most 64 KiB and the asset is gameplay content (priority 1-4); **VISUAL_REVIEW_REQUIRED** otherwise. Priority: 1 fighter, 2 VS stage, 3 effect/item, 4 1P/bonus, 5 menu/movie/unused.
+
+Over all 189 candidates: holdout SSE 7958813430 -> oracle bound 2737043609 (65.6%), but cross-phase SSE only 44569918670 -> 43542506198 (2.3%) with each row's fix-class fit (kept only where it beats the shipped texture). 62 of 189 rows keep at least 25% on U2; 13 keep at least 40%.
+
+| Fix class | Candidates | Recommended | Visual review | Accept |
+|---|---:|---:|---:|---:|
+| `USE_SITE_TEXTURE_VARIANT` | 1 | 0 | 1 | 0 |
+| `DIRECT_RGBA_OVERRIDE` | 12 | 1 | 11 | 0 |
+| `ACCEPT_AFTER_VISUAL_REVIEW` | 176 | 0 | 0 | 176 |
+
+`ACCEPT_AFTER_VISUAL_REVIEW` rows by the class the evidence would otherwise point at: `ALPHA_EDIT` 3, `DIRECT_RGBA_OVERRIDE` 161, `PER_PALETTE_DIRECT_VARIANT` 1, `USE_SITE_TEXTURE_VARIANT` 11.
+
+### 11.1 Alpha-constrained cutouts (66)
+
+Flips are alpha-test disagreements with the 3-point reference on U2. `Oracle` is the silhouette fit (alpha search over refitted RGB); `alpha-only` starts from the shipped texels and changes only alpha, so RGB stays byte-identical. Recoverable = share of current flips the oracle removes. Distinct = RGBA values the alpha-only result needs (CLUT capacity 16 for T4, 256 for T8).
+
+| Rank | Variant | Use | Threshold | Flips now | Oracle flips | Recoverable | Alpha-only flips | Alpha-only SSE gain | Oracle SSE gain | Alpha-only enough | RGB untouched | Distinct / CLUT | Class |
+|---:|---|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 21 | v301 `105:0x1B28` | StageZebesFile2 (105) dl 0x4890 prim 3 | alpha > 0 | 1194 | 1329 | -11.3% | 1293 | -5.5% | -2.9% | no | no: RGB refit needed | 27 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 26 | v614 `117:0x7A8` | StageMetalFile2 (117) dl 0x2950 prim 5 | alpha > 0 | 17728 | 18674 | -5.3% | 20048 | -9.8% | -1.2% | no | no: RGB refit needed | 215 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 27 | v613 `117:0x7A8` | StageMetalFile2 (117) dl 0x2950 prim 4 | alpha > 0 | 23184 | 22927 | 1.1% | 23584 | -1.2% | 5.5% | no | no: RGB refit needed | 201 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 34 | v616 `117:0x310` | StageMetalFile2 (117) dl 0x2950 prim 8 | alpha > 0 | 52588 | 59125 | -12.4% | 58096 | -9.7% | -10.6% | no | no: RGB refit needed | 220 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 44 | v621 `117:0x50` | StageMetalFile2 (117) dl 0x2950 prim 13 | alpha > 0 | 30006 | 31007 | -3.3% | 31425 | -4.0% | -1.5% | no | no: RGB refit needed | 211 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 50 | v620 `117:0x50` | StageMetalFile2 (117) dl 0x2950 prim 12 | alpha > 0 | 49927 | 50075 | -0.3% | 49630 | 0.8% | 2.9% | no | no: RGB refit needed | 274 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 185 | v1327 `324:0xB1F8` | LinkModel (324) dl 0x7EA8 prim 0 | alpha > 0 | 1187 | 1407 | -18.5% | 1351 | -13.1% | -17.3% | no | no: RGB refit needed | 8 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 198 | v378 `107:0x328` | StageInishieFile2 (107) dl 0x4758 prim 1 | alpha >= 8 | 12 | 12 | 0.0% | 12 | 0.0% | 1.8% | no | no: RGB refit needed | 11 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 222 | v777 `120:0x510` | GRBonus2MarioFile2 (137) dl 0x28C8 prim 12 | alpha > 0 | 1985 | 2252 | -13.5% | 2424 | -21.7% | -12.9% | no | no: RGB refit needed | 10 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 231 | v829 `120:0x510` | GRBonus2DonkeyFile2 (139) dl 0x2470 prim 10 | alpha > 0 | 2780 | 3011 | -8.3% | 3251 | -16.6% | -7.8% | no | no: RGB refit needed | 10 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 330 | v471 `110:0xD20` | StageYosterFile2 (111) dl 0x49A0 prim 4 | alpha > 0 | 89 | 99 | -11.2% | 109 | -21.8% | -10.3% | no | no: RGB refit needed | 18 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 343 | v1038 `167:0x26408` | MNTitle (167) dl 0x26A08 prim 0 | alpha >= 8 | 687 | 782 | -13.8% | 766 | -11.0% | -12.5% | no | no: RGB refit needed | 39 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 361 | v334 `106:0xB90` | StageCastleFile2 (106) dl 0x2238 prim 3 | alpha > 0 | 517 | 592 | -14.5% | 618 | -19.2% | -13.9% | no | no: RGB refit needed | 18 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 375 | v293 `103:0x30` | StagePupupuFile2 (104) dl 0x2970 prim 0 | alpha > 0 | 200 | 219 | -9.5% | 228 | -13.7% | -8.9% | no | no: RGB refit needed | 22 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 410 | v520 `112:0x27C0` | StageYamabukiFile2 (112) dl 0x6508 prim 1 | alpha > 0 | 111 | 135 | -21.6% | 144 | -28.6% | -20.0% | no | no: RGB refit needed | 17 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 426 | v254 `86:0x6830` | ITCommonObject (86) dl 0x68E8 prim 0 | alpha > 0 | 4 | 4 | 0.0% | 4 | 0.0% | 2.0% | no | no: RGB refit needed | 14 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 446 | v521 `112:0x27C0` | StageYamabukiFile2 (112) dl 0x6508 prim 2 | alpha > 0 | 185 | 225 | -21.6% | 240 | -28.6% | -20.0% | no | no: RGB refit needed | 17 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 467 | v150 `83:0x7980` | EFCommonEffects1 (83) dl 0x7C28 prim 0 | alpha >= 8 | 1344 | 1482 | -10.3% | 1448 | -7.7% | -10.0% | no | no: RGB refit needed | 20 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 468 | v1597 `353:0x30` | LinkSpecial2 (353) dl 0x2D8 prim 0 | alpha >= 8 | 1344 | 1482 | -10.3% | 1448 | -7.7% | -10.0% | no | no: RGB refit needed | 20 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 474 | v1005 `158:0x30` | StageJungleFile3 (158) dl 0x888 prim 0 | alpha > 0 | 226 | 264 | -16.8% | 247 | -8.8% | -15.0% | no | no: RGB refit needed | 28 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 491 | v54 `52:0x200A0` | MVCommon (52) dl 0x21910 prim 0 | alpha > 0 | 19 | 23 | -21.1% | 27 | -36.6% | -16.3% | no | no: RGB refit needed | 14 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 509 | v315 `105:0x6F0` | StageZebesFile2 (105) dl 0x5138 prim 0 | alpha > 0 | 87 | 96 | -10.3% | 87 | 0.0% | -7.9% | no | no: RGB refit needed | 32 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 532 | v321 `105:0xC890` | StageZebesFile2 (105) dl 0xCDA0 prim 1 | alpha > 0 | 201 | 242 | -20.4% | 230 | -14.2% | -19.8% | no | no: RGB refit needed | 19 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 539 | v765 `120:0x418` | GRBonus2MarioFile2 (137) dl 0x28C8 prim 0 | alpha > 0 | 24 | 20 | 16.7% | 24 | 0.0% | 17.0% | no | no: RGB refit needed | 6 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 554 | v766 `120:0x418` | GRBonus2MarioFile2 (137) dl 0x28C8 prim 1 | alpha > 0 | 8 | 4 | 50.0% | 8 | 0.0% | 47.4% | no | no: RGB refit needed | 6 / 16 | `DIRECT_RGBA_OVERRIDE` |
+| 619 | v569 `113:0x27B0` | StageHyruleFile2 (113) dl 0x6010 prim 3 | alpha > 0 | 54 | 70 | -29.6% | 62 | -14.7% | -29.3% | no | no: RGB refit needed | 15 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 632 | v17 `52:0x1440` | MVCommon (52) dl 0x69C0 prim 0 | alpha > 0 | 16 | 28 | -75.0% | 24 | -48.0% | -70.9% | no | no: RGB refit needed | 17 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 637 | v358 `107:0x1158` | StageInishieFile2 (107) dl 0x4688 prim 0 | alpha >= 8 | 1090 | 1162 | -6.6% | 1148 | -5.3% | -6.3% | no | no: RGB refit needed | 12 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 644 | v311 `105:0xF10` | StageZebesFile2 (105) dl 0x4E50 prim 0 | alpha > 0 | 372 | 402 | -8.1% | 424 | -13.3% | -6.6% | no | no: RGB refit needed | 23 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 668 | v424 `108:0xAC0` | StageJungleFile2 (108) dl 0xD080 prim 1 | alpha > 0 | 417 | 455 | -9.1% | 439 | -5.0% | -7.2% | no | no: RGB refit needed | 20 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 676 | v53 `52:0x1FF90` | MVCommon (52) dl 0x221F0 prim 1 | alpha >= 8 | 854 | 812 | 4.9% | 798 | 6.5% | 5.1% | yes | yes | 15 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 677 | v52 `52:0x1FF90` | MVCommon (52) dl 0x221F0 prim 0 | alpha >= 8 | 1658 | 1574 | 5.1% | 1562 | 5.7% | 5.2% | yes | yes | 15 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 678 | v246 `86:0x11458` | ITCommonObject (86) dl 0x11910 prim 0 | alpha >= 8 | 125 | 130 | -4.0% | 125 | 0.0% | -2.8% | no | no: RGB refit needed | 12 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 699 | v650 `120:0x418` | GRBonus1DonkeyFile2 (126) dl 0x1968 prim 0 | alpha > 0 | 12 | 21 | -75.0% | 12 | 0.0% | -70.2% | no | no: RGB refit needed | 6 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 702 | v332 `106:0x410` | StageCastleFile2 (106) dl 0x2238 prim 1 | alpha > 0 | 90 | 128 | -42.2% | 110 | -21.8% | -41.1% | no | no: RGB refit needed | 11 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 704 | v333 `106:0x410` | StageCastleFile2 (106) dl 0x2238 prim 2 | alpha > 0 | 124 | 180 | -45.2% | 156 | -25.4% | -44.1% | no | no: RGB refit needed | 11 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 706 | v636 `120:0x418` | GRBonus1MarioFile2 (124) dl 0x1960 prim 8 | alpha > 0 | 8 | 14 | -75.0% | 8 | 0.0% | -70.2% | no | no: RGB refit needed | 6 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 708 | v656 `120:0x418` | GRBonus1DonkeyFile2 (126) dl 0x1DC0 prim 0 | alpha > 0 | 16 | 28 | -75.0% | 16 | 0.0% | -70.2% | no | no: RGB refit needed | 6 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 726 | v77 `67:0x5860` | MVOpeningYoster (67) dl 0x9440 prim 0 | alpha >= 8 | 101 | 107 | -5.9% | 108 | -6.8% | -5.3% | no | no: RGB refit needed | 463 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 739 | v1591 `351:0x1018` | PurinSpecial2 (351) dl 0x1FD0 prim 0 | alpha >= 8 | 114 | 110 | 3.5% | 109 | 4.4% | 3.6% | yes | yes | 26 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 742 | v40 `52:0x17C48` | MVCommon (52) dl 0x1C358 prim 0 | alpha >= 8 | 510 | 548 | -7.5% | 580 | -13.4% | -6.6% | no | no: RGB refit needed | 189 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 777 | v37 `52:0xAA80` | MVCommon (52) dl 0xADD0 prim 0 | alpha > 0 | 14 | 22 | -57.1% | 30 | -112.1% | -55.3% | no | no: RGB refit needed | 8 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 784 | v1593 `351:0x8` | PurinSpecial2 (351) dl 0x2090 prim 0 | alpha >= 8 | 114 | 103 | 9.6% | 106 | 7.0% | 9.7% | no | no: RGB refit needed | 24 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 789 | v267 `100:0x490` | StagePupupuBeta1 (101) dl 0x1620 prim 3 | alpha > 0 | 535 | 647 | -20.9% | 621 | -15.5% | -19.2% | no | no: RGB refit needed | 22 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 792 | v1041 `195:0x7358` | SCStaffroll (195) dl 0x77B8 prim 0 | alpha >= 8 | 78 | 117 | -50.0% | 117 | -46.6% | -45.2% | no | no: RGB refit needed | 15 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 864 | v43 `52:0x1AC60` | MVCommon (52) dl 0x1C358 prim 3 | alpha >= 8 | 445 | 478 | -7.4% | 509 | -14.1% | -6.6% | no | no: RGB refit needed | 169 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 913 | v420 `108:0x5750` | StageJungleFile2 (108) dl 0xC718 prim 0 | alpha > 0 | 32 | 40 | -25.0% | 36 | -12.3% | -24.3% | no | no: RGB refit needed | 17 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 917 | v79 `67:0x3850` | MVOpeningYoster (67) dl 0x9530 prim 0 | alpha >= 8 | 88 | 81 | 8.0% | 86 | 2.2% | 8.2% | no | no: RGB refit needed | 613 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 951 | v86 `67:0xAB00` | MVOpeningYoster (67) dl 0xB4D0 prim 0 | alpha >= 8 | 246 | 255 | -3.7% | 273 | -10.7% | -3.0% | no | no: RGB refit needed | 30 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 961 | v41 `52:0x18C50` | MVCommon (52) dl 0x1C358 prim 1 | alpha >= 8 | 330 | 376 | -13.9% | 403 | -21.7% | -13.1% | no | no: RGB refit needed | 143 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 995 | v38 `52:0xB9F8` | MVCommon (52) dl 0xBD00 prim 0 | alpha > 0 | 0 | 0 | - | 0 | 0.0% | 32.3% | no | no: RGB refit needed | 5 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1008 | v252 `86:0x4C18` | ITCommonObject (86) dl 0x5450 prim 0 | alpha >= 8 | 389 | 235 | 39.6% | 235 | 39.4% | 39.6% | no | no: RGB refit needed | 212 / 256 | `DIRECT_RGBA_OVERRIDE` |
+| 1020 | v45 `52:0x1CCA0` | MVCommon (52) dl 0x1DDB0 prim 0 | alpha >= 8 | 439 | 404 | 8.0% | 449 | -2.3% | 8.0% | no | no: RGB refit needed | 230 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1030 | v25 `52:0xF48` | MVCommon (52) dl 0x6EC0 prim 0 | alpha > 0 | 24 | 19 | 20.8% | 32 | -33.0% | 20.8% | no | no: RGB refit needed | 12 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1032 | v295 `103:0x2270` | StageExplainFile2 (115) dl 0xC20 prim 1 | alpha > 0 | 822 | 1014 | -23.4% | 985 | -19.6% | -22.7% | no | no: RGB refit needed | 20 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1058 | v1042 `198:0x4028` | SCExplainGraphics (198) dl 0x51C8 prim 0 | alpha >= 8 | 276 | 283 | -2.5% | 277 | -0.4% | -2.1% | no | no: RGB refit needed | 73 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1079 | v763 `136:0x2C30` | Bonus2Common (136) dl 0x3CC0 prim 0 | alpha >= 8 | 232 | 220 | 5.2% | 237 | -2.2% | 5.3% | no | no: RGB refit needed | 270 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1096 | v419 `108:0x5980` | StageJungleFile2 (108) dl 0x95D8 prim 2 | alpha > 0 | 111 | 103 | 7.2% | 111 | 0.0% | 7.5% | no | no: RGB refit needed | 18 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1099 | v762 `136:0x2020` | Bonus2Common (136) dl 0x3C10 prim 0 | alpha >= 8 | 267 | 236 | 11.6% | 257 | 3.7% | 11.7% | no | no: RGB refit needed | 271 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1100 | v590 `114:0x11768` | StageLastFile2 (114) dl 0x127A8 prim 0 | alpha >= 8 | 134 | 114 | 14.9% | 134 | 0.0% | 14.9% | no | no: RGB refit needed | 198 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1103 | v42 `52:0x19C58` | MVCommon (52) dl 0x1C358 prim 2 | alpha >= 8 | 306 | 376 | -22.9% | 415 | -35.0% | -21.9% | no | no: RGB refit needed | 116 / 256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1112 | v1036 `162:0x2C8` | GRBonus3File3 (162) dl 0x6C8 prim 0 | alpha >= 8 | 90 | 101 | -12.2% | 109 | -21.0% | -12.0% | no | no: RGB refit needed | 20 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1123 | v26 `52:0x740` | MVCommon (52) dl 0x7928 prim 0 | alpha >= 8 | 33 | 46 | -39.4% | 45 | -36.1% | -39.0% | no | no: RGB refit needed | 200 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1126 | v76 `52:0x24228` | MVCommon (52) dl 0x24660 prim 0 | alpha >= 8 | 121 | 77 | 36.4% | 98 | 19.0% | 36.4% | no | no: RGB refit needed | 205 / 256 | `DIRECT_RGBA_OVERRIDE` |
+| 1175 | v87 `67:0xA8F8` | MVOpeningYoster (67) dl 0xB608 prim 0 | alpha >= 8 | 265 | 251 | 5.3% | 282 | -6.4% | 5.4% | no | no: RGB refit needed | 27 / 16 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1279 | v3 `52:0x32F8` | MVCommon (52) dl 0x5A10 prim 0 | alpha > 0 | 28 | 31 | -10.7% | 32 | -13.9% | -9.7% | no | no: RGB refit needed | 21 / direct | `ACCEPT_AFTER_VISUAL_REVIEW` |
+
+### 11.2 Conflicting use sites (13)
+
+Each distinct coverage scored on its own holdout: current, its own oracle, and the shared (union) oracle. The split estimate is the sum of own oracles; the cross-phase column is the shared fit's U2 result (the split's U2 result is at least as good). Cost counts one RGBA8888 texture per site group.
+
+| Rank | Variant | Site group | Current | Own oracle | Shared oracle |
+|---:|---|---|---:|---:|---:|
+| 76 | v310 `105:0x1718` | 105:0x4DA0#0 | 11319765 | 3159962 | 4801444 |
+| 76 | v310 `105:0x1718` | 105:0x5058#0 | 11526436 | 2803539 | 4462109 |
+| 235 | v397 `107:0x50` | 107:0x6A30#2 | 2933645 | 39638 | 110373 |
+| 235 | v397 `107:0x50` | 107:0x6A30#4 | 2873302 | 36317 | 112260 |
+| 612 | v403 `108:0x6D40` | 108:0x7E90#6 | 484107 | 62306 | 138152 |
+| 612 | v403 `108:0x6D40` | 108:0x7E90#8 | 497413 | 79840 | 173099 |
+| 743 | v449 `109:0x30` | 109:0x7FE0#5 | 660208 | 131674 | 322520 |
+| 743 | v449 `109:0x30` | 109:0x81F8#5 | 674253 | 129183 | 323782 |
+| 888 | v255 `100:0x30` | 101:0x310#0 | 250241 | 51229 | 129077 |
+| 888 | v255 `100:0x30` | 102:0x330#0 | 251406 | 50506 | 130898 |
+| 889 | v265 `100:0x30` | 101:0x1620#0 | 254198 | 20797 | 69402 |
+| 889 | v265 `100:0x30` | 102:0x21E0#0 | 245574 | 20134 | 67312 |
+| 1032 | v295 `103:0x2270` | 104:0x2A68#1 | 9888761 | 23623264 | 34373818 |
+| 1032 | v295 `103:0x2270` | 115:0xC20#1 | 9698998 | 25574592 | 35349136 |
+| 1152 | v539 `113:0x1B20` | 113:0x3A50#0, 113:0x3A48#0 | 300150 | 63201 | 143733 |
+| 1152 | v539 `113:0x1B20` | 113:0x64C0#0 | 308610 | 65427 | 146169 |
+| 1158 | v11 `52:0x1960` | 52:0x64C0#0 | 174706 | 14266 | 53632 |
+| 1158 | v11 `52:0x1960` | 52:0x7398#0 | 177217 | 14448 | 56002 |
+| 1158 | v11 `52:0x1960` | 52:0x74A0#0 | 199616 | 147762 | 148251 |
+| 1158 | v11 `52:0x1960` | 52:0x75A0#0 | 171786 | 15372 | 57946 |
+| 1199 | v752 `123:0x5B0` | 135:0x2140#16, 135:0x2138#16 | 169978 | 25698 | 72248 |
+| 1199 | v752 `123:0x5B0` | 145:0x21D0#9, 145:0x2190#9 | 170832 | 18173 | 45230 |
+| 1199 | v752 `123:0x5B0` | 148:0x25F0#15 | 166966 | 57404 | 94640 |
+| 1230 | v919 `123:0x480` | 145:0x21D0#12, 145:0x2190#12 | 155338 | 17353 | 28178 |
+| 1230 | v919 `123:0x480` | 148:0x25F0#8 | 172615 | 48402 | 63406 |
+| 1245 | v744 `123:0x480` | 135:0x2140#3, 135:0x2138#3 | 162922 | 69463 | 93384 |
+| 1245 | v744 `123:0x480` | 142:0x2DE0#11, 142:0x2DD0#11 | 157163 | 17949 | 48300 |
+| 1245 | v744 `123:0x480` | 148:0x25F0#12 | 155290 | 66841 | 86666 |
+| 1249 | v680 `123:0x480` | 129:0x1EE8#5 | 161520 | 20979 | 43477 |
+| 1249 | v680 `123:0x480` | 145:0x21D0#14, 145:0x2190#14 | 158198 | 84619 | 98033 |
+
+| Rank | Variant | Groups | Split (own oracles) | Shared oracle | Cross-phase now -> after | Level-0 delta | Pack delta | Class |
+|---:|---|---:|---:|---:|---|---:|---:|---|
+| 76 | v310 `105:0x1718` | 2 | 5963501 | 9263553 | 179953872 -> 148173742 (17.7%) | 1015744 | 1353024 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 235 | v397 `107:0x50` | 2 | 75955 | 222633 | 61904141 -> 40505020 (34.6%) | 982976 | 1309888 | `USE_SITE_TEXTURE_VARIANT` |
+| 612 | v403 `108:0x6D40` | 2 | 142146 | 311251 | 9123061 -> 7278161 (20.2%) | 122816 | 163136 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 743 | v449 `109:0x30` | 2 | 260857 | 646302 | 6074507 -> 4695689 (22.7%) | 122816 | 163776 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 888 | v255 `100:0x30` | 2 | 101735 | 259975 | 2738476 -> 2246240 (18.0%) | 245696 | 327360 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 889 | v265 `100:0x30` | 2 | 40931 | 136714 | 3848378 -> 3000199 (22.0%) | 245696 | 327360 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1032 | v295 `103:0x2270` | 2 | 49197856 | 69722954 | 162479549 -> 199333136 (-22.7%) | 114624 | 152256 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1152 | v539 `113:0x1B20` | 2 | 128628 | 289902 | 3247572 -> 2519085 (22.4%) | 491456 | 655296 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1158 | v11 `52:0x1960` | 4 | 191848 | 315831 | 3878270 -> 2972280 (23.4%) | 1015744 | 1354176 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1199 | v752 `123:0x5B0` | 3 | 101275 | 212118 | 3206752 -> 2335657 (27.2%) | 720832 | 961472 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1230 | v919 `123:0x480` | 2 | 65755 | 91584 | 3016346 -> 1970970 (34.7%) | 491456 | 652736 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1245 | v744 `123:0x480` | 3 | 154253 | 228350 | 3321171 -> 2375266 (28.5%) | 753600 | 1000896 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1249 | v680 `123:0x480` | 2 | 105598 | 141510 | 2285778 -> 1649200 (27.8%) | 245696 | 326336 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+
+### 11.3 Palette and animated-palette cases (12)
+
+Per-state holdout SSE identifies the palette states that carry the error. Index-only = the pipeline's filter-aware index optimizer (trained, scored on the holdout). Direct fallback = one RGBA8888 texture per state.
+
+| Rank | Variant | States | Worst states (share of current SSE) | Index-only gain | Cross-phase RGBA gain | Index-only enough | Direct fallback level-0 / pack | Class |
+|---:|---|---:|---|---:|---:|---|---:|---|
+| 21 | v301 `105:0x1B28` | 3 | #1 33%, #0 33%, #2 33% | -106.5% | -82.7% | no | 94144 / 123584 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 26 | v614 `117:0x7A8` | 16 | #15 6%, #11 6%, #0 6% | -36.2% | -17.1% | no | 1040320 / 1381696 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 27 | v613 `117:0x7A8` | 16 | #11 6%, #15 6%, #0 6% | -19.7% | -13.3% | no | 2080704 / 2771648 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 34 | v616 `117:0x310` | 16 | #0 7%, #15 6%, #11 6% | -33.6% | -381.3% | no | 1040320 / 1386432 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 44 | v621 `117:0x50` | 16 | #0 8%, #10 6%, #11 6% | -48.2% | -28.8% | no | 520128 / 682688 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 50 | v620 `117:0x50` | 16 | #0 8%, #10 6%, #11 6% | -14.2% | -20.4% | no | 2080704 / 2771648 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 76 | v310 `105:0x1718` | 2 | #0 60%, #1 40% | -140.7% | 17.7% | no | 491456 / 654656 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 509 | v315 `105:0x6F0` | 3 | #1 34%, #2 33%, #0 33% | -6.5% | -117.5% | no | 11712 / 15552 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 644 | v311 `105:0xF10` | 2 | #0 50%, #1 50% | -18.5% | -1273.9% | no | 30656 / 40896 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 690 | v299 `105:0x2540` | 4 | #0 43%, #1 31%, #2 16% | -260.9% | 21.7% | no | 126912 / 166592 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 985 | v339 `106:0x388` | 1 | 1 state | 5.5% | 38.1% | no | 14272 / 19648 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+| 1112 | v1036 `162:0x2C8` | 1 | 1 state | -0.1% | 14.6% | no | 3520 / 4800 | `ACCEPT_AFTER_VISUAL_REVIEW` |
+
+### 11.4 `OTHER` cases (105)
+
+These matched no cause class: the pipeline's gates rejected every candidate and no single constraint explains the gap between current and the holdout oracle. The cross-phase fit decides what the gap really is: below 25% the holdout oracle was fitting sparse probe phases (true bilinear surface limitation); otherwise the first matching explanation of use-site conflict (own oracles <= 75% of shared), alpha-limited (alpha-held fit >= 10 points worse), quantization-limited (paletted and index-only < 10%), coverage-limited (dense training reaches half the gain on U1).
+
+| Explanation | Variants | Cross-phase SSE now | Best fit | Gain |
+|---|---:|---:|---:|---:|
+| quantization-limited | 49 | 367870292 | 237185272 | 35.5% |
+| true bilinear surface limitation | 56 | 460505697 | 369961362 | 19.7% |
+
+| Rank | Variant | Use | Holdout now -> oracle | Dense (U1) gain | Cross-phase gain | Explanation |
+|---:|---|---|---|---:|---:|---|
+| 72 | v1133 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | 1289418 -> 604098 (53.1%) | 3.6% | 12.7% | true bilinear surface limitation |
+| 135 | v666 `121:0x30` | GRBonus1SamusFile2 (127) dl 0x1558 prim 9 | 4577633 -> 1936619 (57.7%) | 8.2% | 19.1% | true bilinear surface limitation |
+| 138 | v800 `121:0x30` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 10 | 4639632 -> 113216 (97.6%) | 11.8% | 37.0% | quantization-limited |
+| 139 | v799 `121:0x30` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 9 | 4602192 -> 68603 (98.5%) | 12.5% | 42.2% | quantization-limited |
+| 140 | v903 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 34 | 4551331 -> 1812936 (60.2%) | 9.0% | 19.3% | true bilinear surface limitation |
+| 148 | v707 `121:0x30` | GRBonus1CaptainFile2 (131) dl 0x13B8 prim 6 | 4512582 -> 1128421 (75.0%) | 9.9% | 23.0% | true bilinear surface limitation |
+| 152 | v899 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 30 | 4494194 -> 1822325 (59.5%) | 8.3% | 19.3% | true bilinear surface limitation |
+| 157 | v902 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 33 | 4510346 -> 585643 (87.0%) | 11.0% | 27.1% | quantization-limited |
+| 170 | v706 `121:0x30` | GRBonus1CaptainFile2 (131) dl 0x13B8 prim 5 | 4491766 -> 2137610 (52.4%) | 7.2% | 18.1% | true bilinear surface limitation |
+| 171 | v901 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 32 | 4438612 -> 557937 (87.4%) | 9.3% | 27.2% | quantization-limited |
+| 174 | v644 `121:0x30` | GRBonus1FoxFile2 (125) dl 0x1B18 prim 6 | 4456059 -> 1529605 (65.7%) | 8.6% | 20.4% | true bilinear surface limitation |
+| 175 | v837 `121:0x30` | GRBonus2SamusFile2 (140) dl 0x10F0 prim 3 | 4385495 -> 40268 (99.1%) | 11.6% | 43.7% | quantization-limited |
+| 245 | v598 `116:0x1FC0` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 5 | 2030506 -> 645033 (68.2%) | 6.9% | 18.3% | true bilinear surface limitation |
+| 265 | v373 `107:0x50` | StageInishieFile2 (107) dl 0x43A8 prim 0 | 2825917 -> 1287905 (54.4%) | 4.6% | 14.4% | true bilinear surface limitation |
+| 271 | v388 `107:0x50` | StageInishieFile2 (107) dl 0x6008 prim 3 | 2771930 -> 493631 (82.2%) | 6.2% | 19.8% | true bilinear surface limitation |
+| 279 | v1004 `157:0x6C0` | StageZebesFile3 (157) dl 0x9D8 prim 0 | 962998 -> 35992 (96.3%) | 11.9% | 34.8% | quantization-limited |
+| 281 | v269 `103:0xE20` | StagePupupuFile2 (104) dl 0x798 prim 0 | 1147443 -> 131769 (88.5%) | 8.0% | 23.1% | true bilinear surface limitation |
+| 293 | v602 `116:0x23D0` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 9 | 1069453 -> 515262 (51.8%) | 5.8% | 15.5% | true bilinear surface limitation |
+| 301 | v1147 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | 595674 -> 203673 (65.8%) | 5.2% | 16.0% | true bilinear surface limitation |
+| 339 | v597 `116:0x1BB8` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 4 | 1240288 -> 477582 (61.5%) | 9.3% | 20.5% | true bilinear surface limitation |
+| 358 | v599 `116:0x21C8` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 6 | 1693791 -> 52767 (96.9%) | 6.1% | 26.5% | quantization-limited |
+| 360 | v575 `114:0x1670` | StageLastFile2 (114) dl 0x4070 prim 0 | 1666113 -> 708309 (57.5%) | 7.1% | 16.3% | true bilinear surface limitation |
+| 383 | v1161 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | 479280 -> 162810 (66.0%) | 5.6% | 16.8% | true bilinear surface limitation |
+| 409 | v507 `112:0x1060` | StageYamabukiFile2 (112) dl 0x5E30 prim 0 | 1336590 -> 406299 (69.6%) | 9.3% | 21.1% | true bilinear surface limitation |
+| 414 | v508 `112:0x1060` | StageYamabukiFile2 (112) dl 0x5E30 prim 1 | 1309112 -> 365319 (72.1%) | 9.0% | 20.4% | true bilinear surface limitation |
+| 420 | v531 `112:0x1060` | StageYamabukiFile2 (112) dl 0x7F68 prim 13 | 1294289 -> 402750 (68.9%) | 9.3% | 20.4% | true bilinear surface limitation |
+| 448 | v286 `103:0x1880` | StagePupupuFile2 (104) dl 0x21E8 prim 0 | 765866 -> 163232 (78.7%) | 6.3% | 18.7% | true bilinear surface limitation |
+| 455 | v1098 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | 454511 -> 149708 (67.1%) | 5.3% | 16.9% | true bilinear surface limitation |
+| 566 | v964 `149:0x2298` | GRBonus3File2 (149) dl 0x2EB0 prim 0 | 1320612 -> 241390 (81.7%) | 7.2% | 23.8% | true bilinear surface limitation |
+| 576 | v738 `122:0x100` | GRBonus1PurinFile2 (134) dl 0x1A28 prim 4 | 645527 -> 221257 (65.7%) | 3.5% | 12.8% | true bilinear surface limitation |
+| 586 | v935 `122:0x100` | GRBonus2PurinFile2 (147) dl 0x1BB8 prim 6 | 653963 -> 235217 (64.0%) | 0.9% | 11.1% | true bilinear surface limitation |
+| 588 | v967 `149:0x1640` | GRBonus3File2 (149) dl 0x2EB0 prim 3 | 2121546 -> 520419 (75.5%) | 7.2% | 22.8% | true bilinear surface limitation |
+| 617 | v694 `122:0x210` | GRBonus1YoshiFile2 (130) dl 0x26E8 prim 3 | 584022 -> 258975 (55.7%) | 4.3% | 17.8% | true bilinear surface limitation |
+| 630 | v925 `122:0x78` | GRBonus2PikachuFile2 (146) dl 0x2DF8 prim 1 | 608171 -> 273377 (55.0%) | 6.4% | 15.4% | true bilinear surface limitation |
+| 641 | v294 `103:0x26A0` | StageExplainFile2 (115) dl 0xC20 prim 0 | 413171 -> 177175 (57.1%) | 4.4% | 14.3% | true bilinear surface limitation |
+| 690 | v299 `105:0x2540` | StageZebesFile2 (105) dl 0x4890 prim 1 | 2606045 -> 1187566 (54.4%) | 11.5% | 21.7% | true bilinear surface limitation |
+| 696 | v986 `149:0xA10` | GRBonus3File2 (149) dl 0x5D50 prim 0 | 788730 -> 197844 (74.9%) | 9.8% | 23.5% | true bilinear surface limitation |
+| 774 | v797 `121:0xE0` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 7 | 872357 -> 291493 (66.6%) | 12.3% | 24.3% | true bilinear surface limitation |
+| 788 | v649 `121:0xE0` | GRBonus1FoxFile2 (125) dl 0x1FB8 prim 0 | 812156 -> 339647 (58.2%) | 14.0% | 23.1% | true bilinear surface limitation |
+| 797 | v966 `149:0x1E68` | GRBonus3File2 (149) dl 0x2EB0 prim 2 | 846063 -> 387791 (54.2%) | 6.1% | 15.1% | true bilinear surface limitation |
+| 808 | v93 `68:0x18D8` | MVOpeningCliff (68) dl 0x3438 prim 1 | 559372 -> 248816 (55.5%) | 5.2% | 15.4% | true bilinear surface limitation |
+| 821 | v1119 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | 574383 -> 186909 (67.5%) | 5.7% | 15.8% | true bilinear surface limitation |
+| 824 | v792 `121:0x658` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 2 | 486903 -> 241798 (50.3%) | 4.4% | 14.8% | true bilinear surface limitation |
+| 915 | v910 `123:0x350` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 1 | 370029 -> 60273 (83.7%) | 8.2% | 23.1% | true bilinear surface limitation |
+| 945 | v913 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 4 | 339904 -> 6868 (98.0%) | 11.8% | 29.4% | quantization-limited |
+| 949 | v914 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 5 | 342637 -> 12859 (96.2%) | 9.7% | 29.2% | quantization-limited |
+| 958 | v912 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 3 | 332369 -> 14671 (95.6%) | 7.7% | 28.1% | quantization-limited |
+| 965 | v876 `122:0x30` | GRBonus2YoshiFile2 (143) dl 0x1D68 prim 6 | 351594 -> 110238 (68.6%) | 8.6% | 24.1% | true bilinear surface limitation |
+| 966 | v67 `52:0x20400` | MVCommon (52) dl 0x21E98 prim 2 | 479441 -> 211302 (55.9%) | 8.3% | 17.8% | true bilinear surface limitation |
+| 993 | v534 `112:0x2200` | StageYamabukiFile2 (112) dl 0x7F68 prim 16 | 292328 -> 124171 (57.5%) | 7.3% | 21.2% | true bilinear surface limitation |
+| 1013 | v922 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 17 | 286703 -> 14 (100.0%) | -5.9% | 53.9% | quantization-limited |
+| 1015 | v757 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 21 | 292576 -> 42950 (85.3%) | 10.0% | 27.1% | quantization-limited |
+| 1016 | v678 `123:0x7E0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 2 | 293767 -> 47551 (83.8%) | 7.4% | 26.0% | quantization-limited |
+| 1019 | v959 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 27 | 284252 -> 574 (99.8%) | 4.9% | 42.7% | quantization-limited |
+| 1022 | v722 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 15 | 281863 -> 110172 (60.9%) | 6.7% | 21.4% | true bilinear surface limitation |
+| 1026 | v753 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 17 | 280584 -> 96001 (65.8%) | 9.7% | 24.4% | true bilinear surface limitation |
+| 1027 | v951 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 19 | 275807 -> 7547 (97.3%) | 7.9% | 32.5% | quantization-limited |
+| 1029 | v954 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 22 | 280441 -> 45220 (83.9%) | 9.6% | 26.3% | quantization-limited |
+| 1033 | v953 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 21 | 291900 -> 67510 (76.9%) | 7.7% | 24.6% | true bilinear surface limitation |
+| 1034 | v952 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 20 | 279230 -> 9084 (96.7%) | 10.6% | 33.1% | quantization-limited |
+| 1037 | v921 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 16 | 277753 -> 38 (100.0%) | -2.8% | 53.4% | quantization-limited |
+| 1039 | v862 `123:0x7E0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 14 | 277563 -> 44 (100.0%) | -2.2% | 51.2% | quantization-limited |
+| 1041 | v923 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 18 | 276181 -> 3380 (98.8%) | 8.9% | 33.6% | quantization-limited |
+| 1048 | v920 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 15 | 276141 -> 366 (99.9%) | 4.9% | 44.5% | quantization-limited |
+| 1052 | v756 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 20 | 280263 -> 135190 (51.8%) | 5.0% | 21.3% | true bilinear surface limitation |
+| 1055 | v721 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 14 | 275280 -> 25735 (90.7%) | 9.7% | 28.1% | quantization-limited |
+| 1056 | v863 `123:0x7E0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 15 | 272382 -> 51 (100.0%) | -1.8% | 48.8% | quantization-limited |
+| 1061 | v677 `123:0x7E0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 1 | 268270 -> 49312 (81.6%) | 7.7% | 25.6% | quantization-limited |
+| 1066 | v381 `107:0x2BB8` | StageInishieFile2 (107) dl 0x45C0 prim 0 | 120625 -> 46486 (61.5%) | 19.9% | 29.3% | quantization-limited |
+| 1071 | v957 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 25 | 252938 -> 103244 (59.2%) | 6.4% | 22.0% | true bilinear surface limitation |
+| 1076 | v512 `112:0xE50` | StageYamabukiFile2 (112) dl 0x5E30 prim 6 | 212110 -> 35673 (83.2%) | 8.5% | 23.7% | true bilinear surface limitation |
+| 1078 | v755 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 19 | 256423 -> 124820 (51.3%) | 10.8% | 22.5% | true bilinear surface limitation |
+| 1081 | v723 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 16 | 248862 -> 109535 (56.0%) | 8.3% | 22.6% | true bilinear surface limitation |
+| 1088 | v754 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 18 | 252133 -> 121015 (52.0%) | 5.8% | 21.3% | true bilinear surface limitation |
+| 1115 | v104 `69:0x80` | MVOpeningStandoff (69) dl 0x1C08 prim 2 | 390095 -> 1241 (99.7%) | 4.9% | 41.7% | quantization-limited |
+| 1138 | v47 `52:0x203B8` | MVCommon (52) dl 0x22108 prim 0 | 781257 -> 31440 (96.0%) | 15.9% | 34.4% | quantization-limited |
+| 1148 | v488 `112:0xDA0` | StageYamabukiFile2 (112) dl 0x45D8 prim 2 | 239593 -> 29240 (87.8%) | 9.4% | 27.1% | quantization-limited |
+| 1151 | v411 `108:0x2B80` | StageJungleFile2 (108) dl 0x8568 prim 0 | 136420 -> 40217 (70.5%) | 14.4% | 25.7% | quantization-limited |
+| 1154 | v547 `113:0x1B20` | StageHyruleFile2 (113) dl 0x3A48 prim 10 | 301923 -> 5778 (98.1%) | 7.1% | 33.1% | quantization-limited |
+| 1155 | v566 `113:0x1B20` | StageHyruleFile2 (113) dl 0x55C0 prim 0 | 296658 -> 87741 (70.4%) | 6.8% | 25.1% | quantization-limited |
+| 1167 | v541 `113:0x1B20` | StageHyruleFile2 (113) dl 0x3A48 prim 2 | 290379 -> 534 (99.8%) | 2.0% | 44.0% | quantization-limited |
+| 1178 | v119 `73:0xA30` | MVOpeningSector (73) dl 0x5F70 prim 15 | 205692 -> 100159 (51.3%) | 18.7% | 33.6% | quantization-limited |
+| 1179 | v556 `113:0xEC0` | StageHyruleFile2 (113) dl 0x5020 prim 4 | 262890 -> 2979 (98.9%) | 12.3% | 36.8% | quantization-limited |
+| 1190 | v557 `113:0xEC0` | StageHyruleFile2 (113) dl 0x5020 prim 5 | 258291 -> 16014 (93.8%) | 12.3% | 29.5% | quantization-limited |
+| 1193 | v916 `123:0x5B0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 7 | 172936 -> 900 (99.5%) | 11.8% | 32.9% | quantization-limited |
+| 1198 | v949 `123:0x5B0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 16 | 170806 -> 24987 (85.4%) | 8.7% | 24.3% | true bilinear surface limitation |
+| 1201 | v915 `123:0x5B0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 6 | 168912 -> 5227 (96.9%) | 11.5% | 30.4% | quantization-limited |
+| 1204 | v859 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 9 | 166518 -> 2593 (98.4%) | 13.7% | 32.6% | quantization-limited |
+| 1209 | v950 `123:0x5B0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 18 | 162376 -> 13404 (91.7%) | 11.6% | 26.3% | quantization-limited |
+| 1210 | v718 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 10 | 325629 -> 120450 (63.0%) | 9.8% | 21.1% | true bilinear surface limitation |
+| 1213 | v719 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 11 | 318830 -> 87494 (72.6%) | 10.3% | 28.4% | quantization-limited |
+| 1214 | v686 `123:0x5B0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 11 | 160596 -> 2313 (98.6%) | 9.9% | 31.5% | quantization-limited |
+| 1215 | v945 `123:0x480` | GRBonus2NessFile2 (148) dl 0x25F0 prim 7 | 171315 -> 13717 (92.0%) | 5.6% | 29.0% | quantization-limited |
+| 1218 | v858 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 8 | 161385 -> 6790 (95.8%) | 10.9% | 28.4% | quantization-limited |
+| 1220 | v103 `69:0x888` | MVOpeningStandoff (69) dl 0x1C08 prim 1 | 218034 -> 18220 (91.6%) | 11.8% | 27.4% | quantization-limited |
+| 1226 | v720 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 12 | 160553 -> 26009 (83.8%) | 10.2% | 24.3% | true bilinear surface limitation |
+| 1234 | v857 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 6 | 156621 -> 71702 (54.2%) | 9.6% | 20.5% | true bilinear surface limitation |
+| 1239 | v746 `123:0x480` | GRBonus1NessFile2 (135) dl 0x2138 prim 7 | 161117 -> 49588 (69.2%) | 8.9% | 22.8% | true bilinear surface limitation |
+| 1241 | v883 `121:0x5A8` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 5 | 197313 -> 71601 (63.7%) | 11.8% | 24.4% | true bilinear surface limitation |
+| 1250 | v685 `123:0x5B0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 10 | 154820 -> 18621 (88.0%) | 8.1% | 25.8% | quantization-limited |
+| 1256 | v918 `123:0x480` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 11 | 156647 -> 27 (100.0%) | -10.2% | 48.5% | quantization-limited |
+| 1259 | v947 `123:0x480` | GRBonus2NessFile2 (148) dl 0x25F0 prim 10 | 156355 -> 4961 (96.8%) | 3.2% | 31.6% | quantization-limited |
+| 1260 | v917 `123:0x480` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 10 | 157572 -> 76287 (51.6%) | 8.6% | 20.0% | true bilinear surface limitation |
+| 1280 | v95 `68:0x10D0` | MVOpeningCliff (68) dl 0x3438 prim 3 | 130354 -> 49 (100.0%) | 2.3% | 44.3% | quantization-limited |
+| 1283 | v101 `69:0x5140` | MVOpeningStandoff (69) dl 0x6570 prim 0 | 210402 -> 92301 (56.1%) | 17.6% | 26.1% | quantization-limited |
+
+### 11.5 Texgen cases (5)
+
+No texgen variant is a hand-edit candidate. Real-normal coverage = the practical solve trained on RE-311's pose samples; conservative coverage is RE-311's box lattice, which is part of the holdout below; material-animated texgen uses the full-tile fallback for both. Oracle = fitted on that holdout; U1 = the same fitted texture on the phase-uniform set.
+
+| Variant | Use | Coverage | Current | Practical (real-normal/full-tile training) | Dense training | Holdout oracle | Oracle gain | Oracle on U1 | Texture-only change helps materially |
+|---|---|---|---:|---:|---:|---:|---:|---:|---|
+| v611 `117:0x718` | StageMetalFile2 (117) dl 0x2950 prim 0 | texgen-full-tile-fallback (linear) | 131186794 | 116384650 | 116298350 | 113433775 | 13.5% | 10.2% | no: even the holdout-fitted oracle keeps most of the error |
+| v1080 `302:0x30` | NNessModel (312) dl 0x34A8 prim 0 | texgen-real-normal (linear) | 13713919 | 18190043 | 12438205 | 11853735 | 13.6% | 8.0% | no: even the holdout-fitted oracle keeps most of the error |
+| v622 `117:0x760` | StageMetalFile2 (117) dl 0x3B50 prim 0 | texgen-full-tile-fallback | 45691201 | 41843738 | 41840095 | 40457774 | 11.5% | 7.7% | no: even the holdout-fitted oracle keeps most of the error |
+| v608 `117:0x760` | StageMetalFile2 (117) dl 0x1708 prim 0 | texgen-full-tile-fallback | 44645964 | 40512993 | 40451053 | 39095497 | 12.4% | 8.2% | no: even the holdout-fitted oracle keeps most of the error |
+| v610 `117:0x8` | StageMetalFile2 (117) dl 0x1708 prim 2 | texgen-full-tile-fallback | 41006668 | 36928359 | 36819262 | 35558834 | 13.3% | 7.9% | no: even the holdout-fitted oracle keeps most of the error |
+
+## MANUAL_FIX_RECOMMENDED (1)
+
+Implementation order: gameplay priority, then absolute cross-phase SSE removed. Expected SSE is the cross-phase (U2) result of the fix class's fit; `current SSE` is the same U2 set.
+
+| # | Variant | File | Use | Priority | Format | Fix | Current SSE | Expected SSE | Reduction | Flips before -> after | Level-0 delta | Pack delta | Runtime | Approach | Crop |
+|---:|---|---|---|---|---|---|---:|---:|---:|---|---:|---:|---|---|---|
+| 1 | v766 `120:0x418` | Bonus1CommonImages1 | GRBonus2MarioFile2 137:0x28C8#1; GRBonus2MarioFile2 137:0x28D0#1 | 1P/bonus | CI4 -> T4 | `DIRECT_RGBA_OVERRIDE` | 1708580 | 898375 | 47.4% | 8 -> 4 | 1728 | 1728 | 32-bit texel fetch | offline RGBA8888 fit on a dense phase-uniform set (U1-style, 16/cell), GE-exact integer refinement, gate on a disjoint phase set; immutable exact-use-site variant at 137:0x28D0#1, 137:0x28C8#1 | `assets/generated/three-point-residuals/554-v766-f120-0x418/` |
+
+## VISUAL_REVIEW_REQUIRED (12)
+
+Large holdout bound and a cross-phase gain of at least 25%, but short of the recommendation bar (gain, cost or visibility): check the crop at PSP resolution before any work.
+
+| Variant | Use | Priority | Fix | Holdout now -> bound | Cross-phase now -> after | Level-0 delta | Why not recommended | Crop |
+|---|---|---|---|---|---|---:|---|---|
+| v397 `107:0x50` | StageInishieFile2 (107) dl 0x6A30 prim 2 | VS stage | `USE_SITE_TEXTURE_VARIANT` | 5787188 -> 179897 (96.9%) | 61904141 -> 40505020 (34.6%) | 982976 | 2 distinct use-site coverages; cross-phase gain 35% below 40%; level-0 cost 982976 B above 65536 B | `assets/generated/three-point-residuals/235-v397-f107-0x50/` |
+| v1004 `157:0x6C0` | StageZebesFile3 (157) dl 0x9D8 prim 0 | VS stage | `DIRECT_RGBA_OVERRIDE` | 962998 -> 35992 (96.3%) | 10339254 -> 6738277 (34.8%) | 917440 | RGBA8888 fit; index-only optimum -54%; cross-phase gain 35% below 40%; level-0 cost 917440 B above 65536 B | `assets/generated/three-point-residuals/279-v1004-f157-0x6C0/` |
+| v404 `108:0x6D40` | StageJungleFile2 (108) dl 0x7E90 prim 7 | VS stage | `DIRECT_RGBA_OVERRIDE` | 439736 -> 101209 (77.0%) | 4897449 -> 3584608 (26.8%) | 57280 | RGBA8888 fit; index-only optimum -49%; cross-phase gain 27% below 40% | `assets/generated/three-point-residuals/653-v404-f108-0x6D40/` |
+| v252 `86:0x4C18` | ITCommonObject (86) dl 0x5450 prim 0 | effect/item | `DIRECT_RGBA_OVERRIDE` | 19400688 -> 5114448 (73.6%) | 76173594 -> 46042386 (39.6%) | 11264 | alpha-only reaches 39% vs silhouette with refitted RGB 40%: RGB must change too; cross-phase gain 40% below 40% | `assets/generated/three-point-residuals/1008-v252-f86-0x4C18/` |
+| v837 `121:0x30` | GRBonus2SamusFile2 (140) dl 0x10F0 prim 3 | 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 4385495 -> 40268 (99.1%) | 53083524 -> 29898410 (43.7%) | 917440 | RGBA8888 fit; index-only optimum -27%; level-0 cost 917440 B above 65536 B | `assets/generated/three-point-residuals/175-v837-f121-0x30/` |
+| v799 `121:0x30` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 9 | 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 4602192 -> 68603 (98.5%) | 53194402 -> 30745106 (42.2%) | 917440 | RGBA8888 fit; index-only optimum -30%; level-0 cost 917440 B above 65536 B | `assets/generated/three-point-residuals/139-v799-f121-0x30/` |
+| v800 `121:0x30` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 10 | 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 4639632 -> 113216 (97.6%) | 49121127 -> 30934790 (37.0%) | 917440 | RGBA8888 fit; index-only optimum -45%; cross-phase gain 37% below 40%; level-0 cost 917440 B above 65536 B | `assets/generated/three-point-residuals/138-v800-f121-0x30/` |
+| v902 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 33 | 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 4510346 -> 585643 (87.0%) | 41889831 -> 30532973 (27.1%) | 1834944 | RGBA8888 fit; index-only optimum -84%; cross-phase gain 27% below 40%; level-0 cost 1834944 B above 65536 B | `assets/generated/three-point-residuals/157-v902-f121-0x30/` |
+| v901 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 32 | 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 4438612 -> 557937 (87.4%) | 40972573 -> 29825866 (27.2%) | 229312 | RGBA8888 fit; index-only optimum -104%; cross-phase gain 27% below 40%; level-0 cost 229312 B above 65536 B | `assets/generated/three-point-residuals/171-v901-f121-0x30/` |
+| v609 `117:0x7A8` | StageMetalFile2 (117) dl 0x1708 prim 1 | 1P stage | `DIRECT_RGBA_OVERRIDE` | 1476704 -> 177702 (88.0%) | 18076984 -> 13084348 (27.6%) | 458688 | RGBA8888 fit; index-only optimum -28%; cross-phase gain 28% below 40%; level-0 cost 458688 B above 65536 B | `assets/generated/three-point-residuals/205-v609-f117-0x7A8/` |
+| v599 `116:0x21C8` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 6 | 1P stage | `DIRECT_RGBA_OVERRIDE` | 1693791 -> 52767 (96.9%) | 16510782 -> 12130407 (26.5%) | 917440 | RGBA8888 fit; index-only optimum -79%; cross-phase gain 27% below 40%; level-0 cost 917440 B above 65536 B | `assets/generated/three-point-residuals/358-v599-f116-0x21C8/` |
+| v76 `52:0x24228` | MVCommon (52) dl 0x24660 prim 0 | menu/movie | `DIRECT_RGBA_OVERRIDE` | 20895135 -> 7422066 (64.5%) | 23625036 -> 15030240 (36.4%) | 2048 | alpha-only reaches 19% vs silhouette with refitted RGB 36%: RGB must change too; cross-phase gain 36% below 40%; menu/movie only | `assets/generated/three-point-residuals/1126-v76-f52-0x24228/` |
+
+## ACCEPT (176)
+
+Even a bespoke same-resolution texture does not buy enough at uniformly distributed phases. By priority and explanation:
+
+| Priority | Evidence pointed at | Variants | Holdout now -> bound | Cross-phase now -> fit (if better) |
+|---|---|---:|---|---|
+| fighter | `DIRECT_RGBA_OVERRIDE` | 6 | 58329977 -> 25807913 (55.8%) | 263767197 -> 260301064 (1.3%) |
+| VS stage | `DIRECT_RGBA_OVERRIDE` | 37 | 598287841 -> 224132439 (62.5%) | 1249047568 -> 1223170653 (2.1%) |
+| VS stage | `PER_PALETTE_DIRECT_VARIANT` | 1 | 2606045 -> 1187566 (54.4%) | 17038297 -> 13342627 (21.7%) |
+| VS stage | `USE_SITE_TEXTURE_VARIANT` | 4 | 25646163 -> 10049055 (60.8%) | 198399012 -> 162666677 (18.0%) |
+| effect/item | `ALPHA_EDIT` | 1 | 32864443 -> 14302140 (56.5%) | 22309901 -> 21333258 (4.4%) |
+| effect/item | `DIRECT_RGBA_OVERRIDE` | 6 | 170374371 -> 65479659 (61.6%) | 578331672 -> 575966461 (0.4%) |
+| 1P stage | `DIRECT_RGBA_OVERRIDE` | 10 | 6069667601 -> 2021695997 (66.7%) | 38769437334 -> 38122720753 (1.7%) |
+| 1P/bonus | `DIRECT_RGBA_OVERRIDE` | 72 | 275769253 -> 102933951 (62.7%) | 1424537749 -> 1332998065 (6.4%) |
+| 1P/bonus | `USE_SITE_TEXTURE_VARIANT` | 4 | 1617998 -> 465500 (71.2%) | 11830047 -> 8331093 (29.6%) |
+| menu/movie | `ALPHA_EDIT` | 2 | 142395617 -> 65436192 (54.0%) | 495878164 -> 466239247 (6.0%) |
+| menu/movie | `DIRECT_RGBA_OVERRIDE` | 27 | 456655182 -> 170017359 (62.8%) | 803746614 -> 784045192 (2.5%) |
+| menu/movie | `USE_SITE_TEXTURE_VARIANT` | 1 | 715675 -> 243849 (65.9%) | 3878270 -> 2972280 (23.4%) |
+| unused/demo stage | `DIRECT_RGBA_OVERRIDE` | 3 | 34990307 -> 15201402 (56.6%) | 273632714 -> 273221583 (0.2%) |
+| unused/demo stage | `USE_SITE_TEXTURE_VARIANT` | 2 | 993248 -> 318181 (68.0%) | 6586854 -> 5246439 (20.3%) |
+
+Per-row reason for every accepted candidate:
+
+| Variant | Use | Reason |
+|---|---|---|
+| v1133 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | RGBA8888 fit; index-only optimum -184%; cross-phase gain 13% < 25%: the holdout oracle's 53% does not transfer |
+| v1147 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | RGBA8888 fit; index-only optimum -156%; cross-phase gain 16% < 25%: the holdout oracle's 66% does not transfer |
+| v1119 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | RGBA8888 fit; index-only optimum -158%; cross-phase gain 16% < 25%: the holdout oracle's 67% does not transfer |
+| v1161 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | RGBA8888 fit; index-only optimum -162%; cross-phase gain 17% < 25%: the holdout oracle's 66% does not transfer |
+| v1098 `317:0xCF88` | DonkeyModel (317) dl 0x2308 prim 1 | RGBA8888 fit; index-only optimum -135%; cross-phase gain 17% < 25%: the holdout oracle's 67% does not transfer |
+| v1327 `324:0xB1F8` | LinkModel (324) dl 0x7EA8 prim 0 | alpha-only reaches -13% vs silhouette with refitted RGB -17%: RGB must change too; cross-phase gain -17% < 25%: the holdout oracle's 55% does not transfer |
+| v310 `105:0x1718` | StageZebesFile2 (105) dl 0x4DA0 prim 0 | 2 distinct use-site coverages; cross-phase gain 18% < 25%: the holdout oracle's 61% does not transfer |
+| v388 `107:0x50` | StageInishieFile2 (107) dl 0x6008 prim 3 | RGBA8888 fit; index-only optimum -125%; cross-phase gain 20% < 25%: the holdout oracle's 82% does not transfer |
+| v299 `105:0x2540` | StageZebesFile2 (105) dl 0x4890 prim 1 | 4 palette states; index-only optimum -261%; cross-phase gain 22% < 25%: the holdout oracle's 54% does not transfer |
+| v373 `107:0x50` | StageInishieFile2 (107) dl 0x43A8 prim 0 | RGBA8888 fit; index-only optimum -232%; cross-phase gain 14% < 25%: the holdout oracle's 54% does not transfer |
+| v269 `103:0xE20` | StagePupupuFile2 (104) dl 0x798 prim 0 | RGBA8888 fit; index-only optimum -98%; cross-phase gain 23% < 25%: the holdout oracle's 89% does not transfer |
+| v508 `112:0x1060` | StageYamabukiFile2 (112) dl 0x5E30 prim 1 | RGBA8888 fit; index-only optimum -110%; cross-phase gain 20% < 25%: the holdout oracle's 72% does not transfer |
+| v507 `112:0x1060` | StageYamabukiFile2 (112) dl 0x5E30 prim 0 | RGBA8888 fit; index-only optimum -118%; cross-phase gain 21% < 25%: the holdout oracle's 70% does not transfer |
+| v531 `112:0x1060` | StageYamabukiFile2 (112) dl 0x7F68 prim 13 | RGBA8888 fit; index-only optimum -116%; cross-phase gain 20% < 25%: the holdout oracle's 69% does not transfer |
+| v403 `108:0x6D40` | StageJungleFile2 (108) dl 0x7E90 prim 6 | 2 distinct use-site coverages; cross-phase gain 20% < 25%: the holdout oracle's 69% does not transfer |
+| v419 `108:0x5980` | StageJungleFile2 (108) dl 0x95D8 prim 2 | alpha-only reaches 0% vs silhouette with refitted RGB 7%: RGB must change too; cross-phase gain 7% < 25%: the holdout oracle's 71% does not transfer |
+| v541 `113:0x1B20` | StageHyruleFile2 (113) dl 0x3A48 prim 2 | RGBA8888 fit; index-only optimum -26%; current cross-phase error is below visibility (0.04% >=16, no flips) |
+| v449 `109:0x30` | StageSectorFile2 (109) dl 0x7FE0 prim 5 | 2 distinct use-site coverages; cross-phase gain 23% < 25%: the holdout oracle's 56% does not transfer |
+| v286 `103:0x1880` | StagePupupuFile2 (104) dl 0x21E8 prim 0 | RGBA8888 fit; index-only optimum -134%; cross-phase gain 19% < 25%: the holdout oracle's 79% does not transfer |
+| v556 `113:0xEC0` | StageHyruleFile2 (113) dl 0x5020 prim 4 | RGBA8888 fit; index-only optimum -37%; current cross-phase error is below visibility (0.01% >=16, no flips) |
+| v547 `113:0x1B20` | StageHyruleFile2 (113) dl 0x3A48 prim 10 | RGBA8888 fit; index-only optimum -65%; current cross-phase error is below visibility (0.05% >=16, no flips) |
+| v402 `108:0x6510` | StageJungleFile2 (108) dl 0x7E90 prim 4 | RGBA8888 fit; index-only optimum -155%; cross-phase gain 15% < 25%: the holdout oracle's 51% does not transfer |
+| v539 `113:0x1B20` | StageHyruleFile2 (113) dl 0x3A48 prim 0 | 2 distinct use-site coverages; cross-phase gain 22% < 25%: the holdout oracle's 61% does not transfer |
+| v557 `113:0xEC0` | StageHyruleFile2 (113) dl 0x5020 prim 5 | RGBA8888 fit; index-only optimum -87%; current cross-phase error is below visibility (0.01% >=16, no flips) |
+| v488 `112:0xDA0` | StageYamabukiFile2 (112) dl 0x45D8 prim 2 | RGBA8888 fit; index-only optimum -88%; current cross-phase error is below visibility (0.41% >=16, no flips) |
+| v566 `113:0x1B20` | StageHyruleFile2 (113) dl 0x55C0 prim 0 | RGBA8888 fit; index-only optimum -159%; current cross-phase error is below visibility (0.05% >=16, no flips) |
+| v512 `112:0xE50` | StageYamabukiFile2 (112) dl 0x5E30 prim 6 | RGBA8888 fit; index-only optimum -82%; cross-phase gain 24% < 25%: the holdout oracle's 83% does not transfer |
+| v534 `112:0x2200` | StageYamabukiFile2 (112) dl 0x7F68 prim 16 | RGBA8888 fit; index-only optimum -174%; cross-phase gain 21% < 25%: the holdout oracle's 58% does not transfer |
+| v381 `107:0x2BB8` | StageInishieFile2 (107) dl 0x45C0 prim 0 | RGBA8888 fit; index-only optimum -93%; current cross-phase error is below visibility (0.55% >=16, no flips) |
+| v411 `108:0x2B80` | StageJungleFile2 (108) dl 0x8568 prim 0 | RGBA8888 fit; index-only optimum -149%; current cross-phase error is below visibility (0.05% >=16, no flips) |
+| v339 `106:0x388` | StageCastleFile2 (106) dl 0x2238 prim 8 | RGBA8888 fit; index-only optimum 6%; current cross-phase error is below visibility (0.97% >=16, no flips) |
+| v378 `107:0x328` | StageInishieFile2 (107) dl 0x4758 prim 1 | alpha-only reaches 0% vs silhouette with refitted RGB 2%: RGB must change too; cross-phase gain 2% < 25%: the holdout oracle's 66% does not transfer |
+| v293 `103:0x30` | StagePupupuFile2 (104) dl 0x2970 prim 0 | alpha-only reaches -14% vs silhouette with refitted RGB -9%: RGB must change too; cross-phase gain -9% < 25%: the holdout oracle's 61% does not transfer |
+| v301 `105:0x1B28` | StageZebesFile2 (105) dl 0x4890 prim 3 | alpha-only reaches -5% vs silhouette with refitted RGB -3%: RGB must change too; cross-phase gain -3% < 25%: the holdout oracle's 62% does not transfer |
+| v311 `105:0xF10` | StageZebesFile2 (105) dl 0x4E50 prim 0 | alpha-only reaches -13% vs silhouette with refitted RGB -7%: RGB must change too; cross-phase gain -7% < 25%: the holdout oracle's 65% does not transfer |
+| v315 `105:0x6F0` | StageZebesFile2 (105) dl 0x5138 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB -8%: RGB must change too; cross-phase gain -8% < 25%: the holdout oracle's 54% does not transfer |
+| v321 `105:0xC890` | StageZebesFile2 (105) dl 0xCDA0 prim 1 | alpha-only reaches -14% vs silhouette with refitted RGB -20%: RGB must change too; cross-phase gain -20% < 25%: the holdout oracle's 53% does not transfer |
+| v332 `106:0x410` | StageCastleFile2 (106) dl 0x2238 prim 1 | alpha-only reaches -22% vs silhouette with refitted RGB -41%: RGB must change too; cross-phase gain -41% < 25%: the holdout oracle's 78% does not transfer |
+| v333 `106:0x410` | StageCastleFile2 (106) dl 0x2238 prim 2 | alpha-only reaches -25% vs silhouette with refitted RGB -44%: RGB must change too; cross-phase gain -44% < 25%: the holdout oracle's 81% does not transfer |
+| v334 `106:0xB90` | StageCastleFile2 (106) dl 0x2238 prim 3 | alpha-only reaches -19% vs silhouette with refitted RGB -14%: RGB must change too; cross-phase gain -14% < 25%: the holdout oracle's 54% does not transfer |
+| v358 `107:0x1158` | StageInishieFile2 (107) dl 0x4688 prim 0 | alpha-only reaches -5% vs silhouette with refitted RGB -6%: RGB must change too; cross-phase gain -6% < 25%: the holdout oracle's 66% does not transfer |
+| v420 `108:0x5750` | StageJungleFile2 (108) dl 0xC718 prim 0 | alpha-only reaches -12% vs silhouette with refitted RGB -24%: RGB must change too; cross-phase gain -24% < 25%: the holdout oracle's 52% does not transfer |
+| v424 `108:0xAC0` | StageJungleFile2 (108) dl 0xD080 prim 1 | alpha-only reaches -5% vs silhouette with refitted RGB -7%: RGB must change too; cross-phase gain -7% < 25%: the holdout oracle's 88% does not transfer |
+| v471 `110:0xD20` | StageYosterFile2 (111) dl 0x49A0 prim 4 | alpha-only reaches -22% vs silhouette with refitted RGB -10%: RGB must change too; cross-phase gain -10% < 25%: the holdout oracle's 55% does not transfer |
+| v520 `112:0x27C0` | StageYamabukiFile2 (112) dl 0x6508 prim 1 | alpha-only reaches -29% vs silhouette with refitted RGB -20%: RGB must change too; cross-phase gain -20% < 25%: the holdout oracle's 70% does not transfer |
+| v521 `112:0x27C0` | StageYamabukiFile2 (112) dl 0x6508 prim 2 | alpha-only reaches -29% vs silhouette with refitted RGB -20%: RGB must change too; cross-phase gain -20% < 25%: the holdout oracle's 71% does not transfer |
+| v569 `113:0x27B0` | StageHyruleFile2 (113) dl 0x6010 prim 3 | alpha-only reaches -15% vs silhouette with refitted RGB -29%: RGB must change too; cross-phase gain -29% < 25%: the holdout oracle's 52% does not transfer |
+| v1005 `158:0x30` | StageJungleFile3 (158) dl 0x888 prim 0 | alpha-only reaches -9% vs silhouette with refitted RGB -15%: RGB must change too; cross-phase gain -15% < 25%: the holdout oracle's 54% does not transfer |
+| v1593 `351:0x8` | PurinSpecial2 (351) dl 0x2090 prim 0 | alpha-only reaches 7% vs silhouette with refitted RGB 10%: RGB must change too; cross-phase gain 10% < 25%: the holdout oracle's 56% does not transfer |
+| v1591 `351:0x1018` | PurinSpecial2 (351) dl 0x1FD0 prim 0 | alpha-only search from the shipped texels (RGB untouched) reaches 123% of the silhouette fit; needs 26 distinct RGBA values; cross-phase gain 4% < 25%: the holdout oracle's 56% does not transfer |
+| v1585 `350:0x1450` | CaptainSpecial2 (350) dl 0x5688 prim 8 | RGBA8888 fit; cross-phase gain 21% < 25%: the holdout oracle's 55% does not transfer |
+| v254 `86:0x6830` | ITCommonObject (86) dl 0x68E8 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB 2%: RGB must change too; cross-phase gain 2% < 25%: the holdout oracle's 82% does not transfer |
+| v150 `83:0x7980` | EFCommonEffects1 (83) dl 0x7C28 prim 0 | alpha-only reaches -8% vs silhouette with refitted RGB -10%: RGB must change too; cross-phase gain -10% < 25%: the holdout oracle's 62% does not transfer |
+| v246 `86:0x11458` | ITCommonObject (86) dl 0x11910 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB -3%: RGB must change too; cross-phase gain -3% < 25%: the holdout oracle's 61% does not transfer |
+| v1597 `353:0x30` | LinkSpecial2 (353) dl 0x2D8 prim 0 | alpha-only reaches -8% vs silhouette with refitted RGB -10%: RGB must change too; cross-phase gain -10% < 25%: the holdout oracle's 62% does not transfer |
+| v613 `117:0x7A8` | StageMetalFile2 (117) dl 0x2950 prim 4 | alpha-only reaches -1% vs silhouette with refitted RGB 5%: RGB must change too; cross-phase gain 5% < 25%: the holdout oracle's 86% does not transfer |
+| v620 `117:0x50` | StageMetalFile2 (117) dl 0x2950 prim 12 | alpha-only reaches 1% vs silhouette with refitted RGB 3%: RGB must change too; cross-phase gain 3% < 25%: the holdout oracle's 89% does not transfer |
+| v707 `121:0x30` | GRBonus1CaptainFile2 (131) dl 0x13B8 prim 6 | RGBA8888 fit; index-only optimum -128%; cross-phase gain 23% < 25%: the holdout oracle's 75% does not transfer |
+| v644 `121:0x30` | GRBonus1FoxFile2 (125) dl 0x1B18 prim 6 | RGBA8888 fit; index-only optimum -175%; cross-phase gain 20% < 25%: the holdout oracle's 66% does not transfer |
+| v762 `136:0x2020` | Bonus2Common (136) dl 0x3C10 prim 0 | alpha-only reaches 4% vs silhouette with refitted RGB 12%: RGB must change too; cross-phase gain 12% < 25%: the holdout oracle's 71% does not transfer |
+| v903 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 34 | RGBA8888 fit; index-only optimum -180%; cross-phase gain 19% < 25%: the holdout oracle's 60% does not transfer |
+| v899 `121:0x30` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 30 | RGBA8888 fit; index-only optimum -187%; cross-phase gain 19% < 25%: the holdout oracle's 59% does not transfer |
+| v666 `121:0x30` | GRBonus1SamusFile2 (127) dl 0x1558 prim 9 | RGBA8888 fit; index-only optimum -197%; cross-phase gain 19% < 25%: the holdout oracle's 58% does not transfer |
+| v967 `149:0x1640` | GRBonus3File2 (149) dl 0x2EB0 prim 3 | RGBA8888 fit; index-only optimum -7319%; cross-phase gain 23% < 25%: the holdout oracle's 75% does not transfer |
+| v706 `121:0x30` | GRBonus1CaptainFile2 (131) dl 0x13B8 prim 5 | RGBA8888 fit; index-only optimum -259%; cross-phase gain 18% < 25%: the holdout oracle's 52% does not transfer |
+| v590 `114:0x11768` | StageLastFile2 (114) dl 0x127A8 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB 15%: RGB must change too; cross-phase gain 15% < 25%: the holdout oracle's 54% does not transfer |
+| v964 `149:0x2298` | GRBonus3File2 (149) dl 0x2EB0 prim 0 | RGBA8888 fit; index-only optimum -69%; cross-phase gain 24% < 25%: the holdout oracle's 82% does not transfer |
+| v598 `116:0x1FC0` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 5 | RGBA8888 fit; index-only optimum -174%; cross-phase gain 18% < 25%: the holdout oracle's 68% does not transfer |
+| v763 `136:0x2C30` | Bonus2Common (136) dl 0x3CC0 prim 0 | alpha-only reaches -2% vs silhouette with refitted RGB 5%: RGB must change too; cross-phase gain 5% < 25%: the holdout oracle's 62% does not transfer |
+| v922 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 17 | RGBA8888 fit; index-only optimum -5%; current cross-phase error is below visibility (0.63% >=16, no flips) |
+| v921 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 16 | RGBA8888 fit; index-only optimum -5%; current cross-phase error is below visibility (0.60% >=16, no flips) |
+| v862 `123:0x7E0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 14 | RGBA8888 fit; index-only optimum -11%; current cross-phase error is below visibility (0.58% >=16, no flips) |
+| v986 `149:0xA10` | GRBonus3File2 (149) dl 0x5D50 prim 0 | RGBA8888 fit; index-only optimum -54%; cross-phase gain 24% < 25%: the holdout oracle's 75% does not transfer |
+| v575 `114:0x1670` | StageLastFile2 (114) dl 0x4070 prim 0 | RGBA8888 fit; index-only optimum -180%; cross-phase gain 16% < 25%: the holdout oracle's 57% does not transfer |
+| v863 `123:0x7E0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 15 | RGBA8888 fit; index-only optimum -12%; current cross-phase error is below visibility (0.59% >=16, no flips) |
+| v597 `116:0x1BB8` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 4 | RGBA8888 fit; index-only optimum -192%; cross-phase gain 20% < 25%: the holdout oracle's 61% does not transfer |
+| v920 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 15 | RGBA8888 fit; index-only optimum -20%; current cross-phase error is below visibility (0.56% >=16, no flips) |
+| v797 `121:0xE0` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 7 | RGBA8888 fit; index-only optimum -157%; cross-phase gain 24% < 25%: the holdout oracle's 67% does not transfer |
+| v959 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 27 | RGBA8888 fit; index-only optimum -19%; current cross-phase error is below visibility (0.62% >=16, no flips) |
+| v966 `149:0x1E68` | GRBonus3File2 (149) dl 0x2EB0 prim 2 | RGBA8888 fit; index-only optimum -111%; cross-phase gain 15% < 25%: the holdout oracle's 54% does not transfer |
+| v649 `121:0xE0` | GRBonus1FoxFile2 (125) dl 0x1FB8 prim 0 | RGBA8888 fit; index-only optimum -145%; cross-phase gain 23% < 25%: the holdout oracle's 58% does not transfer |
+| v919 `123:0x480` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 12 | 2 distinct use-site coverages; current cross-phase error is below visibility (0.21% >=16, no flips) |
+| v914 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 5 | RGBA8888 fit; index-only optimum -43%; current cross-phase error is below visibility (0.54% >=16, no flips) |
+| v918 `123:0x480` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 11 | RGBA8888 fit; index-only optimum -14%; current cross-phase error is below visibility (0.21% >=16, no flips) |
+| v913 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 4 | RGBA8888 fit; index-only optimum -30%; current cross-phase error is below visibility (0.53% >=16, no flips) |
+| v744 `123:0x480` | GRBonus1NessFile2 (135) dl 0x2138 prim 3 | 3 distinct use-site coverages; current cross-phase error is below visibility (0.19% >=16, no flips) |
+| v923 `123:0x7E0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 18 | RGBA8888 fit; index-only optimum -47%; current cross-phase error is below visibility (0.61% >=16, no flips) |
+| v912 `123:0x220` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 3 | RGBA8888 fit; index-only optimum -51%; current cross-phase error is below visibility (0.54% >=16, no flips) |
+| v602 `116:0x23D0` | StageBattlefieldFile2 (116) dl 0x3AB0 prim 9 | RGBA8888 fit; index-only optimum -254%; cross-phase gain 15% < 25%: the holdout oracle's 52% does not transfer |
+| v765 `120:0x418` | GRBonus2MarioFile2 (137) dl 0x28C8 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB 17%: RGB must change too; cross-phase gain 17% < 25%: the holdout oracle's 64% does not transfer |
+| v752 `123:0x5B0` | GRBonus1NessFile2 (135) dl 0x2138 prim 16 | 3 distinct use-site coverages; current cross-phase error is below visibility (0.14% >=16, no flips) |
+| v951 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 19 | RGBA8888 fit; index-only optimum -37%; current cross-phase error is below visibility (0.63% >=16, no flips) |
+| v952 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 20 | RGBA8888 fit; index-only optimum -36%; current cross-phase error is below visibility (0.58% >=16, no flips) |
+| v719 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 11 | RGBA8888 fit; index-only optimum -114%; current cross-phase error is below visibility (0.14% >=16, no flips) |
+| v910 `123:0x350` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 1 | RGBA8888 fit; index-only optimum -97%; cross-phase gain 23% < 25%: the holdout oracle's 84% does not transfer |
+| v721 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 14 | RGBA8888 fit; index-only optimum -64%; current cross-phase error is below visibility (0.58% >=16, no flips) |
+| v680 `123:0x480` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 5 | 2 distinct use-site coverages; current cross-phase error is below visibility (0.20% >=16, no flips) |
+| v678 `123:0x7E0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 2 | RGBA8888 fit; index-only optimum -94%; current cross-phase error is below visibility (0.64% >=16, no flips) |
+| v738 `122:0x100` | GRBonus1PurinFile2 (134) dl 0x1A28 prim 4 | RGBA8888 fit; index-only optimum -131%; cross-phase gain 13% < 25%: the holdout oracle's 66% does not transfer |
+| v757 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 21 | RGBA8888 fit; index-only optimum -66%; current cross-phase error is below visibility (0.65% >=16, no flips) |
+| v916 `123:0x5B0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 7 | RGBA8888 fit; index-only optimum -23%; current cross-phase error is below visibility (0.13% >=16, no flips) |
+| v694 `122:0x210` | GRBonus1YoshiFile2 (130) dl 0x26E8 prim 3 | RGBA8888 fit; index-only optimum -178%; cross-phase gain 18% < 25%: the holdout oracle's 56% does not transfer |
+| v954 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 22 | RGBA8888 fit; index-only optimum -89%; current cross-phase error is below visibility (0.58% >=16, no flips) |
+| v925 `122:0x78` | GRBonus2PikachuFile2 (146) dl 0x2DF8 prim 1 | RGBA8888 fit; index-only optimum -141%; cross-phase gain 15% < 25%: the holdout oracle's 55% does not transfer |
+| v677 `123:0x7E0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 1 | RGBA8888 fit; index-only optimum -108%; current cross-phase error is below visibility (0.56% >=16, no flips) |
+| v935 `122:0x100` | GRBonus2PurinFile2 (147) dl 0x1BB8 prim 6 | RGBA8888 fit; index-only optimum -170%; cross-phase gain 11% < 25%: the holdout oracle's 64% does not transfer |
+| v953 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 21 | RGBA8888 fit; index-only optimum -130%; cross-phase gain 25% < 25%: the holdout oracle's 77% does not transfer |
+| v876 `122:0x30` | GRBonus2YoshiFile2 (143) dl 0x1D68 prim 6 | RGBA8888 fit; index-only optimum -125%; cross-phase gain 24% < 25%: the holdout oracle's 69% does not transfer |
+| v686 `123:0x5B0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 11 | RGBA8888 fit; index-only optimum -32%; current cross-phase error is below visibility (0.14% >=16, no flips) |
+| v947 `123:0x480` | GRBonus2NessFile2 (148) dl 0x25F0 prim 10 | RGBA8888 fit; index-only optimum -52%; current cross-phase error is below visibility (0.19% >=16, no flips) |
+| v859 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 9 | RGBA8888 fit; index-only optimum -32%; current cross-phase error is below visibility (0.12% >=16, no flips) |
+| v915 `123:0x5B0` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 6 | RGBA8888 fit; index-only optimum -31%; current cross-phase error is below visibility (0.15% >=16, no flips) |
+| v945 `123:0x480` | GRBonus2NessFile2 (148) dl 0x25F0 prim 7 | RGBA8888 fit; index-only optimum -87%; current cross-phase error is below visibility (0.23% >=16, no flips) |
+| v858 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 8 | RGBA8888 fit; index-only optimum -32%; current cross-phase error is below visibility (0.13% >=16, no flips) |
+| v718 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 10 | RGBA8888 fit; index-only optimum -136%; cross-phase gain 21% < 25%: the holdout oracle's 63% does not transfer |
+| v753 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 17 | RGBA8888 fit; index-only optimum -114%; cross-phase gain 24% < 25%: the holdout oracle's 66% does not transfer |
+| v950 `123:0x5B0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 18 | RGBA8888 fit; index-only optimum -64%; current cross-phase error is below visibility (0.16% >=16, no flips) |
+| v792 `121:0x658` | GRBonus2FoxFile2 (138) dl 0x1DB8 prim 2 | RGBA8888 fit; index-only optimum -227%; cross-phase gain 15% < 25%: the holdout oracle's 50% does not transfer |
+| v685 `123:0x5B0` | GRBonus1LinkFile2 (129) dl 0x1EE8 prim 10 | RGBA8888 fit; index-only optimum -68%; current cross-phase error is below visibility (0.12% >=16, no flips) |
+| v949 `123:0x5B0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 16 | RGBA8888 fit; index-only optimum -65%; cross-phase gain 24% < 25%: the holdout oracle's 85% does not transfer |
+| v883 `121:0x5A8` | GRBonus2CaptainFile2 (144) dl 0x34D8 prim 5 | RGBA8888 fit; index-only optimum -174%; cross-phase gain 24% < 25%: the holdout oracle's 64% does not transfer |
+| v722 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 15 | RGBA8888 fit; index-only optimum -172%; cross-phase gain 21% < 25%: the holdout oracle's 61% does not transfer |
+| v720 `123:0x5B0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 12 | RGBA8888 fit; index-only optimum -67%; cross-phase gain 24% < 25%: the holdout oracle's 84% does not transfer |
+| v754 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 18 | RGBA8888 fit; index-only optimum -325%; cross-phase gain 21% < 25%: the holdout oracle's 52% does not transfer |
+| v834 `120:0x78` | GRBonus2DonkeyFile2 (139) dl 0x2470 prim 15 | RGBA8888 fit; current cross-phase error is below visibility (0.25% >=16, no flips) |
+| v957 `123:0x7E0` | GRBonus2NessFile2 (148) dl 0x25F0 prim 25 | RGBA8888 fit; index-only optimum -218%; cross-phase gain 22% < 25%: the holdout oracle's 59% does not transfer |
+| v746 `123:0x480` | GRBonus1NessFile2 (135) dl 0x2138 prim 7 | RGBA8888 fit; index-only optimum -115%; cross-phase gain 23% < 25%: the holdout oracle's 69% does not transfer |
+| v723 `123:0x7E0` | GRBonus1KirbyFile2 (132) dl 0x19E0 prim 16 | RGBA8888 fit; index-only optimum -198%; cross-phase gain 23% < 25%: the holdout oracle's 56% does not transfer |
+| v755 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 19 | RGBA8888 fit; index-only optimum -168%; cross-phase gain 23% < 25%: the holdout oracle's 51% does not transfer |
+| v756 `123:0x7E0` | GRBonus1NessFile2 (135) dl 0x2138 prim 20 | RGBA8888 fit; index-only optimum -247%; cross-phase gain 21% < 25%: the holdout oracle's 52% does not transfer |
+| v917 `123:0x480` | GRBonus2KirbyFile2 (145) dl 0x2190 prim 10 | RGBA8888 fit; index-only optimum -204%; cross-phase gain 20% < 25%: the holdout oracle's 52% does not transfer |
+| v857 `123:0x5B0` | GRBonus2LinkFile2 (142) dl 0x2DD0 prim 6 | RGBA8888 fit; index-only optimum -166%; cross-phase gain 20% < 25%: the holdout oracle's 54% does not transfer |
+| v614 `117:0x7A8` | StageMetalFile2 (117) dl 0x2950 prim 5 | alpha-only reaches -10% vs silhouette with refitted RGB -1%: RGB must change too; cross-phase gain -1% < 25%: the holdout oracle's 76% does not transfer |
+| v616 `117:0x310` | StageMetalFile2 (117) dl 0x2950 prim 8 | alpha-only reaches -10% vs silhouette with refitted RGB -11%: RGB must change too; cross-phase gain -11% < 25%: the holdout oracle's 58% does not transfer |
+| v621 `117:0x50` | StageMetalFile2 (117) dl 0x2950 prim 13 | alpha-only reaches -4% vs silhouette with refitted RGB -1%: RGB must change too; cross-phase gain -1% < 25%: the holdout oracle's 51% does not transfer |
+| v636 `120:0x418` | GRBonus1MarioFile2 (124) dl 0x1960 prim 8 | alpha-only reaches 0% vs silhouette with refitted RGB -70%: RGB must change too; cross-phase gain -70% < 25%: the holdout oracle's 59% does not transfer |
+| v650 `120:0x418` | GRBonus1DonkeyFile2 (126) dl 0x1968 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB -70%: RGB must change too; cross-phase gain -70% < 25%: the holdout oracle's 67% does not transfer |
+| v656 `120:0x418` | GRBonus1DonkeyFile2 (126) dl 0x1DC0 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB -70%: RGB must change too; cross-phase gain -70% < 25%: the holdout oracle's 60% does not transfer |
+| v777 `120:0x510` | GRBonus2MarioFile2 (137) dl 0x28C8 prim 12 | alpha-only reaches -22% vs silhouette with refitted RGB -13%: RGB must change too; cross-phase gain -13% < 25%: the holdout oracle's 55% does not transfer |
+| v829 `120:0x510` | GRBonus2DonkeyFile2 (139) dl 0x2470 prim 10 | alpha-only reaches -17% vs silhouette with refitted RGB -8%: RGB must change too; cross-phase gain -8% < 25%: the holdout oracle's 66% does not transfer |
+| v1036 `162:0x2C8` | GRBonus3File3 (162) dl 0x6C8 prim 0 | alpha-only reaches -21% vs silhouette with refitted RGB -12%: RGB must change too; cross-phase gain -12% < 25%: the holdout oracle's 56% does not transfer |
+| v52 `52:0x1FF90` | MVCommon (52) dl 0x221F0 prim 0 | alpha-only search from the shipped texels (RGB untouched) reaches 109% of the silhouette fit; needs 15 distinct RGBA values vs CLUT capacity 16 (fits: index/CLUT edit); cross-phase gain 6% < 25%: the holdout oracle's 55% does not transfer |
+| v53 `52:0x1FF90` | MVCommon (52) dl 0x221F0 prim 1 | alpha-only search from the shipped texels (RGB untouched) reaches 128% of the silhouette fit; needs 15 distinct RGBA values vs CLUT capacity 16 (fits: index/CLUT edit); cross-phase gain 6% < 25%: the holdout oracle's 53% does not transfer |
+| v45 `52:0x1CCA0` | MVCommon (52) dl 0x1DDB0 prim 0 | alpha-only reaches -2% vs silhouette with refitted RGB 8%: RGB must change too; cross-phase gain 8% < 25%: the holdout oracle's 74% does not transfer |
+| v47 `52:0x203B8` | MVCommon (52) dl 0x22108 prim 0 | RGBA8888 fit; index-only optimum -53%; current cross-phase error is below visibility (0.46% >=16, no flips) |
+| v87 `67:0xA8F8` | MVOpeningYoster (67) dl 0xB608 prim 0 | alpha-only reaches -6% vs silhouette with refitted RGB 5%: RGB must change too; cross-phase gain 5% < 25%: the holdout oracle's 66% does not transfer |
+| v104 `69:0x80` | MVOpeningStandoff (69) dl 0x1C08 prim 2 | RGBA8888 fit; index-only optimum -27%; current cross-phase error is below visibility (0.07% >=16, no flips) |
+| v79 `67:0x3850` | MVOpeningYoster (67) dl 0x9530 prim 0 | alpha-only reaches 2% vs silhouette with refitted RGB 8%: RGB must change too; cross-phase gain 8% < 25%: the holdout oracle's 52% does not transfer |
+| v25 `52:0xF48` | MVCommon (52) dl 0x6EC0 prim 0 | alpha-only reaches -33% vs silhouette with refitted RGB 21%: RGB must change too; cross-phase gain 21% < 25%: the holdout oracle's 77% does not transfer |
+| v11 `52:0x1960` | MVCommon (52) dl 0x64C0 prim 0 | 4 distinct use-site coverages; cross-phase gain 23% < 25%: the holdout oracle's 66% does not transfer |
+| v265 `100:0x30` | StagePupupuBeta1 (101) dl 0x1620 prim 0 | 2 distinct use-site coverages; cross-phase gain 22% < 25%: the holdout oracle's 79% does not transfer |
+| v95 `68:0x10D0` | MVOpeningCliff (68) dl 0x3438 prim 3 | RGBA8888 fit; index-only optimum -15%; current cross-phase error is below visibility (0.02% >=16, no flips) |
+| v103 `69:0x888` | MVOpeningStandoff (69) dl 0x1C08 prim 1 | RGBA8888 fit; index-only optimum -91%; current cross-phase error is below visibility (0.04% >=16, no flips) |
+| v93 `68:0x18D8` | MVOpeningCliff (68) dl 0x3438 prim 1 | RGBA8888 fit; index-only optimum -179%; cross-phase gain 15% < 25%: the holdout oracle's 56% does not transfer |
+| v255 `100:0x30` | StagePupupuBeta1 (101) dl 0x310 prim 0 | 2 distinct use-site coverages; cross-phase gain 18% < 25%: the holdout oracle's 56% does not transfer |
+| v67 `52:0x20400` | MVCommon (52) dl 0x21E98 prim 2 | RGBA8888 fit; index-only optimum -204%; cross-phase gain 18% < 25%: the holdout oracle's 56% does not transfer |
+| v294 `103:0x26A0` | StageExplainFile2 (115) dl 0xC20 prim 0 | RGBA8888 fit; index-only optimum -151%; cross-phase gain 14% < 25%: the holdout oracle's 57% does not transfer |
+| v101 `69:0x5140` | MVOpeningStandoff (69) dl 0x6570 prim 0 | RGBA8888 fit; index-only optimum -40272%; current cross-phase error is below visibility (0.32% >=16, no flips) |
+| v119 `73:0xA30` | MVOpeningSector (73) dl 0x5F70 prim 15 | RGBA8888 fit; index-only optimum -210%; current cross-phase error is below visibility (0.34% >=16, no flips) |
+| v38 `52:0xB9F8` | MVCommon (52) dl 0xBD00 prim 0 | alpha-only reaches 0% vs silhouette with refitted RGB 32%: RGB must change too; current cross-phase error is below visibility (0.00% >=16, no flips) |
+| v3 `52:0x32F8` | MVCommon (52) dl 0x5A10 prim 0 | alpha-only reaches -14% vs silhouette with refitted RGB -10%: RGB must change too; cross-phase gain -10% < 25%: the holdout oracle's 89% does not transfer |
+| v17 `52:0x1440` | MVCommon (52) dl 0x69C0 prim 0 | alpha-only reaches -48% vs silhouette with refitted RGB -71%: RGB must change too; cross-phase gain -71% < 25%: the holdout oracle's 52% does not transfer |
+| v26 `52:0x740` | MVCommon (52) dl 0x7928 prim 0 | alpha-only reaches -36% vs silhouette with refitted RGB -39%: RGB must change too; cross-phase gain -39% < 25%: the holdout oracle's 73% does not transfer |
+| v37 `52:0xAA80` | MVCommon (52) dl 0xADD0 prim 0 | alpha-only reaches -112% vs silhouette with refitted RGB -55%: RGB must change too; cross-phase gain -55% < 25%: the holdout oracle's 74% does not transfer |
+| v40 `52:0x17C48` | MVCommon (52) dl 0x1C358 prim 0 | alpha-only reaches -13% vs silhouette with refitted RGB -7%: RGB must change too; cross-phase gain -7% < 25%: the holdout oracle's 58% does not transfer |
+| v41 `52:0x18C50` | MVCommon (52) dl 0x1C358 prim 1 | alpha-only reaches -22% vs silhouette with refitted RGB -13%: RGB must change too; cross-phase gain -13% < 25%: the holdout oracle's 61% does not transfer |
+| v42 `52:0x19C58` | MVCommon (52) dl 0x1C358 prim 2 | alpha-only reaches -35% vs silhouette with refitted RGB -22%: RGB must change too; cross-phase gain -22% < 25%: the holdout oracle's 81% does not transfer |
+| v43 `52:0x1AC60` | MVCommon (52) dl 0x1C358 prim 3 | alpha-only reaches -14% vs silhouette with refitted RGB -7%: RGB must change too; cross-phase gain -7% < 25%: the holdout oracle's 57% does not transfer |
+| v54 `52:0x200A0` | MVCommon (52) dl 0x21910 prim 0 | alpha-only reaches -37% vs silhouette with refitted RGB -16%: RGB must change too; cross-phase gain -16% < 25%: the holdout oracle's 55% does not transfer |
+| v77 `67:0x5860` | MVOpeningYoster (67) dl 0x9440 prim 0 | alpha-only reaches -7% vs silhouette with refitted RGB -5%: RGB must change too; cross-phase gain -5% < 25%: the holdout oracle's 52% does not transfer |
+| v86 `67:0xAB00` | MVOpeningYoster (67) dl 0xB4D0 prim 0 | alpha-only reaches -11% vs silhouette with refitted RGB -3%: RGB must change too; cross-phase gain -3% < 25%: the holdout oracle's 54% does not transfer |
+| v267 `100:0x490` | StagePupupuBeta1 (101) dl 0x1620 prim 3 | alpha-only reaches -15% vs silhouette with refitted RGB -19%: RGB must change too; cross-phase gain -19% < 25%: the holdout oracle's 52% does not transfer |
+| v295 `103:0x2270` | StageExplainFile2 (115) dl 0xC20 prim 1 | alpha-only reaches -20% vs silhouette with refitted RGB -23%: RGB must change too; cross-phase gain -23% < 25%: the holdout oracle's 60% does not transfer |
+| v1038 `167:0x26408` | MNTitle (167) dl 0x26A08 prim 0 | alpha-only reaches -11% vs silhouette with refitted RGB -12%: RGB must change too; cross-phase gain -12% < 25%: the holdout oracle's 52% does not transfer |
+| v1041 `195:0x7358` | SCStaffroll (195) dl 0x77B8 prim 0 | alpha-only reaches -47% vs silhouette with refitted RGB -45%: RGB must change too; cross-phase gain -45% < 25%: the holdout oracle's 64% does not transfer |
+| v1042 `198:0x4028` | SCExplainGraphics (198) dl 0x51C8 prim 0 | alpha-only reaches -0% vs silhouette with refitted RGB -2%: RGB must change too; cross-phase gain -2% < 25%: the holdout oracle's 69% does not transfer |
+
+## Triage totals
+
+- Deployable automatic cases remaining (section 5a): **0**
+- Hand-edit candidates: **189**
+- MANUAL_FIX_RECOMMENDED: **1**
+- VISUAL_REVIEW_REQUIRED: **12**
+- ACCEPT: **176**
+
+Top 20 manual fixes in implementation order (recommended first, then visual review):
+
+1. v766 `120:0x418` GRBonus2MarioFile2 (137) dl 0x28C8 prim 1 - `DIRECT_RGBA_OVERRIDE`, cross-phase 47.4% (1P/bonus)
+2. v397 `107:0x50` StageInishieFile2 (107) dl 0x6A30 prim 2 - `USE_SITE_TEXTURE_VARIANT`, cross-phase 34.6% (VS stage), after visual review
+3. v1004 `157:0x6C0` StageZebesFile3 (157) dl 0x9D8 prim 0 - `DIRECT_RGBA_OVERRIDE`, cross-phase 34.8% (VS stage), after visual review
+4. v404 `108:0x6D40` StageJungleFile2 (108) dl 0x7E90 prim 7 - `DIRECT_RGBA_OVERRIDE`, cross-phase 26.8% (VS stage), after visual review
+5. v252 `86:0x4C18` ITCommonObject (86) dl 0x5450 prim 0 - `DIRECT_RGBA_OVERRIDE`, cross-phase 39.6% (effect/item), after visual review
+6. v837 `121:0x30` GRBonus2SamusFile2 (140) dl 0x10F0 prim 3 - `DIRECT_RGBA_OVERRIDE`, cross-phase 43.7% (1P/bonus), after visual review
+7. v799 `121:0x30` GRBonus2FoxFile2 (138) dl 0x1DB8 prim 9 - `DIRECT_RGBA_OVERRIDE`, cross-phase 42.2% (1P/bonus), after visual review
+8. v800 `121:0x30` GRBonus2FoxFile2 (138) dl 0x1DB8 prim 10 - `DIRECT_RGBA_OVERRIDE`, cross-phase 37.0% (1P/bonus), after visual review
+9. v902 `121:0x30` GRBonus2CaptainFile2 (144) dl 0x34D8 prim 33 - `DIRECT_RGBA_OVERRIDE`, cross-phase 27.1% (1P/bonus), after visual review
+10. v901 `121:0x30` GRBonus2CaptainFile2 (144) dl 0x34D8 prim 32 - `DIRECT_RGBA_OVERRIDE`, cross-phase 27.2% (1P/bonus), after visual review
+11. v609 `117:0x7A8` StageMetalFile2 (117) dl 0x1708 prim 1 - `DIRECT_RGBA_OVERRIDE`, cross-phase 27.6% (1P stage), after visual review
+12. v599 `116:0x21C8` StageBattlefieldFile2 (116) dl 0x3AB0 prim 6 - `DIRECT_RGBA_OVERRIDE`, cross-phase 26.5% (1P stage), after visual review
+13. v76 `52:0x24228` MVCommon (52) dl 0x24660 prim 0 - `DIRECT_RGBA_OVERRIDE`, cross-phase 36.4% (menu/movie), after visual review
 

@@ -13,6 +13,8 @@
 //! the verified GE model for the current variant and for a fixed set of
 //! alternatives. It does not select or apply any of them.
 
+mod triage;
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -767,6 +769,36 @@ fn sorted(mut v: Vec<[i32; 2]>) -> Vec<[i32; 2]> {
     v
 }
 
+/// Report-only transfer of fitted candidates to the phase-uniform set.
+#[derive(Default)]
+struct UniformTransfer {
+    rgba_oracle: Eval,
+    alpha_held_oracle: Option<Eval>,
+    silhouette_oracle: Option<Eval>,
+    alpha_only: Option<Eval>,
+    dense: Eval,
+    /// Hand-edit-eligible rows only: the honest representability bound.
+    cross: Option<CrossPhase>,
+}
+
+/// Fits on the phase-uniform set U1 and scores on U2, the same cells with
+/// every sample shifted by (4, 4)/32 texel (disjoint by construction). With
+/// 16 samples per cell the fit is well determined, so the U2 gain is what a
+/// hand-authored same-resolution texture can be expected to buy at uniformly
+/// distributed screen phases, not a fit to sparse probe points.
+struct CrossPhase {
+    current: Eval,
+    rgba: Eval,
+    alpha_held: Option<Eval>,
+    silhouette: Option<Eval>,
+    /// Cutout: flip-minimizing alpha search from the shipped texels, RGB
+    /// untouched, and the distinct RGBA colours it needs.
+    alpha_only: Option<(Eval, usize)>,
+    /// The same fits scored on U1, the set they were fitted on: in-sample
+    /// (current, RGBA, silhouette, alpha-only). The gap to U2 is overfit.
+    in_sample: [Option<Eval>; 4],
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Candidate {
     eval: Eval,
@@ -799,12 +831,25 @@ struct Analysis {
     /// search on the holdout (bounds what any alpha edit can do for the
     /// silhouette).
     rgba_silhouette_oracle: Option<Candidate>,
+    /// Cutout only: the same flip-minimizing alpha search started from the
+    /// shipped texels, so RGB stays byte-identical, and the number of
+    /// distinct RGBA colours the result needs (palette capacity check).
+    alpha_only: Option<(Candidate, usize)>,
     indexed: Option<Candidate>,
     /// Per-palette-state direct colour (animated only), practical.
     per_state_direct: Option<Candidate>,
     /// Per-use-site oracles, summed over the distinct sites, and the union
     /// oracle measured on the same per-site sets.
     per_site_oracle_vis_sse: Option<(u64, u64)>,
+    /// The same split per distinct site group: (own oracle, shared oracle).
+    per_site_oracle_split: Vec<(u64, u64)>,
+    /// Out-of-sample transfer: images fitted on the holdout (oracles) or on
+    /// training (dense) scored on the phase-uniform set, which the fits never
+    /// saw. An oracle gain that does not transfer is holdout overfit.
+    uniform_transfer: UniformTransfer,
+    /// Animated only: holdout visible SSE per palette state for current and
+    /// the free RGBA8888 oracle.
+    per_state_vis_sse: Vec<(u64, u64)>,
     per_site_current: Vec<Eval>,
     uv_phase: Option<([i32; 2], Eval)>,
     /// Phase-uniform set over every holdout cell: current, uncompensated,
@@ -1086,6 +1131,8 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
     let mut practical_image = c.source.clone();
     let mut seed_image = c.source.clone();
     let mut oracle_fits: Vec<Rgba8> = Vec::new();
+    let mut oracle_imgs: Vec<Rgba8> = Vec::new();
+    let mut per_state_vis_sse: Vec<(u64, u64)> = Vec::new();
     let solvable = w >= 2 && h >= 2 && !train.is_empty();
     for (k, (r, _)) in images.iter().enumerate() {
         // Practical: the pipeline's own 48-iteration continuous solve
@@ -1119,14 +1166,16 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         } else {
             o.image
         };
-        oracle_eval.merge(&evaluate(
-            r,
-            clamp,
-            &eval,
-            policy,
-            k,
-            bilinear(&o_img, clamp),
-        ));
+        let o_eval = evaluate(r, clamp, &eval, policy, k, bilinear(&o_img, clamp));
+        if states > 1 {
+            let cur = evaluate(r, clamp, &eval, policy, k, {
+                let f = bilinear(&images[k].1, clamp);
+                move |s, t| f(s + phase[0] as i32, t + phase[1] as i32)
+            });
+            per_state_vis_sse.push((cur.vis.sse, o_eval.vis.sse));
+        }
+        oracle_eval.merge(&o_eval);
+        oracle_imgs.push(o_img);
         oracle_float += o.float_sse;
         oracle_iter = oracle_iter.max(o.iterations);
         if k == 0 {
@@ -1152,6 +1201,10 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
 
     // Alpha-constrained oracles (non-opaque only): alpha held exactly, and
     // for cutout the alpha-held colours plus a flip-minimizing alpha search.
+    let mut held_imgs: Vec<Rgba8> = Vec::new();
+    let mut sil_imgs: Vec<Rgba8> = Vec::new();
+    let mut alpha_only_imgs: Vec<Rgba8> = Vec::new();
+    let mut alpha_only_eval = Eval::default();
     let (rgba_alpha_held_oracle, rgba_silhouette_oracle) = if policy == AlphaPolicy::Opaque {
         (None, None)
     } else {
@@ -1174,8 +1227,22 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                 bilinear(&a_img, clamp),
             ));
             held_float += a.float_sse;
+            held_imgs.push(a_img.clone());
             if matches!(policy, AlphaPolicy::Cutout { .. }) {
                 let s_img = silhouette_search(r, a_img, clamp, &eval, policy);
+                sil_imgs.push(s_img.clone());
+                if phase == [0, 0] {
+                    let o_img = silhouette_search(r, images[k].1.clone(), clamp, &eval, policy);
+                    alpha_only_eval.merge(&evaluate(
+                        r,
+                        clamp,
+                        &eval,
+                        policy,
+                        k,
+                        bilinear(&o_img, clamp),
+                    ));
+                    alpha_only_imgs.push(o_img);
+                }
                 sil.merge(&evaluate(
                     r,
                     clamp,
@@ -1202,6 +1269,23 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         });
         (Some(held_c), sil_c)
     };
+
+    let alpha_only = (!alpha_only_imgs.is_empty()).then(|| {
+        let colours: BTreeSet<&[u8]> = alpha_only_imgs
+            .iter()
+            .flat_map(|img| img.pixels.chunks_exact(4))
+            .collect();
+        (
+            Candidate {
+                eval: alpha_only_eval,
+                level0_bytes: cur_level0,
+                pack_bytes: cur_pack,
+                float_sse: None,
+                iterations: None,
+            },
+            colours.len(),
+        )
+    });
 
     // Filter-aware indexed candidate on the pipeline's own optimizers,
     // trained on the training coverage and measured on the holdout.
@@ -1261,10 +1345,12 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         .iter()
         .map(|g| eval_current(&images, clamp, &g.eval, g.policy, phase))
         .collect();
+    let mut per_site_oracle_split: Vec<(u64, u64)> = Vec::new();
     let per_site_oracle_vis_sse = (groups.len() >= 2).then(|| {
         let mut own = 0u64;
         let mut shared = 0u64;
         for g in &groups {
+            let (own0, shared0) = (own, shared);
             for (k, (r, _)) in images.iter().enumerate() {
                 let f = fit(r, r, clamp, &g.eval, free);
                 own += evaluate(r, clamp, &g.eval, policy, k, bilinear(&f.image, clamp))
@@ -1275,6 +1361,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
                     .vis
                     .sse;
             }
+            per_site_oracle_split.push((own - own0, shared - shared0));
         }
         (own, shared)
     });
@@ -1363,6 +1450,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         }
     }
     let dense = sorted(dense);
+    let mut dense_imgs: Vec<Rgba8> = Vec::new();
     let rgba_dense = {
         let mut e = Eval::default();
         let mut pack = 0u64;
@@ -1379,6 +1467,7 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
             };
             e.merge(&evaluate(r, clamp, &eval, policy, k, bilinear(&img, clamp)));
             pack += direct_pack_bytes(&img);
+            dense_imgs.push(img);
         }
         Candidate {
             eval: e,
@@ -1387,6 +1476,130 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
             float_sse: None,
             iterations: None,
         }
+    };
+
+    let on_uniform = |imgs: &[Rgba8]| {
+        let mut e = Eval::default();
+        for (k, img) in imgs.iter().enumerate() {
+            e.merge(&evaluate(
+                &images[k].0,
+                clamp,
+                &uniform_set,
+                policy,
+                k,
+                bilinear(img, clamp),
+            ));
+        }
+        e
+    };
+    let bound = [
+        Some(&rgba_oracle),
+        rgba_alpha_held_oracle.as_ref(),
+        rgba_silhouette_oracle.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|c| c.eval.vis.sse)
+    .min()
+    .unwrap();
+    let cross = (bound * 2 <= current.eval.vis.sse && current.eval.vis.ge8 > 0 && phase == [0, 0])
+        .then(|| {
+            let u2: Vec<[i32; 2]> = uniform_set.iter().map(|&[s, t]| [s + 4, t + 4]).collect();
+            let mut cur = Eval::default();
+            let mut rgba = Eval::default();
+            let mut held = Eval::default();
+            let mut sil = Eval::default();
+            let mut alpha_only = Eval::default();
+            let mut alpha_only_imgs: Vec<Rgba8> = Vec::new();
+            let mut in_sample: [Eval; 4] = Default::default();
+            for (k, (r, now)) in images.iter().enumerate() {
+                cur.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(now, clamp)));
+                in_sample[0].merge(&evaluate(
+                    r,
+                    clamp,
+                    &uniform_set,
+                    policy,
+                    k,
+                    bilinear(now, clamp),
+                ));
+                let o = fit(r, r, clamp, &uniform_set, free);
+                let o_img = if refine_integer {
+                    refine(r, &o.image, clamp, &uniform_set, refine_policy)
+                } else {
+                    o.image
+                };
+                rgba.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&o_img, clamp)));
+                in_sample[1].merge(&evaluate(
+                    r,
+                    clamp,
+                    &uniform_set,
+                    policy,
+                    k,
+                    bilinear(&o_img, clamp),
+                ));
+                if policy != AlphaPolicy::Opaque {
+                    let a = fit(r, r, clamp, &uniform_set, &[0, 1, 2]);
+                    let a_img = if refine_integer {
+                        refine(r, &a.image, clamp, &uniform_set, policy)
+                    } else {
+                        a.image
+                    };
+                    held.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&a_img, clamp)));
+                    if matches!(policy, AlphaPolicy::Cutout { .. }) {
+                        let s_img = silhouette_search(r, a_img, clamp, &uniform_set, policy);
+                        sil.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&s_img, clamp)));
+                        in_sample[2].merge(&evaluate(
+                            r,
+                            clamp,
+                            &uniform_set,
+                            policy,
+                            k,
+                            bilinear(&s_img, clamp),
+                        ));
+                        let ao = silhouette_search(r, now.clone(), clamp, &uniform_set, policy);
+                        alpha_only.merge(&evaluate(r, clamp, &u2, policy, k, bilinear(&ao, clamp)));
+                        in_sample[3].merge(&evaluate(
+                            r,
+                            clamp,
+                            &uniform_set,
+                            policy,
+                            k,
+                            bilinear(&ao, clamp),
+                        ));
+                        alpha_only_imgs.push(ao);
+                    }
+                }
+            }
+            let cutout = matches!(policy, AlphaPolicy::Cutout { .. });
+            let colours = alpha_only_imgs
+                .iter()
+                .flat_map(|img| img.pixels.chunks_exact(4))
+                .collect::<BTreeSet<&[u8]>>()
+                .len();
+            CrossPhase {
+                current: cur,
+                rgba,
+                alpha_held: (policy != AlphaPolicy::Opaque).then_some(held),
+                silhouette: cutout.then_some(sil),
+                alpha_only: cutout.then_some((alpha_only, colours)),
+                in_sample: {
+                    let [c0, c1, c2, c3] = in_sample;
+                    [
+                        Some(c0),
+                        Some(c1),
+                        cutout.then_some(c2),
+                        cutout.then_some(c3),
+                    ]
+                },
+            }
+        });
+    let uniform_transfer = UniformTransfer {
+        rgba_oracle: on_uniform(&oracle_imgs),
+        alpha_held_oracle: (!held_imgs.is_empty()).then(|| on_uniform(&held_imgs)),
+        silhouette_oracle: (!sil_imgs.is_empty()).then(|| on_uniform(&sil_imgs)),
+        alpha_only: (!alpha_only_imgs.is_empty()).then(|| on_uniform(&alpha_only_imgs)),
+        dense: on_uniform(&dense_imgs),
+        cross,
     };
 
     Analysis {
@@ -1405,9 +1618,13 @@ fn analyze(index: u32, v: &Variant, sites: &[&UseSite], refine_integer: bool) ->
         rgba_oracle,
         rgba_alpha_held_oracle,
         rgba_silhouette_oracle,
+        alpha_only,
         indexed,
         per_state_direct,
         per_site_oracle_vis_sse,
+        per_site_oracle_split,
+        uniform_transfer,
+        per_state_vis_sse,
         per_site_current,
         uv_phase,
         uniform,
@@ -1986,14 +2203,21 @@ fn interventions(a: &Analysis, v: &Variant, cl: &Classified) -> Vec<Intervention
             complexity: "low",
         });
     }
+    let dense_rejected = crate::residual_fixes::dense_gate_rejected(
+        source_file(v),
+        c.texture.data_offset,
+        [a.width, a.height],
+    );
     out.push(Intervention {
         name: "denser-training RGBA8888 variant",
-        deployable: true,
+        deployable: dense_rejected.is_none(),
         after_tier: Some(tier(&a.rgba_dense.eval.vis)),
         after_sse: Some(a.rgba_dense.eval.vis.sse),
         note: format!(
-            "pipeline solve on training + 4 phase-varied samples per touched cell ({} cells, {} training samples now)",
-            a.cells, a.train_samples
+            "pipeline solve on training + 4 phase-varied samples per touched cell ({} cells, {} training samples now){}",
+            a.cells,
+            a.train_samples,
+            dense_rejected.map_or(String::new(), |why| format!("; not deployable: {why}"))
         ),
         vram_delta: a.rgba_dense.level0_bytes as i64 - a.current_level0_bytes as i64,
         pack_delta: a.rgba_dense.pack_bytes as i64 - a.current_pack_bytes as i64,
@@ -2679,6 +2903,15 @@ fn row_json(r: &Row<'_>, names: &Names) -> String {
     if let Some(x) = &a.rgba_silhouette_oracle {
         alts.push(("rgba8888_silhouette_oracle", cand_json(x)));
     }
+    if let Some((x, colours)) = &a.alpha_only {
+        alts.push((
+            "alpha_only_silhouette",
+            format!(
+                "{{\"candidate\":{},\"distinct_rgba\":{colours}}}",
+                cand_json(x)
+            ),
+        ));
+    }
     if let Some(x) = &a.indexed {
         alts.push(("indexed_filter_aware", cand_json(x)));
     }
@@ -2705,12 +2938,65 @@ fn row_json(r: &Row<'_>, names: &Names) -> String {
     alts.push((
         "phase_uniform_set",
         format!(
-            "{{\"current_linear\":{},\"uncompensated_linear\":{},\"uv_phase_shift\":{}}}",
+            "{{\"current_linear\":{},\"uncompensated_linear\":{},\"uv_phase_shift\":{},\"rgba8888_oracle\":{},\"rgba8888_alpha_held_oracle\":{},\"rgba8888_silhouette_oracle\":{},\"alpha_only_silhouette\":{},\"rgba8888_dense_training\":{}}}",
             eval_json(&a.uniform.0),
             eval_json(&a.uniform.1),
-            a.uniform.2.as_ref().map_or("null".into(), eval_json)
+            a.uniform.2.as_ref().map_or("null".into(), eval_json),
+            eval_json(&a.uniform_transfer.rgba_oracle),
+            a.uniform_transfer.alpha_held_oracle.as_ref().map_or("null".into(), eval_json),
+            a.uniform_transfer.silhouette_oracle.as_ref().map_or("null".into(), eval_json),
+            a.uniform_transfer.alpha_only.as_ref().map_or("null".into(), eval_json),
+            eval_json(&a.uniform_transfer.dense),
         ),
     ));
+    if let Some(x) = &a.uniform_transfer.cross {
+        alts.push((
+            "cross_phase",
+            format!(
+                "{{\"current_linear\":{},\"rgba8888\":{},\"alpha_held\":{},\"silhouette\":{},\"alpha_only\":{},\"alpha_only_distinct_rgba\":{},\"in_sample_u1\":{{\"current_linear\":{},\"rgba8888\":{},\"silhouette\":{},\"alpha_only\":{}}}}}",
+                eval_json(&x.current),
+                eval_json(&x.rgba),
+                x.alpha_held.as_ref().map_or("null".into(), eval_json),
+                x.silhouette.as_ref().map_or("null".into(), eval_json),
+                x.alpha_only.as_ref().map_or("null".into(), |(e, _)| eval_json(e)),
+                x.alpha_only.as_ref().map_or("null".into(), |(_, n)| n.to_string()),
+                x.in_sample[0].as_ref().map_or("null".into(), eval_json),
+                x.in_sample[1].as_ref().map_or("null".into(), eval_json),
+                x.in_sample[2].as_ref().map_or("null".into(), eval_json),
+                x.in_sample[3].as_ref().map_or("null".into(), eval_json),
+            ),
+        ));
+    }
+    if !a.per_site_oracle_split.is_empty() {
+        alts.push((
+            "per_use_site_oracle_split",
+            format!(
+                "[{}]",
+                a.per_site_oracle_split
+                    .iter()
+                    .map(|(o, sh)| format!(
+                        "{{\"own_visible_sse\":{o},\"shared_visible_sse\":{sh}}}"
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ));
+    }
+    if !a.per_state_vis_sse.is_empty() {
+        alts.push((
+            "per_palette_state",
+            format!(
+                "[{}]",
+                a.per_state_vis_sse
+                    .iter()
+                    .map(|(c, o)| format!(
+                        "{{\"current_visible_sse\":{c},\"oracle_visible_sse\":{o}}}"
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        ));
+    }
     s.push_str(
         &alts
             .iter()
@@ -2908,6 +3194,17 @@ pub(super) fn run(opts: &Options) -> Result<(), Box<dyn std::error::Error>> {
             .any(|(c, _)| *c == "LIKELY_IMPLEMENTATION_BUG")
             && !image_set.contains(&k)
             && image_set.len() < opts.top_images + 20
+        {
+            image_set.push(k);
+        }
+    }
+    // Every row that needs a per-variant decision (sections 5a/5b and the
+    // triage in section 11) also gets diagnostics.
+    for &k in &ranked {
+        if matches!(
+            rows[k].disposition,
+            "manual-intervention" | "hand-edit-candidate"
+        ) && !image_set.contains(&k)
         {
             image_set.push(k);
         }
@@ -3501,7 +3798,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
     }
     let _ = writeln!(
         m,
-        "\n### 5b. Hand-edit candidates: only an oracle-level texture reaches it ({})\n\nNo deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA, alpha-held, or cutout silhouette search) at least halves the visible SSE, so a hand-authored or use-site-specific texture could. These oracles are fitted on the samples they are scored on: treat the figure as an upper bound on the gain. Top 40 by severity; the rest have `disposition == \"hand-edit-candidate\"` in the JSON.\n",
+        "\n### 5b. Hand-edit candidates: only an oracle-level texture reaches it ({})\n\nNo deployable candidate meets the bar, but the best holdout-fitted oracle (RGBA, alpha-held, or cutout silhouette search) at least halves the visible SSE, so a hand-authored or use-site-specific texture could. These oracles are fitted on the samples they are scored on: treat the figure as an upper bound on the gain. Section 11 re-scores every row out of sample (fit on one phase-uniform set, score on a disjoint one); most of these bounds do not survive it. Top 40 by severity; the rest have `disposition == \"hand-edit-candidate\"` in the JSON.\n",
         hand.len()
     );
     let _ = writeln!(
@@ -3850,7 +4147,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
     item(
         &mut m,
         format!(
-            "Section 5b hand-edit candidates ({}): only after the above, since their bound comes from oracles.",
+            "Section 5b hand-edit candidates ({}): use section 11's out-of-sample triage and its MANUAL_FIX_RECOMMENDED list, not the holdout oracle bound.",
             hand.len()
         ),
     );
@@ -3865,6 +4162,7 @@ never the optimizer's training samples. Do not edit by hand: rerun the command.\
         m,
         "\nRe-run this report after each step; it is deterministic and refuses to run on a pack that differs from the shipped one.\n"
     );
+    triage::section(&mut m, rows, ranked, names);
     m
 }
 
