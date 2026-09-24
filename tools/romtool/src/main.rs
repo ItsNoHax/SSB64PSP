@@ -981,6 +981,13 @@ struct MatAnimData {
     /// RE-318: the script can never move `TraU`/`TraV`/`ScaU`/`ScaV` off
     /// their rest values, so the primitive samples exactly its authored UVs.
     uv_static: bool,
+    /// RE-321: the script drives `SetLFrac` or `TextureIDNext`, the two
+    /// inputs of the two-tile fractional blend.
+    drives_lod: bool,
+    /// RE-321: the highest `sprites[]` index `TextureIDCurrent` reaches in the
+    /// replay (0 when the track never moves: `gcAddMObjForDObj` zeroes it).
+    /// `sprites` also covers `TextureIDNext`, which only tile 1 samples.
+    max_current: usize,
 }
 
 fn texture_cache_key(
@@ -1131,6 +1138,153 @@ thread_local! {
     /// RE-318 census for the pack summary: source primitives lowered,
     /// triangles split, primitives emitted.
     static WIDE_TILE_STATS: std::cell::RefCell<(usize, usize, usize)> = const { std::cell::RefCell::new((0, 0, 0)) };
+    /// RE-321 census for the pack summary: every primitive the converter
+    /// classified as a two-tile blend, with the outcome.
+    static LOD_BLEND_SITES: std::cell::RefCell<Vec<LodBlendSite>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One classified two-tile blend primitive and what the packer did with it.
+struct LodBlendSite {
+    file: u32,
+    dl: u32,
+    prim: usize,
+    triangles: usize,
+    /// `Ok(next textures added)` or the reason the primitive keeps its
+    /// single-texture path.
+    outcome: Result<usize, &'static str>,
+}
+
+/// RE-321: whether every texel `t` can sample is fully opaque, read from the
+/// source. Only CI through a TLUT is measured; anything else declines.
+fn source_fully_opaque(src: Texels<'_>, t: &ssb_rom::mesh::TextureRef) -> Option<bool> {
+    use ssb_rom::texture;
+    if !t.tlut.enabled() || t.format != texture::Format::Ci {
+        return None;
+    }
+    let file = src.bytes(t.data_file)?;
+    let indices = decode_index_field(file, t)?;
+    let bank = if t.size == texture::BitSize::Bits4 {
+        t.palette
+    } else {
+        0
+    };
+    let (off, n) = palette_bank_offset(t.palette_offset?, t.palette_entries, bank);
+    let tlut = src
+        .bytes(t.palette_file)?
+        .get(off as usize..off as usize + n * 2)
+        .map(texture::parse_tlut)?;
+    Some(indices.iter().all(|&i| {
+        tlut.get(usize::from(i))
+            .is_some_and(|&e| t.tlut.entry_rgba(e)[3] == 255)
+    }))
+}
+
+/// RE-321: converts a two-tile blend primitive's `TEXEL1` images and checks
+/// that the two-pass GE lowering reproduces its RDP output, returning the
+/// record to pack or the reason to keep the single-texture path.
+///
+/// The lowering is exact when pass 1's pixel replaces the framebuffer and the
+/// alpha gate cannot tell pass 1's `TEXEL0` alpha from the blended alpha:
+///
+/// * no GE blending (`translucent` with a classified alpha formula);
+/// * no gate, or a zero-threshold gate with every `TEXEL0` image opaque and
+///   `PRIM_ALPHA` 255 -- then the blended alpha is at least `1 - f` with
+///   `f <= 255/256`, which never fails a zero threshold, and pass 1's alpha
+///   is 255;
+/// * no palette animation and no texgen, which the second pass does not
+///   carry.
+///
+/// `TEXEL1` images convert through the ordinary texture pipeline, shaped by
+/// tile 1's own descriptor, under the opaque alpha policy: pass 2 blends by
+/// fixed factors, and the RDP interpolates `TEXEL1`'s colour even where its
+/// alpha is zero, so that colour must survive compensation.
+#[allow(clippy::too_many_arguments)]
+fn lod_blend_desc(
+    writer: &mut ssb_rom::pack::PackWriter,
+    src: Texels<'_>,
+    id: u32,
+    offset: u32,
+    prim_index: usize,
+    m: &ssb_rom::mesh::Mesh,
+    prim: &ssb_rom::mesh::Primitive,
+    lod: &ssb_rom::mesh::LodBlend,
+    mat_anim: u32,
+    data: &MatAnimData,
+    swizzle: bool,
+    phase: [i16; 2],
+) -> Result<ssb_rom::pack::LodBlendDesc, &'static str> {
+    use ssb_rom::pack::AlphaGate;
+    if !data.drives_lod {
+        return Err("script drives neither SetLFrac nor TextureIDNext");
+    }
+    if data.sprites.is_empty() {
+        return Err("no sprite table for TextureIDNext");
+    }
+    if !data.palettes.is_empty() {
+        return Err("PaletteID animation is not carried by the second pass");
+    }
+    if prim.material.texture_gen != ssb_rom::mesh::TextureGen::None {
+        return Err("texgen is not carried by the second pass");
+    }
+    let base = prim.material.texture.ok_or("no TEXEL0 texture")?;
+    let (gate, translucent_blend) = ssb_rom::pack::material_alpha_state(&prim.material);
+    if translucent_blend {
+        return Err("GE blending would weight pass 1 by its own alpha");
+    }
+    let zero_gate = match gate {
+        AlphaGate::Off => false,
+        AlphaGate::Greater(0) | AlphaGate::GreaterOrEqual(0 | 1) => true,
+        _ => return Err("nonzero alpha threshold"),
+    };
+    if zero_gate {
+        if lod.prim_alpha != 255 {
+            return Err("PRIM_ALPHA below 255 under an alpha gate");
+        }
+        let reached = data.sprites.iter().take(data.max_current + 1);
+        let current = std::iter::once(base).chain(reached.map(|p| ssb_rom::mesh::TextureRef {
+            data_file: p.file,
+            data_offset: p.offset,
+            ..base
+        }));
+        for t in current {
+            if source_fully_opaque(src, &t) != Some(true) {
+                return Err("a TEXEL0 image is not provably opaque under an alpha gate");
+            }
+        }
+    }
+    let coverage = primitive_filter_coverage(m, prim);
+    let policy = ssb_rom::filter_compensation::AlphaPolicy::Opaque;
+    let mut next_textures =
+        [ssb_rom::pack::TextureDesc::NO_ANIM; ssb_rom::pack::MatAnimDesc::MAX_TEXTURES];
+    for (slot, p) in data.sprites.iter().enumerate() {
+        residuals::discard_conversion();
+        let tex = convert_mat_anim_sprite(src, *p, &lod.next, &coverage, None, swizzle, policy)
+            .ok_or("a TEXEL1 image did not convert")?;
+        let i = writer.add_texture(&tex, lod.next.clamp_s, lod.next.clamp_t);
+        residuals::record_variant(i, &tex, lod.next.clamp_s, lod.next.clamp_t);
+        if residuals::enabled() {
+            residuals::record_site(residuals::UseSite {
+                variant: i,
+                file: id,
+                dl: offset,
+                prim: prim_index,
+                sprite_slot: Some(slot),
+                policy,
+                texgen: None,
+                mat_anim: true,
+                triangles: prim.triangle_count(),
+                coverage: coverage.clone(),
+                phase,
+            });
+        }
+        next_textures[slot] = i;
+    }
+    Ok(ssb_rom::pack::LodBlendDesc {
+        mat_anim,
+        next_count: data.sprites.len() as u32,
+        next_textures,
+        tile1_params: lod.tile1_params.map(u32::from),
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1177,6 +1331,7 @@ fn pack_mesh(
     let mut per_prim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_mat_anim: Vec<Option<u32>> = Vec::with_capacity(m.primitives.len());
     let mut per_prim_phase = Vec::with_capacity(m.primitives.len());
+    let mut per_prim_lod = Vec::with_capacity(m.primitives.len());
     for (packed_index, prim) in m.primitives.iter().enumerate() {
         let prim_index = lowered.source_prim[packed_index];
         let fix = prim
@@ -1457,13 +1612,58 @@ fn pack_mesh(
             // primitive happens to be drawing it.
             writer.set_texture_mat_anim(texture, mat_anim);
         }
+        // RE-321: a classified two-tile blend gets its second pass only
+        // once the lowering is proven exact for it; otherwise it keeps the
+        // single-texture path.
+        let lod = prim.material.lod_blend.map(|lod| {
+            let outcome = if prim.material.texture != source.primitives[prim_index].material.texture
+            {
+                Err("split by the wide-tile lowering")
+            } else if texture_index.is_none() {
+                Err("TEXEL0 did not convert")
+            } else {
+                match (prim.material.mat_anim, mat_anim_index_resolved) {
+                    (Some(key), Some(anim)) => match mat_anim_data.get(&key) {
+                        Some(data) => lod_blend_desc(
+                            writer, src, id, offset, prim_index, m, prim, &lod, anim, data,
+                            swizzle, phase,
+                        )
+                        .and_then(|desc| {
+                            if writer.add_lod_blend(desc) {
+                                Ok(desc.next_count as usize)
+                            } else {
+                                Err("one script drives two different tile-1 shapes")
+                            }
+                        }),
+                        None => Err("material animation did not resolve"),
+                    },
+                    _ => Err("material animation did not pack"),
+                }
+            };
+            LOD_BLEND_SITES.with(|s| {
+                s.borrow_mut().push(LodBlendSite {
+                    file: id,
+                    dl: offset,
+                    prim: prim_index,
+                    triangles: prim.triangle_count(),
+                    outcome,
+                })
+            });
+            outcome.is_ok()
+        });
         per_prim.push(texture_index);
         per_prim_mat_anim.push(mat_anim_index_resolved);
+        per_prim_lod.push(lod == Some(true));
     }
     let mesh_index = writer.add_mesh(m, id, offset, |i| per_prim[i], |i| per_prim_mat_anim[i]);
     for (i, &phase) in per_prim_phase.iter().enumerate() {
         if phase != [0, 0] {
             writer.set_mesh_prim_phase(mesh_index, i, phase);
+        }
+    }
+    for (i, &lod) in per_prim_lod.iter().enumerate() {
+        if lod {
+            writer.set_mesh_prim_lod_blend(mesh_index, i);
         }
     }
     mesh_index
@@ -1790,6 +1990,8 @@ fn resolve_one_mat_anim(
     let uv_rest: [f32; 4] = core::array::from_fn(|k| f32::from_bits(base_tracks[k + 1]));
     let mut uv_seen = [false; 4];
     let mut uv_replay_holds = true;
+    let mut drives_lod = false;
+    let mut max_current = 0.0f32;
     loop {
         // A decoder error means this script is not something this resolver
         // can trust the replay of -- decline it outright rather than attach
@@ -1801,11 +2003,15 @@ fn resolve_one_mat_anim(
         }
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT) {
             max_texture = max_texture.max(v);
+            max_current = max_current.max(v);
         }
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT) {
             max_texture = max_texture.max(v);
         }
         seen_material |= (0..10).any(|track| j.track_value(track).is_some());
+        drives_lod |= j.track_value(ssb_rom::matanim::TRACK_SET_LFRAC).is_some()
+            || j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_NEXT)
+                .is_some();
         for (k, seen) in uv_seen.iter_mut().enumerate() {
             if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TRA_U + k) {
                 *seen = true;
@@ -1895,6 +2101,9 @@ fn resolve_one_mat_anim(
                     .is_some_and(|written| {
                         written.iter().zip(uv_seen).all(|(&w, seen)| !w || seen)
                     }),
+            drives_lod,
+            // `texture_id_curr` is a `u16`: the live float truncates.
+            max_current: max_current.max(0.0) as usize,
         },
     ))
 }
@@ -2992,6 +3201,26 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     println!(
         "  wide tiles  {wide_prims} primitive(s) over the GE's 512-texel limit lowered to {wide_emitted} (RE-318, {wide_split} triangle(s) split)"
     );
+    LOD_BLEND_SITES.with(|s| {
+        let sites = s.borrow();
+        let exact = sites.iter().filter(|site| site.outcome.is_ok()).count();
+        println!(
+            "  lod blends  {exact} of {} classified two-tile blend primitive(s) drawn in two passes (RE-321)",
+            sites.len()
+        );
+        for site in sites.iter() {
+            match site.outcome {
+                Ok(next) => println!(
+                    "    file {} list 0x{:X} prim {}: {} triangle(s), {next} TEXEL1 image(s)",
+                    site.file, site.dl, site.prim, site.triangles
+                ),
+                Err(why) => println!(
+                    "    file {} list 0x{:X} prim {}: {} triangle(s) declined: {why}",
+                    site.file, site.dl, site.prim, site.triangles
+                ),
+            }
+        }
+    });
     println!("  billboards  {billboards} node(s) drawn facing the camera");
     println!("  stage anims {stage_anims} stage(s), {stage_anim_joints} animated node(s)");
     println!(

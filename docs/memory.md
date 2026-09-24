@@ -8,9 +8,9 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v32, with Donkey animations) is 22.2 MB. It needs
-  `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). The earlier stock v32
-  pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
+- The current asset pack (v33) is 22.2 MB. It needs
+  `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v33 ran on a PSP-2000 via
+  PSPLink (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).
 - PSP-1000 ignores `MEMSIZE=1`; the full pack does not fit (RE-288). Support
   needs a per-scene or reduced pack.

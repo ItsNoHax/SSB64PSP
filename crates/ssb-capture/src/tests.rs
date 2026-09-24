@@ -21,6 +21,7 @@ fn every_viewer_scene() -> Vec<ViewerScene> {
         ViewerScene::MarioEntry,
         ViewerScene::BonusPlatform,
         ViewerScene::DepthMask,
+        ViewerScene::DreamLandWater,
     ];
     scenes.extend(Fighter::ALL.map(ViewerScene::Fighter));
     scenes.extend((0..41).map(ViewerScene::Stage));

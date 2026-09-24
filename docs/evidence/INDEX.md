@@ -330,3 +330,4 @@ editing a record.
 | RE-318 | Lowering tiles whose bake exceeds the GE 512-texel limit | COMPLETE (host equivalence tests, PPSSPP software A/B and hidden-primitive controls, 10 stage goldens rebaselined; physical PSP not captured) | texture, psp-ge, pack, asset-pipeline, visual-regression |  |
 | RE-319 | Texture buffer rows under 16 bytes are read at the wrong pitch | COMPLETE (PPSSPP and PSP-2000 stripe diagnostics, host tests, 44 goldens refreshed) | texture, psp-ge, pack, visual-regression |  |
 | RE-320 | PSP-2000 confirms the 16-byte T4 texture-row pitch | COMPLETE (physical PSP A/B stripe diagnostic and stock-pack smoke) | texture, psp-ge, hardware, pack, visual-regression |  |
+| RE-321 | RDP two-tile fractional blend (`SetLFrac` + `TextureIDNext`) on the GE | COMPLETE (PPSSPP exact-formula check, N64 reference, PSP-2000 timing and capture) | material, animation, texture, combiner, psp-ge, pack, stage, visual-regression, hardware |  |

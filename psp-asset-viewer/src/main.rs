@@ -1348,6 +1348,14 @@ unsafe fn run() -> ! {
         // node cannot disappear solely because the audit sees its back; the
         // eight whole-stage checks retain real culling (RE-136/137).
         draw_state.force_no_cull = object_view || billboard_view;
+        // RE-321 diagnostic captures: one texture of the two-tile blend.
+        draw_state.lod_blend_isolate = if cfg!(feature = "lod_blend_current_only") {
+            Some(meshdraw::LodBlendIsolate::Current)
+        } else if cfg!(feature = "lod_blend_next_only") {
+            Some(meshdraw::LodBlendIsolate::Next)
+        } else {
+            None
+        };
         // RE-131: reset every frame, then set for real inside `stage_view`'s
         // own real-camera branch below -- every other mode's view matrix is
         // identity, so `None` (leave the billboard basis at whatever
@@ -1880,12 +1888,13 @@ unsafe fn run() -> ! {
                     // deriving a second convention. The object stays at its
                     // own real position (no recentring translate baked into
                     // the model matrix); the camera orbits it instead.
-                    let base = if capture_scene.is(CaptureScene::MetalTexgenCameraRotated) {
+                    // RE-321 reuses the same orbit to look down on Dream
+                    // Land's water layer.
+                    let base = if let Some((yaw, pitch, zoom)) = capture_scene.orbit_camera() {
+                        let dist = dist * zoom;
                         let at = ssb_engine::math::Vec3::new(centre[0], centre[1], centre[2]);
-                        const YAW: f32 = 0.610_865_2; // 35 degrees
-                        const PITCH: f32 = 0.349_065_85; // 20 degrees
-                        let (sy, cy) = ssb_engine::math::sin_cos(YAW);
-                        let (sp, cp) = ssb_engine::math::sin_cos(PITCH);
+                        let (sy, cy) = ssb_engine::math::sin_cos(yaw);
+                        let (sp, cp) = ssb_engine::math::sin_cos(pitch);
                         let eye = at
                             + ssb_engine::math::Vec3::new(
                                 dist * cp * sy,

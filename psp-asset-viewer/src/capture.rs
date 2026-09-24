@@ -127,6 +127,7 @@ pub trait SceneExt {
     fn stage_index(self) -> Option<u32>;
     fn object_graph(self) -> Option<(u32, u32)>;
     fn object_view(self) -> bool;
+    fn orbit_camera(self) -> Option<(f32, f32, f32)>;
     fn holds_spin(self) -> bool;
     /// The Mario entry pipe is a frame of the effect browser, HUD line
     /// included.
@@ -148,6 +149,9 @@ impl SceneExt for Option<CaptureScene> {
     }
     fn object_view(self) -> bool {
         self.is_some_and(CaptureScene::object_view)
+    }
+    fn orbit_camera(self) -> Option<(f32, f32, f32)> {
+        self.and_then(CaptureScene::orbit_camera)
     }
     fn holds_spin(self) -> bool {
         self.is_some_and(CaptureScene::holds_spin)

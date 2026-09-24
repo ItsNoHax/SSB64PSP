@@ -176,6 +176,10 @@ pub struct DrawState {
     /// the ROM's own `CULL_BACK`/`CULL_FRONT` state faithfully (RE-068), and
     /// a real camera always views authored geometry from its intended side.
     pub force_no_cull: bool,
+    /// Debug-viewer-only override isolating one texture of the two-tile
+    /// fractional blend (RE-321), so a capture of each can be checked per
+    /// pixel against the RDP equation. `None` in every real build.
+    pub lod_blend_isolate: Option<LodBlendIsolate>,
     /// The real camera's own basis vectors this frame, or `None` while the
     /// active view matrix is identity (RE-131: the debug viewer's
     /// whole-stage overview and every other mode besides the zoomed-in
@@ -228,6 +232,16 @@ pub struct DrawState {
     /// from `last_flags` because two primitives with identical flags can carry
     /// different `G_TEXTURE` scales or tile origins.
     last_texture_mapping: Option<TextureMapping>,
+}
+
+/// Which texture of a two-tile fractional blend a diagnostic capture keeps
+/// (RE-321). See [`DrawState::lod_blend_isolate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LodBlendIsolate {
+    /// Pass 1 alone: `TEXEL0 * SHADE`.
+    Current,
+    /// Pass 2 at full weight over pass 1: `TEXEL1 * SHADE`.
+    Next,
 }
 
 /// The basis a camera-less (identity view) caller generates against: world X
@@ -1156,6 +1170,85 @@ unsafe fn apply_material(
     }
 }
 
+/// Draws the second pass of the RDP two-tile fractional image blend
+/// (RE-321) over the primitive [`draw_mesh`] just drew.
+///
+/// Pass 1 was the ordinary draw of `TEXEL0` modulated by the vertex colour,
+/// replacing the framebuffer (the packer only sets `LOD_BLEND` where GE
+/// blending is off and pass 1's alpha gate can never reject). This pass draws
+/// `TEXEL1` over the identical submission with `sceGuBlendFunc(Add, Fix, Fix)`
+/// weights from the live `PRIM_LOD_FRAC`, which is the RDP's
+/// `(TEXEL1 - TEXEL0) * PRIM_LOD_FRAC + TEXEL0` followed by the second
+/// cycle's `* SHADE` ([`ssb_rom::lod_blend`]).
+///
+/// * Texture and mapping go through [`bind_texture`] and
+///   [`apply_texture_mapping`] with tile 1's live window, updating the cache
+///   fields so the next primitive compares against what is really bound.
+/// * The alpha test is off: the RDP gates on the blended alpha, which the
+///   packer proved always passes, while `TEXEL1`'s own alpha must not
+///   discard its colour.
+/// * Depth keeps pass 1's test and function. Identical vertices under the
+///   same matrices give identical depth, so every pixel pass 1 accepted
+///   passes again (`GreaterOrEqual` accepts equal depth, whether or not pass
+///   1 wrote it), and every pixel it rejected is rejected again. Depth
+///   writes are masked, so this pass cannot change the buffer.
+/// * Blend, alpha test and depth mask live under `last_flags`; forgetting it
+///   makes the next primitive re-issue all three.
+///
+/// Returns whether a draw was submitted. A zero fraction submits nothing:
+/// pass 1 already is the RDP result.
+unsafe fn draw_lod_blend_pass(
+    pack: &Pack<'_>,
+    p: &PrimDesc,
+    st: &mut DrawState,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    (vtype, index_ptr, vertex_ptr): (VertexType, *const c_void, *const c_void),
+) -> bool {
+    let Some(lod) = mat_anim.and_then(|m| m.resolved_lod_blend(pack, p.mat_anim)) else {
+        return false;
+    };
+    let (fix_a, fix_b) = match st.lod_blend_isolate {
+        None if lod.frac == 0 => return false,
+        None => ssb_rom::lod_blend::ge_fix_colors(lod.frac),
+        Some(LodBlendIsolate::Current) => return false,
+        Some(LodBlendIsolate::Next) => (0x00FF_FFFF, 0),
+    };
+    let Some(t) = pack.texture(lod.texture) else {
+        return false;
+    };
+    if st.last_texture != Some(lod.texture) {
+        st.last_texture = Some(lod.texture);
+        st.state_changes += 1;
+        bind_texture(pack, &t, mat_anim, None);
+    }
+    apply_texture_mapping(pack, p, st, lod.texture, lod.uv);
+    if st.last_texture_func != Some(TextureFuncState::Modulate) {
+        st.last_texture_func = Some(TextureFuncState::Modulate);
+        sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    }
+
+    sys::sceGuDisable(GuState::AlphaTest);
+    sys::sceGuEnable(GuState::Blend);
+    sys::sceGuBlendFunc(
+        sys::BlendOp::Add,
+        sys::BlendFactor::Fix,
+        sys::BlendFactor::Fix,
+        fix_a,
+        fix_b,
+    );
+    sys::sceGuDepthMask(1);
+    sys::sceGumDrawArray(
+        GuPrimitive::Triangles,
+        vtype,
+        p.index_count as i32,
+        index_ptr,
+        vertex_ptr,
+    );
+    st.last_flags = None;
+    st.state_changes += 1;
+    true
+}
+
 /// Draws one mesh from the pack.
 ///
 /// Returns the number of triangles submitted.
@@ -1200,7 +1293,9 @@ pub unsafe fn draw_mesh(
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;
 
-        if signed_clamp_uv {
+        // One submission, kept so a two-tile blend's second pass redraws the
+        // exact same vertices (RE-321).
+        let submission = if signed_clamp_uv {
             // N64 authored UVs are signed S10.5. The GE's 16-bit texture
             // field is *unsigned*, so a negative value such as Fox's -41 is
             // decoded as 65495 and Clamp samples the far edge across most of
@@ -1238,13 +1333,11 @@ pub unsafe fn draw_mesh(
                     _tail_pad: 0,
                 });
             }
-            sys::sceGumDrawArray(
-                GuPrimitive::Triangles,
+            (
                 FLOAT_UV_VERTEX_FORMAT,
-                p.index_count as i32,
                 core::ptr::null(),
                 dynamic as *const c_void,
-            );
+            )
         } else if effect_colors.is_some() || linear_texgen {
             // `sceGuGetMemory` allocates from the current display-list arena,
             // whose lifetime already matches this asynchronous GE submission.
@@ -1300,24 +1393,32 @@ pub unsafe fn draw_mesh(
                 }
                 dynamic.add(corner).write(v);
             }
-            sys::sceGumDrawArray(
-                GuPrimitive::Triangles,
+            (
                 UNINDEXED_VERTEX_FORMAT,
-                p.index_count as i32,
                 core::ptr::null(),
                 dynamic as *const c_void,
-            );
+            )
         } else {
-            sys::sceGumDrawArray(
-                GuPrimitive::Triangles,
+            (
                 VERTEX_FORMAT,
-                p.index_count as i32,
                 indices.as_ptr() as *const c_void,
                 verts.as_ptr() as *const c_void,
-            );
-        }
-
+            )
+        };
+        let (vtype, index_ptr, vertex_ptr) = submission;
+        sys::sceGumDrawArray(
+            GuPrimitive::Triangles,
+            VertexType::from_bits_truncate(vtype.bits()),
+            p.index_count as i32,
+            index_ptr,
+            vertex_ptr,
+        );
         st.draws += 1;
+        if p.flags & flags::LOD_BLEND != 0
+            && draw_lod_blend_pass(pack, &p, st, mat_anim, (vtype, index_ptr, vertex_ptr))
+        {
+            st.draws += 1;
+        }
         tris += p.index_count / 3;
     }
 

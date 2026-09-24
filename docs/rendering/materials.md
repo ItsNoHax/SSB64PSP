@@ -43,7 +43,7 @@ in static content. Tile-1 scroll is inert: all 12 inputs equal tile 0 and no
 
 ## Material animation
 
-Status: stage palette, frame and tile-0 UV tracks implemented.
+Status: stage palette, frame, tile-0 UV and two-tile blend tracks implemented.
 
 - Each animated `MObj`'s rest `TraU`/`TraV`/`ScaU`/`ScaV` and tile parameters
   are packed; the runtime applies `gcDrawMObjForDObj`'s tile-window delta
@@ -53,10 +53,15 @@ Status: stage palette, frame and tile-0 UV tracks implemented.
   so state never leaks between materials.
 - The linear-filter `+0.5 / uploaded_dim` correction is added after the
   animated transform, so animation never scales it (RE-304).
+- `SetLFrac`/`TextureIDNext`: the two-cycle `(TEXEL1 - TEXEL0) *
+  PRIM_LOD_FRAC + TEXEL0` blend is drawn in two GE passes (Dream Land's two
+  ponds, the only ROM users). Pass 2 draws tile 1's image, through tile 1's
+  own descriptor and `ScrU`/`ScrV` window, with fixed blend weights from the
+  live fraction. The packer sets `LOD_BLEND` only where the lowering is exact
+  (no GE blending, alpha gate provably inert); within one step of the RDP
+  per channel (RE-321).
 
 Limitations (not approximated):
 
-- `SetLFrac`/`TextureIDNext` need the RDP two-tile fractional blend.
-- `ScrU`/`ScrV` only affect tile 1.
 - Sparse stage `PrimColor`/`Light1Color`/`Light2Color` tracks feed baked
   vertex colour or an absent stage GE light; they need dynamic lowering.

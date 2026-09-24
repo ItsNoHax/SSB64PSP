@@ -446,6 +446,20 @@ pub struct MaterialUv {
     pub tile_height: f32,
 }
 
+/// The live second pass of a two-tile fractional image blend (RE-321).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LodBlendState {
+    /// `TEXEL1`'s texture: [`crate::pack::LodBlendDesc::next_textures`] at
+    /// the live `TextureIDNext`.
+    pub texture: u32,
+    /// `PRIM_LOD_FRAC` from the live `lfrac`.
+    pub frac: u8,
+    /// Tile 1's live window, in [`MaterialUv`] form: `ScrU`/`ScrV` in the
+    /// `Tra*` slots, over the tile-1 equation inputs. `None` when neither
+    /// tile 1's window nor the shared scale moves.
+    pub uv: Option<MaterialUv>,
+}
+
 impl Default for MaterialAnimator {
     fn default() -> Self {
         MaterialAnimator::new()
@@ -546,7 +560,8 @@ impl MaterialAnimator {
     /// Resolves `TraU`/`TraV`/`ScaU`/`ScaV`, retaining the MObjSub rest
     /// values for tracks the script leaves untouched. `ScrU`/`ScrV` target
     /// tile 1 and `SetLFrac` is a two-frame RDP blend; neither aliases these
-    /// tile-0 coordinates (RE-086/RE-211).
+    /// tile-0 coordinates (RE-086/RE-211); [`Self::resolved_lod_blend`] owns
+    /// both (RE-321).
     pub fn resolved_uv(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<MaterialUv> {
         let j = self.joints.get(mat_anim as usize)?;
         if mat_anim as usize >= self.count {
@@ -581,6 +596,62 @@ impl MaterialAnimator {
             tile_bias: a.uv_tile_params[0] as f32,
             tile_width: a.uv_tile_params[1] as f32,
             tile_height: a.uv_tile_params[2] as f32,
+        })
+    }
+
+    /// The two-tile fractional blend's second pass as of the last tick, or
+    /// `None` when `mat_anim` has no [`crate::pack::LodBlendDesc`] (RE-321).
+    ///
+    /// Read in the same frame, from the same joint, as
+    /// [`Self::resolved_texture`] and [`Self::resolved_uv`], so the two
+    /// texture ids, the fraction and both tile windows can never be a tick
+    /// apart. Each value follows `gcDrawMObjForDObj`: `texture_id_next` is a
+    /// `u16` (the float truncates), and the fraction is
+    /// [`crate::lod_blend::prim_lod_frac`] of `lfrac`, which starts at the
+    /// `MObjSub`'s `prim_l / 255`.
+    pub fn resolved_lod_blend(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<LodBlendState> {
+        use crate::matanim::{
+            TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V, TRACK_SET_LFRAC,
+            TRACK_TEXTURE_ID_NEXT,
+        };
+        let lod = pack.lod_blend(mat_anim)?;
+        let a = pack.mat_anim(mat_anim)?;
+        if lod.next_count == 0 {
+            return None;
+        }
+        let live = |track: usize| {
+            self.joints
+                .get(mat_anim as usize)
+                .filter(|_| (mat_anim as usize) < self.count)
+                .and_then(|j| j.track_value(track))
+        };
+        let base = |i: usize| f32::from_bits(a.base_tracks[i]);
+        let lfrac = live(TRACK_SET_LFRAC).unwrap_or_else(|| base(TRACK_SET_LFRAC));
+        let next = live(TRACK_TEXTURE_ID_NEXT).map_or(0, |v| v.max(0.0) as u32);
+        let texture = lod.next_textures[next.min(lod.next_count - 1) as usize];
+        let moves = [TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V]
+            .into_iter()
+            .any(|t| live(t).is_some());
+        let uv = (a.uv_mode != 0 && moves).then(|| MaterialUv {
+            trau: live(TRACK_SCR_U).unwrap_or_else(|| base(TRACK_SCR_U)),
+            trav: live(TRACK_SCR_V).unwrap_or_else(|| base(TRACK_SCR_V)),
+            scau: live(TRACK_SCA_U).unwrap_or_else(|| base(TRACK_SCA_U)),
+            scav: live(TRACK_SCA_V).unwrap_or_else(|| base(TRACK_SCA_V)),
+            base_trau: base(TRACK_SCR_U),
+            base_trav: base(TRACK_SCR_V),
+            base_scau: base(TRACK_SCA_U),
+            base_scav: base(TRACK_SCA_V),
+            // `gDPSetTileSize(1, ...)` has only the normal window form; the
+            // `G_TEXTURE` scale bit is shared with tile 0.
+            mode: 1 | (a.uv_mode & 4),
+            tile_bias: lod.tile1_params[0] as f32,
+            tile_width: lod.tile1_params[1] as f32,
+            tile_height: lod.tile1_params[2] as f32,
+        });
+        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(LodBlendState {
+            texture,
+            frac: crate::lod_blend::prim_lod_frac(lfrac),
+            uv,
         })
     }
 
@@ -1245,6 +1316,148 @@ mod tests {
         let a = pack.mat_anim(anim).unwrap();
         assert!(pairs.contains(&(Some(frame0), Some(a.first_palette))));
         assert!(pairs.contains(&(Some(frame1), Some(a.first_palette + 1))));
+    }
+
+    /// A `SetLFrac`/`TextureIDNext` script (RE-321): three steps that move
+    /// the fraction and swap which image is current and which is next.
+    fn lod_blend_pack() -> (alloc::vec::Vec<u8>, u32, [u32; 2], [u32; 2]) {
+        use crate::psp_texture::{Psm, PspTexture};
+        const OP_SET_VAL_AFTER_BLOCK: u32 = 10;
+        const OP_WAIT: u32 = 2;
+        const CURRENT: u32 = crate::matanim::TRACK_TEXTURE_ID_CURRENT as u32;
+        const NEXT: u32 = crate::matanim::TRACK_TEXTURE_ID_NEXT as u32;
+        const LFRAC: u32 = crate::matanim::TRACK_SET_LFRAC as u32;
+        const SCRV: u32 = crate::matanim::TRACK_SCR_V as u32;
+        let tracks = (1 << CURRENT) | (1 << NEXT) | (1 << LFRAC);
+        let script = mat_script(&[
+            // Values follow in ascending track order.
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, tracks, 3),
+            0.0f32.to_bits(),
+            1.0f32.to_bits(),
+            0.45f32.to_bits(),
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, tracks | (1 << SCRV), 3),
+            1.0f32.to_bits(),
+            0.0f32.to_bits(),
+            (-0.5f32).to_bits(),
+            0.6f32.to_bits(),
+            mat_cmd(OP_WAIT, 0, 50),
+        ]);
+        let image = |byte| PspTexture {
+            width: 32,
+            height: 32,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![byte; 512],
+            swizzled: true,
+            palette: alloc::vec![0xFFFF_FFFF; 16],
+            levels: 1,
+        };
+        let mut w = PackWriter::new();
+        let current = [
+            w.add_texture(&image(0x11), true, true),
+            w.add_texture(&image(0x22), true, true),
+        ];
+        let next = [
+            w.add_texture(&image(0x33), true, true),
+            w.add_texture(&image(0x44), true, true),
+        ];
+        let mut base = [0u32; 10];
+        base[1] = 0.0066f32.to_bits();
+        base[3] = 2.0f32.to_bits();
+        base[4] = 4.0f32.to_bits();
+        base[6] = 0.0066f32.to_bits();
+        base[8] = (115.0f32 / 255.0).to_bits();
+        let anim = w.add_mat_anim(
+            104,
+            &script,
+            0,
+            0x1F78,
+            &[],
+            &current,
+            base,
+            1,
+            [384, 128, 128],
+        );
+        let mut next_textures =
+            [crate::pack::TextureDesc::NO_ANIM; crate::pack::MatAnimDesc::MAX_TEXTURES];
+        next_textures[..2].copy_from_slice(&next);
+        assert!(w.add_lod_blend(crate::pack::LodBlendDesc {
+            mat_anim: anim,
+            next_count: 2,
+            next_textures,
+            tile1_params: [384, 128, 128],
+        }));
+        (w.finish(), anim, current, next)
+    }
+
+    #[test]
+    fn lod_blend_follows_the_fraction_and_both_texture_ids_on_the_same_tick() {
+        let (bytes, anim, current, next) = lod_blend_pack();
+        let pack = Pack::open(&bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+
+        // Before any tick the fraction is the MObjSub's `prim_l`, and
+        // `texture_id_next` its zeroed start.
+        let rest = animator.resolved_lod_blend(&pack, anim).unwrap();
+        assert_eq!(rest.frac, crate::lod_blend::prim_lod_frac(115.0 / 255.0));
+        assert_eq!(rest.texture, next[0]);
+        assert_eq!(rest.uv, None);
+
+        // Every tick, the current texture, the next texture and the fraction
+        // resolve from one joint state: no pair of them is ever a tick apart.
+        let mut seen = alloc::vec::Vec::new();
+        for _ in 0..8 {
+            animator.tick(&pack);
+            let lod = animator.resolved_lod_blend(&pack, anim).unwrap();
+            let cur = animator.resolved_texture(&pack, anim).unwrap();
+            let state = (cur, lod.texture, lod.frac);
+            if seen.last() != Some(&state) {
+                seen.push(state);
+            }
+        }
+        // `matanim::tick_tests` pins when an `_AFTER_BLOCK` step lands; before
+        // the first one every track still reads its start value.
+        assert!(
+            seen.ends_with(&[(current[0], next[1], 114), (current[1], next[0], 153)]),
+            "the fraction animates and current/next swap together: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn lod_blend_moves_tile_one_by_its_own_scroll_tracks() {
+        let (bytes, anim, ..) = lod_blend_pack();
+        let pack = Pack::open(&bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+        let mut uv = None;
+        for _ in 0..8 {
+            animator.tick(&pack);
+            uv = animator.resolved_lod_blend(&pack, anim).unwrap().uv.or(uv);
+        }
+        let uv = uv.expect("ScrV moves tile 1");
+        assert_eq!(uv.trav, -0.5, "ScrV drives tile 1, not TraV");
+        assert_eq!(uv.trau, 0.0066, "an undriven ScrU keeps its rest value");
+        assert_eq!((uv.scau, uv.scav), (2.0, 4.0));
+        assert_eq!(uv.mode & 3, 1, "tile 1 has only the normal window form");
+        assert_eq!(
+            (uv.tile_bias, uv.tile_width, uv.tile_height),
+            (384.0, 128.0, 128.0)
+        );
+        assert!(
+            animator.resolved_uv(&pack, anim).is_none(),
+            "tile 0 has no UV track here, so its window stays at rest"
+        );
+    }
+
+    #[test]
+    fn lod_blend_is_absent_without_a_record() {
+        let (bytes, mat_anim) = packed_mat_anim();
+        let pack = Pack::open(&bytes).unwrap();
+        let mut animator = MaterialAnimator::new();
+        animator.start(&pack);
+        animator.tick(&pack);
+        assert!(animator.resolved_lod_blend(&pack, mat_anim).is_none());
     }
 
     #[test]

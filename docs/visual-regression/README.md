@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  A full run of all 67 scenes takes about 17 s (RE-316).
+  A full run of all 68 scenes takes about 17 s (RE-316).
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
   of golden, candidate and mask with changed scenes first.
@@ -129,6 +129,7 @@ builds the same scene as its default.
 | `regression_capture_metal_mario` | `r2-metal-mario-fighter` | Texgen on a posed fighter; compensated body texture | RE-311 |
 | `regression_capture_mario_entry` | `r2-mario-entry-pipe` | File 356 graph `0x608`, dense compensation variant | RE-312 |
 | `regression_capture_bonus_platform` | `r2-bonus-platform-small` | File 136 graph `0x3DA8`, UV phase variant | RE-312 |
+| — (`dream_land_water` spec only) | `r2-dream-land-water` | File 104 graph `0x2450` from above: both two-tile fractional blend ponds | RE-321 |
 | `regression_capture_object` | none (A/B only) | Any graph, chosen by `SSB64_CAPTURE_OBJECT=<file>:<hex graph>` | RE-312 |
 | `regression_capture_fireball` (`psp-game`) | `f1-training-fireball` | Translucent Fireball weapon in Training | RE-300 |
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
