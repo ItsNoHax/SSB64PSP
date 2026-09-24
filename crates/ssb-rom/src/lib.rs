@@ -36,6 +36,7 @@ pub mod stage;
 pub mod texture;
 pub mod transition;
 pub mod vpk0;
+pub mod wide_tile;
 
 pub use archive::{Archive, TableEntry};
 pub use rom::{Region, RomInfo};

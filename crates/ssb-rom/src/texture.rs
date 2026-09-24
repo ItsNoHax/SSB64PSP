@@ -218,7 +218,7 @@ pub fn mirror_extend(
 /// no-op when the mask does not narrow the texture below the drawn rect,
 /// since `drawn == period` then), mirror-without-clamp always bakes
 /// exactly one mirrored pair, and neither bakes nothing.
-fn mirror_axis_len(period: u32, mirror: bool, clamp: bool, drawn: u32) -> u32 {
+pub fn mirror_axis_len(period: u32, mirror: bool, clamp: bool, drawn: u32) -> u32 {
     if clamp {
         drawn.max(1)
     } else if mirror {
