@@ -501,6 +501,9 @@ struct ResolverTally {
     textures_checked: usize,
     /// Of those, read through a mirrored or repeated period (RE-327).
     textures_folded: usize,
+    /// Of those, filter-compensated: paired by source digest, not texels
+    /// (RE-336).
+    textures_compensated: usize,
     textures_bad: usize,
     /// Static CLUTs compared with `palettes[0]`, and those that differ.
     static_palettes_checked: usize,
@@ -708,6 +711,15 @@ fn check_resolvers(
             }
             let r = crate::matsample::compare_texture(archive, &rom_file, pack, &desc, sprites[*k]);
             match r {
+                Ok(r) if !r.source_matches => {
+                    tally.textures_bad += 1;
+                    notes.push(format!(
+                        "texels: {name} (texture {t}): recorded source digest {:#010X} \
+                         is not sprites[{k}]'s",
+                        desc.source_digest
+                    ));
+                }
+                Ok(r) if r.compensated => tally.textures_compensated += 1,
                 Ok(r) if r.bad == 0 => {}
                 Ok(r) => {
                     tally.textures_bad += 1;
@@ -1317,11 +1329,13 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     );
     println!(
         "Texels: {} packed texture(s) against sprites[] through their recorded tile, {} differ \
-         ({} read through a mirrored or repeated period); \
+         ({} read through a mirrored or repeated period; {} filter-compensated, \
+         paired by source digest); \
          {} static CLUT(s) against palettes[0], {} differ",
         tally.textures_checked,
         tally.textures_bad,
         tally.textures_folded,
+        tally.textures_compensated,
         tally.static_palettes_checked,
         tally.static_palettes_bad
     );

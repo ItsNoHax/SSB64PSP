@@ -20,7 +20,7 @@ unless a physical PSP is named.
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
 | Mesh / model conversion | VERIFYING | 0 conversion failures; all 127 material graphs paired; PRIM ownership, lighting provenance, independent depth state | Physical-PSP confirmation | RE-163, RE-240–261 |
 | Scene graph (DObj) | 87% | 363 `DObjDesc` arrays + 11 effects packed as 374 objects | `GObj` layer | RE-172 |
-| Asset pack | COMPLETE | v36, zero-copy, 16-byte aligned; Donkey attack/special/cargo slots, Samus and Luigi attack/special slots and Mario/Fox/Donkey/Samus/Luigi grab/throw clips; two-tile blend and animated colour registers; recorded render-tile layout and `unk10 == 1` inputs | — | RE-301, RE-312, RE-319, RE-321, RE-322, RE-327, RE-330, RE-334 |
+| Asset pack | COMPLETE | v37, zero-copy, 16-byte aligned; Donkey attack/special/cargo slots, Samus and Luigi attack/special slots and Mario/Fox/Donkey/Samus/Luigi grab/throw clips; two-tile blend and animated colour registers; recorded render-tile layout and `unk10 == 1` inputs; per-texture compensation flag and source digest | — | RE-301, RE-312, RE-319, RE-321, RE-322, RE-327, RE-330, RE-334, RE-336 |
 
 ## Rendering
 

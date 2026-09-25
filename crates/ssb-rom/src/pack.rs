@@ -188,7 +188,21 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 36 grows `TextureDesc` to 48 bytes with the render tile it was converted
 // through, and `MatAnimDesc` to 132 with `uv_half` for `MObjSub.unk10 == 1`
 // (RE-327). Every later table starts at a different offset.
-pub const VERSION: u32 = 36;
+//
+// 37 grows `TextureDesc` to 52 bytes with `texels` and `source_digest`
+// (RE-336): whether level 0 holds the source texels or their 3-point filter
+// compensation, and a digest of the source tile bytes, so a check can pair a
+// compensated texture with its image. Every later table starts at a
+// different offset.
+pub const VERSION: u32 = 37;
+
+/// FNV-1a over a texture's source tile bytes: the identity
+/// [`TextureDesc::source_digest`] records (RE-336).
+pub fn source_digest(bytes: &[u8]) -> u32 {
+    bytes.iter().fold(0x811C_9DC5u32, |h, &b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
+}
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -666,6 +680,14 @@ pub struct TextureDesc {
     /// [`crate::mesh::TextureRef::source_width`]: the source row length, in
     /// texels of the tile's size.
     pub tile_source_width: u16,
+    /// [`TextureDesc::TEXELS_COMPENSATED`] when level 0 holds the 3-point
+    /// filter compensation of the source texels rather than the texels
+    /// themselves (RE-305, RE-306; `VERSION` 37, RE-336).
+    pub texels: u8,
+    /// [`source_digest`] of the source tile's bytes: `tile_period[1]` rows
+    /// of `tile_source_width.max(tile_period[0])` texels from the image
+    /// pointer, or 0 when none is recorded (`VERSION` 37, RE-336).
+    pub source_digest: u32,
 }
 
 impl TextureDesc {
@@ -684,7 +706,9 @@ impl TextureDesc {
     /// correct no matter what the stride says.
     ///
     /// `VERSION` 36 adds the render tile's shape after `wrap` (48).
-    pub const SIZE: usize = 48;
+    /// `VERSION` 37 adds `texels` in the spare byte after `tile_mirror` and
+    /// `source_digest` at the end (52).
+    pub const SIZE: usize = 52;
     pub const NO_ANIM: u32 = u32::MAX;
     /// Baked from real ROM texel data at pack time -- every texture before
     /// `VERSION` 14.
@@ -707,6 +731,8 @@ impl TextureDesc {
     pub const TILE_MIRROR_S: u8 = 1 << 0;
     /// `tile_mirror` bit for a mirrored T axis.
     pub const TILE_MIRROR_T: u8 = 1 << 1;
+    /// `texels` bit: level 0 is a filter compensation, not the source.
+    pub const TEXELS_COMPENSATED: u8 = 1 << 0;
 
     /// The recorded render tile's `(fmt, siz)`, or `None`.
     pub fn tile_format(&self) -> Option<(u8, u8)> {
@@ -1568,6 +1594,8 @@ impl PackWriter {
             tile_mirror: 0,
             tile_period: [0; 2],
             tile_source_width: 0,
+            texels: 0,
+            source_digest: 0,
         });
         (self.textures.len() - 1) as u32
     }
@@ -1580,6 +1608,14 @@ impl PackWriter {
             | (t.mirror_t as u8 * TextureDesc::TILE_MIRROR_T);
         d.tile_period = [t.width, t.height];
         d.tile_source_width = t.source_width;
+    }
+
+    /// Records the source tile bytes texture `i` was converted from and
+    /// whether its level 0 is their filter compensation (RE-336).
+    pub fn set_texture_source(&mut self, i: u32, source: &[u8], compensated: bool) {
+        let d = &mut self.textures[i as usize];
+        d.source_digest = source_digest(source);
+        d.texels = compensated as u8 * TextureDesc::TEXELS_COMPENSATED;
     }
 
     /// Adds the source fighter-shadow texture with a stable semantic role.
@@ -1619,6 +1655,8 @@ impl PackWriter {
             tile_mirror: 0,
             tile_period: [0; 2],
             tile_source_width: 0,
+            texels: 0,
+            source_digest: 0,
         });
         (self.textures.len() - 1) as u32
     }
@@ -2598,11 +2636,12 @@ impl PackWriter {
             out.push(t.wrap);
             out.push(t.tile);
             out.push(t.tile_mirror);
-            out.push(0);
+            out.push(t.texels);
             out.extend_from_slice(&t.tile_period[0].to_le_bytes());
             out.extend_from_slice(&t.tile_period[1].to_le_bytes());
             out.extend_from_slice(&t.tile_source_width.to_le_bytes());
             out.extend_from_slice(&[0u8; 2]);
+            out.extend_from_slice(&t.source_digest.to_le_bytes());
         }
         for o in &self.objects {
             for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
@@ -3455,6 +3494,8 @@ impl<'a> Pack<'a> {
             tile_mirror: self.data[at + 38],
             tile_period: [u16_at(self.data, at + 40), u16_at(self.data, at + 42)],
             tile_source_width: u16_at(self.data, at + 44),
+            texels: self.data[at + 39],
+            source_digest: u32_at(self.data, at + 48),
         })
     }
 
@@ -4528,6 +4569,39 @@ mod tests {
         assert_eq!(fb.data_len, 0, "a framebuffer entry has no baked bytes");
         assert_eq!(fb.palette_len, 0);
         assert_eq!(fb.mat_anim, TextureDesc::NO_ANIM);
+    }
+
+    #[test]
+    fn texture_source_record_round_trips() {
+        // RE-336, VERSION 37: the second descriptor reads its fields from
+        // the right offset only if `TextureDesc::SIZE` matches the writer.
+        let mut w = PackWriter::new();
+        let tex = PspTexture {
+            width: 8,
+            height: 8,
+            stride: 8,
+            format: Psm::Psm8888,
+            data: alloc::vec![0x11u8; 256],
+            swizzled: false,
+            palette: Vec::new(),
+            levels: 1,
+        };
+        let raw = w.add_texture(&tex, false, false);
+        let compensated = w.add_texture(&tex, false, false);
+        w.set_texture_source(raw, b"raw", false);
+        w.set_texture_source(compensated, b"source", true);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        let a = pack.texture(raw).unwrap();
+        assert_eq!(a.texels, 0);
+        assert_eq!(a.source_digest, source_digest(b"raw"));
+        let b = pack.texture(compensated).unwrap();
+        assert_eq!(b.texels, TextureDesc::TEXELS_COMPENSATED);
+        assert_eq!(b.source_digest, source_digest(b"source"));
+        assert_ne!(a.source_digest, b.source_digest);
+        // FNV-1a's published 32-bit value for "a".
+        assert_eq!(source_digest(b"a"), 0xE40C_292C);
     }
 
     #[test]

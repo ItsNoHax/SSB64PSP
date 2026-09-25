@@ -1264,10 +1264,11 @@ fn lod_blend_desc(
         [ssb_rom::pack::TextureDesc::NO_ANIM; ssb_rom::pack::MatAnimDesc::MAX_TEXTURES];
     for (slot, p) in data.sprites.iter().enumerate() {
         residuals::discard_conversion();
-        let tex = convert_mat_anim_sprite(src, *p, &lod.next, &coverage, None, swizzle, policy)
-            .ok_or("a TEXEL1 image did not convert")?;
+        let (tex, variant, compensated) =
+            convert_mat_anim_sprite(src, *p, &lod.next, &coverage, None, swizzle, policy)
+                .ok_or("a TEXEL1 image did not convert")?;
         let i = writer.add_texture(&tex, lod.next.clamp_s, lod.next.clamp_t);
-        writer.set_texture_tile(i, &lod.next);
+        record_texture_source(writer, i, src, &variant, compensated);
         residuals::record_variant(i, &tex, lod.next.clamp_s, lod.next.clamp_t);
         if residuals::enabled() {
             residuals::record_site(residuals::UseSite {
@@ -1475,7 +1476,7 @@ fn pack_mesh(
                             return i;
                         }
                         let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
-                        writer.set_texture_tile(i, &t);
+                        record_texture_source(writer, i, src, &t, compensated);
                         residuals::record_variant(i, &tex, t.clamp_s, t.clamp_t);
                         tex_index.insert(final_key, i);
                         i
@@ -1577,27 +1578,41 @@ fn pack_mesh(
                                     swizzle,
                                     alpha_policy,
                                 )
-                                .map(|tex| {
-                                    let i = writer.add_texture(&tex, base.clamp_s, base.clamp_t);
-                                    writer.set_texture_tile(i, &base);
-                                    residuals::record_variant(i, &tex, base.clamp_s, base.clamp_t);
-                                    if residuals::enabled() {
-                                        residuals::record_site(residuals::UseSite {
-                                            variant: i,
-                                            file: id,
-                                            dl: offset,
-                                            prim: prim_index,
-                                            sprite_slot: Some(slot),
-                                            policy: alpha_policy,
-                                            texgen: texgen_site,
-                                            mat_anim: true,
-                                            triangles: prim.triangle_count(),
-                                            coverage: coverage.clone(),
-                                            phase,
-                                        });
-                                    }
-                                    i
-                                })
+                                .map(
+                                    |(tex, variant, compensated)| {
+                                        let i =
+                                            writer.add_texture(&tex, base.clamp_s, base.clamp_t);
+                                        record_texture_source(
+                                            writer,
+                                            i,
+                                            src,
+                                            &variant,
+                                            compensated,
+                                        );
+                                        residuals::record_variant(
+                                            i,
+                                            &tex,
+                                            base.clamp_s,
+                                            base.clamp_t,
+                                        );
+                                        if residuals::enabled() {
+                                            residuals::record_site(residuals::UseSite {
+                                                variant: i,
+                                                file: id,
+                                                dl: offset,
+                                                prim: prim_index,
+                                                sprite_slot: Some(slot),
+                                                policy: alpha_policy,
+                                                texgen: texgen_site,
+                                                mat_anim: true,
+                                                triangles: prim.triangle_count(),
+                                                coverage: coverage.clone(),
+                                                phase,
+                                            });
+                                        }
+                                        i
+                                    },
+                                )
                             })
                             .collect();
                         if converted.len() != anim_data.sprites.len() {
@@ -1768,22 +1783,50 @@ fn convert_mat_anim_sprite(
     palettes: Option<&[Vec<u32>]>,
     swizzle: bool,
     alpha_policy: ssb_rom::filter_compensation::AlphaPolicy,
-) -> Option<ssb_rom::psp_texture::PspTexture> {
+) -> Option<(
+    ssb_rom::psp_texture::PspTexture,
+    ssb_rom::mesh::TextureRef,
+    bool,
+)> {
     let variant = ssb_rom::mesh::TextureRef {
         data_file: p.file,
         data_offset: p.offset,
         ..*base
     };
-    convert_texture(
+    let mut compensated = false;
+    let tex = convert_texture(
         src,
         &variant,
         coverage,
         swizzle,
         palettes,
         alpha_policy,
+        Some(&mut compensated),
         None,
-        None,
-    )
+    )?;
+    Some((tex, variant, compensated))
+}
+
+/// Records the render tile texture `i` was converted through (RE-327) and
+/// the source tile bytes it came from, with whether its level 0 is their
+/// filter compensation (RE-336). The bytes are the tile's period rows of
+/// `source_width` texels, as `romtool matcolors` reads a sprite.
+fn record_texture_source(
+    writer: &mut ssb_rom::pack::PackWriter,
+    i: u32,
+    src: Texels<'_>,
+    t: &ssb_rom::mesh::TextureRef,
+    compensated: bool,
+) {
+    writer.set_texture_tile(i, t);
+    let row = ssb_rom::texture::data_len(u32::from(t.source_width.max(t.width)), 1, t.size);
+    let at = t.data_offset as usize;
+    if let Some(bytes) = src
+        .bytes(t.data_file)
+        .and_then(|f| f.get(at..at + row * usize::from(t.height)))
+    {
+        writer.set_texture_source(i, bytes, compensated);
+    }
 }
 
 /// Read the source CI field before colour decoding so equal RGB entries keep

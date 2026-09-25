@@ -134,6 +134,12 @@ fn home(archive: &Archive, rom_file: &File, ptr: Ptr) -> Result<(File, usize), S
 /// One texture's comparison.
 #[derive(Default)]
 pub(crate) struct TexelResult {
+    /// Level 0 is a filter compensation (RE-336): not compared texel by
+    /// texel, only by [`TexelResult::source_matches`].
+    pub compensated: bool,
+    /// The recorded source digest is that of the image at `ptr` read
+    /// through the recorded tile.
+    pub source_matches: bool,
     pub texels: usize,
     pub bad: usize,
     /// First differing texel: `(x, y, rom, packed)`.
@@ -150,6 +156,11 @@ pub(crate) struct TexelResult {
 /// An index texture compares indices; its CLUT is checked apart
 /// ([`palette_matches`]). A direct-colour texture compares RGBA to the
 /// packed format's precision.
+///
+/// The source bytes read through the tile must match the digest the pack
+/// records. A texture whose level 0 is a 3-point filter compensation of
+/// those bytes (RE-305, RE-306) is paired with its image by that digest
+/// alone: its texels differ from the source by design (RE-336).
 pub(crate) fn compare_texture(
     archive: &Archive,
     rom_file: &File,
@@ -186,7 +197,14 @@ pub(crate) fn compare_texture(
     };
     let fx = |x: usize| fold(x, pw, mirror[0]);
     let fy = |y: usize| fold(y, ph, mirror[1]);
-    let mut r = TexelResult::default();
+    let mut r = TexelResult {
+        compensated: t.texels & TextureDesc::TEXELS_COMPENSATED != 0,
+        source_matches: ssb_rom::pack::source_digest(src) == t.source_digest,
+        ..TexelResult::default()
+    };
+    if r.compensated {
+        return Ok(r);
+    }
     let note = |r: &mut TexelResult, x: usize, y: usize, rom: String, got: String| {
         r.bad += 1;
         if r.first.is_none() {
