@@ -67,7 +67,10 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   the decomp's frame `n`: the first parse keeps `AOBJ_ANIM_CHANGED`'s
   clock and keys start at `length = -anim_wait - anim_speed` (RE-324).
   All fifteen tracks of all 103 entries match a decomp reference bit for
-  bit over 600 frames (`romtool matcolors`).
+  bit over 600 frames (`romtool matcolors`). So do the texture, palette,
+  tile-0 and two-tile-blend resolvers against `gcDrawMObjForDObj`. Both
+  index resolvers truncate and accept every live kind: a linear
+  `PaletteID` hold selects its palette (RE-325).
 - Colour tracks (RE-322; only Race to the Finish uses them, 2 `PrimColor`,
   1 `Light1Color` + `Light2Color` script). The packer marks where the
   register still holds the animated `MObj`'s value (`PRIM_ANIM`,

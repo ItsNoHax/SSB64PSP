@@ -516,51 +516,14 @@ impl MaterialAnimator {
         }
     }
 
-    /// The currently-resolved palette variant, as an absolute index into
-    /// [`Pack::mat_anim_palette`] ready to hand to [`Pack::mat_anim_palette_data`]
-    /// — or `None` if `mat_anim` names no tracked entry, its script never set
-    /// `PaletteID`, or the current value did not arrive by a step (the only
-    /// kind `PaletteID` can trust; see [`crate::matanim::MaterialJoint`]'s own
-    /// doc comment).
-    ///
-    /// Clamped into the entry's own `palette_count` rather than trusting the
-    /// script's raw value: a corrupted or out-of-range replay would otherwise
-    /// read into a neighbouring `MatAnimDesc`'s own variants in the shared
-    /// palette table instead of failing safely.
+    /// The currently-resolved palette variant; see [`resolve_palette`].
     pub fn resolved_palette(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
-        let j = self.joints.get(mat_anim as usize)?;
-        if !j.track_is_stepped(crate::matanim::TRACK_PALETTE_ID) {
-            return None;
-        }
-        let v = j.track_value(crate::matanim::TRACK_PALETTE_ID)?;
-        let a = pack.mat_anim(mat_anim)?;
-        if a.palette_count == 0 {
-            return None;
-        }
-        // `core` has no `round()` without `std`/`libm` (see `scene.rs`'s own
-        // note on `sin`/`cos`); round-to-nearest for a non-negative value is
-        // just "add a half, truncate" (the same trick `mesh.rs`'s vertex
-        // rounding already uses).
-        let index = ((v.max(0.0) + 0.5) as u32).min(a.palette_count - 1);
-        Some(a.first_palette + index)
+        resolve_palette(self.joints.get(mat_anim as usize)?, pack, mat_anim)
     }
 
-    /// The current `TextureIDCurrent` sprite frame. This is deliberately not
-    /// step-gated: the original assigns every live interpolation kind before
-    /// truncating it to the `u16` texture index in the draw path.
+    /// The current `TextureIDCurrent` sprite frame; see [`resolve_texture`].
     pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
-        let j = self.joints.get(mat_anim as usize)?;
-        let a = pack.mat_anim(mat_anim)?;
-        let value = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
-        if a.texture_count == 0 {
-            return None;
-        }
-        // `texture_id_curr` is a u16 in the original MObj, so its assignment
-        // from the live float truncates toward zero.  PaletteID is different
-        // (`f32`) and keeps its established round-to-nearest resolver.
-        let index = (value.max(0.0) as u32).min(a.texture_count - 1);
-        let texture = a.textures[index as usize];
-        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
+        resolve_texture(self.joints.get(mat_anim as usize)?, pack, mat_anim)
     }
 
     /// Resolves `TraU`/`TraV`/`ScaU`/`ScaV`, retaining the MObjSub rest
@@ -670,6 +633,47 @@ impl MaterialAnimator {
             light2: j.track_color(crate::matanim::TRACK_LIGHT2_COLOR),
         })
     }
+}
+
+/// `palettes[(s32)mobj->palette_id]` (`gcDrawMObjForDObj`), as an absolute
+/// index into [`Pack::mat_anim_palette`] — or `None` if the script never set
+/// `PaletteID` or the entry packed no palette table.
+///
+/// `gcPlayMObjMatAnim` writes `palette_id` for every live kind, and the draw
+/// truncates it: a linear hold at 0 selects palette 0 (RE-324). Clamped into
+/// the entry's own `palette_count` so an out-of-range value cannot read a
+/// neighbouring `MatAnimDesc`'s palettes.
+fn resolve_palette(
+    j: &crate::matanim::MaterialJoint,
+    pack: &Pack<'_>,
+    mat_anim: u32,
+) -> Option<u32> {
+    let v = j.track_value(crate::matanim::TRACK_PALETTE_ID)?;
+    let a = pack.mat_anim(mat_anim)?;
+    if a.palette_count == 0 {
+        return None;
+    }
+    let index = (v as i32).clamp(0, a.palette_count as i32 - 1) as u32;
+    Some(a.first_palette + index)
+}
+
+/// `sprites[texture_id_curr]` as an absolute pack texture index, or `None`
+/// if the script never set `TextureIDCurrent`. Not step-gated:
+/// `gcPlayMObjMatAnim` assigns every live kind (RE-175), and the `u16`
+/// field truncates the float.
+fn resolve_texture(
+    j: &crate::matanim::MaterialJoint,
+    pack: &Pack<'_>,
+    mat_anim: u32,
+) -> Option<u32> {
+    let value = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
+    let a = pack.mat_anim(mat_anim)?;
+    if a.texture_count == 0 {
+        return None;
+    }
+    let index = (value.max(0.0) as u32).min(a.texture_count - 1);
+    let texture = a.textures[index as usize];
+    (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
 }
 
 /// Distinct `MatAnimDesc` scripts one spawned effect's own primitives can
@@ -809,42 +813,16 @@ impl EffectMaterialAnimator {
             .map(|(_, j)| j)
     }
 
-    /// The currently-resolved palette variant -- the same resolution rule as
-    /// [`MaterialAnimator::resolved_palette`], just against this player's
-    /// own restarted joints.
+    /// The currently-resolved palette variant, against this player's own
+    /// restarted joints; see [`resolve_palette`].
     pub fn resolved_palette(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
-        let j = self.joint(mat_anim)?;
-        if !j.track_is_stepped(crate::matanim::TRACK_PALETTE_ID) {
-            return None;
-        }
-        let v = j.track_value(crate::matanim::TRACK_PALETTE_ID)?;
-        let a = pack.mat_anim(mat_anim)?;
-        if a.palette_count == 0 {
-            return None;
-        }
-        let index = ((v.max(0.0) + 0.5) as u32).min(a.palette_count - 1);
-        Some(a.first_palette + index)
+        resolve_palette(self.joint(mat_anim)?, pack, mat_anim)
     }
 
-    /// The currently-resolved sprite variant, as an absolute pack texture
-    /// index ready for [`crate::pack::Pack::texture`] -- `TextureIDCurrent`
-    /// resolved into `MatAnimDesc::textures[]`, the sprite-table analogue of
-    /// [`Self::resolved_palette`].
+    /// The currently-resolved sprite variant, against this player's own
+    /// restarted joints; see [`resolve_texture`].
     pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
-        // Not gated on `track_is_stepped` the way `resolved_palette` is:
-        // `gcPlayMObjMatAnim` assigns `mobj->texture_id_curr` for any live
-        // kind, and RE-175 measured real manager scripts (CommonSpark's own
-        // UV/texture-id stream) driving it with a plain `Kind::Linear` ramp
-        // rather than a `_After` step list.
-        let j = self.joint(mat_anim)?;
-        let v = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
-        let a = pack.mat_anim(mat_anim)?;
-        if a.texture_count == 0 {
-            return None;
-        }
-        let index = ((v.max(0.0) + 0.5) as u32).min(a.texture_count - 1);
-        let texture = a.textures[index as usize];
-        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(texture)
+        resolve_texture(self.joint(mat_anim)?, pack, mat_anim)
     }
 
     /// The five colour tracks' current RGBA bytes -- `None` for any this
@@ -1263,6 +1241,53 @@ mod tests {
             Some(a.first_palette + 1),
             "clamped to the last real variant, not read past it"
         );
+    }
+
+    #[test]
+    fn a_linear_palette_hold_selects_its_truncated_index() {
+        // File 114's pond scripts open with `SetValBlock(PaletteID, 0)` held
+        // for 90 frames. `gcDrawMObjForDObj` reads `palettes[(s32)
+        // palette_id]` whatever the kind, so the hold draws palette 0, and a
+        // linear ramp through 1.75 draws palette 1.
+        let mut w = PackWriter::new();
+        const OP_SET_VAL_BLOCK: u32 = 3;
+        const OP_END: u32 = 0;
+        const TRACK_PALETTE_ID: u32 = crate::matanim::TRACK_PALETTE_ID as u32;
+        let file_bytes = mat_script(&[
+            mat_cmd(OP_SET_VAL_BLOCK, 1 << TRACK_PALETTE_ID, 0),
+            0.0f32.to_bits(),
+            mat_cmd(OP_SET_VAL_BLOCK, 1 << TRACK_PALETTE_ID, 4),
+            2.0f32.to_bits(),
+            mat_cmd(OP_END, 0, 0),
+        ]);
+        let palettes = alloc::vec![alloc::vec![0u32; 16]; 3];
+        let mat_anim = w.add_mat_anim(
+            105,
+            &file_bytes,
+            0,
+            0x1000,
+            &palettes,
+            &[],
+            [0; 10],
+            0,
+            [0; 3],
+        );
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let a = pack.mat_anim(mat_anim).unwrap();
+
+        let mut m = MaterialAnimator::new();
+        m.start(&pack);
+        let mut got = alloc::vec::Vec::new();
+        for _ in 0..4 {
+            m.tick(&pack);
+            got.push(
+                m.resolved_palette(&pack, mat_anim)
+                    .map(|p| p - a.first_palette),
+            );
+        }
+        // 0.0, 0.5, 1.0, 1.5 per frame.
+        assert_eq!(got, [Some(0), Some(0), Some(1), Some(1)]);
     }
 
     #[test]
