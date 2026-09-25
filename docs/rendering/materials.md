@@ -66,6 +66,8 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   fixed 64-slot array had left entries 64+ unticked (RE-322). Tick `n` is
   the decomp's frame `n`: the first parse keeps `AOBJ_ANIM_CHANGED`'s
   clock and keys start at `length = -anim_wait - anim_speed` (RE-324).
+  All fifteen tracks of all 103 entries match a decomp reference bit for
+  bit over 600 frames (`romtool matcolors`).
 - Colour tracks (RE-322; only Race to the Finish uses them, 2 `PrimColor`,
   1 `Light1Color` + `Light2Color` script). The packer marks where the
   register still holds the animated `MObj`'s value (`PRIM_ANIM`,

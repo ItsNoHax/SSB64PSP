@@ -493,6 +493,12 @@ impl MaterialAnimator {
         self.joints.is_empty()
     }
 
+    /// The joint driving `mat_anim`, for reference checks that read raw
+    /// track values rather than a resolved texture, palette or UV.
+    pub fn joint(&self, mat_anim: u32) -> Option<&crate::matanim::MaterialJoint> {
+        self.joints.get(mat_anim as usize)
+    }
+
     /// Advances every tracked animation one tick. Each entry ticks against
     /// its own source file's bytes, since different `MatAnimDesc`s can come
     /// from different archive files (RE-089's own same-file scope limit is

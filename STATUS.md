@@ -23,8 +23,8 @@ Replacement snapshot, not a journal. History lives in git and
 ## Verification baseline
 
 - `SSB64_ROM=… cargo test --workspace`: 868 tests pass.
-- `romtool matcolors --pack`: 3 stage colour entries, 0 mismatching ticks at
-  phase 0.
+- `romtool matcolors --pack`: 103 `MatAnimDesc`s, all 15 material and colour
+  tracks bit-exact against the decomp reference over 600 frames.
 - Both PSP builds pass.
 - Pack v34 built twice, byte-identical: 22,225,680 bytes, SHA-256
   `a40728812aa9e91c7f437899d1763bd0f97e30ab1f31372df470906112ea1818`.
