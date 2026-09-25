@@ -732,7 +732,9 @@ impl MaterialJoint {
             if bits == 0 {
                 break;
             }
-            if bits & 1 != 0 {
+            let set = bits & 1 != 0;
+            bits >>= 1;
+            if set {
                 let raw = u32_at(data, pc).ok_or(MatAnimError::Truncated { at: pc })?;
                 pc += 4;
                 let second = if per == 2 {
@@ -745,53 +747,65 @@ impl MaterialJoint {
                 let value = f32::from_bits(raw);
 
                 let t = &mut self.tracks[base + i];
+                // `SetTargetRate` writes the rate alone: no value, length or
+                // kind (`objanim.c`, `nGCAnimEvent32SetTargetRate`).
+                if opcode == OP_SET_TARGET_RATE {
+                    t.rate_target = value;
+                    continue;
+                }
                 t.value_base = t.value_target;
                 t.value_target = value;
                 t.length = -self.anim_wait - speed;
-                if payload != 0.0 {
-                    t.length_invert = payload_inverse;
-                }
 
                 match opcode {
                     OP_SET_VAL0_RATE_BLOCK | OP_SET_VAL0_RATE => {
                         t.rate_base = t.rate_target;
                         t.rate_target = 0.0;
                         t.kind = Kind::Cubic;
+                        if payload != 0.0 {
+                            t.length_invert = payload_inverse;
+                        }
                     }
                     OP_SET_VAL_RATE_BLOCK | OP_SET_VAL_RATE => {
                         t.rate_base = t.rate_target;
                         t.rate_target = second.unwrap_or(0.0);
                         t.kind = Kind::Cubic;
+                        if payload != 0.0 {
+                            t.length_invert = payload_inverse;
+                        }
                     }
-                    OP_SET_TARGET_RATE => {
-                        t.rate_target = value;
-                        t.value_target = t.value_base;
-                        t.kind = Kind::Cubic;
+                    OP_SET_VAL_AFTER_BLOCK | OP_SET_VAL_AFTER => {
+                        t.length_invert = payload;
+                        t.rate_target = 0.0;
+                        t.kind = Kind::Step;
                     }
-                    OP_SET_VAL_AFTER_BLOCK
-                    | OP_SET_VAL_AFTER
-                    | OP_EXT_VAL_AFTER_BLOCK
-                    | OP_EXT_VAL_AFTER => {
+                    // The colour window's step leaves the rates alone.
+                    OP_EXT_VAL_AFTER_BLOCK | OP_EXT_VAL_AFTER => {
                         t.length_invert = payload;
                         t.kind = Kind::Step;
                     }
+                    _ if color_window => {
+                        // `EXT_VAL(_BLOCK)`: a packed RGBA ramp. `track_color`
+                        // blends the bytes over `length_invert`; subtracting
+                        // the words as floats would be unused and invalid for
+                        // values that encode NaNs, so the rates stay put.
+                        if payload != 0.0 {
+                            t.length_invert = payload_inverse;
+                        }
+                        t.kind = Kind::Linear;
+                    }
                     _ => {
-                        // `SET_VAL(_BLOCK)`/`EXT_VAL(_BLOCK)`: linear ramp.
-                        // Extended tracks are packed RGBA words. Their byte
-                        // interpolation is performed by `track_color`, so
-                        // subtracting their float bit interpretations is both
-                        // unused and invalid for values that encode NaNs.
-                        t.rate_base = if !color_window && payload != 0.0 {
-                            (t.value_target - t.value_base) * payload_inverse
-                        } else {
-                            0.0
-                        };
+                        // `SET_VAL(_BLOCK)`: a linear ramp. A zero payload
+                        // keeps the previous rate, and `length_invert` is
+                        // left for a later cubic key.
+                        if payload != 0.0 {
+                            t.rate_base = (t.value_target - t.value_base) * payload_inverse;
+                        }
                         t.rate_target = 0.0;
                         t.kind = Kind::Linear;
                     }
                 }
             }
-            bits >>= 1;
         }
         Ok(pc)
     }
@@ -1105,6 +1119,73 @@ mod tick_tests {
         let track = j.tracks[0];
         assert_eq!(track.rate_base, 0.0);
         assert!(track.length_invert.is_finite());
+    }
+
+    #[test]
+    fn set_target_rate_writes_only_the_rate() {
+        // `nGCAnimEvent32SetTargetRate` leaves the value pair, length and
+        // kind alone, so a running linear ramp keeps running.
+        let d = script(&[
+            cmd(OP_SET_VAL, 1 << TRACK_TRA_U, 4),
+            2.0f32.to_bits(),
+            cmd(OP_SET_TARGET_RATE, 1 << TRACK_TRA_U, 0),
+            0.25f32.to_bits(),
+            cmd(OP_WAIT, 0, 10),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        for _ in 0..3 {
+            j.tick(&d, 1.0).expect("ticks");
+        }
+        let t = j.tracks[TRACK_TRA_U];
+        assert_eq!(t.kind, Kind::Linear);
+        assert_eq!(t.rate_target, 0.25);
+        assert_eq!(
+            j.track_value(TRACK_TRA_U),
+            Some(1.0),
+            "0.5 per frame from 0"
+        );
+    }
+
+    #[test]
+    fn a_material_step_clears_the_target_rate_a_later_cubic_inherits() {
+        // `nGCAnimEvent32SetValAfter` zeroes `rate_target`; the next
+        // `SetVal0Rate` moves it into `rate_base`.
+        let d = script(&[
+            cmd(OP_SET_VAL_RATE, 1 << TRACK_TRA_U, 0),
+            1.0f32.to_bits(),
+            3.0f32.to_bits(),
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_TRA_U, 1),
+            2.0f32.to_bits(),
+            cmd(OP_SET_VAL0_RATE_BLOCK, 1 << TRACK_TRA_U, 2),
+            4.0f32.to_bits(),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        assert_eq!(j.tracks[TRACK_TRA_U].rate_target, 0.0);
+        j.tick(&d, 1.0).expect("ticks");
+        let t = j.tracks[TRACK_TRA_U];
+        assert_eq!(t.kind, Kind::Cubic);
+        assert_eq!(t.rate_base, 0.0);
+    }
+
+    #[test]
+    fn a_zero_payload_linear_key_keeps_the_previous_rate() {
+        // `nGCAnimEvent32SetVal` sets `rate_base` only for a nonzero payload.
+        let d = script(&[
+            cmd(OP_SET_VAL_BLOCK, 1 << TRACK_TRA_U, 2),
+            4.0f32.to_bits(),
+            cmd(OP_SET_VAL_BLOCK, 1 << TRACK_TRA_U, 0),
+            10.0f32.to_bits(),
+            cmd(OP_WAIT, 0, 10),
+            cmd(OP_END, 0, 0),
+        ]);
+        let mut j = MaterialJoint::start(0, 0.0);
+        for _ in 0..3 {
+            j.tick(&d, 1.0).expect("ticks");
+        }
+        assert_eq!(j.tracks[TRACK_TRA_U].rate_base, 2.0);
     }
 
     #[test]

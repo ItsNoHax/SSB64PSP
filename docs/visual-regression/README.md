@@ -281,4 +281,12 @@ frame `n`, two frames later than before. Fourteen goldens changed and were
 refreshed; 68 of 68 then match twice. Changes range from 144 pixels
 (`r2-stage-yoshis-island`) to 81,856 (`r2-dream-land-water`) at 2x.
 Control: a build that pre-ticks every material joint twice reproduces all
-68 old goldens exactly. Per-golden counts are in RE-324.
+68 old goldens exactly. Per-golden counts are in RE-324. Correction
+(RE-325): the pack was not rebuilt, and RE-324's packer changes it.
+
+## 2026-09-25 RE-325 material resolvers
+
+Pack v34 rebuilt (`59cc6d36…`, +5,424 bytes: entry 91's sprite table gains
+its second texture). `resolved_palette` accepts every live kind and
+truncates. No golden changed; 68 of 68 match twice. No golden covers the
+frames either change affects (RE-325).

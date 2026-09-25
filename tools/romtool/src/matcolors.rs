@@ -1,5 +1,6 @@
-//! `romtool matcolors`: every material animation track against an
-//! independent decomp-semantics reference (RE-322, RE-324).
+//! `romtool matcolors`: every material animation track, and the resolvers
+//! built on them, against an independent decomp-semantics reference
+//! (RE-322, RE-324, RE-325).
 //!
 //! The reference below is written from `objanim.c`'s
 //! `gcParseMObjMatAnimJoint`/`gcPlayMObjMatAnim` directly, including the
@@ -11,6 +12,10 @@
 //! RGBA. An opcode the decomp's switch has no case for would hang the
 //! original (`default` does not advance the script), so the reference
 //! declines it rather than guessing.
+//!
+//! [`check_resolvers`] then feeds `gcDrawMObjForDObj`'s texture, palette,
+//! tile-window and `PRIM_LOD_FRAC` logic from those tracks and the ROM's
+//! own `MObjSub`, and compares `MaterialAnimator`'s resolvers with it.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -18,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use ssb_rom::archive::Archive;
 use ssb_rom::pack::{flags, Pack};
+use ssb_rom::skeleton::{LodBlendState, MaterialUv};
 
 type Res = Result<(), Box<dyn std::error::Error>>;
 
@@ -405,6 +411,358 @@ fn runtime_frame(j: &ssb_rom::matanim::MaterialJoint) -> Frame {
     })
 }
 
+/// What `MaterialAnimator`'s resolvers returned for one entry on one frame.
+#[derive(Clone, Copy)]
+struct Resolved {
+    texture: Option<u32>,
+    palette: Option<u32>,
+    uv: Option<MaterialUv>,
+    lod: Option<LodBlendState>,
+}
+
+const MOBJ_FLAG_ALPHA: u16 = 1 << 0;
+const MOBJ_FLAG_SPLIT: u16 = 1 << 1;
+const MOBJ_FLAG_PALETTE: u16 = 1 << 2;
+const MOBJ_FLAG_FRAC: u16 = 1 << 4;
+const MOBJ_FLAG_TILE0: u16 = 0x20;
+const MOBJ_FLAG_TILE1: u16 = 0x40;
+const MOBJ_FLAG_TEXTURE: u16 = 1 << 7;
+
+/// The `MObjSub` fields `gcDrawMObjForDObj` reads for textures, palettes
+/// and tile windows (`objtypes.h`'s layout), read straight from the ROM.
+struct RomSub {
+    flags: u16,
+    unk0a: u16,
+    unk0c: u16,
+    unk0e: u16,
+    unk10: i32,
+    /// `trau`, `trav`, `scau`, `scav`.
+    uv: [f32; 4],
+    unk38: u16,
+    unk3a: u16,
+    /// `scrollu`, `scrollv`.
+    scroll: [f32; 2],
+    prim_l: u8,
+}
+
+impl RomSub {
+    fn read(data: &[u8], at: u32) -> Result<Self, String> {
+        let at = at as usize;
+        let bytes = |off: usize, n: usize| {
+            data.get(at + off..at + off + n)
+                .ok_or_else(|| format!("MObjSub at 0x{at:X} runs off its file"))
+        };
+        let u16_ = |off| bytes(off, 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
+        let u32_ = |off| bytes(off, 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+        let f32_ = |off| u32_(off).map(f32::from_bits);
+        let flags = u16_(0x30)?;
+        Ok(RomSub {
+            // `MOBJ_FLAG_NONE` draws as `TEXTURE | 0x20 | ALPHA`.
+            flags: if flags == 0 {
+                MOBJ_FLAG_TEXTURE | MOBJ_FLAG_TILE0 | MOBJ_FLAG_ALPHA
+            } else {
+                flags
+            },
+            unk0a: u16_(0x0A)?,
+            unk0c: u16_(0x0C)?,
+            unk0e: u16_(0x0E)?,
+            unk10: u32_(0x10)? as i32,
+            uv: [f32_(0x14)?, f32_(0x18)?, f32_(0x1C)?, f32_(0x20)?],
+            unk38: u16_(0x38)?,
+            unk3a: u16_(0x3A)?,
+            scroll: [f32_(0x3C)?, f32_(0x40)?],
+            prim_l: bytes(0x54, 1)?[0],
+        })
+    }
+}
+
+/// Resolver mismatches, by resolver.
+#[derive(Default)]
+struct ResolverTally {
+    /// Frames the decomp or the runtime drew something through each
+    /// resolver: texture, palette, tile 0, two-tile blend.
+    checked: [usize; 4],
+    bad: [usize; 4],
+    /// Static checks of the packed tables against the ROM's arrays.
+    table_bad: usize,
+    /// Entries whose `MObjSub` loads a second tile the packer did not lower.
+    lod_not_lowered: usize,
+}
+
+const RESOLVERS: [&str; 4] = ["texture", "palette", "tile0 UV", "two-tile blend"];
+
+/// Compares a resolved window with the fields `gcDrawMObjForDObj` reads:
+/// live and rest `Tra*`/`Sca*`, form and tile parameters. `None` when equal.
+fn uv_diff(
+    got: &MaterialUv,
+    live: [f32; 4],
+    rest: [f32; 4],
+    mode: u32,
+    params: [u16; 3],
+) -> Option<String> {
+    let want = [
+        live[0], live[1], live[2], live[3], rest[0], rest[1], rest[2], rest[3],
+    ];
+    let have = [
+        got.trau,
+        got.trav,
+        got.scau,
+        got.scav,
+        got.base_trau,
+        got.base_trav,
+        got.base_scau,
+        got.base_scav,
+    ];
+    let params_have = [got.tile_bias, got.tile_width, got.tile_height];
+    let params_want = params.map(f32::from);
+    if want.map(f32::to_bits) == have.map(f32::to_bits)
+        && got.mode == mode
+        && params_have.map(f32::to_bits) == params_want.map(f32::to_bits)
+    {
+        return None;
+    }
+    Some(format!(
+        "want {want:?} mode {mode} params {params_want:?}, got {have:?} mode {} params {params_have:?}",
+        got.mode
+    ))
+}
+
+/// Checks one entry's resolved texture, palette, tile-0 window and
+/// two-tile blend against `gcDrawMObjForDObj` fed by the reference's
+/// tracks and the ROM's `MObjSub`. Returns the first difference per
+/// resolver.
+fn check_resolvers(
+    archive: &Archive,
+    pack: &Pack<'_>,
+    i: u32,
+    expected: &[Frame],
+    got: &[Resolved],
+    tally: &mut ResolverTally,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let a = pack.mat_anim(i).ok_or("missing MatAnimDesc")?;
+    let rom_file = archive.load(a.source_file)?;
+    let sub = RomSub::read(&rom_file.data, a.source_offset)?;
+    let lod = pack.lod_blend(i);
+    let f = sub.flags;
+    let mut notes: Vec<String> = Vec::new();
+    let mut note = |notes: &mut Vec<String>, kind: usize, msg: String| {
+        tally.bad[kind] += 1;
+        if !notes.iter().any(|n| n.starts_with(RESOLVERS[kind])) {
+            notes.push(format!("{}: {msg}", RESOLVERS[kind]));
+        }
+    };
+
+    // Static: the packed tables follow the ROM's arrays. Equal sprite
+    // pointers must share a packed texture and distinct ones must not;
+    // palettes must hold the ROM's RGBA5551 entries.
+    let same_shape = |ptrs: &[ssb_rom::mobj::Ptr], packed: &[u32]| {
+        (0..ptrs.len())
+            .all(|x| (0..ptrs.len()).all(|y| (ptrs[x] == ptrs[y]) == (packed[x] == packed[y])))
+    };
+    let mut table_notes = Vec::new();
+    if a.texture_count > 0 {
+        let n = a.texture_count as usize;
+        match ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, n) {
+            Some(ptrs) if same_shape(&ptrs, &a.textures[..n]) => {}
+            Some(_) => table_notes.push("textures[] do not follow sprites[]".to_string()),
+            None => table_notes.push("sprites[] unreadable".to_string()),
+        }
+    }
+    if let Some(l) = lod {
+        let n = l.next_count as usize;
+        match ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, n) {
+            Some(ptrs) if same_shape(&ptrs, &l.next_textures[..n]) => {}
+            Some(_) => table_notes.push("next_textures[] do not follow sprites[]".to_string()),
+            None => table_notes.push("sprites[] unreadable".to_string()),
+        }
+    }
+    if a.palette_count > 0 {
+        let ptrs =
+            ssb_rom::mobj::read_palettes(&rom_file, a.source_offset, a.palette_count as usize)
+                .ok_or("palettes[] unreadable")?;
+        for (k, p) in ptrs.iter().enumerate() {
+            let packed = pack
+                .mat_anim_palette(a.first_palette + k as u32)
+                .ok_or("missing packed palette")?;
+            let words = pack
+                .mat_anim_palette_data(&packed)
+                .ok_or("missing palette bytes")?;
+            let home = match p.file {
+                Some(id) => archive.load(u32::from(id))?,
+                None => rom_file.clone(),
+            };
+            let n = packed.palette_len as usize;
+            let rom = home
+                .data
+                .get(p.offset as usize..p.offset as usize + 2 * n)
+                .ok_or("palette runs off its file")?;
+            let matches = (0..n).all(|e| {
+                let v = u16::from_be_bytes([rom[2 * e], rom[2 * e + 1]]);
+                let w = u32::from_le_bytes(words[4 * e..4 * e + 4].try_into().unwrap());
+                let top = |shift: u32| (w >> shift) as u16 & 0xF8;
+                top(0) >> 3 == (v >> 11) & 0x1F
+                    && top(8) >> 3 == (v >> 6) & 0x1F
+                    && top(16) >> 3 == (v >> 1) & 0x1F
+                    && (w >> 24 != 0) == (v & 1 != 0)
+            });
+            if !matches {
+                table_notes.push(format!("palette {k} differs from palettes[{k}]"));
+            }
+        }
+    }
+    tally.table_bad += table_notes.len();
+    notes.extend(table_notes.into_iter().map(|n| format!("table: {n}")));
+
+    let loads_next =
+        f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT) != 0 && f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0;
+    if loads_next && lod.is_none() && expected.iter().any(|e| e[5].is_some() || e[8].is_some()) {
+        tally.lod_not_lowered += 1;
+    }
+    let rest_uv = sub.uv;
+    let tile0_mode = if f & MOBJ_FLAG_TILE0 == 0 {
+        0
+    } else if sub.unk10 == 2 {
+        2
+    } else {
+        1
+    } | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 };
+
+    for (n, (e, g)) in expected.iter().zip(got).enumerate() {
+        let frame = n + 1;
+        let live = |t: usize| e[t].map(f32::from_bits);
+        // `MObj` state after `gcPlayMObjMatAnim`, from `gcAddMObjForDObj`'s
+        // initial values (`objman.c:1321-1328`) where no track has written.
+        let lfrac = live(8).unwrap_or(sub.prim_l as f32 / 255.0);
+        let (curr, next) = if f & MOBJ_FLAG_FRAC != 0 {
+            let trunc = lfrac as i32;
+            (Some(trunc as u16), (trunc + 1) as u16)
+        } else {
+            (
+                live(0).map(|v| v as i32 as u16),
+                live(5).map_or(0, |v| v as i32 as u16),
+            )
+        };
+        let uv: [f32; 4] = core::array::from_fn(|k| live(1 + k).unwrap_or(rest_uv[k]));
+        let scroll: [f32; 2] = core::array::from_fn(|k| live(6 + k).unwrap_or(sub.scroll[k]));
+
+        // Texture: `sprites[texture_id_curr]` under `FRAC | ALPHA`. Only a
+        // moving index needs the resolver; index 0 is the packed texture.
+        let want_tex = curr.filter(|_| f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0);
+        if want_tex.is_some() || g.texture.is_some() {
+            tally.checked[0] += 1;
+            let want = want_tex.map(|k| {
+                a.textures
+                    .get(k as usize)
+                    .copied()
+                    .filter(|_| u32::from(k) < a.texture_count)
+            });
+            let ok = match (want, g.texture) {
+                (Some(Some(t)), Some(h)) => t == h,
+                // A NO_ANIM slot resolves to the packed texture.
+                (Some(Some(t)), None) => t == ssb_rom::pack::TextureDesc::NO_ANIM,
+                _ => false,
+            };
+            if !ok {
+                note(
+                    &mut notes,
+                    0,
+                    format!(
+                        "frame {frame}: index {want_tex:?} (table {:?}), runtime {:?}",
+                        &a.textures[..a.texture_count as usize],
+                        g.texture
+                    ),
+                );
+            }
+        }
+
+        // Palette: `palettes[(s32)palette_id]` under `PALETTE`.
+        let want_pal = live(9)
+            .map(|v| v as i32)
+            .filter(|_| f & MOBJ_FLAG_PALETTE != 0);
+        if want_pal.is_some() || g.palette.is_some() {
+            tally.checked[1] += 1;
+            let ok = match (want_pal, g.palette) {
+                (Some(k), Some(p)) => {
+                    k >= 0 && (k as u32) < a.palette_count && p == a.first_palette + k as u32
+                }
+                // No packed table: one palette, the packed texture's.
+                (Some(0), None) => a.palette_count == 0,
+                _ => false,
+            };
+            if !ok {
+                note(
+                    &mut notes,
+                    1,
+                    format!(
+                        "frame {frame}: index {want_pal:?} of {}, runtime {:?} (first {})",
+                        a.palette_count, g.palette, a.first_palette
+                    ),
+                );
+            }
+        }
+
+        // Tile 0 and `gSPTexture`.
+        if f & (MOBJ_FLAG_TILE0 | MOBJ_FLAG_TEXTURE) != 0 {
+            let moved = uv.map(f32::to_bits) != rest_uv.map(f32::to_bits);
+            if moved || g.uv.is_some() {
+                tally.checked[2] += 1;
+                let diff = match &g.uv {
+                    None => Some("runtime draws the rest window".to_string()),
+                    Some(_) if f & MOBJ_FLAG_TILE0 != 0 && sub.unk10 == 1 => {
+                        Some("unk10 == 1 halving is not modelled".to_string())
+                    }
+                    Some(got) => uv_diff(
+                        got,
+                        uv,
+                        rest_uv,
+                        tile0_mode,
+                        [sub.unk0a, sub.unk0c, sub.unk0e],
+                    ),
+                };
+                if let Some(d) = diff {
+                    note(&mut notes, 2, format!("frame {frame}: {d}"));
+                }
+            }
+        }
+
+        // Two-tile blend: `sprites[texture_id_next]`, `PRIM_LOD_FRAC` and
+        // tile 1, for the entries the packer lowered.
+        if let Some(l) = lod {
+            tally.checked[3] += 1;
+            let frac = if f & MOBJ_FLAG_FRAC != 0 {
+                ((lfrac - (lfrac as i32) as f32) * 256.0) as u32 as u8
+            } else {
+                (lfrac * 255.0) as u32 as u8
+            };
+            let texture = (u32::from(next) < l.next_count).then(|| l.next_textures[next as usize]);
+            let tile1_moved = [uv[2], uv[3], scroll[0], scroll[1]].map(f32::to_bits)
+                != [rest_uv[2], rest_uv[3], sub.scroll[0], sub.scroll[1]].map(f32::to_bits);
+            let diff = match &g.lod {
+                None => Some(format!("runtime has no blend (next {next}, frac {frac})")),
+                Some(got) if Some(got.texture) != texture || got.frac != frac => Some(format!(
+                    "next {next} texture {texture:?} frac {frac}, runtime texture {} frac {}",
+                    got.texture, got.frac
+                )),
+                Some(got) => match (&got.uv, f & MOBJ_FLAG_TILE1 != 0 && tile1_moved) {
+                    (None, false) => None,
+                    (None, true) => Some("runtime draws the rest tile-1 window".to_string()),
+                    (Some(w), _) => uv_diff(
+                        w,
+                        [scroll[0], scroll[1], uv[2], uv[3]],
+                        [sub.scroll[0], sub.scroll[1], rest_uv[2], rest_uv[3]],
+                        1 | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 },
+                        [sub.unk0a, sub.unk38, sub.unk3a],
+                    ),
+                },
+            };
+            if let Some(d) = diff {
+                note(&mut notes, 3, format!("frame {frame}: {d}"));
+            }
+        }
+    }
+    Ok(notes)
+}
+
 pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     let mut pack_path: Option<PathBuf> = None;
     let mut it = opts.iter();
@@ -434,11 +792,41 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     animator.start(&pack);
     const TICKS: u32 = 600;
     let mut runtime: Vec<Vec<Frame>> = vec![Vec::new(); animator.len()];
+    let mut resolved: Vec<Vec<Resolved>> = vec![Vec::new(); animator.len()];
     for _ in 0..TICKS {
         animator.tick(&pack);
-        for (i, frames) in runtime.iter_mut().enumerate() {
-            let j = animator.joint(i as u32).ok_or("animator lost a joint")?;
+        for (i, (frames, res)) in runtime.iter_mut().zip(&mut resolved).enumerate() {
+            let i = i as u32;
+            let j = animator.joint(i).ok_or("animator lost a joint")?;
             frames.push(runtime_frame(j));
+            res.push(Resolved {
+                texture: animator.resolved_texture(&pack, i),
+                palette: animator.resolved_palette(&pack, i),
+                uv: animator.resolved_uv(&pack, i),
+                lod: animator.resolved_lod_blend(&pack, i),
+            });
+        }
+    }
+    let mut tally = ResolverTally::default();
+
+    // Effect players restart per spawn but resolve through the same rules;
+    // started at frame 0 they must agree with the stage clock tick for tick.
+    let mut effect_bad = 0usize;
+    let all: Vec<u32> = (0..pack.mat_anim_count()).collect();
+    for chunk in all.chunks(ssb_rom::skeleton::MAX_EFFECT_MAT_ANIMS) {
+        let mut effect = ssb_rom::skeleton::EffectMaterialAnimator::new();
+        effect.start(&pack, chunk.iter().copied());
+        #[allow(clippy::needless_range_loop)] // `n` indexes each entry's frames
+        for n in 0..TICKS as usize {
+            effect.tick(&pack);
+            for &i in chunk {
+                let stage = &resolved[i as usize][n];
+                if effect.resolved_texture(&pack, i) != stage.texture
+                    || effect.resolved_palette(&pack, i) != stage.palette
+                {
+                    effect_bad += 1;
+                }
+            }
         }
     }
 
@@ -534,6 +922,16 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         if bad > 0 {
             println!("  {bad} of {TICKS} ticks differ from the reference");
         }
+        for n in check_resolvers(
+            &archive,
+            &pack,
+            i,
+            &expected,
+            &resolved[i as usize],
+            &mut tally,
+        )? {
+            println!("  {n}");
+        }
         // Stage colour entries keep RE-322's sampled table.
         if !stage || !live.iter().any(|&t| t >= EXT) {
             continue;
@@ -625,11 +1023,27 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             .join(" ")
     );
     println!("{mismatches} mismatching tick(s) over {TICKS} per entry");
+    println!("Resolvers against gcDrawMObjForDObj:");
+    for (k, name) in RESOLVERS.iter().enumerate() {
+        println!(
+            "  {name:<16} {:6} frames checked  {:6} mismatching",
+            tally.checked[k], tally.bad[k]
+        );
+    }
+    println!(
+        "  {} packed-table difference(s); {} entr(ies) load a second tile the packer did not lower",
+        tally.table_bad, tally.lod_not_lowered
+    );
+    println!("  {effect_bad} effect-player tick(s) resolve differently from the stage player");
+    let resolver_bad = tally.bad.iter().sum::<usize>() + tally.table_bad + effect_bad;
     if !declined.is_empty() {
         return Err(format!("the reference declined MatAnimDesc(s) {declined:?}").into());
     }
     if mismatches > 0 {
         return Err("runtime material tracks disagree with the decomp reference".into());
+    }
+    if resolver_bad > 0 {
+        return Err("material resolvers disagree with the decomp draw path".into());
     }
     Ok(())
 }
