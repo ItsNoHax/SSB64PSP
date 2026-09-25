@@ -410,6 +410,32 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 87,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Samus as u32 {
+        match status {
+            AnyStatus::Common(Status::Attack11) => 123,
+            AnyStatus::Common(Status::Attack12) => 124,
+            AnyStatus::Common(Status::AttackDash) => 125,
+            AnyStatus::Common(Status::AttackS3Hi) => 126,
+            AnyStatus::Common(Status::AttackS3HiS) => 127,
+            AnyStatus::Common(Status::AttackS3) => 128,
+            AnyStatus::Common(Status::AttackS3LwS) => 129,
+            AnyStatus::Common(Status::AttackS3Lw) => 130,
+            AnyStatus::Common(Status::AttackHi3) => 131,
+            AnyStatus::Common(Status::AttackLw3) => 132,
+            AnyStatus::Common(Status::AttackS4Hi) => 133,
+            AnyStatus::Common(Status::AttackS4HiS) => 134,
+            AnyStatus::Common(Status::AttackS4) => 135,
+            AnyStatus::Common(Status::AttackS4LwS) => 136,
+            AnyStatus::Common(Status::AttackS4Lw) => 137,
+            AnyStatus::Common(Status::AttackHi4) => 138,
+            AnyStatus::Common(Status::AttackLw4) => 139,
+            AnyStatus::Common(Status::AttackAirN) => 140,
+            AnyStatus::Common(Status::AttackAirF) => 141,
+            AnyStatus::Common(Status::AttackAirB) => 142,
+            AnyStatus::Common(Status::AttackAirHi) => 143,
+            AnyStatus::Common(Status::AttackAirLw) => 144,
+            _ => status.anim_slot(),
+        }
     } else {
         status.anim_slot()
     } as u32;
@@ -649,7 +675,7 @@ impl FighterScene {
             AnyStatus::Mario(
                 ssb_game::status::MarioStatus::SpecialHi
                     | ssb_game::status::MarioStatus::SpecialAirHi
-            )
+            ) | AnyStatus::Samus(ssb_game::status::SamusStatus::SpecialHi)
         ) {
             if let (Some(before), Some(current)) =
                 (self.root_motion_before_tick, self.skeleton.pose(0))

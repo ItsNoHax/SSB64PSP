@@ -42,6 +42,10 @@ pub enum WeaponKind {
     MarioFireball,
     /// `nWPKindBlaster`, created by Fox's neutral special.
     FoxBlaster,
+    /// `nWPKindChargeShot` at the given charge level, already released.
+    SamusChargeShot(u8),
+    /// `nWPKindSamusBomb`, created by Samus's down special.
+    SamusBomb,
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -140,10 +144,286 @@ impl FoxBlaster {
     }
 }
 
+/// `dWPSamusChargeShotWeaponAttributes` (US): `(gfx size, X velocity,
+/// damage, attack size, map-collision size)` per charge level.
+pub const SAMUS_CHARGE_SHOT_LEVELS: [(f32, f32, i32, f32, f32); 8] = [
+    (150.0, 60.0, 3, 100.0, 10.0),
+    (230.0, 62.0, 6, 120.0, 10.0),
+    (280.0, 64.0, 9, 140.0, 10.0),
+    (340.0, 66.0, 12, 160.0, 10.0),
+    (410.0, 68.0, 15, 180.0, 10.0),
+    (490.0, 70.0, 18, 200.0, 10.0),
+    (600.0, 72.0, 21, 240.0, 10.0),
+    (700.0, 74.0, 26, 260.0, 10.0),
+];
+/// `WPCHARGESHOT_GFX_SIZE_DIV`.
+pub const SAMUS_CHARGE_SHOT_GFX_SIZE_DIV: f32 = 30.0;
+
+/// `dSamusSpecial1_ChargeShot_WeaponAttributes`: the knockback that
+/// `wpSamusChargeShotLaunch` keeps while it replaces damage and size.
+pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
+    damage: 0,
+    offset: Vec3::ZERO,
+    radius: 0.0,
+    angle: 361,
+    kb_scale: 100,
+    kb_weight: 0,
+    kb_base: 0,
+};
+
+/// Source `wpSamusChargeShot` after release: a straight shot that ends on
+/// any map contact (`wpMapTestAllCheckCollEnd`) or registered hit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamusChargeShot {
+    pub owner_port: u8,
+    pub charge: u8,
+    pub damage: i32,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    /// `rotate.z`, presentation only.
+    pub rotate_z: f32,
+}
+
+impl SamusChargeShot {
+    fn new(spawn: WeaponSpawn, charge: u8) -> Self {
+        let level = SAMUS_CHARGE_SHOT_LEVELS[usize::from(charge.min(7))];
+        Self {
+            owner_port: spawn.owner_port,
+            charge: charge.min(7),
+            damage: level.2,
+            position: spawn.position,
+            velocity: Vec3::new(level.1 * spawn.facing, 0.0, 0.0),
+            rotate_z: 0.0,
+        }
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        let level = SAMUS_CHARGE_SHOT_LEVELS[usize::from(self.charge)];
+        Hitbox {
+            damage: self.damage,
+            radius: level.3 * 0.5,
+            ..SAMUS_CHARGE_SHOT_HITBOX
+        }
+    }
+
+    /// Display scale of the sprite, `gfx_size / 30`.
+    pub fn scale(&self) -> f32 {
+        SAMUS_CHARGE_SHOT_LEVELS[usize::from(self.charge)].0 / SAMUS_CHARGE_SHOT_GFX_SIZE_DIV
+    }
+
+    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let lr = if self.velocity.x < 0.0 { -1.0 } else { 1.0 };
+        self.rotate_z -= 18.0f32.to_radians() * lr;
+        let half = SAMUS_CHARGE_SHOT_LEVELS[usize::from(self.charge)].4 * 0.5;
+        let coll = BodyColl {
+            top: half,
+            center: 0.0,
+            bottom: -half,
+            width: half,
+        };
+        let wanted = self.position + self.velocity;
+        if map_contact(surfaces(), self.position, wanted, coll).is_some() {
+            return false;
+        }
+        self.position = wanted;
+        true
+    }
+}
+
+/// `wpvars.h` Bomb constants.
+pub const SAMUS_BOMB_WAIT_LIFETIME: u16 = 100;
+pub const SAMUS_BOMB_EXPLODE_LIFETIME: u16 = 6;
+pub const SAMUS_BOMB_EXPLODE_SIZE: f32 = 180.0;
+pub const SAMUS_BOMB_WAIT_VEL_Y: f32 = 10.0;
+pub const SAMUS_BOMB_WAIT_GRAVITY: f32 = 1.0;
+pub const SAMUS_BOMB_WAIT_TVEL: f32 = 50.0;
+pub const SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL: f32 = 0.9;
+pub const SAMUS_BOMB_FLOOR_MOD_VEL: f32 = 0.6;
+pub const SAMUS_BOMB_GROUND_MIN_SPEED: f32 = 8.0;
+
+/// `llSamusMainBombWeaponAttributes` in `217_SamusMain.c` (the words at file
+/// offset 0x0C onward): size 160, angle 361, knockback 65/0/10, 9 damage.
+pub const SAMUS_BOMB_HITBOX: Hitbox = Hitbox {
+    damage: 9,
+    offset: Vec3::ZERO,
+    radius: 80.0,
+    angle: 361,
+    kb_scale: 65,
+    kb_weight: 0,
+    kb_base: 10,
+};
+pub const SAMUS_BOMB_MAP_COLL: BodyColl = BodyColl {
+    top: 75.0,
+    center: 0.0,
+    bottom: -75.0,
+    width: 75.0,
+};
+
+/// Source `wpSamusBomb`. It bounces, settles and explodes after 100 frames
+/// or on its first registered hit; the explosion lives six more frames and
+/// keeps the hit record, so a fighter it already hit is not hit again.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SamusBomb {
+    pub owner_port: u8,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub lifetime: u16,
+    pub exploded: bool,
+    /// `lr`, set from the launch and after every rebound.
+    pub lr: f32,
+    /// The floor line while grounded, with `vel_ground`.
+    pub floor: Option<(Segment, f32)>,
+    /// Ports already in the attack record.
+    pub hit_ports: u8,
+    /// `bomb_blink_timer` and the current palette, presentation only.
+    pub blink_timer: u16,
+    pub blink_palette: u8,
+}
+
+impl SamusBomb {
+    fn new(spawn: WeaponSpawn) -> Self {
+        Self {
+            owner_port: spawn.owner_port,
+            position: spawn.position,
+            velocity: Vec3::new(0.0, SAMUS_BOMB_WAIT_VEL_Y, 0.0),
+            lifetime: SAMUS_BOMB_WAIT_LIFETIME,
+            exploded: false,
+            lr: spawn.facing,
+            floor: None,
+            hit_ports: 0,
+            blink_timer: 8,
+            blink_palette: 0,
+        }
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        Hitbox {
+            radius: if self.exploded {
+                SAMUS_BOMB_EXPLODE_SIZE
+            } else {
+                SAMUS_BOMB_HITBOX.radius
+            },
+            ..SAMUS_BOMB_HITBOX
+        }
+    }
+
+    /// `wpSamusBombExplodeInitVars`.
+    fn explode(&mut self) {
+        self.exploded = true;
+        self.lifetime = SAMUS_BOMB_EXPLODE_LIFETIME;
+        self.velocity = Vec3::ZERO;
+        self.floor = None;
+    }
+
+    fn set_lr(&mut self) {
+        self.lr = if self.velocity.x < 0.0 { -1.0 } else { 1.0 };
+    }
+
+    /// `wpSamusBombProcUpdate` (or the explosion's) then `wpSamusBombProcMap`.
+    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        self.lifetime -= 1;
+        if self.exploded {
+            return self.lifetime != 0;
+        }
+        if self.lifetime == 0 {
+            self.explode();
+            return true;
+        }
+        match self.floor {
+            None => {
+                self.velocity.y -= SAMUS_BOMB_WAIT_GRAVITY;
+                let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
+                if speed > SAMUS_BOMB_WAIT_TVEL {
+                    let scale = SAMUS_BOMB_WAIT_TVEL / speed;
+                    self.velocity.x *= scale;
+                    self.velocity.y *= scale;
+                }
+            }
+            Some((segment, vel_ground)) => {
+                // `wpMainVelGroundTransferAir` along the floor line.
+                let normal = surface_normal(MapSurfaceKind::Floor, segment);
+                self.velocity.x = self.lr * normal.y * vel_ground;
+                self.velocity.y = self.lr * -normal.x * vel_ground;
+            }
+        }
+        self.blink_timer -= 1;
+        if self.blink_timer == 0 {
+            self.blink_palette ^= 1;
+            self.blink_timer = if self.lifetime > 40 {
+                8
+            } else if self.lifetime > 20 {
+                5
+            } else {
+                3
+            };
+        }
+
+        let wanted = self.position + self.velocity;
+        if let Some((segment, _)) = self.floor {
+            // `wpMapTestLRWallCheckFloor`: slide along the line until it ends.
+            let (lo, hi) = if segment.x1 <= segment.x2 {
+                (segment.x1, segment.x2)
+            } else {
+                (segment.x2, segment.x1)
+            };
+            if wanted.x < f32::from(lo) || wanted.x > f32::from(hi) {
+                self.floor = None;
+                self.position = wanted;
+            } else {
+                let y = segment_y(segment, wanted.x) - SAMUS_BOMB_MAP_COLL.bottom;
+                self.position = Vec3::new(wanted.x, y, wanted.z);
+            }
+            return true;
+        }
+        match map_contact(surfaces(), self.position, wanted, SAMUS_BOMB_MAP_COLL) {
+            Some(hit) => {
+                self.position = hit.position;
+                let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
+                self.velocity.x -= 2.0 * dot * hit.normal.x;
+                self.velocity.y -= 2.0 * dot * hit.normal.y;
+                if hit.kind == MapSurfaceKind::Floor {
+                    self.velocity.x *= SAMUS_BOMB_FLOOR_MOD_VEL;
+                    self.velocity.y *= SAMUS_BOMB_FLOOR_MOD_VEL;
+                    self.set_lr();
+                    let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
+                    if speed < SAMUS_BOMB_GROUND_MIN_SPEED {
+                        // `wpMapSetGround`.
+                        self.floor = Some((hit.segment, self.velocity.x * self.lr));
+                    }
+                } else {
+                    self.velocity.x *= SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL;
+                    self.velocity.y *= SAMUS_BOMB_WAIT_COLLIDE_MOD_VEL;
+                    self.set_lr();
+                }
+            }
+            None => self.position = wanted,
+        }
+        true
+    }
+}
+
+fn segment_y(s: Segment, x: f32) -> f32 {
+    let dx = f32::from(s.x2 - s.x1);
+    if dx == 0.0 {
+        return f32::from(s.y1);
+    }
+    f32::from(s.y1) + (x - f32::from(s.x1)) * f32::from(s.y2 - s.y1) / dx
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Weapon {
     Fireball(MarioFireball),
     Blaster(FoxBlaster),
+    ChargeShot(SamusChargeShot),
+    Bomb(SamusBomb),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -241,6 +521,10 @@ impl WeaponPool {
         *slot = Some(match spawn.kind {
             WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn)),
             WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
+            WeaponKind::SamusChargeShot(charge) => {
+                Weapon::ChargeShot(SamusChargeShot::new(spawn, charge))
+            }
+            WeaponKind::SamusBomb => Weapon::Bomb(SamusBomb::new(spawn)),
         });
         true
     }
@@ -257,6 +541,8 @@ impl WeaponPool {
                 let alive = match weapon {
                     Weapon::Fireball(fireball) => fireball.tick(surfaces),
                     Weapon::Blaster(blaster) => blaster.tick(surfaces),
+                    Weapon::ChargeShot(shot) => shot.tick(surfaces),
+                    Weapon::Bomb(bomb) => bomb.tick(surfaces),
                 };
                 if !alive {
                     *slot = None;
@@ -274,8 +560,25 @@ impl WeaponPool {
             let (owner, mut hitbox, position) = match weapon {
                 Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
                 Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
+                Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position),
+                Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position),
             };
             if owner == defender.port {
+                continue;
+            }
+            // The Bomb's `WPAttributes::can_reflect` is clear, and its attack
+            // record outlives the explosion.
+            if let Weapon::Bomb(bomb) = weapon {
+                let bit = 1u8 << (defender.port & 7);
+                if bomb.hit_ports & bit != 0 {
+                    continue;
+                }
+                if attack::apply_hitbox_at(&hitbox, position, defender) {
+                    bomb.hit_ports |= bit;
+                    if !bomb.exploded {
+                        bomb.explode();
+                    }
+                }
                 continue;
             }
             if defender.kind == crate::fighter::FighterKind::Fox
@@ -311,6 +614,14 @@ impl WeaponPool {
                             b.scale_x = 1.0;
                             b.damage = ((b.damage as f32 * 1.8 + 0.99) as i32).min(100);
                         }
+                        Weapon::ChargeShot(c) => {
+                            c.owner_port = defender.port;
+                            if c.velocity.x * defender.facing.sign() < 0.0 {
+                                c.velocity.x = -c.velocity.x;
+                            }
+                            c.damage = ((c.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                        }
+                        Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
                     }
                     crate::status::set_fox_special_lw_hit(defender);
                     continue;
@@ -319,6 +630,8 @@ impl WeaponPool {
             hitbox.damage = match weapon {
                 Weapon::Fireball(f) => f.damage,
                 Weapon::Blaster(b) => b.damage,
+                Weapon::ChargeShot(c) => c.damage,
+                Weapon::Bomb(_) => hitbox.damage,
             };
             if attack::apply_hitbox_at(&hitbox, position, defender) {
                 *slot = None;
@@ -339,14 +652,28 @@ impl WeaponPool {
     pub fn fireballs(&self) -> impl Iterator<Item = MarioFireball> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Fireball(f) => Some(*f),
-            Weapon::Blaster(_) => None,
+            _ => None,
         })
     }
 
     pub fn blasters(&self) -> impl Iterator<Item = FoxBlaster> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Blaster(b) => Some(*b),
-            Weapon::Fireball(_) => None,
+            _ => None,
+        })
+    }
+
+    pub fn charge_shots(&self) -> impl Iterator<Item = SamusChargeShot> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::ChargeShot(c) => Some(*c),
+            _ => None,
+        })
+    }
+
+    pub fn bombs(&self) -> impl Iterator<Item = SamusBomb> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Bomb(b) => Some(*b),
+            _ => None,
         })
     }
 }
@@ -356,6 +683,8 @@ struct MapContact {
     position: Vec3,
     normal: Vec2,
     time: f32,
+    kind: MapSurfaceKind,
+    segment: Segment,
 }
 
 /// Finds the first one-sided contact of a weapon's authored map-collision
@@ -390,6 +719,8 @@ where
             position: Vec3::new(from.x + delta.x * time, from.y + delta.y * time, from.z),
             normal,
             time,
+            kind: surface.kind,
+            segment: surface.segment,
         });
     }
     first
@@ -570,6 +901,86 @@ mod tests {
         weapons.apply_hits(&mut target);
         assert_eq!(target.damage, 7);
         assert_eq!(weapons.active_count(), 0);
+    }
+
+    #[test]
+    fn charge_shot_uses_its_level_row_and_ends_on_a_wall() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::SamusChargeShot(7),
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing: -1.0,
+        });
+        let shot = weapons.charge_shots().next().unwrap();
+        assert_eq!(shot.velocity.x, -74.0);
+        assert_eq!(shot.hitbox().damage, 26);
+        assert_eq!(shot.hitbox().radius, 130.0);
+        let wall = [surface(MapSurfaceKind::LeftWall, -100, -500, -100, 500)];
+        weapons.tick(|| wall);
+        assert_eq!(weapons.active_count(), 1);
+        weapons.tick(|| wall);
+        assert_eq!(weapons.active_count(), 0);
+    }
+
+    #[test]
+    fn bomb_explodes_after_its_fuse_and_hits_each_fighter_once() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::SamusBomb,
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        for _ in 0..99 {
+            weapons.tick(open_air);
+        }
+        assert!(!weapons.bombs().next().unwrap().exploded);
+        weapons.tick(open_air);
+        let bomb = weapons.bombs().next().unwrap();
+        assert!(bomb.exploded);
+        assert_eq!(bomb.hitbox().radius, SAMUS_BOMB_EXPLODE_SIZE);
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.pos = bomb.position + Vec3::new(150.0, 0.0, 0.0);
+        target.situation = Situation::Ground;
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 9);
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 9);
+        for _ in 0..5 {
+            weapons.tick(open_air);
+        }
+        assert_eq!(weapons.active_count(), 1);
+        weapons.tick(open_air);
+        assert_eq!(weapons.active_count(), 0);
+    }
+
+    #[test]
+    fn bomb_bounces_then_settles_on_the_floor() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::SamusBomb,
+            owner_port: 0,
+            position: Vec3::new(0.0, 200.0, 0.0),
+            facing: 1.0,
+        });
+        let floor = [surface(MapSurfaceKind::Floor, -1000, 0, 1000, 0)];
+        let mut settled = None;
+        for tick in 0..90 {
+            weapons.tick(|| floor);
+            let bomb = weapons.bombs().next().unwrap();
+            if bomb.floor.is_some() {
+                settled = Some(tick);
+                break;
+            }
+        }
+        assert!(settled.is_some(), "the bomb comes to rest before its fuse");
+        let bomb = weapons.bombs().next().unwrap();
+        assert!((bomb.position.y - 75.0).abs() < 1.0);
+        weapons.tick(|| floor);
+        let bomb = weapons.bombs().next().unwrap();
+        assert!(bomb.floor.is_some());
+        assert_eq!(bomb.position.y, 75.0);
     }
 
     fn surface(kind: MapSurfaceKind, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {

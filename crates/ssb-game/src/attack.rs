@@ -1388,6 +1388,37 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Samus, AnyStatus::Samus(crate::status::SamusStatus::SpecialHi)) => {
+            Some(&crate::samus_attack::SCREW_GROUND)
+        }
+        (FighterKind::Samus, AnyStatus::Samus(crate::status::SamusStatus::SpecialAirHi)) => {
+            Some(&crate::samus_attack::SCREW_AIR)
+        }
+        (FighterKind::Samus, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::samus_attack::JAB1),
+            Status::Attack12 => Some(&crate::samus_attack::JAB2),
+            Status::AttackDash => Some(&crate::samus_attack::DASH),
+            Status::AttackS3Hi => Some(&crate::samus_attack::FTILT_HI),
+            Status::AttackS3HiS => Some(&crate::samus_attack::FTILT_HI_S),
+            Status::AttackS3 => Some(&crate::samus_attack::FTILT),
+            Status::AttackS3LwS => Some(&crate::samus_attack::FTILT_LW_S),
+            Status::AttackS3Lw => Some(&crate::samus_attack::FTILT_LW),
+            Status::AttackHi3 => Some(&crate::samus_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::samus_attack::DTILT),
+            Status::AttackS4Hi => Some(&crate::samus_attack::FSMASH_HI),
+            Status::AttackS4HiS => Some(&crate::samus_attack::FSMASH_HI_S),
+            Status::AttackS4 => Some(&crate::samus_attack::FSMASH),
+            Status::AttackS4LwS => Some(&crate::samus_attack::FSMASH_LW_S),
+            Status::AttackS4Lw => Some(&crate::samus_attack::FSMASH_LW),
+            Status::AttackHi4 => Some(&crate::samus_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::samus_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::samus_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::samus_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::samus_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::samus_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::samus_attack::AIR_LW),
+            _ => None,
+        },
         (
             FighterKind::Donkey,
             AnyStatus::Donkey(
@@ -1768,10 +1799,10 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 
 /// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
 /// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
-/// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey
-/// `MainMotion.c`, not from the visual model's node order.
+/// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey/
+/// Samus `MainMotion.c`, not from the visual model's node order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Donkey, Fox, Mario};
+    use crate::fighter::FighterKind::{Donkey, Fox, Mario, Samus};
     if kind == Donkey
         && matches!(
             status,
@@ -1883,6 +1914,45 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
             ),
         ) => &[14, 14, 5],
         (Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialLwLoop)) => &[0],
+
+        (Samus, AnyStatus::Common(Status::Attack11)) => &[9, 8, 8],
+        (Samus, AnyStatus::Common(Status::Attack12 | Status::AttackDash)) => &[16],
+        (
+            Samus,
+            AnyStatus::Common(
+                Status::AttackS3Hi
+                | Status::AttackS3HiS
+                | Status::AttackS3
+                | Status::AttackS3LwS
+                | Status::AttackS3Lw,
+            ),
+        ) => &[32, 33, 33],
+        (Samus, AnyStatus::Common(Status::AttackHi3 | Status::AttackLw3 | Status::AttackLw4)) => {
+            &[33]
+        }
+        (
+            Samus,
+            AnyStatus::Common(
+                Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw,
+            ),
+        ) => &[16, 16, 8],
+        (
+            Samus,
+            AnyStatus::Common(Status::AttackHi4 | Status::AttackAirF | Status::AttackAirLw),
+        ) => &[16],
+        (Samus, AnyStatus::Common(Status::AttackAirN)) => &[27, 33],
+        (Samus, AnyStatus::Common(Status::AttackAirB)) => &[33],
+        (Samus, AnyStatus::Common(Status::AttackAirHi)) => &[28],
+        (
+            Samus,
+            AnyStatus::Samus(
+                crate::status::SamusStatus::SpecialHi | crate::status::SamusStatus::SpecialAirHi,
+            ),
+        ) => &[0],
         _ => unreachable!("ported move lacks source joint IDs"),
     };
     ids[index % ids.len()]
@@ -1975,6 +2045,9 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     );
     if defender.kind == crate::fighter::FighterKind::Donkey {
         defender.donkey_special_n.charge_level = 0;
+    }
+    if defender.kind == crate::fighter::FighterKind::Samus {
+        crate::samus::on_damage(defender);
     }
     if defender.grab.catch.is_some() {
         // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
@@ -2631,5 +2704,30 @@ mod tests {
 
         apply_hit_from(&attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 14);
+    }
+
+    #[test]
+    fn samus_pulses_follow_their_clears_and_refreshes() {
+        use crate::fighter::FighterKind;
+        let usmash = move_data(FighterKind::Samus, Status::AttackHi4.into()).unwrap();
+        let starts: [f32; 5] = [17.0, 21.0, 25.0, 29.0, 33.0];
+        for (pulse, start) in starts.iter().enumerate() {
+            let active = || usmash.hitboxes.iter().filter(|h| h.is_active(*start));
+            assert_eq!(active().count(), 2);
+            assert!(active().all(|h| h.hit_generation == pulse as u8));
+        }
+        assert!(usmash.hitboxes.iter().all(|h| !h.is_active(20.0)));
+        assert!(usmash.hitboxes.iter().all(|h| !h.is_active(35.0)));
+
+        let air_hi = move_data(FighterKind::Samus, Status::AttackAirHi.into()).unwrap();
+        assert!(air_hi.hitboxes.iter().all(|h| h.hitbox.damage == 2));
+        assert!(air_hi.hitboxes.iter().all(|h| !h.is_active(20.0)));
+
+        let mut samus = Fighter::new(FighterKind::Samus, 0, 3);
+        samus.anim.landing = 10.0;
+        status::set_air_attack(&mut samus, Status::AttackAirF);
+        status::set_landing_or_landing_air(&mut samus);
+        assert_eq!(samus.status.status, Status::LandingAirNull);
+        assert_eq!(samus.status.timing.anim_length, Some(2.0));
     }
 }

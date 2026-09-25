@@ -258,6 +258,8 @@ pub struct Fighter {
     pub fox_special_lw: crate::status::FoxSpecialLwState,
     pub donkey_special_n: crate::status::DonkeySpecialNState,
     pub donkey_special_lw: crate::status::DonkeySpecialLwState,
+    /// Charge level, recoil and special-move flags — `crate::samus`.
+    pub samus: crate::samus::SamusState,
     /// Grab, capture and throw link to another fighter — `crate::grab`.
     pub grab: crate::grab::GrabState,
     /// One weapon creation requested by this fighter's current status. The
@@ -315,6 +317,7 @@ impl Fighter {
             fox_special_lw: crate::status::FoxSpecialLwState::default(),
             donkey_special_n: crate::status::DonkeySpecialNState::default(),
             donkey_special_lw: crate::status::DonkeySpecialLwState::default(),
+            samus: crate::samus::SamusState::default(),
             grab: crate::grab::GrabState::default(),
             weapon_spawn: None,
             weapon_spawn_anchor: None,
@@ -401,6 +404,8 @@ impl Fighter {
         self.situation = Situation::Ground;
         self.pos.y = floor_y;
         self.physics.jumps_used = 0;
+        // `mpCommonSetFighterGround`'s Samus case.
+        self.samus.charge_recoil = 0;
     }
 
     /// Places the fighter on the stage beneath it, as a match start does.
@@ -550,6 +555,7 @@ impl Fighter {
                 crate::grab::ground_physics_status(crate::status::AnyStatus::Donkey(s))
                     .unwrap_or(crate::status::Status::Wait)
             }
+            crate::status::AnyStatus::Samus(_) => crate::status::Status::Wait,
         };
         if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -648,8 +654,8 @@ impl Fighter {
                     )
                 ) {
                     crate::status::switch_donkey_special_air(self);
-                } else if crate::grab::on_ground_lost(self) {
-                } else {
+                } else if !crate::samus::on_ground_lost(self) && !crate::grab::on_ground_lost(self)
+                {
                     self.become_airborne();
                     crate::status::set_fall(self);
                 }
@@ -696,6 +702,7 @@ impl Fighter {
             && !fox_special_hi
             && !fox_special_lw
             && !donkey_special_hi
+            && !crate::samus::skips_fast_fall(self.status.status)
         {
             crate::status::check_set_fast_fall(self);
         }
@@ -709,6 +716,7 @@ impl Fighter {
             crate::status::apply_fox_special_lw_air_physics(self);
         } else if donkey_special_hi {
             crate::status::apply_donkey_special_hi_air_physics(self);
+        } else if crate::samus::apply_air_physics(self) {
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
@@ -778,6 +786,9 @@ impl Fighter {
                 ) {
                     self.land(moved.pos.y);
                     crate::status::switch_donkey_special_ground(self);
+                    return;
+                }
+                if crate::samus::on_landing(self, moved.pos.y) {
                     return;
                 }
                 if crate::grab::on_landing(self, moved.pos.y) {

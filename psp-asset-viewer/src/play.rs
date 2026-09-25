@@ -25,6 +25,7 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         AnyStatus::Mario(MarioStatus::SpecialAirLw) => return "sp-airlw",
         AnyStatus::Fox(_) => return "fox-ext ",
         AnyStatus::Donkey(_) => return "dk-ext  ",
+        AnyStatus::Samus(_) => return "sam-ext ",
     };
     match current {
         Wait => "wait    ",
