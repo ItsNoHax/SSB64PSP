@@ -119,10 +119,10 @@ enum TextureFuncState {
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
-    /// The bound texture and the `mat_anim` entry whose palette its CLUT
+    /// The bound texture and the [`Pack::mat_anim_palette`] entry its CLUT
     /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
     /// sharing a texture can each cycle their own `MObj`'s palettes
-    /// (RE-326).
+    /// (RE-326), on their own player's clock (RE-327).
     last_texture: Option<(u32, u32)>,
     last_flags: Option<u32>,
     /// The texture function last actually issued to the GE, or `None` while
@@ -559,24 +559,20 @@ fn psm_bits(psm: TexturePixelFormat) -> usize {
 
 /// Binds a texture from the pack.
 ///
-/// `mat_anim` overrides the baked CLUT with the current frame's resolved
-/// `PaletteID` variant when `palette_anim` names an entry (RE-089–095) —
-/// the drawing primitive's own, under [`flags::PALETTE_ANIM`] (RE-326),
-/// not the texture's: one texture can serve several `MObj`s. Issued
-/// *after* the static load above so it always wins, but only when there is
-/// a live animator and it actually has a value (a texture whose animation
-/// has not started ticking yet, or a device build with no animator at all,
-/// keeps its baked palette rather than showing nothing).
+/// `palette` overrides the baked CLUT with the current frame's resolved
+/// `PaletteID` variant (RE-089–095), an index into
+/// [`Pack::mat_anim_palette`] or [`TextureDesc::NO_ANIM`]. It is the drawing
+/// primitive's own, under [`flags::PALETTE_ANIM`] (RE-326), not the
+/// texture's: one texture can serve several `MObj`s. Issued *after* the
+/// static load above so it always wins, but only when a player resolved a
+/// value (a texture whose animation has not started ticking yet, or a
+/// device build with no animator at all, keeps its baked palette rather
+/// than showing nothing).
 ///
 /// # Safety
 ///
 /// The pack buffer must outlive the frame; the GE reads it asynchronously.
-unsafe fn bind_texture(
-    pack: &Pack<'_>,
-    t: &TextureDesc,
-    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
-    palette_anim: u32,
-) {
+unsafe fn bind_texture(pack: &Pack<'_>, t: &TextureDesc, palette: u32) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099/RE-100)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
     // must be intercepted here rather than falling into the ordinary path
@@ -630,10 +626,9 @@ unsafe fn bind_texture(
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
     }
 
-    if palette_anim != TextureDesc::NO_ANIM {
-        if let Some(animated) = mat_anim
-            .and_then(|m| m.resolved_palette(pack, palette_anim))
-            .and_then(|i| pack.mat_anim_palette(i))
+    if palette != TextureDesc::NO_ANIM {
+        if let Some(animated) = pack
+            .mat_anim_palette(palette)
             .and_then(|p| pack.mat_anim_palette_data(&p))
         {
             let blocks = (animated.len() as i32 / 4 + 7) / 8;
@@ -787,7 +782,10 @@ unsafe fn apply_texture_mapping(
     let affine = match (uv, pack.texture(texture)) {
         (Some(uv), Some(t)) => uv.ge_affine(
             ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
-            (t.wrap & TextureDesc::CLAMP_S != 0, t.wrap & TextureDesc::CLAMP_T != 0),
+            (
+                t.wrap & TextureDesc::CLAMP_S != 0,
+                t.wrap & TextureDesc::CLAMP_T != 0,
+            ),
         ),
         _ => ssb_rom::skeleton::UvAffine::IDENTITY,
     };
@@ -934,10 +932,11 @@ struct TextureMapping {
 
 /// The live colour registers a primitive's `mat_anim` drives.
 ///
-/// A spawned effect's own player wins. The pack-lifetime stage player only
-/// supplies the tracks whose register the primitive still inherits from the
-/// animated `MObj` (RE-322); a primitive that set its own colour after it
-/// keeps the packed value.
+/// A spawned effect's own player wins, including when a track has not set a
+/// value yet. Without one, the pack-lifetime stage player supplies tracks
+/// whose register the primitive still inherits from the animated `MObj`
+/// (RE-322); a primitive that set its own colour after it keeps the packed
+/// value.
 fn material_colors(
     p: &PrimDesc,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
@@ -946,13 +945,12 @@ fn material_colors(
     if p.mat_anim == TextureDesc::NO_ANIM {
         return None;
     }
-    effect_mat_anim
-        .and_then(|m| m.resolved_colors(p.mat_anim))
-        .or_else(|| {
-            mat_anim
-                .and_then(|m| m.resolved_colors(p.mat_anim))
-                .map(|c| ssb_rom::anim_color::stage_colors(c, p.flags))
-        })
+    match effect_mat_anim {
+        Some(m) => m.resolved_colors(p.mat_anim),
+        None => mat_anim
+            .and_then(|m| m.resolved_colors(p.mat_anim))
+            .map(|c| ssb_rom::anim_color::stage_colors(c, p.flags)),
+    }
 }
 
 /// Applies a primitive's material state.
@@ -1146,28 +1144,40 @@ unsafe fn apply_material(
     // primitive still draws the `MObj`'s own image (`IMAGE_ANIM`); a display
     // list that loaded its own keeps it.
     let effective_texture = match p.image_anim() {
-        Some(anim) => effect_mat_anim
-            .and_then(|m| m.resolved_texture(pack, anim))
-            .or_else(|| mat_anim.and_then(|m| m.resolved_texture(pack, anim)))
-            .unwrap_or(p.texture),
+        Some(anim) => match effect_mat_anim {
+            Some(m) => m.resolved_texture(pack, anim),
+            None => mat_anim.and_then(|m| m.resolved_texture(pack, anim)),
+        }
+        .unwrap_or(p.texture),
         None => p.texture,
     };
 
     // RE-326: the palette is the primitive's `MObj`'s while it owns the
-    // TLUT, whichever texture is bound.
-    let palette_anim = p.palette_anim().unwrap_or(TextureDesc::NO_ANIM);
-    if st.last_texture != Some((effective_texture, palette_anim)) {
-        st.last_texture = Some((effective_texture, palette_anim));
+    // TLUT, whichever texture is bound. RE-327: a spawned effect's own
+    // player wins here too, as for the image, window and colours.
+    let palette = p
+        .palette_anim()
+        .and_then(|anim| match effect_mat_anim {
+            Some(m) => m.resolved_palette(pack, anim),
+            None => mat_anim.and_then(|m| m.resolved_palette(pack, anim)),
+        })
+        .unwrap_or(TextureDesc::NO_ANIM);
+    if st.last_texture != Some((effective_texture, palette)) {
+        st.last_texture = Some((effective_texture, palette));
         st.state_changes += 1;
         match pack.texture(effective_texture) {
-            Some(t) => bind_texture(pack, &t, mat_anim, palette_anim),
+            Some(t) => bind_texture(pack, &t, palette),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
 
-    // RE-326: the window and scale the `MObj` still owns.
+    // RE-326: the window and scale the `MObj` still owns. RE-327: from the
+    // spawned effect's own clock when it ticks this script.
     let uv = (p.mat_anim != TextureDesc::NO_ANIM)
-        .then(|| mat_anim.and_then(|m| m.resolved_uv(pack, p.mat_anim)))
+        .then(|| match effect_mat_anim {
+            Some(m) => m.resolved_uv(pack, p.mat_anim),
+            None => mat_anim.and_then(|m| m.resolved_uv(pack, p.mat_anim)),
+        })
         .flatten()
         .and_then(|uv| uv.owned_by(p.flags));
     apply_texture_mapping(pack, p, st, effective_texture, uv);
@@ -1247,9 +1257,13 @@ unsafe fn draw_lod_blend_pass(
     p: &PrimDesc,
     st: &mut DrawState,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
     (vtype, index_ptr, vertex_ptr): (VertexType, *const c_void, *const c_void),
 ) -> bool {
-    let Some(lod) = mat_anim.and_then(|m| m.resolved_lod_blend(pack, p.mat_anim)) else {
+    let Some(lod) = (match effect_mat_anim {
+        Some(m) => m.resolved_lod_blend(pack, p.mat_anim),
+        None => mat_anim.and_then(|m| m.resolved_lod_blend(pack, p.mat_anim)),
+    }) else {
         return false;
     };
     let (fix_a, fix_b) = match st.lod_blend_isolate {
@@ -1264,12 +1278,15 @@ unsafe fn draw_lod_blend_pass(
     if st.last_texture != Some((lod.texture, TextureDesc::NO_ANIM)) {
         st.last_texture = Some((lod.texture, TextureDesc::NO_ANIM));
         st.state_changes += 1;
-        bind_texture(pack, &t, mat_anim, TextureDesc::NO_ANIM);
+        bind_texture(pack, &t, TextureDesc::NO_ANIM);
     }
     apply_texture_mapping(pack, p, st, lod.texture, lod.uv);
     if st.last_texture_func != Some(TextureFuncState::Modulate) {
         st.last_texture_func = Some(TextureFuncState::Modulate);
-        sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+        sys::sceGuTexFunc(
+            sys::TextureEffect::Modulate,
+            sys::TextureColorComponent::Rgba,
+        );
     }
 
     sys::sceGuDisable(GuState::AlphaTest);
@@ -1454,7 +1471,14 @@ pub unsafe fn draw_mesh(
         );
         st.draws += 1;
         if p.flags & flags::LOD_BLEND != 0
-            && draw_lod_blend_pass(pack, &p, st, mat_anim, (vtype, index_ptr, vertex_ptr))
+            && draw_lod_blend_pass(
+                pack,
+                &p,
+                st,
+                mat_anim,
+                effect_mat_anim,
+                (vtype, index_ptr, vertex_ptr),
+            )
         {
             st.draws += 1;
         }
@@ -1894,7 +1918,7 @@ pub unsafe fn draw_texture_quad(
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(index) else { return };
-    bind_texture(pack, &t, None, TextureDesc::NO_ANIM);
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
     // always wants the plain, unblended sample.
     sys::sceGuTexFunc(
@@ -1985,7 +2009,7 @@ pub unsafe fn draw_particle(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, None, TextureDesc::NO_ANIM);
+    bind_texture(pack, &t, TextureDesc::NO_ANIM);
 
     let color = match envcolor {
         Some(env) => {
@@ -2051,7 +2075,9 @@ pub struct TexQuadVertex {
     pub z: f32,
 }
 
-pub use ssb_game::shadow::{RenderState as FighterShadowMaterial, RENDER_STATE as FIGHTER_SHADOW_MATERIAL};
+pub use ssb_game::shadow::{
+    RenderState as FighterShadowMaterial, RENDER_STATE as FIGHTER_SHADOW_MATERIAL,
+};
 
 /// Draws the runtime-generated `ftShadowProcDisplay` strip.
 ///
@@ -2078,9 +2104,14 @@ pub unsafe fn draw_fighter_shadow(
     }) else {
         return;
     };
-    let Some(texture) = pack.texture(texture_index) else { return };
-    bind_texture(pack, &texture, None, TextureDesc::NO_ANIM);
-    sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
+    let Some(texture) = pack.texture(texture_index) else {
+        return;
+    };
+    bind_texture(pack, &texture, TextureDesc::NO_ANIM);
+    sys::sceGuTexFunc(
+        sys::TextureEffect::Modulate,
+        sys::TextureColorComponent::Rgba,
+    );
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuDisable(GuState::CullFace);
     sys::sceGuDisable(GuState::Lighting);
@@ -2111,12 +2142,31 @@ pub unsafe fn draw_fighter_shadow(
         let vb = b.v / 32.0;
         let q = [
             (a.x, a.y, ssb_game::shadow::HALF_DEPTH, 0.0, va),
-            (a.x, a.y, -ssb_game::shadow::HALF_DEPTH, ssb_game::shadow::SOURCE_TEX_SPAN / 32.0, va),
+            (
+                a.x,
+                a.y,
+                -ssb_game::shadow::HALF_DEPTH,
+                ssb_game::shadow::SOURCE_TEX_SPAN / 32.0,
+                va,
+            ),
             (b.x, b.y, ssb_game::shadow::HALF_DEPTH, 0.0, vb),
-            (b.x, b.y, -ssb_game::shadow::HALF_DEPTH, ssb_game::shadow::SOURCE_TEX_SPAN / 32.0, vb),
+            (
+                b.x,
+                b.y,
+                -ssb_game::shadow::HALF_DEPTH,
+                ssb_game::shadow::SOURCE_TEX_SPAN / 32.0,
+                vb,
+            ),
         ];
         for (x, y, z, u, v) in [q[0], q[1], q[3], q[0], q[3], q[2]] {
-            verts[count] = TexQuadVertex { u, v, color: packed, x, y, z };
+            verts[count] = TexQuadVertex {
+                u,
+                v,
+                color: packed,
+                x,
+                y,
+                z,
+            };
             count += 1;
         }
     }

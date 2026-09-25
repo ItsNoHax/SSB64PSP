@@ -184,7 +184,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 // (RE-326). A v34 runtime would swap the texture, palette and window of
 // every primitive a `mat_anim` names, including ones whose display list
 // loaded its own.
-pub const VERSION: u32 = 35;
+//
+// 36 grows `TextureDesc` to 48 bytes with the render tile it was converted
+// through, and `MatAnimDesc` to 132 with `uv_half` for `MObjSub.unk10 == 1`
+// (RE-327). Every later table starts at a different offset.
+pub const VERSION: u32 = 36;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -647,6 +651,21 @@ pub struct TextureDesc {
     /// to `Repeat` on the PSP GE, so leaving the bit off for them costs
     /// nothing and keeps this purely additive over `VERSION` 14 packs.
     pub wrap: u8,
+    /// The render tile's `G_SETTILE` format this texture was converted
+    /// through, as `TILE_KNOWN | fmt << 2 | siz`, or 0 when none applies
+    /// (framebuffer and shadow textures). `VERSION` 36 (RE-327): the
+    /// `MObj` never sets tile 0's format, so a check reading a sprite
+    /// needs the display list's.
+    pub tile: u8,
+    /// [`TextureDesc::TILE_MIRROR_S`]/[`TextureDesc::TILE_MIRROR_T`]: axes
+    /// baked as mirrored period pairs (RE-067).
+    pub tile_mirror: u8,
+    /// One source period per axis, in texels: the tile after the mask
+    /// narrowing (RE-044). The texture repeats, or mirrors, every period.
+    pub tile_period: [u16; 2],
+    /// [`crate::mesh::TextureRef::source_width`]: the source row length, in
+    /// texels of the tile's size.
+    pub tile_source_width: u16,
 }
 
 impl TextureDesc {
@@ -663,7 +682,9 @@ impl TextureDesc {
     /// coloured noise on device. The size guard test below exists because the
     /// original round-trip test only checked texture 0, where the offset is
     /// correct no matter what the stride says.
-    pub const SIZE: usize = 40;
+    ///
+    /// `VERSION` 36 adds the render tile's shape after `wrap` (48).
+    pub const SIZE: usize = 48;
     pub const NO_ANIM: u32 = u32::MAX;
     /// Baked from real ROM texel data at pack time -- every texture before
     /// `VERSION` 14.
@@ -680,6 +701,17 @@ impl TextureDesc {
     pub const CLAMP_S: u8 = 1 << 0;
     /// `wrap` bit for `G_TX_CLAMP` on the T axis (RE-102).
     pub const CLAMP_T: u8 = 1 << 1;
+    /// `tile` bit: the fields after it are recorded (RE-327).
+    pub const TILE_KNOWN: u8 = 0x80;
+    /// `tile_mirror` bit for a mirrored S axis.
+    pub const TILE_MIRROR_S: u8 = 1 << 0;
+    /// `tile_mirror` bit for a mirrored T axis.
+    pub const TILE_MIRROR_T: u8 = 1 << 1;
+
+    /// The recorded render tile's `(fmt, siz)`, or `None`.
+    pub fn tile_format(&self) -> Option<(u8, u8)> {
+        (self.tile & Self::TILE_KNOWN != 0).then_some(((self.tile >> 2) & 7, self.tile & 3))
+    }
 }
 
 /// An assembled object: a run of nodes forming one `DObjDesc` hierarchy.
@@ -893,12 +925,17 @@ pub struct MatAnimDesc {
     /// `MObjSub::{unk0A,unk0C,unk0E}` promoted to `u32`; needed for the
     /// source tile-window equations while UV tracks are live.
     pub uv_tile_params: [u32; 3],
+    /// `MObjSub::{unk24, unk28, unk44}` as raw `f32` bits, the inputs of
+    /// `gcDrawMObjForDObj`'s `unk10 == 1` halving of `scau`, `trau` and
+    /// `scrollu`. Read only under [`crate::mobj::UV_MODE_HALF`] (RE-327,
+    /// `VERSION` 36).
+    pub uv_half: [u32; 3],
 }
 
 impl MatAnimDesc {
     /// Measured maximum across manager-effect material streams.
     pub const MAX_TEXTURES: usize = 8;
-    pub const SIZE: usize = 120;
+    pub const SIZE: usize = 132;
 }
 
 /// One resolved palette variant of an animated texture — the same shape as
@@ -1527,8 +1564,22 @@ impl PackWriter {
             mat_anim: TextureDesc::NO_ANIM,
             role: TextureDesc::ROLE_NORMAL,
             wrap,
+            tile: 0,
+            tile_mirror: 0,
+            tile_period: [0; 2],
+            tile_source_width: 0,
         });
         (self.textures.len() - 1) as u32
+    }
+
+    /// Records the render tile texture `i` was converted through (RE-327).
+    pub fn set_texture_tile(&mut self, i: u32, t: &crate::mesh::TextureRef) {
+        let d = &mut self.textures[i as usize];
+        d.tile = TextureDesc::TILE_KNOWN | (t.format as u8) << 2 | t.size as u8;
+        d.tile_mirror = (t.mirror_s as u8 * TextureDesc::TILE_MIRROR_S)
+            | (t.mirror_t as u8 * TextureDesc::TILE_MIRROR_T);
+        d.tile_period = [t.width, t.height];
+        d.tile_source_width = t.source_width;
     }
 
     /// Adds the source fighter-shadow texture with a stable semantic role.
@@ -1564,6 +1615,10 @@ impl PackWriter {
             // Always a single full-frame quad (RE-099/RE-100): its UVs never
             // exceed the tile, so `Repeat` vs `Clamp` cannot be told apart.
             wrap: 0,
+            tile: 0,
+            tile_mirror: 0,
+            tile_period: [0; 2],
+            tile_source_width: 0,
         });
         (self.textures.len() - 1) as u32
     }
@@ -1700,8 +1755,15 @@ impl PackWriter {
             base_tracks,
             uv_mode: u32::from(uv_mode),
             uv_tile_params: uv_tile_params.map(u32::from),
+            uv_half: [0; 3],
         });
         (self.mat_anims.len() - 1) as u32
+    }
+
+    /// Sets [`MatAnimDesc::uv_half`] on an entry added via
+    /// [`PackWriter::add_mat_anim`].
+    pub fn set_mat_anim_uv_half(&mut self, mat_anim: u32, uv_half: [u32; 3]) {
+        self.mat_anims[mat_anim as usize].uv_half = uv_half;
     }
 
     /// Points an already-added texture at an animated palette table added
@@ -2534,7 +2596,13 @@ impl PackWriter {
             out.extend_from_slice(&t.mat_anim.to_le_bytes());
             out.extend_from_slice(&t.role.to_le_bytes());
             out.push(t.wrap);
-            out.extend_from_slice(&[0u8; 3]);
+            out.push(t.tile);
+            out.push(t.tile_mirror);
+            out.push(0);
+            out.extend_from_slice(&t.tile_period[0].to_le_bytes());
+            out.extend_from_slice(&t.tile_period[1].to_le_bytes());
+            out.extend_from_slice(&t.tile_source_width.to_le_bytes());
+            out.extend_from_slice(&[0u8; 2]);
         }
         for o in &self.objects {
             for v in [o.first_node, o.node_count, o.source_file, o.source_offset] {
@@ -2647,7 +2715,7 @@ impl PackWriter {
                 out.extend_from_slice(&track.to_le_bytes());
             }
             out.extend_from_slice(&a.uv_mode.to_le_bytes());
-            for param in a.uv_tile_params {
+            for param in a.uv_tile_params.into_iter().chain(a.uv_half) {
                 out.extend_from_slice(&param.to_le_bytes());
             }
         }
@@ -3165,6 +3233,11 @@ impl<'a> Pack<'a> {
                 u32_at(self.data, at + 112),
                 u32_at(self.data, at + 116),
             ],
+            uv_half: [
+                u32_at(self.data, at + 120),
+                u32_at(self.data, at + 124),
+                u32_at(self.data, at + 128),
+            ],
         })
     }
 
@@ -3378,6 +3451,10 @@ impl<'a> Pack<'a> {
             mat_anim: u32_at(self.data, at + 28),
             role: u32_at(self.data, at + 32),
             wrap: self.data[at + 36],
+            tile: self.data[at + 37],
+            tile_mirror: self.data[at + 38],
+            tile_period: [u16_at(self.data, at + 40), u16_at(self.data, at + 42)],
+            tile_source_width: u16_at(self.data, at + 44),
         })
     }
 
@@ -5476,14 +5553,26 @@ mod tests {
             tile0,
             scale,
         };
-        assert_eq!(prim_of(one(true, true, true, true), true).flags & anim, anim);
+        assert_eq!(
+            prim_of(one(true, true, true, true), true).flags & anim,
+            anim
+        );
         assert_eq!(prim_of(one(true, true, true, true), false).flags & anim, 0);
-        assert_eq!(prim_of(one(false, false, true, false), true).flags & anim, flags::TILE0_ANIM);
-        assert_eq!(prim_of(one(false, false, false, true), true).flags & anim, flags::SCALE_ANIM);
+        assert_eq!(
+            prim_of(one(false, false, true, false), true).flags & anim,
+            flags::TILE0_ANIM
+        );
+        assert_eq!(
+            prim_of(one(false, false, false, true), true).flags & anim,
+            flags::SCALE_ANIM
+        );
         let image = prim_of(one(true, false, false, false), true);
         assert_eq!((image.image_anim(), image.palette_anim()), (Some(0), None));
         let palette = prim_of(one(false, true, false, false), true);
-        assert_eq!((palette.image_anim(), palette.palette_anim()), (None, Some(0)));
+        assert_eq!(
+            (palette.image_anim(), palette.palette_anim()),
+            (None, Some(0))
+        );
     }
 
     /// RE-322: a lit `TEXTURE_BLEND` vertex takes its RGB from the blend base

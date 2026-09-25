@@ -69,7 +69,7 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   (no GE blending, alpha gate provably inert); within one step of the RDP
   per channel (RE-321).
 
-- `MaterialAnimator` holds one joint per `MatAnimDesc` (103 in v34); a
+- `MaterialAnimator` holds one joint per `MatAnimDesc` (103 in v36); a
   fixed 64-slot array had left entries 64+ unticked (RE-322). Tick `n` is
   the decomp's frame `n`: the first parse keeps `AOBJ_ANIM_CHANGED`'s
   clock and keys start at `length = -anim_wait - anim_speed` (RE-324).

@@ -336,3 +336,4 @@ editing a record.
 | RE-324 | Material animation phase | COMPLETE (decomp reference exact at phase 0; PPSSPP goldens; pre-roll control) | material, animation, stage, visual-regression |  |
 | RE-325 | Material resolvers against the decomp draw path | COMPLETE (decomp reference exact on all 103 entries; host tests; PPSSPP goldens) | material, animation, texture, palette, pack, visual-regression |  |
 | RE-326 | Material sampling: texture ownership, palettes and the UV affine | COMPLETE (ROM texel and sampling checks exact; host tests; PPSSPP goldens; PSP hardware captures of three stages) | material, animation, texture, palette, uv, pack, visual-regression, hardware |  |
+| RE-327 | Recorded texture tiles, `unk10 == 1`, and effect material clocks | COMPLETE (decomp comparison, ROM census and texel check, host tests, PSP builds, PPSSPP smoke; no physical-PSP capture) | material, animation, texture, uv, pack, effects, visual-regression |  |
