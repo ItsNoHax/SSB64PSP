@@ -306,3 +306,13 @@ PSP-2000 Slim hardware captures of Mushroom Kingdom, Meta Crystal and Final
 Destination agree with the new renders (100–512 native pixels over 24 against
 1,716–5,698 against the old goldens). The rest of the matrix is not
 recaptured.
+
+## 2026-09-25 RE-328 camera head-1 reset
+
+Pack `a5eacfa2…` seeds every packed graph's head-1 stream from the camera's
+`G_RM_AA_ZB_XLU_SURF` reset. Five goldens changed and were rebaselined after
+two identical captures: `r1-mvopeningroom` (85,248 pixels at 2x),
+`r1-stage-sector` (580), `r1-catch-swirl-flat-color` (30,892),
+`r2-bonus-platform-small` (1,628) and `r2-stage-mushroom-kingdom` (2,012).
+The other 63 goldens were unchanged. The ROM graph census and pack diff are
+in RE-328.

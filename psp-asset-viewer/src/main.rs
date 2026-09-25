@@ -684,6 +684,7 @@ unsafe fn run() -> ! {
     // and ticked once per simulation tick beside the fighter's own skeleton.
     let mut stage_anim = ssb_rom::skeleton::StageAnimator::new();
     let mut stage_anim_loaded: Option<u32> = None;
+    let mut stage_anim_desc: Option<ssb_rom::pack::AnimDesc> = None;
     // Whether the last stage tick succeeded; a desynchronised script draws
     // the scenery unanimated.
     let mut stage_anim_ok = false;
@@ -1285,7 +1286,8 @@ unsafe fn run() -> ! {
                     // (Re)load when the stage changes.
                     if stage_anim_loaded != Some(stage_index) {
                         stage_anim_loaded = Some(stage_index);
-                        match p.stage_anim(stage_index) {
+                        stage_anim_desc = p.stage_anim(stage_index);
+                        match stage_anim_desc {
                             Some(a) => stage_anim.start(p, &a),
                             None => stage_anim = ssb_rom::skeleton::StageAnimator::new(),
                         }
@@ -1294,8 +1296,7 @@ unsafe fn run() -> ! {
                     if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                         // A script that desynchronises stops the scenery
                         // rather than posing it from a garbage stream.
-                        stage_anim_ok = p
-                            .stage_anim(stage_index)
+                        stage_anim_ok = stage_anim_desc
                             .and_then(|a| p.anim_script(&a))
                             .is_some_and(|script| stage_anim.tick(script).is_ok());
                     }

@@ -16,22 +16,22 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Viewer timing and camera head 1 | Shared PSP input peeks the latest sample instead of waiting per tick; the viewer caches its stage animation descriptor. On PSP-2000, stage 40 held 1.026 ms/tick through tick 3,600 after polling had previously climbed past 9 ms/tick. All packed head-1 graphs start from the camera XLU reset; five goldens refreshed | RE-328, RE-329 |
 | Material follow-up | Pack v36 records each texture's render tile; texel verification no longer guesses format or mirror layout. `unk10 == 1` U halving follows the decomp, and manager effects resolve material state on their own clock | RE-327 |
-| Material sampling | Texture, palette and window tracks apply only where the `MObj` still owns that state (33 Mushroom Kingdom primitives drew its sprite); palettes resolve per primitive; UV affine decomp-exact. All bound textures and CLUTs match the ROM. Pack v35; 13 goldens rebaselined; hardware agrees on 3 stages | RE-326 |
-| Material resolvers | `romtool matcolors` checks the texture, palette, tile-0 and two-tile-blend resolvers against `gcDrawMObjForDObj`. `PaletteID` resolves for every kind, truncated. Stale pack rebuilt. `MaterialJoint` follows the decomp for `SetTargetRate` and step rates | RE-325 |
-| Material animation phase | `MaterialJoint` tick `n` is now the decomp's frame `n` (was `n + 2`): the first parse no longer advances the clock and keys subtract `anim_speed`. Stage and effect material tracks shift two frames; `romtool matcolors` exact at phase 0. A pre-roll control reproduces all 68 old goldens, so the 14 refreshed goldens differ only by phase | RE-324 |
 
 ## Verification baseline
 
-- `cargo test --workspace`: 887 tests pass (ROM-backed tests also pass).
+- `cargo test --workspace`: 888 tests pass (ROM-backed tests also pass).
 - `romtool matcolors --pack`: 103 entries, all 15 tracks and four resolvers
   exact over 600 frames; 145/145 textures match through the recorded tile,
   33/33 CLUTs match, and every animated UV sample lands on the RDP texel.
 - Both PSP builds pass.
-- Pack v36 rebuilt byte-identical to `assets/generated/ssb64.pak`:
-  22,247,328 bytes, SHA-256 `010291620b7ef25fb207ec7e658d03df13b55b126fcdb2e32679e6b6d1abbc58`.
-- PPSSPPHeadless: Final Destination golden smoke matches. The full v36
-  matrix has not been run.
+- Pack v36 rebuilt from the ROM with the camera seed: 22,361,792 bytes,
+  SHA-256 `a5eacfa256a5ef6a6ca09728f24b61fd93e47c956a3eb7fe741a0367eedd13a0`.
+- PPSSPPHeadless: all 68 goldens match twice; five changed for RE-328.
+- PSP-2000 Slim, firmware 6.61 ARK, PSPLink v3.2.1: stage 40 held
+  1.026 ms/tick in each 600-tick window from tick 601 through 3,600;
+  controller peek cost 7 µs/tick, no dropped ticks or exceptions (RE-329).
 - PSP-2000 Slim, firmware 6.61: v35 Mushroom Kingdom, Meta Crystal and
   Final Destination agree with the new PPSSPP renders (RE-326). v34
   (`ff5166dd…`) Race to the Finish renders the translucent glows (+105 µs

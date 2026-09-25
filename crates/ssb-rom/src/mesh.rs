@@ -1795,10 +1795,8 @@ impl State {
         };
         // RE-322/RE-323: `TEXEL0_ALPHA * PRIM_ALPHA`, where the render mode
         // blends or the register is animated. A static primitive under a
-        // non-blending mode keeps its earlier vertex alpha: RE-323 measured
-        // 52 such primitives whose `G_AC_THRESHOLD` result would change,
-        // most in task-list-1 graphs whose camera-level XLU reset is not
-        // modelled. An unknown register declines rather than guessing.
+        // non-blending mode keeps its earlier vertex alpha. An unknown
+        // register declines rather than guessing.
         let prim_alpha_blend = self
             .combiner
             .filter(|_| self.material.translucent || anim_colors.prim)
@@ -2375,10 +2373,10 @@ pub struct SequenceItem<'a> {
     /// commands only after its head-0 commands (RE-313). A head-1 list
     /// therefore inherits RDP and vertex-cache state only from earlier head-1
     /// items, never from a head-0 item that precedes it in node order:
-    /// [`convert_sequence`] keeps one [`State`] per head. Head 1 starts from
-    /// the same `initial` seed with `G_TT_NONE`: the lists that enable the
-    /// TLUT disable it again, and RE-313's frame captures entered head 1 with
-    /// `G_TT_NONE` every time.
+    /// [`convert_sequence`] keeps one [`State`] per head. Head 1 starts with
+    /// the camera's `G_RM_AA_ZB_XLU_SURF` render mode and `G_TT_NONE`.
+    /// The lists that enable the TLUT disable it again, and RE-313's frame
+    /// captures entered head 1 with `G_TT_NONE` every time.
     pub stream: u8,
 }
 
@@ -2423,6 +2421,10 @@ pub fn convert_sequence(
 ) -> Vec<Result<Mesh, MeshError>> {
     let spaces: Vec<crate::scene::Mat4> = items.iter().map(|i| i.world).collect();
     let mut streams = [State::new(initial), State::new(initial)];
+    // `func_80016338` seeds a camera's task head 1 with this render mode.
+    // Archive census: the only three head-1 graphs that change render mode
+    // restore XLU before returning, so later graphs inherit this same mode.
+    streams[1].set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF);
     streams[1].texture_lut = LutState::Known(crate::texture::TextureLut::None);
     for state in &mut streams {
         state.spaces = spaces.clone();
@@ -4165,16 +4167,15 @@ mod tests {
     }
 
     #[test]
-    fn an_animated_prim_alpha_needs_a_translucent_render_mode() {
+    fn camera_head1_reset_reaches_graphs_without_a_stage_layer_seed() {
         let p = race_glows(None);
-        assert!(!p[0].material.translucent, "no XLU reset, no blending");
+        assert!(p[0].material.translucent);
         assert!(
             p[0].material.anim_colors.prim,
             "the register is still animated"
         );
-        // RE-323: a static register under a non-blending mode keeps the
-        // earlier vertex alpha.
-        assert_eq!(p[1].material.alpha_blend, None);
+        assert_eq!(p[1].material.alpha_blend, Some(AlphaBlend::Prim(0x99)));
+        assert!(p[1].material.depth_test && !p[1].material.depth_write);
     }
 
     #[test]
