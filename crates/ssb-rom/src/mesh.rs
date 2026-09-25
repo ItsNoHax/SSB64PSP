@@ -548,6 +548,32 @@ pub struct MeshMaterial {
     /// Which colour registers still hold the value [`Self::mat_anim`]'s
     /// `MObj` emitted (RE-322). Always all-false without a `mat_anim`.
     pub anim_colors: AnimColors,
+    /// Which texture state still comes from [`Self::mat_anim`]'s `MObj`
+    /// (RE-326). Always all-false without a `mat_anim`.
+    pub anim_texture: AnimTexture,
+}
+
+/// Texture state an animated `MObj` set and nothing has replaced since
+/// (RE-326).
+///
+/// `gcDrawMObjForDObj` feeds `texture_id_curr`, `palette_id` and the
+/// `Tra*`/`Sca*` window to the RDP only through the commands it emits: the
+/// image address, the palette address, `gDPSetTileSize(0, ...)` and
+/// `gSPTexture`. A display list that issues its own afterwards draws its own
+/// state whatever the script does. The builder carries state from one
+/// display list to the next as the RDP does, so a later node without an
+/// `MObj` call still names the script; without these bits its own textures
+/// were swapped for the script's sprites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+pub struct AnimTexture {
+    /// The loaded image is `sprites[texture_id_curr]`.
+    pub image: bool,
+    /// The loaded TLUT is `palettes[palette_id]`.
+    pub palette: bool,
+    /// Tile 0's window is the `MObj`'s.
+    pub tile0: bool,
+    /// `G_TEXTURE`'s scale is the `MObj`'s.
+    pub scale: bool,
 }
 
 /// Colour registers an animated `MObj` wrote and nothing has overwritten
@@ -1370,6 +1396,11 @@ struct State {
     /// keeps whatever it last held, it does not go blank just because a
     /// palette load read a different address in between.
     real_timg: Option<(u32, Option<u16>)>,
+    /// Whether `real_timg` is the current `MObj`'s sprite (RE-326).
+    real_timg_mobj: bool,
+    /// Whether `timg_addr` is the current `MObj`'s palette, not yet loaded
+    /// (RE-326).
+    timg_mobj_palette: bool,
     /// Render format from `G_SETTILE` on tile 0 — the authoritative one.
     tile0_fmt: Option<(u8, u8)>,
     tile_dims: Option<(u16, u16)>,
@@ -1514,6 +1545,8 @@ impl State {
             timg_addr: None,
             timg_file: None,
             real_timg: None,
+            real_timg_mobj: false,
+            timg_mobj_palette: false,
             tile0_fmt: None,
             tile_dims: None,
             tile0_origin: None,
@@ -1599,15 +1632,23 @@ impl State {
             light1: keep(m.light1_color.is_some(), before.light1),
             light2: keep(m.light2_color.is_some(), before.light2),
         };
+        // RE-326: this `MObj` owns what it emits, and nothing it does not:
+        // a script's texture, palette and window tracks reach the RDP only
+        // through this call's own commands.
+        self.material.anim_texture = AnimTexture::default();
+        self.timg_mobj_palette = false;
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette.offset);
             self.timg_file = palette.file;
             self.framebuffer_capture = false;
+            self.timg_mobj_palette = true;
             if m.loads_tlut {
                 self.palette_offset = Some(palette.offset);
                 self.palette_file = palette.file;
                 self.palette_entries = m.palette_entries;
                 self.timg_addr = None;
+                self.timg_mobj_palette = false;
+                self.material.anim_texture.palette = true;
             }
         }
         if let Some(sprite) = m.sprite {
@@ -1615,6 +1656,11 @@ impl State {
             self.timg_file = sprite.file;
             self.real_timg = Some((sprite.offset, sprite.file));
             self.framebuffer_capture = false;
+            self.timg_mobj_palette = false;
+            self.real_timg_mobj = true;
+            self.material.anim_texture.image = true;
+        } else {
+            self.real_timg_mobj = false;
         }
         if let Some(c) = m.prim_color {
             self.material.prim_color = Some(c);
@@ -1646,10 +1692,12 @@ impl State {
                 ((lrt.saturating_sub(ult)) >> 2) + 1,
             ));
             self.tile0_origin = Some((uls, ult));
+            self.material.anim_texture.tile0 = true;
         }
         if let Some((s, t)) = m.tex_scale {
             self.texture_enabled = true;
             self.tex_scale = (s, t);
+            self.material.anim_texture.scale = true;
         }
         // RE-321: the two-tile blend's inputs, in `gcDrawMObjForDObj`'s
         // order -- the primitive colour carrying `PRIM_LOD_FRAC`, the block
@@ -1688,6 +1736,9 @@ impl State {
         self.framebuffer_capture = false;
         self.material.mat_anim = None;
         self.material.anim_colors = AnimColors::default();
+        self.material.anim_texture = AnimTexture::default();
+        self.real_timg_mobj = false;
+        self.timg_mobj_palette = false;
     }
 
     /// The material a primitive emitted right now would carry.
@@ -1733,6 +1784,14 @@ impl State {
             self.material.anim_colors
         } else {
             AnimColors::default()
+        };
+        let anim_texture = if self.material.mat_anim.is_some() {
+            AnimTexture {
+                image: self.real_timg_mobj,
+                ..self.material.anim_texture
+            }
+        } else {
+            AnimTexture::default()
         };
         // RE-322/RE-323: `TEXEL0_ALPHA * PRIM_ALPHA`, where the render mode
         // blends or the register is animated. A static primitive under a
@@ -1821,6 +1880,7 @@ impl State {
             texgen_scale: (self.material.texture_gen != TextureGen::None).then_some(self.tex_scale),
             lod_blend,
             anim_colors,
+            anim_texture,
             ..self.material
         }
     }
@@ -2539,6 +2599,10 @@ fn walk(
                 // `Texture{on: true}` of their own to undo the earlier
                 // `off` -- `Cmd::Texture` alone cannot be the sole signal.
                 state.texture_enabled = true;
+                // RE-326: the list's own image or palette replaces the
+                // `MObj`'s.
+                state.real_timg_mobj = false;
+                state.timg_mobj_palette = false;
                 if addr.segment() == crate::mobj::LB_TRANSITION_SEGMENT {
                     // The LB "loading transition" system binds this segment to
                     // a one-time CPU-side snapshot of the framebuffer
@@ -2618,6 +2682,7 @@ fn walk(
                 let h = ((lrt.saturating_sub(ult)) >> 2) + 1;
                 state.tile_dims = Some((w, h));
                 state.tile0_origin = Some((uls, ult));
+                state.material.anim_texture.tile0 = false;
             }
 
             // A tile-1 window a display list sets itself (RE-321); an
@@ -2673,6 +2738,10 @@ fn walk(
                 state.palette_offset = state.timg_addr;
                 state.palette_file = state.timg_file;
                 state.palette_entries = count;
+                // RE-326: an `MObj` that only set the palette address leaves
+                // the load to the list.
+                state.material.anim_texture.palette = state.timg_mobj_palette;
+                state.timg_mobj_palette = false;
                 state.timg_addr = state.real_timg.map(|(a, _)| a);
                 state.timg_file = state.real_timg.and_then(|(_, f)| f);
             }
@@ -2685,6 +2754,7 @@ fn walk(
             } => {
                 state.texture_enabled = on;
                 state.tex_scale = (scale_s, scale_t);
+                state.material.anim_texture.scale = false;
             }
 
             Cmd::GeometryMode { clear, set } => {
@@ -3841,6 +3911,183 @@ mod tests {
     }
 
     const XLU_SEED: Option<(bool, bool, ZMode)> = Some((true, false, ZMode::Translucent));
+
+    /// RE-326: Mushroom Kingdom's layer-0 meshes 605 and 606 (file 107
+    /// `0x4348`, `0x43A8`), reduced. The first draws through an animated
+    /// `MObj` that sets the image, loads the TLUT and sets tile 0 and
+    /// `G_TEXTURE`; the second loads its own palette, image and tile window
+    /// with no `MObj` call, so only the scale is still the `MObj`'s.
+    fn mushroom_meshes(later: &[Cmd]) -> Vec<Primitive> {
+        use crate::mobj::{MObjMaterial, Ptr};
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let ci4 = Cmd::SetTile {
+            format: Format::Ci as u8,
+            size: BitSize::Bits4 as u8,
+            line: 1,
+            tmem: 0,
+            tile: 0,
+            palette: 0,
+            cm_s: 2,
+            cm_t: 2,
+            mask_s: 5,
+            mask_t: 5,
+            shift_s: 0,
+            shift_t: 0,
+        };
+        let first = [ci4, Cmd::Call(SegAddr(0x0E00_0000)), vtx(3), Cmd::Tri1([0, 1, 2])];
+        let second: Vec<Cmd> = [ci4]
+            .into_iter()
+            .chain(later.iter().copied())
+            .chain([vtx(3), Cmd::Tri1([0, 1, 2])])
+            .collect();
+        let mobj = [MObjMaterial {
+            sprite: Some(Ptr { file: None, offset: 0x400 }),
+            palette: Some(Ptr { file: None, offset: 0x600 }),
+            loads_tlut: true,
+            palette_entries: 16,
+            tile0_uv: Some((0, 0, 92, 96)),
+            tex_scale: Some((0xFFFF, 0xFFFF)),
+            ..MObjMaterial::default()
+        }];
+        let anim = [Some(MatAnimRef {
+            source_file: 107,
+            script: 0x52F0,
+            source_mobj: 0x38E8,
+        })];
+        let item = |cmds, mobjs, mat_anims| SequenceItem {
+            cmds,
+            world: Mat4::IDENTITY,
+            mobjs,
+            mat_anims,
+            depth_seed: None,
+            stream: 0,
+        };
+        let items = [item(&first, &mobj, &anim), item(&second, &[], &[])];
+        convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+            .into_iter()
+            .map(|m| m.unwrap().primitives.pop().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn a_later_list_that_loads_its_own_texture_leaves_the_mobj_nothing_but_the_scale() {
+        let own = [
+            Cmd::SetTimg {
+                format: 0,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x800),
+                slot: 0,
+            },
+            Cmd::LoadTlut { tile: 5, count: 16 },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 1084,
+                lrt: 124,
+            },
+            Cmd::SetTimg {
+                format: 2,
+                size: 2,
+                width: 1,
+                addr: SegAddr(0x900),
+                slot: 0,
+            },
+        ];
+        let p = mushroom_meshes(&own);
+        let all = AnimTexture {
+            image: true,
+            palette: true,
+            tile0: true,
+            scale: true,
+        };
+        assert_eq!(p[0].material.anim_texture, all);
+        assert!(p[1].material.mat_anim.is_some(), "the script is still bound");
+        assert_eq!(
+            p[1].material.anim_texture,
+            AnimTexture {
+                scale: true,
+                ..AnimTexture::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_later_list_that_changes_nothing_still_draws_the_mobj_texture() {
+        let p = mushroom_meshes(&[]);
+        assert_eq!(p[1].material.anim_texture, p[0].material.anim_texture);
+        let scale = [Cmd::Texture {
+            level: 0,
+            tile: 0,
+            on: true,
+            scale_s: 0x8000,
+            scale_t: 0x8000,
+        }];
+        let p = mushroom_meshes(&scale);
+        assert!(!p[1].material.anim_texture.scale);
+        assert!(p[1].material.anim_texture.image && p[1].material.anim_texture.tile0);
+    }
+
+    #[test]
+    fn a_tlut_the_list_loads_from_the_mobj_palette_is_the_mobj_s() {
+        use crate::mobj::{MObjMaterial, Ptr};
+        use crate::scene::Mat4;
+
+        // `MOBJ_FLAG_PALETTE` without `SPLIT`/`ALPHA`: the `MObj` only sets
+        // the image address; the list's own `G_LOADTLUT` reads it.
+        let file = vertex_data(3);
+        let draw = |load: Cmd| {
+            vec![
+                Cmd::Call(SegAddr(0x0E00_0000)),
+                load,
+                Cmd::LoadTlut { tile: 5, count: 16 },
+                vtx(3),
+                Cmd::Tri1([0, 1, 2]),
+            ]
+        };
+        let mobj = [MObjMaterial {
+            palette: Some(Ptr { file: None, offset: 0x600 }),
+            ..MObjMaterial::default()
+        }];
+        let anim = [Some(MatAnimRef {
+            source_file: 114,
+            script: 0x56F4,
+            source_mobj: 0x2708,
+        })];
+        let palette = |load| {
+            let cmds = draw(load);
+            let items = [SequenceItem {
+                cmds: &cmds,
+                world: Mat4::IDENTITY,
+                mobjs: &mobj,
+                mat_anims: &anim,
+                depth_seed: None,
+                stream: 0,
+            }];
+            convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+                .pop()
+                .unwrap()
+                .unwrap()
+                .primitives
+                .pop()
+                .unwrap()
+                .material
+                .anim_texture
+                .palette
+        };
+        assert!(palette(Cmd::Sync(0)));
+        let own = Cmd::SetTimg {
+            format: 0,
+            size: 2,
+            width: 1,
+            addr: SegAddr(0x800),
+            slot: 0,
+        };
+        assert!(!palette(own));
+    }
 
     #[test]
     fn an_animated_prim_register_follows_the_primitives_that_inherit_it() {

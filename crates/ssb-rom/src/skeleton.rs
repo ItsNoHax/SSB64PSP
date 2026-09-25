@@ -444,6 +444,124 @@ pub struct MaterialUv {
     pub tile_height: f32,
 }
 
+impl MaterialUv {
+    /// This window restricted to the state the primitive's `MObj` still owns
+    /// ([`crate::pack::flags::TILE0_ANIM`], [`crate::pack::flags::SCALE_ANIM`],
+    /// RE-326), or `None` when it owns neither.
+    pub fn owned_by(self, prim_flags: u32) -> Option<MaterialUv> {
+        use crate::pack::flags::{SCALE_ANIM, TILE0_ANIM};
+        let mut mode = self.mode;
+        if prim_flags & TILE0_ANIM == 0 {
+            mode &= !3;
+        }
+        if prim_flags & SCALE_ANIM == 0 {
+            mode &= !4;
+        }
+        (mode != 0).then_some(MaterialUv { mode, ..self })
+    }
+
+    /// `gDPSetTileSize`'s `uls`/`ult` for `tra`/`sca` as
+    /// `gcDrawMObjForDObj` computes them: `s32` quarter texels, truncated
+    /// where the source truncates (`objdisplay.c:1353-1397`).
+    fn tile_origin(&self, tra: [f32; 2], sca: [f32; 2]) -> [i32; 2] {
+        const EPS: f32 = 1.0 / 65535.0;
+        let (w, h, a) = (self.tile_width, self.tile_height, self.tile_bias);
+        let [trau, trav] = tra;
+        let [scau, scav] = sca;
+        match self.mode & 3 {
+            2 => {
+                let uls = if scau.abs() > EPS { ((w * trau) / scau) * 4.0 } else { 0.0 };
+                let ult = if scav.abs() > EPS { ((h * trav) / scav) * 4.0 } else { 0.0 };
+                [(uls as i32).max(0), (ult as i32).max(0)]
+            }
+            1 => {
+                let uls = if scau.abs() > EPS { (((w * trau) + a) / scau) * 4.0 } else { 0.0 };
+                let ult = if scav.abs() > EPS {
+                    (((((1.0 - scav) - trav) * h) + a) / scav) * 4.0
+                } else {
+                    0.0
+                };
+                [uls as i32, ult as i32]
+            }
+            _ => [0, 0],
+        }
+    }
+
+    /// The GE texture scale and offset that move a primitive packed at the
+    /// rest window to this live one (RE-326). `dims` are the dimensions
+    /// handed to `sceGuTexImage` and `clamp` the texture's clamped axes; the
+    /// offset is in the GE's normalised units, added after the scale.
+    ///
+    /// Per axis, in texels, a packed coordinate `x` is the vertex loaded
+    /// under the rest `gSPTexture` scale, less the rest tile origin on a
+    /// clamped axis (`mesh::Builder::push_vertex`, as `mobj::read` clamps
+    /// it). The RDP samples the vertex under the live scale less the live
+    /// origin, which `gDPSetTileSize` holds in a 12-bit field:
+    ///
+    /// ```text
+    /// rdp(x) = (x + baked) * k - (uls & 0xFFF) / 4,   k = s_live / s_rest
+    /// ```
+    ///
+    /// `k` is `base_sca / sca`: the `u16` truncation of `gSPTexture`'s
+    /// scale is not modelled, as `unk08` is not packed.
+    pub fn ge_affine(&self, dims: (u32, u32), clamp: (bool, bool)) -> UvAffine {
+        const EPS: f32 = 1.0 / 65535.0;
+        if self.scau.abs() <= EPS
+            || self.scav.abs() <= EPS
+            || self.base_scau.abs() <= EPS
+            || self.base_scav.abs() <= EPS
+        {
+            return UvAffine::IDENTITY;
+        }
+        let k = if self.mode & 4 != 0 {
+            [self.base_scau / self.scau, self.base_scav / self.scav]
+        } else {
+            [1.0, 1.0]
+        };
+        let rest = self.tile_origin([self.base_trau, self.base_trav], [self.base_scau, self.base_scav]);
+        let live = self.tile_origin([self.trau, self.trav], [self.scau, self.scav]);
+        let clamped = [clamp.0, clamp.1];
+        let dim = [dims.0.max(1) as f32, dims.1.max(1) as f32];
+        let offset = |axis: usize| {
+            if self.mode & 3 == 0 {
+                return 0.0;
+            }
+            let baked = if clamped[axis] {
+                rest[axis].clamp(0, 0xFFFF) as f32 / 4.0
+            } else {
+                0.0
+            };
+            (baked * k[axis] - (live[axis] & 0xFFF) as f32 / 4.0) / dim[axis]
+        };
+        UvAffine {
+            scale_s: k[0],
+            scale_t: k[1],
+            offset_s: offset(0),
+            offset_t: offset(1),
+        }
+    }
+}
+
+/// `sceGuTexScale`/`sceGuTexOffset` factors a live material window applies
+/// on top of a primitive's static mapping: `u' = u * scale + offset`, in
+/// the GE's normalised texture units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UvAffine {
+    pub scale_s: f32,
+    pub scale_t: f32,
+    pub offset_s: f32,
+    pub offset_t: f32,
+}
+
+impl UvAffine {
+    pub const IDENTITY: Self = Self {
+        scale_s: 1.0,
+        scale_t: 1.0,
+        offset_s: 0.0,
+        offset_t: 0.0,
+    };
+}
+
 /// The live second pass of a two-tile fractional image blend (RE-321).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LodBlendState {
@@ -1241,6 +1359,97 @@ mod tests {
             Some(a.first_palette + 1),
             "clamped to the last real variant, not read past it"
         );
+    }
+
+    /// A tile-0 window at rest at the origin with unit scale.
+    fn window(mode: u32, width: f32) -> MaterialUv {
+        MaterialUv {
+            trau: 0.0,
+            trav: 0.0,
+            scau: 1.0,
+            scav: 1.0,
+            base_trau: 0.0,
+            base_trav: 0.0,
+            base_scau: 1.0,
+            base_scav: 1.0,
+            mode,
+            tile_bias: 0.0,
+            tile_width: width,
+            tile_height: width,
+        }
+    }
+
+    #[test]
+    fn the_live_tile_origin_truncates_to_a_quarter_texel() {
+        // `uls = ((128 * 0.0301) / 1) * 4 = 15.41` is an `s32`: 15.
+        let uv = MaterialUv {
+            trau: 0.0301,
+            ..window(2, 128.0)
+        };
+        let a = uv.ge_affine((128, 128), (false, false));
+        assert_eq!(a.offset_s, -(15.0 / 4.0) / 128.0);
+        assert_eq!((a.scale_s, a.offset_t), (1.0, 0.0));
+    }
+
+    #[test]
+    fn the_tile_origin_wraps_in_its_twelve_bit_field() {
+        // 128 * 10 * 4 = 5120 quarter texels; `gDPSetTileSize` keeps 1024.
+        let uv = MaterialUv {
+            trau: 10.0,
+            ..window(2, 128.0)
+        };
+        let a = uv.ge_affine((128, 128), (false, false));
+        assert_eq!(a.offset_s, -256.0 / 128.0);
+    }
+
+    #[test]
+    fn the_offset_is_in_the_uploaded_texture_s_units() {
+        // A 24-texel tile uploaded 32 wide: 12 texels are 12/32, not 1/2.
+        let uv = MaterialUv {
+            trau: 0.5,
+            ..window(2, 24.0)
+        };
+        let a = uv.ge_affine((32, 32), (false, false));
+        assert_eq!(a.offset_s, -12.0 / 32.0);
+    }
+
+    #[test]
+    fn a_clamped_axis_restores_the_origin_the_packer_baked_out() {
+        // Rest origin 2 texels, live 3, scale doubled by `gSPTexture`:
+        // `(x + 2) * 2 - 3 = 2x + 1`.
+        let base = MaterialUv {
+            base_trau: 2.0 / 128.0,
+            trau: 3.0 / 128.0 * 0.5,
+            scau: 0.5,
+            ..window(2 | 4, 128.0)
+        };
+        let a = base.ge_affine((128, 128), (true, false));
+        assert_eq!(a.scale_s, 2.0);
+        assert_eq!(a.offset_s, 1.0 / 128.0);
+        // Repeating, the packed coordinate kept the absolute position.
+        let a = base.ge_affine((128, 128), (false, false));
+        assert_eq!(a.offset_s, -3.0 / 128.0);
+    }
+
+    #[test]
+    fn scale_moves_only_with_the_mobj_s_g_texture() {
+        let uv = MaterialUv {
+            scau: 0.5,
+            ..window(2, 128.0)
+        };
+        assert_eq!(uv.ge_affine((128, 128), (false, false)).scale_s, 1.0);
+        let uv = MaterialUv { mode: 2 | 4, ..uv };
+        assert_eq!(uv.ge_affine((128, 128), (false, false)).scale_s, 2.0);
+    }
+
+    #[test]
+    fn a_window_keeps_only_the_state_its_mobj_owns() {
+        use crate::pack::flags::{SCALE_ANIM, TILE0_ANIM};
+        let uv = window(1 | 4, 32.0);
+        assert_eq!(uv.owned_by(TILE0_ANIM | SCALE_ANIM).unwrap().mode, 5);
+        assert_eq!(uv.owned_by(TILE0_ANIM).unwrap().mode, 1);
+        assert_eq!(uv.owned_by(SCALE_ANIM).unwrap().mode, 4);
+        assert!(uv.owned_by(0).is_none());
     }
 
     #[test]
