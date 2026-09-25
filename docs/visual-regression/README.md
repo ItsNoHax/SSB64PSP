@@ -290,3 +290,19 @@ Pack v34 rebuilt (`59cc6d36…`, +5,424 bytes: entry 91's sprite table gains
 its second texture). `resolved_palette` accepts every live kind and
 truncates. No golden changed; 68 of 68 match twice. No golden covers the
 frames either change affects (RE-325).
+
+## 2026-09-25 RE-326 material sampling
+
+Pack v35 (`5e529bbf…`, same size). Texture, palette and window tracks apply
+only where the primitive's `MObj` still owns that state; palettes resolve per
+primitive; the material UV affine is decomp-exact. 13 goldens changed and
+were rebaselined; 68 of 68 then match twice. Restoring the old affine alone
+reproduces `r0-dream-land-default`, `r2-dream-land-water`,
+`f1-training-fireball` and `f1-training-shadows`, and leaves Zebes, Mushroom
+Kingdom, Final Destination and Bonus 2 Fox unchanged; Meta Crystal and the
+four Metal texgen scenes change under both. Counts in RE-326.
+
+PSP-2000 Slim hardware captures of Mushroom Kingdom, Meta Crystal and Final
+Destination agree with the new renders (100–512 native pixels over 24 against
+1,716–5,698 against the old goldens). The rest of the matrix is not
+recaptured.

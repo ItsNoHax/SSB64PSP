@@ -179,7 +179,12 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 34 adds `flags::PRIM_ANIM`/`LIGHT1_ANIM`/`LIGHT2_ANIM` (RE-322). A v33
 // runtime would apply every stage colour track a primitive's `mat_anim`
 // carries, including to primitives that replaced the register.
-pub const VERSION: u32 = 34;
+//
+// 35 adds `flags::IMAGE_ANIM`/`PALETTE_ANIM`/`TILE0_ANIM`/`SCALE_ANIM`
+// (RE-326). A v34 runtime would swap the texture, palette and window of
+// every primitive a `mat_anim` names, including ones whose display list
+// loaded its own.
+pub const VERSION: u32 = 35;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -385,6 +390,18 @@ pub mod flags {
     pub const LIGHT1_ANIM: u32 = 1 << 22;
     /// RE-322: as [`LIGHT1_ANIM`], for `LIGHT_2` (`Light2Color`, ambient).
     pub const LIGHT2_ANIM: u32 = 1 << 23;
+    /// RE-326: the primitive's texture image is its `mat_anim`'s
+    /// `sprites[texture_id_curr]`, so `TextureIDCurrent` selects it. Clear
+    /// when a display list loaded its own image after the `MObj`.
+    pub const IMAGE_ANIM: u32 = 1 << 24;
+    /// RE-326: as [`IMAGE_ANIM`], for the TLUT and `PaletteID`.
+    pub const PALETTE_ANIM: u32 = 1 << 25;
+    /// RE-326: tile 0's window is the `MObj`'s, so `TraU`/`TraV`/`ScaU`/
+    /// `ScaV` move it.
+    pub const TILE0_ANIM: u32 = 1 << 26;
+    /// RE-326: `G_TEXTURE`'s scale is the `MObj`'s, so `ScaU`/`ScaV` scale
+    /// the coordinates.
+    pub const SCALE_ANIM: u32 = 1 << 27;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -544,6 +561,23 @@ pub struct PrimDesc {
 impl PrimDesc {
     pub const SIZE: usize = 64;
     pub const NO_TEXTURE: u32 = u32::MAX;
+
+    /// The `mat_anim` entry whose `TextureIDCurrent` selects this
+    /// primitive's image, if its `MObj` still owns it (RE-326).
+    pub fn image_anim(&self) -> Option<u32> {
+        self.owned_anim(flags::IMAGE_ANIM)
+    }
+
+    /// The `mat_anim` entry whose `PaletteID` selects this primitive's CLUT,
+    /// if its `MObj` still owns the TLUT (RE-326). Per primitive, not per
+    /// texture: `MObj`s with different scripts can share one image.
+    pub fn palette_anim(&self) -> Option<u32> {
+        self.owned_anim(flags::PALETTE_ANIM)
+    }
+
+    fn owned_anim(&self, bit: u32) -> Option<u32> {
+        (self.mat_anim != TextureDesc::NO_ANIM && self.flags & bit != 0).then_some(self.mat_anim)
+    }
 }
 
 /// A mesh: one shared vertex buffer and a run of primitives.
@@ -1924,6 +1958,17 @@ impl PackWriter {
                 }
                 if m.lit && m.anim_colors.light2 {
                     f |= flags::LIGHT2_ANIM;
+                }
+                let t = m.anim_texture;
+                for (owned, bit) in [
+                    (t.image, flags::IMAGE_ANIM),
+                    (t.palette, flags::PALETTE_ANIM),
+                    (t.tile0, flags::TILE0_ANIM),
+                    (t.scale, flags::SCALE_ANIM),
+                ] {
+                    if owned {
+                        f |= bit;
+                    }
                 }
             }
             // The GE decodes GU_TEXTURE_16BIT as unsigned (`u16 / 32768`),
@@ -5407,6 +5452,38 @@ mod tests {
         assert_eq!(flags_of(true, true) & anim, anim);
         assert_eq!(flags_of(false, true) & anim, flags::PRIM_ANIM);
         assert_eq!(flags_of(true, false) & anim, 0);
+    }
+
+    /// RE-326: each texture-state ownership bit reaches its own flag, and
+    /// the primitive names its entry for the image and palette only while
+    /// it owns them.
+    #[test]
+    fn anim_texture_flags_follow_ownership_and_need_a_script() {
+        use crate::mesh::AnimTexture;
+        let prim_of = |t: AnimTexture, with_script: bool| {
+            let mut m = sample_mesh();
+            m.primitives[0].material.anim_texture = t;
+            let mut w = PackWriter::new();
+            let a = w.add_mat_anim(107, &[0u8; 8], 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            w.add_mesh(&m, 0, 0, |_| None, move |_| with_script.then_some(a));
+            let bytes = w.finish();
+            Pack::open(&bytes).unwrap().prim(0).unwrap()
+        };
+        let anim = flags::IMAGE_ANIM | flags::PALETTE_ANIM | flags::TILE0_ANIM | flags::SCALE_ANIM;
+        let one = |image, palette, tile0, scale| AnimTexture {
+            image,
+            palette,
+            tile0,
+            scale,
+        };
+        assert_eq!(prim_of(one(true, true, true, true), true).flags & anim, anim);
+        assert_eq!(prim_of(one(true, true, true, true), false).flags & anim, 0);
+        assert_eq!(prim_of(one(false, false, true, false), true).flags & anim, flags::TILE0_ANIM);
+        assert_eq!(prim_of(one(false, false, false, true), true).flags & anim, flags::SCALE_ANIM);
+        let image = prim_of(one(true, false, false, false), true);
+        assert_eq!((image.image_anim(), image.palette_anim()), (Some(0), None));
+        let palette = prim_of(one(false, true, false, false), true);
+        assert_eq!((palette.image_anim(), palette.palette_anim()), (None, Some(0)));
     }
 
     /// RE-322: a lit `TEXTURE_BLEND` vertex takes its RGB from the blend base

@@ -48,8 +48,15 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
 
 - Each animated `MObj`'s rest `TraU`/`TraV`/`ScaU`/`ScaV` and tile parameters
   are packed; the runtime applies `gcDrawMObjForDObj`'s tile-window delta
-  through the GE texture mapping (RE-301).
+  through the GE texture mapping (RE-301). `MaterialUv::ge_affine`
+  reproduces the RDP's truncated quarter-texel origin, its 12-bit field and
+  the uploaded dimension; every packed vertex lands on the RDP's texel for
+  tile 0 and tile 1 (RE-326).
 - `TextureIDCurrent` selects a packed texture; `PaletteID` selects its CLUT.
+  Each applies only while the primitive's `MObj` still owns that state
+  (`IMAGE_ANIM`, `PALETTE_ANIM`, `TILE0_ANIM`, `SCALE_ANIM`): a later
+  display list that loads its own image, TLUT, tile window or `G_TEXTURE`
+  keeps it. Palettes are resolved per primitive, not per texture (RE-326).
 - Cache identity is `(file, script, MObjSub)` plus the live affine transform,
   so state never leaks between materials.
 - The linear-filter `+0.5 / uploaded_dim` correction is added after the
@@ -70,7 +77,9 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   bit over 600 frames (`romtool matcolors`). So do the texture, palette,
   tile-0 and two-tile-blend resolvers against `gcDrawMObjForDObj`. Both
   index resolvers truncate and accept every live kind: a linear
-  `PaletteID` hold selects its palette (RE-325).
+  `PaletteID` hold selects its palette (RE-325). Every bound texture holds
+  its `sprites[]` image's texels and every owned CLUT equals `palettes[0]`
+  (RE-326).
 - Colour tracks (RE-322; only Race to the Finish uses them, 2 `PrimColor`,
   1 `Light1Color` + `Light2Color` script). The packer marks where the
   register still holds the animated `MObj`'s value (`PRIM_ANIM`,

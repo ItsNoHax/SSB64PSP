@@ -335,3 +335,4 @@ editing a record.
 | RE-323 | Task-list-1 XLU reset for static stage primitives | COMPLETE (pack diff measured per primitive; PPSSPP goldens; N64 references for Sector Z, Board the Platforms and Race to the Finish) | material, combiner, alpha, blending, depth, stage, pack, visual-regression |  |
 | RE-324 | Material animation phase | COMPLETE (decomp reference exact at phase 0; PPSSPP goldens; pre-roll control) | material, animation, stage, visual-regression |  |
 | RE-325 | Material resolvers against the decomp draw path | COMPLETE (decomp reference exact on all 103 entries; host tests; PPSSPP goldens) | material, animation, texture, palette, pack, visual-regression |  |
+| RE-326 | Material sampling: texture ownership, palettes and the UV affine | COMPLETE (ROM texel and sampling checks exact; host tests; PPSSPP goldens; PSP hardware captures of three stages) | material, animation, texture, palette, uv, pack, visual-regression, hardware |  |

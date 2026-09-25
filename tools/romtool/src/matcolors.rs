@@ -1,6 +1,6 @@
 //! `romtool matcolors`: every material animation track, and the resolvers
 //! built on them, against an independent decomp-semantics reference
-//! (RE-322, RE-324, RE-325).
+//! (RE-322, RE-324, RE-325, RE-326).
 //!
 //! The reference below is written from `objanim.c`'s
 //! `gcParseMObjMatAnimJoint`/`gcPlayMObjMatAnim` directly, including the
@@ -16,6 +16,10 @@
 //! [`check_resolvers`] then feeds `gcDrawMObjForDObj`'s texture, palette,
 //! tile-window and `PRIM_LOD_FRAC` logic from those tracks and the ROM's
 //! own `MObjSub`, and compares `MaterialAnimator`'s resolvers with it.
+//!
+//! [`crate::matsample`] then checks what the primitives sample: packed
+//! texels against the ROM images, and every material-animated vertex's GE
+//! texel against the RDP's (RE-326).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -432,6 +436,7 @@ const MOBJ_FLAG_TEXTURE: u16 = 1 << 7;
 /// and tile windows (`objtypes.h`'s layout), read straight from the ROM.
 struct RomSub {
     flags: u16,
+    unk08: u16,
     unk0a: u16,
     unk0c: u16,
     unk0e: u16,
@@ -443,6 +448,10 @@ struct RomSub {
     /// `scrollu`, `scrollv`.
     scroll: [f32; 2],
     prim_l: u8,
+    /// `fmt`/`siz` of `sprites[texture_id_curr]`, `block_fmt`/`block_siz`
+    /// of `sprites[texture_id_next]`.
+    fmt: [u8; 2],
+    block: [u8; 2],
 }
 
 impl RomSub {
@@ -463,6 +472,7 @@ impl RomSub {
             } else {
                 flags
             },
+            unk08: u16_(0x08)?,
             unk0a: u16_(0x0A)?,
             unk0c: u16_(0x0C)?,
             unk0e: u16_(0x0E)?,
@@ -472,6 +482,8 @@ impl RomSub {
             unk3a: u16_(0x3A)?,
             scroll: [f32_(0x3C)?, f32_(0x40)?],
             prim_l: bytes(0x54, 1)?[0],
+            fmt: [bytes(0x02, 1)?[0], bytes(0x03, 1)?[0]],
+            block: [bytes(0x32, 1)?[0], bytes(0x33, 1)?[0]],
         })
     }
 }
@@ -487,6 +499,21 @@ struct ResolverTally {
     table_bad: usize,
     /// Entries whose `MObjSub` loads a second tile the packer did not lower.
     lod_not_lowered: usize,
+    /// Packed textures compared texel for texel with their `sprites[]`
+    /// image, and those that differ (RE-326).
+    textures_checked: usize,
+    textures_bad: usize,
+    /// Static CLUTs compared with `palettes[0]`, and those that differ.
+    static_palettes_checked: usize,
+    static_palettes_bad: usize,
+    /// GE against RDP texel coordinates (RE-326).
+    uv: crate::matsample::UvTally,
+    /// Primitives naming an entry whose texture, palette or window track
+    /// moves, by whether their `MObj` still owns that state (RE-326):
+    /// `[owned, not owned]` for image, TLUT and tile 0.
+    ownership: [[usize; 2]; 3],
+    /// Source files of the entries with primitives in `ownership[_][1]`.
+    replaced_files: BTreeSet<u32>,
 }
 
 const RESOLVERS: [&str; 4] = ["texture", "palette", "tile0 UV", "two-tile blend"];
@@ -613,6 +640,105 @@ fn check_resolvers(
     tally.table_bad += table_notes.len();
     notes.extend(table_notes.into_iter().map(|n| format!("table: {n}")));
 
+    // Texels (RE-326): every packed texture the entry can bind against the
+    // image it stands for. A primitive's own texture is `sprites[0]` when
+    // the `MObj` sets the image (`texture_id_curr` starts at 0), and its own
+    // CLUT is `palettes[0]` under `PALETTE` (`palette_id` starts at 0).
+    // Only primitives whose `MObj` still owns the image or TLUT (RE-326).
+    let owned = |bit: u32| -> BTreeSet<u32> {
+        (0..pack.prim_count())
+            .filter_map(|p| pack.prim(p))
+            .filter(|p| {
+                p.mat_anim == i
+                    && p.flags & bit != 0
+                    && p.texture != ssb_rom::pack::TextureDesc::NO_ANIM
+            })
+            .map(|p| p.texture)
+            .collect()
+    };
+    // A v34 runtime applied each moving track to every primitive naming the
+    // entry; count the ones that do not own the state it moves.
+    for (slot, (bit, tracks)) in [
+        (flags::IMAGE_ANIM, &[0usize][..]),
+        (flags::PALETTE_ANIM, &[9][..]),
+        (flags::TILE0_ANIM, &[1, 2, 3, 4][..]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if !expected.iter().any(|e| tracks.iter().any(|&t| e[t].is_some())) {
+            continue;
+        }
+        for p in (0..pack.prim_count()).filter_map(|p| pack.prim(p)) {
+            if p.mat_anim == i {
+                tally.ownership[slot][(p.flags & bit == 0) as usize] += 1;
+                if p.flags & bit == 0 {
+                    tally.replaced_files.insert(a.source_file);
+                }
+            }
+        }
+    }
+    let statics = owned(flags::IMAGE_ANIM);
+    let palette_statics = owned(flags::PALETTE_ANIM);
+    let mut bound: Vec<(String, u32, usize, [u8; 2])> = Vec::new();
+    if f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0 {
+        bound.extend(statics.iter().map(|&t| ("static".to_string(), t, 0, sub.fmt)));
+    }
+    for (k, &t) in a.textures[..a.texture_count as usize].iter().enumerate() {
+        bound.push((format!("textures[{k}]"), t, k, sub.fmt));
+    }
+    if let Some(l) = lod {
+        for (k, &t) in l.next_textures[..l.next_count as usize].iter().enumerate() {
+            bound.push((format!("next_textures[{k}]"), t, k, sub.block));
+        }
+    }
+    let sprite_count = bound.iter().map(|b| b.2 + 1).max().unwrap_or(0);
+    if sprite_count > 0 {
+        let sprites = ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, sprite_count)
+            .ok_or("sprites[] unreadable")?;
+        for (name, t, k, [fmt, siz]) in &bound {
+            let desc = pack.texture(*t).ok_or("missing packed texture")?;
+            tally.textures_checked += 1;
+            let r = crate::matsample::compare_texture(
+                archive, &rom_file, pack, &desc, sprites[*k], *fmt, *siz,
+            );
+            match r {
+                Ok(r) if r.bad == 0 => {}
+                Ok(r) => {
+                    tally.textures_bad += 1;
+                    let (x, y, rom, got) = r.first.unwrap();
+                    notes.push(format!(
+                        "texels: {name} (texture {t}, {}x{} psm {}, as {:?} layout {:?}) differs from sprites[{k}] \
+                         in {} of {} texels; first ({x},{y}) rom {rom} packed {got}",
+                        desc.width, desc.height, desc.psm, r.format, r.layout, r.bad, r.texels
+                    ));
+                }
+                Err(e) => {
+                    tally.textures_bad += 1;
+                    notes.push(format!("texels: {name} (texture {t}): {e}"));
+                }
+            }
+        }
+    }
+    if f & MOBJ_FLAG_PALETTE != 0 {
+        let first = ssb_rom::mobj::read_palettes(&rom_file, a.source_offset, 1)
+            .and_then(|p| p.first().copied())
+            .ok_or("palettes[0] unreadable")?;
+        for &t in &palette_statics {
+            let desc = pack.texture(t).ok_or("missing packed texture")?;
+            let Some(words) = pack.palette_data(&desc) else {
+                continue;
+            };
+            tally.static_palettes_checked += 1;
+            if !crate::matsample::palette_matches(archive, &rom_file, words, first)? {
+                tally.static_palettes_bad += 1;
+                notes.push(format!(
+                    "texels: texture {t}'s packed CLUT differs from palettes[0]"
+                ));
+            }
+        }
+    }
+
     let loads_next =
         f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT) != 0 && f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0;
     if loads_next && lod.is_none() && expected.iter().any(|e| e[5].is_some() || e[8].is_some()) {
@@ -626,6 +752,36 @@ fn check_resolvers(
     } else {
         1
     } | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 };
+
+    let window = crate::matsample::SubWindow {
+        flags: f,
+        unk08: sub.unk08,
+        unk0a: sub.unk0a,
+        unk0c: sub.unk0c,
+        unk0e: sub.unk0e,
+        unk10: sub.unk10,
+        rest: sub.uv,
+    };
+    let live_uv: Vec<[f32; 4]> = expected
+        .iter()
+        .map(|e| core::array::from_fn(|k| e[1 + k].map_or(sub.uv[k], f32::from_bits)))
+        .collect();
+    let got_uv: Vec<Option<MaterialUv>> = got.iter().map(|g| g.uv).collect();
+    crate::matsample::check_uv(pack, i, &window, &live_uv, &got_uv, &mut tally.uv, &mut notes);
+    if lod.is_some() {
+        let scroll: Vec<[f32; 2]> = expected
+            .iter()
+            .map(|e| core::array::from_fn(|k| e[6 + k].map_or(sub.scroll[k], f32::from_bits)))
+            .collect();
+        let got_lod: Vec<Option<LodBlendState>> = got.iter().map(|g| g.lod).collect();
+        let tile1 = crate::matsample::Tile1 {
+            unk38: sub.unk38,
+            unk3a: sub.unk3a,
+        };
+        crate::matsample::check_uv_tile1(
+            pack, i, &window, &tile1, &live_uv, &scroll, &got_lod, &mut tally.uv, &mut notes,
+        );
+    }
 
     for (n, (e, g)) in expected.iter().zip(got).enumerate() {
         let frame = n + 1;
@@ -1035,7 +1191,54 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         tally.table_bad, tally.lod_not_lowered
     );
     println!("  {effect_bad} effect-player tick(s) resolve differently from the stage player");
-    let resolver_bad = tally.bad.iter().sum::<usize>() + tally.table_bad + effect_bad;
+    for (k, name) in ["image", "TLUT", "tile 0"].iter().enumerate() {
+        println!(
+            "Ownership: {:4} primitive(s) whose MObj owns the {name} its entry moves, \
+             {:4} whose display list replaced it",
+            tally.ownership[k][0], tally.ownership[k][1]
+        );
+    }
+    println!("  replaced in files {:?}", tally.replaced_files);
+    // A texture-keyed palette (`TextureDesc::mat_anim`, one per texture)
+    // would give these primitives another `MObj`'s palette cycle.
+    let shared: Vec<u32> = (0..pack.prim_count())
+        .filter(|&p| {
+            pack.prim(p).is_some_and(|d| {
+                d.palette_anim().is_some_and(|e| {
+                    pack.texture(d.texture).is_some_and(|t| t.mat_anim != e)
+                })
+            })
+        })
+        .collect();
+    println!(
+        "  {} primitive(s) cycle a palette other than their texture's mat_anim: {shared:?}",
+        shared.len()
+    );
+    let u = &tally.uv;
+    println!(
+        "Sampling: {} primitive(s) ({} texgen, {} over a list's own origin skipped)\n  \
+         moving: {} vertex-axis samples, {} beyond 1/64 texel, max {:.4} texel\n  \
+         rest: {} samples, {} beyond 1/64 texel, max {:.4} texel\n  \
+         tile 1: {} primitive(s), {} samples, {} beyond 1/64 texel, max {:.4} texel",
+        u.prims, u.texgen, u.dl_origin, u.samples, u.bad, u.max_err, u.rest_samples, u.rest_bad,
+        u.rest_max, u.tile1_prims, u.tile1_samples, u.tile1_bad, u.tile1_max
+    );
+    println!(
+        "Texels: {} packed texture(s) against sprites[], {} differ; \
+         {} static CLUT(s) against palettes[0], {} differ",
+        tally.textures_checked,
+        tally.textures_bad,
+        tally.static_palettes_checked,
+        tally.static_palettes_bad
+    );
+    let resolver_bad = tally.bad.iter().sum::<usize>()
+        + tally.table_bad
+        + effect_bad
+        + tally.textures_bad
+        + tally.static_palettes_bad
+        + tally.uv.bad
+        + tally.uv.rest_bad
+        + tally.uv.tile1_bad;
     if !declined.is_empty() {
         return Err(format!("the reference declined MatAnimDesc(s) {declined:?}").into());
     }

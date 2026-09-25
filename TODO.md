@@ -25,7 +25,7 @@ Deferred by user instruction.
 |---|---|---|
 | PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v34) is 22,224,368 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
-| Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, not the full current golden matrix | RE-320 |
+| Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
 
 ## Open questions
 

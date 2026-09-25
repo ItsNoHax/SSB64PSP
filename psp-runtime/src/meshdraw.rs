@@ -119,7 +119,11 @@ enum TextureFuncState {
 /// Tracks what state is already applied, so redundant sets are skipped.
 #[derive(Default)]
 pub struct DrawState {
-    last_texture: Option<u32>,
+    /// The bound texture and the `mat_anim` entry whose palette its CLUT
+    /// holds ([`TextureDesc::NO_ANIM`] for the baked one): primitives
+    /// sharing a texture can each cycle their own `MObj`'s palettes
+    /// (RE-326).
+    last_texture: Option<(u32, u32)>,
     last_flags: Option<u32>,
     /// The texture function last actually issued to the GE, or `None` while
     /// it is genuinely unknown (frame start, or after [`DrawState::invalidate_all`]).
@@ -556,7 +560,9 @@ fn psm_bits(psm: TexturePixelFormat) -> usize {
 /// Binds a texture from the pack.
 ///
 /// `mat_anim` overrides the baked CLUT with the current frame's resolved
-/// `PaletteID` variant when `t.mat_anim` names one (RE-089–095) — issued
+/// `PaletteID` variant when `palette_anim` names an entry (RE-089–095) —
+/// the drawing primitive's own, under [`flags::PALETTE_ANIM`] (RE-326),
+/// not the texture's: one texture can serve several `MObj`s. Issued
 /// *after* the static load above so it always wins, but only when there is
 /// a live animator and it actually has a value (a texture whose animation
 /// has not started ticking yet, or a device build with no animator at all,
@@ -569,7 +575,7 @@ unsafe fn bind_texture(
     pack: &Pack<'_>,
     t: &TextureDesc,
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
-    palette_anim: Option<u32>,
+    palette_anim: u32,
 ) {
     // A `ROLE_FRAMEBUFFER` texture has no baked bytes at all (RE-099/RE-100)
     // -- `pack.texture_data` would return an empty slice, not `None`, so it
@@ -624,9 +630,9 @@ unsafe fn bind_texture(
         sys::sceGuClutLoad(blocks, pal.as_ptr() as *const c_void);
     }
 
-    if palette_anim.unwrap_or(t.mat_anim) != TextureDesc::NO_ANIM {
+    if palette_anim != TextureDesc::NO_ANIM {
         if let Some(animated) = mat_anim
-            .and_then(|m| m.resolved_palette(pack, palette_anim.unwrap_or(t.mat_anim)))
+            .and_then(|m| m.resolved_palette(pack, palette_anim))
             .and_then(|i| pack.mat_anim_palette(i))
             .and_then(|p| pack.mat_anim_palette_data(&p))
         {
@@ -777,7 +783,14 @@ unsafe fn apply_texture_mapping(
     texture: u32,
     uv: Option<ssb_rom::skeleton::MaterialUv>,
 ) {
-    let affine = UvAffine::from_material(uv);
+    // RE-326: the offset is normalised by the dimensions the GE is given.
+    let affine = match (uv, pack.texture(texture)) {
+        (Some(uv), Some(t)) => uv.ge_affine(
+            ssb_rom::psp_texture::ge_texture_dims(t.width as u32, t.height as u32),
+            (t.wrap & TextureDesc::CLAMP_S != 0, t.wrap & TextureDesc::CLAMP_T != 0),
+        ),
+        _ => ssb_rom::skeleton::UvAffine::IDENTITY,
+    };
     let environment = p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
     let key = TextureMapping {
         environment,
@@ -917,48 +930,6 @@ struct TextureMapping {
     scale_t_bits: u32,
     offset_s_bits: u32,
     offset_t_bits: u32,
-}
-
-#[derive(Clone, Copy)]
-struct UvAffine { scale_s: f32, scale_t: f32, offset_s: f32, offset_t: f32 }
-
-impl UvAffine {
-    const IDENTITY: Self = Self { scale_s: 1.0, scale_t: 1.0, offset_s: 0.0, offset_t: 0.0 };
-    fn from_material(uv: Option<ssb_rom::skeleton::MaterialUv>) -> Self {
-        let Some(uv) = uv else { return Self::IDENTITY };
-        const EPS: f32 = 1.0 / 65535.0;
-        if uv.scau.abs() <= EPS || uv.scav.abs() <= EPS || uv.base_scau.abs() <= EPS || uv.base_scav.abs() <= EPS { return Self::IDENTITY; }
-        let scale_s = uv.base_scau / uv.scau;
-        let scale_t = uv.base_scav / uv.scav;
-        // `gcDrawMObjForDObj` changes both `gSPTexture` and the render-tile
-        // window.  The source window is expressed as an origin divided by
-        // scale; applying `base_scale * base_origin - current_origin` after
-        // the GE scale exactly maps the already-packed rest pose to the live
-        // one.  The normal branch includes MObjSub::unk0A, while `unk10 ==
-        // 2` does not; see objdisplay.c:1353-1382.
-        let tile0 = uv.mode & 3;
-        let (base_s, current_s, base_t, current_t) = match tile0 {
-            2 => (
-                uv.base_trau / uv.base_scau,
-                uv.trau / uv.scau,
-                uv.base_trav / uv.base_scav,
-                uv.trav / uv.scav,
-            ),
-            1 if uv.tile_width > 0.0 && uv.tile_height > 0.0 => (
-                (uv.tile_width * uv.base_trau + uv.tile_bias) / (uv.tile_width * uv.base_scau),
-                (uv.tile_width * uv.trau + uv.tile_bias) / (uv.tile_width * uv.scau),
-                (((1.0 - uv.base_scav - uv.base_trav) * uv.tile_height + uv.tile_bias) / (uv.tile_height * uv.base_scav)),
-                (((1.0 - uv.scav - uv.trav) * uv.tile_height + uv.tile_bias) / (uv.tile_height * uv.scav)),
-            ),
-            _ => (0.0, 0.0, 0.0, 0.0),
-        };
-        Self {
-            scale_s,
-            scale_t,
-            offset_s: scale_s * base_s - current_s,
-            offset_t: scale_t * base_t - current_t,
-        }
-    }
 }
 
 /// The live colour registers a primitive's `mat_anim` drives.
@@ -1170,33 +1141,35 @@ unsafe fn apply_material(
         }
     }
 
-    // `PrimDesc.mat_anim` (RE-175): a manager-effect script can swap which
-    // sprite a primitive samples (`MatAnimDesc::textures`), independent of
-    // `TextureDesc.mat_anim`'s texture-keyed palette cycling above -- this
-    // one is keyed by the primitive, since an untextured colour script and a
-    // sprite-swapping one can both attach to the same `MatAnimDesc` index.
-    let stage_texture = (p.mat_anim != TextureDesc::NO_ANIM)
-        .then(|| mat_anim.and_then(|m| m.resolved_texture(pack, p.mat_anim)))
-        .flatten();
-    let effective_texture = if p.mat_anim != TextureDesc::NO_ANIM {
-        effect_mat_anim
-            .and_then(|m| m.resolved_texture(pack, p.mat_anim))
-            .or(stage_texture)
-            .unwrap_or(p.texture)
-    } else { p.texture };
+    // `PrimDesc.mat_anim` (RE-175): a script can swap which sprite a
+    // primitive samples (`MatAnimDesc::textures`). RE-326: only where the
+    // primitive still draws the `MObj`'s own image (`IMAGE_ANIM`); a display
+    // list that loaded its own keeps it.
+    let effective_texture = match p.image_anim() {
+        Some(anim) => effect_mat_anim
+            .and_then(|m| m.resolved_texture(pack, anim))
+            .or_else(|| mat_anim.and_then(|m| m.resolved_texture(pack, anim)))
+            .unwrap_or(p.texture),
+        None => p.texture,
+    };
 
-    if st.last_texture != Some(effective_texture) {
-        st.last_texture = Some(effective_texture);
+    // RE-326: the palette is the primitive's `MObj`'s while it owns the
+    // TLUT, whichever texture is bound.
+    let palette_anim = p.palette_anim().unwrap_or(TextureDesc::NO_ANIM);
+    if st.last_texture != Some((effective_texture, palette_anim)) {
+        st.last_texture = Some((effective_texture, palette_anim));
         st.state_changes += 1;
         match pack.texture(effective_texture) {
-            Some(t) => bind_texture(pack, &t, mat_anim, (stage_texture.is_some()).then_some(p.mat_anim)),
+            Some(t) => bind_texture(pack, &t, mat_anim, palette_anim),
             None => sys::sceGuDisable(GuState::Texture2D),
         }
     }
 
+    // RE-326: the window and scale the `MObj` still owns.
     let uv = (p.mat_anim != TextureDesc::NO_ANIM)
         .then(|| mat_anim.and_then(|m| m.resolved_uv(pack, p.mat_anim)))
-        .flatten();
+        .flatten()
+        .and_then(|uv| uv.owned_by(p.flags));
     apply_texture_mapping(pack, p, st, effective_texture, uv);
 
     // `TEXTURE_BLEND` (RE-073): `(PRIM-ENV)*TEXEL+ENV`, a texture-driven
@@ -1288,10 +1261,10 @@ unsafe fn draw_lod_blend_pass(
     let Some(t) = pack.texture(lod.texture) else {
         return false;
     };
-    if st.last_texture != Some(lod.texture) {
-        st.last_texture = Some(lod.texture);
+    if st.last_texture != Some((lod.texture, TextureDesc::NO_ANIM)) {
+        st.last_texture = Some((lod.texture, TextureDesc::NO_ANIM));
         st.state_changes += 1;
-        bind_texture(pack, &t, mat_anim, None);
+        bind_texture(pack, &t, mat_anim, TextureDesc::NO_ANIM);
     }
     apply_texture_mapping(pack, p, st, lod.texture, lod.uv);
     if st.last_texture_func != Some(TextureFuncState::Modulate) {
@@ -1921,7 +1894,7 @@ pub unsafe fn draw_texture_quad(
     draw_state: &mut DrawState,
 ) {
     let Some(t) = pack.texture(index) else { return };
-    bind_texture(pack, &t, None, None);
+    bind_texture(pack, &t, None, TextureDesc::NO_ANIM);
     // `bind_texture` no longer sets this itself (RE-073); this diagnostic
     // always wants the plain, unblended sample.
     sys::sceGuTexFunc(
@@ -2012,7 +1985,7 @@ pub unsafe fn draw_particle(
     let Some(t) = pack.texture(texture_index) else {
         return;
     };
-    bind_texture(pack, &t, None, None);
+    bind_texture(pack, &t, None, TextureDesc::NO_ANIM);
 
     let color = match envcolor {
         Some(env) => {
@@ -2106,7 +2079,7 @@ pub unsafe fn draw_fighter_shadow(
         return;
     };
     let Some(texture) = pack.texture(texture_index) else { return };
-    bind_texture(pack, &texture, None, None);
+    bind_texture(pack, &texture, None, TextureDesc::NO_ANIM);
     sys::sceGuTexFunc(sys::TextureEffect::Modulate, sys::TextureColorComponent::Rgba);
     sys::sceGuTexScale(1.0, 1.0);
     sys::sceGuDisable(GuState::CullFace);

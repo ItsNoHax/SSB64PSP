@@ -38,6 +38,7 @@ use ssb_rom::rom;
 
 mod filter_coverage;
 mod matcolors;
+mod matsample;
 mod residual_fixes;
 mod residuals;
 
@@ -1540,6 +1541,14 @@ fn pack_mesh(
                     let sprites: Vec<u32> = if anim_data.sprites.is_empty() {
                         Vec::new()
                     } else {
+                        // RE-326: only a primitive drawing the `MObj`'s own
+                        // image has the tile shape its sprites load into. A
+                        // later one that loaded its own image leaves the
+                        // entry to that primitive.
+                        if !prim.material.anim_texture.image {
+                            NON_OWNER_FIRST.with(|n| n.set(n.get() + 1));
+                            return None;
+                        }
                         let base = prim.material.texture.or(prim.material.texture_shape)?;
                         let (gate, translucent_blend) =
                             ssb_rom::pack::material_alpha_state(&prim.material);
@@ -1607,7 +1616,11 @@ fn pack_mesh(
                 }),
             }
         });
-        if let (Some(texture), Some(mat_anim)) = (texture_index, mat_anim_index_resolved) {
+        if let (Some(texture), Some(mat_anim), true) = (
+            texture_index,
+            mat_anim_index_resolved,
+            prim.material.anim_texture.palette,
+        ) {
             // Kept alongside `PrimDesc.mat_anim` for the texture-only
             // palette-cycling case (RE-089/RE-090/RE-091): `bind_texture`
             // (`psp-asset-viewer/src/meshdraw.rs`) still reads a texture's own resolved
@@ -1719,9 +1732,10 @@ fn reachable_palettes(
         let texture = joint
             .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
             .map(|v| (v.max(0.0) as usize).min(data.sprites.len().saturating_sub(1)));
-        if texture == sprite_slot && joint.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID) {
+        // `palettes[(s32)palette_id]` for any live kind (RE-325/RE-326).
+        if texture == sprite_slot {
             if let Some(value) = joint.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
-                reached.insert(((value.max(0.0) + 0.5) as usize).min(data.palettes.len() - 1));
+                reached.insert((value.max(0.0) as usize).min(data.palettes.len() - 1));
             }
         }
         if joint.ended() || joint.looped() {
@@ -1962,6 +1976,12 @@ fn convert_graph_at(
 /// for the same replay).
 const MAT_ANIM_REPLAY_FRAMES: u32 = 600;
 
+thread_local! {
+    /// Primitives that named a sprite-table script before any primitive
+    /// drawing its image did, and so carry no `mat_anim` (RE-326).
+    static NON_OWNER_FIRST: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Runs one material animation script to see whether it drives anything a
 /// packed primitive can attach: a real `PaletteID` cycle (RE-089/RE-090/
 /// RE-091), a texture-id cycle (the manager-effect sprite frame lists --
@@ -1986,6 +2006,7 @@ fn resolve_one_mat_anim(
 ) -> Option<(ssb_rom::mesh::MatAnimRef, MatAnimData)> {
     let mut j = ssb_rom::matanim::MaterialJoint::start(script, 0.0);
     let mut max_palette = 0.0f32;
+    let mut palette_seen = false;
     let mut max_texture = 0.0f32;
     let mut frames = 0u32;
     let mut seen_material = false;
@@ -2003,6 +2024,7 @@ fn resolve_one_mat_anim(
         frames += 1;
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_PALETTE_ID) {
             max_palette = max_palette.max(v);
+            palette_seen = true;
         }
         if let Some(v) = j.track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT) {
             max_texture = max_texture.max(v);
@@ -2026,10 +2048,9 @@ fn resolve_one_mat_anim(
         }
     }
 
-    // `has_palette` mirrors RE-089's original gate: only a *stepped*
-    // `PaletteID` names a discrete index worth sizing an array around, kept
-    // as-is to avoid changing already-verified stage-layer behaviour.
-    // `has_texture` does not require a step: `gcPlayMObjMatAnim` assigns
+    // `gcDrawMObjForDObj` draws `palettes[(s32)palette_id]` whatever kind
+    // wrote it (RE-325), so neither gate requires a step and both indices
+    // truncate (RE-326). `has_texture`: `gcPlayMObjMatAnim` assigns
     // `mobj->texture_id_curr = value` for *any* live kind (RE-175 measured
     // real manager scripts using a plain `Kind::Linear` ramp for this --
     // CommonSpark's own UV/texture-id stream among them, not a `_After`
@@ -2037,7 +2058,7 @@ fn resolve_one_mat_anim(
     // wrongly decline a real, in-source frame selection. A colour track has
     // no such requirement either -- `track_color` already handles a smooth
     // `Kind::Linear` ramp correctly, unlike `track_value`.
-    let has_palette = j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID);
+    let has_palette = palette_seen;
     let has_texture = j
         .track_value(ssb_rom::matanim::TRACK_TEXTURE_ID_CURRENT)
         .is_some()
@@ -2053,7 +2074,7 @@ fn resolve_one_mat_anim(
 
     let (sub_offset, palette_entries) = sub_at(node, m)?;
     let palette_count = if has_palette {
-        max_palette.round() as u32 + 1
+        max_palette.max(0.0) as u32 + 1
     } else {
         0
     };
@@ -2063,7 +2084,7 @@ fn resolve_one_mat_anim(
         Vec::new()
     };
     let texture_count = if has_texture {
-        max_texture.round() as u32 + 1
+        max_texture.max(0.0) as u32 + 1
     } else {
         0
     };
@@ -3282,6 +3303,10 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
     for (i, t, f) in ranked.iter().take(5) {
         println!("    object {i:<4} file {f:<5} {t} triangles");
     }
+    println!(
+        "  {} primitive(s) named a sprite-table script before its image owner",
+        NON_OWNER_FIRST.with(|n| n.get())
+    );
     Ok(())
 }
 
