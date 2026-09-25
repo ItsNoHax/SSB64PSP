@@ -3938,15 +3938,26 @@ mod tests {
             shift_s: 0,
             shift_t: 0,
         };
-        let first = [ci4, Cmd::Call(SegAddr(0x0E00_0000)), vtx(3), Cmd::Tri1([0, 1, 2])];
+        let first = [
+            ci4,
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
         let second: Vec<Cmd> = [ci4]
             .into_iter()
             .chain(later.iter().copied())
             .chain([vtx(3), Cmd::Tri1([0, 1, 2])])
             .collect();
         let mobj = [MObjMaterial {
-            sprite: Some(Ptr { file: None, offset: 0x400 }),
-            palette: Some(Ptr { file: None, offset: 0x600 }),
+            sprite: Some(Ptr {
+                file: None,
+                offset: 0x400,
+            }),
+            palette: Some(Ptr {
+                file: None,
+                offset: 0x600,
+            }),
             loads_tlut: true,
             palette_entries: 16,
             tile0_uv: Some((0, 0, 92, 96)),
@@ -4007,7 +4018,10 @@ mod tests {
             scale: true,
         };
         assert_eq!(p[0].material.anim_texture, all);
-        assert!(p[1].material.mat_anim.is_some(), "the script is still bound");
+        assert!(
+            p[1].material.mat_anim.is_some(),
+            "the script is still bound"
+        );
         assert_eq!(
             p[1].material.anim_texture,
             AnimTexture {
@@ -4051,7 +4065,10 @@ mod tests {
             ]
         };
         let mobj = [MObjMaterial {
-            palette: Some(Ptr { file: None, offset: 0x600 }),
+            palette: Some(Ptr {
+                file: None,
+                offset: 0x600,
+            }),
             ..MObjMaterial::default()
         }];
         let anim = [Some(MatAnimRef {
