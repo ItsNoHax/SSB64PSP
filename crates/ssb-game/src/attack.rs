@@ -16,12 +16,9 @@
 //!
 //! ## What is simplified here, and why
 //!
-//! * **No per-bone joint attachment.** A hitbox's `ox`/`oy`/`oz` offset is
-//!   from an attachment joint in the original; here it is just added to the
-//!   attacker's root position (`oy`/`oz` as-is, `ox` mirrored by facing —
-//!   see [`apply_hit_from`]). `Jab1`'s own offset is `(0, 0, 0)`, so it is
-//!   unaffected; moves with a real reach offset (the tilts, the dash attack)
-//!   are approximated by this, not modelled exactly.
+//! * **Joint attachment comes from the current pose.** The PSP runtime
+//!   samples `FTStruct::joints` into portable transforms. A host caller that
+//!   has no skeleton retains the old fallback for non-root joints.
 //! * **A sphere hurtbox, not a per-bone capsule set.** The original tests a
 //!   hitbox sphere against eleven `FTDamageColl` capsules per fighter
 //!   (`gmCollisionCheckFighterInFighterRange`). No per-bone hurtbox system
@@ -67,9 +64,7 @@ use crate::status::{self, AnyStatus, FoxStatus, MarioStatus, Status, StatusTimin
 pub struct Hitbox {
     /// `dmg` — base damage, added to the target's percent as-is.
     pub damage: i32,
-    /// `ox, oy, oz` — offset from the attachment joint. `(0, 0, 0)` for
-    /// [`MARIO_JAB1_HITBOX`], so the missing joint attachment (see module
-    /// docs) is not yet observable.
+    /// `ox, oy, oz` — offset from the attachment joint.
     pub offset: Vec3,
     /// `sz` — the motion command's "size", which the original halves into a
     /// radius (`fttypes.h`); this field is already that radius.
@@ -1771,6 +1766,128 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
     d.length_squared() <= r * r
 }
 
+/// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
+/// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
+/// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey
+/// `MainMotion.c`, not from the visual model's node order.
+fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
+    use crate::fighter::FighterKind::{Donkey, Fox, Mario};
+    if kind == Donkey
+        && matches!(
+            status,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialHi | crate::status::DonkeyStatus::SpecialAirHi
+            )
+        )
+    {
+        return if index < 2 {
+            [8, 14][index]
+        } else {
+            [8, 14, 21][(index - 2) % 3]
+        };
+    }
+    let ids: &[u8] = match (kind, status) {
+        (Mario, AnyStatus::Common(Status::Attack11)) => &[10, 9],
+        (Mario, AnyStatus::Common(Status::Attack12)) => &[16, 15],
+        (Mario, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 25, 27],
+        (Mario, AnyStatus::Common(Status::AttackDash)) => &[5],
+        (Mario, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
+            &[24, 25]
+        }
+        (Mario, AnyStatus::Common(Status::AttackHi3)) => &[14, 15],
+        (Mario, AnyStatus::Common(Status::AttackLw3)) => &[24, 25],
+        (
+            Mario,
+            AnyStatus::Common(
+                Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw,
+            ),
+        ) => &[14, 15],
+        (Mario, AnyStatus::Common(Status::AttackHi4)) => &[12],
+        (Mario, AnyStatus::Common(Status::AttackLw4)) => &[25, 25],
+        (Mario, AnyStatus::Common(Status::AttackAirN)) => &[25, 5],
+        (
+            Mario,
+            AnyStatus::Common(Status::AttackAirF | Status::AttackAirB | Status::AttackAirLw),
+        ) => &[25],
+        (Mario, AnyStatus::Common(Status::AttackAirHi)) => &[25, 27],
+        (Mario, AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi)) => &[12, 15],
+        (Mario, AnyStatus::Mario(MarioStatus::SpecialLw | MarioStatus::SpecialAirLw)) => &[0],
+
+        (Fox, AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart)) => &[0],
+        (Fox, AnyStatus::Fox(FoxStatus::Attack100Loop)) => &[19, 20],
+        (Fox, AnyStatus::Common(Status::Attack11)) => &[8],
+        (Fox, AnyStatus::Common(Status::Attack12)) => &[14],
+        (Fox, AnyStatus::Common(Status::AttackDash)) => &[20],
+        (
+            Fox,
+            AnyStatus::Common(
+                Status::AttackS3Hi
+                | Status::AttackS3HiS
+                | Status::AttackS3
+                | Status::AttackS3LwS
+                | Status::AttackS3Lw
+                | Status::AttackHi3,
+            ),
+        ) => &[24, 25],
+        (Fox, AnyStatus::Common(Status::AttackLw3)) => &[29],
+        (Fox, AnyStatus::Common(Status::AttackS4)) => &[20],
+        (Fox, AnyStatus::Common(Status::AttackHi4)) => &[25],
+        (Fox, AnyStatus::Common(Status::AttackLw4)) => &[25],
+        (Fox, AnyStatus::Common(Status::AttackAirN)) => &[5, 20, 25],
+        (Fox, AnyStatus::Common(Status::AttackAirF)) => &[25],
+        (Fox, AnyStatus::Common(Status::AttackAirB)) => &[5, 25, 20],
+        (Fox, AnyStatus::Common(Status::AttackAirHi)) => &[5, 25],
+        (Fox, AnyStatus::Common(Status::AttackAirLw)) => &[20],
+
+        (Donkey, AnyStatus::Common(Status::Attack11)) => &[9],
+        (Donkey, AnyStatus::Common(Status::Attack12)) => &[15],
+        (Donkey, AnyStatus::Common(Status::AttackDash)) => &[21],
+        (Donkey, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
+            &[14, 15, 14]
+        }
+        (Donkey, AnyStatus::Common(Status::AttackHi3)) => &[8, 9],
+        (Donkey, AnyStatus::Common(Status::AttackLw3)) => &[14, 15],
+        (
+            Donkey,
+            AnyStatus::Common(
+                Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw,
+            ),
+        ) => &[14, 15, 14],
+        (Donkey, AnyStatus::Common(Status::AttackHi4)) => &[15, 9],
+        (Donkey, AnyStatus::Common(Status::AttackLw4)) => &[26, 21],
+        (Donkey, AnyStatus::Common(Status::AttackAirN)) => &[15, 9, 5],
+        (Donkey, AnyStatus::Common(Status::AttackAirF)) => &[15, 14, 8],
+        (Donkey, AnyStatus::Common(Status::AttackAirB)) => &[0],
+        (Donkey, AnyStatus::Common(Status::AttackAirHi)) => &[8, 9],
+        (Donkey, AnyStatus::Common(Status::AttackAirLw)) => &[26, 21],
+        (
+            Donkey,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNEnd
+                | crate::status::DonkeyStatus::SpecialAirNEnd,
+            ),
+        ) => &[14],
+        (
+            Donkey,
+            AnyStatus::Donkey(
+                crate::status::DonkeyStatus::SpecialNFull
+                | crate::status::DonkeyStatus::SpecialAirNFull,
+            ),
+        ) => &[14, 14, 5],
+        (Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialLwLoop)) => &[0],
+        _ => unreachable!("ported move lacks source joint IDs"),
+    };
+    ids[index % ids.len()]
+}
+
 /// `F1` criterion 5: tests `attacker`'s active hitboxes against `defender` and
 /// applies the hit. `hit_record` is the caller's per-target hit-suppression
 /// state — the fixed-size Training stand-in for the original's per-attack
@@ -1783,10 +1900,11 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         return;
     };
     let mut has_active_hitbox = false;
-    for active in move_data
+    for (index, active) in move_data
         .hitboxes
         .iter()
-        .filter(|h| h.is_active(attacker.status.anim_frame))
+        .enumerate()
+        .filter(|(_, h)| h.is_active(attacker.status.anim_frame))
     {
         has_active_hitbox = true;
         if hit_record.hit_generation == Some(active.hit_generation) {
@@ -1802,15 +1920,8 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         ) {
             hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
         }
-        // `ox` mirrors with facing (a joint-space X offset rotated by the
-        // fighter's own transform in the original); `oy`/`oz` do not need that,
-        // matching decomp's own attachment convention.
-        let hitbox_pos = attacker.pos
-            + Vec3::new(
-                hitbox.offset.x * attacker.facing.sign(),
-                hitbox.offset.y,
-                hitbox.offset.z,
-            );
+        let joint = attack_joint(attacker.kind, attacker.status.status, index);
+        let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
         if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
             hit_record.hit_generation = Some(active.hit_generation);
             return;
@@ -1999,6 +2110,27 @@ mod tests {
         assert!(jab1_hitbox_active(2.0));
         assert!(jab1_hitbox_active(3.99));
         assert!(!jab1_hitbox_active(4.0));
+    }
+
+    #[test]
+    fn jab_uses_the_posed_hand_joint() {
+        use crate::fighter::{FighterKind, JointTransform};
+        let mut attacker = Fighter::new(FighterKind::Mario, 0, 3);
+        let mut defender = Fighter::new(FighterKind::Mario, 1, 3);
+        attacker.status.status = Status::Attack11.into();
+        attacker.status.anim_frame = 2.0;
+        attacker.joint_transforms[10] = Some(JointTransform {
+            axes: [
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            origin: Vec3::new(500.0, 0.0, 0.0),
+        });
+        defender.pos = Vec3::new(500.0, 0.0, 0.0);
+        let mut record = HitRecord::default();
+        apply_hit_from(&attacker, &mut defender, &mut record);
+        assert_eq!(defender.damage, 2);
     }
 
     #[test]
@@ -2262,7 +2394,7 @@ mod tests {
         // The loop's side hitbox at frame 4 is rooted at this exact
         // authored offset; the root hurtbox approximation then exercises the
         // same Training bridge as the live dummy.
-        defender.pos = Vec3::new(0.0, 280.0, 150.0);
+        defender.pos = Vec3::new(150.0, 280.0, 0.0);
 
         let mut hit_record = HitRecord::default();
         attacker.status.anim_frame = 4.0;

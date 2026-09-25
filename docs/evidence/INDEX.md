@@ -341,3 +341,4 @@ editing a record.
 | RE-329 | Blocking controller read causes the viewer's tick spiral | COMPLETE (PSP-2000 interleaved scan A/B and per-section timing; 3,600-tick replay) | hardware, input, timing, performance, viewer |  |
 | RE-330 | Shared capture links and Donkey Kong cargo carry | COMPLETE (decomp source, host tests, ROM animation cross-check, PSP builds, PPSSPP capture) | fighter, gameplay, grab, capture, throw, animation, asset-pipeline, visual-regression |  |
 | RE-331 | Grab golden model below Dream Land platform | COMPLETE (decomp motion descriptors, ROM figatree, 69 PPSSPP goldens twice) | fighter, animation, grab, rendering, asset-pipeline, visual-regression |  |
+| RE-332 | Gameplay joint transforms for attacks, catches and held fighters | COMPLETE (decomp source, host tests, both PSP builds, PPSSPP grab capture; physical PSP not captured) | fighter, gameplay, collision, grab, capture, animation, visual-regression |  |

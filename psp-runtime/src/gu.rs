@@ -800,14 +800,44 @@ impl Gpu {
         self.model_transform_xyz(pos, rot_radians, [scale; 3]);
     }
 
+    /// Loads a held fighter's TopN transform from its catcher's sampled joint.
+    /// The source extracts rotation from the joint matrix after removing
+    /// scale; the held fighter's own model scale remains `scale`.
+    pub fn model_transform_joint(
+        &mut self,
+        pos: ssb_engine::math::Vec3,
+        joint: ssb_game::fighter::JointTransform,
+        scale: f32,
+    ) {
+        let axis = |i: usize| {
+            let v = joint.axes[i].normalized() * scale;
+            sys::ScePspFVector4 {
+                x: v.x,
+                y: v.y,
+                z: v.z,
+                w: 0.0,
+            }
+        };
+        let matrix = sys::ScePspFMatrix4 {
+            x: axis(0),
+            y: axis(1),
+            z: axis(2),
+            w: sys::ScePspFVector4 {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                w: 1.0,
+            },
+        };
+        unsafe {
+            sys::sceGumMatrixMode(sys::MatrixMode::Model);
+            sys::sceGumLoadMatrix(&matrix);
+        }
+    }
+
     /// Sets a model transform with independent axis scales, used by source
     /// weapons whose `DObj` animates only its X scale.
-    pub fn model_transform_xyz(
-        &mut self,
-        pos: [f32; 3],
-        rot_radians: [f32; 3],
-        scale: [f32; 3],
-    ) {
+    pub fn model_transform_xyz(&mut self, pos: [f32; 3], rot_radians: [f32; 3], scale: [f32; 3]) {
         unsafe {
             sys::sceGumMatrixMode(sys::MatrixMode::Model);
             sys::sceGumLoadIdentity();

@@ -22,6 +22,8 @@ or evidence record covers it.
 | Damage to a held fighter | `ftCommonDamageCheckCaptureKeepHold` needs its own hit response while the capture link persists; this batch leaves such hits unregistered | RE-330 |
 | Throw collisions against bystanders | Mario and Fox back-throw attack boxes cannot hit another fighter in the current two-fighter match | RE-330 |
 | Throw stale-move and handicap modifiers | The current Training match has no stale-move queue or handicap state; throw damage uses descriptor values | RE-330 |
+| Restore condensed same-valued attack boxes | Some Mario, Fox and Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy, so joint placement now exposes this old omission | RE-332 |
+| Non-unit held fighter scale | Held TopN placement currently uses the first-child offset at normal fighter size; giant/shrunken capture needs the root scale applied as in `ftCommonCapturePulledRotateScale` | RE-332 |
 
 ## Hardware acceptance
 

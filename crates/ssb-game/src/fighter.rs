@@ -157,6 +157,23 @@ impl Facing {
     }
 }
 
+/// A sampled fighter joint in match coordinates. The three columns carry the
+/// joint's rotation and scale; `origin` is its world position. The runtime
+/// builds this from the current skeleton, while gameplay remains pack-free.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JointTransform {
+    pub axes: [Vec3; 3],
+    pub origin: Vec3,
+}
+
+impl JointTransform {
+    pub fn point(self, offset: Vec3) -> Vec3 {
+        self.origin + self.axes[0] * offset.x + self.axes[1] * offset.y + self.axes[2] * offset.z
+    }
+}
+
+pub const FIGHTER_JOINTS: usize = 40;
+
 /// Whether a fighter is standing on something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Situation {
@@ -251,6 +268,9 @@ pub struct Fighter {
     /// never a skeleton or pack handle; callers without a renderer fall back
     /// to the fighter root when it is absent.
     pub weapon_spawn_anchor: Option<Vec3>,
+    /// Current posed joints, indexed as `FTStruct::joints` (four runtime
+    /// joints precede the packed model nodes).
+    pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -298,6 +318,7 @@ impl Fighter {
             grab: crate::grab::GrabState::default(),
             weapon_spawn: None,
             weapon_spawn_anchor: None,
+            joint_transforms: [None; FIGHTER_JOINTS],
             root_motion: RootMotion::default(),
         }
     }
@@ -428,6 +449,24 @@ impl Fighter {
     /// that needs it, then cleared with the other per-frame runtime input.
     pub fn set_weapon_spawn_anchor(&mut self, anchor: Vec3) {
         self.weapon_spawn_anchor = Some(anchor);
+    }
+
+    /// World position of a motion collision offset. Host-only callers with
+    /// no skeleton use TopN's facing transform for joint 0 and the previous
+    /// root-offset fallback for non-root joints.
+    pub fn joint_world(&self, joint: u8, offset: Vec3) -> Vec3 {
+        if let Some(transform) = self.joint_transforms.get(joint as usize).copied().flatten() {
+            transform.point(offset)
+        } else if joint == 0 {
+            self.pos
+                + Vec3::new(
+                    offset.z * self.facing.sign(),
+                    offset.y,
+                    -offset.x * self.facing.sign(),
+                )
+        } else {
+            self.pos + Vec3::new(offset.x * self.facing.sign(), offset.y, offset.z)
+        }
     }
 
     /// Takes the one weapon creation emitted by this fighter's motion script.
@@ -763,6 +802,23 @@ impl Fighter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn joint_offset_uses_rotated_and_scaled_axes() {
+        let mut fighter = Fighter::new(FighterKind::Mario, 0, 3);
+        fighter.joint_transforms[28] = Some(JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -2.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(2.0, 0.0, 0.0),
+            ],
+            origin: Vec3::new(100.0, 200.0, 30.0),
+        });
+        assert_eq!(
+            fighter.joint_world(28, Vec3::new(10.0, 20.0, 30.0)),
+            Vec3::new(160.0, 220.0, 10.0)
+        );
+    }
 
     #[test]
     fn roster_ordinals_match_the_original_enum() {
