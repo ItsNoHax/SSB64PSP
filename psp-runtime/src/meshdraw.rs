@@ -142,12 +142,12 @@ pub struct DrawState {
     /// from `last_flags`: light-colour writes are independent RSP state, so
     /// two primitives with identical geometry/render flags can still require
     /// different GE light colours (RE-166).
-    last_fighter_light_colors: Option<(Option<u32>, Option<u32>)>,
+    last_fighter_light_colors: ssb_rom::anim_color::Latch<(Option<u32>, Option<u32>)>,
     /// The combiner's resolved scale on `SHADE`, installed as the GE material
     /// colour for a runtime-lit primitive.  Vertex colour carried this scale
     /// while lighting was baked; the GE ignores that vertex colour when
     /// `sceGuColorMaterial` is disabled, so it must be applied here instead.
-    last_fighter_material_color: Option<u32>,
+    last_fighter_material_color: ssb_rom::anim_color::Latch<u32>,
     /// `Some` only while the caller has installed SSB64's per-fighter light.
     ///
     /// A `LIT` primitive alone is deliberately insufficient to enable GE
@@ -157,6 +157,14 @@ pub struct DrawState {
     /// emits `ftDisplayLightsDrawReflect` immediately before the fighter
     /// object, then enables `G_LIGHTING` only for the appropriate primitives.
     runtime_fighter_light: bool,
+    /// The scene's stage light direction for this frame, set by
+    /// [`Self::set_stage_light`]. Only primitives whose `LIGHT_1`/`LIGHT_2`
+    /// register is animated (`LIGHT1_ANIM`/`LIGHT2_ANIM`, RE-322) light with
+    /// it; every other stage primitive keeps its baked shade.
+    stage_light: Option<ScePspFVector3>,
+    /// Whether the GE's light 0 currently holds [`Self::stage_light`]. The
+    /// fighter scope reprograms the same channel, so it clears this.
+    stage_light_installed: bool,
     pub draws: u32,
     pub triangles: u32,
     pub state_changes: u32,
@@ -269,11 +277,13 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_func = None;
-        self.last_fighter_light_colors = None;
-        self.last_fighter_material_color = None;
+        self.last_fighter_light_colors.invalidate();
+        self.last_fighter_material_color.invalidate();
         self.last_texture_mapping = None;
         self.texgen_model = None;
         self.runtime_fighter_light = false;
+        self.stage_light = None;
+        self.stage_light_installed = false;
         self.draws = 0;
         self.triangles = 0;
         self.state_changes = 0;
@@ -291,51 +301,91 @@ impl DrawState {
     /// because [`apply_material`] enables `GuState::Lighting` only when both
     /// this context and their packed `flags::LIT` are present.
     pub unsafe fn configure_fighter_light(&mut self, angles_degrees: [f32; 2]) {
-        let radians = core::f32::consts::PI / 180.0;
-        let (sin_x, cos_x) = ssb_engine::math::sin_cos(angles_degrees[0] * radians);
-        let (sin_y, cos_y) = ssb_engine::math::sin_cos(angles_degrees[1] * radians);
-        let direction = ScePspFVector3 {
-            x: sin_x * cos_y,
-            y: sin_y,
-            z: cos_x * cos_y,
-        };
-
-        // The GE otherwise treats the packed colour as a material colour.
-        // For a lit N64 vertex those bytes are a normal, not a colour; leave
-        // material white and source colour solely from the directional light.
-        sys::sceGuColorMaterial(LightComponent::empty());
-        sys::sceGuMaterial(
-            LightComponent::AMBIENT | LightComponent::DIFFUSE,
-            0xFFFF_FFFF,
-        );
-        // The actual LIGHT_1/LIGHT_2 colours are material state and are
-        // applied from each `PrimDesc` below. Start neutral so a primitive
-        // that contains no colour command cannot inherit a prior render pass.
-        sys::sceGuAmbient(0);
-        sys::sceGuLight(
-            0,
-            LightType::Directional,
-            LightComponent::DIFFUSE,
-            &direction,
-        );
-        // `sceGuLight` programs the channel but does not enable it. Both the
-        // per-channel gate and the per-primitive `Lighting` gate below are
-        // required; omitting this left only LIGHT_2's gray ambient term.
-        sys::sceGuEnable(GuState::Light0);
+        install_directional_light(&light_direction(angles_degrees));
         self.runtime_fighter_light = true;
-        self.last_fighter_light_colors = None;
-        self.last_fighter_material_color = None;
+        self.stage_light_installed = false;
+        self.last_fighter_light_colors.invalidate();
+        self.last_fighter_material_color.invalidate();
     }
 
+    /// Records the scene's stage light for this frame (RE-322).
+    ///
+    /// `sc1PGameFuncLights`/`scVSBattleFuncLights` enable `G_LIGHTING` and
+    /// load one directional light from the stage's `light_angle.x/y` before
+    /// anything draws; a stage `MObj` that animates `LIGHT_1`/`LIGHT_2` is lit
+    /// by it. Nothing is written to the GE here: the first animated-light
+    /// primitive installs it, so frames without one cost nothing.
+    pub fn set_stage_light(&mut self, angles_degrees: [f32; 2]) {
+        self.stage_light = Some(light_direction(angles_degrees));
+        self.stage_light_installed = false;
+    }
+
+    /// Installs [`Self::stage_light`] on the GE if a fighter scope or a new
+    /// frame replaced it.
+    unsafe fn ensure_stage_light(&mut self) {
+        if self.stage_light_installed {
+            return;
+        }
+        if let Some(direction) = self.stage_light {
+            install_directional_light(&direction);
+            self.stage_light_installed = true;
+            self.last_fighter_light_colors.invalidate();
+            self.last_fighter_material_color.invalidate();
+            self.state_changes += 1;
+        }
+    }
+}
+
+/// `ftDisplayLightsDrawReflect`'s direction from the stage's X/Y angles.
+fn light_direction(angles_degrees: [f32; 2]) -> ScePspFVector3 {
+    let radians = core::f32::consts::PI / 180.0;
+    let (sin_x, cos_x) = ssb_engine::math::sin_cos(angles_degrees[0] * radians);
+    let (sin_y, cos_y) = ssb_engine::math::sin_cos(angles_degrees[1] * radians);
+    ScePspFVector3 {
+        x: sin_x * cos_y,
+        y: sin_y,
+        z: cos_x * cos_y,
+    }
+}
+
+/// Programs GE light 0 as the original's one directional light plus LIGHT_2
+/// ambient, with a white material and vertex colour ignored.
+unsafe fn install_directional_light(direction: &ScePspFVector3) {
+    // The GE otherwise treats the packed colour as a material colour.
+    // For a lit N64 vertex those bytes are a normal, not a colour; leave
+    // material white and source colour solely from the directional light.
+    sys::sceGuColorMaterial(LightComponent::empty());
+    sys::sceGuMaterial(
+        LightComponent::AMBIENT | LightComponent::DIFFUSE,
+        0xFFFF_FFFF,
+    );
+    // The actual LIGHT_1/LIGHT_2 colours are material state and are
+    // applied from each `PrimDesc` below. Start neutral so a primitive
+    // that contains no colour command cannot inherit a prior render pass.
+    sys::sceGuAmbient(0);
+    sys::sceGuLight(
+        0,
+        LightType::Directional,
+        LightComponent::DIFFUSE,
+        direction,
+    );
+    // `sceGuLight` programs the channel but does not enable it. Both the
+    // per-channel gate and the per-primitive `Lighting` gate below are
+    // required; omitting this left only LIGHT_2's gray ambient term.
+    sys::sceGuEnable(GuState::Light0);
+}
+
+impl DrawState {
     /// Ends a fighter-light scope before debug geometry or another render
     /// pass.  The cache must be invalidated too: the next packed primitive
     /// needs to re-issue all of its GE state rather than trusting a state this
     /// direct disable has changed behind its back.
     pub unsafe fn finish_fighter_light(&mut self) {
         self.runtime_fighter_light = false;
+        self.stage_light_installed = false;
         self.last_flags = None;
-        self.last_fighter_light_colors = None;
-        self.last_fighter_material_color = None;
+        self.last_fighter_light_colors.invalidate();
+        self.last_fighter_material_color.invalidate();
         sys::sceGuDisable(GuState::Lighting);
         sys::sceGuDisable(GuState::Light0);
     }
@@ -396,8 +446,9 @@ impl DrawState {
         self.last_texture = None;
         self.last_flags = None;
         self.last_texture_func = None;
-        self.last_fighter_light_colors = None;
-        self.last_fighter_material_color = None;
+        self.last_fighter_light_colors.invalidate();
+        self.last_fighter_material_color.invalidate();
+        self.stage_light_installed = false;
         self.last_texture_mapping = None;
     }
 
@@ -910,6 +961,29 @@ impl UvAffine {
     }
 }
 
+/// The live colour registers a primitive's `mat_anim` drives.
+///
+/// A spawned effect's own player wins. The pack-lifetime stage player only
+/// supplies the tracks whose register the primitive still inherits from the
+/// animated `MObj` (RE-322); a primitive that set its own colour after it
+/// keeps the packed value.
+fn material_colors(
+    p: &PrimDesc,
+    mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
+    effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
+) -> Option<ssb_rom::skeleton::EffectColors> {
+    if p.mat_anim == TextureDesc::NO_ANIM {
+        return None;
+    }
+    effect_mat_anim
+        .and_then(|m| m.resolved_colors(p.mat_anim))
+        .or_else(|| {
+            mat_anim
+                .and_then(|m| m.resolved_colors(p.mat_anim))
+                .map(|c| ssb_rom::anim_color::stage_colors(c, p.flags))
+        })
+}
+
 /// Applies a primitive's material state.
 unsafe fn apply_material(
     pack: &Pack<'_>,
@@ -918,13 +992,15 @@ unsafe fn apply_material(
     mat_anim: Option<&ssb_rom::skeleton::MaterialAnimator>,
     effect_mat_anim: Option<&ssb_rom::skeleton::EffectMaterialAnimator>,
 ) {
-    let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
-        .then(|| {
-            effect_mat_anim
-                .and_then(|m| m.resolved_colors(p.mat_anim))
-                .or_else(|| mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
-        })
-        .flatten();
+    let effect_colors = material_colors(p, mat_anim, effect_mat_anim);
+    let light_scope = ssb_rom::anim_color::light_scope(
+        p.flags,
+        st.runtime_fighter_light,
+        st.stage_light.is_some(),
+    );
+    if light_scope == ssb_rom::anim_color::LightScope::StageAnimated {
+        st.ensure_stage_light();
+    }
 
     if st.last_flags != Some(p.flags) {
         st.last_flags = Some(p.flags);
@@ -960,7 +1036,12 @@ unsafe fn apply_material(
         // authored literal-colour material draws must stay literal.  The pack
         // records that source distinction as `LIT`; GE lighting is a draw
         // state, so make the equivalent decision at the same granularity.
-        if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
+        //
+        // RE-322: a stage primitive whose light colour is animated lights
+        // too, under the scene's stage light. Its flags carry
+        // `LIGHT1_ANIM`/`LIGHT2_ANIM`, so no other primitive shares this
+        // cached decision.
+        if light_scope != ssb_rom::anim_color::LightScope::Off {
             sys::sceGuEnable(GuState::Lighting);
         } else {
             sys::sceGuDisable(GuState::Lighting);
@@ -1055,17 +1136,9 @@ unsafe fn apply_material(
     // list may write a new colour while retaining the same flags. Presence is
     // carried explicitly because RGB=0 is an authored light state, not an
     // absent write (RE-166).
-    if st.runtime_fighter_light && p.flags & flags::LIT != 0 {
-        let colors = (
-            effect_colors
-                .and_then(|c| c.packed_light1())
-                .or_else(|| (p.flags & flags::LIGHT1_COLOR != 0).then_some(p.light1_color)),
-            effect_colors
-                .and_then(|c| c.packed_light2())
-                .or_else(|| (p.flags & flags::LIGHT2_COLOR != 0).then_some(p.light2_color)),
-        );
-        if st.last_fighter_light_colors != Some(colors) {
-            st.last_fighter_light_colors = Some(colors);
+    if light_scope != ssb_rom::anim_color::LightScope::Off {
+        let colors = ssb_rom::anim_color::light_registers(effect_colors, p);
+        if st.last_fighter_light_colors.set(colors) {
             st.state_changes += 1;
             if let Some(color) = colors.0 {
                 sys::sceGuLightColor(0, LightComponent::DIFFUSE, color);
@@ -1088,8 +1161,7 @@ unsafe fn apply_material(
         } else {
             p.prim_color
         };
-        if st.last_fighter_material_color != Some(material_color) {
-            st.last_fighter_material_color = Some(material_color);
+        if st.last_fighter_material_color.set(material_color) {
             st.state_changes += 1;
             sys::sceGuMaterial(
                 LightComponent::AMBIENT | LightComponent::DIFFUSE,
@@ -1282,13 +1354,7 @@ pub unsafe fn draw_mesh(
 
         apply_material(pack, &p, st, mat_anim, effect_mat_anim);
 
-        let effect_colors = (p.mat_anim != TextureDesc::NO_ANIM)
-            .then(|| {
-                effect_mat_anim
-                    .and_then(|m| m.resolved_colors(p.mat_anim))
-                    .or_else(|| mat_anim.and_then(|m| m.resolved_colors(p.mat_anim)))
-            })
-            .flatten()
+        let effect_colors = material_colors(&p, mat_anim, effect_mat_anim)
             .filter(|c| c.prim.is_some() || c.env.is_some());
         let linear_texgen = p.flags & flags::TEXTURE_GEN_LINEAR != 0;
         let signed_clamp_uv = p.flags & flags::SIGNED_CLAMP_UV != 0;

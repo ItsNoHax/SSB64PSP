@@ -18,10 +18,10 @@ r1-mvopeningroom	psp-asset-viewer	scene2	pass	RE-198 RE-199
 r1-stage-sector	psp-asset-viewer	scene3	pass	RE-200
 r1-catch-swirl-flat-color	psp-asset-viewer	scene4	pass	RE-200
 r2-saffron-city-gate	psp-asset-viewer	scene5	pass	RE-205
-r2-metal-texgen	psp-asset-viewer	scene6	pass	RE-214
-r2-metal-texgen-rotated	psp-asset-viewer	scene7	pass	RE-214
-r2-metal-texgen-linear	psp-asset-viewer	scene8	pass	RE-215 RE-259
-r2-metal-texgen-camera-rotated	psp-asset-viewer	scene9	pass	RE-237
+r2-metal-texgen	psp-asset-viewer	scene6	pass	RE-214 RE-322
+r2-metal-texgen-rotated	psp-asset-viewer	scene7	pass	RE-214 RE-322
+r2-metal-texgen-linear	psp-asset-viewer	scene8	pass	RE-215 RE-259 RE-322
+r2-metal-texgen-camera-rotated	psp-asset-viewer	scene9	pass	RE-237 RE-322
 r2-peach-castle	psp-asset-viewer	scene10	pass	RE-286
 r2-depth-mask-diagnostic	psp-asset-viewer	depth_mask	pass	RE-251
 r2-mario-fighter	psp-asset-viewer	fighter mario	pass	RE-265
@@ -51,10 +51,10 @@ r2-stage-kongo-jungle	psp-asset-viewer	stage 6	pass	RE-286 RE-312
 r2-stage-sector-z	psp-asset-viewer	stage 7	pass	RE-286 RE-312
 r2-stage-yoshis-island	psp-asset-viewer	stage 8	pass	RE-286 RE-312
 r2-stage-hyrule-castle	psp-asset-viewer	stage 10	pass	RE-286 RE-312
-r2-stage-final-destination	psp-asset-viewer	stage 11	pass	RE-286 RE-312
+r2-stage-final-destination	psp-asset-viewer	stage 11	pass	RE-286 RE-312 RE-322
 r2-stage-how-to-play	psp-asset-viewer	stage 12	pass	RE-286 RE-312
 r2-stage-duel-zone	psp-asset-viewer	stage 13	pass	RE-286 RE-312
-r2-stage-metal-mario	psp-asset-viewer	stage 14	pass	RE-286 RE-312
+r2-stage-metal-mario	psp-asset-viewer	stage 14	pass	RE-286 RE-312 RE-322
 r2-stage-small-yoshis-island	psp-asset-viewer	stage 15	pass	RE-286 RE-312
 r2-stage-bonus1-mario	psp-asset-viewer	stage 16	pass	RE-286 RE-312
 r2-stage-bonus1-fox	psp-asset-viewer	stage 17	pass	RE-286 RE-312
@@ -69,7 +69,7 @@ r2-stage-bonus1-pikachu	psp-asset-viewer	stage 25	pass	RE-286 RE-312
 r2-stage-bonus1-purin	psp-asset-viewer	stage 26	pass	RE-286 RE-312
 r2-stage-bonus1-ness	psp-asset-viewer	stage 27	pass	RE-286 RE-312
 r2-stage-bonus2-mario	psp-asset-viewer	stage 28	pass	RE-286 RE-312
-r2-stage-bonus2-fox	psp-asset-viewer	stage 29	pass	RE-286 RE-312
+r2-stage-bonus2-fox	psp-asset-viewer	stage 29	pass	RE-286 RE-312 RE-322
 r2-stage-bonus2-donkey-kong	psp-asset-viewer	stage 30	pass	RE-286 RE-312
 r2-stage-bonus2-samus	psp-asset-viewer	stage 31	pass	RE-286 RE-312
 r2-stage-bonus2-luigi	psp-asset-viewer	stage 32	pass	RE-286 RE-312
@@ -80,4 +80,4 @@ r2-stage-bonus2-kirby	psp-asset-viewer	stage 36	pass	RE-286 RE-312
 r2-stage-bonus2-pikachu	psp-asset-viewer	stage 37	pass	RE-286 RE-312
 r2-stage-bonus2-purin	psp-asset-viewer	stage 38	pass	RE-286 RE-312
 r2-stage-bonus2-ness	psp-asset-viewer	stage 39	pass	RE-286 RE-312
-r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312
+r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312 RE-322

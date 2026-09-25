@@ -331,3 +331,4 @@ editing a record.
 | RE-319 | Texture buffer rows under 16 bytes are read at the wrong pitch | COMPLETE (PPSSPP and PSP-2000 stripe diagnostics, host tests, 44 goldens refreshed) | texture, psp-ge, pack, visual-regression |  |
 | RE-320 | PSP-2000 confirms the 16-byte T4 texture-row pitch | COMPLETE (physical PSP A/B stripe diagnostic and stock-pack smoke) | texture, psp-ge, hardware, pack, visual-regression |  |
 | RE-321 | RDP two-tile fractional blend (`SetLFrac` + `TextureIDNext`) on the GE | COMPLETE (PPSSPP exact-formula check, N64 reference, PSP-2000 timing and capture) | material, animation, texture, combiner, psp-ge, pack, stage, visual-regression, hardware |  |
+| RE-322 | Dynamic stage `PrimColor` and `Light1Color`/`Light2Color` tracks | COMPLETE (host reference exact; PPSSPP A/B; PSP-2000 timing and capture; N64 reference partial) | material, animation, lighting, combiner, psp-ge, pack, stage, visual-regression, hardware |  |

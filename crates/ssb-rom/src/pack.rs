@@ -175,7 +175,11 @@ pub const MAGIC: u32 = 0x5342_5350;
 //
 // 33 adds `flags::LOD_BLEND` and the `LodBlendDesc` table after the particle
 // textures (RE-321); the header grows by its count.
-pub const VERSION: u32 = 33;
+//
+// 34 adds `flags::PRIM_ANIM`/`LIGHT1_ANIM`/`LIGHT2_ANIM` (RE-322). A v33
+// runtime would apply every stage colour track a primitive's `mat_anim`
+// carries, including to primitives that replaced the register.
+pub const VERSION: u32 = 34;
 
 /// Alignment for every blob the GE reads.
 pub const ALIGN: usize = 16;
@@ -371,6 +375,16 @@ pub mod flags {
     /// `PRIM_LOD_FRAC`. Only set once the packer has verified the two-pass
     /// decomposition is exact for this primitive.
     pub const LOD_BLEND: u32 = 1 << 20;
+    /// RE-322: the primitive's `PRIMITIVE` register still holds the value
+    /// its [`super::PrimDesc::mat_anim`]'s `MObj` emitted, so the live
+    /// `PrimColor` track replaces the packed primitive colour. Clear when a
+    /// later `G_SETPRIMCOLOR` replaced it.
+    pub const PRIM_ANIM: u32 = 1 << 21;
+    /// RE-322: as [`PRIM_ANIM`], for `LIGHT_1` (`Light1Color`). Set only on
+    /// a [`LIT`] primitive, the only kind that reads the light.
+    pub const LIGHT1_ANIM: u32 = 1 << 22;
+    /// RE-322: as [`LIGHT1_ANIM`], for `LIGHT_2` (`Light2Color`, ambient).
+    pub const LIGHT2_ANIM: u32 = 1 << 23;
 }
 
 /// The one GE alpha comparison that reproduces a primitive's RDP alpha
@@ -1733,7 +1747,17 @@ impl PackWriter {
             alloc::vec![None; mesh.vertices.len()];
         let mut blend_override: alloc::vec::Vec<Option<[u8; 4]>> =
             alloc::vec![None; mesh.vertices.len()];
+        // RE-322: `AlphaBlend::Prim`'s vertex alpha is the primitive alpha
+        // (`push_vertex`), which the colour substitutions below would reset.
+        let mut prim_alpha: alloc::vec::Vec<Option<u8>> = alloc::vec![None; mesh.vertices.len()];
         for p in &mesh.primitives {
+            if let Some(crate::mesh::AlphaBlend::Prim(alpha)) = p.material.alpha_blend {
+                for &i in &p.indices {
+                    if let Some(slot @ None) = prim_alpha.get_mut(i as usize) {
+                        *slot = Some(alpha);
+                    }
+                }
+            }
             if let Some(s) = p.material.prim_color {
                 for &i in &p.indices {
                     if let Some(slot @ None) = prim_scale.get_mut(i as usize) {
@@ -1767,7 +1791,7 @@ impl PackWriter {
             // `prim_scale`, a second multiply on top of `push_vertex`'s own
             // (RE-240) -- gate all three on `lit[i]` explicitly rather than
             // relying on the maps happening to stay empty.
-            let rgba = if lit[i] {
+            let mut rgba = if lit[i] {
                 let shaded = shade_normal(v.rgba);
                 // Same priority order as `push_vertex`'s mutually exclusive
                 // if/else-if chain: at most one of these is ever set for a
@@ -1791,6 +1815,9 @@ impl PackWriter {
             } else {
                 v.rgba
             };
+            if let (true, Some(alpha)) = (lit[i], prim_alpha[i]) {
+                rgba[3] = alpha;
+            }
             let packed = PackedVertex {
                 u: v.uv[0],
                 v: v.uv[1],
@@ -1885,6 +1912,19 @@ impl PackWriter {
             }
             if m.light2_color.is_some() {
                 f |= flags::LIGHT2_COLOR;
+            }
+            // RE-322: only meaningful with a packed script to read the track
+            // from; `material_now` already clears them without a `mat_anim`.
+            if mat_anim_for(i).is_some() {
+                if m.anim_colors.prim {
+                    f |= flags::PRIM_ANIM;
+                }
+                if m.lit && m.anim_colors.light1 {
+                    f |= flags::LIGHT1_ANIM;
+                }
+                if m.lit && m.anim_colors.light2 {
+                    f |= flags::LIGHT2_ANIM;
+                }
             }
             // The GE decodes GU_TEXTURE_16BIT as unsigned (`u16 / 32768`),
             // whereas the N64 vertex format is signed S10.5. Reinterpreting a
@@ -5341,6 +5381,56 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         assert_eq!(pack.prim(0).unwrap().mat_anim, mat_anim);
         assert_eq!(pack.prim(0).unwrap().texture, PrimDesc::NO_TEXTURE);
+    }
+
+    /// RE-322: the register-liveness flags need a packed script, and the
+    /// light ones a lit primitive.
+    #[test]
+    fn anim_colour_flags_need_a_script_and_lights_need_lighting() {
+        use crate::mesh::AnimColors;
+        let all = AnimColors {
+            prim: true,
+            light1: true,
+            light2: true,
+        };
+        let flags_of = |lit: bool, with_script: bool| {
+            let mut m = sample_mesh();
+            m.primitives[0].material.lit = lit;
+            m.primitives[0].material.anim_colors = all;
+            let mut w = PackWriter::new();
+            let a = w.add_mat_anim(149, &[0u8; 8], 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+            w.add_mesh(&m, 0, 0, |_| None, move |_| with_script.then_some(a));
+            let bytes = w.finish();
+            Pack::open(&bytes).unwrap().prim(0).unwrap().flags
+        };
+        let anim = flags::PRIM_ANIM | flags::LIGHT1_ANIM | flags::LIGHT2_ANIM;
+        assert_eq!(flags_of(true, true) & anim, anim);
+        assert_eq!(flags_of(false, true) & anim, flags::PRIM_ANIM);
+        assert_eq!(flags_of(true, false) & anim, 0);
+    }
+
+    /// RE-322: a lit `TEXTURE_BLEND` vertex takes its RGB from the blend base
+    /// but keeps `AlphaBlend::Prim`'s primitive alpha.
+    #[test]
+    fn a_lit_prim_alpha_blend_vertex_keeps_the_primitive_alpha() {
+        let mut m = sample_mesh();
+        for v in &mut m.vertices {
+            v.lit = true;
+            v.rgba = [0, 127, 0, 0x69];
+        }
+        let material = &mut m.primitives[0].material;
+        material.prim_color = None;
+        material.texture_blend = Some(([0xFF, 0, 0, 255], [0xFF, 0xFF, 0xFF, 255]));
+        material.translucent = true;
+        material.alpha_blend = Some(crate::mesh::AlphaBlend::Prim(0x69));
+        let mut w = PackWriter::new();
+        let mesh = w.add_mesh(&m, 0, 0, |_| None, |_| None);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+        let verts = pack.vertices(&pack.mesh(mesh).unwrap()).unwrap();
+        let color = u32::from_le_bytes(verts[4..8].try_into().unwrap());
+        assert_eq!(color, 0x6900_00FF, "red base, primitive alpha 0x69");
+        assert_ne!(pack.prim(0).unwrap().flags & flags::ALPHA_BLEND, 0);
     }
 
     /// A primitive `mat_anim_for` never names must read back `NO_ANIM`, the

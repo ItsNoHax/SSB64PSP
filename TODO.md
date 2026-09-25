@@ -8,7 +8,9 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Dynamic stage colour/light tracks (2 `PrimColor`, 2 light) | Values are baked into vertex colour or lack a stage GE-light context; needs dynamic vertex/combiner lowering | RE-301 |
+| Task-list-1 XLU reset for static stage primitives | `grDisplayLayer1*ProcDisplay` resets list 1 to `G_RM_AA_ZB_XLU_SURF`; only animated-alpha primitives take it. A general seed makes 12 more primitives blend (Race to the Finish nodes 8/9 draw opaque yellow boxes; N64 shows translucent cones) | RE-322 |
+| Material animation phase | `MaterialJoint` tick `n` = decomp frame `n + 2` for every track; fixing it shifts every material animation and golden | RE-322 |
+| Viewer simulation slows with run time | On PSP-2000 the stage view's per-tick simulation cost grows (≈4 ms/tick at frame 1,200, spiralling to ≈4 ticks/frame later), in HEAD too | RE-322 |
 | Fighter costumes beyond 0 in `psp-game` | All palettes are packed and selectable in the viewer; the game still hardcodes costume 0 | RE-096, RE-261 |
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
 | Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
@@ -22,7 +24,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v33) is 22,224,368 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v34) is 22,224,368 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, not the full current golden matrix | RE-320 |
 

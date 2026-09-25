@@ -13,6 +13,10 @@ Status: complete; PPSSPP-validated.
   [D-024](../decisions/D-024.md)).
 - `sceGuLight` does not enable its channel; `GU_LIGHT0` is enabled explicitly
   (RE-264).
+- Stage geometry keeps the baked key-light shade, except a `LIT` primitive
+  whose `LIGHT_1`/`LIGHT_2` is animated (Race to the Finish): it lights on
+  the GE under the stage light (`DrawState::set_stage_light`, the direction
+  `sc1PGameFuncLights` loads) with the live colours (RE-322).
 
 Remaining: physical-PSP recheck of the corrected light channel; costume
 selection in `psp-game`.

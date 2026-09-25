@@ -37,6 +37,7 @@ use ssb_rom::archive::Archive;
 use ssb_rom::rom;
 
 mod filter_coverage;
+mod matcolors;
 mod residual_fixes;
 mod residuals;
 
@@ -54,6 +55,7 @@ fn main() -> ExitCode {
         ["mobj", rom_path, rest @ ..] => mobj(rom_path.as_ref(), rest),
         ["texgen", rom_path, rest @ ..] => texgen(rom_path.as_ref(), rest),
         ["stages", rom_path, rest @ ..] => stages(rom_path.as_ref(), rest),
+        ["matcolors", rom_path, rest @ ..] => matcolors::matcolors(rom_path.as_ref(), rest),
         ["pack", rom_path, rest @ ..] => pack(rom_path.as_ref(), rest),
         ["residuals", rom_path, rest @ ..] => residuals_cmd(rom_path.as_ref(), rest),
         ["collide", pack_path, rest @ ..] => collide(pack_path.as_ref(), rest),
@@ -100,6 +102,7 @@ USAGE:
                                [--search] [--expect-tables <tables.tsv>]
     romtool texgen   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>] [--verify]
     romtool stages   <rom.z64> [--file <id>] [--lines] [--pack <pack.pak>]
+    romtool matcolors <rom.z64> --pack <pack.pak>
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
@@ -7109,6 +7112,7 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
     let mut matanim_scripts = 0usize;
     let mut matanim_fail = 0usize;
     let mut matanim_categories = [0usize; ssb_rom::matanim::TICK_TRACK_COUNT];
+    let mut colour_scripts: Vec<String> = Vec::new();
     let mut palette_examples: Vec<(u32, u32, u32, u32)> = Vec::new(); // (file, graph, script, entries needed)
                                                                       // RE-090: does the script-computed bound actually read a real
                                                                       // `palettes[]` array, not just a plausible-looking number?
@@ -7252,6 +7256,25 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                                             if j.track_value(i).is_some() {
                                                 *count += 1;
                                             }
+                                        }
+                                        // Colour-window tracks (PrimColor..Light2Color):
+                                        // listed individually, they are rare enough to
+                                        // trace one by one.
+                                        let colour: Vec<&str> = (ssb_rom::matanim::TICK_EXT_START
+                                            ..ssb_rom::matanim::TICK_TRACK_COUNT)
+                                            .filter(|&i| j.track_value(i).is_some())
+                                            .map(|i| MATANIM_TRACK_NAMES[i])
+                                            .collect();
+                                        if !colour.is_empty() {
+                                            let sub_at = chain_table
+                                                .as_ref()
+                                                .and_then(|t| t.nodes[node].get(m))
+                                                .map_or(0, |m| m.at);
+                                            colour_scripts.push(format!(
+                                                "file {mf} graph 0x{:X} node {node} MObj {m} MObjSub 0x{sub_at:X} script 0x{script:X}: {}",
+                                                l.graph.1,
+                                                colour.join(" ")
+                                            ));
                                         }
                                         let entries = max_palette.round() as u32 + 1;
                                         if j.track_is_stepped(ssb_rom::matanim::TRACK_PALETTE_ID)
@@ -7408,6 +7431,13 @@ fn stages(path: &Path, opts: &[&str]) -> Res {
                 100.0 * matanim_categories[i] as f64 / matanim_scripts.max(1) as f64
             );
         }
+    }
+    println!(
+        "  {} script(s) set a colour-window track:",
+        colour_scripts.len()
+    );
+    for line in &colour_scripts {
+        println!("    {line}");
     }
     if !palette_examples.is_empty() {
         println!(

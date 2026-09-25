@@ -73,7 +73,26 @@ use ssb_psp_runtime::timing::{PspClock, Stopwatch};
 /// 4 real seconds at the sim's fixed 60 Hz -- comfortably past Mario landing
 /// from Dream Land's spawn height and long enough for the battle camera to
 /// settle. Shared by R0.17's baseline and R0.14's camera audit.
-const DETERMINISTIC_CAPTURE_TICKS: u64 = 240;
+///
+/// A diagnostic build may move the freeze with `SSB64_CAPTURE_TICKS=<n>` at
+/// build time, to capture an animation at a chosen tick (RE-322). Goldens are
+/// never built with it.
+const DETERMINISTIC_CAPTURE_TICKS: u64 = match option_env!("SSB64_CAPTURE_TICKS") {
+    Some(ticks) => parse_ticks(ticks.as_bytes()),
+    None => 240,
+};
+
+/// `SSB64_CAPTURE_TICKS` as a decimal; a malformed value fails the build.
+const fn parse_ticks(digits: &[u8]) -> u64 {
+    assert!(!digits.is_empty(), "SSB64_CAPTURE_TICKS is empty");
+    let (mut value, mut i) = (0u64, 0);
+    while i < digits.len() {
+        assert!(digits[i].is_ascii_digit(), "SSB64_CAPTURE_TICKS is not decimal");
+        value = value * 10 + (digits[i] - b'0') as u64;
+        i += 1;
+    }
+    value
+}
 
 #[cfg(feature = "billboard_audit_capture")]
 mod billboard_capture {
@@ -1689,6 +1708,8 @@ unsafe fn run() -> ! {
                     // Loaded and ticked in the simulation loop above.
                     let scenery = (stage_anim_ok && p.stage_anim(stage_index).is_some())
                         .then_some(&stage_anim);
+                    // The scene light animated stage light colours use (RE-322).
+                    draw_state.set_stage_light(stage.light_angle_xy);
                     let (mut tris, layers) = meshdraw::draw_stage_animated(
                         p,
                         &stage,

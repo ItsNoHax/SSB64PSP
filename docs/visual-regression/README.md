@@ -253,3 +253,14 @@ goldens changed (56 to 17,092 pixels at 2×), including Dream Land, Captain
 Falcon, and Bonus 1/2 stage surfaces. Each changed golden was rebaselined
 after two matching captures; `verify --twice` passes 67/67. See RE-319 for
 the texture census, stripe diagnostic, and visual attribution.
+
+## 2026-09-25 RE-322 colour tracks and animator capacity
+
+Pack v34 (`ff5166dd…`). Eight goldens changed and were refreshed; 68 of 68
+then match twice. `r2-stage-bonus3-race-to-the-finish` (10,656 pixels at 2x):
+Race to the Finish's animated glows blend and its lit fixture follows its
+light track. `r2-stage-final-destination`, `r2-stage-metal-mario`,
+`r2-stage-bonus2-fox` and the four `r2-metal-texgen*` scenes (24,612 to 44,596
+pixels): `MaterialAnimator` now ticks `MatAnimDesc` entries 64-102, which a
+fixed 64-slot array had left static. `SSB64_CAPTURE_TICKS=<n>` at build time
+moves a diagnostic build's freeze tick; goldens never set it.

@@ -544,6 +544,31 @@ pub struct MeshMaterial {
     /// `PRIM_LOD_FRAC` crossfading tile 0's image into tile 1's. `None` for
     /// every primitive outside that classified shape.
     pub lod_blend: Option<LodBlend>,
+    /// Which colour registers still hold the value [`Self::mat_anim`]'s
+    /// `MObj` emitted (RE-322). Always all-false without a `mat_anim`.
+    pub anim_colors: AnimColors,
+}
+
+/// Colour registers an animated `MObj` wrote and nothing has overwritten
+/// since (RE-322).
+///
+/// `gcDrawMObjForDObj` emits `gDPSetPrimColor` under `MOBJ_FLAG_PRIMCOLOR`
+/// and `gSPLightColor(LIGHT_1/LIGHT_2, ...)` under `MOBJ_FLAG_LIGHT1/2`,
+/// each from the value `gcPlayMObjMatAnim` last wrote into `mobj->sub`
+/// (`objdisplay.c:1210-1245`, `objanim.c:1398-1414`). The register keeps that
+/// value for every later draw in the same task list until a display list
+/// command or another `MObj` replaces it, so a primitive samples the track
+/// only while its register is still the animated one. Without this, a node
+/// that sets its own `G_SETPRIMCOLOR` after an animated sibling inherited
+/// the sibling's track (Race to the Finish nodes 8 and 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct AnimColors {
+    /// `PRIMITIVE` colour, including its alpha.
+    pub prim: bool,
+    /// `LIGHT_1`, the directional light's colour.
+    pub light1: bool,
+    /// `LIGHT_2`, the ambient colour with one directional light.
+    pub light2: bool,
 }
 
 /// A primitive whose first combiner cycle is `(TEXEL1 - TEXEL0) *
@@ -1025,6 +1050,30 @@ pub enum AlphaBlend {
     /// override is needed here -- a plain `Modulate` already computes
     /// this formula for free once blend is enabled.
     Shade,
+    /// `TEXEL0_ALPHA * PRIM_ALPHA`, classified only where the primitive
+    /// colour is animated (RE-322): the vertex alpha carries the primitive
+    /// alpha, which the renderer replaces with the live track value. Static
+    /// primitives with this formula keep their earlier path. Carries the
+    /// static primitive alpha, since [`MeshMaterial::prim_color`] holds the
+    /// combiner's shade scale rather than the register.
+    Prim(u8),
+}
+
+/// Whether single-cycle alpha is `(TEXEL0_ALPHA - 0) * PRIM_ALPHA + 0`, the
+/// alpha half of Race to the Finish's glow combiner (RE-322).
+fn combiner_alpha_is_texel_times_prim(hi: u32, lo: u32, two_cycle: bool) -> bool {
+    if two_cycle {
+        return false;
+    }
+    const TEXEL0_A: u32 = 1;
+    const PRIM_A: u32 = 3;
+    const ZERO: u32 = 7;
+    (
+        (hi >> 12) & 0x7,
+        (lo >> 12) & 0x7,
+        (hi >> 9) & 0x7,
+        (lo >> 9) & 0x7,
+    ) == (TEXEL0_A, ZERO, PRIM_A, ZERO)
 }
 
 /// Classifies `G_SETCOMBINE`'s alpha formula into one of the two shapes
@@ -1394,6 +1443,11 @@ struct State {
     mobjs: Vec<crate::mobj::MObjMaterial>,
     /// Parallel to `mobjs`; see `SequenceItem::mat_anims`.
     mat_anims: Vec<Option<MatAnimRef>>,
+    /// The render mode is still task list 1's `G_RM_AA_ZB_XLU_SURF` reset
+    /// (`SequenceItem::depth_seed`), not one the lists set themselves.
+    /// Consumed only for an animated primitive colour (RE-322); see
+    /// [`State::material_now`].
+    xlu_seed: bool,
 }
 
 /// What the stream has said about `G_MDSFT_TEXTLUT`.
@@ -1477,6 +1531,7 @@ impl State {
             tile1_params: None,
             mobjs: Vec::new(),
             mat_anims: Vec::new(),
+            xlu_seed: false,
         }
     }
 
@@ -1522,7 +1577,21 @@ impl State {
         // all (`crate::matanim::MaterialJoint`'s colour window), so this is
         // no longer tied to the palette branch below the way a
         // palette-cycling script (RE-089/RE-090/RE-091) always was.
+        let same_script = self.material.mat_anim == mat_anim;
+        let before = self.material.anim_colors;
         self.material.mat_anim = mat_anim;
+        // RE-322: an `MObj` that emits a register replaces it with its own
+        // (possibly animated) value. One that does not leaves the previous
+        // `MObj`'s value in place, which stays expressible only while the
+        // same script is still the primitive's `mat_anim`; otherwise the
+        // static value is the fallback (no ROM stage content does this).
+        let live = mat_anim.is_some();
+        let keep = |emits: bool, was: bool| if emits { live } else { same_script && was };
+        self.material.anim_colors = AnimColors {
+            prim: keep(m.prim_color.is_some(), before.prim),
+            light1: keep(m.light1_color.is_some(), before.light1),
+            light2: keep(m.light2_color.is_some(), before.light2),
+        };
         if let Some(palette) = m.palette {
             self.timg_addr = Some(palette.offset);
             self.timg_file = palette.file;
@@ -1611,6 +1680,7 @@ impl State {
         self.texture_enabled = false;
         self.framebuffer_capture = false;
         self.material.mat_anim = None;
+        self.material.anim_colors = AnimColors::default();
     }
 
     /// The material a primitive emitted right now would carry.
@@ -1650,6 +1720,23 @@ impl State {
                 self.material.env_color,
             )
         });
+        // RE-322: an animated primitive colour whose alpha reaches the
+        // blender. Race to the Finish's tracks animate only that alpha, and
+        // its task-list-1 glows reach the XLU blender through the list-1
+        // render-mode reset rather than a command of their own. Scoped to
+        // the animated register: the same reset on static list-1 primitives
+        // is a separate, unchanged gap (TODO.md).
+        let anim_colors = if self.material.mat_anim.is_some() {
+            self.material.anim_colors
+        } else {
+            AnimColors::default()
+        };
+        let prim_alpha_blend = (anim_colors.prim
+            && self.combiner.is_some_and(|(hi, lo)| {
+                combiner_alpha_is_texel_times_prim(hi, lo, self.two_cycle)
+            }))
+        .then(|| AlphaBlend::Prim(self.material.prim_color.map_or(255, |c| c[3])));
+        let anim_translucent = prim_alpha_blend.is_some() && self.xlu_seed;
         let flat_color = combiner.and_then(|(hi, lo)| {
             combiner_flat_color(
                 hi,
@@ -1691,7 +1778,7 @@ impl State {
             // does classify some shapes, an untextured primitive still has
             // no texel alpha for any of them to multiply, so the gate stays.
             alpha_test: self.material.alpha_test && texture.is_some(),
-            translucent: self.material.translucent && texture.is_some(),
+            translucent: (self.material.translucent || anim_translucent) && texture.is_some(),
             // RE-129/RE-130: independent of the RGB (`texture_blend`/
             // `flat_color`/shade-scale) classification above, and only
             // meaningful when `translucent` (just above) actually is --
@@ -1707,6 +1794,7 @@ impl State {
             alpha_blend: self
                 .combiner
                 .and_then(|(hi, lo)| combiner_alpha_blend(hi, lo, self.two_cycle))
+                .or(prim_alpha_blend)
                 .or(self.initial_alpha_blend.filter(|_| self.combiner.is_none())),
             texture_blend,
             // Unlike `alpha_test`/`translucent`, not gated on `texture`: an
@@ -1723,6 +1811,7 @@ impl State {
             // baked the authored UVs at load time.
             texgen_scale: (self.material.texture_gen != TextureGen::None).then_some(self.tex_scale),
             lod_blend,
+            anim_colors,
             ..self.material
         }
     }
@@ -2103,6 +2192,9 @@ impl Builder {
             // overwrote it for an unrelated reason (`prim_color`'s own
             // alpha override, RE-106).
             Some(AlphaBlend::Shade) => v.rgba[3] = raw_alpha,
+            // RE-322: the static primitive alpha; the renderer substitutes
+            // the live track value per frame.
+            Some(AlphaBlend::Prim(alpha)) => v.rgba[3] = alpha,
             None => {}
         }
         // RE-321: the two-tile blend's alpha is `COMBINED_ALPHA`, optionally
@@ -2288,6 +2380,9 @@ pub fn convert_sequence(
             state.material.depth_test = depth_test;
             state.material.depth_write = depth_write;
             state.material.depth_mode = depth_mode;
+            // `grDisplayLayer1*ProcDisplay` resets task list 1 to
+            // `G_RM_AA_ZB_XLU_SURF`; this seed is its depth half.
+            state.xlu_seed = depth_test && !depth_write && depth_mode == ZMode::Translucent;
         }
 
         // Seed the builder from the state carried in, not from the default.
@@ -2616,9 +2711,16 @@ fn walk(
                 // rather than using the old command-presence-only lighting
                 // signal: their values are render state, not decoration.
                 let rgba = data.to_be_bytes();
+                // RE-322: a literal write replaces an animated `MObj`'s value.
                 match offset {
-                    0x00 | 0x04 => state.material.light1_color = Some(rgba),
-                    0x18 | 0x1C => state.material.light2_color = Some(rgba),
+                    0x00 | 0x04 => {
+                        state.material.light1_color = Some(rgba);
+                        state.material.anim_colors.light1 = false;
+                    }
+                    0x18 | 0x1C => {
+                        state.material.light2_color = Some(rgba);
+                        state.material.anim_colors.light2 = false;
+                    }
                     _ => {}
                 }
                 state.material.lit = true;
@@ -2665,6 +2767,7 @@ fn walk(
                 state.material.depth_test = data & Z_CMP != 0;
                 state.material.depth_write = data & Z_UPD != 0;
                 state.material.depth_mode = ZMode::from_render_mode(data);
+                state.xlu_seed = false;
             }
 
             // `G_MDSFT_ALPHACOMPARE`, 2 bits at shift 0 (RE-195): a second,
@@ -2685,6 +2788,7 @@ fn walk(
             Cmd::SetPrimColor { l, rgba, .. } => {
                 state.material.prim_color = Some(rgba);
                 state.prim_lod = Some((l, rgba));
+                state.material.anim_colors.prim = false;
             }
             Cmd::SetEnvColor(c) => state.material.env_color = Some(c),
             Cmd::SetBlendColor(c) => state.material.blend_color = Some(c),
@@ -3609,6 +3713,223 @@ mod tests {
             by_texture(0x500).material.mat_anim,
             None,
             "the second MObj's own palette carries no script and must clear the first one's"
+        );
+    }
+
+    /// RE-322: Race to the Finish's task-list-1 glows, reduced to the
+    /// commands that matter. Node 6 draws through an animated `MObj`
+    /// (`PRIMCOLOR`), node 8 sets its own primitive colour, node 9 inherits
+    /// node 8's, and node 10 draws through a second animated `MObj`.
+    fn race_glows(seed: Option<(bool, bool, ZMode)>) -> Vec<Primitive> {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let texture = [
+            Cmd::SetTile {
+                format: Format::I as u8,
+                size: BitSize::Bits8 as u8,
+                line: 4,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                cm_s: 0,
+                cm_t: 0,
+                mask_s: 5,
+                mask_t: 5,
+                shift_s: 0,
+                shift_t: 0,
+            },
+            Cmd::Texture {
+                level: 0,
+                tile: 0,
+                on: true,
+                scale_s: 0xFFFF,
+                scale_t: 0xFFFF,
+            },
+            Cmd::SetTileSize {
+                tile: 0,
+                uls: 0,
+                ult: 0,
+                lrs: 124,
+                lrt: 124,
+            },
+            Cmd::SetTimg {
+                format: 4,
+                size: 1,
+                width: 1,
+                addr: SegAddr(0x400),
+                slot: 0,
+            },
+        ];
+        // `FC309661 552EFF7F`: RGB `(PRIM - ENV) * TEXEL0 + ENV`, alpha
+        // `TEXEL0 * PRIM`.
+        let combine = Cmd::SetCombine {
+            hi: 0x0030_9661,
+            lo: 0x552E_FF7F,
+        };
+        let node6: Vec<Cmd> = [combine]
+            .into_iter()
+            .chain(texture)
+            .chain([
+                Cmd::SetEnvColor([0xFF, 0, 0, 0xFF]),
+                Cmd::Call(SegAddr(0x0E00_0000)),
+                vtx(3),
+                Cmd::Tri1([0, 1, 2]),
+            ])
+            .collect();
+        let node8 = [
+            Cmd::SetPrimColor {
+                m: 0,
+                l: 0,
+                rgba: [0xFF, 0xFF, 0xFF, 0x99],
+            },
+            Cmd::SetEnvColor([0xFF, 0xFF, 0, 0xFF]),
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let node9 = [vtx(3), Cmd::Tri1([0, 1, 2])];
+        let node10 = [
+            Cmd::SetEnvColor([0xFF, 0, 0, 0xFF]),
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let glow = |alpha| MObjMaterial {
+            prim_color: Some([0xFF, 0xFF, 0xFF, alpha]),
+            ..MObjMaterial::default()
+        };
+        let (mobj6, mobj10) = ([glow(0x69)], [glow(0x66)]);
+        let script = |script| {
+            [Some(MatAnimRef {
+                source_file: 149,
+                script,
+                source_mobj: 0,
+            })]
+        };
+        let (anim6, anim10) = (script(0x6600), script(0x67F0));
+        let item = |cmds, mobjs, mat_anims| SequenceItem {
+            cmds,
+            world: Mat4::IDENTITY,
+            mobjs,
+            mat_anims,
+            depth_seed: seed,
+            stream: 1,
+        };
+        let items = [
+            item(&node6, &mobj6, &anim6),
+            item(&node8, &[], &[]),
+            item(&node9, &[], &[]),
+            item(&node10, &mobj10, &anim10),
+        ];
+        convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+            .into_iter()
+            .map(|m| m.unwrap().primitives.pop().unwrap())
+            .collect()
+    }
+
+    const XLU_SEED: Option<(bool, bool, ZMode)> = Some((true, false, ZMode::Translucent));
+
+    #[test]
+    fn an_animated_prim_register_follows_the_primitives_that_inherit_it() {
+        let p = race_glows(XLU_SEED);
+        let anim: Vec<bool> = p.iter().map(|p| p.material.anim_colors.prim).collect();
+        assert_eq!(anim, [true, false, false, true]);
+        assert!(
+            p[1].material.mat_anim.is_some(),
+            "the script is still bound"
+        );
+        assert_eq!(
+            p[1].material.texture_blend.unwrap().1[..3],
+            [0xFF, 0xFF, 0xFF]
+        );
+    }
+
+    #[test]
+    fn an_animated_prim_alpha_reaches_the_xlu_blender() {
+        let p = race_glows(XLU_SEED);
+        assert!(p[0].material.translucent);
+        assert_eq!(p[0].material.alpha_blend, Some(AlphaBlend::Prim(0x69)));
+        assert_eq!(p[3].material.alpha_blend, Some(AlphaBlend::Prim(0x66)));
+        // Static list-1 glows keep their earlier, opaque lowering.
+        assert!(!p[1].material.translucent);
+        assert_eq!(p[1].material.alpha_blend, None);
+    }
+
+    #[test]
+    fn an_animated_prim_alpha_needs_a_translucent_render_mode() {
+        let p = race_glows(None);
+        assert!(!p[0].material.translucent, "no XLU reset, no blending");
+        assert!(
+            p[0].material.anim_colors.prim,
+            "the register is still animated"
+        );
+    }
+
+    #[test]
+    fn a_literal_light_colour_replaces_an_animated_one() {
+        use crate::mobj::MObjMaterial;
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::GeometryMode {
+                clear: !0,
+                set: G_LIGHTING,
+            },
+            Cmd::Call(SegAddr(0x0E00_0000)),
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+            Cmd::MoveWord {
+                index: G_MW_LIGHTCOL,
+                offset: 0x18,
+                data: 0x1010_1000,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let mobjs = [MObjMaterial {
+            light1_color: Some([0xB3, 0xB3, 0xB3, 0]),
+            light2_color: Some([0x80, 0x80, 0x80, 0]),
+            ..MObjMaterial::default()
+        }];
+        let mat_anims = [Some(MatAnimRef {
+            source_file: 149,
+            script: 0x6828,
+            source_mobj: 0x37C0,
+        })];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &mobjs,
+            mat_anims: &mat_anims,
+            depth_seed: None,
+            stream: 0,
+        }];
+        let mesh = convert_sequence(&items, Source::bare(&file), InitialMaterial::default())
+            .pop()
+            .unwrap()
+            .unwrap();
+        let anim: Vec<AnimColors> = mesh
+            .primitives
+            .iter()
+            .map(|p| p.material.anim_colors)
+            .collect();
+        assert_eq!(
+            anim,
+            [
+                AnimColors {
+                    prim: false,
+                    light1: true,
+                    light2: true
+                },
+                AnimColors {
+                    prim: false,
+                    light1: true,
+                    light2: false
+                },
+            ],
+            "LIGHT_2's literal write ends only its own animation"
         );
     }
 
