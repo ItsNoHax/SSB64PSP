@@ -40,6 +40,8 @@ pub struct MapSurface {
 pub enum WeaponKind {
     /// `nWPKindFireball`, created by Mario's `SpecialN` accessory callback.
     MarioFireball,
+    /// The same weapon with Luigi's attribute row (`fireball_item_id = 1`).
+    LuigiFireball,
     /// `nWPKindBlaster`, created by Fox's neutral special.
     FoxBlaster,
     /// `nWPKindChargeShot` at the given charge level, already released.
@@ -68,6 +70,52 @@ pub const MARIO_FIREBALL_SPEED: f32 = 50.0;
 pub const MARIO_FIREBALL_ANGLE: f32 = -0.087_266_46; // -5 degrees
 pub const MARIO_FIREBALL_REBOUND: f32 = 0.85;
 pub const MARIO_FIREBALL_MIN_SPEED: f32 = 30.0;
+
+/// Luigi's row of `dWPMarioFireballWeaponAttributes` (US): no gravity, a
+/// slower level shot and a shorter life. Its `WPAttributes` in
+/// `222_LuigiSpecial1.c` differ from Mario's only in damage.
+pub const LUIGI_FIREBALL_LIFETIME: u16 = 80;
+pub const LUIGI_FIREBALL_SPEED: f32 = 36.0;
+pub const LUIGI_FIREBALL_DAMAGE: i32 = 6;
+
+/// The per-kind values `wpMarioFireball*` read through
+/// `weapon_vars.fireball.index`. Both rows use the same angle on the ground
+/// and in the air, so the spawn does not need the owner's situation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FireballAttributes {
+    pub lifetime: u16,
+    pub vel_terminal: f32,
+    pub vel_min: f32,
+    pub gravity: f32,
+    pub rebound: f32,
+    pub angle: f32,
+    pub vel_base: f32,
+    pub damage: i32,
+}
+
+/// `dWPMarioFireballWeaponAttributes`: index 0 is Mario, 1 is Luigi.
+pub const FIREBALL_ATTRIBUTES: [FireballAttributes; 2] = [
+    FireballAttributes {
+        lifetime: MARIO_FIREBALL_LIFETIME,
+        vel_terminal: MARIO_FIREBALL_TERMINAL_VELOCITY,
+        vel_min: MARIO_FIREBALL_MIN_SPEED,
+        gravity: MARIO_FIREBALL_GRAVITY,
+        rebound: MARIO_FIREBALL_REBOUND,
+        angle: MARIO_FIREBALL_ANGLE,
+        vel_base: MARIO_FIREBALL_SPEED,
+        damage: MARIO_FIREBALL_HITBOX.damage,
+    },
+    FireballAttributes {
+        lifetime: LUIGI_FIREBALL_LIFETIME,
+        vel_terminal: 55.0,
+        vel_min: 30.0,
+        gravity: 0.0,
+        rebound: 0.85,
+        angle: 0.0,
+        vel_base: LUIGI_FIREBALL_SPEED,
+        damage: LUIGI_FIREBALL_DAMAGE,
+    },
+];
 
 /// `WPAttributes.map_coll` from Mario Special1: the projectile's collision
 /// diamond is deliberately larger than its rendered sprite.
@@ -431,6 +479,8 @@ enum Weapon {
 /// has its own position, velocity, lifetime, and collision result.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarioFireball {
+    /// `weapon_vars.fireball.index` into [`FIREBALL_ATTRIBUTES`].
+    pub index: u8,
     pub owner_port: u8,
     pub damage: i32,
     pub position: Vec3,
@@ -439,19 +489,22 @@ pub struct MarioFireball {
 }
 
 impl MarioFireball {
-    pub fn new(spawn: WeaponSpawn) -> Self {
-        let (sin, cos) = sin_cos(MARIO_FIREBALL_ANGLE);
+    /// `wpMarioFireballMakeWeapon` with the given attribute row.
+    pub fn new(spawn: WeaponSpawn, index: u8) -> Self {
+        let attr = &FIREBALL_ATTRIBUTES[index as usize];
+        let (sin, cos) = sin_cos(attr.angle);
         MarioFireball {
+            index,
             owner_port: spawn.owner_port,
-            damage: MARIO_FIREBALL_HITBOX.damage,
+            damage: attr.damage,
             position: spawn.position,
-            velocity: Vec3::new(
-                MARIO_FIREBALL_SPEED * cos * spawn.facing,
-                MARIO_FIREBALL_SPEED * sin,
-                0.0,
-            ),
-            lifetime: MARIO_FIREBALL_LIFETIME,
+            velocity: Vec3::new(attr.vel_base * cos * spawn.facing, attr.vel_base * sin, 0.0),
+            lifetime: attr.lifetime,
         }
+    }
+
+    pub fn attributes(&self) -> &'static FireballAttributes {
+        &FIREBALL_ATTRIBUTES[self.index as usize]
     }
 
     /// `wpMarioFireballProcUpdate` then `wpMarioFireballProcMap`.
@@ -473,16 +526,16 @@ impl MarioFireball {
         if self.lifetime == 0 {
             return false;
         }
-        self.velocity.y =
-            (self.velocity.y - MARIO_FIREBALL_GRAVITY).max(-MARIO_FIREBALL_TERMINAL_VELOCITY);
+        let attr = self.attributes();
+        self.velocity.y = (self.velocity.y - attr.gravity).max(-attr.vel_terminal);
         let wanted = self.position + self.velocity;
         if let Some(hit) = map_contact(surfaces(), self.position, wanted, MARIO_FIREBALL_MAP_COLL) {
             self.position = hit.position;
             let dot = self.velocity.x * hit.normal.x + self.velocity.y * hit.normal.y;
-            self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * MARIO_FIREBALL_REBOUND;
-            self.velocity.y = (self.velocity.y - 2.0 * dot * hit.normal.y) * MARIO_FIREBALL_REBOUND;
+            self.velocity.x = (self.velocity.x - 2.0 * dot * hit.normal.x) * attr.rebound;
+            self.velocity.y = (self.velocity.y - 2.0 * dot * hit.normal.y) * attr.rebound;
             if self.velocity.x * self.velocity.x + self.velocity.y * self.velocity.y
-                < MARIO_FIREBALL_MIN_SPEED * MARIO_FIREBALL_MIN_SPEED
+                < attr.vel_min * attr.vel_min
             {
                 return false;
             }
@@ -519,7 +572,8 @@ impl WeaponPool {
             return false;
         };
         *slot = Some(match spawn.kind {
-            WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn)),
+            WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn, 0)),
+            WeaponKind::LuigiFireball => Weapon::Fireball(MarioFireball::new(spawn, 1)),
             WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
             WeaponKind::SamusChargeShot(charge) => {
                 Weapon::ChargeShot(SamusChargeShot::new(spawn, charge))
@@ -603,7 +657,7 @@ impl WeaponPool {
                             if f.velocity.x * defender.facing.sign() < 0.0 {
                                 f.velocity.x = -f.velocity.x;
                             }
-                            f.lifetime = MARIO_FIREBALL_LIFETIME;
+                            f.lifetime = f.attributes().lifetime;
                             f.damage = ((f.damage as f32 * 1.8 + 0.99) as i32).min(100);
                         }
                         Weapon::Blaster(b) => {

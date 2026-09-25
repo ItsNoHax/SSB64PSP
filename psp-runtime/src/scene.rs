@@ -29,6 +29,7 @@ use ssb_game::ground::BodyColl;
 use ssb_game::physics::PhysicsAttributes;
 use ssb_game::status::AnimLengths;
 use ssb_game::status::AnyStatus;
+use ssb_game::status::MarioStatus;
 use ssb_game::status::Status;
 use ssb_game::weapon::{MapSurface, MapSurfaceKind};
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
@@ -408,6 +409,33 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirB) => 85,
             AnyStatus::Common(Status::AttackAirHi) => 86,
             AnyStatus::Common(Status::AttackAirLw) => 87,
+            _ => status.anim_slot(),
+        }
+    } else if kind == FighterKind::Luigi as u32 {
+        // `ssb_rom::anim::SLOT_LUIGI_ATTACK11` onward. Luigi has no
+        // mid-angle forward tilts.
+        match status {
+            AnyStatus::Common(Status::Attack11) => 154,
+            AnyStatus::Common(Status::Attack12) => 155,
+            AnyStatus::Mario(MarioStatus::Attack13) => 156,
+            AnyStatus::Common(Status::AttackDash) => 157,
+            AnyStatus::Common(Status::AttackS3Hi) => 158,
+            AnyStatus::Common(Status::AttackS3) => 159,
+            AnyStatus::Common(Status::AttackS3Lw) => 160,
+            AnyStatus::Common(Status::AttackHi3) => 161,
+            AnyStatus::Common(Status::AttackLw3) => 162,
+            AnyStatus::Common(Status::AttackS4Hi) => 163,
+            AnyStatus::Common(Status::AttackS4HiS) => 164,
+            AnyStatus::Common(Status::AttackS4) => 165,
+            AnyStatus::Common(Status::AttackS4LwS) => 166,
+            AnyStatus::Common(Status::AttackS4Lw) => 167,
+            AnyStatus::Common(Status::AttackHi4) => 168,
+            AnyStatus::Common(Status::AttackLw4) => 169,
+            AnyStatus::Common(Status::AttackAirN) => 170,
+            AnyStatus::Common(Status::AttackAirF) => 171,
+            AnyStatus::Common(Status::AttackAirB) => 172,
+            AnyStatus::Common(Status::AttackAirHi) => 173,
+            AnyStatus::Common(Status::AttackAirLw) => 174,
             _ => status.anim_slot(),
         }
     } else if kind == FighterKind::Samus as u32 {
