@@ -25,10 +25,14 @@ or evidence record covers it.
 | Restore condensed same-valued attack boxes | Some Mario, Fox and Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy, so joint placement now exposes this old omission | RE-332 |
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
 | Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
-| Select and draw Samus and Luigi in `psp-game` | Both movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1 | RE-333, RE-334 |
+| Select and draw Samus, Luigi and Link in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect are not drawn | RE-333–335 |
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
+| Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
+| Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
+| Weapon shield and hop callbacks | Weapons pass through shields; the Boomerang's `ProcShield`/`ProcHop` are not reached | RE-335 |
 | Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
 | Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility have no effect on the root-sphere hurtbox | RE-333, RE-334 |
+| `romtool matcolors` texel check | Textures 160 and 161 differ from `sprites[0]` in the alpha bit of 307 texels, and the resolver check exits with an error. The HEAD pack before RE-335 (SHA-256 `096a03c9…`) fails the same way, so the earlier "145/145" baseline is stale | RE-335 |
 | Non-unit held fighter scale | Held TopN placement currently uses the first-child offset at normal fighter size; giant/shrunken capture needs the root scale applied as in `ftCommonCapturePulledRotateScale` | RE-332 |
 
 ## Hardware acceptance
@@ -37,7 +41,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v36, with Samus and Luigi slots) is 22,631,056 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v36, with Samus, Luigi and Link slots) is 22,738,640 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
 

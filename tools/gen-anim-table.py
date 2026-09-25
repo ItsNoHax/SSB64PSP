@@ -197,7 +197,7 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -276,6 +276,42 @@ LATE_SPECIAL_SLOTS += [
     ("LuigiAttackAirB", "Luigi", "FTMarioAnimAttackAirB"),
     ("LuigiAttackAirHi", "Luigi", "FTMarioAnimAttackAirU"),
     ("LuigiAttackAirLw", "Luigi", "FTMarioAnimAttackAirD"),
+]
+
+# Link's common attacks, then his own statuses in `ftLinkStatus` order
+# without the two Appear entries (`224_LinkMainMotion.c`,
+# `dFTLinkMotionDescs`). He has one forward tilt and one forward smash. The
+# boomerang throw and its empty-handed variant share one figatree.
+LATE_SPECIAL_SLOTS += [
+    ("LinkAttack11", "Link", "FTLinkAnimJab1"),
+    ("LinkAttack12", "Link", "FTLinkAnimJab2"),
+    ("LinkAttackDash", "Link", "FTLinkAnimDashAttack"),
+    ("LinkAttackS3", "Link", "FTLinkAnimFTilt"),
+    ("LinkAttackHi3", "Link", "FTLinkAnimUTilt"),
+    ("LinkAttackLw3", "Link", "FTLinkAnimDTilt"),
+    ("LinkAttackS4", "Link", "FTLinkAnimFSmash"),
+    ("LinkAttackHi4", "Link", "FTLinkAnimUSmash"),
+    ("LinkAttackLw4", "Link", "FTLinkAnimDSmash"),
+    ("LinkAttackAirN", "Link", "FTLinkAnimAttackAirN"),
+    ("LinkAttackAirF", "Link", "FTLinkAnimAttackAirF"),
+    ("LinkAttackAirB", "Link", "FTLinkAnimAttackAirB"),
+    ("LinkAttackAirHi", "Link", "FTLinkAnimAttackAirU"),
+    ("LinkAttackAirLw", "Link", "FTLinkAnimAttackAirD"),
+    ("LinkAttack13", "Link", "FTLinkAnimJab3"),
+    ("LinkAttack100Start", "Link", "FTLinkAnimJabLoopStart"),
+    ("LinkAttack100Loop", "Link", "FTLinkAnimJabLoop"),
+    ("LinkAttack100End", "Link", "FTLinkAnimJabLoopEnd"),
+    ("LinkSpecialHi", "Link", "FTLinkAnimUpSpecialGround"),
+    ("LinkSpecialHiEnd", "Link", "FTLinkAnimUpSpecialEndGround"),
+    ("LinkSpecialAirHi", "Link", "FTLinkAnimUpSpecialAir"),
+    ("LinkSpecialN", "Link", "FTLinkAnimMissingBoomerang"),
+    ("LinkSpecialNGet", "Link", "FTLinkAnimCatchingBoomerang"),
+    ("LinkSpecialNEmpty", "Link", "FTLinkAnimMissingBoomerang"),
+    ("LinkSpecialAirN", "Link", "FTLinkAnimMissingBoomerangAir"),
+    ("LinkSpecialAirNReturn", "Link", "FTLinkAnimCatchingBoomerangAir"),
+    ("LinkSpecialAirNEmpty", "Link", "FTLinkAnimMissingBoomerangAir"),
+    ("LinkSpecialLw", "Link", "FTLinkAnimBomb"),
+    ("LinkSpecialAirLw", "Link", "FTLinkAnimBombAir"),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]

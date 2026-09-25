@@ -85,11 +85,11 @@ impl Dummy {
     /// [`apply_hit_from`](ssb_game::attack::apply_hit_from). Called from here
     /// because this is the only place both fighters exist together (the
     /// player's own scene and `Dummy` are separate values).
-    pub fn apply_hit_from(&mut self, attacker: &Fighter) {
+    pub fn apply_hit_from(&mut self, attacker: &Fighter) -> bool {
         ssb_game::attack::apply_hit_from(
             attacker,
             &mut self.scene.fighter,
             &mut self.hit_record,
-        );
+        )
     }
 }

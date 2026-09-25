@@ -48,6 +48,13 @@ pub enum WeaponKind {
     SamusChargeShot(u8),
     /// `nWPKindSamusBomb`, created by Samus's down special.
     SamusBomb,
+    /// `nWPKindBoomerang`. The stick is read when the motion script's flag 0
+    /// fires, not when the status starts.
+    LinkBoomerang {
+        is_smash: bool,
+        stick_x: i8,
+        stick_y: i8,
+    },
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -466,12 +473,313 @@ fn segment_y(s: Segment, x: f32) -> f32 {
     f32::from(s.y1) + (x - f32::from(s.x1)) * f32::from(s.y2 - s.y1) / dx
 }
 
+/// `wpvars.h` Boomerang constants.
+pub const BOOMERANG_OFF_X: f32 = 150.0;
+pub const BOOMERANG_OFF_Y: f32 = 290.0;
+pub const BOOMERANG_HOMING_ANGLE_MAX: f32 = 1.5 * core::f32::consts::PI / 180.0;
+pub const BOOMERANG_HOMING_ANGLE_MIN: f32 = 0.75 * core::f32::consts::PI / 180.0;
+pub const BOOMERANG_VEL_SMASH: f32 = 114.0;
+pub const BOOMERANG_VEL_TILT: f32 = 85.0;
+pub const BOOMERANG_RETURN_DAMAGE: i32 = 8;
+pub const BOOMERANG_ANGLE_STICK_THRESHOLD: i32 = 10;
+pub const BOOMERANG_LIFETIME_SMASH: u16 = 190;
+pub const BOOMERANG_LIFETIME_TILT: u16 = 160;
+pub const BOOMERANG_LIFETIME_REFLECT: u16 = 100;
+/// `wpLinkBoomerangCheckOwnerCatch`: catch distance from the owner's TopN
+/// plus 290 up.
+pub const BOOMERANG_CATCH_DIST: f32 = 180.0;
+
+/// `dLinkSpecial1_Boomerang_WeaponAttributes` (`226_LinkSpecial1.c`, US):
+/// size 200, angle 70, knockback 30/0/55, 9 damage.
+pub const LINK_BOOMERANG_HITBOX: Hitbox = Hitbox {
+    damage: 9,
+    offset: Vec3::ZERO,
+    radius: 100.0,
+    angle: 70,
+    kb_scale: 30,
+    kb_weight: 0,
+    kb_base: 55,
+};
+pub const LINK_BOOMERANG_MAP_COLL: BodyColl = BodyColl {
+    top: 150.0,
+    center: 0.0,
+    bottom: -150.0,
+    width: 150.0,
+};
+
+const DEG_30: f32 = core::f32::consts::PI / 6.0;
+const DEG_90: f32 = core::f32::consts::FRAC_PI_2;
+const DEG_180: f32 = core::f32::consts::PI;
+const DEG_270: f32 = 3.0 * core::f32::consts::FRAC_PI_2;
+const DEG_360: f32 = 2.0 * core::f32::consts::PI;
+
+/// `wpLinkBoomerangClampAngle360`: one wrap only, as the source does.
+fn clamp_angle_360(angle: f32) -> f32 {
+    if angle > DEG_360 {
+        angle - DEG_360
+    } else if angle < -DEG_360 {
+        angle + DEG_360
+    } else {
+        angle
+    }
+}
+
+/// What the pool needs to know about a Boomerang's owner this frame: its
+/// TopN and `FTStruct::is_special_interrupt`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OwnerView {
+    pub position: Vec3,
+    pub is_special_interrupt: bool,
+}
+
+/// Source `wpLinkBoomerang`. It flies out and slows down, then turns back
+/// and homes on its owner, who catches it within 180 units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LinkBoomerang {
+    /// `owner_gobj`: the attacker, which a reflector changes.
+    pub owner_port: u8,
+    /// `weapon_vars.boomerang.parent_gobj`: the thrower it homes on.
+    pub parent_port: Option<u8>,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub lifetime: u16,
+    pub is_return: bool,
+    pub is_reflect: bool,
+    /// `WPLINK_BOOMERANG_FLAG_FORWARD`: bounds the homing by
+    /// `flyforward_timer` once it returns.
+    pub is_forward: bool,
+    pub flyforward_timer: u8,
+    pub default_angle: f32,
+    pub homing_angle: f32,
+    pub damage: i32,
+    pub lr: f32,
+    /// Ports in the attack record. `can_rehit_fighter` is clear.
+    pub hit_ports: u8,
+}
+
+impl LinkBoomerang {
+    /// `wpLinkBoomerangMakeWeapon`.
+    fn new(spawn: WeaponSpawn, is_smash: bool, stick_x: i8, stick_y: i8) -> Self {
+        let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
+        let (lifetime, speed) = if is_smash {
+            (BOOMERANG_LIFETIME_SMASH, BOOMERANG_VEL_SMASH)
+        } else {
+            (BOOMERANG_LIFETIME_TILT, BOOMERANG_VEL_TILT)
+        };
+        let default_angle = Self::launch_angle(stick_x, stick_y, lr);
+        // `wpLinkBoomerangGetAngleSetVel` scales both components by `lr`;
+        // only the speed survives the first update, which rebuilds the
+        // velocity from `default_angle`.
+        let (sin, cos) = sin_cos(default_angle);
+        LinkBoomerang {
+            owner_port: spawn.owner_port,
+            parent_port: Some(spawn.owner_port),
+            position: spawn.position + Vec3::new(BOOMERANG_OFF_X * lr, BOOMERANG_OFF_Y, 0.0),
+            velocity: Vec3::new(cos * speed, sin * speed, 0.0),
+            lifetime,
+            is_return: false,
+            is_reflect: false,
+            is_forward: true,
+            flyforward_timer: 0,
+            default_angle,
+            homing_angle: 0.0,
+            damage: LINK_BOOMERANG_HITBOX.damage,
+            lr,
+            hit_ports: 0,
+        }
+    }
+
+    /// The angle half of `wpLinkBoomerangGetAngleSetVel`: up to 30 degrees
+    /// up or down once the stick passes 10, mirrored for a left throw.
+    pub fn launch_angle(stick_x: i8, stick_y: i8, lr: f32) -> f32 {
+        let y = i32::from(stick_y);
+        let mut angle = if y.abs() > BOOMERANG_ANGLE_STICK_THRESHOLD {
+            ssb_engine::math::atan2(y as f32, i32::from(stick_x).abs() as f32)
+                .clamp(-DEG_30, DEG_30)
+        } else {
+            0.0
+        };
+        if lr < 0.0 {
+            angle = if angle < 0.0 {
+                -DEG_180 - angle
+            } else {
+                DEG_180 - angle
+            };
+        }
+        if angle < 0.0 {
+            angle += DEG_360;
+        }
+        angle
+    }
+
+    fn speed(&self) -> f32 {
+        Vec2::new(self.velocity.x, self.velocity.y).length()
+    }
+
+    /// `wpLinkBoomerangUpdateVelLR`.
+    fn set_speed(&mut self, speed: f32) {
+        let (sin, cos) = sin_cos(self.default_angle);
+        self.velocity.x = cos * speed;
+        self.velocity.y = sin * speed;
+        self.lr = if self.default_angle > DEG_90 && self.default_angle < DEG_270 {
+            -1.0
+        } else {
+            1.0
+        };
+    }
+
+    /// `wpLinkBoomerangSetReturnVars`.
+    fn set_return(&mut self, homing_max: bool) {
+        self.is_return = true;
+        self.damage = BOOMERANG_RETURN_DAMAGE;
+        self.default_angle -= DEG_180;
+        if self.default_angle < 0.0 {
+            self.default_angle += DEG_360;
+        }
+        self.lr = -self.lr;
+        self.flyforward_timer = 140;
+        self.homing_angle = if homing_max {
+            BOOMERANG_HOMING_ANGLE_MAX
+        } else {
+            BOOMERANG_HOMING_ANGLE_MIN
+        };
+    }
+
+    /// `wpLinkBoomerangGetDistUpdateAngle`: turns toward the parent's TopN
+    /// plus 290 by at most `homing_angle` a frame, and returns the distance.
+    fn home(&mut self, parent: Vec3) -> f32 {
+        let dist_x = parent.x - self.position.x;
+        let dist_y = parent.y - self.position.y + BOOMERANG_OFF_Y;
+        let dist = Vec2::new(dist_x, dist_y).length();
+        if self.is_forward {
+            if self.flyforward_timer > 0 {
+                self.flyforward_timer -= 1;
+            } else {
+                return dist;
+            }
+        }
+        let mut angle = ssb_engine::math::atan2(dist_y, dist_x);
+        if angle < -DEG_180 {
+            angle += DEG_360;
+        } else if angle > DEG_180 {
+            angle -= DEG_360;
+        }
+        angle -= self.default_angle;
+        if angle < -DEG_180 {
+            angle += DEG_360;
+        } else if angle > DEG_180 {
+            angle -= DEG_360;
+        }
+        angle = angle.clamp(-self.homing_angle, self.homing_angle);
+        self.default_angle = clamp_angle_360(self.default_angle + angle);
+        dist
+    }
+
+    /// `wpLinkBoomerangCheckBound`. The source's similarity divides the dot
+    /// product by the *sum* of the two magnitudes, so the threshold is a
+    /// normal speed of about half the boomerang's speed, not 30 degrees.
+    fn bound(&mut self, normal: Vec2) -> bool {
+        let dot = self.velocity.x * normal.x + self.velocity.y * normal.y;
+        let sim = dot / (normal.length() + self.speed());
+        if sim < 0.0 {
+            if sim > -ssb_engine::math::sin_cos(DEG_30).0 {
+                self.velocity.x -= 2.0 * dot * normal.x;
+                self.velocity.y -= 2.0 * dot * normal.y;
+                self.default_angle =
+                    clamp_angle_360(ssb_engine::math::atan2(self.velocity.y, self.velocity.x));
+            } else {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `wpLinkBoomerangProcUpdate`, the manager's move, then
+    /// `wpLinkBoomerangProcMap`. Returns `(alive, caught)`, where `caught`
+    /// reports a catch by a parent whose `is_special_interrupt` is set.
+    fn tick<I, F>(&mut self, surfaces: F, parent: Option<OwnerView>) -> (bool, bool)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        self.lifetime -= 1;
+        if self.lifetime == 0 {
+            return (false, false);
+        }
+        if self.is_reflect {
+            // Flies straight.
+        } else if self.is_return {
+            self.set_speed((self.speed() + 1.0).min(90.0));
+            if let Some(parent) = parent {
+                let dist = self.home(parent.position);
+                if dist < BOOMERANG_CATCH_DIST {
+                    return (false, parent.is_special_interrupt);
+                }
+            }
+        } else {
+            let speed = (self.speed() - 1.4).max(10.0);
+            self.set_speed(speed);
+            if speed == 10.0 {
+                self.set_return(false);
+            }
+        }
+        let wanted = self.position + self.velocity;
+        if self.is_reflect || self.is_return {
+            self.position = wanted;
+            return (true, false);
+        }
+        match map_contact(surfaces(), self.position, wanted, LINK_BOOMERANG_MAP_COLL) {
+            Some(hit) => {
+                self.position = hit.position;
+                if self.bound(hit.normal) {
+                    self.set_return(true);
+                }
+            }
+            None => self.position = wanted,
+        }
+        (true, false)
+    }
+
+    /// `wpLinkBoomerangProcHit` after a registered hit.
+    fn on_hit(&mut self) {
+        if !self.is_reflect && !self.is_return {
+            let speed = (self.speed() - 5.0).max(10.0);
+            self.set_speed(speed);
+            self.set_return(true);
+        }
+    }
+
+    /// `wpLinkBoomerangProcReflector`, then the reflect damage bonus.
+    fn reflect(&mut self, reflector: &Fighter) {
+        if !self.is_reflect {
+            self.is_reflect = true;
+            self.is_return = false;
+            self.is_forward = false;
+            self.lifetime = BOOMERANG_LIFETIME_REFLECT;
+        }
+        let dist_x = self.position.x - reflector.pos.x;
+        let dist_y = self.position.y - (reflector.pos.y + 250.0);
+        self.default_angle = clamp_angle_360(ssb_engine::math::atan2(dist_y, dist_x));
+        self.set_speed(self.speed());
+        self.owner_port = reflector.port;
+        self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        Hitbox {
+            damage: self.damage,
+            ..LINK_BOOMERANG_HITBOX
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Weapon {
     Fireball(MarioFireball),
     Blaster(FoxBlaster),
     ChargeShot(SamusChargeShot),
     Bomb(SamusBomb),
+    Boomerang(LinkBoomerang),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -550,15 +858,25 @@ impl MarioFireball {
 /// one slot per shot.
 pub const MAX_WEAPONS: usize = 16;
 
+/// Player ports the pool keeps owner views and catch events for.
+const MAX_OWNERS: usize = 4;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
     slots: [Option<Weapon>; MAX_WEAPONS],
+    /// This frame's [`OwnerView`] per port, from [`Self::observe_owner`].
+    owners: [Option<OwnerView>; MAX_OWNERS],
+    /// A returning Boomerang reached this port's thrower while its
+    /// `is_special_interrupt` was set; [`Self::sync_owner`] delivers it.
+    caught: [bool; MAX_OWNERS],
 }
 
 impl Default for WeaponPool {
     fn default() -> Self {
         WeaponPool {
             slots: [None; MAX_WEAPONS],
+            owners: [None; MAX_OWNERS],
+            caught: [false; MAX_OWNERS],
         }
     }
 }
@@ -579,8 +897,42 @@ impl WeaponPool {
                 Weapon::ChargeShot(SamusChargeShot::new(spawn, charge))
             }
             WeaponKind::SamusBomb => Weapon::Bomb(SamusBomb::new(spawn)),
+            WeaponKind::LinkBoomerang {
+                is_smash,
+                stick_x,
+                stick_y,
+            } => Weapon::Boomerang(LinkBoomerang::new(spawn, is_smash, stick_x, stick_y)),
         });
         true
+    }
+
+    /// Records what this frame's weapons may read about a fighter: the
+    /// Boomerang homes on its thrower's TopN. Call it for every fighter after
+    /// the fighters tick and before [`Self::tick`].
+    pub fn observe_owner(&mut self, f: &Fighter) {
+        if let Some(slot) = self.owners.get_mut(usize::from(f.port)) {
+            *slot = Some(OwnerView {
+                position: f.pos,
+                is_special_interrupt: f.is_special_interrupt,
+            });
+        }
+    }
+
+    /// Delivers the pool's writes to a fighter after [`Self::tick`]:
+    /// `wpLinkBoomerangCheckOwnerCatch`'s catch status, and
+    /// `wpLinkBoomerangClearGObjs`, which clears the thrower's
+    /// `boomerang_gobj` when the Boomerang goes away (or was never made
+    /// because the pool was full).
+    pub fn sync_owner(&mut self, f: &mut Fighter) {
+        let port = usize::from(f.port);
+        if port < MAX_OWNERS && core::mem::take(&mut self.caught[port]) {
+            crate::link::set_special_n_get(f);
+        }
+        f.link.boomerang_out = self
+            .slots
+            .iter()
+            .flatten()
+            .any(|w| matches!(w, Weapon::Boomerang(b) if b.parent_port == Some(f.port)));
     }
 
     /// Advances each weapon's source physics and map callback once. Call this
@@ -590,6 +942,7 @@ impl WeaponPool {
         F: Fn() -> I + Copy,
         I: IntoIterator<Item = MapSurface>,
     {
+        let owners = self.owners;
         for slot in &mut self.slots {
             if let Some(weapon) = slot.as_mut() {
                 let alive = match weapon {
@@ -597,6 +950,18 @@ impl WeaponPool {
                     Weapon::Blaster(blaster) => blaster.tick(surfaces),
                     Weapon::ChargeShot(shot) => shot.tick(surfaces),
                     Weapon::Bomb(bomb) => bomb.tick(surfaces),
+                    Weapon::Boomerang(boomerang) => {
+                        let parent = boomerang
+                            .parent_port
+                            .and_then(|port| owners.get(usize::from(port)).copied().flatten());
+                        let (alive, caught) = boomerang.tick(surfaces, parent);
+                        if caught {
+                            if let Some(port) = boomerang.parent_port {
+                                self.caught[usize::from(port)] = true;
+                            }
+                        }
+                        alive
+                    }
                 };
                 if !alive {
                     *slot = None;
@@ -616,8 +981,13 @@ impl WeaponPool {
                 Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
                 Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position),
                 Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position),
+                Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position),
             };
             if owner == defender.port {
+                continue;
+            }
+            let bit = 1u8 << (defender.port & 7);
+            if matches!(weapon, Weapon::Boomerang(b) if b.hit_ports & bit != 0) {
                 continue;
             }
             // The Bomb's `WPAttributes::can_reflect` is clear, and its attack
@@ -676,6 +1046,7 @@ impl WeaponPool {
                             c.damage = ((c.damage as f32 * 1.8 + 0.99) as i32).min(100);
                         }
                         Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
+                        Weapon::Boomerang(b) => b.reflect(defender),
                     }
                     crate::status::set_fox_special_lw_hit(defender);
                     continue;
@@ -686,8 +1057,15 @@ impl WeaponPool {
                 Weapon::Blaster(b) => b.damage,
                 Weapon::ChargeShot(c) => c.damage,
                 Weapon::Bomb(_) => hitbox.damage,
+                Weapon::Boomerang(b) => b.damage,
             };
             if attack::apply_hitbox_at(&hitbox, position, defender) {
+                // The Boomerang survives a hit and turns back.
+                if let Weapon::Boomerang(b) = weapon {
+                    b.hit_ports |= bit;
+                    b.on_hit();
+                    continue;
+                }
                 *slot = None;
             }
         }
@@ -727,6 +1105,13 @@ impl WeaponPool {
     pub fn bombs(&self) -> impl Iterator<Item = SamusBomb> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Bomb(b) => Some(*b),
+            _ => None,
+        })
+    }
+
+    pub fn boomerangs(&self) -> impl Iterator<Item = LinkBoomerang> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Boomerang(b) => Some(*b),
             _ => None,
         })
     }
@@ -1035,6 +1420,118 @@ mod tests {
         let bomb = weapons.bombs().next().unwrap();
         assert!(bomb.floor.is_some());
         assert_eq!(bomb.position.y, 75.0);
+    }
+
+    fn boomerang_spawn(is_smash: bool, stick_y: i8, facing: f32) -> WeaponSpawn {
+        WeaponSpawn {
+            kind: WeaponKind::LinkBoomerang {
+                is_smash,
+                stick_x: 0,
+                stick_y,
+            },
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing,
+        }
+    }
+
+    #[test]
+    fn boomerang_slows_turns_back_and_is_caught_by_an_idle_thrower() {
+        let mut weapons = WeaponPool::default();
+        let mut link = Fighter::new(FighterKind::Link, 0, 3);
+        link.situation = Situation::Ground;
+        crate::status::set_wait(&mut link);
+        weapons.spawn(boomerang_spawn(false, 0, 1.0));
+        let b = weapons.boomerangs().next().unwrap();
+        assert_eq!(b.position, Vec3::new(BOOMERANG_OFF_X, BOOMERANG_OFF_Y, 0.0));
+        assert_eq!(b.lifetime, BOOMERANG_LIFETIME_TILT);
+        // 85 slows by 1.4 a frame to the 10 floor, then turns back.
+        let mut frames = 0;
+        while !weapons.boomerangs().next().unwrap().is_return {
+            weapons.observe_owner(&link);
+            weapons.tick(open_air);
+            weapons.sync_owner(&mut link);
+            frames += 1;
+        }
+        assert_eq!(frames, 54);
+        let b = weapons.boomerangs().next().unwrap();
+        assert_eq!(b.damage, BOOMERANG_RETURN_DAMAGE);
+        assert_eq!(b.homing_angle, BOOMERANG_HOMING_ANGLE_MIN);
+        assert!(link.link.boomerang_out);
+        while weapons.active_count() == 1 {
+            weapons.observe_owner(&link);
+            weapons.tick(open_air);
+            weapons.sync_owner(&mut link);
+        }
+        assert!(!link.link.boomerang_out);
+        assert_eq!(
+            link.status.status,
+            crate::status::AnyStatus::Link(crate::status::LinkStatus::SpecialNGet)
+        );
+    }
+
+    #[test]
+    fn boomerang_hit_sends_it_back_without_removing_it() {
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(boomerang_spawn(true, 0, 1.0));
+        assert_eq!(
+            weapons.boomerangs().next().unwrap().lifetime,
+            BOOMERANG_LIFETIME_SMASH
+        );
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.situation = Situation::Ground;
+        target.pos = weapons.boomerangs().next().unwrap().position;
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 9);
+        let b = weapons.boomerangs().next().unwrap();
+        assert!(b.is_return);
+        assert_eq!(b.homing_angle, BOOMERANG_HOMING_ANGLE_MAX);
+        assert_eq!(b.lr, -1.0);
+        target.hitlag = 0;
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 9, "the record keeps the target");
+    }
+
+    #[test]
+    fn boomerang_launch_angle_follows_the_stick_and_mirrors_left() {
+        let up = LinkBoomerang::launch_angle(0, 80, 1.0);
+        assert!((up - core::f32::consts::PI / 6.0).abs() < 1e-6);
+        assert_eq!(LinkBoomerang::launch_angle(40, 10, 1.0), 0.0);
+        let left_up = LinkBoomerang::launch_angle(0, 80, -1.0);
+        assert!((left_up - 5.0 * core::f32::consts::PI / 6.0).abs() < 1e-5);
+        let left_down = LinkBoomerang::launch_angle(0, -80, -1.0);
+        assert!((left_down - 7.0 * core::f32::consts::PI / 6.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn boomerang_glances_off_a_shallow_surface_and_turns_on_a_steep_one() {
+        // Aimed 30 degrees down at a floor: the normal speed stays under
+        // half the total, so it reflects and keeps flying out.
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(boomerang_spawn(false, -80, 1.0));
+        let floor = [surface(MapSurfaceKind::Floor, -5000, 0, 5000, 0)];
+        let mut reflected = false;
+        for _ in 0..20 {
+            weapons.tick(|| floor);
+            let b = weapons.boomerangs().next().unwrap();
+            assert!(!b.is_return);
+            if b.velocity.y > 0.0 {
+                reflected = true;
+                break;
+            }
+        }
+        assert!(reflected);
+
+        // Straight into a wall: returns with the fast homing turn.
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(boomerang_spawn(false, 0, 1.0));
+        let wall = [surface(MapSurfaceKind::RightWall, 400, -500, 400, 1000)];
+        for _ in 0..10 {
+            weapons.tick(|| wall);
+        }
+        let b = weapons.boomerangs().next().unwrap();
+        assert!(b.is_return);
+        assert_eq!(b.homing_angle, BOOMERANG_HOMING_ANGLE_MAX);
     }
 
     fn surface(kind: MapSurfaceKind, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {
