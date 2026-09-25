@@ -1118,6 +1118,11 @@ mod tests {
             1.0f32.to_bits(),
             mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
             2.0f32.to_bits(),
+            // Real loops close on the start value (e.g. file 105's): the
+            // payload-0 step after `SET_ANIM` would otherwise replace `2`
+            // on the frame it becomes due.
+            mat_cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
+            0.0f32.to_bits(),
             mat_cmd(OP_SET_ANIM, 0, 0),
             0, // jump target: this script's own start
         ])
@@ -1477,6 +1482,8 @@ mod tests {
         let pack = Pack::open(&bytes).unwrap();
         let mut animator = MaterialAnimator::new();
         animator.start(&pack);
+        // Frame 1 holds the step's zero base; its target is due on frame 2.
+        animator.tick(&pack);
         animator.tick(&pack);
         let uv = animator.resolved_uv(&pack, anim).unwrap();
         assert_eq!(uv.trau, 0.5);
@@ -1650,7 +1657,10 @@ mod tests {
             .resolved_colors(mat_anim)
             .and_then(|c| c.prim)
             .expect("a live ramp");
-        assert!(prim[3] > 0, "measurably visible after one tick: {prim:?}");
+        assert_eq!(prim, [255, 255, 96, 0], "frame 1 is the authored start");
+        m.tick(&pack);
+        let prim = m.resolved_colors(mat_anim).and_then(|c| c.prim).unwrap();
+        assert!(prim[3] > 0, "measurably visible on frame 2: {prim:?}");
     }
 
     #[test]
@@ -1676,6 +1686,8 @@ mod tests {
         let mut m = MaterialAnimator::new();
         m.start(&pack);
         assert_eq!(m.len(), 103);
+        // Frame 1 shows the zero base; frame 2 the payload-0 key.
+        m.tick(&pack);
         m.tick(&pack);
         let prim = m.resolved_colors(last).and_then(|c| c.prim);
         assert_eq!(prim, Some([0xFF, 0xFF, 0xFF, 102]), "the last entry ticks");
