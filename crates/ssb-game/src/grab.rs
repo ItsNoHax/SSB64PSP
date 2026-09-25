@@ -21,18 +21,12 @@
 //!
 //! ## Documented deviations
 //!
-//! * **Attachment joint.** `ftCommonCapturePulledRotateScale` places the held
-//!   fighter at the catcher's `joint_itemheavy_id` joint and copies that
-//!   joint's rotation. `ssb-game` stores no skeleton, so the runtime samples
-//!   the joint's world position into [`GrabState::anchor`]; without a sample
-//!   (host tests) the catcher's root stands in. The held fighter's own
-//!   `TopN` child offset and the joint rotation are not applied: the held
-//!   fighter faces opposite its catcher, as `ftCommonCapturePulledProcCapture`
-//!   sets on entry.
-//! * **Catch collision.** A catch box on the root joint (`TopN`) is placed
-//!   exactly (its joint space is the model's, turned by facing). A catch box
-//!   on a hand joint uses the root-offset convention every other hitbox uses
-//!   (`crate::attack`'s module docs); hurtboxes are the single root sphere.
+//! * **Attachment joint.** The runtime samples the catcher's heavy-item
+//!   joint matrix and the held fighter's first child translation. Gameplay
+//!   applies the negative child translation through that matrix; rendering
+//!   uses its rotation. Host tests without a skeleton use the catcher root.
+//! * **Catch collision.** Catch boxes use their posed joint transform,
+//!   including hand rotations and offsets. Hurtboxes remain one root sphere.
 //! * **No stale-move queue, handicap or 1P stats.** Throw damage is the
 //!   descriptor's damage (`ftParamGetStaledDamage` with an empty queue);
 //!   handicaps are neutral.
@@ -49,7 +43,7 @@ use ssb_engine::math::Vec3;
 
 use crate::attack::{self, Hitbox};
 use crate::collision::{self, Segment};
-use crate::fighter::{Facing, Fighter, FighterKind, Situation};
+use crate::fighter::{Facing, Fighter, FighterKind, JointTransform, Situation};
 use crate::physics;
 use crate::status::{self, AnyStatus, DonkeyStatus, JumpInput, Status, StatusTiming};
 
@@ -337,6 +331,8 @@ pub struct Holder {
     pub status: AnyStatus,
     /// World position of the catcher's `joint_itemheavy_id` joint.
     pub anchor: Vec3,
+    /// Full current heavy-item joint transform, when a skeleton is present.
+    pub anchor_transform: Option<JointTransform>,
     /// The catcher's floor line, or `None` while it is airborne.
     pub floor_line: Option<u16>,
     pub percent: u16,
@@ -405,6 +401,10 @@ pub struct GrabState {
     pub throwff_turn_tics: i32,
     /// Runtime-sampled world position of `joint_itemheavy_id`.
     pub anchor: Option<Vec3>,
+    pub anchor_transform: Option<JointTransform>,
+    /// Translation of this fighter's first child of TopN, sampled from its
+    /// current runtime joint pose for capture placement.
+    pub held_child_offset: Option<Vec3>,
     /// Events for the partner, drained by [`exchange`].
     pub outbox: [Option<GrabEvent>; OUTBOX],
 }
@@ -818,7 +818,7 @@ fn release_with(f: &mut Fighter, desc: ThrowHitDesc, lr: Option<f32>, shield_cat
     };
     if lr.is_some() {
         // `ftCommonThrownProcPhysics(catch_gobj)` runs just before release.
-        f.pos = holder.anchor;
+        f.pos = held_attachment(f, holder);
     }
     lose_grip(f);
     if lr.is_some() || !f.is_grounded() {
@@ -1192,6 +1192,35 @@ pub fn update(f: &mut Fighter) -> bool {
     true
 }
 
+/// `ftCommonCapturePulledRotateScale`: place the held fighter's TopN so its
+/// first child lands exactly on the catcher's heavy-item joint. The source
+/// transforms the negative child translation through that joint's matrix.
+fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
+    match (holder.anchor_transform, f.grab.held_child_offset) {
+        (Some(joint), Some(child)) => joint.point(Vec3::ZERO - child),
+        _ => holder.anchor,
+    }
+}
+
+/// Refreshes the held X/Z location after the animation runtime advances its
+/// child pose. `CapturePulled` and `CaptureWait` keep Y under floor collision;
+/// thrown and shouldered statuses take all three attachment coordinates.
+pub fn refresh_held_attachment(f: &mut Fighter) {
+    if !is_held(f.status.status) {
+        return;
+    }
+    let Some(holder) = f.grab.holder else { return };
+    let point = held_attachment(f, holder);
+    f.pos.x = point.x;
+    f.pos.z = point.z;
+    if !matches!(
+        f.status.status,
+        AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
+    ) {
+        f.pos.y = point.y;
+    }
+}
+
 /// Physics for a held fighter: `ftCommonCapturePulledProcPhysics` or
 /// `ftCommonThrownProcPhysics`, then the matching map callback against the
 /// catcher's floor line. Returns `false` when the fighter is not held.
@@ -1216,10 +1245,11 @@ where
         f.status.status,
         AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
     );
-    f.pos.x = holder.anchor.x;
-    f.pos.z = holder.anchor.z;
+    let attachment = held_attachment(f, holder);
+    f.pos.x = attachment.x;
+    f.pos.z = attachment.z;
     if !pulled {
-        f.pos.y = holder.anchor.y;
+        f.pos.y = attachment.y;
     }
     if pulled {
         // `ftCommonCapturePulledProcMap` / `ftCommonCaptureWaitProcMap`.
@@ -1357,6 +1387,7 @@ fn holder_of(f: &Fighter) -> Holder {
         facing: f.facing,
         status: f.status.status,
         anchor: f.grab.anchor.unwrap_or(f.pos),
+        anchor_transform: f.grab.anchor_transform,
         floor_line: f.floor.map(|s| s.line),
         percent: f.damage,
     }
@@ -1436,17 +1467,9 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if other.grab.capture_immune || other.invincible_frames > 0 || other.stocks <= 0 {
         return false;
     }
-    let sign = catcher.facing.sign();
     let hit = catch_colls(catcher.kind).iter().any(|(hitbox, joint)| {
-        let o = hitbox.offset;
-        let offset = if *joint == 0 {
-            // `TopN` joint space is the model's: +Z forward, turned by facing.
-            Vec3::new(o.z * sign, o.y, -o.x * sign)
-        } else {
-            Vec3::new(o.x * sign, o.y, o.z)
-        };
         attack::spheres_overlap(
-            catcher.pos + offset,
+            catcher.joint_world(*joint, hitbox.offset),
             hitbox.radius,
             other.pos,
             attack::MARIO_HURTBOX_RADIUS,
@@ -1552,6 +1575,49 @@ mod tests {
         assert_eq!(dummy.grab.capture, Some(0));
         assert_eq!(dummy.status.status, Status::CapturePulled);
         assert_eq!(dummy.facing, Facing::Left);
+    }
+
+    #[test]
+    fn catch_uses_animated_hand_position() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let dummy = grounded(FighterKind::Mario, 1, 400.0);
+        set_catch(&mut mario);
+        mario.status.anim_frame = 6.0;
+        assert!(!search_catch(&mut mario, &dummy));
+        mario.joint_transforms[28] = Some(JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ],
+            origin: Vec3::new(400.0, 0.0, 0.0),
+        });
+        assert!(search_catch(&mut mario, &dummy));
+    }
+
+    #[test]
+    fn held_topn_cancels_child_translation_through_holder_rotation() {
+        let mut catcher = grounded(FighterKind::Mario, 0, 0.0);
+        let joint = JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ],
+            origin: Vec3::new(100.0, 200.0, 0.0),
+        };
+        catcher.grab.anchor = Some(joint.origin);
+        catcher.grab.anchor_transform = Some(joint);
+        let mut held = grounded(FighterKind::Mario, 1, 0.0);
+        held.grab.capture = Some(0);
+        held.grab.holder = Some(holder_of(&catcher));
+        held.grab.held_child_offset = Some(Vec3::new(0.0, 50.0, 60.0));
+        held.status.status = Status::CapturePulled.into();
+        refresh_held_attachment(&mut held);
+        assert_eq!(held.pos, Vec3::new(40.0, 0.0, 0.0));
+        held.status.status = Status::ThrownCommon.into();
+        refresh_held_attachment(&mut held);
+        assert_eq!(held.pos, Vec3::new(40.0, 150.0, 0.0));
     }
 
     #[test]

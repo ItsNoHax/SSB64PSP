@@ -621,6 +621,7 @@ impl FighterScene {
         self.jump_was_held = jump_held;
 
         self.fighter.set_input(input, tapped, released);
+        self.sample_held_child_offset();
         if matches!(
             self.fighter.status.status,
             AnyStatus::Mario(
@@ -670,11 +671,21 @@ impl FighterScene {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
         self.tick_animation(pack);
+        self.sample_held_child_offset();
+        ssb_game::grab::refresh_held_attachment(&mut self.fighter);
+        self.sample_gameplay_joints(pack);
         // A held fighter hangs from this fighter's `joint_itemheavy_id`; the
         // match loop hands the sampled position over in `grab::exchange`.
         self.fighter.grab.anchor = if self.fighter.grab.catch.is_some() {
             ssb_game::grab::itemheavy_joint(self.fighter.kind)
-                .and_then(|joint| self.fighter_part_anchor(pack, joint))
+                .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
+                .map(|joint| joint.origin)
+        } else {
+            None
+        };
+        self.fighter.grab.anchor_transform = if self.fighter.grab.catch.is_some() {
+            ssb_game::grab::itemheavy_joint(self.fighter.kind)
+                .and_then(|joint| self.fighter.joint_transforms.get(joint).copied().flatten())
         } else {
             None
         };
@@ -750,6 +761,17 @@ impl FighterScene {
         );
     }
 
+    fn sample_held_child_offset(&mut self) {
+        self.fighter.grab.held_child_offset = if ssb_game::grab::is_held(self.fighter.status.status)
+        {
+            self.skeleton.pose(0).map(|p| {
+                ssb_engine::math::Vec3::new(p.translate[0], p.translate[1], p.translate[2])
+            })
+        } else {
+            None
+        };
+    }
+
     /// Maps an authored weapon attachment joint and forward offset into
     /// match coordinates before the fighter's motion event consumes it.
     /// Mario's Fireball uses joint 16; Fox's Blaster uses joint 17 plus 60.
@@ -763,22 +785,43 @@ impl FighterScene {
         self.node_anchor(pack, node, offset_x)
     }
 
-    /// `FTAttributes::joint_itemheavy_id` indexes `FTStruct::joints`, where
-    /// TopN, TransN, XRotN and YRotN precede the model's DObjDesc array
-    /// (`nFTPartsJointCommonStart == 4`, `ftmanager.c`). The packed object
-    /// contains only that array. A part need not have an animation script, so
-    /// look up its packed node directly instead of using `Skeleton::joint_node`.
-    fn fighter_part_anchor(
-        &self,
-        pack: &Pack<'_>,
-        part_id: usize,
-    ) -> Option<ssb_engine::math::Vec3> {
-        let object = pack.object(self.object)?;
-        let local_index = part_id.checked_sub(4)? as u32;
-        if local_index >= object.node_count {
-            return None;
+    /// Samples all posed model nodes once for gameplay collision. Joint IDs
+    /// 4.. are the packed DObjDesc nodes; 0 is TopN. The other runtime joints
+    /// have no packed node and are not used by the ported motion collisions.
+    fn sample_gameplay_joints(&mut self, pack: &Pack<'_>) {
+        use ssb_engine::math::Vec3;
+        use ssb_game::fighter::{JointTransform, FIGHTER_JOINTS};
+        self.fighter.joint_transforms = [None; FIGHTER_JOINTS];
+        let sign = self.fighter.facing.sign();
+        let root = JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -sign),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(sign, 0.0, 0.0),
+            ],
+            origin: self.fighter.pos,
+        };
+        self.fighter.joint_transforms[0] = Some(root);
+        let Some(object) = pack.object(self.object) else {
+            return;
+        };
+        let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
+        let count = self
+            .compose_model(pack, &object, &mut posed)
+            .min(FIGHTER_JOINTS - 4);
+        let scale = ssb_rom::pack::MODEL_SCALE;
+        for (i, matrix) in posed[..count].iter().enumerate() {
+            let axis = |col: usize| {
+                let m = &matrix.0;
+                Vec3::new(m[col * 4 + 2] * sign, m[col * 4 + 1], -m[col * 4] * sign)
+            };
+            let t = matrix.translation();
+            self.fighter.joint_transforms[i + 4] = Some(JointTransform {
+                axes: [axis(0), axis(1), axis(2)],
+                origin: self.fighter.pos
+                    + Vec3::new(t[2] * scale * sign, t[1] * scale, -t[0] * scale * sign),
+            });
         }
-        self.node_anchor(pack, object.first_node + local_index, 0.0)
     }
 
     fn node_anchor(

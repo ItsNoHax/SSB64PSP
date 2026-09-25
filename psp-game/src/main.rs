@@ -661,11 +661,21 @@ unsafe fn draw_training(
     if let Some(obj) = p.object(pl.object) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
         let n = pl.compose_model(p, &obj, &mut posed);
-        gpu.model_transform(
-            [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
-            [0.0, play::facing_turn(pl.fighter.facing), 0.0],
-            meshdraw::MODEL_SCALE,
-        );
+        if let Some(joint) = pl
+            .fighter
+            .grab
+            .holder
+            .and_then(|h| h.anchor_transform)
+            .filter(|_| ssb_game::grab::is_held(pl.fighter.status.status))
+        {
+            gpu.model_transform_joint(pl.fighter.pos, joint, meshdraw::MODEL_SCALE);
+        } else {
+            gpu.model_transform(
+                [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
+                [0.0, play::facing_turn(pl.fighter.facing), 0.0],
+                meshdraw::MODEL_SCALE,
+            );
+        }
         let m = gpu.model_matrix();
         // `ftDisplayMainProcDisplay` rebuilds the fighter's one directional
         // light from the active stage's `MPGroundData.light_angle.x/y`
@@ -684,15 +694,25 @@ unsafe fn draw_training(
         if let Some(obj) = p.object(dummy.object) {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
             let n = dummy.compose_model(p, &obj, &mut posed);
-            gpu.model_transform(
-                [
-                    dummy.fighter.pos.x,
-                    dummy.fighter.pos.y,
-                    dummy.fighter.pos.z,
-                ],
-                [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
-                meshdraw::MODEL_SCALE,
-            );
+            if let Some(joint) = dummy
+                .fighter
+                .grab
+                .holder
+                .and_then(|h| h.anchor_transform)
+                .filter(|_| ssb_game::grab::is_held(dummy.fighter.status.status))
+            {
+                gpu.model_transform_joint(dummy.fighter.pos, joint, meshdraw::MODEL_SCALE);
+            } else {
+                gpu.model_transform(
+                    [
+                        dummy.fighter.pos.x,
+                        dummy.fighter.pos.y,
+                        dummy.fighter.pos.z,
+                    ],
+                    [0.0, play::facing_turn(dummy.fighter.facing), 0.0],
+                    meshdraw::MODEL_SCALE,
+                );
+            }
             let m = gpu.model_matrix();
             draw_state.configure_fighter_light(stage.light_angle_xy);
             meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
