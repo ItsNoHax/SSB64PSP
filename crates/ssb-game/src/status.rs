@@ -405,14 +405,19 @@ pub enum Status {
     YoshiEgg = 178,
     CaptureCaptain = 179,
     ThrownDonkeyUnk = 180,
+    // `nFTCommonStatusThrownStart`..`ThrownEnd` in `ftdef.h`. The status
+    // table's comments call 182/183/185/187/188 `ThrownMarioB1`, `ThrownUnk1`,
+    // `ThrownMarioB2`, `ThrownUnk2` and `ThrownUnk3`; the enum names are the
+    // ones the thrown-status tables (`dMarioMain_thrown_status` and friends)
+    // are written in.
     ThrownDonkeyF = 181,
-    ThrownMarioB1 = 182,
-    ThrownUnk1 = 183,
+    ThrownMarioBStart = 182,
+    ThrownFoxFStart = 183,
     Shouldered = 184,
-    ThrownMarioB2 = 185,
+    ThrownMarioB = 185,
     ThrownCommon = 186,
-    ThrownUnk2 = 187,
-    ThrownUnk3 = 188,
+    ThrownFoxF = 187,
+    ThrownFoxB = 188,
 
     Appeal = 189,
 
@@ -493,6 +498,22 @@ impl Status {
             // current pose", so this is the same fallback other unextracted
             // animations get, not a special case.
             Status::Attack11 => Status::Wait.anim_slot(),
+            // Shared grab slots (`ssb_rom::anim::SLOT_CATCH` on). `CatchWait`
+            // and `CaptureWait` have no motion of their own (script id -2):
+            // they hold the pose the pull ended on, so they map to the pull.
+            Status::Catch => 110,
+            Status::CatchPull | Status::CatchWait => 111,
+            Status::ThrowF => 112,
+            Status::ThrowB => 113,
+            Status::CapturePulled | Status::CaptureWait => 114,
+            Status::ThrownDonkeyF => 115,
+            Status::ThrownMarioBStart => 116,
+            Status::ThrownFoxFStart => 117,
+            Status::Shouldered => 118,
+            Status::ThrownMarioB => 119,
+            Status::ThrownCommon => 120,
+            Status::ThrownFoxF => 121,
+            Status::ThrownFoxB => 122,
             // Every other status (the bulk of the just-added common table,
             // `Status` doc comment): no animation is extracted for it yet.
             // Same fallback as `Attack11` — keep the current pose rather than
@@ -559,6 +580,16 @@ impl Status {
                 | Status::AttackAirHi
                 | Status::AttackAirLw
                 | Status::FallSpecial
+                // `ftCommonThrownSetStatusQueue`/`...Immediate` put the held
+                // fighter in the air (`ga = nMPKineticsAir`).
+                | Status::ThrownDonkeyF
+                | Status::ThrownMarioBStart
+                | Status::ThrownFoxFStart
+                | Status::Shouldered
+                | Status::ThrownMarioB
+                | Status::ThrownCommon
+                | Status::ThrownFoxF
+                | Status::ThrownFoxB
         )
     }
 
@@ -661,6 +692,18 @@ pub enum DonkeyStatus {
     SpecialLwStart = 232,
     SpecialLwLoop = 233,
     SpecialLwEnd = 234,
+    // Cargo carry (`ftdonkeythrowf*.c`), `nFTDonkeyStatusThrowFStart` on.
+    ThrowFWait = 235,
+    ThrowFWalkSlow = 236,
+    ThrowFWalkMiddle = 237,
+    ThrowFWalkFast = 238,
+    ThrowFTurn = 239,
+    ThrowFKneeBend = 240,
+    ThrowFFall = 241,
+    ThrowFLanding = 242,
+    ThrowFDamage = 243,
+    ThrowFF = 244,
+    ThrowAirFF = 245,
 }
 
 /// A fighter's current status: the shared common one, or one of a specific
@@ -709,7 +752,12 @@ impl AnyStatus {
                 | DonkeyStatus::SpecialAirNLoop
                 | DonkeyStatus::SpecialAirNEnd
                 | DonkeyStatus::SpecialAirNFull
-                | DonkeyStatus::SpecialAirHi,
+                | DonkeyStatus::SpecialAirHi
+                | DonkeyStatus::ThrowFFall
+                | DonkeyStatus::ThrowAirFF
+                // Forced to damage level 3, so always launched airborne;
+                // landing keeps the status (`mpCommonUpdateFighterKinetics`).
+                | DonkeyStatus::ThrowFDamage,
             ) => false,
             AnyStatus::Donkey(_) => true,
         }
@@ -729,8 +777,22 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.is_walk(),
             AnyStatus::Mario(_) => false,
             AnyStatus::Fox(_) => false,
-            AnyStatus::Donkey(_) => false,
+            AnyStatus::Donkey(s) => matches!(
+                s,
+                DonkeyStatus::ThrowFWalkSlow
+                    | DonkeyStatus::ThrowFWalkMiddle
+                    | DonkeyStatus::ThrowFWalkFast
+            ),
         }
+    }
+
+    /// Statuses whose motion id is -1/-2: `ftMainSetStatus` loads no new
+    /// figatree, so the previous animation keeps playing.
+    pub fn keeps_motion(self) -> bool {
+        matches!(
+            self,
+            AnyStatus::Common(Status::CatchWait | Status::CaptureWait)
+        )
     }
 
     /// See `Status::anim_slot`'s docs. Mario's Super Jump Punch pair has
@@ -784,6 +846,17 @@ impl AnyStatus {
                 DonkeyStatus::SpecialLwStart => 96,
                 DonkeyStatus::SpecialLwLoop => 97,
                 DonkeyStatus::SpecialLwEnd => 98,
+                DonkeyStatus::ThrowFWait => 99,
+                DonkeyStatus::ThrowFWalkSlow => 100,
+                DonkeyStatus::ThrowFWalkMiddle => 101,
+                DonkeyStatus::ThrowFWalkFast => 102,
+                DonkeyStatus::ThrowFTurn => 103,
+                DonkeyStatus::ThrowFKneeBend => 104,
+                DonkeyStatus::ThrowFFall => 105,
+                DonkeyStatus::ThrowFLanding => 106,
+                DonkeyStatus::ThrowFDamage => 107,
+                DonkeyStatus::ThrowFF => 108,
+                DonkeyStatus::ThrowAirFF => 109,
             },
         }
     }
@@ -794,6 +867,14 @@ impl AnyStatus {
             AnyStatus::Common(s) => s.anim_speed(),
             AnyStatus::Mario(_) => 1.0,
             AnyStatus::Fox(_) => 1.0,
+            // `ftDonkeyThrowFKneeBendSetStatus`, `...FallSetStatus` and
+            // `...LandingSetStatus` pass an animation speed of 0: the held
+            // pose does not play. Their frame counters still run.
+            AnyStatus::Donkey(
+                DonkeyStatus::ThrowFKneeBend
+                | DonkeyStatus::ThrowFFall
+                | DonkeyStatus::ThrowFLanding,
+            ) => 0.0,
             AnyStatus::Donkey(_) => 1.0,
         }
     }
@@ -1109,6 +1190,9 @@ pub struct GuardState {
     pub setoff_frames: f32,
     /// Frames until the next point of passive regen while not shielding.
     pub heal_wait: f32,
+    /// `status_vars.common.guard.is_setoff`: the shield was hit since it
+    /// went up. A grab out of it is a shield grab (half throw damage).
+    pub is_setoff: bool,
 }
 
 impl Default for GuardState {
@@ -1121,6 +1205,7 @@ impl Default for GuardState {
             is_release: false,
             setoff_frames: 0.0,
             heal_wait: GUARD_HEAL_INTERVAL,
+            is_setoff: false,
         }
     }
 }
@@ -1165,6 +1250,7 @@ pub fn set_guard_on(f: &mut Fighter) {
     f.guard.release_lag = GUARD_RELEASE_LAG;
     f.guard.decay_wait = GUARD_DECAY_INT;
     f.guard.is_release = false;
+    f.guard.is_setoff = false;
 }
 
 /// `ftCommonGuardOnCheckInterruptCommon` @ `ftcommonguard1.c:460`. Sits
@@ -1212,6 +1298,7 @@ pub fn set_shield_break_fly(f: &mut Fighter) {
 pub fn set_guard_set_off(f: &mut Fighter, hit_damage: f32, shield_lr: f32) {
     set_status(f, Status::GuardSetOff, 0.0, StatusTiming::unknown());
     f.guard.shield_damage = hit_damage;
+    f.guard.is_setoff = true;
     let setoff_frames = hit_damage * GUARD_SETOFF_MUL + GUARD_SETOFF_ADD;
     f.guard.setoff_frames = setoff_frames;
     let dir = if f.facing.sign() == shield_lr {
@@ -1281,6 +1368,8 @@ pub fn check_dead(f: &mut Fighter, bounds: BlastZone) -> bool {
 }
 
 fn enter_dead(f: &mut Fighter, status: Status, wait: f32) {
+    // `ftCommonDeadResetCommonVars` → `ftCommonThrownDecideDeadResult`.
+    crate::grab::release_on_dead(f);
     set_status(f, status, 0.0, StatusTiming::frames(wait));
     f.physics = crate::physics::PhysicsState::default();
     f.situation = Situation::Air;
@@ -2782,6 +2871,15 @@ pub fn set_fall(f: &mut Fighter) {
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
 }
 
+/// `mpCommonSetFighterWaitOrFall`: Wait on the ground, Fall in the air.
+pub fn set_wait_or_fall(f: &mut Fighter) {
+    if f.is_grounded() {
+        set_wait(f);
+    } else {
+        set_fall(f);
+    }
+}
+
 /// `ftCommonLandingSetStatus` @ 0x80142D9C.
 ///
 /// A fastfall that was still at terminal velocity on contact gets the heavy
@@ -3139,7 +3237,7 @@ pub fn set_damage_fall(f: &mut Fighter) {
 // ---------------------------------------------------------------------------
 
 /// `ftCommonKneeBendGetInputTypeCommon` @ 0x8013F474.
-fn jump_input_type(f: &Fighter, stick_min: i32) -> JumpInput {
+pub(crate) fn jump_input_type(f: &Fighter, stick_min: i32) -> JumpInput {
     if f.stick.y as i32 >= stick_min && f.stick.tap_y <= KNEEBEND_BUFFER_TICS_MAX {
         JumpInput::Stick
     } else if f.stick.jump_tapped {
@@ -3439,6 +3537,7 @@ pub fn ground_interrupt(f: &mut Fighter) -> bool {
     check_special_n(f)
         || check_special_hi(f)
         || check_special_lw(f)
+        || crate::grab::check_catch_common(f)
         || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
@@ -3479,6 +3578,7 @@ pub fn walk_interrupt(f: &mut Fighter) -> bool {
     check_special_n(f)
         || check_special_hi(f)
         || check_special_lw(f)
+        || crate::grab::check_catch_common(f)
         || check_fsmash(f)
         || check_usmash(f)
         || check_dsmash(f)
@@ -3509,6 +3609,9 @@ pub fn update(f: &mut Fighter) {
     // separately, in `update_extended` — unwrapping to a bare `Status` here
     // means the common-table match below needs no changes at all to stay
     // exactly what it was before `AnyStatus` existed.
+    if crate::grab::update(f) {
+        return;
+    }
     let AnyStatus::Common(current) = f.status.status else {
         update_extended(f);
         return;
@@ -3518,7 +3621,11 @@ pub fn update(f: &mut Fighter) {
         Status::KneeBend => update_kneebend(f),
         Status::Dash => update_dash(f),
         Status::Run => {
-            if !(check_attack_dash(f) || check_kneebend_run(f) || check_run_brake(f)) {
+            if !(crate::grab::check_catch_dash_run(f)
+                || check_attack_dash(f)
+                || check_kneebend_run(f)
+                || check_run_brake(f))
+            {
                 // Runs do not end on their own; they are held.
             }
         }
@@ -3548,6 +3655,11 @@ pub fn update(f: &mut Fighter) {
         // `ftcommonattack1.c:75,349`, collapsed into one check — see
         // `Attack1State`'s doc comment for why that is safe.
         Status::Attack11 => {
+            // `ftCommonAttack11ProcInterrupt`'s `interrupt_catch_timer < 2`:
+            // a Z tap in the jab's first two frames becomes a grab.
+            if f.status.anim_frame <= 2.0 && crate::grab::check_catch_attack11(f) {
+                return;
+            }
             fox_rapid_input(f);
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
@@ -3646,6 +3758,8 @@ pub fn update(f: &mut Fighter) {
                 set_guard_off(f);
             } else {
                 set_guard(f);
+                // `ftCommonGuardCommonProcInterrupt`'s catch check.
+                crate::grab::check_catch_guard(f);
             }
         }
         // `ftCommonGuardProcUpdate` @ `ftcommonguard1.c:472`.
@@ -3656,6 +3770,8 @@ pub fn update(f: &mut Fighter) {
                 set_shield_break_fly(f);
             } else if f.guard.is_release {
                 set_guard_off(f);
+            } else {
+                crate::grab::check_catch_guard(f);
             }
         }
         // `ftCommonGuardOffProcUpdate` @ `ftcommonguard2.c:60`, using
@@ -4145,6 +4261,8 @@ fn update_extended(f: &mut Fighter) {
             }
         }
         AnyStatus::Common(_) => unreachable!("update dispatches Common statuses itself"),
+        // Cargo statuses are run by `crate::grab::update` before this.
+        AnyStatus::Donkey(_) => {}
     }
 }
 
@@ -4207,6 +4325,11 @@ fn update_dash(f: &mut Fighter) {
     if f.status.animation_ended() {
         f.physics.vel_ground.x *= DASH_END_VEL_MUL;
         set_wait(f);
+        return;
+    }
+    // Every `ftCommonDashProcInterrupt` branch checks the catch input
+    // (`...Common` or `...DashRun`, which are the same without items).
+    if crate::grab::check_catch_dash_run(f) {
         return;
     }
     // `ftCommonDashProcInterrupt`'s `anim_frame <= 20.0` window.

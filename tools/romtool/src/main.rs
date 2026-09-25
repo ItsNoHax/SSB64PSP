@@ -8551,9 +8551,10 @@ fn anims(path: &Path, opts: &[&str]) -> Res {
     let mut fields = 0usize;
     for (lengths, want) in decoded.iter().zip(anim::EXPECTED_FRAMES.iter()) {
         for (slot, (&got, &w)) in lengths.frames.iter().zip(want.iter()).enumerate() {
-            // The looping slots have no length by design (RE-035); only the
-            // seven that end on their own are worth comparing.
-            if slot >= anim::TIMED_SLOTS {
+            // Every slot the decompilation gives a finite length for is
+            // compared; a looping or absent slot is 0 on both sides, and the
+            // first seven must never be 0 (checked above).
+            if slot >= anim::TIMED_SLOTS && got == 0 && w == 0 {
                 continue;
             }
             fields += 1;
@@ -10019,6 +10020,53 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 
 #[cfg(test)]
 mod tests {
+    /// `ssb-game` repeats the pack's slot numbering and the thrown
+    /// figatree lengths, because Layer A must not depend on `ssb-rom`. This
+    /// pins both copies to the generated table.
+    #[test]
+    fn grab_slots_and_thrown_lengths_match_the_anim_table() {
+        use ssb_game::fighter::FighterKind;
+        use ssb_game::status::{AnyStatus, DonkeyStatus, Status};
+        let common = [
+            Status::Catch,
+            Status::CatchPull,
+            Status::ThrowF,
+            Status::ThrowB,
+            Status::CapturePulled,
+            Status::ThrownDonkeyF,
+            Status::ThrownMarioBStart,
+            Status::ThrownFoxFStart,
+            Status::Shouldered,
+            Status::ThrownMarioB,
+            Status::ThrownCommon,
+            Status::ThrownFoxF,
+            Status::ThrownFoxB,
+        ];
+        for (i, status) in common.iter().enumerate() {
+            let slot = AnyStatus::Common(*status).anim_slot();
+            assert_eq!(slot, ssb_rom::anim::SLOT_CATCH + i, "{status:?}");
+        }
+        assert_eq!(
+            AnyStatus::Donkey(DonkeyStatus::ThrowFWait).anim_slot(),
+            ssb_rom::anim::SLOT_DONKEY_THROWF_WAIT
+        );
+        assert_eq!(
+            AnyStatus::Donkey(DonkeyStatus::ThrowAirFF).anim_slot(),
+            ssb_rom::anim::SLOT_DONKEY_THROWF_WAIT + 10
+        );
+        for (row, kind) in [FighterKind::Mario, FighterKind::Fox, FighterKind::Donkey]
+            .into_iter()
+            .enumerate()
+        {
+            for status in &common[5..] {
+                let slot = AnyStatus::Common(*status).anim_slot();
+                let want = ssb_rom::anim::EXPECTED_FRAMES[row][slot];
+                let got = ssb_game::grab::thrown_length(kind, *status).unwrap_or(0.0);
+                assert_eq!(got, f32::from(want), "{kind:?} {status:?}");
+            }
+        }
+    }
+
     #[test]
     fn camera_head1_graphs_restore_xlu_mode() {
         let Some(path) = std::env::var_os("SSB64_ROM") else {

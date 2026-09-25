@@ -47,15 +47,23 @@ use alloc::vec::Vec;
 use crate::archive::{Archive, File};
 use crate::figatree;
 
+/// First of Donkey Kong's eleven cargo-carry slots, `ThrowFWait` through
+/// `ThrowAirFF` in `ftDonkeyStatus` order.
+pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
+/// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
+/// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
+/// `ftCommonStatus` order. Packed for Mario, Fox and Donkey Kong only.
+pub const SLOT_CATCH: usize = 110;
+
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 99;
+pub const SLOT_COUNT: usize = 123;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
-/// The first seven are the statuses that end when their animation runs out,
-/// and are the only ones with a length (RE-035). The rest loop until they are
-/// interrupted; they are carried for their *poses*, because a fighter that
-/// animates only while dashing spends most of a match in a rest pose.
+/// The first seven are the original movement statuses whose animation length
+/// controls their exit (RE-035). Later grab, throw and cargo slots also carry
+/// finite lengths for their status callbacks; other slots provide poses and
+/// loop or leave when interrupted.
 pub const SLOT_DASH: usize = 0;
 pub const SLOT_TURN: usize = 1;
 pub const SLOT_RUN_BRAKE: usize = 2;
@@ -467,7 +475,10 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        assert_eq!(missing, 2062, "Mario, Fox and Donkey have character slots");
+        assert_eq!(
+            missing, 2666,
+            "Mario, Fox and Donkey have character and grab slots"
+        );
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
@@ -482,6 +493,21 @@ mod tests {
             .expect("Donkey is in FTKind order");
         assert_eq!(donkey.files[68], 907); // Jab1
         assert_eq!(donkey.files[94], 940); // Spinning Kong ground
+
+        // Cargo reuses one held-pose file for five statuses, and both cargo
+        // throws share one figatree (`dFTDonkeyMotionDescs`).
+        assert_eq!(donkey.files[SLOT_DONKEY_THROWF_WAIT], 946);
+        assert_eq!(donkey.files[SLOT_DONKEY_THROWF_WAIT + 8], 946);
+        assert_eq!(donkey.files[SLOT_DONKEY_THROWF_WAIT + 9], 945);
+        assert_eq!(mario.files[SLOT_CATCH], 561);
+        assert_eq!(donkey.files[SLOT_CATCH + 3], 865); // ThrowB
+
+        // Only Donkey Kong's own table has a `ThrownFoxFStart` motion; Mario
+        // and Fox carry null placeholders there.
+        assert_eq!(mario.files[SLOT_CATCH + 7], 0);
+        assert_eq!(donkey.files[SLOT_CATCH + 7], 868);
+        assert_eq!(EXPECTED_FRAMES[0][SLOT_CATCH], 16);
+        assert_eq!(EXPECTED_FRAMES[2][SLOT_CATCH + 2], 20); // Donkey ThrowF
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_LW], 638);
         assert_eq!(mario.files[SLOT_MARIO_SPECIAL_AIR_LW], 639);
         assert_eq!(

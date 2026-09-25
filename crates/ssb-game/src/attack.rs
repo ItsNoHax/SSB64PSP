@@ -1577,18 +1577,79 @@ pub fn common_knockback(
     hitbox: &Hitbox,
     defender_weight: f32,
 ) -> f32 {
-    let scale = hitbox.kb_scale as f32 * 0.01;
-    let knockback = if hitbox.kb_weight != 0 {
-        (((1.0 + (10.0 * hitbox.kb_weight as f32 * 0.05)) * defender_weight * 1.4) + 18.0) * scale
-            + hitbox.kb_base as f32
+    knockback(
+        defender_damage_percent,
+        0,
+        hitbox.damage,
+        hitbox.kb_weight,
+        hitbox.kb_scale,
+        hitbox.kb_base,
+        defender_weight,
+    )
+}
+
+/// `ftParamGetCommonKnockback` @ `ftparam.c:1451` with every argument the
+/// original takes, minus the neutral handicap and damage-ratio terms.
+/// Throws pass the throw's own damage as `recent_damage`.
+pub fn knockback(
+    percent_damage: u16,
+    recent_damage: i32,
+    hit_damage: i32,
+    kb_weight: i32,
+    kb_scale: i32,
+    kb_base: i32,
+    weight: f32,
+) -> f32 {
+    let scale = kb_scale as f32 * 0.01;
+    let knockback = if kb_weight != 0 {
+        (((1.0 + (10.0 * kb_weight as f32 * 0.05)) * weight * 1.4) + 18.0) * scale + kb_base as f32
     } else {
-        let damage_add = defender_damage_percent as f32;
-        let hit_damage = hitbox.damage as f32;
-        ((((damage_add * 0.1) + (damage_add * hit_damage * 0.05)) * defender_weight * 1.4) + 18.0)
-            * scale
-            + hitbox.kb_base as f32
+        let damage_add = percent_damage as f32 + recent_damage as f32;
+        let hit_damage = hit_damage as f32;
+        ((((damage_add * 0.1) + (damage_add * hit_damage * 0.05)) * weight * 1.4) + 18.0) * scale
+            + kb_base as f32
     };
     knockback.min(2500.0)
+}
+
+/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, for callers that
+/// already know the knockback and direction (throws, grab escapes, the cargo
+/// stagger). A forced `status_replace` counts as a tumble-level hit, as in
+/// the original, so it always launches. The fighter turns to face `lr`.
+/// The same simplifications as [`resolve_hit`] apply (middle damage column,
+/// no ground-launch angle branch, no random `DamageFlyRoll`).
+pub fn init_damage_vars(
+    f: &mut Fighter,
+    status_replace: Option<AnyStatus>,
+    damage: i32,
+    knockback: f32,
+    angle_i: i32,
+    lr: f32,
+) {
+    let airborne = !f.is_grounded();
+    let angle = sakurai_angle_radians(angle_i, airborne, knockback);
+    let (sin, cos) = sin_cos(angle);
+    let hitstun_f = hitstun_frames(knockback);
+    let level = if status_replace.is_some() {
+        3
+    } else {
+        damage_level(hitstun_f)
+    };
+    f.facing = if lr > 0.0 {
+        crate::fighter::Facing::Right
+    } else {
+        crate::fighter::Facing::Left
+    };
+    let status = status_replace.unwrap_or(damage_status(level, airborne, angle).into());
+    if level == 3 {
+        f.become_airborne();
+    }
+    f.damage = f.damage.saturating_add(damage.max(0) as u16);
+    status::set_any_status(f, status, 0.0, StatusTiming::unknown());
+    f.physics.vel_ground = Vec3::ZERO;
+    f.physics.vel_air = Vec3::ZERO;
+    f.physics.vel_knockback = Vec3::new(-cos * knockback * lr, sin * knockback, 0.0);
+    f.hitstun = (hitstun_f as u16).max(1);
 }
 
 /// `ftParamGetHitStun` @ `ftparam.c:1505`.
@@ -1778,6 +1839,11 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     ) {
         return false;
     }
+    if defender.grab.capture.is_some() {
+        // A held fighter's damage-while-captured branch
+        // (`ftCommonDamageCheckCaptureKeepHold`) is not ported; see TODO.md.
+        return false;
+    }
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // the hit record is left alone so the same active window
@@ -1798,6 +1864,19 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     );
     if defender.kind == crate::fighter::FighterKind::Donkey {
         defender.donkey_special_n.charge_level = 0;
+    }
+    if defender.grab.catch.is_some() {
+        // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
+        // stance absorbs anything below a tumble; otherwise the held fighter
+        // is dropped with the throw descriptor's `[1]` knockback.
+        let knockback = common_knockback(defender.damage, hitbox, defender.attributes.weight);
+        if crate::grab::cargo_resists(defender, knockback) {
+            defender.damage = defender.damage.saturating_add(result.damage as u16);
+            let lr = damage_lr(defender.pos, attacker_pos);
+            crate::grab::set_donkey_throwf_damage(defender, knockback, hitbox.angle, lr);
+            return true;
+        }
+        crate::grab::release_on_hit(defender);
     }
     defender.damage = defender.damage.saturating_add(result.damage as u16);
     // `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the

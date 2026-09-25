@@ -241,6 +241,8 @@ pub struct Fighter {
     pub fox_special_lw: crate::status::FoxSpecialLwState,
     pub donkey_special_n: crate::status::DonkeySpecialNState,
     pub donkey_special_lw: crate::status::DonkeySpecialLwState,
+    /// Grab, capture and throw link to another fighter — `crate::grab`.
+    pub grab: crate::grab::GrabState,
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
@@ -293,6 +295,7 @@ impl Fighter {
             fox_special_lw: crate::status::FoxSpecialLwState::default(),
             donkey_special_n: crate::status::DonkeySpecialNState::default(),
             donkey_special_lw: crate::status::DonkeySpecialLwState::default(),
+            grab: crate::grab::GrabState::default(),
             weapon_spawn: None,
             weapon_spawn_anchor: None,
             root_motion: RootMotion::default(),
@@ -461,6 +464,13 @@ impl Fighter {
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
 
+        // A held fighter's position is its catcher's hand, not the result
+        // of its own velocity (`ftCommonCapturePulledProcPhysics`).
+        if crate::grab::tick_held(self, &floors) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            return;
+        }
         match self.situation {
             Situation::Ground => self.tick_ground(floors),
             Situation::Air => self.tick_air(floors),
@@ -497,7 +507,10 @@ impl Fighter {
             crate::status::AnyStatus::Common(s) => s,
             crate::status::AnyStatus::Mario(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Fox(_) => crate::status::Status::Wait,
-            crate::status::AnyStatus::Donkey(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Donkey(s) => {
+                crate::grab::ground_physics_status(crate::status::AnyStatus::Donkey(s))
+                    .unwrap_or(crate::status::Status::Wait)
+            }
         };
         if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -596,6 +609,7 @@ impl Fighter {
                     )
                 ) {
                     crate::status::switch_donkey_special_air(self);
+                } else if crate::grab::on_ground_lost(self) {
                 } else {
                     self.become_airborne();
                     crate::status::set_fall(self);
@@ -725,6 +739,9 @@ impl Fighter {
                 ) {
                     self.land(moved.pos.y);
                     crate::status::switch_donkey_special_ground(self);
+                    return;
+                }
+                if crate::grab::on_landing(self, moved.pos.y) {
                     return;
                 }
                 // The landing status is chosen from the velocity *before*

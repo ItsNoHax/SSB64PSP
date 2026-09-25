@@ -415,8 +415,12 @@ pub fn tick_skeleton_animation(
     } as u32;
     if *started != Some(status) {
         *started = Some(status);
-        if let Some(anim) = pack.fighter_anim(kind, slot) {
-            skeleton.start(pack, &anim, 0.0, status.anim_speed());
+        // A status with no motion of its own (`CatchWait`, `CaptureWait`)
+        // keeps playing the previous one; its slot is that status's slot.
+        if !status.keeps_motion() {
+            if let Some(anim) = pack.fighter_anim(kind, slot) {
+                skeleton.start(pack, &anim, 0.0, status.anim_speed());
+            }
         }
     }
     // The slot is read back rather than remembered, so a status whose
@@ -630,6 +634,14 @@ impl FighterScene {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
         self.tick_animation(pack);
+        // A held fighter hangs from this fighter's `joint_itemheavy_id`; the
+        // match loop hands the sampled position over in `grab::exchange`.
+        self.fighter.grab.anchor = if self.fighter.grab.catch.is_some() {
+            ssb_game::grab::itemheavy_joint(self.fighter.kind)
+                .and_then(|joint| self.weapon_anchor(pack, joint, 0.0))
+        } else {
+            None
+        };
     }
 
     /// Advances the battle camera one tick from the fighter's current

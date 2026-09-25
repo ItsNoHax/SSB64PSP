@@ -133,6 +133,7 @@ builds the same scene as its default.
 | `regression_capture_object` | none (A/B only) | Any graph, chosen by `SSB64_CAPTURE_OBJECT=<file>:<hex graph>` | RE-312 |
 | `regression_capture_fireball` (`psp-game`) | `f1-training-fireball` | Translucent Fireball weapon in Training | RE-300 |
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
+| `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario holding the Training dummy after a Z+A catch | RE-330 |
 
 Stage sweep example:
 
