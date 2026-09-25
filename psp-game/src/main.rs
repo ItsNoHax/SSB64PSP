@@ -59,6 +59,9 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         GameScene::Superjump => 156,
         GameScene::Fox => 46,
         GameScene::Training => 106,
+        // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
+        // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
+        GameScene::Grab => 118,
     }
 }
 
@@ -127,6 +130,19 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
     if scene == GameScene::Superjump && tick == 150 {
         return N64Buttons(N64Buttons::B);
     }
+    // The grab scene has its own route onto the dummy's platform, found
+    // with `romtool jumptest --jump-tick 5 --jump2-tick 22 --stick-x -30
+    // --stick-switch-tick 6 --stick-release-tick 44` (local ticks): Mario
+    // lands at x -1253, 144 units right of the dummy, facing it. Tick 108
+    // is Z held with an A edge (`ftCommonCatchCheckInterruptCommon`).
+    if scene == GameScene::Grab {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            13 | 30 => N64Buttons(N64Buttons::C_UP),
+            108 => N64Buttons(N64Buttons::Z | N64Buttons::A),
+            _ => N64Buttons(0),
+        };
+    }
 
     match tick {
         4 | 8 => N64Buttons(N64Buttons::A),
@@ -143,7 +159,10 @@ fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
 /// jumpsquats, so a button jump's height is not traded away for horizontal
 /// distance it does not need yet (`ftCommonJumpGetJumpForceButton`'s
 /// full-deflection-trades-height-for-distance curve).
-fn scripted_stick_x(tick: u64) -> i8 {
+fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
+    if scene == GameScene::Grab {
+        return if (14..52).contains(&tick) { -30 } else { 0 };
+    }
     if (34..90).contains(&tick) {
         -30
     } else {
@@ -310,13 +329,13 @@ unsafe fn run() -> ! {
             (
                 ControllerState {
                     buttons: scripted_buttons(scene, sim_frame_index.saturating_sub(1)),
-                    stick_x: scripted_stick_x(sim_frame_index.saturating_sub(1)),
+                    stick_x: scripted_stick_x(scene, sim_frame_index.saturating_sub(1)),
                     stick_y: scripted_stick_y(scene, sim_frame_index.saturating_sub(1)),
                     connected: true,
                 },
                 ControllerState {
                     buttons: scripted_buttons(scene, sim_frame_index),
-                    stick_x: scripted_stick_x(sim_frame_index),
+                    stick_x: scripted_stick_x(scene, sim_frame_index),
                     stick_y: scripted_stick_y(scene, sim_frame_index),
                     connected: true,
                 },
@@ -396,7 +415,12 @@ unsafe fn run() -> ! {
                         weapons.spawn(spawn);
                     }
                     if let Some(dummy) = dummy_state.as_mut() {
+                        // Grab events land before the partner's own tick,
+                        // matching the original's direct status writes
+                        // (`ssb_game::grab` module docs).
+                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
                         dummy.tick(p, &stage);
+                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                         if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
                             weapons.spawn(spawn);
                         }
@@ -404,6 +428,11 @@ unsafe fn run() -> ! {
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
                         dummy.apply_hit_from(&pl.fighter);
+                        // `ftMainProcSearchCatch`, in the hit phase.
+                        ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
+                        ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
+                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                     }
                 }
             }

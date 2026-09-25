@@ -285,15 +285,18 @@ pub enum GameScene {
     Fox,
     /// `shadows`: first jump's apex, player airborne.
     Shadows,
+    /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
+    Grab,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 5] = [
+    pub const ALL: [GameScene; 6] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
         GameScene::Fox,
         GameScene::Shadows,
+        GameScene::Grab,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -303,6 +306,7 @@ impl GameScene {
             GameScene::Superjump => "superjump",
             GameScene::Fox => "fox",
             GameScene::Shadows => "shadows",
+            GameScene::Grab => "grab",
         }
     }
 

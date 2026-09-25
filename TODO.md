@@ -15,6 +15,14 @@ or evidence record covers it.
 | Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
+## Gameplay
+
+| Item | Reason deferred | Evidence |
+|---|---|---|
+| Damage to a held fighter | `ftCommonDamageCheckCaptureKeepHold` needs its own hit response while the capture link persists; this batch leaves such hits unregistered | RE-330 |
+| Throw collisions against bystanders | Mario and Fox back-throw attack boxes cannot hit another fighter in the current two-fighter match | RE-330 |
+| Throw stale-move and handicap modifiers | The current Training match has no stale-move queue or handicap state; throw damage uses descriptor values | RE-330 |
+
 ## Hardware acceptance
 
 Deferred by user instruction.

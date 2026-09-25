@@ -169,7 +169,51 @@ SPECIAL_SLOTS = [
     ("DonkeySpecialLwEnd", "Donkey", "FTDonkeyAnimHandSlapEnd"),
 ]
 
-ALL_SLOTS = SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
+
+# Donkey Kong's cargo carry (`ftdonkeythrowf*.c`). Its motion descriptors
+# reuse one held-pose figatree for Wait, KneeBend, Fall, Landing and Damage;
+# the source symbol is named after the landing, but the pairing is by
+# `dFTDonkeyMotionDescs` position (`nFTDonkeyMotionThrowFWait` onward).
+SPECIAL_SLOTS += [
+    ("DonkeyThrowFWait", "Donkey", "FTDonkeyAnimCargoLanding"),
+    ("DonkeyThrowFWalkSlow", "Donkey", "FTDonkeyAnimCargoVerySlowWalk"),
+    ("DonkeyThrowFWalkMiddle", "Donkey", "FTDonkeyAnimCargoSlowWalk"),
+    ("DonkeyThrowFWalkFast", "Donkey", "FTDonkeyAnimCargoWalk"),
+    ("DonkeyThrowFTurn", "Donkey", "FTDonkeyAnimCargoTurn"),
+    ("DonkeyThrowFKneeBend", "Donkey", "FTDonkeyAnimCargoLanding"),
+    ("DonkeyThrowFFall", "Donkey", "FTDonkeyAnimCargoLanding"),
+    ("DonkeyThrowFLanding", "Donkey", "FTDonkeyAnimCargoLanding"),
+    ("DonkeyThrowFDamage", "Donkey", "FTDonkeyAnimCargoLanding"),
+    ("DonkeyThrowFF", "Donkey", "FTDonkeyAnimCargoAirThrow"),
+    ("DonkeyThrowAirFF", "Donkey", "FTDonkeyAnimCargoAirThrow"),
+]
+
+# Shared grab, capture and thrown statuses (`ftcommoncatch*.c`,
+# `ftcommoncapture*.c`, `ftcommonthrow*.c`). These resolve through the common
+# status -> motion pairing like `SLOTS`, but are packed only for the fighters
+# whose gameplay is ported, so the pack does not carry 27 copies of moves no
+# playable fighter can reach yet. The thrown symbols are auto-named and do not
+# describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
+# so no name check is applied; the index pairing is the evidence.
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey"}
+GRAB_SLOTS = [
+    ("Catch",             166),
+    ("CatchPull",         167),
+    ("ThrowF",            169),
+    ("ThrowB",            170),
+    ("CapturePulled",     171),
+    ("ThrownDonkeyF",     181),
+    ("ThrownMarioBStart", 182),
+    ("ThrownFoxFStart",   183),
+    ("Shouldered",        184),
+    ("ThrownMarioB",      185),
+    ("ThrownCommon",      186),
+    ("ThrownFoxF",        187),
+    ("ThrownFoxB",        188),
+]
+
+ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
+             + [(name, status, None) for name, status in GRAB_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -362,19 +406,27 @@ def status_motions(refs):
 def motion_descs(refs):
     """Fighter -> [animation symbol per motion_id, or None].
 
-    Every brace group is one motion_id, including the `{ 0x0, 0x80000000, 0x0 }`
-    placeholders some fighters carry (Kirby has no aerial-jump animation, so
-    motions 18 and 19 are null). Matching only the entries that name a symbol
-    would silently shift every later motion_id by the number of holes.
+    An `FTMotionDesc` is three words, and the decompilation spells a table
+    both ways: brace groups, and bare `0x0, 0x80000000, 0x80000000,` word
+    runs for the null placeholders some fighters carry (Kirby has no
+    aerial-jump animation, so motions 18 and 19 are null; Fox and Donkey
+    Kong have unbraced nulls among their thrown motions). Grouping the
+    flattened words in threes counts both spellings. Matching only the
+    entries that name a symbol, or only brace groups, would silently shift
+    every later motion_id by the number of holes.
     """
-    src = open(os.path.join(refs, "src/ft/ftdata.c")).read()
+    src = COMMENT_RE.sub(" ", open(os.path.join(refs, "src/ft/ftdata.c")).read())
     out = {}
     for m in re.finditer(r"^FTMotionDesc dFT(\w+)MotionDescs\[\]\s*=\s*$", src, re.M):
         start = src.index("{", m.end())
         body = src[start + 1:src.index("\n};", start)]
+        words = [w.strip() for w in body.replace("{", " ").replace("}", " ").split(",")]
+        words = [w for w in words if w]
+        if len(words) % 3:
+            raise ValueError(f"{m.group(1)} motion table: {len(words)} words, not a multiple of 3")
         entries = []
-        for group in re.finditer(r"\{([^{}]*)\}", body):
-            sym = re.search(r"&ll(\w+?)FileID", group.group(1))
+        for i in range(0, len(words), 3):
+            sym = re.match(r"&ll(\w+?)FileID$", words[i])
             entries.append(sym.group(1) if sym else None)
         out[m.group(1)] = entries
     return out
@@ -418,6 +470,15 @@ def resolve(refs):
             entry.append((slot, fid, sym, cache[fid]))
         for slot, target, sym in SPECIAL_SLOTS:
             if fighter != target:
+                entry.append((slot, 0, None, 0))
+                continue
+            fid, path = files[sym]
+            if fid not in cache:
+                cache[fid] = file_frames(path)
+            entry.append((slot, fid, sym, cache[fid]))
+        for slot, status in GRAB_SLOTS:
+            sym = table[smot[status]] if fighter in GRAB_FIGHTERS else None
+            if sym is None:
                 entry.append((slot, 0, None, 0))
                 continue
             fid, path = files[sym]

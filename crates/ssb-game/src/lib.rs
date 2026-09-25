@@ -17,6 +17,7 @@ pub mod collision;
 mod donkey_attack;
 pub mod fighter;
 mod fox_attack;
+pub mod grab;
 pub mod ground;
 pub mod physics;
 pub mod shadow;
