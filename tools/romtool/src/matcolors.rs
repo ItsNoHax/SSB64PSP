@@ -441,6 +441,8 @@ struct RomSub {
     unk0c: u16,
     unk0e: u16,
     unk10: i32,
+    /// `unk24`, `unk28`, `unk44`: the `unk10 == 1` inputs (RE-327).
+    half: [f32; 3],
     /// `trau`, `trav`, `scau`, `scav`.
     uv: [f32; 4],
     unk38: u16,
@@ -448,10 +450,6 @@ struct RomSub {
     /// `scrollu`, `scrollv`.
     scroll: [f32; 2],
     prim_l: u8,
-    /// `fmt`/`siz` of `sprites[texture_id_curr]`, `block_fmt`/`block_siz`
-    /// of `sprites[texture_id_next]`.
-    fmt: [u8; 2],
-    block: [u8; 2],
 }
 
 impl RomSub {
@@ -477,13 +475,12 @@ impl RomSub {
             unk0c: u16_(0x0C)?,
             unk0e: u16_(0x0E)?,
             unk10: u32_(0x10)? as i32,
+            half: [f32_(0x24)?, f32_(0x28)?, f32_(0x44)?],
             uv: [f32_(0x14)?, f32_(0x18)?, f32_(0x1C)?, f32_(0x20)?],
             unk38: u16_(0x38)?,
             unk3a: u16_(0x3A)?,
             scroll: [f32_(0x3C)?, f32_(0x40)?],
             prim_l: bytes(0x54, 1)?[0],
-            fmt: [bytes(0x02, 1)?[0], bytes(0x03, 1)?[0]],
-            block: [bytes(0x32, 1)?[0], bytes(0x33, 1)?[0]],
         })
     }
 }
@@ -502,6 +499,8 @@ struct ResolverTally {
     /// Packed textures compared texel for texel with their `sprites[]`
     /// image, and those that differ (RE-326).
     textures_checked: usize,
+    /// Of those, read through a mirrored or repeated period (RE-327).
+    textures_folded: usize,
     textures_bad: usize,
     /// Static CLUTs compared with `palettes[0]`, and those that differ.
     static_palettes_checked: usize,
@@ -526,6 +525,7 @@ fn uv_diff(
     rest: [f32; 4],
     mode: u32,
     params: [u16; 3],
+    half: [f32; 2],
 ) -> Option<String> {
     let want = [
         live[0], live[1], live[2], live[3], rest[0], rest[1], rest[2], rest[3],
@@ -545,6 +545,7 @@ fn uv_diff(
     if want.map(f32::to_bits) == have.map(f32::to_bits)
         && got.mode == mode
         && params_have.map(f32::to_bits) == params_want.map(f32::to_bits)
+        && (mode & 8 == 0 || got.half.map(f32::to_bits) == half.map(f32::to_bits))
     {
         return None;
     }
@@ -666,7 +667,10 @@ fn check_resolvers(
     .into_iter()
     .enumerate()
     {
-        if !expected.iter().any(|e| tracks.iter().any(|&t| e[t].is_some())) {
+        if !expected
+            .iter()
+            .any(|e| tracks.iter().any(|&t| e[t].is_some()))
+        {
             continue;
         }
         for p in (0..pack.prim_count()).filter_map(|p| pack.prim(p)) {
@@ -680,37 +684,45 @@ fn check_resolvers(
     }
     let statics = owned(flags::IMAGE_ANIM);
     let palette_statics = owned(flags::PALETTE_ANIM);
-    let mut bound: Vec<(String, u32, usize, [u8; 2])> = Vec::new();
+    let mut bound: Vec<(String, u32, usize)> = Vec::new();
     if f & (MOBJ_FLAG_FRAC | MOBJ_FLAG_ALPHA) != 0 {
-        bound.extend(statics.iter().map(|&t| ("static".to_string(), t, 0, sub.fmt)));
+        bound.extend(statics.iter().map(|&t| ("static".to_string(), t, 0)));
     }
     for (k, &t) in a.textures[..a.texture_count as usize].iter().enumerate() {
-        bound.push((format!("textures[{k}]"), t, k, sub.fmt));
+        bound.push((format!("textures[{k}]"), t, k));
     }
     if let Some(l) = lod {
         for (k, &t) in l.next_textures[..l.next_count as usize].iter().enumerate() {
-            bound.push((format!("next_textures[{k}]"), t, k, sub.block));
+            bound.push((format!("next_textures[{k}]"), t, k));
         }
     }
     let sprite_count = bound.iter().map(|b| b.2 + 1).max().unwrap_or(0);
     if sprite_count > 0 {
         let sprites = ssb_rom::mobj::read_sprites(&rom_file, a.source_offset, sprite_count)
             .ok_or("sprites[] unreadable")?;
-        for (name, t, k, [fmt, siz]) in &bound {
+        for (name, t, k) in &bound {
             let desc = pack.texture(*t).ok_or("missing packed texture")?;
             tally.textures_checked += 1;
-            let r = crate::matsample::compare_texture(
-                archive, &rom_file, pack, &desc, sprites[*k], *fmt, *siz,
-            );
+            if desc.tile_mirror != 0 || [desc.width, desc.height] != desc.tile_period {
+                tally.textures_folded += 1;
+            }
+            let r = crate::matsample::compare_texture(archive, &rom_file, pack, &desc, sprites[*k]);
             match r {
                 Ok(r) if r.bad == 0 => {}
                 Ok(r) => {
                     tally.textures_bad += 1;
                     let (x, y, rom, got) = r.first.unwrap();
                     notes.push(format!(
-                        "texels: {name} (texture {t}, {}x{} psm {}, as {:?} layout {:?}) differs from sprites[{k}] \
-                         in {} of {} texels; first ({x},{y}) rom {rom} packed {got}",
-                        desc.width, desc.height, desc.psm, r.format, r.layout, r.bad, r.texels
+                        "texels: {name} (texture {t}, {}x{} psm {}, tile {:?} period {:?} mirror {}) \
+                         differs from sprites[{k}] in {} of {} texels; first ({x},{y}) rom {rom} packed {got}",
+                        desc.width,
+                        desc.height,
+                        desc.psm,
+                        desc.tile_format(),
+                        desc.tile_period,
+                        desc.tile_mirror,
+                        r.bad,
+                        r.texels
                     ));
                 }
                 Err(e) => {
@@ -752,6 +764,13 @@ fn check_resolvers(
     } else {
         1
     } | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 };
+    // RE-327: `unk10 == 1` halves the U window and scale of both tiles.
+    let half_bit = if sub.unk10 == 1 { 8 } else { 0 };
+    let tile0_mode = if tile0_mode == 0 {
+        0
+    } else {
+        tile0_mode | half_bit
+    };
 
     let window = crate::matsample::SubWindow {
         flags: f,
@@ -760,6 +779,7 @@ fn check_resolvers(
         unk0c: sub.unk0c,
         unk0e: sub.unk0e,
         unk10: sub.unk10,
+        half: sub.half,
         rest: sub.uv,
     };
     let live_uv: Vec<[f32; 4]> = expected
@@ -767,7 +787,15 @@ fn check_resolvers(
         .map(|e| core::array::from_fn(|k| e[1 + k].map_or(sub.uv[k], f32::from_bits)))
         .collect();
     let got_uv: Vec<Option<MaterialUv>> = got.iter().map(|g| g.uv).collect();
-    crate::matsample::check_uv(pack, i, &window, &live_uv, &got_uv, &mut tally.uv, &mut notes);
+    crate::matsample::check_uv(
+        pack,
+        i,
+        &window,
+        &live_uv,
+        &got_uv,
+        &mut tally.uv,
+        &mut notes,
+    );
     if lod.is_some() {
         let scroll: Vec<[f32; 2]> = expected
             .iter()
@@ -779,7 +807,15 @@ fn check_resolvers(
             unk3a: sub.unk3a,
         };
         crate::matsample::check_uv_tile1(
-            pack, i, &window, &tile1, &live_uv, &scroll, &got_lod, &mut tally.uv, &mut notes,
+            pack,
+            i,
+            &window,
+            &tile1,
+            &live_uv,
+            &scroll,
+            &got_lod,
+            &mut tally.uv,
+            &mut notes,
         );
     }
 
@@ -864,15 +900,13 @@ fn check_resolvers(
                 tally.checked[2] += 1;
                 let diff = match &g.uv {
                     None => Some("runtime draws the rest window".to_string()),
-                    Some(_) if f & MOBJ_FLAG_TILE0 != 0 && sub.unk10 == 1 => {
-                        Some("unk10 == 1 halving is not modelled".to_string())
-                    }
                     Some(got) => uv_diff(
                         got,
                         uv,
                         rest_uv,
                         tile0_mode,
                         [sub.unk0a, sub.unk0c, sub.unk0e],
+                        [sub.half[0], sub.half[1]],
                     ),
                 };
                 if let Some(d) = diff {
@@ -906,8 +940,9 @@ fn check_resolvers(
                         w,
                         [scroll[0], scroll[1], uv[2], uv[3]],
                         [sub.scroll[0], sub.scroll[1], rest_uv[2], rest_uv[3]],
-                        1 | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 },
+                        1 | if f & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 } | half_bit,
                         [sub.unk0a, sub.unk38, sub.unk3a],
+                        [sub.half[2], sub.half[1]],
                     ),
                 },
             };
@@ -977,14 +1012,53 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             effect.tick(&pack);
             for &i in chunk {
                 let stage = &resolved[i as usize][n];
+                // RE-327: the window and the two-tile blend as well.
                 if effect.resolved_texture(&pack, i) != stage.texture
                     || effect.resolved_palette(&pack, i) != stage.palette
+                    || effect.resolved_uv(&pack, i) != stage.uv
+                    || effect.resolved_lod_blend(&pack, i) != stage.lod
                 {
                     effect_bad += 1;
                 }
             }
         }
     }
+
+    // RE-327: entries a manager effect's primitives name, and how many of
+    // them resolve a texture, palette, window or blend that changes over
+    // time. On the stage clock those drew the value at the frame since pack
+    // load, not since the spawn.
+    let effect_entries: BTreeSet<u32> = ssb_rom::effect::MANAGER_EFFECT_KEYS
+        .iter()
+        .filter_map(|&(file, offset)| {
+            (0..pack.object_count())
+                .filter_map(|o| pack.object(o))
+                .find(|o| o.source_file == file && o.source_offset == offset)
+        })
+        .flat_map(|o| super::object_mat_anims(&pack, &o))
+        .collect();
+    let varies = |i: u32, f: &dyn Fn(&Resolved) -> String| {
+        let r = &resolved[i as usize];
+        r.iter().any(|x| f(x) != f(&r[0]))
+    };
+    let effect_moving: [usize; 4] = [
+        effect_entries
+            .iter()
+            .filter(|&&i| varies(i, &|r| format!("{:?}", r.texture)))
+            .count(),
+        effect_entries
+            .iter()
+            .filter(|&&i| varies(i, &|r| format!("{:?}", r.palette)))
+            .count(),
+        effect_entries
+            .iter()
+            .filter(|&&i| varies(i, &|r| format!("{:?}", r.uv)))
+            .count(),
+        effect_entries
+            .iter()
+            .filter(|&&i| varies(i, &|r| format!("{:?}", r.lod)))
+            .count(),
+    ];
 
     let (mut entries, mut stage_entries, mut mismatches) = (0usize, 0usize, 0usize);
     let mut track_counts = [0usize; TRACKS];
@@ -1191,6 +1265,14 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         tally.table_bad, tally.lod_not_lowered
     );
     println!("  {effect_bad} effect-player tick(s) resolve differently from the stage player");
+    println!(
+        "  manager-effect entries: {}; moving over {TICKS} ticks: texture {}, palette {}, window {}, blend {}",
+        effect_entries.len(),
+        effect_moving[0],
+        effect_moving[1],
+        effect_moving[2],
+        effect_moving[3],
+    );
     for (k, name) in ["image", "TLUT", "tile 0"].iter().enumerate() {
         println!(
             "Ownership: {:4} primitive(s) whose MObj owns the {name} its entry moves, \
@@ -1204,9 +1286,8 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
     let shared: Vec<u32> = (0..pack.prim_count())
         .filter(|&p| {
             pack.prim(p).is_some_and(|d| {
-                d.palette_anim().is_some_and(|e| {
-                    pack.texture(d.texture).is_some_and(|t| t.mat_anim != e)
-                })
+                d.palette_anim()
+                    .is_some_and(|e| pack.texture(d.texture).is_some_and(|t| t.mat_anim != e))
             })
         })
         .collect();
@@ -1220,14 +1301,27 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
          moving: {} vertex-axis samples, {} beyond 1/64 texel, max {:.4} texel\n  \
          rest: {} samples, {} beyond 1/64 texel, max {:.4} texel\n  \
          tile 1: {} primitive(s), {} samples, {} beyond 1/64 texel, max {:.4} texel",
-        u.prims, u.texgen, u.dl_origin, u.samples, u.bad, u.max_err, u.rest_samples, u.rest_bad,
-        u.rest_max, u.tile1_prims, u.tile1_samples, u.tile1_bad, u.tile1_max
+        u.prims,
+        u.texgen,
+        u.dl_origin,
+        u.samples,
+        u.bad,
+        u.max_err,
+        u.rest_samples,
+        u.rest_bad,
+        u.rest_max,
+        u.tile1_prims,
+        u.tile1_samples,
+        u.tile1_bad,
+        u.tile1_max
     );
     println!(
-        "Texels: {} packed texture(s) against sprites[], {} differ; \
+        "Texels: {} packed texture(s) against sprites[] through their recorded tile, {} differ \
+         ({} read through a mirrored or repeated period); \
          {} static CLUT(s) against palettes[0], {} differ",
         tally.textures_checked,
         tally.textures_bad,
+        tally.textures_folded,
         tally.static_palettes_checked,
         tally.static_palettes_bad
     );

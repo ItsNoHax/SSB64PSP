@@ -138,163 +138,116 @@ pub(crate) struct TexelResult {
     pub bad: usize,
     /// First differing texel: `(x, y, rom, packed)`.
     pub first: Option<(usize, usize, String, String)>,
-    /// Packed size over source period, per axis: positive where the axis
-    /// mirrors past the period, negative where it repeats.
-    pub layout: (isize, isize),
-    /// The render `(fmt, siz)` compared.
-    pub format: (u8, u8),
 }
 
-/// Compares a packed texture with the `fmt`/`siz` image at `ptr`. An
-/// index texture compares indices; its CLUT is checked apart
+/// Compares a packed texture with the image at `ptr`, read through the
+/// render tile the pack records for it (RE-327): its `G_SETTILE` format,
+/// source row length, and per-axis period and mirror. Packed texel `x`
+/// reads source texel `x mod p`, reversed on odd periods of a mirrored
+/// axis: the RDP's mask and mirror addressing, which the packer bakes
+/// (RE-044, RE-067).
+///
+/// An index texture compares indices; its CLUT is checked apart
 /// ([`palette_matches`]). A direct-colour texture compares RGBA to the
 /// packed format's precision.
-///
-/// The packer bakes a mirrored axis into a texture twice the source size
-/// (RE-067), so each axis is tried at full and half size with the second
-/// half mirrored; the layout with the fewest differences is reported.
-/// `G_LOADBLOCK` source rows are whole 64-bit words.
 pub(crate) fn compare_texture(
     archive: &Archive,
     rom_file: &File,
     pack: &Pack<'_>,
     t: &TextureDesc,
     ptr: Ptr,
-    fmt: u8,
-    siz: u8,
 ) -> Result<TexelResult, String> {
-    let mut format = Format::from_raw(fmt).ok_or("MObjSub.fmt is not a format")?;
-    let mut size = BitSize::from_raw(siz).ok_or("MObjSub.siz is not a size")?;
-    // `fmt`/`siz` describe the image `gDPSetTextureImage` loads, often as
-    // 16-bit words for `G_LOADBLOCK`; the render tile reads it as the
-    // display list's own `G_SETTILE` format. An index texture keeps that
-    // format as its PSM.
-    match t.psm {
-        4 => (format, size) = (Format::Ci, BitSize::Bits4),
-        5 => (format, size) = (Format::Ci, BitSize::Bits8),
-        _ => {}
+    let (fmt, siz) = t.tile_format().ok_or("pack records no render tile")?;
+    let format = Format::from_raw(fmt).ok_or("tile fmt is not a format")?;
+    let size = BitSize::from_raw(siz).ok_or("tile siz is not a size")?;
+    let [pw, ph] = t.tile_period.map(usize::from);
+    if pw == 0 || ph == 0 {
+        return Err("recorded period is zero".to_string());
     }
+    let mirror = [
+        t.tile_mirror & TextureDesc::TILE_MIRROR_S != 0,
+        t.tile_mirror & TextureDesc::TILE_MIRROR_T != 0,
+    ];
     let (file, at) = home(archive, rom_file, ptr)?;
     let packed = packed_texels(pack, t).ok_or("packed texture unreadable")?;
     let (w, h) = (t.width as usize, t.height as usize);
-    // A direct-colour render tile's format is the display list's
-    // `G_SETTILE`, which the pack does not keep: try each the PSP format
-    // can hold, starting from the `MObjSub`'s load format.
-    let candidates: Vec<(Format, BitSize)> = if format == Format::Ci {
-        vec![(format, size)]
-    } else {
-        let mut c = vec![(format, size)];
-        for f in [
-            (Format::Rgba, BitSize::Bits16),
-            (Format::Rgba, BitSize::Bits32),
-            (Format::Ia, BitSize::Bits4),
-            (Format::Ia, BitSize::Bits8),
-            (Format::Ia, BitSize::Bits16),
-            (Format::I, BitSize::Bits4),
-            (Format::I, BitSize::Bits8),
-        ] {
-            if !c.contains(&f) {
-                c.push(f);
-            }
+    let texel_width = u32::from(t.tile_source_width).max(pw as u32);
+    let row = texture::data_len(texel_width, 1, size);
+    let src = file
+        .data
+        .get(at..at + row * ph)
+        .ok_or("sprite image runs off its file")?;
+    let fold = |x: usize, n: usize, mirrored: bool| {
+        if mirrored && (x / n) % 2 == 1 {
+            n - 1 - x % n
+        } else {
+            x % n
         }
-        c
     };
-    let mut best: Option<TexelResult> = None;
-    for (format, size) in candidates {
-    // Per axis: the source period `n` and whether the packed axis mirrors
-    // (`2n - 1 - x` on odd periods) or repeats (`x mod n`) past it.
-    let axis_layouts = |dim: usize| -> Vec<(usize, bool)> {
-        (0..4)
-            .map(|j| dim >> j)
-            .filter(|&n| n > 0 && dim.is_multiple_of(n))
-            .flat_map(|n| [(n, false), (n, true)])
-            .filter(|&(n, m)| !(n == dim && m))
-            .collect()
+    let fx = |x: usize| fold(x, pw, mirror[0]);
+    let fy = |y: usize| fold(y, ph, mirror[1]);
+    let mut r = TexelResult::default();
+    let note = |r: &mut TexelResult, x: usize, y: usize, rom: String, got: String| {
+        r.bad += 1;
+        if r.first.is_none() {
+            r.first = Some((x, y, rom, got));
+        }
     };
-    for (sw, mirror_x) in axis_layouts(w) {
-    for (sh, mirror_y) in axis_layouts(h) {
-        let (mx, my) = (w / sw, h / sh);
-        let row = texture::data_len(sw as u32, 1, size).div_ceil(8) * 8;
-        let Some(src) = file.data.get(at..at + row * sh) else {
-            continue;
-        };
-        let texel_width = (row * 8 / size.bits()) as u32;
-        let fold = |x: usize, n: usize, mirrored: bool| {
-            let p = x % (2 * n);
-            if mirrored && p >= n {
-                2 * n - 1 - p
-            } else {
-                x % n
-            }
-        };
-        let fx = |x: usize| fold(x, sw, mirror_x);
-        let fy = |y: usize| fold(y, sh, mirror_y);
-        let mut r = TexelResult::default();
-        let note = |r: &mut TexelResult, x: usize, y: usize, rom: String, got: String| {
-            r.bad += 1;
-            if r.first.is_none() {
-                r.first = Some((x, y, rom, got));
-            }
-        };
-        match (&packed, format) {
-            (Texels::Indices(got), Format::Ci) => {
-                let index = |x: usize, y: usize| {
-                    let k = y * texel_width as usize + x;
-                    match size {
-                        BitSize::Bits4 => {
-                            let b = src[k / 2];
-                            if k & 1 == 0 {
-                                b >> 4
-                            } else {
-                                b & 0x0F
-                            }
-                        }
-                        _ => src[k],
+    match &packed {
+        Texels::Indices(got) => {
+            // An index texture is a 4- or 8-bit tile drawn with the TLUT
+            // on, whatever its format names (RE-313).
+            let index = |x: usize, y: usize| match size {
+                BitSize::Bits4 => {
+                    let b = src[y * row + x / 2];
+                    if x & 1 == 0 {
+                        b >> 4
+                    } else {
+                        b & 0x0F
                     }
-                };
-                for y in 0..h {
-                    for x in 0..w {
-                        let rom = index(fx(x), fy(y));
-                        let g = got[y * w + x];
-                        r.texels += 1;
-                        if rom != g {
-                            note(&mut r, x, y, rom.to_string(), g.to_string());
-                        }
+                }
+                _ => src[y * row + x],
+            };
+            if !matches!(size, BitSize::Bits4 | BitSize::Bits8) {
+                return Err(format!("index texture over a {size:?} tile"));
+            }
+            for y in 0..h {
+                for x in 0..w {
+                    let rom = index(fx(x), fy(y));
+                    let g = got[y * w + x];
+                    r.texels += 1;
+                    if rom != g {
+                        note(&mut r, x, y, rom.to_string(), g.to_string());
                     }
                 }
             }
-            (Texels::Rgba(got), _) if format != Format::Ci => {
-                let image = texture::decode(src, texel_width, sh as u32, format, size, None)
-                    .map_err(|e| format!("{e:?}"))?;
-                let tol = tolerance(t.psm);
-                for y in 0..h {
-                    for x in 0..w {
-                        let rom = image.get(fy(y) * texel_width as usize + fx(x));
-                        let g = got[y * w + x];
-                        r.texels += 1;
-                        let close = (0..4).all(|c| rom[c].abs_diff(g[c]) <= tol)
-                            // 5551 keeps one alpha bit: the RDP's `a >= 128`.
-                            && (t.psm != 1 || (rom[3] >= 128) == (g[3] == 255));
-                        if !close {
-                            note(&mut r, x, y, format!("{rom:?}"), format!("{g:?}"));
-                        }
+        }
+        Texels::Rgba(got) if format != Format::Ci => {
+            let image = texture::decode(src, texel_width, ph as u32, format, size, None)
+                .map_err(|e| format!("{e:?}"))?;
+            let tol = tolerance(t.psm);
+            for y in 0..h {
+                for x in 0..w {
+                    let rom = image.get(fy(y) * texel_width as usize + fx(x));
+                    let g = got[y * w + x];
+                    r.texels += 1;
+                    let close = (0..4).all(|c| rom[c].abs_diff(g[c]) <= tol)
+                        // 5551 keeps one alpha bit: the RDP's `a >= 128`.
+                        && (t.psm != 1 || (rom[3] >= 128) == (g[3] == 255));
+                    if !close {
+                        note(&mut r, x, y, format!("{rom:?}"), format!("{g:?}"));
                     }
                 }
             }
-            _ => return Err(format!("packed psm {} does not carry fmt {fmt}", t.psm)),
         }
-        r.layout = (
-            if mirror_x { mx as isize } else { -(mx as isize) },
-            if mirror_y { my as isize } else { -(my as isize) },
-        );
-        r.format = (format as u8, size as u8);
-        if best.as_ref().is_none_or(|b| r.bad < b.bad) {
-            best = Some(r);
+        _ => {
+            return Err(format!(
+                "packed psm {} does not carry tile fmt {fmt}",
+                t.psm
+            ))
         }
     }
-    }
-    }
-    best.ok_or_else(|| "sprite image runs off its file".to_string())
+    Ok(r)
 }
 
 /// Whether a packed CLUT holds the RGBA5551 palette at `ptr`: the top five
@@ -332,6 +285,8 @@ pub(crate) struct SubWindow {
     pub unk0c: u16,
     pub unk0e: u16,
     pub unk10: i32,
+    /// `unk24`, `unk28`, `unk44`: the `unk10 == 1` inputs.
+    pub half: [f32; 3],
     /// `trau`, `trav`, `scau`, `scav` at rest.
     pub rest: [f32; 4],
 }
@@ -342,17 +297,34 @@ const SCALE_EPS: f32 = 1.0 / 65535.0;
 
 /// What `gcDrawMObjForDObj` hands the RDP for a window: `uls`/`ult` as the
 /// `s32` it computes (quarter texels), and `gSPTexture`'s `s`/`t`.
-/// `objdisplay.c:1353-1420`; `unk10 == 1` is not modelled.
+/// `objdisplay.c:1173-1178` and `1353-1420`.
 fn rdp_window(w: &SubWindow, uv: [f32; 4]) -> (Option<[i32; 2]>, Option<[u32; 2]>) {
-    let [trau, trav, scau, scav] = uv;
+    let [mut trau, trav, mut scau, scav] = uv;
+    if w.unk10 == 1 {
+        let [unk24, unk28, _] = w.half;
+        scau *= 0.5;
+        trau = ((trau - unk24) + 1.0 - (unk28 * 0.5)) * 0.5;
+    }
     let (c, e, a) = (w.unk0c as f32, w.unk0e as f32, w.unk0a as f32);
     let origin = (w.flags & TILE0 != 0).then(|| {
         if w.unk10 == 2 {
-            let uls = if scau.abs() > SCALE_EPS { ((c * trau) / scau) * 4.0 } else { 0.0 };
-            let ult = if scav.abs() > SCALE_EPS { ((e * trav) / scav) * 4.0 } else { 0.0 };
+            let uls = if scau.abs() > SCALE_EPS {
+                ((c * trau) / scau) * 4.0
+            } else {
+                0.0
+            };
+            let ult = if scav.abs() > SCALE_EPS {
+                ((e * trav) / scav) * 4.0
+            } else {
+                0.0
+            };
             [(uls as i32).max(0), (ult as i32).max(0)]
         } else {
-            let uls = if scau.abs() > SCALE_EPS { (((c * trau) + a) / scau) * 4.0 } else { 0.0 };
+            let uls = if scau.abs() > SCALE_EPS {
+                (((c * trau) + a) / scau) * 4.0
+            } else {
+                0.0
+            };
             let ult = if scav.abs() > SCALE_EPS {
                 (((((1.0 - scav) - trav) * e) + a) / scav) * 4.0
             } else {
@@ -364,14 +336,30 @@ fn rdp_window(w: &SubWindow, uv: [f32; 4]) -> (Option<[i32; 2]>, Option<[u32; 2]
     let scale = (w.flags & TEXTURE != 0).then(|| {
         let (s, t) = if w.unk10 == 2 {
             (
-                if scau.abs() > SCALE_EPS { (c * 64.0) / scau } else { 0.0 },
-                if scav.abs() > SCALE_EPS { (e * 64.0) / scav } else { 0.0 },
+                if scau.abs() > SCALE_EPS {
+                    (c * 64.0) / scau
+                } else {
+                    0.0
+                },
+                if scav.abs() > SCALE_EPS {
+                    (e * 64.0) / scav
+                } else {
+                    0.0
+                },
             )
         } else {
             let k = 2097152.0 / w.unk08 as f32;
             (
-                if scau.abs() > SCALE_EPS { k / scau } else { 0.0 },
-                if scav.abs() > SCALE_EPS { k / scav } else { 0.0 },
+                if scau.abs() > SCALE_EPS {
+                    k / scau
+                } else {
+                    0.0
+                },
+                if scav.abs() > SCALE_EPS {
+                    k / scav
+                } else {
+                    0.0
+                },
             )
         };
         [(s as i32).min(0xFFFF) as u32, (t as i32).min(0xFFFF) as u32]
@@ -432,14 +420,18 @@ pub(crate) fn check_uv(
         .collect();
     for m in 0..pack.mesh_count() {
         let Some(md) = pack.mesh(m) else { continue };
-        let Some(verts) = pack.vertices(&md) else { continue };
+        let Some(verts) = pack.vertices(&md) else {
+            continue;
+        };
         for pi in md.first_prim..md.first_prim + md.prim_count {
             let Some(p) = pack.prim(pi) else { continue };
             let owns = p.flags & (flags::TILE0_ANIM | flags::SCALE_ANIM);
             if p.mat_anim != i || owns == 0 {
                 continue;
             }
-            let Some(t) = pack.texture(p.texture) else { continue };
+            let Some(t) = pack.texture(p.texture) else {
+                continue;
+            };
             let texgen =
                 p.flags & flags::TEXTURE_GEN != 0 && p.flags & flags::TEXTURE_GEN_LINEAR == 0;
             let owns_tile0 = p.flags & flags::TILE0_ANIM != 0;
@@ -447,7 +439,9 @@ pub(crate) fn check_uv(
                 tally.dl_origin += 1;
                 continue;
             }
-            let Some(rest_origin) = rest_origin else { continue };
+            let Some(rest_origin) = rest_origin else {
+                continue;
+            };
             tally.prims += 1;
             let dims = psp::ge_texture_dims(t.width as u32, t.height as u32);
             let dim = [dims.0 as f64, dims.1 as f64];
@@ -466,7 +460,12 @@ pub(crate) fn check_uv(
                 .iter()
                 .map(|&b| u16::from_le_bytes(b) as usize * ssb_rom::pack::VERTEX_SIZE)
                 .filter_map(|at| verts.get(at..at + 4))
-                .map(|v| (i16::from_le_bytes([v[0], v[1]]), i16::from_le_bytes([v[2], v[3]])))
+                .map(|v| {
+                    (
+                        i16::from_le_bytes([v[0], v[1]]),
+                        i16::from_le_bytes([v[2], v[3]]),
+                    )
+                })
                 .collect();
             if texgen {
                 // `G_TEXTURE_GEN` replaces the vertex coordinate with
@@ -480,7 +479,11 @@ pub(crate) fn check_uv(
                     .map(|q| {
                         let g = |axis: usize| {
                             let s10_5 = (q as f64 / 8.0) * 0.5 * gscale[axis] as f64;
-                            let c = if clamp[axis] { origin[axis] as f64 * 8.0 } else { 0.0 };
+                            let c = if clamp[axis] {
+                                origin[axis] as f64 * 8.0
+                            } else {
+                                0.0
+                            };
                             (s10_5 - c) as i16
                         };
                         (g(0), g(1))
@@ -569,12 +572,22 @@ pub(crate) struct Tile1 {
     pub unk3a: u16,
 }
 
-/// `gDPSetTileSize(1, ...)`'s `uls`/`ult` (`objdisplay.c:1386-1397`).
+/// `gDPSetTileSize(1, ...)`'s `uls`/`ult` (`objdisplay.c:1173-1178` and
+/// `1386-1397`).
 fn rdp_tile1(w: &SubWindow, t: &Tile1, sca: [f32; 2], scroll: [f32; 2]) -> [i32; 2] {
-    let [scau, scav] = sca;
-    let [scrollu, scrollv] = scroll;
+    let [mut scau, scav] = sca;
+    let [mut scrollu, scrollv] = scroll;
+    if w.unk10 == 1 {
+        let [_, unk28, unk44] = w.half;
+        scau *= 0.5;
+        scrollu = ((scrollu - unk44) + 1.0 - (unk28 * 0.5)) * 0.5;
+    }
     let (a, c, e) = (w.unk0a as f32, t.unk38 as f32, t.unk3a as f32);
-    let uls = if scau.abs() > SCALE_EPS { (((c * scrollu) + a) / scau) * 4.0 } else { 0.0 };
+    let uls = if scau.abs() > SCALE_EPS {
+        (((c * scrollu) + a) / scau) * 4.0
+    } else {
+        0.0
+    };
     let ult = if scav.abs() > SCALE_EPS {
         (((((1.0 - scav) - scrollv) * e) + a) / scav) * 4.0
     } else {
@@ -603,19 +616,25 @@ pub(crate) fn check_uv_tile1(
     let (rest_origin, rest_scale) = rdp_window(sub, sub.rest);
     for m in 0..pack.mesh_count() {
         let Some(md) = pack.mesh(m) else { continue };
-        let Some(verts) = pack.vertices(&md) else { continue };
+        let Some(verts) = pack.vertices(&md) else {
+            continue;
+        };
         for pi in md.first_prim..md.first_prim + md.prim_count {
             let Some(p) = pack.prim(pi) else { continue };
             if p.mat_anim != i || p.flags & flags::LOD_BLEND == 0 {
                 continue;
             }
-            let Some(t0) = pack.texture(p.texture) else { continue };
+            let Some(t0) = pack.texture(p.texture) else {
+                continue;
+            };
             tally.tile1_prims += 1;
             let clamp0 = [
                 t0.wrap & TextureDesc::CLAMP_S != 0,
                 t0.wrap & TextureDesc::CLAMP_T != 0,
             ];
-            let baked = rest_origin.unwrap_or([0, 0]).map(|o| o.clamp(0, 0xFFFF) as f64 / 4.0);
+            let baked = rest_origin
+                .unwrap_or([0, 0])
+                .map(|o| o.clamp(0, 0xFFFF) as f64 / 4.0);
             let idx = pack.indices(&p).unwrap_or(&[]);
             let coords: BTreeSet<(i16, i16)> = idx
                 .as_chunks::<2>()
@@ -623,12 +642,19 @@ pub(crate) fn check_uv_tile1(
                 .iter()
                 .map(|&b| u16::from_le_bytes(b) as usize * ssb_rom::pack::VERTEX_SIZE)
                 .filter_map(|at| verts.get(at..at + 4))
-                .map(|v| (i16::from_le_bytes([v[0], v[1]]), i16::from_le_bytes([v[2], v[3]])))
+                .map(|v| {
+                    (
+                        i16::from_le_bytes([v[0], v[1]]),
+                        i16::from_le_bytes([v[2], v[3]]),
+                    )
+                })
                 .collect();
             let mut first: Option<String> = None;
             for (n, g) in got.iter().enumerate() {
                 let Some(g) = g else { continue };
-                let Some(t1) = pack.texture(g.texture) else { continue };
+                let Some(t1) = pack.texture(g.texture) else {
+                    continue;
+                };
                 let dims = psp::ge_texture_dims(t1.width as u32, t1.height as u32);
                 let dim = [dims.0 as f64, dims.1 as f64];
                 let tile = [t1.width as f64, t1.height as f64];
@@ -642,11 +668,9 @@ pub(crate) fn check_uv_tile1(
                     (Some(s), Some(r)) => [s[0] as f64 / r[0] as f64, s[1] as f64 / r[1] as f64],
                     _ => [1.0, 1.0],
                 };
-                let affine = g
-                    .uv
-                    .map_or(ssb_rom::skeleton::UvAffine::IDENTITY, |uv| {
-                        uv.ge_affine(dims, (clamp1[0], clamp1[1]))
-                    });
+                let affine = g.uv.map_or(ssb_rom::skeleton::UvAffine::IDENTITY, |uv| {
+                    uv.ge_affine(dims, (clamp1[0], clamp1[1]))
+                });
                 let a = [affine.scale_s as f64, affine.scale_t as f64];
                 let b = [affine.offset_s as f64, affine.offset_t as f64];
                 for &(u, v) in &coords {
@@ -656,7 +680,8 @@ pub(crate) fn check_uv_tile1(
                         let want = (x + c) * k[axis] - (origin[axis] & 0xFFF) as f64 / 4.0;
                         let ge = x * a[axis] + dim[axis] * b[axis];
                         let e = if clamp1[axis] {
-                            (ge.clamp(0.0, tile[axis] - 1.0) - want.clamp(0.0, tile[axis] - 1.0)).abs()
+                            (ge.clamp(0.0, tile[axis] - 1.0) - want.clamp(0.0, tile[axis] - 1.0))
+                                .abs()
                         } else {
                             let d = (ge - want).rem_euclid(dim[axis]);
                             d.min(dim[axis] - d)
@@ -681,5 +706,38 @@ pub(crate) fn check_uv_tile1(
                 notes.push(format!("sampling: {f}"));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RE-327: the check's own transcription of the `unk10 == 1` branch
+    /// lands on the same windows and scale as `ssb_rom::mobj`'s
+    /// (`unk10_one_halves_the_u_windows_and_scale`, same inputs). No ROM
+    /// `MObjSub` reaches the branch, so only this test exercises it.
+    #[test]
+    fn unk10_one_halves_the_rdp_windows() {
+        let w = SubWindow {
+            flags: TILE0 | 0x40 | TEXTURE,
+            unk08: 128,
+            unk0a: 0,
+            unk0c: 64,
+            unk0e: 32,
+            unk10: 1,
+            half: [0.125, 0.5, 0.0625],
+            rest: [0.25, 0.0, 1.0, 1.0],
+        };
+        let (origin, scale) = rdp_window(&w, w.rest);
+        assert_eq!(origin, Some([224, 0]));
+        assert_eq!(scale, Some([32768, 16384]));
+        let t = Tile1 {
+            unk38: 64,
+            unk3a: 32,
+        };
+        assert_eq!(rdp_tile1(&w, &t, [1.0, 1.0], [0.25, 0.0]), [240, 0]);
+        let plain = SubWindow { unk10: 0, ..w };
+        assert_eq!(rdp_window(&plain, plain.rest).0, Some([64, 0]));
     }
 }

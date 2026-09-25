@@ -442,6 +442,10 @@ pub struct MaterialUv {
     pub tile_bias: f32,
     pub tile_width: f32,
     pub tile_height: f32,
+    /// Under [`crate::mobj::UV_MODE_HALF`], the `unk10 == 1` inputs for
+    /// this tile's U origin: `unk24` (tile 0) or `unk44` (tile 1), then
+    /// `unk28` (RE-327).
+    pub half: [f32; 2],
 }
 
 impl MaterialUv {
@@ -457,7 +461,18 @@ impl MaterialUv {
         if prim_flags & SCALE_ANIM == 0 {
             mode &= !4;
         }
-        (mode != 0).then_some(MaterialUv { mode, ..self })
+        (mode & 7 != 0).then_some(MaterialUv { mode, ..self })
+    }
+
+    /// `tra`/`sca` as `gcDrawMObjForDObj` reads them after its
+    /// `unk10 == 1` branch (`objdisplay.c:1173-1178`, [`crate::mobj::halve_u`]).
+    fn drawn(&self, tra: [f32; 2], sca: [f32; 2]) -> ([f32; 2], [f32; 2]) {
+        if self.mode & u32::from(crate::mobj::UV_MODE_HALF) == 0 {
+            return (tra, sca);
+        }
+        let [origin, unk28] = self.half;
+        let (scau, trau, _) = crate::mobj::halve_u(sca[0], tra[0], 0.0, origin, unk28, 0.0);
+        ([trau, tra[1]], [scau, sca[1]])
     }
 
     /// `gDPSetTileSize`'s `uls`/`ult` for `tra`/`sca` as
@@ -465,17 +480,30 @@ impl MaterialUv {
     /// where the source truncates (`objdisplay.c:1353-1397`).
     fn tile_origin(&self, tra: [f32; 2], sca: [f32; 2]) -> [i32; 2] {
         const EPS: f32 = 1.0 / 65535.0;
+        let (tra, sca) = self.drawn(tra, sca);
         let (w, h, a) = (self.tile_width, self.tile_height, self.tile_bias);
         let [trau, trav] = tra;
         let [scau, scav] = sca;
         match self.mode & 3 {
             2 => {
-                let uls = if scau.abs() > EPS { ((w * trau) / scau) * 4.0 } else { 0.0 };
-                let ult = if scav.abs() > EPS { ((h * trav) / scav) * 4.0 } else { 0.0 };
+                let uls = if scau.abs() > EPS {
+                    ((w * trau) / scau) * 4.0
+                } else {
+                    0.0
+                };
+                let ult = if scav.abs() > EPS {
+                    ((h * trav) / scav) * 4.0
+                } else {
+                    0.0
+                };
                 [(uls as i32).max(0), (ult as i32).max(0)]
             }
             1 => {
-                let uls = if scau.abs() > EPS { (((w * trau) + a) / scau) * 4.0 } else { 0.0 };
+                let uls = if scau.abs() > EPS {
+                    (((w * trau) + a) / scau) * 4.0
+                } else {
+                    0.0
+                };
                 let ult = if scav.abs() > EPS {
                     (((((1.0 - scav) - trav) * h) + a) / scav) * 4.0
                 } else {
@@ -502,23 +530,28 @@ impl MaterialUv {
     /// rdp(x) = (x + baked) * k - (uls & 0xFFF) / 4,   k = s_live / s_rest
     /// ```
     ///
-    /// `k` is `base_sca / sca`: the `u16` truncation of `gSPTexture`'s
-    /// scale is not modelled, as `unk08` is not packed.
+    /// `k` is `base_sca / sca`, after the `unk10 == 1` halving: the `u16`
+    /// truncation of `gSPTexture`'s scale is not modelled, as `unk08` is
+    /// not packed.
     pub fn ge_affine(&self, dims: (u32, u32), clamp: (bool, bool)) -> UvAffine {
         const EPS: f32 = 1.0 / 65535.0;
-        if self.scau.abs() <= EPS
-            || self.scav.abs() <= EPS
-            || self.base_scau.abs() <= EPS
-            || self.base_scav.abs() <= EPS
-        {
+        let (_, live) = self.drawn([self.trau, self.trav], [self.scau, self.scav]);
+        let (_, rest) = self.drawn(
+            [self.base_trau, self.base_trav],
+            [self.base_scau, self.base_scav],
+        );
+        if live.iter().chain(&rest).any(|s| s.abs() <= EPS) {
             return UvAffine::IDENTITY;
         }
         let k = if self.mode & 4 != 0 {
-            [self.base_scau / self.scau, self.base_scav / self.scav]
+            [rest[0] / live[0], rest[1] / live[1]]
         } else {
             [1.0, 1.0]
         };
-        let rest = self.tile_origin([self.base_trau, self.base_trav], [self.base_scau, self.base_scav]);
+        let rest = self.tile_origin(
+            [self.base_trau, self.base_trav],
+            [self.base_scau, self.base_scav],
+        );
         let live = self.tile_origin([self.trau, self.trav], [self.scau, self.scav]);
         let clamped = [clamp.0, clamp.1];
         let dim = [dims.0.max(1) as f32, dims.1.max(1) as f32];
@@ -650,37 +683,7 @@ impl MaterialAnimator {
     /// tile-0 coordinates (RE-086/RE-211); [`Self::resolved_lod_blend`] owns
     /// both (RE-321).
     pub fn resolved_uv(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<MaterialUv> {
-        let j = self.joints.get(mat_anim as usize)?;
-        let a = pack.mat_anim(mat_anim)?;
-        if a.uv_mode == 0
-            || !(crate::matanim::TRACK_TRA_U..=crate::matanim::TRACK_SCA_V)
-                .any(|i| j.track_value(i).is_some())
-        {
-            return None;
-        }
-        let base = |i| f32::from_bits(a.base_tracks[i]);
-        Some(MaterialUv {
-            trau: j
-                .track_value(crate::matanim::TRACK_TRA_U)
-                .unwrap_or_else(|| base(1)),
-            trav: j
-                .track_value(crate::matanim::TRACK_TRA_V)
-                .unwrap_or_else(|| base(2)),
-            scau: j
-                .track_value(crate::matanim::TRACK_SCA_U)
-                .unwrap_or_else(|| base(3)),
-            scav: j
-                .track_value(crate::matanim::TRACK_SCA_V)
-                .unwrap_or_else(|| base(4)),
-            base_trau: base(1),
-            base_trav: base(2),
-            base_scau: base(3),
-            base_scav: base(4),
-            mode: a.uv_mode,
-            tile_bias: a.uv_tile_params[0] as f32,
-            tile_width: a.uv_tile_params[1] as f32,
-            tile_height: a.uv_tile_params[2] as f32,
-        })
+        resolve_uv(self.joints.get(mat_anim as usize)?, pack, mat_anim)
     }
 
     /// The two-tile fractional blend's second pass as of the last tick, or
@@ -694,48 +697,7 @@ impl MaterialAnimator {
     /// [`crate::lod_blend::prim_lod_frac`] of `lfrac`, which starts at the
     /// `MObjSub`'s `prim_l / 255`.
     pub fn resolved_lod_blend(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<LodBlendState> {
-        use crate::matanim::{
-            TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V, TRACK_SET_LFRAC,
-            TRACK_TEXTURE_ID_NEXT,
-        };
-        let lod = pack.lod_blend(mat_anim)?;
-        let a = pack.mat_anim(mat_anim)?;
-        if lod.next_count == 0 {
-            return None;
-        }
-        let live = |track: usize| {
-            self.joints
-                .get(mat_anim as usize)
-                .and_then(|j| j.track_value(track))
-        };
-        let base = |i: usize| f32::from_bits(a.base_tracks[i]);
-        let lfrac = live(TRACK_SET_LFRAC).unwrap_or_else(|| base(TRACK_SET_LFRAC));
-        let next = live(TRACK_TEXTURE_ID_NEXT).map_or(0, |v| v.max(0.0) as u32);
-        let texture = lod.next_textures[next.min(lod.next_count - 1) as usize];
-        let moves = [TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V]
-            .into_iter()
-            .any(|t| live(t).is_some());
-        let uv = (a.uv_mode != 0 && moves).then(|| MaterialUv {
-            trau: live(TRACK_SCR_U).unwrap_or_else(|| base(TRACK_SCR_U)),
-            trav: live(TRACK_SCR_V).unwrap_or_else(|| base(TRACK_SCR_V)),
-            scau: live(TRACK_SCA_U).unwrap_or_else(|| base(TRACK_SCA_U)),
-            scav: live(TRACK_SCA_V).unwrap_or_else(|| base(TRACK_SCA_V)),
-            base_trau: base(TRACK_SCR_U),
-            base_trav: base(TRACK_SCR_V),
-            base_scau: base(TRACK_SCA_U),
-            base_scav: base(TRACK_SCA_V),
-            // `gDPSetTileSize(1, ...)` has only the normal window form; the
-            // `G_TEXTURE` scale bit is shared with tile 0.
-            mode: 1 | (a.uv_mode & 4),
-            tile_bias: lod.tile1_params[0] as f32,
-            tile_width: lod.tile1_params[1] as f32,
-            tile_height: lod.tile1_params[2] as f32,
-        });
-        (texture != crate::pack::TextureDesc::NO_ANIM).then_some(LodBlendState {
-            texture,
-            frac: crate::lod_blend::prim_lod_frac(lfrac),
-            uv,
-        })
+        resolve_lod_blend(self.joints.get(mat_anim as usize), pack, mat_anim)
     }
 
     /// The material colour registers driven by a stage script.  This is the
@@ -751,6 +713,93 @@ impl MaterialAnimator {
             light2: j.track_color(crate::matanim::TRACK_LIGHT2_COLOR),
         })
     }
+}
+
+/// See [`MaterialAnimator::resolved_uv`].
+fn resolve_uv(
+    j: &crate::matanim::MaterialJoint,
+    pack: &Pack<'_>,
+    mat_anim: u32,
+) -> Option<MaterialUv> {
+    let a = pack.mat_anim(mat_anim)?;
+    if a.uv_mode == 0
+        || !(crate::matanim::TRACK_TRA_U..=crate::matanim::TRACK_SCA_V)
+            .any(|i| j.track_value(i).is_some())
+    {
+        return None;
+    }
+    let base = |i| f32::from_bits(a.base_tracks[i]);
+    Some(MaterialUv {
+        trau: j
+            .track_value(crate::matanim::TRACK_TRA_U)
+            .unwrap_or_else(|| base(1)),
+        trav: j
+            .track_value(crate::matanim::TRACK_TRA_V)
+            .unwrap_or_else(|| base(2)),
+        scau: j
+            .track_value(crate::matanim::TRACK_SCA_U)
+            .unwrap_or_else(|| base(3)),
+        scav: j
+            .track_value(crate::matanim::TRACK_SCA_V)
+            .unwrap_or_else(|| base(4)),
+        base_trau: base(1),
+        base_trav: base(2),
+        base_scau: base(3),
+        base_scav: base(4),
+        mode: a.uv_mode,
+        tile_bias: a.uv_tile_params[0] as f32,
+        tile_width: a.uv_tile_params[1] as f32,
+        tile_height: a.uv_tile_params[2] as f32,
+        half: [f32::from_bits(a.uv_half[0]), f32::from_bits(a.uv_half[1])],
+    })
+}
+
+/// See [`MaterialAnimator::resolved_lod_blend`]. `j` is `None` when no
+/// player ticks `mat_anim`: every track reads its rest value.
+fn resolve_lod_blend(
+    j: Option<&crate::matanim::MaterialJoint>,
+    pack: &Pack<'_>,
+    mat_anim: u32,
+) -> Option<LodBlendState> {
+    use crate::matanim::{
+        TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V, TRACK_SET_LFRAC, TRACK_TEXTURE_ID_NEXT,
+    };
+    let lod = pack.lod_blend(mat_anim)?;
+    let a = pack.mat_anim(mat_anim)?;
+    if lod.next_count == 0 {
+        return None;
+    }
+    let live = |track: usize| j.and_then(|j| j.track_value(track));
+    let base = |i: usize| f32::from_bits(a.base_tracks[i]);
+    let lfrac = live(TRACK_SET_LFRAC).unwrap_or_else(|| base(TRACK_SET_LFRAC));
+    let next = live(TRACK_TEXTURE_ID_NEXT).map_or(0, |v| v.max(0.0) as u32);
+    let texture = lod.next_textures[next.min(lod.next_count - 1) as usize];
+    let moves = [TRACK_SCA_U, TRACK_SCA_V, TRACK_SCR_U, TRACK_SCR_V]
+        .into_iter()
+        .any(|t| live(t).is_some());
+    let uv = (a.uv_mode != 0 && moves).then(|| MaterialUv {
+        trau: live(TRACK_SCR_U).unwrap_or_else(|| base(TRACK_SCR_U)),
+        trav: live(TRACK_SCR_V).unwrap_or_else(|| base(TRACK_SCR_V)),
+        scau: live(TRACK_SCA_U).unwrap_or_else(|| base(TRACK_SCA_U)),
+        scav: live(TRACK_SCA_V).unwrap_or_else(|| base(TRACK_SCA_V)),
+        base_trau: base(TRACK_SCR_U),
+        base_trav: base(TRACK_SCR_V),
+        base_scau: base(TRACK_SCA_U),
+        base_scav: base(TRACK_SCA_V),
+        // `gDPSetTileSize(1, ...)` has only the normal window form; the
+        // `G_TEXTURE` scale bit and the `unk10 == 1` halving, here of
+        // `scrollu` about `unk44`, are shared with tile 0.
+        mode: 1 | (a.uv_mode & (4 | u32::from(crate::mobj::UV_MODE_HALF))),
+        tile_bias: lod.tile1_params[0] as f32,
+        tile_width: lod.tile1_params[1] as f32,
+        tile_height: lod.tile1_params[2] as f32,
+        half: [f32::from_bits(a.uv_half[2]), f32::from_bits(a.uv_half[1])],
+    });
+    (texture != crate::pack::TextureDesc::NO_ANIM).then_some(LodBlendState {
+        texture,
+        frac: crate::lod_blend::prim_lod_frac(lfrac),
+        uv,
+    })
 }
 
 /// `palettes[(s32)mobj->palette_id]` (`gcDrawMObjForDObj`), as an absolute
@@ -941,6 +990,19 @@ impl EffectMaterialAnimator {
     /// restarted joints; see [`resolve_texture`].
     pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
         resolve_texture(self.joint(mat_anim)?, pack, mat_anim)
+    }
+
+    /// The live tile-0 window and scale, against this player's own
+    /// restarted joints; see [`MaterialAnimator::resolved_uv`].
+    pub fn resolved_uv(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<MaterialUv> {
+        resolve_uv(self.joint(mat_anim)?, pack, mat_anim)
+    }
+
+    /// The two-tile blend's second pass, against this player's own
+    /// restarted joints, or `None` when this player does not tick
+    /// `mat_anim`; see [`MaterialAnimator::resolved_lod_blend`].
+    pub fn resolved_lod_blend(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<LodBlendState> {
+        resolve_lod_blend(Some(self.joint(mat_anim)?), pack, mat_anim)
     }
 
     /// The five colour tracks' current RGBA bytes -- `None` for any this
@@ -1376,6 +1438,7 @@ mod tests {
             tile_bias: 0.0,
             tile_width: width,
             tile_height: width,
+            half: [0.0; 2],
         }
     }
 
@@ -1440,6 +1503,39 @@ mod tests {
         assert_eq!(uv.ge_affine((128, 128), (false, false)).scale_s, 1.0);
         let uv = MaterialUv { mode: 2 | 4, ..uv };
         assert_eq!(uv.ge_affine((128, 128), (false, false)).scale_s, 2.0);
+    }
+
+    /// RE-327: the resolver's `unk10 == 1` window lands where `mobj::read`
+    /// puts the static one (`mobj::tests::unk10_one_halves_the_u_windows_and_scale`,
+    /// same inputs): tile 0 about `unk24`, tile 1 about `unk44`.
+    #[test]
+    fn unk10_one_halves_the_window_as_the_static_read_does() {
+        let half = u32::from(crate::mobj::UV_MODE_HALF);
+        let tile0 = MaterialUv {
+            trau: 0.25,
+            base_trau: 0.25,
+            tile_width: 64.0,
+            tile_height: 32.0,
+            half: [0.125, 0.5],
+            ..window(1 | 4 | half, 64.0)
+        };
+        assert_eq!(tile0.tile_origin([0.25, 0.0], [1.0, 1.0]), [224, 0]);
+        let tile1 = MaterialUv {
+            half: [0.0625, 0.5],
+            ..tile0
+        };
+        assert_eq!(tile1.tile_origin([0.25, 0.0], [1.0, 1.0]), [240, 0]);
+        // Without the bit, the unhalved window.
+        let plain = MaterialUv {
+            mode: 1 | 4,
+            ..tile0
+        };
+        assert_eq!(plain.tile_origin([0.25, 0.0], [1.0, 1.0]), [64, 0]);
+        // The halving scales rest and live alike: `k` is their ratio.
+        let live = MaterialUv { scau: 0.5, ..tile0 };
+        assert_eq!(live.ge_affine((64, 32), (false, false)).scale_s, 2.0);
+        // The halving bit alone owns no window.
+        assert!(tile0.owned_by(0).is_none());
     }
 
     #[test]
@@ -1739,6 +1835,45 @@ mod tests {
             animator.resolved_uv(&pack, anim).is_none(),
             "restart clears live track state"
         );
+    }
+
+    #[test]
+    fn effect_uv_window_uses_its_restart_clock() {
+        const SET_AFTER: u32 = 10;
+        const WAIT: u32 = 2;
+        const TRAU: u32 = crate::matanim::TRACK_TRA_U as u32;
+        let script = mat_script(&[
+            mat_cmd(SET_AFTER, 1 << TRAU, 1),
+            0.5f32.to_bits(),
+            mat_cmd(WAIT, 0, 20),
+        ]);
+        let mut base = [0u32; 10];
+        base[1] = 0.25f32.to_bits();
+        base[3] = 1.0f32.to_bits();
+        base[4] = 1.0f32.to_bits();
+        let mut writer = PackWriter::new();
+        let anim = writer.add_mat_anim(333, &script, 0, 0x100, &[], &[], base, 1, [0, 64, 32]);
+        let bytes = writer.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        let mut stage = MaterialAnimator::new();
+        stage.start(&pack);
+        for _ in 0..5 {
+            stage.tick(&pack);
+        }
+        assert_eq!(stage.resolved_uv(&pack, anim).unwrap().trau, 0.5);
+
+        let mut effect = EffectMaterialAnimator::new();
+        effect.start(&pack, core::iter::once(anim));
+        assert!(effect.resolved_uv(&pack, anim).is_none());
+        effect.tick(&pack);
+        assert_ne!(effect.resolved_uv(&pack, anim).map(|uv| uv.trau), Some(0.5));
+        effect.tick(&pack);
+        assert_eq!(effect.resolved_uv(&pack, anim).unwrap().trau, 0.5);
+
+        effect.start(&pack, core::iter::once(anim));
+        assert!(effect.resolved_uv(&pack, anim).is_none());
+        assert_eq!(stage.resolved_uv(&pack, anim).unwrap().trau, 0.5);
     }
 
     #[test]

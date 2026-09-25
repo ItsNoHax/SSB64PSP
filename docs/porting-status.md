@@ -20,7 +20,7 @@ unless a physical PSP is named.
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
 | Mesh / model conversion | VERIFYING | 0 conversion failures; all 127 material graphs paired; PRIM ownership, lighting provenance, independent depth state | Physical-PSP confirmation | RE-163, RE-240–261 |
 | Scene graph (DObj) | 87% | 363 `DObjDesc` arrays + 11 effects packed as 374 objects | `GObj` layer | RE-172 |
-| Asset pack | COMPLETE | v34, zero-copy, 16-byte aligned; Donkey attack/special animation slots packed; two-tile blend records; animated colour-register flags | — | RE-301, RE-312, RE-319, RE-321, RE-322 |
+| Asset pack | COMPLETE | v36, zero-copy, 16-byte aligned; Donkey attack/special animation slots; two-tile blend and animated colour registers; recorded render-tile layout and `unk10 == 1` inputs | — | RE-301, RE-312, RE-319, RE-321, RE-322, RE-327 |
 
 ## Rendering
 
@@ -28,7 +28,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 | Subsystem | Status | Capability | Gap | Evidence |
 |---|---|---|---|---|
-| PSP GE backend | VERIFYING (89%) | Indexed textured draws, CLUTs, addressing, alpha test/blend, depth, culling, lighting, texgen, material animation incl. `SetLFrac` two-tile blend and `PrimColor`/light tracks, GE state cache | Physical-PSP confirmation | RE-251–264, RE-301, RE-321, RE-322 |
+| PSP GE backend | VERIFYING (89%) | Indexed textured draws, CLUTs, addressing, alpha test/blend, depth, culling, lighting, texgen, material animation incl. `SetLFrac` two-tile blend and `PrimColor`/light tracks, effect-owned material clocks, GE state cache | Physical-PSP confirmation | RE-251–264, RE-301, RE-321, RE-322, RE-327 |
 | Camera / projection | COMPLETE | Default battle camera; matches original ROM camera state within 0.1 units | Special camera modes | RE-151 |
 | Coordinate conversion | 80% | Matrices, UVs incl. signed S10.5 on clamped axes, pillarboxed viewport | On-hardware confirmation | RE-004, RE-005, RE-262 |
 | Stage animation | 90% | 35 stages, 206 animated nodes; packed poses match the archive | — | RE-050–052, RE-142 |

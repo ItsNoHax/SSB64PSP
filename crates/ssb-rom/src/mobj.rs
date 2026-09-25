@@ -70,12 +70,15 @@ const F_TRAU: u32 = 0x14;
 const F_TRAV: u32 = 0x18;
 const F_SCAU: u32 = 0x1C;
 const F_SCAV: u32 = 0x20;
+const F_UNK24: u32 = 0x24;
+const F_UNK28: u32 = 0x28;
 const F_PALETTES: u32 = 0x2C;
 const F_FLAGS: u32 = 0x30;
 const F_UNK38: u32 = 0x38;
 const F_UNK3A: u32 = 0x3A;
 const F_SCROLLU: u32 = 0x3C;
 const F_SCROLLV: u32 = 0x40;
+const F_UNK44: u32 = 0x44;
 const F_PRIMCOLOR: u32 = 0x50;
 const F_PRIM_L: u32 = 0x54;
 const F_ENVCOLOR: u32 = 0x58;
@@ -177,8 +180,13 @@ pub struct MObjMaterial {
     /// Tile-0 transform form used by `gcDrawMObjForDObj`: 0 means this MObj
     /// does not emit a tile-0 window, 1 is the normal formula and 2 is its
     /// special `unk10 == 2` form.  The renderer needs this distinction to
-    /// preserve the source's V-axis sign/one-minus-scale convention.
+    /// preserve the source's V-axis sign/one-minus-scale convention. Bit
+    /// 4 is set under `MOBJ_FLAG_TEXTURE`, and [`UV_MODE_HALF`] with
+    /// `unk10 == 1` beside either.
     pub mat_anim_uv_mode: u8,
+    /// `unk24`, `unk28` and `unk44` as raw `f32` bits: the inputs of the
+    /// `unk10 == 1` halving, meaningful under [`UV_MODE_HALF`] (RE-327).
+    pub mat_anim_uv_half: [u32; 3],
     /// `unk0A` plus the tile-0 width/height used by the original dynamic
     /// `gDPSetTileSize` equations.  These are needed to preserve the
     /// non-zero source tile origin while a track changes `Tra*`/`Sca*`.
@@ -405,10 +413,23 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
     let unk0a = read_u16(data, at + F_UNK0A)? as f32;
     let unk0c = read_u16(data, at + F_UNK0C)?;
     let unk0e = read_u16(data, at + F_UNK0E)?;
-    // `s32` in the decomp, but only ever observed as 0 or 2 archive-wide
-    // (RE-194); the `== 1` branch is translated below for fidelity even
-    // though no real `MObjSub` reaches it.
+    // `s32` in the decomp: 0, 1 or 2 in the ROM. RE-194 reported only 0 and
+    // 2; RE-327's table-plus-decomp-offset census found 21 at 1, none
+    // beside a flag that reads it.
     let unk10 = read_i32(data, at + F_UNK10)?;
+    let unk24 = read_f32(data, at + F_UNK24)?;
+    let unk28 = read_f32(data, at + F_UNK28)?;
+    let unk44 = read_f32(data, at + F_UNK44)?;
+    let scrollu = read_f32(data, at + F_SCROLLU)?;
+    // `objdisplay.c:1173-1178`: `unk10 == 1` halves the U scale and moves
+    // the U origins before any window or `gSPTexture` scale is built.
+    // All 21 `unk10 == 1` entries in RE-327's combined census set none of
+    // the flags that read these, so the branch is followed for fidelity only.
+    let (raw_scau, raw_trau, raw_scrollu) = (scau, trau, scrollu);
+    let (scau, trau, scrollu) = match unk10 {
+        1 => halve_u(scau, trau, scrollu, unk24, unk28, unk44),
+        _ => (scau, trau, scrollu),
+    };
 
     // `objdisplay.c:1353-1382`. `uls`/`ult` are declared `s32` and reused
     // *after* truncation for `lrs`/`lrt` below, so this truncates the same
@@ -453,7 +474,6 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
     // `objdisplay.c:1386-1397`: tile 1 has no `unk10 == 2` form.
     let unk38 = read_u16(data, at + F_UNK38)?;
     let unk3a = read_u16(data, at + F_UNK3A)?;
-    let scrollu = read_f32(data, at + F_SCROLLU)?;
     let scrollv = read_f32(data, at + F_SCROLLV)?;
     let tile1_uv = (flags & MOBJ_FLAG_TILE1 != 0).then(|| {
         let uls = if scau.abs() > SCALE_EPS {
@@ -535,19 +555,21 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         light2_color: flagged(MOBJ_FLAG_LIGHT2, F_LIGHT2COLOR),
         tex_scale,
         tile0_uv,
+        // The tracks hold the raw fields a script writes; the halving is
+        // the draw's, applied again by `MaterialUv` on every frame.
         mat_anim_tracks: [
             0.0f32.to_bits(),
-            trau.to_bits(),
+            raw_trau.to_bits(),
             trav.to_bits(),
-            scau.to_bits(),
+            raw_scau.to_bits(),
             scav.to_bits(),
             0.0f32.to_bits(),
-            scrollu.to_bits(),
+            raw_scrollu.to_bits(),
             scrollv.to_bits(),
             (prim_l as f32 / 255.0).to_bits(),
             0.0f32.to_bits(),
         ],
-        mat_anim_uv_mode: if flags & MOBJ_FLAG_TILE0 == 0 {
+        mat_anim_uv_mode: match if flags & MOBJ_FLAG_TILE0 == 0 {
             if flags & MOBJ_FLAG_TEXTURE == 0 {
                 0
             } else {
@@ -557,7 +579,12 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
             2 | if flags & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 }
         } else {
             1 | if flags & MOBJ_FLAG_TEXTURE != 0 { 4 } else { 0 }
+        } {
+            0 => 0,
+            mode if unk10 == 1 => mode | UV_MODE_HALF,
+            mode => mode,
         },
+        mat_anim_uv_half: [unk24.to_bits(), unk28.to_bits(), unk44.to_bits()],
         mat_anim_tile_params: [unk0a as u16, unk0c, unk0e],
         prim_lod,
         loads_next_block: flags & (MOBJ_FLAG_FRAC | MOBJ_FLAG_SPLIT) != 0
@@ -566,6 +593,28 @@ fn read_material(file: &File, is_ptr: &dyn Fn(u32) -> bool, at: u32) -> Option<M
         tile1_uv,
         tile1_params: [unk38, unk3a],
     })
+}
+
+/// [`MObjMaterial::mat_anim_uv_mode`] bit: `MObjSub.unk10 == 1`, whose draw
+/// halves the U scale and moves the U origins first (RE-327).
+pub const UV_MODE_HALF: u8 = 8;
+
+/// `gcDrawMObjForDObj`'s `unk10 == 1` branch (`objdisplay.c:1173-1178`):
+/// `(scau, trau, scrollu)` as the tile and `gSPTexture` equations then read
+/// them.
+pub fn halve_u(
+    scau: f32,
+    trau: f32,
+    scrollu: f32,
+    unk24: f32,
+    unk28: f32,
+    unk44: f32,
+) -> (f32, f32, f32) {
+    (
+        scau * 0.5,
+        ((trau - unk24) + 1.0 - (unk28 * 0.5)) * 0.5,
+        ((scrollu - unk44) + 1.0 - (unk28 * 0.5)) * 0.5,
+    )
 }
 
 /// Reads the `MObjSub **table[]` at a known offset, for a graph of
@@ -1191,6 +1240,64 @@ mod tests {
             extern_relocs: Vec::new(),
             intern_relocs: Vec::new(),
         }
+    }
+
+    /// RE-327: `unk10 == 1` halves `scau` and moves `trau`/`scrollu`
+    /// before both windows and `gSPTexture` are built
+    /// (`objdisplay.c:1173-1178`). Expected values worked by hand:
+    /// `scau = 0.5`, `trau = ((0.25 - 0.125) + 1 - 0.25) * 0.5 = 0.4375`,
+    /// `scrollu = ((0.25 - 0.0625) + 1 - 0.25) * 0.5 = 0.46875`.
+    #[test]
+    fn unk10_one_halves_the_u_windows_and_scale() {
+        let mut file = sub_with(
+            MOBJ_FLAG_TILE0 | MOBJ_FLAG_TILE1 | MOBJ_FLAG_TEXTURE,
+            128,
+            0,
+            64,
+            32,
+            1,
+            0.25,
+            0.0,
+            1.0,
+            1.0,
+        );
+        let put = |data: &mut [u8], at: u32, v: &[u8]| {
+            data[at as usize..at as usize + v.len()].copy_from_slice(v)
+        };
+        put(&mut file.data, F_UNK24, &0.125f32.to_be_bytes());
+        put(&mut file.data, F_UNK28, &0.5f32.to_be_bytes());
+        put(&mut file.data, F_UNK44, &0.0625f32.to_be_bytes());
+        put(&mut file.data, F_SCROLLU, &0.25f32.to_be_bytes());
+        put(&mut file.data, F_UNK38, &64u16.to_be_bytes());
+        put(&mut file.data, F_UNK3A, &32u16.to_be_bytes());
+        let m = read_material(&file, &|_| false, 0).expect("resolves");
+        // `uls = (64 * 0.4375) / 0.5 * 4`; unhalved it would be 64.
+        assert_eq!(m.tile0_uv, Some((224, 0, 476, 124)));
+        // `uls = (64 * 0.46875) / 0.5 * 4`.
+        assert_eq!(m.tile1_uv, Some((240, 0, 492, 124)));
+        // `(2097152 / 128) / 0.5`; unhalved 16384.
+        assert_eq!(m.tex_scale, Some((32768, 16384)));
+        // The tracks keep the raw fields a script overwrites.
+        assert_eq!(m.mat_anim_tracks[1], 0.25f32.to_bits());
+        assert_eq!(m.mat_anim_tracks[3], 1.0f32.to_bits());
+        assert_eq!(m.mat_anim_tracks[6], 0.25f32.to_bits());
+        assert_eq!(m.mat_anim_uv_mode, 1 | 4 | UV_MODE_HALF);
+        assert_eq!(
+            m.mat_anim_uv_half,
+            [0.125f32.to_bits(), 0.5f32.to_bits(), 0.0625f32.to_bits()]
+        );
+    }
+
+    /// RE-327: all 21 `unk10 == 1` entries in the combined census set no
+    /// flag that reads it; its mode stays 0 so no window is resolved.
+    #[test]
+    fn unk10_one_without_a_window_flag_draws_nothing_new() {
+        let file = sub_with(0x0004, 64, 0, 64, 24, 1, 0.0, -0.1, 1.0, 0.82);
+        let m = read_material(&file, &|_| false, 0).expect("resolves");
+        assert_eq!(
+            (m.tile0_uv, m.tex_scale, m.mat_anim_uv_mode),
+            (None, None, 0)
+        );
     }
 
     /// RE-194: locks in `gcDrawMObjForDObj`'s `MOBJ_FLAG_TILE0`

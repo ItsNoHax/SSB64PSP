@@ -33,10 +33,10 @@ mod depth_diag;
 mod normal_diag;
 mod play;
 mod results_transition;
-#[cfg(feature = "tri_addr_diag_probe")]
-mod tri_addr_diag;
 #[cfg(feature = "texture_sampling_diag")]
 mod texture_sampling_diag;
+#[cfg(feature = "tri_addr_diag_probe")]
+mod tri_addr_diag;
 
 use core::f32::consts::PI;
 
@@ -87,7 +87,10 @@ const fn parse_ticks(digits: &[u8]) -> u64 {
     assert!(!digits.is_empty(), "SSB64_CAPTURE_TICKS is empty");
     let (mut value, mut i) = (0u64, 0);
     while i < digits.len() {
-        assert!(digits[i].is_ascii_digit(), "SSB64_CAPTURE_TICKS is not decimal");
+        assert!(
+            digits[i].is_ascii_digit(),
+            "SSB64_CAPTURE_TICKS is not decimal"
+        );
         value = value * 10 + (digits[i] - b'0') as u64;
         i += 1;
     }
@@ -303,7 +306,12 @@ fn fighter_regression_scene(scene: Option<CaptureScene>) -> Option<FighterRegres
         Fighter::Ness => (11, 335, 0x26B0, DreamLand),
         Fighter::MetalMario => (13, 300, 0x1E08, DreamLand),
     };
-    Some(FighterRegressionScene { fighter_kind, model_file, graph, light_stage })
+    Some(FighterRegressionScene {
+        fighter_kind,
+        model_file,
+        graph,
+        light_stage,
+    })
 }
 
 fn psp_main() {
@@ -542,10 +550,9 @@ unsafe fn run() -> ! {
     if let Some(scene) = fighter_regression_scene(capture_scene) {
         if let Some(p) = &pack {
             if let Some(i) = (0..p.object_count()).find(|&i| {
-                p.object(i)
-                    .is_some_and(|o| {
-                        o.source_file == scene.model_file && o.source_offset == scene.graph
-                    })
+                p.object(i).is_some_and(|o| {
+                    o.source_file == scene.model_file && o.source_offset == scene.graph
+                })
             }) {
                 object_index = i;
             }
@@ -714,9 +721,9 @@ unsafe fn run() -> ! {
     // is the only way to see it happen at 60 Hz rather than in a test.
     let mut sim_fighter = true;
     let mut player = match (&pack, stage_count > 0) {
-        (Some(p), true) => p.stage(stage_index).map(|s| {
-            play::FighterScene::at_spawn(p, &s, ssb_game::fighter::FighterKind::Mario, 0)
-        }),
+        (Some(p), true) => p
+            .stage(stage_index)
+            .map(|s| play::FighterScene::at_spawn(p, &s, ssb_game::fighter::FighterKind::Mario, 0)),
         _ => None,
     };
     // The repeatable original-ROM camera reference uses Mario at player 1's
@@ -925,7 +932,10 @@ unsafe fn run() -> ! {
 
             // One tick of every joint, at the simulation rate rather than the
             // frame rate -- animation timing is gameplay timing (RE-035).
-            if anim_playing && object_view && !deterministic_capture_frozen(capture_scene, sim_frame_index) {
+            if anim_playing
+                && object_view
+                && !deterministic_capture_frozen(capture_scene, sim_frame_index)
+            {
                 if let Some(p) = &pack {
                     if skeleton.ended() {
                         start_anim(p, anim_index, &mut skeleton);
@@ -982,7 +992,12 @@ unsafe fn run() -> ! {
                 if respawn {
                     if let Some(p) = &pack {
                         player = p.stage(stage_index).map(|s| {
-                            play::FighterScene::at_spawn(p, &s, ssb_game::fighter::FighterKind::Mario, 0)
+                            play::FighterScene::at_spawn(
+                                p,
+                                &s,
+                                ssb_game::fighter::FighterKind::Mario,
+                                0,
+                            )
                         });
                         if cfg!(feature = "camera_audit_capture") {
                             if let Some(pl) = player.as_mut() {
@@ -1248,6 +1263,15 @@ unsafe fn run() -> ! {
             if let Some(p) = &pack {
                 if !deterministic_capture_frozen(capture_scene, sim_frame_index) {
                     material_anim.tick(p);
+                }
+                if object_view
+                    && effect_mat_anim_loaded.is_some()
+                    && !deterministic_capture_frozen(capture_scene, sim_frame_index)
+                    && (!cfg!(feature = "effect_material_audit_capture")
+                        || effect_mat_anim_ticks < 4)
+                {
+                    effect_mat_anim.tick(p);
+                    effect_mat_anim_ticks += 1;
                 }
                 // The stage animator runs only while the stage view is what
                 // gets drawn; the arms ahead of it in the render match win.
@@ -1820,14 +1844,18 @@ unsafe fn run() -> ! {
                     }
                     // RE-176's material counterpart: restart
                     // `EffectMaterialAnimator` on selection against this
-                    // object's own bound `PrimDesc.mat_anim` indices (RE-175),
-                    // then tick to the same frame 4 the host `romtool effects`
-                    // audit already measured Link Spin Attack's alpha ramp
-                    // against.
-                    if cfg!(feature = "effect_material_audit_capture")
-                        && effect_mat_anim_loaded != Some(effect_index)
-                    {
-                        effect_mat_anim_loaded = Some(effect_index);
+                    // object's own bound `PrimDesc.mat_anim` indices (RE-175).
+                    // Every manager effect gets its own clock, not only the
+                    // audit build: its texture, palette, window and colours
+                    // start at spawn, not at pack load (RE-327). The audit
+                    // build stops at the same frame 4 the host `romtool
+                    // effects` audit measured Link Spin Attack's alpha ramp
+                    // against; the simulation tick advances it.
+                    let is_effect = effect_objects.contains(&object_index);
+                    if !is_effect {
+                        effect_mat_anim_loaded = None;
+                    } else if effect_mat_anim_loaded != Some(object_index) {
+                        effect_mat_anim_loaded = Some(object_index);
                         effect_mat_anim_ticks = 0;
                         let mat_anims = (0..obj.node_count)
                             .filter_map(|n| p.node(obj.first_node + n))
@@ -1844,11 +1872,6 @@ unsafe fn run() -> ! {
                             });
                         effect_mat_anim.start(p, mat_anims);
                     }
-                    if cfg!(feature = "effect_material_audit_capture") && effect_mat_anim_ticks < 4
-                    {
-                        effect_mat_anim.tick(p);
-                        effect_mat_anim_ticks += 1;
-                    }
                     posed_len = if cfg!(feature = "effect_animation_audit_capture") {
                         effect_anim.compose(p, &obj, &mut posed)
                     } else if anim_playing {
@@ -1859,11 +1882,12 @@ unsafe fn run() -> ! {
                     // Frame the whole hierarchy, not one node: an object's
                     // nodes are spread over the stage, so bounding only the
                     // first would put the camera inside the scene.
-                    let object_bounds = if cfg!(feature = "effect_animation_audit_capture") || anim_playing {
-                        meshdraw::object_bounds_posed(p, &obj, &posed[..posed_len])
-                    } else {
-                        meshdraw::object_bounds(p, &obj)
-                    };
+                    let object_bounds =
+                        if cfg!(feature = "effect_animation_audit_capture") || anim_playing {
+                            meshdraw::object_bounds_posed(p, &obj, &posed[..posed_len])
+                        } else {
+                            meshdraw::object_bounds(p, &obj)
+                        };
                     let (centre, radius) = match object_bounds {
                         Some((min, max)) => {
                             let c = [
@@ -1956,20 +1980,21 @@ unsafe fn run() -> ! {
                     // PSP directional-light channel.  Dream Land is the
                     // shared neutral context; Fox keeps Sector Z because the
                     // supplied original-game comparison uses that stage.
-                    let fighter_light = fighter_regression_scene(capture_scene).is_some_and(|scene| {
-                        let stage = match scene.light_stage {
-                            FighterLightStage::DreamLand => p.stage(0),
-                            FighterLightStage::SectorZ => (0..p.stage_count())
-                                .filter_map(|i| p.stage(i))
-                                .find(|stage| stage.source_file == 262),
-                        };
-                        if let Some(stage) = stage {
-                            draw_state.configure_fighter_light(stage.light_angle_xy);
-                            true
-                        } else {
-                            false
-                        }
-                    });
+                    let fighter_light =
+                        fighter_regression_scene(capture_scene).is_some_and(|scene| {
+                            let stage = match scene.light_stage {
+                                FighterLightStage::DreamLand => p.stage(0),
+                                FighterLightStage::SectorZ => (0..p.stage_count())
+                                    .filter_map(|i| p.stage(i))
+                                    .find(|stage| stage.source_file == 262),
+                            };
+                            if let Some(stage) = stage {
+                                draw_state.configure_fighter_light(stage.light_angle_xy);
+                                true
+                            } else {
+                                false
+                            }
+                        });
                     let tris = meshdraw::draw_object_posed(
                         p,
                         &obj,
@@ -1978,7 +2003,7 @@ unsafe fn run() -> ! {
                         None,
                         &mut draw_state,
                         Some(&material_anim),
-                        cfg!(feature = "effect_material_audit_capture").then_some(&effect_mat_anim),
+                        is_effect.then_some(&effect_mat_anim),
                         costume_index,
                     );
                     if fighter_light {

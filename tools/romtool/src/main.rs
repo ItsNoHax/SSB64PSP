@@ -982,6 +982,8 @@ struct MatAnimData {
     base_tracks: [u32; 10],
     uv_mode: u8,
     uv_tile_params: [u16; 3],
+    /// RE-327: `unk24`/`unk28`/`unk44` bits for `unk10 == 1`.
+    uv_half: [u32; 3],
     /// RE-318: the script can never move `TraU`/`TraV`/`ScaU`/`ScaV` off
     /// their rest values, so the primitive samples exactly its authored UVs.
     uv_static: bool,
@@ -1265,6 +1267,7 @@ fn lod_blend_desc(
         let tex = convert_mat_anim_sprite(src, *p, &lod.next, &coverage, None, swizzle, policy)
             .ok_or("a TEXEL1 image did not convert")?;
         let i = writer.add_texture(&tex, lod.next.clamp_s, lod.next.clamp_t);
+        writer.set_texture_tile(i, &lod.next);
         residuals::record_variant(i, &tex, lod.next.clamp_s, lod.next.clamp_t);
         if residuals::enabled() {
             residuals::record_site(residuals::UseSite {
@@ -1472,6 +1475,7 @@ fn pack_mesh(
                             return i;
                         }
                         let i = writer.add_texture(&tex, t.clamp_s, t.clamp_t);
+                        writer.set_texture_tile(i, &t);
                         residuals::record_variant(i, &tex, t.clamp_s, t.clamp_t);
                         tex_index.insert(final_key, i);
                         i
@@ -1575,6 +1579,7 @@ fn pack_mesh(
                                 )
                                 .map(|tex| {
                                     let i = writer.add_texture(&tex, base.clamp_s, base.clamp_t);
+                                    writer.set_texture_tile(i, &base);
                                     residuals::record_variant(i, &tex, base.clamp_s, base.clamp_t);
                                     if residuals::enabled() {
                                         residuals::record_site(residuals::UseSite {
@@ -1611,6 +1616,7 @@ fn pack_mesh(
                         anim_data.uv_mode,
                         anim_data.uv_tile_params,
                     );
+                    writer.set_mat_anim_uv_half(i, anim_data.uv_half);
                     mat_anim_index.insert(key, i);
                     Some(i)
                 }),
@@ -2115,6 +2121,8 @@ fn resolve_one_mat_anim(
             base_tracks,
             uv_mode,
             uv_tile_params,
+            // Filled by the caller, which holds the `MObjMaterial`.
+            uv_half: [0; 3],
             // Every reachable write holds the rest value, and each written
             // track reached it in the replay without a transient: from then
             // on nothing can move it.
@@ -2170,7 +2178,7 @@ fn resolve_mat_anims(
                 refs[node][m] = Some(key);
                 continue;
             }
-            let Some((r, data)) = resolve_one_mat_anim(
+            let Some((r, mut data)) = resolve_one_mat_anim(
                 file,
                 node,
                 m,
@@ -2183,6 +2191,7 @@ fn resolve_mat_anims(
                 continue;
             };
             refs[node][m] = Some(r);
+            data.uv_half = material.mat_anim_uv_half;
             mat_anim_data.insert(key, data);
         }
     }
@@ -7543,6 +7552,8 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     let (mut agree, mut disagree, mut unfollowable) = (0usize, 0usize, 0usize);
     let (mut materials, mut palettes) = (0usize, 0usize);
     let (mut in_decomp, mut not_in_decomp) = (0usize, 0usize);
+    // Every `MObjSub` reached, by file and offset, for the `unk10` census.
+    let mut subs: BTreeSet<(u32, u32)> = BTreeSet::new();
 
     for file in files.iter().flatten() {
         if only_file.is_some_and(|f| f != file.id) {
@@ -7597,6 +7608,7 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
                 }
                 for m in &table.nodes[i] {
                     materials += 1;
+                    subs.insert((file.id, m.at));
                     palettes += usize::from(m.palette.is_some());
                     // A material with no palette is not necessarily wrong —
                     // plenty supply only a primitive colour — but a CI texture
@@ -7637,6 +7649,46 @@ fn mobj(path: &Path, opts: &[&str]) -> Res {
     println!("nodes where chain length == display-list demand: {agree}, mismatched: {disagree}");
     println!("  chains in another archive file, not followed: {unfollowable}");
     println!("materials: {materials} ({palettes} carrying a palette)");
+    // `gcDrawMObjForDObj` reads `unk10` only under the tile and
+    // `gSPTexture` flags (`0x20 | 0x40 | MOBJ_FLAG_TEXTURE`, with
+    // `MOBJ_FLAG_NONE` read as `0xA1`), so a value other than 0 or 2 matters
+    // only beside one of them (RE-327). Counted over the table chains and
+    // every `--expect` offset, from the raw bytes.
+    for (f, set) in known.iter().flatten() {
+        subs.extend(set.iter().map(|&at| (*f, at)));
+    }
+    let mut unk10: BTreeMap<i32, (usize, usize)> = BTreeMap::new();
+    for &(f, at) in &subs {
+        let Some(data) = files
+            .get(f as usize)
+            .and_then(Option::as_ref)
+            .map(|x| &x.data)
+        else {
+            continue;
+        };
+        let word = |o: usize| {
+            data.get(o..o + 4)
+                .map(|b| i32::from_be_bytes(b.try_into().unwrap()))
+        };
+        let half = |o: usize| {
+            data.get(o..o + 2)
+                .map(|b| u16::from_be_bytes(b.try_into().unwrap()))
+        };
+        let (Some(v), Some(flags)) = (word(at as usize + 0x10), half(at as usize + 0x30)) else {
+            continue;
+        };
+        let flags = if flags == 0 { 0xA1 } else { flags };
+        let e = unk10.entry(v).or_default();
+        e.0 += 1;
+        if flags & 0xE0 != 0 {
+            e.1 += 1;
+        } else if v == 1 {
+            println!("  UNK10 file {f} MObjSub 0x{at:X}: 1, flags 0x{flags:04X}");
+        }
+    }
+    for (v, (n, windowed)) in &unk10 {
+        println!("MObjSub.unk10 == {v}: {n} ({windowed} with a tile or gSPTexture flag)");
+    }
     if !unpaired_graphs.is_empty() && !search {
         println!("\ngraphs that call the graphics heap but no record names:");
         for (file, offset, nodes) in unpaired_graphs.iter().take(12) {
