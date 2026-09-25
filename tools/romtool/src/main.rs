@@ -10020,6 +10020,56 @@ fn texgen(path: &Path, args: &[&str]) -> Res {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn camera_head1_graphs_restore_xlu_mode() {
+        let Some(path) = std::env::var_os("SSB64_ROM") else {
+            return;
+        };
+        let (data, info) = super::load_rom(path.as_ref()).unwrap();
+        let archive = ssb_rom::archive::Archive::open(&data, info.region).unwrap();
+        let loaded = super::load_all(&archive);
+        let mut total = 0;
+        let mut mode_writers = 0;
+        for (file_id, graphs) in &loaded.graphs {
+            let Some(file) = loaded.files.get(*file_id as usize).and_then(Option::as_ref) else {
+                continue;
+            };
+            let resolver = ssb_rom::scene::DlResolver::new(file);
+            for graph in graphs {
+                let plan = super::plan_draw_order(graph, &resolver);
+                let heads: Vec<_> = plan.iter().filter(|p| p.list_id == Some(1)).collect();
+                if heads.is_empty() {
+                    continue;
+                }
+                total += 1;
+                let mut own_modes = Vec::new();
+                for p in heads {
+                    let cmds = file
+                        .data
+                        .get(p.dl as usize..)
+                        .and_then(|d| ssb_rom::dl::decode_list_at(d, p.dl).ok())
+                        .unwrap_or_default();
+                    for c in &cmds {
+                        if let ssb_rom::dl::Cmd::SetOtherModeL { shift: 3, data, .. } = c {
+                            own_modes.push(*data);
+                        }
+                    }
+                }
+                if !own_modes.is_empty() {
+                    mode_writers += 1;
+                    assert_eq!(
+                        own_modes,
+                        [0x0C18_49D8, 0x0050_49D8],
+                        "file {file_id} graph {:X}",
+                        graph.offset
+                    );
+                }
+            }
+        }
+        assert_eq!(total, 103);
+        assert_eq!(mode_writers, 3);
+    }
+
+    #[test]
     fn holdout_rejects_a_training_only_saddle_improvement() {
         use ssb_rom::{filter_compensation as fc, texture::Rgba8};
 

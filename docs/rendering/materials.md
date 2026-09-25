@@ -93,5 +93,6 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
 
 Limitations:
 
-- The camera-level head-1 XLU reset outside stage layers is not modelled
-  (RE-323, TODO.md).
+- The camera-level head-1 XLU reset is applied to every packed graph's
+  head-1 stream (RE-328). Commands emitted by runtime effects outside those
+  graphs still need their own ordered state if they change render mode.

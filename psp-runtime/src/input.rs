@@ -50,12 +50,18 @@ impl Input for PspInput {
         self.previous = self.current;
 
         let mut pad = SceCtrlData::default();
-        unsafe {
-            sys::sceCtrlReadBufferPositive(&mut pad, 1);
-        }
+        let samples = unsafe {
+            // ReadBuffer waits for a fresh controller sample. When a slow
+            // display frame requires several fixed simulation ticks, one
+            // wait per tick turns catch-up into a feedback loop. Peek takes
+            // the latest sample without stalling the simulation.
+            sys::sceCtrlPeekBufferPositive(&mut pad, 1)
+        };
 
-        self.current[0] =
-            map_psp_to_n64(PspButtons(pad.buttons.bits()), pad.lx, pad.ly, self.mapping);
+        if samples > 0 {
+            self.current[0] =
+                map_psp_to_n64(PspButtons(pad.buttons.bits()), pad.lx, pad.ly, self.mapping);
+        }
 
         // Remaining ports stay disconnected until CPU players fill them.
         for p in 1..MAX_PORTS {

@@ -28,7 +28,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 
 | Subsystem | Status | Capability | Gap | Evidence |
 |---|---|---|---|---|
-| PSP GE backend | VERIFYING (89%) | Indexed textured draws, CLUTs, addressing, alpha test/blend, depth, culling, lighting, texgen, material animation incl. `SetLFrac` two-tile blend and `PrimColor`/light tracks, effect-owned material clocks, GE state cache | Physical-PSP confirmation | RE-251–264, RE-301, RE-321, RE-322, RE-327 |
+| PSP GE backend | VERIFYING (89%) | Indexed textured draws, CLUTs, addressing, alpha test/blend, depth, culling, lighting, texgen, material animation incl. `SetLFrac` two-tile blend and `PrimColor`/light tracks, effect-owned material clocks, camera head-1 XLU seed, GE state cache | Physical-PSP confirmation | RE-251–264, RE-301, RE-321, RE-322, RE-327, RE-328 |
 | Camera / projection | COMPLETE | Default battle camera; matches original ROM camera state within 0.1 units | Special camera modes | RE-151 |
 | Coordinate conversion | 80% | Matrices, UVs incl. signed S10.5 on clamped axes, pillarboxed viewport | On-hardware confirmation | RE-004, RE-005, RE-262 |
 | Stage animation | 90% | 35 stages, 206 animated nodes; packed poses match the archive | — | RE-050–052, RE-142 |
@@ -44,7 +44,7 @@ Detail per domain: [`rendering.md`](rendering.md).
 |---|---|---|---|---|
 | PSP asset loading | COMPLETE on PSP-2000 and later | `MEMSIZE=1` 64 MiB mode; stock v32 pack loaded via PSPLink on PSP-2000 | PSP-1000 (32 MiB) | RE-256, RE-260, RE-288, RE-320 |
 | Timing | COMPLETE | Fixed 60 Hz with catch-up cap | — | — |
-| Input | 80% | `psp-game` PSP→N64 layout (see README); viewer keeps its own | Nub deadzone unmeasured | RE-008, RE-009, RE-295 |
+| Input | 80% | `psp-game` PSP→N64 layout (see README); viewer keeps its own; shared PSP polling is nonblocking | Nub deadzone unmeasured | RE-008, RE-009, RE-295, RE-329 |
 | Engine traits | 70% | Renderer, audio, input, timing, clock | — | — |
 | Math | 80% | Scalar math | VFPU after profiling | [D-032](decisions/D-032.md) |
 | Audio | 0% | — | Mixer thread, VADPCM, sequencer | — |
