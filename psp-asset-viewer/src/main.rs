@@ -1760,7 +1760,7 @@ unsafe fn run() -> ! {
                             // R0.14 reference capture suppresses that developer
                             // marker along with the other diagnostics.
                             if let Some(obj) = p.object(pl.object) {
-                                let n = pl.skeleton.compose(p, &obj, &mut posed);
+                                let n = pl.compose_model(p, &obj, &mut posed);
                                 let sc = meshdraw::MODEL_SCALE;
                                 gpu.model_transform(
                                     [cam[0] + pl.fighter.pos.x, cam[1] + pl.fighter.pos.y, cam[2]],

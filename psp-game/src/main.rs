@@ -660,7 +660,7 @@ unsafe fn draw_training(
 
     if let Some(obj) = p.object(pl.object) {
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let n = pl.skeleton.compose(p, &obj, &mut posed);
+        let n = pl.compose_model(p, &obj, &mut posed);
         gpu.model_transform(
             [pl.fighter.pos.x, pl.fighter.pos.y, pl.fighter.pos.z],
             [0.0, play::facing_turn(pl.fighter.facing), 0.0],
@@ -683,7 +683,7 @@ unsafe fn draw_training(
     if let Some(dummy) = dummy_state {
         if let Some(obj) = p.object(dummy.object) {
             let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-            let n = dummy.skeleton.compose(p, &obj, &mut posed);
+            let n = dummy.compose_model(p, &obj, &mut posed);
             gpu.model_transform(
                 [
                     dummy.fighter.pos.x,

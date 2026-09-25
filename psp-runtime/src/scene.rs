@@ -490,6 +490,42 @@ pub struct FighterScene {
 }
 
 impl FighterScene {
+    /// Compose a fighter model, including the extra runtime joint in the
+    /// held pose. `CapturePulled`'s first script drives TransN; its model
+    /// root script is relative to that transform. The pack stores TransN
+    /// as `NO_NODE`, so a plain `Skeleton::compose` leaves the model below
+    /// its gameplay root even though floor collision is correct (RE-331).
+    pub fn compose_model(
+        &self,
+        pack: &Pack<'_>,
+        object: &ObjectDesc,
+        out: &mut [ssb_rom::scene::Mat4],
+    ) -> usize {
+        let count = self.skeleton.compose(pack, object, out);
+        if matches!(
+            self.fighter.status.status,
+            AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
+        ) && self.skeleton.joint_node(0).is_none()
+        {
+            if let Some(pose) = self.skeleton.pose(0) {
+                let scale = ssb_rom::pack::MODEL_SCALE;
+                let runtime = ssb_rom::scene::Mat4::from_trs(
+                    [
+                        pose.translate[0] / scale,
+                        pose.translate[1] / scale,
+                        pose.translate[2] / scale,
+                    ],
+                    pose.rotate,
+                    pose.scale,
+                );
+                for matrix in &mut out[..count] {
+                    *matrix = runtime.mul(matrix);
+                }
+            }
+        }
+        count
+    }
+
     /// Puts a fighter of `kind` at a stage's `spawn_index`'th spawn point.
     ///
     /// Deliberately *not* settled onto the surface: a spawn sits a few units
@@ -638,7 +674,7 @@ impl FighterScene {
         // match loop hands the sampled position over in `grab::exchange`.
         self.fighter.grab.anchor = if self.fighter.grab.catch.is_some() {
             ssb_game::grab::itemheavy_joint(self.fighter.kind)
-                .and_then(|joint| self.weapon_anchor(pack, joint, 0.0))
+                .and_then(|joint| self.fighter_part_anchor(pack, joint))
         } else {
             None
         };
@@ -723,10 +759,37 @@ impl FighterScene {
         joint: usize,
         offset_x: f32,
     ) -> Option<ssb_engine::math::Vec3> {
+        let node = self.skeleton.joint_node(joint)?;
+        self.node_anchor(pack, node, offset_x)
+    }
+
+    /// `FTAttributes::joint_itemheavy_id` indexes `FTStruct::joints`, where
+    /// TopN, TransN, XRotN and YRotN precede the model's DObjDesc array
+    /// (`nFTPartsJointCommonStart == 4`, `ftmanager.c`). The packed object
+    /// contains only that array. A part need not have an animation script, so
+    /// look up its packed node directly instead of using `Skeleton::joint_node`.
+    fn fighter_part_anchor(
+        &self,
+        pack: &Pack<'_>,
+        part_id: usize,
+    ) -> Option<ssb_engine::math::Vec3> {
+        let object = pack.object(self.object)?;
+        let local_index = part_id.checked_sub(4)? as u32;
+        if local_index >= object.node_count {
+            return None;
+        }
+        self.node_anchor(pack, object.first_node + local_index, 0.0)
+    }
+
+    fn node_anchor(
+        &self,
+        pack: &Pack<'_>,
+        node: u32,
+        offset_x: f32,
+    ) -> Option<ssb_engine::math::Vec3> {
         let object = pack.object(self.object)?;
         let mut posed = [ssb_rom::scene::Mat4::IDENTITY; ssb_rom::skeleton::MAX_NODES];
-        let count = self.skeleton.compose(pack, &object, &mut posed);
-        let node = self.skeleton.joint_node(joint)?;
+        let count = self.compose_model(pack, &object, &mut posed);
         let local_index = node.checked_sub(object.first_node)? as usize;
         if local_index >= count {
             return None;

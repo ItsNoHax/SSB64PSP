@@ -58,14 +58,14 @@ Detail per domain: [`rendering.md`](rendering.md).
 |---|---|---|---|---|
 | Physics | 62% | Ground/air/knockback velocities, gravity, friction, fastfall; per-fighter constants for all 27 kinds verified against the decomp | — | RE-032 |
 | Collision | 65% | All 41 stages packed; swept floor queries; weapon diamond collider vs floors, ceilings, walls | Fighter wall/ceiling solver; moving groups tested at rest | RE-030, RE-031 |
-| Animation | 95% | Figatree playback at 60 Hz; joint attachments and TransN root motion feed gameplay; grab/thrown/cargo clips for Mario, Fox and Donkey Kong | Reflector effect phases; held TopN offset and attachment rotation | RE-036, RE-038, RE-171, RE-299, RE-330 |
+| Animation | 95% | Figatree playback at 60 Hz; joint attachments and TransN root motion feed gameplay; grab/thrown/cargo clips for Mario, Fox and Donkey Kong; held pose includes its runtime joint | Reflector effect phases; held TopN offset and attachment rotation | RE-036, RE-038, RE-171, RE-299, RE-330, RE-331 |
 | Status machine | 68% | Full `FTCommonStatus` table (0–219); movement, Damage/hitstun, per-character `AnyStatus` | Most statuses beyond those listed are ordinals only | RE-033, RE-035, RE-294 |
 | Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; Donkey normal/special windows; throw descriptors and release knockback | Gameplay joint transforms, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG) | RE-294, RE-299, RE-330 |
 | Shield / guard | 40% | `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff`, decay, shield break | Clip lengths, bubble visual, break mash-out chain | — |
 | Ledges | 45% | `CliffCatch` → `CliffWait` → climb/attack/escape, re-grab cooldown | Hand-reach offset, ledge-hog, clip lengths | — |
 | KO / respawn | 45% | Blast zones, stock loss, rebirth sequence, 120-frame invincibility | `DeadUpFall` (RNG), halo visuals, team/1P branches | — |
 | Recovery (`FallSpecial`) | 25% | Shared helpless fall and landing; driven by Mario up-B | Drop-through, ledge auto-catch | RE-299 |
-| Grabs / throws | IMPLEMENTED for Mario, Fox and Donkey Kong in two-fighter Training | Catch search, linked capture/throw statuses, breakout, shield-grab damage, Donkey cargo walk/jump/turn/throw, heavy-item joint position | Held TopN offset and rotation, hand-joint catch transforms, bystander throw hits, held-fighter damage | RE-330 |
+| Grabs / throws | IMPLEMENTED for Mario, Fox and Donkey Kong in two-fighter Training | Catch search, linked capture/throw statuses, breakout, shield-grab damage, Donkey cargo walk/jump/turn/throw, heavy-item joint position and held runtime pose | Held TopN offset and rotation, hand-joint catch transforms, bystander throw hits, held-fighter damage | RE-330, RE-331 |
 | Weapons | 18% | Fixed pool: Mario Fireball, Fox Blaster; reflection | General item system | RE-300, RE-303 |
 | Stages | 65% | Headers, collision, render layers for all 41 | No match stage loader | RE-028, RE-029, RE-170 |
 | CPU AI | 0% | — | — | — |
