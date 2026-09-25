@@ -404,7 +404,7 @@ def status_motions(refs):
 
 
 def motion_descs(refs):
-    """Fighter -> [animation symbol per motion_id, or None].
+    """Fighter -> [(animation symbol, leading runtime joint) per motion_id].
 
     An `FTMotionDesc` is three words, and the decompilation spells a table
     both ways: brace groups, and bare `0x0, 0x80000000, 0x80000000,` word
@@ -427,7 +427,11 @@ def motion_descs(refs):
         entries = []
         for i in range(0, len(words), 3):
             sym = re.match(r"&ll(\w+?)FileID$", words[i])
-            entries.append(sym.group(1) if sym else None)
+            flags = words[i + 2]
+            runtime = bool(re.search(r"FTANIM_FLAG_(?:TRANSN|XROTN|YROTN)_JOINT", flags))
+            runtime |= any(int(n, 16) & 0xE0000000 != 0
+                           for n in re.findall(r"0x[0-9A-Fa-f]+", flags))
+            entries.append((sym.group(1) if sym else None, runtime))
         out[m.group(1)] = entries
     return out
 
@@ -451,13 +455,13 @@ def resolve(refs):
         entry = []
         exempt = fighter in NO_GROUND_STATUSES
         for slot, status, allowed in SLOTS:
-            sym = table[smot[status]]
+            sym, runtime = table[smot[status]]
             if sym is None:
                 # A null motion is a move the fighter does not have. Kirby and
                 # Jigglypuff have no aerial jump, and RE-035 found those exact
                 # placeholders. Record the absence rather than failing: the
                 # slot gets no file and the runtime keeps the rest pose.
-                entry.append((slot, 0, None, 0))
+                entry.append((slot, 0, None, 0, False))
                 continue
             # `FT<Name>Anim<X>` -> `<X>`
             anim = re.sub(r"^FT\w*?Anim", "", sym)
@@ -467,24 +471,28 @@ def resolve(refs):
             fid, path = files[sym]
             if fid not in cache:
                 cache[fid] = file_frames(path)
-            entry.append((slot, fid, sym, cache[fid]))
+            entry.append((slot, fid, sym, cache[fid], runtime))
         for slot, target, sym in SPECIAL_SLOTS:
             if fighter != target:
-                entry.append((slot, 0, None, 0))
+                entry.append((slot, 0, None, 0, False))
                 continue
+            runtime_options = {runtime for name, runtime in table if name == sym}
+            if len(runtime_options) != 1:
+                problems.append(f"{fighter} {slot}: inconsistent runtime-joint flags for {sym}")
+            runtime = next(iter(runtime_options), False)
             fid, path = files[sym]
             if fid not in cache:
                 cache[fid] = file_frames(path)
-            entry.append((slot, fid, sym, cache[fid]))
+            entry.append((slot, fid, sym, cache[fid], runtime))
         for slot, status in GRAB_SLOTS:
-            sym = table[smot[status]] if fighter in GRAB_FIGHTERS else None
+            sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, False)
             if sym is None:
-                entry.append((slot, 0, None, 0))
+                entry.append((slot, 0, None, 0, False))
                 continue
             fid, path = files[sym]
             if fid not in cache:
                 cache[fid] = file_frames(path)
-            entry.append((slot, fid, sym, cache[fid]))
+            entry.append((slot, fid, sym, cache[fid], runtime))
         rows.append((fighter, entry))
     return rows, problems
 
@@ -501,16 +509,24 @@ def emit(rows, out):
     w("#[rustfmt::skip]\npub const FIGHTER_ANIMS: "
       f"[FighterAnims; {len(rows)}] = [\n")
     for fighter, entry in rows:
-        ids = ", ".join(f"{fid:4d}" for _, fid, _, _ in entry)
+        ids = ", ".join(f"{fid:4d}" for _, fid, _, _, _ in entry)
         w(f'    FighterAnims {{ name: "{fighter}",{" " * (9 - len(fighter))}'
           f"files: [{ids}] }},\n")
+    w("];\n\n")
+    w("/// Whether a motion's extra figatree entry is a leading runtime joint.\n")
+    w("/// Read from `FTMotionDesc.anim_desc` in `ftdata.c`.\n")
+    w("#[rustfmt::skip]\npub const LEADING_RUNTIME_JOINT: "
+      f"[[bool; SLOT_COUNT]; {len(rows)}] = [\n")
+    for fighter, entry in rows:
+        flags = ", ".join("true" if runtime else "false" for _, _, _, _, runtime in entry)
+        w(f"    [{flags}],  // {fighter}\n")
     w("];\n\n")
     w("/// Lengths the decompilation's own C sources give for the same files.\n")
     w("/// `romtool anims --verify` checks the ROM against these.\n")
     w("#[rustfmt::skip]\npub const EXPECTED_FRAMES: "
       f"[[u16; SLOT_COUNT]; {len(rows)}] = [\n")
     for fighter, entry in rows:
-        lens = ", ".join(f"{0 if n is None else n:3d}" for _, _, _, n in entry)
+        lens = ", ".join(f"{0 if n is None else n:3d}" for _, _, _, n, _ in entry)
         w(f"    [{lens}],  // {fighter}\n")
     w("];\n")
 
@@ -524,7 +540,7 @@ def main():
     for fighter, entry in rows:
         if fighter in NO_GROUND_STATUSES:
             continue
-        for slot, fid, sym, frames in entry:
+        for slot, fid, sym, frames, _ in entry:
             if frames is None and slot in TIMED_SLOTS:
                 problems.append(f"{sym} (file {fid}, {slot}) loops; it has no length")
     if problems:

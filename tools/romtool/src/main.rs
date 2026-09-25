@@ -2956,14 +2956,13 @@ fn pack(path: &Path, opts: &[&str]) -> Res {
                 .ok()
                 .and_then(|l| l.frames())
                 .unwrap_or(0);
-            // One script more than the fighter has model joints means the
-            // motion carries one runtime joint (`TransN`, `XRotN`, or
-            // `YRotN`) before the model tree. It has no packed model node,
-            // so script 0 is retained as a no-node entry and every model
-            // script follows it. The motion descriptor tells the original
-            // which runtime joint it is; a bare figatree table does not, so
-            // do not mislabel every such entry TransN (RE-036).
-            let hidden_joint = table.len() == nodes.len() + 1;
+            // The motion descriptor, not the table length alone, identifies
+            // a leading runtime joint (`TransN`, `XRotN`, or `YRotN`). A
+            // disabled trailing model part can also leave one more script
+            // than active joints; treating that as a leading joint shifts
+            // every model transform and sinks the visible fighter (RE-331).
+            let hidden_joint =
+                table.len() == nodes.len() + 1 && ssb_rom::anim::LEADING_RUNTIME_JOINT[kind][slot];
             let joints: Vec<(Option<u32>, Option<u32>)> = table
                 .iter()
                 .enumerate()
@@ -10064,6 +10063,23 @@ mod tests {
                 let got = ssb_game::grab::thrown_length(kind, *status).unwrap_or(0.0);
                 assert_eq!(got, f32::from(want), "{kind:?} {status:?}");
             }
+        }
+    }
+
+    #[test]
+    fn grab_motion_flags_distinguish_model_parts_from_runtime_joints() {
+        use ssb_rom::anim::{LEADING_RUNTIME_JOINT, SLOT_CATCH};
+
+        // Catch, CatchPull and ThrowF have no leading runtime joint for these
+        // fighters, whereas CapturePulled does.
+        for kind in 0..3 {
+            for slot in SLOT_CATCH..SLOT_CATCH + 3 {
+                assert!(
+                    !LEADING_RUNTIME_JOINT[kind][slot],
+                    "kind {kind} slot {slot}"
+                );
+            }
+            assert!(LEADING_RUNTIME_JOINT[kind][SLOT_CATCH + 4]);
         }
     }
 
