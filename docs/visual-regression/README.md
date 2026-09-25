@@ -264,3 +264,12 @@ light track. `r2-stage-final-destination`, `r2-stage-metal-mario`,
 pixels): `MaterialAnimator` now ticks `MatAnimDesc` entries 64-102, which a
 fixed 64-slot array had left static. `SSB64_CAPTURE_TICKS=<n>` at build time
 moves a diagnostic build's freeze tick; goldens never set it.
+
+## 2026-09-25 RE-323 task-list-1 XLU reset
+
+Pack `a4072881…`. Four goldens changed and were refreshed; 68 of 68 then
+match twice. Stage render-layer-1 task-list-1 primitives now blend under
+`G_RM_AA_ZB_XLU_SURF`: `r2-stage-bonus3-race-to-the-finish` (8,764 pixels
+at 2x, nodes 8/9 glows), `r2-stage-bonus2-mario` (1,156, hazard-bar glow),
+`r2-stage-zebes` (236) and `r2-stage-sector-z` (224, engine glows). N64
+references in RE-323.

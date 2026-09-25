@@ -69,7 +69,8 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   register still holds the animated `MObj`'s value (`PRIM_ANIM`,
   `LIGHT1_ANIM`, `LIGHT2_ANIM`); a later `G_SETPRIMCOLOR`/`G_MW_LIGHTCOL`
   clears it. `PrimColor` feeds the `TEXTURE_BLEND` constant and vertex
-  alpha; its `TEXEL0 * PRIM` alpha blends under the task-list-1 XLU reset.
+  alpha; its `TEXEL0 * PRIM` alpha blends under the task-list-1 XLU reset
+  (RE-323 applies that reset to every stage list-1 primitive).
   Light tracks light that one primitive with the GE under the stage light
   (see [lighting.md](lighting.md)). Exact against a decomp reference
   (`romtool matcolors`).
@@ -78,4 +79,5 @@ Limitations:
 
 - Every material track runs two ticks ahead of the decomp's frame count
   (constant scene-start phase, RE-322).
-- Static task-list-1 primitives do not yet take the XLU reset (TODO.md).
+- The camera-level head-1 XLU reset outside stage layers is not modelled
+  (RE-323, TODO.md).

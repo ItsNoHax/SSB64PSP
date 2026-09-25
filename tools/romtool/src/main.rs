@@ -1898,9 +1898,9 @@ fn initial_material_for(
 /// `GROUND_LAYER1_EXTERNAL` seeds every render-layer-1 node with task list
 /// 0's `Z_CMP | Z_UPD | ZMODE_OPA` -- correct for the 142 of 163 `DObjDLLink`
 /// entries that really are on list 0, but not the 21 on list 1, which
-/// `grDisplayLayer1{Pri,Sec}ProcDisplay` resets separately to `Z_CMP |
-/// !Z_UPD | ZMODE_XLU` (see [`ssb_rom::mesh::SequenceItem::depth_seed`]'s own
-/// doc comment). No other seed (`FIGHTER_EXTERNAL`, `LB_TRANSITION_EXTERNAL`)
+/// `grDisplayLayer1{Pri,Sec}ProcDisplay` resets separately to
+/// `G_RM_AA_ZB_XLU_SURF` (`Z_CMP | !Z_UPD | ZMODE_XLU`, blending; RE-323; see
+/// [`ssb_rom::mesh::SequenceItem::depth_seed`]'s own doc comment). No other seed (`FIGHTER_EXTERNAL`, `LB_TRANSITION_EXTERNAL`)
 /// has a second task list to correct for.
 fn ground_layer1_list1_depth_seed(
     initial: ssb_rom::mesh::InitialMaterial,

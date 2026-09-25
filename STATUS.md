@@ -16,23 +16,23 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Task-list-1 XLU reset | Stage list-1 primitives take the whole `G_RM_AA_ZB_XLU_SURF` reset; static `TEXEL0 * PRIM` classifies where the mode blends. 15 primitives now blend (Race to the Finish cones, Sector Z engine glows, Board the Platforms bar glow, Zebes, Saffron, staff roll). N64 references agree. 4 goldens refreshed; pack +1,312 bytes | RE-323 |
 | Dynamic stage colour/light tracks | Race to the Finish holds the ROM's only 2 `PrimColor` and 2 light tracks. Glows now blend with their live alpha; the lit fixture lights on the GE under the stage light with live `LIGHT_1`/`LIGHT_2`. Exact against a decomp reference over 600 ticks. `MaterialAnimator` now ticks all 103 entries (64+ were frozen). Pack v34, +0 bytes; 8 goldens refreshed | RE-322 |
 | RDP two-tile fractional blend | Dream Land's two ponds draw `TEXEL1` in a second GE pass weighted by the live `PRIM_LOD_FRAC`; within one step of the RDP equation. Pack v33 | RE-321 |
-| Donkey Kong attacks and specials | 20 normal attacks and three special families; cargo/grabs remain open | decomp: `ftdonkey*` |
 
 ## Verification baseline
 
-- `SSB64_ROM=… cargo test --workspace`: 865 tests pass.
+- `SSB64_ROM=… cargo test --workspace`: 868 tests pass.
 - `romtool matcolors --pack`: 3 stage colour entries, 0 mismatching ticks.
 - Both PSP builds pass.
-- Pack v34 built twice, byte-identical: 22,224,368 bytes, SHA-256
-  `ff5166dded1faa79c07f4aca275a87aa6f35cc23c2483bd5cf0cde72e42921b5`.
+- Pack v34 built twice, byte-identical: 22,225,680 bytes, SHA-256
+  `a40728812aa9e91c7f437899d1763bd0f97e30ab1f31372df470906112ea1818`.
 - PPSSPPHeadless: `tools/golden.sh verify --twice`: all 68 goldens match and
   repeat pixel-identically.
-- PSP-2000 Slim, firmware 6.61: v34 Race to the Finish renders the
-  translucent glows; dynamic colour costs +105 µs render CPU, +4 state
-  writes per frame; no exceptions. New Donkey gameplay is not
-  hardware-validated.
+- PSP-2000 Slim, firmware 6.61: v34 (`ff5166dd…`) Race to the Finish
+  renders the translucent glows; dynamic colour costs +105 µs render CPU,
+  +4 state writes per frame. RE-323's pack and the new Donkey gameplay are
+  not hardware-validated.
 
 ## Blockers
 
