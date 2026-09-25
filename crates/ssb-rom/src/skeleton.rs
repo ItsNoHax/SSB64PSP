@@ -409,12 +409,6 @@ impl StageAnimator {
     }
 }
 
-/// Simultaneous `PaletteID`-cycling material animations one pack can define.
-/// RE-089 found 33 real scripts archive-wide; this leaves headroom the same
-/// way `MAX_JOINTS`/`MAX_STAGE_JOINTS` do, sized above the real content
-/// rather than at it.
-pub const MAX_MAT_ANIMS: usize = 64;
-
 /// Ticks every `MatAnimDesc` the pack defines (RE-089–094), once per frame.
 ///
 /// Unlike [`Skeleton`]/[`StageAnimator`] above, a `MatAnimDesc` entry is a
@@ -422,10 +416,14 @@ pub const MAX_MAT_ANIMS: usize = 64;
 /// per-object "start" boundary to restart on. [`Self::start`] runs once,
 /// when the pack loads, and [`Self::tick`] runs every frame after that for
 /// as long as the pack is loaded, independent of which stage or fighter is
-/// currently on screen (cheap either way: at most [`MAX_MAT_ANIMS`] scripts).
+/// currently on screen (cheap either way: one short script per entry).
+///
+/// One joint per `MatAnimDesc`, sized from the pack at [`Self::start`]
+/// (RE-322). A fixed 64-slot array silently left the v33 pack's entries
+/// 64..103 unticked: Race to the Finish's colour tracks and the later
+/// stages' palette and texture cycles never ran.
 pub struct MaterialAnimator {
-    joints: [crate::matanim::MaterialJoint; MAX_MAT_ANIMS],
-    count: usize,
+    joints: alloc::vec::Vec<crate::matanim::MaterialJoint>,
 }
 
 /// The live material UV state before the renderer converts the original
@@ -469,8 +467,7 @@ impl Default for MaterialAnimator {
 impl MaterialAnimator {
     pub fn new() -> Self {
         MaterialAnimator {
-            joints: [crate::matanim::MaterialJoint::start(0, 0.0); MAX_MAT_ANIMS],
-            count: 0,
+            joints: alloc::vec::Vec::new(),
         }
     }
 
@@ -480,11 +477,20 @@ impl MaterialAnimator {
     /// mat_anim`](crate::pack::TextureDesc::mat_anim) index names — no
     /// separate lookup table is needed.
     pub fn start(&mut self, pack: &Pack<'_>) {
-        self.count = (pack.mat_anim_count() as usize).min(MAX_MAT_ANIMS);
-        for i in 0..self.count {
-            let script = pack.mat_anim(i as u32).map_or(0, |a| a.script);
-            self.joints[i] = crate::matanim::MaterialJoint::start(script, 0.0);
-        }
+        self.joints.clear();
+        self.joints.extend((0..pack.mat_anim_count()).map(|i| {
+            let script = pack.mat_anim(i).map_or(0, |a| a.script);
+            crate::matanim::MaterialJoint::start(script, 0.0)
+        }));
+    }
+
+    /// How many `MatAnimDesc` entries this animator ticks.
+    pub fn len(&self) -> usize {
+        self.joints.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.joints.is_empty()
     }
 
     /// Advances every tracked animation one tick. Each entry ticks against
@@ -493,14 +499,14 @@ impl MaterialAnimator {
     /// about *resolving* a script, not about where two different scripts
     /// live relative to each other).
     pub fn tick(&mut self, pack: &Pack<'_>) {
-        for i in 0..self.count {
+        for (i, joint) in self.joints.iter_mut().enumerate() {
             let Some(a) = pack.mat_anim(i as u32) else {
                 continue;
             };
             let Some(data) = pack.mat_anim_file(&a) else {
                 continue;
             };
-            let _ = self.joints[i].tick(data, 1.0);
+            let _ = joint.tick(data, 1.0);
         }
     }
 
@@ -517,9 +523,6 @@ impl MaterialAnimator {
     /// palette table instead of failing safely.
     pub fn resolved_palette(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
         let j = self.joints.get(mat_anim as usize)?;
-        if mat_anim as usize >= self.count {
-            return None;
-        }
         if !j.track_is_stepped(crate::matanim::TRACK_PALETTE_ID) {
             return None;
         }
@@ -541,9 +544,6 @@ impl MaterialAnimator {
     /// truncating it to the `u16` texture index in the draw path.
     pub fn resolved_texture(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<u32> {
         let j = self.joints.get(mat_anim as usize)?;
-        if mat_anim as usize >= self.count {
-            return None;
-        }
         let a = pack.mat_anim(mat_anim)?;
         let value = j.track_value(crate::matanim::TRACK_TEXTURE_ID_CURRENT)?;
         if a.texture_count == 0 {
@@ -564,9 +564,6 @@ impl MaterialAnimator {
     /// both (RE-321).
     pub fn resolved_uv(&self, pack: &Pack<'_>, mat_anim: u32) -> Option<MaterialUv> {
         let j = self.joints.get(mat_anim as usize)?;
-        if mat_anim as usize >= self.count {
-            return None;
-        }
         let a = pack.mat_anim(mat_anim)?;
         if a.uv_mode == 0
             || !(crate::matanim::TRACK_TRA_U..=crate::matanim::TRACK_SCA_V)
@@ -622,7 +619,6 @@ impl MaterialAnimator {
         let live = |track: usize| {
             self.joints
                 .get(mat_anim as usize)
-                .filter(|_| (mat_anim as usize) < self.count)
                 .and_then(|j| j.track_value(track))
         };
         let base = |i: usize| f32::from_bits(a.base_tracks[i]);
@@ -660,7 +656,7 @@ impl MaterialAnimator {
     /// stages merely own a pack-lifetime clock instead of a spawn-local one.
     pub fn resolved_colors(&self, mat_anim: u32) -> Option<EffectColors> {
         let j = self.joints.get(mat_anim as usize)?;
-        ((mat_anim as usize) < self.count).then(|| EffectColors {
+        Some(EffectColors {
             prim: j.track_color(crate::matanim::TRACK_PRIM_COLOR),
             env: j.track_color(crate::matanim::TRACK_ENV_COLOR),
             blend: j.track_color(crate::matanim::TRACK_BLEND_COLOR),
@@ -1655,6 +1651,35 @@ mod tests {
             .and_then(|c| c.prim)
             .expect("a live ramp");
         assert!(prim[3] > 0, "measurably visible after one tick: {prim:?}");
+    }
+
+    #[test]
+    fn material_animator_ticks_every_entry_the_pack_defines() {
+        // RE-322: the v33 pack has 103 `MatAnimDesc`s; a fixed 64-slot
+        // array left the last 39 frozen, Race to the Finish among them.
+        const OP_EXT_VAL_BLOCK: u32 = 20;
+        const OP_WAIT: u32 = 2;
+        const TRACK_PRIM: u32 = crate::matanim::TRACK_PRIM as u32;
+        let mut w = PackWriter::new();
+        let mut last = 0;
+        for i in 0..103 {
+            let file_bytes = mat_script(&[
+                mat_cmd(OP_EXT_VAL_BLOCK, 1 << TRACK_PRIM, 0),
+                0xFFFF_FF00 | i,
+                mat_cmd(OP_WAIT, 0, 100),
+                0,
+            ]);
+            last = w.add_mat_anim(500 + i, &file_bytes, 0, 0, &[], &[], [0; 10], 0, [0; 3]);
+        }
+        let bytes = w.finish();
+        let pack = crate::pack::Pack::open(&bytes).unwrap();
+        let mut m = MaterialAnimator::new();
+        m.start(&pack);
+        assert_eq!(m.len(), 103);
+        m.tick(&pack);
+        let prim = m.resolved_colors(last).and_then(|c| c.prim);
+        assert_eq!(prim, Some([0xFF, 0xFF, 0xFF, 102]), "the last entry ticks");
+        assert_eq!(m.resolved_colors(103), None, "past the pack's own count");
     }
 
     #[test]

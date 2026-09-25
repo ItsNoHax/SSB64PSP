@@ -525,6 +525,9 @@ unsafe fn draw_training(
     gpu.model_transform([0.0, 0.0, 0.0], [0.0, 0.0, 0.0], meshdraw::MODEL_SCALE);
     let base = gpu.model_matrix();
 
+    // `sc1PGameFuncLights`: the stage light that animated stage light
+    // colours are evaluated under (RE-322).
+    draw_state.set_stage_light(stage.light_angle_xy);
     meshdraw::draw_stage(p, &stage, &base, draw_state, material_anim);
 
     // The N64 puts shadows on their own display link between the stage and

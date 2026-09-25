@@ -8,12 +8,14 @@
 | Video memory | shared | 2 MiB VRAM | 2 MiB VRAM |
 | Fast scratch | 4 KiB TMEM | 16 KiB scratchpad | 16 KiB scratchpad |
 
-- The current asset pack (v33) is 22.2 MB. It needs
-  `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v33 ran on a PSP-2000 via
-  PSPLink (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
+- The current asset pack (v34) is 22.2 MB. It needs
+  `PARAM.SFO` `MEMSIZE=1` (64 MiB process mode). v34 ran on a PSP-2000 via
+  PSPLink (RE-322), v33 before it (RE-321); the earlier stock v32 pack loaded on a PSP-2000 via PSPLink (RE-320); the mode was also
   confirmed with earlier packs (RE-255, RE-260).
 - PSP-1000 ignores `MEMSIZE=1`; the full pack does not fit (RE-288). Support
   needs a per-scene or reduced pack.
+- The stage `MaterialAnimator` allocates one 448-byte joint per
+  `MatAnimDesc` on the heap (103, 46 KiB; RE-322).
 - CPU time, not RAM, is the main constraint. Trade memory for CPU:
   preconverted assets, cached meshes, no runtime decompression.
 

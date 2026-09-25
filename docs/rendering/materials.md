@@ -43,7 +43,8 @@ in static content. Tile-1 scroll is inert: all 12 inputs equal tile 0 and no
 
 ## Material animation
 
-Status: stage palette, frame, tile-0 UV and two-tile blend tracks implemented.
+Status: every stage track implemented: palette, frame, tile-0 UV, two-tile
+blend, `PrimColor`, `Light1Color`, `Light2Color`.
 
 - Each animated `MObj`'s rest `TraU`/`TraV`/`ScaU`/`ScaV` and tile parameters
   are packed; the runtime applies `gcDrawMObjForDObj`'s tile-window delta
@@ -61,7 +62,20 @@ Status: stage palette, frame, tile-0 UV and two-tile blend tracks implemented.
   (no GE blending, alpha gate provably inert); within one step of the RDP
   per channel (RE-321).
 
-Limitations (not approximated):
+- `MaterialAnimator` holds one joint per `MatAnimDesc` (103 in v34); a
+  fixed 64-slot array had left entries 64+ unticked (RE-322).
+- Colour tracks (RE-322; only Race to the Finish uses them, 2 `PrimColor`,
+  1 `Light1Color` + `Light2Color` script). The packer marks where the
+  register still holds the animated `MObj`'s value (`PRIM_ANIM`,
+  `LIGHT1_ANIM`, `LIGHT2_ANIM`); a later `G_SETPRIMCOLOR`/`G_MW_LIGHTCOL`
+  clears it. `PrimColor` feeds the `TEXTURE_BLEND` constant and vertex
+  alpha; its `TEXEL0 * PRIM` alpha blends under the task-list-1 XLU reset.
+  Light tracks light that one primitive with the GE under the stage light
+  (see [lighting.md](lighting.md)). Exact against a decomp reference
+  (`romtool matcolors`).
 
-- Sparse stage `PrimColor`/`Light1Color`/`Light2Color` tracks feed baked
-  vertex colour or an absent stage GE light; they need dynamic lowering.
+Limitations:
+
+- Every material track runs two ticks ahead of the decomp's frame count
+  (constant scene-start phase, RE-322).
+- Static task-list-1 primitives do not yet take the XLU reset (TODO.md).
