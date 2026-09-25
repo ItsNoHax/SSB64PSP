@@ -32,7 +32,6 @@ or evidence record covers it.
 | Weapon shield and hop callbacks | Weapons pass through shields; the Boomerang's `ProcShield`/`ProcHop` are not reached | RE-335 |
 | Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
 | Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility have no effect on the root-sphere hurtbox | RE-333, RE-334 |
-| `romtool matcolors` texel check | Textures 160 and 161 differ from `sprites[0]` in the alpha bit of 307 texels, and the resolver check exits with an error. The HEAD pack before RE-335 (SHA-256 `096a03c9…`) fails the same way, so the earlier "145/145" baseline is stale | RE-335 |
 | Non-unit held fighter scale | Held TopN placement currently uses the first-child offset at normal fighter size; giant/shrunken capture needs the root scale applied as in `ftCommonCapturePulledRotateScale` | RE-332 |
 
 ## Hardware acceptance
@@ -41,7 +40,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v36, with Samus, Luigi and Link slots) is 22,738,640 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Samus, Luigi and Link slots) is 22,746,176 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
 

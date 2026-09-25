@@ -16,23 +16,23 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| `matcolors` texel check | Bisected to `fe01213`: `DamageFlyMDust` now correctly packs under the XLU alpha policy, and its accepted 3-point compensation broke the check's raw-texel assumption. Pack v37 records compensation and a source digest; the check pairs by digest | RE-336 |
 | Link moveset | 14 normals, jab finisher on mid-animation flag 1, five-edge rapid jab, down-air rehit bounce; Boomerang weapon with owner catch; Spin Attack with its fighter-driven weapon; Bomb pull (item unported); Hookshot and throws. 29 Link slots packed. Per-fighter `Attack11` follow-up windows. Host-only | RE-335 |
-| Luigi moveset | Normals, jab finisher, shared Mario specials, Fireball row 1, grabs and throws. Host-only | RE-334 |
 
 ## Verification baseline
 
-- `cargo test --workspace`: 943 tests pass (including ROM-backed tests).
+- `cargo test --workspace`: 944 tests pass (including ROM-backed tests).
 - `romtool anims --verify`: 525 finite lengths agree with the decompilation;
   generated fighter-animation table is reproducible byte for byte.
 - `romtool matcolors --pack`: all 15 tracks and the four resolvers exact
-  over 600 frames and 33/33 CLUTs match, but textures 160 and 161 differ in
-  the alpha bit of 307 texels and the command exits with an error. The HEAD
-  pack before this batch fails the same way (TODO).
+  over 600 frames; 145/145 textures match `sprites[]` through their
+  recorded tile (2 filter-compensated, paired by source digest); 33/33
+  CLUTs match (RE-336).
 - Both PSP builds pass.
-- Pack v36 rebuilt from the ROM: 22,738,640 bytes, SHA-256
-  `153b4b1574e86d7e12e923864aa06a0ad95f307743fb7f18be552ed4c3ba4465`.
-- PPSSPPHeadless: the three `f1-training*` goldens match unchanged with the
-  rebuilt pack. The previous 69-scene baseline is RE-331.
+- Pack v37 rebuilt from the ROM: 22,746,176 bytes, SHA-256
+  `a0e31495e3666212fb6c587b93bf5efdf4ce9078bbe30ff6e750f5ba5c56f0b3`.
+- `tools/golden.sh verify`: 69 of 69 scenes match with the v37 pack
+  (RE-336).
 - PSP-2000 Slim, firmware 6.61 ARK, PSPLink v3.2.1: stage 40 held
   1.026 ms/tick in each 600-tick window from tick 601 through 3,600 (RE-329).
 - PSP-2000 Slim, firmware 6.61: v35 Mushroom Kingdom, Meta Crystal and

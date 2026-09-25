@@ -128,6 +128,10 @@ Runtime still uses plain `GU_LINEAR`.
 | UV phase | Per-primitive S10.5 phase shift stored in pack v31 | RE-312 |
 | Exact-site override | Immutable RGBA8888 cross-phase fit at listed use sites only (`residual_fixes::Kind::Direct`); v766 ships | RE-312 |
 
+Pack v37 marks each compensated texture (`TextureDesc::TEXELS_COMPENSATED`)
+and records a digest of its source tile bytes, so `romtool matcolors` pairs
+it with its ROM image without a texel comparison (RE-336).
+
 A candidate is kept only if it does not regress SSE, maximum error, or the
 ≥ 8 and ≥ 32 counts on an independent holdout. CI textures are promoted to
 RGBA8888 only for ≥ 25% SSE gain within 64 KiB of level-0 cost.
