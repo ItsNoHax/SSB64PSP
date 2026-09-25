@@ -473,6 +473,9 @@ pub fn costume_colors(
 pub struct MaterialJoint {
     tracks: [Aobj; TICK_TRACK_COUNT],
     anim_wait: f32,
+    /// `anim_wait == AOBJ_ANIM_CHANGED`: the first parse neither advances
+    /// the clock nor returns early.
+    changed: bool,
     pc: usize,
     ended: bool,
     start: usize,
@@ -545,6 +548,7 @@ impl MaterialJoint {
         MaterialJoint {
             tracks: [Aobj::default(); TICK_TRACK_COUNT],
             anim_wait: -frame,
+            changed: true,
             pc: script as usize,
             ended: false,
             start: script as usize,
@@ -636,9 +640,15 @@ impl MaterialJoint {
         if self.ended {
             return Ok(());
         }
-        self.anim_wait -= speed;
-        if self.anim_wait > 0.0 {
-            return Ok(());
+        // `gcParseMObjMatAnimJoint`: `AOBJ_ANIM_CHANGED` becomes
+        // `-anim_frame` (set by `start`) without advancing the clock.
+        if self.changed {
+            self.changed = false;
+        } else {
+            self.anim_wait -= speed;
+            if self.anim_wait > 0.0 {
+                return Ok(());
+            }
         }
 
         for _ in 0..4096 {
@@ -680,7 +690,7 @@ impl MaterialJoint {
                 _ => {
                     let per = tick_values_per_track(opcode)
                         .ok_or(MatAnimError::UnknownOpcode { opcode, at })?;
-                    self.pc = self.apply(data, opcode, flags, payload, per)?;
+                    self.pc = self.apply(data, opcode, flags, payload, per, speed)?;
                     if blocks(opcode) {
                         self.anim_wait += payload;
                     }
@@ -705,6 +715,7 @@ impl MaterialJoint {
         flags: u32,
         payload: f32,
         per: usize,
+        speed: f32,
     ) -> Result<usize, MatAnimError> {
         let mut pc = self.pc;
         // PSPLink enables FPU divide-by-zero traps. A zero-duration command
@@ -736,7 +747,7 @@ impl MaterialJoint {
                 let t = &mut self.tracks[base + i];
                 t.value_base = t.value_target;
                 t.value_target = value;
-                t.length = -self.anim_wait;
+                t.length = -self.anim_wait - speed;
                 if payload != 0.0 {
                     t.length_invert = payload_inverse;
                 }
@@ -1049,7 +1060,8 @@ mod tick_tests {
     #[test]
     fn a_palette_step_switches_after_its_payload_frames() {
         // RE-086/RE-087's real shape: PaletteID (track 9) steps to 0
-        // immediately (payload 0), then to 1 after 3 more frames.
+        // immediately (payload 0), then to 1 three frames later (frame 4,
+        // when `END` runs and the length reaches the payload).
         let d = script(&[
             cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 0),
             0.0f32.to_bits(),
@@ -1066,6 +1078,10 @@ mod tick_tests {
         );
         assert!(j.track_is_stepped(TRACK_PALETTE_ID));
 
+        for _ in 0..2 {
+            j.tick(&d, 1.0).expect("ticks");
+            assert_eq!(j.track_value(TRACK_PALETTE_ID), Some(0.0), "held");
+        }
         j.tick(&d, 1.0).expect("ticks");
         assert_eq!(
             j.track_value(TRACK_PALETTE_ID),
@@ -1131,6 +1147,10 @@ mod tick_tests {
             0.0f32.to_bits(),
             cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
             1.0f32.to_bits(),
+            // Real loops close on the start value; without it the payload-0
+            // step after `SET_ANIM` replaces `1` on the frame it is due.
+            cmd(OP_SET_VAL_AFTER_BLOCK, 1 << TRACK_PALETTE_ID, 2),
+            0.0f32.to_bits(),
             cmd(OP_SET_ANIM, 0, 0),
             0, // jump target: offset 0, this script's own start
         ]);
@@ -1219,7 +1239,11 @@ mod tick_tests {
         assert!(!j.track_is_stepped(TRACK_PRIM_COLOR), "a ramp, not a step");
         let [r, g, b, a] = j.track_color(TRACK_PRIM_COLOR).unwrap();
         assert_eq!((r, g, b), (255, 255, 96), "RGB is constant across the ramp");
-        assert!(a > 0, "already measurably visible after one tick, was {a}");
+        assert_eq!(a, 0, "frame 1 shows the authored start");
+
+        j.tick(&d, 1.0).expect("ticks");
+        let a = j.track_color(TRACK_PRIM_COLOR).unwrap()[3];
+        assert!(a > 0, "measurably visible on frame 2, was {a}");
 
         for _ in 0..5 {
             j.tick(&d, 1.0).expect("ticks");
@@ -1230,9 +1254,14 @@ mod tick_tests {
             "still ramping up: {a} < {halfway} < 204"
         );
 
-        for _ in 0..6 {
+        for _ in 0..5 {
             j.tick(&d, 1.0).expect("ticks");
         }
+        assert!(
+            j.track_color(TRACK_PRIM_COLOR).unwrap()[3] < 204,
+            "frame 12"
+        );
+        j.tick(&d, 1.0).expect("ticks");
         assert_eq!(
             j.track_color(TRACK_PRIM_COLOR).unwrap()[3],
             204,

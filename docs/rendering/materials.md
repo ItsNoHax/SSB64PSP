@@ -63,7 +63,9 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
   per channel (RE-321).
 
 - `MaterialAnimator` holds one joint per `MatAnimDesc` (103 in v34); a
-  fixed 64-slot array had left entries 64+ unticked (RE-322).
+  fixed 64-slot array had left entries 64+ unticked (RE-322). Tick `n` is
+  the decomp's frame `n`: the first parse keeps `AOBJ_ANIM_CHANGED`'s
+  clock and keys start at `length = -anim_wait - anim_speed` (RE-324).
 - Colour tracks (RE-322; only Race to the Finish uses them, 2 `PrimColor`,
   1 `Light1Color` + `Light2Color` script). The packer marks where the
   register still holds the animated `MObj`'s value (`PRIM_ANIM`,
@@ -77,7 +79,5 @@ blend, `PrimColor`, `Light1Color`, `Light2Color`.
 
 Limitations:
 
-- Every material track runs two ticks ahead of the decomp's frame count
-  (constant scene-start phase, RE-322).
 - The camera-level head-1 XLU reset outside stage layers is not modelled
   (RE-323, TODO.md).

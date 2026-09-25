@@ -188,29 +188,34 @@ mod tests {
     #[test]
     fn prim_color_interpolates_each_byte_like_the_packed_multiply() {
         let d = glow_fade();
-        // The engine's tick `n` is the decomp's frame `n + 2` (RE-322): a
-        // segment's length is `n + 1` after `n` ticks, where the decomp's
-        // first `gcPlayMObjMatAnim` sees 0.
-        assert_eq!(after(&d, P, 1), lerp(0xFFFF_A366, 0xFFFF_A300, 2.0, 60.0));
-        assert_eq!(after(&d, P, 30), lerp(0xFFFF_A366, 0xFFFF_A300, 31.0, 60.0));
-        assert_eq!(after(&d, P, 30)[3], 49, "midpoint alpha");
+        // The engine's tick `n` is the decomp's frame `n`: a segment's
+        // length is `n - 1` after `n` ticks, as the decomp's first
+        // `gcPlayMObjMatAnim` sees 0.
+        assert_eq!(
+            after(&d, P, 1),
+            [0xFF, 0xFF, 0xA3, 0x66],
+            "rest alpha first"
+        );
+        assert_eq!(after(&d, P, 3), lerp(0xFFFF_A366, 0xFFFF_A300, 2.0, 60.0));
+        assert_eq!(after(&d, P, 32), lerp(0xFFFF_A366, 0xFFFF_A300, 31.0, 60.0));
+        assert_eq!(after(&d, P, 32)[3], 49, "midpoint alpha");
         // RGB is constant across every key: only alpha animates.
-        assert_eq!(after(&d, P, 30)[..3], [0xFF, 0xFF, 0xA3]);
+        assert_eq!(after(&d, P, 32)[..3], [0xFF, 0xFF, 0xA3]);
     }
 
     #[test]
     fn prim_color_reaches_each_key_exactly() {
         let d = glow_fade();
         assert_eq!(
-            after(&d, P, 59),
+            after(&d, P, 61),
             [0xFF, 0xFF, 0xA3, 0],
             "end of the first fade"
         );
         // The second segment starts from exactly the first one's target.
-        assert_eq!(after(&d, P, 60), lerp(0xFFFF_A300, 0xFFFF_A366, 1.0, 60.0));
-        assert_eq!(after(&d, P, 119)[3], 102, "back to the rest alpha");
+        assert_eq!(after(&d, P, 62), lerp(0xFFFF_A300, 0xFFFF_A366, 1.0, 60.0));
+        assert_eq!(after(&d, P, 121)[3], 102, "back to the rest alpha");
         // One-tick key: 102 -> 100 in a single step.
-        assert_eq!(after(&d, P, 120)[3], 100);
+        assert_eq!(after(&d, P, 122)[3], 100);
     }
 
     #[test]
@@ -221,21 +226,21 @@ mod tests {
             assert_eq!(after(&d, P, tick), after(&d, P, tick + 240), "tick {tick}");
         }
         // Across the loop the last segment's target is the first one's base.
-        assert_eq!(after(&d, P, 239)[3], 102);
-        assert_eq!(after(&d, P, 240), lerp(0xFFFF_A366, 0xFFFF_A300, 1.0, 60.0));
+        assert_eq!(after(&d, P, 241)[3], 102);
+        assert_eq!(after(&d, P, 242), lerp(0xFFFF_A366, 0xFFFF_A300, 1.0, 60.0));
     }
 
     #[test]
     fn light1_and_light2_interpolate_independently() {
         let d = light_fade();
-        let (l1, l2) = (after(&d, L1, 30), after(&d, L2, 30));
+        let (l1, l2) = (after(&d, L1, 32), after(&d, L2, 32));
         assert_eq!(l1, lerp(0xB3B3_B300, 0, 31.0, 60.0));
         assert_eq!(l2, lerp(0x8080_8000, 0, 31.0, 60.0));
         assert_ne!(l1, l2);
-        assert_eq!(after(&d, L1, 59), [0; 4]);
-        assert_eq!(after(&d, L2, 119), [0x80, 0x80, 0x80, 0]);
-        assert_eq!(after(&d, L1, 120), [0xB0, 0xB0, 0xB0, 0]);
-        assert_eq!(after(&d, L2, 120), [0x7D, 0x7D, 0x7D, 0]);
+        assert_eq!(after(&d, L1, 61), [0; 4]);
+        assert_eq!(after(&d, L2, 121), [0x80, 0x80, 0x80, 0]);
+        assert_eq!(after(&d, L1, 122), [0xB0, 0xB0, 0xB0, 0]);
+        assert_eq!(after(&d, L2, 122), [0x7D, 0x7D, 0x7D, 0]);
     }
 
     fn prim(flags: u32) -> PrimDesc {
@@ -344,7 +349,7 @@ mod tests {
     fn static_and_animated_primitives_alternate_without_stale_registers() {
         let d = light_fade();
         let mut j = MaterialJoint::start(0, 0.0);
-        for _ in 0..30 {
+        for _ in 0..32 {
             j.tick(&d, 1.0).unwrap();
         }
         let live = EffectColors {

@@ -273,3 +273,12 @@ match twice. Stage render-layer-1 task-list-1 primitives now blend under
 at 2x, nodes 8/9 glows), `r2-stage-bonus2-mario` (1,156, hazard-bar glow),
 `r2-stage-zebes` (236) and `r2-stage-sector-z` (224, engine glows). N64
 references in RE-323.
+
+## 2026-09-25 RE-324 material animation phase
+
+Pack unchanged (`a4072881…`). `MaterialJoint` tick `n` is now the decomp's
+frame `n`, two frames later than before. Fourteen goldens changed and were
+refreshed; 68 of 68 then match twice. Changes range from 144 pixels
+(`r2-stage-yoshis-island`) to 81,856 (`r2-dream-land-water`) at 2x.
+Control: a build that pre-ticks every material joint twice reproduces all
+68 old goldens exactly. Per-golden counts are in RE-324.

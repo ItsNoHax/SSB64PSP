@@ -25,10 +25,6 @@ const TRACK_NAMES: [&str; 5] = [
     "Light2Color",
 ];
 
-/// How far the runtime engine leads the decomp: its tick `n` equals the
-/// decomp's frame `n + PHASE` (RE-322).
-const PHASE: u32 = 2;
-
 #[derive(Clone, Copy, Default)]
 struct RefTrack {
     live: bool,
@@ -230,7 +226,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
 
         let mut reference = Reference::new(data, a.script);
         let mut expected = Vec::new();
-        for _ in 0..TICKS + PHASE {
+        for _ in 0..TICKS {
             expected.push(reference.frame()?);
         }
         let live: Vec<usize> = (0..5)
@@ -243,7 +239,7 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
         for n in 1..=TICKS {
             let got = runtime[i as usize][n as usize - 1];
             let got = [got.prim, got.env, got.blend, got.light1, got.light2];
-            if got != expected[(n + PHASE) as usize - 1] {
+            if got != expected[n as usize - 1] {
                 bad += 1;
             }
         }
@@ -304,11 +300,10 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
             loop_at.map_or("-".into(), |l| (l - 1).to_string()),
             &starts[..starts.len().min(12)]
         );
-        println!("  decomp frame  reference                         runtime tick  runtime");
-        for f in samples.into_iter().filter(|&f| f > PHASE) {
+        println!("  frame  reference                         runtime");
+        for f in samples.into_iter().filter(|&f| f <= TICKS) {
             let e = expected[f as usize - 1];
-            let n = f - PHASE;
-            let g = runtime[i as usize][n as usize - 1];
+            let g = runtime[i as usize][f as usize - 1];
             let g = [g.prim, g.env, g.blend, g.light1, g.light2];
             let fmt = |c: [Option<[u8; 4]>; 5]| {
                 live.iter()
@@ -317,16 +312,13 @@ pub fn matcolors(rom_path: &Path, opts: &[&str]) -> Res {
                     .join(" ")
             };
             println!(
-                "  {f:12}  {:<32}  {n:12}  {}{}",
+                "  {f:5}  {:<32}  {}{}",
                 fmt(e),
                 fmt(g),
                 if e == g { "" } else { "  MISMATCH" }
             );
         }
-        println!(
-            "  {} of {TICKS} ticks differ from the reference at phase {PHASE}",
-            bad
-        );
+        println!("  {} of {TICKS} ticks differ from the reference", bad);
     }
     println!(
         "\n{entries} stage colour MatAnimDesc(s): {}; {mismatches} mismatching tick(s)",
