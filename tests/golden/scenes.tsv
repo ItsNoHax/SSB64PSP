@@ -44,11 +44,11 @@ r2-dream-land-water	psp-asset-viewer	dream_land_water	pass	RE-321
 f1-training-fireball	psp-game	fireball	pass	RE-300
 f1-training-shadows	psp-game	shadows	pass	RE-302
 r2-stage-beta-dream-land	psp-asset-viewer	stage 1	pass	RE-286 RE-312
-r2-stage-zebes	psp-asset-viewer	stage 2	pass	RE-286 RE-312
+r2-stage-zebes	psp-asset-viewer	stage 2	pass	RE-286 RE-312 RE-323
 r2-stage-test-stage	psp-asset-viewer	stage 3	pass	RE-286 RE-312
 r2-stage-mushroom-kingdom	psp-asset-viewer	stage 5	pass	RE-286 RE-312
 r2-stage-kongo-jungle	psp-asset-viewer	stage 6	pass	RE-286 RE-312
-r2-stage-sector-z	psp-asset-viewer	stage 7	pass	RE-286 RE-312
+r2-stage-sector-z	psp-asset-viewer	stage 7	pass	RE-286 RE-312 RE-323
 r2-stage-yoshis-island	psp-asset-viewer	stage 8	pass	RE-286 RE-312
 r2-stage-hyrule-castle	psp-asset-viewer	stage 10	pass	RE-286 RE-312
 r2-stage-final-destination	psp-asset-viewer	stage 11	pass	RE-286 RE-312 RE-322
@@ -68,7 +68,7 @@ r2-stage-bonus1-kirby	psp-asset-viewer	stage 24	pass	RE-286 RE-312
 r2-stage-bonus1-pikachu	psp-asset-viewer	stage 25	pass	RE-286 RE-312
 r2-stage-bonus1-purin	psp-asset-viewer	stage 26	pass	RE-286 RE-312
 r2-stage-bonus1-ness	psp-asset-viewer	stage 27	pass	RE-286 RE-312
-r2-stage-bonus2-mario	psp-asset-viewer	stage 28	pass	RE-286 RE-312
+r2-stage-bonus2-mario	psp-asset-viewer	stage 28	pass	RE-286 RE-312 RE-323
 r2-stage-bonus2-fox	psp-asset-viewer	stage 29	pass	RE-286 RE-312 RE-322
 r2-stage-bonus2-donkey-kong	psp-asset-viewer	stage 30	pass	RE-286 RE-312
 r2-stage-bonus2-samus	psp-asset-viewer	stage 31	pass	RE-286 RE-312
@@ -80,4 +80,4 @@ r2-stage-bonus2-kirby	psp-asset-viewer	stage 36	pass	RE-286 RE-312
 r2-stage-bonus2-pikachu	psp-asset-viewer	stage 37	pass	RE-286 RE-312
 r2-stage-bonus2-purin	psp-asset-viewer	stage 38	pass	RE-286 RE-312
 r2-stage-bonus2-ness	psp-asset-viewer	stage 39	pass	RE-286 RE-312
-r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312 RE-322
+r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312 RE-322 RE-323

@@ -293,8 +293,9 @@ impl InitialMaterial {
     /// with `list_id == 1`, `gr`'s translucent pass) gets
     /// `G_RM_AA_ZB_XLU_SURF` instead -- `Z_CMP` on, `Z_UPD` off, `ZMODE_XLU`.
     /// This constant alone would overstate `depth_write` for those entries;
-    /// `tools/romtool`'s `ground_layer1_list1_depth_seed` (RE-250) corrects it
-    /// per item via [`SequenceItem::depth_seed`], using the `list_id`
+    /// `tools/romtool`'s `ground_layer1_list1_depth_seed` (RE-250, RE-323)
+    /// applies the list-1 render mode per item via
+    /// [`SequenceItem::depth_seed`], using the `list_id`
     /// `PlannedList` now keeps. Measured (`census_ground_layer_depth_state_vs_
     /// z_buffer`): 21 of 163 layer-1 `DObjDLLink` entries target list 1 (108
     /// of 776 layer-1 primitives), now correctly reading `depth_write` false.
@@ -1050,10 +1051,9 @@ pub enum AlphaBlend {
     /// override is needed here -- a plain `Modulate` already computes
     /// this formula for free once blend is enabled.
     Shade,
-    /// `TEXEL0_ALPHA * PRIM_ALPHA`, classified only where the primitive
-    /// colour is animated (RE-322): the vertex alpha carries the primitive
-    /// alpha, which the renderer replaces with the live track value. Static
-    /// primitives with this formula keep their earlier path. Carries the
+    /// `TEXEL0_ALPHA * PRIM_ALPHA` (RE-322, RE-323): the vertex alpha
+    /// carries the primitive alpha; where the primitive colour is animated
+    /// the renderer replaces it with the live track value. Carries the
     /// static primitive alpha, since [`MeshMaterial::prim_color`] holds the
     /// combiner's shade scale rather than the register.
     Prim(u8),
@@ -1443,11 +1443,6 @@ struct State {
     mobjs: Vec<crate::mobj::MObjMaterial>,
     /// Parallel to `mobjs`; see `SequenceItem::mat_anims`.
     mat_anims: Vec<Option<MatAnimRef>>,
-    /// The render mode is still task list 1's `G_RM_AA_ZB_XLU_SURF` reset
-    /// (`SequenceItem::depth_seed`), not one the lists set themselves.
-    /// Consumed only for an animated primitive colour (RE-322); see
-    /// [`State::material_now`].
-    xlu_seed: bool,
 }
 
 /// What the stream has said about `G_MDSFT_TEXTLUT`.
@@ -1462,6 +1457,19 @@ enum LutState {
 }
 
 impl State {
+    /// Applies a `G_MDSFT_RENDERMODE` word (`G_SETOTHERMODE_L`, shift 3,
+    /// length 29).
+    fn set_render_mode(&mut self, data: u32) {
+        self.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
+        self.material.translucent = render_mode_is_translucent(data);
+        // RE-244: `Z_CMP`/`Z_UPD`/`ZMODE` are independent RDP bits, not
+        // derived from `G_ZBUFFER` (`material.z_buffer`, set only by
+        // `Cmd::GeometryMode`).
+        self.material.depth_test = data & Z_CMP != 0;
+        self.material.depth_write = data & Z_UPD != 0;
+        self.material.depth_mode = ZMode::from_render_mode(data);
+    }
+
     /// The TLUT mode a texture drawn now is sampled with.
     ///
     /// An unset mode keeps the converter's pre-RE-313 reading: CI through the
@@ -1531,7 +1539,6 @@ impl State {
             tile1_params: None,
             mobjs: Vec::new(),
             mat_anims: Vec::new(),
-            xlu_seed: false,
         }
     }
 
@@ -1720,23 +1727,25 @@ impl State {
                 self.material.env_color,
             )
         });
-        // RE-322: an animated primitive colour whose alpha reaches the
-        // blender. Race to the Finish's tracks animate only that alpha, and
-        // its task-list-1 glows reach the XLU blender through the list-1
-        // render-mode reset rather than a command of their own. Scoped to
-        // the animated register: the same reset on static list-1 primitives
-        // is a separate, unchanged gap (TODO.md).
+        // RE-322: which colour registers still hold an animated `MObj`'s
+        // value, for the renderer to replace with the live track.
         let anim_colors = if self.material.mat_anim.is_some() {
             self.material.anim_colors
         } else {
             AnimColors::default()
         };
-        let prim_alpha_blend = (anim_colors.prim
-            && self.combiner.is_some_and(|(hi, lo)| {
-                combiner_alpha_is_texel_times_prim(hi, lo, self.two_cycle)
-            }))
-        .then(|| AlphaBlend::Prim(self.material.prim_color.map_or(255, |c| c[3])));
-        let anim_translucent = prim_alpha_blend.is_some() && self.xlu_seed;
+        // RE-322/RE-323: `TEXEL0_ALPHA * PRIM_ALPHA`, where the render mode
+        // blends or the register is animated. A static primitive under a
+        // non-blending mode keeps its earlier vertex alpha: RE-323 measured
+        // 52 such primitives whose `G_AC_THRESHOLD` result would change,
+        // most in task-list-1 graphs whose camera-level XLU reset is not
+        // modelled. An unknown register declines rather than guessing.
+        let prim_alpha_blend = self
+            .combiner
+            .filter(|_| self.material.translucent || anim_colors.prim)
+            .filter(|&(hi, lo)| combiner_alpha_is_texel_times_prim(hi, lo, self.two_cycle))
+            .and(self.material.prim_color)
+            .map(|c| AlphaBlend::Prim(c[3]));
         let flat_color = combiner.and_then(|(hi, lo)| {
             combiner_flat_color(
                 hi,
@@ -1778,7 +1787,7 @@ impl State {
             // does classify some shapes, an untextured primitive still has
             // no texel alpha for any of them to multiply, so the gate stays.
             alpha_test: self.material.alpha_test && texture.is_some(),
-            translucent: (self.material.translucent || anim_translucent) && texture.is_some(),
+            translucent: self.material.translucent && texture.is_some(),
             // RE-129/RE-130: independent of the RGB (`texture_blend`/
             // `flat_color`/shade-scale) classification above, and only
             // meaningful when `translucent` (just above) actually is --
@@ -2283,7 +2292,9 @@ pub struct SequenceItem<'a> {
     /// "not animated", not "unknown" — most `MObj`s never are.
     pub mat_anims: &'a [Option<MatAnimRef>],
     /// Forces `depth_test`/`depth_write`/`depth_mode` before this item's own
-    /// commands run, overriding whatever the previous item left behind.
+    /// commands run, overriding whatever the previous item left behind. The
+    /// list-1 value `(true, false, ZMode::Translucent)` applies the whole
+    /// `G_RM_AA_ZB_XLU_SURF` render mode, blender included (RE-323).
     ///
     /// Every other field on [`State`] genuinely is one shared RDP/vertex-cache
     /// stream across a whole sequence (see this function's own doc comment),
@@ -2377,12 +2388,17 @@ pub fn convert_sequence(
         // regardless of what the previous item left behind -- see
         // `SequenceItem::depth_seed`'s own doc comment for why.
         if let Some((depth_test, depth_write, depth_mode)) = item.depth_seed {
-            state.material.depth_test = depth_test;
-            state.material.depth_write = depth_write;
-            state.material.depth_mode = depth_mode;
-            // `grDisplayLayer1*ProcDisplay` resets task list 1 to
-            // `G_RM_AA_ZB_XLU_SURF`; this seed is its depth half.
-            state.xlu_seed = depth_test && !depth_write && depth_mode == ZMode::Translucent;
+            if (depth_test, depth_write, depth_mode) == (true, false, ZMode::Translucent) {
+                // `grDisplayLayer1*ProcDisplay` resets task list 1 to
+                // `G_RM_AA_ZB_XLU_SURF`: the whole render mode, not only its
+                // depth bits, so a list-1 primitive that sets none of its
+                // own blends (RE-323).
+                state.set_render_mode(RENDER_MODE_AA_ZB_XLU_SURF);
+            } else {
+                state.material.depth_test = depth_test;
+                state.material.depth_write = depth_write;
+                state.material.depth_mode = depth_mode;
+            }
         }
 
         // Seed the builder from the state carried in, not from the default.
@@ -2759,15 +2775,7 @@ fn walk(
                 len: 29,
                 data,
             } => {
-                state.material.alpha_test = data & RENDER_MODE_TEX_EDGE == RENDER_MODE_TEX_EDGE;
-                state.material.translucent = render_mode_is_translucent(data);
-                // RE-244: `Z_CMP`/`Z_UPD`/`ZMODE` are independent RDP bits,
-                // not derived from `G_ZBUFFER` (`state.material.z_buffer`,
-                // set only by `Cmd::GeometryMode` above).
-                state.material.depth_test = data & Z_CMP != 0;
-                state.material.depth_write = data & Z_UPD != 0;
-                state.material.depth_mode = ZMode::from_render_mode(data);
-                state.xlu_seed = false;
+                state.set_render_mode(data);
             }
 
             // `G_MDSFT_ALPHACOMPARE`, 2 bits at shift 0 (RE-195): a second,
@@ -2895,6 +2903,10 @@ const Z_UPD: u32 = 0x0000_0020;
 /// edge coverage the PSP has no equivalent for; approximated as a plain
 /// alpha test (RE-069, following `sf64-psp`'s validated approach).
 const RENDER_MODE_TEX_EDGE: u32 = CVG_X_ALPHA | ALPHA_CVG_SEL;
+/// `G_RM_AA_ZB_XLU_SURF | G_RM_AA_ZB_XLU_SURF2`: `AA_EN | Z_CMP | IM_RD |
+/// CLR_ON_CVG | CVG_DST_WRAP | ZMODE_XLU | FORCE_BL`, blending
+/// `IN * A_IN + MEM * (1 - A_IN)` in both cycles.
+const RENDER_MODE_AA_ZB_XLU_SURF: u32 = 0x0050_49D8;
 
 /// True when a `G_SETRENDERMODE` value's blend equation reads back the
 /// framebuffer weighted by `1 - alpha` (`G_BL_CLR_MEM`, `G_BL_1MA`) in
@@ -3851,9 +3863,58 @@ mod tests {
         assert!(p[0].material.translucent);
         assert_eq!(p[0].material.alpha_blend, Some(AlphaBlend::Prim(0x69)));
         assert_eq!(p[3].material.alpha_blend, Some(AlphaBlend::Prim(0x66)));
-        // Static list-1 glows keep their earlier, opaque lowering.
-        assert!(!p[1].material.translucent);
-        assert_eq!(p[1].material.alpha_blend, None);
+    }
+
+    #[test]
+    fn a_static_prim_alpha_reaches_the_xlu_blender() {
+        // RE-323: nodes 8 and 9 set no render mode of their own; the list-1
+        // reset alone makes them blend, by node 8's literal primitive alpha.
+        let p = race_glows(XLU_SEED);
+        for p in &p[1..3] {
+            assert!(p.material.translucent);
+            assert!(!p.material.anim_colors.prim);
+            assert_eq!(p.material.alpha_blend, Some(AlphaBlend::Prim(0x99)));
+        }
+    }
+
+    #[test]
+    fn the_list1_reset_is_the_whole_xlu_render_mode() {
+        let p = race_glows(XLU_SEED);
+        let m = &p[1].material;
+        assert!(m.depth_test && !m.depth_write);
+        assert_eq!(m.depth_mode, ZMode::Translucent);
+        assert!(!m.alpha_test, "XLU_SURF has no TEX_EDGE coverage");
+        assert!(render_mode_is_translucent(RENDER_MODE_AA_ZB_XLU_SURF));
+        assert_eq!(
+            ZMode::from_render_mode(RENDER_MODE_AA_ZB_XLU_SURF),
+            ZMode::Translucent
+        );
+    }
+
+    #[test]
+    fn an_unknown_prim_register_declines_the_prim_alpha_formula() {
+        use crate::scene::Mat4;
+
+        let file = vertex_data(3);
+        let cmds = [
+            Cmd::SetCombine {
+                hi: 0x0030_9661,
+                lo: 0x552E_FF7F,
+            },
+            vtx(3),
+            Cmd::Tri1([0, 1, 2]),
+        ];
+        let items = [SequenceItem {
+            cmds: &cmds,
+            world: Mat4::IDENTITY,
+            mobjs: &[],
+            mat_anims: &[],
+            depth_seed: XLU_SEED,
+            stream: 1,
+        }];
+        let mut m = convert_sequence(&items, Source::bare(&file), InitialMaterial::default());
+        let p = m.pop().unwrap().unwrap().primitives.pop().unwrap();
+        assert_eq!(p.material.alpha_blend, None);
     }
 
     #[test]
@@ -3864,6 +3925,9 @@ mod tests {
             p[0].material.anim_colors.prim,
             "the register is still animated"
         );
+        // RE-323: a static register under a non-blending mode keeps the
+        // earlier vertex alpha.
+        assert_eq!(p[1].material.alpha_blend, None);
     }
 
     #[test]

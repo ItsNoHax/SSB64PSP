@@ -43,6 +43,12 @@ Status: complete for classified single-cycle formulas.
 
 Nine alpha-combiner shapes were classified archive-wide. `TEXEL0_ALPHA` and
 `TEXEL0_ALPHA * SHADE_ALPHA` blend on the GE (RE-129, RE-130).
+`TEXEL0_ALPHA * PRIM_ALPHA` blends where the render mode blends or `PRIM`
+is animated (RE-322, RE-323).
+
+Stage render-layer-1 task list 1 starts from `grDisplayLayer1*ProcDisplay`'s
+`G_RM_AA_ZB_XLU_SURF` (depth and blender; RE-250, RE-323). The per-camera
+head-1 reset (`func_80016338`) is not modelled for other graphs (TODO.md).
 
 Declined, measured: about 43 `PRIM_ALPHA`-multiply and 93 two-cycle
 primitives.

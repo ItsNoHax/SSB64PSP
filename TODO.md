@@ -8,7 +8,7 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Task-list-1 XLU reset for static stage primitives | `grDisplayLayer1*ProcDisplay` resets list 1 to `G_RM_AA_ZB_XLU_SURF`; only animated-alpha primitives take it. A general seed makes 12 more primitives blend (Race to the Finish nodes 8/9 draw opaque yellow boxes; N64 shows translucent cones) | RE-322 |
+| Camera head-1 XLU reset outside stage layers | `func_80016338` resets task list 1 to `G_RM_AA_ZB_XLU_SURF` per camera, but earlier head-1 draws under that camera can change it; not modelled. 52 opaque `TEXEL0 * PRIM` primitives (MV opening room, item/effect and fighter models) keep their earlier vertex alpha until it is | RE-323 |
 | Material animation phase | `MaterialJoint` tick `n` = decomp frame `n + 2` for every track; fixing it shifts every material animation and golden | RE-322 |
 | Viewer simulation slows with run time | On PSP-2000 the stage view's per-tick simulation cost grows (≈4 ms/tick at frame 1,200, spiralling to ≈4 ticks/frame later), in HEAD too | RE-322 |
 | Fighter costumes beyond 0 in `psp-game` | All palettes are packed and selectable in the viewer; the game still hardcodes costume 0 | RE-096, RE-261 |
