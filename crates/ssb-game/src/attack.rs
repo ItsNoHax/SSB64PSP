@@ -1388,6 +1388,37 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Luigi, AnyStatus::Mario(s)) => match s {
+            MarioStatus::Attack13 => Some(&crate::luigi_attack::JAB3),
+            MarioStatus::SpecialHi => Some(&crate::luigi_attack::SUPERJUMP_GROUND),
+            MarioStatus::SpecialAirHi => Some(&crate::luigi_attack::SUPERJUMP_AIR),
+            MarioStatus::SpecialLw => Some(&crate::luigi_attack::CYCLONE_GROUND),
+            MarioStatus::SpecialAirLw => Some(&crate::luigi_attack::CYCLONE_AIR),
+            MarioStatus::SpecialN | MarioStatus::SpecialAirN => None,
+        },
+        (FighterKind::Luigi, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::luigi_attack::JAB1),
+            Status::Attack12 => Some(&crate::luigi_attack::JAB2),
+            Status::AttackDash => Some(&crate::luigi_attack::DASH),
+            Status::AttackS3Hi => Some(&crate::luigi_attack::FTILT_HI),
+            Status::AttackS3 => Some(&crate::luigi_attack::FTILT),
+            Status::AttackS3Lw => Some(&crate::luigi_attack::FTILT_LW),
+            Status::AttackHi3 => Some(&crate::luigi_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::luigi_attack::DTILT),
+            Status::AttackS4Hi => Some(&crate::luigi_attack::FSMASH_HI),
+            Status::AttackS4HiS => Some(&crate::luigi_attack::FSMASH_HI_S),
+            Status::AttackS4 => Some(&crate::luigi_attack::FSMASH),
+            Status::AttackS4LwS => Some(&crate::luigi_attack::FSMASH_LW_S),
+            Status::AttackS4Lw => Some(&crate::luigi_attack::FSMASH_LW),
+            Status::AttackHi4 => Some(&crate::luigi_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::luigi_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::luigi_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::luigi_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::luigi_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::luigi_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::luigi_attack::AIR_LW),
+            _ => None,
+        },
         (FighterKind::Samus, AnyStatus::Samus(crate::status::SamusStatus::SpecialHi)) => {
             Some(&crate::samus_attack::SCREW_GROUND)
         }
@@ -1800,9 +1831,9 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 /// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
 /// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
 /// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey/
-/// Samus `MainMotion.c`, not from the visual model's node order.
+/// Samus/Luigi `MainMotion.c`, not from the visual model's node order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Donkey, Fox, Mario, Samus};
+    use crate::fighter::FighterKind::{Donkey, Fox, Luigi, Mario, Samus};
     if kind == Donkey
         && matches!(
             status,
@@ -1818,6 +1849,35 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         };
     }
     let ids: &[u8] = match (kind, status) {
+        (Luigi, AnyStatus::Common(Status::Attack11)) => &[10, 9],
+        (Luigi, AnyStatus::Common(Status::Attack12)) => &[16, 15],
+        (Luigi, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 27, 25],
+        (Luigi, AnyStatus::Common(Status::AttackDash)) => &[16, 10],
+        (Luigi, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
+            &[24, 25]
+        }
+        (Luigi, AnyStatus::Common(Status::AttackHi3)) => &[14, 15],
+        (Luigi, AnyStatus::Common(Status::AttackLw3)) => &[19, 20],
+        (
+            Luigi,
+            AnyStatus::Common(
+                Status::AttackS4Hi
+                | Status::AttackS4HiS
+                | Status::AttackS4
+                | Status::AttackS4LwS
+                | Status::AttackS4Lw,
+            ),
+        ) => &[14, 15],
+        (Luigi, AnyStatus::Common(Status::AttackHi4)) => &[12],
+        (Luigi, AnyStatus::Common(Status::AttackLw4)) => &[25, 25, 20, 20],
+        (Luigi, AnyStatus::Common(Status::AttackAirN)) => &[25, 20, 5],
+        (Luigi, AnyStatus::Common(Status::AttackAirHi)) => &[25, 27],
+        (
+            Luigi,
+            AnyStatus::Common(Status::AttackAirF | Status::AttackAirB | Status::AttackAirLw),
+        ) => &[25],
+        (Luigi, AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi)) => &[12, 15],
+        (Luigi, AnyStatus::Mario(MarioStatus::SpecialLw | MarioStatus::SpecialAirLw)) => &[0],
         (Mario, AnyStatus::Common(Status::Attack11)) => &[10, 9],
         (Mario, AnyStatus::Common(Status::Attack12)) => &[16, 15],
         (Mario, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 25, 27],
@@ -2704,6 +2764,58 @@ mod tests {
 
         apply_hit_from(&attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 14);
+    }
+
+    #[test]
+    fn every_luigi_move_has_source_joints() {
+        use crate::fighter::FighterKind;
+        let mut statuses: [AnyStatus; 25] = [Status::Attack11.into(); 25];
+        let common = [
+            Status::Attack11,
+            Status::Attack12,
+            Status::AttackDash,
+            Status::AttackS3Hi,
+            Status::AttackS3,
+            Status::AttackS3Lw,
+            Status::AttackHi3,
+            Status::AttackLw3,
+            Status::AttackS4Hi,
+            Status::AttackS4HiS,
+            Status::AttackS4,
+            Status::AttackS4LwS,
+            Status::AttackS4Lw,
+            Status::AttackHi4,
+            Status::AttackLw4,
+            Status::AttackAirN,
+            Status::AttackAirF,
+            Status::AttackAirB,
+            Status::AttackAirHi,
+            Status::AttackAirLw,
+        ];
+        for (slot, status) in statuses.iter_mut().zip(common) {
+            *slot = status.into();
+        }
+        statuses[20] = AnyStatus::Mario(MarioStatus::Attack13);
+        statuses[21] = AnyStatus::Mario(MarioStatus::SpecialHi);
+        statuses[22] = AnyStatus::Mario(MarioStatus::SpecialAirHi);
+        statuses[23] = AnyStatus::Mario(MarioStatus::SpecialLw);
+        statuses[24] = AnyStatus::Mario(MarioStatus::SpecialAirLw);
+        for status in statuses {
+            let data = move_data(FighterKind::Luigi, status).expect("ported");
+            for index in 0..data.hitboxes.len() {
+                attack_joint(FighterKind::Luigi, status, index);
+            }
+        }
+        // Luigi has no mid-angle forward tilts.
+        assert!(move_data(FighterKind::Luigi, Status::AttackS3HiS.into()).is_none());
+        assert_eq!(
+            attack_joint(
+                FighterKind::Luigi,
+                AnyStatus::Mario(MarioStatus::Attack13),
+                2
+            ),
+            25
+        );
     }
 
     #[test]

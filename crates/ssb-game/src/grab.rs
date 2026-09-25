@@ -122,6 +122,17 @@ const DONKEY_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 18, 45, 70, 0, 80),
     desc(None, 9, 361, 100, 0, 0),
 ];
+// `220_LuigiMainMotion.c` (US). The catch descriptor equals Mario's. Luigi's
+// forward throw rolls the target and his back throw does not, the reverse of
+// Mario's pair.
+const LUIGI_THROW_F: [ThrowHitDesc; 2] = [
+    desc(Some(Status::DamageFlyRoll), 16, 45, 70, 0, 70),
+    desc(None, 6, 361, 100, 0, 0),
+];
+const LUIGI_THROW_B: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 12, 45, 70, 0, 80),
+    desc(None, 8, 361, 100, 0, 0),
+];
 // `216_SamusMainMotion.c`. Both throws carry element 2 (electric), which
 // only selects hit effects.
 const SAMUS_CATCH: [ThrowHitDesc; 2] = [desc(None, 8, 361, 100, 0, 0); 2];
@@ -196,6 +207,19 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((9.0, 1)),
             length: 22.0,
         },
+        // Luigi's throws play Mario's figatrees and keep Mario's event frames.
+        (FighterKind::Luigi, false) => ThrowScript {
+            desc: Some(LUIGI_THROW_F),
+            flag1: None,
+            flag2: Some((14.0, 1)),
+            length: 28.0,
+        },
+        (FighterKind::Luigi, true) => ThrowScript {
+            desc: Some(LUIGI_THROW_B),
+            flag1: Some(46.0),
+            flag2: Some((46.0, 1)),
+            length: 67.0,
+        },
         // Wait(4) then WaitAsync(9): both throws release at frame 9.
         (FighterKind::Samus, false) => ThrowScript {
             desc: Some(SAMUS_THROW_F),
@@ -229,11 +253,11 @@ fn base_kind(kind: FighterKind) -> FighterKind {
 
 /// `FTAttributes::joint_itemheavy_id`: the joint a held fighter hangs from
 /// (`203_MarioMain.c`, `209_FoxMain.c`, `213_DonkeyMain.c`,
-/// `217_SamusMain.c`). The runtime samples its world position into
-/// [`GrabState::anchor`].
+/// `217_SamusMain.c`, `221_LuigiMain.c`). The runtime samples its world
+/// position into [`GrabState::anchor`].
 pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
     match base_kind(kind) {
-        FighterKind::Mario => Some(28),
+        FighterKind::Mario | FighterKind::Luigi => Some(28),
         FighterKind::Fox => Some(30),
         FighterKind::Donkey => Some(29),
         FighterKind::Samus => Some(36),
@@ -272,7 +296,8 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
         (catch(160.0, 0.0, 0.0, 200.0), 36),
     ];
     match base_kind(kind) {
-        FighterKind::Mario => &MARIO,
+        // `dLuigiMainMotion_Catch` has Mario's box and window.
+        FighterKind::Mario | FighterKind::Luigi => &MARIO,
         FighterKind::Fox => &FOX,
         FighterKind::Donkey => &DONKEY,
         FighterKind::Samus => &SAMUS,
@@ -326,7 +351,8 @@ pub fn thrown_status(
 ) -> (Option<Status>, Status) {
     use Status::{ThrownCommon as C, ThrownFoxB as FB, ThrownFoxF as FF};
     match base_kind(thrower) {
-        FighterKind::Mario => {
+        // `dLuigiMain_thrown_status` equals `dMarioMain_thrown_status`.
+        FighterKind::Mario | FighterKind::Luigi => {
             if back {
                 (Some(Status::ThrownMarioBStart), Status::ThrownMarioB)
             } else {
@@ -362,7 +388,8 @@ pub fn thrown_status(
 /// when it loops or the fighter has no such motion.
 pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
     let lengths: [u16; 8] = match base_kind(held) {
-        FighterKind::Mario => [20, 10, 0, 0, 40, 0, 0, 0],
+        // Luigi's thrown motions name Mario's figatrees.
+        FighterKind::Mario | FighterKind::Luigi => [20, 10, 0, 0, 40, 0, 0, 0],
         FighterKind::Fox => [18, 10, 0, 0, 0, 10, 10, 18],
         FighterKind::Donkey => [20, 10, 5, 0, 0, 6, 0, 0],
         FighterKind::Samus => [20, 10, 5, 0, 0, 0, 5, 10],
@@ -1706,6 +1733,27 @@ mod tests {
         assert_eq!(throw_script(FighterKind::Samus, true).flag2, Some((9.0, 2)));
         assert_eq!(SAMUS_THROW_F[0].damage, 16);
         assert_eq!(SAMUS_THROW_B[0].damage, 18);
+    }
+
+    #[test]
+    fn luigi_throws_swap_marios_roll_and_keep_his_frames() {
+        let forward = throw_script(FighterKind::Luigi, false);
+        assert_eq!(forward.flag2, Some((14.0, 1)));
+        assert_eq!(forward.desc.unwrap()[0].status, Some(Status::DamageFlyRoll));
+        let back = throw_script(FighterKind::Luigi, true);
+        assert_eq!(back.flag1, Some(46.0));
+        assert_eq!(back.desc.unwrap()[0].status, Some(Status::DamageFlyN));
+        assert_eq!(back.desc.unwrap()[0].damage, 12);
+        assert_eq!(itemheavy_joint(FighterKind::Luigi), Some(28));
+        assert_eq!(catch_colls(FighterKind::Luigi).len(), 1);
+        assert_eq!(
+            thrown_status(FighterKind::Luigi, FighterKind::Fox, true),
+            (Some(Status::ThrownMarioBStart), Status::ThrownMarioB)
+        );
+        assert_eq!(
+            thrown_length(FighterKind::Luigi, Status::ThrownMarioB),
+            Some(40.0)
+        );
     }
 
     #[test]

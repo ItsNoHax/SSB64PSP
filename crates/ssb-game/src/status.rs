@@ -117,6 +117,18 @@ pub const MARIO_FIREBALL_SPAWN_FRAME: f32 = 16.0;
 /// `dMarioMainMotion_SuperJumpPunchAir`: two frames to the initial hit, one
 /// frame through its cleanup, then six to `SetFlag1(1)`/`SetFlag2(1)`.
 pub const MARIO_SUPERJUMP_LAUNCH_FRAME: f32 = 9.0;
+/// `dLuigiMainMotion_SuperJumpPunchAir`/`0x17FC`: the same events, but only
+/// four frames from the sweet spot's end to the flags.
+pub const LUIGI_SUPERJUMP_LAUNCH_FRAME: f32 = 7.0;
+
+/// The frame the fighter's Super Jump Punch script raises flags 1 and 2.
+pub fn superjump_launch_frame(kind: crate::fighter::FighterKind) -> f32 {
+    if kind == crate::fighter::FighterKind::Luigi {
+        LUIGI_SUPERJUMP_LAUNCH_FRAME
+    } else {
+        MARIO_SUPERJUMP_LAUNCH_FRAME
+    }
+}
 /// The ROM-verified Super Jump Punch figatree duration. Its motion-event
 /// script ends after 27 frames, but `ftMarioSpecialHiProcUpdate` waits for
 /// the 40-frame skeleton animation itself to end before entering FallSpecial.
@@ -2171,6 +2183,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
+            | crate::fighter::FighterKind::Luigi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2180,7 +2193,8 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         f.facing = f.facing.flipped();
     }
     match f.kind {
-        crate::fighter::FighterKind::Mario => {
+        // Luigi runs Mario's special statuses (`dFTLuigiSpecialStatusDescs`).
+        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
             if f.situation == Situation::Ground {
                 set_mario_special_n(f);
             } else {
@@ -2228,6 +2242,7 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
+            | crate::fighter::FighterKind::Luigi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
@@ -2255,7 +2270,7 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
 /// source motion script raises flag1 the move uses capped gravity and normal
 /// air friction; from frame 9 onward it consumes TransN and damps all axes.
 pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
-    if f.status.anim_frame >= MARIO_SUPERJUMP_LAUNCH_FRAME {
+    if f.status.anim_frame >= superjump_launch_frame(f.kind) {
         physics::apply_air_vel_transn_all(&mut f.physics, f.root_motion, f.facing.sign());
         f.physics.vel_air *= 0.95;
     } else {
@@ -2273,7 +2288,7 @@ pub fn apply_mario_special_air_hi_physics(f: &mut Fighter) {
 /// the original's player-input semantics.
 pub fn apply_mario_special_hi_interrupt(f: &mut Fighter) {
     let stick_x = f.stick.x as i32;
-    if f.status.anim_frame < MARIO_SUPERJUMP_LAUNCH_FRAME {
+    if f.status.anim_frame < superjump_launch_frame(f.kind) {
         if stick_x.abs() >= MARIO_SUPERJUMP_TURN_STICK_MIN {
             let clamped = stick_x.signum() * MARIO_SUPERJUMP_TURN_STICK_MIN;
             let desired_rotation =
@@ -2372,6 +2387,7 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
+            | crate::fighter::FighterKind::Luigi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
@@ -3042,10 +3058,17 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
         return set_landing(f);
     };
     match current {
-        // Samus has no `LandingAirF`/`LandingAirLw` motion (`dFTSamusMotionDescs`).
+        // Samus has no `LandingAirF`/`LandingAirLw` motion (`dFTSamusMotionDescs`),
+        // and Luigi none for `LandingAirLw` (`dFTLuigiMotionDescs`).
         Status::AttackAirF | Status::AttackAirLw
             if f.kind == crate::fighter::FighterKind::Samus =>
         {
+            let percent = crate::attack::move_data(f.kind, current.into())
+                .and_then(|m| m.landing_lag_percent)
+                .unwrap_or(100);
+            set_landing_air_null(f, percent);
+        }
+        Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Luigi => {
             let percent = crate::attack::move_data(f.kind, current.into())
                 .and_then(|m| m.landing_lag_percent)
                 .unwrap_or(100);
@@ -4128,8 +4151,15 @@ fn update_extended(f: &mut Fighter) {
             // and hands weapon creation to `wpManager` after fighter update.
             if f.status.anim_frame >= MARIO_FIREBALL_SPAWN_FRAME && !f.mario_special_n.spawned {
                 f.mario_special_n.spawned = true;
+                // `ftMarioSpecialNProcAccessory`'s `fkind` switch picks
+                // the Fireball attribute row.
+                let kind = if f.kind == crate::fighter::FighterKind::Luigi {
+                    crate::weapon::WeaponKind::LuigiFireball
+                } else {
+                    crate::weapon::WeaponKind::MarioFireball
+                };
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
-                    kind: crate::weapon::WeaponKind::MarioFireball,
+                    kind,
                     owner_port: f.port,
                     // `ftMarioSpecialNProcAccessory` asks the runtime for
                     // Mario joint 16's world position. Host-only gameplay
@@ -4342,7 +4372,9 @@ fn update_extended(f: &mut Fighter) {
 /// smaller set — not ported, `crate::attack`'s module docs).
 pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
     match kind {
-        crate::fighter::FighterKind::Mario => Some(AnyStatus::Mario(MarioStatus::Attack13)),
+        crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
+            Some(AnyStatus::Mario(MarioStatus::Attack13))
+        }
         _ => None,
     }
 }

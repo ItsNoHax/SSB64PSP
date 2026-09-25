@@ -52,7 +52,8 @@ use crate::figatree;
 pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
 /// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
 /// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
-/// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong and Samus.
+/// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong, Samus and
+/// Luigi.
 pub const SLOT_CATCH: usize = 110;
 /// First of Samus's 22 common attack slots, `Attack11` through
 /// `AttackAirLw` in `ftCommonStatus` order.
@@ -60,9 +61,13 @@ pub const SLOT_SAMUS_ATTACK11: usize = 123;
 /// First of Samus's nine special slots, `SpecialNStart` through
 /// `SpecialAirLw` in `ftSamusStatus` order.
 pub const SLOT_SAMUS_SPECIAL_N_START: usize = 145;
+/// First of Luigi's 21 attack slots: `Attack11`, `Attack12`, `Attack13`,
+/// then `AttackDash` through `AttackAirLw` without the two mid-angle
+/// forward tilts he lacks. His specials use the Mario special slots.
+pub const SLOT_LUIGI_ATTACK11: usize = 154;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 154;
+pub const SLOT_COUNT: usize = 175;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -482,8 +487,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 3459,
-            "Mario, Fox, Donkey and Samus have character and grab slots"
+            missing, 3989,
+            "Mario, Fox, Donkey, Samus and Luigi have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -506,6 +511,15 @@ mod tests {
         assert_eq!(samus.files[SLOT_SAMUS_ATTACK11], 1063); // Jab1
         assert_eq!(samus.files[SLOT_SAMUS_SPECIAL_N_START + 5], 1097); // Screw Attack
         assert_eq!(samus.files[SLOT_CATCH], 1015);
+        let luigi = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Luigi")
+            .expect("Luigi is in FTKind order");
+        assert_eq!(luigi.files[SLOT_LUIGI_ATTACK11], 606); // Mario's Jab1
+        assert_eq!(luigi.files[SLOT_LUIGI_ATTACK11 + 3], 1108); // DashAttack
+        assert_eq!(luigi.files[SLOT_LUIGI_ATTACK11 + 11], 1112); // FSmash
+        assert_eq!(luigi.files[SLOT_MARIO_SPECIAL_HI], 637);
+        assert_eq!(luigi.files[SLOT_CATCH], 561);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo
         // throws share one figatree (`dFTDonkeyMotionDescs`).
@@ -530,7 +544,7 @@ mod tests {
         assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_LW], 87);
         assert_eq!(EXPECTED_FRAMES[0][SLOT_MARIO_SPECIAL_AIR_LW], 83);
         for fighter in FIGHTER_ANIMS {
-            let has_mario_specials = fighter.name == "Mario";
+            let has_mario_specials = matches!(fighter.name, "Mario" | "Luigi");
             assert_eq!(
                 fighter.files[SLOT_MARIO_SPECIAL_HI] != 0,
                 has_mario_specials

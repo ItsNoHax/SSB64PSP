@@ -86,12 +86,14 @@ SLOTS = [
 # motion-script entry points are gameplay data, while their skeletal pose is
 # the same.
 SPECIAL_SLOTS = [
-    ("MarioSpecialN", "Mario", "FTMarioAnimFireballGround"),
-    ("MarioSpecialAirN", "Mario", "FTMarioAnimFireballAir"),
-    ("MarioSpecialHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
-    ("MarioSpecialAirHi", "Mario", "FTMarioAnimSuperJumpPunchAir"),
-    ("MarioSpecialLw", "Mario", "FTMarioAnimMarioTornadoGround"),
-    ("MarioSpecialAirLw", "Mario", "FTMarioAnimMarioTornadoAir"),
+    # Luigi runs Mario's special statuses (`ftluigistatus.h`) and his motion
+    # table names Mario's figatrees for them, so both fill these slots.
+    ("MarioSpecialN", ("Mario", "Luigi"), "FTMarioAnimFireballGround"),
+    ("MarioSpecialAirN", ("Mario", "Luigi"), "FTMarioAnimFireballAir"),
+    ("MarioSpecialHi", ("Mario", "Luigi"), "FTMarioAnimSuperJumpPunchAir"),
+    ("MarioSpecialAirHi", ("Mario", "Luigi"), "FTMarioAnimSuperJumpPunchAir"),
+    ("MarioSpecialLw", ("Mario", "Luigi"), "FTMarioAnimMarioTornadoGround"),
+    ("MarioSpecialAirLw", ("Mario", "Luigi"), "FTMarioAnimMarioTornadoAir"),
     ("FoxAttack11", "Fox", "FTFoxAnimJab1"),
     ("FoxAttack12", "Fox", "FTFoxAnimJab2"),
     ("FoxAttack100Start", "Fox", "FTFoxAnimJabLoopStart"),
@@ -195,7 +197,7 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -247,6 +249,33 @@ LATE_SPECIAL_SLOTS = [
     ("SamusSpecialAirHi", "Samus", "FTSamusAnimScrewAttackAir"),
     ("SamusSpecialLw", "Samus", "FTSamusAnimBomb"),
     ("SamusSpecialAirLw", "Samus", "FTSamusAnimBombAir"),
+]
+
+# Luigi's common attacks and jab finisher (`220_LuigiMainMotion.c`,
+# `dFTLuigiMotionDescs`). Most name Mario's figatrees: the two share a
+# skeleton, and Luigi has his own dash attack, down tilt and forward smashes.
+LATE_SPECIAL_SLOTS += [
+    ("LuigiAttack11", "Luigi", "FTMarioAnimJab1"),
+    ("LuigiAttack12", "Luigi", "FTMarioAnimJab2"),
+    ("LuigiAttack13", "Luigi", "FTMarioAnimJab3"),
+    ("LuigiAttackDash", "Luigi", "FTLuigiAnimDashAttack"),
+    ("LuigiAttackS3Hi", "Luigi", "FTMarioAnimFTiltHigh"),
+    ("LuigiAttackS3", "Luigi", "FTMarioAnimFTilt"),
+    ("LuigiAttackS3Lw", "Luigi", "FTMarioAnimFTiltLow"),
+    ("LuigiAttackHi3", "Luigi", "FTMarioAnimUTilt"),
+    ("LuigiAttackLw3", "Luigi", "FTLuigiAnimDTilt"),
+    ("LuigiAttackS4Hi", "Luigi", "FTLuigiAnimFSmashHigh"),
+    ("LuigiAttackS4HiS", "Luigi", "FTLuigiAnimFSmashMidHigh"),
+    ("LuigiAttackS4", "Luigi", "FTLuigiAnimFSmash"),
+    ("LuigiAttackS4LwS", "Luigi", "FTLuigiAnimFSmashMidLow"),
+    ("LuigiAttackS4Lw", "Luigi", "FTLuigiAnimFSmashLow"),
+    ("LuigiAttackHi4", "Luigi", "FTMarioAnimUSmash"),
+    ("LuigiAttackLw4", "Luigi", "FTMarioAnimDSmash"),
+    ("LuigiAttackAirN", "Luigi", "FTMarioAnimAttackAirN"),
+    ("LuigiAttackAirF", "Luigi", "FTMarioAnimAttackAirF"),
+    ("LuigiAttackAirB", "Luigi", "FTMarioAnimAttackAirB"),
+    ("LuigiAttackAirHi", "Luigi", "FTMarioAnimAttackAirU"),
+    ("LuigiAttackAirLw", "Luigi", "FTMarioAnimAttackAirD"),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
@@ -511,7 +540,8 @@ def resolve(refs):
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
         def special(slot, target, sym):
-            if fighter != target:
+            targets = target if isinstance(target, tuple) else (target,)
+            if fighter not in targets:
                 entry.append((slot, 0, None, 0, False))
                 return
             runtime_options = {runtime for name, runtime in table if name == sym}

@@ -10066,6 +10066,7 @@ mod tests {
             FighterKind::Fox,
             FighterKind::Donkey,
             FighterKind::Samus,
+            FighterKind::Luigi,
         ]
         .into_iter()
         .enumerate()
@@ -10085,7 +10086,7 @@ mod tests {
 
         // Catch, CatchPull and ThrowF have no leading runtime joint for these
         // fighters, whereas CapturePulled does.
-        for kind in 0..4 {
+        for kind in 0..5 {
             for slot in SLOT_CATCH..SLOT_CATCH + 3 {
                 assert!(
                     !LEADING_RUNTIME_JOINT[kind][slot],

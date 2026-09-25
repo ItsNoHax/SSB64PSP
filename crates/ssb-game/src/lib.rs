@@ -19,6 +19,7 @@ pub mod fighter;
 mod fox_attack;
 pub mod grab;
 pub mod ground;
+mod luigi_attack;
 pub mod physics;
 pub mod samus;
 mod samus_attack;
