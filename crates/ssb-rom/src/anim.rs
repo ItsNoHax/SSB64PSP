@@ -52,8 +52,8 @@ use crate::figatree;
 pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
 /// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
 /// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
-/// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong, Samus and
-/// Luigi.
+/// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong, Samus, Luigi
+/// and Link.
 pub const SLOT_CATCH: usize = 110;
 /// First of Samus's 22 common attack slots, `Attack11` through
 /// `AttackAirLw` in `ftCommonStatus` order.
@@ -65,9 +65,16 @@ pub const SLOT_SAMUS_SPECIAL_N_START: usize = 145;
 /// then `AttackDash` through `AttackAirLw` without the two mid-angle
 /// forward tilts he lacks. His specials use the Mario special slots.
 pub const SLOT_LUIGI_ATTACK11: usize = 154;
+/// First of Link's 14 common attack slots: `Attack11`, `Attack12`,
+/// `AttackDash`, then one forward tilt, the up and down tilts, one forward
+/// smash, the other smashes and the five aerials.
+pub const SLOT_LINK_ATTACK11: usize = 175;
+/// First of Link's 15 own slots, `Attack13` through `SpecialAirLw` in
+/// `ftLinkStatus` order without the two Appear statuses.
+pub const SLOT_LINK_ATTACK13: usize = 189;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 175;
+pub const SLOT_COUNT: usize = 204;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -487,8 +494,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 3989,
-            "Mario, Fox, Donkey, Samus and Luigi have character and grab slots"
+            missing, 4732,
+            "Mario, Fox, Donkey, Samus, Luigi and Link have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -520,6 +527,16 @@ mod tests {
         assert_eq!(luigi.files[SLOT_LUIGI_ATTACK11 + 11], 1112); // FSmash
         assert_eq!(luigi.files[SLOT_MARIO_SPECIAL_HI], 637);
         assert_eq!(luigi.files[SLOT_CATCH], 561);
+        let link = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Link")
+            .expect("Link is in FTKind order");
+        assert_eq!(link.files[SLOT_LINK_ATTACK11], 1223); // Jab1
+        assert_eq!(link.files[SLOT_LINK_ATTACK13], 1225); // Jab3
+                                                          // The Boomerang throw and its empty-handed variant share a figatree.
+        assert_eq!(link.files[SLOT_LINK_ATTACK13 + 7], 1251);
+        assert_eq!(link.files[SLOT_LINK_ATTACK13 + 9], 1251);
+        assert_eq!(link.files[SLOT_CATCH], 1177);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo
         // throws share one figatree (`dFTDonkeyMotionDescs`).

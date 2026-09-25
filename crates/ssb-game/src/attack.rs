@@ -1388,6 +1388,33 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Link, AnyStatus::Link(s)) => {
+            use crate::status::LinkStatus;
+            match s {
+                LinkStatus::Attack13 => Some(&crate::link_attack::JAB3),
+                LinkStatus::Attack100Loop => Some(&crate::link_attack::RAPID_LOOP),
+                LinkStatus::SpecialHi => Some(&crate::link_attack::SPIN_GROUND),
+                LinkStatus::SpecialAirHi => Some(&crate::link_attack::SPIN_AIR),
+                _ => None,
+            }
+        }
+        (FighterKind::Link, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::link_attack::JAB1),
+            Status::Attack12 => Some(&crate::link_attack::JAB2),
+            Status::AttackDash => Some(&crate::link_attack::DASH),
+            Status::AttackS3 => Some(&crate::link_attack::FTILT),
+            Status::AttackHi3 => Some(&crate::link_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::link_attack::DTILT),
+            Status::AttackS4 => Some(&crate::link_attack::FSMASH),
+            Status::AttackHi4 => Some(&crate::link_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::link_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::link_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::link_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::link_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::link_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::link_attack::AIR_LW),
+            _ => None,
+        },
         (FighterKind::Luigi, AnyStatus::Mario(s)) => match s {
             MarioStatus::Attack13 => Some(&crate::luigi_attack::JAB3),
             MarioStatus::SpecialHi => Some(&crate::luigi_attack::SUPERJUMP_GROUND),
@@ -1831,9 +1858,9 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 /// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
 /// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
 /// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey/
-/// Samus/Luigi `MainMotion.c`, not from the visual model's node order.
+/// Samus/Luigi/Link `MainMotion.c`, not from the visual model's node order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Donkey, Fox, Luigi, Mario, Samus};
+    use crate::fighter::FighterKind::{Donkey, Fox, Link, Luigi, Mario, Samus};
     if kind == Donkey
         && matches!(
             status,
@@ -1849,6 +1876,38 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         };
     }
     let ids: &[u8] = match (kind, status) {
+        // Link's sword: joint 11 carries the blade box, joint 10 the hilt.
+        (
+            Link,
+            AnyStatus::Common(
+                Status::Attack11
+                | Status::Attack12
+                | Status::AttackDash
+                | Status::AttackS3
+                | Status::AttackHi3
+                | Status::AttackLw3
+                | Status::AttackHi4
+                | Status::AttackLw4
+                | Status::AttackAirF
+                | Status::AttackAirHi
+                | Status::AttackAirLw,
+            )
+            | AnyStatus::Link(
+                crate::status::LinkStatus::Attack13
+                | crate::status::LinkStatus::Attack100Loop
+                | crate::status::LinkStatus::SpecialHi
+                | crate::status::LinkStatus::SpecialAirHi,
+            ),
+        ) => &[11, 10],
+        (Link, AnyStatus::Common(Status::AttackS4)) => &[11, 11, 10],
+        (Link, AnyStatus::Common(Status::AttackAirN)) => &[32, 27, 5],
+        (Link, AnyStatus::Common(Status::AttackAirB)) => {
+            if index % 6 < 3 {
+                &[27, 27, 5]
+            } else {
+                &[32, 32, 5]
+            }
+        }
         (Luigi, AnyStatus::Common(Status::Attack11)) => &[10, 9],
         (Luigi, AnyStatus::Common(Status::Attack12)) => &[16, 15],
         (Luigi, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 27, 25],
@@ -2023,12 +2082,22 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
 /// state — the fixed-size Training stand-in for the original's per-attack
 /// `GMAttackRecord` hit list. It is re-armed at a sourced
 /// `ClearAttackCollAll`, including a clear/recreate boundary with no idle
-/// animation frame between them.
-pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &mut HitRecord) {
+/// animation frame between them. Returns whether a hit registered, which
+/// runs the attacker's `proc_hit` ([`crate::link::on_attack_hit`]).
+pub fn apply_hit_from(
+    attacker: &Fighter,
+    defender: &mut Fighter,
+    hit_record: &mut HitRecord,
+) -> bool {
     let Some(move_data) = move_data(attacker.kind, attacker.status.status) else {
         *hit_record = HitRecord::default();
-        return;
+        return false;
     };
+    // Link's down air after `ftCommonAttackAirLwProcHit` cleared its boxes.
+    if crate::link::attack_colls_cleared(attacker) {
+        *hit_record = HitRecord::default();
+        return false;
+    }
     let mut has_active_hitbox = false;
     for (index, active) in move_data
         .hitboxes
@@ -2054,7 +2123,7 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
         if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
             hit_record.hit_generation = Some(active.hit_generation);
-            return;
+            return true;
         }
     }
     if !has_active_hitbox {
@@ -2062,6 +2131,7 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         // A later pulse in a multi-hit script is a new collision opportunity.
         *hit_record = HitRecord::default();
     }
+    false
 }
 
 /// Applies an already-positioned hitbox to a defender. Fighter moves obtain
@@ -2108,6 +2178,9 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     }
     if defender.kind == crate::fighter::FighterKind::Samus {
         crate::samus::on_damage(defender);
+    }
+    if defender.kind == crate::fighter::FighterKind::Link {
+        crate::link::on_damage(defender);
     }
     if defender.grab.catch.is_some() {
         // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
@@ -2764,6 +2837,74 @@ mod tests {
 
         apply_hit_from(&attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 14);
+    }
+
+    #[test]
+    fn every_link_move_has_source_joints() {
+        use crate::fighter::FighterKind;
+        use crate::status::LinkStatus;
+        let statuses: [AnyStatus; 18] = [
+            Status::Attack11.into(),
+            Status::Attack12.into(),
+            Status::AttackDash.into(),
+            Status::AttackS3.into(),
+            Status::AttackHi3.into(),
+            Status::AttackLw3.into(),
+            Status::AttackS4.into(),
+            Status::AttackHi4.into(),
+            Status::AttackLw4.into(),
+            Status::AttackAirN.into(),
+            Status::AttackAirF.into(),
+            Status::AttackAirB.into(),
+            Status::AttackAirHi.into(),
+            Status::AttackAirLw.into(),
+            AnyStatus::Link(LinkStatus::Attack13),
+            AnyStatus::Link(LinkStatus::Attack100Loop),
+            AnyStatus::Link(LinkStatus::SpecialHi),
+            AnyStatus::Link(LinkStatus::SpecialAirHi),
+        ];
+        for status in statuses {
+            let data = move_data(FighterKind::Link, status).expect("ported");
+            for index in 0..data.hitboxes.len() {
+                attack_joint(FighterKind::Link, status, index);
+            }
+        }
+        // One forward tilt and one forward smash.
+        assert!(move_data(FighterKind::Link, Status::AttackS3Hi.into()).is_none());
+        assert!(move_data(FighterKind::Link, Status::AttackS4Lw.into()).is_none());
+        // The back air's second swing moves from joint 27 to joint 32.
+        assert_eq!(
+            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 0),
+            27
+        );
+        assert_eq!(
+            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 3),
+            32
+        );
+        assert_eq!(
+            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 5),
+            5
+        );
+        // Five rapid pulses, each its own hit record.
+        let rapid = move_data(
+            FighterKind::Link,
+            AnyStatus::Link(LinkStatus::Attack100Loop),
+        )
+        .unwrap();
+        for (pulse, start) in [3.0, 10.0, 17.0, 24.0, 31.0].into_iter().enumerate() {
+            let active: Vec<_> = rapid
+                .hitboxes
+                .iter()
+                .filter(|h| h.is_active(start))
+                .collect();
+            assert_eq!(active.len(), 2);
+            assert!(active.iter().all(|h| h.hit_generation == pulse as u8));
+        }
+        // The Spin Attack's sweet spot and its weaker phase share a record.
+        let spin = move_data(FighterKind::Link, AnyStatus::Link(LinkStatus::SpecialHi)).unwrap();
+        assert!(spin.hitboxes.iter().all(|h| h.hit_generation == 0));
+        assert_eq!(spin.hitboxes[0].hitbox.damage, 16);
+        assert!(spin.hitboxes[2].is_active(39.0) && !spin.hitboxes[2].is_active(40.0));
     }
 
     #[test]

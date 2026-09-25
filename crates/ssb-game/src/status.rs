@@ -734,6 +734,28 @@ pub enum SamusStatus {
     SpecialAirLw = 230,
 }
 
+/// Link's character status table, `ftlink.h`. Appear (224, 225) belongs to
+/// the unported match-entry sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum LinkStatus {
+    Attack13 = 220,
+    Attack100Start = 221,
+    Attack100Loop = 222,
+    Attack100End = 223,
+    SpecialHi = 226,
+    SpecialHiEnd = 227,
+    SpecialAirHi = 228,
+    SpecialN = 229,
+    SpecialNGet = 230,
+    SpecialNEmpty = 231,
+    SpecialAirN = 232,
+    SpecialAirNReturn = 233,
+    SpecialAirNEmpty = 234,
+    SpecialLw = 235,
+    SpecialAirLw = 236,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -746,6 +768,7 @@ pub enum AnyStatus {
     Fox(FoxStatus),
     Donkey(DonkeyStatus),
     Samus(SamusStatus),
+    Link(LinkStatus),
 }
 
 impl AnyStatus {
@@ -796,6 +819,14 @@ impl AnyStatus {
                 | SamusStatus::SpecialAirLw,
             ) => false,
             AnyStatus::Samus(_) => true,
+            AnyStatus::Link(
+                LinkStatus::SpecialAirHi
+                | LinkStatus::SpecialAirN
+                | LinkStatus::SpecialAirNReturn
+                | LinkStatus::SpecialAirNEmpty
+                | LinkStatus::SpecialAirLw,
+            ) => false,
+            AnyStatus::Link(_) => true,
         }
     }
 
@@ -806,6 +837,7 @@ impl AnyStatus {
             AnyStatus::Fox(_) => false,
             AnyStatus::Donkey(_) => false,
             AnyStatus::Samus(_) => false,
+            AnyStatus::Link(_) => false,
         }
     }
 
@@ -821,6 +853,7 @@ impl AnyStatus {
                     | DonkeyStatus::ThrowFWalkFast
             ),
             AnyStatus::Samus(_) => false,
+            AnyStatus::Link(_) => false,
         }
     }
 
@@ -907,6 +940,24 @@ impl AnyStatus {
                 SamusStatus::SpecialLw => 152,
                 SamusStatus::SpecialAirLw => 153,
             },
+            // `ssb_rom::anim::SLOT_LINK_ATTACK13` onward.
+            AnyStatus::Link(s) => match s {
+                LinkStatus::Attack13 => 189,
+                LinkStatus::Attack100Start => 190,
+                LinkStatus::Attack100Loop => 191,
+                LinkStatus::Attack100End => 192,
+                LinkStatus::SpecialHi => 193,
+                LinkStatus::SpecialHiEnd => 194,
+                LinkStatus::SpecialAirHi => 195,
+                LinkStatus::SpecialN => 196,
+                LinkStatus::SpecialNGet => 197,
+                LinkStatus::SpecialNEmpty => 198,
+                LinkStatus::SpecialAirN => 199,
+                LinkStatus::SpecialAirNReturn => 200,
+                LinkStatus::SpecialAirNEmpty => 201,
+                LinkStatus::SpecialLw => 202,
+                LinkStatus::SpecialAirLw => 203,
+            },
         }
     }
 
@@ -927,6 +978,7 @@ impl AnyStatus {
             AnyStatus::Donkey(_) => 1.0,
             // `ftSamusSpecialNStartGetAnimSpeed` is applied by the setter.
             AnyStatus::Samus(_) => 1.0,
+            AnyStatus::Link(_) => 1.0,
         }
     }
 }
@@ -1094,6 +1146,8 @@ pub struct StickState {
     /// counter, not an edge flag.
     pub tap_x: u8,
     pub tap_y: u8,
+    /// `hold_stick_x`: the same count as `tap_x`, which no status consumes.
+    pub hold_x: u8,
     /// Jump buttons pressed this frame, and released this frame.
     pub jump_tapped: bool,
     pub jump_released: bool,
@@ -1104,6 +1158,7 @@ impl StickState {
         StickState {
             tap_x: STICKBUFFER_MAX,
             tap_y: STICKBUFFER_MAX,
+            hold_x: STICKBUFFER_MAX,
             ..Default::default()
         }
     }
@@ -1119,6 +1174,7 @@ impl StickState {
         self.x = clamp_stick(x);
         self.y = clamp_stick(y);
         self.tap_x = step_tap(self.tap_x, self.x as i32, self.prev_x as i32);
+        self.hold_x = step_tap(self.hold_x, self.x as i32, self.prev_x as i32);
         self.tap_y = step_tap(self.tap_y, self.y as i32, self.prev_y as i32);
         self.jump_tapped = jump_tapped;
         self.jump_released = jump_released;
@@ -1673,6 +1729,7 @@ pub fn set_fall_special(
         is_allow_interrupt,
         is_fall_accelerate,
     };
+    f.is_special_interrupt = true;
 }
 
 /// `ftMarioSpecialNSetStatus` @ 0x80156014.
@@ -2184,6 +2241,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
+            | crate::fighter::FighterKind::Link
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2204,6 +2262,13 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         crate::fighter::FighterKind::Fox => set_fox_special_n(f),
         crate::fighter::FighterKind::Donkey => set_donkey_special_n(f),
         crate::fighter::FighterKind::Samus => crate::samus::set_special_n(f),
+        crate::fighter::FighterKind::Link => {
+            if f.situation == Situation::Ground {
+                crate::link::set_special_n(f);
+            } else {
+                crate::link::set_special_air_n(f);
+            }
+        }
         _ => unreachable!(),
     }
     true
@@ -2243,12 +2308,19 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
+            | crate::fighter::FighterKind::Link
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Samus {
+    if f.kind == crate::fighter::FighterKind::Link {
+        if f.is_grounded() {
+            crate::link::set_special_hi(f);
+        } else {
+            crate::link::set_special_air_hi(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Samus {
         if f.is_grounded() {
             crate::samus::set_special_hi(f);
         } else {
@@ -2388,12 +2460,19 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Donkey
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
+            | crate::fighter::FighterKind::Link
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Samus {
+    if f.kind == crate::fighter::FighterKind::Link {
+        if f.is_grounded() {
+            crate::link::set_special_lw(f);
+        } else {
+            crate::link::set_special_air_lw(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Samus {
         if f.is_grounded() {
             crate::samus::set_special_lw(f);
         } else {
@@ -2479,8 +2558,9 @@ pub fn set_landing_fall_special(f: &mut Fighter) {
 // Jab combo
 // ---------------------------------------------------------------------------
 
-/// `FTCOMMON_ATTACK1_FOLLOWUP_FRAMES_DEFAULT` — `ft/ftcommon.h`. Every
-/// fighter this codebase covers uses the same default.
+/// `FTCOMMON_ATTACK1_FOLLOWUP_FRAMES_DEFAULT` — `ft/ftcommon.h`. `Attack12`
+/// uses it for every fighter; `Attack11` reads the fighter's own attribute
+/// (`attack11_followup_frames`).
 pub const ATTACK1_FOLLOWUP_FRAMES_DEFAULT: f32 = 24.0;
 
 /// `FTStruct::attack1_followup_frames`/`status_vars.common.attack1.is_goto_followup`.
@@ -2750,6 +2830,9 @@ pub fn set_any_status(
         _ => {}
     }
     f.status.status = status;
+    // `ftMainSetStatus` clears it; the setters that allow a boomerang catch
+    // set it again afterwards.
+    f.is_special_interrupt = false;
     // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
     // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
     // so rendering has one display gate and capture systems can use it too.
@@ -2761,6 +2844,7 @@ pub fn set_any_status(
 /// `ftCommonWaitSetStatus` @ 0x8013E1C8.
 pub fn set_wait(f: &mut Fighter) {
     set_status(f, Status::Wait, 0.0, StatusTiming::unknown());
+    f.is_special_interrupt = true;
 }
 
 /// `ftCommonWalkGetWalkStatus` @ 0x8013E340.
@@ -2793,6 +2877,7 @@ pub fn set_walk(f: &mut Fighter, anim_frame_begin: f32) {
     let status = walk_status_for(f.input.stick_x);
     let len = walk_anim_length(&f.attributes, status);
     set_status(f, status, anim_frame_begin, StatusTiming::frames(len));
+    f.is_special_interrupt = status != Status::WalkFast;
 }
 
 /// `ftCommonDashSetStatus` @ 0x8013ED00.
@@ -2835,6 +2920,7 @@ pub fn set_turn(f: &mut Fighter) {
 pub fn set_squat(f: &mut Fighter) {
     let len = f.anim.squat;
     set_status(f, Status::Squat, 0.0, StatusTiming::animation(len, 1.0));
+    f.is_special_interrupt = true;
 }
 
 /// `ftCommonKneeBendSetStatusParam` @ 0x8013F3A0.
@@ -2846,6 +2932,7 @@ pub fn set_kneebend(f: &mut Fighter, input: JumpInput) {
     // runs, not the one on the frame it started.
     f.status.jump_force = f.input.stick_y;
     f.status.is_shorthop = false;
+    f.is_special_interrupt = true;
 }
 
 /// `ftCommonJumpGetJumpForceButton` @ 0x8013F6A0.
@@ -2908,6 +2995,7 @@ pub fn set_jump(f: &mut Fighter) {
     // takeoff, leaving only `jumps_max - 1` aerial jumps available.
     f.physics.jumps_used = 1;
     f.stick.tap_y = STICKBUFFER_MAX;
+    f.is_special_interrupt = true;
 }
 
 /// `ftCommonJumpAerialSetStatus` @ 0x8013FD74.
@@ -2930,6 +3018,7 @@ pub fn set_jump_aerial(f: &mut Fighter) {
     f.physics.vel_air.x = f.input.stick_x as f32 * attr.jumpaerial_vel_x;
     f.physics.jumps_used += 1;
     f.stick.tap_y = STICKBUFFER_MAX;
+    f.is_special_interrupt = true;
 }
 
 /// `ftCommonFallSetStatus` @ 0x8013F9E0.
@@ -2941,6 +3030,7 @@ pub fn set_fall(f: &mut Fighter) {
     };
     set_status(f, status, 0.0, StatusTiming::unknown());
     physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+    f.is_special_interrupt = true;
 }
 
 /// `mpCommonSetFighterWaitOrFall`: Wait on the ground, Fall in the air.
@@ -3068,6 +3158,14 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
                 .unwrap_or(100);
             set_landing_air_null(f, percent);
         }
+        // Link has `LandingAirF` and `LandingAirLw` (`LandingAirD`) motions
+        // only (`dFTLinkMotionDescs`).
+        Status::AttackAirB | Status::AttackAirHi if f.kind == crate::fighter::FighterKind::Link => {
+            let percent = crate::attack::move_data(f.kind, current.into())
+                .and_then(|m| m.landing_lag_percent)
+                .unwrap_or(100);
+            set_landing_air_null(f, percent);
+        }
         Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Luigi => {
             let percent = crate::attack::move_data(f.kind, current.into())
                 .and_then(|m| m.landing_lag_percent)
@@ -3137,10 +3235,27 @@ pub fn set_attack11(f: &mut Fighter) {
         StatusTiming::frames(attack_length(f, Status::Attack11)),
     );
     f.attack1 = Attack1State {
-        followup_frames: ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
+        followup_frames: attack11_followup_frames(f.kind),
         is_goto_followup: false,
         ..Attack1State::default()
     };
+}
+
+/// `FTAttributes::attack1_followup_frames`, which `ftCommonAttack11SetStatus`
+/// loads (`<Fighter>Main.c`). `Attack12` always uses
+/// [`ATTACK1_FOLLOWUP_FRAMES_DEFAULT`].
+fn attack11_followup_frames(kind: crate::fighter::FighterKind) -> f32 {
+    use crate::fighter::FighterKind;
+    let base = match kind {
+        FighterKind::MetalMario => FighterKind::Mario,
+        FighterKind::GiantDonkey => FighterKind::Donkey,
+        k => k.polygon_base().unwrap_or(k),
+    };
+    match base {
+        FighterKind::Fox | FighterKind::Samus => 30.0,
+        FighterKind::Donkey => 28.0,
+        _ => ATTACK1_FOLLOWUP_FRAMES_DEFAULT,
+    }
 }
 
 /// `ftCommonAttack12SetStatus` @ `ftcommonattack1.c:152`, reduced to the
@@ -3161,17 +3276,118 @@ pub fn set_attack12(f: &mut Fighter) {
     };
 }
 
-fn fox_rapid_input(f: &mut Fighter) {
-    if f.kind != crate::fighter::FighterKind::Fox {
-        return;
+/// `ftCommonAttack100StartCheckInterruptCommon`'s `inputs_min` for the
+/// fighters this codebase ports: `None` when the fighter has no `Attack100`.
+fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
+    match kind {
+        crate::fighter::FighterKind::Fox => Some(4),
+        crate::fighter::FighterKind::Link => Some(5),
+        _ => None,
     }
+}
+
+/// The counting half of `ftCommonAttack100StartCheckInterruptCommon`: both
+/// A taps and A releases count. Returns whether the count has reached the
+/// fighter's minimum.
+fn rapid_input(f: &mut Fighter) -> bool {
+    let Some(min) = rapid_inputs_min(f.kind) else {
+        return false;
+    };
     if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
         || newly_released(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
     {
         f.attack1.rapid_input_count = f.attack1.rapid_input_count.saturating_add(1);
-        if f.attack1.rapid_input_count >= 4 {
+        if f.attack1.rapid_input_count >= min {
             f.attack1.rapid_requested = true;
+            return true;
         }
+    }
+    false
+}
+
+/// The motion-script frame at which a jab's `SetFlag1(1)` lands, for a
+/// fighter whose flag lands before the figatree ends. `None` keeps the
+/// collapsed "flag 1 is the animation end" reading (`Attack1State`).
+fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Option<f32> {
+    match (kind, status) {
+        (crate::fighter::FighterKind::Link, Status::Attack11) => {
+            Some(crate::link_attack::JAB1_FLAG1_FRAME)
+        }
+        (crate::fighter::FighterKind::Link, Status::Attack12) => {
+            Some(crate::link_attack::JAB2_FLAG1_FRAME)
+        }
+        _ => None,
+    }
+}
+
+/// `ftCommonAttack11ProcUpdate`, then `ftCommonAttack11ProcInterrupt`, in
+/// source order, for a jab whose flag 1 lands mid-animation.
+fn update_attack11_flagged(f: &mut Fighter) {
+    let flag1 = attack1_flag1_frame(f.kind, Status::Attack11)
+        .is_some_and(|frame| f.status.anim_frame >= frame);
+    if flag1 && f.attack1.is_goto_followup {
+        return set_attack12(f);
+    }
+    if f.status.animation_ended() {
+        return set_wait(f);
+    }
+    if f.status.anim_frame <= 2.0 && crate::grab::check_catch_attack11(f) {
+        return;
+    }
+    // `ftCommonAttack100StartCheckInterruptCommon` cannot start the loop
+    // from `Attack11`; it only records the request.
+    rapid_input(f);
+    // `ftCommonAttack12CheckGoto`.
+    if f.attack1.followup_frames > 0.0 {
+        f.attack1.followup_frames -= f.status.timing.anim_speed;
+        if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+            if flag1 {
+                return set_attack12(f);
+            }
+            f.attack1.is_goto_followup = true;
+        }
+    }
+}
+
+/// `ftCommonAttack12ProcUpdate`, then `ftCommonAttack12ProcInterrupt`
+/// (`ftCommonAttack13CheckGoto`, then
+/// `ftCommonAttack100StartCheckInterruptCommon`), in source order.
+fn update_attack12_flagged(f: &mut Fighter) {
+    let flag1 = attack1_flag1_frame(f.kind, Status::Attack12)
+        .is_some_and(|frame| f.status.anim_frame >= frame);
+    if flag1 && f.attack1.rapid_requested {
+        return set_rapid_start(f);
+    }
+    if flag1 && f.attack1.is_goto_followup {
+        if let Some(status) = attack13_status(f.kind) {
+            return set_attack13(f, status);
+        }
+    }
+    if f.status.animation_ended() {
+        return set_wait(f);
+    }
+    if f.attack1.followup_frames > 0.0 && attack13_status(f.kind).is_some() {
+        f.attack1.followup_frames -= f.status.timing.anim_speed;
+        if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
+            if flag1 {
+                let status = attack13_status(f.kind).expect("checked above");
+                return set_attack13(f, status);
+            }
+            f.attack1.is_goto_followup = true;
+        }
+    }
+    if rapid_input(f) && flag1 {
+        set_rapid_start(f);
+    }
+}
+
+/// `ftCommonAttack100StartSetStatus` for the fighters with their own
+/// `Attack100` statuses.
+fn set_rapid_start(f: &mut Fighter) {
+    match f.kind {
+        crate::fighter::FighterKind::Fox => set_fox_rapid_start(f),
+        crate::fighter::FighterKind::Link => crate::link::set_attack100_start(f),
+        _ => unreachable!("no Attack100 for this fighter"),
     }
 }
 
@@ -3278,6 +3494,8 @@ pub fn set_dtilt(f: &mut Fighter) {
 pub fn set_air_attack(f: &mut Fighter, status: Status) {
     let len = attack_length(f, status);
     set_status(f, status, 0.0, StatusTiming::frames(len));
+    f.link.dair_rehit_timer = 0;
+    f.link.dair_cleared = false;
 }
 
 /// `ftCommonAttackS4SetStatus` @ `ftcommonattacks4.c:70`, reduced to the
@@ -3724,6 +3942,7 @@ pub fn update(f: &mut Fighter) {
         Status::Squat => {
             if f.status.animation_ended() {
                 set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
+                f.is_special_interrupt = true;
             } else {
                 ground_interrupt(f);
             }
@@ -3745,13 +3964,19 @@ pub fn update(f: &mut Fighter) {
         // `ftCommonAttack11ProcInterrupt` → `ftCommonAttack12CheckGoto` @
         // `ftcommonattack1.c:75,349`, collapsed into one check — see
         // `Attack1State`'s doc comment for why that is safe.
+        Status::Attack11 if attack1_flag1_frame(f.kind, Status::Attack11).is_some() => {
+            update_attack11_flagged(f)
+        }
+        Status::Attack12 if attack1_flag1_frame(f.kind, Status::Attack12).is_some() => {
+            update_attack12_flagged(f)
+        }
         Status::Attack11 => {
             // `ftCommonAttack11ProcInterrupt`'s `interrupt_catch_timer < 2`:
             // a Z tap in the jab's first two frames becomes a grab.
             if f.status.anim_frame <= 2.0 && crate::grab::check_catch_attack11(f) {
                 return;
             }
-            fox_rapid_input(f);
+            rapid_input(f);
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
                 if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
@@ -3774,7 +3999,7 @@ pub fn update(f: &mut Fighter) {
         // `ftCommonAttack13CheckFighterKind` does, rather than assuming
         // every fighter does.
         Status::Attack12 => {
-            fox_rapid_input(f);
+            rapid_input(f);
             if f.attack1.followup_frames > 0.0 {
                 f.attack1.followup_frames -= f.status.timing.anim_speed;
                 if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A) {
@@ -3824,6 +4049,7 @@ pub fn update(f: &mut Fighter) {
         Status::AttackLw3 => {
             if f.status.animation_ended() {
                 set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
+                f.is_special_interrupt = true;
             }
         }
         // `ftAnimEndSetFall` @ ftcommonstatus.h: a drop-through becomes a
@@ -3978,6 +4204,9 @@ pub fn update(f: &mut Fighter) {
         // first drops the fighter into a plain fall — landing mid-move is
         // handled separately, in `Fighter::tick_air` via
         // `set_landing_or_landing_air`.
+        Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Link => {
+            crate::link::update_attack_air_lw(f)
+        }
         Status::AttackAirN
         | Status::AttackAirF
         | Status::AttackAirB
@@ -4039,6 +4268,7 @@ pub fn update(f: &mut Fighter) {
 fn update_extended(f: &mut Fighter) {
     match f.status.status {
         AnyStatus::Samus(_) => crate::samus::update(f),
+        AnyStatus::Link(_) => crate::link::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
@@ -4375,6 +4605,7 @@ pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
         crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
             Some(AnyStatus::Mario(MarioStatus::Attack13))
         }
+        crate::fighter::FighterKind::Link => Some(AnyStatus::Link(LinkStatus::Attack13)),
         _ => None,
     }
 }
@@ -5286,7 +5517,7 @@ mod tests {
         for held in [true, false, true, false] {
             f.prev_input = f.input;
             f.input.buttons.set(N64Buttons::A, held);
-            fox_rapid_input(&mut f);
+            rapid_input(&mut f);
         }
         assert_eq!(f.attack1.rapid_input_count, 4);
         assert!(f.attack1.rapid_requested);
@@ -5305,6 +5536,105 @@ mod tests {
         f.status.anim_frame = 8.0;
         update(&mut f);
         assert_eq!(f.status.status, Status::Wait);
+    }
+
+    fn link_on_ground() -> Fighter {
+        let mut f = Fighter::new(FighterKind::Link, 0, 3);
+        f.situation = Situation::Ground;
+        f
+    }
+
+    fn release_a(f: &mut Fighter) {
+        f.prev_input = f.input;
+        f.input.buttons = N64Buttons(0);
+    }
+
+    #[test]
+    fn link_jab_chains_on_its_mid_animation_flag1() {
+        let mut f = link_on_ground();
+        set_attack11(&mut f);
+        release_a(&mut f);
+        update(&mut f);
+        tap_a(&mut f);
+        update(&mut f);
+        assert!(f.attack1.is_goto_followup);
+        // Jab1's figatree runs 24 frames, but flag 1 lands at frame 10.
+        for frame in 3..10 {
+            release_a(&mut f);
+            update(&mut f);
+            assert_eq!(f.status.status, Status::Attack11, "frame {frame}");
+        }
+        release_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, Status::Attack12);
+
+        // A tap after flag 1 chains on that frame.
+        for _ in 0..14 {
+            release_a(&mut f);
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Attack12);
+        tap_a(&mut f);
+        update(&mut f);
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::Attack13));
+        while f.status.status != Status::Wait {
+            release_a(&mut f);
+            update(&mut f);
+        }
+    }
+
+    #[test]
+    fn link_needs_five_a_edges_for_the_rapid_jab() {
+        let mut f = link_on_ground();
+        set_attack11(&mut f);
+        let mut edges = 0;
+        while f.status.status == Status::Attack11 {
+            if edges % 2 == 0 {
+                tap_a(&mut f);
+            } else {
+                release_a(&mut f);
+            }
+            edges += 1;
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, Status::Attack12);
+        assert!(f.attack1.rapid_input_count >= 5);
+        while f.status.status == Status::Attack12 {
+            release_a(&mut f);
+            update(&mut f);
+        }
+        assert_eq!(f.status.status, AnyStatus::Link(LinkStatus::Attack100Start));
+        assert_eq!(f.status.anim_frame, 0.0);
+
+        // Four edges are not enough.
+        let mut f = link_on_ground();
+        set_attack11(&mut f);
+        for held in [true, false, true, false] {
+            f.prev_input = f.input;
+            f.input.buttons.set(N64Buttons::A, held);
+            rapid_input(&mut f);
+        }
+        assert!(!f.attack1.rapid_requested);
+        assert_eq!(attack11_followup_frames(FighterKind::Link), 24.0);
+        assert_eq!(attack11_followup_frames(FighterKind::Fox), 30.0);
+        assert_eq!(attack11_followup_frames(FighterKind::Donkey), 28.0);
+    }
+
+    #[test]
+    fn link_lands_out_of_aerials_by_his_motion_table() {
+        for (air, landing) in [
+            (Status::AttackAirF, Status::LandingAirF),
+            (Status::AttackAirLw, Status::LandingAirLw),
+            (Status::AttackAirB, Status::LandingAirNull),
+            (Status::AttackAirHi, Status::LandingAirNull),
+            (Status::AttackAirN, Status::LandingAirNull),
+        ] {
+            let mut f = Fighter::new(FighterKind::Link, 0, 3);
+            f.anim.landing = 10.0;
+            set_air_attack(&mut f, air);
+            set_landing_or_landing_air(&mut f);
+            assert_eq!(f.status.status, landing, "{air:?}");
+        }
     }
 
     #[test]

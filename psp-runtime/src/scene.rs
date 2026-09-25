@@ -411,6 +411,26 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 87,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Link as u32 {
+        // `ssb_rom::anim::SLOT_LINK_ATTACK11` onward. Link has one forward
+        // tilt and one forward smash; his own statuses use `anim_slot`.
+        match status {
+            AnyStatus::Common(Status::Attack11) => 175,
+            AnyStatus::Common(Status::Attack12) => 176,
+            AnyStatus::Common(Status::AttackDash) => 177,
+            AnyStatus::Common(Status::AttackS3) => 178,
+            AnyStatus::Common(Status::AttackHi3) => 179,
+            AnyStatus::Common(Status::AttackLw3) => 180,
+            AnyStatus::Common(Status::AttackS4) => 181,
+            AnyStatus::Common(Status::AttackHi4) => 182,
+            AnyStatus::Common(Status::AttackLw4) => 183,
+            AnyStatus::Common(Status::AttackAirN) => 184,
+            AnyStatus::Common(Status::AttackAirF) => 185,
+            AnyStatus::Common(Status::AttackAirB) => 186,
+            AnyStatus::Common(Status::AttackAirHi) => 187,
+            AnyStatus::Common(Status::AttackAirLw) => 188,
+            _ => status.anim_slot(),
+        }
     } else if kind == FighterKind::Luigi as u32 {
         // `ssb_rom::anim::SLOT_LUIGI_ATTACK11` onward. Luigi has no
         // mid-angle forward tilts.

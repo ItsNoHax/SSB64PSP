@@ -424,10 +424,20 @@ unsafe fn run() -> ! {
                         if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
                             weapons.spawn(spawn);
                         }
+                        weapons.observe_owner(&pl.fighter);
+                        weapons.observe_owner(&dummy.fighter);
                         weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
+                        weapons.sync_owner(&mut pl.fighter);
+                        weapons.sync_owner(&mut dummy.fighter);
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
-                        dummy.apply_hit_from(&pl.fighter);
+                        if dummy.apply_hit_from(&pl.fighter) {
+                            ssb_game::link::on_attack_hit(&mut pl.fighter);
+                        }
+                        ssb_game::link::apply_spin_attack_hits(
+                            &mut pl.fighter,
+                            &mut dummy.fighter,
+                        );
                         // `ftMainProcSearchCatch`, in the hit phase.
                         ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
                         ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);

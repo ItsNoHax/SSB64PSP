@@ -26,6 +26,7 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         AnyStatus::Fox(_) => return "fox-ext ",
         AnyStatus::Donkey(_) => return "dk-ext  ",
         AnyStatus::Samus(_) => return "sam-ext ",
+        AnyStatus::Link(_) => return "lnk-ext ",
     };
     match current {
         Wait => "wait    ",
