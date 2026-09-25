@@ -52,11 +52,17 @@ use crate::figatree;
 pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
 /// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
 /// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
-/// `ftCommonStatus` order. Packed for Mario, Fox and Donkey Kong only.
+/// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong and Samus.
 pub const SLOT_CATCH: usize = 110;
+/// First of Samus's 22 common attack slots, `Attack11` through
+/// `AttackAirLw` in `ftCommonStatus` order.
+pub const SLOT_SAMUS_ATTACK11: usize = 123;
+/// First of Samus's nine special slots, `SpecialNStart` through
+/// `SpecialAirLw` in `ftSamusStatus` order.
+pub const SLOT_SAMUS_SPECIAL_N_START: usize = 145;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 123;
+pub const SLOT_COUNT: usize = 154;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -476,8 +482,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 2666,
-            "Mario, Fox and Donkey have character and grab slots"
+            missing, 3459,
+            "Mario, Fox, Donkey and Samus have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -493,6 +499,13 @@ mod tests {
             .expect("Donkey is in FTKind order");
         assert_eq!(donkey.files[68], 907); // Jab1
         assert_eq!(donkey.files[94], 940); // Spinning Kong ground
+        let samus = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Samus")
+            .expect("Samus is in FTKind order");
+        assert_eq!(samus.files[SLOT_SAMUS_ATTACK11], 1063); // Jab1
+        assert_eq!(samus.files[SLOT_SAMUS_SPECIAL_N_START + 5], 1097); // Screw Attack
+        assert_eq!(samus.files[SLOT_CATCH], 1015);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo
         // throws share one figatree (`dFTDonkeyMotionDescs`).

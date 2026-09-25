@@ -20,6 +20,8 @@ mod fox_attack;
 pub mod grab;
 pub mod ground;
 pub mod physics;
+pub mod samus;
+mod samus_attack;
 pub mod shadow;
 pub mod status;
 pub mod weapon;

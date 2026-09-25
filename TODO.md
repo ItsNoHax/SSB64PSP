@@ -23,6 +23,10 @@ or evidence record covers it.
 | Throw collisions against bystanders | Mario and Fox back-throw attack boxes cannot hit another fighter in the current two-fighter match | RE-330 |
 | Throw stale-move and handicap modifiers | The current Training match has no stale-move queue or handicap state; throw damage uses descriptor values | RE-330 |
 | Restore condensed same-valued attack boxes | Some Mario, Fox and Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy, so joint placement now exposes this old omission | RE-332 |
+| Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
+| Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
+| Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
+| Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) has no effect on the root-sphere hurtbox | RE-333 |
 | Non-unit held fighter scale | Held TopN placement currently uses the first-child offset at normal fighter size; giant/shrunken capture needs the root scale applied as in `ftCommonCapturePulledRotateScale` | RE-332 |
 
 ## Hardware acceptance
@@ -31,7 +35,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v36) is 22,247,328 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v36, with Samus slots) is 22,557,024 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
 

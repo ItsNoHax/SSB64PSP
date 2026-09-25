@@ -706,6 +706,22 @@ pub enum DonkeyStatus {
     ThrowAirFF = 245,
 }
 
+/// Samus's character status table, `ftsamus.h`. Appear (220, 221) belongs
+/// to the unported match-entry sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum SamusStatus {
+    SpecialNStart = 222,
+    SpecialNLoop = 223,
+    SpecialNEnd = 224,
+    SpecialAirNStart = 225,
+    SpecialAirNEnd = 226,
+    SpecialHi = 227,
+    SpecialAirHi = 228,
+    SpecialLw = 229,
+    SpecialAirLw = 230,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -717,6 +733,7 @@ pub enum AnyStatus {
     Mario(MarioStatus),
     Fox(FoxStatus),
     Donkey(DonkeyStatus),
+    Samus(SamusStatus),
 }
 
 impl AnyStatus {
@@ -760,6 +777,13 @@ impl AnyStatus {
                 | DonkeyStatus::ThrowFDamage,
             ) => false,
             AnyStatus::Donkey(_) => true,
+            AnyStatus::Samus(
+                SamusStatus::SpecialAirNStart
+                | SamusStatus::SpecialAirNEnd
+                | SamusStatus::SpecialAirHi
+                | SamusStatus::SpecialAirLw,
+            ) => false,
+            AnyStatus::Samus(_) => true,
         }
     }
 
@@ -769,6 +793,7 @@ impl AnyStatus {
             AnyStatus::Mario(_) => false,
             AnyStatus::Fox(_) => false,
             AnyStatus::Donkey(_) => false,
+            AnyStatus::Samus(_) => false,
         }
     }
 
@@ -783,6 +808,7 @@ impl AnyStatus {
                     | DonkeyStatus::ThrowFWalkMiddle
                     | DonkeyStatus::ThrowFWalkFast
             ),
+            AnyStatus::Samus(_) => false,
         }
     }
 
@@ -858,6 +884,17 @@ impl AnyStatus {
                 DonkeyStatus::ThrowFF => 108,
                 DonkeyStatus::ThrowAirFF => 109,
             },
+            AnyStatus::Samus(s) => match s {
+                SamusStatus::SpecialNStart => 145,
+                SamusStatus::SpecialNLoop => 146,
+                SamusStatus::SpecialNEnd => 147,
+                SamusStatus::SpecialAirNStart => 148,
+                SamusStatus::SpecialAirNEnd => 149,
+                SamusStatus::SpecialHi => 150,
+                SamusStatus::SpecialAirHi => 151,
+                SamusStatus::SpecialLw => 152,
+                SamusStatus::SpecialAirLw => 153,
+            },
         }
     }
 
@@ -876,6 +913,8 @@ impl AnyStatus {
                 | DonkeyStatus::ThrowFLanding,
             ) => 0.0,
             AnyStatus::Donkey(_) => 1.0,
+            // `ftSamusSpecialNStartGetAnimSpeed` is applied by the setter.
+            AnyStatus::Samus(_) => 1.0,
         }
     }
 }
@@ -2131,6 +2170,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         crate::fighter::FighterKind::Mario
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
+            | crate::fighter::FighterKind::Samus
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2149,6 +2189,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         }
         crate::fighter::FighterKind::Fox => set_fox_special_n(f),
         crate::fighter::FighterKind::Donkey => set_donkey_special_n(f),
+        crate::fighter::FighterKind::Samus => crate::samus::set_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -2186,12 +2227,19 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
         crate::fighter::FighterKind::Mario
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
+            | crate::fighter::FighterKind::Samus
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Donkey {
+    if f.kind == crate::fighter::FighterKind::Samus {
+        if f.is_grounded() {
+            crate::samus::set_special_hi(f);
+        } else {
+            crate::samus::set_special_air_hi(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Donkey {
         set_donkey_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Fox {
         set_fox_special_hi_start(f);
@@ -2323,12 +2371,19 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
         crate::fighter::FighterKind::Mario
             | crate::fighter::FighterKind::Fox
             | crate::fighter::FighterKind::Donkey
+            | crate::fighter::FighterKind::Samus
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Donkey {
+    if f.kind == crate::fighter::FighterKind::Samus {
+        if f.is_grounded() {
+            crate::samus::set_special_lw(f);
+        } else {
+            crate::samus::set_special_air_lw(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Donkey {
         if f.is_grounded() {
             set_donkey_special_lw(f);
         } else {
@@ -2674,6 +2729,7 @@ pub fn set_any_status(
             f.physics.vel_ground.x = f.physics.vel_air.x;
             f.physics.vel_air = ssb_engine::math::Vec3::ZERO;
             f.physics.is_fastfall = false;
+            f.samus.charge_recoil = 0;
         }
         _ => {}
     }
@@ -2986,6 +3042,15 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
         return set_landing(f);
     };
     match current {
+        // Samus has no `LandingAirF`/`LandingAirLw` motion (`dFTSamusMotionDescs`).
+        Status::AttackAirF | Status::AttackAirLw
+            if f.kind == crate::fighter::FighterKind::Samus =>
+        {
+            let percent = crate::attack::move_data(f.kind, current.into())
+                .and_then(|m| m.landing_lag_percent)
+                .unwrap_or(100);
+            set_landing_air_null(f, percent);
+        }
         Status::AttackAirF => set_landing_air(f, Status::LandingAirF),
         Status::AttackAirB => set_landing_air(f, Status::LandingAirB),
         Status::AttackAirHi | Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Fox => {
@@ -3142,15 +3207,18 @@ pub fn set_dash_attack(f: &mut Fighter) {
 pub fn set_ftilt(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
-    let status = if f.kind == crate::fighter::FighterKind::Fox
-        && y > ATTACKS3_5ANGLE_TAN_30 * x.abs()
-    {
+    // Fox and Samus have all five forward-tilt motion files.
+    let five = matches!(
+        f.kind,
+        crate::fighter::FighterKind::Fox | crate::fighter::FighterKind::Samus
+    );
+    let status = if five && y > ATTACKS3_5ANGLE_TAN_30 * x.abs() {
         Status::AttackS3Hi
-    } else if f.kind == crate::fighter::FighterKind::Fox && y > ATTACKS3_5ANGLE_TAN_10 * x.abs() {
+    } else if five && y > ATTACKS3_5ANGLE_TAN_10 * x.abs() {
         Status::AttackS3HiS
-    } else if f.kind == crate::fighter::FighterKind::Fox && y < -ATTACKS3_5ANGLE_TAN_30 * x.abs() {
+    } else if five && y < -ATTACKS3_5ANGLE_TAN_30 * x.abs() {
         Status::AttackS3Lw
-    } else if f.kind == crate::fighter::FighterKind::Fox && y < -ATTACKS3_5ANGLE_TAN_10 * x.abs() {
+    } else if five && y < -ATTACKS3_5ANGLE_TAN_10 * x.abs() {
         Status::AttackS3LwS
     } else if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
         Status::AttackS3Hi
@@ -3947,6 +4015,7 @@ pub fn update(f: &mut Fighter) {
 /// [`AnyStatus`].
 fn update_extended(f: &mut Fighter) {
     match f.status.status {
+        AnyStatus::Samus(_) => crate::samus::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {

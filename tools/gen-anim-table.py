@@ -195,7 +195,7 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -212,8 +212,46 @@ GRAB_SLOTS = [
     ("ThrownFoxB",        188),
 ]
 
+# Samus's common attacks and specials (`216_SamusMainMotion.c`,
+# `dFTSamusMotionDescs`). They follow the grab slots so the earlier slot
+# numbers stay stable for the fighters already ported.
+LATE_SPECIAL_SLOTS = [
+    ("SamusAttack11", "Samus", "FTSamusAnimJab1"),
+    ("SamusAttack12", "Samus", "FTSamusAnimJab2"),
+    ("SamusAttackDash", "Samus", "FTSamusAnimDashAttack"),
+    ("SamusAttackS3Hi", "Samus", "FTSamusAnimFTiltHigh"),
+    ("SamusAttackS3HiS", "Samus", "FTSamusAnimFTiltMidHigh"),
+    ("SamusAttackS3", "Samus", "FTSamusAnimFTilt"),
+    ("SamusAttackS3LwS", "Samus", "FTSamusAnimFTiltMidLow"),
+    ("SamusAttackS3Lw", "Samus", "FTSamusAnimFTiltLow"),
+    ("SamusAttackHi3", "Samus", "FTSamusAnimUTilt"),
+    ("SamusAttackLw3", "Samus", "FTSamusAnimDTilt"),
+    ("SamusAttackS4Hi", "Samus", "FTSamusAnimFSmashHigh"),
+    ("SamusAttackS4HiS", "Samus", "FTSamusAnimFSmashMidHigh"),
+    ("SamusAttackS4", "Samus", "FTSamusAnimFSmash"),
+    ("SamusAttackS4LwS", "Samus", "FTSamusAnimFSmashMidLow"),
+    ("SamusAttackS4Lw", "Samus", "FTSamusAnimFSmashLow"),
+    ("SamusAttackHi4", "Samus", "FTSamusAnimUSmash"),
+    ("SamusAttackLw4", "Samus", "FTSamusAnimDSmash"),
+    ("SamusAttackAirN", "Samus", "FTSamusAnimAttackAirN"),
+    ("SamusAttackAirF", "Samus", "FTSamusAnimAttackAirF"),
+    ("SamusAttackAirB", "Samus", "FTSamusAnimAttackAirB"),
+    ("SamusAttackAirHi", "Samus", "FTSamusAnimAttackAirU"),
+    ("SamusAttackAirLw", "Samus", "FTSamusAnimAttackAirD"),
+    ("SamusSpecialNStart", "Samus", "FTSamusAnimStartingChargeShot"),
+    ("SamusSpecialNLoop", "Samus", "FTSamusAnimChargingNeutralSpecial"),
+    ("SamusSpecialNEnd", "Samus", "FTSamusAnimShooting"),
+    ("SamusSpecialAirNStart", "Samus", "FTSamusAnimStartingChargeShotAir"),
+    ("SamusSpecialAirNEnd", "Samus", "FTSamusAnimShootingAir"),
+    ("SamusSpecialHi", "Samus", "FTSamusAnimScrewAttackGround"),
+    ("SamusSpecialAirHi", "Samus", "FTSamusAnimScrewAttackAir"),
+    ("SamusSpecialLw", "Samus", "FTSamusAnimBomb"),
+    ("SamusSpecialAirLw", "Samus", "FTSamusAnimBombAir"),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
-             + [(name, status, None) for name, status in GRAB_SLOTS])
+             + [(name, status, None) for name, status in GRAB_SLOTS]
+             + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -472,10 +510,10 @@ def resolve(refs):
             if fid not in cache:
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
-        for slot, target, sym in SPECIAL_SLOTS:
+        def special(slot, target, sym):
             if fighter != target:
                 entry.append((slot, 0, None, 0, False))
-                continue
+                return
             runtime_options = {runtime for name, runtime in table if name == sym}
             if len(runtime_options) != 1:
                 problems.append(f"{fighter} {slot}: inconsistent runtime-joint flags for {sym}")
@@ -484,6 +522,8 @@ def resolve(refs):
             if fid not in cache:
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
+        for slot, target, sym in SPECIAL_SLOTS:
+            special(slot, target, sym)
         for slot, status in GRAB_SLOTS:
             sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, False)
             if sym is None:
@@ -493,6 +533,8 @@ def resolve(refs):
             if fid not in cache:
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
+        for slot, target, sym in LATE_SPECIAL_SLOTS:
+            special(slot, target, sym)
         rows.append((fighter, entry))
     return rows, problems
 

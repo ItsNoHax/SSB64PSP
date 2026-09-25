@@ -122,6 +122,17 @@ const DONKEY_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 18, 45, 70, 0, 80),
     desc(None, 9, 361, 100, 0, 0),
 ];
+// `216_SamusMainMotion.c`. Both throws carry element 2 (electric), which
+// only selects hit effects.
+const SAMUS_CATCH: [ThrowHitDesc; 2] = [desc(None, 8, 361, 100, 0, 0); 2];
+const SAMUS_THROW_F: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 16, 40, 60, 0, 90),
+    desc(None, 8, 361, 100, 0, 0),
+];
+const SAMUS_THROW_B: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 18, 40, 60, 0, 90),
+    desc(None, 8, 361, 100, 0, 0),
+];
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
@@ -185,6 +196,19 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((9.0, 1)),
             length: 22.0,
         },
+        // Wait(4) then WaitAsync(9): both throws release at frame 9.
+        (FighterKind::Samus, false) => ThrowScript {
+            desc: Some(SAMUS_THROW_F),
+            flag1: None,
+            flag2: Some((9.0, 1)),
+            length: 42.0,
+        },
+        (FighterKind::Samus, true) => ThrowScript {
+            desc: Some(SAMUS_THROW_B),
+            flag1: None,
+            flag2: Some((9.0, 2)),
+            length: 42.0,
+        },
         _ => ThrowScript {
             desc: None,
             flag1: None,
@@ -204,13 +228,15 @@ fn base_kind(kind: FighterKind) -> FighterKind {
 }
 
 /// `FTAttributes::joint_itemheavy_id`: the joint a held fighter hangs from
-/// (`203_MarioMain.c`, `209_FoxMain.c`, `213_DonkeyMain.c`). The runtime
-/// samples its world position into [`GrabState::anchor`].
+/// (`203_MarioMain.c`, `209_FoxMain.c`, `213_DonkeyMain.c`,
+/// `217_SamusMain.c`). The runtime samples its world position into
+/// [`GrabState::anchor`].
 pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
     match base_kind(kind) {
         FighterKind::Mario => Some(28),
         FighterKind::Fox => Some(30),
         FighterKind::Donkey => Some(29),
+        FighterKind::Samus => Some(36),
         _ => None,
     }
 }
@@ -220,8 +246,8 @@ pub fn has_catch(kind: FighterKind) -> bool {
     !kind.is_polygon()
 }
 
-/// The `Catch` script's attack collisions: `(hitbox, joint)` created at
-/// `WaitAsync(6)` and cleared one frame later.
+/// The `Catch` script's attack collisions: `(hitbox, joint)`, active over
+/// [`catch_coll_frames`].
 fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
     const fn catch(size: f32, x: f32, y: f32, z: f32) -> Hitbox {
         Hitbox {
@@ -240,18 +266,46 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
         (catch(330.0, 0.0, 0.0, 0.0), 29),
         (catch(180.0, 0.0, 200.0, 250.0), 0),
     ];
+    // The Grapple Beam: both boxes ride the beam joint.
+    const SAMUS: [(Hitbox, u8); 2] = [
+        (catch(210.0, 0.0, 0.0, 0.0), 36),
+        (catch(160.0, 0.0, 0.0, 200.0), 36),
+    ];
     match base_kind(kind) {
         FighterKind::Mario => &MARIO,
         FighterKind::Fox => &FOX,
         FighterKind::Donkey => &DONKEY,
+        FighterKind::Samus => &SAMUS,
         _ => &[],
     }
 }
 
-const CATCH_COLL_FRAMES: core::ops::Range<f32> = 6.0..7.0;
-/// Figatree lengths of `Catch` and `CatchPull`; the same for all three.
-const CATCH_LENGTH: f32 = 16.0;
-const CATCH_PULL_LENGTH: f32 = 2.0;
+/// Frames the `Catch` script's collisions exist: `WaitAsync(6)` and a
+/// one-frame clear, or Samus's five `Wait(4)` loops before the beam and its
+/// 19-frame reach.
+fn catch_coll_frames(kind: FighterKind) -> core::ops::Range<f32> {
+    match base_kind(kind) {
+        FighterKind::Samus => 20.0..39.0,
+        _ => 6.0..7.0,
+    }
+}
+/// Figatree lengths of `Catch` and `CatchPull`.
+fn catch_length(kind: FighterKind) -> f32 {
+    match base_kind(kind) {
+        FighterKind::Samus => 100.0,
+        _ => 16.0,
+    }
+}
+fn catch_pull_length(kind: FighterKind) -> f32 {
+    match base_kind(kind) {
+        FighterKind::Samus => 10.0,
+        _ => 2.0,
+    }
+}
+/// Samus's `Catch` script: `SetFlag1(17)` and `SetFlag2(9)` at frame 20 set
+/// the `CatchPull` start frame, which `ftCommonCatchProcUpdate` then winds
+/// down to zero over 17 frames.
+const SAMUS_CATCH_PULL_FLAGS: (f32, f32, f32) = (20.0, 17.0, 9.0);
 /// `CapturePulled`'s figatree (3 frames) holds its last pose.
 const CAPTURE_PULLED_LENGTH: f32 = 3.0;
 /// `ThrowFTurn`'s figatree, and the frame its script sets flag1.
@@ -311,6 +365,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Mario => [20, 10, 0, 0, 40, 0, 0, 0],
         FighterKind::Fox => [18, 10, 0, 0, 0, 10, 10, 18],
         FighterKind::Donkey => [20, 10, 5, 0, 0, 6, 0, 0],
+        FighterKind::Samus => [20, 10, 5, 0, 0, 0, 5, 10],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -390,6 +445,10 @@ pub struct GrabState {
     pub catch_kind: Option<FighterKind>,
     /// `status_vars.common.catchwait.throw_wait`.
     pub throw_wait: i32,
+    /// `status_vars.common.catchmain.catch_pull_frame_begin` and
+    /// `catch_pull_anim_frames`.
+    pub catch_pull_frame_begin: f32,
+    pub catch_pull_anim_frames: f32,
     /// `status_vars.common.capture.is_goto_pulled_wait`.
     pub is_goto_pulled_wait: bool,
     /// `status_vars.common.thrown.status_id`: the queued thrown status.
@@ -477,12 +536,16 @@ fn tapped(f: &Fighter) -> N64Buttons {
 
 /// `ftCommonCatchSetStatus` @ 0x80149BA8.
 pub fn set_catch(f: &mut Fighter) {
-    status::set_status(f, Status::Catch, 0.0, StatusTiming::frames(CATCH_LENGTH));
+    let length = catch_length(f.kind);
+    status::set_status(f, Status::Catch, 0.0, StatusTiming::frames(length));
     f.grab.throw_desc = Some(match base_kind(f.kind) {
         FighterKind::Fox => FOX_CATCH,
         FighterKind::Donkey => DONKEY_CATCH,
+        FighterKind::Samus => SAMUS_CATCH,
         _ => MARIO_CATCH,
     });
+    f.grab.catch_pull_frame_begin = 0.0;
+    f.grab.catch_pull_anim_frames = 0.0;
     // `ftParamSetCatchParams(fp, FTCATCHKIND_MASK_COMMON, ...)`.
     f.grab.is_catchstatus = true;
     f.grab.is_shield_catch = false;
@@ -530,12 +593,9 @@ pub fn check_catch_attack11(f: &mut Fighter) -> bool {
 
 /// `ftCommonCatchPullProcCatch` @ 0x80149F04: this fighter's `proc_catch`.
 fn catch_pull(f: &mut Fighter, held: &Fighter) {
-    status::set_status(
-        f,
-        Status::CatchPull,
-        0.0,
-        StatusTiming::frames(CATCH_PULL_LENGTH),
-    );
+    let length = catch_pull_length(f.kind);
+    let begin = f.grab.catch_pull_frame_begin;
+    status::set_status(f, Status::CatchPull, begin, StatusTiming::frames(length));
     f.grab.catch = Some(held.port);
     f.grab.catch_kind = Some(held.kind);
     f.grab.is_catchstatus = false;
@@ -567,7 +627,8 @@ fn check_throw(f: &mut Fighter) -> bool {
     true
 }
 
-/// `ftCommonThrowSetStatus` @ 0x8014A1E8, minus Kirby's and Samus's branches.
+/// `ftCommonThrowSetStatus` @ 0x8014A1E8, minus Kirby's branch. Samus's
+/// branch only attaches the Grapple Beam glow effect.
 fn set_throw(f: &mut Fighter, is_throwf: bool) {
     let back = !(is_throwf || f.stick.forward(f.facing) >= 0);
     let script = throw_script(f.kind, back);
@@ -1059,10 +1120,23 @@ pub fn release_on_dead(f: &mut Fighter) {
 /// when the current status is not one of them.
 pub fn update(f: &mut Fighter) -> bool {
     match f.status.status {
-        // `ftCommonCatchProcUpdate`: flag1/flag2 pull-frame bookkeeping is
-        // never set by these fighters' scripts, so it reduces to
-        // `ftAnimEndSetWait`.
+        // `ftCommonCatchProcUpdate`. Only Samus's script sets flag2.
         AnyStatus::Common(Status::Catch) => {
+            if f.grab.catch_pull_frame_begin > 0.0 {
+                f.grab.catch_pull_frame_begin -= f.grab.catch_pull_anim_frames;
+                if f.grab.catch_pull_frame_begin <= 0.0 {
+                    f.grab.catch_pull_frame_begin = 0.0;
+                }
+            }
+            let (at, flag1, flag2) = SAMUS_CATCH_PULL_FLAGS;
+            let frame = f.status.anim_frame;
+            if base_kind(f.kind) == FighterKind::Samus
+                && frame >= at
+                && frame - f.status.timing.anim_speed < at
+            {
+                f.grab.catch_pull_frame_begin = flag2;
+                f.grab.catch_pull_anim_frames = flag2 / flag1;
+            }
             if f.status.animation_ended() {
                 f.grab.is_catchstatus = false;
                 status::set_wait(f);
@@ -1460,7 +1534,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
 pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if !catcher.grab.is_catchstatus
         || catcher.status.status != Status::Catch
-        || !CATCH_COLL_FRAMES.contains(&catcher.status.anim_frame)
+        || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame)
     {
         return false;
     }
@@ -1593,6 +1667,45 @@ mod tests {
             origin: Vec3::new(400.0, 0.0, 0.0),
         });
         assert!(search_catch(&mut mario, &dummy));
+    }
+
+    #[test]
+    fn samus_grapple_beam_reaches_late_and_starts_the_pull_part_way() {
+        let mut samus = grounded(FighterKind::Samus, 0, 0.0);
+        let dummy = grounded(FighterKind::Mario, 1, 0.0);
+        set_catch(&mut samus);
+        assert_eq!(samus.status.timing.anim_length, Some(100.0));
+        for _ in 0..19 {
+            press(&mut samus, 0, 0);
+            tick(&mut samus);
+            assert!(!search_catch(&mut samus, &dummy), "no beam before frame 20");
+        }
+        press(&mut samus, 0, 0);
+        tick(&mut samus);
+        tick(&mut samus);
+        assert_eq!(samus.status.anim_frame, 21.0);
+        // Flag2 = 9 over flag1 = 17 frames, one step already taken.
+        assert_eq!(samus.grab.catch_pull_frame_begin, 9.0 - 9.0 / 17.0);
+        assert!(search_catch(&mut samus, &dummy));
+        assert_eq!(samus.status.status, Status::CatchPull);
+        assert_eq!(samus.status.anim_frame, 9.0 - 9.0 / 17.0);
+        assert_eq!(samus.status.timing.anim_length, Some(10.0));
+        assert_eq!(itemheavy_joint(FighterKind::Samus), Some(36));
+        assert_eq!(
+            thrown_status(FighterKind::Samus, FighterKind::Fox, true),
+            (None, Status::ThrownCommon)
+        );
+    }
+
+    #[test]
+    fn samus_throws_release_on_frame_nine() {
+        assert_eq!(
+            throw_script(FighterKind::Samus, false).flag2,
+            Some((9.0, 1))
+        );
+        assert_eq!(throw_script(FighterKind::Samus, true).flag2, Some((9.0, 2)));
+        assert_eq!(SAMUS_THROW_F[0].damage, 16);
+        assert_eq!(SAMUS_THROW_B[0].damage, 18);
     }
 
     #[test]
