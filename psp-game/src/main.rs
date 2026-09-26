@@ -488,11 +488,18 @@ unsafe fn run() -> ! {
                     // separate wiring here: `Fighter::tick`'s own status
                     // machine reads `stick_y` directly.
                     let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+                    pl.fighter.occupied_cliff = dummy_state.as_ref().and_then(|dummy| {
+                        ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
+                            .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
+                    });
                     pl.tick(p, &stage, controller, jump_held, None);
                     if let Some(spawn) = pl.fighter.take_weapon_spawn() {
                         weapons.spawn(spawn);
                     }
                     if let Some(dummy) = dummy_state.as_mut() {
+                        dummy.fighter.occupied_cliff =
+                            ssb_game::map::is_cliff_hold(pl.fighter.status.status)
+                                .then_some((pl.fighter.cliff.line, pl.fighter.facing));
                         // Grab events land before the partner's own tick,
                         // matching the original's direct status writes
                         // (`ssb_game::grab` module docs).

@@ -2211,8 +2211,8 @@ fn diamond_support_toward_surface(normal: Vec2, coll: BodyColl) -> Vec2 {
 /// are grouped by kind before testing, so their winding is not gameplay data;
 /// choose the perpendicular whose signed axis matches that group.
 pub(crate) fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
-    let dx = (s.x2 - s.x1) as f32;
-    let dy = (s.y2 - s.y1) as f32;
+    let dx = s.x2 as f32 - s.x1 as f32;
+    let dy = s.y2 as f32 - s.y1 as f32;
     let mut n = Vec2::new(-dy, dx);
     let choose_positive = match kind {
         MapSurfaceKind::Floor => n.y < 0.0,
@@ -2241,7 +2241,7 @@ pub(crate) fn swept_segment_intersection(from: Vec2, to: Vec2, s: Segment) -> Op
     const EPS: f32 = 0.001;
     let r = Vec2::new(to.x - from.x, to.y - from.y);
     let q = Vec2::new(s.x1 as f32, s.y1 as f32);
-    let v = Vec2::new((s.x2 - s.x1) as f32, (s.y2 - s.y1) as f32);
+    let v = Vec2::new(s.x2 as f32 - s.x1 as f32, s.y2 as f32 - s.y1 as f32);
     let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
     let denom = cross(r, v);
     if denom.abs() <= EPS {

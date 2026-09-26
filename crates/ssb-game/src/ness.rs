@@ -1,7 +1,7 @@
 //! Ness's US callbacks from `ftnessspecial{n,hi,lw}.c` and
 //! `ftNessJumpAerialProcPhysics`. Update precedes physics and map.
-//! Fighter wall/ceiling sliding, rebounds, cliff catch, part intangibility,
-//! sound and effects await their shared systems. Floors are handled here.
+//! Map responses use the shared fighter solver. Part intangibility, sound
+//! and effects await their shared systems.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
 use crate::status::{self, AnyStatus, NessStatus as N, Status, StatusTiming};
@@ -211,6 +211,66 @@ fn down_bounce(f: &mut Fighter) {
     f.physics.vel_ground.x = 0.0;
     // Shared DownBounce update/clip is still unported, as for other fighters.
     status::set_status(f, Status::DownBounceD, 0.0, StatusTiming::unknown());
+}
+pub(crate) fn map_down_bounce(f: &mut Fighter) {
+    down_bounce(f);
+}
+pub(crate) fn map_end_blast(f: &mut Fighter) {
+    set_thunder_end(f);
+}
+
+pub(crate) fn map_blast_contacts(f: &mut Fighter) {
+    let contacts = f.map_contacts;
+    for (hit, wall) in [
+        (contacts.ceiling, false),
+        (contacts.left_wall, true),
+        (contacts.right_wall, true),
+    ] {
+        let Some(hit) = hit else {
+            continue;
+        };
+        let v = f.physics.vel_air;
+        if hit.normal.x * v.x + hit.normal.y * v.y < v.length() * -0.906_307_8 {
+            let factor = -2.0 * (hit.normal.x * v.x + hit.normal.y * v.y);
+            f.physics.vel_air.x = (v.x + hit.normal.x * factor) * 0.5;
+            f.physics.vel_air.y = (v.y + hit.normal.y * factor) * 0.5;
+            physics::clamp_air_vel_x(&mut f.physics, f.attributes.air_speed_max_x);
+            f.facing = if f.physics.vel_air.x < 0.0 {
+                Facing::Right
+            } else {
+                Facing::Left
+            };
+            set(f, N::SpecialAirHiBound);
+        } else if wall {
+            // `ftNessSpecialHiCollideWallPhysics` (active US source).
+            let lr = f.facing.sign();
+            let old = if lr > 0.0 {
+                f.ness.blast_angle
+            } else {
+                core::f32::consts::PI - f.ness.blast_angle
+            };
+            let mut angle = 0.0;
+            for (contact, left) in [(contacts.left_wall, true), (contacts.right_wall, false)] {
+                if let Some(contact) = contact {
+                    angle = atan2(contact.normal.y, contact.normal.x);
+                    let plus = if left {
+                        old + core::f32::consts::PI < angle
+                    } else {
+                        angle + core::f32::consts::PI < old
+                    };
+                    angle += if plus {
+                        core::f32::consts::FRAC_PI_2
+                    } else {
+                        -core::f32::consts::FRAC_PI_2
+                    };
+                }
+            }
+            let (sin, cos) = sin_cos(angle - f.ness.blast_angle * lr);
+            f.physics.vel_air.x = v.x * cos - v.y * sin;
+            f.physics.vel_air.y = v.x * sin + v.y * cos;
+            f.ness.blast_angle = atan2(f.physics.vel_air.y, f.physics.vel_air.x * lr);
+        }
+    }
 }
 fn set_blast(f: &mut Fighter, thunder: Vec3) {
     f.ness.thunder_collide = true;

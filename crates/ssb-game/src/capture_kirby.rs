@@ -15,8 +15,9 @@
 //! * **Drop-through wiggle.** A downward wiggle tests the victim's stale
 //!   `floor_flags & 0x4000` and makes Kirby ignore its floor line. Map
 //!   collision has no pass-through line flag here, so it is not ported.
-//! * **Star map collision.** `ftCommonThrownCommonStarProcMap` also reflects
-//!   off ceilings and walls; fighter map collision resolves floors only.
+//!
+//! Star floor/ceiling/wall reflection consumes the shared map contacts.
+//!
 //! * **Visual scale.** The swallow and star shrink the victim's first joint
 //!   (`FTCOMMON_CAPTUREKIRBY_MAGNITUDE_*`); that is presentation.
 

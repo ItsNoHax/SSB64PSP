@@ -17,9 +17,8 @@
 //!
 //! ## Limits
 //!
-//! Floors only. Walls and ceilings (`mpProcessCheckTestLWallCollision` and
-//! friends) are not ported, so a body may pass sideways through a wall and
-//! nothing stops it at a ceiling.
+//! These primitives take floors only. [`crate::map`] composes them with
+//! fighter wall/ceiling probes, contour adjustment and cliff queries.
 
 use crate::collision::{self, FloorBelow, Segment};
 use ssb_engine::math::{Vec2, Vec3};
@@ -32,11 +31,8 @@ use ssb_engine::math::{Vec2, Vec3};
 /// centre point. Mario's `{320, 190, 0, 150}` is a body 320 tall whose widest
 /// span is 300 across, at hip height.
 ///
-/// Only `bottom` is read so far, because only floors are ported: the floor
-/// query runs at `pos.y + bottom` and landing puts the body back at
-/// `surface - bottom`. `top` and `width` are what the unported ceiling and
-/// wall queries will use, and `ftDisplayMain` already sizes the shadow from
-/// `width` and `center`.
+/// The floor probe runs at `pos.y + bottom`; [`crate::map`] uses the top
+/// and both waist points for ceiling/wall probes and diamond correction.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BodyColl {
     pub top: f32,
@@ -176,7 +172,14 @@ where
 /// When that x is past the end of the line, the original does not leave it
 /// hanging: it moves the body to the corner it went off, which is what puts a
 /// fighter exactly on a ledge instead of beside it.
-fn land<I, F>(coll: &BodyColl, pos: Vec3, line: u16, flags: u16, normal: Vec2, floors: F) -> Moved
+pub(crate) fn land<I, F>(
+    coll: &BodyColl,
+    pos: Vec3,
+    line: u16,
+    flags: u16,
+    normal: Vec2,
+    floors: F,
+) -> Moved
 where
     F: Fn() -> I,
     I: IntoIterator<Item = (u16, Segment)>,

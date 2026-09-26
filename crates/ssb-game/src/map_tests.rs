@@ -1,0 +1,597 @@
+use super::*;
+use crate::fighter::{FighterKind, Situation};
+use crate::status::StatusTiming;
+
+const BODY: BodyColl = BodyColl {
+    top: 20.0,
+    center: 10.0,
+    bottom: 0.0,
+    width: 10.0,
+};
+
+fn surface(kind: Kind, line: u16, a: (i16, i16), b: (i16, i16), flags: u16) -> MapSurface {
+    MapSurface {
+        kind,
+        segment: Segment {
+            x1: a.0,
+            y1: a.1,
+            x2: b.0,
+            y2: b.1,
+            flags,
+        },
+        topology: Some(SurfaceTopology {
+            line,
+            point: 0,
+            segments: 1,
+            vertex1: line * 2,
+            vertex2: line * 2 + 1,
+        }),
+    }
+}
+
+fn air(s: &[MapSurface], from: Vec3, to: Vec3) -> AirMoved {
+    move_air(&BODY, from, to, AirOptions::default(), || s.iter().copied())
+}
+
+#[test]
+fn both_wall_sides_stop_at_the_waist_and_keep_vertical_motion() {
+    let left = surface(Kind::LeftWall, 8, (100, -100), (100, 100), 3);
+    let moved = air(
+        &[left],
+        Vec3::new(50.0, 0.0, 0.0),
+        Vec3::new(120.0, 30.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos, Vec3::new(90.0, 30.0, 0.0));
+    assert_eq!(
+        moved.contacts.left_wall.unwrap(),
+        Contact {
+            line: 8,
+            flags: 3,
+            normal: Vec2::new(-1.0, 0.0)
+        }
+    );
+    let right = surface(Kind::RightWall, 9, (-100, -100), (-100, 100), 0);
+    let moved = air(
+        &[right],
+        Vec3::new(-50.0, 0.0, 0.0),
+        Vec3::new(-120.0, -30.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos, Vec3::new(-90.0, -30.0, 0.0));
+    assert_eq!(
+        moved.contacts.right_wall.unwrap().normal,
+        Vec2::new(1.0, 0.0)
+    );
+}
+
+#[test]
+fn walls_are_one_sided_and_independent_of_vertex_winding() {
+    let wall = surface(Kind::LeftWall, 1, (100, -100), (100, 100), 0);
+    assert!(air(
+        &[wall],
+        Vec3::new(130.0, 0.0, 0.0),
+        Vec3::new(50.0, 0.0, 0.0)
+    )
+    .contacts
+    .left_wall
+    .is_none());
+    let reversed = surface(Kind::LeftWall, 1, (100, 100), (100, -100), 0);
+    let from = Vec3::new(50.0, 0.0, 0.0);
+    let to = Vec3::new(120.0, 0.0, 0.0);
+    assert_eq!(air(&[wall], from, to), air(&[reversed], from, to));
+}
+
+#[test]
+fn wall_vertices_inside_the_diamond_constrain_the_origin() {
+    // Waist is above this wall: its upper vertex meets the lower diamond edge.
+    let wall = surface(Kind::LeftWall, 1, (100, -30), (100, 5), 0);
+    let moved = air(
+        &[wall],
+        Vec3::new(70.0, 0.0, 0.0),
+        Vec3::new(110.0, 0.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos.x, 95.0);
+    assert!(moved.contacts.left_wall.is_some());
+}
+
+#[test]
+fn tilted_wall_samples_all_three_diamond_points() {
+    let wall = surface(Kind::LeftWall, 1, (100, -10), (70, 20), 0);
+    let moved = air(
+        &[wall],
+        Vec3::new(40.0, 0.0, 0.0),
+        Vec3::new(120.0, 0.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos.x, 70.0);
+    let n = moved.contacts.left_wall.unwrap().normal;
+    assert!((n.x + 0.70710677).abs() < 0.001);
+    assert!((n.y + 0.70710677).abs() < 0.001);
+}
+
+#[test]
+fn ceiling_uses_the_top_tip_and_preserves_destination_x() {
+    let ceil = surface(Kind::Ceiling, 2, (-500, 100), (500, 100), 0);
+    let moved = air(
+        &[ceil],
+        Vec3::new(0.0, 50.0, 0.0),
+        Vec3::new(25.0, 120.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos, Vec3::new(25.0, 80.0, 0.0));
+    assert_eq!(moved.contacts.ceiling.unwrap().normal, Vec2::new(0.0, -1.0));
+    assert!(air(
+        &[ceil],
+        Vec3::new(0.0, 120.0, 0.0),
+        Vec3::new(0.0, 50.0, 0.0)
+    )
+    .contacts
+    .ceiling
+    .is_none());
+}
+
+#[test]
+fn substeps_retain_wall_contact_and_land_after_sliding() {
+    let wall = surface(Kind::LeftWall, 1, (100, -1000), (100, 1000), 0);
+    let floor = surface(Kind::Floor, 2, (-1000, 0), (1000, 0), 0);
+    let moved = air(
+        &[wall, floor],
+        Vec3::new(0.0, 500.0, 0.0),
+        Vec3::new(500.0, -500.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos, Vec3::new(90.0, 0.0, 0.0));
+    assert_eq!(moved.moved.floor.unwrap().line, 2);
+    assert!(moved.contacts.left_wall.is_some());
+}
+
+#[test]
+fn source_pass_callback_rejects_nearest_floor_without_retrying_the_probe() {
+    let soft = surface(
+        Kind::Floor,
+        1,
+        (-100, 10),
+        (100, 10),
+        collision::flags::PASS,
+    );
+    let solid = surface(Kind::Floor, 2, (-100, 0), (100, 0), 0);
+    let options = AirOptions {
+        skip_pass: true,
+        ..AirOptions::default()
+    };
+    let moved = move_air(
+        &BODY,
+        Vec3::new(0.0, 20.0, 0.0),
+        Vec3::new(0.0, -10.0, 0.0),
+        options,
+        || [soft, solid],
+    );
+    assert!(moved.moved.floor.is_none());
+    let moved = move_air(
+        &BODY,
+        Vec3::new(0.0, 20.0, 0.0),
+        Vec3::new(0.0, -10.0, 0.0),
+        AirOptions::default(),
+        || [soft, solid],
+    );
+    assert_eq!(moved.moved.floor.unwrap().line, 1);
+}
+
+#[test]
+fn cliff_uses_hand_reach_and_whole_polyline_edge() {
+    let mut a = surface(Kind::Floor, 3, (-200, 0), (0, 0), collision::flags::CLIFF);
+    let mut b = surface(Kind::Floor, 3, (0, 0), (200, 0), collision::flags::CLIFF);
+    a.topology.as_mut().unwrap().segments = 2;
+    b.topology.as_mut().unwrap().point = 1;
+    b.topology.as_mut().unwrap().segments = 2;
+    let caught = cliff(
+        || [a, b],
+        -1.0,
+        0,
+        Vec2::new(100.0, 50.0),
+        Vec3::new(250.0, -40.0, 0.0),
+        Vec3::new(250.0, -60.0, 0.0),
+    );
+    assert_eq!(caught, Some((3, Vec2::new(200.0, 0.0))));
+    assert!(cliff(
+        || [a, b],
+        -1.0,
+        0,
+        Vec2::ZERO,
+        Vec3::new(250.0, -40.0, 0.0),
+        Vec3::new(250.0, -60.0, 0.0)
+    )
+    .is_none());
+}
+
+#[test]
+fn cliff_material_four_exclusion_is_left_only_and_cooldown_applies() {
+    let floor = surface(
+        Kind::Floor,
+        3,
+        (-100, 0),
+        (100, 0),
+        collision::flags::CLIFF | 4,
+    );
+    let from = Vec3::new(0.0, 10.0, 0.0);
+    let to = Vec3::new(0.0, -10.0, 0.0);
+    assert!(cliff(|| [floor], 1.0, 0, Vec2::ZERO, from, to).is_none());
+    assert!(cliff(|| [floor], -1.0, 0, Vec2::ZERO, from, to).is_some());
+    assert!(cliff(|| [floor], -1.0, 1, Vec2::ZERO, from, to).is_none());
+}
+
+#[test]
+fn cliff_is_tested_per_substep_and_an_occupied_corner_is_skipped() {
+    let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
+    let query = CliffQuery {
+        facing: 1.0,
+        wait: 0,
+        reach: Vec2::new(100.0, 100.0),
+        occupied: None,
+    };
+    let from = Vec3::new(-150.0, 100.0, 0.0);
+    let to = Vec3::new(-150.0, -600.0, 0.0);
+    let moved = move_air(
+        &BODY,
+        from,
+        to,
+        AirOptions {
+            cliff: Some(query),
+            ..AirOptions::default()
+        },
+        || [floor],
+    );
+    assert_eq!(moved.cliff, Some((3, Vec2::new(-100.0, 0.0))));
+    assert!(moved.moved.pos.y > to.y);
+    let moved = move_air(
+        &BODY,
+        from,
+        to,
+        AirOptions {
+            cliff: Some(CliffQuery {
+                occupied: Some((3, 1.0)),
+                ..query
+            }),
+            ..AirOptions::default()
+        },
+        || [floor],
+    );
+    assert!(moved.cliff.is_none());
+    assert_eq!(moved.moved.pos, to);
+}
+
+#[test]
+fn neighbor_identity_uses_original_vertex_ids_and_highest_line_id() {
+    let floor = surface(Kind::Floor, 1, (-100, 0), (100, 0), 0);
+    let mut wall = surface(Kind::RightWall, 2, (-100, -100), (-100, 0), 0);
+    assert_eq!(neighbor(&|| [floor, wall], Kind::Floor, 1, false), None);
+    wall.topology.as_mut().unwrap().vertex2 = floor.topology.unwrap().vertex1;
+    let mut higher = wall;
+    higher.topology.as_mut().unwrap().line = 7;
+    assert_eq!(
+        neighbor(&|| [higher, floor, wall], Kind::Floor, 1, false),
+        Some((Kind::RightWall, 7))
+    );
+}
+
+#[test]
+fn edge_stops_are_selected_by_status_and_do_not_affect_walk_offs() {
+    let floor = surface(Kind::Floor, 1, (-100, 0), (100, 0), 0);
+    let from = Vec3::new(90.0, 0.0, 0.0);
+    let to = Vec3::new(120.0, 0.0, 0.0);
+    let (m, _) = move_ground(&BODY, from, to, 1, true, || [floor]);
+    assert_eq!(m.pos.x, 100.0);
+    assert!(m.floor.is_some());
+    assert!(move_ground(&BODY, from, to, 1, false, || [floor])
+        .0
+        .floor
+        .is_none());
+    assert!(stops_at_edge(AnyStatus::Purin(PurinStatus::SpecialHi)));
+    assert!(!stops_at_edge(AnyStatus::Common(Status::WalkFast)));
+}
+
+fn fighter(kind: FighterKind, s: AnyStatus, velocity: Vec3) -> Fighter {
+    let mut f = Fighter::new(kind, 0, 3);
+    f.coll = BODY;
+    status::set_any_status(&mut f, s, 0.0, StatusTiming::unknown());
+    f.physics.vel_air = velocity;
+    f
+}
+
+#[test]
+fn quick_attack_wall_and_ceiling_cancel_only_above_135_degrees() {
+    let mut f = fighter(
+        FighterKind::Pikachu,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi),
+        Vec3::new(100.0, 0.0, 0.0),
+    );
+    f.map_contacts.left_wall = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(-1.0, 0.0),
+    });
+    air_callback(&mut f);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHiEnd)
+    );
+    assert_eq!(f.physics.vel_air.x, 20.0);
+    let mut middle = fighter(
+        FighterKind::Pikachu,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi),
+        Vec3::new(60.0, 80.0, 0.0),
+    );
+    middle.map_contacts = f.map_contacts;
+    air_callback(&mut middle);
+    assert_eq!(
+        middle.status.status,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi)
+    );
+    let mut shallow = fighter(
+        FighterKind::Pikachu,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi),
+        Vec3::new(20.0, 100.0, 0.0),
+    );
+    shallow.map_contacts = f.map_contacts;
+    air_callback(&mut shallow);
+    assert_eq!(
+        shallow.status.status,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi)
+    );
+    shallow.map_contacts.ceiling = Some(Contact {
+        line: 2,
+        flags: 0,
+        normal: Vec2::new(0.0, -1.0),
+    });
+    air_callback(&mut shallow);
+    assert_eq!(
+        shallow.status.status,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHiEnd)
+    );
+}
+
+#[test]
+fn fire_fox_redirects_shallow_new_contacts_and_keeps_speed() {
+    let mut f = fighter(
+        FighterKind::Fox,
+        AnyStatus::Fox(FoxStatus::SpecialAirHi),
+        Vec3::new(10.0, 100.0, 0.0),
+    );
+    f.map_contacts.left_wall = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(-1.0, 0.0),
+    });
+    let speed = f.physics.vel_air.length();
+    air_callback(&mut f);
+    assert_eq!(f.physics.vel_air.x, 0.0);
+    assert!((f.physics.vel_air.y - speed).abs() < 0.001);
+    f.map_contacts_prev = f.map_contacts;
+    f.physics.vel_air.x = 10.0;
+    air_callback(&mut f);
+    assert_eq!(f.physics.vel_air.x, 10.0);
+
+    let floor = surface(Kind::Floor, 3, (-1000, 0), (1000, 0), 0);
+    f.status.status = AnyStatus::Fox(FoxStatus::SpecialHi);
+    f.fox_special_hi.travel_frames = 30;
+    f.situation = crate::fighter::Situation::Ground;
+    f.floor = Some(Standing {
+        line: 3,
+        flags: 0,
+        normal: Vec2::new(0.0, 1.0),
+    });
+    f.pos = Vec3::ZERO;
+    f.tick_map(|| [floor]);
+    assert_eq!(f.fox_special_hi.pass_timer, 1);
+}
+
+#[test]
+fn ness_blast_rebounds_steep_contacts_and_slides_shallow_walls() {
+    let mut f = fighter(
+        FighterKind::Ness,
+        AnyStatus::Ness(NessStatus::SpecialAirHiJibaku),
+        Vec3::new(0.0, 200.0, 0.0),
+    );
+    f.map_contacts.ceiling = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(0.0, -1.0),
+    });
+    air_callback(&mut f);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Ness(NessStatus::SpecialAirHiBound)
+    );
+    assert_eq!(f.physics.vel_air.y, -100.0);
+    assert_eq!(f.facing, Facing::Left);
+    let mut f = fighter(
+        FighterKind::Ness,
+        AnyStatus::Ness(NessStatus::SpecialAirHiJibaku),
+        Vec3::new(20.0, 100.0, 0.0),
+    );
+    f.ness.blast_angle = ssb_engine::math::atan2(100.0, 20.0);
+    f.map_contacts.left_wall = Some(Contact {
+        line: 2,
+        flags: 0,
+        normal: Vec2::new(-1.0, 0.0),
+    });
+    let speed = f.physics.vel_air.length();
+    air_callback(&mut f);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Ness(NessStatus::SpecialAirHiJibaku)
+    );
+    assert!(f.physics.vel_air.x.abs() < 0.01);
+    assert!((f.physics.vel_air.y - speed).abs() < 0.01);
+}
+
+#[test]
+fn falcon_kick_wall_rebound_obeys_the_source_flag_window() {
+    let mut f = fighter(
+        FighterKind::Captain,
+        AnyStatus::Captain(CaptainStatus::SpecialLw),
+        Vec3::ZERO,
+    );
+    f.status.anim_frame = 12.0;
+    f.map_contacts.left_wall = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(-1.0, 0.0),
+    });
+    assert!(ground_callback(&mut f, None));
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Captain(CaptainStatus::SpecialLwBound)
+    );
+    assert_eq!(f.situation, Situation::Air);
+    let mut f = fighter(
+        FighterKind::Captain,
+        AnyStatus::Captain(CaptainStatus::SpecialLw),
+        Vec3::ZERO,
+    );
+    f.status.anim_frame = 32.0;
+    f.map_contacts.right_wall = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(1.0, 0.0),
+    });
+    assert!(!ground_callback(&mut f, None));
+}
+
+#[test]
+fn a_live_fighter_tick_reaches_the_wall_callback() {
+    let wall = surface(Kind::LeftWall, 1, (100, -100), (100, 100), 0);
+    let mut f = fighter(
+        FighterKind::Pikachu,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHi),
+        Vec3::new(200.0, 0.0, 0.0),
+    );
+    f.pikachu.zip_frames = 5;
+    f.tick_map(|| [wall]);
+    assert_eq!(f.pos.x, 90.0);
+    assert_eq!(
+        f.status.status,
+        AnyStatus::Pikachu(PikachuStatus::SpecialAirHiEnd)
+    );
+    assert!(f.map_contacts.left_wall.is_some());
+}
+
+#[test]
+fn a_held_cliff_does_not_run_air_gravity_or_map_queries() {
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::CliffWait),
+        Vec3::ZERO,
+    );
+    f.cliff.fall_wait = 100;
+    f.pos = Vec3::new(100.0, 0.0, 0.0);
+    f.tick_map(core::iter::empty);
+    assert_eq!(f.pos, Vec3::new(100.0, 0.0, 0.0));
+    assert_eq!(f.physics.vel_air, Vec3::ZERO);
+}
+
+#[test]
+fn full_signed_vertex_range_survives_axis_reflection_and_widening() {
+    let ceil = surface(
+        Kind::Ceiling,
+        1,
+        (i16::MIN, i16::MIN),
+        (i16::MAX, i16::MIN),
+        0,
+    );
+    let moved = air(
+        &[ceil],
+        Vec3::new(0.0, -32800.0, 0.0),
+        Vec3::new(0.0, -32760.0, 0.0),
+    );
+    assert_eq!(moved.moved.pos.y, -32788.0);
+    assert_eq!(moved.contacts.ceiling.unwrap().normal, Vec2::new(0.0, -1.0));
+    let floor = surface(Kind::Floor, 2, (i16::MIN, 0), (i16::MAX, 0), 0);
+    let moved = air(
+        &[floor],
+        Vec3::new(0.0, 20.0, 0.0),
+        Vec3::new(0.0, -20.0, 0.0),
+    );
+    assert_eq!(moved.moved.floor.unwrap().line, 2);
+}
+
+#[test]
+fn a_live_fighter_catches_with_hand_reach_and_respects_ledge_hog() {
+    let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::CLIFF);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::Fall),
+        Vec3::new(0.0, -20.0, 0.0),
+    );
+    f.pos = Vec3::new(-150.0, -40.0, 0.0);
+    f.cliff_reach = Vec2::new(100.0, 50.0);
+    let mut occupied = f.clone();
+    occupied.occupied_cliff = Some((3, Facing::Right));
+    f.tick_map(|| [floor]);
+    assert_eq!(f.status.status, AnyStatus::Common(Status::CliffCatch));
+    assert_eq!(f.pos, Vec3::new(-100.0, 0.0, 0.0));
+    assert!(f.floor.is_none());
+    occupied.tick_map(|| [floor]);
+    assert_eq!(occupied.status.status, AnyStatus::Common(Status::Fall));
+}
+
+#[test]
+fn helpless_fall_pass_callback_uses_the_exact_down_stick_threshold() {
+    let floor = surface(Kind::Floor, 3, (-100, 0), (100, 0), collision::flags::PASS);
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::FallSpecial),
+        Vec3::new(0.0, -20.0, 0.0),
+    );
+    f.pos.y = 10.0;
+    f.fall_special.is_allow_pass = true;
+    f.input.stick_y = -45;
+    let mut lands = f.clone();
+    lands.input.stick_y = -44;
+    f.tick_map(|| [floor]);
+    assert!(f.floor.is_none());
+    assert!(f.pos.y < 0.0);
+    lands.tick_map(|| [floor]);
+    assert!(lands.floor.is_some());
+    assert_eq!(lands.pos.y, 0.0);
+}
+
+#[test]
+fn swallowed_star_reflects_from_the_ceiling_with_source_flag_updates() {
+    let mut f = fighter(
+        FighterKind::Mario,
+        AnyStatus::Common(Status::ThrownKirbyStar),
+        Vec3::new(0.0, 100.0, 0.0),
+    );
+    f.kirby_capture.flag1 = 20;
+    f.map_contacts.ceiling = Some(Contact {
+        line: 1,
+        flags: 0,
+        normal: Vec2::new(0.0, -1.0),
+    });
+    air_callback(&mut f);
+    assert_eq!(f.physics.vel_air.y, -100.0);
+    assert_eq!(f.kirby_capture.flag1, 0);
+    assert_eq!(f.kirby_capture.lr, 1.0);
+}
+
+#[test]
+fn aerial_jump_and_recovery_cliff_gates_follow_their_source_callbacks() {
+    let mut f = fighter(
+        FighterKind::Captain,
+        AnyStatus::Captain(CaptainStatus::SpecialAirHi),
+        Vec3::new(0.0, -1.0, 0.0),
+    );
+    f.captain.dive_cliff_wait = 1;
+    assert!(!allows_cliff(&f));
+    f.physics.vel_air.y = 1.0;
+    assert!(allows_cliff(&f));
+    f.captain.dive_cliff_wait = 0;
+    f.physics.vel_air.y = -1.0;
+    assert!(allows_cliff(&f));
+    f.status.status = AnyStatus::Kirby(KirbyStatus::JumpAerialF5);
+    assert!(allows_cliff(&f));
+    f.status.status = AnyStatus::Purin(PurinStatus::JumpAerialF3);
+    assert!(allows_cliff(&f));
+    f.status.status = AnyStatus::Yoshi(status::YoshiStatus::SpecialAirLwStart);
+    f.status.anim_frame = 4.0;
+    assert!(!allows_cliff(&f));
+    f.status.anim_frame = 5.0;
+    assert!(allows_cliff(&f));
+}

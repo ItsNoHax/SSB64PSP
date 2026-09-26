@@ -30,6 +30,7 @@ pub mod kirby_copy;
 pub mod link;
 mod link_attack;
 mod luigi_attack;
+pub mod map;
 pub mod ness;
 mod ness_attack;
 pub mod physics;
