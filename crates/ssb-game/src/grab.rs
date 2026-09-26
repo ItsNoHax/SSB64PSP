@@ -2014,9 +2014,11 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
         return false;
     }
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);
+    let copy_egg_lay = crate::kirby_copy::egg_lay_searching(catcher);
     let dive = crate::captain::dive_searching(catcher);
     let inhale = crate::kirby::inhale_searching(catcher);
     if !egg_lay
+        && !copy_egg_lay
         && !dive
         && !inhale
         && (catcher.status.status != Status::Catch
@@ -2031,6 +2033,8 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
         &crate::kirby::INHALE_CATCH
     } else if egg_lay {
         core::slice::from_ref(&crate::yoshi::EGG_LAY_CATCH)
+    } else if copy_egg_lay {
+        core::slice::from_ref(&crate::kirby_copy::EGG_LAY_CATCH)
     } else if dive {
         if catcher.status.anim_frame < 14.0 {
             &crate::captain::DIVE_CATCH
@@ -2058,6 +2062,9 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
         crate::captain::dive_catch(catcher, other);
     } else if egg_lay {
         crate::yoshi::catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureYoshi);
+    } else if copy_egg_lay {
+        crate::kirby_copy::egg_lay_catch(catcher, other);
         catcher.grab.send(GrabEvent::CaptureYoshi);
     } else {
         catch_pull(catcher, other);
@@ -2194,6 +2201,43 @@ mod tests {
         let mut record = attack::HitRecord::default();
         fox.pos = kirby.pos;
         assert!(!attack::apply_hit_from(&mut fox, &mut kirby, &mut record));
+    }
+
+    #[test]
+    fn kirby_with_yoshis_copy_lays_the_caught_fighter_in_an_egg() {
+        use crate::status::KirbyStatus as K;
+        let mut kirby = grounded(FighterKind::Kirby, 0, 0.0);
+        kirby.kirby.copy_id = FighterKind::Yoshi;
+        let mut mario = grounded(FighterKind::Mario, 1, 150.0);
+        press(&mut kirby, 0, 0);
+        tick(&mut kirby);
+        press(&mut kirby, N64Buttons::B, 0);
+        press(&mut mario, 0, 0);
+        frame(&mut kirby, &mut mario);
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::CopyYoshiSpecialN));
+        for _ in 0..30 {
+            if mario.status.status == Status::CaptureYoshi {
+                break;
+            }
+            press(&mut kirby, 0, 0);
+            press(&mut mario, 0, 0);
+            frame(&mut kirby, &mut mario);
+        }
+        assert_eq!(mario.status.status, Status::CaptureYoshi);
+        assert_eq!(
+            kirby.status.status,
+            AnyStatus::Kirby(K::CopyYoshiSpecialNCatch)
+        );
+        for _ in 0..60 {
+            if mario.status.status == Status::YoshiEgg {
+                break;
+            }
+            press(&mut kirby, 0, 0);
+            press(&mut mario, 0, 0);
+            frame(&mut kirby, &mut mario);
+        }
+        assert_eq!(mario.status.status, Status::YoshiEgg);
+        assert!(kirby.grab.catch.is_none() && mario.grab.capture.is_none());
     }
 
     /// Runs the two-frame `CatchPull` out.

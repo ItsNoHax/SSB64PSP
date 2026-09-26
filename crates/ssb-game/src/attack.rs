@@ -1450,6 +1450,14 @@ pub fn move_data(
                 K::SpecialLwUnk | K::SpecialAirLwHold | K::SpecialAirLwFall => {
                     Some(&crate::kirby_attack::STONE)
                 }
+                K::CopyDonkeySpecialNEnd | K::CopyDonkeySpecialAirNEnd => {
+                    Some(&crate::kirby_attack::COPY_GIANT_PUNCH)
+                }
+                K::CopyDonkeySpecialNFull | K::CopyDonkeySpecialAirNFull => {
+                    Some(&crate::kirby_attack::COPY_GIANT_PUNCH_FULL)
+                }
+                K::CopyCaptainSpecialN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH),
+                K::CopyCaptainSpecialAirN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH_AIR),
                 _ => None,
             }
         }
@@ -2466,6 +2474,7 @@ pub fn apply_hit_from(
         ) {
             hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
         }
+        hitbox.damage += crate::kirby_copy::giant_punch_bonus(attacker);
         if attacker.status.status == Status::ThrownKirbyStar {
             // `ftCommonThrownKirbyStarSetStatus` writes the star damage.
             hitbox.damage = crate::kirby_attack::star_damage(attacker.kind);
@@ -2613,6 +2622,9 @@ pub fn apply_hitbox_at(
         crate::link::on_damage(defender);
     }
     crate::yoshi::on_damage(defender);
+    if crate::kirby::is_kirby(defender.kind) {
+        crate::kirby_copy::on_damage(defender);
+    }
     if defender.grab.capture.is_some() {
         // `ftCommonDamageUpdateMain`'s `capture_gobj` branch. The percent is
         // always added (`ftParamUpdateDamage(fp, fp->damage_queue)`).

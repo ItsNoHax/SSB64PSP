@@ -1391,7 +1391,12 @@ impl WeaponPool {
     pub fn sync_owner(&mut self, f: &mut Fighter) {
         let port = usize::from(f.port);
         if port < MAX_OWNERS && core::mem::take(&mut self.caught[port]) {
-            crate::link::set_special_n_get(f);
+            // `wpLinkBoomerangCheckOwnerCatch`'s `fkind` check.
+            if crate::kirby::is_kirby(f.kind) {
+                crate::kirby_copy::set_boomerang_get(f);
+            } else {
+                crate::link::set_special_n_get(f);
+            }
         }
         f.link.boomerang_out = self
             .slots

@@ -10263,6 +10263,14 @@ mod tests {
             AnyStatus::Kirby(KirbyStatus::SpecialAirNCopy).anim_slot(),
             ssb_rom::anim::SLOT_KIRBY_ATTACK100_START + 30
         );
+        assert_eq!(
+            AnyStatus::Kirby(KirbyStatus::CopyLuigiSpecialN).anim_slot(),
+            ssb_rom::anim::SLOT_KIRBY_COPY_MARIO_SPECIAL_N
+        );
+        assert_eq!(
+            AnyStatus::Kirby(KirbyStatus::CopyYoshiSpecialAirNRelease).anim_slot(),
+            ssb_rom::anim::SLOT_KIRBY_COPY_MARIO_SPECIAL_N + 24
+        );
         for (row, kind) in [
             FighterKind::Mario,
             FighterKind::Fox,
