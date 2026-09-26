@@ -1,8 +1,8 @@
 //! Kirby's copy abilities for the ported fighters: `ftkirbycopy*specialn.c`
 //! for Mario and Luigi (Fireball), Fox (Blaster), Samus (Charge Shot),
 //! Donkey Kong (Giant Punch), Link (Boomerang), Captain Falcon (Falcon
-//! Punch), Yoshi (Egg Lay) and Pikachu (Thunder Jolt), with the motion-script
-//! events from `relocData/228_KirbyMainMotion.c` (US).
+//! Punch), Yoshi (Egg Lay), Pikachu (Thunder Jolt) and Jigglypuff (Pound),
+//! with the motion-script events from `relocData/228_KirbyMainMotion.c` (US).
 //!
 //! `ftKirbySpecialNSetStatusSelect` and `ftKirbySpecialAirNSetStatusSelect`
 //! pick the status from `passive_vars.kirby.copy_id` ([`set_special_n`]).
@@ -17,8 +17,8 @@
 //!
 //! ## Documented deviations
 //!
-//! * **Jigglypuff and Ness.** Their copies wait on those fighters'
-//!   weapons; a Kirby holding one of them still inhales.
+//! * **Ness.** His copy waits on his weapon; a Kirby holding it still
+//!   inhales.
 //! * **Giant Punch intangibility.** The full punch's `SetHitStatusAll(3)`
 //!   window waits on hit-status intangibility, which is not ported.
 //! * **Escape.** Charge Shot's and Giant Punch's shield-roll interrupts wait
@@ -86,6 +86,8 @@ const FALCONPUNCH_LENGTH: f32 = 90.0;
 const EGG_LAY_LENGTH: f32 = 38.0;
 const EGG_LAY_RELEASE_LENGTH: f32 = 35.0;
 const THUNDERJOLT_LENGTH: f32 = 64.0;
+/// Jigglypuff's `PoundGround` and `PoundAir` figatrees.
+const POUND_LENGTH: f32 = 55.0;
 
 /// Motion-script frames. `LuigiFireballGround` and its three siblings set
 /// flag 0 at `WaitAsync(16)`.
@@ -151,6 +153,10 @@ pub struct CopyState {
     /// `passive_vars.kirby.copycaptain_falcon_punch_unk`: aerial punches
     /// thrown. Nothing reads it.
     pub captain_punch_count: i32,
+    /// Pound's flag 1 was consumed.
+    pub purin_boosted: bool,
+    /// `passive_vars.kirby.copypurin_unk`: aerial Pounds. Nothing reads it.
+    pub purin_count: i32,
 }
 
 fn set(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
@@ -190,6 +196,7 @@ pub fn is_grounded(s: K) -> bool {
             | K::CopyYoshiSpecialNCatch
             | K::CopyYoshiSpecialNRelease
             | K::CopyPikachuSpecialN
+            | K::CopyPurinSpecialN
     )
 }
 
@@ -225,6 +232,8 @@ pub fn anim_slot(s: K) -> Option<usize> {
         K::CopyYoshiSpecialAirNRelease => C + 24,
         K::CopyPikachuSpecialN => 373,
         K::CopyPikachuSpecialAirN => 374,
+        K::CopyPurinSpecialN => 402,
+        K::CopyPurinSpecialAirN => 403,
         _ => return None,
     })
 }
@@ -263,6 +272,7 @@ pub fn attack_id(s: K) -> Option<MotionAttackId> {
         | K::CopyYoshiSpecialAirNCatch
         | K::CopyYoshiSpecialAirNRelease => M::SpecialNCopyYoshi,
         K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => M::SpecialNCopyPikachu,
+        K::CopyPurinSpecialN | K::CopyPurinSpecialAirN => M::SpecialNCopyPurin,
         _ => return None,
     })
 }
@@ -276,6 +286,7 @@ pub fn init_passive_vars(f: &mut Fighter) {
         }
         FighterKind::Donkey => f.kirby.copy.donkey_charge_level = 0,
         FighterKind::Captain => f.kirby.copy.captain_punch_count = 0,
+        FighterKind::Purin => f.kirby.copy.purin_count = 0,
         _ => {}
     }
 }
@@ -317,6 +328,15 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             };
             set(f, s, 0.0, StatusTiming::frames(THUNDERJOLT_LENGTH));
             f.kirby.copy.spawned = false;
+        }
+        FighterKind::Purin => {
+            let s = if ground {
+                K::CopyPurinSpecialN
+            } else {
+                K::CopyPurinSpecialAirN
+            };
+            set(f, s, 0.0, StatusTiming::frames(POUND_LENGTH));
+            f.kirby.copy.purin_boosted = false;
         }
         _ => return false,
     }
@@ -904,6 +924,7 @@ pub fn update(f: &mut Fighter) {
         K::CopyLinkSpecialNGet
         | K::CopyLinkSpecialNEmpty
         | K::CopyCaptainSpecialN
+        | K::CopyPurinSpecialN
         | K::CopyYoshiSpecialN => {
             if f.status.animation_ended() {
                 if current == K::CopyYoshiSpecialN {
@@ -915,6 +936,7 @@ pub fn update(f: &mut Fighter) {
         K::CopyLinkSpecialAirNReturn
         | K::CopyLinkSpecialAirNEmpty
         | K::CopyCaptainSpecialAirN
+        | K::CopyPurinSpecialAirN
         | K::CopyYoshiSpecialAirN => {
             if f.status.animation_ended() {
                 if current == K::CopyYoshiSpecialAirN {
@@ -1029,7 +1051,10 @@ fn air_vel_friction(f: &mut Fighter) {
 
 /// Grounded `proc_physics` where it is not plain friction.
 pub fn apply_ground_physics(f: &mut Fighter) -> bool {
-    if f.status.status != AnyStatus::Kirby(K::CopyCaptainSpecialN) {
+    if !matches!(
+        f.status.status,
+        AnyStatus::Kirby(K::CopyCaptainSpecialN | K::CopyPurinSpecialN)
+    ) {
         return false;
     }
     physics::apply_ground_vel_transn(&mut f.physics, f.root_motion, f.facing.sign());
@@ -1055,6 +1080,14 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
             physics::apply_air_drift(&mut f.physics, &attr, f.input.stick_x);
         }
         K::CopyCaptainSpecialAirN => falcon_punch_air_physics(f),
+        // `ftKirbyCopyPurinSpecialAirNProcPhysics`.
+        K::CopyPurinSpecialAirN => {
+            let mut boosted = f.kirby.copy.purin_boosted;
+            let mut count = f.kirby.copy.purin_count;
+            crate::purin::pound_air_physics(f, &mut boosted, &mut count);
+            f.kirby.copy.purin_boosted = boosted;
+            f.kirby.copy.purin_count = count;
+        }
         _ => air_vel_friction(f),
     }
     true
@@ -1089,6 +1122,11 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
         }
         K::CopyPikachuSpecialN => {
             switch(f, K::CopyPikachuSpecialAirN);
+            clamp(f);
+        }
+        // `mpCommonProcFighterOnFloor`, where Jigglypuff's is `OnEdge`.
+        K::CopyPurinSpecialN => {
+            switch(f, K::CopyPurinSpecialAirN);
             clamp(f);
         }
         K::CopySamusSpecialNStart => {
@@ -1145,6 +1183,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         K::CopyMarioSpecialAirN => K::CopyMarioSpecialN,
         K::CopyLuigiSpecialAirN => K::CopyLuigiSpecialN,
         K::CopyPikachuSpecialAirN => K::CopyPikachuSpecialN,
+        K::CopyPurinSpecialAirN => K::CopyPurinSpecialN,
         K::CopySamusSpecialAirNStart => K::CopySamusSpecialNStart,
         K::CopySamusSpecialAirNEnd => K::CopySamusSpecialNEnd,
         K::CopyDonkeySpecialAirNStart => K::CopyDonkeySpecialNStart,
@@ -1544,5 +1583,29 @@ mod tests {
             f.status.status,
             AnyStatus::Common(crate::status::Status::Fall)
         );
+    }
+
+    #[test]
+    fn copied_pound_uses_jigglypuffs_boost_and_floor_callback() {
+        let mut f = kirby(FighterKind::Purin, true);
+        status::set_wait(&mut f);
+        assert!(set_special_n(&mut f));
+        assert_eq!(status(&f), K::CopyPurinSpecialN);
+        assert_eq!(f.status.status.anim_slot(), 402);
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(status(&f), K::CopyPurinSpecialAirN);
+        while f.status.anim_frame < crate::purin::POUND_BOOST_FRAME {
+            status::update(&mut f);
+            apply_air_physics(&mut f);
+        }
+        assert_eq!(f.kirby.copy.purin_count, 1);
+        let x = crate::purin::POUND_VEL_BASE * crate::purin::POUND_VEL_MUL * f.facing.sign();
+        assert!((f.physics.vel_air.x - x).abs() < 1e-3);
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(status(&f), K::CopyPurinSpecialN);
+        assert!(core::ptr::eq(
+            crate::attack::move_data(FighterKind::Kirby, f.status.status).unwrap(),
+            &crate::purin_attack::COPY_POUND
+        ));
     }
 }

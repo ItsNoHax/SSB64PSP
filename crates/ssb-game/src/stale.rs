@@ -440,6 +440,19 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
                 _ => M::SpecialHi,
             }
         }
+        AnyStatus::Purin(s) => {
+            use crate::status::PurinStatus as P;
+            match s {
+                P::JumpAerialF1
+                | P::JumpAerialF2
+                | P::JumpAerialF3
+                | P::JumpAerialF4
+                | P::JumpAerialF5 => M::None,
+                P::SpecialN | P::SpecialAirN => M::SpecialN,
+                P::SpecialHi | P::SpecialAirHi => M::SpecialHi,
+                P::SpecialLw | P::SpecialAirLw => M::SpecialLw,
+            }
+        }
         AnyStatus::Kirby(s) => {
             use crate::status::KirbyStatus as K;
             if let Some(id) = crate::kirby_copy::attack_id(s) {

@@ -455,6 +455,8 @@ pub fn joints(status: crate::status::AnyStatus, index: usize) -> Option<u8> {
             | K::CopyDonkeySpecialAirNFull,
         ) => &[15, 15, 5],
         AnyStatus::Kirby(K::CopyCaptainSpecialN | K::CopyCaptainSpecialAirN) => &[15],
+        // `dKirbyMainMotion_Pound`: joint 16 where Jigglypuff's uses 15.
+        AnyStatus::Kirby(K::CopyPurinSpecialN | K::CopyPurinSpecialAirN) => &[16],
         _ => &[0],
     };
     Some(ids.get(index).copied().unwrap_or(ids[ids.len() - 1]))
