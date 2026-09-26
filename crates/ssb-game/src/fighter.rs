@@ -265,6 +265,8 @@ pub struct Fighter {
     pub link: crate::link::LinkState,
     /// Egg Throw and aerial-jump state — `crate::yoshi`.
     pub yoshi: crate::yoshi::YoshiState,
+    /// Falcon Punch, Kick and Dive state.
+    pub captain: crate::captain::CaptainState,
     /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
     pub egg: crate::capture_yoshi::CaptureYoshiState,
     /// `FTStruct::knockback_resist_status`: knockback a hit loses before it
@@ -335,6 +337,7 @@ impl Fighter {
             samus: crate::samus::SamusState::default(),
             link: crate::link::LinkState::default(),
             yoshi: crate::yoshi::YoshiState::default(),
+            captain: crate::captain::CaptainState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
             knockback_resist: 0.0,
             is_special_interrupt: false,
@@ -584,8 +587,10 @@ impl Fighter {
             crate::status::AnyStatus::Samus(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Link(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Yoshi(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Captain(_) => crate::status::Status::Wait,
         };
-        if self.status.status
+        if crate::captain::apply_ground_physics(self) {
+        } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
         {
             crate::physics::apply_ground_vel_transn(
@@ -685,6 +690,7 @@ impl Fighter {
                 } else if !crate::samus::on_ground_lost(self)
                     && !crate::link::on_ground_lost(self)
                     && !crate::yoshi::on_ground_lost(self)
+                    && !crate::captain::on_ground_lost(self)
                     && !crate::capture_yoshi::on_ground_lost(self)
                     && !crate::grab::on_ground_lost(self)
                 {
@@ -737,6 +743,7 @@ impl Fighter {
             && !crate::samus::skips_fast_fall(self.status.status)
             && !crate::link::skips_fast_fall(self.status.status)
             && !crate::yoshi::skips_fast_fall(self)
+            && !crate::captain::skips_fast_fall(self.status.status)
         {
             crate::status::check_set_fast_fall(self);
         }
@@ -753,6 +760,7 @@ impl Fighter {
         } else if crate::samus::apply_air_physics(self)
             || crate::link::apply_air_physics(self)
             || crate::yoshi::apply_air_physics(self)
+            || crate::captain::apply_air_physics(self)
         {
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
@@ -832,6 +840,9 @@ impl Fighter {
                     return;
                 }
                 if crate::yoshi::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if crate::captain::on_landing(self, moved.pos.y) {
                     return;
                 }
                 if crate::capture_yoshi::on_landing(self, moved.pos.y) {

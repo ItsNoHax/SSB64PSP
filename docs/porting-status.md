@@ -20,7 +20,7 @@ unless a physical PSP is named.
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
 | Mesh / model conversion | VERIFYING | 0 conversion failures; all 127 material graphs paired; PRIM ownership, lighting provenance, independent depth state | Physical-PSP confirmation | RE-163, RE-240–261 |
 | Scene graph (DObj) | 87% | 363 `DObjDesc` arrays + 11 effects packed as 374 objects | `GObj` layer | RE-172 |
-| Asset pack | COMPLETE | v37, zero-copy, 16-byte aligned; Donkey attack/special/cargo slots, Samus and Luigi attack/special slots and Mario/Fox/Donkey/Samus/Luigi grab/throw clips; two-tile blend and animated colour registers; recorded render-tile layout and `unk10 == 1` inputs; per-texture compensation flag and source digest | — | RE-301, RE-312, RE-319, RE-321, RE-322, RE-327, RE-330, RE-334, RE-336 |
+| Asset pack | COMPLETE | v37, zero-copy, 16-byte aligned; attack/special and grab/throw clips through Captain Falcon; two-tile blend and animated colour registers; recorded render-tile layout and `unk10 == 1` inputs; per-texture compensation flag and source digest | — | RE-301, RE-312, RE-319, RE-321, RE-322, RE-327, RE-330, RE-334, RE-336, RE-338 |
 
 ## Rendering
 
@@ -58,14 +58,14 @@ Detail per domain: [`rendering.md`](rendering.md).
 |---|---|---|---|---|
 | Physics | 62% | Ground/air/knockback velocities, gravity, friction, fastfall; per-fighter constants for all 27 kinds verified against the decomp | — | RE-032 |
 | Collision | 65% | All 41 stages packed; swept floor queries; weapon diamond collider vs floors, ceilings, walls | Fighter wall/ceiling solver; moving groups tested at rest | RE-030, RE-031 |
-| Animation | 95% | Figatree playback at 60 Hz; posed joint transforms and TransN root motion feed gameplay; grab/thrown/cargo clips for Mario, Fox, Donkey Kong, Samus, Luigi, Link and Yoshi; Yoshi Bomb holds its pose at speed zero; held TopN uses the catcher's joint rotation and its own child offset | Reflector effect phases | RE-036, RE-038, RE-171, RE-299, RE-330–335, RE-337 |
-| Status machine | 68% | Full `FTCommonStatus` table (0–219); movement, Damage/hitstun, per-character `AnyStatus`, Yoshi Egg Lay victim and aerial jump | Most statuses beyond those listed are ordinals only | RE-033, RE-035, RE-294, RE-337 |
-| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes on posed joints, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; Donkey, Samus, Luigi, Link and Yoshi normal/special windows; Link's down-air rehit, Yoshi's 14-pulse down air and aerial-jump resistance; throw descriptors and release knockback | Some same-valued source joint boxes still condensed; root-sphere hurtbox, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG) | RE-294, RE-299, RE-330, RE-332–335, RE-337 |
+| Animation | 95% | Figatree playback at 60 Hz; posed joint transforms and TransN root motion feed gameplay; grab/thrown/cargo clips through Captain Falcon; Yoshi Bomb holds its pose at speed zero; held TopN uses the catcher's joint rotation and its own child offset | Reflector effect phases | RE-036, RE-038, RE-171, RE-299, RE-330–335, RE-337–338 |
+| Status machine | 68% | Full `FTCommonStatus` table (0–219); movement, Damage/hitstun, per-character `AnyStatus`, Yoshi Egg Lay victim and aerial jump, Falcon Dive capture | Most statuses beyond those listed are ordinals only | RE-033, RE-035, RE-294, RE-337–338 |
+| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes on posed joints, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; normal/special windows through Captain Falcon; Link's down-air rehit, Yoshi's 14-pulse down air, Falcon Kick contact scaling; throw descriptors and release knockback | Some same-valued source joint boxes still condensed; root-sphere hurtbox, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG) | RE-294, RE-299, RE-330, RE-332–335, RE-337–338 |
 | Shield / guard | 40% | `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff`, decay, shield break | Clip lengths, bubble visual, break mash-out chain | — |
 | Ledges | 45% | `CliffCatch` → `CliffWait` → climb/attack/escape, re-grab cooldown | Hand-reach offset, ledge-hog, clip lengths | — |
 | KO / respawn | 45% | Blast zones, stock loss, rebirth sequence, 120-frame invincibility | `DeadUpFall` (RNG), halo visuals, team/1P branches | — |
-| Recovery (`FallSpecial`) | 25% | Shared helpless fall and landing; driven by Mario, Luigi, Donkey, Samus and Link up-B | Drop-through, ledge auto-catch | RE-299 |
-| Grabs / throws | IMPLEMENTED for Mario, Fox, Donkey Kong, Samus, Luigi, Link and Yoshi in the two-fighter host match model | Catch search on posed hand joints, Samus Grapple Beam, Link Hookshot and Yoshi tongue windows and pull frames, linked capture/throw statuses, Egg Lay swallow and breakout, shield-grab damage, Donkey cargo walk/jump/turn/throw, heavy-item joint matrix and held TopN pose | Bystander throw hits, held-fighter damage, non-unit held scale; Yoshi egg hurtbox uses root sphere | RE-330–335, RE-337 |
+| Recovery (`FallSpecial`) | 25% | Shared helpless fall and landing; driven by Mario, Luigi, Donkey, Samus, Link and Captain Falcon up-B | Drop-through, ledge auto-catch | RE-299, RE-338 |
+| Grabs / throws | IMPLEMENTED through Captain Falcon in the two-fighter host match model | Catch search on posed hand joints, Samus Grapple Beam, Link Hookshot, Yoshi tongue and Falcon Dive; linked capture/throw statuses, Egg Lay swallow and breakout, shield-grab damage, Donkey cargo walk/jump/turn/throw, heavy-item joint matrix and held TopN pose | Bystander throw hits, held-fighter damage, non-unit held scale; Yoshi egg and Falcon Dive victims use root-sphere hurtboxes | RE-330–335, RE-337–338 |
 | Weapons | 30% | Fixed pool: Mario and Luigi Fireball, Fox Blaster, Samus Charge Shot and Bomb, Link Boomerang with owner catch, Yoshi thrown egg and Bomb stars; Link's Spin Attack weapon as fighter state; reflection | General item system (Link's Bomb); map-bound and off-camera removal; weapon shields; Samus, Luigi, Link and Yoshi weapon rendering | RE-300, RE-303, RE-333–335, RE-337 |
 | Stages | 65% | Headers, collision, render layers for all 41 | No match stage loader | RE-028, RE-029, RE-170 |
 | CPU AI | 0% | — | — | — |
@@ -82,7 +82,8 @@ Detail per domain: [`rendering.md`](rendering.md).
 | Luigi | Normals, specials, grabs and throws | Host-only (not selectable in `psp-game`); shares Mario's special statuses; Super Jump Punch and up-smash intangibility wait on hit status |
 | Link | Normals, rapid jab, specials, grabs and throws | Host-only (not selectable in `psp-game`); Bomb waits on the item system; Boomerang and Spin Attack weapon not drawn |
 | Yoshi | Normals, Egg Lay/Throw/Bomb, grabs and throws | Host-only (not selectable in `psp-game`); egg and stars not drawn; egg hurtbox uses root sphere |
-| Other 5 | Not started | Movement and models work for all |
+| Captain Falcon | Normals, rapid jab, Falcon Punch/Kick/Dive, grabs and throws | Host-only (not selectable in `psp-game`); Kick wall rebound and Dive cliff catch wait on fighter map collision |
+| Other 4 | Not started | Movement and models work for all |
 
 ## Known caveats
 

@@ -433,6 +433,7 @@ unsafe fn run() -> ! {
                         weapons.apply_hits(&mut dummy.fighter);
                         if dummy.apply_hit_from(&pl.fighter) {
                             ssb_game::link::on_attack_hit(&mut pl.fighter);
+                            ssb_game::captain::on_kick_hit(&mut pl.fighter);
                         }
                         ssb_game::link::apply_spin_attack_hits(
                             &mut pl.fighter,

@@ -606,6 +606,7 @@ impl Status {
                 // `ftCommonYoshiEggSetStatus` both set the fighter airborne;
                 // the egg's own map callback lands it without a new status.
                 | Status::CaptureYoshi
+                | Status::CaptureCaptain
                 | Status::YoshiEgg
         )
     }
@@ -780,6 +781,28 @@ pub enum YoshiStatus {
     SpecialAirNRelease = 233,
 }
 
+/// Captain Falcon's `ftCaptainStatus` table. Entry-car statuses 224–227 are
+/// reserved for the match-entry sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum CaptainStatus {
+    Attack13 = 220,
+    Attack100Start = 221,
+    Attack100Loop = 222,
+    Attack100End = 223,
+    SpecialN = 228,
+    SpecialAirN = 229,
+    SpecialLw = 230,
+    SpecialLwAir = 231,
+    SpecialLwLanding = 232,
+    SpecialAirLw = 233,
+    SpecialLwBound = 234,
+    SpecialHi = 235,
+    SpecialHiCatch = 236,
+    SpecialHiThrow = 237,
+    SpecialAirHi = 238,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -794,6 +817,7 @@ pub enum AnyStatus {
     Samus(SamusStatus),
     Link(LinkStatus),
     Yoshi(YoshiStatus),
+    Captain(CaptainStatus),
 }
 
 impl AnyStatus {
@@ -865,6 +889,8 @@ impl AnyStatus {
                 | YoshiStatus::SpecialAirNRelease,
             ) => false,
             AnyStatus::Yoshi(_) => true,
+            AnyStatus::Captain(CaptainStatus::SpecialAirN | CaptainStatus::SpecialLwAir | CaptainStatus::SpecialAirLw | CaptainStatus::SpecialLwBound | CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi | CaptainStatus::SpecialHiThrow | CaptainStatus::SpecialHiCatch) => false,
+            AnyStatus::Captain(_) => true,
         }
     }
 
@@ -877,6 +903,7 @@ impl AnyStatus {
             AnyStatus::Samus(_) => false,
             AnyStatus::Link(_) => false,
             AnyStatus::Yoshi(_) => false,
+            AnyStatus::Captain(_) => false,
         }
     }
 
@@ -894,6 +921,7 @@ impl AnyStatus {
             AnyStatus::Samus(_) => false,
             AnyStatus::Link(_) => false,
             AnyStatus::Yoshi(_) => false,
+            AnyStatus::Captain(_) => false,
         }
     }
 
@@ -1014,6 +1042,23 @@ impl AnyStatus {
                 YoshiStatus::SpecialAirNCatch => 231,
                 YoshiStatus::SpecialAirNRelease => 232,
             },
+            AnyStatus::Captain(s) => match s {
+                CaptainStatus::Attack13 => 253,
+                CaptainStatus::Attack100Start => 254,
+                CaptainStatus::Attack100Loop => 255,
+                CaptainStatus::Attack100End => 256,
+                CaptainStatus::SpecialN => 257,
+                CaptainStatus::SpecialAirN => 258,
+                CaptainStatus::SpecialLw => 259,
+                CaptainStatus::SpecialLwAir => 260,
+                CaptainStatus::SpecialLwLanding => 261,
+                CaptainStatus::SpecialAirLw => 262,
+                CaptainStatus::SpecialLwBound => 263,
+                CaptainStatus::SpecialHi => 264,
+                CaptainStatus::SpecialHiCatch => 265,
+                CaptainStatus::SpecialHiThrow => 266,
+                CaptainStatus::SpecialAirHi => 267,
+            },
         }
     }
 
@@ -1039,6 +1084,7 @@ impl AnyStatus {
             // of 0: the pose and the motion script hold.
             AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop) => 0.0,
             AnyStatus::Yoshi(_) => 1.0,
+            AnyStatus::Captain(_) => 1.0,
         }
     }
 }
@@ -2303,6 +2349,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
+            | crate::fighter::FighterKind::Captain
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2335,6 +2382,13 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
                 crate::yoshi::set_special_n(f);
             } else {
                 crate::yoshi::set_special_air_n(f);
+            }
+        }
+        crate::fighter::FighterKind::Captain => {
+            if f.is_grounded() {
+                crate::captain::set_special_n(f);
+            } else {
+                crate::captain::set_special_air_n(f);
             }
         }
         _ => unreachable!(),
@@ -2378,12 +2432,15 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
+            | crate::fighter::FighterKind::Captain
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Yoshi {
+    if f.kind == crate::fighter::FighterKind::Captain {
+        crate::captain::set_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Yoshi {
         if f.is_grounded() {
             crate::yoshi::set_special_hi(f);
         } else {
@@ -2537,12 +2594,19 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
+            | crate::fighter::FighterKind::Captain
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Yoshi {
+    if f.kind == crate::fighter::FighterKind::Captain {
+        if f.is_grounded() {
+            crate::captain::set_special_lw(f);
+        } else {
+            crate::captain::set_special_air_lw(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Yoshi {
         if f.is_grounded() {
             crate::yoshi::set_special_lw_start(f);
         } else {
@@ -3377,6 +3441,7 @@ fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
     match kind {
         crate::fighter::FighterKind::Fox => Some(4),
         crate::fighter::FighterKind::Link => Some(5),
+        crate::fighter::FighterKind::Captain => Some(6),
         _ => None,
     }
 }
@@ -3384,7 +3449,7 @@ fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
 /// The counting half of `ftCommonAttack100StartCheckInterruptCommon`: both
 /// A taps and A releases count. Returns whether the count has reached the
 /// fighter's minimum.
-fn rapid_input(f: &mut Fighter) -> bool {
+pub(crate) fn rapid_input(f: &mut Fighter) -> bool {
     let Some(min) = rapid_inputs_min(f.kind) else {
         return false;
     };
@@ -3415,6 +3480,12 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
         // has no `Attack13` to chain into.
         (crate::fighter::FighterKind::Yoshi, Status::Attack11) => {
             Some(crate::yoshi_attack::JAB1_FLAG1_FRAME)
+        }
+        (crate::fighter::FighterKind::Captain, Status::Attack11) => {
+            Some(crate::captain_attack::JAB1_FLAG1_FRAME)
+        }
+        (crate::fighter::FighterKind::Captain, Status::Attack12) => {
+            Some(crate::captain_attack::JAB2_FLAG1_FRAME)
         }
         _ => None,
     }
@@ -3455,7 +3526,7 @@ fn update_attack11_flagged(f: &mut Fighter) {
 fn update_attack12_flagged(f: &mut Fighter) {
     let flag1 = attack1_flag1_frame(f.kind, Status::Attack12)
         .is_some_and(|frame| f.status.anim_frame >= frame);
-    if flag1 && f.attack1.rapid_requested {
+    if flag1 && f.attack1.rapid_requested && f.kind != crate::fighter::FighterKind::Captain {
         return set_rapid_start(f);
     }
     if flag1 && f.attack1.is_goto_followup {
@@ -3476,7 +3547,7 @@ fn update_attack12_flagged(f: &mut Fighter) {
             f.attack1.is_goto_followup = true;
         }
     }
-    if rapid_input(f) && flag1 {
+    if rapid_input(f) && flag1 && f.kind != crate::fighter::FighterKind::Captain {
         set_rapid_start(f);
     }
 }
@@ -3487,6 +3558,7 @@ fn set_rapid_start(f: &mut Fighter) {
     match f.kind {
         crate::fighter::FighterKind::Fox => set_fox_rapid_start(f),
         crate::fighter::FighterKind::Link => crate::link::set_attack100_start(f),
+        crate::fighter::FighterKind::Captain => crate::captain::set_attack100_start(f),
         _ => unreachable!("no Attack100 for this fighter"),
     }
 }
@@ -3555,7 +3627,7 @@ enum AngleVariants {
 fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
-        FighterKind::Fox | FighterKind::Samus => AngleVariants::Five,
+        FighterKind::Fox | FighterKind::Samus | FighterKind::Captain => AngleVariants::Five,
         FighterKind::Link => AngleVariants::One,
         _ => AngleVariants::Three,
     }
@@ -3565,7 +3637,7 @@ fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
         FighterKind::Fox | FighterKind::Link => AngleVariants::One,
-        FighterKind::Yoshi => AngleVariants::Three,
+        FighterKind::Yoshi | FighterKind::Captain => AngleVariants::Three,
         _ => AngleVariants::Five,
     }
 }
@@ -4411,6 +4483,7 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Samus(_) => crate::samus::update(f),
         AnyStatus::Link(_) => crate::link::update(f),
         AnyStatus::Yoshi(_) => crate::yoshi::update(f),
+        AnyStatus::Captain(_) => crate::captain::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
@@ -4741,13 +4814,14 @@ fn update_extended(f: &mut Fighter) {
 /// fighters have a jab-combo finisher at all, and which extended status it
 /// is. `None` for a fighter with no `Attack13` (most of them; the original
 /// falls back to `Attack100`'s rapid-jab loop instead for a different,
-/// smaller set — not ported, `crate::attack`'s module docs).
+/// smaller set).
 pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
     match kind {
         crate::fighter::FighterKind::Mario | crate::fighter::FighterKind::Luigi => {
             Some(AnyStatus::Mario(MarioStatus::Attack13))
         }
         crate::fighter::FighterKind::Link => Some(AnyStatus::Link(LinkStatus::Attack13)),
+        crate::fighter::FighterKind::Captain => Some(AnyStatus::Captain(CaptainStatus::Attack13)),
         _ => None,
     }
 }
