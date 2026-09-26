@@ -55,6 +55,11 @@ pub enum WeaponKind {
         stick_x: i8,
         stick_y: i8,
     },
+    /// `nWPKindEggThrow` at its throw: `throw_force` and the stick are read
+    /// at `SetFlag2(2)`. The spawn's `facing` is the egg's `lr`.
+    YoshiEgg { throw_force: i16, stick_x: i8 },
+    /// `wpYoshiStarMakeStars`: one `nWPKindYoshiStar` each way.
+    YoshiStars,
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -773,6 +778,258 @@ impl LinkBoomerang {
     }
 }
 
+/// `wpvars.h` Egg Throw constants.
+pub const EGGTHROW_LIFETIME: u16 = 50;
+pub const EGGTHROW_EXPLODE_LIFETIME: u16 = 10;
+pub const EGGTHROW_EXPLODE_SIZE: f32 = 340.0;
+pub const EGGTHROW_TRAJECTORY_DIV: f32 = 65.0;
+pub const EGGTHROW_TRAJECTORY_SUB_FORWARD: f32 = 73.0 * core::f32::consts::PI / 180.0;
+pub const EGGTHROW_TRAJECTORY_SUB_BEHIND: f32 = 107.0 * core::f32::consts::PI / 180.0;
+pub const EGGTHROW_ANGLE_MUL: f32 = 20.0 * core::f32::consts::PI / 180.0;
+pub const EGGTHROW_ANGLE_CLAMP: f32 = 6.0 * core::f32::consts::PI / 180.0;
+pub const EGGTHROW_VEL_ADD: f32 = 50.0;
+pub const EGGTHROW_VEL_FORCE_MUL: f32 = 2.3;
+pub const EGGTHROW_GRAVITY: f32 = 2.7;
+pub const EGGTHROW_TVEL: f32 = 120.0;
+
+/// `llYoshiMainEggThrowWeaponAttributes` (the words at offset 0x0C of
+/// `247_YoshiMain.c`, US): size 200, angle 361, knockback 50/0/50, 14
+/// damage.
+pub const YOSHI_EGG_HITBOX: Hitbox = Hitbox {
+    damage: 14,
+    offset: Vec3::ZERO,
+    radius: 100.0,
+    angle: 361,
+    kb_scale: 50,
+    kb_weight: 0,
+    kb_base: 50,
+};
+pub const YOSHI_EGG_MAP_COLL: BodyColl = BodyColl {
+    top: 150.0,
+    center: 0.0,
+    bottom: -150.0,
+    width: 150.0,
+};
+
+/// Source `wpYoshiEggThrow` from its throw. It arcs, and explodes on any map
+/// contact, on its first registered hit or after 50 frames. The explosion
+/// keeps the attack record (`can_rehit_fighter` is clear).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct YoshiEgg {
+    pub owner_port: u8,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub lifetime: u16,
+    pub damage: i32,
+    /// `weapon_vars.egg_throw.is_spin`: the throw's velocity is set.
+    pub is_spin: bool,
+    pub exploded: bool,
+    pub throw_force: i16,
+    pub stick_x: i8,
+    pub lr: f32,
+    pub hit_ports: u8,
+}
+
+impl YoshiEgg {
+    fn new(spawn: WeaponSpawn, throw_force: i16, stick_x: i8) -> Self {
+        YoshiEgg {
+            owner_port: spawn.owner_port,
+            position: spawn.position,
+            velocity: Vec3::ZERO,
+            lifetime: EGGTHROW_LIFETIME,
+            damage: YOSHI_EGG_HITBOX.damage,
+            is_spin: false,
+            exploded: false,
+            throw_force,
+            stick_x,
+            lr: if spawn.facing < 0.0 { -1.0 } else { 1.0 },
+            hit_ports: 0,
+        }
+    }
+
+    /// The trajectory half of `wpYoshiEggThrowInitVars`.
+    pub fn launch_velocity(throw_force: i16, stick_x: i8, lr: f32) -> Vec3 {
+        let stick = i32::from(stick_x);
+        let mut angle =
+            (stick.abs() as f32 / EGGTHROW_TRAJECTORY_DIV).min(1.0) * EGGTHROW_ANGLE_MUL;
+        if angle < EGGTHROW_ANGLE_CLAMP {
+            angle = 0.0;
+        }
+        if stick < 0 {
+            angle = -angle;
+        }
+        let angle = if lr > 0.0 {
+            EGGTHROW_TRAJECTORY_SUB_FORWARD - angle
+        } else {
+            EGGTHROW_TRAJECTORY_SUB_BEHIND - angle
+        };
+        let speed = f32::from(throw_force) * EGGTHROW_VEL_FORCE_MUL + EGGTHROW_VEL_ADD;
+        let (sin, cos) = sin_cos(angle);
+        Vec3::new(cos * speed, sin * speed, 0.0)
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        Hitbox {
+            damage: self.damage,
+            radius: if self.exploded {
+                EGGTHROW_EXPLODE_SIZE * 0.5
+            } else {
+                YOSHI_EGG_HITBOX.radius
+            },
+            ..YOSHI_EGG_HITBOX
+        }
+    }
+
+    /// `wpYoshiEggHitInitVars` / `wpYoshiEggExpireInitVars`.
+    fn explode(&mut self) {
+        self.exploded = true;
+        self.lifetime = EGGTHROW_EXPLODE_LIFETIME;
+        self.velocity = Vec3::ZERO;
+    }
+
+    /// `wpYoshiEggThrowProcUpdate` (or the explosion's), the manager's move,
+    /// then `wpYoshiEggThrowProcMap`.
+    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.exploded {
+            self.lifetime -= 1;
+            return self.lifetime != 0;
+        }
+        if self.is_spin {
+            self.lifetime -= 1;
+            if self.lifetime == 0 {
+                self.explode();
+                return true;
+            }
+            self.velocity.y -= EGGTHROW_GRAVITY;
+            let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
+            if speed > EGGTHROW_TVEL {
+                self.velocity.x *= EGGTHROW_TVEL / speed;
+                self.velocity.y *= EGGTHROW_TVEL / speed;
+            }
+        } else {
+            self.is_spin = true;
+            self.velocity = Self::launch_velocity(self.throw_force, self.stick_x, self.lr);
+            self.position.z = 0.0;
+        }
+        let wanted = self.position + self.velocity;
+        match map_contact(surfaces(), self.position, wanted, YOSHI_EGG_MAP_COLL) {
+            Some(hit) => {
+                self.position = hit.position;
+                self.explode();
+            }
+            None => self.position = wanted,
+        }
+        true
+    }
+
+    /// `wpYoshiEggThrowProcReflector`, then the reflect damage bonus.
+    fn reflect(&mut self, reflector: &Fighter) {
+        self.lifetime = EGGTHROW_LIFETIME;
+        self.owner_port = reflector.port;
+        if self.velocity.x * reflector.facing.sign() < 0.0 {
+            self.velocity.x = -self.velocity.x;
+        }
+        self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
+    }
+}
+
+/// `wpvars.h` star constants.
+pub const YOSHISTAR_LIFETIME: u16 = 16;
+pub const YOSHISTAR_LIFETIME_SCALE_MUL: f32 = 0.175;
+pub const YOSHISTAR_LIFETIME_SCALE_ADD: f32 = 0.3;
+pub const YOSHISTAR_VEL_CLAMP: f32 = 1.8;
+pub const YOSHISTAR_ANGLE: f32 = 30.0 * core::f32::consts::PI / 180.0;
+pub const YOSHISTAR_VEL: f32 = 30.0;
+pub const YOSHISTAR_OFF_X: f32 = 300.0;
+pub const YOSHISTAR_OFF_Y: f32 = 20.0;
+
+/// `llYoshiMainStarWeaponAttributes` (offset 0x40 of `247_YoshiMain.c`,
+/// US): size 160, angle 361, knockback 100/30/0, 4 damage.
+pub const YOSHI_STAR_HITBOX: Hitbox = Hitbox {
+    damage: 4,
+    offset: Vec3::ZERO,
+    radius: 80.0,
+    angle: 361,
+    kb_scale: 100,
+    kb_weight: 30,
+    kb_base: 0,
+};
+
+/// Source `wpYoshiStar`: it slows down and is gone after 16 frames or on a
+/// hit. Its map callback does nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct YoshiStar {
+    pub owner_port: u8,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub lifetime: u16,
+    pub damage: i32,
+    pub lr: f32,
+}
+
+impl YoshiStar {
+    /// `wpYoshiStarMakeWeapon`.
+    fn new(spawn: WeaponSpawn, lr: f32) -> Self {
+        let (sin, cos) = sin_cos(YOSHISTAR_ANGLE);
+        YoshiStar {
+            owner_port: spawn.owner_port,
+            position: spawn.position + Vec3::new(YOSHISTAR_OFF_X * lr, YOSHISTAR_OFF_Y, 0.0),
+            velocity: Vec3::new(cos * YOSHISTAR_VEL * lr, sin * YOSHISTAR_VEL, 0.0),
+            lifetime: YOSHISTAR_LIFETIME,
+            damage: YOSHI_STAR_HITBOX.damage,
+            lr,
+        }
+    }
+
+    /// `wpYoshiStarGetScale`, presentation only.
+    pub fn scale(&self) -> f32 {
+        (f32::from(self.lifetime) * YOSHISTAR_LIFETIME_SCALE_MUL + YOSHISTAR_LIFETIME_SCALE_ADD)
+            .min(1.0)
+    }
+
+    /// `wpYoshiStarProcUpdate`, then the manager's move.
+    fn tick(&mut self) -> bool {
+        self.lifetime -= 1;
+        if self.lifetime == 0 {
+            return false;
+        }
+        let speed = Vec2::new(self.velocity.x, self.velocity.y).length();
+        if speed > 0.0 {
+            let slowed = if speed < YOSHISTAR_VEL_CLAMP {
+                0.0
+            } else {
+                speed - YOSHISTAR_VEL_CLAMP
+            };
+            self.velocity.x = self.velocity.x * slowed / speed;
+            self.velocity.y = self.velocity.y * slowed / speed;
+        }
+        self.position = self.position + self.velocity;
+        true
+    }
+
+    /// `wpYoshiStarProcReflector`, then the reflect damage bonus.
+    fn reflect(&mut self, reflector: &Fighter) {
+        self.lifetime = YOSHISTAR_LIFETIME;
+        self.owner_port = reflector.port;
+        if self.velocity.x * reflector.facing.sign() < 0.0 {
+            self.velocity.x = -self.velocity.x;
+        }
+        self.lr = -self.lr;
+        self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
+    }
+
+    pub fn hitbox(&self) -> Hitbox {
+        Hitbox {
+            damage: self.damage,
+            ..YOSHI_STAR_HITBOX
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Weapon {
     Fireball(MarioFireball),
@@ -780,6 +1037,8 @@ enum Weapon {
     ChargeShot(SamusChargeShot),
     Bomb(SamusBomb),
     Boomerang(LinkBoomerang),
+    Egg(YoshiEgg),
+    Star(YoshiStar),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -886,6 +1145,13 @@ impl WeaponPool {
     /// manager's allocation-failure shape: the already-consumed script event
     /// is not retried on a later frame.
     pub fn spawn(&mut self, spawn: WeaponSpawn) -> bool {
+        if spawn.kind == WeaponKind::YoshiStars {
+            // Two `wpManagerMakeWeapon` calls; each fails on its own.
+            let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
+            let first = self.insert(Weapon::Star(YoshiStar::new(spawn, lr)));
+            let second = self.insert(Weapon::Star(YoshiStar::new(spawn, -lr)));
+            return first || second;
+        }
         let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_none()) else {
             return false;
         };
@@ -902,8 +1168,23 @@ impl WeaponPool {
                 stick_x,
                 stick_y,
             } => Weapon::Boomerang(LinkBoomerang::new(spawn, is_smash, stick_x, stick_y)),
+            WeaponKind::YoshiEgg {
+                throw_force,
+                stick_x,
+            } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x)),
+            WeaponKind::YoshiStars => unreachable!("handled above"),
         });
         true
+    }
+
+    fn insert(&mut self, weapon: Weapon) -> bool {
+        match self.slots.iter_mut().find(|slot| slot.is_none()) {
+            Some(slot) => {
+                *slot = Some(weapon);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Records what this frame's weapons may read about a fighter: the
@@ -962,6 +1243,8 @@ impl WeaponPool {
                         }
                         alive
                     }
+                    Weapon::Egg(egg) => egg.tick(surfaces),
+                    Weapon::Star(star) => star.tick(),
                 };
                 if !alive {
                     *slot = None;
@@ -982,6 +1265,8 @@ impl WeaponPool {
                 Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position),
                 Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position),
                 Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position),
+                Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position),
+                Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position),
             };
             if owner == defender.port {
                 continue;
@@ -992,6 +1277,19 @@ impl WeaponPool {
             }
             // The Bomb's `WPAttributes::can_reflect` is clear, and its attack
             // record outlives the explosion.
+            // The exploding egg can no longer be reflected, and it keeps the
+            // record of what the egg hit.
+            if let Weapon::Egg(egg) = weapon {
+                if egg.hit_ports & bit != 0 {
+                    continue;
+                }
+                if egg.exploded {
+                    if attack::apply_hitbox_at(&hitbox, position, defender) {
+                        egg.hit_ports |= bit;
+                    }
+                    continue;
+                }
+            }
             if let Weapon::Bomb(bomb) = weapon {
                 let bit = 1u8 << (defender.port & 7);
                 if bomb.hit_ports & bit != 0 {
@@ -1047,6 +1345,8 @@ impl WeaponPool {
                         }
                         Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
                         Weapon::Boomerang(b) => b.reflect(defender),
+                        Weapon::Egg(e) => e.reflect(defender),
+                        Weapon::Star(s) => s.reflect(defender),
                     }
                     crate::status::set_fox_special_lw_hit(defender);
                     continue;
@@ -1058,12 +1358,20 @@ impl WeaponPool {
                 Weapon::ChargeShot(c) => c.damage,
                 Weapon::Bomb(_) => hitbox.damage,
                 Weapon::Boomerang(b) => b.damage,
+                Weapon::Egg(e) => e.damage,
+                Weapon::Star(s) => s.damage,
             };
             if attack::apply_hitbox_at(&hitbox, position, defender) {
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
                     b.hit_ports |= bit;
                     b.on_hit();
+                    continue;
+                }
+                // `wpYoshiEggThrowProcHit`: the egg explodes in place.
+                if let Weapon::Egg(e) = weapon {
+                    e.hit_ports |= bit;
+                    e.explode();
                     continue;
                 }
                 *slot = None;
@@ -1105,6 +1413,20 @@ impl WeaponPool {
     pub fn bombs(&self) -> impl Iterator<Item = SamusBomb> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Bomb(b) => Some(*b),
+            _ => None,
+        })
+    }
+
+    pub fn eggs(&self) -> impl Iterator<Item = YoshiEgg> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Egg(e) => Some(*e),
+            _ => None,
+        })
+    }
+
+    pub fn stars(&self) -> impl Iterator<Item = YoshiStar> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Star(s) => Some(*s),
             _ => None,
         })
     }
@@ -1262,6 +1584,45 @@ mod tests {
             fireball.velocity.y,
             MARIO_FIREBALL_SPEED * sin - MARIO_FIREBALL_GRAVITY
         );
+    }
+
+    #[test]
+    fn yoshi_egg_explodes_on_hit_and_bomb_spawns_two_stars() {
+        let mut weapons = WeaponPool::default();
+        assert!(weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::YoshiEgg {
+                throw_force: 10,
+                stick_x: 0,
+            },
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        }));
+        weapons.tick(open_air);
+        let egg = weapons.eggs().next().unwrap();
+        assert!(egg.is_spin);
+        assert_eq!(egg.hitbox().damage, 14);
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.pos = egg.position;
+        target.situation = Situation::Ground;
+        weapons.apply_hits(&mut target);
+        assert_eq!(target.damage, 14);
+        let egg = weapons.eggs().next().unwrap();
+        assert!(egg.exploded);
+        assert_eq!(egg.lifetime, EGGTHROW_EXPLODE_LIFETIME);
+
+        let mut stars = WeaponPool::default();
+        assert!(stars.spawn(WeaponSpawn {
+            kind: WeaponKind::YoshiStars,
+            owner_port: 0,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        }));
+        let pair: Vec<_> = stars.stars().collect();
+        assert_eq!(pair.len(), 2);
+        assert_eq!(pair[0].hitbox().damage, 4);
+        assert_eq!(pair[0].position.x, -pair[1].position.x);
+        assert_eq!(pair[0].lifetime, YOSHISTAR_LIFETIME);
     }
 
     #[test]

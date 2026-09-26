@@ -263,6 +263,13 @@ pub struct Fighter {
     /// Boomerang ownership, Spin Attack weapon and rapid-jab state —
     /// `crate::link`.
     pub link: crate::link::LinkState,
+    /// Egg Throw and aerial-jump state — `crate::yoshi`.
+    pub yoshi: crate::yoshi::YoshiState,
+    /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
+    pub egg: crate::capture_yoshi::CaptureYoshiState,
+    /// `FTStruct::knockback_resist_status`: knockback a hit loses before it
+    /// applies. `set_any_status` clears it; Yoshi's aerial jump sets it.
+    pub knockback_resist: f32,
     /// `FTStruct::is_special_interrupt`: whether a returning Boomerang may
     /// put this fighter into its catch status. `set_any_status` clears it;
     /// Wait, the slow walks, Squat, KneeBend, the jumps, the falls and Link's
@@ -327,6 +334,9 @@ impl Fighter {
             donkey_special_lw: crate::status::DonkeySpecialLwState::default(),
             samus: crate::samus::SamusState::default(),
             link: crate::link::LinkState::default(),
+            yoshi: crate::yoshi::YoshiState::default(),
+            egg: crate::capture_yoshi::CaptureYoshiState::default(),
+            knockback_resist: 0.0,
             is_special_interrupt: false,
             grab: crate::grab::GrabState::default(),
             weapon_spawn: None,
@@ -518,6 +528,12 @@ impl Fighter {
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
 
+        // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
+        // physics it ends with.
+        if self.status.status == crate::status::Status::YoshiEgg {
+            crate::capture_yoshi::physics(self);
+        }
+
         // A held fighter's position is its catcher's hand, not the result
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).
         if crate::grab::tick_held(self, &floors) {
@@ -567,6 +583,7 @@ impl Fighter {
             }
             crate::status::AnyStatus::Samus(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Link(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Yoshi(_) => crate::status::Status::Wait,
         };
         if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -667,6 +684,8 @@ impl Fighter {
                     crate::status::switch_donkey_special_air(self);
                 } else if !crate::samus::on_ground_lost(self)
                     && !crate::link::on_ground_lost(self)
+                    && !crate::yoshi::on_ground_lost(self)
+                    && !crate::capture_yoshi::on_ground_lost(self)
                     && !crate::grab::on_ground_lost(self)
                 {
                     self.become_airborne();
@@ -717,6 +736,7 @@ impl Fighter {
             && !donkey_special_hi
             && !crate::samus::skips_fast_fall(self.status.status)
             && !crate::link::skips_fast_fall(self.status.status)
+            && !crate::yoshi::skips_fast_fall(self)
         {
             crate::status::check_set_fast_fall(self);
         }
@@ -730,7 +750,10 @@ impl Fighter {
             crate::status::apply_fox_special_lw_air_physics(self);
         } else if donkey_special_hi {
             crate::status::apply_donkey_special_hi_air_physics(self);
-        } else if crate::samus::apply_air_physics(self) || crate::link::apply_air_physics(self) {
+        } else if crate::samus::apply_air_physics(self)
+            || crate::link::apply_air_physics(self)
+            || crate::yoshi::apply_air_physics(self)
+        {
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
@@ -806,6 +829,12 @@ impl Fighter {
                     return;
                 }
                 if crate::link::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if crate::yoshi::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if crate::capture_yoshi::on_landing(self, moved.pos.y) {
                     return;
                 }
                 if crate::grab::on_landing(self, moved.pos.y) {

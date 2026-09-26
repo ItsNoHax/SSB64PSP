@@ -1388,6 +1388,36 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Yoshi, AnyStatus::Yoshi(s)) => {
+            use crate::status::YoshiStatus;
+            match s {
+                YoshiStatus::SpecialLwStart => Some(&crate::yoshi_attack::BOMB_GROUND_START),
+                YoshiStatus::SpecialAirLwStart => Some(&crate::yoshi_attack::BOMB_AIR_START),
+                YoshiStatus::SpecialAirLwLoop => Some(&crate::yoshi_attack::BOMB_LOOP),
+                _ => None,
+            }
+        }
+        (FighterKind::Yoshi, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::yoshi_attack::JAB1),
+            Status::Attack12 => Some(&crate::yoshi_attack::JAB2),
+            Status::AttackDash => Some(&crate::yoshi_attack::DASH),
+            Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw => {
+                Some(&crate::yoshi_attack::FTILT)
+            }
+            Status::AttackHi3 => Some(&crate::yoshi_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::yoshi_attack::DTILT),
+            Status::AttackS4Hi | Status::AttackS4 | Status::AttackS4Lw => {
+                Some(&crate::yoshi_attack::FSMASH)
+            }
+            Status::AttackHi4 => Some(&crate::yoshi_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::yoshi_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::yoshi_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::yoshi_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::yoshi_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::yoshi_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::yoshi_attack::AIR_LW),
+            _ => None,
+        },
         (FighterKind::Link, AnyStatus::Link(s)) => {
             use crate::status::LinkStatus;
             match s {
@@ -1825,8 +1855,26 @@ pub fn resolve_hit(
     defender_weight: f32,
     defender_airborne: bool,
 ) -> HitResult {
-    let lr = damage_lr(defender_pos, attacker_pos);
     let knockback = common_knockback(defender_damage_percent, hitbox, defender_weight);
+    resolve_hit_with_knockback(
+        hitbox,
+        attacker_pos,
+        defender_pos,
+        knockback,
+        defender_airborne,
+    )
+}
+
+/// [`resolve_hit`] for a knockback already computed, such as one reduced by
+/// `knockback_resist_status`.
+pub fn resolve_hit_with_knockback(
+    hitbox: &Hitbox,
+    attacker_pos: Vec3,
+    defender_pos: Vec3,
+    knockback: f32,
+    defender_airborne: bool,
+) -> HitResult {
+    let lr = damage_lr(defender_pos, attacker_pos);
     let angle = sakurai_angle_radians(hitbox.angle, defender_airborne, knockback);
     let (sin, cos) = sin_cos(angle);
     let vel_x = cos * knockback;
@@ -1858,9 +1906,10 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 /// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
 /// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
 /// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey/
-/// Samus/Luigi/Link `MainMotion.c`, not from the visual model's node order.
+/// Samus/Luigi/Link/Yoshi `MainMotion.c`, not from the visual model's node
+/// order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Donkey, Fox, Link, Luigi, Mario, Samus};
+    use crate::fighter::FighterKind::{Donkey, Fox, Link, Luigi, Mario, Samus, Yoshi};
     if kind == Donkey
         && matches!(
             status,
@@ -1876,6 +1925,31 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         };
     }
     let ids: &[u8] = match (kind, status) {
+        (Yoshi, AnyStatus::Common(Status::Attack11)) => &[23, 25],
+        (
+            Yoshi,
+            AnyStatus::Common(
+                Status::Attack12 | Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw,
+            ),
+        ) => &[28, 30],
+        (
+            Yoshi,
+            AnyStatus::Common(
+                Status::AttackHi3
+                | Status::AttackS4Hi
+                | Status::AttackS4
+                | Status::AttackS4Lw
+                | Status::AttackHi4
+                | Status::AttackAirF,
+            ),
+        ) => &[7, 6],
+        (Yoshi, AnyStatus::Common(Status::AttackLw3 | Status::AttackLw4 | Status::AttackAirHi)) => {
+            &[19, 20]
+        }
+        (Yoshi, AnyStatus::Common(Status::AttackAirN)) => &[28, 23, 5],
+        (Yoshi, AnyStatus::Common(Status::AttackAirB)) => &[28],
+        (Yoshi, AnyStatus::Common(Status::AttackAirLw)) => &[28, 23],
+        (Yoshi, AnyStatus::Common(Status::AttackDash) | AnyStatus::Yoshi(_)) => &[0],
         // Link's sword: joint 11 carries the blade box, joint 10 the hilt.
         (
             Link,
@@ -2165,12 +2239,24 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
         apply_shield_hit_at(hitbox, attacker_pos, defender);
         return true;
     }
-    let result = resolve_hit(
+    if defender.status.status == Status::YoshiEgg {
+        crate::capture_yoshi::on_hit(defender, hitbox.damage);
+        return true;
+    }
+    // `ftMainUpdateDamageStatFighter`: the status's knockback resistance
+    // comes off first, and a hit left with no knockback only flashes
+    // (`ftCommonDamageSetDamageColAnim`): no damage status, no `proc_damage`.
+    let knockback = common_knockback(defender.damage, hitbox, defender.attributes.weight)
+        - defender.knockback_resist;
+    if knockback <= 0.0 {
+        defender.damage = defender.damage.saturating_add(hitbox.damage.max(0) as u16);
+        return true;
+    }
+    let result = resolve_hit_with_knockback(
         hitbox,
         attacker_pos,
         defender.pos,
-        defender.damage,
-        defender.attributes.weight,
+        knockback,
         !defender.is_grounded(),
     );
     if defender.kind == crate::fighter::FighterKind::Donkey {
@@ -2182,6 +2268,7 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
     if defender.kind == crate::fighter::FighterKind::Link {
         crate::link::on_damage(defender);
     }
+    crate::yoshi::on_damage(defender);
     if defender.grab.catch.is_some() {
         // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
         // stance absorbs anything below a tumble; otherwise the held fighter
@@ -2905,6 +2992,54 @@ mod tests {
         assert!(spin.hitboxes.iter().all(|h| h.hit_generation == 0));
         assert_eq!(spin.hitboxes[0].hitbox.damage, 16);
         assert!(spin.hitboxes[2].is_active(39.0) && !spin.hitboxes[2].is_active(40.0));
+    }
+
+    #[test]
+    fn yoshi_down_air_refreshes_fourteen_hit_records_and_bomb_holds_its_box() {
+        use crate::fighter::FighterKind;
+        use crate::status::YoshiStatus;
+
+        for status in [
+            Status::Attack11,
+            Status::Attack12,
+            Status::AttackDash,
+            Status::AttackS3Hi,
+            Status::AttackS3,
+            Status::AttackS3Lw,
+            Status::AttackHi3,
+            Status::AttackLw3,
+            Status::AttackS4Hi,
+            Status::AttackS4,
+            Status::AttackS4Lw,
+            Status::AttackHi4,
+            Status::AttackLw4,
+            Status::AttackAirN,
+            Status::AttackAirF,
+            Status::AttackAirB,
+            Status::AttackAirHi,
+            Status::AttackAirLw,
+        ] {
+            let data = move_data(FighterKind::Yoshi, status.into()).expect("Yoshi normal");
+            for index in 0..data.hitboxes.len() {
+                attack_joint(FighterKind::Yoshi, status.into(), index);
+            }
+        }
+        let down_air = move_data(FighterKind::Yoshi, Status::AttackAirLw.into()).unwrap();
+        for pulse in 0..14 {
+            let active: Vec<_> = down_air
+                .hitboxes
+                .iter()
+                .filter(|hit| hit.is_active(4.0 + pulse as f32 * 2.0))
+                .collect();
+            assert_eq!(active.len(), 2);
+            assert!(active.iter().all(|hit| hit.hit_generation == pulse));
+        }
+        let bomb = move_data(
+            FighterKind::Yoshi,
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop),
+        )
+        .unwrap();
+        assert!(bomb.hitboxes[0].is_active(100.0));
     }
 
     #[test]

@@ -142,6 +142,15 @@ const LINK_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 16, 45, 70, 0, 70),
     desc(None, 8, 361, 100, 0, 0),
 ];
+// `246_YoshiMainMotion.c`. The catch descriptor equals Mario's.
+const YOSHI_THROW_F: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 12, 45, 70, 0, 80),
+    desc(None, 6, 361, 100, 0, 0),
+];
+const YOSHI_THROW_B: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 16, 45, 70, 0, 70),
+    desc(None, 8, 361, 100, 0, 0),
+];
 // `216_SamusMainMotion.c`. Both throws carry element 2 (electric), which
 // only selects hit effects.
 const SAMUS_CATCH: [ThrowHitDesc; 2] = [desc(None, 8, 361, 100, 0, 0); 2];
@@ -242,6 +251,19 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((20.0, 2)),
             length: 40.0,
         },
+        // WaitAsync(4), WaitAsync(19): both throws release at frame 19.
+        (FighterKind::Yoshi, false) => ThrowScript {
+            desc: Some(YOSHI_THROW_F),
+            flag1: None,
+            flag2: Some((19.0, 1)),
+            length: 39.0,
+        },
+        (FighterKind::Yoshi, true) => ThrowScript {
+            desc: Some(YOSHI_THROW_B),
+            flag1: None,
+            flag2: Some((19.0, 2)),
+            length: 49.0,
+        },
         // Wait(4) then WaitAsync(9): both throws release at frame 9.
         (FighterKind::Samus, false) => ThrowScript {
             desc: Some(SAMUS_THROW_F),
@@ -265,7 +287,7 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
 }
 
 /// Polygon, Metal and Giant fighters share their base fighter's motion data.
-fn base_kind(kind: FighterKind) -> FighterKind {
+pub(crate) fn base_kind(kind: FighterKind) -> FighterKind {
     match kind {
         FighterKind::MetalMario => FighterKind::Mario,
         FighterKind::GiantDonkey => FighterKind::Donkey,
@@ -275,8 +297,8 @@ fn base_kind(kind: FighterKind) -> FighterKind {
 
 /// `FTAttributes::joint_itemheavy_id`: the joint a held fighter hangs from
 /// (`203_MarioMain.c`, `209_FoxMain.c`, `213_DonkeyMain.c`,
-/// `217_SamusMain.c`, `221_LuigiMain.c`, `225_LinkMain.c`). The runtime
-/// samples its world position into [`GrabState::anchor`].
+/// `217_SamusMain.c`, `221_LuigiMain.c`, `225_LinkMain.c`, `247_YoshiMain.c`).
+/// The runtime samples its world position into [`GrabState::anchor`].
 pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
     match base_kind(kind) {
         FighterKind::Mario | FighterKind::Luigi => Some(28),
@@ -284,6 +306,8 @@ pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
         FighterKind::Donkey => Some(29),
         FighterKind::Samus => Some(36),
         FighterKind::Link => Some(35),
+        // The tongue, which also carries a swallowed fighter.
+        FighterKind::Yoshi => Some(31),
         _ => None,
     }
 }
@@ -320,7 +344,10 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
     ];
     // The Hookshot: one box on the hook joint.
     const LINK: [(Hitbox, u8); 1] = [(catch(180.0, 0.0, 0.0, 0.0), 35)];
+    // The tongue.
+    const YOSHI: [(Hitbox, u8); 1] = [(catch(220.0, 0.0, 0.0, 0.0), 31)];
     match base_kind(kind) {
+        FighterKind::Yoshi => &YOSHI,
         FighterKind::Link => &LINK,
         // `dLuigiMainMotion_Catch` has Mario's box and window.
         FighterKind::Mario | FighterKind::Luigi => &MARIO,
@@ -339,6 +366,8 @@ fn catch_coll_frames(kind: FighterKind) -> core::ops::Range<f32> {
         FighterKind::Samus => 20.0..39.0,
         // `WaitAsync(17)`, then four `Wait(3)` loops before the clear.
         FighterKind::Link => 17.0..29.0,
+        // `WaitAsync(15)`, then `Wait(6)` before the clear.
+        FighterKind::Yoshi => 15.0..21.0,
         _ => 6.0..7.0,
     }
 }
@@ -347,6 +376,7 @@ fn catch_length(kind: FighterKind) -> f32 {
     match base_kind(kind) {
         FighterKind::Samus => 100.0,
         FighterKind::Link => 85.0,
+        FighterKind::Yoshi => 70.0,
         _ => 16.0,
     }
 }
@@ -354,17 +384,20 @@ fn catch_pull_length(kind: FighterKind) -> f32 {
     match base_kind(kind) {
         FighterKind::Samus => 10.0,
         FighterKind::Link => 6.0,
+        FighterKind::Yoshi => 3.0,
         _ => 2.0,
     }
 }
 /// `(frame, flag1, flag2)` of a `Catch` script that sets the `CatchPull`
 /// start frame, which `ftCommonCatchProcUpdate` then winds down to zero over
 /// `flag1` frames. Samus sets `SetFlag1(17)`/`SetFlag2(9)` at frame 20 and
-/// Link `SetFlag1(12)`/`SetFlag2(5)` at frame 17.
+/// Link `SetFlag1(12)`/`SetFlag2(5)` at frame 17, Yoshi `SetFlag1(6)`/
+/// `SetFlag2(2)` at frame 15.
 fn catch_pull_flags(kind: FighterKind) -> Option<(f32, f32, f32)> {
     match base_kind(kind) {
         FighterKind::Samus => Some((20.0, 17.0, 9.0)),
         FighterKind::Link => Some((17.0, 12.0, 5.0)),
+        FighterKind::Yoshi => Some((15.0, 6.0, 2.0)),
         _ => None,
     }
 }
@@ -431,6 +464,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Donkey => [20, 10, 5, 0, 0, 6, 0, 0],
         FighterKind::Samus => [20, 10, 5, 0, 0, 0, 5, 10],
         FighterKind::Link => [32, 10, 5, 0, 0, 0, 0, 0],
+        FighterKind::Yoshi => [20, 10, 0, 0, 0, 0, 0, 0],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -486,6 +520,10 @@ pub enum GrabEvent {
     BreakoutKnockback,
     /// `ftCommonThrownDecideDeadResult`: the partner was KO'd.
     Dead,
+    /// `proc_capture` → `ftCommonCaptureYoshiProcCapture` (Egg Lay).
+    CaptureYoshi,
+    /// Yoshi's release script writes `status_vars.common.captureyoshi.stage`.
+    YoshiEggStage(u8),
 }
 
 const OUTBOX: usize = 4;
@@ -534,7 +572,7 @@ pub struct GrabState {
 }
 
 impl GrabState {
-    fn send(&mut self, event: GrabEvent) {
+    pub(crate) fn send(&mut self, event: GrabEvent) {
         if let Some(slot) = self.outbox.iter_mut().find(|e| e.is_none()) {
             *slot = Some(event);
         }
@@ -571,6 +609,7 @@ pub fn is_held(status: AnyStatus) -> bool {
         AnyStatus::Common(
             Status::CapturePulled
                 | Status::CaptureWait
+                | Status::CaptureYoshi
                 | Status::ThrownDonkeyF
                 | Status::ThrownMarioBStart
                 | Status::ThrownFoxFStart
@@ -587,7 +626,7 @@ fn is_thrown(status: AnyStatus) -> bool {
     is_held(status)
         && !matches!(
             status,
-            AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
+            AnyStatus::Common(Status::CapturePulled | Status::CaptureWait | Status::CaptureYoshi)
         )
 }
 
@@ -768,18 +807,23 @@ pub fn release_on_edge(f: &mut Fighter) {
 // `ftcommoncapture.c`) and thrown (`ftcommonthrown1.c`, `ftcommonthrown2.c`)
 // ---------------------------------------------------------------------------
 
-/// `ftCommonCapturePulledProcCapture` @ 0x8014A860, run on the grabbed
-/// fighter once its catcher's snapshot has been delivered.
-fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+/// Grabbed while grabbing: the fighter this one held is released with
+/// `ftCommonThrownSetStatusDamageRelease`.
+pub(crate) fn drop_own_catch(f: &mut Fighter) {
     if f.grab.catch.take().is_some() {
-        // Grabbed while grabbing: the fighter it held is released with
-        // `ftCommonThrownSetStatusDamageRelease`.
+        f.grab.catch_kind = None;
         let desc = f.grab.throw_desc.map(|d| d[1]).unwrap_or(MARIO_CATCH[1]);
         f.grab.send(GrabEvent::DamageRelease {
             desc,
             shield_catch: f.grab.is_shield_catch,
         });
     }
+}
+
+/// `ftCommonCapturePulledProcCapture` @ 0x8014A860, run on the grabbed
+/// fighter once its catcher's snapshot has been delivered.
+fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    drop_own_catch(f);
     f.grab.capture = Some(catcher_port);
     f.grab.holder = Some(holder);
     f.grab.is_catchstatus = false;
@@ -842,14 +886,14 @@ fn update_thrown(f: &mut Fighter) {
 }
 
 /// `ftCommonCaptureTrappedInitBreakoutVars` @ 0x8014E3EC.
-fn init_breakout(f: &mut Fighter, wait: i32) {
+pub(crate) fn init_breakout(f: &mut Fighter, wait: i32) {
     f.grab.breakout_wait = wait;
     f.grab.breakout_lr = 0;
     f.grab.breakout_ud = 0;
 }
 
 /// `ftCommonCaptureTrappedUpdateBreakoutVars` @ 0x8014E400.
-fn update_breakout(f: &mut Fighter) -> bool {
+pub(crate) fn update_breakout(f: &mut Fighter) -> bool {
     let taps = tapped(f);
     let mut is_mash = false;
     if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) || taps.contains(N64Buttons::Z)
@@ -1228,7 +1272,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 set_capture_wait(f);
             }
         }
-        AnyStatus::Common(Status::CaptureWait) => {}
+        AnyStatus::Common(Status::CaptureWait | Status::CaptureYoshi) => {}
         AnyStatus::Common(Status::Shouldered) => update_shouldered(f),
         s if is_thrown(s) => update_thrown(f),
         AnyStatus::Donkey(DonkeyStatus::ThrowFWait) => {
@@ -1354,7 +1398,7 @@ pub fn refresh_held_attachment(f: &mut Fighter) {
     f.pos.z = point.z;
     if !matches!(
         f.status.status,
-        AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
+        AnyStatus::Common(Status::CapturePulled | Status::CaptureWait | Status::CaptureYoshi)
     ) {
         f.pos.y = point.y;
     }
@@ -1380,6 +1424,11 @@ where
     };
     f.physics.vel_air = Vec3::ZERO;
     f.physics.vel_ground = Vec3::ZERO;
+    if f.status.status == Status::CaptureYoshi {
+        let attachment = held_attachment(f, holder);
+        crate::capture_yoshi::update_held(f, attachment);
+        return true;
+    }
     let pulled = matches!(
         f.status.status,
         AnyStatus::Common(Status::CapturePulled | Status::CaptureWait)
@@ -1589,24 +1638,36 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             lose_grip(to);
             status::set_wait_or_fall(to);
         }
+        GrabEvent::CaptureYoshi => crate::capture_yoshi::capture(to, from.port, holder_of(from)),
+        GrabEvent::YoshiEggStage(stage) => to.egg.stage = stage,
     }
 }
 
 /// `ftMainSearchFighterCatch` + `ftMainProcSearchCatch` for one catcher
 /// against one other fighter. On a catch, the catcher enters `CatchPull`
 /// here and the grabbed fighter's `CapturePulled` is queued for
-/// [`exchange`].
+/// [`exchange`]. Yoshi's Egg Lay searches with its own box and
+/// `proc_catch`/`proc_capture` pair.
 pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
-    if !catcher.grab.is_catchstatus
-        || catcher.status.status != Status::Catch
-        || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame)
+    if !catcher.grab.is_catchstatus {
+        return false;
+    }
+    let egg_lay = crate::yoshi::egg_lay_searching(catcher);
+    if !egg_lay
+        && (catcher.status.status != Status::Catch
+            || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame))
     {
         return false;
     }
     if other.grab.capture_immune || other.invincible_frames > 0 || other.stocks <= 0 {
         return false;
     }
-    let hit = catch_colls(catcher.kind).iter().any(|(hitbox, joint)| {
+    let colls: &[(Hitbox, u8)] = if egg_lay {
+        core::slice::from_ref(&crate::yoshi::EGG_LAY_CATCH)
+    } else {
+        catch_colls(catcher.kind)
+    };
+    let hit = colls.iter().any(|(hitbox, joint)| {
         attack::spheres_overlap(
             catcher.joint_world(*joint, hitbox.offset),
             hitbox.radius,
@@ -1617,8 +1678,13 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if !hit {
         return false;
     }
-    catch_pull(catcher, other);
-    catcher.grab.send(GrabEvent::Capture);
+    if egg_lay {
+        crate::yoshi::catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureYoshi);
+    } else {
+        catch_pull(catcher, other);
+        catcher.grab.send(GrabEvent::Capture);
+    }
     true
 }
 
@@ -1809,6 +1875,20 @@ mod tests {
             thrown_length(FighterKind::Link, Status::ThrownDonkeyF),
             Some(32.0)
         );
+    }
+
+    #[test]
+    fn yoshi_tongue_and_throws_use_their_motion_frames() {
+        assert_eq!(itemheavy_joint(FighterKind::Yoshi), Some(31));
+        assert_eq!(catch_colls(FighterKind::Yoshi)[0].1, 31);
+        assert_eq!(catch_coll_frames(FighterKind::Yoshi), 15.0..21.0);
+        assert_eq!(catch_pull_flags(FighterKind::Yoshi), Some((15.0, 6.0, 2.0)));
+        let forward = throw_script(FighterKind::Yoshi, false);
+        assert_eq!(forward.flag2, Some((19.0, 1)));
+        assert_eq!(forward.desc.unwrap()[0].damage, 12);
+        let back = throw_script(FighterKind::Yoshi, true);
+        assert_eq!(back.flag2, Some((19.0, 2)));
+        assert_eq!(back.desc.unwrap()[0].damage, 16);
     }
 
     #[test]
