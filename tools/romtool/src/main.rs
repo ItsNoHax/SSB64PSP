@@ -10193,7 +10193,8 @@ mod tests {
     fn grab_slots_and_thrown_lengths_match_the_anim_table() {
         use ssb_game::fighter::FighterKind;
         use ssb_game::status::{
-            AnyStatus, CaptainStatus, DonkeyStatus, LinkStatus, SamusStatus, Status, YoshiStatus,
+            AnyStatus, CaptainStatus, DonkeyStatus, KirbyStatus, LinkStatus, SamusStatus, Status,
+            YoshiStatus,
         };
         let common = [
             Status::Catch,
@@ -10254,6 +10255,14 @@ mod tests {
             AnyStatus::Captain(CaptainStatus::SpecialAirHi).anim_slot(),
             ssb_rom::anim::SLOT_CAPTAIN_ATTACK13 + 14
         );
+        assert_eq!(
+            AnyStatus::Kirby(KirbyStatus::Attack100Start).anim_slot(),
+            ssb_rom::anim::SLOT_KIRBY_ATTACK100_START
+        );
+        assert_eq!(
+            AnyStatus::Kirby(KirbyStatus::SpecialAirNCopy).anim_slot(),
+            ssb_rom::anim::SLOT_KIRBY_ATTACK100_START + 30
+        );
         for (row, kind) in [
             FighterKind::Mario,
             FighterKind::Fox,
@@ -10263,6 +10272,7 @@ mod tests {
             FighterKind::Link,
             FighterKind::Yoshi,
             FighterKind::Captain,
+            FighterKind::Kirby,
         ]
         .into_iter()
         .enumerate()
@@ -10282,7 +10292,7 @@ mod tests {
 
         // Catch, CatchPull and ThrowF have no leading runtime joint for these
         // fighters, whereas CapturePulled does.
-        for (kind, flags) in LEADING_RUNTIME_JOINT.iter().enumerate().take(8) {
+        for (kind, flags) in LEADING_RUNTIME_JOINT.iter().enumerate().take(9) {
             for (slot, &flag) in flags.iter().enumerate().skip(SLOT_CATCH).take(3) {
                 assert!(!flag, "kind {kind} slot {slot}");
             }

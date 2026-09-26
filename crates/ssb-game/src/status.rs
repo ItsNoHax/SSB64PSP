@@ -608,6 +608,12 @@ impl Status {
                 | Status::CaptureYoshi
                 | Status::CaptureCaptain
                 | Status::YoshiEgg
+                // `ftCommonCaptureKirbyProcCapture` and the star setters put
+                // the fighter in the air.
+                | Status::CaptureKirby
+                | Status::CaptureWaitKirby
+                | Status::ThrownKirbyStar
+                | Status::ThrownCopyStar
         )
     }
 
@@ -803,6 +809,55 @@ pub enum CaptainStatus {
     SpecialAirHi = 238,
 }
 
+/// Kirby's `ftKirbyStatus` table without the entry and copy-ability
+/// statuses, which are not ported yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum KirbyStatus {
+    Attack100Start = 220,
+    Attack100Loop = 221,
+    Attack100End = 222,
+    JumpAerialF1 = 223,
+    JumpAerialF2 = 224,
+    JumpAerialF3 = 225,
+    JumpAerialF4 = 226,
+    JumpAerialF5 = 227,
+    ThrowF = 228,
+    ThrowFFall = 229,
+    ThrowFLanding = 230,
+    SpecialHi = 256,
+    SpecialHiLanding = 257,
+    SpecialAirHi = 258,
+    SpecialAirHiFall = 259,
+    SpecialLwStart = 260,
+    SpecialLwUnk = 261,
+    SpecialLwHold = 262,
+    SpecialLwEnd = 263,
+    SpecialAirLwStart = 264,
+    SpecialAirLwHold = 265,
+    SpecialAirLwLanding = 266,
+    SpecialAirLwFall = 267,
+    SpecialAirLwEnd = 268,
+    SpecialNStart = 269,
+    SpecialNLoop = 270,
+    SpecialNEnd = 271,
+    SpecialNCatch = 272,
+    SpecialNEat = 273,
+    SpecialNThrow = 274,
+    SpecialNWait = 275,
+    SpecialNTurn = 276,
+    SpecialNCopy = 277,
+    SpecialAirNStart = 278,
+    SpecialAirNLoop = 279,
+    SpecialAirNEnd = 280,
+    SpecialAirNCatch = 281,
+    SpecialAirNEat = 282,
+    SpecialAirNThrow = 283,
+    SpecialAirNWait = 284,
+    SpecialAirNTurn = 285,
+    SpecialAirNCopy = 286,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -818,6 +873,7 @@ pub enum AnyStatus {
     Link(LinkStatus),
     Yoshi(YoshiStatus),
     Captain(CaptainStatus),
+    Kirby(KirbyStatus),
 }
 
 impl AnyStatus {
@@ -891,6 +947,7 @@ impl AnyStatus {
             AnyStatus::Yoshi(_) => true,
             AnyStatus::Captain(CaptainStatus::SpecialAirN | CaptainStatus::SpecialLwAir | CaptainStatus::SpecialAirLw | CaptainStatus::SpecialLwBound | CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi | CaptainStatus::SpecialHiThrow | CaptainStatus::SpecialHiCatch) => false,
             AnyStatus::Captain(_) => true,
+            AnyStatus::Kirby(k) => crate::kirby::is_grounded(k),
         }
     }
 
@@ -904,6 +961,7 @@ impl AnyStatus {
             AnyStatus::Link(_) => false,
             AnyStatus::Yoshi(_) => false,
             AnyStatus::Captain(_) => false,
+            AnyStatus::Kirby(_) => false,
         }
     }
 
@@ -922,6 +980,7 @@ impl AnyStatus {
             AnyStatus::Link(_) => false,
             AnyStatus::Yoshi(_) => false,
             AnyStatus::Captain(_) => false,
+            AnyStatus::Kirby(_) => false,
         }
     }
 
@@ -932,6 +991,7 @@ impl AnyStatus {
             self,
             AnyStatus::Common(Status::CatchWait | Status::CaptureWait)
                 | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
+                | AnyStatus::Kirby(KirbyStatus::SpecialNCatch | KirbyStatus::SpecialAirNCatch)
         )
     }
 
@@ -1059,6 +1119,7 @@ impl AnyStatus {
                 CaptainStatus::SpecialHiThrow => 266,
                 CaptainStatus::SpecialAirHi => 267,
             },
+            AnyStatus::Kirby(k) => crate::kirby::anim_slot(k),
         }
     }
 
@@ -1085,6 +1146,7 @@ impl AnyStatus {
             AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop) => 0.0,
             AnyStatus::Yoshi(_) => 1.0,
             AnyStatus::Captain(_) => 1.0,
+            AnyStatus::Kirby(_) => 1.0,
         }
     }
 }
@@ -2353,6 +2415,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
+            | crate::fighter::FighterKind::Kirby
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2394,6 +2457,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
                 crate::captain::set_special_air_n(f);
             }
         }
+        crate::fighter::FighterKind::Kirby => crate::kirby::set_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -2436,12 +2500,15 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
+            | crate::fighter::FighterKind::Kirby
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Captain {
+    if f.kind == crate::fighter::FighterKind::Kirby {
+        crate::kirby::set_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Captain {
         crate::captain::set_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Yoshi {
         if f.is_grounded() {
@@ -2598,12 +2665,15 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Link
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
+            | crate::fighter::FighterKind::Kirby
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Captain {
+    if f.kind == crate::fighter::FighterKind::Kirby {
+        crate::kirby::set_special_lw(f);
+    } else if f.kind == crate::fighter::FighterKind::Captain {
         if f.is_grounded() {
             crate::captain::set_special_lw(f);
         } else {
@@ -2985,6 +3055,8 @@ pub fn set_any_status(
     // `ftMainSetStatus` resets `knockback_resist_status`; Yoshi's aerial
     // jump sets it again.
     f.knockback_resist = 0.0;
+    // `ftMainSetStatus` clears `is_damage_resist`; Stone's setters restore it.
+    f.kirby.is_damage_resist = false;
     crate::stale::on_set_status(f, status);
     // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
     // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
@@ -3229,7 +3301,7 @@ fn set_landing_air(f: &mut Fighter, status: Status) {
 /// `F_PCT_TO_DEC(flag1)` scales the fighter's own normal landing-lag length
 /// (`f.anim.landing`), which is real, extracted data, unlike
 /// [`set_landing_air`]'s case.
-fn set_landing_air_null(f: &mut Fighter, percent: u8) {
+pub(crate) fn set_landing_air_null(f: &mut Fighter, percent: u8) {
     let len = f.anim.landing * (percent as f32 / 100.0);
     set_status(f, Status::LandingAirNull, 0.0, StatusTiming::frames(len));
 }
@@ -3297,6 +3369,9 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
     }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirN) {
         return switch_mario_fireball_ground(f);
+    }
+    if crate::kirby::set_landing_air(f) {
+        return;
     }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirLw) {
         return switch_mario_tornado_ground(f);
@@ -3446,6 +3521,7 @@ fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
         crate::fighter::FighterKind::Fox => Some(4),
         crate::fighter::FighterKind::Link => Some(5),
         crate::fighter::FighterKind::Captain => Some(6),
+        crate::fighter::FighterKind::Kirby => Some(4),
         _ => None,
     }
 }
@@ -3490,6 +3566,12 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
         }
         (crate::fighter::FighterKind::Captain, Status::Attack12) => {
             Some(crate::captain_attack::JAB2_FLAG1_FRAME)
+        }
+        (crate::fighter::FighterKind::Kirby, Status::Attack11) => {
+            Some(crate::kirby_attack::JAB1_FLAG1_FRAME)
+        }
+        (crate::fighter::FighterKind::Kirby, Status::Attack12) => {
+            Some(crate::kirby_attack::JAB2_FLAG1_FRAME)
         }
         _ => None,
     }
@@ -3563,6 +3645,7 @@ fn set_rapid_start(f: &mut Fighter) {
         crate::fighter::FighterKind::Fox => set_fox_rapid_start(f),
         crate::fighter::FighterKind::Link => crate::link::set_attack100_start(f),
         crate::fighter::FighterKind::Captain => crate::captain::set_attack100_start(f),
+        crate::fighter::FighterKind::Kirby => crate::kirby::set_attack100_start(f),
         _ => unreachable!("no Attack100 for this fighter"),
     }
 }
@@ -3643,7 +3726,7 @@ fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
 fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
-        FighterKind::Fox | FighterKind::Link => AngleVariants::One,
+        FighterKind::Fox | FighterKind::Link | FighterKind::Kirby => AngleVariants::One,
         FighterKind::Yoshi | FighterKind::Captain => AngleVariants::Three,
         _ => AngleVariants::Five,
     }
@@ -4025,6 +4108,9 @@ pub fn check_wait(f: &mut Fighter) -> bool {
 
 /// `ftCommonJumpAerialCheckInterruptCommon` @ 0x8014019C.
 pub fn check_jump_aerial(f: &mut Fighter) -> bool {
+    if crate::kirby::is_kirby(f.kind) {
+        return crate::kirby::check_jump_aerial(f);
+    }
     if f.physics.jumps_used >= f.attributes.jumps_max {
         return false;
     }
@@ -4132,6 +4218,10 @@ pub fn update(f: &mut Fighter) {
     // means the common-table match below needs no changes at all to stay
     // exactly what it was before `AnyStatus` existed.
     if crate::grab::update(f) {
+        return;
+    }
+    // The stars' `proc_update` only makes their effect.
+    if crate::capture_kirby::is_star(f.status.status) {
         return;
     }
     let AnyStatus::Common(current) = f.status.status else {
@@ -4432,6 +4522,15 @@ pub fn update(f: &mut Fighter) {
         // `LandingAirF`/`Hi`/`B`/`Lw` have no extracted animation length
         // (`set_landing_air`'s docs), so they collapse to `Wait` on the tick
         // after they are entered.
+        // Kirby's two dedicated landings carry extracted lengths and a
+        // landing hitbox (`crate::kirby::set_landing_air`).
+        Status::LandingAirF | Status::LandingAirB
+            if crate::kirby::is_kirby(f.kind) && f.status.timing.anim_length.is_some() =>
+        {
+            if f.status.animation_ended() {
+                set_wait(f);
+            }
+        }
         Status::LandingAirF | Status::LandingAirB | Status::LandingAirHi | Status::LandingAirLw => {
             set_wait(f);
         }
@@ -4491,6 +4590,7 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Link(_) => crate::link::update(f),
         AnyStatus::Yoshi(_) => crate::yoshi::update(f),
         AnyStatus::Captain(_) => crate::captain::update(f),
+        AnyStatus::Kirby(_) => crate::kirby::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {

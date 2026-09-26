@@ -446,6 +446,30 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 221,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Kirby as u32 {
+        // `SLOT_KIRBY_ATTACK11` through `LandingAirB`; the extended statuses
+        // use `AnyStatus::anim_slot`.
+        match status {
+            AnyStatus::Common(Status::Attack11) => 268,
+            AnyStatus::Common(Status::Attack12) => 269,
+            AnyStatus::Common(Status::AttackDash) => 270,
+            AnyStatus::Common(Status::AttackS3Hi) => 271,
+            AnyStatus::Common(Status::AttackS3) => 272,
+            AnyStatus::Common(Status::AttackS3Lw) => 273,
+            AnyStatus::Common(Status::AttackHi3) => 274,
+            AnyStatus::Common(Status::AttackLw3) => 275,
+            AnyStatus::Common(Status::AttackS4) => 276,
+            AnyStatus::Common(Status::AttackHi4) => 277,
+            AnyStatus::Common(Status::AttackLw4) => 278,
+            AnyStatus::Common(Status::AttackAirN) => 279,
+            AnyStatus::Common(Status::AttackAirF) => 280,
+            AnyStatus::Common(Status::AttackAirB) => 281,
+            AnyStatus::Common(Status::AttackAirHi) => 282,
+            AnyStatus::Common(Status::AttackAirLw) => 283,
+            AnyStatus::Common(Status::LandingAirF) => 284,
+            AnyStatus::Common(Status::LandingAirB) => 285,
+            _ => status.anim_slot(),
+        }
     } else if kind == FighterKind::Captain as u32 {
         // `SLOT_CAPTAIN_ATTACK11` through `AttackAirLw`; the extended
         // statuses use `AnyStatus::anim_slot`.

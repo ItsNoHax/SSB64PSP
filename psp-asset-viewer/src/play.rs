@@ -29,6 +29,7 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         AnyStatus::Link(_) => return "lnk-ext ",
         AnyStatus::Yoshi(_) => return "ysh-ext ",
         AnyStatus::Captain(_) => return "cap-ext ",
+        AnyStatus::Kirby(_) => return "krb-ext ",
     };
     match current {
         Wait => "wait    ",

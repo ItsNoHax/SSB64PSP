@@ -197,7 +197,8 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain",
+                 "Kirby"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -389,6 +390,64 @@ LATE_SPECIAL_SLOTS += [
     ("CaptainSpecialHiCatch", "Captain", "FTCaptainAnimCatchingEnemyWhileDiving"),
     ("CaptainSpecialHiThrow", "Captain", "FTCaptainAnimFalconDiveEnd1"),
     ("CaptainSpecialAirHi", "Captain", "FTCaptainAnimFalconDive"),
+]
+
+# Kirby's common attacks, the two dedicated aerial landings, then his own
+# statuses in `ftKirbyStatus` order without Appear and the copy abilities
+# (`228_KirbyMainMotion.c`, `dFTKirbyMotionDescs`). He has three forward
+# tilts and one forward smash. `SpecialNCatch` has motion -1 and keeps the
+# loop's figatree, and `SpecialAirLwFall`'s motion names no figatree, so
+# neither has a slot.
+LATE_SPECIAL_SLOTS += [
+    ("KirbyAttack11", "Kirby", "FTKirbyAnimJab1"),
+    ("KirbyAttack12", "Kirby", "FTKirbyAnimJab2"),
+    ("KirbyAttackDash", "Kirby", "FTKirbyAnimDashAttack"),
+    ("KirbyAttackS3Hi", "Kirby", "FTKirbyAnimFTiltHigh"),
+    ("KirbyAttackS3", "Kirby", "FTKirbyAnimFTilt"),
+    ("KirbyAttackS3Lw", "Kirby", "FTKirbyAnimFTiltLow"),
+    ("KirbyAttackHi3", "Kirby", "FTKirbyAnimUTilt"),
+    ("KirbyAttackLw3", "Kirby", "FTKirbyAnimDTilt"),
+    ("KirbyAttackS4", "Kirby", "FTKirbyAnimFSmash"),
+    ("KirbyAttackHi4", "Kirby", "FTKirbyAnimUSmash"),
+    ("KirbyAttackLw4", "Kirby", "FTKirbyAnimDSmash"),
+    ("KirbyAttackAirN", "Kirby", "FTKirbyAnimAttackAirN"),
+    ("KirbyAttackAirF", "Kirby", "FTKirbyAnimAttackAirF"),
+    ("KirbyAttackAirB", "Kirby", "FTKirbyAnimAttackAirB"),
+    ("KirbyAttackAirHi", "Kirby", "FTKirbyAnimAttackAirU"),
+    ("KirbyAttackAirLw", "Kirby", "FTKirbyAnimAttackAirD"),
+    ("KirbyLandingAirF", "Kirby", "FTKirbyAnimLandingAirF"),
+    ("KirbyLandingAirB", "Kirby", "FTKirbyAnimLandingAirB"),
+    ("KirbyAttack100Start", "Kirby", "FTKirbyAnimJabLoopStart"),
+    ("KirbyAttack100Loop", "Kirby", "FTKirbyAnimJabLoop"),
+    ("KirbyAttack100End", "Kirby", "FTKirbyAnimJabLoopEnd"),
+    ("KirbyJumpAerialF1", "Kirby", "FTKirbyAnimJump2"),
+    ("KirbyJumpAerialF2", "Kirby", "FTKirbyAnimJump3"),
+    ("KirbyJumpAerialF3", "Kirby", "FTKirbyAnimJump4"),
+    ("KirbyJumpAerialF4", "Kirby", "FTKirbyAnimJump5"),
+    ("KirbyJumpAerialF5", "Kirby", "FTKirbyAnimJump6"),
+    ("KirbyThrowF", "Kirby", "FTKirbyAnimForwardThrow"),
+    ("KirbyThrowFFall", "Kirby", "FTKirbyAnimForwardThrowFall"),
+    ("KirbyThrowFLanding", "Kirby", "FTKirbyAnimForwardThrowRecoil"),
+    ("KirbySpecialHi", "Kirby", "FTKirbyAnimFinalCutter"),
+    ("KirbySpecialHiLanding", "Kirby", "FTKirbyAnimFinalCutterLand"),
+    ("KirbySpecialAirHi", "Kirby", "FTKirbyAnimFinalCutter"),
+    ("KirbySpecialAirHiFall", "Kirby", "FTKirbyAnimFinalCutterImpact"),
+    ("KirbySpecialLwStart", "Kirby", "FTKirbyAnimStoneStartGround"),
+    ("KirbySpecialLwUnk", "Kirby", "FTKirbyAnimStoneGround"),
+    ("KirbySpecialLwHold", "Kirby", "FTKirbyAnimStoneGround"),
+    ("KirbySpecialLwEnd", "Kirby", "FTKirbyAnimStoneCancel"),
+    ("KirbySpecialAirLwStart", "Kirby", "FTKirbyAnimStoneStartAir"),
+    ("KirbySpecialAirLwHold", "Kirby", "FTKirbyAnimStoneGround"),
+    ("KirbySpecialAirLwLanding", "Kirby", "FTKirbyAnimStoneGround"),
+    ("KirbySpecialAirLwEnd", "Kirby", "FTKirbyAnimStoneCancel"),
+    ("KirbySpecialNStart", "Kirby", "FTKirbyAnimInhaleStartGround"),
+    ("KirbySpecialNLoop", "Kirby", "FTKirbyAnimInhaleGround"),
+    ("KirbySpecialNEnd", "Kirby", "FTKirbyAnimInhaleEnd"),
+    ("KirbySpecialNEat", "Kirby", "FTKirbyAnimInhaleSwallowed"),
+    ("KirbySpecialNThrow", "Kirby", "FTKirbyAnimInhaleSpit"),
+    ("KirbySpecialNWait", "Kirby", "FTKirbyAnimInhaleStuffed"),
+    ("KirbySpecialNTurn", "Kirby", "FTKirbyAnimInhaleTurn"),
+    ("KirbySpecialNCopy", "Kirby", "FTKirbyAnimInhaleAbsorb"),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
@@ -691,7 +750,7 @@ def emit(rows, out):
     w("// Do not edit by hand; re-run the generator instead.\n\n")
     w(f"/// The statuses carried, in slot order.\n")
     w(f"pub const SLOT_NAMES: [&str; SLOT_COUNT] = [{slots}];\n\n")
-    w("#[rustfmt::skip]\npub const FIGHTER_ANIMS: "
+    w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const FIGHTER_ANIMS: "
       f"[FighterAnims; {len(rows)}] = [\n")
     for fighter, entry in rows:
         ids = ", ".join(f"{fid:4d}" for _, fid, _, _, _ in entry)
@@ -708,7 +767,7 @@ def emit(rows, out):
     w("];\n\n")
     w("/// Lengths the decompilation's own C sources give for the same files.\n")
     w("/// `romtool anims --verify` checks the ROM against these.\n")
-    w("#[rustfmt::skip]\npub const EXPECTED_FRAMES: "
+    w("#[rustfmt::skip]\n#[allow(clippy::large_const_arrays)]\npub const EXPECTED_FRAMES: "
       f"[[u16; SLOT_COUNT]; {len(rows)}] = [\n")
     for fighter, entry in rows:
         lens = ", ".join(f"{0 if n is None else n:3d}" for _, _, _, n, _ in entry)

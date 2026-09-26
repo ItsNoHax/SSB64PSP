@@ -60,6 +60,9 @@ pub enum WeaponKind {
     YoshiEgg { throw_force: i16, stick_x: i8 },
     /// `wpYoshiStarMakeStars`: one `nWPKindYoshiStar` each way.
     YoshiStars,
+    /// `nWPKindCutter`, Final Cutter's wave. `grounded`: Kirby stood on a
+    /// floor line, which the wave then follows.
+    KirbyCutter { grounded: bool },
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -1032,6 +1035,140 @@ impl YoshiStar {
     }
 }
 
+/// `WPFINALCUTTER_LIFETIME` and `WPFINALCUTTER_VEL` (`wpvars.h`).
+pub const KIRBY_CUTTER_LIFETIME: u16 = 20;
+pub const KIRBY_CUTTER_VEL: f32 = 100.0;
+/// `llKirbyMainCutterWeaponAttributes` in `229_KirbyMain.c` (US): size 250,
+/// angle 361, knockback 50/0/70, 6 damage.
+pub const KIRBY_CUTTER_HITBOX: Hitbox = Hitbox {
+    damage: 6,
+    offset: Vec3::ZERO,
+    radius: 125.0,
+    angle: 361,
+    kb_scale: 50,
+    kb_weight: 0,
+    kb_base: 70,
+};
+pub const KIRBY_CUTTER_MAP_COLL: BodyColl = BodyColl {
+    top: 220.0,
+    center: 0.0,
+    bottom: -220.0,
+    width: 50.0,
+};
+
+/// Source `wpKirbyCutter`: the Final Cutter wave. It rides the floor line it
+/// was made on, flies straight once off an edge, dies against a wall or
+/// ceiling, and survives its hits (`wpKirbyCutterProcHit` returns FALSE)
+/// without hitting a fighter twice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KirbyCutter {
+    pub owner_port: u8,
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub lifetime: u16,
+    pub lr: f32,
+    pub damage: i32,
+    /// Resolve the floor line under the spawn on the first tick.
+    pub seek_floor: bool,
+    pub floor: Option<Segment>,
+    pub hit_ports: u8,
+}
+
+impl KirbyCutter {
+    fn new(spawn: WeaponSpawn, grounded: bool) -> Self {
+        let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
+        Self {
+            owner_port: spawn.owner_port,
+            position: spawn.position,
+            velocity: Vec3::new(lr * KIRBY_CUTTER_VEL, 0.0, 0.0),
+            lifetime: KIRBY_CUTTER_LIFETIME,
+            lr,
+            damage: KIRBY_CUTTER_HITBOX.damage,
+            seek_floor: grounded,
+            floor: None,
+            hit_ports: 0,
+        }
+    }
+
+    /// `wpKirbyCutterProcUpdate` then `wpKirbyCutterProcMap`.
+    fn tick<I, F>(&mut self, surfaces: F) -> bool
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        if self.seek_floor {
+            // `mpCollisionGetFCCommonFloor(fp->coll_data.floor_line_id, pos)`:
+            // the owner's floor, which the spawn stands over.
+            self.seek_floor = false;
+            self.floor = surfaces()
+                .into_iter()
+                .filter(|s| s.kind == MapSurfaceKind::Floor)
+                .map(|s| s.segment)
+                .filter(|seg| {
+                    let (lo, hi) = (seg.x1.min(seg.x2), seg.x1.max(seg.x2));
+                    self.position.x >= f32::from(lo) && self.position.x <= f32::from(hi)
+                })
+                .map(|seg| {
+                    (
+                        seg,
+                        (segment_y(seg, self.position.x) - self.position.y).abs(),
+                    )
+                })
+                .filter(|(_, d)| *d <= KIRBY_CUTTER_MAP_COLL.top)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(seg, _)| seg);
+        }
+        self.lifetime -= 1;
+        if self.lifetime == 0 {
+            return false;
+        }
+        if let Some(segment) = self.floor {
+            // `wpMainVelGroundTransferAir` along the floor line.
+            let normal = surface_normal(MapSurfaceKind::Floor, segment);
+            self.velocity.x = self.lr * normal.y * KIRBY_CUTTER_VEL;
+            self.velocity.y = self.lr * -normal.x * KIRBY_CUTTER_VEL;
+            let wanted = self.position + self.velocity;
+            let (lo, hi) = (segment.x1.min(segment.x2), segment.x1.max(segment.x2));
+            if wanted.x < f32::from(lo) || wanted.x > f32::from(hi) {
+                // `wpMapSetAir`: the wave keeps flying along the line.
+                self.floor = None;
+                self.position = wanted;
+            } else {
+                let y = segment_y(segment, wanted.x) - KIRBY_CUTTER_MAP_COLL.bottom;
+                self.position = Vec3::new(wanted.x, y, wanted.z);
+            }
+            return true;
+        }
+        let wanted = self.position + self.velocity;
+        match map_contact(surfaces(), self.position, wanted, KIRBY_CUTTER_MAP_COLL) {
+            Some(hit) if hit.kind == MapSurfaceKind::Floor => {
+                // `wpMapTestAllCheckFloor` then `wpMapSetGround`.
+                self.floor = Some(hit.segment);
+                self.position = hit.position;
+                true
+            }
+            Some(_) => false,
+            None => {
+                self.position = wanted;
+                true
+            }
+        }
+    }
+
+    /// `wpKirbyCutterProcReflector`, then the reflect damage bonus.
+    fn reflect(&mut self, reflector: &Fighter) {
+        self.lifetime = KIRBY_CUTTER_LIFETIME;
+        self.owner_port = reflector.port;
+        if self.velocity.x * reflector.facing.sign() < 0.0 {
+            self.velocity.x = -self.velocity.x;
+            self.velocity.y = -self.velocity.y;
+        }
+        self.lr = -self.lr;
+        self.hit_ports = 0;
+        self.damage = ((self.damage as f32 * 1.8 + 0.99) as i32).min(100);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Weapon {
     Fireball(MarioFireball),
@@ -1041,6 +1178,7 @@ enum Weapon {
     Boomerang(LinkBoomerang),
     Egg(YoshiEgg),
     Star(YoshiStar),
+    Cutter(KirbyCutter),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1200,6 +1338,9 @@ impl WeaponPool {
                 stick_x,
             } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x)),
             WeaponKind::YoshiStars => unreachable!("handled above"),
+            WeaponKind::KirbyCutter { grounded } => {
+                Weapon::Cutter(KirbyCutter::new(spawn, grounded))
+            }
         };
         self.insert(weapon, spawn.stale)
     }
@@ -1288,6 +1429,7 @@ impl WeaponPool {
                     }
                     Weapon::Egg(egg) => egg.tick(surfaces),
                     Weapon::Star(star) => star.tick(),
+                    Weapon::Cutter(cutter) => cutter.tick(surfaces),
                 };
                 if !alive {
                     *slot = None;
@@ -1310,12 +1452,16 @@ impl WeaponPool {
                 Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position),
                 Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position),
                 Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position),
+                Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position),
             };
             if owner == defender.port {
                 continue;
             }
             let bit = 1u8 << (defender.port & 7);
             if matches!(weapon, Weapon::Boomerang(b) if b.hit_ports & bit != 0) {
+                continue;
+            }
+            if matches!(weapon, Weapon::Cutter(c) if c.hit_ports & bit != 0) {
                 continue;
             }
             // The Bomb's `WPAttributes::can_reflect` is clear, and its attack
@@ -1408,6 +1554,7 @@ impl WeaponPool {
                         Weapon::Boomerang(b) => b.reflect(defender),
                         Weapon::Egg(e) => e.reflect(defender),
                         Weapon::Star(s) => s.reflect(defender),
+                        Weapon::Cutter(c) => c.reflect(defender),
                     }
                     crate::status::set_fox_special_lw_hit(defender);
                     continue;
@@ -1421,6 +1568,7 @@ impl WeaponPool {
                 Weapon::Boomerang(b) => b.damage,
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
+                Weapon::Cutter(c) => c.damage,
             };
             if stale_hit(
                 &hitbox,
@@ -1436,6 +1584,11 @@ impl WeaponPool {
                 if let Weapon::Boomerang(b) = weapon {
                     b.hit_ports |= bit;
                     b.on_hit();
+                    continue;
+                }
+                // `wpKirbyCutterProcHit` returns FALSE: the wave carries on.
+                if let Weapon::Cutter(c) = weapon {
+                    c.hit_ports |= bit;
                     continue;
                 }
                 // `wpYoshiEggThrowProcHit`: the egg explodes in place.
@@ -1497,6 +1650,13 @@ impl WeaponPool {
     pub fn stars(&self) -> impl Iterator<Item = YoshiStar> + '_ {
         self.slots.iter().flatten().filter_map(|w| match w {
             Weapon::Star(s) => Some(*s),
+            _ => None,
+        })
+    }
+
+    pub fn cutters(&self) -> impl Iterator<Item = KirbyCutter> + '_ {
+        self.slots.iter().flatten().filter_map(|w| match w {
+            Weapon::Cutter(c) => Some(*c),
             _ => None,
         })
     }
