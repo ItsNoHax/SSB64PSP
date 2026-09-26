@@ -53,7 +53,7 @@ pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
 /// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
 /// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
 /// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong, Samus, Luigi
-/// Link and Yoshi.
+/// Link, Yoshi and Captain Falcon.
 pub const SLOT_CATCH: usize = 110;
 /// First of Samus's 22 common attack slots, `Attack11` through
 /// `AttackAirLw` in `ftCommonStatus` order.
@@ -77,9 +77,13 @@ pub const SLOT_YOSHI_ATTACK11: usize = 204;
 /// First of Yoshi's 11 special slots, `SpecialHi` through
 /// `SpecialAirNRelease` in `ftYoshiStatus` order without Appear.
 pub const SLOT_YOSHI_SPECIAL_HI: usize = 222;
+/// First of Captain Falcon's 20 common attack slots.
+pub const SLOT_CAPTAIN_ATTACK11: usize = 233;
+/// First of his 15 extended attack and special slots, without Appear.
+pub const SLOT_CAPTAIN_ATTACK13: usize = 253;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 233;
+pub const SLOT_COUNT: usize = 268;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -499,8 +503,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 5476,
-            "Mario, Fox, Donkey, Samus, Luigi, Link and Yoshi have character and grab slots"
+            missing, 6376,
+            "Eight ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -549,6 +553,14 @@ mod tests {
         assert_ne!(yoshi.files[SLOT_YOSHI_ATTACK11], 0);
         assert_ne!(yoshi.files[SLOT_YOSHI_SPECIAL_HI], 0);
         assert_ne!(yoshi.files[SLOT_CATCH], 0);
+        let captain = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Captain")
+            .expect("Captain is in FTKind order");
+        assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK11], 1619);
+        assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK13], 1621);
+        assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK13 + 11], 1658);
+        assert_ne!(captain.files[SLOT_CATCH], 0);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo
         // throws share one figatree (`dFTDonkeyMotionDescs`).

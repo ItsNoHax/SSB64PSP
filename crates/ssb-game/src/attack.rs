@@ -1388,6 +1388,42 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Captain, AnyStatus::Captain(s)) => {
+            use crate::status::CaptainStatus;
+            match s {
+                CaptainStatus::Attack13 => Some(&crate::captain_attack::JAB3),
+                CaptainStatus::Attack100Loop => Some(&crate::captain_attack::RAPID_LOOP),
+                CaptainStatus::SpecialN => Some(&crate::captain_attack::PUNCH_GROUND),
+                CaptainStatus::SpecialAirN => Some(&crate::captain_attack::PUNCH_AIR),
+                CaptainStatus::SpecialLw => Some(&crate::captain_attack::KICK),
+                CaptainStatus::SpecialAirLw => Some(&crate::captain_attack::KICK_AIR),
+                CaptainStatus::SpecialLwLanding => Some(&crate::captain_attack::KICK_LANDING),
+                _ => None,
+            }
+        }
+        (FighterKind::Captain, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::captain_attack::JAB1),
+            Status::Attack12 => Some(&crate::captain_attack::JAB2),
+            Status::AttackDash => Some(&crate::captain_attack::DASH),
+            Status::AttackS3Hi => Some(&crate::captain_attack::FTILT_HI),
+            Status::AttackS3HiS => Some(&crate::captain_attack::FTILT_HIS),
+            Status::AttackS3 => Some(&crate::captain_attack::FTILT),
+            Status::AttackS3LwS => Some(&crate::captain_attack::FTILT_LWS),
+            Status::AttackS3Lw => Some(&crate::captain_attack::FTILT_LW),
+            Status::AttackHi3 => Some(&crate::captain_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::captain_attack::DTILT),
+            Status::AttackS4Hi => Some(&crate::captain_attack::FSMASH_HI),
+            Status::AttackS4 => Some(&crate::captain_attack::FSMASH),
+            Status::AttackS4Lw => Some(&crate::captain_attack::FSMASH_LW),
+            Status::AttackHi4 => Some(&crate::captain_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::captain_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::captain_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::captain_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::captain_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::captain_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::captain_attack::AIR_LW),
+            _ => None,
+        },
         (FighterKind::Yoshi, AnyStatus::Yoshi(s)) => {
             use crate::status::YoshiStatus;
             match s {
@@ -1909,7 +1945,7 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 /// Samus/Luigi/Link/Yoshi `MainMotion.c`, not from the visual model's node
 /// order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Donkey, Fox, Link, Luigi, Mario, Samus, Yoshi};
+    use crate::fighter::FighterKind::{Captain, Donkey, Fox, Link, Luigi, Mario, Samus, Yoshi};
     if kind == Donkey
         && matches!(
             status,
@@ -1925,6 +1961,47 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         };
     }
     let ids: &[u8] = match (kind, status) {
+        (Captain, AnyStatus::Common(Status::Attack11)) => &[9, 8, 8],
+        (Captain, AnyStatus::Common(Status::Attack12)) => &[15, 14],
+        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::Attack13)) => &[26],
+        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::Attack100Loop)) => &[14],
+        (Captain, AnyStatus::Common(Status::AttackDash)) => &[14],
+        (
+            Captain,
+            AnyStatus::Common(
+                Status::AttackS3Hi
+                | Status::AttackS3HiS
+                | Status::AttackS3
+                | Status::AttackS3LwS
+                | Status::AttackS3Lw,
+            ),
+        ) => &[21, 21, 20],
+        (Captain, AnyStatus::Common(Status::AttackHi3 | Status::AttackLw4)) => &[26],
+        (Captain, AnyStatus::Common(Status::AttackLw3)) => &[21],
+        (Captain, AnyStatus::Common(Status::AttackAirHi)) => &[21],
+        (
+            Captain,
+            AnyStatus::Common(Status::AttackS4Hi | Status::AttackS4 | Status::AttackS4Lw),
+        ) => &[26, 26, 5],
+        (Captain, AnyStatus::Common(Status::AttackHi4)) => &[14],
+        (Captain, AnyStatus::Common(Status::AttackAirN)) => &[20, 26],
+        (Captain, AnyStatus::Common(Status::AttackAirF)) => &[26, 26, 21, 21],
+        (Captain, AnyStatus::Common(Status::AttackAirLw)) => &[26, 5],
+        (Captain, AnyStatus::Common(Status::AttackAirB)) => &[8],
+        (
+            Captain,
+            AnyStatus::Captain(
+                crate::status::CaptainStatus::SpecialN | crate::status::CaptainStatus::SpecialAirN,
+            ),
+        ) => &[16, 14, 14],
+        (
+            Captain,
+            AnyStatus::Captain(
+                crate::status::CaptainStatus::SpecialLw
+                | crate::status::CaptainStatus::SpecialAirLw,
+            ),
+        ) => &[21, 21, 20],
+        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::SpecialLwLanding)) => &[0],
         (Yoshi, AnyStatus::Common(Status::Attack11)) => &[23, 25],
         (
             Yoshi,

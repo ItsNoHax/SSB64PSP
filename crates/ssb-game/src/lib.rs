@@ -13,6 +13,8 @@
 
 pub mod attack;
 pub mod camera;
+pub mod captain;
+mod captain_attack;
 pub mod capture_yoshi;
 pub mod collision;
 mod donkey_attack;

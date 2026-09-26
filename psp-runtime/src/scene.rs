@@ -455,6 +455,32 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 221,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Captain as u32 {
+        // `SLOT_CAPTAIN_ATTACK11` through `AttackAirLw`; the extended
+        // statuses use `AnyStatus::anim_slot`.
+        match status {
+            AnyStatus::Common(Status::Attack11) => 233,
+            AnyStatus::Common(Status::Attack12) => 234,
+            AnyStatus::Common(Status::AttackDash) => 235,
+            AnyStatus::Common(Status::AttackS3Hi) => 236,
+            AnyStatus::Common(Status::AttackS3HiS) => 237,
+            AnyStatus::Common(Status::AttackS3) => 238,
+            AnyStatus::Common(Status::AttackS3LwS) => 239,
+            AnyStatus::Common(Status::AttackS3Lw) => 240,
+            AnyStatus::Common(Status::AttackHi3) => 241,
+            AnyStatus::Common(Status::AttackLw3) => 242,
+            AnyStatus::Common(Status::AttackS4Hi) => 243,
+            AnyStatus::Common(Status::AttackS4) => 244,
+            AnyStatus::Common(Status::AttackS4Lw) => 245,
+            AnyStatus::Common(Status::AttackHi4) => 246,
+            AnyStatus::Common(Status::AttackLw4) => 247,
+            AnyStatus::Common(Status::AttackAirN) => 248,
+            AnyStatus::Common(Status::AttackAirF) => 249,
+            AnyStatus::Common(Status::AttackAirB) => 250,
+            AnyStatus::Common(Status::AttackAirHi) => 251,
+            AnyStatus::Common(Status::AttackAirLw) => 252,
+            _ => status.anim_slot(),
+        }
     } else if kind == FighterKind::Luigi as u32 {
         // `ssb_rom::anim::SLOT_LUIGI_ATTACK11` onward. Luigi has no
         // mid-angle forward tilts.

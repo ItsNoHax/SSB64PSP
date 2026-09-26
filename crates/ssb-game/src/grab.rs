@@ -162,6 +162,15 @@ const SAMUS_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 18, 40, 60, 0, 90),
     desc(None, 8, 361, 100, 0, 0),
 ];
+// `235_CaptainMainMotion.c`: Falcon's standard grab and throw descriptors.
+const CAPTAIN_THROW_F: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 12, 70, 50, 0, 100),
+    desc(None, 6, 361, 100, 0, 0),
+];
+const CAPTAIN_THROW_B: [ThrowHitDesc; 2] = [
+    desc(FLY_N, 16, 361, 50, 0, 100),
+    desc(None, 8, 361, 100, 0, 0),
+];
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
@@ -264,6 +273,18 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((19.0, 2)),
             length: 49.0,
         },
+        (FighterKind::Captain, false) => ThrowScript {
+            desc: Some(CAPTAIN_THROW_F),
+            flag1: None,
+            flag2: Some((20.0, 1)),
+            length: 44.0,
+        },
+        (FighterKind::Captain, true) => ThrowScript {
+            desc: Some(CAPTAIN_THROW_B),
+            flag1: None,
+            flag2: Some((20.0, 2)),
+            length: 44.0,
+        },
         // Wait(4) then WaitAsync(9): both throws release at frame 9.
         (FighterKind::Samus, false) => ThrowScript {
             desc: Some(SAMUS_THROW_F),
@@ -308,6 +329,7 @@ pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
         FighterKind::Link => Some(35),
         // The tongue, which also carries a swallowed fighter.
         FighterKind::Yoshi => Some(31),
+        FighterKind::Captain => Some(29),
         _ => None,
     }
 }
@@ -346,8 +368,10 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
     const LINK: [(Hitbox, u8); 1] = [(catch(180.0, 0.0, 0.0, 0.0), 35)];
     // The tongue.
     const YOSHI: [(Hitbox, u8); 1] = [(catch(220.0, 0.0, 0.0, 0.0), 31)];
+    const CAPTAIN: [(Hitbox, u8); 1] = [(catch(300.0, 0.0, 0.0, 0.0), 29)];
     match base_kind(kind) {
         FighterKind::Yoshi => &YOSHI,
+        FighterKind::Captain => &CAPTAIN,
         FighterKind::Link => &LINK,
         // `dLuigiMainMotion_Catch` has Mario's box and window.
         FighterKind::Mario | FighterKind::Luigi => &MARIO,
@@ -465,6 +489,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Samus => [20, 10, 5, 0, 0, 0, 5, 10],
         FighterKind::Link => [32, 10, 5, 0, 0, 0, 0, 0],
         FighterKind::Yoshi => [20, 10, 0, 0, 0, 0, 0, 0],
+        FighterKind::Captain => [20, 10, 0, 0, 0, 0, 0, 0],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -522,6 +547,8 @@ pub enum GrabEvent {
     Dead,
     /// `proc_capture` → `ftCommonCaptureYoshiProcCapture` (Egg Lay).
     CaptureYoshi,
+    /// Falcon Dive's `ftCommonCaptureCaptainProcCapture`.
+    CaptureCaptain,
     /// Yoshi's release script writes `status_vars.common.captureyoshi.stage`.
     YoshiEggStage(u8),
 }
@@ -567,6 +594,8 @@ pub struct GrabState {
     /// Translation of this fighter's first child of TopN, sampled from its
     /// current runtime joint pose for capture placement.
     pub held_child_offset: Option<Vec3>,
+    /// `FTCOMMON_CAPTURECAPTAIN_MASK_NOUPDATE`: a grounded victim stays put.
+    pub captain_no_update: bool,
     /// Events for the partner, drained by [`exchange`].
     pub outbox: [Option<GrabEvent>; OUTBOX],
 }
@@ -610,6 +639,7 @@ pub fn is_held(status: AnyStatus) -> bool {
             Status::CapturePulled
                 | Status::CaptureWait
                 | Status::CaptureYoshi
+                | Status::CaptureCaptain
                 | Status::ThrownDonkeyF
                 | Status::ThrownMarioBStart
                 | Status::ThrownFoxFStart
@@ -626,7 +656,12 @@ fn is_thrown(status: AnyStatus) -> bool {
     is_held(status)
         && !matches!(
             status,
-            AnyStatus::Common(Status::CapturePulled | Status::CaptureWait | Status::CaptureYoshi)
+            AnyStatus::Common(
+                Status::CapturePulled
+                    | Status::CaptureWait
+                    | Status::CaptureYoshi
+                    | Status::CaptureCaptain
+            )
         )
 }
 
@@ -842,6 +877,71 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
     f.hitstun = 0;
 }
 
+// `dCaptainMainMotion_0x0000`: offset from the victim's TopN to Falcon's
+// heavy-item joint, indexed by FTKind. These are signed short pairs in file 235.
+const CAPTAIN_OFFSETS: [(f32, f32); 27] = [
+    (30.0, 70.0),
+    (40.0, 40.0),
+    (100.0, 250.0),
+    (80.0, 210.0),
+    (30.0, 70.0),
+    (100.0, 160.0),
+    (0.0, 110.0),
+    (80.0, 210.0),
+    (20.0, 100.0),
+    (-10.0, 80.0),
+    (20.0, 100.0),
+    (30.0, 70.0),
+    (0.0, 0.0),
+    (30.0, 70.0),
+    (30.0, 70.0),
+    (40.0, 40.0),
+    (120.0, 260.0),
+    (80.0, 210.0),
+    (30.0, 70.0),
+    (100.0, 160.0),
+    (0.0, 0.0),
+    (80.0, 210.0),
+    (20.0, 100.0),
+    (-10.0, 80.0),
+    (20.0, 100.0),
+    (50.0, 150.0),
+    (100.0, 250.0),
+];
+
+pub(crate) fn captain_offset(kind: FighterKind) -> Vec3 {
+    let (x, y) = CAPTAIN_OFFSETS[kind as usize];
+    Vec3::new(x, y, 0.0)
+}
+
+fn capture_captain(f: &mut Fighter, catcher_port: u8, holder: Holder) {
+    drop_own_catch(f);
+    f.grab.capture = Some(catcher_port);
+    f.grab.holder = Some(holder);
+    f.grab.captain_no_update = f.is_grounded();
+    f.facing = holder.facing.flipped();
+    f.become_airborne();
+    status::set_status(f, Status::CaptureCaptain, 0.0, StatusTiming::unknown());
+    f.grab.capture_immune = true;
+    physics::stop_all(&mut f.physics);
+}
+
+fn update_capture_captain(f: &mut Fighter, holder: Holder) {
+    if f.grab.captain_no_update {
+        return;
+    }
+    let (x, y) = CAPTAIN_OFFSETS[f.kind as usize];
+    let want = holder.anchor - Vec3::new(x * holder.facing.sign(), y, 0.0);
+    let delta = want - f.pos;
+    let d2 = delta.length_squared();
+    if d2 > 180.0 * 180.0 {
+        let scale = 180.0 / ssb_engine::math::sqrt(d2);
+        f.pos += delta * scale;
+    } else {
+        f.pos = want;
+    }
+}
+
 /// `ftCommonCaptureWaitSetStatus` @ 0x8014AA58.
 fn set_capture_wait(f: &mut Fighter) {
     status::set_status(f, Status::CaptureWait, 0.0, StatusTiming::unknown());
@@ -975,6 +1075,7 @@ fn lose_grip(f: &mut Fighter) {
     f.grab.holder = None;
     f.grab.thrown_queue = None;
     f.grab.capture_immune = false;
+    f.grab.captain_no_update = false;
     f.is_invisible = false;
     if f.is_grounded() && f.floor.is_none() {
         f.become_airborne();
@@ -989,7 +1090,9 @@ fn release_with(f: &mut Fighter, desc: ThrowHitDesc, lr: Option<f32>, shield_cat
     };
     if lr.is_some() {
         // `ftCommonThrownProcPhysics(catch_gobj)` runs just before release.
-        f.pos = held_attachment(f, holder);
+        if f.status.status != Status::CaptureCaptain {
+            f.pos = held_attachment(f, holder);
+        }
     }
     lose_grip(f);
     if lr.is_some() || !f.is_grounded() {
@@ -1272,7 +1375,7 @@ pub fn update(f: &mut Fighter) -> bool {
                 set_capture_wait(f);
             }
         }
-        AnyStatus::Common(Status::CaptureWait | Status::CaptureYoshi) => {}
+        AnyStatus::Common(Status::CaptureWait | Status::CaptureYoshi | Status::CaptureCaptain) => {}
         AnyStatus::Common(Status::Shouldered) => update_shouldered(f),
         s if is_thrown(s) => update_thrown(f),
         AnyStatus::Donkey(DonkeyStatus::ThrowFWait) => {
@@ -1393,6 +1496,10 @@ pub fn refresh_held_attachment(f: &mut Fighter) {
         return;
     }
     let Some(holder) = f.grab.holder else { return };
+    if f.status.status == Status::CaptureCaptain {
+        update_capture_captain(f, holder);
+        return;
+    }
     let point = held_attachment(f, holder);
     f.pos.x = point.x;
     f.pos.z = point.z;
@@ -1427,6 +1534,10 @@ where
     if f.status.status == Status::CaptureYoshi {
         let attachment = held_attachment(f, holder);
         crate::capture_yoshi::update_held(f, attachment);
+        return true;
+    }
+    if f.status.status == Status::CaptureCaptain {
+        update_capture_captain(f, holder);
         return true;
     }
     let pulled = matches!(
@@ -1639,6 +1750,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             status::set_wait_or_fall(to);
         }
         GrabEvent::CaptureYoshi => crate::capture_yoshi::capture(to, from.port, holder_of(from)),
+        GrabEvent::CaptureCaptain => capture_captain(to, from.port, holder_of(from)),
         GrabEvent::YoshiEggStage(stage) => to.egg.stage = stage,
     }
 }
@@ -1653,7 +1765,9 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
         return false;
     }
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);
+    let dive = crate::captain::dive_searching(catcher);
     if !egg_lay
+        && !dive
         && (catcher.status.status != Status::Catch
             || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame))
     {
@@ -1664,6 +1778,12 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     }
     let colls: &[(Hitbox, u8)] = if egg_lay {
         core::slice::from_ref(&crate::yoshi::EGG_LAY_CATCH)
+    } else if dive {
+        if catcher.status.anim_frame < 14.0 {
+            &crate::captain::DIVE_CATCH
+        } else {
+            &crate::captain::DIVE_CATCH[..1]
+        }
     } else {
         catch_colls(catcher.kind)
     };
@@ -1678,7 +1798,9 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if !hit {
         return false;
     }
-    if egg_lay {
+    if dive {
+        crate::captain::dive_catch(catcher, other);
+    } else if egg_lay {
         crate::yoshi::catch(catcher, other);
         catcher.grab.send(GrabEvent::CaptureYoshi);
     } else {
@@ -1692,6 +1814,26 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
 mod tests {
     use super::*;
     use crate::fighter::FighterKind;
+
+    #[test]
+    fn captain_capture_freezes_grounded_victim_and_pulls_airborne_victim() {
+        let catcher = Fighter::new(FighterKind::Captain, 0, 4);
+        let holder = holder_of(&catcher);
+        let mut victim = Fighter::new(FighterKind::Mario, 1, 4);
+        victim.pos = Vec3::new(500.0, 0.0, 0.0);
+        victim.situation = Situation::Ground;
+        capture_captain(&mut victim, catcher.port, holder);
+        assert_eq!(victim.status.status, Status::CaptureCaptain);
+        assert!(!victim.is_grounded());
+        update_capture_captain(&mut victim, holder);
+        assert_eq!(victim.pos.x, 500.0);
+
+        let mut airborne = Fighter::new(FighterKind::Mario, 2, 4);
+        airborne.pos = Vec3::new(500.0, 0.0, 0.0);
+        capture_captain(&mut airborne, catcher.port, holder);
+        update_capture_captain(&mut airborne, holder);
+        assert!(airborne.pos.x < 500.0 && airborne.pos.x >= 320.0);
+    }
 
     fn grounded(kind: FighterKind, port: u8, x: f32) -> Fighter {
         let mut f = Fighter::new(kind, port, 4);

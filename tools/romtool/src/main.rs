@@ -10069,7 +10069,7 @@ mod tests {
     fn grab_slots_and_thrown_lengths_match_the_anim_table() {
         use ssb_game::fighter::FighterKind;
         use ssb_game::status::{
-            AnyStatus, DonkeyStatus, LinkStatus, SamusStatus, Status, YoshiStatus,
+            AnyStatus, CaptainStatus, DonkeyStatus, LinkStatus, SamusStatus, Status, YoshiStatus,
         };
         let common = [
             Status::Catch,
@@ -10122,6 +10122,14 @@ mod tests {
             AnyStatus::Yoshi(YoshiStatus::SpecialAirNRelease).anim_slot(),
             ssb_rom::anim::SLOT_YOSHI_SPECIAL_HI + 10
         );
+        assert_eq!(
+            AnyStatus::Captain(CaptainStatus::Attack13).anim_slot(),
+            ssb_rom::anim::SLOT_CAPTAIN_ATTACK13
+        );
+        assert_eq!(
+            AnyStatus::Captain(CaptainStatus::SpecialAirHi).anim_slot(),
+            ssb_rom::anim::SLOT_CAPTAIN_ATTACK13 + 14
+        );
         for (row, kind) in [
             FighterKind::Mario,
             FighterKind::Fox,
@@ -10130,6 +10138,7 @@ mod tests {
             FighterKind::Luigi,
             FighterKind::Link,
             FighterKind::Yoshi,
+            FighterKind::Captain,
         ]
         .into_iter()
         .enumerate()
@@ -10149,7 +10158,7 @@ mod tests {
 
         // Catch, CatchPull and ThrowF have no leading runtime joint for these
         // fighters, whereas CapturePulled does.
-        for kind in 0..7 {
+        for kind in 0..8 {
             for slot in SLOT_CATCH..SLOT_CATCH + 3 {
                 assert!(
                     !LEADING_RUNTIME_JOINT[kind][slot],

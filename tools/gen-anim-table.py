@@ -197,7 +197,7 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -349,6 +349,46 @@ LATE_SPECIAL_SLOTS += [
     ("YoshiSpecialAirN", "Yoshi", "FTYoshiAnimEggLayAirGrabOut"),
     ("YoshiSpecialAirNCatch", "Yoshi", "FTYoshiAnimEggLayAirGrabOut"),
     ("YoshiSpecialAirNRelease", "Yoshi", "FTYoshiAnimEggLayAirGrabIn"),
+]
+
+# Captain Falcon's five forward tilts, three forward smashes and extended
+# statuses in `ftCaptainStatus` order (the four entry animations are omitted).
+LATE_SPECIAL_SLOTS += [
+    ("CaptainAttack11", "Captain", "FTCaptainAnimJab1"),
+    ("CaptainAttack12", "Captain", "FTCaptainAnimJab2"),
+    ("CaptainAttackDash", "Captain", "FTCaptainAnimDashAttack"),
+    ("CaptainAttackS3Hi", "Captain", "FTCaptainAnimFTiltHigh"),
+    ("CaptainAttackS3HiS", "Captain", "FTCaptainAnimFTiltMidHigh"),
+    ("CaptainAttackS3", "Captain", "FTCaptainAnimFTilt"),
+    ("CaptainAttackS3LwS", "Captain", "FTCaptainAnimFTiltMidLow"),
+    ("CaptainAttackS3Lw", "Captain", "FTCaptainAnimFTiltLow"),
+    ("CaptainAttackHi3", "Captain", "FTCaptainAnimUTilt"),
+    ("CaptainAttackLw3", "Captain", "FTCaptainAnimDTilt"),
+    ("CaptainAttackS4Hi", "Captain", "FTCaptainAnimFSmashHigh"),
+    ("CaptainAttackS4", "Captain", "FTCaptainAnimFSmash"),
+    ("CaptainAttackS4Lw", "Captain", "FTCaptainAnimFSmashLow"),
+    ("CaptainAttackHi4", "Captain", "FTCaptainAnimUSmash"),
+    ("CaptainAttackLw4", "Captain", "FTCaptainAnimDSmash"),
+    ("CaptainAttackAirN", "Captain", "FTCaptainAnimAttackAirN"),
+    ("CaptainAttackAirF", "Captain", "FTCaptainAnimAttackAirF"),
+    ("CaptainAttackAirB", "Captain", "FTCaptainAnimAttackAirB"),
+    ("CaptainAttackAirHi", "Captain", "FTCaptainAnimAttackAirU"),
+    ("CaptainAttackAirLw", "Captain", "FTCaptainAnimAttackAirD"),
+    ("CaptainAttack13", "Captain", "FTCaptainAnimJab3"),
+    ("CaptainAttack100Start", "Captain", "FTCaptainAnimJabLoopStart"),
+    ("CaptainAttack100Loop", "Captain", "FTCaptainAnimJabLoop"),
+    ("CaptainAttack100End", "Captain", "FTCaptainAnimJabLoopEnd"),
+    ("CaptainSpecialN", "Captain", "FTCaptainAnimFalconPunchGround"),
+    ("CaptainSpecialAirN", "Captain", "FTCaptainAnimFalconPunchAir"),
+    ("CaptainSpecialLw", "Captain", "FTCaptainAnimDownSpecial"),
+    ("CaptainSpecialLwAir", "Captain", "FTCaptainAnimVelocityXDownSpecialAir"),
+    ("CaptainSpecialLwLanding", "Captain", "FTCaptainAnimLandingDownSpecial"),
+    ("CaptainSpecialAirLw", "Captain", "FTCaptainAnimDownSpecialAir"),
+    ("CaptainSpecialLwBound", "Captain", "FTCaptainAnimVelocityXDownSpecialAir"),
+    ("CaptainSpecialHi", "Captain", "FTCaptainAnimFalconDive"),
+    ("CaptainSpecialHiCatch", "Captain", "FTCaptainAnimCatchingEnemyWhileDiving"),
+    ("CaptainSpecialHiThrow", "Captain", "FTCaptainAnimFalconDiveEnd1"),
+    ("CaptainSpecialAirHi", "Captain", "FTCaptainAnimFalconDive"),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
