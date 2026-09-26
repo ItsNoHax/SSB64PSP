@@ -160,6 +160,9 @@ pub struct CopyState {
 }
 
 fn set(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
+    if matches!(s, K::CopyNessSpecialN | K::CopyNessSpecialAirN) {
+        f.physics.is_fastfall = false;
+    }
     status::set_any_status(f, AnyStatus::Kirby(s), frame, timing);
 }
 
@@ -171,7 +174,13 @@ fn taps(f: &Fighter) -> N64Buttons {
 pub fn is_copy(s: K) -> bool {
     (K::CopyMarioSpecialN..=K::CopyDonkeySpecialAirNFull).contains(&s)
         || (K::CopyLinkSpecialN..=K::CopyYoshiSpecialAirNRelease).contains(&s)
-        || matches!(s, K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN)
+        || matches!(
+            s,
+            K::CopyPikachuSpecialN
+                | K::CopyPikachuSpecialAirN
+                | K::CopyNessSpecialN
+                | K::CopyNessSpecialAirN
+        )
 }
 
 /// Which copy statuses leave Kirby grounded.
@@ -197,6 +206,7 @@ pub fn is_grounded(s: K) -> bool {
             | K::CopyYoshiSpecialNRelease
             | K::CopyPikachuSpecialN
             | K::CopyPurinSpecialN
+            | K::CopyNessSpecialN
     )
 }
 
@@ -232,6 +242,8 @@ pub fn anim_slot(s: K) -> Option<usize> {
         K::CopyYoshiSpecialAirNRelease => C + 24,
         K::CopyPikachuSpecialN => 373,
         K::CopyPikachuSpecialAirN => 374,
+        K::CopyNessSpecialN => 444,
+        K::CopyNessSpecialAirN => 445,
         K::CopyPurinSpecialN => 402,
         K::CopyPurinSpecialAirN => 403,
         _ => return None,
@@ -273,6 +285,7 @@ pub fn attack_id(s: K) -> Option<MotionAttackId> {
         | K::CopyYoshiSpecialAirNRelease => M::SpecialNCopyYoshi,
         K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => M::SpecialNCopyPikachu,
         K::CopyPurinSpecialN | K::CopyPurinSpecialAirN => M::SpecialNCopyPurin,
+        K::CopyNessSpecialN | K::CopyNessSpecialAirN => M::SpecialNCopyNess,
         _ => return None,
     })
 }
@@ -327,6 +340,19 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
                 K::CopyPikachuSpecialAirN
             };
             set(f, s, 0.0, StatusTiming::frames(THUNDERJOLT_LENGTH));
+            f.kirby.copy.spawned = false;
+        }
+        FighterKind::Ness => {
+            set(
+                f,
+                if ground {
+                    K::CopyNessSpecialN
+                } else {
+                    K::CopyNessSpecialAirN
+                },
+                0.0,
+                StatusTiming::frames(if ground { 72.0 } else { 60.0 }),
+            );
             f.kirby.copy.spawned = false;
         }
         FighterKind::Purin => {
@@ -845,6 +871,15 @@ pub fn update(f: &mut Fighter) {
             }
         }
         K::CopyFoxSpecialN | K::CopyFoxSpecialAirN => update_blaster(f, current),
+        K::CopyNessSpecialN | K::CopyNessSpecialAirN => {
+            if !f.kirby.copy.spawned && f.status.anim_frame >= 20.0 {
+                f.kirby.copy.spawned = true;
+                crate::ness::make_pk_fire(f, true);
+            }
+            if f.status.animation_ended() {
+                status::set_wait_or_fall(f);
+            }
+        }
         K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => {
             make_thunder_jolt(f);
             if f.status.animation_ended() {
@@ -1095,7 +1130,10 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
 
 /// A switch that keeps the animation frame and clock.
 fn switch(f: &mut Fighter, s: K) {
-    let (frame, timing) = (f.status.anim_frame, f.status.timing);
+    let (frame, mut timing) = (f.status.anim_frame, f.status.timing);
+    if matches!(s, K::CopyNessSpecialN | K::CopyNessSpecialAirN) {
+        timing = StatusTiming::frames(if s == K::CopyNessSpecialN { 72.0 } else { 60.0 });
+    }
     set(f, s, frame, timing);
 }
 
@@ -1118,6 +1156,10 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
         }
         K::CopyLuigiSpecialN => {
             switch(f, K::CopyLuigiSpecialAirN);
+            clamp(f);
+        }
+        K::CopyNessSpecialN => {
+            switch(f, K::CopyNessSpecialAirN);
             clamp(f);
         }
         K::CopyPikachuSpecialN => {
@@ -1182,6 +1224,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
     let ground = match current {
         K::CopyMarioSpecialAirN => K::CopyMarioSpecialN,
         K::CopyLuigiSpecialAirN => K::CopyLuigiSpecialN,
+        K::CopyNessSpecialAirN => K::CopyNessSpecialN,
         K::CopyPikachuSpecialAirN => K::CopyPikachuSpecialN,
         K::CopyPurinSpecialAirN => K::CopyPurinSpecialN,
         K::CopySamusSpecialAirNStart => K::CopySamusSpecialNStart,
@@ -1259,7 +1302,8 @@ mod tests {
         assert!(set_special_n(&mut f));
         assert_eq!(status(&f), K::CopyCaptainSpecialAirN);
         let mut f = kirby(FighterKind::Ness, true);
-        assert!(!set_special_n(&mut f));
+        assert!(set_special_n(&mut f));
+        assert_eq!(status(&f), K::CopyNessSpecialN);
         let mut f = kirby(FighterKind::Kirby, true);
         crate::kirby::set_special_n(&mut f);
         assert_eq!(status(&f), K::SpecialNStart);

@@ -325,6 +325,15 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((34.0, 2)),
             length: 43.0,
         },
+        (FighterKind::Ness, back) => ThrowScript {
+            desc: Some([
+                desc(FLY_N, 16, 45, 70, 0, 90),
+                desc(None, 8, 361, 100, 0, 0),
+            ]),
+            flag1: None,
+            flag2: Some((27.0, if back { 2 } else { 1 })),
+            length: 45.0,
+        },
         // `dPurinMainMotion_ThrowF`: `Wait(4)`, `WaitAsync(8)`, then
         // `SetFlag2(1)`; the forward throw launches into `DamageFlyRoll`.
         (FighterKind::Purin, false) => ThrowScript {
@@ -403,7 +412,7 @@ pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
         // The tongue, which also carries a swallowed fighter.
         FighterKind::Yoshi => Some(31),
         FighterKind::Captain => Some(29),
-        FighterKind::Kirby | FighterKind::Pikachu => Some(30),
+        FighterKind::Kirby | FighterKind::Pikachu | FighterKind::Ness => Some(30),
         FighterKind::Purin => Some(29),
         _ => None,
     }
@@ -449,6 +458,7 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
         (catch(260.0, 0.0, 0.0, -20.0), 30),
         (catch(160.0, 0.0, 0.0, -160.0), 30),
     ];
+    const NESS: [(Hitbox, u8); 1] = [(catch(310.0, 0.0, 0.0, 0.0), 30)];
     // `dPurinMainMotion_Catch`: two boxes on joint 29.
     const PURIN: [(Hitbox, u8); 2] = [
         (catch(240.0, 0.0, 0.0, -30.0), 29),
@@ -456,6 +466,7 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
     ];
     match base_kind(kind) {
         FighterKind::Kirby => &KIRBY,
+        FighterKind::Ness => &NESS,
         FighterKind::Purin => &PURIN,
         FighterKind::Pikachu => &PIKACHU,
         FighterKind::Yoshi => &YOSHI,
@@ -581,6 +592,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Kirby => [18, 20, 0, 0, 0, 0, 10, 10],
         FighterKind::Pikachu => [20, 10, 0, 0, 0, 0, 0, 0],
         FighterKind::Purin => [18, 20, 0, 0, 0, 0, 10, 10],
+        FighterKind::Ness => [20, 10, 0, 0, 0, 0, 0, 0],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -2660,6 +2672,42 @@ mod tests {
                 assert!(dummy.physics.vel_knockback.x.abs() < 1e-3);
                 assert!(dummy.physics.vel_knockback.y > 0.0);
             }
+        }
+    }
+
+    #[test]
+    fn ness_throws_exclude_held_target_from_boxes_and_release_at27() {
+        for back in [false, true] {
+            let mut ness = grounded(FighterKind::Ness, 0, 0.0);
+            let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+            grab(&mut ness, &mut dummy);
+            assert_eq!(dummy.grab.capture, Some(ness.port));
+            to_catch_wait(&mut ness, &mut dummy);
+            press(
+                &mut ness,
+                if back { 0 } else { N64Buttons::A },
+                if back { -60 } else { 0 },
+            );
+            frame(&mut ness, &mut dummy);
+            let mut bystander = grounded(FighterKind::Fox, 2, 0.0);
+            let mut record = attack::HitRecord::default();
+            for _ in 0..27 {
+                press(&mut ness, 0, 0);
+                frame(&mut ness, &mut dummy);
+                bystander.pos = ness.joint_world(30, Vec3::ZERO);
+                attack::apply_hit_from(&mut ness, &mut bystander, &mut record);
+                if dummy.grab.capture.is_none() {
+                    break;
+                }
+            }
+            assert_eq!(ness.status.anim_frame, 27.0);
+            assert_eq!(dummy.status.status, Status::DamageFlyN);
+            // ftMainSearchFighterAttack skips the victim's capture_gobj.
+            // The joint-30 box reaches bystanders; the victim takes the
+            // descriptor's 16 on release.
+            assert_eq!(dummy.damage, 16);
+            assert_eq!(bystander.damage, 10);
+            assert_eq!(dummy.physics.vel_knockback.x < 0.0, back);
         }
     }
 

@@ -271,6 +271,7 @@ pub struct Fighter {
     pub kirby: crate::kirby::KirbyState,
     pub pikachu: crate::pikachu::PikachuState,
     pub purin: crate::purin::PurinState,
+    pub ness: crate::ness::NessState,
     /// This fighter's side of an Inhale — `crate::capture_kirby`.
     pub kirby_capture: crate::capture_kirby::CaptureKirbyState,
     /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
@@ -355,6 +356,7 @@ impl Fighter {
             kirby: crate::kirby::KirbyState::default(),
             pikachu: crate::pikachu::PikachuState::default(),
             purin: crate::purin::PurinState::default(),
+            ness: crate::ness::NessState::default(),
             kirby_capture: crate::capture_kirby::CaptureKirbyState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
             knockback_resist: 0.0,
@@ -623,12 +625,14 @@ impl Fighter {
             crate::status::AnyStatus::Captain(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Kirby(_)
             | crate::status::AnyStatus::Pikachu(_)
-            | crate::status::AnyStatus::Purin(_) => crate::status::Status::Wait,
+            | crate::status::AnyStatus::Purin(_)
+            | crate::status::AnyStatus::Ness(_) => crate::status::Status::Wait,
         };
         if crate::captain::apply_ground_physics(self)
             || crate::kirby::apply_ground_physics(self)
             || crate::pikachu::apply_ground_physics(self)
             || crate::purin::apply_ground_physics(self)
+            || crate::ness::apply_ground_physics(self)
         {
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -741,6 +745,7 @@ impl Fighter {
                     && !crate::kirby::on_ground_lost(self)
                     && !crate::pikachu::on_ground_lost(self)
                     && !crate::purin::on_ground_lost(self)
+                    && !crate::ness::on_ground_lost(self)
                     && !crate::capture_yoshi::on_ground_lost(self)
                     && !crate::grab::on_ground_lost(self)
                 {
@@ -796,6 +801,7 @@ impl Fighter {
             && !crate::captain::skips_fast_fall(self.status.status)
             && !crate::kirby::skips_fast_fall(self.status.status)
             && !crate::purin::skips_fast_fall(self.status.status)
+            && !crate::ness::skips_fast_fall(self)
             && !crate::capture_kirby::is_star(self.status.status)
         {
             crate::status::check_set_fast_fall(self);
@@ -817,6 +823,7 @@ impl Fighter {
             || crate::kirby::apply_air_physics(self)
             || crate::pikachu::apply_air_physics(self)
             || crate::purin::apply_air_physics(self)
+            || crate::ness::apply_air_physics(self)
             || crate::capture_kirby::apply_air_physics(self)
         {
         } else if self.status.status == crate::status::Status::FallSpecial {
@@ -867,7 +874,8 @@ impl Fighter {
 
         let skip_pass = self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)
-            && self.pikachu.pass_timer < 2;
+            && self.pikachu.pass_timer < 2
+            || crate::ness::skip_pass(self);
         let moved = ground::move_air(&self.coll, self.pos, want, self.ignore_line, || {
             floors()
                 .into_iter()
@@ -912,6 +920,7 @@ impl Fighter {
                 if crate::kirby::on_landing(self, moved.pos.y)
                     || crate::pikachu::on_landing(self, moved.pos.y, f.normal)
                     || crate::purin::on_landing(self, moved.pos.y)
+                    || crate::ness::on_landing(self, moved.pos.y, f.normal)
                 {
                     return;
                 }

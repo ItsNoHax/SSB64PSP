@@ -440,6 +440,22 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
                 _ => M::SpecialHi,
             }
         }
+        AnyStatus::Ness(s) => {
+            use crate::status::NessStatus as N;
+            match s {
+                N::Attack13 => M::Attack13,
+                N::SpecialN | N::SpecialAirN => M::SpecialN,
+                N::SpecialLwStart
+                | N::SpecialLwHold
+                | N::SpecialLwHit
+                | N::SpecialLwEnd
+                | N::SpecialAirLwStart
+                | N::SpecialAirLwHold
+                | N::SpecialAirLwHit
+                | N::SpecialAirLwEnd => M::SpecialLw,
+                _ => M::SpecialHi,
+            }
+        }
         AnyStatus::Purin(s) => {
             use crate::status::PurinStatus as P;
             match s {
