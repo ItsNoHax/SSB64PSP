@@ -2638,6 +2638,15 @@ mod tests {
         assert_eq!(kb, 17.0);
     }
 
+    /// Training's default handicap 9 (`{ 1.09, 0.9174312 }`) leaves this
+    /// value exact, which is why the golden scenes whose only hit is this
+    /// jab did not move when handicaps arrived (RE-341).
+    #[test]
+    fn jab_knockback_at_zero_percent_survives_training_handicaps() {
+        let hc = crate::stale::HANDICAP_DEFAULT;
+        assert_eq!(common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, hc, hc), 17.0);
+    }
+
     #[test]
     fn hitstun_divides_knockback_by_1_875() {
         assert_eq!(hitstun_frames(17.0), 17.0 / 1.875);

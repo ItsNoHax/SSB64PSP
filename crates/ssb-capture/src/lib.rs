@@ -287,16 +287,24 @@ pub enum GameScene {
     Shadows,
     /// `grab`: Training plus a Z+A grab of the dummy, frozen while held.
     Grab,
+    /// `costume1`..`costume3`: Fox in Training after a C-Right, C-Down or
+    /// C-Left costume pick on the Training menu entry.
+    Costume1,
+    Costume2,
+    Costume3,
 }
 
 impl GameScene {
-    pub const ALL: [GameScene; 6] = [
+    pub const ALL: [GameScene; 9] = [
         GameScene::Training,
         GameScene::Fireball,
         GameScene::Superjump,
         GameScene::Fox,
         GameScene::Shadows,
         GameScene::Grab,
+        GameScene::Costume1,
+        GameScene::Costume2,
+        GameScene::Costume3,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -307,6 +315,9 @@ impl GameScene {
             GameScene::Fox => "fox",
             GameScene::Shadows => "shadows",
             GameScene::Grab => "grab",
+            GameScene::Costume1 => "costume1",
+            GameScene::Costume2 => "costume2",
+            GameScene::Costume3 => "costume3",
         }
     }
 

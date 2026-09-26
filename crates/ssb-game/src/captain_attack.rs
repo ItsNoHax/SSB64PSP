@@ -4,6 +4,7 @@
 use crate::attack::{ActiveHitbox, Hitbox, MoveData};
 use ssb_engine::math::Vec3;
 
+#[allow(clippy::too_many_arguments)]
 const fn hit(d: i32, size: f32, x: f32, y: f32, z: f32, a: i32, g: i32, w: i32, b: i32) -> Hitbox {
     Hitbox {
         damage: d,

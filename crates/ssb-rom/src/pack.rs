@@ -3643,6 +3643,16 @@ impl<'a> Pack<'a> {
         self.lod_blend_count
     }
 
+    /// The `i`th two-tile blend record in table order, for whole-table walks
+    /// such as [`crate::strict::check`].
+    pub fn lod_blend_at(&self, i: u32) -> Option<LodBlendDesc> {
+        if i >= self.lod_blend_count {
+            return None;
+        }
+        let at = self.lod_blend_table() + i as usize * LodBlendDesc::SIZE;
+        self.lod_blend(u32_at(self.data, at))
+    }
+
     /// The two-tile fractional blend record keyed by `mat_anim` (RE-321). A
     /// linear scan: the ROM has two, and only [`flags::LOD_BLEND`] primitives
     /// ask.

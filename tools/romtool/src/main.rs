@@ -111,7 +111,8 @@ USAGE:
     romtool collide  <pack.pak> [--stage <n>]
     romtool strict   <pack.pak>
     romtool link     <rom.z64> <file id>...
-    romtool scene-deps <pack.pak> [--stage <n>] [--object <n>[:<costume>]]...
+    romtool scene-deps <pack.pak> [--stage <n>] [--object <n>[:<costume>]]
+                                  [--fighter <kind>[:<costume>]]...
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool jumptest <pack.pak> [--stage <n>] [--jump-tick <n>] [--jump2-tick <n>]
                                  [--stick-x <n>] [--stick-switch-tick <n>]
@@ -4960,11 +4961,15 @@ fn strict(path: &Path) -> Res {
     let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
     let count = ssb_rom::strict::check(&pack, |issue| println!("  {issue}"));
     println!(
-        "{} textures, {} meshes, {} primitives, {} nodes: {count} unresolved",
+        "{} textures, {} meshes, {} primitives, {} nodes, {} material animations, \
+         {} animated palettes, {} two-tile blends: {count} unresolved",
         pack.texture_count(),
         pack.mesh_count(),
         pack.prim_count(),
-        pack.node_count()
+        pack.node_count(),
+        pack.mat_anim_count(),
+        pack.mat_anim_palette_count(),
+        pack.lod_blend_count()
     );
     if count == 0 {
         Ok(())
@@ -4984,6 +4989,10 @@ fn scene_deps(path: &Path, rest: &[&str]) -> Res {
         let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
         match flag {
             "--stage" => deps.add_stage(&pack, value.parse()?),
+            "--fighter" => {
+                let (kind, costume) = value.split_once(':').unwrap_or((value, "0"));
+                deps.add_fighter(&pack, kind.parse()?, costume.parse()?);
+            }
             "--object" => {
                 let (object, costume) = value.split_once(':').unwrap_or((value, "0"));
                 deps.add_object(&pack, object.parse()?, costume.parse()?);
@@ -8104,11 +8113,28 @@ fn link(path: &Path, ids: &[&str]) -> Res {
             files[id].data.len()
         );
     }
+    // `lbRelocGetAllocSize` reserves every file's size rounded up to 16;
+    // `lbRelocLoadFilesExtern` uses exactly the last file's size, so the
+    // two differ by that file's alignment slack and nothing else.
+    let alloc = ssb_rom::reloc_link::alloc_size(&archive, &roots)?;
+    let last = linked.layout.order.last().copied().unwrap_or(0);
+    let slack = files
+        .get(&last)
+        .map_or(0, |f| (16 - f.data.len() as u32 % 16) % 16);
     println!(
-        "{} files, {} bytes",
+        "{} files, {} bytes used; lbRelocGetAllocSize {} bytes ({})",
         linked.layout.order.len(),
-        linked.layout.size
+        linked.layout.size,
+        alloc,
+        if alloc == linked.layout.size + slack {
+            "agrees"
+        } else {
+            "DISAGREES"
+        }
     );
+    if alloc != linked.layout.size + slack {
+        return Err("layout size disagrees with lbRelocGetAllocSize".into());
+    }
     Ok(())
 }
 

@@ -233,21 +233,11 @@ impl Iterator for FloorSegments<'_, '_> {
     }
 }
 
-/// The object a character's animations drive.
-///
-/// The pack stores an absolute node per animation joint, and a node belongs to
-/// exactly one object, so this is the one hop the tables do not hold — a scan
-/// over the object list, done once when a fighter is created.
+/// The object a character's animations drive
+/// ([`ssb_rom::scene_deps::fighter_object`]), found once when a fighter is
+/// created.
 pub fn fighter_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
-    let anim = pack.fighter_anim(kind, 0)?;
-    let node = (0..anim.joint_count)
-        .filter_map(|i| pack.anim_joint(anim.first_joint + i))
-        .map(|j| j.node)
-        .find(|&n| n != ssb_rom::pack::AnimJoint::NO_NODE)?;
-    (0..pack.object_count()).find(|&i| {
-        pack.object(i)
-            .is_some_and(|o| node >= o.first_node && node < o.first_node + o.node_count)
-    })
+    ssb_rom::scene_deps::fighter_object(pack, kind)
 }
 
 /// The physics constants out of a packed [`FighterDesc`].

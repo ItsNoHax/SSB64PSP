@@ -27,7 +27,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::archive::File;
+use crate::archive::{Archive, File};
 
 /// `LBRELOC_CACHE_ALIGN`: 16 bytes.
 pub const ALIGN: u32 = 16;
@@ -72,9 +72,21 @@ pub struct Layout {
 
 /// Step 2: `lbRelocLoadFilesExtern`'s placement for `roots`, in order.
 pub fn layout(files: &BTreeMap<u32, File>, roots: &[u32]) -> Result<Layout, LinkError> {
+    layout_after(files, roots, &alloc::collections::BTreeSet::new())
+}
+
+/// [`layout`] when `loaded` files are already resident: the source's
+/// `lbRelocFindStatusBufferFile` returns their existing address, so they
+/// take no space and their externs are not walked again. Their slots are
+/// not in [`Layout::offsets`]; [`link`] needs the full closure.
+pub fn layout_after(
+    files: &BTreeMap<u32, File>,
+    roots: &[u32],
+    loaded: &alloc::collections::BTreeSet<u32>,
+) -> Result<Layout, LinkError> {
     let mut out = Layout::default();
     for &root in roots {
-        place(files, root, &mut out)?;
+        place(files, root, loaded, &mut out)?;
     }
     Ok(out)
 }
@@ -83,10 +95,15 @@ pub fn layout(files: &BTreeMap<u32, File>, roots: &[u32]) -> Result<Layout, Link
 /// `lbRelocLoadAndRelocFile`. An explicit stack keeps the depth-first order
 /// without recursion: each frame is a file and how far its extern chain has
 /// been walked.
-fn place(files: &BTreeMap<u32, File>, root: u32, out: &mut Layout) -> Result<(), LinkError> {
+fn place(
+    files: &BTreeMap<u32, File>,
+    root: u32,
+    loaded: &alloc::collections::BTreeSet<u32>,
+    out: &mut Layout,
+) -> Result<(), LinkError> {
     let mut stack: Vec<(u32, usize)> = Vec::new();
     let visit = |id: u32, out: &mut Layout, stack: &mut Vec<(u32, usize)>| {
-        if out.offsets.contains_key(&id) {
+        if out.offsets.contains_key(&id) || loaded.contains(&id) {
             return Ok(());
         }
         let file = files.get(&id).ok_or(LinkError::MissingFile(id))?;
@@ -112,6 +129,36 @@ fn place(files: &BTreeMap<u32, File>, root: u32, out: &mut Layout) -> Result<(),
         }
     }
     Ok(())
+}
+
+/// `lbRelocGetAllocSize(roots)` against an empty status buffer: the bytes
+/// the source reserves before calling `lbRelocLoadFilesExtern`.
+///
+/// Computed only from the file table and the ROM's `u16` extern-ID arrays
+/// (`lbRelocGetExternBytesNum`), never from decompressed chains, so it is an
+/// independent check of [`layout`]. Each root adds `ALIGN16(total)` first;
+/// each file not yet seen adds `ALIGN16(decompressed bytes)` plus its
+/// targets, in ROM order.
+pub fn alloc_size(archive: &Archive<'_>, roots: &[u32]) -> crate::Result<u32> {
+    let mut seen = alloc::collections::BTreeSet::new();
+    let mut total = 0u32;
+    for &root in roots {
+        total = align(total);
+        let mut stack = alloc::vec![root];
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let entry = archive.entry(id).ok_or(crate::Error::OutOfBounds {
+                offset: id as usize,
+                len: 1,
+            })?;
+            total += align(entry.size() as u32);
+            // Visiting order does not change a sum over unique files.
+            stack.extend(archive.extern_ids(id)?.into_iter().map(u32::from));
+        }
+    }
+    Ok(total)
 }
 
 /// The linked block and its layout.
@@ -231,6 +278,17 @@ mod tests {
         assert_eq!(word(b, 48 + 8), base + 48);
         assert_eq!(&b[20..32], &[0; 12], "alignment gap stays zero");
         assert_eq!(word(b, 16), 0xEEEE_EEEE, "non-pointer data is copied");
+    }
+
+    /// A resident target (the status buffer's) takes no space, so the next
+    /// file moves into its place; its own externs are not walked again.
+    #[test]
+    fn resident_files_are_skipped() {
+        let loaded = [20].into_iter().collect();
+        let l = layout_after(&closure(), &[10], &loaded).unwrap();
+        assert_eq!(l.order, [10, 30]);
+        assert_eq!(l.offsets[&30], 32);
+        assert_eq!(l.size, 48);
     }
 
     #[test]

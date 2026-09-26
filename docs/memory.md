@@ -31,12 +31,19 @@ Texture pool    remainder  ≈700 KiB
 Paletted textures keep the pool usable: a 64×64 CI4 texture is 2 KiB versus
 16 KiB as RGBA8888 ([D-003](decisions/D-003.md)).
 
-The archive-wide texture set is larger than the pool, but no scene needs all
-of it. Dream Land plus the four largest playable fighters measured 217.1 KiB
-of deduplicated textures (RE-076, RE-077). That covers 12 of 27 fighter kinds
-and 1 of 41 stages, so re-measure once a scene dependency graph exists before
-designing streaming. Build-time filter compensation (RE-305–313) has since
-grown some textures; the per-scene figure has not been re-measured.
+The archive-wide texture set is larger than the pool, and so are some
+scenes. `romtool scene-deps` over pack v37 (RE-341), counting every packed
+mip level and CLUT:
+
+| Scene | Bytes |
+|---|---:|
+| Training (Dream Land, two Marios) | 171.2 KiB |
+| Hyrule Castle alone | 915.3 KiB |
+| Donkey Kong, one costume | 531.3 KiB |
+| Worst VS scene: Hyrule Castle + four Donkey Kong costumes | 3,024.6 KiB |
+
+Training fits the pool; four-player VS scenes do not, so they need
+per-scene residency (textures sampled from main RAM or streamed).
 
 ## Original pattern
 
@@ -72,7 +79,9 @@ Scratchpad is reserved for VFPU staging and hot loops, after profiling.
 `romtool` leaves extern relocations zeroed in the pack and records them in the
 manifest ([D-011](decisions/D-011.md)). `ssb_rom::reloc_link` implements
 the loader's layout and patching over `Archive::load_closure` output
-(RE-340); no runtime path calls it yet. It:
+(RE-340). Its layout matches `lbRelocGetAllocSize` and the original's live
+RDRAM placement, resident files included (RE-341); no runtime path calls it
+yet. It:
 
 1. Computes the scene's file closure.
 2. Assigns each file an offset in the asset arena.

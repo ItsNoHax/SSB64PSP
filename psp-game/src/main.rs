@@ -62,6 +62,8 @@ const fn capture_ticks(scene: GameScene) -> u64 {
         // Z+A at tick 108; the catch box is live on `Catch` frame 6, the
         // two-frame pull follows, and the dummy then hangs in `CaptureWait`.
         GameScene::Grab => 118,
+        // Both fighters have settled on Dream Land's main floor.
+        GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3 => 40,
     }
 }
 
@@ -113,6 +115,7 @@ fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) 
 /// past the dummy while grounded next to it -- `jumptest`'s trace confirmed
 /// the hit with `ssb_game::attack::spheres_overlap` at ticks 100-101 against
 /// the real pack's Mario collision width and spawn-1 position, not a guess.
+/// RE-341 found that the current build's jab no longer damages the dummy.
 /// Only consulted when `deterministic_capture_frozen` reads
 /// `regression_capture` as enabled; harmless to keep unconditionally. The
 /// `regression_capture_fireball` variant adds a neutral-B tap at tick 150,
@@ -121,6 +124,20 @@ fn deterministic_capture_frozen(scene: Option<GameScene>, sim_frame_index: u64) 
 /// the same B edge plus an upward stick at tick 150 and freezes after its
 /// opening hit window.
 fn scripted_buttons(scene: GameScene, tick: u64) -> N64Buttons {
+    // The costume scenes tap one C-button on the Training entry at tick 6,
+    // between the Intro and Training confirms (`mnPlayers1PTrainingUpdateCostume`).
+    if let Some(pick) = match scene {
+        GameScene::Costume1 => Some(N64Buttons::C_RIGHT),
+        GameScene::Costume2 => Some(N64Buttons::C_DOWN),
+        GameScene::Costume3 => Some(N64Buttons::C_LEFT),
+        _ => None,
+    } {
+        return match tick {
+            4 | 8 => N64Buttons(N64Buttons::A),
+            6 => N64Buttons(pick),
+            _ => N64Buttons(0),
+        };
+    }
     if scene == GameScene::Fox && tick == 20 {
         return N64Buttons(N64Buttons::B);
     }
@@ -163,6 +180,12 @@ fn scripted_stick_x(scene: GameScene, tick: u64) -> i8 {
     if scene == GameScene::Grab {
         return if (14..52).contains(&tick) { -30 } else { 0 };
     }
+    if matches!(
+        scene,
+        GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3
+    ) {
+        return 0;
+    }
     if (34..90).contains(&tick) {
         -30
     } else {
@@ -197,7 +220,12 @@ const MENU_STICK_NAV_MIN: i8 = 40;
 /// The fighter Training spawns for the player: Fox for the Fox capture
 /// scene, Mario otherwise.
 fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
-    if capture_scene == Some(GameScene::Fox) {
+    // The costume scenes use Fox so that no pick can collide with the Mario
+    // dummy's costume.
+    if matches!(
+        capture_scene,
+        Some(GameScene::Fox | GameScene::Costume1 | GameScene::Costume2 | GameScene::Costume3)
+    ) {
         ssb_game::fighter::FighterKind::Fox
     } else {
         ssb_game::fighter::FighterKind::Mario
@@ -340,6 +368,17 @@ unsafe fn run() -> ! {
     // The player's costume, picked with a C-button tap on the Training
     // entry (`mnPlayers1PTrainingUpdateCostume`, `ssb_game::costume`).
     let mut player_costume: u8 = 0;
+    // The dummy's costume: `mnPlayers1PTrainingInitVars` fills the player's
+    // slot first, then gives the CPU slot the first royal costume the player
+    // is not wearing (`mnPlayers1PTrainingGetFreeCostume`). It keeps that
+    // costume while the player picks.
+    let dummy_costume = ssb_game::costume::free_costume(
+        ssb_game::fighter::FighterKind::Mario,
+        ssb_game::costume::Slot {
+            kind: training_fighter_kind(capture_scene),
+            costume: player_costume,
+        },
+    );
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
@@ -389,7 +428,7 @@ unsafe fn run() -> ! {
                         // denied when the dummy already wears that costume.
                         let dummy = ssb_game::costume::Slot {
                             kind: ssb_game::fighter::FighterKind::Mario,
-                            costume: 0,
+                            costume: dummy_costume,
                         };
                         if let Some(costume) = ssb_game::costume::pick(
                             training_fighter_kind(capture_scene),
@@ -416,7 +455,7 @@ unsafe fn run() -> ! {
                             });
                             dummy_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX)
-                                    .and_then(|s| play::Dummy::at_spawn(p, &s))
+                                    .and_then(|s| play::Dummy::at_spawn(p, &s, dummy_costume))
                             });
                         }
                     }
@@ -470,6 +509,8 @@ unsafe fn run() -> ! {
                         weapons.sync_owner(&mut dummy.fighter);
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
+                        weapons.record_landed(&mut pl.fighter);
+                        weapons.record_landed(&mut dummy.fighter);
                         if dummy.apply_hit_from(&mut pl.fighter) {
                             ssb_game::link::on_attack_hit(&mut pl.fighter);
                             ssb_game::captain::on_kick_hit(&mut pl.fighter);
