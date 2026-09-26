@@ -851,8 +851,33 @@ pub enum PurinStatus {
     SpecialAirLw = 235,
 }
 
-/// Kirby's `ftKirbyStatus` table without the entry statuses and Ness's copy
-/// ability.
+/// Ness's source ordinals; the five entry statuses (221–225) are omitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum NessStatus {
+    Attack13 = 220,
+    SpecialN = 226,
+    SpecialAirN = 227,
+    SpecialHiStart = 228,
+    SpecialHiHold = 229,
+    SpecialHiEnd = 230,
+    SpecialHiJibaku = 231,
+    SpecialAirHiStart = 232,
+    SpecialAirHiHold = 233,
+    SpecialAirHiEnd = 234,
+    SpecialAirHiBound = 235,
+    SpecialAirHiJibaku = 236,
+    SpecialLwStart = 237,
+    SpecialLwHold = 238,
+    SpecialLwHit = 239,
+    SpecialLwEnd = 240,
+    SpecialAirLwStart = 241,
+    SpecialAirLwHold = 242,
+    SpecialAirLwHit = 243,
+    SpecialAirLwEnd = 244,
+}
+
+/// Kirby's `ftKirbyStatus` table without the entry statuses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum KirbyStatus {
@@ -888,6 +913,8 @@ pub enum KirbyStatus {
     CopyDonkeySpecialAirNFull = 249,
     CopyPikachuSpecialN = 252,
     CopyPikachuSpecialAirN = 253,
+    CopyNessSpecialN = 254,
+    CopyNessSpecialAirN = 255,
     SpecialHi = 256,
     SpecialHiLanding = 257,
     SpecialAirHi = 258,
@@ -955,6 +982,7 @@ pub enum AnyStatus {
     Kirby(KirbyStatus),
     Pikachu(PikachuStatus),
     Purin(PurinStatus),
+    Ness(NessStatus),
 }
 
 impl AnyStatus {
@@ -1031,6 +1059,7 @@ impl AnyStatus {
             AnyStatus::Kirby(k) => crate::kirby::is_grounded(k),
             AnyStatus::Pikachu(p) => crate::pikachu::is_grounded(p),
             AnyStatus::Purin(p) => crate::purin::is_grounded(p),
+            AnyStatus::Ness(n) => crate::ness::is_grounded(n),
         }
     }
 
@@ -1047,6 +1076,7 @@ impl AnyStatus {
             AnyStatus::Kirby(_) => false,
             AnyStatus::Pikachu(_) => false,
             AnyStatus::Purin(_) => false,
+            AnyStatus::Ness(_) => false,
         }
     }
 
@@ -1068,6 +1098,7 @@ impl AnyStatus {
             AnyStatus::Kirby(_) => false,
             AnyStatus::Pikachu(_) => false,
             AnyStatus::Purin(_) => false,
+            AnyStatus::Ness(_) => false,
         }
     }
 
@@ -1212,6 +1243,7 @@ impl AnyStatus {
             AnyStatus::Kirby(k) => crate::kirby::anim_slot(k),
             AnyStatus::Pikachu(p) => crate::pikachu::anim_slot(p),
             AnyStatus::Purin(p) => crate::purin::anim_slot(p),
+            AnyStatus::Ness(n) => crate::ness::anim_slot(n),
         }
     }
 
@@ -1241,6 +1273,7 @@ impl AnyStatus {
             AnyStatus::Kirby(_) => 1.0,
             AnyStatus::Pikachu(_) => 1.0,
             AnyStatus::Purin(_) => 1.0,
+            AnyStatus::Ness(_) => 1.0,
         }
     }
 }
@@ -2527,6 +2560,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
             | crate::fighter::FighterKind::Purin
+            | crate::fighter::FighterKind::Ness
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2571,6 +2605,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         crate::fighter::FighterKind::Kirby => crate::kirby::set_special_n(f),
         crate::fighter::FighterKind::Pikachu => crate::pikachu::set_special_n(f),
         crate::fighter::FighterKind::Purin => crate::purin::set_special_n(f),
+        crate::fighter::FighterKind::Ness => crate::ness::set_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -2616,12 +2651,15 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
             | crate::fighter::FighterKind::Purin
+            | crate::fighter::FighterKind::Ness
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Pikachu {
+    if f.kind == crate::fighter::FighterKind::Ness {
+        crate::ness::set_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Purin {
         crate::purin::set_special_hi(f);
@@ -2787,12 +2825,15 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
             | crate::fighter::FighterKind::Purin
+            | crate::fighter::FighterKind::Ness
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Pikachu {
+    if f.kind == crate::fighter::FighterKind::Ness {
+        crate::ness::set_special_lw(f);
+    } else if f.kind == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_lw(f);
     } else if f.kind == crate::fighter::FighterKind::Purin {
         crate::purin::set_special_lw(f);
@@ -3366,12 +3407,20 @@ pub fn set_jump_aerial(f: &mut Fighter) {
     let attr = f.attributes;
     f.physics.vel_air.y =
         (STICK_MAX as f32 * attr.jump_height_mul + attr.jump_height_base) * attr.jumpaerial_height;
-    f.physics.vel_air.x = f.input.stick_x as f32 * attr.jumpaerial_vel_x;
+    if crate::ness::is_ness(f.kind) {
+        f.physics.is_fastfall = false;
+        f.ness.jump_velocity_x = f.input.stick_x as f32 * attr.jumpaerial_vel_x;
+    } else {
+        f.physics.vel_air.x = f.input.stick_x as f32 * attr.jumpaerial_vel_x;
+    }
     f.physics.jumps_used += 1;
     f.stick.tap_y = STICKBUFFER_MAX;
     f.is_special_interrupt = true;
     if crate::yoshi::is_yoshi(f.kind) {
         crate::yoshi::set_jump_aerial(f);
+    }
+    if crate::ness::is_ness(f.kind) {
+        f.status.timing = StatusTiming::frames(75.0);
     }
 }
 
@@ -3498,6 +3547,7 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
     if crate::kirby::set_landing_air(f)
         || crate::pikachu::set_landing_air(f)
         || crate::purin::set_landing_air(f)
+        || crate::ness::set_landing_air(f)
     {
         return;
     }
@@ -3702,6 +3752,8 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
             Some(crate::captain_attack::JAB2_FLAG1_FRAME)
         }
         (crate::fighter::FighterKind::Pikachu, Status::Attack11) => Some(10.0),
+        (crate::fighter::FighterKind::Ness, Status::Attack11) => Some(10.0),
+        (crate::fighter::FighterKind::Ness, Status::Attack12) => Some(8.0),
         (crate::fighter::FighterKind::Purin, Status::Attack11) => {
             Some(crate::purin_attack::JAB1_FLAG1_FRAME)
         }
@@ -3864,9 +3916,12 @@ fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
 fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
-        FighterKind::Fox | FighterKind::Link | FighterKind::Kirby | FighterKind::Pikachu => {
-            AngleVariants::One
-        }
+        FighterKind::Fox
+        | FighterKind::Link
+        | FighterKind::Kirby
+        | FighterKind::Pikachu
+        | FighterKind::Purin
+        | FighterKind::Ness => AngleVariants::One,
         FighterKind::Yoshi | FighterKind::Captain => AngleVariants::Three,
         _ => AngleVariants::Five,
     }
@@ -3909,6 +3964,7 @@ pub fn set_utilt(f: &mut Fighter) {
 
 /// `ftCommonAttackLw3SetStatus` @ `ftcommonattacklw3.c:59`.
 pub fn set_dtilt(f: &mut Fighter) {
+    f.ness.dtilt_requested = false;
     let len = attack_length(f, Status::AttackLw3);
     set_status(f, Status::AttackLw3, 0.0, StatusTiming::frames(len));
 }
@@ -4504,7 +4560,9 @@ pub fn update(f: &mut Fighter) {
         // repeated-tap extension (`is_goto_attacklw3`) — down tilt is
         // performed from a crouch and ends back in it, not in `Wait`.
         Status::AttackLw3 => {
-            if f.status.animation_ended() {
+            if crate::ness::is_ness(f.kind) {
+                crate::ness::update_dtilt(f);
+            } else if f.status.animation_ended() {
                 set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
                 f.is_special_interrupt = true;
             }
@@ -4723,6 +4781,9 @@ pub fn update(f: &mut Fighter) {
             // `ftCommonJumpAerialUpdateModelYaw`: only Yoshi sets a turn.
             if matches!(s, Status::JumpAerialF | Status::JumpAerialB) {
                 crate::yoshi::update_jump_aerial_turn(f);
+                if crate::ness::is_ness(f.kind) && f.status.animation_ended() {
+                    set_fall(f);
+                }
             }
             if !check_special_n(f)
                 && !check_special_hi(f)
@@ -4748,6 +4809,7 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Kirby(_) => crate::kirby::update(f),
         AnyStatus::Pikachu(_) => crate::pikachu::update(f),
         AnyStatus::Purin(_) => crate::purin::update(f),
+        AnyStatus::Ness(_) => crate::ness::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
@@ -5088,6 +5150,7 @@ pub fn attack13_status(kind: crate::fighter::FighterKind) -> Option<AnyStatus> {
         }
         crate::fighter::FighterKind::Link => Some(AnyStatus::Link(LinkStatus::Attack13)),
         crate::fighter::FighterKind::Captain => Some(AnyStatus::Captain(CaptainStatus::Attack13)),
+        crate::fighter::FighterKind::Ness => Some(AnyStatus::Ness(NessStatus::Attack13)),
         _ => None,
     }
 }

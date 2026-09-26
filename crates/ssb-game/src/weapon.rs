@@ -12,8 +12,11 @@ use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
+#[path = "ness_weapon.rs"]
+mod ness;
 #[path = "pikachu_weapon.rs"]
 mod pikachu;
+pub use ness::{PKFire, PKFirePillar, PKThunder, PKThunderTrail};
 pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail};
 
 /// The one-sided role a map segment has in the original collision tables.
@@ -82,6 +85,10 @@ pub enum WeaponKind {
     KirbyCutter {
         grounded: bool,
     },
+    NessPKFire {
+        grounded: bool,
+    },
+    NessPKThunder,
     PikachuThunderJolt,
     PikachuThunder,
 }
@@ -564,6 +571,10 @@ pub struct OwnerView {
     pub thunder_collide: bool,
     pub thunder_damage: bool,
     pub thunder_motion: u16,
+    pub ness_control: bool,
+    pub ness_collide: bool,
+    pub ness_motion: u16,
+    pub stick: crate::status::StickState,
 }
 
 /// Source `wpLinkBoomerang`. It flies out and slows down, then turns back
@@ -1206,6 +1217,9 @@ enum Weapon {
     Jolt(ThunderJolt),
     Thunder(ThunderHead),
     Trail(ThunderTrail),
+    PKFire(PKFire),
+    PKThunder(PKThunder),
+    PKTrail(PKThunderTrail),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1290,6 +1304,7 @@ const MAX_OWNERS: usize = 4;
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
     slots: [Option<Weapon>; MAX_WEAPONS],
+    pkfire_items: ness::PKFireItems,
     /// This frame's [`OwnerView`] per port, from [`Self::observe_owner`].
     owners: [Option<OwnerView>; MAX_OWNERS],
     /// A returning Boomerang reached this port's thrower while its
@@ -1306,6 +1321,26 @@ pub struct WeaponPool {
 
 /// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, the
 /// shared hit path, and the landed motion for the owner's stale queue.
+fn reflector_contact(f: &Fighter, position: Vec3, radius: f32) -> bool {
+    let fox = f.kind == crate::fighter::FighterKind::Fox
+        && matches!(
+            f.status.status,
+            crate::status::AnyStatus::Fox(
+                crate::status::FoxStatus::SpecialLwLoop
+                    | crate::status::FoxStatus::SpecialLwTurn
+                    | crate::status::FoxStatus::SpecialAirLwLoop
+                    | crate::status::FoxStatus::SpecialAirLwTurn
+            )
+        );
+    let dx = position.x - f.pos.x;
+    let dy = position.y - (f.pos.y + 60.0);
+    fox && dx * dx + dy * dy <= 350.0 * 350.0 || crate::ness::bat_contact(f, position, radius)
+}
+fn reflector_hit(f: &mut Fighter) {
+    if f.kind == crate::fighter::FighterKind::Fox {
+        crate::status::set_fox_special_lw_hit(f);
+    }
+}
 fn stale_hit(
     hitbox: &Hitbox,
     position: Vec3,
@@ -1329,6 +1364,7 @@ impl Default for WeaponPool {
     fn default() -> Self {
         WeaponPool {
             slots: [None; MAX_WEAPONS],
+            pkfire_items: ness::PKFireItems::default(),
             owners: [None; MAX_OWNERS],
             caught: [false; MAX_OWNERS],
             thunder_destroyed: [false; MAX_OWNERS],
@@ -1340,6 +1376,212 @@ impl Default for WeaponPool {
 }
 
 impl WeaponPool {
+    fn tick_pk_thunder<I, F>(&mut self, surfaces: F)
+    where
+        F: Fn() -> I + Copy,
+        I: IntoIterator<Item = MapSurface>,
+    {
+        let mut pending = [None; MAX_WEAPONS];
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if let Some(Weapon::PKThunder(h)) = slot {
+                let owner = self.owners.get(h.owner_port as usize).copied().flatten();
+                if !h.tick(surfaces, owner) {
+                    *slot = None;
+                } else if h.trail_spawn {
+                    pending[i] = Some((PKThunderTrail::new(*h, 0), self.stale[i]));
+                }
+            }
+        }
+        let mut heads = [None; MAX_WEAPONS];
+        for (i, slot) in self.slots.iter().enumerate() {
+            if let Some(Weapon::PKThunder(h)) = slot {
+                heads[i] = Some(*h);
+            }
+        }
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if let Some(Weapon::PKTrail(t)) = slot {
+                if let Some(head) = heads.iter().flatten().find(|h| h.group == t.group) {
+                    t.tick(*head);
+                    if t.spawn_next {
+                        let mut child = PKThunderTrail::new(*head, t.id + 1);
+                        child.position = t.position;
+                        pending[i] = Some((child, self.stale[i]));
+                    }
+                } else {
+                    *slot = None;
+                }
+            }
+        }
+        for (trail, stale) in pending.into_iter().flatten() {
+            self.insert(Weapon::PKTrail(trail), stale);
+        }
+    }
+    fn clear_pk_trails(&mut self) {
+        let mut groups = [None; MAX_WEAPONS];
+        for (i, w) in self.slots.iter().enumerate() {
+            if let Some(Weapon::PKThunder(h)) = w {
+                groups[i] = Some(h.group);
+            }
+        }
+        for slot in &mut self.slots {
+            if matches!(slot, Some(Weapon::PKTrail(t)) if !groups.contains(&Some(t.group))) {
+                *slot = None;
+            }
+        }
+    }
+    fn apply_pk_hits(&mut self, defender: &mut Fighter) {
+        let bit = 1u8 << (defender.port & 7);
+        let mut groups = [None; MAX_WEAPONS];
+        let mut pillars = [None; MAX_WEAPONS];
+        let mut free_slots = self.slots.iter().filter(|s| s.is_none()).count();
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            let Some(w) = slot else { continue };
+            match w {
+                Weapon::PKTrail(t) => {
+                    if t.owner_port == defender.port
+                        || t.hit_ports & bit != 0
+                        || groups.contains(&Some(t.group))
+                    {
+                        continue;
+                    }
+                    if stale_hit(
+                        &ness::TRAIL_HIT,
+                        t.hit_position(),
+                        self.stale[i],
+                        defender,
+                        &mut self.landed[i],
+                        t.owner_port,
+                    )
+                    .registered()
+                    {
+                        t.hit_ports |= bit;
+                        groups[i] = Some(t.group);
+                    }
+                }
+                Weapon::PKFire(spark) => {
+                    if spark.owner_port == defender.port {
+                        continue;
+                    }
+                    if crate::ness::absorb_contact(defender, spark.position, ness::SPARK_HIT.radius)
+                    {
+                        crate::ness::absorb(
+                            defender,
+                            spark.position,
+                            self.stale[i].damage(spark.damage),
+                        );
+                        *slot = None;
+                        free_slots += 1;
+                        continue;
+                    }
+                    if reflector_contact(defender, spark.position, ness::SPARK_HIT.radius) {
+                        spark.reflect(defender);
+                        reflector_hit(defender);
+                        continue;
+                    }
+                    let mut hit = ness::SPARK_HIT;
+                    hit.damage = spark.damage;
+                    let outcome = stale_hit(
+                        &hit,
+                        spark.position,
+                        self.stale[i],
+                        defender,
+                        &mut self.landed[i],
+                        spark.owner_port,
+                    );
+                    if outcome.registered() {
+                        if outcome == attack::HitOutcome::Damaged {
+                            pillars[i] = Some((spark.pillar(), self.stale[i]));
+                        }
+                        *slot = None;
+                        free_slots += 1;
+                    }
+                }
+                Weapon::PKThunder(h) => {
+                    if h.owner_port == defender.port {
+                        continue;
+                    }
+                    if crate::ness::absorb_contact(defender, h.position, ness::HEAD_HIT.radius) {
+                        crate::ness::absorb(defender, h.position, self.stale[i].damage(h.damage));
+                        *slot = None;
+                        free_slots += 1;
+                        continue;
+                    }
+                    if reflector_contact(defender, h.position, ness::HEAD_HIT.radius) {
+                        // First reflection allocates a new descriptor before ejecting
+                        // the old head. Allocation failure still consumes the old one.
+                        if !h.reflected && free_slots == 0 {
+                            *slot = None;
+                            free_slots += 1;
+                            reflector_hit(defender);
+                            continue;
+                        }
+                        let group = self.next_group;
+                        self.next_group = self.next_group.wrapping_add(1);
+                        h.reflect(defender, group);
+                        reflector_hit(defender);
+                        continue;
+                    }
+                    let mut hit = ness::HEAD_HIT;
+                    hit.damage = h.damage;
+                    if stale_hit(
+                        &hit,
+                        h.position,
+                        self.stale[i],
+                        defender,
+                        &mut self.landed[i],
+                        h.owner_port,
+                    )
+                    .registered()
+                    {
+                        *slot = None;
+                        free_slots += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        for w in self.slots.iter_mut().flatten() {
+            if let Weapon::PKTrail(t) = w {
+                if groups.contains(&Some(t.group)) {
+                    t.hit_ports |= bit;
+                }
+            }
+        }
+        self.clear_pk_trails();
+        for (pillar, stale) in pillars.into_iter().flatten() {
+            self.pkfire_items.insert(pillar, stale);
+        }
+    }
+    pub fn pk_fires(&self) -> impl Iterator<Item = PKFire> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::PKFire(p) = w {
+                Some(*p)
+            } else {
+                None
+            }
+        })
+    }
+    pub fn pk_pillars(&self) -> impl Iterator<Item = PKFirePillar> + '_ {
+        self.pkfire_items.pillars()
+    }
+    pub fn pk_thunders(&self) -> impl Iterator<Item = PKThunder> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::PKThunder(p) = w {
+                Some(*p)
+            } else {
+                None
+            }
+        })
+    }
+    pub fn pk_trails(&self) -> impl Iterator<Item = PKThunderTrail> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::PKTrail(p) = w {
+                Some(*p)
+            } else {
+                None
+            }
+        })
+    }
     /// Consumes a fighter's deferred request. A full pool follows the source
     /// manager's allocation-failure shape: the already-consumed script event
     /// is not retried on a later frame.
@@ -1352,6 +1594,12 @@ impl WeaponPool {
             return first || second;
         }
         let weapon = match spawn.kind {
+            WeaponKind::NessPKFire { grounded } => Weapon::PKFire(PKFire::new(spawn, grounded)),
+            WeaponKind::NessPKThunder => {
+                let group = self.next_group;
+                self.next_group = self.next_group.wrapping_add(1);
+                Weapon::PKThunder(PKThunder::new(spawn, group))
+            }
             WeaponKind::PikachuThunderJolt => Weapon::Jolt(ThunderJolt::new(spawn)),
             WeaponKind::PikachuThunder => {
                 if let Some(flag) = self.thunder_destroyed.get_mut(spawn.owner_port as usize) {
@@ -1401,6 +1649,7 @@ impl WeaponPool {
     /// ...)`: records this frame's damaging weapon hits in their owner's
     /// queue. Call it for every fighter after [`Self::apply_hits`].
     pub fn record_landed(&mut self, owner: &mut Fighter) {
+        self.pkfire_items.record_landed(owner);
         for landed in &mut self.landed {
             if let Some((port, id, count)) = *landed {
                 if port == owner.port {
@@ -1422,6 +1671,10 @@ impl WeaponPool {
                 thunder_collide: f.pikachu.thunder_collide,
                 thunder_damage: f.pikachu.thunder_damage,
                 thunder_motion: f.pikachu.thunder_motion,
+                ness_control: crate::ness::thunder_controlling(f.status.status),
+                ness_collide: f.ness.thunder_collide,
+                ness_motion: f.ness.thunder_motion,
+                stick: f.stick,
             });
         }
     }
@@ -1432,6 +1685,21 @@ impl WeaponPool {
     /// `boomerang_gobj` when the Boomerang goes away (or was never made
     /// because the pool was full).
     pub fn sync_owner(&mut self, f: &mut Fighter) {
+        if crate::ness::thunder_controlling(f.status.status) {
+            f.ness.thunder_position = self.slots.iter().flatten().find_map(|w| match w {
+                Weapon::PKThunder(h)
+                    if !h.reflected
+                        && h.owner_port == f.port
+                        && h.motion_count == f.ness.thunder_motion =>
+                {
+                    Some(h.position)
+                }
+                _ => None,
+            });
+            if f.ness.thunder_position.is_none() {
+                f.ness.thunder_destroyed = true;
+            }
+        }
         let port = usize::from(f.port);
         if crate::pikachu::thunder_controlling(f.status.status) {
             f.pikachu.thunder_position = self.slots.iter().flatten().find_map(|w| match w {
@@ -1471,10 +1739,14 @@ impl WeaponPool {
         I: IntoIterator<Item = MapSurface>,
     {
         let owners = self.owners;
+        self.tick_pk_thunder(surfaces);
+        self.pkfire_items.tick(surfaces);
         let mut trails = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
                 let alive = match weapon {
+                    Weapon::PKFire(spark) => spark.tick(surfaces),
+                    Weapon::PKThunder(_) | Weapon::PKTrail(_) => true, // ticked together above
                     Weapon::Jolt(jolt) => jolt.tick(surfaces),
                     Weapon::Trail(trail) => trail.tick(),
                     Weapon::Thunder(head) => {
@@ -1538,9 +1810,17 @@ impl WeaponPool {
     /// Blaster both delete on registered contact; invincibility leaves the
     /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
+        self.apply_pk_hits(defender);
+        self.pkfire_items.apply_hits(defender);
         let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
+            if matches!(
+                weapon,
+                Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_)
+            ) {
+                continue;
+            }
             if let Weapon::Thunder(_) = weapon {
                 continue;
             }
@@ -1577,6 +1857,9 @@ impl WeaponPool {
                     let (hit, pos) = j.hit();
                     (j.owner_port, hit, pos)
                 }
+                Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
+                    unreachable!("handled separately")
+                }
                 Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
                 Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
@@ -1591,6 +1874,20 @@ impl WeaponPool {
                 continue;
             }
             let bit = 1u8 << (defender.port & 7);
+            let absorb_damage = match weapon {
+                Weapon::Fireball(f) => Some(f.damage),
+                Weapon::Blaster(b) => Some(b.damage),
+                Weapon::ChargeShot(c) => Some(c.damage),
+                Weapon::Jolt(j) => Some(j.damage),
+                _ => None,
+            };
+            if let Some(damage) = absorb_damage {
+                if crate::ness::absorb_contact(defender, position, hitbox.radius) {
+                    crate::ness::absorb(defender, position, self.stale[i].damage(damage));
+                    *slot = None;
+                    continue;
+                }
+            }
             if matches!(weapon, Weapon::Boomerang(b) if b.hit_ports & bit != 0) {
                 continue;
             }
@@ -1643,60 +1940,52 @@ impl WeaponPool {
                 }
                 continue;
             }
-            if defender.kind == crate::fighter::FighterKind::Fox
-                && matches!(
-                    defender.status.status,
-                    crate::status::AnyStatus::Fox(
-                        crate::status::FoxStatus::SpecialLwLoop
-                            | crate::status::FoxStatus::SpecialLwTurn
-                            | crate::status::FoxStatus::SpecialAirLwLoop
-                            | crate::status::FoxStatus::SpecialAirLwTurn
-                    )
-                )
-            {
-                let dx = position.x - defender.pos.x;
-                let dy = position.y - (defender.pos.y + 60.0);
-                if dx * dx + dy * dy <= 350.0 * 350.0 {
-                    // `wpMainReflectorSetLR`: turn X toward Fox's facing,
-                    // transfer ownership, and apply the US 1.8x + 0.99 bonus.
-                    match weapon {
-                        Weapon::Fireball(f) => {
-                            f.owner_port = defender.port;
-                            if f.velocity.x * defender.facing.sign() < 0.0 {
-                                f.velocity.x = -f.velocity.x;
-                            }
-                            f.lifetime = f.attributes().lifetime;
-                            f.damage = ((f.damage as f32 * 1.8 + 0.99) as i32).min(100);
+            if reflector_contact(defender, position, hitbox.radius) {
+                // `wpMainReflectorSetLR`: turn X toward Fox's facing,
+                // transfer ownership, and apply the US 1.8x + 0.99 bonus.
+                match weapon {
+                    Weapon::Fireball(f) => {
+                        f.owner_port = defender.port;
+                        if f.velocity.x * defender.facing.sign() < 0.0 {
+                            f.velocity.x = -f.velocity.x;
                         }
-                        Weapon::Blaster(b) => {
-                            b.owner_port = defender.port;
-                            if b.velocity.x * defender.facing.sign() < 0.0 {
-                                b.velocity.x = -b.velocity.x;
-                            }
-                            b.scale_x = 1.0;
-                            b.damage = ((b.damage as f32 * 1.8 + 0.99) as i32).min(100);
-                        }
-                        Weapon::ChargeShot(c) => {
-                            c.owner_port = defender.port;
-                            if c.velocity.x * defender.facing.sign() < 0.0 {
-                                c.velocity.x = -c.velocity.x;
-                            }
-                            c.damage = ((c.damage as f32 * 1.8 + 0.99) as i32).min(100);
-                        }
-                        Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
-                        Weapon::Boomerang(b) => b.reflect(defender),
-                        Weapon::Egg(e) => e.reflect(defender),
-                        Weapon::Star(s) => s.reflect(defender),
-                        Weapon::Cutter(c) => c.reflect(defender),
-                        Weapon::Jolt(j) => j.reflect(defender),
-                        Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("not reflectable"),
+                        f.lifetime = f.attributes().lifetime;
+                        f.damage = ((f.damage as f32 * 1.8 + 0.99) as i32).min(100);
                     }
-                    crate::status::set_fox_special_lw_hit(defender);
-                    continue;
+                    Weapon::Blaster(b) => {
+                        b.owner_port = defender.port;
+                        if b.velocity.x * defender.facing.sign() < 0.0 {
+                            b.velocity.x = -b.velocity.x;
+                        }
+                        b.scale_x = 1.0;
+                        b.damage = ((b.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                    }
+                    Weapon::ChargeShot(c) => {
+                        c.owner_port = defender.port;
+                        if c.velocity.x * defender.facing.sign() < 0.0 {
+                            c.velocity.x = -c.velocity.x;
+                        }
+                        c.damage = ((c.damage as f32 * 1.8 + 0.99) as i32).min(100);
+                    }
+                    Weapon::Bomb(_) => unreachable!("bombs skip the reflector"),
+                    Weapon::Boomerang(b) => b.reflect(defender),
+                    Weapon::Egg(e) => e.reflect(defender),
+                    Weapon::Star(s) => s.reflect(defender),
+                    Weapon::Cutter(c) => c.reflect(defender),
+                    Weapon::Jolt(j) => j.reflect(defender),
+                    Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
+                        unreachable!("handled separately")
+                    }
+                    Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("not reflectable"),
                 }
+                reflector_hit(defender);
+                continue;
             }
             hitbox.damage = match weapon {
                 Weapon::Jolt(j) => j.damage,
+                Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
+                    unreachable!("handled separately")
+                }
                 Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => f.damage,
                 Weapon::Blaster(b) => b.damage,

@@ -73,6 +73,10 @@ def extract(prefix, name, source):
 
         def reopen(slot, **changes):
             old = active[slot]
+            # Several edits on one frame shape a single window.
+            if old["start"] == tick:
+                old.update(changes)
+                return
             old["end"] = tick
             hit = {**old, "start": tick, "end": None, **changes}
             windows.append(hit)
@@ -101,7 +105,9 @@ def extract(prefix, name, source):
                        joint=int(args[2]), damage=int(args[3]),
                        element=int(args[5]), size=int(args[6]),
                        x=int(args[7]), y=int(args[8]), z=int(args[9]),
-                       angle=int(args[10]), scale=int(args[11]),
+                       # `FTMotionEventMakeAttack4::angle` is `s32 : 10`.
+                       angle=(int(args[10]) + 512) % 1024 - 512,
+                       scale=int(args[11]),
                        weight=int(args[12]), ga=int(args[13]),
                        base=int(args[17]))
             windows.append(hit)

@@ -30,6 +30,8 @@ pub mod kirby_copy;
 pub mod link;
 mod link_attack;
 mod luigi_attack;
+pub mod ness;
+mod ness_attack;
 pub mod physics;
 pub mod pikachu;
 mod pikachu_attack;

@@ -198,7 +198,7 @@ SPECIAL_SLOTS += [
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
 GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain",
-                 "Kirby", "Pikachu", "Purin"}
+                 "Kirby", "Pikachu", "Purin", "Ness"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -564,10 +564,56 @@ LATE_COMMON_SLOTS = [
     ("FuraSleep", 165),
 ]
 
+# Ness follows FuraSleep to preserve every existing slot ordinal.
+POST_SPECIAL_SLOTS = [
+    ("NessAttack11", "Ness", "FTNessAnimJab1"),
+    ("NessAttack12", "Ness", "FTNessAnimJab2"),
+    ("NessAttackDash", "Ness", "FTNessAnimDashAttack"),
+    ("NessAttackS3Hi", "Ness", "FTNessAnimFTiltHigh"),
+    ("NessAttackS3", "Ness", "FTNessAnimFTilt"),
+    ("NessAttackS3Lw", "Ness", "FTNessAnimFTiltLow"),
+    ("NessAttackHi3", "Ness", "FTNessAnimUTilt"),
+    ("NessAttackLw3", "Ness", "FTNessAnimDTilt"),
+    ("NessAttackS4", "Ness", "FTNessAnimFSmash"),
+    ("NessAttackHi4", "Ness", "FTNessAnimUSmash"),
+    ("NessAttackLw4", "Ness", "FTNessAnimDSmash"),
+    ("NessAttackAirN", "Ness", "FTNessAnimAttackAirN"),
+    ("NessAttackAirF", "Ness", "FTNessAnimAttackAirF"),
+    ("NessAttackAirB", "Ness", "FTNessAnimAttackAirB"),
+    ("NessAttackAirHi", "Ness", "FTNessAnimAttackAirU"),
+    ("NessAttackAirLw", "Ness", "FTNessAnimAttackAirD"),
+    ("NessLandingAirF", "Ness", "FTNessAnimLandingAirF"),
+    ("NessLandingAirB", "Ness", "FTNessAnimLandingAirB"),
+    ("NessLandingAirLw", "Ness", "FTNessAnimLandingAirX"),
+    ("NessAttack13", "Ness", "FTNessAnimJab3"),
+    ("NessSpecialN", "Ness", "FTNessAnimPKFireGround"),
+    ("NessSpecialAirN", "Ness", "FTNessAnimPKFireAir"),
+    ("NessSpecialHiStart", "Ness", "FTNessAnimPKThunderStartGround1"),
+    ("NessSpecialHiHold", "Ness", "FTNessAnimPKThunderStartGround2"),
+    ("NessSpecialHiEnd", "Ness", "FTNessAnimPKThunderEnd"),
+    ("NessSpecialHiJibaku", "Ness", "FTNessAnimDKTAAir"),
+    ("NessSpecialAirHiStart", "Ness", "FTNessAnimPKThunderStartAir"),
+    ("NessSpecialAirHiHold", "Ness", "FTNessAnimPKThunderAir"),
+    ("NessSpecialAirHiEnd", "Ness", "FTNessAnimPKThunderEndAir"),
+    ("NessSpecialAirHiBound", "Ness", "FTNessAnimClashingDuringPKTA"),
+    ("NessSpecialAirHiJibaku", "Ness", "FTNessAnimDKTAAir"),
+    ("NessSpecialLwStart", "Ness", "FTNessAnimDownBStartGround"),
+    ("NessSpecialLwHold", "Ness", "FTNessAnimHealingDownB"),
+    ("NessSpecialLwHit", "Ness", "FTNessAnimHealingDownB"),
+    ("NessSpecialLwEnd", "Ness", "FTNessAnimDownSpecialEndGround"),
+    ("NessSpecialAirLwStart", "Ness", "FTNessAnimDownSpecialStartAir"),
+    ("NessSpecialAirLwHold", "Ness", "FTNessAnimHealingAirDownB"),
+    ("NessSpecialAirLwHit", "Ness", "FTNessAnimHealingAirDownB"),
+    ("NessSpecialAirLwEnd", "Ness", "FTNessAnimDownSpecialEndAir"),
+    ("KirbyCopyNessSpecialN", "Kirby", "FTKirbyAnimPKFireGround"),
+    ("KirbyCopyNessSpecialAirN", "Kirby", "FTKirbyAnimPKFireAir"),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
-             + [(name, status, None) for name, status in LATE_COMMON_SLOTS])
+             + [(name, status, None) for name, status in LATE_COMMON_SLOTS]
+             + [(name, None, None) for name, _, _ in POST_SPECIAL_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -856,6 +902,8 @@ def resolve(refs):
             special(slot, target, sym)
         for slot, status in LATE_COMMON_SLOTS:
             common(slot, status)
+        for slot, target, sym in POST_SPECIAL_SLOTS:
+            special(slot, target, sym)
         rows.append((fighter, entry))
     return rows, problems
 

@@ -1470,6 +1470,7 @@ pub fn move_data(
                 | crate::status::PikachuStatus::SpecialAirLwHit,
             ),
         ) => Some(&crate::pikachu_attack::THUNDERHIT),
+        (FighterKind::Ness, s) => crate::ness::move_data(s),
         (FighterKind::Pikachu, AnyStatus::Common(s)) => crate::pikachu::move_data(s),
         (FighterKind::Purin, s @ (AnyStatus::Common(_) | AnyStatus::Purin(_))) => {
             crate::purin::move_data(s)
@@ -2168,6 +2169,9 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
     if kind == crate::fighter::FighterKind::Pikachu {
         return crate::pikachu_attack::joints(status, index);
     }
+    if kind == crate::fighter::FighterKind::Ness {
+        return crate::ness_attack::joints(status, index);
+    }
     if kind == crate::fighter::FighterKind::Purin {
         return crate::purin_attack::joints(status, index);
     }
@@ -2628,7 +2632,7 @@ pub fn apply_hitbox_at_element(
     if crate::capture_kirby::is_intangible(defender) || crate::purin::is_intangible(defender) {
         return HitOutcome::Missed;
     }
-    if defender.invincible_frames > 0 {
+    if defender.invincible_frames > 0 || crate::ness::is_invincible(defender) {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // the hit record is left alone so the same active window
         // can still connect once invincibility ends.

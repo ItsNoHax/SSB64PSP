@@ -109,8 +109,11 @@ pub const SLOT_KIRBY_COPY_PURIN_SPECIAL_N: usize = 402;
 /// `FuraSleep`, the shared status Sing puts its targets in.
 pub const SLOT_FURA_SLEEP: usize = 404;
 
+pub const SLOT_NESS_ATTACK11: usize = 405;
+pub const SLOT_NESS_ATTACK13: usize = 424;
+pub const SLOT_KIRBY_COPY_NESS_SPECIAL_N: usize = 444;
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 405;
+pub const SLOT_COUNT: usize = 446;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -530,8 +533,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 9895,
-            "Eleven ported fighters have character and grab slots"
+            missing, 10950,
+            "Twelve ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
