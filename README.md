@@ -73,7 +73,9 @@ PPSSPPHeadless setup and golden comparisons.
 | Circle | L |
 | Start | Start |
 
-Triangle and Select are unbound.
+Triangle and Select are unbound. In battle any C-button jumps, and N64 R
+acts as A + Z. On the menu's Training entry, a D-pad (C-button) tap picks
+the costume, as the character select does.
 
 ## Layout
 

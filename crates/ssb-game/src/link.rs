@@ -417,6 +417,9 @@ fn set_attack100_loop(f: &mut Fighter) {
         0.0,
         crate::link_attack::RAPID_LOOP_LENGTH,
     );
+    // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
+    // start of every loop, so each cycle is a new motion.
+    f.motion.set(crate::stale::MotionAttackId::Attack100);
 }
 
 /// Link's `proc_update` and `proc_interrupt` callbacks, then the physics
@@ -677,6 +680,8 @@ pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
     if attacker.port == defender.port {
         return;
     }
+    // `wp->handicap` is the owner's. Weapon damage is not staled yet.
+    let handicap = attacker.handicap;
     let Some(spin) = attacker.link.spin.as_mut() else {
         return;
     };
@@ -692,7 +697,7 @@ pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
         ..SPIN_ATTACK_HITBOX
     };
     for position in spin.hit_positions().into_iter().flatten() {
-        if crate::attack::apply_hitbox_at(&hitbox, position, defender) {
+        if crate::attack::apply_hitbox_at(&hitbox, position, handicap, defender).registered() {
             spin.hit_ports |= bit;
             return;
         }
@@ -910,18 +915,30 @@ mod tests {
             status::update(&mut f);
         }
         target.pos = f.joint_world(11, Vec3::new(0.0, 0.0, 100.0));
-        assert!(crate::attack::apply_hit_from(&f, &mut target, &mut record));
+        assert!(crate::attack::apply_hit_from(
+            &mut f,
+            &mut target,
+            &mut record
+        ));
         on_attack_hit(&mut f);
         assert_eq!(f.physics.vel_air.y, DAIR_REHIT_BOUNCE_VEL_Y);
         assert_eq!(f.status.anim_frame, 10.0);
         target.hitlag = 0;
         for _ in 0..29 {
             status::update(&mut f);
-            assert!(!crate::attack::apply_hit_from(&f, &mut target, &mut record));
+            assert!(!crate::attack::apply_hit_from(
+                &mut f,
+                &mut target,
+                &mut record
+            ));
         }
         status::update(&mut f);
         assert_eq!(f.status.anim_frame, 40.0);
-        assert!(crate::attack::apply_hit_from(&f, &mut target, &mut record));
+        assert!(crate::attack::apply_hit_from(
+            &mut f,
+            &mut target,
+            &mut record
+        ));
 
         // A hit past frame 35 restarts the swing at 35 and never refreshes.
         let mut late = link(false);

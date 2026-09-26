@@ -117,6 +117,9 @@ pub fn set_attack100_start(f: &mut Fighter) {
 
 fn set_attack100_loop(f: &mut Fighter) {
     set(f, CaptainStatus::Attack100Loop, 0.0, 37.0);
+    // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
+    // start of every loop, so each cycle is a new motion.
+    f.motion.set(crate::stale::MotionAttackId::Attack100);
 }
 
 fn crossed(f: &Fighter, at: f32) -> bool {
@@ -193,6 +196,7 @@ fn dive_throw(f: &mut Fighter) {
             lr: f.facing.sign(),
             desc: DIVE_THROW[0],
             shield_catch: false,
+            staled: crate::grab::StaledThrow::of(f, DIVE_THROW[0].damage),
         });
     }
     f.grab.catch_kind = None;

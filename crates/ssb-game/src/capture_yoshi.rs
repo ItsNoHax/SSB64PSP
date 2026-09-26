@@ -217,6 +217,7 @@ mod tests {
             anchor_transform: None,
             floor_line: Some(0),
             percent: 0,
+            handicap: crate::stale::HANDICAP_DEFAULT,
         }
     }
 

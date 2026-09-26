@@ -32,6 +32,9 @@ pub struct RootMotion {
 /// ids, camera offsets and per-move flags; those belong to other systems.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PhysicsAttributes {
+    /// `FTAttributes::size`: the TopN scale `ftManagerMakeFighter` gives the
+    /// fighter (Donkey Kong 1.25, Giant Donkey Kong 2.0).
+    pub size: f32,
     /// Ground deceleration, scaled by the floor material's friction.
     pub traction: f32,
     pub dash_speed: f32,
@@ -90,6 +93,7 @@ impl PhysicsAttributes {
     /// old numbers still fell and still landed; it just took three hundred
     /// frames to drop what should take twenty.
     pub const MARIO: PhysicsAttributes = PhysicsAttributes {
+        size: 1.0,
         traction: 1.5,
         dash_speed: 54.0,
         dash_decel: 2.8,

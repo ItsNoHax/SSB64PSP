@@ -1284,7 +1284,14 @@ impl WeaponPool {
                     continue;
                 }
                 if egg.exploded {
-                    if attack::apply_hitbox_at(&hitbox, position, defender) {
+                    if attack::apply_hitbox_at(
+                        &hitbox,
+                        position,
+                        crate::stale::HANDICAP_DEFAULT,
+                        defender,
+                    )
+                    .registered()
+                    {
                         egg.hit_ports |= bit;
                     }
                     continue;
@@ -1295,7 +1302,14 @@ impl WeaponPool {
                 if bomb.hit_ports & bit != 0 {
                     continue;
                 }
-                if attack::apply_hitbox_at(&hitbox, position, defender) {
+                if attack::apply_hitbox_at(
+                    &hitbox,
+                    position,
+                    crate::stale::HANDICAP_DEFAULT,
+                    defender,
+                )
+                .registered()
+                {
                     bomb.hit_ports |= bit;
                     if !bomb.exploded {
                         bomb.explode();
@@ -1361,7 +1375,11 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
             };
-            if attack::apply_hitbox_at(&hitbox, position, defender) {
+            // `wp->handicap` is the owner's; every Training player has the
+            // default handicap. Weapon damage is not staled yet (TODO.md).
+            if attack::apply_hitbox_at(&hitbox, position, crate::stale::HANDICAP_DEFAULT, defender)
+                .registered()
+            {
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
                     b.hit_ports |= bit;
