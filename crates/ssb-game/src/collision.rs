@@ -142,16 +142,11 @@ where
     for (line, s) in segments {
         // The original splits on whether the segment is level, because a level
         // one makes the tilted solver divide by zero.
-        let hit = if s.y1 == s.y2 {
-            // And it only tests level floors while moving *downward*: standing
-            // still or rising can never land on one.
-            if to.y >= from.y {
-                continue;
-            }
-            check_flat(&s, from, to)
-        } else {
-            check_tilt(&s, from, to)
-        };
+        let hit = check_floor_coords(
+            [s.x1 as f32, s.y1 as f32, s.x2 as f32, s.y2 as f32],
+            from,
+            to,
+        );
         let Some(point) = hit else { continue };
 
         let dist = (point.y - from.y).abs();
@@ -316,24 +311,24 @@ where
 
 /// The height of a segment's surface at `x`, from `mpCollisionGetLineDistanceFC`.
 fn surface_y(s: &Segment, x: f32) -> f32 {
-    let dx = (s.x2 - s.x1) as f32;
+    let dx = s.x2 as f32 - s.x1 as f32;
     if dx == 0.0 {
         // The original divides here and the game's own assert says a floor
         // never has two vertices at the same x. Report the near end rather
         // than a NaN that would propagate into a position.
         return s.y1 as f32;
     }
-    s.y1 as f32 + ((x - s.x1 as f32) / dx) * (s.y2 - s.y1) as f32
+    s.y1 as f32 + ((x - s.x1 as f32) / dx) * (s.y2 as f32 - s.y1 as f32)
 }
 
 /// The upward unit normal of a floor segment, from `mpCollisionGetFCAngle`
 /// with `ud = +1`.
 fn normal_of(s: &Segment) -> Vec2 {
-    let dy = (s.y2 - s.y1) as f32;
+    let dy = s.y2 as f32 - s.y1 as f32;
     if dy == 0.0 {
         return Vec2::new(0.0, 1.0);
     }
-    let slope = -(dy / (s.x2 - s.x1) as f32);
+    let slope = -(dy / (s.x2 as f32 - s.x1 as f32));
     let n = Vec2::new(slope, 1.0);
     let len = n.length();
     if len == 0.0 {
@@ -342,14 +337,22 @@ fn normal_of(s: &Segment) -> Vec2 {
     Vec2::new(n.x / len, n.y / len)
 }
 
-/// Ports `mpCollisionCheckFCSurfaceFlat`: a level floor segment.
-///
-/// The caller guarantees `to.y < from.y`, so the vertical span is never zero
-/// and the division below is safe. The original has no such guard and would
-/// return a NaN intersection if one ever reached it with level motion — the
-/// `is_finite` check keeps that from becoming a silent teleport here.
-fn check_flat(s: &Segment, from: Vec2, to: Vec2) -> Option<Vec2> {
-    let y = s.y1 as f32;
+/// Shared FC/LR query kernel after widening the original signed vertices.
+/// Fighter map tests reflect or exchange axes before entering this kernel.
+pub(crate) fn check_floor_coords(s: [f32; 4], from: Vec2, to: Vec2) -> Option<Vec2> {
+    if s[1] == s[3] {
+        if to.y >= from.y {
+            return None;
+        }
+        check_flat(s, from, to)
+    } else {
+        check_tilt(s, from, to)
+    }
+}
+
+/// `mpCollisionCheckFCSurfaceFlat`; the caller guarantees downward motion.
+fn check_flat(s: [f32; 4], from: Vec2, to: Vec2) -> Option<Vec2> {
+    let y = s[1];
     let span_y = from.y - to.y;
 
     // The movement must cross the surface's height, from above.
@@ -362,7 +365,7 @@ fn check_flat(s: &Segment, from: Vec2, to: Vec2) -> Option<Vec2> {
     }
 
     let span_x = from.x - to.x;
-    let (near, far) = min_max(s.x1, s.x2);
+    let (near, far) = (s[0].min(s[2]), s[0].max(s[2]));
 
     // And it must overlap the segment horizontally.
     if span_x > 0.0 {
@@ -382,16 +385,16 @@ fn check_flat(s: &Segment, from: Vec2, to: Vec2) -> Option<Vec2> {
 }
 
 /// Ports `mpCollisionCheckFloorSurfaceTilt`: a sloped floor segment.
-fn check_tilt(s: &Segment, from: Vec2, to: Vec2) -> Option<Vec2> {
-    let (v1x, v1y) = (s.x1 as f32, s.y1 as f32);
-    let vdist_x = (s.x2 - s.x1) as f32;
-    let vdist_y = (s.y2 - s.y1) as f32;
+fn check_tilt(s: [f32; 4], from: Vec2, to: Vec2) -> Option<Vec2> {
+    let (v1x, v1y) = (s[0], s[1]);
+    let vdist_x = s[2] - s[0];
+    let vdist_y = s[3] - s[1];
     let span_x = from.x - to.x;
     let span_y = from.y - to.y;
 
     // Bounding-box rejection on both axes, with the movement's direction
     // deciding which end of it to compare against.
-    let (near_y, far_y) = min_max(s.y1, s.y2);
+    let (near_y, far_y) = (s[1].min(s[3]), s[1].max(s[3]));
     if span_y > 0.0 {
         if far_y + EPS < to.y || from.y < near_y - EPS {
             return None;
@@ -400,7 +403,7 @@ fn check_tilt(s: &Segment, from: Vec2, to: Vec2) -> Option<Vec2> {
         return None;
     }
 
-    let (near_x, far_x) = min_max(s.x1, s.x2);
+    let (near_x, far_x) = (s[0].min(s[2]), s[0].max(s[2]));
     if span_x > 0.0 {
         if far_x < to.x || from.x < near_x {
             return None;

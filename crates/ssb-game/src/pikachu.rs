@@ -1,6 +1,5 @@
 //! Pikachu's specials (`ftpikachuspecial{n,hi,lw}.c`, US).
-//! Fighter map callbacks currently resolve floors; Quick Attack wall/ceiling
-//! cancellation and cliff catch await the shared fighter map solver.
+//! Quick Attack's wall/ceiling cancellation consumes the shared map normals.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
 use crate::status::{self, AnyStatus, PikachuStatus as P, Status, StatusTiming};
@@ -184,6 +183,9 @@ fn set_zip_end(f: &mut Fighter) {
         P::SpecialAirHiEnd
     };
     set(f, s, 0.0);
+}
+pub(crate) fn map_end_zip(f: &mut Fighter) {
+    set_zip_end(f);
 }
 fn can_sub_zip(f: &Fighter) -> bool {
     let s = Vec2::new(f.stick.x as f32, f.stick.y as f32);

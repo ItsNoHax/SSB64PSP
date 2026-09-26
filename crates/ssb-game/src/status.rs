@@ -45,7 +45,9 @@
 use ssb_engine::input::{newly_pressed, newly_released, N64Buttons};
 use ssb_engine::math::{Vec2, Vec3};
 
-use crate::collision::{self, Segment};
+#[cfg(test)]
+use crate::collision;
+use crate::collision::Segment;
 use crate::fighter::{Facing, Fighter, Situation};
 use crate::physics::{self, PhysicsAttributes, PhysicsState};
 
@@ -1914,11 +1916,10 @@ pub fn check_set_fast_fall(f: &mut Fighter) {
     }
 }
 
-/// `ftCommonFallSpecialSetStatus`/status_vars, minus `is_allow_pass`'s
-/// drop-through-platform nuance during the fall (module docs on
-/// [`set_fall_special`]).
+/// `ftCommonFallSpecialSetStatus`/status_vars, including its pass callback.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FallSpecialState {
+    pub is_allow_pass: bool,
     /// Air-drift clamp for this particular use, already multiplied by
     /// `attr.air_speed_max_x` — a recovery move's own drift multiplier,
     /// not the fighter's normal one.
@@ -1975,6 +1976,7 @@ pub struct FoxSpecialNState {
 /// `ftFoxSpecialHiStatusVars`, retained across ground/air switches.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct FoxSpecialHiState {
+    pub pass_timer: u8,
     pub gravity_delay: u8,
     pub launch_delay: u8,
     pub travel_frames: u8,
@@ -2016,7 +2018,7 @@ impl Default for MarioSpecialLwState {
 pub const FALLSPECIAL_SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
 
 /// `ftCommonFallSpecialSetStatus` @ `ftcommonfallspecial.c:72`, minus the
-/// collision-animation/rumble side effects and `is_allow_pass` (module docs).
+/// collision-animation/rumble side effects.
 /// This is the shared "helpless fall" a recovery move lands in after its own
 /// launch phase — every fighter's up-special that has one calls into this
 /// same status rather than defining its own.
@@ -2033,6 +2035,7 @@ pub fn set_fall_special(
     physics::clamp_air_vel_x(&mut f.physics, drift);
     f.physics.jumps_used = f.attributes.jumps_max;
     f.fall_special = FallSpecialState {
+        is_allow_pass: true,
         drift,
         is_goto_landing,
         landing_lag,
@@ -2200,6 +2203,7 @@ fn set_fox_special_hi_travel(f: &mut Fighter) {
     set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::unknown());
     f.fox_special_hi.angle = angle;
     f.fox_special_hi.travel_frames = 30;
+    f.fox_special_hi.pass_timer = 0;
     f.fox_special_hi.decelerate_wait = 0;
     if on_ground {
         f.physics.vel_ground.x = 115.0 * f.facing.sign();
@@ -2226,7 +2230,7 @@ fn set_fox_special_hi_end(f: &mut Fighter) {
 }
 
 /// Floor-only portion of `ftFoxSpecialAirHiProcMap`. The source redirects a
-/// shallow collision along the surface and keeps the travel status airborne.
+/// newly acquired shallow collision along the surface and keeps travel airborne.
 /// Steeper contact enters bound if its approach exceeds 110 degrees from the
 /// surface normal; other contacts finish on the ground.
 pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -> bool {
@@ -2242,7 +2246,7 @@ pub fn fox_fire_fox_floor_contact(f: &mut Fighter, normal: Vec2, floor_y: f32) -
     }
     let dot = normal.x * velocity.x + normal.y * velocity.y;
     let similarity = dot / (1.0 + speed);
-    if (-0.342_020_15..=0.0).contains(&similarity) {
+    if !f.map_contacts_prev.floor && (-0.342_020_15..=0.0).contains(&similarity) {
         let orientation = if normal.x * velocity.y - normal.y * velocity.x < 0.0 {
             -1.0
         } else {
@@ -2984,14 +2988,10 @@ pub const CLIFF_DAMAGE_HIGH: u16 = 100;
 pub const CLIFF_FALL_WAIT_DAMAGE_LOW: i32 = 1080;
 pub const CLIFF_FALL_WAIT_DAMAGE_HIGH: i32 = 480;
 pub const CLIFF_MOTION_STICK_RANGE_MIN: i32 = 20;
-/// The real `800.0F` corner-proximity tolerance from
-/// `mpProcessCheckTestLCliffCollision`/`RCliffCollision` @ `mpprocess.c:1031,1082`.
-const CLIFF_CATCH_CORNER_RANGE: f32 = 800.0;
 /// `tan(50°)`. `ftCommonCliffClimbOrFallCheckInterruptCommon`'s real test is
 /// `ftParamGetStickAngleRads(fp) > F_CST_DTOR32(50.0F)`, where the angle is
 /// `atan2(stick_y, |stick_x|)` — reframed here as the equivalent slope
-/// comparison (`stick_y > tan(50°) * |stick_x|`) so it needs no `atan2`
-/// (`ssb_engine::math` has none).
+/// comparison (`stick_y > tan(50°) * |stick_x|`) so it needs no `atan2`.
 const CLIFF_MOTION_ANGLE_TAN_50: f32 = 1.191_753_6;
 
 /// `FTStruct::status_vars.common.cliffwait`/`cliffmotion`, plus which floor
@@ -3008,23 +3008,8 @@ pub struct CliffState {
     pub is_allow_interrupt: bool,
 }
 
-/// `mpProcessCheckTestLCliffCollision`/`RCliffCollision` @
-/// `mpprocess.c:1031,1082`, wrapped by `mpCommonProcFighterCliff` @
-/// `mpcommon.c:584`, restricted to `cliffcatch_coll == (0, 0)` — the
-/// per-character hand-reach offset (`FTAttributes.cliffcatch_coll`) is not in
-/// the extracted attribute range yet, the same class of gap as
-/// `crate::attack`'s hitbox-offset simplifications — and dropping the
-/// material-4 exemption the original's left-side test has.
-///
-/// `from`/`to` are the fighter's position before/after the movement being
-/// tested; the caller supplies both because, like [`try_rebirth`]'s respawn
-/// point, this needs data external to a single `Fighter`. Returns the caught
-/// line and the exact corner point to hang from, or `None`. The caller still
-/// owns ledge-hog exclusivity (the original's loop over every other
-/// fighter checking `is_cliff_hold && same cliff_id && same lr`) — that
-/// needs match-wide fighter awareness no function taking one `Fighter` can
-/// have, so it is a filter the caller applies to this function's result
-/// before calling [`set_cliff_catch`], not part of this function.
+/// Zero-reach compatibility query for floor-only host callers. Fighter ticks
+/// use [`crate::map::cliff`] with the packed hand reach and match occupancy.
 pub fn cliff_catch_candidate<I, F>(
     facing: Facing,
     cliffcatch_wait: u16,
@@ -3036,41 +3021,23 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = (u16, Segment)>,
 {
-    if cliffcatch_wait != 0 {
-        return None;
-    }
-    let hit = collision::check_floor(floors(), Vec2::new(from.x, from.y), Vec2::new(to.x, to.y))?;
-    if hit.flags & collision::flags::CLIFF == 0 {
-        return None;
-    }
-    let seg = floors().into_iter().find(|(id, _)| *id == hit.line)?.1;
-    let (left, right) = if seg.x1 <= seg.x2 {
-        (
-            Vec2::new(seg.x1 as f32, seg.y1 as f32),
-            Vec2::new(seg.x2 as f32, seg.y2 as f32),
-        )
-    } else {
-        (
-            Vec2::new(seg.x2 as f32, seg.y2 as f32),
-            Vec2::new(seg.x1 as f32, seg.y1 as f32),
-        )
-    };
-    // `lr == +1` tests the left corner (`mpCollisionGetFloorEdgeL`), `lr ==
-    // -1` the right — see the module docs' offset simplification for why
-    // this collapses the original's two separate L/R sweeps into one.
-    let corner = if facing == Facing::Right { left } else { right };
-    if (hit.point.x - corner.x).abs() >= CLIFF_CATCH_CORNER_RANGE {
-        return None;
-    }
-    Some((hit.line, corner))
+    crate::map::cliff(
+        || floors().into_iter().map(crate::map::floor_surface),
+        facing.sign(),
+        cliffcatch_wait,
+        Vec2::ZERO,
+        from,
+        to,
+    )
 }
 
 /// `ftCommonCliffCatchSetStatus` @ `ftcommoncliffcatchwait.c:39`, minus the
 /// capture-immunity mask and Samus-effect side cases. The fighter hangs
-/// exactly at `corner` — no per-character reach offset exists yet (module
-/// docs), so there is no arm's-length gap the way a real hang has one.
+/// at `corner`. The query uses the authored hand reach; hanging root placement
+/// still needs the cliff pose and TransN animation sample.
 pub fn set_cliff_catch(f: &mut Fighter, line: u16, corner: Vec2) {
     f.cliff.line = line;
+    f.floor = None;
     f.pos = Vec3::new(corner.x, corner.y, f.pos.z);
     f.situation = Situation::Air;
     f.physics = crate::physics::PhysicsState::default();
@@ -3604,12 +3571,8 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
                 .unwrap_or(100);
             set_landing_air_null(f, percent);
         }
-        // `ftCommonFallSpecialProcMap` @ `ftcommonfallspecial.c:51`, minus
-        // the cliff-catch branch — no status in this codebase auto-catches
-        // a ledge yet, ledge detection is caller-invoked
-        // (`cliff_catch_candidate`'s own docs), so this is the same
-        // pre-existing gap, not a new one — and `is_allow_pass`'s
-        // drop-through nuance (`FallSpecialState`'s docs).
+        // `ftCommonFallSpecialProcMap`: the shared map solver handles pass
+        // and cliff checks before dispatching this landing branch.
         Status::FallSpecial => {
             if f.fall_special.is_goto_landing
                 || f.physics.vel_air.y < FALLSPECIAL_SKIPLANDING_VEL_Y_MAX
@@ -6045,6 +6008,14 @@ mod tests {
         assert_eq!(fox.physics.vel_air.y, 0.0);
         assert_eq!(fox.situation, Situation::Air);
 
+        fox.map_contacts_prev.floor = true;
+        fox.physics.vel_air.x = 100.0;
+        fox.physics.vel_air.y = -10.0;
+        assert!(fox_fire_fox_floor_contact(&mut fox, normal, 0.0));
+        assert_eq!(fox.status.status, AnyStatus::Fox(FoxStatus::SpecialHiEnd));
+
+        fox.status.status = AnyStatus::Fox(FoxStatus::SpecialAirHi);
+        fox.situation = Situation::Air;
         fox.physics.vel_air.x = 10.0;
         fox.physics.vel_air.y = -100.0;
         assert!(fox_fire_fox_floor_contact(&mut fox, normal, 0.0));

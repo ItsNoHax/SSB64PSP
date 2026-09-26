@@ -219,6 +219,12 @@ pub struct Fighter {
     pub prev_input: ControllerState,
     /// Collision offsets — `MPObjectColl`.
     pub coll: BodyColl,
+    /// `FTAttributes.cliffcatch_coll`: facing-scaled hand reach.
+    pub cliff_reach: ssb_engine::math::Vec2,
+    pub map_contacts: crate::map::Contacts,
+    pub map_contacts_prev: crate::map::Contacts,
+    /// Occupied `(floor line, facing)` supplied by the match before ticking.
+    pub occupied_cliff: Option<(u16, Facing)>,
     /// The floor being stood on, or `None` while airborne.
     pub floor: Option<Standing>,
     /// A drop-through platform being fallen past — `ignore_line_id`.
@@ -331,6 +337,10 @@ impl Fighter {
             input: ControllerState::default(),
             prev_input: ControllerState::default(),
             coll: BodyColl::default(),
+            cliff_reach: ssb_engine::math::Vec2::ZERO,
+            map_contacts: crate::map::Contacts::default(),
+            map_contacts_prev: crate::map::Contacts::default(),
+            occupied_cliff: None,
             floor: None,
             ignore_line: None,
             anim: crate::status::AnimLengths::default(),
@@ -556,6 +566,15 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = (u16, Segment)>,
     {
+        self.tick_map(|| floors().into_iter().map(crate::map::floor_surface));
+    }
+
+    /// Full static map input, shared by host matches and the PSP runtime.
+    pub fn tick_map<I, F>(&mut self, surfaces: F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         self.tick_timers();
         if self.is_in_hitlag() {
             return;
@@ -574,14 +593,16 @@ impl Fighter {
 
         // A held fighter's position is its catcher's hand, not the result
         // of its own velocity (`ftCommonCapturePulledProcPhysics`).
-        if crate::grab::tick_held(self, &floors) {
+        if crate::grab::tick_held(self, || crate::map::floors(surfaces())) {
             self.root_motion = RootMotion::default();
             self.weapon_spawn_anchor = None;
             return;
         }
+        self.map_contacts_prev = self.map_contacts;
+        self.map_contacts = crate::map::Contacts::default();
         match self.situation {
-            Situation::Ground => self.tick_ground(floors),
-            Situation::Air => self.tick_air(floors),
+            Situation::Ground => self.tick_ground(surfaces),
+            Situation::Air => self.tick_air(surfaces),
         }
         // Root motion is an input sample, not persistent fighter state. This
         // prevents a missed runtime sample from replaying an old displacement.
@@ -589,10 +610,10 @@ impl Fighter {
         self.weapon_spawn_anchor = None;
     }
 
-    fn tick_ground<I, F>(&mut self, floors: F)
+    fn tick_ground<I, F>(&mut self, surfaces: F)
     where
         F: Fn() -> I,
-        I: IntoIterator<Item = (u16, Segment)>,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         let Some(standing) = self.floor else {
             // Grounded with no floor recorded is not a state the original can
@@ -688,8 +709,25 @@ impl Fighter {
             self.pos.y,
             self.pos.z,
         );
-        let moved = ground::move_ground(&self.coll, want, standing.line, floors);
+        let stop_edge = crate::map::stops_at_edge(self.status.status);
+        if self.status.status == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialHi)
+        {
+            self.fox_special_hi.pass_timer = self.fox_special_hi.pass_timer.saturating_add(1);
+        }
+        let (moved, contacts) = crate::map::move_ground(
+            &self.coll,
+            self.pos,
+            want,
+            standing.line,
+            stop_edge,
+            &surfaces,
+        );
+        self.map_contacts = contacts;
         self.pos = moved.pos;
+
+        if crate::map::ground_callback(self, moved.floor) {
+            return;
+        }
 
         match moved.floor {
             Some(f) => self.floor = Some(f),
@@ -756,11 +794,15 @@ impl Fighter {
         }
     }
 
-    fn tick_air<I, F>(&mut self, floors: F)
+    fn tick_air<I, F>(&mut self, surfaces: F)
     where
         F: Fn() -> I,
-        I: IntoIterator<Item = (u16, Segment)>,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        if crate::map::is_cliff_hold(self.status.status) {
+            self.physics = crate::physics::PhysicsState::default();
+            return;
+        }
         // `ftPhysicsCheckSetFastFall` runs from every airborne status's own
         // `proc_physics` in the original; here it is the one thing every
         // airborne tick does regardless of status.
@@ -875,14 +917,49 @@ impl Fighter {
         let skip_pass = self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)
             && self.pikachu.pass_timer < 2
-            || crate::ness::skip_pass(self);
-        let moved = ground::move_air(&self.coll, self.pos, want, self.ignore_line, || {
-            floors()
-                .into_iter()
-                .filter(|(_, s)| !skip_pass || s.flags & crate::collision::flags::PASS == 0)
+            || crate::ness::skip_pass(self)
+            || self.status.status == crate::status::Status::FallSpecial
+                && self.fall_special.is_allow_pass
+                && self.input.stick_y < -44;
+        let skip_pass = if self.status.status
+            == crate::status::AnyStatus::Fox(crate::status::FoxStatus::SpecialAirHi)
+        {
+            self.fox_special_hi.pass_timer = self.fox_special_hi.pass_timer.saturating_add(1);
+            skip_pass || self.fox_special_hi.pass_timer < 15
+        } else {
+            skip_pass
+        };
+        let from = self.pos;
+        let cliff = crate::map::allows_cliff(self).then_some(crate::map::CliffQuery {
+            facing: self.facing.sign(),
+            wait: self.cliffcatch_wait,
+            reach: self.cliff_reach,
+            occupied: self.occupied_cliff.map(|(l, f)| (l, f.sign())),
         });
+        let result = crate::map::move_air(
+            &self.coll,
+            from,
+            want,
+            crate::map::AirOptions {
+                ignore_line: self.ignore_line,
+                skip_pass,
+                cliff,
+            },
+            &surfaces,
+        );
+        let moved = result.moved;
+        self.map_contacts = result.contacts;
         self.pos.x = moved.pos.x;
         self.pos.z = moved.pos.z;
+
+        if moved.floor.is_none() {
+            self.pos.y = moved.pos.y;
+            if let Some((line, corner)) = result.cliff {
+                crate::status::set_cliff_catch(self, line, corner);
+                return;
+            }
+            crate::map::air_callback(self);
+        }
 
         match moved.floor {
             Some(f) => {

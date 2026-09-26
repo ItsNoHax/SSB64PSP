@@ -218,6 +218,19 @@ pub fn on_kick_hit(f: &mut Fighter) {
     }
 }
 
+/// Ground Falcon Kick flag 1 is set at 12 and replaced by 2 at 32.
+pub(crate) fn map_wall(f: &mut Fighter) -> bool {
+    if f.status.status != AnyStatus::Captain(CaptainStatus::SpecialLw)
+        || !(12.0..32.0).contains(&f.status.anim_frame)
+        || (f.map_contacts.left_wall.is_none() && f.map_contacts.right_wall.is_none())
+    {
+        return false;
+    }
+    f.become_airborne();
+    set(f, CaptainStatus::SpecialLwBound, 0.0, 30.0);
+    true
+}
+
 pub fn update(f: &mut Fighter) {
     let AnyStatus::Captain(current) = f.status.status else {
         return;

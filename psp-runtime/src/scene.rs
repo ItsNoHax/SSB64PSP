@@ -89,8 +89,7 @@ pub struct FloorSegments<'a, 'p> {
 }
 
 /// Walks every static stage collision segment with its authored one-sided
-/// kind. Fighters still deliberately consume [`FloorSegments`] alone; live
-/// weapons require all four kinds for `wpMapTestAll`/rebound behavior.
+/// kind. Fighters and weapons share this allocation-free static map input.
 pub struct MapSegments<'a, 'p> {
     pack: &'a Pack<'p>,
     stage: &'a StageDesc,
@@ -727,6 +726,8 @@ impl FighterScene {
         if let Some(d) = desc {
             fighter.attributes = physics_of(&d);
             fighter.coll = body_of(&d);
+            fighter.cliff_reach =
+                ssb_engine::math::Vec2::new(d.cliffcatch_width, d.cliffcatch_height);
             fighter.anim = anim_of(&d);
             cam_offset_y = d.cam_offset_y;
             camera_zoom_frame = d.camera_zoom;
@@ -834,7 +835,7 @@ impl FighterScene {
                 });
             }
         }
-        self.fighter.tick(|| FloorSegments::new(pack, stage));
+        self.fighter.tick_map(|| MapSegments::new(pack, stage));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
