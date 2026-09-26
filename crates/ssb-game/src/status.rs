@@ -809,8 +809,8 @@ pub enum CaptainStatus {
     SpecialAirHi = 238,
 }
 
-/// Kirby's `ftKirbyStatus` table without the entry and copy-ability
-/// statuses, which are not ported yet.
+/// Kirby's `ftKirbyStatus` table without the entry statuses and the copy
+/// abilities of the fighters not yet ported (Pikachu, Jigglypuff, Ness).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum KirbyStatus {
@@ -825,6 +825,25 @@ pub enum KirbyStatus {
     ThrowF = 228,
     ThrowFFall = 229,
     ThrowFLanding = 230,
+    CopyMarioSpecialN = 231,
+    CopyMarioSpecialAirN = 232,
+    CopyLuigiSpecialN = 233,
+    CopyLuigiSpecialAirN = 234,
+    CopyFoxSpecialN = 235,
+    CopyFoxSpecialAirN = 236,
+    CopySamusSpecialNStart = 237,
+    CopySamusSpecialNLoop = 238,
+    CopySamusSpecialNEnd = 239,
+    CopySamusSpecialAirNStart = 240,
+    CopySamusSpecialAirNEnd = 241,
+    CopyDonkeySpecialNStart = 242,
+    CopyDonkeySpecialAirNStart = 243,
+    CopyDonkeySpecialNLoop = 244,
+    CopyDonkeySpecialAirNLoop = 245,
+    CopyDonkeySpecialNEnd = 246,
+    CopyDonkeySpecialAirNEnd = 247,
+    CopyDonkeySpecialNFull = 248,
+    CopyDonkeySpecialAirNFull = 249,
     SpecialHi = 256,
     SpecialHiLanding = 257,
     SpecialAirHi = 258,
@@ -856,6 +875,20 @@ pub enum KirbyStatus {
     SpecialAirNWait = 284,
     SpecialAirNTurn = 285,
     SpecialAirNCopy = 286,
+    CopyLinkSpecialN = 287,
+    CopyLinkSpecialNGet = 288,
+    CopyLinkSpecialNEmpty = 289,
+    CopyLinkSpecialAirN = 290,
+    CopyLinkSpecialAirNReturn = 291,
+    CopyLinkSpecialAirNEmpty = 292,
+    CopyCaptainSpecialN = 295,
+    CopyCaptainSpecialAirN = 296,
+    CopyYoshiSpecialN = 297,
+    CopyYoshiSpecialNCatch = 298,
+    CopyYoshiSpecialNRelease = 299,
+    CopyYoshiSpecialAirN = 300,
+    CopyYoshiSpecialAirNCatch = 301,
+    CopyYoshiSpecialAirNRelease = 302,
 }
 
 /// A fighter's current status: the shared common one, or one of a specific

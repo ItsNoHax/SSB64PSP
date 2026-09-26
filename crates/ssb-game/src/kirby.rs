@@ -10,13 +10,12 @@
 //! [`on_landing`]).
 //!
 //! Inhale uses the shared grab link (`crate::grab`); the swallowed fighter's
-//! side is `crate::capture_kirby`.
+//! side is `crate::capture_kirby`. The copy abilities Inhale grants are
+//! `crate::kirby_copy`, which these callbacks route the copy statuses to.
 //!
 //! ## Documented deviations
 //!
-//! * **Copy abilities.** Inhale records the copy (`copy_id`), but the ten
-//!   `ftKirbyCopy*SpecialN` statuses are not ported yet, so a Kirby with a
-//!   copy still inhales. Losing a copy on damage needs an RNG
+//! * **Copy loss.** Losing a copy on damage needs an RNG
 //!   (`syUtilsRandFloat`), which this crate does not have.
 //! * **Ledges.** Final Cutter and the suplex can catch a ledge in the
 //!   source; fighter map collision resolves floors only.
@@ -157,6 +156,8 @@ pub struct KirbyState {
     pub copy_pending: FighterKind,
     /// The swallowed fighter is a Kirby (`capturekirby.is_kirby`).
     pub victim_is_kirby: bool,
+    /// The copy abilities' passive and status vars.
+    pub copy: crate::kirby_copy::CopyState,
 }
 
 impl Default for KirbyState {
@@ -177,6 +178,7 @@ impl Default for KirbyState {
             inhale_dist: Vec2::ZERO,
             copy_pending: FighterKind::Kirby,
             victim_is_kirby: false,
+            copy: crate::kirby_copy::CopyState::default(),
         }
     }
 }
@@ -188,7 +190,8 @@ pub fn is_kirby(kind: FighterKind) -> bool {
 
 /// Which Kirby statuses leave the fighter grounded (`ga` after the setter).
 pub fn is_grounded(s: K) -> bool {
-    matches!(
+    crate::kirby_copy::is_grounded(s)
+        || matches!(
         s,
         K::Attack100Start
             | K::Attack100Loop
@@ -250,6 +253,7 @@ pub fn anim_slot(s: K) -> usize {
         K::SpecialNWait | K::SpecialAirNWait => B + 28,
         K::SpecialNTurn | K::SpecialAirNTurn => B + 29,
         K::SpecialNCopy | K::SpecialAirNCopy => B + 30,
+        _ => crate::kirby_copy::anim_slot(s).unwrap_or(B),
     }
 }
 
@@ -272,7 +276,7 @@ fn tapped(f: &Fighter) -> N64Buttons {
 
 /// `mpCommonSetFighterWaitOrLanding`, run before `land` clears the
 /// velocity.
-fn wait_or_landing(f: &mut Fighter, floor_y: f32) {
+pub(crate) fn wait_or_landing(f: &mut Fighter, floor_y: f32) {
     if f.physics.vel_air.y > SKIPLANDING_VEL_Y_MAX {
         f.land(floor_y);
         status::set_wait(f);
@@ -631,10 +635,13 @@ pub fn absorb_damage(f: &mut Fighter, damage: &mut i32) -> bool {
 // Inhale (`ftkirbyspecialn.c`)
 // ---------------------------------------------------------------------------
 
-/// `ftKirbySpecialNSetStatusSelect` for a Kirby without a ported copy:
-/// `ftKirbySpecialNStartSetStatus`, whose floor callback switches an
-/// airborne Kirby into the aerial start at once.
+/// `ftKirbySpecialNSetStatusSelect`: the copy's special, or for a Kirby
+/// without a ported copy `ftKirbySpecialNStartSetStatus`, whose floor
+/// callback switches an airborne Kirby into the aerial start at once.
 pub fn set_special_n(f: &mut Fighter) {
+    if crate::kirby_copy::set_special_n(f) {
+        return;
+    }
     let s = if f.is_grounded() {
         K::SpecialNStart
     } else {
@@ -788,6 +795,7 @@ fn spit(f: &mut Fighter) {
 fn copy(f: &mut Fighter) {
     if f.kirby.copy_id != f.kirby.copy_pending {
         f.kirby.copy_id = f.kirby.copy_pending;
+        crate::kirby_copy::init_passive_vars(f);
     }
     if f.grab.catch.take().is_none() {
         return;
@@ -1027,6 +1035,7 @@ pub fn update(f: &mut Fighter) {
                 }
             }
         }
+        _ => crate::kirby_copy::update(f),
     }
 }
 
@@ -1066,7 +1075,7 @@ pub fn apply_ground_physics(f: &mut Fighter) -> bool {
                 * STONE_SLIDE_TRACTION_MUL;
             physics::apply_ground_friction(&mut f.physics, friction);
         }
-        _ => return false,
+        _ => return crate::kirby_copy::apply_ground_physics(f),
     }
     true
 }
@@ -1076,6 +1085,9 @@ pub fn apply_air_physics(f: &mut Fighter) -> bool {
     let AnyStatus::Kirby(current) = f.status.status else {
         return false;
     };
+    if crate::kirby_copy::apply_air_physics(f) {
+        return true;
+    }
     let attr = f.attributes;
     match current {
         K::JumpAerialF1 | K::JumpAerialF2 | K::JumpAerialF3 | K::JumpAerialF4 | K::JumpAerialF5 => {
@@ -1240,7 +1252,7 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             f.become_airborne();
             status::set_fall(f);
         }
-        _ => return false,
+        _ => return crate::kirby_copy::on_ground_lost(f),
     }
     true
 }
@@ -1298,7 +1310,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
         }
         K::SpecialLwEnd | K::SpecialAirLwEnd => wait_or_landing(f, y),
         _ => {
-            if !switch_ground(f, y) {
+            if !crate::kirby_copy::on_landing(f, y) && !switch_ground(f, y) {
                 return false;
             }
         }

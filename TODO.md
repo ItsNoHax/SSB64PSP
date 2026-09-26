@@ -21,6 +21,7 @@ or evidence record covers it.
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
 | Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
 | Select and draw Samus, Luigi, Link, Yoshi, Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, Yoshi's Egg Throw and Bomb stars, and Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-333–335, RE-337–338, RE-343 |
+| Kirby copies of Pikachu, Jigglypuff and Ness | `ftkirbycopy{pikachu,purin,ness}specialn.c` need Thunder Jolt, PK Fire and Pound; port each with its fighter | RE-344 |
 | Kirby copy-ability loss on damage | `ftKirbySpecialNDamageCheckLoseCopy` rolls `syUtilsRandFloat() < 1/12`; the crate has no RNG | RE-343 |
 | Kirby ledge, wall and pass-through cases | Final Cutter and suplex ledge catches, star reflections off walls and ceilings, and the Inhale drop-through wiggle need fighter wall/cliff/pass collision | RE-343 |
 | Falcon Kick wall rebound and Falcon Dive cliff catch | Fighter map collision resolves floors only; the decomp callbacks need wall and cliff flags | RE-338 |
@@ -43,7 +44,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Kirby slots) is 23,154,048 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-343 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Kirby copy slots) is 23,228,080 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
 | Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |

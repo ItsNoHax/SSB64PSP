@@ -450,6 +450,39 @@ LATE_SPECIAL_SLOTS += [
     ("KirbySpecialNCopy", "Kirby", "FTKirbyAnimInhaleAbsorb"),
 ]
 
+# Kirby's copy abilities for the ported fighters, one slot per figatree in
+# `dFTKirbyMotionDescs` order (Mario and Luigi share theirs; Giant Punch's
+# End and Full statuses share theirs; each Egg Lay catch reuses its lay).
+# The decompilation's file names describe the motions only loosely: the
+# aerial Egg Lay is `EggThrowAir` and its release `EggThrowEndAir`.
+LATE_SPECIAL_SLOTS += [
+    ("KirbyCopyMarioSpecialN", "Kirby", "FTKirbyAnimLuigiFireballGround"),
+    ("KirbyCopyMarioSpecialAirN", "Kirby", "FTKirbyAnimLuigiFireballAir"),
+    ("KirbyCopyFoxSpecialN", "Kirby", "FTKirbyAnimLaserGround"),
+    ("KirbyCopyFoxSpecialAirN", "Kirby", "FTKirbyAnimLaserAir"),
+    ("KirbyCopySamusSpecialNStart", "Kirby", "FTKirbyAnimChargeShotStart"),
+    ("KirbyCopySamusSpecialNLoop", "Kirby", "FTKirbyAnimCharging"),
+    ("KirbyCopySamusSpecialNEnd", "Kirby", "FTKirbyAnimShootingChargeShot"),
+    ("KirbyCopySamusSpecialAirNStart", "Kirby", "FTKirbyAnimChargeShotAir"),
+    ("KirbyCopySamusSpecialAirNEnd", "Kirby", "FTKirbyAnimShootingChargeShotAir"),
+    ("KirbyCopyDonkeySpecialNStart", "Kirby", "FTKirbyAnimChargePunchStartGround"),
+    ("KirbyCopyDonkeySpecialAirNStart", "Kirby", "FTKirbyAnimChargeStartAir"),
+    ("KirbyCopyDonkeySpecialNLoop", "Kirby", "FTKirbyAnimChargePunchGround"),
+    ("KirbyCopyDonkeySpecialAirNLoop", "Kirby", "FTKirbyAnimChargePunchAir"),
+    ("KirbyCopyDonkeySpecialNEnd", "Kirby", "FTKirbyAnimChargePunchGroundFull"),
+    ("KirbyCopyDonkeySpecialAirNEnd", "Kirby", "FTKirbyAnimChargePunchAirFull"),
+    ("KirbyCopyLinkSpecialN", "Kirby", "FTKirbyAnimBoomerangMiss"),
+    ("KirbyCopyLinkSpecialNGet", "Kirby", "FTKirbyAnimBoomerangCatch"),
+    ("KirbyCopyLinkSpecialAirN", "Kirby", "FTKirbyAnimBoomerangAirMiss"),
+    ("KirbyCopyLinkSpecialAirNReturn", "Kirby", "FTKirbyAnimBoomerangAirCatch"),
+    ("KirbyCopyCaptainSpecialN", "Kirby", "FTKirbyAnimFalconPunchGround"),
+    ("KirbyCopyCaptainSpecialAirN", "Kirby", "FTKirbyAnimFalconPunchAir"),
+    ("KirbyCopyYoshiSpecialN", "Kirby", "FTKirbyAnimEggLayGround"),
+    ("KirbyCopyYoshiSpecialNRelease", "Kirby", "FTKirbyAnimEggThrowGround"),
+    ("KirbyCopyYoshiSpecialAirN", "Kirby", "FTKirbyAnimEggThrowAir"),
+    ("KirbyCopyYoshiSpecialAirNRelease", "Kirby", "FTKirbyAnimEggThrowEndAir"),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
              + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS])

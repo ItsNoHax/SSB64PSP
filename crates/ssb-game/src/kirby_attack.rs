@@ -383,6 +383,51 @@ pub const COPY: [(u8, i32); 27] = [
     (2, 50),
 ];
 
+// `ChargePunchGroundFull_0x1F24` (both uncharged Giant Punches): `Wait(9)`
+// after the texture swap, three frames of two boxes on joint 15. Each
+// charge level adds 2 (`crate::kirby_copy::giant_punch_bonus`).
+mv!(
+    COPY_GIANT_PUNCH,
+    80.0,
+    None,
+    [
+        h!(14, 280.0, 0.0, 0.0, 0.0, 361, 100, 0, 0, 9.0, 12.0),
+        h!(14, 340.0, 300.0, 0.0, 0.0, 361, 100, 0, 0, 9.0, 12.0),
+    ]
+);
+// `ChargePunchGroundFull_0x1F8C` (both full Giant Punches): from frame 9
+// until the clear eight frames later; the third box is on joint 5.
+mv!(
+    COPY_GIANT_PUNCH_FULL,
+    80.0,
+    None,
+    [
+        h!(36, 280.0, 0.0, 0.0, 0.0, 361, 100, 0, 0, 9.0, 17.0),
+        h!(36, 340.0, 320.0, 0.0, 0.0, 361, 100, 0, 0, 9.0, 17.0),
+        h!(36, 50.0, 0.0, 0.0, 0.0, 361, 100, 0, 0, 9.0, 17.0),
+    ]
+);
+// `FalconPunchGround`: `WaitAsync(42)`, five frames on joint 15.
+mv!(
+    COPY_FALCON_PUNCH,
+    90.0,
+    None,
+    [
+        h!(24, 250.0, 400.0, 0.0, 0.0, 361, 120, 0, 30, 42.0, 47.0),
+        h!(26, 200.0, 0.0, 0.0, 0.0, 361, 120, 0, 30, 42.0, 47.0),
+    ]
+);
+// `FalconPunchAir`: the same boxes with base knockback 40.
+mv!(
+    COPY_FALCON_PUNCH_AIR,
+    90.0,
+    None,
+    [
+        h!(24, 250.0, 400.0, 0.0, 0.0, 361, 120, 0, 40, 42.0, 47.0),
+        h!(26, 200.0, 0.0, 0.0, 0.0, 361, 120, 0, 40, 42.0, 47.0),
+    ]
+);
+
 /// Star damage for a swallowed fighter kind.
 pub fn star_damage(kind: crate::fighter::FighterKind) -> i32 {
     COPY[kind as usize].1
@@ -403,6 +448,13 @@ pub fn joints(status: crate::status::AnyStatus, index: usize) -> Option<u8> {
         AnyStatus::Common(Status::AttackLw4) => &[29, 24, 5, 29, 24, 5],
         AnyStatus::Common(Status::AttackAirN) => &[5, 24, 5, 24],
         AnyStatus::Common(Status::AttackAirHi) => &[5],
+        AnyStatus::Kirby(
+            K::CopyDonkeySpecialNEnd
+            | K::CopyDonkeySpecialAirNEnd
+            | K::CopyDonkeySpecialNFull
+            | K::CopyDonkeySpecialAirNFull,
+        ) => &[15, 15, 5],
+        AnyStatus::Kirby(K::CopyCaptainSpecialN | K::CopyCaptainSpecialAirN) => &[15],
         _ => &[0],
     };
     Some(ids.get(index).copied().unwrap_or(ids[ids.len() - 1]))

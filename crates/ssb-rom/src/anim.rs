@@ -89,9 +89,13 @@ pub const SLOT_KIRBY_ATTACK11: usize = 268;
 /// `SpecialNCatch`, `SpecialAirLwFall` and the aerial inhale statuses, which
 /// reuse the grounded figatrees.
 pub const SLOT_KIRBY_ATTACK100_START: usize = 286;
+/// First of Kirby's 25 copy-ability slots for the ported fighters, one per
+/// figatree in `dFTKirbyMotionDescs` order, from `CopyMarioSpecialN` to
+/// `CopyYoshiSpecialAirNRelease`.
+pub const SLOT_KIRBY_COPY_MARIO_SPECIAL_N: usize = 317;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 317;
+pub const SLOT_COUNT: usize = 342;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -511,7 +515,7 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 7639,
+            missing, 8289,
             "Nine ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
@@ -575,6 +579,8 @@ mod tests {
         assert_eq!(kirby.files[SLOT_KIRBY_ATTACK11], 1373);
         assert_eq!(kirby.files[SLOT_KIRBY_ATTACK100_START], 1375);
         assert_eq!(kirby.files[SLOT_KIRBY_ATTACK100_START + 30], 1430);
+        assert_eq!(kirby.files[SLOT_KIRBY_COPY_MARIO_SPECIAL_N], 1397);
+        assert_eq!(kirby.files[SLOT_KIRBY_COPY_MARIO_SPECIAL_N + 24], 1442);
         assert_ne!(kirby.files[SLOT_CATCH], 0);
         assert_ne!(captain.files[SLOT_CATCH], 0);
 
