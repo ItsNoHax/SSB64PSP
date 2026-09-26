@@ -809,6 +809,28 @@ pub enum CaptainStatus {
     SpecialAirHi = 238,
 }
 
+/// Pikachu's source `ftPikachuStatus` ordinals (Appear omitted).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum PikachuStatus {
+    SpecialN = 222,
+    SpecialAirN = 223,
+    SpecialLwStart = 224,
+    SpecialLwLoop = 225,
+    SpecialLwHit = 226,
+    SpecialLwEnd = 227,
+    SpecialAirLwStart = 228,
+    SpecialAirLwLoop = 229,
+    SpecialAirLwHit = 230,
+    SpecialAirLwEnd = 231,
+    SpecialHiStart = 232,
+    SpecialHi = 233,
+    SpecialHiEnd = 234,
+    SpecialAirHiStart = 235,
+    SpecialAirHi = 236,
+    SpecialAirHiEnd = 237,
+}
+
 /// Kirby's `ftKirbyStatus` table without the entry statuses and the copy
 /// abilities of the fighters not yet ported (Pikachu, Jigglypuff, Ness).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -881,6 +903,8 @@ pub enum KirbyStatus {
     CopyLinkSpecialAirN = 290,
     CopyLinkSpecialAirNReturn = 291,
     CopyLinkSpecialAirNEmpty = 292,
+    CopyPikachuSpecialN = 293,
+    CopyPikachuSpecialAirN = 294,
     CopyCaptainSpecialN = 295,
     CopyCaptainSpecialAirN = 296,
     CopyYoshiSpecialN = 297,
@@ -907,6 +931,7 @@ pub enum AnyStatus {
     Yoshi(YoshiStatus),
     Captain(CaptainStatus),
     Kirby(KirbyStatus),
+    Pikachu(PikachuStatus),
 }
 
 impl AnyStatus {
@@ -981,6 +1006,7 @@ impl AnyStatus {
             AnyStatus::Captain(CaptainStatus::SpecialAirN | CaptainStatus::SpecialLwAir | CaptainStatus::SpecialAirLw | CaptainStatus::SpecialLwBound | CaptainStatus::SpecialHi | CaptainStatus::SpecialAirHi | CaptainStatus::SpecialHiThrow | CaptainStatus::SpecialHiCatch) => false,
             AnyStatus::Captain(_) => true,
             AnyStatus::Kirby(k) => crate::kirby::is_grounded(k),
+            AnyStatus::Pikachu(p) => crate::pikachu::is_grounded(p),
         }
     }
 
@@ -995,6 +1021,7 @@ impl AnyStatus {
             AnyStatus::Yoshi(_) => false,
             AnyStatus::Captain(_) => false,
             AnyStatus::Kirby(_) => false,
+            AnyStatus::Pikachu(_) => false,
         }
     }
 
@@ -1014,6 +1041,7 @@ impl AnyStatus {
             AnyStatus::Yoshi(_) => false,
             AnyStatus::Captain(_) => false,
             AnyStatus::Kirby(_) => false,
+            AnyStatus::Pikachu(_) => false,
         }
     }
 
@@ -1024,6 +1052,9 @@ impl AnyStatus {
             self,
             AnyStatus::Common(Status::CatchWait | Status::CaptureWait)
                 | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
+                | AnyStatus::Pikachu(
+                    PikachuStatus::SpecialHiStart | PikachuStatus::SpecialAirHiStart
+                )
                 | AnyStatus::Kirby(KirbyStatus::SpecialNCatch | KirbyStatus::SpecialAirNCatch)
         )
     }
@@ -1153,6 +1184,7 @@ impl AnyStatus {
                 CaptainStatus::SpecialAirHi => 267,
             },
             AnyStatus::Kirby(k) => crate::kirby::anim_slot(k),
+            AnyStatus::Pikachu(p) => crate::pikachu::anim_slot(p),
         }
     }
 
@@ -1180,6 +1212,7 @@ impl AnyStatus {
             AnyStatus::Yoshi(_) => 1.0,
             AnyStatus::Captain(_) => 1.0,
             AnyStatus::Kirby(_) => 1.0,
+            AnyStatus::Pikachu(_) => 1.0,
         }
     }
 }
@@ -2449,6 +2482,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
+            | crate::fighter::FighterKind::Pikachu
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2491,6 +2525,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             }
         }
         crate::fighter::FighterKind::Kirby => crate::kirby::set_special_n(f),
+        crate::fighter::FighterKind::Pikachu => crate::pikachu::set_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -2534,12 +2569,15 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
+            | crate::fighter::FighterKind::Pikachu
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Kirby {
+    if f.kind == crate::fighter::FighterKind::Pikachu {
+        crate::pikachu::set_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Captain {
         crate::captain::set_special_hi(f);
@@ -2699,12 +2737,15 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Yoshi
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
+            | crate::fighter::FighterKind::Pikachu
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Kirby {
+    if f.kind == crate::fighter::FighterKind::Pikachu {
+        crate::pikachu::set_special_lw(f);
+    } else if f.kind == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_lw(f);
     } else if f.kind == crate::fighter::FighterKind::Captain {
         if f.is_grounded() {
@@ -3403,7 +3444,7 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirN) {
         return switch_mario_fireball_ground(f);
     }
-    if crate::kirby::set_landing_air(f) {
+    if crate::kirby::set_landing_air(f) || crate::pikachu::set_landing_air(f) {
         return;
     }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirLw) {
@@ -3534,6 +3575,9 @@ fn attack11_followup_frames(kind: crate::fighter::FighterKind) -> f32 {
 /// fighter this batch covers, so the original's per-`fkind` `switch` that
 /// all resolves to the same constant is not reproduced as one).
 pub fn set_attack12(f: &mut Fighter) {
+    if crate::grab::base_kind(f.kind) == crate::fighter::FighterKind::Pikachu {
+        return set_attack11(f);
+    }
     let len = attack_length(f, Status::Attack12);
     set_status(f, Status::Attack12, 0.0, StatusTiming::frames(len));
     let rapid_input_count = f.attack1.rapid_input_count;
@@ -3600,6 +3644,7 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
         (crate::fighter::FighterKind::Captain, Status::Attack12) => {
             Some(crate::captain_attack::JAB2_FLAG1_FRAME)
         }
+        (crate::fighter::FighterKind::Pikachu, Status::Attack11) => Some(10.0),
         (crate::fighter::FighterKind::Kirby, Status::Attack11) => {
             Some(crate::kirby_attack::JAB1_FLAG1_FRAME)
         }
@@ -3759,7 +3804,9 @@ fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
 fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
     use crate::fighter::FighterKind;
     match crate::grab::base_kind(kind) {
-        FighterKind::Fox | FighterKind::Link | FighterKind::Kirby => AngleVariants::One,
+        FighterKind::Fox | FighterKind::Link | FighterKind::Kirby | FighterKind::Pikachu => {
+            AngleVariants::One
+        }
         FighterKind::Yoshi | FighterKind::Captain => AngleVariants::Three,
         _ => AngleVariants::Five,
     }
@@ -4624,6 +4671,7 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Yoshi(_) => crate::yoshi::update(f),
         AnyStatus::Captain(_) => crate::captain::update(f),
         AnyStatus::Kirby(_) => crate::kirby::update(f),
+        AnyStatus::Pikachu(_) => crate::pikachu::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {

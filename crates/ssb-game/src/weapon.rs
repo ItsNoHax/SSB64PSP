@@ -12,6 +12,9 @@ use crate::attack::{self, Hitbox};
 use crate::collision::Segment;
 use crate::fighter::Fighter;
 use crate::ground::BodyColl;
+#[path = "pikachu_weapon.rs"]
+mod pikachu;
+pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail};
 
 /// The one-sided role a map segment has in the original collision tables.
 ///
@@ -22,9 +25,9 @@ use crate::ground::BodyColl;
 pub enum MapSurfaceKind {
     Floor,
     Ceiling,
-    /// A right-hand map boundary. Its outward normal points left.
+    /// `nMPLineKindRWall`: its normal points right (+X).
     RightWall,
-    /// A left-hand map boundary. Its outward normal points right.
+    /// `nMPLineKindLWall`: its normal points left (-X).
     LeftWall,
 }
 
@@ -33,6 +36,17 @@ pub enum MapSurfaceKind {
 pub struct MapSurface {
     pub kind: MapSurfaceKind,
     pub segment: Segment,
+    /// Original vertex identity and polyline position for map-bound weapons.
+    pub topology: Option<SurfaceTopology>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurfaceTopology {
+    pub line: u16,
+    pub point: u16,
+    pub segments: u16,
+    pub vertex1: u16,
+    pub vertex2: u16,
 }
 
 /// The weapon families that a fighter status can request.
@@ -57,12 +71,19 @@ pub enum WeaponKind {
     },
     /// `nWPKindEggThrow` at its throw: `throw_force` and the stick are read
     /// at `SetFlag2(2)`. The spawn's `facing` is the egg's `lr`.
-    YoshiEgg { throw_force: i16, stick_x: i8 },
+    YoshiEgg {
+        throw_force: i16,
+        stick_x: i8,
+    },
     /// `wpYoshiStarMakeStars`: one `nWPKindYoshiStar` each way.
     YoshiStars,
     /// `nWPKindCutter`, Final Cutter's wave. `grounded`: Kirby stood on a
     /// floor line, which the wave then follows.
-    KirbyCutter { grounded: bool },
+    KirbyCutter {
+        grounded: bool,
+    },
+    PikachuThunderJolt,
+    PikachuThunder,
 }
 
 /// One deferred weapon creation. The owner is identified by player port, the
@@ -540,6 +561,9 @@ fn clamp_angle_360(angle: f32) -> f32 {
 pub struct OwnerView {
     pub position: Vec3,
     pub is_special_interrupt: bool,
+    pub thunder_collide: bool,
+    pub thunder_damage: bool,
+    pub thunder_motion: u16,
 }
 
 /// Source `wpLinkBoomerang`. It flies out and slows down, then turns back
@@ -1179,6 +1203,9 @@ enum Weapon {
     Egg(YoshiEgg),
     Star(YoshiStar),
     Cutter(KirbyCutter),
+    Jolt(ThunderJolt),
+    Thunder(ThunderHead),
+    Trail(ThunderTrail),
 }
 
 /// A live Mario Fireball. Weapons are match-owned, not fighter-owned:
@@ -1268,6 +1295,8 @@ pub struct WeaponPool {
     /// A returning Boomerang reached this port's thrower while its
     /// `is_special_interrupt` was set; [`Self::sync_owner`] delivers it.
     caught: [bool; MAX_OWNERS],
+    thunder_destroyed: [bool; MAX_OWNERS],
+    next_group: u16,
     /// Each slot's [`WeaponSpawn::stale`].
     stale: [crate::stale::WeaponStale; MAX_WEAPONS],
     /// A slot's hit that registered damage this frame, as `(owner port,
@@ -1302,6 +1331,8 @@ impl Default for WeaponPool {
             slots: [None; MAX_WEAPONS],
             owners: [None; MAX_OWNERS],
             caught: [false; MAX_OWNERS],
+            thunder_destroyed: [false; MAX_OWNERS],
+            next_group: 1,
             stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
             landed: [None; MAX_WEAPONS],
         }
@@ -1321,6 +1352,15 @@ impl WeaponPool {
             return first || second;
         }
         let weapon = match spawn.kind {
+            WeaponKind::PikachuThunderJolt => Weapon::Jolt(ThunderJolt::new(spawn)),
+            WeaponKind::PikachuThunder => {
+                if let Some(flag) = self.thunder_destroyed.get_mut(spawn.owner_port as usize) {
+                    *flag = false;
+                }
+                let group = self.next_group;
+                self.next_group = self.next_group.wrapping_add(1);
+                Weapon::Thunder(ThunderHead::new(spawn, group))
+            }
             WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn, 0)),
             WeaponKind::LuigiFireball => Weapon::Fireball(MarioFireball::new(spawn, 1)),
             WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
@@ -1379,6 +1419,9 @@ impl WeaponPool {
             *slot = Some(OwnerView {
                 position: f.pos,
                 is_special_interrupt: f.is_special_interrupt,
+                thunder_collide: f.pikachu.thunder_collide,
+                thunder_damage: f.pikachu.thunder_damage,
+                thunder_motion: f.pikachu.thunder_motion,
             });
         }
     }
@@ -1390,6 +1433,21 @@ impl WeaponPool {
     /// because the pool was full).
     pub fn sync_owner(&mut self, f: &mut Fighter) {
         let port = usize::from(f.port);
+        if crate::pikachu::thunder_controlling(f.status.status) {
+            f.pikachu.thunder_position = self.slots.iter().flatten().find_map(|w| match w {
+                Weapon::Thunder(h)
+                    if h.owner_port == f.port && h.motion_count == f.pikachu.thunder_motion =>
+                {
+                    Some(h.position)
+                }
+                _ => None,
+            });
+            if port < MAX_OWNERS && core::mem::take(&mut self.thunder_destroyed[port])
+                || (f.pikachu.thunder_position.is_none() && !f.pikachu.thunder_collide)
+            {
+                f.pikachu.thunder_destroyed = true;
+            }
+        }
         if port < MAX_OWNERS && core::mem::take(&mut self.caught[port]) {
             // `wpLinkBoomerangCheckOwnerCatch`'s `fkind` check.
             if crate::kirby::is_kirby(f.kind) {
@@ -1413,9 +1471,39 @@ impl WeaponPool {
         I: IntoIterator<Item = MapSurface>,
     {
         let owners = self.owners;
-        for slot in &mut self.slots {
+        let mut trails = [None; MAX_WEAPONS];
+        for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
                 let alive = match weapon {
+                    Weapon::Jolt(jolt) => jolt.tick(surfaces),
+                    Weapon::Trail(trail) => trail.tick(),
+                    Weapon::Thunder(head) => {
+                        let owner = owners.get(head.owner_port as usize).copied().flatten();
+                        if owner.is_some_and(|o| {
+                            o.thunder_damage && o.thunder_motion == head.motion_count
+                        }) {
+                            head.notify_destroy = false;
+                        }
+                        if owner.is_some_and(|o| {
+                            o.thunder_collide && o.thunder_motion == head.motion_count
+                        }) {
+                            false
+                        } else {
+                            // ProcUpdate makes a stationary trail before head physics/map.
+                            if head.lifetime > 1 {
+                                trails[i] = Some((ThunderTrail::new(*head), self.stale[i]));
+                            }
+                            let alive = head.tick(surfaces);
+                            if !alive && head.notify_destroy {
+                                if let Some(flag) =
+                                    self.thunder_destroyed.get_mut(head.owner_port as usize)
+                                {
+                                    *flag = true;
+                                }
+                            }
+                            alive
+                        }
+                    }
                     Weapon::Fireball(fireball) => fireball.tick(surfaces),
                     Weapon::Blaster(blaster) => blaster.tick(surfaces),
                     Weapon::ChargeShot(shot) => shot.tick(surfaces),
@@ -1441,15 +1529,55 @@ impl WeaponPool {
                 }
             }
         }
+        for (trail, stale) in trails.into_iter().flatten() {
+            self.insert(Weapon::Trail(trail), stale);
+        }
     }
 
     /// Resolves every eligible weapon against one fighter. Fireball and
     /// Blaster both delete on registered contact; invincibility leaves the
     /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
+        let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
+            if let Weapon::Thunder(_) = weapon {
+                continue;
+            }
+            if let Weapon::Trail(t) = weapon {
+                let bit = 1u8 << (defender.port & 7);
+                if t.owner_port == defender.port
+                    || t.hit_ports & bit != 0
+                    || thunder_groups.contains(&Some(t.group))
+                {
+                    continue;
+                }
+                // Trail DObj scale is 0.5; wpProcessUpdateHitOffsets scales
+                // the two authored ±240 offsets, while radius stays 200.
+                for y in [120.0, -120.0] {
+                    if stale_hit(
+                        &pikachu::TRAIL_HIT,
+                        t.position + Vec3::new(0.0, y, 0.0),
+                        self.stale[i],
+                        defender,
+                        &mut self.landed[i],
+                        t.owner_port,
+                    )
+                    .registered()
+                    {
+                        t.hit_ports |= bit;
+                        thunder_groups[i] = Some(t.group);
+                        break;
+                    }
+                }
+                continue;
+            }
             let (owner, mut hitbox, position) = match weapon {
+                Weapon::Jolt(j) => {
+                    let (hit, pos) = j.hit();
+                    (j.owner_port, hit, pos)
+                }
+                Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
                 Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
                 Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position),
@@ -1560,12 +1688,16 @@ impl WeaponPool {
                         Weapon::Egg(e) => e.reflect(defender),
                         Weapon::Star(s) => s.reflect(defender),
                         Weapon::Cutter(c) => c.reflect(defender),
+                        Weapon::Jolt(j) => j.reflect(defender),
+                        Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("not reflectable"),
                     }
                     crate::status::set_fox_special_lw_hit(defender);
                     continue;
                 }
             }
             hitbox.damage = match weapon {
+                Weapon::Jolt(j) => j.damage,
+                Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
                 Weapon::Fireball(f) => f.damage,
                 Weapon::Blaster(b) => b.damage,
                 Weapon::ChargeShot(c) => c.damage,
@@ -1605,6 +1737,46 @@ impl WeaponPool {
                 *slot = None;
             }
         }
+        for w in self.slots.iter_mut().flatten() {
+            if let Weapon::Trail(t) = w {
+                if thunder_groups.contains(&Some(t.group)) {
+                    t.hit_ports |= 1u8 << (defender.port & 7);
+                }
+            }
+            if let Weapon::Thunder(h) = w {
+                if thunder_groups.contains(&Some(h.group)) {
+                    h.hit_ports |= 1u8 << (defender.port & 7);
+                }
+            }
+        }
+    }
+
+    pub fn jolts(&self) -> impl Iterator<Item = ThunderJolt> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::Jolt(j) = w {
+                Some(*j)
+            } else {
+                None
+            }
+        })
+    }
+    pub fn thunder_heads(&self) -> impl Iterator<Item = ThunderHead> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::Thunder(h) = w {
+                Some(*h)
+            } else {
+                None
+            }
+        })
+    }
+    pub fn thunder_trails(&self) -> impl Iterator<Item = ThunderTrail> + '_ {
+        self.slots.iter().flatten().filter_map(|w| {
+            if let Weapon::Trail(t) = w {
+                Some(*t)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn active_count(&self) -> usize {
@@ -1675,7 +1847,7 @@ impl WeaponPool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct MapContact {
+pub(crate) struct MapContact {
     position: Vec3,
     normal: Vec2,
     time: f32,
@@ -1687,7 +1859,12 @@ struct MapContact {
 /// diamond. `mpProcessUpdateMain` performs this before weapon map callbacks;
 /// support-point sweeping is the allocation-free equivalent of its individual
 /// bottom/top/side probes for a weapon that has one symmetric diamond.
-fn map_contact<I>(surfaces: I, from: Vec3, to: Vec3, coll: BodyColl) -> Option<MapContact>
+pub(crate) fn map_contact<I>(
+    surfaces: I,
+    from: Vec3,
+    to: Vec3,
+    coll: BodyColl,
+) -> Option<MapContact>
 where
     I: IntoIterator<Item = MapSurface>,
 {
@@ -1744,15 +1921,15 @@ fn diamond_support_toward_surface(normal: Vec2, coll: BodyColl) -> Vec2 {
 /// The collision normal represented by a one-sided map line. Source map lines
 /// are grouped by kind before testing, so their winding is not gameplay data;
 /// choose the perpendicular whose signed axis matches that group.
-fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
+pub(crate) fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
     let dx = (s.x2 - s.x1) as f32;
     let dy = (s.y2 - s.y1) as f32;
     let mut n = Vec2::new(-dy, dx);
     let choose_positive = match kind {
         MapSurfaceKind::Floor => n.y < 0.0,
         MapSurfaceKind::Ceiling => n.y > 0.0,
-        MapSurfaceKind::RightWall => n.x > 0.0,
-        MapSurfaceKind::LeftWall => n.x < 0.0,
+        MapSurfaceKind::RightWall => n.x < 0.0,
+        MapSurfaceKind::LeftWall => n.x > 0.0,
     };
     if choose_positive {
         n = Vec2::new(-n.x, -n.y);
@@ -1762,8 +1939,8 @@ fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
         return match kind {
             MapSurfaceKind::Floor => Vec2::new(0.0, 1.0),
             MapSurfaceKind::Ceiling => Vec2::new(0.0, -1.0),
-            MapSurfaceKind::RightWall => Vec2::new(-1.0, 0.0),
-            MapSurfaceKind::LeftWall => Vec2::new(1.0, 0.0),
+            MapSurfaceKind::RightWall => Vec2::new(1.0, 0.0),
+            MapSurfaceKind::LeftWall => Vec2::new(-1.0, 0.0),
         };
     }
     Vec2::new(n.x / length, n.y / length)
@@ -1771,7 +1948,7 @@ fn surface_normal(kind: MapSurfaceKind, s: Segment) -> Vec2 {
 
 /// Returns the movement fraction where the moving point meets the static
 /// segment. The `0.001` edge slack is shared with `mpcollision.c`.
-fn swept_segment_intersection(from: Vec2, to: Vec2, s: Segment) -> Option<f32> {
+pub(crate) fn swept_segment_intersection(from: Vec2, to: Vec2, s: Segment) -> Option<f32> {
     const EPS: f32 = 0.001;
     let r = Vec2::new(to.x - from.x, to.y - from.y);
     let q = Vec2::new(s.x1 as f32, s.y1 as f32);
@@ -2000,7 +2177,7 @@ mod tests {
         assert_eq!(shot.velocity.x, -74.0);
         assert_eq!(shot.hitbox().damage, 26);
         assert_eq!(shot.hitbox().radius, 130.0);
-        let wall = [surface(MapSurfaceKind::LeftWall, -100, -500, -100, 500)];
+        let wall = [surface(MapSurfaceKind::RightWall, -100, -500, -100, 500)];
         weapons.tick(|| wall);
         assert_eq!(weapons.active_count(), 1);
         weapons.tick(|| wall);
@@ -2173,7 +2350,7 @@ mod tests {
         // Straight into a wall: returns with the fast homing turn.
         let mut weapons = WeaponPool::default();
         weapons.spawn(boomerang_spawn(false, 0, 1.0));
-        let wall = [surface(MapSurfaceKind::RightWall, 400, -500, 400, 1000)];
+        let wall = [surface(MapSurfaceKind::LeftWall, 400, -500, 400, 1000)];
         for _ in 0..10 {
             weapons.tick(|| wall);
         }
@@ -2184,6 +2361,7 @@ mod tests {
 
     fn surface(kind: MapSurfaceKind, x1: i16, y1: i16, x2: i16, y2: i16) -> MapSurface {
         MapSurface {
+            topology: None,
             kind,
             segment: Segment {
                 x1,
@@ -2214,12 +2392,12 @@ mod tests {
                 Vec3::new(0.0, -1.0, 0.0),
             ),
             (
-                surface(MapSurfaceKind::RightWall, 50, -100, 50, 100),
+                surface(MapSurfaceKind::LeftWall, 50, -100, 50, 100),
                 Vec3::new(10.0, 0.0, 0.0),
                 Vec3::new(-1.0, 0.0, 0.0),
             ),
             (
-                surface(MapSurfaceKind::LeftWall, -50, -100, -50, 100),
+                surface(MapSurfaceKind::RightWall, -50, -100, -50, 100),
                 Vec3::new(-10.0, 0.0, 0.0),
                 Vec3::new(1.0, 0.0, 0.0),
             ),

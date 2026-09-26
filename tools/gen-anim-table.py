@@ -198,7 +198,7 @@ SPECIAL_SLOTS += [
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
 GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain",
-                 "Kirby"}
+                 "Kirby", "Pikachu"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -481,6 +481,42 @@ LATE_SPECIAL_SLOTS += [
     ("KirbyCopyYoshiSpecialNRelease", "Kirby", "FTKirbyAnimEggThrowGround"),
     ("KirbyCopyYoshiSpecialAirN", "Kirby", "FTKirbyAnimEggThrowAir"),
     ("KirbyCopyYoshiSpecialAirNRelease", "Kirby", "FTKirbyAnimEggThrowEndAir"),
+]
+
+LATE_SPECIAL_SLOTS += [
+    ('PikachuAttack11', 'Pikachu', 'FTPikachuAnimJab1'),
+    ('PikachuAttackDash', 'Pikachu', 'FTPikachuAnimDashAttack'),
+    ('PikachuAttackS3Hi', 'Pikachu', 'FTPikachuAnimFTiltHigh'),
+    ('PikachuAttackS3', 'Pikachu', 'FTPikachuAnimFTilt'),
+    ('PikachuAttackS3Lw', 'Pikachu', 'FTPikachuAnimFTiltLow'),
+    ('PikachuAttackHi3', 'Pikachu', 'FTPikachuAnimUTilt'),
+    ('PikachuAttackLw3', 'Pikachu', 'FTPikachuAnimDTilt'),
+    ('PikachuAttackS4', 'Pikachu', 'FTPikachuAnimFSmash'),
+    ('PikachuAttackHi4', 'Pikachu', 'FTPikachuAnimUSmash'),
+    ('PikachuAttackLw4', 'Pikachu', 'FTPikachuAnimDSmash'),
+    ('PikachuAttackAirN', 'Pikachu', 'FTPikachuAnimAttackAirN'),
+    ('PikachuAttackAirF', 'Pikachu', 'FTPikachuAnimAttackAirF'),
+    ('PikachuAttackAirB', 'Pikachu', 'FTPikachuAnimAttackAirB'),
+    ('PikachuAttackAirHi', 'Pikachu', 'FTPikachuAnimAttackAirU'),
+    ('PikachuAttackAirLw', 'Pikachu', 'FTPikachuAnimAttackAirD'),
+    ('PikachuLandingAirF', 'Pikachu', 'FTPikachuAnimLandingAirF'),
+    ('PikachuLandingAirLw', 'Pikachu', 'FTPikachuAnimLandingAirD'),
+    ('PikachuSpecialN', 'Pikachu', 'FTPikachuAnimNeutralSpecialGround'),
+    ('PikachuSpecialAirN', 'Pikachu', 'FTPikachuAnimNeutralSpecialAir'),
+    ('PikachuSpecialLwStart', 'Pikachu', 'FTPikachuAnimDownSpecialStart'),
+    ('PikachuSpecialLwLoop', 'Pikachu', 'FTPikachuAnimGettingThundered'),
+    ('PikachuSpecialLwHit', 'Pikachu', 'FTPikachuAnimGettingThundered'),
+    ('PikachuSpecialLwEnd', 'Pikachu', 'FTPikachuAnimDownSpecialEnd'),
+    ('PikachuSpecialAirLwStart', 'Pikachu', 'FTPikachuAnimDownSpecialStartAir'),
+    ('PikachuSpecialAirLwLoop', 'Pikachu', 'FTPikachuAnimDownSpecialThunderedAir'),
+    ('PikachuSpecialAirLwHit', 'Pikachu', 'FTPikachuAnimDownSpecialThunderedAir'),
+    ('PikachuSpecialAirLwEnd', 'Pikachu', 'FTPikachuAnimDownSpecialEndAir'),
+    ('PikachuSpecialHi', 'Pikachu', 'FTPikachuAnimUpSpecialEnd'),
+    ('PikachuSpecialHiEnd', 'Pikachu', 'FTPikachuAnimUpSpecialEnd'),
+    ('PikachuSpecialAirHi', 'Pikachu', 'FTPikachuAnimUpSpecialAirEnd'),
+    ('PikachuSpecialAirHiEnd', 'Pikachu', 'FTPikachuAnimUpSpecialAirEnd'),
+    ('KirbyCopyPikachuSpecialN', 'Kirby', 'FTKirbyAnimThunderJoltGround'),
+    ('KirbyCopyPikachuSpecialAirN', 'Kirby', 'FTKirbyAnimThunderJoltAir'),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]

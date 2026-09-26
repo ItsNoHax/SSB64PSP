@@ -21,7 +21,10 @@ or evidence record covers it.
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
 | Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
 | Select and draw Samus, Luigi, Link, Yoshi, Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, Yoshi's Egg Throw and Bomb stars, and Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-333–335, RE-337–338, RE-343 |
-| Kirby copies of Pikachu, Jigglypuff and Ness | `ftkirbycopy{pikachu,purin,ness}specialn.c` need Thunder Jolt, PK Fire and Pound; port each with its fighter | RE-344 |
+| Kirby copies of Jigglypuff and Ness | `ftkirbycopy{purin,ness}specialn.c` need Pound and PK Fire; port each with its fighter | RE-344–345 |
+| Quick Attack wall/ceiling cancellation and cliff catch | The fighter map solver resolves floors only; Quick Attack needs source wall/ceiling normals and cliff flags | RE-345 |
+| Aerial Z-cancel window | `ftCommonAttackAirProcMap` checks ten ticks since Z; the shared fighter state has no Z-tap timer, so Pikachu's active landing windows retain their authored lag | RE-345 |
+| Select and draw Pikachu in `psp-game` | The moveset is host-only; Thunder Jolt, Thunder head/trails and Quick Attack effects need gameplay render integration | RE-345 |
 | Kirby copy-ability loss on damage | `ftKirbySpecialNDamageCheckLoseCopy` rolls `syUtilsRandFloat() < 1/12`; the crate has no RNG | RE-343 |
 | Kirby ledge, wall and pass-through cases | Final Cutter and suplex ledge catches, star reflections off walls and ceilings, and the Inhale drop-through wiggle need fighter wall/cliff/pass collision | RE-343 |
 | Falcon Kick wall rebound and Falcon Dive cliff catch | Fighter map collision resolves floors only; the decomp callbacks need wall and cliff flags | RE-338 |
@@ -32,7 +35,7 @@ or evidence record covers it.
 | Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
 | Weapon shield and hop callbacks | Weapons pass through shields; the Boomerang's `ProcShield`/`ProcHop` are not reached | RE-335 |
 | Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
-| Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility have no effect on the root-sphere hurtbox | RE-333, RE-334 |
+| Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility and Quick Attack startup have no effect on the root-sphere hurtbox | RE-333, RE-334, RE-345 |
 | Same-frame catcher and held hits | `ftCommonDamageUpdateMain`'s simultaneous-hit branches and catcher hitlag need a deferred per-frame damage queue; hits resolve one at a time | RE-339 |
 | `recent_damage` for fighter hits | The source passes the frame's `damage_queue`; the hit path passes zero. Needs the same deferred hit collection as the row above | RE-339 |
 | Training capture scripts land no hit | RE-295 timed the jab to hit the dummy; on the current build the scripted jab and Fireball never damage it (dummy damage 0 over 3,600 ticks), so no golden covers hit resolution | RE-341 |
@@ -44,7 +47,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Kirby copy slots) is 23,228,080 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v38, with Pikachu and copy slots) is 23,376,928 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-344–345 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
 | Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |

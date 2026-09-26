@@ -269,6 +269,7 @@ pub struct Fighter {
     pub captain: crate::captain::CaptainState,
     /// Kirby's copy, rapid jab, Stone and Inhale state — `crate::kirby`.
     pub kirby: crate::kirby::KirbyState,
+    pub pikachu: crate::pikachu::PikachuState,
     /// This fighter's side of an Inhale — `crate::capture_kirby`.
     pub kirby_capture: crate::capture_kirby::CaptureKirbyState,
     /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
@@ -351,6 +352,7 @@ impl Fighter {
             yoshi: crate::yoshi::YoshiState::default(),
             captain: crate::captain::CaptainState::default(),
             kirby: crate::kirby::KirbyState::default(),
+            pikachu: crate::pikachu::PikachuState::default(),
             kirby_capture: crate::capture_kirby::CaptureKirbyState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
             knockback_resist: 0.0,
@@ -615,9 +617,14 @@ impl Fighter {
             crate::status::AnyStatus::Link(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Yoshi(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Captain(_) => crate::status::Status::Wait,
-            crate::status::AnyStatus::Kirby(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Kirby(_) | crate::status::AnyStatus::Pikachu(_) => {
+                crate::status::Status::Wait
+            }
         };
-        if crate::captain::apply_ground_physics(self) || crate::kirby::apply_ground_physics(self) {
+        if crate::captain::apply_ground_physics(self)
+            || crate::kirby::apply_ground_physics(self)
+            || crate::pikachu::apply_ground_physics(self)
+        {
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
         {
@@ -660,8 +667,15 @@ impl Fighter {
             self.physics.vel_ground.x = self.physics.vel_ground.x.abs() * self.facing.sign();
         }
 
+        let ground_x = if self.status.status
+            == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
+        {
+            self.physics.vel_air.x
+        } else {
+            self.physics.vel_ground.x
+        };
         let want = Vec3::new(
-            self.pos.x + self.physics.vel_ground.x + self.physics.vel_knockback.x,
+            self.pos.x + ground_x + self.physics.vel_knockback.x,
             self.pos.y,
             self.pos.z,
         );
@@ -720,6 +734,7 @@ impl Fighter {
                     && !crate::yoshi::on_ground_lost(self)
                     && !crate::captain::on_ground_lost(self)
                     && !crate::kirby::on_ground_lost(self)
+                    && !crate::pikachu::on_ground_lost(self)
                     && !crate::capture_yoshi::on_ground_lost(self)
                     && !crate::grab::on_ground_lost(self)
                 {
@@ -793,6 +808,7 @@ impl Fighter {
             || crate::yoshi::apply_air_physics(self)
             || crate::captain::apply_air_physics(self)
             || crate::kirby::apply_air_physics(self)
+            || crate::pikachu::apply_air_physics(self)
             || crate::capture_kirby::apply_air_physics(self)
         {
         } else if self.status.status == crate::status::Status::FallSpecial {
@@ -841,7 +857,14 @@ impl Fighter {
             self.pos.z + crate::physics::clamp_z_velocity(self.pos.z, v.z),
         );
 
-        let moved = ground::move_air(&self.coll, self.pos, want, self.ignore_line, floors);
+        let skip_pass = self.status.status
+            == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialAirHi)
+            && self.pikachu.pass_timer < 2;
+        let moved = ground::move_air(&self.coll, self.pos, want, self.ignore_line, || {
+            floors()
+                .into_iter()
+                .filter(|(_, s)| !skip_pass || s.flags & crate::collision::flags::PASS == 0)
+        });
         self.pos.x = moved.pos.x;
         self.pos.z = moved.pos.z;
 
@@ -878,7 +901,9 @@ impl Fighter {
                 if crate::captain::on_landing(self, moved.pos.y) {
                     return;
                 }
-                if crate::kirby::on_landing(self, moved.pos.y) {
+                if crate::kirby::on_landing(self, moved.pos.y)
+                    || crate::pikachu::on_landing(self, moved.pos.y, f.normal)
+                {
                     return;
                 }
                 if crate::capture_kirby::on_landing(self, moved.pos.y, f.normal) {

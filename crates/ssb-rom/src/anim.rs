@@ -95,7 +95,10 @@ pub const SLOT_KIRBY_ATTACK100_START: usize = 286;
 pub const SLOT_KIRBY_COPY_MARIO_SPECIAL_N: usize = 317;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 342;
+pub const SLOT_PIKACHU_ATTACK11: usize = 342;
+pub const SLOT_PIKACHU_SPECIAL_N: usize = 359;
+pub const SLOT_KIRBY_COPY_PIKACHU_SPECIAL_N: usize = 373;
+pub const SLOT_COUNT: usize = 375;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -515,8 +518,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 8289,
-            "Nine ported fighters have character and grab slots"
+            missing, 9137,
+            "Ten ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()

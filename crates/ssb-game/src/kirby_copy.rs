@@ -1,8 +1,8 @@
 //! Kirby's copy abilities for the ported fighters: `ftkirbycopy*specialn.c`
 //! for Mario and Luigi (Fireball), Fox (Blaster), Samus (Charge Shot),
 //! Donkey Kong (Giant Punch), Link (Boomerang), Captain Falcon (Falcon
-//! Punch) and Yoshi (Egg Lay), with the motion-script events from
-//! `relocData/228_KirbyMainMotion.c` (US).
+//! Punch), Yoshi (Egg Lay) and Pikachu (Thunder Jolt), with the motion-script
+//! events from `relocData/228_KirbyMainMotion.c` (US).
 //!
 //! `ftKirbySpecialNSetStatusSelect` and `ftKirbySpecialAirNSetStatusSelect`
 //! pick the status from `passive_vars.kirby.copy_id` ([`set_special_n`]).
@@ -17,7 +17,7 @@
 //!
 //! ## Documented deviations
 //!
-//! * **Pikachu, Jigglypuff and Ness.** Their copies wait on those fighters'
+//! * **Jigglypuff and Ness.** Their copies wait on those fighters'
 //!   weapons; a Kirby holding one of them still inhales.
 //! * **Giant Punch intangibility.** The full punch's `SetHitStatusAll(3)`
 //!   window waits on hit-status intangibility, which is not ported.
@@ -63,6 +63,11 @@ pub const BOOMERANG_SMASH_BUFFER: u8 = 8;
 /// `FTKIRBY_COPYCAPTAIN_FALCONPUNCH_*`.
 pub const FALCONPUNCH_VEL_BASE: f32 = 65.0;
 pub const FALCONPUNCH_VEL_MUL: f32 = 0.92;
+/// `FTKIRBY_COPYPIKACHU_THUNDERJOLT_SPAWN_*`. The shared weapon launches
+/// at -45 degrees with speed 40, as for Pikachu's own Thunder Jolt.
+pub const THUNDERJOLT_SPAWN_JOINT: u8 = 0;
+pub const THUNDERJOLT_SPAWN_OFF_X: f32 = 200.0;
+pub const THUNDERJOLT_SPAWN_OFF_Y: f32 = 200.0;
 
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).
 const FIREBALL_LENGTH: f32 = 46.0;
@@ -80,6 +85,7 @@ const BOOMERANG_GET_LENGTH: f32 = 20.0;
 const FALCONPUNCH_LENGTH: f32 = 90.0;
 const EGG_LAY_LENGTH: f32 = 38.0;
 const EGG_LAY_RELEASE_LENGTH: f32 = 35.0;
+const THUNDERJOLT_LENGTH: f32 = 64.0;
 
 /// Motion-script frames. `LuigiFireballGround` and its three siblings set
 /// flag 0 at `WaitAsync(16)`.
@@ -103,6 +109,8 @@ const EGG_LAY_CATCH_FLAG1_FRAME: f32 = 25.0;
 /// at frame 20 lays it.
 const EGG_LAY_SWALLOW_FRAME: f32 = 6.0;
 const EGG_LAY_LAY_FRAME: f32 = 20.0;
+/// `ThunderJoltGround` and `ThunderJoltAir`: `WaitAsync(21)`, flag 0.
+const THUNDERJOLT_FRAME: f32 = 21.0;
 
 /// The Egg Lay catch box: joint 30 (Kirby's heavy-item joint), size 300,
 /// 100 up. Yoshi's uses joint 31 with the same box.
@@ -114,8 +122,8 @@ pub const EGG_LAY_CATCH: (Hitbox, u8) = (crate::yoshi::EGG_LAY_CATCH.0, 30);
 /// every thrower.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CopyState {
-    /// Motion flag 0 was consumed: the Fireball, Blaster shot, Charge Shot
-    /// or Boomerang was made.
+    /// Motion flag 0 was consumed: the Fireball, Blaster shot, Charge Shot,
+    /// Boomerang or Thunder Jolt was made.
     pub spawned: bool,
     /// `passive_vars.kirby.copysamus_charge_level`.
     pub samus_charge_level: u8,
@@ -157,6 +165,7 @@ fn taps(f: &Fighter) -> N64Buttons {
 pub fn is_copy(s: K) -> bool {
     (K::CopyMarioSpecialN..=K::CopyDonkeySpecialAirNFull).contains(&s)
         || (K::CopyLinkSpecialN..=K::CopyYoshiSpecialAirNRelease).contains(&s)
+        || matches!(s, K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN)
 }
 
 /// Which copy statuses leave Kirby grounded.
@@ -180,6 +189,7 @@ pub fn is_grounded(s: K) -> bool {
             | K::CopyYoshiSpecialN
             | K::CopyYoshiSpecialNCatch
             | K::CopyYoshiSpecialNRelease
+            | K::CopyPikachuSpecialN
     )
 }
 
@@ -213,6 +223,8 @@ pub fn anim_slot(s: K) -> Option<usize> {
         K::CopyYoshiSpecialNRelease => C + 22,
         K::CopyYoshiSpecialAirN | K::CopyYoshiSpecialAirNCatch => C + 23,
         K::CopyYoshiSpecialAirNRelease => C + 24,
+        K::CopyPikachuSpecialN => 373,
+        K::CopyPikachuSpecialAirN => 374,
         _ => return None,
     })
 }
@@ -250,6 +262,7 @@ pub fn attack_id(s: K) -> Option<MotionAttackId> {
         | K::CopyYoshiSpecialAirN
         | K::CopyYoshiSpecialAirNCatch
         | K::CopyYoshiSpecialAirNRelease => M::SpecialNCopyYoshi,
+        K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => M::SpecialNCopyPikachu,
         _ => return None,
     })
 }
@@ -295,6 +308,15 @@ pub fn set_special_n(f: &mut Fighter) -> bool {
             };
             set(f, s, 0.0, StatusTiming::frames(EGG_LAY_LENGTH));
             set_egg_lay_catch_params(f);
+        }
+        FighterKind::Pikachu => {
+            let s = if ground {
+                K::CopyPikachuSpecialN
+            } else {
+                K::CopyPikachuSpecialAirN
+            };
+            set(f, s, 0.0, StatusTiming::frames(THUNDERJOLT_LENGTH));
+            f.kirby.copy.spawned = false;
         }
         _ => return false,
     }
@@ -382,7 +404,10 @@ fn update_blaster(f: &mut Fighter, s: K) {
             kind: WeaponKind::FoxBlaster,
             owner_port: f.port,
             stale: crate::stale::WeaponStale::of(f),
-            position: f.joint_world(BLASTER_SPAWN_JOINT, Vec3::new(BLASTER_SPAWN_OFF_X, 0.0, 0.0)),
+            position: f.joint_world(
+                BLASTER_SPAWN_JOINT,
+                Vec3::new(BLASTER_SPAWN_OFF_X, 0.0, 0.0),
+            ),
             facing: f.facing.sign(),
         });
     }
@@ -501,8 +526,7 @@ fn fire_charge_shot(f: &mut Fighter) {
 
 /// Whether a charging shot is on Kirby, for presentation.
 pub fn is_charging(f: &Fighter) -> bool {
-    f.kirby.copy.samus_charge_shot
-        && f.status.status == AnyStatus::Kirby(K::CopySamusSpecialNLoop)
+    f.kirby.copy.samus_charge_shot && f.status.status == AnyStatus::Kirby(K::CopySamusSpecialNLoop)
 }
 
 // ---------------------------------------------------------------------------
@@ -757,6 +781,31 @@ fn crossed(f: &Fighter, at: f32) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Thunder Jolt (`ftkirbycopypikachuspecialn.c`)
+// ---------------------------------------------------------------------------
+
+/// `ftKirbyCopyPikachuSpecialNProcAccessory`: offset the root's world
+/// position in world X/Y, rather than transforming the offsets by the joint.
+fn make_thunder_jolt(f: &mut Fighter) {
+    if f.kirby.copy.spawned || f.status.anim_frame < THUNDERJOLT_FRAME {
+        return;
+    }
+    f.kirby.copy.spawned = true;
+    f.weapon_spawn = Some(WeaponSpawn {
+        kind: WeaponKind::PikachuThunderJolt,
+        owner_port: f.port,
+        stale: crate::stale::WeaponStale::of(f),
+        position: f.joint_world(THUNDERJOLT_SPAWN_JOINT, Vec3::ZERO)
+            + Vec3::new(
+                THUNDERJOLT_SPAWN_OFF_X * f.facing.sign(),
+                THUNDERJOLT_SPAWN_OFF_Y,
+                0.0,
+            ),
+        facing: f.facing.sign(),
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Callbacks
 // ---------------------------------------------------------------------------
 
@@ -776,6 +825,12 @@ pub fn update(f: &mut Fighter) {
             }
         }
         K::CopyFoxSpecialN | K::CopyFoxSpecialAirN => update_blaster(f, current),
+        K::CopyPikachuSpecialN | K::CopyPikachuSpecialAirN => {
+            make_thunder_jolt(f);
+            if f.status.animation_ended() {
+                status::set_wait_or_fall(f);
+            }
+        }
         K::CopySamusSpecialNStart | K::CopySamusSpecialAirNStart => {
             if f.status.animation_ended() {
                 if !f.is_grounded() {
@@ -939,9 +994,7 @@ pub fn on_damage(f: &mut Fighter) {
         return;
     };
     match current {
-        K::CopySamusSpecialNStart
-        | K::CopySamusSpecialNLoop
-        | K::CopySamusSpecialAirNStart => {
+        K::CopySamusSpecialNStart | K::CopySamusSpecialNLoop | K::CopySamusSpecialAirNStart => {
             f.kirby.copy.samus_charge_level = 0;
             f.kirby.copy.samus_charge_shot = false;
         }
@@ -1034,6 +1087,10 @@ pub fn on_ground_lost(f: &mut Fighter) -> bool {
             switch(f, K::CopyLuigiSpecialAirN);
             clamp(f);
         }
+        K::CopyPikachuSpecialN => {
+            switch(f, K::CopyPikachuSpecialAirN);
+            clamp(f);
+        }
         K::CopySamusSpecialNStart => {
             switch(f, K::CopySamusSpecialAirNStart);
             clamp(f);
@@ -1087,6 +1144,7 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
     let ground = match current {
         K::CopyMarioSpecialAirN => K::CopyMarioSpecialN,
         K::CopyLuigiSpecialAirN => K::CopyLuigiSpecialN,
+        K::CopyPikachuSpecialAirN => K::CopyPikachuSpecialN,
         K::CopySamusSpecialAirNStart => K::CopySamusSpecialNStart,
         K::CopySamusSpecialAirNEnd => K::CopySamusSpecialNEnd,
         K::CopyDonkeySpecialAirNStart => K::CopyDonkeySpecialNStart,
@@ -1161,7 +1219,7 @@ mod tests {
         let mut f = kirby(FighterKind::Captain, false);
         assert!(set_special_n(&mut f));
         assert_eq!(status(&f), K::CopyCaptainSpecialAirN);
-        let mut f = kirby(FighterKind::Pikachu, true);
+        let mut f = kirby(FighterKind::Ness, true);
         assert!(!set_special_n(&mut f));
         let mut f = kirby(FighterKind::Kirby, true);
         crate::kirby::set_special_n(&mut f);
@@ -1184,7 +1242,101 @@ mod tests {
             step(&mut f);
         }
         assert!(f.weapon_spawn.is_none(), "one Fireball per status");
-        assert_eq!(f.status.status, AnyStatus::Common(crate::status::Status::Wait));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Common(crate::status::Status::Wait)
+        );
+    }
+
+    #[test]
+    fn pikachu_copy_selects_its_ground_and_air_figatrees_and_attack_id() {
+        for (ground, expected, slot) in [
+            (true, K::CopyPikachuSpecialN, 373),
+            (false, K::CopyPikachuSpecialAirN, 374),
+        ] {
+            let mut f = kirby(FighterKind::Pikachu, ground);
+            assert!(set_special_n(&mut f));
+            assert_eq!(status(&f), expected);
+            assert!(is_copy(expected));
+            assert_eq!(is_grounded(expected), ground);
+            assert_eq!(anim_slot(expected), Some(slot));
+            assert_eq!(
+                attack_id(expected),
+                Some(MotionAttackId::SpecialNCopyPikachu)
+            );
+            assert_eq!(f.status.timing, StatusTiming::frames(64.0));
+        }
+    }
+
+    #[test]
+    fn copied_thunder_jolt_leaves_at_21_from_world_offsets_of_joint_zero() {
+        use crate::fighter::{Facing, JointTransform};
+        for ground in [true, false] {
+            let mut f = kirby(FighterKind::Pikachu, ground);
+            f.facing = Facing::Left;
+            f.pos = Vec3::new(-500.0, -500.0, 0.0);
+            // Rotated/scaled axes must not transform the source's world offsets.
+            f.joint_transforms[0] = Some(JointTransform {
+                axes: [
+                    Vec3::new(0.0, 2.0, 0.0),
+                    Vec3::new(-2.0, 0.0, 0.0),
+                    Vec3::new(0.0, 0.0, 2.0),
+                ],
+                origin: Vec3::new(100.0, 300.0, 50.0),
+            });
+            set_special_n(&mut f);
+            for _ in 0..20 {
+                step(&mut f);
+                assert!(f.weapon_spawn.is_none());
+            }
+            step(&mut f);
+            let spawn = f.take_weapon_spawn().expect("Thunder Jolt at frame 21");
+            assert_eq!(spawn.kind, WeaponKind::PikachuThunderJolt);
+            assert_eq!(spawn.position, Vec3::new(-100.0, 500.0, 50.0));
+            assert_eq!(spawn.facing, -1.0);
+            for _ in 21..64 {
+                step(&mut f);
+                assert!(f.weapon_spawn.is_none());
+            }
+            assert_eq!(
+                f.status.status,
+                AnyStatus::Common(if ground {
+                    crate::status::Status::Wait
+                } else {
+                    crate::status::Status::Fall
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn copied_thunder_jolt_keeps_spawn_consumption_and_frame_across_map_switches() {
+        let mut f = kirby(FighterKind::Pikachu, true);
+        set_special_n(&mut f);
+        for _ in 0..20 {
+            step(&mut f);
+        }
+        f.physics.vel_ground.x = 100.0;
+        assert!(on_ground_lost(&mut f));
+        assert_eq!(status(&f), K::CopyPikachuSpecialAirN);
+        assert_eq!(f.status.anim_frame, 20.0);
+        assert_eq!(f.physics.vel_air.x, f.attributes.air_speed_max_x);
+        step(&mut f);
+        assert!(f.take_weapon_spawn().is_some());
+        assert!(on_landing(&mut f, 0.0));
+        assert_eq!(status(&f), K::CopyPikachuSpecialN);
+        assert_eq!(f.status.anim_frame, 21.0);
+        step(&mut f);
+        assert!(
+            f.weapon_spawn.is_none(),
+            "landing preserves the consumed flag"
+        );
+        assert!(on_ground_lost(&mut f));
+        step(&mut f);
+        assert!(
+            f.weapon_spawn.is_none(),
+            "leaving a ledge preserves the consumed flag"
+        );
     }
 
     #[test]
@@ -1285,7 +1437,10 @@ mod tests {
         while f.status.status == AnyStatus::Kirby(K::CopyDonkeySpecialNLoop) {
             step(&mut f);
         }
-        assert_eq!(f.status.status, AnyStatus::Common(crate::status::Status::Wait));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Common(crate::status::Status::Wait)
+        );
         assert_eq!(f.kirby.copy.donkey_charge_level, GIANTPUNCH_CHARGE_MAX);
         set_special_n(&mut f);
         assert!(f.kirby.copy.donkey_is_release);
@@ -1385,6 +1540,9 @@ mod tests {
         let mut f = kirby(FighterKind::Fox, true);
         set_special_n(&mut f);
         assert!(on_ground_lost(&mut f));
-        assert_eq!(f.status.status, AnyStatus::Common(crate::status::Status::Fall));
+        assert_eq!(
+            f.status.status,
+            AnyStatus::Common(crate::status::Status::Fall)
+        );
     }
 }

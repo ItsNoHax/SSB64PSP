@@ -1441,6 +1441,14 @@ pub fn move_data(
     match (kind, status) {
         // `dFTCommonMoveset_DamageBumpHit`, in every fighter's motion table.
         (_, AnyStatus::Common(Status::ThrownKirbyStar)) => Some(&crate::kirby_attack::STAR_MOVE),
+        (
+            FighterKind::Pikachu,
+            AnyStatus::Pikachu(
+                crate::status::PikachuStatus::SpecialLwHit
+                | crate::status::PikachuStatus::SpecialAirLwHit,
+            ),
+        ) => Some(&crate::pikachu_attack::THUNDERHIT),
+        (FighterKind::Pikachu, AnyStatus::Common(s)) => crate::pikachu::move_data(s),
         (FighterKind::Kirby, AnyStatus::Kirby(s)) => {
             use crate::status::KirbyStatus as K;
             match s {
@@ -2129,6 +2137,9 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
     if status == AnyStatus::Common(Status::ThrownKirbyStar) {
         return 0;
     }
+    if kind == crate::fighter::FighterKind::Pikachu {
+        return crate::pikachu_attack::joints(status, index);
+    }
     if kind == crate::fighter::FighterKind::Kirby {
         return crate::kirby_attack::joints(status, index).unwrap_or(0);
     }
@@ -2622,6 +2633,7 @@ pub fn apply_hitbox_at(
         crate::link::on_damage(defender);
     }
     crate::yoshi::on_damage(defender);
+    crate::pikachu::on_damage(defender);
     if crate::kirby::is_kirby(defender.kind) {
         crate::kirby_copy::on_damage(defender);
     }
@@ -3092,6 +3104,28 @@ mod tests {
         attacker.status.anim_frame = 7.0;
         apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 2);
+    }
+
+    #[test]
+    fn pikachu_forward_air_rearms_each_of_seven_source_pulses() {
+        let mut attacker = Fighter::new(crate::fighter::FighterKind::Pikachu, 0, 3);
+        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        attacker.status.status = AnyStatus::Common(Status::AttackAirF);
+        defender.pos = Vec3::new(0.0, 65.0, 0.0);
+        let mut record = HitRecord::default();
+        for pulse in 0..7 {
+            attacker.status.anim_frame = 7.0 + 3.0 * pulse as f32;
+            apply_hit_from(&mut attacker, &mut defender, &mut record);
+            let damage = defender.damage;
+            assert!(damage > 0);
+            assert_eq!(record.hit_generation, Some(pulse));
+            apply_hit_from(&mut attacker, &mut defender, &mut record);
+            assert_eq!(defender.damage, damage);
+            attacker.status.anim_frame += 2.0;
+            apply_hit_from(&mut attacker, &mut defender, &mut record);
+            assert_eq!(record, HitRecord::default());
+        }
+        assert!(defender.damage >= 14);
     }
 
     /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
