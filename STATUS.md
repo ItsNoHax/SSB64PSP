@@ -15,35 +15,28 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
-| Gameplay joint attachment | Mario, Fox and Donkey attack/catch boxes use their posed source joints. Held TopN placement subtracts its child translation through the catcher's heavy-item joint and draws at that rotation. Grab golden refreshed | RE-332 |
-| Shared grabs and Donkey cargo | Mario, Fox and Donkey Kong catch, hold, throw and escape through linked fighter statuses; Donkey Kong carries and throws. The pack binds grab clips by their source runtime-joint flags, and the Training golden now shows both fighters on the platform | RE-330, RE-331 |
+| Grab combat and ROM-free deferred work | Held fighters take halved damage and break loose at 6; stale-move queue and Training handicaps; Mario/Fox back throws hit bystanders; held offset scales by `size`; condensed Mario/Fox boxes restored; R expands to A + Z. Costume picks in `psp-game`, `strict_render`, scene dependency graph, extern linker and arenas/pools, none ROM-validated | RE-333, RE-334, RE-008, RE-010 |
+| Gameplay joint attachment | Attack/catch boxes on posed source joints; held TopN through the catcher's heavy-item joint | RE-332 |
 
 ## Verification baseline
 
-- `cargo test --workspace`: 905 tests pass (including ROM-backed tests).
-- `romtool anims --verify`: 414 finite lengths agree with the decompilation;
-  generated fighter-animation table is reproducible byte for byte.
-- `romtool matcolors --pack`: 103 entries, all 15 tracks and four resolvers
-  exact over 600 frames; 145/145 textures match through the recorded tile,
-  33/33 CLUTs match, and every animated UV sample lands on the RDP texel.
-- Both PSP builds pass.
-- Pack v36 rebuilt from the ROM: 22,446,048 bytes, SHA-256
+- `cargo test --workspace`: 933 tests pass without the ROM; clippy with
+  `-D warnings` is clean. ROM-backed tests, `romtool anims --verify` and
+  `romtool matcolors` were not run this batch (last passing results: RE-330,
+  RE-332).
+- Both PSP builds pass, `psp-game` also with `strict_render`.
+- Pack v36 unchanged: 22,446,048 bytes, SHA-256
   `b5c86c5efe53030626fac4629561140da0d8596f4c39542ec07173c4ae5e6686`.
-- PPSSPPHeadless: updated grab golden matches twice; 10,908 pixels changed
-  from the previous held pose (RE-332). The previous 69-scene baseline is
-  RE-331; this batch ran the focused scene.
+- PPSSPPHeadless: not run this batch. The 69-scene baseline is RE-331 and
+  the grab golden RE-332; hit scenes need a re-run after RE-333.
 - PSP-2000 Slim, firmware 6.61 ARK, PSPLink v3.2.1: stage 40 held
-  1.026 ms/tick in each 600-tick window from tick 601 through 3,600;
-  controller peek cost 7 µs/tick, no dropped ticks or exceptions (RE-329).
-- PSP-2000 Slim, firmware 6.61: v35 Mushroom Kingdom, Meta Crystal and
-  Final Destination agree with the new PPSSPP renders (RE-326). v34
-  (`ff5166dd…`) Race to the Finish renders the translucent glows (+105 µs
-  render CPU). The rest of the golden matrix and the Donkey gameplay are not
-  hardware-validated.
+  1.026 ms/tick over ticks 601–3,600 (RE-329). v35 Mushroom Kingdom, Meta
+  Crystal and Final Destination agree with PPSSPP (RE-326). The rest of the
+  golden matrix and the Donkey gameplay are not hardware-validated.
 
 ## Blockers
 
 - Fighter map collision is floor-only (no wall/ceiling solver).
-- Hurtboxes remain one root sphere; some same-valued source attack boxes
-  attached to different joints are still condensed. Held non-unit scale is
-  deferred (RE-332).
+- Hurtboxes remain one root sphere.
+- Hits resolve one at a time; same-frame catcher/held hits need a deferred
+  damage queue (RE-333).

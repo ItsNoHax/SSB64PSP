@@ -16,6 +16,7 @@ pub mod audio;
 pub mod coord;
 pub mod input;
 pub mod math;
+pub mod memory;
 pub mod renderer;
 pub mod timing;
 

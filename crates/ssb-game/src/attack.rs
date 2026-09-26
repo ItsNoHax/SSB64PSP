@@ -26,12 +26,12 @@
 //!   the fighter's root — sized from Mario's own real collision-diamond width
 //!   (`dMarioMain_attr.map_coll = { 320, 190, 0, 150 }`, so half of `150`),
 //!   not an invented number.
-//! * **No hitlag, no handicap, no damage-ratio scaling, no `recent_damage`
-//!   accumulation.** `ftParamGetCommonKnockback`'s handicap and damage-ratio
-//!   terms are fixed at their singleplayer-neutral value of `1.0`, and
-//!   `recent_damage` (a short-window stale-move accumulator) is treated as
-//!   always zero. None of those systems exist yet; wiring real values in
-//!   later must not silently change these formulas' shape.
+//! * **No hitlag and no `recent_damage` for fighter hits.**
+//!   `ftParamGetCommonKnockback` runs with Training's damage ratio and each
+//!   side's handicap ([`crate::stale`]), and fighter hitboxes deal
+//!   stale-move-scaled damage. The hit path still passes `recent_damage` as
+//!   zero where the source passes the frame's `damage_queue` (see
+//!   `TODO.md`).
 //! * **Knockback decay, not a friction curve.** The original decelerates
 //!   `vel_damage_ground` by friction every frame the way normal ground
 //!   movement does. Until that exists, [`crate::fighter::Fighter::tick_timers`]
@@ -963,13 +963,26 @@ pub static MARIO_TORNADO_AIR: MoveData = MoveData {
 };
 
 /// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
-/// simultaneous hitboxes (`jid` 25/20/5 — foot, shin, and a wider late
-/// sweetspot), each with a weaker second phase after frame 11.
+/// simultaneous hitboxes (`jid` 25/20/5 — both feet share one descriptor,
+/// plus a wider body box), each replaced by a weaker phase after frame 11.
 /// `WaitAsync(3)` + 3×`MakeAttackColl`, `Wait(8)` + 3× weaker
 /// `MakeAttackColl`, `Wait(26)` + `ClearAttackCollAll` — total
 /// `3 + 8 + 26 = 37`.
 pub static MARIO_AIR_N: MoveData = MoveData {
     hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 14,
+                offset: Vec3::new(10.0, 0.0, 0.0),
+                radius: 240.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 15,
+            },
+            3.0,
+            11.0,
+        ),
         ActiveHitbox::new(
             Hitbox {
                 damage: 14,
@@ -995,6 +1008,19 @@ pub static MARIO_AIR_N: MoveData = MoveData {
             },
             3.0,
             11.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 11,
+                offset: Vec3::new(10.0, 0.0, 0.0),
+                radius: 240.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 0,
+            },
+            11.0,
+            37.0,
         ),
         ActiveHitbox::new(
             Hitbox {
@@ -1337,14 +1363,39 @@ pub static MARIO_USMASH: MoveData = MoveData {
     landing_lag_percent: None,
 };
 
-/// Mario's down smash — `dMarioMainMotion_DSmash`. Two hitboxes (each
-/// spawned twice under different `jid`s with identical other arguments, so
-/// two `ActiveHitbox`es cover all four `MakeAttackColl` calls).
-/// `WaitAsync(4)` then `WaitAsync(8)` then two `MakeAttackColl`s,
+/// Mario's down smash — `dMarioMainMotion_DSmash`. Four `MakeAttackColl`s:
+/// the same two boxes on `jid` 25 and again on `jid` 20 (front and back
+/// foot). `WaitAsync(4)` then `WaitAsync(8)` then the four boxes,
 /// `Wait(15)` then `Wait(7)` then `ClearAttackCollAll` — total
 /// `4 + 8 + 15 + 7 = 34`.
 pub static MARIO_DSMASH: MoveData = MoveData {
     hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 17,
+                offset: Vec3::new(0.0, 0.0, 20.0),
+                radius: 170.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 20,
+            },
+            12.0,
+            34.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 17,
+                offset: Vec3::new(120.0, 0.0, 50.0),
+                radius: 210.0 / 2.0,
+                angle: 361,
+                kb_scale: 100,
+                kb_weight: 0,
+                kb_base: 20,
+            },
+            12.0,
+            34.0,
+        ),
         ActiveHitbox::new(
             Hitbox {
                 damage: 17,
@@ -1388,6 +1439,8 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        (FighterKind::Mario, AnyStatus::Common(Status::ThrowB)) => Some(&MARIO_THROW_B),
+        (FighterKind::Fox, AnyStatus::Common(Status::ThrowB)) => Some(&FOX_THROW_B),
         (
             FighterKind::Donkey,
             AnyStatus::Donkey(
@@ -1530,6 +1583,68 @@ pub fn move_data(
     }
 }
 
+/// Mario's back throw — `dMarioMainMotion_ThrowB`,
+/// `relocData/202_MarioMainMotion.c`. `Wait(4)`, `WaitAsync(10)`, `Wait(8)`,
+/// then `MakeAttackColl(0, 0, 10, 10, 0, 0, 300, 120, 0, 0, 361, 80, 0, 3, 1,
+/// 2, 0, 30)`; two `Wait(14)` loops reach `ClearAttackCollAll` at frame 46.
+/// The swing only reaches bystanders: the held fighter is skipped
+/// ([`apply_hit_from`]).
+pub static MARIO_THROW_B: MoveData = MoveData {
+    hitboxes: &[ActiveHitbox::new(
+        Hitbox {
+            damage: 10,
+            offset: Vec3::new(120.0, 0.0, 0.0),
+            radius: 300.0 / 2.0,
+            angle: 361,
+            kb_scale: 80,
+            kb_weight: 0,
+            kb_base: 30,
+        },
+        18.0,
+        46.0,
+    )],
+    length_frames: 67.0,
+    landing_lag_percent: None,
+};
+
+/// Fox's back throw — `dFoxMainMotion_ThrowB`,
+/// `relocData/208_FoxMainMotion.c`. At `WaitAsync(11)`:
+/// `MakeAttackColl(0, 0, 20, 10, 0, 0, 230, 140, 0, 0, 361, 90, 0, 3, 1, 2,
+/// 1, 10)` and the same box at offset zero (`aid` 1); `WaitAsync(13)` and
+/// `Wait(6)` reach `ClearAttackCollAll` at frame 19.
+pub static FOX_THROW_B: MoveData = MoveData {
+    hitboxes: &[
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::new(140.0, 0.0, 0.0),
+                radius: 230.0 / 2.0,
+                angle: 361,
+                kb_scale: 90,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            11.0,
+            19.0,
+        ),
+        ActiveHitbox::new(
+            Hitbox {
+                damage: 10,
+                offset: Vec3::ZERO,
+                radius: 230.0 / 2.0,
+                angle: 361,
+                kb_scale: 90,
+                kb_weight: 0,
+                kb_base: 10,
+            },
+            11.0,
+            19.0,
+        ),
+    ],
+    length_frames: 40.0,
+    landing_lag_percent: None,
+};
+
 /// `FTCOMMON_DAMAGE_SAKURAI_*` — `ft/ftcommon.h`.
 const SAKURAI_KNOCKBACK_LOW: f32 = 32.0;
 const SAKURAI_ANGLE_LOW_GR_DEG: f32 = 0.0;
@@ -1564,13 +1679,14 @@ pub fn sakurai_angle_radians(angle_i: i32, target_airborne: bool, knockback: f32
     deg.to_radians()
 }
 
-/// `ftParamGetCommonKnockback` @ `ftparam.c:1451`, restricted to
-/// singleplayer-neutral handicap/damage-ratio terms and `recent_damage == 0`
-/// (module docs).
+/// `ftParamGetCommonKnockback` @ `ftparam.c:1451` for a hitbox, with
+/// `recent_damage == 0` (module docs).
 pub fn common_knockback(
     defender_damage_percent: u16,
     hitbox: &Hitbox,
     defender_weight: f32,
+    attack_handicap: u8,
+    defend_handicap: u8,
 ) -> f32 {
     knockback(
         defender_damage_percent,
@@ -1580,12 +1696,16 @@ pub fn common_knockback(
         hitbox.kb_scale,
         hitbox.kb_base,
         defender_weight,
+        attack_handicap,
+        defend_handicap,
     )
 }
 
-/// `ftParamGetCommonKnockback` @ `ftparam.c:1451` with every argument the
-/// original takes, minus the neutral handicap and damage-ratio terms.
+/// `ftParamGetCommonKnockback` @ `ftparam.c:1451`. The damage ratio is
+/// Training's `100` ([`crate::stale::DAMAGE_RATIO_DEFAULT`]); the handicaps
+/// index `dFTCommonDataHandicapTable` ([`crate::stale::HANDICAP_TABLE`]).
 /// Throws pass the throw's own damage as `recent_damage`.
+#[allow(clippy::too_many_arguments)]
 pub fn knockback(
     percent_damage: u16,
     recent_damage: i32,
@@ -1594,9 +1714,11 @@ pub fn knockback(
     kb_scale: i32,
     kb_base: i32,
     weight: f32,
+    attack_handicap: u8,
+    defend_handicap: u8,
 ) -> f32 {
     let scale = kb_scale as f32 * 0.01;
-    let knockback = if kb_weight != 0 {
+    let base = if kb_weight != 0 {
         (((1.0 + (10.0 * kb_weight as f32 * 0.05)) * weight * 1.4) + 18.0) * scale + kb_base as f32
     } else {
         let damage_add = percent_damage as f32 + recent_damage as f32;
@@ -1604,6 +1726,12 @@ pub fn knockback(
         ((((damage_add * 0.1) + (damage_add * hit_damage * 0.05)) * weight * 1.4) + 18.0) * scale
             + kb_base as f32
     };
+    let knockback = crate::stale::apply_ratio_and_handicap(
+        base,
+        crate::stale::DAMAGE_RATIO_DEFAULT,
+        attack_handicap,
+        defend_handicap,
+    );
     knockback.min(2500.0)
 }
 
@@ -1728,6 +1856,7 @@ pub struct HitResult {
 /// (`ftcommondamage.c:466`), for the grounded, non-launching case (module
 /// docs: no ground/air damage-velocity split exists yet, so this always
 /// writes to [`crate::physics::PhysicsState::vel_knockback`]).
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_hit(
     hitbox: &Hitbox,
     attacker_pos: Vec3,
@@ -1735,9 +1864,17 @@ pub fn resolve_hit(
     defender_damage_percent: u16,
     defender_weight: f32,
     defender_airborne: bool,
+    attack_handicap: u8,
+    defend_handicap: u8,
 ) -> HitResult {
     let lr = damage_lr(defender_pos, attacker_pos);
-    let knockback = common_knockback(defender_damage_percent, hitbox, defender_weight);
+    let knockback = common_knockback(
+        defender_damage_percent,
+        hitbox,
+        defender_weight,
+        attack_handicap,
+        defend_handicap,
+    );
     let angle = sakurai_angle_radians(hitbox.angle, defender_airborne, knockback);
     let (sin, cos) = sin_cos(angle);
     let vel_x = cos * knockback;
@@ -1787,6 +1924,8 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         };
     }
     let ids: &[u8] = match (kind, status) {
+        (Mario, AnyStatus::Common(Status::ThrowB)) => &[10],
+        (Fox, AnyStatus::Common(Status::ThrowB)) => &[20, 20],
         (Mario, AnyStatus::Common(Status::Attack11)) => &[10, 9],
         (Mario, AnyStatus::Common(Status::Attack12)) => &[16, 15],
         (Mario, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 25, 27],
@@ -1807,8 +1946,8 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
             ),
         ) => &[14, 15],
         (Mario, AnyStatus::Common(Status::AttackHi4)) => &[12],
-        (Mario, AnyStatus::Common(Status::AttackLw4)) => &[25, 25],
-        (Mario, AnyStatus::Common(Status::AttackAirN)) => &[25, 5],
+        (Mario, AnyStatus::Common(Status::AttackLw4)) => &[25, 25, 20, 20],
+        (Mario, AnyStatus::Common(Status::AttackAirN)) => &[25, 20, 5],
         (
             Mario,
             AnyStatus::Common(Status::AttackAirF | Status::AttackAirB | Status::AttackAirLw),
@@ -1836,7 +1975,7 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
         (Fox, AnyStatus::Common(Status::AttackLw3)) => &[29],
         (Fox, AnyStatus::Common(Status::AttackS4)) => &[20],
         (Fox, AnyStatus::Common(Status::AttackHi4)) => &[25],
-        (Fox, AnyStatus::Common(Status::AttackLw4)) => &[25],
+        (Fox, AnyStatus::Common(Status::AttackLw4)) => &[25, 20],
         (Fox, AnyStatus::Common(Status::AttackAirN)) => &[5, 20, 25],
         (Fox, AnyStatus::Common(Status::AttackAirF)) => &[25],
         (Fox, AnyStatus::Common(Status::AttackAirB)) => &[5, 25, 20],
@@ -1894,11 +2033,19 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
 /// `GMAttackRecord` hit list. It is re-armed at a sourced
 /// `ClearAttackCollAll`, including a clear/recreate boundary with no idle
 /// animation frame between them.
-pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &mut HitRecord) {
+///
+/// `ftMainSearchFighterAttack` skips the defender's own catcher
+/// (`other_gobj == this_fp->capture_gobj`), so a throw's attack boxes only
+/// reach bystanders. A registered hit stales the box's damage by the
+/// attacker's queue and records the move in it (`ftParamUpdateStaleQueue`).
+pub fn apply_hit_from(attacker: &mut Fighter, defender: &mut Fighter, hit_record: &mut HitRecord) {
     let Some(move_data) = move_data(attacker.kind, attacker.status.status) else {
         *hit_record = HitRecord::default();
         return;
     };
+    if defender.grab.capture == Some(attacker.port) {
+        return;
+    }
     let mut has_active_hitbox = false;
     for (index, active) in move_data
         .hitboxes
@@ -1920,11 +2067,18 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
         ) {
             hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
         }
+        hitbox.damage = crate::stale::staled_damage(attacker, hitbox.damage);
         let joint = attack_joint(attacker.kind, attacker.status.status, index);
         let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
-        if apply_hitbox_at(&hitbox, hitbox_pos, defender) {
-            hit_record.hit_generation = Some(active.hit_generation);
-            return;
+        match apply_hitbox_at(&hitbox, hitbox_pos, attacker.handicap, defender) {
+            HitOutcome::Missed => continue,
+            outcome => {
+                if outcome == HitOutcome::Damaged {
+                    crate::stale::record_hit(attacker, defender.port);
+                }
+                hit_record.hit_generation = Some(active.hit_generation);
+                return;
+            }
         }
     }
     if !has_active_hitbox {
@@ -1934,37 +2088,75 @@ pub fn apply_hit_from(attacker: &Fighter, defender: &mut Fighter, hit_record: &m
     }
 }
 
+/// What one hitbox did to a defender.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitOutcome {
+    /// No contact, or an invincible target: the box may still connect later.
+    Missed,
+    /// The shield took it.
+    Shielded,
+    /// Damage registered (`ftMainCheckGetUpdateDamage`).
+    Damaged,
+}
+
+impl HitOutcome {
+    pub fn registered(self) -> bool {
+        self != HitOutcome::Missed
+    }
+}
+
+/// `FTCOMMON_DAMAGE_CATCH_RELEASE_THRESHOLD`: a held fighter whose queued
+/// damage reaches this is knocked out of the hold.
+pub const CATCH_RELEASE_THRESHOLD: i32 = 6;
+
+/// `ftCommonDamageCheckCaptureKeepHold` @ 0x80140EC0.
+pub fn capture_keep_hold(damage_queue: i32) -> bool {
+    damage_queue < CATCH_RELEASE_THRESHOLD
+}
+
+/// `ftParamGetCapturedDamage` @ 0x800EA40C: a held fighter takes half,
+/// rounded up, then `damage_mul` (always `1.0` for the ported fighters).
+pub fn captured_damage(defender: &Fighter, damage: i32) -> i32 {
+    let mut damage = damage;
+    if defender.grab.capture.is_some() {
+        damage = (damage as f32 * 0.5 + 0.999) as i32;
+    }
+    (damage as f32 * 1.0 + 0.999) as i32
+}
+
 /// Applies an already-positioned hitbox to a defender. Fighter moves obtain
 /// their position from a joint-relative offset; a weapon owns its world
 /// position directly. Keeping collision resolution here preserves one damage,
-/// shield, knockback, and invincibility path for both.
+/// shield, knockback, and invincibility path for both. `attack_handicap` is
+/// the attacker's (a weapon's is its owner's).
 ///
-/// Returns whether the hit registered. An invincible target returns `false`,
-/// so a live weapon may contact it again when its invincibility ends.
-pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fighter) -> bool {
+/// An invincible target returns [`HitOutcome::Missed`], so a live weapon may
+/// contact it again when its invincibility ends.
+pub fn apply_hitbox_at(
+    hitbox: &Hitbox,
+    attacker_pos: Vec3,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+) -> HitOutcome {
     if !spheres_overlap(
         attacker_pos,
         hitbox.radius,
         defender.pos,
         MARIO_HURTBOX_RADIUS,
     ) {
-        return false;
-    }
-    if defender.grab.capture.is_some() {
-        // A held fighter's damage-while-captured branch
-        // (`ftCommonDamageCheckCaptureKeepHold`) is not ported; see TODO.md.
-        return false;
+        return HitOutcome::Missed;
     }
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // the hit record is left alone so the same active window
         // can still connect once invincibility ends.
-        return false;
+        return HitOutcome::Missed;
     }
     if is_shielding(defender.status.status) {
         apply_shield_hit_at(hitbox, attacker_pos, defender);
-        return true;
+        return HitOutcome::Shielded;
     }
+    let damage = captured_damage(defender, hitbox.damage);
     let result = resolve_hit(
         hitbox,
         attacker_pos,
@@ -1972,36 +2164,64 @@ pub fn apply_hitbox_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fight
         defender.damage,
         defender.attributes.weight,
         !defender.is_grounded(),
+        attack_handicap,
+        defender.handicap,
     );
     if defender.kind == crate::fighter::FighterKind::Donkey {
         defender.donkey_special_n.charge_level = 0;
+    }
+    if defender.grab.capture.is_some() {
+        // `ftCommonDamageUpdateMain`'s `capture_gobj` branch. The percent is
+        // always added (`ftParamUpdateDamage(fp, fp->damage_queue)`).
+        defender.damage = defender.damage.saturating_add(damage as u16);
+        if capture_keep_hold(damage) {
+            // The hold survives; only the catcher's hitlag (not ported)
+            // and the colour animation react.
+            return HitOutcome::Damaged;
+        }
+        // `ftCommonThrownDecideFighterLoseGrip(catcher, held)`, then the
+        // catcher's `ftCommonThrownSetStatusNoDamageRelease` (delivered by
+        // `grab::exchange`) and this fighter's normal damage status below.
+        crate::grab::release_on_capture_hit(defender);
+        enter_damage(defender, &result);
+        return HitOutcome::Damaged;
     }
     if defender.grab.catch.is_some() {
         // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
         // stance absorbs anything below a tumble; otherwise the held fighter
         // is dropped with the throw descriptor's `[1]` knockback.
-        let knockback = common_knockback(defender.damage, hitbox, defender.attributes.weight);
+        let knockback = common_knockback(
+            defender.damage,
+            hitbox,
+            defender.attributes.weight,
+            attack_handicap,
+            defender.handicap,
+        );
         if crate::grab::cargo_resists(defender, knockback) {
-            defender.damage = defender.damage.saturating_add(result.damage as u16);
+            defender.damage = defender.damage.saturating_add(damage as u16);
             let lr = damage_lr(defender.pos, attacker_pos);
             crate::grab::set_donkey_throwf_damage(defender, knockback, hitbox.angle, lr);
-            return true;
+            return HitOutcome::Damaged;
         }
         crate::grab::release_on_hit(defender);
     }
-    defender.damage = defender.damage.saturating_add(result.damage as u16);
-    // `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the
-    // fighter's normal ground/air velocity outright before writing the
-    // knockback vector — a hit fully overrides existing movement rather than
-    // adding to it. `status::set_status` runs first because it is what moves
-    // `vel_ground` into `vel_air` on a ground-to-air transition, and that
-    // transferred value must not survive the zeroing below.
+    defender.damage = defender.damage.saturating_add(damage as u16);
+    enter_damage(defender, &result);
+    HitOutcome::Damaged
+}
+
+/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the
+/// fighter's normal ground/air velocity outright before writing the
+/// knockback vector — a hit fully overrides existing movement rather than
+/// adding to it. `status::set_status` runs first because it is what moves
+/// `vel_ground` into `vel_air` on a ground-to-air transition, and that
+/// transferred value must not survive the zeroing below.
+fn enter_damage(defender: &mut Fighter, result: &HitResult) {
     status::set_status(defender, result.status, 0.0, StatusTiming::unknown());
     defender.physics.vel_ground = Vec3::ZERO;
     defender.physics.vel_air = Vec3::ZERO;
     defender.physics.vel_knockback = result.knockback_vel;
     defender.hitstun = result.hitstun;
-    true
 }
 
 /// Whether a hit landing on this status should be redirected into
@@ -2041,7 +2261,7 @@ mod tests {
     #[test]
     fn jab_knockback_at_zero_percent_matches_the_formula_by_hand() {
         // ((0*1.4)+18) * (50*0.01) + 8 == 18*0.5+8 == 17.0
-        let kb = common_knockback(0, &MARIO_JAB1_HITBOX, 1.0);
+        let kb = common_knockback(0, &MARIO_JAB1_HITBOX, 1.0, 8, 8);
         assert_eq!(kb, 17.0);
     }
 
@@ -2094,7 +2314,7 @@ mod tests {
     fn resolve_hit_pushes_the_defender_away_from_the_attacker() {
         let attacker = Vec3::new(0.0, 0.0, 0.0);
         let defender = Vec3::new(10.0, 0.0, 0.0);
-        let result = resolve_hit(&MARIO_JAB1_HITBOX, attacker, defender, 0, 1.0, false);
+        let result = resolve_hit(&MARIO_JAB1_HITBOX, attacker, defender, 0, 1.0, false, 8, 8);
         assert_eq!(result.damage, 2);
         // Flat, grounded, low knockback: pure +X push away from the attacker.
         assert!(result.knockback_vel.x > 0.0);
@@ -2129,7 +2349,7 @@ mod tests {
         });
         defender.pos = Vec3::new(500.0, 0.0, 0.0);
         let mut record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut record);
+        apply_hit_from(&mut attacker, &mut defender, &mut record);
         assert_eq!(defender.damage, 2);
     }
 
@@ -2196,7 +2416,7 @@ mod tests {
         );
 
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::DamageN1);
         assert!(hit_record.hit_generation.is_some());
@@ -2230,7 +2450,7 @@ mod tests {
         );
 
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::GuardSetOff);
         assert_eq!(defender.damage, 0);
@@ -2260,7 +2480,7 @@ mod tests {
         );
 
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
 
         assert_eq!(defender.status.status, Status::Wait);
         assert_eq!(defender.damage, 0);
@@ -2347,19 +2567,19 @@ mod tests {
 
         let mut hit_record = HitRecord::default();
         attacker.status.anim_frame = 9.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 1);
         assert_eq!(hit_record.hit_generation, Some(1));
 
         // Still inside the same `MakeAttackColl` lifetime: one target once.
         attacker.status.anim_frame = 10.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 1);
 
         // Frame 11 is the immediately recreated next loop collision, not a
         // gap, and is therefore a distinct legal hit.
         attacker.status.anim_frame = 11.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 2);
         assert_eq!(hit_record.hit_generation, Some(2));
     }
@@ -2398,15 +2618,15 @@ mod tests {
 
         let mut hit_record = HitRecord::default();
         attacker.status.anim_frame = 4.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 1);
 
         attacker.status.anim_frame = 5.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(hit_record, HitRecord::default());
 
         attacker.status.anim_frame = 7.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 2);
     }
 
@@ -2436,11 +2656,11 @@ mod tests {
 
         let mut hit_record = HitRecord::default();
         attacker.status.anim_frame = 10.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 12);
 
         attacker.status.anim_frame = 15.0;
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 12);
     }
 
@@ -2463,7 +2683,7 @@ mod tests {
         );
 
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
 
         // Only reachable if the offset flipped to -90 with facing; at +90 the
         // defender at x=-90 would be 180 units away, past even the 115-unit
@@ -2502,10 +2722,26 @@ mod tests {
             .iter()
             .filter(|h| h.is_active(20.0))
             .collect();
-        assert_eq!(strong.len(), 2); // the two ox=10/ox=0 hitboxes share a window
-        assert_eq!(weak.len(), 2);
+        assert_eq!(strong.len(), 3); // `jid` 25, 20 and 5 share a window
+        assert_eq!(weak.len(), 3);
         assert!(strong.iter().all(|h| h.hitbox.damage == 14));
         assert!(weak.iter().all(|h| h.hitbox.damage == 11));
+    }
+
+    /// RE-332's condensed boxes: every source `MakeAttackColl` is present
+    /// and reads its own `jid`.
+    #[test]
+    fn same_valued_boxes_keep_their_own_joints() {
+        use crate::fighter::FighterKind::{Fox, Mario};
+        let joints = |kind, status: Status| {
+            let data = move_data(kind, status.into()).unwrap();
+            (0..data.hitboxes.len())
+                .map(|i| attack_joint(kind, status.into(), i))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(joints(Mario, Status::AttackLw4), [25, 25, 20, 20]);
+        assert_eq!(joints(Mario, Status::AttackAirN), [25, 20, 5, 25, 20, 5]);
+        assert_eq!(joints(Fox, Status::AttackLw4), [25, 20]);
     }
 
     /// `move_data` finds `Attack13`'s data through the extended-status path
@@ -2543,7 +2779,7 @@ mod tests {
         );
 
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
 
         assert!(hit_record.hit_generation.is_some());
         assert_eq!(defender.damage, 4);
@@ -2589,7 +2825,7 @@ mod tests {
             9.0,
             StatusTiming::frames(80.0),
         );
-        apply_hit_from(&attacker, &mut defender, &mut HitRecord::default());
+        apply_hit_from(&mut attacker, &mut defender, &mut HitRecord::default());
         assert_eq!(defender.damage, 22); // script base 14 + 4 * 2
         let spin = move_data(
             crate::fighter::FighterKind::Donkey,
@@ -2625,11 +2861,11 @@ mod tests {
             StatusTiming::frames(80.0),
         );
         let mut hit_record = HitRecord::default();
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 14);
         assert_eq!(hit_record.hit_generation, Some(0));
 
-        apply_hit_from(&attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
         assert_eq!(defender.damage, 14);
     }
 }

@@ -256,6 +256,7 @@ pub fn fighter_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
 /// crate into the other for the sake of eighteen field copies.
 pub fn physics_of(d: &FighterDesc) -> PhysicsAttributes {
     PhysicsAttributes {
+        size: d.size,
         traction: d.traction,
         dash_speed: d.dash_speed,
         dash_decel: d.dash_decel,

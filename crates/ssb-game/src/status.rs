@@ -1656,6 +1656,9 @@ pub fn set_fox_special_n(f: &mut Fighter) {
     };
     set_any_status(f, AnyStatus::Fox(status), 0.0, StatusTiming::frames(length));
     f.fox_special_n = FoxSpecialNState::default();
+    // `ftFoxSpecialNProcUpdate`'s repeat path calls `ftParamSetMotionID`, so
+    // every blaster shot is a new motion.
+    f.motion.set(crate::stale::MotionAttackId::SpecialN);
 }
 
 /// `ftFoxSpecialLwStartSetStatus` and aerial counterpart.
@@ -2678,6 +2681,7 @@ pub fn set_any_status(
         _ => {}
     }
     f.status.status = status;
+    crate::stale::on_set_status(f, status);
     // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
     // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
     // so rendering has one display gate and capture systems can use it too.
@@ -3107,6 +3111,9 @@ fn set_fox_rapid_loop(f: &mut Fighter) {
         StatusTiming::frames(32.0),
     );
     f.attack1.rapid_keep_loop = false;
+    // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
+    // start of every loop, so each cycle is a new motion.
+    f.motion.set(crate::stale::MotionAttackId::Attack100);
 }
 
 fn set_fox_rapid_end(f: &mut Fighter) {

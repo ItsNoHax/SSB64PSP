@@ -39,6 +39,10 @@ capture_scene_file = ["regression_capture"]
 # otherwise unrelated (`psp-asset-viewer/`'s freezes render state, this one
 # scripts input).
 regression_capture = []
+# Strict rendering mode: refuse a pack with any texture, palette, mesh,
+# node-transform or costume reference the draw path would skip
+# (`ssb_rom::strict`). Training then shows `BG_TRAINING_STRICT_FAILED`.
+strict_render = []
 # Extends the scripted Training capture with a neutral-B input after the
 # existing jump/jab sequence, keeping the default capture's established
 # composition while providing a focused Fireball integration smoke.
