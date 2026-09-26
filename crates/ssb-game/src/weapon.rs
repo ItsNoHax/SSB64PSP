@@ -320,7 +320,11 @@ impl WeaponPool {
                 Weapon::Fireball(f) => f.damage,
                 Weapon::Blaster(b) => b.damage,
             };
-            if attack::apply_hitbox_at(&hitbox, position, defender) {
+            // `wp->handicap` is the owner's; every Training player has the
+            // default handicap. Weapon damage is not staled yet (TODO.md).
+            if attack::apply_hitbox_at(&hitbox, position, crate::stale::HANDICAP_DEFAULT, defender)
+                .registered()
+            {
                 *slot = None;
             }
         }

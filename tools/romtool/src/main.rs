@@ -63,6 +63,8 @@ fn main() -> ExitCode {
         ["jumptest", pack_path, rest @ ..] => jumptest(pack_path.as_ref(), rest),
         ["simulate", pack_path, rest @ ..] => simulate(pack_path.as_ref(), rest),
         ["effects", pack_path] => effects(pack_path.as_ref()),
+        ["strict", pack_path] => strict(pack_path.as_ref()),
+        ["scene-deps", pack_path, rest @ ..] => scene_deps(pack_path.as_ref(), rest),
         ["particles", rom_path] => particles(rom_path.as_ref()),
         ["fighters", rom_path, rest @ ..] => fighters(rom_path.as_ref(), rest),
         ["anims", rom_path, rest @ ..] => anims(rom_path.as_ref(), rest),
@@ -71,6 +73,7 @@ fn main() -> ExitCode {
         ["texdump", rom_path, rest @ ..] => texdump(rom_path.as_ref(), rest),
         ["extract", rom_path, rest @ ..] => extract(rom_path.as_ref(), rest),
         ["dump", rom_path, id] => dump(rom_path.as_ref(), id),
+        ["link", rom_path, ids @ ..] if !ids.is_empty() => link(rom_path.as_ref(), ids),
         ["textures", rom_path, rest @ ..] => textures(rom_path.as_ref(), rest),
         _ => {
             usage();
@@ -106,6 +109,9 @@ USAGE:
     romtool matcolors <rom.z64> --pack <pack.pak>
     romtool pack     <rom.z64> [--out <file>] [--file <id>] [--no-swizzle]
     romtool collide  <pack.pak> [--stage <n>]
+    romtool strict   <pack.pak>
+    romtool link     <rom.z64> <file id>...
+    romtool scene-deps <pack.pak> [--stage <n>] [--object <n>[:<costume>]]...
     romtool simulate <pack.pak> [--stage <n>] [--verbose]
     romtool jumptest <pack.pak> [--stage <n>] [--jump-tick <n>] [--jump2-tick <n>]
                                  [--stick-x <n>] [--stick-switch-tick <n>]
@@ -4903,6 +4909,68 @@ fn object_mat_anims(
 /// ROM-to-pack pipeline and reports their stable object indices for the PSP
 /// visual audit. This deliberately does not count LBParticle scripts: those
 /// are a separate bytecode/texture-bank renderer and remain an explicit gap.
+/// Strict rendering mode over a built pack: every texture, palette, mesh,
+/// node transform and costume reference a draw would resolve
+/// (`ssb_rom::strict`). Fails on the first pack with any unresolved one.
+fn strict(path: &Path) -> Res {
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+    let count = ssb_rom::strict::check(&pack, |issue| println!("  {issue}"));
+    println!(
+        "{} textures, {} meshes, {} primitives, {} nodes: {count} unresolved",
+        pack.texture_count(),
+        pack.mesh_count(),
+        pack.prim_count(),
+        pack.node_count()
+    );
+    if count == 0 {
+        Ok(())
+    } else {
+        Err(format!("{count} unresolved rendering references").into())
+    }
+}
+
+/// The scene dependency graph (`ssb_rom::scene_deps`) for a stage plus any
+/// objects, each in an optional costume, and the texel/CLUT bytes it needs.
+fn scene_deps(path: &Path, rest: &[&str]) -> Res {
+    let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
+    let mut deps = ssb_rom::scene_deps::SceneDeps::new();
+    let mut args = rest.iter();
+    while let Some(&flag) = args.next() {
+        let value = args.next().ok_or_else(|| format!("{flag} needs a value"))?;
+        match flag {
+            "--stage" => deps.add_stage(&pack, value.parse()?),
+            "--object" => {
+                let (object, costume) = value.split_once(':').unwrap_or((value, "0"));
+                deps.add_object(&pack, object.parse()?, costume.parse()?);
+            }
+            _ => return Err(format!("unknown option {flag}").into()),
+        }
+    }
+    let f = deps.footprint(&pack);
+    println!(
+        "{} objects, {} nodes, {} meshes, {} primitives, {} textures, {} material animations",
+        deps.objects.len(),
+        deps.nodes.len(),
+        deps.meshes.len(),
+        deps.prims.len(),
+        deps.textures.len(),
+        deps.mat_anims.len()
+    );
+    println!(
+        "texels {} B, palettes {} B, animated palettes {} B, total {} B",
+        f.texel_bytes,
+        f.palette_bytes,
+        f.mat_anim_palette_bytes,
+        f.total()
+    );
+    if deps.unresolved > 0 {
+        return Err(format!("{} unresolved references", deps.unresolved).into());
+    }
+    Ok(())
+}
+
 fn effects(path: &Path) -> Res {
     let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let pack = ssb_rom::pack::Pack::open(&bytes).map_err(|e| format!("{e:?}"))?;
@@ -7971,6 +8039,36 @@ fn parse_id(s: &str) -> Result<u32, Box<dyn std::error::Error>> {
         .map_err(|e| format!("bad file id {s:?}: {e}").into())
 }
 
+/// Lays out and links the `relocData` closure of `ids` the way
+/// `lbRelocLoadFilesExtern` does (`ssb_rom::reloc_link`, D-011) and prints
+/// each file's offset and the block size.
+fn link(path: &Path, ids: &[&str]) -> Res {
+    let (data, info) = load_rom(path)?;
+    let archive = Archive::open(&data, info.region)?;
+    let roots = ids
+        .iter()
+        .map(|id| parse_id(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut files = std::collections::BTreeMap::new();
+    for &root in &roots {
+        files.extend(archive.load_closure(root)?);
+    }
+    let linked = ssb_rom::reloc_link::link(&files, &roots, 0).map_err(|e| e.to_string())?;
+    for id in &linked.layout.order {
+        println!(
+            "  file {id:4} at 0x{:06X} ({} bytes)",
+            linked.layout.offsets[id],
+            files[id].data.len()
+        );
+    }
+    println!(
+        "{} files, {} bytes",
+        linked.layout.order.len(),
+        linked.layout.size
+    );
+    Ok(())
+}
+
 fn dump(path: &Path, id: &str) -> Res {
     let (data, info) = load_rom(path)?;
     let archive = Archive::open(&data, info.region)?;
@@ -10072,14 +10170,11 @@ mod tests {
 
         // Catch, CatchPull and ThrowF have no leading runtime joint for these
         // fighters, whereas CapturePulled does.
-        for kind in 0..3 {
-            for slot in SLOT_CATCH..SLOT_CATCH + 3 {
-                assert!(
-                    !LEADING_RUNTIME_JOINT[kind][slot],
-                    "kind {kind} slot {slot}"
-                );
+        for (kind, flags) in LEADING_RUNTIME_JOINT.iter().enumerate().take(3) {
+            for (slot, &flag) in flags.iter().enumerate().skip(SLOT_CATCH).take(3) {
+                assert!(!flag, "kind {kind} slot {slot}");
             }
-            assert!(LEADING_RUNTIME_JOINT[kind][SLOT_CATCH + 4]);
+            assert!(flags[SLOT_CATCH + 4]);
         }
     }
 

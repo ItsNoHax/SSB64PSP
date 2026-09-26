@@ -8,22 +8,21 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Fighter costumes beyond 0 in `psp-game` | All palettes are packed and selectable in the viewer; the game still hardcodes costume 0 | RE-096, RE-261 |
+| Costume validation and dummy costume | `psp-game` picks the player's costume (RE-334) but no PPSSPP capture shows costumes 1–3; the dummy keeps costume 0 instead of the CPU's first free costume, which needs a golden refresh | RE-096, RE-261, RE-334 |
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
-| Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure once a scene dependency graph exists | RE-076, RE-077 |
-| Scene dependency graph | No explicit `scene → nodes → materials → textures → palettes` graph yet | — |
-| Strict rendering mode | No fail-fast mode for unresolved textures, palettes or transforms | — |
+| Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure with `romtool scene-deps` | RE-076, RE-077, RE-334 |
+| Strict mode over the real pack | `romtool strict` and `strict_render` exist but have not run over pack v36 | RE-334 |
+| Material-animation command 22 | `ssb-rom::matanim` rejects it; its writes are never read, so it can be skipped | RE-010 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
 ## Gameplay
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Damage to a held fighter | `ftCommonDamageCheckCaptureKeepHold` needs its own hit response while the capture link persists; this batch leaves such hits unregistered | RE-330 |
-| Throw collisions against bystanders | Mario and Fox back-throw attack boxes cannot hit another fighter in the current two-fighter match | RE-330 |
-| Throw stale-move and handicap modifiers | The current Training match has no stale-move queue or handicap state; throw damage uses descriptor values | RE-330 |
-| Restore condensed same-valued attack boxes | Some Mario, Fox and Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy, so joint placement now exposes this old omission | RE-332 |
-| Non-unit held fighter scale | Held TopN placement currently uses the first-child offset at normal fighter size; giant/shrunken capture needs the root scale applied as in `ftCommonCapturePulledRotateScale` | RE-332 |
+| Same-frame catcher and held hits | `ftCommonDamageUpdateMain`'s simultaneous-hit branches and catcher hitlag need a deferred per-frame damage queue; hits resolve one at a time | RE-333 |
+| `recent_damage` for fighter hits | The source passes the frame's `damage_queue`; the hit path passes zero | RE-333 |
+| Weapon staling | `wpMainGetStaledDamage` and weapon queue updates are not ported | RE-333 |
+| Re-run goldens after RE-333 | Handicap rounding moves some knockback by one ulp, and repeated moves now deal staled damage | RE-333 |
 
 ## Hardware acceptance
 
@@ -39,15 +38,13 @@ Deferred by user instruction.
 
 | ID | Question | Next step |
 |---|---|---|
-| RE-008 | What each C-button does in-game (taunt, camera) | All four now pass through as raw N64 C-buttons; confirm uses against `ft/ftkey.c` |
 | RE-009 | PSP nub deadzone (20 units, linear rescale to ±80 is a guess) | Measure on hardware against decomp thresholds |
-| RE-010 | Unused `MObjSub` fields | Find readers in the decomp if a material looks wrong |
 | RE-011 | How `sGCDetailLevel` is chosen | Trace during `P5` profiling |
 
 ## Technical debt
 
-- Runtime extern-relocation loader (the pack stores them zeroed; [D-011](docs/decisions/D-011.md))
-- `AssetArena`, `GameArena`, `FrameArena`, `ObjectPool` allocators ([docs/memory.md](docs/memory.md))
+- Check `ssb_rom::reloc_link` against real closures and use it from a runtime loader ([D-011](docs/decisions/D-011.md), RE-334)
+- Wire `ssb_engine::memory` arenas and pools into `psp-runtime` ([docs/memory.md](docs/memory.md))
 - VFPU math, after `P5` profiling ([D-032](docs/decisions/D-032.md))
 - `sceAudio` mixer thread (`P4`)
 - Debug HUD uses `sceGuDebugFlush`: software-rasterizer-only in PPSSPP (RE-014) and faults on real hardware (RE-202); replace with GE geometry

@@ -14,6 +14,7 @@
 pub mod attack;
 pub mod camera;
 pub mod collision;
+pub mod costume;
 mod donkey_attack;
 pub mod fighter;
 mod fox_attack;
@@ -21,5 +22,6 @@ pub mod grab;
 pub mod ground;
 pub mod physics;
 pub mod shadow;
+pub mod stale;
 pub mod status;
 pub mod weapon;

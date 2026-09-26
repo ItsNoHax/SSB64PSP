@@ -27,12 +27,19 @@
 //!   uses its rotation. Host tests without a skeleton use the catcher root.
 //! * **Catch collision.** Catch boxes use their posed joint transform,
 //!   including hand rotations and offsets. Hurtboxes remain one root sphere.
-//! * **No stale-move queue, handicap or 1P stats.** Throw damage is the
-//!   descriptor's damage (`ftParamGetStaledDamage` with an empty queue);
-//!   handicaps are neutral.
+//! * **No 1P stats.** Throw damage is staled by the catcher's queue
+//!   ([`crate::stale`]) when the catcher queues the release, and the
+//!   catcher's queue records the throw when the damage lands.
 //! * **Throw attack colls.** Mario's and Fox's back throws make attack
-//!   collisions that can hit bystanders. With two fighters there is no
-//!   bystander, so they are not ported.
+//!   collisions ([`crate::attack::move_data`]). `apply_hit_from` skips the
+//!   held fighter, as `ftMainSearchFighterAttack` skips `capture_gobj`, so
+//!   only bystanders can be hit.
+//! * **Held fighters hit by a third party.** `ftCommonDamageUpdateMain`
+//!   keeps the hold below [`crate::attack::CATCH_RELEASE_THRESHOLD`] and
+//!   otherwise drops it, sending the catcher
+//!   [`GrabEvent::CaptureHitRelease`]. The branches for both fighters being
+//!   hit in the same frame need the source's deferred damage queue, which
+//!   the immediate hit path does not have; hits resolve one at a time.
 //! * **Losing grip.** `ftCommonThrownReleaseFighterLoseGrip` snaps a thrown
 //!   fighter to its joint 4 minus 300 and runs the catcher-relative floor
 //!   collision. Here the fighter keeps its held position and the normal
@@ -45,6 +52,7 @@ use crate::attack::{self, Hitbox};
 use crate::collision::{self, Segment};
 use crate::fighter::{Facing, Fighter, FighterKind, JointTransform, Situation};
 use crate::physics;
+use crate::stale::MotionAttackId;
 use crate::status::{self, AnyStatus, DonkeyStatus, JumpInput, Status, StatusTiming};
 
 /// `FTCOMMON_CATCH_THROW_WAIT` — frames before a held fighter is thrown
@@ -336,6 +344,27 @@ pub struct Holder {
     /// The catcher's floor line, or `None` while it is airborne.
     pub floor_line: Option<u16>,
     pub percent: u16,
+    /// `capture_fp->handicap`.
+    pub handicap: u8,
+}
+
+/// A throw's damage staled by the catcher at the moment it queued the
+/// release, and the motion to record in the catcher's queue if it lands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StaledThrow {
+    pub damage: i32,
+    pub attack_id: MotionAttackId,
+    pub motion_count: u16,
+}
+
+impl StaledThrow {
+    fn of(f: &Fighter, damage: i32) -> Self {
+        StaledThrow {
+            damage: crate::stale::staled_damage(f, damage),
+            attack_id: f.motion.attack_id,
+            motion_count: f.motion.count,
+        }
+    }
 }
 
 /// A write the original makes to the other fighter of a grab.
@@ -347,19 +376,25 @@ pub enum GrabEvent {
     GotoPulledWait,
     /// `ftCommonThrownSetStatusQueue` / `...Immediate`.
     Thrown { first: Option<Status>, then: Status },
-    /// `ftCommonCaptureShoulderedSetStatus`.
-    Shouldered,
+    /// `ftCommonCaptureShoulderedSetStatus`: the lift's fixed 8 damage.
+    Shouldered { staled: StaledThrow },
     /// `ftCommonThrownReleaseThrownUpdateStats`.
     Release {
         lr: f32,
         desc: ThrowHitDesc,
         shield_catch: bool,
+        staled: StaledThrow,
     },
     /// `ftCommonThrownSetStatusDamageRelease`: the catcher was hit.
     DamageRelease {
         desc: ThrowHitDesc,
         shield_catch: bool,
+        staled: StaledThrow,
     },
+    /// Sent by the held fighter: a third party's hit reached
+    /// `FTCOMMON_DAMAGE_CATCH_RELEASE_THRESHOLD`, so the catcher loses its
+    /// grip and takes `ftCommonThrownSetStatusNoDamageRelease`.
+    CaptureHitRelease,
     /// `ftCommonCatchCaptureSetStatusRelease`: the catcher fell off its floor.
     LoseGrip,
     /// `ftCommonCaptureApplyCatchKnockback`: the held fighter broke free.
@@ -604,7 +639,9 @@ fn update_throw(f: &mut Fighter) {
     }
     if f.status.animation_ended() {
         if is_donkey(f.kind) && !back && f.grab.catch.is_some() {
-            f.grab.send(GrabEvent::Shouldered);
+            f.grab.send(GrabEvent::Shouldered {
+                staled: StaledThrow::of(f, SHOULDERED_DAMAGE),
+            });
             set_donkey_throwf_wait(f);
             return;
         }
@@ -620,6 +657,7 @@ fn release_thrown(f: &mut Fighter, lr: f32) {
         lr,
         desc,
         shield_catch: f.grab.is_shield_catch,
+        staled: StaledThrow::of(f, desc.damage),
     });
     f.grab.catch = None;
     f.grab.catch_kind = None;
@@ -651,6 +689,7 @@ fn capture_pulled(f: &mut Fighter, catcher_port: u8, holder: Holder) {
         f.grab.send(GrabEvent::DamageRelease {
             desc,
             shield_catch: f.grab.is_shield_catch,
+            staled: StaledThrow::of(f, desc.damage),
         });
     }
     f.grab.capture = Some(catcher_port);
@@ -751,14 +790,22 @@ fn update_breakout(f: &mut Fighter) -> bool {
     is_mash
 }
 
+/// The literal damage `ftCommonCaptureShoulderedSetStatus` stales.
+const SHOULDERED_DAMAGE: i32 = 8;
+
 /// `ftCommonCaptureShoulderedSetStatus` @ 0x8014E558 (US breakout base 14).
-/// Donkey Kong's forward throw deals 8 on the lift.
-fn set_shouldered(f: &mut Fighter) {
+/// Donkey Kong's forward throw deals 8, staled, on the lift. Returns the
+/// damage dealt.
+fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
     set_thrown(f, Status::Shouldered, None);
     init_breakout(f, (f32::from(f.damage) * 0.08 + 14.0) as i32);
-    if f.invincible_frames == 0 {
-        f.damage = f.damage.saturating_add(8);
-    }
+    let damage = if f.invincible_frames == 0 {
+        staled.damage
+    } else {
+        0
+    };
+    f.damage = f.damage.saturating_add(damage.max(0) as u16);
+    damage
 }
 
 /// `ftCommonCaptureShoulderedProcInterrupt` @ 0x8014E4D4.
@@ -783,16 +830,36 @@ fn apply_capture_knockback(f: &mut Fighter) {
         f.physics.vel_air.z = 0.0;
     }
     let (angle, kbs, kbw, kbb) = CAPTURE_KNOCKBACK_CAPTURE;
-    let knockback = attack::knockback(f.damage, 0, 0, kbw, kbs, kbb, f.attributes.weight);
+    let knockback = attack::knockback(
+        f.damage,
+        0,
+        0,
+        kbw,
+        kbs,
+        kbb,
+        f.attributes.weight,
+        holder.handicap,
+        f.handicap,
+    );
     let lr = if f.pos.x < holder.pos.x { 1.0 } else { -1.0 };
     attack::init_damage_vars(f, None, 0, knockback, angle, lr);
 }
 
 /// `ftCommonCaptureApplyCatchKnockback` @ 0x8014E1D0: the catcher's recoil
 /// when the held fighter escapes.
-fn apply_catch_knockback(f: &mut Fighter) {
+fn apply_catch_knockback(f: &mut Fighter, capture_handicap: u8) {
     let (angle, kbs, kbw, kbb) = CAPTURE_KNOCKBACK_CATCH;
-    let knockback = attack::knockback(f.damage, 0, 0, kbw, kbs, kbb, f.attributes.weight);
+    let knockback = attack::knockback(
+        f.damage,
+        0,
+        0,
+        kbw,
+        kbs,
+        kbb,
+        f.attributes.weight,
+        capture_handicap,
+        f.handicap,
+    );
     let lr = f.facing.sign();
     attack::init_damage_vars(f, None, 0, knockback, angle, lr);
 }
@@ -811,10 +878,17 @@ fn lose_grip(f: &mut Fighter) {
 }
 
 /// `ftCommonThrownReleaseThrownUpdateStats` @ 0x8014AFD0 and
-/// `ftCommonThrownSetStatusDamageRelease` @ 0x8014B330.
-fn release_with(f: &mut Fighter, desc: ThrowHitDesc, lr: Option<f32>, shield_catch: bool) {
+/// `ftCommonThrownSetStatusDamageRelease` @ 0x8014B330. Returns the damage
+/// dealt, for the catcher's stale queue.
+fn release_with(
+    f: &mut Fighter,
+    desc: ThrowHitDesc,
+    lr: Option<f32>,
+    shield_catch: bool,
+    staled: StaledThrow,
+) -> i32 {
     let Some(holder) = f.grab.holder else {
-        return;
+        return 0;
     };
     if lr.is_some() {
         // `ftCommonThrownProcPhysics(catch_gobj)` runs just before release.
@@ -832,9 +906,11 @@ fn release_with(f: &mut Fighter, desc: ThrowHitDesc, lr: Option<f32>, shield_cat
         desc.kb_scale,
         desc.kb_base,
         f.attributes.weight,
+        holder.handicap,
+        f.handicap,
     );
     let lr = lr.unwrap_or(if f.pos.x < holder.pos.x { 1.0 } else { -1.0 });
-    let mut damage = desc.damage;
+    let mut damage = staled.damage;
     if shield_catch {
         damage = (damage as f32 * 0.5 + 0.999) as i32;
     }
@@ -849,6 +925,7 @@ fn release_with(f: &mut Fighter, desc: ThrowHitDesc, lr: Option<f32>, shield_cat
         desc.angle,
         lr,
     );
+    damage
 }
 
 // ---------------------------------------------------------------------------
@@ -1035,8 +1112,44 @@ pub fn release_on_hit(f: &mut Fighter) {
         f.grab.send(GrabEvent::DamageRelease {
             desc,
             shield_catch: f.grab.is_shield_catch,
+            staled: StaledThrow::of(f, desc.damage),
         });
     }
+}
+
+/// The held side of `ftCommonDamageUpdateMain`'s capture branch when the hit
+/// breaks the hold: `ftCommonThrownDecideFighterLoseGrip(catcher, held)`
+/// drops both links, and the catcher is told to take
+/// `ftCommonThrownSetStatusNoDamageRelease`.
+pub fn release_on_capture_hit(f: &mut Fighter) {
+    if f.grab.capture.is_some() {
+        f.grab.send(GrabEvent::CaptureHitRelease);
+        lose_grip(f);
+    }
+}
+
+/// `dFTCommonThrownNoDamageKnockback`: `{ -1, 0, 361, 0, 0, 20, 0 }`.
+const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = desc(None, 0, 361, 0, 0, 20);
+
+/// `ftCommonThrownSetStatusNoDamageRelease` @ 0x8014B5B4, on the catcher.
+/// The attack handicap is the source's literal `9`, and the fighter keeps
+/// its facing (`lr = fp->lr`).
+fn set_no_damage_release(f: &mut Fighter) {
+    f.pos.z = 0.0;
+    let d = NO_DAMAGE_KNOCKBACK;
+    let knockback = attack::knockback(
+        f.damage,
+        d.damage,
+        d.damage,
+        d.kb_weight,
+        d.kb_scale,
+        d.kb_base,
+        f.attributes.weight,
+        crate::stale::HANDICAP_DEFAULT,
+        f.handicap,
+    );
+    let lr = f.facing.sign();
+    attack::init_damage_vars(f, None, 0, knockback, d.angle, lr);
 }
 
 /// `ftCommonThrownDecideDeadResult` @ 0x8014AF2C, the KO'd side.
@@ -1194,12 +1307,20 @@ pub fn update(f: &mut Fighter) -> bool {
 
 /// `ftCommonCapturePulledRotateScale`: place the held fighter's TopN so its
 /// first child lands exactly on the catcher's heavy-item joint. The source
-/// transforms the negative child translation through that joint's matrix.
+/// scales the negative child translation by the held fighter's own TopN
+/// scale (`attr->size`) and transforms it through that joint's matrix.
 fn held_attachment(f: &Fighter, holder: Holder) -> Vec3 {
     match (holder.anchor_transform, f.grab.held_child_offset) {
-        (Some(joint), Some(child)) => joint.point(Vec3::ZERO - child),
+        (Some(joint), Some(child)) => joint.point(held_child_point(child, f.attributes.size)),
         _ => holder.anchor,
     }
+}
+
+/// `this_pos = -child->translate * TopN->scale`, component by component.
+/// TopN's scale is uniform (`ftManagerMakeFighter` writes `attr->size` to
+/// all three axes).
+fn held_child_point(child: Vec3, size: f32) -> Vec3 {
+    Vec3::new(-child.x * size, -child.y * size, -child.z * size)
 }
 
 /// Refreshes the held X/Z location after the animation runtime advances its
@@ -1390,6 +1511,7 @@ fn holder_of(f: &Fighter) -> Holder {
         anchor_transform: f.grab.anchor_transform,
         floor_line: f.floor.map(|s| s.line),
         percent: f.damage,
+        handicap: f.handicap,
     }
 }
 
@@ -1409,6 +1531,14 @@ pub fn exchange(from: &mut Fighter, to: &mut Fighter) {
     }
 }
 
+/// `ftParamUpdateStaleQueue(capture_fp->player, this_fp->player, ...)`,
+/// which the throw paths call only when damage was dealt.
+fn record_throw(catcher: &mut Fighter, held: &Fighter, staled: StaledThrow, damage: i32) {
+    if damage != 0 && catcher.port != held.port {
+        catcher.stale.push(staled.attack_id, staled.motion_count);
+    }
+}
+
 fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
     match event {
         GrabEvent::Capture => capture_pulled(to, from.port, holder_of(from)),
@@ -1417,17 +1547,34 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             Some(first) => set_thrown(to, first, Some(then)),
             None => set_thrown(to, then, None),
         },
-        GrabEvent::Shouldered => set_shouldered(to),
+        GrabEvent::Shouldered { staled } => {
+            let damage = set_shouldered(to, staled);
+            record_throw(from, to, staled, damage);
+        }
         GrabEvent::Release {
             lr,
             desc,
             shield_catch,
+            staled,
         } => {
             to.grab.holder = Some(holder_of(from));
-            release_with(to, desc, Some(lr), shield_catch);
+            let damage = release_with(to, desc, Some(lr), shield_catch, staled);
+            record_throw(from, to, staled, damage);
         }
-        GrabEvent::DamageRelease { desc, shield_catch } => {
-            release_with(to, desc, None, shield_catch)
+        GrabEvent::DamageRelease {
+            desc,
+            shield_catch,
+            staled,
+        } => {
+            let damage = release_with(to, desc, None, shield_catch, staled);
+            record_throw(from, to, staled, damage);
+        }
+        GrabEvent::CaptureHitRelease => {
+            if to.grab.catch.take().is_some() {
+                to.grab.catch_kind = None;
+                to.grab.capture_immune = false;
+                set_no_damage_release(to);
+            }
         }
         GrabEvent::LoseGrip => {
             lose_grip(to);
@@ -1441,7 +1588,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
             if to.grab.catch.take().is_some() {
                 to.grab.catch_kind = None;
                 to.grab.capture_immune = false;
-                apply_catch_knockback(to);
+                apply_catch_knockback(to, from.handicap);
             }
         }
         GrabEvent::Dead => {
@@ -1618,6 +1765,32 @@ mod tests {
         held.status.status = Status::ThrownCommon.into();
         refresh_held_attachment(&mut held);
         assert_eq!(held.pos, Vec3::new(40.0, 150.0, 0.0));
+    }
+
+    /// `ftCommonCapturePulledRotateScale` multiplies the child translation
+    /// by the held fighter's TopN scale: Donkey Kong's `size` is 1.25.
+    #[test]
+    fn held_child_offset_is_scaled_by_the_held_fighters_size() {
+        let mut catcher = grounded(FighterKind::Mario, 0, 0.0);
+        let joint = JointTransform {
+            axes: [
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.0, 1.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+            ],
+            origin: Vec3::new(100.0, 200.0, 0.0),
+        };
+        catcher.grab.anchor = Some(joint.origin);
+        catcher.grab.anchor_transform = Some(joint);
+        let mut held = grounded(FighterKind::Donkey, 1, 0.0);
+        held.attributes.size = 1.25;
+        held.grab.capture = Some(0);
+        held.grab.holder = Some(holder_of(&catcher));
+        held.grab.held_child_offset = Some(Vec3::new(0.0, 50.0, 60.0));
+        held.status.status = Status::ThrownCommon.into();
+        refresh_held_attachment(&mut held);
+        // -(0, 50, 60) * 1.25 = (0, -62.5, -75) through the joint's axes.
+        assert_eq!(held.pos, Vec3::new(25.0, 137.5, 0.0));
     }
 
     #[test]
@@ -1834,7 +2007,7 @@ mod tests {
             kb_weight: 0,
             kb_base: 0,
         };
-        assert!(attack::apply_hitbox_at(&hit, dk.pos, &mut dk));
+        assert!(attack::apply_hitbox_at(&hit, dk.pos, 9, &mut dk).registered());
         assert_eq!(
             dk.status.status,
             AnyStatus::Donkey(DonkeyStatus::ThrowFDamage)
@@ -1844,7 +2017,7 @@ mod tests {
         hit.damage = 20;
         hit.kb_scale = 200;
         hit.kb_base = 100;
-        assert!(attack::apply_hitbox_at(&hit, dk.pos, &mut dk));
+        assert!(attack::apply_hitbox_at(&hit, dk.pos, 9, &mut dk).registered());
         exchange(&mut dk, &mut dummy);
         assert_eq!(dk.grab.catch, None);
         assert_eq!(dummy.grab.capture, None);
@@ -1888,5 +2061,164 @@ mod tests {
             (None, Status::ThrownCommon)
         );
         assert_eq!(thrown_status(Fox, Purin, true), (None, Status::ThrownFoxB));
+    }
+
+    /// A third party's hit on a held fighter: `ftParamGetCapturedDamage`
+    /// halves it, and `ftCommonDamageCheckCaptureKeepHold` keeps the hold
+    /// while the queued damage stays under 6.
+    #[test]
+    fn a_light_hit_on_a_held_fighter_keeps_the_hold() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut mario, &mut dummy);
+        to_catch_wait(&mut mario, &mut dummy);
+        let hit = Hitbox {
+            damage: 9,
+            offset: Vec3::ZERO,
+            radius: 80.0,
+            angle: 361,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 10,
+        };
+        let outcome = attack::apply_hitbox_at(&hit, dummy.pos, 9, &mut dummy);
+        assert_eq!(outcome, attack::HitOutcome::Damaged);
+        // (9 * 0.5 + 0.999) as i32 == 5, below the release threshold.
+        assert_eq!(dummy.damage, 5);
+        assert_eq!(dummy.status.status, Status::CaptureWait);
+        assert_eq!(dummy.grab.capture, Some(0));
+        exchange(&mut dummy, &mut mario);
+        assert_eq!(mario.grab.catch, Some(1));
+        assert_eq!(mario.status.status, Status::CatchWait);
+    }
+
+    /// At 6 or more queued damage the held fighter takes its normal damage
+    /// status and the catcher loses its grip with
+    /// `dFTCommonThrownNoDamageKnockback` (20 base knockback, no damage).
+    #[test]
+    fn a_strong_hit_on_a_held_fighter_breaks_the_hold() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        grab(&mut mario, &mut dummy);
+        to_catch_wait(&mut mario, &mut dummy);
+        let facing = mario.facing;
+        let hit = Hitbox {
+            damage: 12,
+            offset: Vec3::ZERO,
+            radius: 80.0,
+            angle: 361,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 10,
+        };
+        let outcome = attack::apply_hitbox_at(&hit, dummy.pos, 9, &mut dummy);
+        assert_eq!(outcome, attack::HitOutcome::Damaged);
+        assert_eq!(dummy.damage, 6);
+        assert_eq!(dummy.grab.capture, None);
+        assert!(!is_held(dummy.status.status));
+        exchange(&mut dummy, &mut mario);
+        assert_eq!(mario.grab.catch, None);
+        assert_eq!(mario.damage, 0, "the catcher's release deals no damage");
+        // 20 knockback -> 10.7 hitstun frames -> level 0, grounded.
+        assert_eq!(mario.status.status, Status::DamageN1);
+        assert_eq!(mario.facing, facing, "lr = fp->lr keeps the facing");
+        assert!(
+            mario.physics.vel_knockback.x * facing.sign() < 0.0,
+            "pushed backwards"
+        );
+    }
+
+    /// `ftMainSearchFighterAttack` skips `capture_gobj`: Mario's back-throw
+    /// swing hits a bystander but never the fighter he is holding.
+    #[test]
+    fn mario_back_throw_swing_hits_a_bystander_but_not_the_held_fighter() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        // Without a skeleton, joint 10 falls back to the root and the swing
+        // sits 120 units in front of Mario; the held fighter hangs at the
+        // root, well inside the same box.
+        let mut bystander = grounded(FighterKind::Fox, 2, 260.0);
+        grab(&mut mario, &mut dummy);
+        to_catch_wait(&mut mario, &mut dummy);
+        press(&mut mario, 0, -60);
+        frame(&mut mario, &mut dummy);
+        assert_eq!(mario.status.status, Status::ThrowB);
+        let mut on_held = attack::HitRecord::default();
+        let mut on_bystander = attack::HitRecord::default();
+        let mut bystander_hit_at = None;
+        for _ in 0..60 {
+            press(&mut mario, 0, 0);
+            press(&mut bystander, 0, 0);
+            frame(&mut mario, &mut dummy);
+            if dummy.grab.capture.is_none() {
+                break;
+            }
+            attack::apply_hit_from(&mut mario, &mut dummy, &mut on_held);
+            let before = bystander.damage;
+            attack::apply_hit_from(&mut mario, &mut bystander, &mut on_bystander);
+            if bystander.damage != before && bystander_hit_at.is_none() {
+                bystander_hit_at = Some(mario.status.anim_frame);
+            }
+            assert_eq!(dummy.damage, 0, "the held fighter is never swung into");
+        }
+        let at = bystander_hit_at.expect("the swing reaches the bystander");
+        assert!((18.0..46.0).contains(&at), "hit on frame {at}");
+        assert_eq!(bystander.damage, 10);
+        // The throw itself still lands on the held fighter.
+        assert_eq!(dummy.damage, 16);
+        // The bystander hit and the throw share Mario's `ThrowB` motion, so
+        // the queue holds that one motion once.
+        assert_eq!(mario.stale.next, 1);
+        assert_eq!(mario.stale.entries[0].0, MotionAttackId::ThrowB);
+    }
+
+    /// Fox's back throw makes two boxes on joint 20 for frames 11..19.
+    #[test]
+    fn fox_back_throw_swing_hits_a_bystander() {
+        let mut fox = grounded(FighterKind::Fox, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        let mut bystander = grounded(FighterKind::Mario, 2, -100.0);
+        grab(&mut fox, &mut dummy);
+        to_catch_wait(&mut fox, &mut dummy);
+        press(&mut fox, 0, -60);
+        frame(&mut fox, &mut dummy);
+        assert_eq!(fox.status.status, Status::ThrowB);
+        let mut record = attack::HitRecord::default();
+        for _ in 0..30 {
+            press(&mut fox, 0, 0);
+            frame(&mut fox, &mut dummy);
+            attack::apply_hit_from(&mut fox, &mut bystander, &mut record);
+        }
+        assert_eq!(bystander.damage, 10);
+    }
+
+    /// A second back throw of the same fighter is staled by the first:
+    /// `ftParamGetStaledDamage(16) == (16 * 0.75 + 0.999) as i32 == 12`.
+    #[test]
+    fn a_repeated_throw_is_staled() {
+        let mut mario = grounded(FighterKind::Mario, 0, 0.0);
+        let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+        let throw_back = |mario: &mut Fighter, dummy: &mut Fighter| {
+            grab(mario, dummy);
+            to_catch_wait(mario, dummy);
+            press(mario, 0, -60);
+            frame(mario, dummy);
+            for _ in 0..60 {
+                press(mario, 0, 0);
+                frame(mario, dummy);
+                if dummy.grab.capture.is_none() {
+                    break;
+                }
+            }
+        };
+        throw_back(&mut mario, &mut dummy);
+        assert_eq!(dummy.damage, 16);
+        let (stale, motion) = (mario.stale, mario.motion);
+        mario = grounded(FighterKind::Mario, 0, 0.0);
+        mario.stale = stale;
+        mario.motion = motion;
+        dummy = grounded(FighterKind::Mario, 1, 150.0);
+        throw_back(&mut mario, &mut dummy);
+        assert_eq!(dummy.damage, 12);
     }
 }

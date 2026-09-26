@@ -194,6 +194,16 @@ const JUMP_BUTTON_MASK: u16 =
 /// button identities.
 const MENU_STICK_NAV_MIN: i8 = 40;
 
+/// The fighter Training spawns for the player: Fox for the Fox capture
+/// scene, Mario otherwise.
+fn training_fighter_kind(capture_scene: Option<GameScene>) -> ssb_game::fighter::FighterKind {
+    if capture_scene == Some(GameScene::Fox) {
+        ssb_game::fighter::FighterKind::Fox
+    } else {
+        ssb_game::fighter::FighterKind::Mario
+    }
+}
+
 fn menu_stick_down_pressed(previous: ControllerState, current: ControllerState) -> bool {
     previous.stick_y > -MENU_STICK_NAV_MIN && current.stick_y <= -MENU_STICK_NAV_MIN
 }
@@ -252,6 +262,10 @@ const BG_TRAINING_SHORT_READ: Color = Color::rgba(200, 200, 0, 255);
 /// The pack opened and read fully but `ssb_rom::pack::Pack::open` rejected
 /// its contents (bad magic/version/bounds).
 const BG_TRAINING_PARSE_FAILED: Color = Color::rgba(0, 90, 170, 255);
+/// `strict_render` builds only: the pack opened but `ssb_rom::strict` found
+/// a reference the draw path would silently skip.
+#[cfg(feature = "strict_render")]
+const BG_TRAINING_STRICT_FAILED: Color = Color::rgba(200, 0, 100, 255);
 const ENTRY_SELECTED: Color = Color::rgba(255, 200, 40, 255);
 const ENTRY_ENABLED: Color = Color::rgba(200, 200, 200, 255);
 const ENTRY_DISABLED: Color = Color::rgba(70, 70, 70, 255);
@@ -291,6 +305,13 @@ unsafe fn run() -> ! {
         (Ok(_), _) => BG_TRAINING_NO_PACK,
     };
     let pack: Option<Pack<'_>> = opened.and_then(|r| r.ok());
+    // Strict rendering mode fails fast instead of drawing around a bad
+    // reference.
+    #[cfg(feature = "strict_render")]
+    let (pack, no_pack_color) = match pack {
+        Some(p) if ssb_rom::strict::first_issue(&p).is_some() => (None, BG_TRAINING_STRICT_FAILED),
+        p => (p, no_pack_color),
+    };
     // Stage MObj material joints are process-lifetime clocks in the original
     // layer setup. Start once with this pack and advance in the same simulation
     // branch as the stage/fighter tick; draw only reads the resulting state.
@@ -316,6 +337,9 @@ unsafe fn run() -> ! {
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
+    // The player's costume, picked with a C-button tap on the Training
+    // entry (`mnPlayers1PTrainingUpdateCostume`, `ssb_game::costume`).
+    let mut player_costume: u8 = 0;
     let mut sim_frame_index: u64 = 0;
     #[cfg(feature = "headless_capture")]
     let mut headless_capture_sent = false;
@@ -357,22 +381,37 @@ unsafe fn run() -> ! {
                         cursor = (cursor + 1) % MENU_ENTRIES;
                     } else if menu_stick_up_pressed(previous_controller, controller) {
                         cursor = (cursor + MENU_ENTRIES - 1) % MENU_ENTRIES;
+                    } else if let (Some(button), true) = (
+                        ssb_game::costume::select_button(pressed),
+                        cursor == TRAINING_ENTRY && play_state.is_none(),
+                    ) {
+                        // The Training select's C-button costume pick,
+                        // denied when the dummy already wears that costume.
+                        let dummy = ssb_game::costume::Slot {
+                            kind: ssb_game::fighter::FighterKind::Mario,
+                            costume: 0,
+                        };
+                        if let Some(costume) = ssb_game::costume::pick(
+                            training_fighter_kind(capture_scene),
+                            button,
+                            dummy,
+                        ) {
+                            player_costume = costume;
+                        }
                     } else if pressed.contains(N64Buttons::A) && cursor == TRAINING_ENTRY {
                         screen = Screen::Training;
                         if play_state.is_none() {
                             weapons = ssb_game::weapon::WeaponPool::default();
                             play_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX).map(|s| {
-                                    play::FighterScene::at_spawn(
+                                    let mut scene = play::FighterScene::at_spawn(
                                         p,
                                         &s,
-                                        if capture_scene == Some(GameScene::Fox) {
-                                            ssb_game::fighter::FighterKind::Fox
-                                        } else {
-                                            ssb_game::fighter::FighterKind::Mario
-                                        },
+                                        training_fighter_kind(capture_scene),
                                         0,
-                                    )
+                                    );
+                                    scene.fighter.costume = player_costume;
+                                    scene
                                 })
                             });
                             dummy_state = pack.as_ref().and_then(|p| {
@@ -427,7 +466,7 @@ unsafe fn run() -> ! {
                         weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
-                        dummy.apply_hit_from(&pl.fighter);
+                        dummy.apply_hit_from(&mut pl.fighter);
                         // `ftMainProcSearchCatch`, in the hit phase.
                         ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
                         ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
@@ -682,7 +721,17 @@ unsafe fn draw_training(
         // immediately before drawing each fighter (RE-164) -- matches
         // `psp-asset-viewer/main.rs`'s own real-camera fighter draw.
         draw_state.configure_fighter_light(stage.light_angle_xy);
-        meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
+        meshdraw::draw_object_posed(
+            p,
+            &obj,
+            &m,
+            &posed[..n],
+            None,
+            draw_state,
+            None,
+            None,
+            u32::from(pl.fighter.costume),
+        );
         draw_state.finish_fighter_light();
     }
 
@@ -715,7 +764,17 @@ unsafe fn draw_training(
             }
             let m = gpu.model_matrix();
             draw_state.configure_fighter_light(stage.light_angle_xy);
-            meshdraw::draw_object_posed(p, &obj, &m, &posed[..n], None, draw_state, None, None, 0);
+            meshdraw::draw_object_posed(
+                p,
+                &obj,
+                &m,
+                &posed[..n],
+                None,
+                draw_state,
+                None,
+                None,
+                u32::from(dummy.fighter.costume),
+            );
             draw_state.finish_fighter_light();
         }
     }
