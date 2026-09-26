@@ -427,6 +427,31 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | CaptainStatus::SpecialHiThrow
             | CaptainStatus::SpecialAirHi => M::SpecialHi,
         },
+        AnyStatus::Kirby(s) => {
+            use crate::status::KirbyStatus as K;
+            match s {
+                K::Attack100Start | K::Attack100Loop | K::Attack100End => M::Attack100,
+                K::JumpAerialF1
+                | K::JumpAerialF2
+                | K::JumpAerialF3
+                | K::JumpAerialF4
+                | K::JumpAerialF5 => M::None,
+                K::ThrowF | K::ThrowFFall | K::ThrowFLanding => M::ThrowF,
+                K::SpecialHi | K::SpecialHiLanding | K::SpecialAirHi | K::SpecialAirHiFall => {
+                    M::SpecialHi
+                }
+                K::SpecialLwStart
+                | K::SpecialLwUnk
+                | K::SpecialLwHold
+                | K::SpecialLwEnd
+                | K::SpecialAirLwStart
+                | K::SpecialAirLwHold
+                | K::SpecialAirLwLanding
+                | K::SpecialAirLwFall
+                | K::SpecialAirLwEnd => M::SpecialLw,
+                _ => M::SpecialN,
+            }
+        }
     }
 }
 

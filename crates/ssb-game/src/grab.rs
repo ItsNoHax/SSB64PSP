@@ -179,6 +179,17 @@ const CAPTAIN_THROW_B: [ThrowHitDesc; 2] = [
     desc(FLY_N, 16, 361, 50, 0, 100),
     desc(None, 8, 361, 100, 0, 0),
 ];
+// `228_KirbyMainMotion.c` (US): the suplex and the back throw.
+pub(crate) const KIRBY_THROW_F: [ThrowHitDesc; 2] = [
+    desc(Some(Status::DamageFlyRoll), 13, 70, 70, 0, 100),
+    desc(None, 6, 361, 100, 0, 0),
+];
+const KIRBY_THROW_B: [ThrowHitDesc; 2] = [
+    desc(Some(Status::DamageFlyTop), 16, 115, 70, 0, 70),
+    desc(None, 8, 361, 100, 0, 0),
+];
+/// `dKirbyMainMotion_0x1C94`, the Inhale script's `SetThrow`.
+pub(crate) const KIRBY_INHALE: [ThrowHitDesc; 2] = [desc(None, 6, 361, 100, 0, 0); 2];
 
 /// `FTThrowReleaseDesc dFTCommonCaptureKnockbackCatch`: what the catcher
 /// suffers when the held fighter breaks free. `{ angle, kbs, kbw, kbb }`.
@@ -293,6 +304,20 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
             flag2: Some((20.0, 2)),
             length: 44.0,
         },
+        // The forward throw is Kirby's own `ThrowF` statuses; the release is
+        // in `ThrowFLanding` (`crate::kirby`).
+        (FighterKind::Kirby, false) => ThrowScript {
+            desc: Some(KIRBY_THROW_F),
+            flag1: None,
+            flag2: None,
+            length: 45.0,
+        },
+        (FighterKind::Kirby, true) => ThrowScript {
+            desc: Some(KIRBY_THROW_B),
+            flag1: None,
+            flag2: Some((24.0, 1)),
+            length: 50.0,
+        },
         // Wait(4) then WaitAsync(9): both throws release at frame 9.
         (FighterKind::Samus, false) => ThrowScript {
             desc: Some(SAMUS_THROW_F),
@@ -338,6 +363,7 @@ pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
         // The tongue, which also carries a swallowed fighter.
         FighterKind::Yoshi => Some(31),
         FighterKind::Captain => Some(29),
+        FighterKind::Kirby => Some(30),
         _ => None,
     }
 }
@@ -377,7 +403,12 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
     // The tongue.
     const YOSHI: [(Hitbox, u8); 1] = [(catch(220.0, 0.0, 0.0, 0.0), 31)];
     const CAPTAIN: [(Hitbox, u8); 1] = [(catch(300.0, 0.0, 0.0, 0.0), 29)];
+    const KIRBY: [(Hitbox, u8); 2] = [
+        (catch(260.0, 0.0, 0.0, -20.0), 30),
+        (catch(160.0, 0.0, 0.0, -160.0), 30),
+    ];
     match base_kind(kind) {
+        FighterKind::Kirby => &KIRBY,
         FighterKind::Yoshi => &YOSHI,
         FighterKind::Captain => &CAPTAIN,
         FighterKind::Link => &LINK,
@@ -498,6 +529,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Link => [32, 10, 5, 0, 0, 0, 0, 0],
         FighterKind::Yoshi => [20, 10, 0, 0, 0, 0, 0, 0],
         FighterKind::Captain => [20, 10, 0, 0, 0, 0, 0, 0],
+        FighterKind::Kirby => [18, 20, 0, 0, 0, 0, 10, 10],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -525,6 +557,8 @@ pub struct Holder {
     pub percent: u16,
     /// `capture_fp->handicap`.
     pub handicap: u8,
+    /// Kirby's `status_vars.kirby.specialn.dist` during an Inhale.
+    pub kirby_dist: ssb_engine::math::Vec2,
 }
 
 /// A throw's damage staled by the catcher at the moment it queued the
@@ -586,6 +620,20 @@ pub enum GrabEvent {
     CaptureCaptain,
     /// Yoshi's release script writes `status_vars.common.captureyoshi.stage`.
     YoshiEggStage(u8),
+    /// Inhale's `ftCommonCaptureKirbyProcCapture`.
+    CaptureKirby,
+    /// `ftKirbySpecialNCatchProcUpdate`: `is_goto_capturewait` and `is_kirby`.
+    KirbyEat { is_kirby: bool },
+    /// `ftKirbySpecialNApplyCaptureDamage`: spit or copy damage, staled.
+    KirbyDamage { staled: StaledThrow },
+    /// `ftCommonThrownKirbyStarSetStatus` / `...CopyStarSetStatus`.
+    KirbyStar { copy: bool, vel: Vec3 },
+    /// Sent by the swallowed fighter: `ftCommonCaptureWaitKirbyUpdateBreakoutVars`
+    /// moves Kirby. `up` jumps a grounded Kirby, `push_x` pushes it.
+    KirbyWiggle { up: bool, push_x: Option<f32> },
+    /// Sent by the swallowed fighter: it broke out, and Kirby takes
+    /// `dFTCommonCaptureKirbyKnockbackCatch`.
+    KirbyBreakout,
 }
 
 const OUTBOX: usize = 4;
@@ -675,6 +723,8 @@ pub fn is_held(status: AnyStatus) -> bool {
                 | Status::CaptureWait
                 | Status::CaptureYoshi
                 | Status::CaptureCaptain
+                | Status::CaptureKirby
+                | Status::CaptureWaitKirby
                 | Status::ThrownDonkeyF
                 | Status::ThrownMarioBStart
                 | Status::ThrownFoxFStart
@@ -696,6 +746,8 @@ fn is_thrown(status: AnyStatus) -> bool {
                     | Status::CaptureWait
                     | Status::CaptureYoshi
                     | Status::CaptureCaptain
+                    | Status::CaptureKirby
+                    | Status::CaptureWaitKirby
             )
         )
 }
@@ -807,8 +859,12 @@ fn check_throw(f: &mut Fighter) -> bool {
 fn set_throw(f: &mut Fighter, is_throwf: bool) {
     let back = !(is_throwf || f.stick.forward(f.facing) >= 0);
     let script = throw_script(f.kind, back);
-    let status = if back { Status::ThrowB } else { Status::ThrowF };
-    status::set_status(f, status, 0.0, StatusTiming::frames(script.length));
+    if !back && crate::kirby::is_kirby(f.kind) {
+        crate::kirby::set_throw_f(f, script.length);
+    } else {
+        let status = if back { Status::ThrowB } else { Status::ThrowF };
+        status::set_status(f, status, 0.0, StatusTiming::frames(script.length));
+    }
     if let Some(desc) = script.desc {
         f.grab.throw_desc = Some(desc);
     }
@@ -852,7 +908,7 @@ fn update_throw(f: &mut Fighter) {
 
 /// The release half of a throw's `SetFlag2`: the held fighter takes the
 /// throw's knockback and the link is dropped.
-fn release_thrown(f: &mut Fighter, lr: f32) {
+pub(crate) fn release_thrown(f: &mut Fighter, lr: f32) {
     let desc = f.grab.throw_desc.map(|d| d[0]).unwrap_or(MARIO_CATCH[0]);
     f.grab.send(GrabEvent::Release {
         lr,
@@ -1094,13 +1150,22 @@ fn apply_capture_knockback(f: &mut Fighter) {
     let Some(holder) = f.grab.holder else {
         return;
     };
+    apply_capture_knockback_with(f, holder, CAPTURE_KNOCKBACK_CAPTURE);
+}
+
+/// [`apply_capture_knockback`] with the capture's own descriptor.
+pub(crate) fn apply_capture_knockback_with(
+    f: &mut Fighter,
+    holder: Holder,
+    desc: (i32, i32, i32, i32),
+) {
     lose_grip(f);
     if !f.is_grounded() {
         f.physics.jumps_used = 1;
         f.pos.z = 0.0;
         f.physics.vel_air.z = 0.0;
     }
-    let (angle, kbs, kbw, kbb) = CAPTURE_KNOCKBACK_CAPTURE;
+    let (angle, kbs, kbw, kbb) = desc;
     let knockback = attack::knockback(
         f.damage,
         0,
@@ -1119,7 +1184,11 @@ fn apply_capture_knockback(f: &mut Fighter) {
 /// `ftCommonCaptureApplyCatchKnockback` @ 0x8014E1D0: the catcher's recoil
 /// when the held fighter escapes.
 fn apply_catch_knockback(f: &mut Fighter, capture_handicap: u8) {
-    let (angle, kbs, kbw, kbb) = CAPTURE_KNOCKBACK_CATCH;
+    apply_catch_knockback_with(f, capture_handicap, CAPTURE_KNOCKBACK_CATCH);
+}
+
+fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32, i32, i32, i32)) {
+    let (angle, kbs, kbw, kbb) = desc;
     let knockback = attack::knockback(
         f.damage,
         0,
@@ -1137,12 +1206,13 @@ fn apply_catch_knockback(f: &mut Fighter, capture_handicap: u8) {
 
 /// Drops the link on the held side (`ftCommonThrownReleaseFighterLoseGrip`
 /// plus `capture_gobj = NULL`), leaving the fighter airborne where it is.
-fn lose_grip(f: &mut Fighter) {
+pub(crate) fn lose_grip(f: &mut Fighter) {
     f.grab.capture = None;
     f.grab.holder = None;
     f.grab.thrown_queue = None;
     f.grab.capture_immune = false;
     f.grab.captain_no_update = false;
+    f.kirby_capture.intangible = false;
     f.is_invisible = false;
     if f.is_grounded() && f.floor.is_none() {
         f.become_airborne();
@@ -1489,6 +1559,9 @@ pub fn update(f: &mut Fighter) -> bool {
             }
         }
         AnyStatus::Common(Status::CaptureWait | Status::CaptureYoshi | Status::CaptureCaptain) => {}
+        AnyStatus::Common(Status::CaptureKirby | Status::CaptureWaitKirby) => {
+            crate::capture_kirby::update_captured(f)
+        }
         AnyStatus::Common(Status::Shouldered) => update_shouldered(f),
         s if is_thrown(s) => update_thrown(f),
         AnyStatus::Donkey(DonkeyStatus::ThrowFWait) => {
@@ -1621,6 +1694,9 @@ pub fn refresh_held_attachment(f: &mut Fighter) {
         update_capture_captain(f, holder);
         return;
     }
+    if crate::capture_kirby::is_captured(f.status.status) {
+        return;
+    }
     let point = held_attachment(f, holder);
     f.pos.x = point.x;
     f.pos.z = point.z;
@@ -1659,6 +1735,10 @@ where
     }
     if f.status.status == Status::CaptureCaptain {
         update_capture_captain(f, holder);
+        return true;
+    }
+    if crate::capture_kirby::is_captured(f.status.status) {
+        crate::capture_kirby::update_held(f, holder);
         return true;
     }
     let pulled = matches!(
@@ -1811,6 +1891,7 @@ fn holder_of(f: &Fighter) -> Holder {
         floor_line: f.floor.map(|s| s.line),
         percent: f.damage,
         handicap: f.handicap,
+        kirby_dist: f.kirby.inhale_dist,
     }
 }
 
@@ -1899,6 +1980,27 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::CaptureYoshi => crate::capture_yoshi::capture(to, from.port, holder_of(from)),
         GrabEvent::CaptureCaptain => capture_captain(to, from.port, holder_of(from)),
         GrabEvent::YoshiEggStage(stage) => to.egg.stage = stage,
+        GrabEvent::CaptureKirby => crate::capture_kirby::capture(to, from.port, holder_of(from)),
+        GrabEvent::KirbyEat { is_kirby } => crate::capture_kirby::on_eaten(to, is_kirby),
+        GrabEvent::KirbyDamage { staled } => {
+            to.damage = to.damage.saturating_add(staled.damage.max(0) as u16);
+            record_throw(from, to, staled, staled.damage);
+        }
+        GrabEvent::KirbyStar { copy, vel } => {
+            crate::capture_kirby::set_star(to, copy, vel, from.port)
+        }
+        GrabEvent::KirbyWiggle { up, push_x } => crate::kirby::on_wiggle(to, up, push_x),
+        GrabEvent::KirbyBreakout => {
+            if to.grab.catch.take().is_some() {
+                to.grab.catch_kind = None;
+                to.grab.capture_immune = false;
+                apply_catch_knockback_with(
+                    to,
+                    from.handicap,
+                    crate::capture_kirby::KNOCKBACK_CATCH,
+                );
+            }
+        }
     }
 }
 
@@ -1913,8 +2015,10 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     }
     let egg_lay = crate::yoshi::egg_lay_searching(catcher);
     let dive = crate::captain::dive_searching(catcher);
+    let inhale = crate::kirby::inhale_searching(catcher);
     if !egg_lay
         && !dive
+        && !inhale
         && (catcher.status.status != Status::Catch
             || !catch_coll_frames(catcher.kind).contains(&catcher.status.anim_frame))
     {
@@ -1923,7 +2027,9 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if other.grab.capture_immune || other.invincible_frames > 0 || other.stocks <= 0 {
         return false;
     }
-    let colls: &[(Hitbox, u8)] = if egg_lay {
+    let colls: &[(Hitbox, u8)] = if inhale {
+        &crate::kirby::INHALE_CATCH
+    } else if egg_lay {
         core::slice::from_ref(&crate::yoshi::EGG_LAY_CATCH)
     } else if dive {
         if catcher.status.anim_frame < 14.0 {
@@ -1945,7 +2051,10 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     if !hit {
         return false;
     }
-    if dive {
+    if inhale {
+        crate::kirby::inhale_catch(catcher, other);
+        catcher.grab.send(GrabEvent::CaptureKirby);
+    } else if dive {
         crate::captain::dive_catch(catcher, other);
     } else if egg_lay {
         crate::yoshi::catch(catcher, other);
@@ -2030,6 +2139,61 @@ mod tests {
         exchange(b, a);
         search_catch(a, b);
         exchange(a, b);
+    }
+
+    #[test]
+    fn kirby_inhales_swallows_and_spits_a_star() {
+        use crate::status::KirbyStatus as K;
+        let mut kirby = grounded(FighterKind::Kirby, 0, 0.0);
+        let mut fox = grounded(FighterKind::Fox, 1, 450.0);
+        press(&mut kirby, 0, 0);
+        tick(&mut kirby);
+        press(&mut kirby, N64Buttons::B, 0);
+        press(&mut fox, 0, 0);
+        frame(&mut kirby, &mut fox);
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::SpecialNStart));
+        for _ in 0..40 {
+            if kirby.status.status == AnyStatus::Kirby(K::SpecialNCatch) {
+                break;
+            }
+            press(&mut kirby, N64Buttons::B, 0);
+            press(&mut fox, 0, 0);
+            frame(&mut kirby, &mut fox);
+        }
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::SpecialNCatch));
+        assert_eq!(fox.status.status, Status::CaptureKirby);
+        for _ in 0..60 {
+            if kirby.status.status == AnyStatus::Kirby(K::SpecialNWait) {
+                break;
+            }
+            press(&mut kirby, N64Buttons::B, 0);
+            press(&mut fox, 0, 0);
+            frame(&mut kirby, &mut fox);
+        }
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::SpecialNWait));
+        assert_eq!(fox.status.status, Status::CaptureWaitKirby);
+        assert!(fox.is_invisible);
+        assert!(crate::capture_kirby::is_intangible(&fox));
+        press(&mut kirby, N64Buttons::A, 0);
+        press(&mut fox, 0, 0);
+        frame(&mut kirby, &mut fox);
+        assert_eq!(kirby.status.status, AnyStatus::Kirby(K::SpecialNThrow));
+        assert_eq!(fox.damage, 10);
+        for _ in 0..10 {
+            if fox.status.status == Status::ThrownKirbyStar {
+                break;
+            }
+            press(&mut kirby, 0, 0);
+            press(&mut fox, 0, 0);
+            frame(&mut kirby, &mut fox);
+        }
+        assert_eq!(fox.status.status, Status::ThrownKirbyStar);
+        assert!(fox.physics.vel_air.x > 0.0);
+        assert!(kirby.grab.catch.is_none() && fox.grab.capture.is_none());
+        // The star never hits the Kirby that spat it.
+        let mut record = attack::HitRecord::default();
+        fox.pos = kirby.pos;
+        assert!(!attack::apply_hit_from(&mut fox, &mut kirby, &mut record));
     }
 
     /// Runs the two-frame `CatchPull` out.

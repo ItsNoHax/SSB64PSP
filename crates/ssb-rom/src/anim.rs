@@ -53,7 +53,7 @@ pub const SLOT_DONKEY_THROWF_WAIT: usize = 99;
 /// First of the thirteen shared grab slots: `Catch`, `CatchPull`, `ThrowF`,
 /// `ThrowB`, `CapturePulled`, then the thrown statuses 181..=188 in
 /// `ftCommonStatus` order. Packed for Mario, Fox, Donkey Kong, Samus, Luigi
-/// Link, Yoshi and Captain Falcon.
+/// Link, Yoshi, Captain Falcon and Kirby.
 pub const SLOT_CATCH: usize = 110;
 /// First of Samus's 22 common attack slots, `Attack11` through
 /// `AttackAirLw` in `ftCommonStatus` order.
@@ -81,9 +81,17 @@ pub const SLOT_YOSHI_SPECIAL_HI: usize = 222;
 pub const SLOT_CAPTAIN_ATTACK11: usize = 233;
 /// First of his 15 extended attack and special slots, without Appear.
 pub const SLOT_CAPTAIN_ATTACK13: usize = 253;
+/// First of Kirby's 16 common attack slots (three forward tilts, one
+/// forward smash), followed by his `LandingAirF` and `LandingAirB`.
+pub const SLOT_KIRBY_ATTACK11: usize = 268;
+/// First of Kirby's 31 own slots, `Attack100Start` through `SpecialNCopy`
+/// in `ftKirbyStatus` order without Appear, the copy abilities,
+/// `SpecialNCatch`, `SpecialAirLwFall` and the aerial inhale statuses, which
+/// reuse the grounded figatrees.
+pub const SLOT_KIRBY_ATTACK100_START: usize = 286;
 
 /// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
-pub const SLOT_COUNT: usize = 268;
+pub const SLOT_COUNT: usize = 317;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -503,8 +511,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 6376,
-            "Eight ported fighters have character and grab slots"
+            missing, 7639,
+            "Nine ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -560,6 +568,14 @@ mod tests {
         assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK11], 1619);
         assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK13], 1621);
         assert_eq!(captain.files[SLOT_CAPTAIN_ATTACK13 + 11], 1658);
+        let kirby = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Kirby")
+            .expect("Kirby is in FTKind order");
+        assert_eq!(kirby.files[SLOT_KIRBY_ATTACK11], 1373);
+        assert_eq!(kirby.files[SLOT_KIRBY_ATTACK100_START], 1375);
+        assert_eq!(kirby.files[SLOT_KIRBY_ATTACK100_START + 30], 1430);
+        assert_ne!(kirby.files[SLOT_CATCH], 0);
         assert_ne!(captain.files[SLOT_CATCH], 0);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo

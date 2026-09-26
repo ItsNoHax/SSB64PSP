@@ -267,6 +267,10 @@ pub struct Fighter {
     pub yoshi: crate::yoshi::YoshiState,
     /// Falcon Punch, Kick and Dive state.
     pub captain: crate::captain::CaptainState,
+    /// Kirby's copy, rapid jab, Stone and Inhale state — `crate::kirby`.
+    pub kirby: crate::kirby::KirbyState,
+    /// This fighter's side of an Inhale — `crate::capture_kirby`.
+    pub kirby_capture: crate::capture_kirby::CaptureKirbyState,
     /// This fighter's side of an Egg Lay — `crate::capture_yoshi`.
     pub egg: crate::capture_yoshi::CaptureYoshiState,
     /// `FTStruct::knockback_resist_status`: knockback a hit loses before it
@@ -346,6 +350,8 @@ impl Fighter {
             link: crate::link::LinkState::default(),
             yoshi: crate::yoshi::YoshiState::default(),
             captain: crate::captain::CaptainState::default(),
+            kirby: crate::kirby::KirbyState::default(),
+            kirby_capture: crate::capture_kirby::CaptureKirbyState::default(),
             egg: crate::capture_yoshi::CaptureYoshiState::default(),
             knockback_resist: 0.0,
             is_special_interrupt: false,
@@ -609,8 +615,9 @@ impl Fighter {
             crate::status::AnyStatus::Link(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Yoshi(_) => crate::status::Status::Wait,
             crate::status::AnyStatus::Captain(_) => crate::status::Status::Wait,
+            crate::status::AnyStatus::Kirby(_) => crate::status::Status::Wait,
         };
-        if crate::captain::apply_ground_physics(self) {
+        if crate::captain::apply_ground_physics(self) || crate::kirby::apply_ground_physics(self) {
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
         {
@@ -712,6 +719,7 @@ impl Fighter {
                     && !crate::link::on_ground_lost(self)
                     && !crate::yoshi::on_ground_lost(self)
                     && !crate::captain::on_ground_lost(self)
+                    && !crate::kirby::on_ground_lost(self)
                     && !crate::capture_yoshi::on_ground_lost(self)
                     && !crate::grab::on_ground_lost(self)
                 {
@@ -765,6 +773,8 @@ impl Fighter {
             && !crate::link::skips_fast_fall(self.status.status)
             && !crate::yoshi::skips_fast_fall(self)
             && !crate::captain::skips_fast_fall(self.status.status)
+            && !crate::kirby::skips_fast_fall(self.status.status)
+            && !crate::capture_kirby::is_star(self.status.status)
         {
             crate::status::check_set_fast_fall(self);
         }
@@ -782,6 +792,8 @@ impl Fighter {
             || crate::link::apply_air_physics(self)
             || crate::yoshi::apply_air_physics(self)
             || crate::captain::apply_air_physics(self)
+            || crate::kirby::apply_air_physics(self)
+            || crate::capture_kirby::apply_air_physics(self)
         {
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
@@ -864,6 +876,13 @@ impl Fighter {
                     return;
                 }
                 if crate::captain::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if crate::kirby::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if crate::capture_kirby::on_landing(self, moved.pos.y, f.normal) {
+                    self.floor = None;
                     return;
                 }
                 if crate::capture_yoshi::on_landing(self, moved.pos.y) {

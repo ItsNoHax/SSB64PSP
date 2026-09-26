@@ -1439,6 +1439,41 @@ pub fn move_data(
 ) -> Option<&'static MoveData> {
     use crate::fighter::FighterKind;
     match (kind, status) {
+        // `dFTCommonMoveset_DamageBumpHit`, in every fighter's motion table.
+        (_, AnyStatus::Common(Status::ThrownKirbyStar)) => Some(&crate::kirby_attack::STAR_MOVE),
+        (FighterKind::Kirby, AnyStatus::Kirby(s)) => {
+            use crate::status::KirbyStatus as K;
+            match s {
+                K::Attack100Loop => Some(&crate::kirby_attack::RAPID_LOOP_FIRST),
+                K::ThrowFLanding => Some(&crate::kirby_attack::THROWF_LANDING),
+                K::SpecialHi | K::SpecialAirHi => Some(&crate::kirby_attack::FINAL_CUTTER),
+                K::SpecialLwUnk | K::SpecialAirLwHold | K::SpecialAirLwFall => {
+                    Some(&crate::kirby_attack::STONE)
+                }
+                _ => None,
+            }
+        }
+        (FighterKind::Kirby, AnyStatus::Common(status)) => match status {
+            Status::Attack11 => Some(&crate::kirby_attack::JAB1),
+            Status::Attack12 => Some(&crate::kirby_attack::JAB2),
+            Status::AttackDash => Some(&crate::kirby_attack::DASH),
+            Status::AttackS3Hi => Some(&crate::kirby_attack::FTILT_HI),
+            Status::AttackS3 => Some(&crate::kirby_attack::FTILT),
+            Status::AttackS3Lw => Some(&crate::kirby_attack::FTILT_LW),
+            Status::AttackHi3 => Some(&crate::kirby_attack::UTILT),
+            Status::AttackLw3 => Some(&crate::kirby_attack::DTILT),
+            Status::AttackS4 => Some(&crate::kirby_attack::FSMASH),
+            Status::AttackHi4 => Some(&crate::kirby_attack::USMASH),
+            Status::AttackLw4 => Some(&crate::kirby_attack::DSMASH),
+            Status::AttackAirN => Some(&crate::kirby_attack::AIR_N),
+            Status::AttackAirF => Some(&crate::kirby_attack::AIR_F),
+            Status::AttackAirB => Some(&crate::kirby_attack::AIR_B),
+            Status::AttackAirHi => Some(&crate::kirby_attack::AIR_HI),
+            Status::AttackAirLw => Some(&crate::kirby_attack::AIR_LW),
+            Status::LandingAirF => Some(&crate::kirby_attack::LANDING_AIR_F),
+            Status::LandingAirNull => Some(&crate::kirby_attack::LANDING_AIR_NULL),
+            _ => None,
+        },
         (FighterKind::Captain, AnyStatus::Captain(s)) => {
             use crate::status::CaptainStatus;
             match s {
@@ -2083,6 +2118,12 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
 /// order.
 fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
     use crate::fighter::FighterKind::{Captain, Donkey, Fox, Link, Luigi, Mario, Samus, Yoshi};
+    if status == AnyStatus::Common(Status::ThrownKirbyStar) {
+        return 0;
+    }
+    if kind == crate::fighter::FighterKind::Kirby {
+        return crate::kirby_attack::joints(status, index).unwrap_or(0);
+    }
     if kind == Donkey
         && matches!(
             status,
@@ -2384,10 +2425,18 @@ pub fn apply_hit_from(
     defender: &mut Fighter,
     hit_record: &mut HitRecord,
 ) -> bool {
-    let Some(move_data) = move_data(attacker.kind, attacker.status.status) else {
+    let Some(move_data) = crate::kirby::move_data(attacker)
+        .or_else(|| move_data(attacker.kind, attacker.status.status))
+    else {
         *hit_record = HitRecord::default();
         return false;
     };
+    // `throw_gobj`: a spat-out star never hits the Kirby that spat it.
+    if attacker.status.status == Status::ThrownKirbyStar
+        && attacker.kirby_capture.thrower == Some(defender.port)
+    {
+        return false;
+    }
     // Link's down air after `ftCommonAttackAirLwProcHit` cleared its boxes.
     if crate::link::attack_colls_cleared(attacker) {
         *hit_record = HitRecord::default();
@@ -2417,6 +2466,10 @@ pub fn apply_hit_from(
         ) {
             hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
         }
+        if attacker.status.status == Status::ThrownKirbyStar {
+            // `ftCommonThrownKirbyStarSetStatus` writes the star damage.
+            hitbox.damage = crate::kirby_attack::star_damage(attacker.kind);
+        }
         hitbox.damage = crate::stale::staled_damage(attacker, hitbox.damage);
         let joint = attack_joint(attacker.kind, attacker.status.status, index);
         let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
@@ -2427,6 +2480,7 @@ pub fn apply_hit_from(
                     crate::stale::record_hit(attacker, defender.port);
                 }
                 hit_record.hit_generation = Some(active.hit_generation);
+                crate::capture_kirby::on_star_hit(attacker);
                 return true;
             }
         }
@@ -2497,6 +2551,9 @@ pub fn apply_hitbox_at(
     ) {
         return HitOutcome::Missed;
     }
+    if crate::capture_kirby::is_intangible(defender) {
+        return HitOutcome::Missed;
+    }
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // the hit record is left alone so the same active window
@@ -2511,7 +2568,20 @@ pub fn apply_hitbox_at(
         crate::capture_yoshi::on_hit(defender, hitbox.damage);
         return HitOutcome::Damaged;
     }
-    let damage = captured_damage(defender, hitbox.damage);
+    let mut damage = captured_damage(defender, hitbox.damage);
+    // `ftMainCheckGetUpdateDamage`: Kirby's Stone soaks the hit, and only
+    // the overflow of its health goes through.
+    let resisting = defender.kirby.is_damage_resist;
+    if !crate::kirby::absorb_damage(defender, &mut damage) {
+        return HitOutcome::Damaged;
+    }
+    let reduced;
+    let hitbox = if resisting {
+        reduced = Hitbox { damage, ..*hitbox };
+        &reduced
+    } else {
+        hitbox
+    };
     // `ftMainUpdateDamageStatFighter`: the status's knockback resistance
     // comes off first, and a hit left with no knockback only flashes
     // (`ftCommonDamageSetDamageColAnim`): no damage status, no `proc_damage`.

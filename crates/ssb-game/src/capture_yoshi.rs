@@ -218,6 +218,7 @@ mod tests {
             floor_line: Some(0),
             percent: 0,
             handicap: crate::stale::HANDICAP_DEFAULT,
+            kirby_dist: ssb_engine::math::Vec2::ZERO,
         }
     }
 
