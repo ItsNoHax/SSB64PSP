@@ -31,6 +31,7 @@ pub fn status_name(scene: &FighterScene) -> &'static str {
         AnyStatus::Captain(_) => return "cap-ext ",
         AnyStatus::Kirby(_) => return "krb-ext ",
         AnyStatus::Pikachu(_) => return "pika-ext",
+        AnyStatus::Purin(_) => return "pur-ext ",
     };
     match current {
         Wait => "wait    ",

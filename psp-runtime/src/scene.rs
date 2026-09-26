@@ -459,6 +459,13 @@ pub fn tick_skeleton_animation(
                 .unwrap_or_else(|| status.anim_slot()),
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Purin as u32 {
+        // `SLOT_PURIN_ATTACK11` through `LandingAirB`.
+        match status {
+            AnyStatus::Common(s) => ssb_game::purin::common_anim_slot(s)
+                .unwrap_or_else(|| status.anim_slot()),
+            _ => status.anim_slot(),
+        }
     } else if kind == FighterKind::Kirby as u32 {
         // `SLOT_KIRBY_ATTACK11` through `LandingAirB`; the extended statuses
         // use `AnyStatus::anim_slot`.

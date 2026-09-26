@@ -198,7 +198,7 @@ SPECIAL_SLOTS += [
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
 GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi", "Captain",
-                 "Kirby", "Pikachu"}
+                 "Kirby", "Pikachu", "Purin"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -519,9 +519,55 @@ LATE_SPECIAL_SLOTS += [
     ('KirbyCopyPikachuSpecialAirN', 'Kirby', 'FTKirbyAnimThunderJoltAir'),
 ]
 
+# Jigglypuff's common attacks, the two dedicated aerial landings (the forward
+# one names Kirby's figatree), then her own statuses in `ftPurinStatus` order
+# without the unreachable rapid jab and Appear (`232_PurinMainMotion.c`,
+# `dFTPurinMotionDescs`). Rest and Sing have one figatree each, named after
+# their aerial use; the grounded statuses share them.
+LATE_SPECIAL_SLOTS += [
+    ("PurinAttack11", "Purin", "FTPurinAnimJab1"),
+    ("PurinAttack12", "Purin", "FTPurinAnimJab2"),
+    ("PurinAttackDash", "Purin", "FTPurinAnimDashAttack"),
+    ("PurinAttackS3Hi", "Purin", "FTPurinAnimFTiltHigh"),
+    ("PurinAttackS3", "Purin", "FTPurinAnimFTilt"),
+    ("PurinAttackS3Lw", "Purin", "FTPurinAnimFTiltLow"),
+    ("PurinAttackHi3", "Purin", "FTPurinAnimUTilt"),
+    ("PurinAttackLw3", "Purin", "FTPurinAnimDTilt"),
+    ("PurinAttackS4", "Purin", "FTPurinAnimFSmash"),
+    ("PurinAttackHi4", "Purin", "FTPurinAnimUSmash"),
+    ("PurinAttackLw4", "Purin", "FTPurinAnimDSmash"),
+    ("PurinAttackAirN", "Purin", "FTPurinAnimAttackAirN"),
+    ("PurinAttackAirF", "Purin", "FTPurinAnimAttackAirF"),
+    ("PurinAttackAirB", "Purin", "FTPurinAnimAttackAirB"),
+    ("PurinAttackAirHi", "Purin", "FTPurinAnimAttackAirU"),
+    ("PurinAttackAirLw", "Purin", "FTPurinAnimAttackAirD"),
+    ("PurinLandingAirF", "Purin", "FTKirbyAnimLandingAirF"),
+    ("PurinLandingAirB", "Purin", "FTPurinAnimLandingAirB"),
+    ("PurinJumpAerialF1", "Purin", "FTPurinAnimJump2"),
+    ("PurinJumpAerialF2", "Purin", "FTPurinAnimJump3"),
+    ("PurinJumpAerialF3", "Purin", "FTPurinAnimJump4"),
+    ("PurinJumpAerialF4", "Purin", "FTPurinAnimJump5"),
+    ("PurinJumpAerialF5", "Purin", "FTPurinAnimJump6"),
+    ("PurinSpecialN", "Purin", "FTPurinAnimPoundGround"),
+    ("PurinSpecialAirN", "Purin", "FTPurinAnimPoundAir"),
+    ("PurinSpecialHi", "Purin", "FTPurinAnimSingAir"),
+    ("PurinSpecialLw", "Purin", "FTPurinAnimRestAir"),
+    # Kirby's Pound names Jigglypuff's figatrees (`dFTKirbyMotionDescs`).
+    ("KirbyCopyPurinSpecialN", "Kirby", "FTPurinAnimPoundGround"),
+    ("KirbyCopyPurinSpecialAirN", "Kirby", "FTPurinAnimPoundAir"),
+]
+
+# Shared statuses added after the per-fighter slots, so earlier slot numbers
+# stay stable. They resolve through the common status -> motion pairing, for
+# the same fighters as `GRAB_SLOTS`.
+LATE_COMMON_SLOTS = [
+    ("FuraSleep", 165),
+]
+
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]
              + [(name, status, None) for name, status in GRAB_SLOTS]
-             + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS])
+             + [(name, None, None) for name, _, _ in LATE_SPECIAL_SLOTS]
+             + [(name, status, None) for name, status in LATE_COMMON_SLOTS])
 
 # The slots whose animation ends on its own, and whose length the status
 # machine therefore reads (RE-035). Everything after them loops until it is
@@ -795,17 +841,21 @@ def resolve(refs):
             entry.append((slot, fid, sym, cache[fid], runtime))
         for slot, target, sym in SPECIAL_SLOTS:
             special(slot, target, sym)
-        for slot, status in GRAB_SLOTS:
+        def common(slot, status):
             sym, runtime = table[smot[status]] if fighter in GRAB_FIGHTERS else (None, False)
             if sym is None:
                 entry.append((slot, 0, None, 0, False))
-                continue
+                return
             fid, path = files[sym]
             if fid not in cache:
                 cache[fid] = file_frames(path)
             entry.append((slot, fid, sym, cache[fid], runtime))
+        for slot, status in GRAB_SLOTS:
+            common(slot, status)
         for slot, target, sym in LATE_SPECIAL_SLOTS:
             special(slot, target, sym)
+        for slot, status in LATE_COMMON_SLOTS:
+            common(slot, status)
         rows.append((fighter, entry))
     return rows, problems
 

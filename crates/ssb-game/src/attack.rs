@@ -134,6 +134,13 @@ pub struct ActiveHitbox {
     /// generation even when the two frame windows touch; the original's
     /// per-attack hit record is cleared with the old collision object.
     pub hit_generation: u8,
+    /// `elem == nGMHitElementSleep`: a hit sends the target to `FuraSleep`
+    /// instead of a damage status (`ftCommonDamageGotoDamageStatus`).
+    pub sleep: bool,
+    /// `ga` bit 1: the box reaches airborne targets.
+    pub hits_air: bool,
+    /// `ga` bit 2: the box reaches grounded targets.
+    pub hits_ground: bool,
 }
 
 impl ActiveHitbox {
@@ -143,7 +150,22 @@ impl ActiveHitbox {
             start,
             end,
             hit_generation: 0,
+            sleep: false,
+            hits_air: true,
+            hits_ground: true,
         }
+    }
+
+    /// `nGMHitElementSleep`.
+    pub const fn sleep(mut self) -> Self {
+        self.sleep = true;
+        self
+    }
+
+    /// `ga == 2`: only grounded targets (`ftMainSearchFighterAttack`).
+    pub const fn ground_only(mut self) -> Self {
+        self.hits_air = false;
+        self
     }
 
     /// Marks an independently-created source collision generation. Most
@@ -1449,6 +1471,9 @@ pub fn move_data(
             ),
         ) => Some(&crate::pikachu_attack::THUNDERHIT),
         (FighterKind::Pikachu, AnyStatus::Common(s)) => crate::pikachu::move_data(s),
+        (FighterKind::Purin, s @ (AnyStatus::Common(_) | AnyStatus::Purin(_))) => {
+            crate::purin::move_data(s)
+        }
         (FighterKind::Kirby, AnyStatus::Kirby(s)) => {
             use crate::status::KirbyStatus as K;
             match s {
@@ -1463,6 +1488,9 @@ pub fn move_data(
                 }
                 K::CopyDonkeySpecialNFull | K::CopyDonkeySpecialAirNFull => {
                     Some(&crate::kirby_attack::COPY_GIANT_PUNCH_FULL)
+                }
+                K::CopyPurinSpecialN | K::CopyPurinSpecialAirN => {
+                    Some(&crate::purin_attack::COPY_POUND)
                 }
                 K::CopyCaptainSpecialN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH),
                 K::CopyCaptainSpecialAirN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH_AIR),
@@ -2140,6 +2168,9 @@ fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usi
     if kind == crate::fighter::FighterKind::Pikachu {
         return crate::pikachu_attack::joints(status, index);
     }
+    if kind == crate::fighter::FighterKind::Purin {
+        return crate::purin_attack::joints(status, index);
+    }
     if kind == crate::fighter::FighterKind::Kirby {
         return crate::kirby_attack::joints(status, index).unwrap_or(0);
     }
@@ -2475,6 +2506,12 @@ pub fn apply_hit_from(
         if hit_record.hit_generation == Some(active.hit_generation) {
             continue;
         }
+        // `ftMainSearchFighterAttack`: `is_hit_air` / `is_hit_ground`.
+        if (defender.is_grounded() && !active.hits_ground)
+            || (!defender.is_grounded() && !active.hits_air)
+        {
+            continue;
+        }
         let mut hitbox = active.hitbox;
         if matches!(
             attacker.status.status,
@@ -2493,7 +2530,13 @@ pub fn apply_hit_from(
         hitbox.damage = crate::stale::staled_damage(attacker, hitbox.damage);
         let joint = attack_joint(attacker.kind, attacker.status.status, index);
         let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
-        match apply_hitbox_at(&hitbox, hitbox_pos, attacker.handicap, defender) {
+        match apply_hitbox_at_element(
+            &hitbox,
+            hitbox_pos,
+            attacker.handicap,
+            defender,
+            active.sleep,
+        ) {
             HitOutcome::Missed => continue,
             outcome => {
                 if outcome == HitOutcome::Damaged {
@@ -2563,6 +2606,17 @@ pub fn apply_hitbox_at(
     attack_handicap: u8,
     defender: &mut Fighter,
 ) -> HitOutcome {
+    apply_hitbox_at_element(hitbox, attacker_pos, attack_handicap, defender, false)
+}
+
+/// [`apply_hitbox_at`] with the box's sleep element.
+pub fn apply_hitbox_at_element(
+    hitbox: &Hitbox,
+    attacker_pos: Vec3,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+    sleep: bool,
+) -> HitOutcome {
     if !spheres_overlap(
         attacker_pos,
         hitbox.radius,
@@ -2571,7 +2625,7 @@ pub fn apply_hitbox_at(
     ) {
         return HitOutcome::Missed;
     }
-    if crate::capture_kirby::is_intangible(defender) {
+    if crate::capture_kirby::is_intangible(defender) || crate::purin::is_intangible(defender) {
         return HitOutcome::Missed;
     }
     if defender.invincible_frames > 0 {
@@ -2602,6 +2656,19 @@ pub fn apply_hitbox_at(
     } else {
         hitbox
     };
+    if sleep {
+        // `ftCommonDamageUpdateMain`: a sleep hit always leaves the current
+        // status, even without knockback, and a held fighter loses the hold
+        // (`ftCommonDamageCheckCatchResist`). Percent still takes the damage.
+        defender.damage = defender.damage.saturating_add(damage.max(0) as u16);
+        if defender.grab.capture.is_some() {
+            crate::grab::release_on_capture_hit(defender);
+        } else if defender.grab.catch.is_some() {
+            crate::grab::release_on_hit(defender);
+        }
+        status::set_fura_sleep(defender);
+        return HitOutcome::Damaged;
+    }
     // `ftMainUpdateDamageStatFighter`: the status's knockback resistance
     // comes off first, and a hit left with no knockback only flashes
     // (`ftCommonDamageSetDamageColAnim`): no damage status, no `proc_damage`.

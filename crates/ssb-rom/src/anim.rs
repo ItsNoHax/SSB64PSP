@@ -94,11 +94,23 @@ pub const SLOT_KIRBY_ATTACK100_START: usize = 286;
 /// `CopyYoshiSpecialAirNRelease`.
 pub const SLOT_KIRBY_COPY_MARIO_SPECIAL_N: usize = 317;
 
-/// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
 pub const SLOT_PIKACHU_ATTACK11: usize = 342;
 pub const SLOT_PIKACHU_SPECIAL_N: usize = 359;
 pub const SLOT_KIRBY_COPY_PIKACHU_SPECIAL_N: usize = 373;
-pub const SLOT_COUNT: usize = 375;
+/// First of Jigglypuff's 18 common attack slots (three forward tilts, one
+/// forward smash), followed by her `LandingAirF` (Kirby's figatree) and
+/// `LandingAirB`.
+pub const SLOT_PURIN_ATTACK11: usize = 375;
+/// First of Jigglypuff's nine own slots: `JumpAerialF1` through
+/// `JumpAerialF5`, then Pound, Pound in the air, Sing and Rest. Sing and Rest
+/// have one figatree each for the grounded and aerial statuses.
+pub const SLOT_PURIN_JUMP_AERIAL_F1: usize = 393;
+pub const SLOT_KIRBY_COPY_PURIN_SPECIAL_N: usize = 402;
+/// `FuraSleep`, the shared status Sing puts its targets in.
+pub const SLOT_FURA_SLEEP: usize = 404;
+
+/// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
+pub const SLOT_COUNT: usize = 405;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -518,8 +530,8 @@ mod tests {
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
         assert_eq!(
-            missing, 9137,
-            "Ten ported fighters have character and grab slots"
+            missing, 9895,
+            "Eleven ported fighters have character and grab slots"
         );
         let mario = FIGHTER_ANIMS
             .iter()
@@ -586,6 +598,17 @@ mod tests {
         assert_eq!(kirby.files[SLOT_KIRBY_COPY_MARIO_SPECIAL_N + 24], 1442);
         assert_ne!(kirby.files[SLOT_CATCH], 0);
         assert_ne!(captain.files[SLOT_CATCH], 0);
+        let purin = FIGHTER_ANIMS
+            .iter()
+            .find(|fighter| fighter.name == "Purin")
+            .expect("Jigglypuff is in FTKind order");
+        assert_eq!(purin.files[SLOT_PURIN_ATTACK11], 1446); // Jab1
+        assert_eq!(purin.files[SLOT_PURIN_ATTACK11 + 16], 1392); // Kirby's LandingAirF
+        assert_eq!(purin.files[SLOT_PURIN_JUMP_AERIAL_F1], 1471); // Jump2
+        assert_eq!(purin.files[SLOT_PURIN_JUMP_AERIAL_F1 + 8], 1501); // Rest
+        assert_eq!(kirby.files[SLOT_KIRBY_COPY_PURIN_SPECIAL_N], 1502); // Pound
+        assert_eq!(purin.files[SLOT_FURA_SLEEP], kirby.files[SLOT_FURA_SLEEP]); // Kirby's Sleep
+        assert_eq!(mario.files[SLOT_FURA_SLEEP], 522);
 
         // Cargo reuses one held-pose file for five statuses, and both cargo
         // throws share one figatree (`dFTDonkeyMotionDescs`).

@@ -306,9 +306,10 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         },
         // The forward throw is Kirby's own `ThrowF` statuses; the release is
         // in `ThrowFLanding` (`crate::kirby`).
+        // Status 52 in both descriptors is `DamageFlyN`.
         (FighterKind::Pikachu, false) => ThrowScript {
             desc: Some([
-                desc(Some(Status::DamageFlyHi), 12, 45, 70, 0, 80),
+                desc(FLY_N, 12, 45, 70, 0, 80),
                 desc(None, 6, 361, 100, 0, 0),
             ]),
             flag1: None,
@@ -317,12 +318,33 @@ fn throw_script(kind: FighterKind, back: bool) -> ThrowScript {
         },
         (FighterKind::Pikachu, true) => ThrowScript {
             desc: Some([
-                desc(Some(Status::DamageFlyHi), 18, 45, 80, 0, 60),
+                desc(FLY_N, 18, 45, 80, 0, 60),
                 desc(None, 8, 361, 100, 0, 0),
             ]),
             flag1: None,
             flag2: Some((34.0, 2)),
             length: 43.0,
+        },
+        // `dPurinMainMotion_ThrowF`: `Wait(4)`, `WaitAsync(8)`, then
+        // `SetFlag2(1)`; the forward throw launches into `DamageFlyRoll`.
+        (FighterKind::Purin, false) => ThrowScript {
+            desc: Some([
+                desc(Some(Status::DamageFlyRoll), 14, 90, 50, 0, 90),
+                desc(None, 6, 361, 100, 0, 0),
+            ]),
+            flag1: None,
+            flag2: Some((8.0, 1)),
+            length: 40.0,
+        },
+        // `dPurinMainMotion_ThrowB`: `SetFlag2(2)` at `WaitAsync(24)`.
+        (FighterKind::Purin, true) => ThrowScript {
+            desc: Some([
+                desc(FLY_N, 16, 45, 70, 0, 80),
+                desc(None, 8, 361, 100, 0, 0),
+            ]),
+            flag1: None,
+            flag2: Some((24.0, 2)),
+            length: 50.0,
         },
         (FighterKind::Kirby, false) => ThrowScript {
             desc: Some(KIRBY_THROW_F),
@@ -382,6 +404,7 @@ pub fn itemheavy_joint(kind: FighterKind) -> Option<usize> {
         FighterKind::Yoshi => Some(31),
         FighterKind::Captain => Some(29),
         FighterKind::Kirby | FighterKind::Pikachu => Some(30),
+        FighterKind::Purin => Some(29),
         _ => None,
     }
 }
@@ -426,8 +449,14 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
         (catch(260.0, 0.0, 0.0, -20.0), 30),
         (catch(160.0, 0.0, 0.0, -160.0), 30),
     ];
+    // `dPurinMainMotion_Catch`: two boxes on joint 29.
+    const PURIN: [(Hitbox, u8); 2] = [
+        (catch(240.0, 0.0, 0.0, -30.0), 29),
+        (catch(160.0, 0.0, 0.0, -160.0), 29),
+    ];
     match base_kind(kind) {
         FighterKind::Kirby => &KIRBY,
+        FighterKind::Purin => &PURIN,
         FighterKind::Pikachu => &PIKACHU,
         FighterKind::Yoshi => &YOSHI,
         FighterKind::Captain => &CAPTAIN,
@@ -551,6 +580,7 @@ pub fn thrown_length(held: FighterKind, status: Status) -> Option<f32> {
         FighterKind::Captain => [20, 10, 0, 0, 0, 0, 0, 0],
         FighterKind::Kirby => [18, 20, 0, 0, 0, 0, 10, 10],
         FighterKind::Pikachu => [20, 10, 0, 0, 0, 0, 0, 0],
+        FighterKind::Purin => [18, 20, 0, 0, 0, 0, 10, 10],
         _ => [0; 8],
     };
     let index = (status as u16).checked_sub(Status::ThrownDonkeyF as u16)? as usize;
@@ -2591,8 +2621,45 @@ mod tests {
             assert_eq!(pika.status.anim_frame, release);
             assert_eq!(pika.facing, facing);
             assert_eq!(dummy.damage, damage);
-            assert_eq!(dummy.status.status, Status::DamageFlyHi);
+            assert_eq!(dummy.status.status, Status::DamageFlyN);
             assert_eq!(dummy.physics.vel_knockback.x < 0.0, back);
+        }
+    }
+
+    #[test]
+    fn purin_throws_release_on_source_frames() {
+        for (back, release, damage, status) in [
+            (false, 8.0, 14, Status::DamageFlyRoll),
+            (true, 24.0, 16, Status::DamageFlyN),
+        ] {
+            let mut purin = grounded(FighterKind::Purin, 0, 0.0);
+            let mut dummy = grounded(FighterKind::Mario, 1, 150.0);
+            grab(&mut purin, &mut dummy);
+            assert_eq!(dummy.grab.capture, Some(purin.port));
+            to_catch_wait(&mut purin, &mut dummy);
+            press(
+                &mut purin,
+                if back { 0 } else { N64Buttons::A },
+                if back { -60 } else { 0 },
+            );
+            frame(&mut purin, &mut dummy);
+            for _ in 0..45 {
+                press(&mut purin, 0, 0);
+                frame(&mut purin, &mut dummy);
+                if dummy.grab.capture.is_none() {
+                    break;
+                }
+            }
+            assert_eq!(purin.status.anim_frame, release);
+            assert_eq!(dummy.damage, damage);
+            assert_eq!(dummy.status.status, status);
+            if back {
+                assert!(dummy.physics.vel_knockback.x < 0.0);
+            } else {
+                // Angle 90: straight up.
+                assert!(dummy.physics.vel_knockback.x.abs() < 1e-3);
+                assert!(dummy.physics.vel_knockback.y > 0.0);
+            }
         }
     }
 

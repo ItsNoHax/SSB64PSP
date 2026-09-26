@@ -526,6 +526,8 @@ impl Status {
             Status::ThrownCommon => 120,
             Status::ThrownFoxF => 121,
             Status::ThrownFoxB => 122,
+            // `ssb_rom::anim::SLOT_FURA_SLEEP`.
+            Status::FuraSleep => 404,
             // Every other status (the bulk of the just-added common table,
             // `Status` doc comment): no animation is extracted for it yet.
             // Same fallback as `Attack11` — keep the current pose rather than
@@ -831,8 +833,26 @@ pub enum PikachuStatus {
     SpecialAirHiEnd = 237,
 }
 
-/// Kirby's `ftKirbyStatus` table without the entry statuses and the copy
-/// abilities of the fighters not yet ported (Pikachu, Jigglypuff, Ness).
+/// Jigglypuff's source `ftPurinStatus` ordinals, without the unreachable
+/// rapid jab (220-222, `crate::purin`) and Appear (228-229).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u16)]
+pub enum PurinStatus {
+    JumpAerialF1 = 223,
+    JumpAerialF2 = 224,
+    JumpAerialF3 = 225,
+    JumpAerialF4 = 226,
+    JumpAerialF5 = 227,
+    SpecialN = 230,
+    SpecialAirN = 231,
+    SpecialHi = 232,
+    SpecialAirHi = 233,
+    SpecialLw = 234,
+    SpecialAirLw = 235,
+}
+
+/// Kirby's `ftKirbyStatus` table without the entry statuses and Ness's copy
+/// ability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 pub enum KirbyStatus {
@@ -866,6 +886,8 @@ pub enum KirbyStatus {
     CopyDonkeySpecialAirNEnd = 247,
     CopyDonkeySpecialNFull = 248,
     CopyDonkeySpecialAirNFull = 249,
+    CopyPikachuSpecialN = 252,
+    CopyPikachuSpecialAirN = 253,
     SpecialHi = 256,
     SpecialHiLanding = 257,
     SpecialAirHi = 258,
@@ -903,8 +925,8 @@ pub enum KirbyStatus {
     CopyLinkSpecialAirN = 290,
     CopyLinkSpecialAirNReturn = 291,
     CopyLinkSpecialAirNEmpty = 292,
-    CopyPikachuSpecialN = 293,
-    CopyPikachuSpecialAirN = 294,
+    CopyPurinSpecialN = 293,
+    CopyPurinSpecialAirN = 294,
     CopyCaptainSpecialN = 295,
     CopyCaptainSpecialAirN = 296,
     CopyYoshiSpecialN = 297,
@@ -932,6 +954,7 @@ pub enum AnyStatus {
     Captain(CaptainStatus),
     Kirby(KirbyStatus),
     Pikachu(PikachuStatus),
+    Purin(PurinStatus),
 }
 
 impl AnyStatus {
@@ -1007,6 +1030,7 @@ impl AnyStatus {
             AnyStatus::Captain(_) => true,
             AnyStatus::Kirby(k) => crate::kirby::is_grounded(k),
             AnyStatus::Pikachu(p) => crate::pikachu::is_grounded(p),
+            AnyStatus::Purin(p) => crate::purin::is_grounded(p),
         }
     }
 
@@ -1022,6 +1046,7 @@ impl AnyStatus {
             AnyStatus::Captain(_) => false,
             AnyStatus::Kirby(_) => false,
             AnyStatus::Pikachu(_) => false,
+            AnyStatus::Purin(_) => false,
         }
     }
 
@@ -1042,6 +1067,7 @@ impl AnyStatus {
             AnyStatus::Captain(_) => false,
             AnyStatus::Kirby(_) => false,
             AnyStatus::Pikachu(_) => false,
+            AnyStatus::Purin(_) => false,
         }
     }
 
@@ -1185,6 +1211,7 @@ impl AnyStatus {
             },
             AnyStatus::Kirby(k) => crate::kirby::anim_slot(k),
             AnyStatus::Pikachu(p) => crate::pikachu::anim_slot(p),
+            AnyStatus::Purin(p) => crate::purin::anim_slot(p),
         }
     }
 
@@ -1213,6 +1240,7 @@ impl AnyStatus {
             AnyStatus::Captain(_) => 1.0,
             AnyStatus::Kirby(_) => 1.0,
             AnyStatus::Pikachu(_) => 1.0,
+            AnyStatus::Purin(_) => 1.0,
         }
     }
 }
@@ -1624,6 +1652,21 @@ pub fn set_guard_off(f: &mut Fighter) {
 pub fn set_shield_break_fly(f: &mut Fighter) {
     set_status(f, Status::ShieldBreakFly, 0.0, StatusTiming::unknown());
     f.guard.shield_health = GUARD_HEALTH_BREAK_RESPAWN;
+}
+
+/// `FTCOMMON_FURASLEEP_BREAKOUT_WAIT_DEFAULT` and the US
+/// `FTCOMMON_FURASLEEP_BREAKOUT_WAIT_MIN`.
+pub const FURASLEEP_BREAKOUT_WAIT_DEFAULT: i32 = 300;
+pub const FURASLEEP_BREAKOUT_WAIT_MIN: i32 = 75;
+
+/// `ftCommonFuraSleepSetStatus`: Sing's target sleeps for longer the less
+/// damage it has taken, and mashes out through the capture breakout. The
+/// colour animation is presentation.
+pub fn set_fura_sleep(f: &mut Fighter) {
+    set_status(f, Status::FuraSleep, 0.0, StatusTiming::unknown());
+    let wait = (FURASLEEP_BREAKOUT_WAIT_DEFAULT - i32::from(f.damage)).max(0)
+        + FURASLEEP_BREAKOUT_WAIT_MIN;
+    crate::grab::init_breakout(f, wait);
 }
 
 /// `ftCommonGuardSetOffSetStatus` @ `ftcommonguard2.c:113`: a hit landing on
@@ -2483,6 +2526,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
+            | crate::fighter::FighterKind::Purin
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2526,6 +2570,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
         }
         crate::fighter::FighterKind::Kirby => crate::kirby::set_special_n(f),
         crate::fighter::FighterKind::Pikachu => crate::pikachu::set_special_n(f),
+        crate::fighter::FighterKind::Purin => crate::purin::set_special_n(f),
         _ => unreachable!(),
     }
     true
@@ -2570,6 +2615,7 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
+            | crate::fighter::FighterKind::Purin
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
@@ -2577,6 +2623,8 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
     }
     if f.kind == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_hi(f);
+    } else if f.kind == crate::fighter::FighterKind::Purin {
+        crate::purin::set_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_hi(f);
     } else if f.kind == crate::fighter::FighterKind::Captain {
@@ -2738,6 +2786,7 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Captain
             | crate::fighter::FighterKind::Kirby
             | crate::fighter::FighterKind::Pikachu
+            | crate::fighter::FighterKind::Purin
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
@@ -2745,6 +2794,8 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
     }
     if f.kind == crate::fighter::FighterKind::Pikachu {
         crate::pikachu::set_special_lw(f);
+    } else if f.kind == crate::fighter::FighterKind::Purin {
+        crate::purin::set_special_lw(f);
     } else if f.kind == crate::fighter::FighterKind::Kirby {
         crate::kirby::set_special_lw(f);
     } else if f.kind == crate::fighter::FighterKind::Captain {
@@ -3444,7 +3495,10 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirN) {
         return switch_mario_fireball_ground(f);
     }
-    if crate::kirby::set_landing_air(f) || crate::pikachu::set_landing_air(f) {
+    if crate::kirby::set_landing_air(f)
+        || crate::pikachu::set_landing_air(f)
+        || crate::purin::set_landing_air(f)
+    {
         return;
     }
     if f.status.status == AnyStatus::Mario(MarioStatus::SpecialAirLw) {
@@ -3599,6 +3653,9 @@ fn rapid_inputs_min(kind: crate::fighter::FighterKind) -> Option<u8> {
         crate::fighter::FighterKind::Link => Some(5),
         crate::fighter::FighterKind::Captain => Some(6),
         crate::fighter::FighterKind::Kirby => Some(4),
+        // Counted, but `Jab2` never sets flag 1, so the loop never starts
+        // (`crate::purin`'s module docs).
+        crate::fighter::FighterKind::Purin => Some(4),
         _ => None,
     }
 }
@@ -3645,6 +3702,9 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
             Some(crate::captain_attack::JAB2_FLAG1_FRAME)
         }
         (crate::fighter::FighterKind::Pikachu, Status::Attack11) => Some(10.0),
+        (crate::fighter::FighterKind::Purin, Status::Attack11) => {
+            Some(crate::purin_attack::JAB1_FLAG1_FRAME)
+        }
         (crate::fighter::FighterKind::Kirby, Status::Attack11) => {
             Some(crate::kirby_attack::JAB1_FLAG1_FRAME)
         }
@@ -4191,6 +4251,9 @@ pub fn check_jump_aerial(f: &mut Fighter) -> bool {
     if crate::kirby::is_kirby(f.kind) {
         return crate::kirby::check_jump_aerial(f);
     }
+    if crate::purin::is_purin(f.kind) {
+        return crate::purin::check_jump_aerial(f);
+    }
     if f.physics.jumps_used >= f.attributes.jumps_max {
         return false;
     }
@@ -4328,6 +4391,17 @@ pub fn update(f: &mut Fighter) {
                 f.is_special_interrupt = true;
             } else {
                 ground_interrupt(f);
+            }
+        }
+        // `ftCommonFuraSleepProcUpdate`: every mash takes three extra frames
+        // off the wait.
+        Status::FuraSleep => {
+            f.grab.breakout_wait -= 1;
+            let before = f.grab.breakout_wait;
+            crate::grab::update_breakout(f);
+            f.grab.breakout_wait += (f.grab.breakout_wait - before) * 3;
+            if f.grab.breakout_wait <= 0 {
+                set_wait(f);
             }
         }
         // `ftAnimEndSetWait`: the whole update function is the animation-end
@@ -4602,10 +4676,11 @@ pub fn update(f: &mut Fighter) {
         // `LandingAirF`/`Hi`/`B`/`Lw` have no extracted animation length
         // (`set_landing_air`'s docs), so they collapse to `Wait` on the tick
         // after they are entered.
-        // Kirby's two dedicated landings carry extracted lengths and a
-        // landing hitbox (`crate::kirby::set_landing_air`).
-        Status::LandingAirF | Status::LandingAirB
-            if crate::kirby::is_kirby(f.kind) && f.status.timing.anim_length.is_some() =>
+        // The fighter-specific landings that carry extracted lengths
+        // (`crate::kirby::set_landing_air` and its Pikachu and Jigglypuff
+        // counterparts) run to their end.
+        Status::LandingAirF | Status::LandingAirB | Status::LandingAirLw
+            if f.status.timing.anim_length.is_some() =>
         {
             if f.status.animation_ended() {
                 set_wait(f);
@@ -4672,6 +4747,7 @@ fn update_extended(f: &mut Fighter) {
         AnyStatus::Captain(_) => crate::captain::update(f),
         AnyStatus::Kirby(_) => crate::kirby::update(f),
         AnyStatus::Pikachu(_) => crate::pikachu::update(f),
+        AnyStatus::Purin(_) => crate::purin::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {
