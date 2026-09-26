@@ -31,6 +31,8 @@ pub mod link;
 mod link_attack;
 mod luigi_attack;
 pub mod physics;
+pub mod pikachu;
+mod pikachu_attack;
 pub mod samus;
 mod samus_attack;
 pub mod shadow;

@@ -427,6 +427,19 @@ pub fn status_attack_id(kind: FighterKind, status: AnyStatus) -> MotionAttackId 
             | CaptainStatus::SpecialHiThrow
             | CaptainStatus::SpecialAirHi => M::SpecialHi,
         },
+        AnyStatus::Pikachu(s) => {
+            use crate::status::PikachuStatus as P;
+            match s {
+                P::SpecialN | P::SpecialAirN => M::SpecialN,
+                P::SpecialHiStart
+                | P::SpecialHi
+                | P::SpecialHiEnd
+                | P::SpecialAirHiStart
+                | P::SpecialAirHi
+                | P::SpecialAirHiEnd => M::SpecialLw,
+                _ => M::SpecialHi,
+            }
+        }
         AnyStatus::Kirby(s) => {
             use crate::status::KirbyStatus as K;
             if let Some(id) = crate::kirby_copy::attack_id(s) {

@@ -81,6 +81,9 @@ impl LineKind {
 /// One collision vertex.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CollisionVertex {
+    /// Original vertex-data index. Endpoint connectivity compares this
+    /// identity, not coordinates or movable-group membership.
+    pub vertex_id: u16,
     /// Position in game units. Collision is planar; there is no z.
     pub pos: [i16; 2],
     /// Upper byte is surface flags (drop-through, cliff), lower byte the
@@ -205,6 +208,7 @@ pub fn read(file: &File, at: u32) -> Option<CollisionMap> {
         .map(|i| {
             let v = vertex_data + i * VERTEX_SIZE;
             Some(CollisionVertex {
+                vertex_id: i as u16,
                 pos: [read_i16(data, v)?, read_i16(data, v + 2)?],
                 flags: read_u16(data, v + 4)?,
             })
@@ -340,12 +344,16 @@ mod tests {
         assert_eq!(floors[0].points[0].pos, [-2318, 0]);
         assert_eq!(floors[0].points[1].pos, [2318, 0]);
         assert_eq!(floors[0].points[0].flags, 0x8000);
+        assert_eq!(floors[0].points[0].vertex_id, 0);
+        assert_eq!(floors[0].points[1].vertex_id, 1);
         assert_eq!(floors[1].points[0].pos, [-1396, 904]);
 
         let ceilings: Vec<&CollisionLine> = map.lines_of(LineKind::Ceiling).collect();
         assert_eq!(ceilings.len(), 1);
         assert_eq!(ceilings[0].id, 2);
         assert_eq!(ceilings[0].yakumono, 1);
+        assert_eq!(ceilings[0].points[0].vertex_id, 1);
+        assert_eq!(ceilings[0].points[1].vertex_id, 0);
     }
 
     #[test]

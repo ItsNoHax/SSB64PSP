@@ -31,7 +31,7 @@ use ssb_game::status::AnimLengths;
 use ssb_game::status::AnyStatus;
 use ssb_game::status::MarioStatus;
 use ssb_game::status::Status;
-use ssb_game::weapon::{MapSurface, MapSurfaceKind};
+use ssb_game::weapon::{MapSurface, MapSurfaceKind, SurfaceTopology};
 use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
 use ssb_rom::pack::ObjectDesc;
 
@@ -85,7 +85,7 @@ pub struct FloorSegments<'a, 'p> {
     /// Index of the next point within the current line.
     point: u16,
     /// The previous point, which is the segment's start.
-    prev: Option<(i16, i16, u16)>,
+    prev: Option<(i16, i16, u16, u16)>,
 }
 
 /// Walks every static stage collision segment with its authored one-sided
@@ -97,7 +97,7 @@ pub struct MapSegments<'a, 'p> {
     line: u32,
     current: Option<LineDesc>,
     point: u16,
-    prev: Option<(i16, i16, u16)>,
+    prev: Option<(i16, i16, u16, u16)>,
 }
 
 impl<'a, 'p> MapSegments<'a, 'p> {
@@ -142,7 +142,7 @@ impl Iterator for MapSegments<'_, '_> {
                 self.current = None;
                 continue;
             };
-            let Some((x1, y1, flags)) = self.prev.replace((vertex.x, vertex.y, vertex.flags)) else {
+            let Some((x1, y1, flags, vertex1)) = self.prev.replace((vertex.x, vertex.y, vertex.flags, vertex.vertex_id)) else {
                 continue;
             };
             let kind = match line.kind {
@@ -153,6 +153,13 @@ impl Iterator for MapSegments<'_, '_> {
                 _ => continue,
             };
             return Some(MapSurface {
+                topology: Some(SurfaceTopology {
+                    line: line.id,
+                    point: self.point - 2,
+                    segments: line.vertex_count - 1,
+                    vertex1,
+                    vertex2: vertex.vertex_id,
+                }),
                 kind,
                 segment: Segment {
                     x1,
@@ -212,9 +219,9 @@ impl Iterator for FloorSegments<'_, '_> {
                 continue;
             };
 
-            match self.prev.replace((v.x, v.y, v.flags)) {
+            match self.prev.replace((v.x, v.y, v.flags, v.vertex_id)) {
                 None => continue,
-                Some((x1, y1, flags)) => {
+                Some((x1, y1, flags, _)) => {
                     return Some((
                         line.id,
                         Segment {
@@ -444,6 +451,12 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirB) => 219,
             AnyStatus::Common(Status::AttackAirHi) => 220,
             AnyStatus::Common(Status::AttackAirLw) => 221,
+            _ => status.anim_slot(),
+        }
+    } else if kind == FighterKind::Pikachu as u32 {
+        match status {
+            AnyStatus::Common(s) => ssb_game::pikachu::common_anim_slot(s)
+                .unwrap_or_else(|| status.anim_slot()),
             _ => status.anim_slot(),
         }
     } else if kind == FighterKind::Kirby as u32 {
@@ -762,6 +775,7 @@ impl FighterScene {
         let released = !jump_held && self.jump_was_held;
         self.jump_was_held = jump_held;
 
+        self.fighter.pikachu.map_bound_top = Some(stage.bounds.top as f32);
         self.fighter.set_input(input, tapped, released);
         self.sample_held_child_offset();
         if matches!(

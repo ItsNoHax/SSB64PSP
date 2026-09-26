@@ -194,7 +194,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // compensation, and a digest of the source tile bytes, so a check can pair a
 // compensated texture with its image. Every later table starts at a
 // different offset.
-pub const VERSION: u32 = 37;
+// 38 uses CollisionVertex's trailing u16 for the original vertex-data ID.
+// Original map endpoint connectivity compares IDs, so the zero padding in
+// older packs cannot recover authored topology even when coordinates match.
+pub const VERSION: u32 = 38;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).
@@ -1180,7 +1183,9 @@ pub struct CollisionVertex {
     /// Upper byte surface flags (drop-through, cliff), lower byte the material
     /// that sets friction.
     pub flags: u16,
-    pub _pad: u16,
+    /// Original vertex-data index, shared by connected polyline endpoints.
+    /// Occupies the former padding field; vertex stride remains eight bytes.
+    pub vertex_id: u16,
 }
 
 impl CollisionVertex {
@@ -2373,7 +2378,7 @@ impl PackWriter {
                         x: p.pos[0],
                         y: p.pos[1],
                         flags: p.flags,
-                        _pad: 0,
+                        vertex_id: p.vertex_id,
                     }));
                 self.lines.push(LineDesc {
                     first_vertex,
@@ -2696,7 +2701,7 @@ impl PackWriter {
             out.extend_from_slice(&v.x.to_le_bytes());
             out.extend_from_slice(&v.y.to_le_bytes());
             out.extend_from_slice(&v.flags.to_le_bytes());
-            out.extend_from_slice(&v._pad.to_le_bytes());
+            out.extend_from_slice(&v.vertex_id.to_le_bytes());
         }
         for p in &self.points {
             out.extend_from_slice(&p.kind.to_le_bytes());
@@ -3550,7 +3555,7 @@ impl<'a> Pack<'a> {
             x: i16_at(self.data, at),
             y: i16_at(self.data, at + 2),
             flags: u16_at(self.data, at + 4),
-            _pad: 0,
+            vertex_id: u16_at(self.data, at + 6),
         })
     }
 
@@ -5022,26 +5027,34 @@ mod tests {
             light_angle: [20.0, 45.0, -0.174_532_94],
         };
 
-        let v = |x, y, flags| V { pos: [x, y], flags };
+        let v = |vertex_id, x, y, flags| V {
+            vertex_id,
+            pos: [x, y],
+            flags,
+        };
         let map = CollisionMap {
             lines: alloc::vec![
                 CollisionLine {
                     yakumono: 0,
                     kind: LineKind::Floor,
                     id: 3,
-                    points: alloc::vec![v(-2318, 0, 0x8000), v(2318, 0, 0)],
+                    points: alloc::vec![v(5, -2318, 0, 0x8000), v(6, 2318, 0, 0)],
                 },
                 CollisionLine {
                     yakumono: 0,
                     kind: LineKind::Floor,
                     id: 1,
-                    points: alloc::vec![v(951, 907, 1), v(1421, 907, 1), v(1892, 907, 1)],
+                    points: alloc::vec![
+                        v(15, 951, 907, 1),
+                        v(14, 1421, 907, 1),
+                        v(13, 1892, 907, 1)
+                    ],
                 },
                 CollisionLine {
                     yakumono: 1,
                     kind: LineKind::RightWall,
                     id: 5,
-                    points: alloc::vec![v(2318, 0, 0), v(2290, -331, 0)],
+                    points: alloc::vec![v(6, 2318, 0, 0), v(8, 2290, -331, 0)],
                 },
             ],
             map_objects: alloc::vec![
@@ -5088,6 +5101,10 @@ mod tests {
         assert_eq!((pts[0].x, pts[0].y), (-2318, 0));
         assert_eq!((pts[1].x, pts[1].y), (2318, 0));
         assert_eq!(pts[0].flags, 0x8000);
+        assert_eq!(pts[0].vertex_id, 5);
+        assert_eq!(pts[1].vertex_id, 6);
+        let wall_start = pack.line_vertices(&lines[2]).next().unwrap();
+        assert_eq!(wall_start.vertex_id, pts[1].vertex_id);
 
         // A three-point polyline stays three points, not collapsed to a
         // segment: `vertex_count` is a point count (RE-029).
@@ -5095,6 +5112,7 @@ mod tests {
         let pts: alloc::vec::Vec<CollisionVertex> = pack.line_vertices(&lines[1]).collect();
         assert_eq!(pts.len(), 3);
         assert_eq!(pts[1].x, 1421);
+        assert_eq!(pts[1].vertex_id, 14);
     }
 
     #[test]

@@ -192,27 +192,27 @@ pub fn is_kirby(kind: FighterKind) -> bool {
 pub fn is_grounded(s: K) -> bool {
     crate::kirby_copy::is_grounded(s)
         || matches!(
-        s,
-        K::Attack100Start
-            | K::Attack100Loop
-            | K::Attack100End
-            | K::ThrowFLanding
-            | K::SpecialHi
-            | K::SpecialHiLanding
-            | K::SpecialLwStart
-            | K::SpecialLwUnk
-            | K::SpecialLwHold
-            | K::SpecialAirLwLanding
-            | K::SpecialNStart
-            | K::SpecialNLoop
-            | K::SpecialNEnd
-            | K::SpecialNCatch
-            | K::SpecialNEat
-            | K::SpecialNThrow
-            | K::SpecialNWait
-            | K::SpecialNTurn
-            | K::SpecialNCopy
-    )
+            s,
+            K::Attack100Start
+                | K::Attack100Loop
+                | K::Attack100End
+                | K::ThrowFLanding
+                | K::SpecialHi
+                | K::SpecialHiLanding
+                | K::SpecialLwStart
+                | K::SpecialLwUnk
+                | K::SpecialLwHold
+                | K::SpecialAirLwLanding
+                | K::SpecialNStart
+                | K::SpecialNLoop
+                | K::SpecialNEnd
+                | K::SpecialNCatch
+                | K::SpecialNEat
+                | K::SpecialNThrow
+                | K::SpecialNWait
+                | K::SpecialNTurn
+                | K::SpecialNCopy
+        )
 }
 
 /// `ssb_rom::anim::SLOT_KIRBY_ATTACK100_START` onward. The aerial Inhale
