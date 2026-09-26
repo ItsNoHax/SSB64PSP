@@ -20,7 +20,24 @@
 
 use alloc::collections::BTreeSet;
 
-use crate::pack::{NodeDesc, Pack, PrimDesc, TextureDesc};
+use crate::pack::{AnimJoint, NodeDesc, Pack, PrimDesc, TextureDesc};
+
+/// The object a character's animations drive.
+///
+/// The pack stores an absolute node per animation joint, and a node belongs to
+/// exactly one object, so this is the one hop the tables do not hold — a scan
+/// over the object list.
+pub fn fighter_object(pack: &Pack<'_>, kind: u32) -> Option<u32> {
+    let anim = pack.fighter_anim(kind, 0)?;
+    let node = (0..anim.joint_count)
+        .filter_map(|i| pack.anim_joint(anim.first_joint + i))
+        .map(|j| j.node)
+        .find(|&n| n != AnimJoint::NO_NODE)?;
+    (0..pack.object_count()).find(|&i| {
+        pack.object(i)
+            .is_some_and(|o| node >= o.first_node && node < o.first_node + o.node_count)
+    })
+}
 
 /// Everything one scene can draw.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -76,6 +93,15 @@ impl SceneDeps {
             if mesh != NodeDesc::NO_MESH {
                 self.add_mesh(pack, mesh);
             }
+        }
+    }
+
+    /// Adds the object fighter `kind` (`FTKind` ordinal) draws, in
+    /// `costume`.
+    pub fn add_fighter(&mut self, pack: &Pack<'_>, kind: u32, costume: u32) {
+        match fighter_object(pack, kind) {
+            Some(object) => self.add_object(pack, object, costume),
+            None => self.unresolved += 1,
         }
     }
 

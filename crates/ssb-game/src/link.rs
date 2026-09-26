@@ -305,6 +305,7 @@ fn make_boomerang(f: &mut Fighter) {
             stick_y: f.input.stick_y,
         },
         owner_port: f.port,
+        stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(0, Vec3::ZERO),
         facing: f.facing.sign(),
     });
@@ -680,8 +681,11 @@ pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
     if attacker.port == defender.port {
         return;
     }
-    // `wp->handicap` is the owner's. Weapon damage is not staled yet.
+    // `wp->handicap` is the owner's. The spin weapon lives inside one
+    // `SpecialHi` motion, so the owner's current staling is the one
+    // `wpManagerMakeWeapon` captured unless Link lands another hit first.
     let handicap = attacker.handicap;
+    let stale = crate::stale::WeaponStale::of(attacker);
     let Some(spin) = attacker.link.spin.as_mut() else {
         return;
     };
@@ -694,11 +698,16 @@ pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
     }
     let hitbox = Hitbox {
         radius,
+        damage: stale.damage(SPIN_ATTACK_HITBOX.damage),
         ..SPIN_ATTACK_HITBOX
     };
     for position in spin.hit_positions().into_iter().flatten() {
-        if crate::attack::apply_hitbox_at(&hitbox, position, handicap, defender).registered() {
+        let outcome = crate::attack::apply_hitbox_at(&hitbox, position, handicap, defender);
+        if outcome.registered() {
             spin.hit_ports |= bit;
+            if outcome == crate::attack::HitOutcome::Damaged {
+                attacker.stale.push(stale.attack_id, stale.motion_count);
+            }
             return;
         }
     }

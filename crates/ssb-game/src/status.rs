@@ -4613,6 +4613,7 @@ fn update_extended(f: &mut Fighter) {
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind,
                     owner_port: f.port,
+                    stale: crate::stale::WeaponStale::of(f),
                     // `ftMarioSpecialNProcAccessory` asks the runtime for
                     // Mario joint 16's world position. Host-only gameplay
                     // stays usable without a skeleton by honestly falling
@@ -4693,6 +4694,7 @@ fn update_extended(f: &mut Fighter) {
                 f.weapon_spawn = Some(crate::weapon::WeaponSpawn {
                     kind: crate::weapon::WeaponKind::FoxBlaster,
                     owner_port: f.port,
+                    stale: crate::stale::WeaponStale::of(f),
                     position: f.weapon_spawn_anchor.unwrap_or(ssb_engine::math::Vec3::new(
                         f.pos.x + 60.0 * f.facing.sign(),
                         f.pos.y,
@@ -6739,11 +6741,18 @@ mod tests {
             assert_eq!(f.take_weapon_spawn(), None);
         }
         update(&mut f);
+        // A fresh queue: the spawn carries the neutral-B motion unstaled.
+        let stale = crate::stale::WeaponStale {
+            stale: 1.0,
+            attack_id: crate::stale::MotionAttackId::SpecialN,
+            motion_count: f.motion.count,
+        };
         assert_eq!(
             f.take_weapon_spawn(),
             Some(crate::weapon::WeaponSpawn {
                 kind: crate::weapon::WeaponKind::MarioFireball,
                 owner_port: 0,
+                stale,
                 position: Vec3::ZERO,
                 facing: -1.0,
             })

@@ -29,7 +29,7 @@ tools/golden.sh rebaseline [--filter REGEX] [-j N] --reason TEXT
   golden: crate, scene spec, `pass` or `known-failing`, and evidence.
 - The driver builds each crate once with `golden_capture`, then captures
   every selected scene from that EBOOT in parallel (default `nproc` jobs).
-  A full run of all 68 scenes takes about 17 s (RE-316).
+  A full run of all 72 scenes takes about 17 s (RE-316).
 - Output goes to `target/golden-run/<timestamp>/`: `candidates/`, difference
   masks in `masks/`, `summary.tsv`, and `index.html`, a side-by-side review
   of golden, candidate and mask with changed scenes first.
@@ -134,6 +134,7 @@ builds the same scene as its default.
 | `regression_capture_fireball` (`psp-game`) | `f1-training-fireball` | Translucent Fireball weapon in Training | RE-300 |
 | `regression_capture_shadows` (`psp-game`) | `f1-training-shadows` | Grounded and airborne fighter shadows | RE-302 |
 | `golden_capture` (`psp-game`, scene `grab`) | `f1-training-grab` | Mario holding the Training dummy on Dream Land's left platform after a Z+A catch, with held TopN placement and joint rotation | RE-330–332 |
+| `golden_capture` (`psp-game`, scenes `costume1`–`costume3`) | `f1-training-costume-1`–`3` | Fox after a C-Right, C-Down or C-Left pick on the Training entry: costumes 1–3 in `psp-game` | RE-341 |
 
 Stage sweep example:
 
@@ -182,8 +183,9 @@ item renders, not exact pixels. Output stays outside Git under
    observations.
 
 See the `psp-hardware` skill for PSPLink. RE-320 captured the v32 stripe
-diagnostic and stock pack on a PSP-2000 Slim, firmware 6.61. The current
-golden matrix has not been recaptured on hardware.
+diagnostic and stock pack on a PSP-2000 Slim, firmware 6.61. RE-341
+captured the six `psp-game` scenes; the viewer goldens have not been
+recaptured on hardware.
 
 ## Original game
 
@@ -317,3 +319,16 @@ two identical captures: `r1-mvopeningroom` (85,248 pixels at 2x),
 `r2-bonus-platform-small` (1,628) and `r2-stage-mushroom-kingdom` (2,012).
 The other 63 goldens were unchanged. The ROM graph census and pack diff are
 in RE-328.
+
+## 2026-09-26 RE-341 costumes and dummy costume
+
+Pack v37 unchanged (`2629e02d…`). After the RE-339/RE-340 merge all 69
+goldens matched: no `psp-game` scene lands a hit, so handicaps and staling
+cannot move them. Three new goldens, `f1-training-costume-1`–`3`, show Fox
+after each C-button pick; each differs from a costume-0 control by 916
+pixels at 2x. The Training dummy then took the source's free costume
+(Mario costume 1 beside a Mario player), and exactly the three Mario-dummy
+goldens changed: `f1-training-fireball` 2,124, `f1-training-shadows` 432 and
+`f1-training-grab` 2,296 pixels at 2x, all on the dummy. 72 of 72 then match
+twice. The PSP-2000 ran the six `psp-game` scenes; the captures agree with
+PPSSPP apart from edge noise (counts in RE-341).

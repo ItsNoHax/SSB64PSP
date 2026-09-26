@@ -276,7 +276,7 @@ pub fn update(f: &mut Fighter) {
         }
         CaptainStatus::SpecialLw | CaptainStatus::SpecialLwAir => {
             if current == CaptainStatus::SpecialLw
-                && f.is_grounded() == false
+                && !f.is_grounded()
                 && f.status.anim_frame >= 32.0
             {
                 set(f, CaptainStatus::SpecialLwAir, 0.0, 30.0);

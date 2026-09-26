@@ -71,6 +71,8 @@ pub struct WeaponSpawn {
     pub position: Vec3,
     /// The owner's left/right direction at the motion-script event.
     pub facing: f32,
+    /// The owner's staling when the weapon is made.
+    pub stale: crate::stale::WeaponStale,
 }
 
 /// Mario's `dMarioSpecial1_Fireball_WeaponAttributes` and the fixed wrapper
@@ -1007,7 +1009,7 @@ impl YoshiStar {
             self.velocity.x = self.velocity.x * slowed / speed;
             self.velocity.y = self.velocity.y * slowed / speed;
         }
-        self.position = self.position + self.velocity;
+        self.position += self.velocity;
         true
     }
 
@@ -1128,6 +1130,32 @@ pub struct WeaponPool {
     /// A returning Boomerang reached this port's thrower while its
     /// `is_special_interrupt` was set; [`Self::sync_owner`] delivers it.
     caught: [bool; MAX_OWNERS],
+    /// Each slot's [`WeaponSpawn::stale`].
+    stale: [crate::stale::WeaponStale; MAX_WEAPONS],
+    /// A slot's hit that registered damage this frame, as `(owner port,
+    /// motion)`, for [`Self::record_landed`].
+    landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
+}
+
+/// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, the
+/// shared hit path, and the landed motion for the owner's stale queue.
+fn stale_hit(
+    hitbox: &Hitbox,
+    position: Vec3,
+    stale: crate::stale::WeaponStale,
+    defender: &mut Fighter,
+    landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
+    owner: u8,
+) -> attack::HitOutcome {
+    let mut hitbox = *hitbox;
+    hitbox.damage = stale.damage(hitbox.damage);
+    // `wp->handicap` is the owner's; every Training player has the default.
+    let outcome =
+        attack::apply_hitbox_at(&hitbox, position, crate::stale::HANDICAP_DEFAULT, defender);
+    if outcome == attack::HitOutcome::Damaged {
+        *landed = Some((owner, stale.attack_id, stale.motion_count));
+    }
+    outcome
 }
 
 impl Default for WeaponPool {
@@ -1136,6 +1164,8 @@ impl Default for WeaponPool {
             slots: [None; MAX_WEAPONS],
             owners: [None; MAX_OWNERS],
             caught: [false; MAX_OWNERS],
+            stale: [crate::stale::WeaponStale::FRESH; MAX_WEAPONS],
+            landed: [None; MAX_WEAPONS],
         }
     }
 }
@@ -1148,14 +1178,11 @@ impl WeaponPool {
         if spawn.kind == WeaponKind::YoshiStars {
             // Two `wpManagerMakeWeapon` calls; each fails on its own.
             let lr = if spawn.facing < 0.0 { -1.0 } else { 1.0 };
-            let first = self.insert(Weapon::Star(YoshiStar::new(spawn, lr)));
-            let second = self.insert(Weapon::Star(YoshiStar::new(spawn, -lr)));
+            let first = self.insert(Weapon::Star(YoshiStar::new(spawn, lr)), spawn.stale);
+            let second = self.insert(Weapon::Star(YoshiStar::new(spawn, -lr)), spawn.stale);
             return first || second;
         }
-        let Some(slot) = self.slots.iter_mut().find(|slot| slot.is_none()) else {
-            return false;
-        };
-        *slot = Some(match spawn.kind {
+        let weapon = match spawn.kind {
             WeaponKind::MarioFireball => Weapon::Fireball(MarioFireball::new(spawn, 0)),
             WeaponKind::LuigiFireball => Weapon::Fireball(MarioFireball::new(spawn, 1)),
             WeaponKind::FoxBlaster => Weapon::Blaster(FoxBlaster::new(spawn)),
@@ -1173,17 +1200,33 @@ impl WeaponPool {
                 stick_x,
             } => Weapon::Egg(YoshiEgg::new(spawn, throw_force, stick_x)),
             WeaponKind::YoshiStars => unreachable!("handled above"),
-        });
-        true
+        };
+        self.insert(weapon, spawn.stale)
     }
 
-    fn insert(&mut self, weapon: Weapon) -> bool {
-        match self.slots.iter_mut().find(|slot| slot.is_none()) {
-            Some(slot) => {
-                *slot = Some(weapon);
+    fn insert(&mut self, weapon: Weapon, stale: crate::stale::WeaponStale) -> bool {
+        match self.slots.iter().position(|slot| slot.is_none()) {
+            Some(i) => {
+                self.slots[i] = Some(weapon);
+                self.stale[i] = stale;
+                self.landed[i] = None;
                 true
             }
             None => false,
+        }
+    }
+
+    /// `ftMainUpdateDamageStatWeapon`'s `ftParamUpdateStaleQueue(wp->player,
+    /// ...)`: records this frame's damaging weapon hits in their owner's
+    /// queue. Call it for every fighter after [`Self::apply_hits`].
+    pub fn record_landed(&mut self, owner: &mut Fighter) {
+        for landed in &mut self.landed {
+            if let Some((port, id, count)) = *landed {
+                if port == owner.port {
+                    owner.stale.push(id, count);
+                    *landed = None;
+                }
+            }
         }
     }
 
@@ -1257,7 +1300,7 @@ impl WeaponPool {
     /// Blaster both delete on registered contact; invincibility leaves the
     /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
-        for slot in &mut self.slots {
+        for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
             let (owner, mut hitbox, position) = match weapon {
                 Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
@@ -1284,11 +1327,13 @@ impl WeaponPool {
                     continue;
                 }
                 if egg.exploded {
-                    if attack::apply_hitbox_at(
+                    if stale_hit(
                         &hitbox,
                         position,
-                        crate::stale::HANDICAP_DEFAULT,
+                        self.stale[i],
                         defender,
+                        &mut self.landed[i],
+                        owner,
                     )
                     .registered()
                     {
@@ -1302,11 +1347,13 @@ impl WeaponPool {
                 if bomb.hit_ports & bit != 0 {
                     continue;
                 }
-                if attack::apply_hitbox_at(
+                if stale_hit(
                     &hitbox,
                     position,
-                    crate::stale::HANDICAP_DEFAULT,
+                    self.stale[i],
                     defender,
+                    &mut self.landed[i],
+                    owner,
                 )
                 .registered()
                 {
@@ -1375,10 +1422,15 @@ impl WeaponPool {
                 Weapon::Egg(e) => e.damage,
                 Weapon::Star(s) => s.damage,
             };
-            // `wp->handicap` is the owner's; every Training player has the
-            // default handicap. Weapon damage is not staled yet (TODO.md).
-            if attack::apply_hitbox_at(&hitbox, position, crate::stale::HANDICAP_DEFAULT, defender)
-                .registered()
+            if stale_hit(
+                &hitbox,
+                position,
+                self.stale[i],
+                defender,
+                &mut self.landed[i],
+                owner,
+            )
+            .registered()
             {
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
@@ -1586,6 +1638,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         }));
@@ -1613,6 +1666,7 @@ mod tests {
                 stick_x: 0,
             },
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         }));
@@ -1633,6 +1687,7 @@ mod tests {
         assert!(stars.spawn(WeaponSpawn {
             kind: WeaponKind::YoshiStars,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         }));
@@ -1643,12 +1698,55 @@ mod tests {
         assert_eq!(pair[0].lifetime, YOSHISTAR_LIFETIME);
     }
 
+    /// `wpManagerMakeWeapon` captures the owner's stale factor; the hit
+    /// deals `damage * stale + 0.999` and records the motion in the owner's
+    /// queue (`ftMainUpdateDamageStatWeapon`).
+    #[test]
+    fn a_repeated_egg_throw_is_staled_and_recorded() {
+        use crate::stale::MotionAttackId;
+        let mut owner = Fighter::new(FighterKind::Yoshi, 0, 3);
+        owner.motion.set(MotionAttackId::SpecialHi);
+        owner
+            .stale
+            .push(MotionAttackId::SpecialHi, owner.motion.count);
+        owner.motion.set(MotionAttackId::SpecialHi);
+        let stale = crate::stale::WeaponStale::of(&owner);
+        assert_eq!(stale.stale, 0.75);
+        let mut weapons = WeaponPool::default();
+        assert!(weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::YoshiEgg {
+                throw_force: 10,
+                stick_x: 0,
+            },
+            owner_port: 0,
+            stale,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        }));
+        weapons.tick(open_air);
+        let egg = weapons.eggs().next().unwrap();
+        let mut target = Fighter::new(FighterKind::Mario, 1, 3);
+        target.pos = egg.position;
+        target.situation = Situation::Ground;
+        weapons.apply_hits(&mut target);
+        // 14 * 0.75 + 0.999 = 11.499.
+        assert_eq!(target.damage, 11);
+        weapons.record_landed(&mut target);
+        assert_eq!(owner.stale.entries[1], (MotionAttackId::None, 0));
+        weapons.record_landed(&mut owner);
+        assert_eq!(
+            owner.stale.entries[1],
+            (MotionAttackId::SpecialHi, stale.motion_count)
+        );
+    }
+
     #[test]
     fn fox_blaster_moves_straight_and_hits_once() {
         let mut weapons = WeaponPool::default();
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::FoxBlaster,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         }));
@@ -1675,6 +1773,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(100.0, 60.0, 0.0),
             facing: -1.0,
         });
@@ -1706,6 +1805,7 @@ mod tests {
         assert!(weapons.spawn(WeaponSpawn {
             kind: WeaponKind::MarioFireball,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         }));
@@ -1727,6 +1827,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusChargeShot(7),
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: -1.0,
         });
@@ -1747,6 +1848,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing: 1.0,
         });
@@ -1779,6 +1881,7 @@ mod tests {
         weapons.spawn(WeaponSpawn {
             kind: WeaponKind::SamusBomb,
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::new(0.0, 200.0, 0.0),
             facing: 1.0,
         });
@@ -1809,6 +1912,7 @@ mod tests {
                 stick_y,
             },
             owner_port: 0,
+            stale: crate::stale::WeaponStale::FRESH,
             position: Vec3::ZERO,
             facing,
         }

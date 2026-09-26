@@ -8,10 +8,8 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Costume validation and dummy costume | `psp-game` picks the player's costume (RE-340) but no PPSSPP capture shows costumes 1–3; the dummy keeps costume 0 instead of the CPU's first free costume, which needs a golden refresh | RE-096, RE-261, RE-340 |
 | Independent fighter animation validation | Stage animation has a ROM-derived check (RE-050–052, RE-142); fighter costume/material animation does not | — |
-| Per-scene texture residency | Archive-wide textures exceed the ~700 KiB VRAM budget; the measured worst match scene fits. Re-measure with `romtool scene-deps` | RE-076, RE-077, RE-340 |
-| Strict mode over the real pack | `romtool strict` and `strict_render` exist but have not run over pack v36 | RE-340 |
+| Per-scene texture residency | Training fits the ~700 KiB VRAM pool (171 KiB), but Hyrule Castle alone is 915 KiB and the worst four-fighter VS scene 3,025 KiB, mostly Donkey Kong's 32-bit mipmapped costume textures. Needs a residency design (main-RAM sampling or per-scene streaming) and a look at DK's packed format before VS mode | RE-076, RE-077, RE-341 |
 | Material-animation command 22 | `ssb-rom::matanim` rejects it; its writes are never read, so it can be skipped | RE-010 |
 | `WPAttributes` pairing shape | Only known instance (Link's boomerang) has no sub-objects; revisit if another appears | RE-058 |
 
@@ -33,9 +31,9 @@ or evidence record covers it.
 | Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
 | Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility have no effect on the root-sphere hurtbox | RE-333, RE-334 |
 | Same-frame catcher and held hits | `ftCommonDamageUpdateMain`'s simultaneous-hit branches and catcher hitlag need a deferred per-frame damage queue; hits resolve one at a time | RE-339 |
-| `recent_damage` for fighter hits | The source passes the frame's `damage_queue`; the hit path passes zero | RE-339 |
-| Weapon staling | `wpMainGetStaledDamage` and weapon queue updates are not ported | RE-339 |
-| Re-run goldens after RE-339 | Handicap rounding moves some knockback by one ulp, and repeated moves now deal staled damage | RE-339 |
+| `recent_damage` for fighter hits | The source passes the frame's `damage_queue`; the hit path passes zero. Needs the same deferred hit collection as the row above | RE-339 |
+| Training capture scripts land no hit | RE-295 timed the jab to hit the dummy; on the current build the scripted jab and Fireball never damage it (dummy damage 0 over 3,600 ticks), so no golden covers hit resolution | RE-341 |
+| `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance
 
@@ -45,7 +43,8 @@ Deferred by user instruction.
 |---|---|---|
 | PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Captain Falcon slots) is 23,037,360 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-338 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
-| Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
+| Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object, RE-326 three v35 stages and RE-341 the six `psp-game` scenes, not the viewer matrix | RE-320, RE-326, RE-341 |
+| Hand-input gameplay checks on hardware | R shield and grab, live throws, a held fighter hit by a Fireball and hand costume picks need a person at the controller | RE-339, RE-341 |
 
 ## Open questions
 
@@ -56,7 +55,7 @@ Deferred by user instruction.
 
 ## Technical debt
 
-- Check `ssb_rom::reloc_link` against real closures and use it from a runtime loader ([D-011](docs/decisions/D-011.md), RE-340)
+- Use `ssb_rom::reloc_link` from a runtime loader; its layout is checked against the original (RE-341, [D-011](docs/decisions/D-011.md))
 - Wire `ssb_engine::memory` arenas and pools into `psp-runtime` ([docs/memory.md](docs/memory.md))
 - VFPU math, after `P5` profiling ([D-032](docs/decisions/D-032.md))
 - `sceAudio` mixer thread (`P4`)

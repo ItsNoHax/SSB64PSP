@@ -20,9 +20,15 @@
 //!   unresolvable parent out), or whose rest transform or world matrix is
 //!   not finite;
 //! * a mesh whose vertices, primitives or indices are outside the pack;
-//! * a costume override naming a node or mesh past its table.
+//! * a costume override naming a node or mesh past its table;
+//! * a material animation whose script file is outside the blob, whose
+//!   palette range runs past the palette table, or whose sprite list names a
+//!   texture past its table (`TextureIDCurrent` selects from it);
+//! * an animated palette whose CLUT is outside the blob;
+//! * a two-tile blend record keyed by a material animation past its table,
+//!   or naming a `TextureIDNext` texture past the texture table.
 
-use crate::pack::{NodeDesc, Pack, PrimDesc, TextureDesc};
+use crate::pack::{LodBlendDesc, MatAnimDesc, NodeDesc, Pack, PrimDesc, TextureDesc};
 use crate::psp_texture::Psm;
 
 /// One reference that would not resolve at draw time.
@@ -40,6 +46,12 @@ pub enum Issue {
     MeshPrims { mesh: u32 },
     PrimIndices { prim: u32 },
     CostumeOverride { index: u32 },
+    MatAnimScript { mat_anim: u32 },
+    MatAnimPalettes { mat_anim: u32 },
+    MatAnimTexture { mat_anim: u32, texture: u32 },
+    MatAnimPaletteData { palette: u32 },
+    LodBlendMatAnim { index: u32, mat_anim: u32 },
+    LodBlendTexture { mat_anim: u32, texture: u32 },
 }
 
 impl core::fmt::Display for Issue {
@@ -80,6 +92,29 @@ impl core::fmt::Display for Issue {
             Issue::PrimIndices { prim } => {
                 write!(f, "primitive {prim} indices are outside the pack")
             }
+            Issue::MatAnimScript { mat_anim } => write!(
+                f,
+                "material animation {mat_anim} script is outside its file or the pack"
+            ),
+            Issue::MatAnimPalettes { mat_anim } => write!(
+                f,
+                "material animation {mat_anim} palette range runs past the table"
+            ),
+            Issue::MatAnimTexture { mat_anim, texture } => write!(
+                f,
+                "material animation {mat_anim} names texture {texture}, past the table"
+            ),
+            Issue::MatAnimPaletteData { palette } => {
+                write!(f, "animated palette {palette} is outside the pack")
+            }
+            Issue::LodBlendMatAnim { index, mat_anim } => write!(
+                f,
+                "two-tile blend {index} names material animation {mat_anim}, past the table"
+            ),
+            Issue::LodBlendTexture { mat_anim, texture } => write!(
+                f,
+                "two-tile blend for material animation {mat_anim} names texture {texture}, past the table"
+            ),
             Issue::CostumeOverride { index } => {
                 write!(
                     f,
@@ -112,6 +147,13 @@ pub trait Source {
     fn has_indices(&self, p: &PrimDesc) -> bool;
     /// `(node, mesh)`.
     fn costume_override(&self, i: u32) -> Option<(u32, u32)>;
+    fn mat_anim(&self, i: u32) -> Option<MatAnimDesc>;
+    /// Whether the script's file bytes resolve and contain `a.script`.
+    fn has_mat_anim_script(&self, a: &MatAnimDesc) -> bool;
+    fn mat_anim_palette_count(&self) -> u32;
+    fn has_mat_anim_palette_data(&self, i: u32) -> bool;
+    fn lod_blend_count(&self) -> u32;
+    fn lod_blend(&self, i: u32) -> Option<LodBlendDesc>;
 }
 
 impl Source for Pack<'_> {
@@ -165,6 +207,27 @@ impl Source for Pack<'_> {
     }
     fn costume_override(&self, i: u32) -> Option<(u32, u32)> {
         Pack::costume_override(self, i).map(|o| (o.node, o.mesh))
+    }
+    fn mat_anim(&self, i: u32) -> Option<MatAnimDesc> {
+        Pack::mat_anim(self, i)
+    }
+    fn has_mat_anim_script(&self, a: &MatAnimDesc) -> bool {
+        self.mat_anim_file(a)
+            .is_some_and(|d| (a.script as usize) < d.len())
+    }
+    fn mat_anim_palette_count(&self) -> u32 {
+        Pack::mat_anim_palette_count(self)
+    }
+    fn has_mat_anim_palette_data(&self, i: u32) -> bool {
+        self.mat_anim_palette(i)
+            .and_then(|p| self.mat_anim_palette_data(&p))
+            .is_some_and(|d| !d.is_empty())
+    }
+    fn lod_blend_count(&self) -> u32 {
+        Pack::lod_blend_count(self)
+    }
+    fn lod_blend(&self, i: u32) -> Option<LodBlendDesc> {
+        self.lod_blend_at(i)
     }
 }
 
@@ -295,6 +358,67 @@ pub fn check<S: Source + ?Sized>(pack: &S, mut report: impl FnMut(Issue)) -> usi
             _ => issue(Issue::CostumeOverride { index: i }),
         }
     }
+
+    let palettes = pack.mat_anim_palette_count();
+    for i in 0..mat_anims {
+        let Some(a) = pack.mat_anim(i) else {
+            issue(Issue::MatAnimScript { mat_anim: i });
+            continue;
+        };
+        if !pack.has_mat_anim_script(&a) {
+            issue(Issue::MatAnimScript { mat_anim: i });
+        }
+        if u64::from(a.first_palette) + u64::from(a.palette_count) > u64::from(palettes) {
+            issue(Issue::MatAnimPalettes { mat_anim: i });
+        }
+        // `resolve_texture` clamps into `textures[..texture_count]` and
+        // treats `NO_ANIM` as "keep the primitive's own image".
+        let count = (a.texture_count as usize).min(MatAnimDesc::MAX_TEXTURES);
+        for &t in &a.textures[..count] {
+            if t != TextureDesc::NO_ANIM && t >= textures {
+                issue(Issue::MatAnimTexture {
+                    mat_anim: i,
+                    texture: t,
+                });
+            }
+        }
+        if a.texture_count as usize > MatAnimDesc::MAX_TEXTURES {
+            issue(Issue::MatAnimTexture {
+                mat_anim: i,
+                texture: a.texture_count,
+            });
+        }
+    }
+    for i in 0..palettes {
+        if !pack.has_mat_anim_palette_data(i) {
+            issue(Issue::MatAnimPaletteData { palette: i });
+        }
+    }
+
+    for i in 0..pack.lod_blend_count() {
+        let Some(lod) = pack.lod_blend(i) else {
+            issue(Issue::LodBlendMatAnim {
+                index: i,
+                mat_anim: TextureDesc::NO_ANIM,
+            });
+            continue;
+        };
+        if lod.mat_anim >= mat_anims {
+            issue(Issue::LodBlendMatAnim {
+                index: i,
+                mat_anim: lod.mat_anim,
+            });
+        }
+        let count = (lod.next_count as usize).min(MatAnimDesc::MAX_TEXTURES);
+        for &t in &lod.next_textures[..count] {
+            if t >= textures {
+                issue(Issue::LodBlendTexture {
+                    mat_anim: lod.mat_anim,
+                    texture: t,
+                });
+            }
+        }
+    }
     n
 }
 
@@ -350,6 +474,10 @@ mod tests {
         prims: Vec<PrimDesc>,
         overrides: Vec<(u32, u32)>,
         objects: Vec<(u32, u32)>,
+        mat_anims: Vec<MatAnimDesc>,
+        script_data: bool,
+        palettes: Vec<bool>,
+        lod_blends: Vec<LodBlendDesc>,
     }
 
     impl Fake {
@@ -399,6 +527,19 @@ mod tests {
                 prims: alloc::vec![prim],
                 overrides: alloc::vec![(0, 0)],
                 objects: alloc::vec![(0, 1)],
+                mat_anims: alloc::vec![MatAnimDesc {
+                    palette_count: 1,
+                    texture_count: 2,
+                    textures: [0, TextureDesc::NO_ANIM, 0, 0, 0, 0, 0, 0],
+                    ..MatAnimDesc::default()
+                }],
+                script_data: true,
+                palettes: alloc::vec![true],
+                lod_blends: alloc::vec![LodBlendDesc {
+                    mat_anim: 0,
+                    next_count: 1,
+                    ..LodBlendDesc::default()
+                }],
             }
         }
     }
@@ -408,7 +549,7 @@ mod tests {
             self.textures.len() as u32
         }
         fn mat_anim_count(&self) -> u32 {
-            0
+            self.mat_anims.len() as u32
         }
         fn mesh_count(&self) -> u32 {
             self.meshes.len() as u32
@@ -451,6 +592,24 @@ mod tests {
         }
         fn costume_override(&self, i: u32) -> Option<(u32, u32)> {
             self.overrides.get(i as usize).copied()
+        }
+        fn mat_anim(&self, i: u32) -> Option<MatAnimDesc> {
+            self.mat_anims.get(i as usize).copied()
+        }
+        fn has_mat_anim_script(&self, _: &MatAnimDesc) -> bool {
+            self.script_data
+        }
+        fn mat_anim_palette_count(&self) -> u32 {
+            self.palettes.len() as u32
+        }
+        fn has_mat_anim_palette_data(&self, i: u32) -> bool {
+            self.palettes[i as usize]
+        }
+        fn lod_blend_count(&self) -> u32 {
+            self.lod_blends.len() as u32
+        }
+        fn lod_blend(&self, i: u32) -> Option<LodBlendDesc> {
+            self.lod_blends.get(i as usize).copied()
         }
     }
 
@@ -522,5 +681,46 @@ mod tests {
         f.nodes[1].parent = 0;
         f.objects.push((1, 1));
         assert_eq!(issues(&f), [Issue::NodeParent { node: 1, parent: 0 }]);
+    }
+
+    #[test]
+    fn unresolved_material_animations_are_reported() {
+        let mut f = Fake::new();
+        f.script_data = false;
+        f.mat_anims[0].first_palette = 1;
+        f.mat_anims[0].textures[0] = 5;
+        f.palettes[0] = false;
+        assert_eq!(
+            issues(&f),
+            [
+                Issue::MatAnimScript { mat_anim: 0 },
+                Issue::MatAnimPalettes { mat_anim: 0 },
+                Issue::MatAnimTexture {
+                    mat_anim: 0,
+                    texture: 5
+                },
+                Issue::MatAnimPaletteData { palette: 0 },
+            ]
+        );
+        // A sprite past `texture_count` is never selected.
+        let mut f = Fake::new();
+        f.mat_anims[0].textures[2] = 9;
+        assert_eq!(issues(&f), []);
+        let mut f = Fake::new();
+        f.lod_blends[0].mat_anim = 3;
+        f.lod_blends[0].next_textures[0] = 4;
+        assert_eq!(
+            issues(&f),
+            [
+                Issue::LodBlendMatAnim {
+                    index: 0,
+                    mat_anim: 3
+                },
+                Issue::LodBlendTexture {
+                    mat_anim: 3,
+                    texture: 4
+                },
+            ]
+        );
     }
 }

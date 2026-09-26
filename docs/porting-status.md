@@ -14,7 +14,7 @@ unless a physical PSP is named.
 |---|---|---|---|---|
 | ROM validation | COMPLETE | SHA-1/MD5, byte order and size checks | — | — |
 | VPK0 | COMPLETE | All 499 compressed files decode | — | RE-002 |
-| relocData archive | COMPLETE | 2,132 files; 61,343 intern + 3,092 extern relocations, 0 mismatches | Extern linker (`ssb_rom::reloc_link`) built but unused at runtime and unchecked on real files | RE-001, RE-340 |
+| relocData archive | COMPLETE | 2,132 files; 61,343 intern + 3,092 extern relocations, 0 mismatches | Extern linker (`ssb_rom::reloc_link`) matches the original's allocation and RDRAM layout but is unused at runtime | RE-001, RE-340, RE-341 |
 | F3DEX2 parser / DL discovery | COMPLETE | Every emitted opcode; 1,864 lists in 135 files, 0 failures | — | RE-017 |
 | Texture decode | 85% | RGBA16/32, IA4/8/16, I4/8, CI4/8 | 26 runtime-framebuffer references have no ROM texels | RE-055 |
 | Texture → PSP | COMPLETE for measured scope | Mirror/clamp/origin lowering, palette banks, TLUT mode, sample-centre alignment, build-time 3-point filter compensation | Fixed-function bilinear cannot equal N64 3-point exactly | RE-219–239, RE-304–313 |
@@ -60,16 +60,16 @@ Detail per domain: [`rendering.md`](rendering.md).
 | Collision | 65% | All 41 stages packed; swept floor queries; weapon diamond collider vs floors, ceilings, walls | Fighter wall/ceiling solver; moving groups tested at rest | RE-030, RE-031 |
 | Animation | 95% | Figatree playback at 60 Hz; posed joint transforms and TransN root motion feed gameplay; grab/thrown/cargo clips through Captain Falcon; Yoshi Bomb holds its pose at speed zero; held TopN uses the catcher's joint rotation and its own child offset | Reflector effect phases | RE-036, RE-038, RE-171, RE-299, RE-330–335, RE-337–338 |
 | Status machine | 68% | Full `FTCommonStatus` table (0–219); movement, Damage/hitstun, per-character `AnyStatus`, Yoshi Egg Lay victim and aerial jump, Falcon Dive capture | Most statuses beyond those listed are ordinals only | RE-033, RE-035, RE-294, RE-337–338 |
-| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes on posed joints, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; normal/special windows through Captain Falcon; Link's down-air rehit, Yoshi's 14-pulse down air, Falcon Kick contact scaling; throw descriptors and release knockback; stale-move queue and Training handicaps | Some same-valued Donkey joint boxes still condensed; root-sphere hurtbox, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG), `recent_damage`, weapon staling | RE-294, RE-299, RE-330, RE-332–335, RE-337–339 |
+| Hit resolution | IMPLEMENTED | Per-`(fighter, status)` `MoveData` hitboxes on posed joints, `ClearAttackCollAll` hit generations, damage, knockback, hitstun; normal/special windows through Captain Falcon; Link's down-air rehit, Yoshi's 14-pulse down air, Falcon Kick contact scaling; throw descriptors and release knockback; stale-move queue for fighters and weapons, Training handicaps | Some same-valued Donkey joint boxes still condensed; root-sphere hurtbox, multi-hit shield accumulation, hit-location Hi/Lw, `DamageFlyRoll` (RNG), `recent_damage` | RE-294, RE-299, RE-330, RE-332–335, RE-337–339, RE-342 |
 | Shield / guard | 40% | `GuardOn`/`Guard`/`GuardOff`/`GuardSetOff`, decay, shield break | Clip lengths, bubble visual, break mash-out chain | — |
 | Ledges | 45% | `CliffCatch` → `CliffWait` → climb/attack/escape, re-grab cooldown | Hand-reach offset, ledge-hog, clip lengths | — |
 | KO / respawn | 45% | Blast zones, stock loss, rebirth sequence, 120-frame invincibility | `DeadUpFall` (RNG), halo visuals, team/1P branches | — |
 | Recovery (`FallSpecial`) | 25% | Shared helpless fall and landing; driven by Mario, Luigi, Donkey, Samus, Link and Captain Falcon up-B | Drop-through, ledge auto-catch | RE-299, RE-338 |
 | Grabs / throws | IMPLEMENTED through Captain Falcon in the two-fighter host match model | Catch search on posed hand joints, Samus Grapple Beam, Link Hookshot, Yoshi tongue and Falcon Dive; linked capture/throw statuses, Egg Lay swallow and breakout, shield-grab damage, Donkey cargo walk/jump/turn/throw, heavy-item joint matrix and held TopN pose scaled by `size`; held-fighter damage and release; back-throw hits on bystanders | Same-frame catcher/held hits; Training has no third fighter; Yoshi egg and Falcon Dive victims use root-sphere hurtboxes | RE-330–335, RE-337–339 |
-| Weapons | 30% | Fixed pool: Mario and Luigi Fireball, Fox Blaster, Samus Charge Shot and Bomb, Link Boomerang with owner catch, Yoshi thrown egg and Bomb stars; Link's Spin Attack weapon as fighter state; reflection | General item system (Link's Bomb); map-bound and off-camera removal; weapon shields; weapon staling; Samus, Luigi, Link and Yoshi weapon rendering | RE-300, RE-303, RE-333–335, RE-337 |
+| Weapons | 30% | Fixed pool: Mario and Luigi Fireball, Fox Blaster, Samus Charge Shot and Bomb, Link Boomerang with owner catch, Yoshi thrown egg and Bomb stars; Link's Spin Attack weapon as fighter state; reflection; staled damage and owner stale queue | General item system (Link's Bomb); map-bound and off-camera removal; weapon shields; Samus, Luigi, Link and Yoshi weapon rendering | RE-300, RE-303, RE-333–335, RE-337, RE-342 |
 | Stages | 65% | Headers, collision, render layers for all 41 | No match stage loader | RE-028, RE-029, RE-170 |
 | CPU AI | 0% | — | — | — |
-| Menus | 35% | `psp-game` Intro → Menu → Training with Mario vs dummy on Dream Land | Text, character/stage select | RE-289–296 |
+| Menus | 35% | `psp-game` Intro → Menu → Training with Mario vs dummy on Dream Land; C-button costume picks; dummy takes the first free costume | Text, character/stage select | RE-289–296, RE-341 |
 
 ### Fighters
 
@@ -96,4 +96,4 @@ Detail per domain: [`rendering.md`](rendering.md).
    IDs and joint indices are not.
 4. Extern relocations are zeroed in the pack; the converter follows them
    (RE-037). `ssb_rom::reloc_link` lays out and patches a closure as the
-   source does (RE-340), but no runtime path uses it.
+   source does (RE-340, checked in RE-341), but no runtime path uses it.

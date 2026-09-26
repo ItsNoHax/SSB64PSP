@@ -292,6 +292,27 @@ impl<'a> Archive<'a> {
         Ok(out)
     }
 
+    /// The `u16` target-file IDs stored in ROM after `id`'s payload, in
+    /// order: the array `lbRelocGetExternBytesNum` scans, read without
+    /// decompressing anything.
+    pub fn extern_ids(&self, id: u32) -> Result<Vec<u16>> {
+        let missing = || Error::OutOfBounds {
+            offset: id as usize,
+            len: 1,
+        };
+        let entry = *self.entry(id).ok_or_else(missing)?;
+        let next = *self.entry(id + 1).ok_or_else(missing)?;
+        let start = self.table_hi + entry.data_offset as usize + entry.rom_size();
+        let end = self.table_hi + next.data_offset as usize;
+        let bytes = rom::slice(self.rom, start, end.saturating_sub(start))?;
+        Ok(bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_be_bytes(*b))
+            .collect())
+    }
+
     /// Cross-checks a file's extern chain length against ROM geometry.
     ///
     /// This is the archive's strongest self-consistency check, and the reason

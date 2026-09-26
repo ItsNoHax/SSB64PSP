@@ -184,6 +184,7 @@ fn fire_charge_shot(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::SamusChargeShot(level),
         owner_port: f.port,
+        stale: crate::stale::WeaponStale::of(f),
         position: charge_shot_position(f),
         facing: f.facing.sign(),
     });
@@ -267,6 +268,7 @@ fn make_bomb(f: &mut Fighter) {
     f.weapon_spawn = Some(WeaponSpawn {
         kind: WeaponKind::SamusBomb,
         owner_port: f.port,
+        stale: crate::stale::WeaponStale::of(f),
         position: f.joint_world(0, Vec3::new(0.0, BOMB_OFF_Y, 0.0)),
         facing: f.facing.sign(),
     });

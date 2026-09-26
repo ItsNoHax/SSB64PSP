@@ -449,6 +449,40 @@ pub fn on_set_status(f: &mut Fighter, status: AnyStatus) {
     }
 }
 
+/// What a weapon keeps of its owner's staling when it is made
+/// (`wpManagerMakeWeapon`'s `WEAPON_FLAG_PARENT_FIGHTER` case): the stale
+/// factor at that moment and the motion to record when it lands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WeaponStale {
+    pub stale: f32,
+    pub attack_id: MotionAttackId,
+    pub motion_count: u16,
+}
+
+impl WeaponStale {
+    /// `WEAPON_STALE_DEFAULT` with no motion: a weapon no fighter made.
+    pub const FRESH: WeaponStale = WeaponStale {
+        stale: 1.0,
+        attack_id: MotionAttackId::None,
+        motion_count: 0,
+    };
+
+    /// `ftParamGetStale(fp->player, fp->motion_attack_id, fp->motion_count)`.
+    pub fn of(f: &Fighter) -> Self {
+        WeaponStale {
+            stale: f.stale.stale(f.motion.attack_id, f.motion.count),
+            attack_id: f.motion.attack_id,
+            motion_count: f.motion.count,
+        }
+    }
+
+    /// `wpMainGetStaledDamage` @ 0x80168128. Unlike the fighter version it
+    /// always adds 0.999, which leaves an unstaled integer unchanged.
+    pub fn damage(&self, damage: i32) -> i32 {
+        (damage as f32 * self.stale + 0.999) as i32
+    }
+}
+
 /// The attacker's current motion, staled against its own queue.
 pub fn staled_damage(attacker: &Fighter, damage: i32) -> i32 {
     attacker

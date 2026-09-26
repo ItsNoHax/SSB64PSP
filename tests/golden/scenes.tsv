@@ -82,3 +82,6 @@ r2-stage-bonus2-purin	psp-asset-viewer	stage 38	pass	RE-286 RE-312
 r2-stage-bonus2-ness	psp-asset-viewer	stage 39	pass	RE-286 RE-312
 r2-stage-bonus3-race-to-the-finish	psp-asset-viewer	stage 40	pass	RE-286 RE-312 RE-322 RE-323
 f1-training-grab	psp-game	grab	pass	RE-332
+f1-training-costume-1	psp-game	costume1	pass	RE-341
+f1-training-costume-2	psp-game	costume2	pass	RE-341
+f1-training-costume-3	psp-game	costume3	pass	RE-341
