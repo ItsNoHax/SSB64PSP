@@ -102,10 +102,10 @@ pub struct ButtonMapping {
 ///   used shoulder input in Smash 64; L and R are the same shield function, so
 ///   losing one is harmless. The PSP has two shoulder buttons, and Z gets the
 ///   more comfortable one.
-/// * **C-buttons on the face buttons.** In Smash 64 the C-buttons are *only*
-///   used for taunt (C-Up in some contexts) and for camera in single-player
-///   modes — they are not attack inputs the way they are in Melee. So they can
-///   safely take the leftover face buttons.
+/// * **C-buttons on the face buttons.** In battle Smash 64 reads the
+///   C-buttons only as one interchangeable jump button (RE-008): taunt is L,
+///   and no camera code reads them. So they can take the leftover face
+///   buttons.
 /// * **D-pad stays D-pad.** It is used for menu navigation and for the debug
 ///   menu, and the PSP D-pad maps one-to-one.
 ///

@@ -19,9 +19,9 @@ editing a record.
 | RE-005 | Handedness | COMPLETE | camera, psp-ge, hardware, texture |  |
 | RE-006 | Simulation rate | COMPLETE |  |  |
 | RE-007 | Physics zero-crossing asymmetry | COMPLETE | texture |  |
-| RE-008 | C-button mapping | OPEN | camera |  |
+| RE-008 | C-button mapping | COMPLETE (decomp source, host tests) | input, camera, fighter |  |
 | RE-009 | PSP nub deadzone | OPEN |  |  |
-| RE-010 | `MObjSub` unknown fields | OPEN | material, animation, lighting, texture |  |
+| RE-010 | `MObjSub` unknown fields | COMPLETE (decomp source; no ROM census this batch) | material, animation, lighting, texture |  |
 | RE-011 | Level of detail selection | OPEN | camera |  |
 | RE-012 | Nightly toolchain pin | SUPERSEDED | toolchain |  |
 | RE-013 | `psp::dprintln!` is a 30x performance trap | COMPLETE | framebuffer, geometry, psp-ge |  |
@@ -348,3 +348,5 @@ editing a record.
 | RE-336 | Filter-compensated material textures in the texel check | COMPLETE (bisect, decomp and ROM check, texel check with a broken-pack control, host tests, PSP builds, 69-scene golden matrix; no physical-PSP capture) | material, texture, pack, asset-pipeline, effects, visual-regression |  |
 | RE-337 | Yoshi motions, Egg Lay break timing and knockback resistance | COMPLETE (decomp source, host tests, both PSP builds, PPSSPP Yoshi-fighter smoke; Yoshi not reachable in `psp-game`, physical PSP not captured) | fighter, gameplay, weapon, grab, capture, animation |  |
 | RE-338 | Captain Falcon motions and Dive capture placement | COMPLETE (decomp source, host tests, both PSP builds, PPSSPP Falcon-fighter smoke; Captain Falcon not reachable in `psp-game`, physical PSP not captured) | fighter, gameplay, grab, capture, animation |  |
+| RE-339 | Held-fighter damage, stale moves, handicaps, bystander throws and held scale | COMPLETE (decomp source, host tests, both PSP builds; no ROM, PPSSPP or physical PSP this batch) | fighter, gameplay, grab, capture, throw, combat, collision |  |
+| RE-340 | Costume picks, strict rendering, scene dependencies, extern linking and allocators | COMPLETE (decomp source and host tests; not run against the ROM, a built pack, PPSSPP or a PSP) | asset-pipeline, rendering, texture, memory, input |  |

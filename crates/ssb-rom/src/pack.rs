@@ -4268,6 +4268,52 @@ mod tests {
         }
     }
 
+    /// `scene_deps` follows object → node → mesh (costume override first)
+    /// → primitive → texture, and totals texel and CLUT bytes.
+    #[test]
+    fn scene_deps_follow_costumes_to_textures() {
+        use crate::scene_deps::SceneDeps;
+        let mut w = PackWriter::new();
+        let tex = |fill: u8| PspTexture {
+            width: 32,
+            height: 8,
+            stride: 32,
+            format: Psm::PsmT4,
+            data: alloc::vec![fill; 128],
+            swizzled: false,
+            palette: alloc::vec![0xFF00_00FFu32; 16],
+            levels: 1,
+        };
+        let base_tex = w.add_texture(&tex(1), false, false);
+        let costume_tex = w.add_texture(&tex(2), false, false);
+        let _unused_tex = w.add_texture(&tex(3), false, false);
+        let base = w.add_mesh(&sample_mesh(), 1, 0, |_| Some(base_tex), |_| None);
+        let costume = w.add_mesh(&sample_mesh(), 1, 0, |_| Some(costume_tex), |_| None);
+        let object = w.add_object(&chain_graph(2), 7, |n| (n == 0).then_some(base), &[]);
+        w.add_costume_override(0, 1, costume);
+        let bytes = w.finish();
+        let pack = Pack::open(&bytes).unwrap();
+
+        let mut deps = SceneDeps::new();
+        deps.add_object(&pack, object, 0);
+        assert_eq!(deps.nodes.len(), 2);
+        assert_eq!(deps.meshes.iter().copied().collect::<Vec<_>>(), [base]);
+        assert_eq!(
+            deps.textures.iter().copied().collect::<Vec<_>>(),
+            [base_tex]
+        );
+        let f = deps.footprint(&pack);
+        assert_eq!((f.texel_bytes, f.palette_bytes), (128, 64));
+
+        let mut deps = SceneDeps::new();
+        deps.add_object(&pack, object, 1);
+        assert_eq!(
+            deps.textures.iter().copied().collect::<Vec<_>>(),
+            [costume_tex]
+        );
+        assert_eq!(deps.unresolved, 0);
+    }
+
     #[test]
     fn objects_and_nodes_round_trip() {
         let mut w = PackWriter::new();

@@ -231,7 +231,7 @@ pub struct Fighter {
     pub status: crate::status::StatusState,
     /// The derived stick state the status machine reads — tap counters and
     /// all. Kept beside `input` rather than inside it because `ControllerState`
-    /// is the raw pad and this is what `ftMainProcessInput` makes of it.
+    /// is the raw pad and this is what `ftMainProcUpdateInterrupt` makes of it.
     pub stick: crate::status::StickState,
     /// Shield health/decay/release-lag state — `crate::status::GuardState`.
     pub guard: crate::status::GuardState,
@@ -279,6 +279,14 @@ pub struct Fighter {
     pub is_special_interrupt: bool,
     /// Grab, capture and throw link to another fighter — `crate::grab`.
     pub grab: crate::grab::GrabState,
+    /// `motion_attack_id` / `motion_count` ([`crate::stale`]).
+    pub motion: crate::stale::MotionId,
+    /// This player's `stale_info` queue ([`crate::stale`]).
+    pub stale: crate::stale::StaleQueue,
+    /// `FTStruct::handicap`, an index into `dFTCommonDataHandicapTable`.
+    pub handicap: u8,
+    /// `FTStruct::costume` ([`crate::costume`]); display only.
+    pub costume: u8,
     /// One weapon creation requested by this fighter's current status. The
     /// match-owned weapon pool consumes it after fighter callbacks finish.
     pub weapon_spawn: Option<crate::weapon::WeaponSpawn>,
@@ -342,6 +350,10 @@ impl Fighter {
             knockback_resist: 0.0,
             is_special_interrupt: false,
             grab: crate::grab::GrabState::default(),
+            motion: crate::stale::MotionId::default(),
+            stale: crate::stale::StaleQueue::default(),
+            handicap: crate::stale::HANDICAP_DEFAULT,
+            costume: 0,
             weapon_spawn: None,
             weapon_spawn_anchor: None,
             joint_transforms: [None; FIGHTER_JOINTS],
@@ -452,13 +464,22 @@ impl Fighter {
         }
     }
 
-    /// Feeds one frame of controller input in — `ftMainProcessInput`.
+    /// Feeds one frame of controller input in — `ftMainProcUpdateInterrupt`.
     ///
     /// Call before [`Fighter::tick`]. This is separate because the derived
     /// stick state has to be advanced exactly once per frame whether or not
     /// the fighter is frozen: the original updates it before the hitlag check,
     /// which is how a frozen fighter can still buffer a direction.
+    ///
+    /// A human player's R trigger is also A + Z (`ftMainProcUpdateInterrupt`,
+    /// `ftmain.c`: `if (button_hold & R_TRIG) button_hold |= (A_BUTTON |
+    /// Z_TRIG)`), which is how R shields and grabs. The expanded hold is what
+    /// taps and releases are derived from, so `prev_input` carries it too.
     pub fn set_input(&mut self, input: ControllerState, jump_tapped: bool, jump_released: bool) {
+        let mut input = input;
+        if input.buttons.contains(ssb_engine::input::N64Buttons::R) {
+            input.buttons.0 |= ssb_engine::input::N64Buttons::A | ssb_engine::input::N64Buttons::Z;
+        }
         self.prev_input = self.input;
         self.input = input;
         self.stick
@@ -1350,5 +1371,25 @@ mod tests {
             "landed with {} ground velocity; momentum was lost",
             f.physics.vel_ground.x
         );
+    }
+
+    /// `ftMainProcUpdateInterrupt`: a held R reads as A + Z to the status machine,
+    /// so pressing R alone taps both.
+    #[test]
+    fn r_trigger_holds_a_and_z() {
+        use ssb_engine::input::{newly_pressed, N64Buttons};
+        let mut f = Fighter::new(FighterKind::Mario, 0, 3);
+        f.set_input(ControllerState::default(), false, false);
+        f.set_input(
+            ControllerState {
+                buttons: N64Buttons(N64Buttons::R),
+                ..Default::default()
+            },
+            false,
+            false,
+        );
+        let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
+        assert!(taps.contains(N64Buttons::A) && taps.contains(N64Buttons::Z));
+        assert!(taps.contains(N64Buttons::R));
     }
 }

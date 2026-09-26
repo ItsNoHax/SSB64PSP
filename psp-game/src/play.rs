@@ -85,7 +85,9 @@ impl Dummy {
     /// [`apply_hit_from`](ssb_game::attack::apply_hit_from). Called from here
     /// because this is the only place both fighters exist together (the
     /// player's own scene and `Dummy` are separate values).
-    pub fn apply_hit_from(&mut self, attacker: &Fighter) -> bool {
+    /// The attacker is mutable because a landed hit records the move in its
+    /// stale queue (`ssb_game::stale`).
+    pub fn apply_hit_from(&mut self, attacker: &mut Fighter) -> bool {
         ssb_game::attack::apply_hit_from(
             attacker,
             &mut self.scene.fighter,

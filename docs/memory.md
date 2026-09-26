@@ -51,9 +51,12 @@ lbRelocLoadFilesExtern(file_ids, count, out_ptrs,
 Contiguous, unfragmented, one free. The port keeps the semantics, not the
 addresses: assets are position-independent through relocations.
 
-## Planned allocators
+## Allocators
 
-None is implemented yet.
+`ssb_engine::memory` implements them over borrowed storage (RE-340):
+`Arena` scopes back `AssetArena`, `GameArena` and `FrameArena`, and
+`ObjectPool<T, N>` gives generation-checked handles. `psp-runtime` does not
+use them yet.
 
 | Allocator | Lifetime |
 |---|---|
@@ -67,7 +70,9 @@ Scratchpad is reserved for VFPU staging and hot loops, after profiling.
 ## Extern relocations
 
 `romtool` leaves extern relocations zeroed in the pack and records them in the
-manifest ([D-011](decisions/D-011.md)). The planned loader:
+manifest ([D-011](decisions/D-011.md)). `ssb_rom::reloc_link` implements
+the loader's layout and patching over `Archive::load_closure` output
+(RE-340); no runtime path calls it yet. It:
 
 1. Computes the scene's file closure.
 2. Assigns each file an offset in the asset arena.
