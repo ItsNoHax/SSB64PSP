@@ -22,17 +22,18 @@ or evidence record covers it.
 | Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
 | Select and draw Samus, Luigi, Link, Yoshi and Captain Falcon in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, and Yoshi's Egg Throw and Bomb stars, are not drawn | RE-333–335, RE-337–338 |
 | Falcon Kick wall rebound and Falcon Dive cliff catch | Fighter map collision resolves floors only; the decomp callbacks need wall and cliff flags | RE-338 |
-| Yoshi Egg Lay victim collision and effect | The egg uses the root-sphere hurtbox instead of `dFTCommonYoshiEggDamageCollDescs`; laying omits the wall/ceiling sweep, damaging-floor escape needs hazards, and the break effect is represented by a 10-frame clock | RE-337 |
+| Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, damaging-floor escape needs hazards, and the break effect is represented by a 10-frame clock | RE-337 |
 | Yoshi Bomb aerial ledge catch | The source can catch a ledge during the aerial Bomb; the fighter ledge search is not integrated with this status | RE-337 |
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
 | Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
 | Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
 | Weapon shield and hop callbacks | Weapons pass through shields; the Boomerang's `ProcShield`/`ProcHop` are not reached | RE-335 |
 | Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
-| Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility have no effect on the root-sphere hurtbox | RE-333, RE-334 |
-| Same-frame catcher and held hits | `ftCommonDamageUpdateMain`'s simultaneous-hit branches and catcher hitlag need a deferred per-frame damage queue; hits resolve one at a time | RE-339 |
-| `recent_damage` for fighter hits | The source passes the frame's `damage_queue`; the hit path passes zero. Needs the same deferred hit collection as the row above | RE-339 |
-| Training capture scripts land no hit | RE-295 timed the jab to hit the dummy; on the current build the scripted jab and Fireball never damage it (dummy damage 0 over 3,600 ticks), so no golden covers hit resolution | RE-341 |
+| Hit-status intangibility | `SetHitStatusAll(2)` (Screw Attack start, throws) and Luigi's Super Jump Punch and up-smash intangibility need per-hurtbox hit status on `crate::hurtbox` | RE-333, RE-334, RE-343 |
+| Same-frame hits | `ftCommonDamageUpdateMain`'s simultaneous catcher/held branches, catcher hitlag and a `damage_queue` summed over several hits need a deferred per-frame hit log; hits resolve one at a time, each with its own damage as `recent_damage` | RE-339, RE-343 |
+| Remaining hitbox fields | `Hitbox` lacks element, rebound, shield damage (`sd`) and the ground/air mask (`ga`); several ported throws and Donkey Kong moves use non-default values | RE-343 |
+| Smash DI and tumble landings | `ftCommonDamageCommonProcLagUpdate` needs map collision during hitlag; a landing tumble needs the `Down` bounce chain and its clip lengths; `DamageFlyRoll` needs the shared RNG | RE-343 |
+| Training capture scripts land no hit | RE-295 timed the jab to hit the dummy; on the RE-341 build the scripted jab and Fireball never damaged it (dummy damage 0 over 3,600 ticks), so no golden covers hit resolution. The hurtbox was then a sphere at the dummy's feet; re-measure with the joint hurtboxes (RE-343), and refresh any golden that now lands a hit | RE-341, RE-343 |
 | `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance

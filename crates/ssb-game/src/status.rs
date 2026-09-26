@@ -547,16 +547,32 @@ impl Status {
         }
     }
 
+    /// Whether this status is one of the hit reactions whose map callback is
+    /// `mpCommonUpdateFighterKinetics`: entering it does not change the
+    /// fighter's situation, landing keeps the status and so does leaving
+    /// the ground. `ftCommonDamageInitDamageVars` puts a
+    /// [`Status::DamageN1`]-table status in the air when the hit launches.
+    pub fn keeps_situation(self) -> bool {
+        matches!(
+            self,
+            Status::DamageHi1
+                | Status::DamageHi2
+                | Status::DamageHi3
+                | Status::DamageN1
+                | Status::DamageN2
+                | Status::DamageN3
+                | Status::DamageLw1
+                | Status::DamageLw2
+                | Status::DamageLw3
+                | Status::DamageAir1
+                | Status::DamageAir2
+                | Status::DamageAir3
+        )
+    }
+
     /// Whether this status is a grounded one — the `ga` field, which the
-    /// original sets through `mpCommonSetFighterGround` / `...Air`.
-    ///
-    /// The Damage/Fly family is a documented simplification
-    /// (`crate::attack`'s module docs): the original can put a
-    /// [`Status::DamageHi1`]-table status in the air too, when a shallow hit's
-    /// knockback still has an upward component (`ftCommonDamageInitDamageVars`'s
-    /// `angle_diff < 90deg` branch). That branch is not ported, so here the
-    /// Hi/N/Lw statuses are always grounded and only the dedicated
-    /// Air/Fly/Fall statuses are airborne.
+    /// original sets through `mpCommonSetFighterGround` / `...Air`. For a
+    /// [`Status::keeps_situation`] status this only names its table.
     pub fn is_grounded(self) -> bool {
         !matches!(
             self,
@@ -2967,7 +2983,9 @@ pub fn set_any_status(
 ) {
     // `mpCommonSetFighterGround` / `...Air`: the situation follows the status,
     // and leaving the ground has to move the velocity across.
+    let keeps_situation = matches!(status, AnyStatus::Common(s) if s.keeps_situation());
     match (f.situation, status.is_grounded()) {
+        _ if keeps_situation => {}
         (Situation::Ground, false) => f.become_airborne(),
         (Situation::Air, true) => {
             f.situation = Situation::Ground;
@@ -4381,10 +4399,14 @@ pub fn update(f: &mut Fighter) {
                 ground_interrupt(f);
             }
         }
-        // `ftCommonDamageCommonProcInterrupt` @ `ftcommondamage.c:166`,
-        // restricted to the no-hammer case: hitstun ends the status into
-        // `Wait` (module docs: the grounded Damage statuses are always
-        // grounded here, so this always takes the `ga != Air` branch).
+        // `ftCommonDamageCommonProcUpdate`/`ProcInterrupt` @
+        // `ftcommondamage.c:95,166`, the no-hammer case. `DamageAir1`-`3`
+        // share them with the grounded table: hitstun over, the fighter
+        // leaves through `mpCommonSetFighterWaitOrFall` — `Fall` in the air,
+        // not `DamageFall`. The reaction clips' lengths are not extracted,
+        // so the status ends on the frame hitstun does rather than at the
+        // clip's end, when the source would also first allow the Wait/Fall
+        // interrupts.
         Status::DamageHi1
         | Status::DamageHi2
         | Status::DamageHi3
@@ -4393,18 +4415,22 @@ pub fn update(f: &mut Fighter) {
         | Status::DamageN3
         | Status::DamageLw1
         | Status::DamageLw2
-        | Status::DamageLw3 => {
+        | Status::DamageLw3
+        | Status::DamageAir1
+        | Status::DamageAir2
+        | Status::DamageAir3 => {
             if f.hitstun == 0 {
-                set_wait(f);
+                if f.is_grounded() {
+                    set_wait(f);
+                } else {
+                    set_fall(f);
+                }
             }
         }
         // `ftCommonDamageAirCommonProcInterrupt` @ `ftcommondamage.c:191`:
-        // an airborne hit reaction ends into `DamageFall`, not directly back
-        // under player control — `crate::attack::set_damage_fall`.
-        Status::DamageAir1
-        | Status::DamageAir2
-        | Status::DamageAir3
-        | Status::DamageFlyHi
+        // a tumble ends into `DamageFall`, not directly back under player
+        // control — `crate::attack::set_damage_fall`.
+        Status::DamageFlyHi
         | Status::DamageFlyN
         | Status::DamageFlyLw
         | Status::DamageFlyTop

@@ -23,6 +23,7 @@ pub mod fighter;
 mod fox_attack;
 pub mod grab;
 pub mod ground;
+pub mod hurtbox;
 pub mod link;
 mod link_attack;
 mod luigi_attack;
