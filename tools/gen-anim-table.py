@@ -197,7 +197,7 @@ SPECIAL_SLOTS += [
 # playable fighter can reach yet. The thrown symbols are auto-named and do not
 # describe the motion (Fox's `ThrownFoxFStart` file is labelled `ThrownDK`),
 # so no name check is applied; the index pairing is the evidence.
-GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link"}
+GRAB_FIGHTERS = {"Mario", "Fox", "Donkey", "Samus", "Luigi", "Link", "Yoshi"}
 GRAB_SLOTS = [
     ("Catch",             166),
     ("CatchPull",         167),
@@ -312,6 +312,43 @@ LATE_SPECIAL_SLOTS += [
     ("LinkSpecialAirNEmpty", "Link", "FTLinkAnimMissingBoomerangAir"),
     ("LinkSpecialLw", "Link", "FTLinkAnimBomb"),
     ("LinkSpecialAirLw", "Link", "FTLinkAnimBombAir"),
+]
+
+# Yoshi's common attacks, then his own statuses in `ftYoshiStatus` order
+# without the two Appear entries and `SpecialAirLwLoop`, whose motion id is
+# -1 (`246_YoshiMainMotion.c`, `dFTYoshiMotionDescs`). He has three forward
+# tilts and three forward smashes. Each Egg Lay grab status keeps the figatree
+# of the status before it.
+LATE_SPECIAL_SLOTS += [
+    ("YoshiAttack11", "Yoshi", "FTYoshiAnimJab1"),
+    ("YoshiAttack12", "Yoshi", "FTYoshiAnimJab2"),
+    ("YoshiAttackDash", "Yoshi", "FTYoshiAnimDashAttack"),
+    ("YoshiAttackS3Hi", "Yoshi", "FTYoshiAnimFTiltHigh"),
+    ("YoshiAttackS3", "Yoshi", "FTYoshiAnimFTilt"),
+    ("YoshiAttackS3Lw", "Yoshi", "FTYoshiAnimFTiltLow"),
+    ("YoshiAttackHi3", "Yoshi", "FTYoshiAnimUTilt"),
+    ("YoshiAttackLw3", "Yoshi", "FTYoshiAnimDTilt"),
+    ("YoshiAttackS4Hi", "Yoshi", "FTYoshiAnimFSmashHigh"),
+    ("YoshiAttackS4", "Yoshi", "FTYoshiAnimFSmash"),
+    ("YoshiAttackS4Lw", "Yoshi", "FTYoshiAnimFSmashLow"),
+    ("YoshiAttackHi4", "Yoshi", "FTYoshiAnimUSmash"),
+    ("YoshiAttackLw4", "Yoshi", "FTYoshiAnimDSmash"),
+    ("YoshiAttackAirN", "Yoshi", "FTYoshiAnimAttackAirN"),
+    ("YoshiAttackAirF", "Yoshi", "FTYoshiAnimAttackAirF"),
+    ("YoshiAttackAirB", "Yoshi", "FTYoshiAnimAttackAirB"),
+    ("YoshiAttackAirHi", "Yoshi", "FTYoshiAnimAttackAirU"),
+    ("YoshiAttackAirLw", "Yoshi", "FTYoshiAnimAttackAirD"),
+    ("YoshiSpecialHi", "Yoshi", "FTYoshiAnimEggThrowGround"),
+    ("YoshiSpecialAirHi", "Yoshi", "FTYoshiAnimEggThrowAir"),
+    ("YoshiSpecialLwStart", "Yoshi", "FTYoshiAnimGroundPoundGroundStart"),
+    ("YoshiSpecialLwLanding", "Yoshi", "FTYoshiAnimGroundPoundLanding"),
+    ("YoshiSpecialAirLwStart", "Yoshi", "FTYoshiAnimGroundPoundAir"),
+    ("YoshiSpecialN", "Yoshi", "FTYoshiAnimEggLayGrabbedSomeoneStillGoingOut"),
+    ("YoshiSpecialNCatch", "Yoshi", "FTYoshiAnimEggLayGrabbedSomeoneStillGoingOut"),
+    ("YoshiSpecialNRelease", "Yoshi", "FTYoshiAnimEggLayGrabbedSomeoneComingInAndSwallowing"),
+    ("YoshiSpecialAirN", "Yoshi", "FTYoshiAnimEggLayAirGrabOut"),
+    ("YoshiSpecialAirNCatch", "Yoshi", "FTYoshiAnimEggLayAirGrabOut"),
+    ("YoshiSpecialAirNRelease", "Yoshi", "FTYoshiAnimEggLayAirGrabIn"),
 ]
 
 ALL_SLOTS = (SLOTS + [(name, None, None) for name, _, _ in SPECIAL_SLOTS]

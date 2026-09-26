@@ -431,6 +431,30 @@ pub fn tick_skeleton_animation(
             AnyStatus::Common(Status::AttackAirLw) => 188,
             _ => status.anim_slot(),
         }
+    } else if kind == FighterKind::Yoshi as u32 {
+        // `ssb_rom::anim::SLOT_YOSHI_ATTACK11` onward; specials use
+        // `AnyStatus::anim_slot`.
+        match status {
+            AnyStatus::Common(Status::Attack11) => 204,
+            AnyStatus::Common(Status::Attack12) => 205,
+            AnyStatus::Common(Status::AttackDash) => 206,
+            AnyStatus::Common(Status::AttackS3Hi) => 207,
+            AnyStatus::Common(Status::AttackS3) => 208,
+            AnyStatus::Common(Status::AttackS3Lw) => 209,
+            AnyStatus::Common(Status::AttackHi3) => 210,
+            AnyStatus::Common(Status::AttackLw3) => 211,
+            AnyStatus::Common(Status::AttackS4Hi) => 212,
+            AnyStatus::Common(Status::AttackS4) => 213,
+            AnyStatus::Common(Status::AttackS4Lw) => 214,
+            AnyStatus::Common(Status::AttackHi4) => 215,
+            AnyStatus::Common(Status::AttackLw4) => 216,
+            AnyStatus::Common(Status::AttackAirN) => 217,
+            AnyStatus::Common(Status::AttackAirF) => 218,
+            AnyStatus::Common(Status::AttackAirB) => 219,
+            AnyStatus::Common(Status::AttackAirHi) => 220,
+            AnyStatus::Common(Status::AttackAirLw) => 221,
+            _ => status.anim_slot(),
+        }
     } else if kind == FighterKind::Luigi as u32 {
         // `ssb_rom::anim::SLOT_LUIGI_ATTACK11` onward. Luigi has no
         // mid-angle forward tilts.
@@ -491,7 +515,10 @@ pub fn tick_skeleton_animation(
         *started = Some(status);
         // A status with no motion of its own (`CatchWait`, `CaptureWait`)
         // keeps playing the previous one; its slot is that status's slot.
-        if !status.keeps_motion() {
+        if status.keeps_motion() {
+            // Yoshi Bomb's fall keeps the start clip at speed zero.
+            skeleton.speed = status.anim_speed();
+        } else {
             if let Some(anim) = pack.fighter_anim(kind, slot) {
                 skeleton.start(pack, &anim, 0.0, status.anim_speed());
             }

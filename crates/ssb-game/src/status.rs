@@ -602,6 +602,11 @@ impl Status {
                 | Status::ThrownCommon
                 | Status::ThrownFoxF
                 | Status::ThrownFoxB
+                // `ftCommonCaptureYoshiProcCapture` and
+                // `ftCommonYoshiEggSetStatus` both set the fighter airborne;
+                // the egg's own map callback lands it without a new status.
+                | Status::CaptureYoshi
+                | Status::YoshiEgg
         )
     }
 
@@ -756,6 +761,25 @@ pub enum LinkStatus {
     SpecialAirLw = 236,
 }
 
+/// Yoshi's character status table, `ftyoshi.h`. Appear (220, 221) belongs to
+/// the unported match-entry sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum YoshiStatus {
+    SpecialHi = 222,
+    SpecialAirHi = 223,
+    SpecialLwStart = 224,
+    SpecialLwLanding = 225,
+    SpecialAirLwStart = 226,
+    SpecialAirLwLoop = 227,
+    SpecialN = 228,
+    SpecialNCatch = 229,
+    SpecialNRelease = 230,
+    SpecialAirN = 231,
+    SpecialAirNCatch = 232,
+    SpecialAirNRelease = 233,
+}
+
 /// A fighter's current status: the shared common one, or one of a specific
 /// fighter's own extended ones. Nothing here ties a variant to a particular
 /// [`crate::fighter::FighterKind`] — same as the original, where a status ID
@@ -769,6 +793,7 @@ pub enum AnyStatus {
     Donkey(DonkeyStatus),
     Samus(SamusStatus),
     Link(LinkStatus),
+    Yoshi(YoshiStatus),
 }
 
 impl AnyStatus {
@@ -827,6 +852,19 @@ impl AnyStatus {
                 | LinkStatus::SpecialAirLw,
             ) => false,
             AnyStatus::Link(_) => true,
+            // `ftYoshiSpecialLwStartSetStatus` puts the fighter in the air
+            // before it sets the status, so the whole Yoshi Bomb is airborne
+            // until `SpecialLwLanding`.
+            AnyStatus::Yoshi(
+                YoshiStatus::SpecialAirHi
+                | YoshiStatus::SpecialLwStart
+                | YoshiStatus::SpecialAirLwStart
+                | YoshiStatus::SpecialAirLwLoop
+                | YoshiStatus::SpecialAirN
+                | YoshiStatus::SpecialAirNCatch
+                | YoshiStatus::SpecialAirNRelease,
+            ) => false,
+            AnyStatus::Yoshi(_) => true,
         }
     }
 
@@ -838,6 +876,7 @@ impl AnyStatus {
             AnyStatus::Donkey(_) => false,
             AnyStatus::Samus(_) => false,
             AnyStatus::Link(_) => false,
+            AnyStatus::Yoshi(_) => false,
         }
     }
 
@@ -854,6 +893,7 @@ impl AnyStatus {
             ),
             AnyStatus::Samus(_) => false,
             AnyStatus::Link(_) => false,
+            AnyStatus::Yoshi(_) => false,
         }
     }
 
@@ -863,6 +903,7 @@ impl AnyStatus {
         matches!(
             self,
             AnyStatus::Common(Status::CatchWait | Status::CaptureWait)
+                | AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop)
         )
     }
 
@@ -958,6 +999,21 @@ impl AnyStatus {
                 LinkStatus::SpecialLw => 202,
                 LinkStatus::SpecialAirLw => 203,
             },
+            // `ssb_rom::anim::SLOT_YOSHI_SPECIAL_HI` onward. The loop keeps
+            // the start's figatree (`keeps_motion`); this slot is not read.
+            AnyStatus::Yoshi(s) => match s {
+                YoshiStatus::SpecialHi => 222,
+                YoshiStatus::SpecialAirHi => 223,
+                YoshiStatus::SpecialLwStart => 224,
+                YoshiStatus::SpecialLwLanding => 225,
+                YoshiStatus::SpecialAirLwStart | YoshiStatus::SpecialAirLwLoop => 226,
+                YoshiStatus::SpecialN => 227,
+                YoshiStatus::SpecialNCatch => 228,
+                YoshiStatus::SpecialNRelease => 229,
+                YoshiStatus::SpecialAirN => 230,
+                YoshiStatus::SpecialAirNCatch => 231,
+                YoshiStatus::SpecialAirNRelease => 232,
+            },
         }
     }
 
@@ -979,6 +1035,10 @@ impl AnyStatus {
             // `ftSamusSpecialNStartGetAnimSpeed` is applied by the setter.
             AnyStatus::Samus(_) => 1.0,
             AnyStatus::Link(_) => 1.0,
+            // `ftYoshiSpecialAirLwLoopSetStatus` passes an animation speed
+            // of 0: the pose and the motion script hold.
+            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop) => 0.0,
+            AnyStatus::Yoshi(_) => 1.0,
         }
     }
 }
@@ -2242,6 +2302,7 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
+            | crate::fighter::FighterKind::Yoshi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || !(SPECIALLW_STICK_MIN < f.stick.y as i32 && (f.stick.y as i32) < SPECIALHI_STICK_MIN)
     {
@@ -2267,6 +2328,13 @@ pub fn check_special_n(f: &mut Fighter) -> bool {
                 crate::link::set_special_n(f);
             } else {
                 crate::link::set_special_air_n(f);
+            }
+        }
+        crate::fighter::FighterKind::Yoshi => {
+            if f.situation == Situation::Ground {
+                crate::yoshi::set_special_n(f);
+            } else {
+                crate::yoshi::set_special_air_n(f);
             }
         }
         _ => unreachable!(),
@@ -2309,12 +2377,19 @@ pub fn check_special_hi(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
+            | crate::fighter::FighterKind::Yoshi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) < SPECIALHI_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Link {
+    if f.kind == crate::fighter::FighterKind::Yoshi {
+        if f.is_grounded() {
+            crate::yoshi::set_special_hi(f);
+        } else {
+            crate::yoshi::set_special_air_hi(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Link {
         if f.is_grounded() {
             crate::link::set_special_hi(f);
         } else {
@@ -2461,12 +2536,19 @@ pub fn check_special_lw(f: &mut Fighter) -> bool {
             | crate::fighter::FighterKind::Samus
             | crate::fighter::FighterKind::Luigi
             | crate::fighter::FighterKind::Link
+            | crate::fighter::FighterKind::Yoshi
     ) || !newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::B)
         || (f.stick.y as i32) > SPECIALLW_STICK_MIN
     {
         return false;
     }
-    if f.kind == crate::fighter::FighterKind::Link {
+    if f.kind == crate::fighter::FighterKind::Yoshi {
+        if f.is_grounded() {
+            crate::yoshi::set_special_lw_start(f);
+        } else {
+            crate::yoshi::set_special_air_lw_start(f);
+        }
+    } else if f.kind == crate::fighter::FighterKind::Link {
         if f.is_grounded() {
             crate::link::set_special_lw(f);
         } else {
@@ -2833,10 +2915,14 @@ pub fn set_any_status(
     // `ftMainSetStatus` clears it; the setters that allow a boomerang catch
     // set it again afterwards.
     f.is_special_interrupt = false;
+    // `ftMainSetStatus` resets `knockback_resist_status`; Yoshi's aerial
+    // jump sets it again.
+    f.knockback_resist = 0.0;
     // `ftCommonEntry`, `ftCommonDead`, `ftCommonRebirth`, and sleep each
     // toggle `FTStruct::is_shadow_hide`. Keep the source-owned flag portable
     // so rendering has one display gate and capture systems can use it too.
     f.is_shadow_hidden = crate::shadow::status_hides_shadow(status);
+    f.is_invisible = false;
     f.status.anim_frame = anim_frame_begin;
     f.status.timing = timing;
 }
@@ -3019,6 +3105,9 @@ pub fn set_jump_aerial(f: &mut Fighter) {
     f.physics.jumps_used += 1;
     f.stick.tap_y = STICKBUFFER_MAX;
     f.is_special_interrupt = true;
+    if crate::yoshi::is_yoshi(f.kind) {
+        crate::yoshi::set_jump_aerial(f);
+    }
 }
 
 /// `ftCommonFallSetStatus` @ 0x8013F9E0.
@@ -3174,7 +3263,13 @@ pub fn set_landing_or_landing_air(f: &mut Fighter) {
         }
         Status::AttackAirF => set_landing_air(f, Status::LandingAirF),
         Status::AttackAirB => set_landing_air(f, Status::LandingAirB),
-        Status::AttackAirHi | Status::AttackAirLw if f.kind == crate::fighter::FighterKind::Fox => {
+        // Fox and Yoshi have `LandingAirF` and `LandingAirB` only.
+        Status::AttackAirHi | Status::AttackAirLw
+            if matches!(
+                f.kind,
+                crate::fighter::FighterKind::Fox | crate::fighter::FighterKind::Yoshi
+            ) =>
+        {
             let percent = crate::attack::move_data(f.kind, current.into())
                 .and_then(|m| m.landing_lag_percent)
                 .unwrap_or(100);
@@ -3316,6 +3411,11 @@ fn attack1_flag1_frame(kind: crate::fighter::FighterKind, status: Status) -> Opt
         (crate::fighter::FighterKind::Link, Status::Attack12) => {
             Some(crate::link_attack::JAB2_FLAG1_FRAME)
         }
+        // `Jab1` sets flag 1 at frame 10 of 24; `Jab2` sets none, and Yoshi
+        // has no `Attack13` to chain into.
+        (crate::fighter::FighterKind::Yoshi, Status::Attack11) => {
+            Some(crate::yoshi_attack::JAB1_FLAG1_FRAME)
+        }
         _ => None,
     }
 }
@@ -3439,18 +3539,44 @@ pub fn set_dash_attack(f: &mut Fighter) {
     set_status(f, Status::AttackDash, 0.0, StatusTiming::frames(len));
 }
 
-/// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:10`, reduced to the
-/// "3ANGLE" branch: Mario has no `AttackS3HiS`/`LwS` motion files (the
-/// 5-angle branch is for characters that do), so this is the exact
-/// original behaviour for Mario, not a simplification for him specifically.
+/// How many angled variants of a forward tilt or forward smash a fighter's
+/// motion table carries. `ftCommonAttackS3SetStatus` and
+/// `ftCommonAttackS4SetStatus` test `motion_desc[...HiS].anim_file_id` for
+/// the five-angle branch, then `motion_desc[...Hi]` for the three-angle one;
+/// a fighter with neither always gets the straight move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AngleVariants {
+    One,
+    Three,
+    Five,
+}
+
+/// Read from each fighter's `dFT<Name>MotionDescs`.
+fn ftilt_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
+    use crate::fighter::FighterKind;
+    match crate::grab::base_kind(kind) {
+        FighterKind::Fox | FighterKind::Samus => AngleVariants::Five,
+        FighterKind::Link => AngleVariants::One,
+        _ => AngleVariants::Three,
+    }
+}
+
+fn fsmash_variants(kind: crate::fighter::FighterKind) -> AngleVariants {
+    use crate::fighter::FighterKind;
+    match crate::grab::base_kind(kind) {
+        FighterKind::Fox | FighterKind::Link => AngleVariants::One,
+        FighterKind::Yoshi => AngleVariants::Three,
+        _ => AngleVariants::Five,
+    }
+}
+
+/// `ftCommonAttackS3SetStatus` @ `ftcommonattacks3.c:10`.
 pub fn set_ftilt(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
-    // Fox and Samus have all five forward-tilt motion files.
-    let five = matches!(
-        f.kind,
-        crate::fighter::FighterKind::Fox | crate::fighter::FighterKind::Samus
-    );
+    let variants = ftilt_variants(f.kind);
+    let five = variants == AngleVariants::Five;
+    let three = variants == AngleVariants::Three;
     let status = if five && y > ATTACKS3_5ANGLE_TAN_30 * x.abs() {
         Status::AttackS3Hi
     } else if five && y > ATTACKS3_5ANGLE_TAN_10 * x.abs() {
@@ -3459,9 +3585,9 @@ pub fn set_ftilt(f: &mut Fighter) {
         Status::AttackS3Lw
     } else if five && y < -ATTACKS3_5ANGLE_TAN_10 * x.abs() {
         Status::AttackS3LwS
-    } else if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
+    } else if three && y > ATTACKS3_3ANGLE_TAN_17 * x.abs() {
         Status::AttackS3Hi
-    } else if y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() {
+    } else if three && y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() {
         Status::AttackS3Lw
     } else {
         Status::AttackS3
@@ -3498,15 +3624,25 @@ pub fn set_air_attack(f: &mut Fighter, status: Status) {
     f.link.dair_cleared = false;
 }
 
-/// `ftCommonAttackS4SetStatus` @ `ftcommonattacks4.c:70`, reduced to the
-/// 5-angle branch (Mario has all five `FSmash*` motion files, unlike his
-/// forward tilt's three — see the module docs).
+/// `ftCommonAttackS4SetStatus` @ `ftcommonattacks4.c:70`. The three-angle
+/// branch uses the forward tilt's 17-degree split
+/// (`FTCOMMON_ATTACKS4_3ANGLE_{HI,LW}_MIN`).
 pub fn set_fsmash(f: &mut Fighter) {
     let x = f.stick.x as f32;
     let y = f.stick.y as f32;
-    let status = if f.kind == crate::fighter::FighterKind::Fox {
-        Status::AttackS4
-    } else if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
+    let status = match fsmash_variants(f.kind) {
+        AngleVariants::One => Status::AttackS4,
+        AngleVariants::Three if y > ATTACKS3_3ANGLE_TAN_17 * x.abs() => Status::AttackS4Hi,
+        AngleVariants::Three if y < -ATTACKS3_3ANGLE_TAN_17 * x.abs() => Status::AttackS4Lw,
+        AngleVariants::Three => Status::AttackS4,
+        AngleVariants::Five => fsmash_five(x, y),
+    };
+    let len = attack_length(f, status);
+    set_status(f, status, 0.0, StatusTiming::frames(len));
+}
+
+fn fsmash_five(x: f32, y: f32) -> Status {
+    if y > ATTACKS4_5ANGLE_TAN_21 * x.abs() {
         Status::AttackS4Hi
     } else if y > ATTACKS4_5ANGLE_TAN_7 * x.abs() {
         Status::AttackS4HiS
@@ -3516,9 +3652,7 @@ pub fn set_fsmash(f: &mut Fighter) {
         Status::AttackS4LwS
     } else {
         Status::AttackS4
-    };
-    let len = attack_length(f, status);
-    set_status(f, status, 0.0, StatusTiming::frames(len));
+    }
 }
 
 /// `ftCommonAttackHi4SetStatus` @ `ftcommonattackhi4.c:10`.
@@ -4249,7 +4383,14 @@ pub fn update(f: &mut Fighter) {
         // `f.status.status` can't borrow alongside — clippy's
         // `collapsible_match` suggestion for this doesn't compile.
         #[allow(clippy::collapsible_match)]
+        // `ftCommonYoshiEggProcUpdate`; its interrupt only wiggles the
+        // effect.
+        Status::YoshiEgg => crate::capture_yoshi::update_egg(f),
         s if !s.is_grounded() => {
+            // `ftCommonJumpAerialUpdateModelYaw`: only Yoshi sets a turn.
+            if matches!(s, Status::JumpAerialF | Status::JumpAerialB) {
+                crate::yoshi::update_jump_aerial_turn(f);
+            }
             if !check_special_n(f)
                 && !check_special_hi(f)
                 && !check_special_lw(f)
@@ -4269,6 +4410,7 @@ fn update_extended(f: &mut Fighter) {
     match f.status.status {
         AnyStatus::Samus(_) => crate::samus::update(f),
         AnyStatus::Link(_) => crate::link::update(f),
+        AnyStatus::Yoshi(_) => crate::yoshi::update(f),
         AnyStatus::Donkey(DonkeyStatus::SpecialNStart | DonkeyStatus::SpecialAirNStart) => {
             let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
             if taps.contains(N64Buttons::A) || taps.contains(N64Buttons::B) {

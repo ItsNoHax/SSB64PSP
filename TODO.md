@@ -25,7 +25,9 @@ or evidence record covers it.
 | Restore condensed same-valued attack boxes | Some Mario, Fox and Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy, so joint placement now exposes this old omission | RE-332 |
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
 | Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
-| Select and draw Samus, Luigi and Link in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect are not drawn | RE-333–335 |
+| Select and draw Samus, Luigi, Link and Yoshi in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, and Yoshi's Egg Throw and Bomb stars, are not drawn | RE-333–335, RE-337 |
+| Yoshi Egg Lay victim collision and effect | The egg uses the root-sphere hurtbox instead of `dFTCommonYoshiEggDamageCollDescs`; laying omits the wall/ceiling sweep, damaging-floor escape needs hazards, and the break effect is represented by a 10-frame clock | RE-337 |
+| Yoshi Bomb aerial ledge catch | The source can catch a ledge during the aerial Bomb; the fighter ledge search is not integrated with this status | RE-337 |
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
 | Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
 | Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
@@ -40,7 +42,7 @@ Deferred by user instruction.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Samus, Luigi and Link slots) is 22,746,176 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327 |
+| PSP-1000 support | Pack did not fit in 32 MiB and `MEMSIZE=1` is ignored. The current pack (v37, with Yoshi slots) is 22,875,008 bytes; re-measure before designing a reduced or streaming pack | RE-288, RE-318, RE-327, RE-337 |
 | 30-minute run on a second unit | Only one unit (Slim) has run 30 minutes with the full pack | RE-273, RE-284 |
 | Re-capture current goldens on hardware | RE-320 captured the v32 diagnostic object and RE-326 three v35 stages, not the full current golden matrix | RE-320, RE-326 |
 

@@ -13,6 +13,7 @@
 
 pub mod attack;
 pub mod camera;
+pub mod capture_yoshi;
 pub mod collision;
 mod donkey_attack;
 pub mod fighter;
@@ -28,3 +29,5 @@ mod samus_attack;
 pub mod shadow;
 pub mod status;
 pub mod weapon;
+pub mod yoshi;
+mod yoshi_attack;
