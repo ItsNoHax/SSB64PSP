@@ -19,36 +19,23 @@
 //! * **Joint attachment comes from the current pose.** The PSP runtime
 //!   samples `FTStruct::joints` into portable transforms. A host caller that
 //!   has no skeleton retains the old fallback for non-root joints.
-//! * **A sphere hurtbox, not a per-bone capsule set.** The original tests a
-//!   hitbox sphere against eleven `FTDamageColl` capsules per fighter
-//!   (`gmCollisionCheckFighterInFighterRange`). No per-bone hurtbox system
-//!   exists yet, so [`MARIO_HURTBOX_RADIUS`] stands in with a single sphere at
-//!   the fighter's root — sized from Mario's own real collision-diamond width
-//!   (`dMarioMain_attr.map_coll = { 320, 190, 0, 150 }`, so half of `150`),
-//!   not an invented number.
-//! * **No hitlag and no `recent_damage` for fighter hits.**
-//!   `ftParamGetCommonKnockback` runs with Training's damage ratio and each
-//!   side's handicap ([`crate::stale`]), and fighter hitboxes deal
-//!   stale-move-scaled damage. The hit path still passes `recent_damage` as
-//!   zero where the source passes the frame's `damage_queue` (see
-//!   `TODO.md`).
-//! * **Knockback decay, not a friction curve.** The original decelerates
-//!   `vel_damage_ground` by friction every frame the way normal ground
-//!   movement does. Until that exists, [`crate::fighter::Fighter::tick_timers`]
-//!   holds knockback constant for the hit's hitstun duration and then snaps it
-//!   to zero the frame hitstun ends, rather than bleeding it off gradually.
-//! * **`Damage` status entered, but not fully.** A landed hit now moves the
-//!   defender into the real `DamageHi/N/Lw1-3`/`DamageAir1-3`/`DamageFlyN`/
-//!   `FlyTop` status (`damage_status`), matching `ftCommonDamageGetDamageLevel`'s
-//!   hitstun tiers and the defender's ground/air situation. Still missing:
-//!   the hit-location Hi/Lw index (every hit reads as "N", the middle
-//!   column — no system yet computes where on the target's body a hitbox
-//!   landed), `DamageFlyRoll` (its selection is a coin flip, and there is no
-//!   shared RNG source to drive it), and the "a shallow hit's upward
-//!   knockback launches the target airborne anyway" angle branch (dropped —
-//!   see [`crate::status::Status::is_grounded`]'s doc comment). No animation
-//!   plays for any of these yet — `Status::anim_slot`'s catch-all keeps the
-//!   current pose, same as `Attack11`.
+//! * **Hurtboxes are the source's joint boxes** ([`crate::hurtbox`]), tested
+//!   at the hit's current position only (no swept previous position). A
+//!   caller with no posed joints falls back to one sphere of
+//!   [`MARIO_HURTBOX_RADIUS`] at the fighter's root.
+//! * **One hit at a time.** The source gathers every hit of a frame into a
+//!   hit log and resolves the strongest (`ftMainProcessHitCollisionStatsMain`);
+//!   here each registered hit is applied as it is found, so the frame's
+//!   `damage_queue` is that one hit's damage. Hitlag (`ftParamGetHitLag`)
+//!   freezes both sides; Smash DI during hitlag is not ported, because a
+//!   frozen fighter skips map collision here and the nudge could cross a
+//!   floor.
+//! * **Not carried by [`Hitbox`]:** the motion command's element, rebound,
+//!   shield damage (`sd`) and ground/air mask (`ga`), so every hit is
+//!   `Normal`, and shields lose only the hit's damage.
+//! * **`DamageFlyRoll`** needs the shared RNG, so a tumble reads as
+//!   `DamageFlyN`/`DamageFlyTop`. A tumble that lands does not bounce into
+//!   the unported `Down` chain; it takes the ordinary landing.
 
 use ssb_engine::math::{sin_cos, Vec3};
 
@@ -116,8 +103,8 @@ pub const MARIO_ATTACK11_LENGTH_FRAMES: f32 = 14.0;
 /// 3, 0, 0, 0, 8)`.
 pub const MARIO_JAB1_HITBOX_2: Hitbox = MARIO_JAB1_HITBOX;
 
-/// Mario's hurtbox radius stand-in — half of `dMarioMain_attr.map_coll`'s
-/// `150.0` width. See the module docs' "sphere hurtbox" simplification.
+/// The root-sphere hurtbox used when a fighter has no posed joints — half
+/// of `dMarioMain_attr.map_coll`'s `150.0` width ([`crate::hurtbox`]).
 pub const MARIO_HURTBOX_RADIUS: f32 = 150.0 / 2.0;
 
 /// One hitbox and the half-open frame window it is active —
@@ -1835,7 +1822,8 @@ pub fn sakurai_angle_radians(angle_i: i32, target_airborne: bool, knockback: f32
 }
 
 /// `ftParamGetCommonKnockback` @ `ftparam.c:1451` for a hitbox, with
-/// `recent_damage == 0` (module docs).
+/// `recent_damage == 0`. A landed hit passes its own damage as
+/// `recent_damage` instead ([`apply_hitbox_dir`]).
 pub fn common_knockback(
     defender_damage_percent: u16,
     hitbox: &Hitbox,
@@ -1892,10 +1880,8 @@ pub fn knockback(
 
 /// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, for callers that
 /// already know the knockback and direction (throws, grab escapes, the cargo
-/// stagger). A forced `status_replace` counts as a tumble-level hit, as in
-/// the original, so it always launches. The fighter turns to face `lr`.
-/// The same simplifications as [`resolve_hit`] apply (middle damage column,
-/// no ground-launch angle branch, no random `DamageFlyRoll`).
+/// stagger). It adds `damage` to the percent first and reads as a middle
+/// (`N`) hit; see [`set_damage_status`] for the rest.
 pub fn init_damage_vars(
     f: &mut Fighter,
     status_replace: Option<AnyStatus>,
@@ -1904,35 +1890,120 @@ pub fn init_damage_vars(
     angle_i: i32,
     lr: f32,
 ) {
+    f.add_damage(damage);
+    set_damage_status(f, status_replace, knockback, angle_i, lr, DAMAGE_INDEX_N);
+}
+
+/// `FTDamageColl::placement`: which column of the damage status tables a
+/// hurtbox selects (`0` low, `1` middle, `2` high).
+pub const DAMAGE_INDEX_LW: usize = 0;
+pub const DAMAGE_INDEX_N: usize = 1;
+pub const DAMAGE_INDEX_HI: usize = 2;
+
+/// `cos(100deg)`: a tumble whose velocity points more than 100 degrees away
+/// from the floor normal bounces off it (`ftCommonDamageInitDamageVars`).
+const DAMAGE_BOUNCE_COS: f32 = -0.173_648_18;
+
+/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, without the
+/// percent update. The fighter turns to `lr` and enters the status from the
+/// air or ground table (`damage_index` column, [`damage_status`]).
+///
+/// On the ground, a knockback vector with any component along the floor
+/// normal launches the fighter into the air with its ground-table status
+/// (`angle_diff < 90`); a tumble always launches, bouncing off the floor
+/// at 0.8 of its vertical speed when it points more than 100 degrees into
+/// it; anything else slides along the floor through `vel_damage_ground`.
+/// `DamageFlyRoll`'s coin flip is not ported, so a sideways tumble at 100%
+/// or more reads as `DamageFlyN`.
+pub fn set_damage_status(
+    f: &mut Fighter,
+    status_replace: Option<AnyStatus>,
+    knockback: f32,
+    angle_i: i32,
+    lr: f32,
+    damage_index: usize,
+) {
     let airborne = !f.is_grounded();
     let angle = sakurai_angle_radians(angle_i, airborne, knockback);
     let (sin, cos) = sin_cos(angle);
+    let vel_x = cos * knockback;
+    let vel_y = sin * knockback;
     let hitstun_f = hitstun_frames(knockback);
     let level = if status_replace.is_some() {
         3
     } else {
         damage_level(hitstun_f)
     };
+    let lr = if lr > 0.0 { 1.0 } else { -1.0 };
     f.facing = if lr > 0.0 {
         crate::fighter::Facing::Right
     } else {
         crate::fighter::Facing::Left
     };
-    let status = status_replace.unwrap_or(damage_status(level, airborne, angle).into());
-    if level == 3 {
-        f.become_airborne();
+    let vel = Vec3::new(-vel_x * lr, vel_y, 0.0);
+    let mut launch = false;
+    let (vel_damage, vel_damage_ground) = if airborne {
+        (vel, 0.0)
+    } else {
+        let normal = f
+            .floor
+            .map(|floor| floor.normal)
+            .unwrap_or(ssb_engine::math::Vec2::new(0.0, 1.0));
+        let dot = normal.x * vel.x + normal.y * vel.y;
+        let len = ssb_engine::math::sqrt(vel.x * vel.x + vel.y * vel.y);
+        if dot > 0.0 {
+            launch = true;
+            (vel, 0.0)
+        } else if level == 3 {
+            launch = true;
+            if len > 0.0 && dot < len * DAMAGE_BOUNCE_COS {
+                (Vec3::new(vel.x, -vel.y * 0.8, 0.0), 0.0)
+            } else {
+                (vel, 0.0)
+            }
+        } else {
+            let ground = -vel_x * lr;
+            (
+                Vec3::new(normal.y * ground, -normal.x * ground, 0.0),
+                ground,
+            )
+        }
+    };
+    let mut status = damage_status(level, airborne, damage_index);
+    if level == 3 && angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
+        status = Status::DamageFlyTop;
     }
-    f.damage = f.damage.saturating_add(damage.max(0) as u16);
+    let status = status_replace.unwrap_or(status.into());
+    if launch {
+        // `mpCommonSetFighterAir`.
+        f.become_airborne();
+        f.floor = None;
+        f.physics.jumps_used = 1;
+        f.pos.z = 0.0;
+    }
     status::set_any_status(f, status, 0.0, StatusTiming::unknown());
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_air = Vec3::ZERO;
-    f.physics.vel_knockback = Vec3::new(-cos * knockback * lr, sin * knockback, 0.0);
+    f.physics.is_fastfall = false;
+    f.physics.vel_knockback = vel_damage;
+    f.physics.vel_damage_ground = vel_damage_ground;
     f.hitstun = (hitstun_f as u16).max(1);
 }
 
 /// `ftParamGetHitStun` @ `ftparam.c:1505`.
 pub fn hitstun_frames(knockback: f32) -> f32 {
     knockback / 1.875
+}
+
+/// `ftParamGetHitLag` @ `ftparam.c:1511` (US), with `hitlag_mul == 1`: the
+/// frames a hit freezes a fighter for, taken from the damage and the status
+/// the fighter was in when it landed. A crouch keeps two thirds.
+pub fn hitlag_frames(damage: i32, status: AnyStatus) -> u16 {
+    let mut tics = ((damage as f32 * (1.0 / 3.0)) + 5.0) as i32;
+    if matches!(status, AnyStatus::Common(Status::Squat | Status::SquatWait)) {
+        tics = (tics as f32 * (2.0 / 3.0)) as i32;
+    }
+    tics.max(0) as u16
 }
 
 /// `this_fp->damage_lr = (defender.x < attacker.x) ? +1 : -1` —
@@ -1972,28 +2043,25 @@ pub fn damage_level(hitstun: f32) -> u8 {
 const FLYTOP_ANGLE_LOW: f32 = 1.221_730_6; // 70 degrees
 const FLYTOP_ANGLE_HIGH: f32 = 1.919_862_2; // 110 degrees
 
-/// `ftCommonDamageInitDamageVars`'s status-table lookup
-/// (`ftcommondamage.c:473`), restricted to the `damage_index == N` ("hit the
-/// middle of the target") column — no hit-location-relative Hi/Lw index
-/// exists yet, so every hit reads as a middle hit — and dropping the
-/// ground-hit-still-launches-airborne branch (see [`Status::is_grounded`]'s
-/// docs). `DamageFlyRoll`'s random branch is not ported: it needs a shared
-/// RNG source this module does not have, so a tumble always reads as
-/// `DamageFlyN`/`DamageFlyTop`.
-pub fn damage_status(level: u8, defender_was_airborne: bool, angle: f32) -> Status {
-    if level == 3 {
-        return if angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
-            Status::DamageFlyTop
-        } else {
-            Status::DamageFlyN
-        };
-    }
-    let table = if defender_was_airborne {
-        [Status::DamageAir1, Status::DamageAir2, Status::DamageAir3]
-    } else {
-        [Status::DamageN1, Status::DamageN2, Status::DamageN3]
-    };
-    table[level as usize]
+/// `dFTCommonDamageStatusGroundIDs` / `dFTCommonDamageStatusAirIDs`
+/// (`ftcommondamage.c:13`), indexed by damage level and the hurtbox's
+/// placement column. The `DamageFlyTop` override is
+/// [`set_damage_status`]'s.
+pub fn damage_status(level: u8, defender_was_airborne: bool, damage_index: usize) -> Status {
+    const GROUND: [[Status; 3]; 4] = [
+        [Status::DamageLw1, Status::DamageN1, Status::DamageHi1],
+        [Status::DamageLw2, Status::DamageN2, Status::DamageHi2],
+        [Status::DamageLw3, Status::DamageN3, Status::DamageHi3],
+        [Status::DamageFlyLw, Status::DamageFlyN, Status::DamageFlyHi],
+    ];
+    const AIR: [[Status; 3]; 4] = [
+        [Status::DamageAir1; 3],
+        [Status::DamageAir2; 3],
+        [Status::DamageAir3; 3],
+        [Status::DamageFlyLw, Status::DamageFlyN, Status::DamageFlyHi],
+    ];
+    let table = if defender_was_airborne { &AIR } else { &GROUND };
+    table[usize::from(level.min(3))][damage_index.min(2)]
 }
 
 /// The outcome of a hit landing, ready to apply to the defending
@@ -2054,11 +2122,16 @@ pub fn resolve_hit_with_knockback(
     let vel_y = sin * knockback;
     let hitstun_f = hitstun_frames(knockback);
     let level = damage_level(hitstun_f);
+    let status = if level == 3 && angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
+        Status::DamageFlyTop
+    } else {
+        damage_status(level, defender_airborne, DAMAGE_INDEX_N)
+    };
     HitResult {
         damage: hitbox.damage,
         knockback_vel: Vec3::new(-vel_x * lr, vel_y, 0.0),
         hitstun: (hitstun_f as u16).max(1),
-        status: damage_status(level, defender_airborne, angle),
+        status,
     }
 }
 
@@ -2420,12 +2493,21 @@ pub fn apply_hit_from(
         hitbox.damage = crate::stale::staled_damage(attacker, hitbox.damage);
         let joint = attack_joint(attacker.kind, attacker.status.status, index);
         let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
+        let captured = captured_damage(defender, hitbox.damage);
         match apply_hitbox_at(&hitbox, hitbox_pos, attacker.handicap, defender) {
             HitOutcome::Missed => continue,
             outcome => {
                 if outcome == HitOutcome::Damaged {
                     crate::stale::record_hit(attacker, defender.port);
                 }
+                // `ftMainProcParams`: `attack_damage` (the captured damage)
+                // or `attack_shield_push` freezes the attacker too.
+                let lag_damage = if outcome == HitOutcome::Damaged {
+                    captured
+                } else {
+                    hitbox.damage
+                };
+                attacker.hitlag = hitlag_frames(lag_damage, attacker.status.status);
                 hit_record.hit_generation = Some(active.hit_generation);
                 return true;
             }
@@ -2475,6 +2557,42 @@ pub fn captured_damage(defender: &Fighter, damage: i32) -> i32 {
     (damage as f32 * 1.0 + 0.999) as i32
 }
 
+/// Which way a registered hit pushes the defender (`damage_lr`) and which
+/// way a shield it lands on slides (`shield_lr`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HitDirection {
+    pub damage_lr: f32,
+    pub shield_lr: f32,
+}
+
+impl HitDirection {
+    /// A fighter attack: both by relative position (`ftmain.c:2860`,
+    /// `ftMainUpdateShieldStatFighter`).
+    pub fn from_position(defender_pos: Vec3, attacker_pos: Vec3) -> Self {
+        let lr = damage_lr(defender_pos, attacker_pos);
+        HitDirection {
+            damage_lr: lr,
+            shield_lr: lr,
+        }
+    }
+
+    /// A weapon: `ftMainProcessHitCollisionStatsMain` takes the side from
+    /// the weapon's travel unless it is nearly still (`|vel.x| < 5`), and
+    /// `ftMainUpdateShieldStatWeapon` always from its travel.
+    pub fn from_weapon(defender_pos: Vec3, weapon_pos: Vec3, weapon_vel_x: f32) -> Self {
+        let travel_lr = if weapon_vel_x < 0.0 { 1.0 } else { -1.0 };
+        let damage_lr = if weapon_vel_x.abs() < 5.0 {
+            damage_lr(defender_pos, weapon_pos)
+        } else {
+            travel_lr
+        };
+        HitDirection {
+            damage_lr,
+            shield_lr: travel_lr,
+        }
+    }
+}
+
 /// Applies an already-positioned hitbox to a defender. Fighter moves obtain
 /// their position from a joint-relative offset; a weapon owns its world
 /// position directly. Keeping collision resolution here preserves one damage,
@@ -2489,14 +2607,54 @@ pub fn apply_hitbox_at(
     attack_handicap: u8,
     defender: &mut Fighter,
 ) -> HitOutcome {
-    if !spheres_overlap(
-        attacker_pos,
-        hitbox.radius,
-        defender.pos,
-        MARIO_HURTBOX_RADIUS,
-    ) {
-        return HitOutcome::Missed;
+    let direction = HitDirection::from_position(defender.pos, attacker_pos);
+    apply_hitbox_dir(hitbox, attacker_pos, direction, attack_handicap, defender)
+}
+
+/// [`apply_hitbox_at`] with an explicit push direction (weapons,
+/// [`HitDirection::from_weapon`]).
+///
+/// The damage path follows `ftMainUpdateDamageStatFighter` and
+/// `ftMainProcParams` for a frame with one hit: the captured-halved damage is
+/// the frame's `damage_queue`, which `ftParamGetCommonKnockback` receives as
+/// `recent_damage` on top of the percent the defender had before the hit.
+/// Crouching takes two thirds of the knockback, then the status's
+/// resistance comes off; the percent is always added.
+pub fn apply_hitbox_dir(
+    hitbox: &Hitbox,
+    attacker_pos: Vec3,
+    direction: HitDirection,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+) -> HitOutcome {
+    let status_before = defender.status.status;
+    let captured = captured_damage(defender, hitbox.damage);
+    let outcome = resolve_hitbox(hitbox, attacker_pos, direction, attack_handicap, defender);
+    // `ftMainProcParams`: `damage_lag` or `shield_damage` freezes the
+    // defender, measured against the status the hit found it in.
+    let lag_damage = match outcome {
+        HitOutcome::Missed => None,
+        HitOutcome::Shielded => Some(hitbox.damage),
+        HitOutcome::Damaged if status_before == AnyStatus::Common(Status::YoshiEgg) => None,
+        HitOutcome::Damaged => Some(captured),
+    };
+    if let Some(damage) = lag_damage {
+        defender.hitlag = hitlag_frames(damage, status_before);
     }
+    outcome
+}
+
+fn resolve_hitbox(
+    hitbox: &Hitbox,
+    attacker_pos: Vec3,
+    direction: HitDirection,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+) -> HitOutcome {
+    let Some(damage_index) = crate::hurtbox::hit_index(defender, attacker_pos, hitbox.radius)
+    else {
+        return HitOutcome::Missed;
+    };
     if defender.invincible_frames > 0 {
         // `nGMHitStatusInvincible`: the hitbox simply does not register —
         // the hit record is left alone so the same active window
@@ -2504,7 +2662,7 @@ pub fn apply_hitbox_at(
         return HitOutcome::Missed;
     }
     if is_shielding(defender.status.status) {
-        apply_shield_hit_at(hitbox, attacker_pos, defender);
+        apply_shield_damage(hitbox.damage, direction.shield_lr, defender);
         return HitOutcome::Shielded;
     }
     if defender.status.status == Status::YoshiEgg {
@@ -2512,27 +2670,32 @@ pub fn apply_hitbox_at(
         return HitOutcome::Damaged;
     }
     let damage = captured_damage(defender, hitbox.damage);
-    // `ftMainUpdateDamageStatFighter`: the status's knockback resistance
-    // comes off first, and a hit left with no knockback only flashes
-    // (`ftCommonDamageSetDamageColAnim`): no damage status, no `proc_damage`.
-    let knockback = common_knockback(
+    let mut knockback = knockback(
         defender.damage,
-        hitbox,
+        damage,
+        hitbox.damage,
+        hitbox.kb_weight,
+        hitbox.kb_scale,
+        hitbox.kb_base,
         defender.attributes.weight,
         attack_handicap,
         defender.handicap,
-    ) - defender.knockback_resist;
-    if knockback <= 0.0 {
-        defender.damage = defender.damage.saturating_add(damage.max(0) as u16);
+    );
+    if matches!(
+        defender.status.status,
+        AnyStatus::Common(Status::Squat | Status::SquatWait)
+    ) {
+        knockback *= 2.0 / 3.0;
+    }
+    // `ftMainProcParams`: the status's knockback resistance comes off, and a
+    // hit left with no knockback only flashes (`ftCommonDamageSetDamageColAnim`):
+    // no damage status, no `proc_damage`.
+    let knockback = (knockback - defender.knockback_resist).max(0.0);
+    defender.add_damage(damage);
+    if knockback == 0.0 {
         return HitOutcome::Damaged;
     }
-    let result = resolve_hit_with_knockback(
-        hitbox,
-        attacker_pos,
-        defender.pos,
-        knockback,
-        !defender.is_grounded(),
-    );
+    let lr = direction.damage_lr;
     if defender.kind == crate::fighter::FighterKind::Donkey {
         defender.donkey_special_n.charge_level = 0;
     }
@@ -2544,9 +2707,7 @@ pub fn apply_hitbox_at(
     }
     crate::yoshi::on_damage(defender);
     if defender.grab.capture.is_some() {
-        // `ftCommonDamageUpdateMain`'s `capture_gobj` branch. The percent is
-        // always added (`ftParamUpdateDamage(fp, fp->damage_queue)`).
-        defender.damage = defender.damage.saturating_add(damage as u16);
+        // `ftCommonDamageUpdateMain`'s `capture_gobj` branch.
         if capture_keep_hold(damage) {
             // The hold survives; only the catcher's hitlag (not ported)
             // and the colour animation react.
@@ -2556,45 +2717,21 @@ pub fn apply_hitbox_at(
         // catcher's `ftCommonThrownSetStatusNoDamageRelease` (delivered by
         // `grab::exchange`) and this fighter's normal damage status below.
         crate::grab::release_on_capture_hit(defender);
-        enter_damage(defender, &result);
+        set_damage_status(defender, None, knockback, hitbox.angle, lr, damage_index);
         return HitOutcome::Damaged;
     }
     if defender.grab.catch.is_some() {
         // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
         // stance absorbs anything below a tumble; otherwise the held fighter
         // is dropped with the throw descriptor's `[1]` knockback.
-        let knockback = common_knockback(
-            defender.damage,
-            hitbox,
-            defender.attributes.weight,
-            attack_handicap,
-            defender.handicap,
-        );
         if crate::grab::cargo_resists(defender, knockback) {
-            defender.damage = defender.damage.saturating_add(damage as u16);
-            let lr = damage_lr(defender.pos, attacker_pos);
             crate::grab::set_donkey_throwf_damage(defender, knockback, hitbox.angle, lr);
             return HitOutcome::Damaged;
         }
         crate::grab::release_on_hit(defender);
     }
-    defender.damage = defender.damage.saturating_add(damage as u16);
-    enter_damage(defender, &result);
+    set_damage_status(defender, None, knockback, hitbox.angle, lr, damage_index);
     HitOutcome::Damaged
-}
-
-/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:557` zeroes the
-/// fighter's normal ground/air velocity outright before writing the
-/// knockback vector — a hit fully overrides existing movement rather than
-/// adding to it. `status::set_status` runs first because it is what moves
-/// `vel_ground` into `vel_air` on a ground-to-air transition, and that
-/// transferred value must not survive the zeroing below.
-fn enter_damage(defender: &mut Fighter, result: &HitResult) {
-    status::set_status(defender, result.status, 0.0, StatusTiming::unknown());
-    defender.physics.vel_ground = Vec3::ZERO;
-    defender.physics.vel_air = Vec3::ZERO;
-    defender.physics.vel_knockback = result.knockback_vel;
-    defender.hitstun = result.hitstun;
 }
 
 /// Whether a hit landing on this status should be redirected into
@@ -2617,11 +2754,24 @@ pub fn apply_shield_hit(hitbox: &Hitbox, attacker: &Fighter, defender: &mut Figh
     apply_shield_hit_at(hitbox, attacker.pos, defender);
 }
 
-/// [`apply_shield_hit`] for a world-space attack source such as a weapon.
+/// [`apply_shield_hit`] for a world-space attack source.
 pub fn apply_shield_hit_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fighter) {
     let shield_lr = damage_lr(defender.pos, attacker_pos);
-    status::set_guard_set_off(defender, hitbox.damage as f32, shield_lr);
-    defender.guard.shield_health -= hitbox.damage as f32;
+    apply_shield_damage(hitbox.damage, shield_lr, defender);
+}
+
+/// `ftMainProcParams`' shield half: the hit comes off the shield's health
+/// first, and a shield taken to zero breaks at once
+/// (`ftCommonShieldBreakFlyCommonSetStatus`) instead of being pushed back.
+/// The motion command's own `shield_damage` term is not carried by
+/// [`Hitbox`], so only the hit's damage counts.
+fn apply_shield_damage(damage: i32, shield_lr: f32, defender: &mut Fighter) {
+    defender.guard.shield_health -= damage as f32;
+    if defender.guard.shield_health <= 0.0 {
+        status::set_shield_break_fly(defender);
+    } else {
+        status::set_guard_set_off(defender, damage as f32, shield_lr);
+    }
 }
 
 #[cfg(test)]
@@ -2754,30 +2904,73 @@ mod tests {
     }
 
     #[test]
-    fn damage_status_picks_the_grounded_or_airborne_table_by_prior_situation() {
-        assert_eq!(damage_status(0, false, 0.0), Status::DamageN1);
-        assert_eq!(damage_status(1, false, 0.0), Status::DamageN2);
-        assert_eq!(damage_status(2, false, 0.0), Status::DamageN3);
-        assert_eq!(damage_status(0, true, 0.0), Status::DamageAir1);
-        assert_eq!(damage_status(2, true, 0.0), Status::DamageAir3);
+    fn damage_status_picks_the_table_and_the_placement_column() {
+        assert_eq!(damage_status(0, false, DAMAGE_INDEX_N), Status::DamageN1);
+        assert_eq!(damage_status(1, false, DAMAGE_INDEX_N), Status::DamageN2);
+        assert_eq!(damage_status(2, false, DAMAGE_INDEX_N), Status::DamageN3);
+        assert_eq!(damage_status(0, false, DAMAGE_INDEX_HI), Status::DamageHi1);
+        assert_eq!(damage_status(2, false, DAMAGE_INDEX_LW), Status::DamageLw3);
+        assert_eq!(damage_status(0, true, DAMAGE_INDEX_HI), Status::DamageAir1);
+        assert_eq!(damage_status(2, true, DAMAGE_INDEX_LW), Status::DamageAir3);
+        assert_eq!(damage_status(3, false, DAMAGE_INDEX_N), Status::DamageFlyN);
+        assert_eq!(damage_status(3, true, DAMAGE_INDEX_HI), Status::DamageFlyHi);
+        assert_eq!(damage_status(3, true, DAMAGE_INDEX_LW), Status::DamageFlyLw);
+    }
+
+    fn grounded_mario() -> Fighter {
+        let mut f = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        f.situation = crate::fighter::Situation::Ground;
+        f.floor = Some(crate::ground::Standing {
+            line: 0,
+            flags: 0,
+            normal: ssb_engine::math::Vec2::new(0.0, 1.0),
+        });
+        f
     }
 
     #[test]
-    fn damage_status_tumble_is_flytop_only_within_the_near_vertical_window() {
-        // Level 3 always tumbles airborne, regardless of prior situation.
-        assert_eq!(damage_status(3, false, 0.0), Status::DamageFlyN);
-        assert_eq!(
-            damage_status(3, true, 90.0f32.to_radians()),
-            Status::DamageFlyTop
-        );
-        assert_eq!(
-            damage_status(3, true, 69.0f32.to_radians()),
-            Status::DamageFlyN
-        );
-        assert_eq!(
-            damage_status(3, true, 111.0f32.to_radians()),
-            Status::DamageFlyN
-        );
+    fn a_tumble_is_flytop_only_within_the_near_vertical_window() {
+        for (angle, expected) in [
+            (90, Status::DamageFlyTop),
+            (69, Status::DamageFlyN),
+            (111, Status::DamageFlyN),
+        ] {
+            let mut f = grounded_mario();
+            set_damage_status(&mut f, None, 100.0, angle, 1.0, DAMAGE_INDEX_N);
+            assert_eq!(f.status.status, AnyStatus::Common(expected), "{angle}");
+        }
+    }
+
+    #[test]
+    fn a_flat_grounded_hit_slides_along_the_floor() {
+        let mut f = grounded_mario();
+        // Sakurai angle below 32 knockback is flat.
+        set_damage_status(&mut f, None, 20.0, 361, 1.0, DAMAGE_INDEX_N);
+        assert!(f.is_grounded());
+        assert_eq!(f.status.status, AnyStatus::Common(Status::DamageN1));
+        assert_eq!(f.physics.vel_damage_ground, -20.0);
+        assert_eq!(f.physics.vel_knockback, Vec3::new(-20.0, 0.0, 0.0));
+        assert_eq!(f.facing, crate::fighter::Facing::Right);
+    }
+
+    #[test]
+    fn an_upward_grounded_hit_launches_with_its_ground_status() {
+        let mut f = grounded_mario();
+        f.physics.jumps_used = 0;
+        set_damage_status(&mut f, None, 20.0, 45, -1.0, DAMAGE_INDEX_HI);
+        assert!(!f.is_grounded(), "angle_diff < 90 launches");
+        assert_eq!(f.status.status, AnyStatus::Common(Status::DamageHi1));
+        assert_eq!(f.physics.jumps_used, 1);
+        assert!(f.physics.vel_knockback.x > 0.0 && f.physics.vel_knockback.y > 0.0);
+        assert_eq!(f.facing, crate::fighter::Facing::Left);
+    }
+
+    #[test]
+    fn a_downward_grounded_tumble_bounces_off_the_floor() {
+        let mut f = grounded_mario();
+        set_damage_status(&mut f, None, 100.0, 270, 1.0, DAMAGE_INDEX_N);
+        assert!(!f.is_grounded());
+        assert!((f.physics.vel_knockback.y - 80.0).abs() < 1e-3);
     }
 
     /// End-to-end through `apply_hit_from`: a grounded jab at 0% enters
@@ -2804,8 +2997,9 @@ mod tests {
         assert!(hit_record.hit_generation.is_some());
         assert!(defender.hitstun > 0);
 
-        // Hitstun running out returns the defender to Wait.
-        for _ in 0..defender.hitstun {
+        // Hitlag, then hitstun, running out returns the defender to Wait.
+        assert!(defender.hitlag > 0 && attacker.hitlag > 0);
+        for _ in 0..defender.hitstun + defender.hitlag {
             defender.tick_timers();
         }
         crate::status::update(&mut defender);
@@ -2842,6 +3036,112 @@ mod tests {
             starting_health - MARIO_JAB1_HITBOX.damage as f32
         );
         assert_ne!(defender.physics.vel_ground.x, 0.0);
+    }
+
+    #[test]
+    fn a_hit_breaking_the_shield_goes_straight_to_shield_break() {
+        let mut defender = grounded_mario();
+        status::set_status(&mut defender, Status::Guard, 0.0, StatusTiming::unknown());
+        defender.guard.shield_health = 2.0;
+        let outcome = apply_hitbox_at(&MARIO_JAB1_HITBOX, Vec3::ZERO, 9, &mut defender);
+        assert_eq!(outcome, HitOutcome::Shielded);
+        assert_eq!(defender.status.status, Status::ShieldBreakFly);
+        assert_eq!(
+            defender.guard.shield_health,
+            status::GUARD_HEALTH_BREAK_RESPAWN
+        );
+    }
+
+    /// `ftMainProcessHitCollisionStatsMain` passes the frame's
+    /// `damage_queue`, which already holds this hit, as `recent_damage`.
+    #[test]
+    fn knockback_counts_the_hit_on_top_of_the_prior_percent() {
+        let hitbox = Hitbox {
+            damage: 10,
+            radius: 50.0,
+            offset: Vec3::ZERO,
+            angle: 45,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 0,
+        };
+        let mut defender = grounded_mario();
+        defender.damage = 50;
+        apply_hitbox_at(&hitbox, Vec3::new(-10.0, 0.0, 0.0), 9, &mut defender);
+        let expected = knockback(50, 10, 10, 0, 100, 0, 1.0, 9, 9);
+        assert!(expected > knockback(50, 0, 10, 0, 100, 0, 1.0, 9, 9));
+        assert_eq!(defender.damage, 60);
+        let v = defender.physics.vel_knockback;
+        assert!(((v.x * v.x + v.y * v.y).sqrt() - expected).abs() < 1e-2);
+    }
+
+    #[test]
+    fn crouching_takes_two_thirds_of_the_knockback() {
+        let hitbox = Hitbox {
+            damage: 10,
+            radius: 50.0,
+            offset: Vec3::ZERO,
+            angle: 0,
+            kb_scale: 100,
+            kb_weight: 0,
+            kb_base: 0,
+        };
+        let mut defender = grounded_mario();
+        status::set_status(
+            &mut defender,
+            Status::SquatWait,
+            0.0,
+            StatusTiming::unknown(),
+        );
+        apply_hitbox_at(&hitbox, Vec3::new(-10.0, 0.0, 0.0), 9, &mut defender);
+        let expected = knockback(0, 10, 10, 0, 100, 0, 1.0, 9, 9) * 2.0 / 3.0;
+        assert!((defender.physics.vel_knockback.x.abs() - expected).abs() < 1e-3);
+    }
+
+    #[test]
+    fn hitlag_follows_the_damage_and_a_crouch_shortens_it() {
+        // US: `(damage / 3 + 5)` frames.
+        assert_eq!(hitlag_frames(2, Status::Wait.into()), 5);
+        assert_eq!(hitlag_frames(12, Status::Wait.into()), 9);
+        assert_eq!(hitlag_frames(12, Status::Squat.into()), 6);
+    }
+
+    #[test]
+    fn percent_stops_at_999() {
+        let mut defender = grounded_mario();
+        defender.damage = 995;
+        apply_hitbox_at(&MARIO_JAB1_HITBOX, Vec3::ZERO, 9, &mut defender);
+        defender.invincible_frames = 0;
+        defender.add_damage(50);
+        assert_eq!(defender.damage, 999);
+    }
+
+    #[test]
+    fn a_fast_weapon_pushes_along_its_travel() {
+        let behind = HitDirection::from_weapon(Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), 40.0);
+        assert_eq!(behind.damage_lr, -1.0, "moving right pushes right");
+        assert_eq!(behind.shield_lr, -1.0);
+        let slow = HitDirection::from_weapon(Vec3::ZERO, Vec3::new(20.0, 0.0, 0.0), 4.0);
+        assert_eq!(slow.damage_lr, 1.0, "a slow weapon pushes away from itself");
+        assert_eq!(slow.shield_lr, -1.0);
+    }
+
+    #[test]
+    fn an_air_hit_reaction_ends_in_fall_and_lands_without_leaving_it() {
+        let mut f = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
+        set_damage_status(&mut f, None, 30.0, 0, 1.0, DAMAGE_INDEX_N);
+        assert_eq!(f.status.status, Status::DamageAir2);
+        assert!(!f.is_grounded());
+        f.hitstun = 0;
+        status::update(&mut f);
+        assert_eq!(f.status.status, Status::Fall);
+
+        let mut f = grounded_mario();
+        set_damage_status(&mut f, None, 30.0, 0, 1.0, DAMAGE_INDEX_N);
+        assert!(f.is_grounded());
+        f.become_airborne();
+        f.land(0.0);
+        assert_eq!(f.status.status, Status::DamageN2);
     }
 
     /// `nGMHitStatusInvincible`: a post-respawn invincible defender takes no

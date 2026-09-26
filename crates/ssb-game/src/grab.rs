@@ -1075,7 +1075,7 @@ fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
     } else {
         0
     };
-    f.damage = f.damage.saturating_add(damage.max(0) as u16);
+    f.add_damage(damage);
     damage
 }
 
@@ -1934,12 +1934,12 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     } else {
         catch_colls(catcher.kind)
     };
+    // Catch boxes only find the target's grabbable hurtboxes.
     let hit = colls.iter().any(|(hitbox, joint)| {
-        attack::spheres_overlap(
+        crate::hurtbox::catch_touches(
+            other,
             catcher.joint_world(*joint, hitbox.offset),
             hitbox.radius,
-            other.pos,
-            attack::MARIO_HURTBOX_RADIUS,
         )
     });
     if !hit {

@@ -1139,9 +1139,11 @@ pub struct WeaponPool {
 
 /// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, the
 /// shared hit path, and the landed motion for the owner's stale queue.
+/// `velocity_x` picks the push direction ([`attack::HitDirection::from_weapon`]).
 fn stale_hit(
     hitbox: &Hitbox,
     position: Vec3,
+    velocity_x: f32,
     stale: crate::stale::WeaponStale,
     defender: &mut Fighter,
     landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
@@ -1149,9 +1151,15 @@ fn stale_hit(
 ) -> attack::HitOutcome {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
+    let direction = attack::HitDirection::from_weapon(defender.pos, position, velocity_x);
     // `wp->handicap` is the owner's; every Training player has the default.
-    let outcome =
-        attack::apply_hitbox_at(&hitbox, position, crate::stale::HANDICAP_DEFAULT, defender);
+    let outcome = attack::apply_hitbox_dir(
+        &hitbox,
+        position,
+        direction,
+        crate::stale::HANDICAP_DEFAULT,
+        defender,
+    );
     if outcome == attack::HitOutcome::Damaged {
         *landed = Some((owner, stale.attack_id, stale.motion_count));
     }
@@ -1302,14 +1310,19 @@ impl WeaponPool {
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
-            let (owner, mut hitbox, position) = match weapon {
-                Weapon::Fireball(f) => (f.owner_port, MARIO_FIREBALL_HITBOX, f.position),
-                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position),
-                Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position),
-                Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position),
-                Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position),
-                Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position),
-                Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position),
+            let (owner, mut hitbox, position, velocity_x) = match weapon {
+                Weapon::Fireball(f) => (
+                    f.owner_port,
+                    MARIO_FIREBALL_HITBOX,
+                    f.position,
+                    f.velocity.x,
+                ),
+                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position, b.velocity.x),
+                Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity.x),
+                Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity.x),
+                Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity.x),
+                Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity.x),
+                Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity.x),
             };
             if owner == defender.port {
                 continue;
@@ -1330,6 +1343,7 @@ impl WeaponPool {
                     if stale_hit(
                         &hitbox,
                         position,
+                        velocity_x,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1350,6 +1364,7 @@ impl WeaponPool {
                 if stale_hit(
                     &hitbox,
                     position,
+                    velocity_x,
                     self.stale[i],
                     defender,
                     &mut self.landed[i],
@@ -1425,6 +1440,7 @@ impl WeaponPool {
             if stale_hit(
                 &hitbox,
                 position,
+                velocity_x,
                 self.stale[i],
                 defender,
                 &mut self.landed[i],
