@@ -31,7 +31,6 @@ or evidence record covers it.
 | Other item kinds and item presentation | Bomb and PK Fire use the shared item system; heavy/swing/shoot/consume items, team checks, item models, effects, sound, spin, throw-turn joint yaw and pickup arrows remain | RE-352 |
 | Training `grab` scene whiffs on PSP | In PPSSPP the player stays in `Catch` without a catch (RE-351 capture log) while host `romtool jumptest --catch-tick 100` on the same route catches on tick 106; the golden already pins the whiff. Compare the posed catch box and the dummy's grabbable boxes against the unposed fallbacks | RE-341, RE-351 |
 | Clips for guard, teeter and item statuses | `GuardOn`/`Guard`/`GuardOff`, `Ottotto`, `Dokan*`, item pickup/throw, Star Rod, Fire Flower and Hammer statuses still map to the Wait slot and keep the previous pose. They resolve through the same common pairing as RE-355's slots | RE-355 |
-| `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance
 

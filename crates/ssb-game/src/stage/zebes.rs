@@ -150,6 +150,8 @@ impl Zebes {
     }
 
     /// `grZebesAcidCheckGetDamageKind` @ 0x801084AC.
+    // Out of line for the same reason as `Hyrule::check_twister` (RE-360).
+    #[inline(never)]
     pub fn check_acid(&self, f: &Fighter) -> bool {
         f.hazard.acid_wait == 0 && super::top_n(f).y < self.level + self.surface_y
     }

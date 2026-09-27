@@ -2137,6 +2137,14 @@ pub use ssb_game::shadow::{
     RenderState as FighterShadowMaterial, RENDER_STATE as FIGHTER_SHADOW_MATERIAL,
 };
 
+/// The pack's fighter shadow texture. A scan of every texture descriptor:
+/// resolve once per pack, not per draw (RE-360).
+pub fn fighter_shadow_texture(pack: &Pack<'_>) -> Option<TextureDesc> {
+    (0..pack.texture_count())
+        .filter_map(|i| pack.texture(i))
+        .find(|t| t.role == TextureDesc::ROLE_FIGHTER_SHADOW)
+}
+
 /// Draws the runtime-generated `ftShadowProcDisplay` strip.
 ///
 /// The source draws this after stage geometry and before fighter objects. Its
@@ -2145,9 +2153,11 @@ pub use ssb_game::shadow::{
 /// using the GE's ordinary repeat address mode. `verts` is caller-owned fixed
 /// scratch (at most three quads / six triangles), and is copied into the GE
 /// display-list arena before submission, so four players never allocate and
-/// cannot race the asynchronous GE.
+/// cannot race the asynchronous GE. `texture` comes from
+/// [`fighter_shadow_texture`].
 pub unsafe fn draw_fighter_shadow(
     pack: &Pack<'_>,
+    texture: &TextureDesc,
     geometry: &ssb_game::shadow::ShadowGeometry,
     color: [u8; 4],
     verts: &mut [TexQuadVertex; 18],
@@ -2156,16 +2166,7 @@ pub unsafe fn draw_fighter_shadow(
     if !geometry.visible() {
         return;
     }
-    let Some(texture_index) = (0..pack.texture_count()).find(|&i| {
-        pack.texture(i)
-            .is_some_and(|t| t.role == TextureDesc::ROLE_FIGHTER_SHADOW)
-    }) else {
-        return;
-    };
-    let Some(texture) = pack.texture(texture_index) else {
-        return;
-    };
-    bind_texture(pack, &texture, TextureDesc::NO_ANIM);
+    bind_texture(pack, texture, TextureDesc::NO_ANIM);
     sys::sceGuTexFunc(
         sys::TextureEffect::Modulate,
         sys::TextureColorComponent::Rgba,
