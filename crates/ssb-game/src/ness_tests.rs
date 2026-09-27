@@ -271,7 +271,7 @@ fn thunder_steers_six_degrees_and_damage_removes_head_and_trails() {
     assert!(pool.spawn(f.take_weapon_spawn().unwrap()));
     input(&mut f, 0, 80, 0);
     pool.observe_owner(&f);
-    pool.tick(core::iter::empty);
+    pool.tick(core::iter::empty, None);
     let head = pool.pk_thunders().next().unwrap();
     close(
         head.angle,
@@ -279,12 +279,12 @@ fn thunder_steers_six_degrees_and_damage_removes_head_and_trails() {
     );
     assert!(head.velocity.x > 0.0);
     for _ in 0..12 {
-        pool.tick(core::iter::empty);
+        pool.tick(core::iter::empty, None);
     }
     assert_eq!(pool.pk_trails().count(), 4);
     status::set_fall(&mut f);
     pool.observe_owner(&f);
-    pool.tick(core::iter::empty);
+    pool.tick(core::iter::empty, None);
     assert_eq!(pool.pk_thunders().count(), 0);
     assert_eq!(pool.pk_trails().count(), 0);
 }
@@ -297,7 +297,7 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
     pool.spawn(f.take_weapon_spawn().unwrap());
     pool.observe_owner(&f);
     for _ in 0..12 {
-        pool.tick(core::iter::empty);
+        pool.tick(core::iter::empty, None);
     }
     assert!(pool.pk_trails().count() > 0);
     for port in [1, 2] {
@@ -318,7 +318,7 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
         assert_eq!(h.lifetime, 160);
         assert_eq!(pool.pk_trails().count(), 0);
         for _ in 0..4 {
-            pool.tick(core::iter::empty);
+            pool.tick(core::iter::empty, None);
         }
     }
     pool.sync_owner(&mut f);
