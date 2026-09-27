@@ -1,7 +1,6 @@
 # Status
 
-Replacement snapshot, not a journal. History lives in git and
-`docs/evidence/`.
+Current snapshot. History lives in git and `docs/evidence/`.
 
 ## Current
 
@@ -16,15 +15,15 @@ Replacement snapshot, not a journal. History lives in git and
 
 | Batch | Result | Evidence |
 |---|---|---|
+| Combat audit integration | Joint hurtboxes for Mario through Captain, hit damage in knockback, crouch/999% cap, damage velocity, hitlag and immediate shield break; reconciled with sleep, Stone and later fighter/weapon ports | RE-349 |
 | Shared static fighter map collision | Diamond wall/ceiling/floor processing, platform passes, topology/edge stops, authored cliff reach and two-fighter occupancy; Fire Fox, Quick Attack, PK Thunder blast, Falcon Kick and Kirby star responses | RE-348 |
 
 ## Verification baseline
 
-- `cargo +1.98.0 test --workspace` with `SSB64_ROM`: 1101 pass.
+- `cargo +1.98.0 test --workspace` with `SSB64_ROM`: 1120 pass.
   Clippy (`--workspace --all-targets -- -D warnings`), host rustfmt and
   no-default-features workspace build pass.
-- 23 map regression tests plus an independent Dream Land ROM-geometry
-  integration test; existing Fire Fox floor test covers repeated contact.
+- Map and combat regressions include independent Dream Land ROM geometry.
 - Both PSP builds pass; `psp-game` also with `strict_render`.
 - Pack v38 unchanged: 23,659,808 bytes, SHA-256
   `0353ac343aa59236e88317b36539f1152902567fcf0dc6cd9e7503e7809c8f4b`.
@@ -43,9 +42,11 @@ Replacement snapshot, not a journal. History lives in git and
 - `DownBounceD` has no update/clip; a downward Ness self-launch or steep
   floor impact reaches that ordinal without recovery (RE-347–348).
 - Cliff root placement and clip clocks still need authored poses/TransN.
-- Hits resolve one at a time; same-frame catcher/held hits and
-  `recent_damage` need a deferred damage queue (RE-339).
-- Escape, per-part hit status and general items remain unported. PK Fire
+- Hits resolve one at a time; `recent_damage` includes the current hit,
+  but same-frame catcher/held hits need a deferred damage queue (RE-339, RE-349).
+- Joint hurtbox tables cover Mario through Captain; Kirby, Pikachu,
+  Jigglypuff and Ness retain the root-sphere fallback (RE-349).
+- Escape, Smash DI, per-part hit status and general items remain unported. PK Fire
   has a separate flame-item table, without incoming item damage callbacks.
 - Samus through Ness are host-only; PSP selection and weapon/effect drawing
   remain. Kirby copy loss, `DamageFlyRoll` and `DeadUpFall` need an RNG.

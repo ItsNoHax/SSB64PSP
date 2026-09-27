@@ -1194,7 +1194,7 @@ fn set_shouldered(f: &mut Fighter, staled: StaledThrow) -> i32 {
     } else {
         0
     };
-    f.damage = f.damage.saturating_add(damage.max(0) as u16);
+    f.add_damage(damage);
     damage
 }
 
@@ -2046,7 +2046,7 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
         GrabEvent::CaptureKirby => crate::capture_kirby::capture(to, from.port, holder_of(from)),
         GrabEvent::KirbyEat { is_kirby } => crate::capture_kirby::on_eaten(to, is_kirby),
         GrabEvent::KirbyDamage { staled } => {
-            to.damage = to.damage.saturating_add(staled.damage.max(0) as u16);
+            to.add_damage(staled.damage);
             record_throw(from, to, staled, staled.damage);
         }
         GrabEvent::KirbyStar { copy, vel } => {
@@ -2107,12 +2107,12 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     } else {
         catch_colls(catcher.kind)
     };
+    // Catch boxes only find the target's grabbable hurtboxes.
     let hit = colls.iter().any(|(hitbox, joint)| {
-        attack::spheres_overlap(
+        crate::hurtbox::catch_touches(
+            other,
             catcher.joint_world(*joint, hitbox.offset),
             hitbox.radius,
-            other.pos,
-            attack::MARIO_HURTBOX_RADIUS,
         )
     });
     if !hit {
@@ -2691,7 +2691,13 @@ mod tests {
             frame(&mut ness, &mut dummy);
             let mut bystander = grounded(FighterKind::Fox, 2, 0.0);
             let mut record = attack::HitRecord::default();
-            for _ in 0..27 {
+            let mut frozen_ticks = 0;
+            // The bystander hit pauses the throw; release is animation frame
+            // 27, not simulation tick 27 (`ftMainProcParams` hitlag).
+            for _ in 0..40 {
+                if ness.is_in_hitlag() {
+                    frozen_ticks += 1;
+                }
                 press(&mut ness, 0, 0);
                 frame(&mut ness, &mut dummy);
                 bystander.pos = ness.joint_world(30, Vec3::ZERO);
@@ -2701,6 +2707,7 @@ mod tests {
                 }
             }
             assert_eq!(ness.status.anim_frame, 27.0);
+            assert!(frozen_ticks > 0);
             assert_eq!(dummy.status.status, Status::DamageFlyN);
             // ftMainSearchFighterAttack skips the victim's capture_gobj.
             // The joint-30 box reaches bystanders; the victim takes the

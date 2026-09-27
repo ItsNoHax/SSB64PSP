@@ -97,6 +97,7 @@ impl PKFireItems {
                 if super::stale_hit(
                     &hit,
                     p.position + Vec3::new(0.0, y * p.scale, 0.0),
+                    p.velocity.x,
                     item.stale,
                     defender,
                     &mut item.landed,

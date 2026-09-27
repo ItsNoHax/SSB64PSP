@@ -841,7 +841,14 @@ impl FighterScene {
         } else {
             self.airborne_ticks = self.airborne_ticks.saturating_add(1);
         }
-        self.tick_animation(pack);
+        // Hitlag freezes the motion with the status (`ftMainProcUpdateMain`
+        // skips the animation while `hitlag_tics` is nonzero).
+        if !self.fighter.is_in_hitlag() {
+            self.tick_animation(pack);
+        } else {
+            // No TransN motion accrues while frozen.
+            self.root_motion_before_tick = self.skeleton.pose(0).copied();
+        }
         self.sample_held_child_offset();
         ssb_game::grab::refresh_held_attachment(&mut self.fighter);
         self.sample_gameplay_joints(pack);
