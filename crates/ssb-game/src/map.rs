@@ -545,6 +545,24 @@ where
     move_air_from_shape(coll, coll, from, to, options, surfaces)
 }
 
+/// [`move_air`] with `coll_data.vel_push` (Whispy's wind). The push joins
+/// the first substep only and does not count toward the substep split,
+/// exactly as `mpProcessUpdateMain` adds it after computing `update_count`.
+pub fn move_air_pushed<I, F>(
+    coll: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    push: Vec3,
+    options: AirOptions,
+    surfaces: F,
+) -> AirMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    move_air_inner(coll, coll, from, to, push, options, surfaces)
+}
+
 /// `p_map_coll` may name another body's diamond during a copied-data sweep.
 /// Ordinary fighter processing aliases it to `map_coll`, including substeps.
 pub fn move_air_from_shape<I, F>(
@@ -552,6 +570,22 @@ pub fn move_air_from_shape<I, F>(
     previous: &BodyColl,
     from: Vec3,
     to: Vec3,
+    options: AirOptions,
+    surfaces: F,
+) -> AirMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    move_air_inner(coll, previous, from, to, Vec3::ZERO, options, surfaces)
+}
+
+fn move_air_inner<I, F>(
+    coll: &BodyColl,
+    previous: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    push: Vec3,
     options: AirOptions,
     surfaces: F,
 ) -> AirMoved
@@ -568,8 +602,11 @@ where
     let mut pos = from;
     let mut contacts = Contacts::default();
     let mut ceil_stop = false;
-    for _ in 0..steps {
+    for i in 0..steps {
         let prev = pos;
+        if i == 0 {
+            pos += push;
+        }
         pos += step;
         let mut current = Contacts::default();
         let lwalls = walls(&surfaces, *coll, *previous, prev, pos, Kind::LeftWall, None);
@@ -847,8 +884,28 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
-    let speed = line_speed(&surfaces, line);
-    let steps = ground::substep_count(from, to + speed);
+    move_ground_pushed(coll, from, to, Vec3::ZERO, line, stop_edge, surfaces)
+}
+
+/// [`move_ground`] with `coll_data.vel_push`, added beside the line speed on
+/// the first substep. Unlike the line speed it is not part of the displacement
+/// `mpProcessUpdateMain` splits.
+pub fn move_ground_pushed<I, F>(
+    coll: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    push: Vec3,
+    line: u16,
+    stop_edge: bool,
+    surfaces: F,
+) -> (Moved, Contacts)
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let speed = line_speed(&surfaces, line) + push;
+    let counted = speed - push;
+    let steps = ground::substep_count(from, to + counted);
     let step = Vec3::new(
         (to.x - from.x) / steps as f32,
         0.0,
@@ -1113,6 +1170,35 @@ where
     F: Fn() -> I,
     I: IntoIterator<Item = MapSurface>,
 {
+    move_damage_pushed(
+        coll,
+        from,
+        to,
+        Vec3::ZERO,
+        prev_mask,
+        hitlag,
+        ignore_line,
+        surfaces,
+    )
+}
+
+/// [`move_damage`] with `coll_data.vel_push` on the first substep. The
+/// strike tests keep using `pos_diff`, which excludes the push.
+#[allow(clippy::too_many_arguments)]
+pub fn move_damage_pushed<I, F>(
+    coll: &BodyColl,
+    from: Vec3,
+    to: Vec3,
+    push: Vec3,
+    prev_mask: u16,
+    hitlag: bool,
+    ignore_line: Option<u16>,
+    surfaces: F,
+) -> DamageMoved
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
     let diff = to - from;
     let steps = ground::substep_count(from, to);
     let step = Vec3::new(
@@ -1133,8 +1219,11 @@ where
         ceil_normal: Vec2::ZERO,
     };
     let mut pos = from;
-    for _ in 0..steps {
+    for i in 0..steps {
         let prev = pos;
+        if i == 0 {
+            pos += push;
+        }
         pos += step;
         let mut collide = false;
         let mut current = Contacts::default();
@@ -1464,4 +1553,48 @@ pub(crate) fn adjust_velocity(v: &mut Vec3, normal: Vec2, minimum: f32) -> bool 
     } else {
         false
     }
+}
+
+/// `mpCollisionCheckProjectFloor`: the nearest floor at or below `pos`,
+/// testing a moving group's lines in its own local frame. Returns the line
+/// and the signed distance down to it.
+pub fn project_floor_line<I, F>(surfaces: &F, pos: Vec3) -> Option<(u16, f32)>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    let mut best: Option<(u16, f32)> = None;
+    for (i, s) in surfaces().into_iter().enumerate() {
+        if s.kind != Kind::Floor {
+            continue;
+        }
+        let o = s.motion.map_or(Vec2::ZERO, |m| m.offset);
+        let local = Vec2::new(pos.x - o.x, pos.y - o.y);
+        let Some(hit) = collision::project_floor([(line_id(i, s), s.segment)], local) else {
+            continue;
+        };
+        if best.is_none_or(|(_, d)| hit.dist.abs() < d.abs()) {
+            best = Some((hit.line, hit.dist));
+        }
+    }
+    best
+}
+
+/// `mpCollisionGetFloorEdgeL` / `...R`.
+pub fn floor_edge<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Vec2>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    edge(surfaces, Kind::Floor, line, right).map(|(p, _)| p)
+}
+
+/// `mpCollisionGetEdgeUnderLLineID` / `...R` followed by
+/// `mpCollisionGetLineTypeID`: the kind of line below a floor's end.
+pub fn floor_edge_under<I, F>(surfaces: &F, line: u16, right: bool) -> Option<Kind>
+where
+    F: Fn() -> I,
+    I: IntoIterator<Item = MapSurface>,
+{
+    neighbor(surfaces, Kind::Floor, line, right).map(|(k, _)| k)
 }

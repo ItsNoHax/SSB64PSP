@@ -17,3 +17,7 @@ std = []
 [dev-dependencies]
 # Tests that touch the real ROM are gated behind the SSB64_ROM env var so the
 # suite still passes in CI, where no ROM is available.
+# `tests/stage_controllers.rs` drives the portable stage controllers with
+# the ROM's own stage-object animations. `ssb-game` does not depend on this
+# crate, so there is no cycle.
+ssb-game = { workspace = true, features = ["std"] }

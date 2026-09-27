@@ -384,6 +384,10 @@ unsafe fn run() -> ! {
     // and the stage collision iterator.
     let mut weapons = ssb_game::weapon::WeaponPool::default();
     let mut items = ssb_game::item::ItemPool::default();
+    // The stage controller slot (`grMainSetupMakeGround`). Dream Land's
+    // Whispy needs its stage objects' animation clocks, which the pack does
+    // not carry yet, so Training runs the slot empty (RE-356).
+    let mut stage_ctl = ssb_game::stage::Stage::none();
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -517,12 +521,64 @@ unsafe fn run() -> ! {
                     // separate wiring here: `Fighter::tick`'s own status
                     // machine reads `stick_y` directly.
                     let jump_held = controller.buttons.contains(JUMP_BUTTON_MASK);
+                    // Priority 5: every fighter's `ftMainProcUpdateInterrupt`.
+                    // Grab events land before the partner's own half,
+                    // matching the original's direct status writes
+                    // (`ssb_game::grab` module docs).
+                    items.publish(&mut pl.fighter);
+                    pl.tick_fighter_interrupt(p, &stage, controller, jump_held, groups);
+                    if let Some(dummy) = dummy_state.as_mut() {
+                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+                        items.publish(&mut dummy.fighter);
+                        dummy.tick_interrupt(p, &stage, groups);
+                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+                    }
+                    // Priority 4, Ground link: the stage controller.
+                    {
+                        let mut empty: [ssb_game::map::MapGroup; 0] = [];
+                        let groups_mut = stage_map
+                            .as_mut()
+                            .map_or(&mut empty[..], |map| map.groups.as_mut_slice());
+                        // `mpCollisionSetDObjNoID`: a floor's original
+                        // line id to its collision group.
+                        let line_group = |line: u16| {
+                            p.stage_lines(&stage)
+                                .find(|l| l.id == line)
+                                .map(|l| l.yakumono as u8)
+                        };
+                        let mut fighters: alloc::vec::Vec<&mut ssb_game::fighter::Fighter> =
+                            alloc::vec::Vec::with_capacity(2);
+                        fighters.push(&mut pl.fighter);
+                        if let Some(dummy) = dummy_state.as_mut() {
+                            fighters.push(&mut dummy.fighter);
+                        }
+                        stage_ctl.tick(
+                            &mut fighters,
+                            ssb_game::stage::TickInput {
+                                groups: groups_mut,
+                                objects: &mut ssb_game::stage::NoObjects,
+                                // The groups are being written, so the
+                                // controller sees the static map; only the
+                                // Twister queries it, on a static floor.
+                                map: ssb_game::stage::MapQuery {
+                                    surfaces: || {
+                                        ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                                    },
+                                    line_group: &line_group,
+                                },
+                                started: true,
+                            },
+                        );
+                    }
+                    let groups = stage_map
+                        .as_ref()
+                        .map_or(&[][..], |map| map.groups.as_slice());
+                    // Priority 4, Fighter link: `ftMainProcPhysicsMap`.
                     pl.fighter.occupied_cliff = dummy_state.as_ref().and_then(|dummy| {
                         ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
                             .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
                     });
-                    items.publish(&mut pl.fighter);
-                    pl.tick_fighter_map(p, &stage, controller, jump_held, groups);
+                    pl.tick_fighter_physics(p, &stage, groups);
                     // The Boomerang projects through the camera last drawn.
                     weapons.observe_camera(&pl.camera);
                     pl.tick_camera(&stage, None);
@@ -536,12 +592,8 @@ unsafe fn run() -> ! {
                         dummy.fighter.occupied_cliff =
                             ssb_game::map::is_cliff_hold(pl.fighter.status.status)
                                 .then_some((pl.fighter.cliff.line, pl.fighter.facing));
-                        // Grab events land before the partner's own tick,
-                        // matching the original's direct status writes
-                        // (`ssb_game::grab` module docs).
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
-                        items.publish(&mut dummy.fighter);
-                        dummy.tick_map(p, &stage, groups);
+                        dummy.tick_fighter_physics(p, &stage, groups);
                         items.take_requests(&mut dummy.fighter, || {
                             ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups)
                         });
@@ -574,7 +626,23 @@ unsafe fn run() -> ! {
                         // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
                         // (fighters, then weapons), then `ftMainProcParams` for
                         // every fighter -- the original's process priorities.
+                        // `ftMainProcSearchCatch` opens with the obstacle
+                        // search (`ftMainSearchHitHazard`).
+                        let dummy_status = [dummy.fighter.status.status];
+                        ssb_game::hazard::search_hit_hazard(
+                            &mut pl.fighter,
+                            &mut stage_ctl,
+                            &mut ssb_game::stage::NoObjects,
+                            &dummy_status,
+                        );
                         ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
+                        let pl_status = [pl.fighter.status.status];
+                        ssb_game::hazard::search_hit_hazard(
+                            &mut dummy.fighter,
+                            &mut stage_ctl,
+                            &mut ssb_game::stage::NoObjects,
+                            &pl_status,
+                        );
                         ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
                         ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
@@ -586,6 +654,9 @@ unsafe fn run() -> ! {
                         ssb_game::link::apply_spin_attack_hits(&mut pl.fighter, &mut dummy.fighter);
                         ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
                         items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], &mut weapons);
+                        // `ftMainSearchGroundHit`, last of `ftMainProcSearchHitAll`.
+                        ssb_game::hazard::search_ground_hit(&mut pl.fighter, &stage_ctl);
+                        ssb_game::hazard::search_ground_hit(&mut dummy.fighter, &stage_ctl);
                         ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
                         let map =
                             || ssb_psp_runtime::scene::MapSegments::with_groups(p, &stage, groups);

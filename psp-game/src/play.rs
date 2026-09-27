@@ -59,18 +59,17 @@ impl Dummy {
         Some(Dummy { scene })
     }
 
-    /// Advances one tick: permanently neutral input (no AI, no player
-    /// control), real physics/animation against the real stage collision --
-    /// the same `Fighter::tick` path the player's own scene drives, just with
-    /// no input source and no camera (`FighterScene::tick_fighter`, not
-    /// `FighterScene::tick`).
-    pub fn tick_map(
+    /// The priority-5 half of a tick with permanently neutral input (no AI,
+    /// no player control) -- the same path the player's own scene drives,
+    /// just with no input source and no camera. The physics half is
+    /// [`FighterScene::tick_fighter_physics`].
+    pub fn tick_interrupt(
         &mut self,
         pack: &Pack<'_>,
         stage: &StageDesc,
         groups: &[ssb_game::map::MapGroup],
     ) {
-        self.scene.tick_fighter_map(
+        self.scene.tick_fighter_interrupt(
             pack,
             stage,
             ssb_engine::input::ControllerState::default(),

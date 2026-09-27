@@ -363,6 +363,8 @@ pub struct Fighter {
     /// Current authored TransN translation, sampled by the animation runtime.
     pub transn: Vec3,
     pub cliff_air_mask: u32,
+    /// Stage hazard timers, wind and captor state ([`crate::hazard`]).
+    pub hazard: crate::hazard::HazardState,
 }
 
 impl Fighter {
@@ -454,6 +456,7 @@ impl Fighter {
             damage_e_status: None,
             reaction: crate::reaction::ReactionState::default(),
             is_smash_di: false,
+            hazard: crate::hazard::HazardState::default(),
         }
     }
 
@@ -694,15 +697,28 @@ impl Fighter {
         F: Fn() -> I,
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
+        self.tick_interrupt(&surfaces);
+        self.tick_physics_map(&surfaces);
+    }
+
+    /// `ftMainProcUpdateInterrupt` (process priority 5). A match runs this
+    /// for every fighter, then the stage processes, then
+    /// [`Self::tick_physics_map`] for every fighter (priority 4): stage
+    /// controllers read fighters between the two.
+    pub fn tick_interrupt<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
         self.tick_timers();
-        self.resolve_cliff_release(&surfaces);
+        self.resolve_cliff_release(surfaces);
         // `proc_passive`: an electric hit's `DamageE` hands over to the
         // real damage status once hitlag is over.
         crate::attack::update_damage_e(self);
         crate::reaction::check_set_invincible(self);
+        // The previous frame's push is spent; the stage sets a new one.
+        self.hazard.vel_push = Vec3::ZERO;
         if self.is_in_hitlag() {
-            // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
-            self.smash_di(&surfaces);
             return;
         }
 
@@ -710,7 +726,21 @@ impl Fighter {
         // ground and air (a jumpsquat ending, a platform drop), so the
         // situation is re-read afterwards rather than captured before.
         crate::status::update(self);
-        self.resolve_cliff_release(&surfaces);
+        self.resolve_cliff_release(surfaces);
+    }
+
+    /// `ftMainProcPhysicsMap` (process priority 4), after the stage.
+    pub fn tick_physics_map<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        if self.is_in_hitlag() {
+            // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
+            self.smash_di(surfaces);
+            return;
+        }
+        let surfaces = || surfaces();
 
         // `ftCommonYoshiEggProcPhysics`'s own half, ahead of the common
         // physics it ends with.
@@ -727,6 +757,11 @@ impl Fighter {
         }
         self.map_contacts_prev = self.map_contacts;
         self.map_contacts = crate::map::Contacts::default();
+        if crate::hazard::tick_status(self, &surfaces) {
+            self.root_motion = RootMotion::default();
+            self.weapon_spawn_anchor = None;
+            return;
+        }
         if !self.tick_cliff(&surfaces) {
             match self.situation {
                 Situation::Ground => self.tick_ground(surfaces),
@@ -917,10 +952,11 @@ impl Fighter {
     {
         // `mpCommonCheckFighterDamageCollision` rolls the masks first.
         self.reaction.coll_mask_prev = self.reaction.coll_mask_curr;
-        let result = crate::map::move_damage(
+        let result = crate::map::move_damage_pushed(
             &self.coll,
             from,
             want,
+            self.hazard.vel_push,
             self.reaction.coll_mask_prev,
             self.hitlag > 0,
             self.ignore_line,
@@ -1052,10 +1088,11 @@ impl Fighter {
         {
             self.fox_special_hi.pass_timer = self.fox_special_hi.pass_timer.saturating_add(1);
         }
-        let (moved, contacts) = crate::map::move_ground(
+        let (moved, contacts) = crate::map::move_ground_pushed(
             &self.coll,
             self.pos,
             want,
+            self.hazard.vel_push,
             standing.line,
             stop_edge,
             &surfaces,
@@ -1333,10 +1370,11 @@ impl Fighter {
             reach: self.cliff_reach,
             occupied: self.occupied_cliff.map(|(l, f)| (l, f.sign())),
         });
-        let result = crate::map::move_air(
+        let result = crate::map::move_air_pushed(
             &self.coll,
             from,
             want,
+            self.hazard.vel_push,
             crate::map::AirOptions {
                 ignore_line: self.ignore_line,
                 skip_pass,

@@ -150,7 +150,17 @@ pub struct StageJoint {
     ended: bool,
     /// Where the script started, so a `Jump` that returns here is a loop.
     start: usize,
+    /// `DObj::anim_frame`, and whether this tick's parse wrote it to the
+    /// parent `GObj::anim_frame`.
+    frame: f32,
+    frame_written: bool,
+    /// `anim_wait == AOBJ_ANIM_CHANGED`: the next parse starts at the
+    /// script's beginning without first advancing the clock.
+    changed: bool,
 }
+
+/// `AOBJ_ANIM_END` (`F32_MIN / 3`), the frame an ended script reports.
+pub const ANIM_END_FRAME: f32 = f32::MIN / 3.0;
 
 impl StageJoint {
     pub fn start(script: u32, frame: f32) -> Self {
@@ -161,7 +171,24 @@ impl StageJoint {
             pc: script as usize,
             ended: false,
             start: script as usize,
+            frame,
+            frame_written: false,
+            changed: false,
         }
+    }
+
+    /// `gcAddDObjAnimJoint`: the next [`Self::tick`] is the caller's
+    /// immediate `gcPlayAnimAll`, which parses from the start at `frame`.
+    pub fn start_changed(script: u32, frame: f32) -> Self {
+        StageJoint {
+            changed: true,
+            ..Self::start(script, frame)
+        }
+    }
+
+    /// The value the last tick wrote to the parent `GObj::anim_frame`, if any.
+    pub fn gobj_frame(&self) -> Option<f32> {
+        self.frame_written.then_some(self.frame)
     }
 
     pub fn ended(&self) -> bool {
@@ -182,12 +209,23 @@ impl StageJoint {
 
     /// `gcParseDObjAnimJoint`: run commands until one blocks past now.
     fn parse(&mut self, data: &[u8], speed: f32) -> Result<(), AnimError> {
+        self.frame_written = false;
         if self.ended {
+            // `AOBJ_ANIM_END` keeps the clock running into the `End` command
+            // again, which leaves `anim_frame` at `anim_wait`.
+            self.frame = ANIM_END_FRAME;
+            self.frame_written = true;
             return Ok(());
         }
-        self.anim_wait -= speed;
-        if self.anim_wait > 0.0 {
-            return Ok(());
+        if core::mem::take(&mut self.changed) {
+            self.anim_wait = -self.frame;
+        } else {
+            self.anim_wait -= speed;
+            self.frame += speed;
+            self.frame_written = true;
+            if self.anim_wait > 0.0 {
+                return Ok(());
+            }
         }
 
         for _ in 0..4096 {
@@ -210,14 +248,19 @@ impl StageJoint {
                         }
                     }
                     self.ended = true;
+                    self.frame = self.anim_wait;
+                    self.frame_written = true;
                     return Ok(());
                 }
                 // Both read the following word as a script pointer and
-                // continue there. `SetAnim` additionally rebases `anim_frame`,
-                // which nothing here reads.
+                // continue there. `SetAnim` additionally rebases `anim_frame`.
                 OP_JUMP | OP_SET_ANIM => {
                     let target = u32_at(data, self.pc).ok_or(AnimError::Truncated { at })?;
                     self.pc = target as usize;
+                    if opcode == OP_SET_ANIM {
+                        self.frame = -self.anim_wait;
+                        self.frame_written = true;
+                    }
                     // A jump straight back to itself would spin this loop.
                     if self.pc == at {
                         return Err(AnimError::TooLong);

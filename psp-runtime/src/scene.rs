@@ -712,6 +712,21 @@ impl FighterScene {
         jump_held: bool,
         groups: &[ssb_game::map::MapGroup],
     ) {
+        self.tick_fighter_interrupt(pack, stage, input, jump_held, groups);
+        self.tick_fighter_physics(pack, stage, groups);
+    }
+
+    /// The priority-5 half of [`Self::tick_fighter_map`]: input, runtime
+    /// samples and `ftMainProcUpdateInterrupt`. A match runs this for every
+    /// fighter, then the stage controller, then [`Self::tick_fighter_physics`].
+    pub fn tick_fighter_interrupt(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        input: ssb_engine::input::ControllerState,
+        jump_held: bool,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
         let tapped = jump_held && !self.jump_was_held;
         let released = !jump_held && self.jump_was_held;
         self.jump_was_held = jump_held;
@@ -764,7 +779,19 @@ impl FighterScene {
             }
         }
         self.fighter
-            .tick_map(|| MapSegments::with_groups(pack, stage, groups));
+            .tick_interrupt(&|| MapSegments::with_groups(pack, stage, groups));
+    }
+
+    /// The priority-4 half: `ftMainProcPhysicsMap`, then the animation and
+    /// the joint samples gameplay reads.
+    pub fn tick_fighter_physics(
+        &mut self,
+        pack: &Pack<'_>,
+        stage: &StageDesc,
+        groups: &[ssb_game::map::MapGroup],
+    ) {
+        self.fighter
+            .tick_physics_map(&|| MapSegments::with_groups(pack, stage, groups));
         if self.fighter.is_grounded() {
             self.airborne_ticks = 0;
         } else {
