@@ -1,5 +1,6 @@
 use super::*;
 use crate::attack;
+use crate::item::ItemPool;
 use crate::weapon::{PKFire, WeaponPool};
 use ssb_engine::input::ControllerState;
 
@@ -403,17 +404,19 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     let mut target = fighter(FighterKind::Mario, 1, true);
     pool.apply_hits(&mut target);
     crate::combat::resolve(&mut target);
-    assert_eq!(pool.pk_pillars().count(), 1);
+    let mut items = ItemPool::default();
+    items.take_weapon_spawns(&mut pool, core::iter::empty);
+    assert_eq!(items.active_count(), 1);
     assert!(pool.spawn(far));
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS);
-    let initial = pool.pk_pillars().next().unwrap();
-    pool.tick(core::iter::empty);
-    let falling = pool.pk_pillars().next().unwrap();
-    assert_eq!(falling.position, initial.position);
-    assert_eq!(falling.velocity, Vec3::ZERO);
+    let initial = *items.items().next().unwrap();
+    items.tick(core::iter::empty, None);
+    let falling = items.items().next().unwrap();
+    assert_eq!(falling.pos, initial.pos);
+    assert_eq!(falling.vel_air, Vec3::ZERO);
     assert_eq!(falling.lifetime, 100);
-    pool.tick(core::iter::empty);
-    close(pool.pk_pillars().next().unwrap().velocity.y, -0.45);
+    items.tick(core::iter::empty, None);
+    close(items.items().next().unwrap().vel_air.y, -0.45);
 }
 #[test]
 fn magnet_delay_and_ground_air_switches_preserve_state() {
@@ -479,34 +482,36 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 4);
     assert_eq!(pool.pk_fires().count(), 0);
-    let p = pool.pk_pillars().next().unwrap();
-    close((p.position - spawn.position).length(), 160.0);
-    target.pos = p.position + Vec3::new(0.0, 100.0, 0.0);
-    pool.apply_hits(&mut target);
+    let mut items = ItemPool::default();
+    items.take_weapon_spawns(&mut pool, core::iter::empty);
+    let p = items.items().next().unwrap();
+    close((p.pos - spawn.position).length(), 160.0);
+    target.pos = p.pos + Vec3::new(0.0, 100.0, 0.0);
+    items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
-    pool.apply_hits(&mut target);
+    items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
     for _ in 0..15 {
-        pool.tick(core::iter::empty);
+        items.tick(core::iter::empty, None);
     }
-    let p = pool.pk_pillars().next().unwrap();
-    assert!(p.scale < 1.0);
-    target.pos = p.position + Vec3::new(0.0, 100.0 * p.scale, 0.0);
-    pool.apply_hits(&mut target);
+    let p = items.items().next().unwrap();
+    assert!(p.scale.x < 1.0);
+    target.pos = p.pos + Vec3::new(0.0, 100.0 * p.scale.x, 0.0);
+    items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
-    pool.tick(core::iter::empty);
-    let p = pool.pk_pillars().next().unwrap();
-    target.pos = p.position + Vec3::new(0.0, 100.0 * p.scale, 0.0);
-    pool.apply_hits(&mut target);
+    items.tick(core::iter::empty, None);
+    let p = items.items().next().unwrap();
+    target.pos = p.pos + Vec3::new(0.0, 100.0 * p.scale.x, 0.0);
+    items.search_fighter(&mut target);
     crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 10);
     for _ in 0..101 {
-        pool.tick(core::iter::empty);
+        items.tick(core::iter::empty, None);
     }
-    assert_eq!(pool.pk_pillars().count(), 0);
+    assert_eq!(items.active_count(), 0);
 }
 #[test]
 fn blast_hit_record_survives_floor_switch_and_invincibility_ends_at10() {

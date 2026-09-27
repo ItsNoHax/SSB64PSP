@@ -374,6 +374,7 @@ unsafe fn run() -> ! {
     // Training owns the pool because it is the layer that has both fighters
     // and the stage collision iterator.
     let mut weapons = ssb_game::weapon::WeaponPool::default();
+    let mut items = ssb_game::item::ItemPool::default();
 
     let mut screen = Screen::Intro;
     let mut cursor: usize = 0;
@@ -453,6 +454,7 @@ unsafe fn run() -> ! {
                         screen = Screen::Training;
                         if play_state.is_none() {
                             weapons = ssb_game::weapon::WeaponPool::default();
+                            items = ssb_game::item::ItemPool::default();
                             play_state = pack.as_ref().and_then(|p| {
                                 p.stage(TRAINING_STAGE_INDEX).map(|s| {
                                     let mut scene = play::FighterScene::at_spawn(
@@ -504,7 +506,11 @@ unsafe fn run() -> ! {
                         ssb_game::map::is_cliff_hold(dummy.fighter.status.status)
                             .then_some((dummy.fighter.cliff.line, dummy.fighter.facing))
                     });
+                    items.publish(&mut pl.fighter);
                     pl.tick(p, &stage, controller, jump_held, None);
+                    items.take_requests(&mut pl.fighter, || {
+                        ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                    });
                     if let Some(spawn) = pl.fighter.take_weapon_spawn() {
                         weapons.spawn(spawn);
                     }
@@ -516,7 +522,11 @@ unsafe fn run() -> ! {
                         // matching the original's direct status writes
                         // (`ssb_game::grab` module docs).
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+                        items.publish(&mut dummy.fighter);
                         dummy.tick(p, &stage);
+                        items.take_requests(&mut dummy.fighter, || {
+                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                        });
                         ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                         if let Some(spawn) = dummy.fighter.take_weapon_spawn() {
                             weapons.spawn(spawn);
@@ -526,6 +536,19 @@ unsafe fn run() -> ! {
                         weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
                         weapons.sync_owner(&mut pl.fighter);
                         weapons.sync_owner(&mut dummy.fighter);
+                        items.observe_owner(&pl.fighter);
+                        items.observe_owner(&dummy.fighter);
+                        items.tick(
+                            || ssb_psp_runtime::scene::MapSegments::new(p, &stage),
+                            Some(ssb_game::status::BlastZone {
+                                top: stage.bounds.top as f32,
+                                bottom: stage.bounds.bottom as f32,
+                                left: stage.bounds.left as f32,
+                                right: stage.bounds.right as f32,
+                            }),
+                        );
+                        items.sync_owner(&mut pl.fighter);
+                        items.sync_owner(&mut dummy.fighter);
                         // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
                         // (fighters, then weapons), then `ftMainProcParams` for
                         // every fighter -- the original's process priorities.
@@ -534,17 +557,28 @@ unsafe fn run() -> ! {
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
                         ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                         ssb_game::combat::search_all(&mut [&mut pl.fighter, &mut dummy.fighter]);
+                        items.search_fighter(&mut pl.fighter);
+                        items.search_fighter(&mut dummy.fighter);
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
-                        ssb_game::link::apply_spin_attack_hits(
-                            &mut pl.fighter,
-                            &mut dummy.fighter,
-                        );
-                        ssb_game::link::apply_spin_attack_hits(
-                            &mut dummy.fighter,
-                            &mut pl.fighter,
-                        );
+                        ssb_game::link::apply_spin_attack_hits(&mut pl.fighter, &mut dummy.fighter);
+                        ssb_game::link::apply_spin_attack_hits(&mut dummy.fighter, &mut pl.fighter);
+                        items.search_hurt(&mut [&mut pl.fighter, &mut dummy.fighter], &mut weapons);
                         ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
+                        items.take_requests(&mut pl.fighter, || {
+                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                        });
+                        items.take_requests(&mut dummy.fighter, || {
+                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                        });
+                        items.resolve(&[&pl.fighter, &dummy.fighter]);
+                        items.sync_owner(&mut pl.fighter);
+                        items.sync_owner(&mut dummy.fighter);
+                        items.take_weapon_spawns(&mut weapons, || {
+                            ssb_psp_runtime::scene::MapSegments::new(p, &stage)
+                        });
+                        items.record_landed(&mut pl.fighter);
+                        items.record_landed(&mut dummy.fighter);
                         weapons.record_landed(&mut pl.fighter);
                         weapons.record_landed(&mut dummy.fighter);
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
@@ -700,12 +734,8 @@ unsafe fn draw_training(
     // the fixed scratch is copied into GE memory by the renderer, so it is
     // safe to reuse for both players without a per-frame allocation.
     let mut shadow_verts = [meshdraw::TexQuadVertex::default(); 18];
-    let player_shadow = ssb_psp_runtime::scene::fighter_shadow(
-        p,
-        &stage,
-        &pl.fighter,
-        pl.shadow_size,
-    );
+    let player_shadow =
+        ssb_psp_runtime::scene::fighter_shadow(p, &stage, &pl.fighter, pl.shadow_size);
     meshdraw::draw_fighter_shadow(
         p,
         &player_shadow,
@@ -714,12 +744,8 @@ unsafe fn draw_training(
         draw_state,
     );
     if let Some(dummy) = dummy_state {
-    let dummy_shadow = ssb_psp_runtime::scene::fighter_shadow(
-        p,
-        &stage,
-        &dummy.fighter,
-        dummy.shadow_size,
-    );
+        let dummy_shadow =
+            ssb_psp_runtime::scene::fighter_shadow(p, &stage, &dummy.fighter, dummy.shadow_size);
         meshdraw::draw_fighter_shadow(
             p,
             &dummy_shadow,

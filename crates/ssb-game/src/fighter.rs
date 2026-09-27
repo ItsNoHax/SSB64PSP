@@ -249,6 +249,8 @@ pub struct Fighter {
     pub stick: crate::status::StickState,
     /// Shield health/decay/release-lag state — `crate::status::GuardState`.
     pub guard: crate::status::GuardState,
+    pub items: crate::item::FighterItems,
+    pub item_throw: crate::item_throw::ThrowState,
     /// Ledge-hang working state — `crate::status::CliffState`.
     pub cliff: crate::status::CliffState,
     /// Frames before this fighter can grab a ledge again —
@@ -390,6 +392,8 @@ impl Fighter {
             status: crate::status::StatusState::default(),
             stick: crate::status::StickState::new(),
             guard: crate::status::GuardState::default(),
+            items: crate::item::FighterItems::default(),
+            item_throw: crate::item_throw::ThrowState::default(),
             cliff: crate::status::CliffState::default(),
             cliffcatch_wait: 0,
             attack1: crate::status::Attack1State::default(),
@@ -873,8 +877,9 @@ impl Fighter {
             || crate::ness::apply_ground_physics(self)
             || crate::reaction::apply_ground_physics(self)
         {
-        } else if self.status.status
-            == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
+        } else if self.status.status == crate::status::Status::LightThrowDash
+            || self.status.status
+                == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
         {
             crate::physics::apply_ground_vel_transn(
                 &mut self.physics,

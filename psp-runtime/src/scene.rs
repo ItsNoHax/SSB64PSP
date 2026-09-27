@@ -32,8 +32,8 @@ use ssb_game::status::AnyStatus;
 use ssb_game::status::MarioStatus;
 use ssb_game::status::Status;
 use ssb_game::weapon::{MapSurface, MapSurfaceKind, SurfaceTopology};
-use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
 use ssb_rom::pack::ObjectDesc;
+use ssb_rom::pack::{line_kind, FighterDesc, LineDesc, MeshDesc, Pack, StageDesc};
 
 /// Mario Special1's direct weapon display list. Unlike fighters and stages,
 /// the source descriptor names geometry directly instead of through a graph.
@@ -141,7 +141,10 @@ impl Iterator for MapSegments<'_, '_> {
                 self.current = None;
                 continue;
             };
-            let Some((x1, y1, flags, vertex1)) = self.prev.replace((vertex.x, vertex.y, vertex.flags, vertex.vertex_id)) else {
+            let Some((x1, y1, flags, vertex1)) =
+                self.prev
+                    .replace((vertex.x, vertex.y, vertex.flags, vertex.vertex_id))
+            else {
                 continue;
             };
             let kind = match line.kind {
@@ -454,8 +457,9 @@ pub fn tick_skeleton_animation(
         }
     } else if kind == FighterKind::Pikachu as u32 {
         match status {
-            AnyStatus::Common(s) => ssb_game::pikachu::common_anim_slot(s)
-                .unwrap_or_else(|| status.anim_slot()),
+            AnyStatus::Common(s) => {
+                ssb_game::pikachu::common_anim_slot(s).unwrap_or_else(|| status.anim_slot())
+            }
             _ => status.anim_slot(),
         }
     } else if kind == FighterKind::Ness as u32 {
@@ -468,8 +472,9 @@ pub fn tick_skeleton_animation(
     } else if kind == FighterKind::Purin as u32 {
         // `SLOT_PURIN_ATTACK11` through `LandingAirB`.
         match status {
-            AnyStatus::Common(s) => ssb_game::purin::common_anim_slot(s)
-                .unwrap_or_else(|| status.anim_slot()),
+            AnyStatus::Common(s) => {
+                ssb_game::purin::common_anim_slot(s).unwrap_or_else(|| status.anim_slot())
+            }
             _ => status.anim_slot(),
         }
     } else if kind == FighterKind::Kirby as u32 {
@@ -807,8 +812,7 @@ impl FighterScene {
         if matches!(
             self.fighter.status.status,
             AnyStatus::Fox(
-                ssb_game::status::FoxStatus::SpecialN
-                    | ssb_game::status::FoxStatus::SpecialAirN
+                ssb_game::status::FoxStatus::SpecialN | ssb_game::status::FoxStatus::SpecialAirN
             )
         ) {
             if let Some(anchor) = self.weapon_anchor(pack, 17, 60.0) {
@@ -822,6 +826,7 @@ impl FighterScene {
                     | ssb_game::status::MarioStatus::SpecialAirHi
             ) | AnyStatus::Samus(ssb_game::status::SamusStatus::SpecialHi)
         ) || ssb_game::reaction::moves_by_transn(self.fighter.status.status)
+            || self.fighter.status.status == ssb_game::status::Status::LightThrowDash
         {
             if let (Some(before), Some(current)) =
                 (self.root_motion_before_tick, self.skeleton.pose(0))

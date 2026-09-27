@@ -862,9 +862,13 @@ pub fn check_catch_guard(f: &mut Fighter) -> bool {
     false
 }
 
-/// `ftCommonCatchCheckInterruptCommon` @ 0x80149CE0: Z held, A tapped. The
-/// item-throw branch ahead of it needs items, which are not ported.
+/// `ftCommonCatchCheckInterruptCommon` @ 0x80149CE0: item throw before
+/// Z held + A tapped for a catch.
 pub fn check_catch_common(f: &mut Fighter) -> bool {
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::decide_set_status(f);
+        return true;
+    }
     if f.input.buttons.contains(N64Buttons::Z)
         && tapped(f).contains(N64Buttons::A)
         && has_catch(f.kind)
@@ -875,9 +879,13 @@ pub fn check_catch_common(f: &mut Fighter) -> bool {
     false
 }
 
-/// `ftCommonCatchCheckInterruptDashRun` @ 0x80149D80. Same input as the
-/// common check once the item branch is gone.
+/// `ftCommonCatchCheckInterruptDashRun` @ 0x80149D80: a held item uses
+/// `LightThrowDash` before the catch check.
 pub fn check_catch_dash_run(f: &mut Fighter) -> bool {
+    if crate::item_throw::check_item_type_throw(f) {
+        crate::item_throw::set_item_throw(f, Status::LightThrowDash);
+        return true;
+    }
     check_catch_common(f)
 }
 

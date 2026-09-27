@@ -253,11 +253,18 @@ impl MotionId {
     /// which skips zero when the counter wraps.
     pub fn set(&mut self, attack_id: MotionAttackId) {
         self.attack_id = attack_id;
-        self.count = self.next_count;
+        self.count = self.take_count();
+    }
+
+    /// `ftParamGetMotionCount`: allocate a count without changing the
+    /// fighter's current motion ID, skipping zero on wrap.
+    pub fn take_count(&mut self) -> u16 {
+        let count = self.next_count;
         self.next_count = self.next_count.wrapping_add(1);
         if self.next_count == 0 {
             self.next_count = 1;
         }
+        count
     }
 }
 

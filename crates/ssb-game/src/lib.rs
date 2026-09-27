@@ -23,6 +23,8 @@ pub mod fighter;
 pub mod grab;
 pub mod ground;
 pub mod hurtbox;
+pub mod item;
+pub mod item_throw;
 pub mod kirby;
 pub mod kirby_copy;
 pub mod link;

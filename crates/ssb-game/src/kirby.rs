@@ -363,6 +363,9 @@ pub fn star_damage(kind: FighterKind) -> i32 {
 
 /// `ftCommonAttack100StartSetStatus`'s Kirby case.
 pub fn set_attack100_start(f: &mut Fighter) {
+    if crate::item_throw::check_get(f) {
+        return;
+    }
     set_frames(f, K::Attack100Start, 0.0, ATTACK100_START_LENGTH);
     f.kirby.rapid_is_anim_end = false;
     f.kirby.rapid_is_goto_loop = false;

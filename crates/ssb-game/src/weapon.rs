@@ -16,7 +16,7 @@ use crate::ground::BodyColl;
 mod ness;
 #[path = "pikachu_weapon.rs"]
 mod pikachu;
-pub use ness::{PKFire, PKFirePillar, PKThunder, PKThunderTrail};
+pub use ness::{PKFire, PKThunder, PKThunderTrail};
 pub use pikachu::{ThunderHead, ThunderJolt, ThunderTrail};
 
 /// The one-sided role a map segment has in the original collision tables.
@@ -1347,7 +1347,14 @@ const MAX_OWNERS: usize = 4;
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeaponPool {
     slots: [Option<Weapon>; MAX_WEAPONS],
-    pkfire_items: ness::PKFireItems,
+    /// PK Fire flames the sparks' hit callbacks made this frame, for
+    /// [`crate::item::ItemPool::take_weapon_spawns`].
+    item_spawns: [Option<crate::item::PKFireSpawn>; MAX_WEAPONS],
+    /// Four `WPAttackColl` victim records, shared by fighters and items.
+    /// Fighters use ports; items use `ITEM_RECORD_BASE + slot`.
+    hit_records: [[Option<u8>; 4]; MAX_WEAPONS],
+    /// Item searches queue `hit_normal_damage`; callbacks run after search.
+    pending_item_hits: [bool; MAX_WEAPONS],
     /// This frame's [`OwnerView`] per port, from [`Self::observe_owner`].
     owners: [Option<OwnerView>; MAX_OWNERS],
     /// A returning Boomerang reached this port's thrower while its
@@ -1364,6 +1371,23 @@ pub struct WeaponPool {
 
 /// `WEAPON_HOP_ANGLE_DEFAULT`: `F_CLC_DTOR32(135.0F)`.
 const WEAPON_HOP_ANGLE_DEFAULT: f32 = 2.356_194_5;
+
+/// `wpProcessSetHitInteractStats`: first empty record, otherwise slot zero.
+fn record_weapon_victim(records: &mut [Option<u8>; 4], victim: u8) {
+    if records.contains(&Some(victim)) {
+        return;
+    }
+    let slot = records.iter().position(Option::is_none).unwrap_or(0);
+    records[slot] = Some(victim);
+}
+
+fn recorded_fighter_ports(records: &[Option<u8>; 4]) -> u8 {
+    records
+        .iter()
+        .flatten()
+        .filter(|&&port| port < 4)
+        .fold(0, |mask, &port| mask | (1 << port))
+}
 
 /// The `WPAttributes` interaction bits `ftMainSearchHitWeapon` and
 /// `wpProcessProcHitCollisions` read. Transcribed from the relocData
@@ -1566,7 +1590,9 @@ impl Default for WeaponPool {
     fn default() -> Self {
         WeaponPool {
             slots: [None; MAX_WEAPONS],
-            pkfire_items: ness::PKFireItems::default(),
+            item_spawns: [None; MAX_WEAPONS],
+            hit_records: [[None; 4]; MAX_WEAPONS],
+            pending_item_hits: [false; MAX_WEAPONS],
             owners: [None; MAX_OWNERS],
             caught: [false; MAX_OWNERS],
             thunder_destroyed: [false; MAX_OWNERS],
@@ -1686,7 +1712,7 @@ impl WeaponPool {
                         }
                         // `proc_hit` (`wpNessPKFireProcHit`): the pillar.
                         PreHit::SetOff | PreHit::ReflectorBroke => {
-                            pillars[i] = Some((spark.pillar(), self.stale[i]));
+                            pillars[i] = Some(spark.item_spawn(self.stale[i]));
                             *slot = None;
                             free_slots += 1;
                             continue;
@@ -1711,7 +1737,7 @@ impl WeaponPool {
                     );
                     if outcome.registered() {
                         if outcome == attack::HitOutcome::Damaged {
-                            pillars[i] = Some((spark.pillar(), self.stale[i]));
+                            pillars[i] = Some(spark.item_spawn(self.stale[i]));
                         }
                         *slot = None;
                         free_slots += 1;
@@ -1783,8 +1809,8 @@ impl WeaponPool {
             }
         }
         self.clear_pk_trails();
-        for (pillar, stale) in pillars.into_iter().flatten() {
-            self.pkfire_items.insert(pillar, stale);
+        for spawn in pillars.into_iter().flatten() {
+            self.queue_item_spawn(spawn);
         }
     }
     pub fn pk_fires(&self) -> impl Iterator<Item = PKFire> + '_ {
@@ -1795,9 +1821,6 @@ impl WeaponPool {
                 None
             }
         })
-    }
-    pub fn pk_pillars(&self) -> impl Iterator<Item = PKFirePillar> + '_ {
-        self.pkfire_items.pillars()
     }
     pub fn pk_thunders(&self) -> impl Iterator<Item = PKThunder> + '_ {
         self.slots.iter().flatten().filter_map(|w| {
@@ -1874,6 +1897,8 @@ impl WeaponPool {
                 self.slots[i] = Some(weapon);
                 self.stale[i] = stale;
                 self.landed[i] = None;
+                self.hit_records[i] = [None; 4];
+                self.pending_item_hits[i] = false;
                 true
             }
             None => false,
@@ -1884,7 +1909,6 @@ impl WeaponPool {
     /// ...)`: records this frame's damaging weapon hits in their owner's
     /// queue. Call it for every fighter after [`Self::apply_hits`].
     pub fn record_landed(&mut self, owner: &mut Fighter) {
-        self.pkfire_items.record_landed(owner);
         for landed in &mut self.landed {
             if let Some((port, id, count)) = *landed {
                 if port == owner.port {
@@ -1892,6 +1916,189 @@ impl WeaponPool {
                     *landed = None;
                 }
             }
+        }
+    }
+
+    fn queue_item_spawn(&mut self, spawn: crate::item::PKFireSpawn) {
+        if let Some(slot) = self.item_spawns.iter_mut().find(|s| s.is_none()) {
+            *slot = Some(spawn);
+        }
+    }
+
+    /// The PK Fire flames made since the last call, in order.
+    pub fn take_item_spawns(&mut self) -> impl Iterator<Item = crate::item::PKFireSpawn> {
+        core::mem::replace(&mut self.item_spawns, [None; MAX_WEAPONS])
+            .into_iter()
+            .flatten()
+    }
+
+    /// A slot's attack as `itProcessSearchHitWeapon` reads it: owner,
+    /// staled hitbox, position and velocity. Pikachu's Thunder and both
+    /// thunder trail kinds keep group records that do not name items; they
+    /// pass items by.
+    fn item_attack(&self, i: usize) -> Option<(u8, Hitbox, Vec3, Vec3)> {
+        let stale = self.stale[i];
+        let (owner, mut hitbox, pos, vel) = match self.slots[i]? {
+            Weapon::Jolt(j) => {
+                let (mut hit, pos) = j.hit();
+                hit.damage = j.damage;
+                (j.owner_port, hit, pos, j.velocity)
+            }
+            Weapon::Fireball(f) => (
+                f.owner_port,
+                Hitbox {
+                    damage: f.damage,
+                    ..MARIO_FIREBALL_HITBOX
+                },
+                f.position,
+                f.velocity,
+            ),
+            Weapon::Blaster(b) => (
+                b.owner_port,
+                Hitbox {
+                    damage: b.damage,
+                    ..FOX_BLASTER_HITBOX
+                },
+                b.position,
+                b.velocity,
+            ),
+            Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity),
+            Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+            Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+            Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
+            Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
+            Weapon::Cutter(c) => (
+                c.owner_port,
+                Hitbox {
+                    damage: c.damage,
+                    ..KIRBY_CUTTER_HITBOX
+                },
+                c.position,
+                c.velocity,
+            ),
+            Weapon::PKFire(p) => (
+                p.owner_port,
+                Hitbox {
+                    damage: p.damage,
+                    ..ness::SPARK_HIT
+                },
+                p.position,
+                p.velocity,
+            ),
+            Weapon::PKThunder(h) => (
+                h.owner_port,
+                Hitbox {
+                    damage: h.damage,
+                    ..ness::HEAD_HIT
+                },
+                h.position,
+                h.velocity,
+            ),
+            Weapon::Thunder(_) | Weapon::Trail(_) | Weapon::PKTrail(_) => return None,
+        };
+        hitbox.damage = stale.damage(hitbox.damage);
+        Some((owner, hitbox, pos, vel))
+    }
+
+    /// `itProcessSearchHitWeapon` for one item (`id` is its record id):
+    /// every weapon that has not recorded it tests its damage box. A contact
+    /// queues the weapon's staled damage on the item and defers the weapon's
+    /// `proc_hit` until all item searches finish. No ported item
+    /// can clank (`can_setoff`), so the weapon-item set-off branch is not
+    /// reached.
+    pub fn hit_item(&mut self, item: &mut crate::item::Item, id: u8) {
+        use crate::item::INTERACT_WEAPON;
+        if item.damage_coll.interact_mask & INTERACT_WEAPON == 0 {
+            return;
+        }
+        for i in 0..MAX_WEAPONS {
+            let Some((owner, hitbox, pos, vel)) = self.item_attack(i) else {
+                continue;
+            };
+            if item.owner == Some(owner) && !item.is_damage_all {
+                continue;
+            }
+            if self.hit_records[i].contains(&Some(id)) {
+                continue;
+            }
+            match item.damage_coll.hitstatus {
+                crate::combat::HitStatus::None | crate::combat::HitStatus::Intangible => continue,
+                _ => {}
+            }
+            let prev = pos - vel;
+            let state = if prev == pos {
+                crate::combat::AttackState::Transfer
+            } else {
+                crate::combat::AttackState::Interpolate
+            };
+            if !crate::item::touches_damage_coll(item, pos, prev, hitbox.radius, state) {
+                continue;
+            }
+            // `itProcessUpdateDamageStatWeapon`.
+            record_weapon_victim(&mut self.hit_records[i], id);
+            let lr = if vel.x.abs() < 5.0 {
+                if item.pos.x < pos.x {
+                    1.0
+                } else {
+                    -1.0
+                }
+            } else if vel.x < 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            crate::item::queue_damage(
+                item,
+                hitbox.damage,
+                hitbox.angle,
+                hitbox.element,
+                lr,
+                crate::item::Attacker {
+                    owner: Some(owner),
+                    player: Some(owner),
+                    handicap: crate::stale::HANDICAP_DEFAULT,
+                },
+            );
+            self.pending_item_hits[i] = true;
+        }
+    }
+
+    /// `wpProcessProcHitCollisions` for normal hits queued by item searches.
+    /// Call once after every item's damage collision has been searched.
+    pub fn finish_item_hits(&mut self) {
+        let pending = core::mem::replace(&mut self.pending_item_hits, [false; MAX_WEAPONS]);
+        for (i, hit) in pending.into_iter().enumerate() {
+            if hit {
+                self.weapon_proc_hit(i);
+            }
+        }
+    }
+
+    /// A weapon's `proc_hit` after its `hit_normal_damage` against an item,
+    /// matching its reaction to a fighter's hurtbox.
+    fn weapon_proc_hit(&mut self, i: usize) {
+        let stale = self.stale[i];
+        let slot = &mut self.slots[i];
+        let Some(weapon) = slot else { return };
+        match weapon {
+            Weapon::Boomerang(b) => b.on_hit(),
+            Weapon::Cutter(_) => {}
+            Weapon::Egg(e) => {
+                if !e.exploded {
+                    e.explode();
+                }
+            }
+            Weapon::Bomb(b) => {
+                if !b.exploded {
+                    b.explode();
+                }
+            }
+            Weapon::PKFire(p) => {
+                let spawn = p.item_spawn(stale);
+                *slot = None;
+                self.queue_item_spawn(spawn);
+            }
+            _ => *slot = None,
         }
     }
 
@@ -1975,7 +2182,6 @@ impl WeaponPool {
     {
         let owners = self.owners;
         self.tick_pk_thunder(surfaces);
-        self.pkfire_items.tick(surfaces);
         let mut trails = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             if let Some(weapon) = slot.as_mut() {
@@ -2046,10 +2252,21 @@ impl WeaponPool {
     /// shot live, exactly like a non-registered source hitbox.
     pub fn apply_hits(&mut self, defender: &mut Fighter) {
         self.apply_pk_hits(defender);
-        self.pkfire_items.apply_hits(defender);
         let mut thunder_groups = [None; MAX_WEAPONS];
         for (i, slot) in self.slots.iter_mut().enumerate() {
             let Some(weapon) = slot else { continue };
+            let records = &mut self.hit_records[i];
+            // An item may have evicted a fighter's record since the last
+            // search. Keep the kind's public port mask in sync with the
+            // same four records the item search reads.
+            let ports = recorded_fighter_ports(records);
+            match weapon {
+                Weapon::Boomerang(b) => b.hit_ports = ports,
+                Weapon::Cutter(c) => c.hit_ports = ports,
+                Weapon::Egg(e) => e.hit_ports = ports,
+                Weapon::Bomb(b) => b.hit_ports = ports,
+                _ => {}
+            }
             if matches!(
                 weapon,
                 Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_)
@@ -2154,6 +2371,7 @@ impl WeaponPool {
                     )
                     .registered()
                     {
+                        record_weapon_victim(records, defender.port);
                         egg.hit_ports |= bit;
                     }
                     continue;
@@ -2173,6 +2391,7 @@ impl WeaponPool {
                 )
                 .registered()
                 {
+                    record_weapon_victim(records, defender.port);
                     bomb.hit_ports |= bit;
                     if !bomb.exploded {
                         bomb.explode();
@@ -2199,11 +2418,13 @@ impl WeaponPool {
                     match weapon {
                         // `wpLinkBoomerangProcSetOff`.
                         Weapon::Boomerang(b) => {
+                            record_weapon_victim(records, defender.port);
                             b.hit_ports |= bit;
                             b.set_off();
                         }
                         // `wpYoshiEggThrowProcHit`: it explodes in place.
                         Weapon::Egg(e) => {
+                            record_weapon_victim(records, defender.port);
                             e.hit_ports |= bit;
                             e.explode();
                         }
@@ -2256,11 +2477,16 @@ impl WeaponPool {
                 PreHit::ReflectorBroke => {
                     match weapon {
                         Weapon::Boomerang(b) => {
+                            record_weapon_victim(records, defender.port);
                             b.hit_ports |= bit;
                             b.on_hit();
                         }
-                        Weapon::Cutter(c) => c.hit_ports |= bit,
+                        Weapon::Cutter(c) => {
+                            record_weapon_victim(records, defender.port);
+                            c.hit_ports |= bit;
+                        }
                         Weapon::Egg(e) => {
+                            record_weapon_victim(records, defender.port);
                             e.hit_ports |= bit;
                             e.explode();
                         }
@@ -2272,7 +2498,10 @@ impl WeaponPool {
                 // on); every other absorbable weapon is destroyed.
                 PreHit::Absorbed => {
                     match weapon {
-                        Weapon::Cutter(c) => c.hit_ports |= bit,
+                        Weapon::Cutter(c) => {
+                            record_weapon_victim(records, defender.port);
+                            c.hit_ports |= bit;
+                        }
                         _ => *slot = None,
                     }
                     continue;
@@ -2289,6 +2518,7 @@ impl WeaponPool {
             );
             if let crate::combat::WeaponContact::Shielded(shield) = contact {
                 if let Weapon::Boomerang(b) = weapon {
+                    record_weapon_victim(records, defender.port);
                     b.hit_ports |= bit;
                     b.on_shield(shield);
                     continue;
@@ -2297,17 +2527,20 @@ impl WeaponPool {
             if attack::HitOutcome::of(contact).registered() {
                 // The Boomerang survives a hit and turns back.
                 if let Weapon::Boomerang(b) = weapon {
+                    record_weapon_victim(records, defender.port);
                     b.hit_ports |= bit;
                     b.on_hit();
                     continue;
                 }
                 // `wpKirbyCutterProcHit` returns FALSE: the wave carries on.
                 if let Weapon::Cutter(c) = weapon {
+                    record_weapon_victim(records, defender.port);
                     c.hit_ports |= bit;
                     continue;
                 }
                 // `wpYoshiEggThrowProcHit`: the egg explodes in place.
                 if let Weapon::Egg(e) = weapon {
+                    record_weapon_victim(records, defender.port);
                     e.hit_ports |= bit;
                     e.explode();
                     continue;
@@ -2550,6 +2783,121 @@ mod tests {
 
     fn open_air() -> [MapSurface; 0] {
         []
+    }
+
+    fn flames_at_damage_centres(centres: &[Vec3]) -> crate::item::ItemPool {
+        let mut items = crate::item::ItemPool::default();
+        let mut spawner = WeaponPool::default();
+        for &centre in centres {
+            let pos = centre - Vec3::new(0.0, 200.0, 0.0);
+            spawner.queue_item_spawn(crate::item::PKFireSpawn {
+                owner_port: 0,
+                pos,
+                weapon_pos: pos,
+                weapon_coll: BodyColl {
+                    top: 10.0,
+                    center: 0.0,
+                    bottom: -10.0,
+                    width: 10.0,
+                },
+                stale: crate::stale::WeaponStale::FRESH,
+            });
+        }
+        items.take_weapon_spawns(&mut spawner, open_air);
+        items
+    }
+
+    #[test]
+    fn fireball_damages_every_overlapping_item_before_its_hit_callback() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO; 2]);
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::MarioFireball,
+            owner_port: 1,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        items.search_hurt(&mut [], &mut weapons);
+        assert!(items
+            .items()
+            .all(|item| item.damage_queue == MARIO_FIREBALL_HITBOX.damage));
+        assert!(weapons.first_fireball().is_none());
+    }
+
+    #[test]
+    fn item_contact_expands_bomb_only_after_all_item_searches() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO, Vec3::new(250.0, 0.0, 0.0)]);
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::SamusBomb,
+            owner_port: 1,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        items.search_hurt(&mut [], &mut weapons);
+        assert_eq!(items.get(0).unwrap().damage_queue, SAMUS_BOMB_HITBOX.damage);
+        assert_eq!(items.get(1).unwrap().damage_queue, 0);
+        assert!(weapons.bombs().next().unwrap().exploded);
+    }
+
+    #[test]
+    fn surviving_weapon_evicts_first_item_record_after_four_victims() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO; 5]);
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::KirbyCutter { grounded: false },
+            owner_port: 1,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        items.search_hurt(&mut [], &mut weapons);
+        for slot in 0..5 {
+            assert_eq!(
+                items.get(slot).unwrap().damage_queue,
+                KIRBY_CUTTER_HITBOX.damage
+            );
+            items.get_mut(slot).unwrap().damage_queue = 0;
+        }
+        items.search_hurt(&mut [], &mut weapons);
+        assert_eq!(
+            items.get(0).unwrap().damage_queue,
+            KIRBY_CUTTER_HITBOX.damage
+        );
+        for slot in 1..4 {
+            assert_eq!(items.get(slot).unwrap().damage_queue, 0);
+        }
+        assert_eq!(
+            items.get(4).unwrap().damage_queue,
+            KIRBY_CUTTER_HITBOX.damage
+        );
+    }
+
+    #[test]
+    fn item_victims_share_the_four_records_with_fighter_victims() {
+        let mut items = flames_at_damage_centres(&[Vec3::ZERO; 4]);
+        let mut weapons = WeaponPool::default();
+        weapons.spawn(WeaponSpawn {
+            kind: WeaponKind::KirbyCutter { grounded: false },
+            owner_port: 1,
+            stale: crate::stale::WeaponStale::FRESH,
+            position: Vec3::ZERO,
+            facing: 1.0,
+        });
+        let mut target = Fighter::new(FighterKind::Mario, 2, 3);
+        weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
+        assert_eq!(i32::from(target.damage), KIRBY_CUTTER_HITBOX.damage);
+        items.search_hurt(&mut [], &mut weapons);
+        // Four later item victims evict the first fighter record. A fresh
+        // fighter state at the same port isolates the attack-record check
+        // from damage-status invulnerability and displacement.
+        let mut target = Fighter::new(FighterKind::Mario, 2, 3);
+        weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
+        assert_eq!(i32::from(target.damage), KIRBY_CUTTER_HITBOX.damage);
     }
 
     #[test]
