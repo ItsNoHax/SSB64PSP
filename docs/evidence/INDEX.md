@@ -365,3 +365,4 @@ editing a record.
 | RE-353 | Moving map groups and authored cliff recovery | IMPLEMENTED (decomp, US ROM, host tests, both PSP builds and PPSSPP Training smoke; no physical PSP) | gameplay, collision, animation, cliff, stages, items, weapons, assets |  |
 | RE-354 | Weapon lifecycle and shield-hop callbacks | IMPLEMENTED (decomp, host tests, both PSP builds and PPSSPP Training goldens; no physical PSP) | gameplay, weapons, combat, shield, camera, visual-regression |  |
 | RE-355 | Shared damage and attack clips | IMPLEMENTED (decomp tables, host tests, pack v41 rebuilt from the ROM, both PSP builds, full PPSSPPHeadless golden matrix; no physical PSP) | animation, pack, status machine, combat, visual-regression |  |
+| RE-356 | Stage controllers and ground hazards | IMPLEMENTED (decomp, US ROM data checks, host tests, both PSP builds, PPSSPPHeadless Training goldens; no physical PSP) | gameplay, stages, collision, combat, animation, status machine |  |

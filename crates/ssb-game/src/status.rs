@@ -3515,7 +3515,10 @@ pub fn set_any_status_preserve(
     }
     // `mpCommonSetFighterGround` / `...Air`: the situation follows the status,
     // and leaving the ground has to move the velocity across.
-    let keeps_situation = matches!(status, AnyStatus::Common(s) if s.keeps_situation());
+    // The two stage captors are listed as grounded but never touch `ga`
+    // (`ftCommonTwisterSetStatus` leaves the air itself beforehand).
+    let keeps_situation = matches!(status, AnyStatus::Common(s) if s.keeps_situation())
+        || crate::hazard::is_captured(status);
     match (f.situation, status.is_grounded()) {
         _ if keeps_situation => {}
         (Situation::Ground, false) => f.become_airborne(),
@@ -4800,6 +4803,9 @@ pub fn update(f: &mut Fighter) {
     }
 
     if crate::reaction::update(f, current) {
+        return;
+    }
+    if crate::hazard::update(f, current) {
         return;
     }
     match current {
