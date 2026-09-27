@@ -141,8 +141,12 @@ pub struct PhysicsState {
     pub vel_ground: Vec3,
     /// Airborne velocity.
     pub vel_air: Vec3,
-    /// Velocity from being hit, which decays independently.
+    /// `vel_damage_air`: velocity from being hit, which decays
+    /// independently of the status's own physics ([`update_damage_velocity`]).
     pub vel_knockback: Vec3,
+    /// `vel_damage_ground`: the along-floor magnitude a grounded fighter's
+    /// damage velocity decays through.
+    pub vel_damage_ground: f32,
     pub is_fastfall: bool,
     pub jumps_used: i32,
 }
@@ -387,6 +391,65 @@ pub fn stop_all(p: &mut PhysicsState) {
     p.vel_ground = Vec3::ZERO;
     p.vel_air = Vec3::ZERO;
     p.vel_knockback = Vec3::ZERO;
+    p.vel_damage_ground = 0.0;
+}
+
+/// `FTPHYSICS_DAMAGE_AIR_DECEL`: the damage velocity an airborne fighter
+/// loses per frame along its own direction (`ftMainProcPhysicsMap`).
+pub const DAMAGE_AIR_DECEL: f32 = 1.7;
+
+/// `ftMainUpdateVelDamageGround` @ 0x800E1FE0.
+fn decay_damage_ground(p: &mut PhysicsState, decel: f32) {
+    if p.vel_damage_ground < 0.0 {
+        p.vel_damage_ground += decel;
+        if p.vel_damage_ground > 0.0 {
+            p.vel_damage_ground = 0.0;
+        }
+    } else {
+        p.vel_damage_ground -= decel;
+        if p.vel_damage_ground < 0.0 {
+            p.vel_damage_ground = 0.0;
+        }
+    }
+}
+
+/// The damage-velocity half of `ftMainProcPhysicsMap` @ 0x800E2048, run
+/// after the status's `proc_physics` on every frame outside hitlag,
+/// whatever the status. Airborne, the vector shrinks by
+/// [`DAMAGE_AIR_DECEL`] along its own angle and stops when either axis
+/// changes sign. Grounded, the X component seeds `vel_damage_ground`, which
+/// decays by `material * traction * 0.25` and is laid back along the floor
+/// (`floor_normal` is `coll_data.floor_angle`).
+pub fn update_damage_velocity(
+    p: &mut PhysicsState,
+    grounded: bool,
+    floor_normal: ssb_engine::math::Vec2,
+    material_friction: f32,
+    traction: f32,
+) {
+    let v = &mut p.vel_knockback;
+    if v.x == 0.0 && v.y == 0.0 {
+        return;
+    }
+    if !grounded {
+        let angle = ssb_engine::math::atan2(v.y, v.x);
+        let (sin, cos) = ssb_engine::math::sin_cos(angle);
+        let (old_x, old_y) = (v.x, v.y);
+        v.x -= DAMAGE_AIR_DECEL * cos;
+        v.y -= DAMAGE_AIR_DECEL * sin;
+        if v.x * old_x < 0.0 || v.y * old_y < 0.0 {
+            v.x = 0.0;
+            v.y = 0.0;
+        }
+        p.vel_damage_ground = 0.0;
+    } else {
+        if p.vel_damage_ground == 0.0 {
+            p.vel_damage_ground = p.vel_knockback.x;
+        }
+        decay_damage_ground(p, material_friction * traction * 0.25);
+        p.vel_knockback.x = floor_normal.y * p.vel_damage_ground;
+        p.vel_knockback.y = -floor_normal.x * p.vel_damage_ground;
+    }
 }
 
 /// Total per-frame displacement from every velocity source.
@@ -398,6 +461,56 @@ pub fn total_velocity(p: &PhysicsState, grounded: bool) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn airborne_damage_velocity_loses_1_7_along_its_angle() {
+        let mut p = PhysicsState {
+            vel_knockback: Vec3::new(30.0, 40.0, 0.0),
+            ..Default::default()
+        };
+        update_damage_velocity(
+            &mut p,
+            false,
+            ssb_engine::math::Vec2::new(0.0, 1.0),
+            1.0,
+            1.0,
+        );
+        assert!((p.vel_knockback.x - (30.0 - 1.7 * 0.6)).abs() < 1e-3);
+        assert!((p.vel_knockback.y - (40.0 - 1.7 * 0.8)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn airborne_damage_velocity_stops_instead_of_reversing() {
+        let mut p = PhysicsState {
+            vel_knockback: Vec3::new(-1.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        update_damage_velocity(
+            &mut p,
+            false,
+            ssb_engine::math::Vec2::new(0.0, 1.0),
+            1.0,
+            1.0,
+        );
+        assert_eq!(p.vel_knockback, Vec3::ZERO);
+    }
+
+    #[test]
+    fn grounded_damage_velocity_slides_down_by_quarter_traction() {
+        let mut p = PhysicsState {
+            vel_knockback: Vec3::new(-10.0, 0.0, 0.0),
+            ..Default::default()
+        };
+        let flat = ssb_engine::math::Vec2::new(0.0, 1.0);
+        update_damage_velocity(&mut p, true, flat, 1.0, 2.0);
+        assert_eq!(p.vel_damage_ground, -9.5);
+        assert_eq!(p.vel_knockback.x, -9.5);
+        for _ in 0..30 {
+            update_damage_velocity(&mut p, true, flat, 1.0, 2.0);
+        }
+        assert_eq!(p.vel_knockback.x, 0.0);
+        assert_eq!(p.vel_damage_ground, 0.0);
+    }
 
     fn state() -> PhysicsState {
         PhysicsState::default()

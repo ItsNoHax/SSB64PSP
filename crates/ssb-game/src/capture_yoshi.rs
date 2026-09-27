@@ -16,11 +16,12 @@
 //! ## Documented deviations
 //!
 //! * **Egg hurtbox.** `ftCommonYoshiEggSetDamageCollCollisions` resizes the
-//!   first hurtbox per fighter (`dFTCommonYoshiEggDamageCollDescs`). The
-//!   port keeps its one root sphere (RE-332).
+//!   first hurtbox per fighter (`dFTCommonYoshiEggDamageCollDescs`) and makes
+//!   the rest intangible; [`crate::hurtbox::yoshi_egg_coll`] is that box
+//!   (RE-332, RE-349).
 //! * **Map collision on laying.** `mpCommonRunFighterCollisionDefault` sweeps
-//!   from Yoshi to the egg. Map collision is floor-only here, so the egg is
-//!   placed without the sweep.
+//!   from Yoshi to the egg. The shared map solver is not yet wired to that
+//!   placement step, so the egg is placed without the sweep.
 //! * **Acid floors.** `ftCommonYoshiEggProcTrap`'s damaging-floor escape
 //!   needs ground hazards, which are not ported.
 
@@ -122,7 +123,7 @@ fn set_egg(f: &mut Fighter) {
     f.grab.capture_immune = true;
     f.is_invisible = true;
     grab::init_breakout(f, BREAKOUT_INPUTS_MIN);
-    f.damage = f.damage.saturating_add(LAY_DAMAGE);
+    f.add_damage(i32::from(LAY_DAMAGE));
     let lr = holder.facing.sign();
     f.pos = holder.pos + Vec3::new(-lr * LAY_OFF_X, LAY_OFF_Y, 0.0);
     f.physics.vel_air = Vec3::new(-lr * LAY_VEL_X, LAY_VEL_Y, 0.0);
@@ -177,7 +178,7 @@ pub fn physics(f: &mut Fighter) {
 /// frames off the escape wait.
 pub fn on_hit(f: &mut Fighter, damage: i32) {
     let queued = (damage as f32 * DAMAGE_MUL + 0.999) as i32;
-    f.damage = f.damage.saturating_add(queued.max(0) as u16);
+    f.add_damage(queued);
     if !f.egg.breaking {
         f.egg.escape_wait -= ((2.0 * queued as f32) / 0.5) as i32;
     }

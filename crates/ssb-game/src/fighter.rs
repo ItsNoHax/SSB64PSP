@@ -174,6 +174,9 @@ impl JointTransform {
 
 pub const FIGHTER_JOINTS: usize = 40;
 
+/// The percent `ftParamUpdateDamage` never lets a fighter exceed.
+pub const DAMAGE_PERCENT_MAX: i32 = 999;
+
 /// Whether a fighter is standing on something.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Situation {
@@ -387,6 +390,13 @@ impl Fighter {
         self.situation == Situation::Ground
     }
 
+    /// `ftParamUpdateDamage` @ 0x800EA248: adds to the percent, which the
+    /// original caps at 999.
+    pub fn add_damage(&mut self, damage: i32) {
+        let total = i32::from(self.damage) + damage.max(0);
+        self.damage = total.min(DAMAGE_PERCENT_MAX) as u16;
+    }
+
     /// Whether the fighter is frozen by hitlag.
     ///
     /// Hitlag freezes *both* fighters in an exchange for the same number of
@@ -398,12 +408,10 @@ impl Fighter {
 
     /// Advances the per-frame timers. Returns whether hitlag ended this frame.
     ///
-    /// The original bleeds `vel_knockback` off by friction every frame of
-    /// hitstun (`ftPhysicsSetGroundVelFriction`-shaped decay). No such curve
-    /// exists yet (`crate::attack`'s module docs), so knockback here is held
-    /// constant through hitstun and snapped to zero the instant it ends,
-    /// rather than decaying gradually — a fighter still slides at the hit's
-    /// full speed on the last hitstun frame and stops dead on the next.
+    /// Hitstun only counts down here; the damage velocity is independent of
+    /// it and decays in [`crate::physics::update_damage_velocity`], so a
+    /// strong hit keeps carrying the fighter after hitstun ends, as in
+    /// `ftMainProcPhysicsMap`.
     pub fn tick_timers(&mut self) -> bool {
         if self.hitlag > 0 {
             self.hitlag -= 1;
@@ -411,9 +419,6 @@ impl Fighter {
         }
         if self.hitstun > 0 {
             self.hitstun -= 1;
-            if self.hitstun == 0 {
-                self.physics.vel_knockback = Vec3::ZERO;
-            }
         }
         if self.invincible_frames > 0 {
             self.invincible_frames -= 1;
@@ -697,6 +702,13 @@ impl Fighter {
             self.physics.vel_ground.x = self.physics.vel_ground.x.abs() * self.facing.sign();
         }
 
+        crate::physics::update_damage_velocity(
+            &mut self.physics,
+            true,
+            standing.normal,
+            friction,
+            self.attributes.traction,
+        );
         let ground_x = if self.status.status
             == crate::status::AnyStatus::Pikachu(crate::status::PikachuStatus::SpecialHi)
         {
@@ -776,6 +788,14 @@ impl Fighter {
                     )
                 ) {
                     crate::status::switch_donkey_special_air(self);
+                } else if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Common(s) if s.keeps_situation()
+                ) {
+                    // `mpCommonUpdateFighterKinetics`: the hit reaction
+                    // carries on in the air.
+                    self.become_airborne();
+                    self.physics.jumps_used = 1;
                 } else if !crate::samus::on_ground_lost(self)
                     && !crate::link::on_ground_lost(self)
                     && !crate::yoshi::on_ground_lost(self)
@@ -832,6 +852,25 @@ impl Fighter {
         );
         let donkey_special_hi = self.status.status
             == crate::status::AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi);
+        // `ftCommonDamageCommonProcPhysics`: until hitstun runs out a hit
+        // reaction takes gravity and air friction but no drift and no
+        // fast-fall input (`ftPhysicsApplyAirVelFriction`).
+        let damage_hitstun = self.hitstun > 0
+            && matches!(
+                self.status.status,
+                crate::status::AnyStatus::Common(s) if s.keeps_situation()
+                    || matches!(
+                        s,
+                        crate::status::Status::DamageE1
+                            | crate::status::Status::DamageE2
+                            | crate::status::Status::DamageFlyHi
+                            | crate::status::Status::DamageFlyN
+                            | crate::status::Status::DamageFlyLw
+                            | crate::status::Status::DamageFlyTop
+                            | crate::status::Status::DamageFlyRoll
+                            | crate::status::Status::WallDamage
+                    )
+            );
         if !special_air_hi
             && !special_air_lw
             && !fox_special_hi
@@ -845,6 +884,7 @@ impl Fighter {
             && !crate::purin::skips_fast_fall(self.status.status)
             && !crate::ness::skips_fast_fall(self)
             && !crate::capture_kirby::is_star(self.status.status)
+            && !damage_hitstun
         {
             crate::status::check_set_fast_fall(self);
         }
@@ -868,6 +908,18 @@ impl Fighter {
             || crate::ness::apply_air_physics(self)
             || crate::capture_kirby::apply_air_physics(self)
         {
+        } else if damage_hitstun {
+            if self.physics.is_fastfall {
+                crate::physics::apply_fast_fall(&mut self.physics, &self.attributes);
+            } else {
+                crate::physics::apply_gravity_default(&mut self.physics, &self.attributes);
+            }
+            if !crate::physics::check_clamp_air_vel_x_dec(
+                &mut self.physics,
+                self.attributes.air_speed_max_x,
+            ) {
+                crate::physics::apply_air_friction(&mut self.physics, &self.attributes);
+            }
         } else if self.status.status == crate::status::Status::FallSpecial {
             // `ftCommonFallSpecialProcPhysics` @ `ftcommonfallspecial.c:15`:
             // its own fall-speed rule and its own drift clamp, instead of
@@ -907,6 +959,13 @@ impl Fighter {
             );
         }
 
+        crate::physics::update_damage_velocity(
+            &mut self.physics,
+            false,
+            ssb_engine::math::Vec2::new(0.0, 1.0),
+            0.0,
+            self.attributes.traction,
+        );
         let v = crate::physics::total_velocity(&self.physics, false);
         let want = Vec3::new(
             self.pos.x + v.x,
@@ -1009,6 +1068,16 @@ impl Fighter {
                     return;
                 }
                 if crate::grab::on_landing(self, moved.pos.y) {
+                    return;
+                }
+                if matches!(
+                    self.status.status,
+                    crate::status::AnyStatus::Common(s) if s.keeps_situation()
+                ) {
+                    // `mpCommonUpdateFighterKinetics` lands the fighter
+                    // without leaving the hit reaction
+                    // (`mpCommonSetFighterGround`).
+                    self.land(moved.pos.y);
                     return;
                 }
                 // The landing status is chosen from the velocity *before*
@@ -1138,16 +1207,13 @@ mod tests {
     }
 
     #[test]
-    fn knockback_holds_through_hitstun_then_snaps_to_zero() {
+    fn hitstun_ending_leaves_the_damage_velocity_alone() {
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
-        f.hitstun = 2;
+        f.hitstun = 1;
         f.physics.vel_knockback = Vec3::new(17.0, 0.0, 0.0);
         f.tick_timers();
-        assert_eq!(f.hitstun, 1);
-        assert_eq!(f.physics.vel_knockback, Vec3::new(17.0, 0.0, 0.0));
-        f.tick_timers();
         assert_eq!(f.hitstun, 0);
-        assert_eq!(f.physics.vel_knockback, Vec3::ZERO);
+        assert_eq!(f.physics.vel_knockback, Vec3::new(17.0, 0.0, 0.0));
     }
 
     #[test]

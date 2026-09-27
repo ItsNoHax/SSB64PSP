@@ -24,6 +24,7 @@ pub mod fighter;
 mod fox_attack;
 pub mod grab;
 pub mod ground;
+pub mod hurtbox;
 pub mod kirby;
 mod kirby_attack;
 pub mod kirby_copy;
