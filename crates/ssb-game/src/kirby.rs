@@ -23,7 +23,7 @@
 //!   `SetAirJumpMax` (frame 23), so the source's grounded end is not
 //!   reachable; the port follows the same path.
 
-use ssb_engine::input::{newly_pressed, newly_released, N64Buttons};
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
 
 use crate::attack::Hitbox;
@@ -80,6 +80,8 @@ const SKIPLANDING_VEL_Y_MAX: f32 = -20.0;
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).
 const ATTACK100_START_LENGTH: f32 = 8.0;
 const ATTACK100_END_LENGTH: f32 = 10.0;
+/// `FTKirbyAnimAttack100Loop`'s 25 frames, if the motion table has none.
+const RAPID_LOOP_LENGTH: f32 = 25.0;
 const JUMPAERIAL_LENGTH: f32 = 50.0;
 const THROWF_LANDING_LENGTH: f32 = 35.0;
 const SPECIAL_HI_LENGTH: f32 = 60.0;
@@ -94,8 +96,6 @@ const SPECIAL_N_EAT_LENGTH: f32 = 20.0;
 const SPECIAL_N_THROW_LENGTH: f32 = 28.0;
 const SPECIAL_N_TURN_LENGTH: f32 = 12.0;
 const SPECIAL_N_COPY_LENGTH: f32 = 30.0;
-/// `LandingAirF` and `LandingAirB`.
-const LANDING_AIR_LENGTH: f32 = 30.0;
 
 /// Motion-script frames.
 const THROWF_RELEASE_FRAME: f32 = 8.0;
@@ -116,6 +116,8 @@ const fn catch_box(size: f32, y: f32, z: f32) -> Hitbox {
         kb_scale: 100,
         kb_weight: 0,
         kb_base: 0,
+        element: crate::combat::Element::Normal,
+        shield_damage: 0,
     }
 }
 
@@ -130,10 +132,11 @@ pub const INHALE_CATCH: [(Hitbox, u8); 2] = [
 pub struct KirbyState {
     /// `passive_vars.kirby.copy_id`.
     pub copy_id: FighterKind,
+    /// `passive_vars.kirby.is_ignore_losecopy`: `ftManagerMakeFighter` sets
+    /// it for a Kirby created already holding a copy.
+    pub is_ignore_losecopy: bool,
     pub rapid_is_anim_end: bool,
     pub rapid_is_goto_loop: bool,
-    /// The loop figatree has wrapped at least once (`0x120C` runs).
-    pub rapid_wrapped: bool,
     /// `status_vars.common.jumpaerial.turn_tics`.
     pub jumpaerial_turn_tics: u8,
     /// Final Cutter's wave was made (motion flag 0 consumed).
@@ -164,9 +167,9 @@ impl Default for KirbyState {
     fn default() -> Self {
         Self {
             copy_id: FighterKind::Kirby,
+            is_ignore_losecopy: false,
             rapid_is_anim_end: false,
             rapid_is_goto_loop: false,
-            rapid_wrapped: false,
             jumpaerial_turn_tics: 0,
             cutter_spawned: false,
             is_damage_resist: false,
@@ -271,7 +274,7 @@ fn crossed(f: &Fighter, at: f32) -> bool {
 }
 
 fn tapped(f: &Fighter) -> N64Buttons {
-    newly_pressed(f.prev_input.buttons, f.input.buttons)
+    f.button_tap()
 }
 
 /// `mpCommonSetFighterWaitOrLanding`, run before `land` clears the
@@ -295,6 +298,65 @@ fn apply_air_vel_transn_yz(f: &mut Fighter, scale: f32) {
     f.physics.vel_air.x = x;
 }
 
+/// `FTKIRBY_COPYDAMAGE_LOSECOPY_RANDOM`.
+const LOSECOPY_RANDOM: f32 = 1.0 / 12.0;
+
+/// `ftKirbySpecialNDamageCheckLoseCopy`: on a tumble-level hit, a Kirby
+/// holding a copy loses it one time in twelve (the shared generator).
+pub fn damage_check_lose_copy(f: &mut Fighter) {
+    if is_kirby(f.kind)
+        && f.kirby.copy_id != FighterKind::Kirby
+        && !f.kirby.is_ignore_losecopy
+        && crate::rng::rand_float() < LOSECOPY_RANDOM
+    {
+        lose_copy(f);
+    }
+}
+
+/// `ftKirbySpecialNLoseCopy`, without its star effect and sound.
+pub fn lose_copy(f: &mut Fighter) {
+    crate::kirby_copy::init_passive_vars(f);
+    f.kirby.copy_id = FighterKind::Kirby;
+}
+
+/// `FTKirbyCopy[27]` at `KirbyMainMotion` 0x0000: `(copy_id, star_damage)`
+/// per swallowed `FTKind`. The model-part and scale columns are
+/// presentation.
+pub const COPY: [(u8, i32); 27] = [
+    (0, 17),
+    (1, 17),
+    (2, 30),
+    (3, 17),
+    (4, 17),
+    (5, 17),
+    (6, 25),
+    (7, 17),
+    (8, 17),
+    (9, 17),
+    (10, 17),
+    (11, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 30),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (8, 17),
+    (2, 50),
+];
+
+/// `FTKirbyCopy::star_damage` for a swallowed fighter kind.
+pub fn star_damage(kind: FighterKind) -> i32 {
+    COPY[kind as usize].1
+}
+
 // ---------------------------------------------------------------------------
 // Rapid jab (`ftcommonattack100.c`)
 // ---------------------------------------------------------------------------
@@ -304,64 +366,40 @@ pub fn set_attack100_start(f: &mut Fighter) {
     set_frames(f, K::Attack100Start, 0.0, ATTACK100_START_LENGTH);
     f.kirby.rapid_is_anim_end = false;
     f.kirby.rapid_is_goto_loop = false;
-    f.kirby.rapid_wrapped = false;
 }
 
-fn set_attack100_loop(f: &mut Fighter, wrapped: bool) {
-    set_frames(
+fn set_attack100_loop(f: &mut Fighter) {
+    // The figatree loops; the script pauses after its fifth pulse and
+    // resumes on the wrap.
+    let len = crate::motion::anim_length(f.kind, AnyStatus::Kirby(K::Attack100Loop))
+        .unwrap_or(RAPID_LOOP_LENGTH);
+    status::set_any_status(
         f,
-        K::Attack100Loop,
+        AnyStatus::Kirby(K::Attack100Loop),
         0.0,
-        crate::kirby_attack::RAPID_LOOP_LENGTH,
+        StatusTiming::looping(len),
     );
-    f.kirby.rapid_wrapped = wrapped;
-    // `ftCommonAttack100LoopProcUpdate` starts a new motion every cycle.
-    f.motion.set(crate::stale::MotionAttackId::Attack100);
 }
 
-/// `ftCommonAttack100LoopProcUpdate` and `...ProcInterrupt`. The script
-/// pauses after its fifth pulse; on the wrap it resumes into `0x120C`.
+/// `ftCommonAttack100LoopProcUpdate` and `...ProcInterrupt`.
 fn update_attack100_loop(f: &mut Fighter) {
-    let wrapped = f.status.animation_ended();
-    if wrapped {
+    let speed = f.status.timing.anim_speed;
+    if f.status.anim_frame >= 0.0 && f.status.anim_frame < speed {
         f.kirby.rapid_is_anim_end = true;
+        // `ftParamSetMotionID`: each cycle is a new motion.
+        f.motion.set(crate::stale::MotionAttackId::Attack100);
     }
-    let flag1 = if f.kirby.rapid_wrapped {
-        crate::kirby_attack::RAPID_WRAPPED_FLAG1_FRAMES
-            .iter()
-            .any(|&at| crossed(f, at))
-    } else {
-        crate::kirby_attack::RAPID_FLAG1_FRAMES
-            .iter()
-            .any(|&at| crossed(f, at))
-    };
-    if flag1 {
+    if f.motion_script.flags[1] != 0 {
+        f.motion_script.flags[1] = 0;
         if f.kirby.rapid_is_anim_end && !f.kirby.rapid_is_goto_loop {
             set_frames(f, K::Attack100End, 0.0, ATTACK100_END_LENGTH);
             return;
         }
         f.kirby.rapid_is_goto_loop = false;
     }
-    if wrapped {
-        set_attack100_loop(f, true);
-    }
-    if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
-        || newly_released(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
-    {
+    if f.button_tap().contains(N64Buttons::A) || f.button_release().contains(N64Buttons::A) {
         f.kirby.rapid_is_goto_loop = true;
     }
-}
-
-/// The rapid loop's collisions depend on whether the figatree has wrapped.
-pub fn move_data(f: &Fighter) -> Option<&'static crate::attack::MoveData> {
-    if f.status.status != AnyStatus::Kirby(K::Attack100Loop) {
-        return None;
-    }
-    Some(if f.kirby.rapid_wrapped {
-        &crate::kirby_attack::RAPID_LOOP_WRAPPED
-    } else {
-        &crate::kirby_attack::RAPID_LOOP_FIRST
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -616,21 +654,6 @@ fn stone_hold_decide(f: &mut Fighter, grounded: bool) {
     }
 }
 
-/// `ftMainCheckGetUpdateDamage`'s resist half: the stone soaks up to its
-/// health and passes the overflow on. Returns whether damage registers.
-pub fn absorb_damage(f: &mut Fighter, damage: &mut i32) -> bool {
-    if !f.kirby.is_damage_resist {
-        return true;
-    }
-    f.kirby.damage_resist -= *damage;
-    if f.kirby.damage_resist <= 0 {
-        f.kirby.is_damage_resist = false;
-        *damage = -f.kirby.damage_resist;
-        return true;
-    }
-    false
-}
-
 // ---------------------------------------------------------------------------
 // Inhale (`ftkirbyspecialn.c`)
 // ---------------------------------------------------------------------------
@@ -709,7 +732,7 @@ pub fn inhale_catch(f: &mut Fighter, held: &Fighter) {
     f.kirby.copy_pending = if f.kirby.victim_is_kirby {
         held.kirby.copy_id
     } else {
-        copy_kind(crate::kirby_attack::COPY[held.kind as usize].0)
+        copy_kind(COPY[held.kind as usize].0)
     };
 }
 
@@ -847,7 +870,7 @@ pub fn update(f: &mut Fighter) {
     match current {
         K::Attack100Start => {
             if f.status.animation_ended() {
-                set_attack100_loop(f, false);
+                set_attack100_loop(f);
             }
         }
         K::Attack100Loop => update_attack100_loop(f),
@@ -1318,42 +1341,10 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
     true
 }
 
-/// `ftCommonAttackAirProcMap` for Kirby: `LandingAirF` and `LandingAirB`
-/// have figatrees (and landing hitboxes); the others take
-/// `LandingAirNull`. Returns whether it handled the landing.
-pub fn set_landing_air(f: &mut Fighter) -> bool {
-    use crate::status::Status;
-    if !is_kirby(f.kind) {
-        return false;
-    }
-    let AnyStatus::Common(current) = f.status.status else {
-        return false;
-    };
-    match current {
-        Status::AttackAirF | Status::AttackAirB => {
-            let s = if current == Status::AttackAirF {
-                Status::LandingAirF
-            } else {
-                Status::LandingAirB
-            };
-            status::set_status(f, s, 0.0, StatusTiming::frames(LANDING_AIR_LENGTH));
-        }
-        Status::AttackAirN | Status::AttackAirHi | Status::AttackAirLw => {
-            let percent = crate::attack::move_data(f.kind, current.into())
-                .and_then(|m| m.landing_lag_percent)
-                .unwrap_or(100);
-            status::set_landing_air_null(f, percent);
-        }
-        _ => return false,
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fighter::Situation;
-    use crate::status::Status;
     use ssb_engine::input::ControllerState;
 
     fn kirby() -> Fighter {
@@ -1404,29 +1395,62 @@ mod tests {
     }
 
     #[test]
-    fn rapid_loop_resumes_into_the_extra_pulse_after_a_wrap() {
+    fn rapid_loop_resumes_its_script_on_the_wrap_and_ends_without_input() {
         let mut f = kirby();
+        f.situation = Situation::Ground;
         set_attack100_start(&mut f);
-        set_attack100_loop(&mut f, false);
-        assert!(std::ptr::eq(
-            move_data(&f).unwrap(),
-            &crate::kirby_attack::RAPID_LOOP_FIRST
-        ));
-        f.status.anim_frame = 25.0;
-        f.kirby.rapid_is_goto_loop = true;
-        update_attack100_loop(&mut f);
-        assert!(f.kirby.rapid_wrapped);
-        assert!(std::ptr::eq(
-            move_data(&f).unwrap(),
-            &crate::kirby_attack::RAPID_LOOP_WRAPPED
-        ));
-        // The flag at frame 2 spends the earlier input; the next one ends it.
-        f.status.anim_frame = 2.0;
-        update_attack100_loop(&mut f);
-        assert_eq!(f.status.status, AnyStatus::Kirby(K::Attack100Loop));
-        f.status.anim_frame = 8.0;
-        update_attack100_loop(&mut f);
+        set_attack100_loop(&mut f);
+        let live = |f: &Fighter| {
+            f.attack_colls
+                .iter()
+                .any(|c| c.state != crate::combat::AttackState::Off)
+        };
+        // Mashing keeps the loop going across the wrap, and the resumed
+        // script keeps making pulses.
+        let mut pulses_after_wrap = 0;
+        for frame in 0..60 {
+            press(&mut f, if frame % 2 == 0 { 0x8000 } else { 0 }, 0, 0);
+            status::update(&mut f);
+            assert_eq!(f.status.status, AnyStatus::Kirby(K::Attack100Loop));
+            if frame > 26 && live(&f) {
+                pulses_after_wrap += 1;
+            }
+        }
+        assert!(f.kirby.rapid_is_anim_end);
+        assert!(pulses_after_wrap > 0);
+        // Without input, the next flag 1 ends the loop.
+        for _ in 0..30 {
+            press(&mut f, 0, 0, 0);
+            status::update(&mut f);
+            if f.status.status != AnyStatus::Kirby(K::Attack100Loop) {
+                break;
+            }
+        }
         assert_eq!(f.status.status, AnyStatus::Kirby(K::Attack100End));
+    }
+
+    #[test]
+    fn a_tumble_costs_the_copy_one_time_in_twelve_on_the_shared_generator() {
+        // Seed 1: count losses over 1,200 tumbles; the LCG is deterministic.
+        crate::rng::set_seed(1);
+        let mut lost = 0;
+        for _ in 0..1200 {
+            let mut f = kirby();
+            f.kirby.copy_id = FighterKind::Mario;
+            damage_check_lose_copy(&mut f);
+            if f.kirby.copy_id == FighterKind::Kirby {
+                lost += 1;
+            }
+        }
+        assert!((70..130).contains(&lost), "{lost}");
+        // A Kirby made with a copy never loses it.
+        let mut f = kirby();
+        f.kirby.copy_id = FighterKind::Mario;
+        f.kirby.is_ignore_losecopy = true;
+        for _ in 0..100 {
+            damage_check_lose_copy(&mut f);
+        }
+        assert_eq!(f.kirby.copy_id, FighterKind::Mario);
     }
 
     #[test]
@@ -1437,11 +1461,18 @@ mod tests {
         f.status.anim_frame = 6.0;
         update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Kirby(K::SpecialLwHold));
-        let mut d = 30;
-        assert!(!absorb_damage(&mut f, &mut d));
-        let mut d = 12;
-        assert!(absorb_damage(&mut f, &mut d));
-        assert_eq!(d, 4);
+        // `ftMainCheckGetUpdateDamage`: 30 of the 34 health is soaked, then a
+        // 12-damage hit passes its 4 overflow on.
+        let mut hit = crate::weapon::MARIO_FIREBALL_HITBOX;
+        hit.damage = 30;
+        let at = f.pos + ssb_engine::math::Vec3::new(0.0, 100.0, 0.0);
+        crate::attack::apply_hitbox_at(&hit, at, crate::stale::HANDICAP_DEFAULT, &mut f);
+        assert_eq!(f.damage, 0);
+        assert!(f.kirby.is_damage_resist);
+        f.hitlag = 0;
+        hit.damage = 12;
+        crate::attack::apply_hitbox_at(&hit, at, crate::stale::HANDICAP_DEFAULT, &mut f);
+        assert_eq!(f.damage, 4);
         assert!(!f.kirby.is_damage_resist);
     }
 
@@ -1550,21 +1581,5 @@ mod tests {
             WeaponKind::KirbyCutter { grounded: true }
         ));
         assert_eq!(spawn.position.x, FINALCUTTER_OFF_X);
-    }
-
-    #[test]
-    fn aerial_landings_take_kirbys_own_lags() {
-        let mut f = kirby();
-        status::set_status(&mut f, Status::AttackAirF, 10.0, StatusTiming::frames(40.0));
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, Status::LandingAirF);
-        status::set_status(
-            &mut f,
-            Status::AttackAirHi,
-            10.0,
-            StatusTiming::frames(80.0),
-        );
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, Status::LandingAirNull);
     }
 }

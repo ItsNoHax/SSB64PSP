@@ -468,29 +468,6 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
     }
     true
 }
-pub fn move_data(s: Status) -> Option<&'static crate::attack::MoveData> {
-    use crate::pikachu_attack as a;
-    Some(match s {
-        Status::Attack11 => &a::ATTACK11,
-        Status::AttackDash => &a::ATTACKDASH,
-        Status::AttackS3Hi => &a::ATTACKS3HI,
-        Status::AttackS3 => &a::ATTACKS3,
-        Status::AttackS3Lw => &a::ATTACKS3LW,
-        Status::AttackHi3 => &a::ATTACKHI3,
-        Status::AttackLw3 => &a::ATTACKLW3,
-        Status::AttackS4 => &a::ATTACKS4,
-        Status::AttackHi4 => &a::ATTACKHI4,
-        Status::AttackLw4 => &a::ATTACKLW4,
-        Status::AttackAirN => &a::ATTACKAIRN,
-        Status::AttackAirF => &a::ATTACKAIRF,
-        Status::AttackAirB => &a::ATTACKAIRB,
-        Status::AttackAirHi => &a::ATTACKAIRHI,
-        Status::AttackAirLw => &a::ATTACKAIRLW,
-        Status::LandingAirF => &a::LANDINGAIRF,
-        Status::LandingAirLw => &a::LANDINGAIRLW,
-        _ => return None,
-    })
-}
 pub fn common_anim_slot(s: Status) -> Option<usize> {
     const STATUSES: [Status; 17] = [
         Status::Attack11,
@@ -512,41 +489,6 @@ pub fn common_anim_slot(s: Status) -> Option<usize> {
         Status::LandingAirLw,
     ];
     STATUSES.iter().position(|&x| x == s).map(|i| 342 + i)
-}
-pub fn set_landing_air(f: &mut Fighter) -> bool {
-    if !is_pikachu(f.kind) {
-        return false;
-    }
-    let AnyStatus::Common(s) = f.status.status else {
-        return false;
-    };
-    let frame = f.status.anim_frame;
-    let active = match s {
-        Status::AttackAirN => (3.0..29.0).contains(&frame),
-        Status::AttackAirF => (7.0..27.0).contains(&frame),
-        Status::AttackAirB => (10.0..22.0).contains(&frame),
-        Status::AttackAirHi => false,
-        Status::AttackAirLw => frame < 26.0,
-        _ => return false,
-    };
-    if !active {
-        // `ftCommonAttackAirProcMap` skips impact when descending slowly.
-        if f.physics.vel_air.y > -20.0 {
-            status::set_wait(f);
-        } else {
-            status::set_landing(f);
-        }
-    } else if matches!(s, Status::AttackAirF | Status::AttackAirLw) {
-        let (s, len) = if s == Status::AttackAirF {
-            (Status::LandingAirF, 16.0)
-        } else {
-            (Status::LandingAirLw, 40.0)
-        };
-        status::set_status(f, s, 0.0, StatusTiming::frames(len));
-    } else {
-        status::set_landing_air_null(f, 50);
-    }
-    true
 }
 
 #[cfg(test)]
@@ -660,12 +602,13 @@ mod tests {
         input(&mut f, N64Buttons::A, 0, 0);
         status::update(&mut f);
         input(&mut f, 0, 0, 0);
-        steps(&mut f, 8);
+        // `ftMainPlayAnimEventsAll` already played the entry frame.
+        steps(&mut f, 7);
         assert_eq!(f.status.anim_frame, 9.0);
         assert_eq!(f.motion.count, first_motion);
         status::update(&mut f);
         assert_eq!(f.status.status, AnyStatus::Common(Status::Attack11));
-        assert_eq!(f.status.anim_frame, 0.0);
+        assert_eq!(f.status.anim_frame, 1.0);
         assert_ne!(f.motion.count, first_motion);
     }
 
@@ -831,33 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn aerial_landing_flags_choose_dedicated_lag_or_autocancel() {
-        for (s, frame, expected) in [
-            (Status::AttackAirN, 2.0, Status::LandingLight),
-            (Status::AttackAirN, 3.0, Status::LandingAirNull),
-            (Status::AttackAirN, 29.0, Status::LandingLight),
-            (Status::AttackAirF, 7.0, Status::LandingAirF),
-            (Status::AttackAirF, 27.0, Status::LandingLight),
-            (Status::AttackAirB, 10.0, Status::LandingAirNull),
-            (Status::AttackAirB, 22.0, Status::LandingLight),
-            (Status::AttackAirHi, 3.0, Status::LandingLight),
-            (Status::AttackAirLw, 0.0, Status::LandingAirLw),
-            (Status::AttackAirLw, 26.0, Status::LandingLight),
-        ] {
-            let mut f = pikachu(false);
-            status::set_status(&mut f, s, frame, StatusTiming::frames(45.0));
-            f.physics.vel_air.y = -20.0;
-            assert!(set_landing_air(&mut f));
-            assert_eq!(f.status.status, AnyStatus::Common(expected));
-            if expected == Status::LandingAirNull {
-                assert_eq!(f.status.timing, StatusTiming::frames(f.anim.landing * 0.5));
-            }
-        }
-        let mut f = pikachu(false);
-        status::set_status(&mut f, Status::AttackAirF, 27.0, StatusTiming::frames(45.0));
-        f.physics.vel_air.y = -19.0;
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
+    fn zip_end_lands_into_landing_fall_special() {
         let mut f = pikachu(false);
         set(&mut f, P::SpecialAirHiEnd, 10.0);
         assert!(on_landing(&mut f, 123.0, Vec2::new(0.0, 1.0)));

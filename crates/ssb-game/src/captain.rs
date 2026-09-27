@@ -1,7 +1,7 @@
 //! Captain Falcon's extended statuses (`ftcaptainspecial{n,hi,lw}.c` and
 //! `ftcommonattack100.c`). Motion-event frames are from file 235 (US).
 
-use ssb_engine::input::{newly_pressed, newly_released, N64Buttons};
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::attack::Hitbox;
@@ -51,6 +51,8 @@ pub const DIVE_CATCH: [(Hitbox, u8); 2] = [
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         },
         0,
     ),
@@ -63,6 +65,8 @@ pub const DIVE_CATCH: [(Hitbox, u8); 2] = [
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         },
         0,
     ),
@@ -238,9 +242,7 @@ pub fn update(f: &mut Fighter) {
     match current {
         CaptainStatus::Attack13 => {
             status::rapid_input(f);
-            if f.status.anim_frame >= crate::captain_attack::JAB3_FLAG1_FRAME
-                && f.attack1.rapid_requested
-            {
+            if f.motion_script.flags[1] != 0 && f.attack1.rapid_requested {
                 set_attack100_start(f);
             } else if f.status.animation_ended() {
                 status::set_wait(f);
@@ -268,8 +270,8 @@ pub fn update(f: &mut Fighter) {
             if f.status.animation_ended() {
                 set_attack100_loop(f);
             }
-            let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
-            let releases = newly_released(f.prev_input.buttons, f.input.buttons);
+            let taps = f.button_tap();
+            let releases = f.button_release();
             if taps.contains(N64Buttons::A) || releases.contains(N64Buttons::A) {
                 f.captain.rapid_is_goto_loop = true;
             }

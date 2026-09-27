@@ -212,6 +212,16 @@ pub fn set_star(f: &mut Fighter, copy: bool, vel: Vec3, thrower: u8) {
         Status::ThrownKirbyStar
     };
     status::set_status(f, status, 0.0, StatusTiming::unknown());
+    if !copy {
+        // `ftCommonThrownKirbyStarSetStatus` rewrites the new collisions'
+        // damage from `FTKirbyCopy::star_damage`.
+        let damage = crate::kirby::star_damage(f.kind);
+        for coll in &mut f.attack_colls {
+            if coll.state == crate::combat::AttackState::New {
+                coll.damage = damage;
+            }
+        }
+    }
     f.physics.vel_air = vel;
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_knockback = Vec3::ZERO;
@@ -340,7 +350,8 @@ pub fn on_landing(f: &mut Fighter, floor_y: f32, normal: Vec2) -> bool {
 
 /// `ftCommonThrownCommonStarProcHit`: a star that hits something falls.
 pub fn on_star_hit(f: &mut Fighter) {
-    if f.status.status != Status::ThrownKirbyStar {
+    // `ftCommonThrownCommonStarProcHit`, both stars' `proc_hit`.
+    if !is_star(f.status.status) {
         return;
     }
     escape(f);
@@ -350,6 +361,27 @@ pub fn on_star_hit(f: &mut Fighter) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_spat_star_hits_with_its_copy_table_damage_through_the_common_moveset() {
+        // `dFTCommonMoveset_DamageBumpHit` makes the collision;
+        // `ftCommonThrownKirbyStarSetStatus` rewrites its damage.
+        for (kind, damage) in [
+            (crate::fighter::FighterKind::Mario, 17),
+            (crate::fighter::FighterKind::Donkey, 30),
+            (crate::fighter::FighterKind::Yoshi, 25),
+        ] {
+            let mut f = Fighter::new(kind, 1, 3);
+            set_star(&mut f, false, Vec3::new(40.0, 0.0, 0.0), 0);
+            let live: std::vec::Vec<_> = f
+                .attack_colls
+                .iter()
+                .filter(|c| c.state != crate::combat::AttackState::Off)
+                .collect();
+            assert!(!live.is_empty(), "{kind:?}");
+            assert!(live.iter().all(|c| c.damage == damage), "{kind:?}");
+        }
+    }
 
     #[test]
     fn dist_decays_by_the_per_axis_step() {

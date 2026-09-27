@@ -4,7 +4,7 @@
 //! exact ordinals matters: extracted asset tables are indexed by fighter kind,
 //! so renumbering would silently mis-associate every character's data.
 
-use ssb_engine::input::ControllerState;
+use ssb_engine::input::{ControllerState, N64Buttons};
 use ssb_engine::math::Vec3;
 
 use crate::collision::{self, Segment};
@@ -174,6 +174,11 @@ impl JointTransform {
 
 pub const FIGHTER_JOINTS: usize = 40;
 
+/// `FTCOMMON_DAMAGE_SMASH_DI_*` (US).
+pub const SMASH_DI_RANGE_MIN: i32 = 53;
+pub const SMASH_DI_BUFFER_TICS_MAX: u8 = 4;
+pub const SMASH_DI_RANGE_MUL: f32 = 2.1;
+
 /// The percent `ftParamUpdateDamage` never lets a fighter exceed.
 pub const DAMAGE_PERCENT_MAX: i32 = 999;
 
@@ -314,6 +319,41 @@ pub struct Fighter {
     /// Current posed joints, indexed as `FTStruct::joints` (four runtime
     /// joints precede the packed model nodes).
     pub joint_transforms: [Option<JointTransform>; FIGHTER_JOINTS],
+    /// The running motion scripts and their flags ([`crate::motion`]).
+    pub motion_script: crate::motion::MotionState,
+    /// `FTStruct::attack_colls`, made by the motion scripts.
+    pub attack_colls: [crate::combat::AttackColl; 4],
+    /// `FTStruct::hitstatus` (`ftParamSetHitStatusAll`).
+    pub hitstatus: crate::combat::HitStatus,
+    /// `FTStruct::damage_colls`' live state ([`crate::hurtbox`]).
+    pub damage_colls: crate::hurtbox::DamageColls,
+    /// `FTStruct::intangible_tics`.
+    pub intangible_frames: u16,
+    /// `FTStruct::knockback_resist_passive`.
+    pub knockback_resist_passive: f32,
+    /// `FTStruct::damage_knockback_stack`: the knockback of the last damage
+    /// status, which a hit during its hitlag must beat by 30 to replace it.
+    pub damage_knockback_stack: f32,
+    /// `FTStruct::is_knockback_paused`: in the hitlag of a damage hit.
+    pub is_knockback_paused: bool,
+    /// This frame's hit bookkeeping ([`crate::combat::FrameHits`]).
+    pub hits: crate::combat::FrameHits,
+    /// Taps and releases gathered while in hitlag
+    /// (`ftMainProcUpdateInterrupt` ORs them together until it ends).
+    pub tap_carry: N64Buttons,
+    pub release_carry: N64Buttons,
+    /// `FTStruct::tics_since_last_z`: frames since Z was tapped (teching).
+    pub tics_since_last_z: u32,
+    /// `FTStruct::damage_mul`: 0.5 while knocked down.
+    pub damage_mul: f32,
+    /// The status an electric hit enters after `DamageE1`/`E2`
+    /// (`status_vars.common.damage.status_id`).
+    pub damage_e_status: Option<crate::status::AnyStatus>,
+    /// Knockdown, clank and roll counters ([`crate::reaction`]).
+    pub reaction: crate::reaction::ReactionState,
+    /// `proc_lagupdate == ftCommonDamageCommonProcLagUpdate`: set by a
+    /// damage status, cleared by the next status.
+    pub is_smash_di: bool,
     /// This tick's runtime-sampled TransN motion. It is data, not a renderer
     /// handle, so host gameplay tests can provide it directly and `ssb-game`
     /// remains runtime-independent.
@@ -383,6 +423,22 @@ impl Fighter {
             weapon_spawn_anchor: None,
             joint_transforms: [None; FIGHTER_JOINTS],
             root_motion: RootMotion::default(),
+            motion_script: crate::motion::MotionState::default(),
+            attack_colls: [crate::combat::AttackColl::default(); 4],
+            hitstatus: crate::combat::HitStatus::Normal,
+            damage_colls: crate::hurtbox::DamageColls::default(),
+            intangible_frames: 0,
+            knockback_resist_passive: 0.0,
+            damage_knockback_stack: 0.0,
+            is_knockback_paused: false,
+            hits: crate::combat::FrameHits::default(),
+            tap_carry: N64Buttons(0),
+            release_carry: N64Buttons(0),
+            tics_since_last_z: crate::status::ZTRIGLAST_TICS_MAX,
+            damage_mul: 1.0,
+            damage_e_status: None,
+            reaction: crate::reaction::ReactionState::default(),
+            is_smash_di: false,
         }
     }
 
@@ -413,20 +469,31 @@ impl Fighter {
     /// strong hit keeps carrying the fighter after hitstun ends, as in
     /// `ftMainProcPhysicsMap`.
     pub fn tick_timers(&mut self) -> bool {
+        let mut lag_ended = false;
         if self.hitlag > 0 {
             self.hitlag -= 1;
-            return self.hitlag == 0;
+            if self.hitlag == 0 {
+                self.is_knockback_paused = false;
+                lag_ended = true;
+            }
         }
-        if self.hitstun > 0 {
-            self.hitstun -= 1;
+        // `intangible_tics`/`invincible_tics` run down in hitlag too.
+        if self.intangible_frames > 0 {
+            self.intangible_frames -= 1;
         }
         if self.invincible_frames > 0 {
             self.invincible_frames -= 1;
         }
+        if self.hitlag > 0 {
+            return false;
+        }
+        if self.hitstun > 0 {
+            self.hitstun -= 1;
+        }
         if self.cliffcatch_wait > 0 {
             self.cliffcatch_wait -= 1;
         }
-        false
+        lag_ended
     }
 
     /// Applies this frame's velocity to position, respecting hitlag.
@@ -509,10 +576,42 @@ impl Fighter {
         if input.buttons.contains(ssb_engine::input::N64Buttons::R) {
             input.buttons.0 |= ssb_engine::input::N64Buttons::A | ssb_engine::input::N64Buttons::Z;
         }
+        let (carry_tap, carry_release) = if self.hitlag != 0 {
+            (self.button_tap(), self.button_release())
+        } else {
+            (N64Buttons(0), N64Buttons(0))
+        };
+        self.tap_carry = carry_tap;
+        self.release_carry = carry_release;
         self.prev_input = self.input;
         self.input = input;
         self.stick
             .step(input.stick_x, input.stick_y, jump_tapped, jump_released);
+        // `tics_since_last_z`.
+        if self.tics_since_last_z < crate::status::ZTRIGLAST_TICS_MAX {
+            self.tics_since_last_z += 1;
+        }
+        if self.button_tap().contains(N64Buttons::Z) {
+            self.tics_since_last_z = 0;
+        }
+    }
+
+    /// `input.pl.button_tap`: buttons pressed this frame, plus any pressed
+    /// during the hitlag that ends this frame.
+    pub fn button_tap(&self) -> N64Buttons {
+        N64Buttons(self.tap_carry.0 | (self.input.buttons.0 & !self.prev_input.buttons.0))
+    }
+
+    /// `input.pl.button_release`, with the same hitlag buffering.
+    pub fn button_release(&self) -> N64Buttons {
+        N64Buttons(self.release_carry.0 | (self.prev_input.buttons.0 & !self.input.buttons.0))
+    }
+
+    /// `button_tap = button_release = 0` (`ftMainProcParams` on a hit).
+    pub fn clear_taps(&mut self) {
+        self.tap_carry = N64Buttons(0);
+        self.release_carry = N64Buttons(0);
+        self.prev_input.buttons = self.input.buttons;
     }
 
     /// Supplies the TransN displacement sampled by the outer animation
@@ -581,7 +680,12 @@ impl Fighter {
         I: IntoIterator<Item = crate::weapon::MapSurface>,
     {
         self.tick_timers();
+        // `proc_passive`: an electric hit's `DamageE` hands over to the
+        // real damage status once hitlag is over.
+        crate::attack::update_damage_e(self);
         if self.is_in_hitlag() {
+            // `proc_lagupdate`: Smash DI nudges a fighter frozen by a hit.
+            self.smash_di(&surfaces);
             return;
         }
 
@@ -613,6 +717,67 @@ impl Fighter {
         // prevents a missed runtime sample from replaying an old displacement.
         self.root_motion = RootMotion::default();
         self.weapon_spawn_anchor = None;
+    }
+
+    /// `ftCommonDamageCommonProcLagUpdate`: during a hit's hitlag, a fresh
+    /// hard stick tilt moves the fighter `2.1` units per stick unit (US),
+    /// once per tilt. The move then goes through the map like any other
+    /// (`proc_map` still runs in hitlag); an airborne fighter that reaches
+    /// a floor stops on it and lands when hitlag ends.
+    fn smash_di<I, F>(&mut self, surfaces: &F)
+    where
+        F: Fn() -> I,
+        I: IntoIterator<Item = crate::weapon::MapSurface>,
+    {
+        if !self.is_smash_di || self.hitlag == 0 {
+            return;
+        }
+        let (x, y) = (self.stick.x as i32, self.stick.y as i32);
+        if x * x + y * y < SMASH_DI_RANGE_MIN * SMASH_DI_RANGE_MIN {
+            return;
+        }
+        if self.stick.tap_x >= SMASH_DI_BUFFER_TICS_MAX
+            && self.stick.tap_y >= SMASH_DI_BUFFER_TICS_MAX
+        {
+            return;
+        }
+        self.stick.tap_x = crate::status::STICKBUFFER_MAX;
+        self.stick.tap_y = crate::status::STICKBUFFER_MAX;
+        let want = Vec3::new(
+            self.pos.x + x as f32 * SMASH_DI_RANGE_MUL,
+            self.pos.y + y as f32 * SMASH_DI_RANGE_MUL,
+            self.pos.z,
+        );
+        match (self.situation, self.floor) {
+            (Situation::Ground, Some(standing)) => {
+                let (moved, _) = crate::map::move_ground(
+                    &self.coll,
+                    self.pos,
+                    want,
+                    standing.line,
+                    false,
+                    surfaces,
+                );
+                self.pos = moved.pos;
+                if let Some(f) = moved.floor {
+                    self.floor = Some(f);
+                }
+            }
+            _ => {
+                let result = crate::map::move_air(
+                    &self.coll,
+                    self.pos,
+                    want,
+                    crate::map::AirOptions {
+                        ignore_line: self.ignore_line,
+                        skip_pass: false,
+                        cliff: None,
+                    },
+                    surfaces,
+                );
+                self.pos = result.moved.pos;
+            }
+        }
     }
 
     fn tick_ground<I, F>(&mut self, surfaces: F)
@@ -659,6 +824,7 @@ impl Fighter {
             || crate::pikachu::apply_ground_physics(self)
             || crate::purin::apply_ground_physics(self)
             || crate::ness::apply_ground_physics(self)
+            || crate::reaction::apply_ground_physics(self)
         {
         } else if self.status.status
             == crate::status::AnyStatus::Mario(crate::status::MarioStatus::SpecialHi)
@@ -898,7 +1064,8 @@ impl Fighter {
             crate::status::apply_fox_special_lw_air_physics(self);
         } else if donkey_special_hi {
             crate::status::apply_donkey_special_hi_air_physics(self);
-        } else if crate::samus::apply_air_physics(self)
+        } else if crate::reaction::apply_air_physics(self)
+            || crate::samus::apply_air_physics(self)
             || crate::link::apply_air_physics(self)
             || crate::yoshi::apply_air_physics(self)
             || crate::captain::apply_air_physics(self)
@@ -1070,6 +1237,9 @@ impl Fighter {
                 if crate::grab::on_landing(self, moved.pos.y) {
                     return;
                 }
+                if crate::reaction::on_landing(self, moved.pos.y) {
+                    return;
+                }
                 if matches!(
                     self.status.status,
                     crate::status::AnyStatus::Common(s) if s.keeps_situation()
@@ -1201,7 +1371,7 @@ mod tests {
         f.hitstun = 10;
         f.tick_timers();
         assert_eq!(f.hitstun, 10, "hitstun is paused during hitlag");
-        f.tick_timers();
+        // The frame hitlag ends runs `proc_update`, which counts hitstun.
         f.tick_timers();
         assert_eq!(f.hitstun, 9);
     }
@@ -1582,7 +1752,7 @@ mod tests {
     /// so pressing R alone taps both.
     #[test]
     fn r_trigger_holds_a_and_z() {
-        use ssb_engine::input::{newly_pressed, N64Buttons};
+        use ssb_engine::input::N64Buttons;
         let mut f = Fighter::new(FighterKind::Mario, 0, 3);
         f.set_input(ControllerState::default(), false, false);
         f.set_input(
@@ -1593,7 +1763,7 @@ mod tests {
             false,
             false,
         );
-        let taps = newly_pressed(f.prev_input.buttons, f.input.buttons);
+        let taps = f.button_tap();
         assert!(taps.contains(N64Buttons::A) && taps.contains(N64Buttons::Z));
         assert!(taps.contains(N64Buttons::R));
     }

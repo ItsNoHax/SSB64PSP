@@ -10,7 +10,7 @@
 
 use core::ops::{Deref, DerefMut};
 
-use ssb_game::fighter::{Fighter, FighterKind};
+use ssb_game::fighter::FighterKind;
 use ssb_rom::pack::{Pack, StageDesc};
 
 pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
@@ -30,12 +30,6 @@ pub use ssb_psp_runtime::scene::{facing_turn, FighterScene};
 /// player's own fighter minus the input source and the camera.
 pub struct Dummy {
     scene: FighterScene,
-    /// The player's live collision generation that has already connected.
-    /// This is the fixed-size Training stand-in for the original's
-    /// per-attack `GMAttackRecord` hit list (`ssb_game::attack`'s module
-    /// docs), including the clear/recreate pulse boundaries in Mario's
-    /// Super Jump Punch.
-    hit_record: ssb_game::attack::HitRecord,
 }
 
 impl Deref for Dummy {
@@ -62,10 +56,7 @@ impl Dummy {
         pack.spawn(stage, 1)?;
         let mut scene = FighterScene::at_spawn(pack, stage, FighterKind::Mario, 1);
         scene.fighter.costume = costume;
-        Some(Dummy {
-            scene,
-            hit_record: ssb_game::attack::HitRecord::default(),
-        })
+        Some(Dummy { scene })
     }
 
     /// Advances one tick: permanently neutral input (no AI, no player
@@ -80,20 +71,5 @@ impl Dummy {
             ssb_engine::input::ControllerState::default(),
             false,
         );
-    }
-
-    /// `F1` criterion 5: orchestration only -- hit detection, damage,
-    /// knockback, hitstun and hit-suppression are `ssb_game::attack`'s
-    /// [`apply_hit_from`](ssb_game::attack::apply_hit_from). Called from here
-    /// because this is the only place both fighters exist together (the
-    /// player's own scene and `Dummy` are separate values).
-    /// The attacker is mutable because a landed hit records the move in its
-    /// stale queue (`ssb_game::stale`).
-    pub fn apply_hit_from(&mut self, attacker: &mut Fighter) -> bool {
-        ssb_game::attack::apply_hit_from(
-            attacker,
-            &mut self.scene.fighter,
-            &mut self.hit_record,
-        )
     }
 }

@@ -514,21 +514,27 @@ unsafe fn run() -> ! {
                         weapons.tick(|| ssb_psp_runtime::scene::MapSegments::new(p, &stage));
                         weapons.sync_owner(&mut pl.fighter);
                         weapons.sync_owner(&mut dummy.fighter);
+                        // `ftMainProcSearchCatch`, then `ftMainProcSearchHitAll`
+                        // (fighters, then weapons), then `ftMainProcParams` for
+                        // every fighter -- the original's process priorities.
+                        ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
+                        ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
+                        ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
+                        ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
+                        ssb_game::combat::search_all(&mut [&mut pl.fighter, &mut dummy.fighter]);
                         weapons.apply_hits(&mut pl.fighter);
                         weapons.apply_hits(&mut dummy.fighter);
-                        weapons.record_landed(&mut pl.fighter);
-                        weapons.record_landed(&mut dummy.fighter);
-                        if dummy.apply_hit_from(&mut pl.fighter) {
-                            ssb_game::link::on_attack_hit(&mut pl.fighter);
-                            ssb_game::captain::on_kick_hit(&mut pl.fighter);
-                        }
                         ssb_game::link::apply_spin_attack_hits(
                             &mut pl.fighter,
                             &mut dummy.fighter,
                         );
-                        // `ftMainProcSearchCatch`, in the hit phase.
-                        ssb_game::grab::search_catch(&mut pl.fighter, &dummy.fighter);
-                        ssb_game::grab::search_catch(&mut dummy.fighter, &pl.fighter);
+                        ssb_game::link::apply_spin_attack_hits(
+                            &mut dummy.fighter,
+                            &mut pl.fighter,
+                        );
+                        ssb_game::combat::finish_frame(&mut [&mut pl.fighter, &mut dummy.fighter]);
+                        weapons.record_landed(&mut pl.fighter);
+                        weapons.record_landed(&mut dummy.fighter);
                         ssb_game::grab::exchange(&mut pl.fighter, &mut dummy.fighter);
                         ssb_game::grab::exchange(&mut dummy.fighter, &mut pl.fighter);
                     }
