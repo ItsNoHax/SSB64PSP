@@ -17,10 +17,9 @@
 //!   aerial jumps can catch one. Fighter map collision resolves floors only,
 //!   so a grounded special that runs out of floor goes airborne as for
 //!   `mpCommonProcFighterOnFloor`.
-//! * **Down smash and throw hit status.** Down smash's per-part
-//!   intangibility and the throws' `SetHitStatusAll(2)` need per-part
-//!   hurtboxes and hit-status invincibility, which are not ported. Rest's
-//!   whole-body intangibility is ([`is_intangible`]).
+//! * **Hit status.** Rest's intangibility, down smash's per-part
+//!   intangibility and the throws' `SetHitStatusAll(2)` come from the motion
+//!   scripts ([`crate::motion`]).
 //! * **Effects.** Sing's note effect (`efManagerPurinSingMakeEffect`) is not
 //!   drawn.
 
@@ -45,16 +44,11 @@ const JUMPAERIAL_FLAG1_FRAME: f32 = 25.0;
 /// becomes 2 at 30.
 pub const POUND_BOOST_FRAME: f32 = 12.0;
 pub const POUND_DRIFT_FRAME: f32 = 30.0;
-/// Rest's script (`0x16F4`): `SetHitStatusAll(3)` from the start until
-/// `SetHitStatusAll(1)` at `WaitAsync(30)`.
-pub const REST_INTANGIBLE_FRAMES: f32 = 30.0;
-
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).
 const JUMPAERIAL_LENGTH: f32 = 50.0;
 const POUND_LENGTH: f32 = 55.0;
 const SING_LENGTH: f32 = 180.0;
 const REST_LENGTH: f32 = 250.0;
-const LANDING_AIR_LENGTH: f32 = 30.0;
 
 /// `passive_vars.purin` and the aerial jump's status vars.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -248,16 +242,6 @@ pub fn set_special_lw(f: &mut Fighter) {
     set(f, s, 0.0, REST_LENGTH);
 }
 
-/// Rest's `SetHitStatusAll(3)` window. The switches between the grounded
-/// and aerial statuses keep the hit status (`FTSTATUS_PRESERVE_HITSTATUS`)
-/// and the frame, so the window is the frame range of either.
-pub fn is_intangible(f: &Fighter) -> bool {
-    matches!(
-        f.status.status,
-        AnyStatus::Purin(P::SpecialLw | P::SpecialAirLw)
-    ) && f.status.anim_frame < REST_INTANGIBLE_FRAMES
-}
-
 /// `ftPurinSpecialNGetAngle` (and `ftKirbyCopyPurinSpecialNGetAngle`).
 pub fn pound_angle(stick_y: i32) -> f32 {
     let mut y = stick_y.abs().min(50) - 10;
@@ -439,88 +423,10 @@ pub fn on_landing(f: &mut Fighter, y: f32) -> bool {
     true
 }
 
-/// `ftCommonAttackAirProcMap` for Jigglypuff: `LandingAirF` (Kirby's
-/// figatree) and `LandingAirB` exist; the others take `LandingAirNull`
-/// scaled by their flag 1. Outside the flag 1 window a slow descent skips
-/// the landing. Returns whether it handled the landing.
-pub fn set_landing_air(f: &mut Fighter) -> bool {
-    if !is_purin(f.kind) {
-        return false;
-    }
-    let AnyStatus::Common(current) = f.status.status else {
-        return false;
-    };
-    let frame = f.status.anim_frame;
-    // `SetFlag1(n)` .. `SetFlag1(0)` of each aerial's script.
-    let active = match current {
-        Status::AttackAirN => (6.0..34.0).contains(&frame),
-        Status::AttackAirF => (8.0..24.0).contains(&frame),
-        Status::AttackAirB => (8.0..28.0).contains(&frame),
-        Status::AttackAirHi => (8.0..17.0).contains(&frame),
-        Status::AttackAirLw => (4.0..33.0).contains(&frame),
-        _ => return false,
-    };
-    if !active {
-        // `FTCOMMON_ATTACKAIR_SKIPLANDING_VEL_Y_MAX`.
-        if f.physics.vel_air.y > -20.0 {
-            status::set_wait(f);
-        } else {
-            status::set_landing(f);
-        }
-        return true;
-    }
-    match current {
-        Status::AttackAirF | Status::AttackAirB => {
-            let s = if current == Status::AttackAirF {
-                Status::LandingAirF
-            } else {
-                Status::LandingAirB
-            };
-            status::set_status(f, s, 0.0, StatusTiming::frames(LANDING_AIR_LENGTH));
-        }
-        _ => {
-            let percent = crate::attack::move_data(f.kind, current.into())
-                .and_then(|m| m.landing_lag_percent)
-                .unwrap_or(100);
-            status::set_landing_air_null(f, percent);
-        }
-    }
-    true
-}
-
-pub fn move_data(s: AnyStatus) -> Option<&'static crate::attack::MoveData> {
-    use crate::purin_attack as a;
-    Some(match s {
-        AnyStatus::Common(s) => match s {
-            Status::Attack11 => &a::ATTACK11,
-            Status::Attack12 => &a::ATTACK12,
-            Status::AttackDash => &a::ATTACKDASH,
-            Status::AttackS3Hi => &a::ATTACKS3HI,
-            Status::AttackS3 => &a::ATTACKS3,
-            Status::AttackS3Lw => &a::ATTACKS3LW,
-            Status::AttackHi3 => &a::ATTACKHI3,
-            Status::AttackLw3 => &a::ATTACKLW3,
-            Status::AttackS4 => &a::ATTACKS4,
-            Status::AttackHi4 => &a::ATTACKHI4,
-            Status::AttackLw4 => &a::ATTACKLW4,
-            Status::AttackAirN => &a::ATTACKAIRN,
-            Status::AttackAirF => &a::ATTACKAIRF,
-            Status::AttackAirB => &a::ATTACKAIRB,
-            Status::AttackAirHi => &a::ATTACKAIRHI,
-            Status::AttackAirLw => &a::ATTACKAIRLW,
-            _ => return None,
-        },
-        AnyStatus::Purin(P::SpecialN | P::SpecialAirN) => &a::POUND,
-        AnyStatus::Purin(P::SpecialHi | P::SpecialAirHi) => &a::SING,
-        AnyStatus::Purin(P::SpecialLw | P::SpecialAirLw) => &a::REST,
-        _ => return None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attack::{apply_hit_from, HitRecord};
+    use crate::attack::apply_hit_from;
     use crate::fighter::Facing;
     use ssb_engine::input::ControllerState;
 
@@ -683,17 +589,16 @@ mod tests {
         status::set_wait(&mut attacker);
         set_special_lw(&mut attacker);
         steps(&mut attacker, 1);
-        let mut record = HitRecord::default();
-        assert!(is_intangible(&dummy));
-        assert!(!apply_hit_from(&mut attacker, &mut dummy, &mut record));
+        assert!(crate::combat::is_body_intangible(&dummy));
+        assert!(!apply_hit_from(&mut attacker, &mut dummy));
         // The attacker's own Rest pulse lands on a vulnerable target.
         let mut target = Fighter::new(FighterKind::Mario, 2, 3);
         target.pos = attacker.pos;
         status::set_wait(&mut target);
-        assert!(apply_hit_from(&mut attacker, &mut target, &mut record));
+        assert!(apply_hit_from(&mut attacker, &mut target));
         assert_eq!(target.damage, 20);
         steps(&mut dummy, 30);
-        assert!(!is_intangible(&dummy));
+        assert!(!crate::combat::is_body_intangible(&dummy));
     }
 
     #[test]
@@ -708,9 +613,11 @@ mod tests {
         airborne.pos = singer.pos;
         airborne.become_airborne();
         status::set_fall(&mut airborne);
-        let mut record = HitRecord::default();
-        assert!(!apply_hit_from(&mut singer, &mut airborne, &mut record));
-        assert!(apply_hit_from(&mut singer, &mut grounded, &mut record));
+        assert!(!apply_hit_from(&mut singer, &mut airborne));
+        assert_eq!(airborne.status.status, AnyStatus::Common(Status::Fall));
+        // Sing deals no damage, so `attack_damage` stays 0 and its
+        // `proc_hit` never runs; the sleep still lands.
+        apply_hit_from(&mut singer, &mut grounded);
         assert_eq!(grounded.status.status, AnyStatus::Common(Status::FuraSleep));
         assert_eq!(grounded.damage, 0);
         assert_eq!(
@@ -724,37 +631,6 @@ mod tests {
         input(&mut grounded, 0, 0, 0);
         steps(&mut grounded, 400);
         assert_eq!(grounded.status.status, AnyStatus::Common(Status::Wait));
-    }
-
-    #[test]
-    fn aerials_land_through_their_flag1_windows() {
-        let mut f = purin(false);
-        f.anim.landing = 8.0;
-        status::set_status(&mut f, Status::AttackAirN, 10.0, StatusTiming::frames(50.0));
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, AnyStatus::Common(Status::LandingAirNull));
-        assert_eq!(f.status.timing.anim_length, Some(4.0));
-
-        let mut f = purin(false);
-        status::set_status(&mut f, Status::AttackAirF, 10.0, StatusTiming::frames(40.0));
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, AnyStatus::Common(Status::LandingAirF));
-        f.situation = crate::fighter::Situation::Ground;
-        steps(&mut f, 29);
-        assert_eq!(f.status.status, AnyStatus::Common(Status::LandingAirF));
-        steps(&mut f, 1);
-        assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
-
-        let mut f = purin(false);
-        status::set_status(
-            &mut f,
-            Status::AttackAirHi,
-            20.0,
-            StatusTiming::frames(40.0),
-        );
-        f.physics.vel_air.y = -5.0;
-        assert!(set_landing_air(&mut f));
-        assert_eq!(f.status.status, AnyStatus::Common(Status::Wait));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use super::*;
-use crate::attack::{self, HitRecord};
+use crate::attack;
 use crate::weapon::{PKFire, WeaponPool};
 use ssb_engine::input::ControllerState;
 
@@ -171,12 +171,35 @@ fn jab_flags_chain_to_jab3_and_down_tilt_repeats_at_frame11() {
 }
 #[test]
 fn down_air_and_fox_drill_have_signed_downward_angles() {
-    let ness = move_data(AnyStatus::Common(Status::AttackAirLw)).unwrap();
-    assert_eq!(ness.hitboxes[0].hitbox.angle, -90);
-    let fox = attack::move_data(FighterKind::Fox, Status::AttackAirLw.into()).unwrap();
-    assert!(fox.hitboxes.iter().all(|h| h.hitbox.angle == -70));
+    // The first live collisions each script makes for its down air.
+    fn down_air(kind: FighterKind) -> [crate::combat::AttackColl; 4] {
+        let mut f = fighter(kind, 0, false);
+        crate::status::set_status(
+            &mut f,
+            Status::AttackAirLw,
+            0.0,
+            crate::status::StatusTiming::frames(60.0),
+        );
+        for _ in 0..60 {
+            if f.attack_colls
+                .iter()
+                .any(|c| c.state != crate::combat::AttackState::Off)
+            {
+                break;
+            }
+            crate::status::update(&mut f);
+        }
+        f.attack_colls
+    }
+    let ness = down_air(FighterKind::Ness);
+    assert_eq!(ness[0].angle, -90);
+    let fox = down_air(FighterKind::Fox);
+    assert!(fox
+        .iter()
+        .filter(|c| c.state != crate::combat::AttackState::Off)
+        .all(|c| c.angle == -70));
     let hit = attack::resolve_hit(
-        &ness.hitboxes[0].hitbox,
+        &ness[0].hitbox(),
         Vec3::ZERO,
         Vec3::ZERO,
         0,
@@ -203,9 +226,9 @@ fn thunder_launch_waits30_hold_frames_then_runs28_with_source_deceleration() {
     close(f.physics.vel_air.x, 200.0);
     apply_air_physics(&mut f);
     close(f.physics.vel_air.x, 200.0 - 43.0 / 7.0);
-    assert!(is_invincible(&f));
+    assert!(!crate::combat::is_body_normal(&f));
     steps(&mut f, 10);
-    assert!(!is_invincible(&f));
+    assert!(crate::combat::is_body_normal(&f));
     steps(&mut f, 18);
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirHiEnd));
     f.physics.vel_air.y = 0.0;
@@ -287,6 +310,7 @@ fn thunder_reflection_cleans_trails_and_repeated_reflection_is_safe() {
             StatusTiming::unknown(),
         );
         pool.apply_hits(&mut fox);
+        crate::combat::resolve(&mut fox);
         let h = pool.pk_thunders().next().unwrap();
         assert!(h.reflected);
         assert_eq!(h.owner_port, port);
@@ -319,6 +343,7 @@ fn magnet_absorbs_staled_energy_heals_and_retains_timers_through_hit() {
     let mut pool = WeaponPool::default();
     pool.spawn(spawn);
     pool.apply_hits(&mut f);
+    crate::combat::resolve(&mut f);
     assert_eq!(f.damage, 70 - healed as u16);
     assert_eq!(pool.active_count(), 0);
     assert_eq!(f.status.status, AnyStatus::Ness(N::SpecialAirLwHit));
@@ -356,6 +381,7 @@ fn first_thunder_reflection_consumes_the_head_when_replacement_allocation_fails(
         StatusTiming::unknown(),
     );
     pool.apply_hits(&mut fox);
+    crate::combat::resolve(&mut fox);
     assert_eq!(pool.pk_thunders().count(), 0);
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS - 1);
     assert_eq!(fox.damage, 0);
@@ -376,6 +402,7 @@ fn fire_pillar_allocation_and_initial_fall_are_independent_of_a_full_weapon_pool
     }
     let mut target = fighter(FighterKind::Mario, 1, true);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(pool.pk_pillars().count(), 1);
     assert!(pool.spawn(far));
     assert_eq!(pool.active_count(), crate::weapon::MAX_WEAPONS);
@@ -421,6 +448,7 @@ fn bat_reflects_projectile_only_in_the_flag_window_without_changing_status() {
         f.pos + Vec3::new(0.0, 150.0, 0.0),
     ));
     pool.apply_hits(&mut f);
+    crate::combat::resolve(&mut f);
     assert_eq!(pool.first_fireball().unwrap().owner_port, 0);
     assert_eq!(f.status.status, AnyStatus::Common(Status::AttackS4));
     f.status.anim_frame = 22.0;
@@ -438,14 +466,17 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     pool.spawn(spawn);
     let mut target = fighter(FighterKind::Mario, 1, true);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 4);
     assert_eq!(pool.pk_fires().count(), 0);
     let p = pool.pk_pillars().next().unwrap();
     close((p.position - spawn.position).length(), 160.0);
     target.pos = p.position + Vec3::new(0.0, 100.0, 0.0);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
     for _ in 0..15 {
         pool.tick(core::iter::empty);
@@ -454,11 +485,13 @@ fn pk_fire_hit_creates_independent_shrinking_pillar_with16_frame_rehit() {
     assert!(p.scale < 1.0);
     target.pos = p.position + Vec3::new(0.0, 100.0 * p.scale, 0.0);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 7);
     pool.tick(core::iter::empty);
     let p = pool.pk_pillars().next().unwrap();
     target.pos = p.position + Vec3::new(0.0, 100.0 * p.scale, 0.0);
     pool.apply_hits(&mut target);
+    crate::combat::resolve(&mut target);
     assert_eq!(target.damage, 10);
     for _ in 0..101 {
         pool.tick(core::iter::empty);
@@ -472,13 +505,12 @@ fn blast_hit_record_survives_floor_switch_and_invincibility_ends_at10() {
     f.ness.blast_frames = 28;
     let mut target = fighter(FighterKind::Mario, 1, true);
     target.pos = f.pos + Vec3::new(0.0, 100.0, 0.0);
-    let mut record = HitRecord::default();
-    assert!(attack::apply_hit_from(&mut f, &mut target, &mut record));
+    assert!(attack::apply_hit_from(&mut f, &mut target));
     assert_eq!(target.damage, 30);
     on_landing(&mut f, 0.0, Vec2::new(0.0, 1.0));
-    assert!(!attack::apply_hit_from(&mut f, &mut target, &mut record));
+    assert!(!attack::apply_hit_from(&mut f, &mut target));
     assert_eq!(target.damage, 30);
-    assert!(is_invincible(&f));
+    assert!(!crate::combat::is_body_normal(&f));
     steps(&mut f, 10);
-    assert!(!is_invincible(&f));
+    assert!(crate::combat::is_body_normal(&f));
 }

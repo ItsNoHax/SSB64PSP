@@ -79,6 +79,8 @@ pub const EGG_LAY_CATCH: (Hitbox, u8) = (
         kb_scale: 100,
         kb_weight: 0,
         kb_base: 0,
+        element: crate::combat::Element::Normal,
+        shield_damage: 0,
     },
     31,
 );
@@ -329,6 +331,7 @@ fn set_special_air_lw_loop(f: &mut Fighter) {
         StatusTiming {
             anim_length: None,
             anim_speed: 0.0,
+            looping: false,
         },
     );
     f.physics.vel_air.y = vel_y.min(YOSHIBOMB_VEL_Y_CLAMP);

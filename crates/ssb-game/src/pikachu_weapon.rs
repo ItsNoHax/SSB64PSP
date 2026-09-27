@@ -21,6 +21,8 @@ const JOLT_AIR: Hitbox = Hitbox {
     kb_scale: 30,
     kb_weight: 0,
     kb_base: 50,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 const JOLT_GROUND: Hitbox = Hitbox {
     damage: 7,
@@ -30,6 +32,8 @@ const JOLT_GROUND: Hitbox = Hitbox {
     kb_scale: 20,
     kb_weight: 0,
     kb_base: 10,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 pub(super) const TRAIL_HIT: Hitbox = Hitbox {
     damage: 12,
@@ -39,6 +43,8 @@ pub(super) const TRAIL_HIT: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 80,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -577,19 +583,23 @@ mod tests {
         let mut defender = Fighter::new(FighterKind::Mario, 1, 3);
         defender.pos = Vec3::new(0.0, 1500.0, 0.0);
         pool.apply_hits(&mut defender);
+        crate::combat::resolve(&mut defender);
         assert_eq!(defender.damage, 12);
         // New trail at 1050 inherits the group's record stored in the head.
         pool.tick(|| []);
         defender.pos = Vec3::new(0.0, 1050.0, 0.0);
         pool.apply_hits(&mut defender);
+        crate::combat::resolve(&mut defender);
         assert_eq!(defender.damage, 12);
         let mut other = Fighter::new(FighterKind::Mario, 2, 3);
         other.pos = Vec3::new(0.0, 600.0, 0.0);
         pool.apply_hits(&mut other);
+        crate::combat::resolve(&mut other);
         assert_eq!(other.damage, 0, "head has no attack collision");
         pool.tick(|| []);
         other.pos = Vec3::new(0.0, 1050.0, 0.0);
         pool.apply_hits(&mut other);
+        crate::combat::resolve(&mut other);
         assert_eq!(other.damage, 12);
     }
     #[test]
@@ -616,9 +626,11 @@ mod tests {
         let mut f = Fighter::new(FighterKind::Mario, 1, 3);
         f.pos.y = 400.0;
         pool.apply_hits(&mut f);
+        crate::combat::resolve(&mut f);
         assert_eq!(f.damage, 0);
         f.pos.y = 0.0;
         pool.apply_hits(&mut f);
+        crate::combat::resolve(&mut f);
         assert_eq!(f.damage, 12);
     }
     #[test]

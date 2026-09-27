@@ -17,30 +17,23 @@ or evidence record covers it.
 
 | Item | Reason deferred | Evidence |
 |---|---|---|
-| Restore condensed same-valued attack boxes | Some Donkey motion commands attach otherwise identical boxes to different joints; the existing `MoveData` kept one copy. Mario's and Fox's cases were restored (RE-339) | RE-332, RE-339 |
 | Draw Samus's Charge Shot and Bomb | Gameplay weapons exist; their meshes (`dSamusSpecial3` and the `SamusModel` bomb display list with palette blink) are not packed or drawn | RE-333 |
-| Mario down-air landing | `dFTMarioMotionDescs` has no `LandingAirLw` motion, so the source enters `LandingAirNull` from `AttackAirLw`; the Mario port still enters `LandingAirLw` (Luigi's port follows the source) | RE-334 |
 | Select and draw Samus, Luigi, Link, Yoshi, Captain Falcon and Kirby in `psp-game` | The movesets are host-only; Luigi's Fireball needs Mario's mesh with palette frame 1; Link's Boomerang and Spin Attack effect, Yoshi's Egg Throw and Bomb stars, and Kirby's Final Cutter wave, copy hats and stars are not drawn | RE-333–335, RE-337–338, RE-343 |
 | Select and draw Ness in `psp-game` | Host moveset and copied PK Fire exist; PK Fire spark/flame, PK Thunder head/trails, Magnet and bat visuals need runtime integration | RE-347 |
 | PK Fire incoming item damage and moving floors | The unpickable flame has its own allocation table, gravity, floor/wall response, shrinking hitboxes and rehit clock; source damage reduces life by three times the highest queued damage, and moving map groups need per-frame surface speed | RE-347 |
-| Aerial Z-cancel window | `ftCommonAttackAirProcMap` checks ten ticks since Z; the shared fighter state has no Z-tap timer, so Pikachu's active landing windows retain their authored lag | RE-345 |
 | Select and draw Pikachu and Jigglypuff in `psp-game` | The movesets are host-only; Thunder Jolt, Thunder head/trails, Quick Attack effects and Sing's notes need gameplay render integration | RE-345–346 |
-| Kirby copy-ability loss on damage | `ftKirbySpecialNDamageCheckLoseCopy` rolls `syUtilsRandFloat() < 1/12`; the crate has no RNG | RE-343 |
 | Kirby Inhale downward wiggle | The captured victim's downward mash/drop-through path needs its source floor flags and ignored-line linkage; Final Cutter cliff catches and star reflections now use the shared map solver | RE-343, RE-348 |
 | Moving map groups and changing fighter diamonds | Static geometry is resolved with authored vertex identity; moving-surface speed, group attachment and per-frame collision-box changes need match inputs | RE-345, RE-348 |
 | Authored cliff poses and clip clocks | Catch queries use packed hand reach and two-fighter occupancy, but root placement still uses the corner; climb/attack/escape need their TransN poses and clip lengths | RE-348 |
 | Yoshi Egg Lay victim collision and effect | Laying omits the wall/ceiling sweep, damaging-floor escape needs hazards, and the break effect is represented by a 10-frame clock | RE-337 |
-| Joint hurtboxes for the final four fighters | The combat audit supplies Mario through Captain tables; Kirby, Pikachu, Jigglypuff and Ness still use the root-sphere fallback | RE-349 |
-| Remaining hitbox fields | Sleep and ground/air gates exist, but other elements, rebound and authored shield damage need shared support | RE-346, RE-349 |
-| Smash DI | Frozen fighters currently skip map processing; the source hitlag nudge needs collision during the pause | RE-349 |
 | Weapon map-bound removal | `wpProcessProcWeaponMain` deletes weapons outside `map_bound_*`; the pool keeps a missed Blaster or Charge Shot until a map contact | RE-333 |
 | Boomerang off-camera removal | `wpLinkBoomerangCheckOffCamera` needs the battle camera's projection; the pool keeps the Boomerang until its lifetime ends | RE-335 |
 | Item system | Link's Bomb (`itLinkBomb`) and the item-throw branch of his down special need held items and `ftCommonItemThrow*` | RE-335 |
-| Weapon shield and hop callbacks | Source-specific shield/hop callbacks remain partial; the Boomerang's `ProcShield`/`ProcHop` are not reached | RE-335 |
-| Escape (roll) statuses | Samus's Charge Shot loop reads `ftCommonEscapeGetStatus`; `EscapeF`/`EscapeB` are ordinals only | RE-333 |
-| Hit-status intangibility | Screw Attack startup, earlier fighters' throws, Luigi's Super Jump Punch/up smash, Quick Attack startup and Jigglypuff's down-smash parts need per-hurtbox hit status; Rest's whole-body window and Ness's blast/throw invincibility windows are modelled | RE-333, RE-334, RE-345–347 |
-| Same-frame hits | Simultaneous catcher/held branches, catcher hitlag and a `damage_queue` summed over several hits need a deferred hit log; each hit currently passes its own damage as `recent_damage` | RE-339, RE-349 |
-| Training capture scripts land no hit | The RE-341 build never damaged the dummy in 3,600 ticks. Re-measure with joint hurtboxes and hitlag; a matching screenshot alone does not prove hit resolution | RE-341, RE-349 |
+| Weapon shield and hop callbacks | Weapons meet shields through the hit log with their source `sd`; the Boomerang's own `ProcShield`/`ProcHop` are not reached | RE-335, RE-350 |
+| Catcher branches on a same-frame partner hit | `ftCommonDamageUpdateMain`'s catcher branches read the held partner's same-frame `damage_knockback`; each fighter resolves without the other's state, so the catcher takes the single-hit path | RE-339, RE-350 |
+| Pack clips for reaction statuses | Escape, Down (bounce/wait/stand/attack/roll), Passive, ShieldBreak, FuraFura and Rebound have figatree lengths from the motion descs but no pack animation slots; roll and tech root motion comes from those clips. Adding slots changes the pack layout | RE-350 |
+| Weapon clank and reflector collisions | Weapon–attack clank (`ftMainSearchHitWeapon`'s attack branch), reflector/absorb special collisions as attack collisions and the one-frame invincibility after a knockback overrun are not ported | RE-350 |
+| Training capture scripts land no hit | The RE-341 build never damaged the dummy in 3,600 ticks. Re-measure with joint hurtboxes, scripted attack timing and the per-frame hit log; a matching screenshot alone does not prove hit resolution | RE-341, RE-349, RE-350 |
 | `psp-game` runs Training at 30 Hz on hardware | One tick per loop, and the loop takes two vsyncs (33.4 ms) on the PSP-2000 while simulation takes 1.74 ms; the draw side needs profiling or a fixed-step clock like the viewer's | RE-341 |
 
 ## Hardware acceptance

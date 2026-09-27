@@ -19,7 +19,7 @@
 //! The Bomb is an item (`itLinkBomb`). The item system is not ported, so the
 //! Bomb statuses play their pull motion and create nothing.
 
-use ssb_engine::input::{newly_pressed, newly_released, N64Buttons};
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec2, Vec3};
 
 use crate::attack::Hitbox;
@@ -58,6 +58,8 @@ pub const SPIN_ATTACK_HITBOX: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 30,
+    element: crate::combat::Element::Normal,
+    shield_damage: 1,
 };
 
 /// Figatree lengths (`ssb_rom::anim::EXPECTED_FRAMES`).
@@ -189,6 +191,13 @@ pub struct LinkState {
     pub dair_cleared: bool,
 }
 
+/// `JabLoop` figatree cycle. The script pauses after its fifth pulse and
+/// resumes when the animation wraps.
+pub const RAPID_LOOP_LENGTH: f32 = 35.0;
+/// The pulse ends, where the script sets flag 1. The fifth flag 1 fires when
+/// the paused script resumes at the wrap.
+pub const RAPID_FLAG1_FRAMES: [f32; 5] = [5.0, 12.0, 19.0, 26.0, RAPID_LOOP_LENGTH];
+
 /// `FTCOMMON_ATTACKAIRLW_LINK_REHIT_*`.
 pub const DAIR_REHIT_TIMER: u8 = 30;
 pub const DAIR_REHIT_FRAME_BEGIN: f32 = 35.0;
@@ -203,7 +212,7 @@ pub fn on_attack_hit(f: &mut Fighter) {
     {
         return;
     }
-    f.link.dair_cleared = true;
+    crate::combat::clear_attack_colls(f);
     f.physics.is_fastfall = false;
     f.physics.vel_air.y = DAIR_REHIT_BOUNCE_VEL_Y;
     if f.status.anim_frame > DAIR_REHIT_FRAME_BEGIN {
@@ -225,7 +234,11 @@ pub fn update_attack_air_lw(f: &mut Fighter) {
     if f.link.dair_rehit_timer != 0 {
         f.link.dair_rehit_timer -= 1;
         if f.link.dair_rehit_timer == 0 && f.status.anim_frame < DAIR_REHIT_FRAME_END {
-            f.link.dair_cleared = false;
+            // `ftParamRefreshAttackCollID(0)` and `(1)`.
+            for coll in &mut f.attack_colls[..2] {
+                coll.state = crate::combat::AttackState::New;
+                coll.clear_records();
+            }
         }
     }
     if f.status.animation_ended() {
@@ -233,10 +246,13 @@ pub fn update_attack_air_lw(f: &mut Fighter) {
     }
 }
 
-/// Whether the attacker's current boxes were removed by its own
-/// `proc_hit`.
+/// Whether the down air's boxes are all gone (cleared by its own
+/// `proc_hit`).
 pub fn attack_colls_cleared(f: &Fighter) -> bool {
-    f.link.dair_cleared && f.status.status == status::Status::AttackAirLw
+    f.status.status == status::Status::AttackAirLw
+        && f.attack_colls
+            .iter()
+            .all(|c| c.state == crate::combat::AttackState::Off)
 }
 
 fn set(f: &mut Fighter, status: LinkStatus, frame: f32, length: f32) {
@@ -412,12 +428,7 @@ pub fn set_attack100_start(f: &mut Fighter) {
 
 /// `ftCommonAttack100LoopSetStatus`. The vars carry over.
 fn set_attack100_loop(f: &mut Fighter) {
-    set(
-        f,
-        LinkStatus::Attack100Loop,
-        0.0,
-        crate::link_attack::RAPID_LOOP_LENGTH,
-    );
+    set(f, LinkStatus::Attack100Loop, 0.0, RAPID_LOOP_LENGTH);
     // `ftCommonAttack100LoopProcUpdate` calls `ftParamSetMotionID` at the
     // start of every loop, so each cycle is a new motion.
     f.motion.set(crate::stale::MotionAttackId::Attack100);
@@ -528,9 +539,7 @@ fn update_attack100_loop(f: &mut Fighter) {
     if wrapped {
         f.link.rapid_is_anim_end = true;
     }
-    let flag1 = crate::link_attack::RAPID_FLAG1_FRAMES
-        .iter()
-        .any(|&at| crossed(f, at));
+    let flag1 = RAPID_FLAG1_FRAMES.iter().any(|&at| crossed(f, at));
     if flag1 {
         if f.link.rapid_is_anim_end && !f.link.rapid_is_goto_loop {
             set(f, LinkStatus::Attack100End, 0.0, ATTACK100_END_LENGTH);
@@ -541,9 +550,7 @@ fn update_attack100_loop(f: &mut Fighter) {
     if wrapped {
         set_attack100_loop(f);
     }
-    if newly_pressed(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
-        || newly_released(f.prev_input.buttons, f.input.buttons).contains(N64Buttons::A)
-    {
+    if f.button_tap().contains(N64Buttons::A) || f.button_release().contains(N64Buttons::A) {
         f.link.rapid_is_goto_loop = true;
     }
 }
@@ -702,7 +709,16 @@ pub fn apply_spin_attack_hits(attacker: &mut Fighter, defender: &mut Fighter) {
         ..SPIN_ATTACK_HITBOX
     };
     for position in spin.hit_positions().into_iter().flatten() {
-        let outcome = crate::attack::apply_hitbox_at(&hitbox, position, handicap, defender);
+        // Registered in the defender's hit log; the damage lands in its
+        // `ftMainProcParams` with the rest of the frame's hits.
+        let outcome = crate::attack::register_hitbox(
+            &hitbox,
+            position,
+            position,
+            crate::combat::HitSource::Weapon { vel_x: 0.0 },
+            handicap,
+            defender,
+        );
         if outcome.registered() {
             spin.hit_ports |= bit;
             if outcome == crate::attack::HitOutcome::Damaged {
@@ -846,9 +862,11 @@ mod tests {
         target.situation = Situation::Ground;
         target.pos = right;
         apply_spin_attack_hits(&mut f, &mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 5);
         target.hitlag = 0;
         apply_spin_attack_hits(&mut f, &mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 5);
     }
 
@@ -918,36 +936,23 @@ mod tests {
         let mut f = link(false);
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
         target.situation = Situation::Ground;
-        let mut record = crate::attack::HitRecord::default();
         status::set_air_attack(&mut f, Status::AttackAirLw);
         for _ in 0..10 {
             status::update(&mut f);
         }
         target.pos = f.joint_world(11, Vec3::new(0.0, 0.0, 100.0));
-        assert!(crate::attack::apply_hit_from(
-            &mut f,
-            &mut target,
-            &mut record
-        ));
-        on_attack_hit(&mut f);
+        // `proc_hit` runs in the attacker's `ftMainProcParams`.
+        assert!(crate::attack::apply_hit_from(&mut f, &mut target));
         assert_eq!(f.physics.vel_air.y, DAIR_REHIT_BOUNCE_VEL_Y);
         assert_eq!(f.status.anim_frame, 10.0);
         target.hitlag = 0;
         for _ in 0..29 {
             status::update(&mut f);
-            assert!(!crate::attack::apply_hit_from(
-                &mut f,
-                &mut target,
-                &mut record
-            ));
+            assert!(!crate::attack::apply_hit_from(&mut f, &mut target));
         }
         status::update(&mut f);
         assert_eq!(f.status.anim_frame, 40.0);
-        assert!(crate::attack::apply_hit_from(
-            &mut f,
-            &mut target,
-            &mut record
-        ));
+        assert!(crate::attack::apply_hit_from(&mut f, &mut target));
 
         // A hit past frame 35 restarts the swing at 35 and never refreshes.
         let mut late = link(false);

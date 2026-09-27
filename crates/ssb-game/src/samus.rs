@@ -16,7 +16,7 @@
 //! full weapon pool therefore refuses the shot at release rather than at the
 //! start of the charge.
 
-use ssb_engine::input::{newly_pressed, N64Buttons};
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::Vec3;
 
 use crate::fighter::{Fighter, Situation};
@@ -89,7 +89,7 @@ pub struct SamusState {
 }
 
 fn taps(f: &Fighter) -> N64Buttons {
-    newly_pressed(f.prev_input.buttons, f.input.buttons)
+    f.button_tap()
 }
 
 fn set(f: &mut Fighter, status: SamusStatus, frame: f32, timing: StatusTiming) {
@@ -373,8 +373,7 @@ fn end_screw_attack(f: &mut Fighter) {
 }
 
 /// `ftSamusSpecialNStartProcInterrupt` / `ftSamusSpecialNLoopProcInterrupt`.
-/// The aerial start has none. The loop's shield-roll escape waits on the
-/// unported `ftCommonEscape` statuses.
+/// The aerial start has none.
 fn interrupt(f: &mut Fighter) {
     let taps = taps(f);
     match f.status.status {
@@ -386,6 +385,10 @@ fn interrupt(f: &mut Fighter) {
         AnyStatus::Samus(SamusStatus::SpecialNLoop) => {
             if taps.contains(N64Buttons::B) || taps.contains(N64Buttons::A) {
                 set_special_n_end(f);
+            } else if let Some(escape) = crate::reaction::escape_status(f) {
+                destroy_charge_shot(f);
+                f.samus.damage_resets_charge = false;
+                crate::reaction::set_escape(f, escape);
             } else if taps.contains(N64Buttons::Z) {
                 destroy_charge_shot(f);
                 f.samus.damage_resets_charge = false;
@@ -621,6 +624,33 @@ mod tests {
     }
 
     #[test]
+    fn a_stick_flick_while_charging_rolls_and_keeps_the_charge() {
+        let mut f = samus(true);
+        set_special_n(&mut f);
+        while f.status.status != AnyStatus::Samus(SamusStatus::SpecialNLoop) {
+            press(&mut f, 0);
+            status::update(&mut f);
+        }
+        for _ in 0..20 {
+            press(&mut f, 0);
+            status::update(&mut f);
+        }
+        assert_eq!(f.samus.charge_level, 1);
+        let flick = ControllerState {
+            stick_x: 80,
+            ..Default::default()
+        };
+        f.set_input(flick, false, false);
+        status::update(&mut f);
+        assert!(matches!(
+            f.status.status,
+            AnyStatus::Common(Status::EscapeF | Status::EscapeB)
+        ));
+        assert!(!is_charging(&f));
+        assert_eq!(f.samus.charge_level, 1);
+    }
+
+    #[test]
     fn a_hit_while_charging_spends_the_stored_charge() {
         let mut f = samus(true);
         f.samus.charge_level = 4;
@@ -666,19 +696,25 @@ mod tests {
         assert_eq!(f.status.status, AnyStatus::Samus(SamusStatus::SpecialHi));
         assert_eq!(f.physics.vel_air.x, SCREWATTACK_VEL_X_BASE);
         assert_eq!(f.physics.jumps_used, 2);
-        let screw = crate::attack::move_data(f.kind, f.status.status).unwrap();
-        assert_eq!(
-            screw.hitboxes.iter().filter(|h| h.is_active(4.0)).count(),
-            4
-        );
-        assert_eq!(
-            screw.hitboxes.iter().filter(|h| h.is_active(30.0)).count(),
-            4
-        );
-        assert_eq!(
-            screw.hitboxes.iter().filter(|h| h.is_active(32.0)).count(),
-            0
-        );
+        // Frame 4: the four multi-hit spheres are live until the finisher.
+        let live = |f: &Fighter| {
+            f.attack_colls
+                .iter()
+                .filter(|c| c.state != crate::combat::AttackState::Off)
+                .count()
+        };
+        assert_eq!(live(&f), 4);
+        for _ in 4..32 {
+            status::update(&mut f);
+        }
+        assert_eq!(live(&f), 1);
+        assert_eq!(f.attack_colls[0].kb_weight, 80);
+        status::update(&mut f);
+        status::update(&mut f);
+        assert_eq!(live(&f), 0);
+        while f.status.status == AnyStatus::Samus(SamusStatus::SpecialHi) {
+            status::update(&mut f);
+        }
         while f.status.status == AnyStatus::Samus(SamusStatus::SpecialHi) {
             status::update(&mut f);
         }
@@ -692,10 +728,17 @@ mod tests {
         set_special_air_hi(&mut f);
         assert_eq!(f.physics.vel_air.y, SCREWATTACK_VEL_Y_BASE);
         assert_eq!(f.physics.vel_air.x, SCREWATTACK_DRIFT_CLAMP);
-        let screw = crate::attack::move_data(f.kind, f.status.status).unwrap();
-        let finisher: &[_] = &[screw.hitboxes[52]];
-        assert!(finisher[0].is_active(30.0));
-        assert_eq!(finisher[0].hitbox.kb_weight, 80);
+        for _ in 0..30 {
+            status::update(&mut f);
+        }
+        // The finisher replaces the multi-hit spheres on frame 30.
+        let live = f
+            .attack_colls
+            .iter()
+            .filter(|c| c.state != crate::combat::AttackState::Off)
+            .count();
+        assert_eq!(live, 1);
+        assert_eq!(f.attack_colls[0].kb_weight, 80);
     }
 
     #[test]

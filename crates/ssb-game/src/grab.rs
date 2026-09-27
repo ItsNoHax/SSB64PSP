@@ -26,20 +26,25 @@
 //!   applies the negative child translation through that matrix; rendering
 //!   uses its rotation. Host tests without a skeleton use the catcher root.
 //! * **Catch collision.** Catch boxes use their posed joint transform,
-//!   including hand rotations and offsets. Hurtboxes remain one root sphere.
+//!   including hand rotations and offsets, against the target's grabbable
+//!   joint hurtboxes; intangible or invincible parts and bodies are skipped
+//!   (`ftMainSearchFighterCatch`).
 //! * **No 1P stats.** Throw damage is staled by the catcher's queue
 //!   ([`crate::stale`]) when the catcher queues the release, and the
 //!   catcher's queue records the throw when the damage lands.
 //! * **Throw attack colls.** Mario's and Fox's back throws make attack
-//!   collisions ([`crate::attack::move_data`]). `apply_hit_from` skips the
-//!   held fighter, as `ftMainSearchFighterAttack` skips `capture_gobj`, so
+//!   collisions from their motion scripts ([`crate::motion`]).
+//!   [`crate::combat::search_fighter_hits`] skips the held fighter, as
+//!   `ftMainSearchFighterAttack` skips `capture_gobj`, so
 //!   only bystanders can be hit.
 //! * **Held fighters hit by a third party.** `ftCommonDamageUpdateMain`
 //!   keeps the hold below [`crate::attack::CATCH_RELEASE_THRESHOLD`] and
 //!   otherwise drops it, sending the catcher
-//!   [`GrabEvent::CaptureHitRelease`]. The branches for both fighters being
-//!   hit in the same frame need the source's deferred damage queue, which
-//!   the immediate hit path does not have; hits resolve one at a time.
+//!   [`GrabEvent::CaptureHitRelease`]. Hits are gathered per frame
+//!   ([`crate::combat`]) and a kept hold hands the catcher the hitlag
+//!   ([`GrabEvent::CatcherHitlag`]). The catcher's branches that read the
+//!   held partner's same-frame `damage_knockback` still take the
+//!   single-hit path: each fighter resolves without the other's state.
 //! * **Losing grip.** `ftCommonThrownReleaseFighterLoseGrip` snaps a thrown
 //!   fighter to its joint 4 minus 300 and runs the catcher-relative floor
 //!   collision. Here the fighter keeps its held position and the normal
@@ -435,6 +440,8 @@ fn catch_colls(kind: FighterKind) -> &'static [(Hitbox, u8)] {
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         }
     }
     const MARIO: [(Hitbox, u8); 1] = [(catch(290.0, 0.0, 0.0, 0.0), 28)];
@@ -697,6 +704,9 @@ pub enum GrabEvent {
     /// Sent by the swallowed fighter: it broke out, and Kirby takes
     /// `dFTCommonCaptureKirbyKnockbackCatch`.
     KirbyBreakout,
+    /// `ftCommonDamageUpdateMain`: a held fighter hit without losing the
+    /// hold freezes its catcher for the hit's hitlag.
+    CatcherHitlag(i32),
 }
 
 const OUTBOX: usize = 4;
@@ -820,7 +830,7 @@ fn is_thrown(status: AnyStatus) -> bool {
 // ---------------------------------------------------------------------------
 
 fn tapped(f: &Fighter) -> N64Buttons {
-    ssb_engine::input::newly_pressed(f.prev_input.buttons, f.input.buttons)
+    f.button_tap()
 }
 
 /// `ftCommonCatchSetStatus` @ 0x80149BA8.
@@ -1241,7 +1251,7 @@ pub(crate) fn apply_capture_knockback_with(
         f.handicap,
     );
     let lr = if f.pos.x < holder.pos.x { 1.0 } else { -1.0 };
-    attack::init_damage_vars(f, None, 0, knockback, angle, lr);
+    attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
 }
 
 /// `ftCommonCaptureApplyCatchKnockback` @ 0x8014E1D0: the catcher's recoil
@@ -1264,7 +1274,7 @@ fn apply_catch_knockback_with(f: &mut Fighter, capture_handicap: u8, desc: (i32,
         f.handicap,
     );
     let lr = f.facing.sign();
-    attack::init_damage_vars(f, None, 0, knockback, angle, lr);
+    attack::init_damage_vars(f, None, 0, knockback, angle, lr, false);
 }
 
 /// Drops the link on the held side (`ftCommonThrownReleaseFighterLoseGrip`
@@ -1331,6 +1341,7 @@ fn release_with(
         knockback,
         desc.angle,
         lr,
+        true,
     );
     damage
 }
@@ -1496,6 +1507,7 @@ pub fn set_donkey_throwf_damage(f: &mut Fighter, knockback: f32, angle: i32, lr:
         knockback,
         angle,
         lr,
+        true,
     );
 }
 
@@ -1535,6 +1547,14 @@ pub fn release_on_capture_hit(f: &mut Fighter) {
     }
 }
 
+/// The held side of `ftCommonDamageUpdateMain`'s capture branch when the hold
+/// survives: the catcher takes the hit's hitlag.
+pub fn send_catcher_hitlag(f: &mut Fighter, damage_lag: i32) {
+    if f.grab.capture.is_some() {
+        f.grab.send(GrabEvent::CatcherHitlag(damage_lag));
+    }
+}
+
 /// `dFTCommonThrownNoDamageKnockback`: `{ -1, 0, 361, 0, 0, 20, 0 }`.
 const NO_DAMAGE_KNOCKBACK: ThrowHitDesc = desc(None, 0, 361, 0, 0, 20);
 
@@ -1556,7 +1576,7 @@ fn set_no_damage_release(f: &mut Fighter) {
         f.handicap,
     );
     let lr = f.facing.sign();
-    attack::init_damage_vars(f, None, 0, knockback, d.angle, lr);
+    attack::init_damage_vars(f, None, 0, knockback, d.angle, lr, false);
 }
 
 /// `ftCommonThrownDecideDeadResult` @ 0x8014AF2C, the KO'd side.
@@ -2064,6 +2084,10 @@ fn deliver(event: GrabEvent, from: &mut Fighter, to: &mut Fighter) {
                 );
             }
         }
+        GrabEvent::CatcherHitlag(damage_lag) => {
+            to.hitlag = crate::combat::hitlag_frames(damage_lag, to.status.status, 1.0);
+            to.clear_taps();
+        }
     }
 }
 
@@ -2089,7 +2113,8 @@ pub fn search_catch(catcher: &mut Fighter, other: &Fighter) -> bool {
     {
         return false;
     }
-    if other.grab.capture_immune || other.invincible_frames > 0 || other.stocks <= 0 {
+    // Any non-normal body-wide hit status (special, star, status) blocks it.
+    if other.grab.capture_immune || !crate::combat::is_body_normal(other) || other.stocks <= 0 {
         return false;
     }
     let colls: &[(Hitbox, u8)] = if inhale {
@@ -2261,9 +2286,8 @@ mod tests {
         assert!(fox.physics.vel_air.x > 0.0);
         assert!(kirby.grab.catch.is_none() && fox.grab.capture.is_none());
         // The star never hits the Kirby that spat it.
-        let mut record = attack::HitRecord::default();
         fox.pos = kirby.pos;
-        assert!(!attack::apply_hit_from(&mut fox, &mut kirby, &mut record));
+        assert!(!attack::apply_hit_from(&mut fox, &mut kirby));
     }
 
     #[test]
@@ -2690,7 +2714,6 @@ mod tests {
             );
             frame(&mut ness, &mut dummy);
             let mut bystander = grounded(FighterKind::Fox, 2, 0.0);
-            let mut record = attack::HitRecord::default();
             let mut frozen_ticks = 0;
             // The bystander hit pauses the throw; release is animation frame
             // 27, not simulation tick 27 (`ftMainProcParams` hitlag).
@@ -2701,7 +2724,7 @@ mod tests {
                 press(&mut ness, 0, 0);
                 frame(&mut ness, &mut dummy);
                 bystander.pos = ness.joint_world(30, Vec3::ZERO);
-                attack::apply_hit_from(&mut ness, &mut bystander, &mut record);
+                attack::apply_hit_from(&mut ness, &mut bystander);
                 if dummy.grab.capture.is_none() {
                     break;
                 }
@@ -2846,6 +2869,8 @@ mod tests {
             kb_scale: 5,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         };
         assert!(attack::apply_hitbox_at(&hit, dk.pos, 9, &mut dk).registered());
         assert_eq!(
@@ -2920,6 +2945,8 @@ mod tests {
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 10,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         };
         let outcome = attack::apply_hitbox_at(&hit, dummy.pos, 9, &mut dummy);
         assert_eq!(outcome, attack::HitOutcome::Damaged);
@@ -2950,6 +2977,8 @@ mod tests {
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 10,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         };
         let outcome = attack::apply_hitbox_at(&hit, dummy.pos, 9, &mut dummy);
         assert_eq!(outcome, attack::HitOutcome::Damaged);
@@ -2983,8 +3012,6 @@ mod tests {
         press(&mut mario, 0, -60);
         frame(&mut mario, &mut dummy);
         assert_eq!(mario.status.status, Status::ThrowB);
-        let mut on_held = attack::HitRecord::default();
-        let mut on_bystander = attack::HitRecord::default();
         let mut bystander_hit_at = None;
         for _ in 0..60 {
             press(&mut mario, 0, 0);
@@ -2993,9 +3020,8 @@ mod tests {
             if dummy.grab.capture.is_none() {
                 break;
             }
-            attack::apply_hit_from(&mut mario, &mut dummy, &mut on_held);
             let before = bystander.damage;
-            attack::apply_hit_from(&mut mario, &mut bystander, &mut on_bystander);
+            crate::combat::resolve_frame(&mut [&mut mario, &mut dummy, &mut bystander]);
             if bystander.damage != before && bystander_hit_at.is_none() {
                 bystander_hit_at = Some(mario.status.anim_frame);
             }
@@ -3023,11 +3049,10 @@ mod tests {
         press(&mut fox, 0, -60);
         frame(&mut fox, &mut dummy);
         assert_eq!(fox.status.status, Status::ThrowB);
-        let mut record = attack::HitRecord::default();
         for _ in 0..30 {
             press(&mut fox, 0, 0);
             frame(&mut fox, &mut dummy);
-            attack::apply_hit_from(&mut fox, &mut bystander, &mut record);
+            crate::combat::resolve_frame(&mut [&mut fox, &mut dummy, &mut bystander]);
         }
         assert_eq!(bystander.damage, 10);
     }

@@ -1,52 +1,31 @@
-//! Hitboxes, hurtboxes and hit resolution — Training Mode's first real
-//! grounded attack, `F1` acceptance criterion 5.
+//! Hitbox descriptors and the damage side of a hit: knockback, hitstun,
+//! hitlag and `ftCommonDamageInitDamageVars`.
 //!
-//! Ported from three places in the decompilation:
+//! Attack collisions are made by the motion scripts ([`crate::motion`]) and
+//! resolved by the per-frame pipeline in [`crate::combat`]. This module
+//! keeps the formulas both use:
 //!
-//! * `relocData/202_MarioMainMotion.c`'s `dMarioMainMotion_Jab1` — the literal
-//!   `ftMotionCommandMakeAttackColl(...)` arguments for Mario's neutral jab
-//!   (`Attack11`), which is where a Smash 64 hitbox's numbers actually live.
-//!   There is no separate per-character "attack table"; the hitbox is a
-//!   motion-event argument list baked into the animation script.
 //! * `ft/ftcommon/ftcommondamage.c`'s `ftCommonDamageGetKnockbackAngle` and
-//!   `ftCommonDamageInitDamageVars` — the "Sakurai angle" resolution and the
-//!   knockback-vector construction.
-//! * `ft/ftparam.c`'s `ftParamGetCommonKnockback` and `ftParamGetHitStun` —
-//!   the knockback magnitude and hitstun-length formulas.
+//!   `ftCommonDamageInitDamageVars` — the "Sakurai angle" resolution, the
+//!   launch/slide/bounce branches, `DamageFlyRoll` and the electric
+//!   `DamageE1`/`DamageE2` detour.
+//! * `ft/ftparam.c`'s `ftParamGetCommonKnockback`, `ftParamGetHitStun` and
+//!   `ftParamGetHitLag`.
 //!
-//! ## What is simplified here, and why
-//!
-//! * **Joint attachment comes from the current pose.** The PSP runtime
-//!   samples `FTStruct::joints` into portable transforms. A host caller that
-//!   has no skeleton retains the old fallback for non-root joints.
-//! * **Hurtboxes are the source's joint boxes** ([`crate::hurtbox`]), tested
-//!   at the hit's current position only (no swept previous position). A
-//!   caller with no posed joints falls back to one sphere of
-//!   [`MARIO_HURTBOX_RADIUS`] at the fighter's root.
-//! * **One hit at a time.** The source gathers every hit of a frame into a
-//!   hit log and resolves the strongest (`ftMainProcessHitCollisionStatsMain`);
-//!   here each registered hit is applied as it is found, so the frame's
-//!   `damage_queue` is that one hit's damage. Hitlag (`ftParamGetHitLag`)
-//!   freezes both sides; Smash DI during hitlag is not ported, because a
-//!   frozen fighter skips map collision here and the nudge could cross a
-//!   floor.
-//! * **Not carried by [`Hitbox`]:** the motion command's element, rebound,
-//!   shield damage (`sd`) and ground/air mask (`ga`), so every hit is
-//!   `Normal`, and shields lose only the hit's damage.
-//! * **`DamageFlyRoll`** needs the shared RNG, so a tumble reads as
-//!   `DamageFlyN`/`DamageFlyTop`. A tumble that lands does not bounce into
-//!   the unported `Down` chain; it takes the ordinary landing.
+//! [`register_hitbox`] feeds a positioned hitbox (a weapon) into the
+//! defender's hit log; [`apply_hitbox_at`] also resolves it at once, for
+//! callers outside the frame pipeline. A caller with no posed joints falls
+//! back to one sphere of [`MARIO_HURTBOX_RADIUS`] at the fighter's root.
 
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::fighter::Fighter;
-use crate::status::{self, AnyStatus, FoxStatus, MarioStatus, Status, StatusTiming};
+use crate::status::{self, AnyStatus, Status, StatusTiming};
 
 /// A hitbox descriptor, transcribed field-for-field from a
 /// `ftMotionCommandMakeAttackColl(aid, gid, jid, dmg, reb, elem, sz, ox, oy,
 /// oz, ang, kbs, kbw, ga, sd, fl, fk, kbb)` call, so it can be checked against
-/// the decomp source by eye. Fields the ported hit-resolution path does not
-/// use yet (rebound, element, shield damage, sound) are not carried.
+/// the decomp source by eye. Sound (`fl`, `fk`) is not carried.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Hitbox {
     /// `dmg` — base damage, added to the target's percent as-is.
@@ -66,6 +45,10 @@ pub struct Hitbox {
     pub kb_weight: i32,
     /// `kbb` — base knockback (BKB).
     pub kb_base: i32,
+    /// `elem` — the hit element (`GMHitElement`).
+    pub element: crate::combat::Element,
+    /// `sd` — extra shield damage.
+    pub shield_damage: i32,
 }
 
 /// Mario's `Attack11` (neutral jab) primary hitbox — `dMarioMainMotion_Jab1`,
@@ -80,1792 +63,13 @@ pub const MARIO_JAB1_HITBOX: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 8,
+    element: crate::combat::Element::Normal,
+    shield_damage: 0,
 };
-
-/// The frame window `Jab1`'s hitbox is active — `WaitAsync(2)` before
-/// `MakeAttackColl`, then `Wait(2)` before `ClearAttackCollAll`. Half-open:
-/// active for `anim_frame` in `2.0..4.0`.
-pub const MARIO_JAB1_HITBOX_START: f32 = 2.0;
-pub const MARIO_JAB1_HITBOX_END: f32 = 4.0;
-
-/// `Attack11`'s total length in frames, summed from `dMarioMainMotion_Jab1`'s
-/// own `WaitAsync`/`Wait` commands (`2 + 2 + 10`). Not extracted from a
-/// figatree file — there is no ported animation for this status yet (module
-/// docs) — but a real number read off the motion script, not a guess.
-pub const MARIO_ATTACK11_LENGTH_FRAMES: f32 = 14.0;
-
-/// Mario's second `Jab1` hitbox (joint 9, the forearm) — closing the module
-/// docs' former "one hitbox, not five" gap for `Jab1` specifically: with
-/// both hitboxes' `ox, oy, oz` already `(0, 0, 0)`, adding the second one
-/// costs nothing numerically (it lands exactly on top of the first) but
-/// completes the pair the motion script actually spawns.
-/// `ftMotionCommandMakeAttackColl(1, 0, 9, 2, 1, 0, 160, 0, 0, 0, 361, 50, 0,
-/// 3, 0, 0, 0, 8)`.
-pub const MARIO_JAB1_HITBOX_2: Hitbox = MARIO_JAB1_HITBOX;
 
 /// The root-sphere hurtbox used when a fighter has no posed joints — half
 /// of `dMarioMain_attr.map_coll`'s `150.0` width ([`crate::hurtbox`]).
 pub const MARIO_HURTBOX_RADIUS: f32 = 150.0 / 2.0;
-
-/// One hitbox and the half-open frame window it is active —
-/// `MakeAttackColl`/`WaitAsync`/`Wait`/`ClearAttackCollAll` baked into a
-/// single value instead of the timing living apart from the data the way
-/// [`MARIO_JAB1_HITBOX_START`]/`_END` used to for `Jab1` alone.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ActiveHitbox {
-    pub hitbox: Hitbox,
-    pub start: f32,
-    pub end: f32,
-    /// The `MakeAttackColl` generation within one motion. A source
-    /// `ClearAttackCollAll` followed by a new `MakeAttackColl` starts a new
-    /// generation even when the two frame windows touch; the original's
-    /// per-attack hit record is cleared with the old collision object.
-    pub hit_generation: u8,
-    /// `elem == nGMHitElementSleep`: a hit sends the target to `FuraSleep`
-    /// instead of a damage status (`ftCommonDamageGotoDamageStatus`).
-    pub sleep: bool,
-    /// `ga` bit 1: the box reaches airborne targets.
-    pub hits_air: bool,
-    /// `ga` bit 2: the box reaches grounded targets.
-    pub hits_ground: bool,
-}
-
-impl ActiveHitbox {
-    pub const fn new(hitbox: Hitbox, start: f32, end: f32) -> Self {
-        ActiveHitbox {
-            hitbox,
-            start,
-            end,
-            hit_generation: 0,
-            sleep: false,
-            hits_air: true,
-            hits_ground: true,
-        }
-    }
-
-    /// `nGMHitElementSleep`.
-    pub const fn sleep(mut self) -> Self {
-        self.sleep = true;
-        self
-    }
-
-    /// `ga == 2`: only grounded targets (`ftMainSearchFighterAttack`).
-    pub const fn ground_only(mut self) -> Self {
-        self.hits_air = false;
-        self
-    }
-
-    /// Marks an independently-created source collision generation. Most
-    /// moves use generation zero throughout: replacing a hitbox without a
-    /// preceding `ClearAttackCollAll` must not re-hit a target.
-    pub const fn with_hit_generation(mut self, hit_generation: u8) -> Self {
-        self.hit_generation = hit_generation;
-        self
-    }
-
-    pub fn is_active(&self, anim_frame: f32) -> bool {
-        (self.start..self.end).contains(&anim_frame)
-    }
-}
-
-/// A single target's record for an attacker's currently live collision
-/// generation. This is the fixed-size Training equivalent of the original
-/// `GMAttackRecord` target list: it suppresses repeated contacts inside one
-/// `MakeAttackColl` lifetime, but a later `ClearAttackCollAll` generation can
-/// hit the target again.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct HitRecord {
-    hit_generation: Option<u8>,
-}
-
-/// A full attack: every hitbox its motion script throws out, and the
-/// attack's total length in frames (every `WaitAsync`/`Wait` in the script
-/// summed, including any after the last `ClearAttackCollAll` — the same
-/// methodology [`MARIO_ATTACK11_LENGTH_FRAMES`]'s doc comment used).
-#[derive(Debug, Clone, Copy)]
-pub struct MoveData {
-    pub hitboxes: &'static [ActiveHitbox],
-    pub length_frames: f32,
-    /// For an aerial attack only: if this fighter has no dedicated
-    /// `LandingAirX` motion file for it, landing mid-move instead takes
-    /// `LandingAirNull` for this percentage of the fighter's normal landing
-    /// lag (`ftCommonAttackAirProcMap`'s `F_PCT_TO_DEC(flag1)` branch) —
-    /// `None` when a dedicated landing clip exists (or for a non-aerial
-    /// move, where this is meaningless).
-    pub landing_lag_percent: Option<u8>,
-}
-
-/// Mario's `DashAttack` — `dMarioMainMotion_DashAttack`,
-/// `relocData/202_MarioMainMotion.c`. One hitbox slot reused with weaker
-/// numbers after frame 11 (`aid` 0 both times) — a real "sourspot" the
-/// original expresses as the same slot getting overwritten mid-swing, not
-/// two hitboxes: `HitRecord` suppression already means only
-/// one of the two windows can ever connect. `WaitAsync(7)` +
-/// `MakeAttackColl(...16)`, `Wait(4)` + `MakeAttackColl(...10)`, `Wait(17)` +
-/// `ClearAttackCollAll` — total `7 + 4 + 17 = 28`.
-pub static MARIO_DASH_ATTACK: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 12,
-                offset: Vec3::new(40.0, 0.0, 0.0),
-                radius: 250.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 16,
-            },
-            7.0,
-            11.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(40.0, 0.0, 0.0),
-                radius: 250.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            11.0,
-            28.0,
-        ),
-    ],
-    length_frames: 28.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's forward tilt, one of three angle variants
-/// (`dMarioMainMotion_FTiltHigh`/`FTilt`/`FTiltLow`) chosen by stick angle —
-/// see `crate::status::set_ftilt`. All three share this shape (only `jid`
-/// differs, which this codebase does not use — module docs), so one
-/// constructor builds all three `MoveData`s from their real, distinct
-/// damage/knockback numbers. `WaitAsync(8)` + two `MakeAttackColl`s,
-/// `Wait(10)` + `ClearAttackCollAll` — total `8 + 10 = 18`.
-/// Builds one of the three `FTilt*` `MoveData`s. A macro rather than a
-/// `const fn` because a `const fn` returning a `&'static [ActiveHitbox]`
-/// built from a local array literal does not get the `'static` promotion a
-/// literal `static` item's own initializer gets — the array would be freed
-/// at the end of the function body. Expanding at each `static`'s own
-/// definition site keeps the promotion working.
-macro_rules! mario_ftilt {
-    ($damage:expr) => {
-        MoveData {
-            hitboxes: &[
-                ActiveHitbox::new(
-                    Hitbox {
-                        damage: $damage,
-                        offset: Vec3::new(20.0, 0.0, 0.0),
-                        radius: 180.0 / 2.0,
-                        angle: 361,
-                        kb_scale: 100,
-                        kb_weight: 0,
-                        kb_base: 10,
-                    },
-                    8.0,
-                    18.0,
-                ),
-                ActiveHitbox::new(
-                    Hitbox {
-                        damage: $damage,
-                        offset: Vec3::new(90.0, 0.0, 0.0),
-                        radius: 230.0 / 2.0,
-                        angle: 361,
-                        kb_scale: 100,
-                        kb_weight: 0,
-                        kb_base: 10,
-                    },
-                    8.0,
-                    18.0,
-                ),
-            ],
-            length_frames: 18.0,
-            landing_lag_percent: None,
-        }
-    };
-}
-/// `dMarioMainMotion_FTiltHigh`: `MakeAttackColl(0,0,24,14,...)`/`(1,0,25,14,...)`.
-pub static MARIO_FTILT_HI: MoveData = mario_ftilt!(14);
-/// `dMarioMainMotion_FTilt`: `MakeAttackColl(0,0,24,13,...)`/`(1,0,25,13,...)`.
-pub static MARIO_FTILT: MoveData = mario_ftilt!(13);
-/// `dMarioMainMotion_FTiltLow`: `MakeAttackColl(0,0,24,12,...)`/`(1,0,25,12,...)`.
-pub static MARIO_FTILT_LOW: MoveData = mario_ftilt!(12);
-
-/// Mario's up tilt — `dMarioMainMotion_UTilt`. A literal (non-Sakurai)
-/// `86`-degree launch angle, unlike every other move ported so far.
-/// `WaitAsync(5)` + two `MakeAttackColl`s, `Wait(12)` + `ClearAttackCollAll`
-/// — total `5 + 12 = 17`.
-pub static MARIO_UTILT: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 180.0 / 2.0,
-                angle: 86,
-                kb_scale: 150,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            17.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(60.0, 0.0, 0.0),
-                radius: 290.0 / 2.0,
-                angle: 86,
-                kb_scale: 150,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            17.0,
-        ),
-    ],
-    length_frames: 17.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's down tilt — `dMarioMainMotion_DTilt`. `WaitAsync(5)` + two
-/// `MakeAttackColl`s, `Wait(7)` + `ClearAttackCollAll` — total `5 + 7 = 12`.
-pub static MARIO_DTILT: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 12,
-                offset: Vec3::new(20.0, 0.0, 0.0),
-                radius: 180.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            12.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 12,
-                offset: Vec3::new(140.0, 0.0, 0.0),
-                radius: 260.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            12.0,
-        ),
-    ],
-    length_frames: 12.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's `Attack11` (neutral jab), now both real hitboxes
-/// ([`MARIO_JAB1_HITBOX`], [`MARIO_JAB1_HITBOX_2`]) instead of the one the
-/// module docs used to note as a gap.
-pub static MARIO_JAB1: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            MARIO_JAB1_HITBOX,
-            MARIO_JAB1_HITBOX_START,
-            MARIO_JAB1_HITBOX_END,
-        ),
-        ActiveHitbox::new(
-            MARIO_JAB1_HITBOX_2,
-            MARIO_JAB1_HITBOX_START,
-            MARIO_JAB1_HITBOX_END,
-        ),
-    ],
-    length_frames: MARIO_ATTACK11_LENGTH_FRAMES,
-    landing_lag_percent: None,
-};
-
-/// Mario's `Attack12` (jab2) — `dMarioMainMotion_Jab2`. A literal (non-Sakurai)
-/// `70°` launch angle, like `Jab1`'s follow-up hit usually is across the
-/// cast. `WaitAsync(3)` then two `MakeAttackColl`s, `Wait(3)` then
-/// `ClearAttackCollAll`, `WaitAsync(8)` then `SetFlag1(1)` — total
-/// `3 + 3 + 8 = 14`. The `SetFlag1(1)` at the very end is what
-/// `crate::status`'s jab-combo window reads as `animation_ended()`: for
-/// both `Jab1` and `Jab2`, the flag flips at exactly the script's own
-/// total length, so no separate flag state is needed.
-pub static MARIO_JAB2: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 2,
-                offset: Vec3::new(16.0, 0.0, 0.0),
-                radius: 180.0 / 2.0,
-                angle: 70,
-                kb_scale: 50,
-                kb_weight: 0,
-                kb_base: 8,
-            },
-            3.0,
-            6.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 2,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 180.0 / 2.0,
-                angle: 70,
-                kb_scale: 50,
-                kb_weight: 0,
-                kb_base: 8,
-            },
-            3.0,
-            6.0,
-        ),
-    ],
-    length_frames: 14.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's jab-combo finisher — `dMarioMainMotion_Jab3`
-/// (`nFTMarioStatusAttack13`, [`crate::status::MarioStatus::Attack13`]). No
-/// further `SetFlag1` combo window — this is the end of the chain, matching
-/// `ftCommonAttack13ProcUpdate` never checking `is_goto_followup` for
-/// non-Captain fighters. Both hitboxes' `SetAttackCollSize` calls at frame 5
-/// only change hitbox 0's radius (`150` → `180`); hitbox 1's call sets it to
-/// the same `280` it already had, so it is one unchanging window here.
-/// `WaitAsync(3)` then two `MakeAttackColl`s, `Wait(2)` then the
-/// `SetAttackCollSize` calls, `Wait(3)` then `ClearAttackCollAll` — total
-/// `3 + 2 + 3 = 8`.
-pub static MARIO_JAB3: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 4,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 150.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            3.0,
-            5.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 4,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 180.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            5.0,
-            8.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 4,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 280.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            3.0,
-            8.0,
-        ),
-    ],
-    length_frames: 8.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's Super Jump Punch — `dMarioMainMotion_SuperJumpPunchAir_0x16CC`.
-/// The event script opens an initial strong two-hit window at frame 2 for one
-/// frame, then, after its frame-9 `SetFlag1/2`, eight adjacent two-frame
-/// coin-hit windows. Each loop clears and recreates the collision objects
-/// between its windows, followed by a two-frame finishing pair.
-/// The status remains live through the ROM's 40-frame figatree, so its motion
-/// and its hitbox script intentionally have different end times.
-pub static MARIO_SUPERJUMP: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 5,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 190.0,
-                angle: 70,
-                kb_scale: 100,
-                kb_weight: 110,
-                kb_base: 0,
-            },
-            2.0,
-            3.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 5,
-                offset: Vec3::new(160.0, 0.0, 0.0),
-                radius: 130.0,
-                angle: 90,
-                kb_scale: 100,
-                kb_weight: 110,
-                kb_base: 0,
-            },
-            2.0,
-            3.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            9.0,
-            11.0,
-        )
-        .with_hit_generation(1),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            9.0,
-            11.0,
-        )
-        .with_hit_generation(1),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            11.0,
-            13.0,
-        )
-        .with_hit_generation(2),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            11.0,
-            13.0,
-        )
-        .with_hit_generation(2),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            13.0,
-            15.0,
-        )
-        .with_hit_generation(3),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            13.0,
-            15.0,
-        )
-        .with_hit_generation(3),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            15.0,
-            17.0,
-        )
-        .with_hit_generation(4),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            15.0,
-            17.0,
-        )
-        .with_hit_generation(4),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            17.0,
-            19.0,
-        )
-        .with_hit_generation(5),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            17.0,
-            19.0,
-        )
-        .with_hit_generation(5),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            19.0,
-            21.0,
-        )
-        .with_hit_generation(6),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            19.0,
-            21.0,
-        )
-        .with_hit_generation(6),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            21.0,
-            23.0,
-        )
-        .with_hit_generation(7),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            21.0,
-            23.0,
-        )
-        .with_hit_generation(7),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(0.0, 0.0, 60.0),
-                radius: 155.0,
-                angle: 75,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            23.0,
-            25.0,
-        )
-        .with_hit_generation(8),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 1,
-                offset: Vec3::new(150.0, 0.0, 60.0),
-                radius: 130.0,
-                angle: 80,
-                kb_scale: 100,
-                kb_weight: 100,
-                kb_base: 0,
-            },
-            23.0,
-            25.0,
-        )
-        .with_hit_generation(8),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 3,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 225.0,
-                angle: 50,
-                kb_scale: 170,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            25.0,
-            27.0,
-        )
-        .with_hit_generation(9),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 3,
-                offset: Vec3::new(150.0, 0.0, 0.0),
-                radius: 100.0,
-                angle: 50,
-                kb_scale: 170,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            25.0,
-            27.0,
-        )
-        .with_hit_generation(9),
-    ],
-    length_frames: crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES,
-    landing_lag_percent: None,
-};
-
-// `dMarioMainMotion_MarioTornadoGround` and `dMarioMainMotion_0x1884` use
-// thirteen one-frame multihit pulses, three frames apart. Constructing the
-// repeated windows here keeps their event-script cadence explicit without
-// maintaining a hand-copied list of 78 near-identical entries.
-const TORNADO_GROUND_SIDE_START: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 300.0, 150.0),
-    radius: 70.0,
-    angle: 180,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 70,
-};
-const TORNADO_GROUND_CENTER_START: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::ZERO,
-    radius: 110.0,
-    angle: 90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 10,
-};
-const TORNADO_GROUND_SIDE_LOOP: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 280.0, 150.0),
-    radius: 80.0,
-    angle: 180,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 70,
-};
-const TORNADO_GROUND_SIDE_FINISH: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 300.0, 150.0),
-    radius: 100.0,
-    angle: 90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 120,
-};
-const TORNADO_AIR_SIDE_START: Hitbox = TORNADO_GROUND_SIDE_START;
-const TORNADO_AIR_CENTER_START: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::ZERO,
-    radius: 90.0,
-    angle: 90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 10,
-};
-const TORNADO_AIR_SIDE_LOOP: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 260.0, 150.0),
-    radius: 70.0,
-    angle: 180,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 70,
-};
-const TORNADO_AIR_LOW_LOOP: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 80.0, 0.0),
-    radius: 80.0,
-    angle: -90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 10,
-};
-const TORNADO_AIR_HIGH_LOOP: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 420.0, 0.0),
-    radius: 50.0,
-    angle: -90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 70,
-};
-const TORNADO_AIR_SIDE_FINISH: Hitbox = TORNADO_GROUND_SIDE_FINISH;
-const TORNADO_AIR_LOW_FINISH: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 80.0, 0.0),
-    radius: 110.0,
-    angle: -90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 120,
-};
-const TORNADO_AIR_HIGH_FINISH: Hitbox = Hitbox {
-    damage: 1,
-    offset: Vec3::new(0.0, 420.0, 0.0),
-    radius: 45.0,
-    angle: -90,
-    kb_scale: 0,
-    kb_weight: 1,
-    kb_base: 120,
-};
-const TORNADO_PLACEHOLDER: ActiveHitbox = ActiveHitbox::new(TORNADO_GROUND_SIDE_START, 0.0, 0.0);
-
-const fn tornado_ground_hitboxes() -> [ActiveHitbox; 31] {
-    let mut out = [TORNADO_PLACEHOLDER; 31];
-    out[0] = ActiveHitbox::new(TORNADO_GROUND_SIDE_START, 0.0, 4.0);
-    out[1] = ActiveHitbox::new(
-        Hitbox {
-            offset: Vec3::new(0.0, 300.0, -150.0),
-            ..TORNADO_GROUND_SIDE_START
-        },
-        0.0,
-        4.0,
-    );
-    out[2] = ActiveHitbox::new(TORNADO_GROUND_CENTER_START, 0.0, 4.0);
-    let mut i = 0;
-    while i < 13 {
-        let start = 4.0 + i as f32 * 3.0;
-        let first = 3 + i * 2;
-        out[first] = ActiveHitbox::new(TORNADO_GROUND_SIDE_LOOP, start, start + 1.0);
-        out[first + 1] = ActiveHitbox::new(
-            Hitbox {
-                offset: Vec3::new(0.0, 280.0, -150.0),
-                ..TORNADO_GROUND_SIDE_LOOP
-            },
-            start,
-            start + 1.0,
-        );
-        i += 1;
-    }
-    out[29] = ActiveHitbox::new(TORNADO_GROUND_SIDE_FINISH, 43.0, 45.0);
-    out[30] = ActiveHitbox::new(
-        Hitbox {
-            offset: Vec3::new(0.0, 300.0, -150.0),
-            ..TORNADO_GROUND_SIDE_FINISH
-        },
-        43.0,
-        45.0,
-    );
-    out
-}
-
-const fn tornado_air_hitboxes() -> [ActiveHitbox; 60] {
-    let mut out = [TORNADO_PLACEHOLDER; 60];
-    out[0] = ActiveHitbox::new(TORNADO_AIR_SIDE_START, 0.0, 4.0);
-    out[1] = ActiveHitbox::new(
-        Hitbox {
-            offset: Vec3::new(0.0, 300.0, -150.0),
-            ..TORNADO_AIR_SIDE_START
-        },
-        0.0,
-        4.0,
-    );
-    out[2] = ActiveHitbox::new(TORNADO_AIR_CENTER_START, 0.0, 4.0);
-    out[3] = ActiveHitbox::new(TORNADO_AIR_HIGH_LOOP, 0.0, 4.0);
-    let mut i = 0;
-    while i < 13 {
-        let start = 4.0 + i as f32 * 3.0;
-        let first = 4 + i * 4;
-        out[first] = ActiveHitbox::new(TORNADO_AIR_SIDE_LOOP, start, start + 1.0);
-        out[first + 1] = ActiveHitbox::new(
-            Hitbox {
-                offset: Vec3::new(0.0, 260.0, -150.0),
-                ..TORNADO_AIR_SIDE_LOOP
-            },
-            start,
-            start + 1.0,
-        );
-        out[first + 2] = ActiveHitbox::new(TORNADO_AIR_LOW_LOOP, start, start + 1.0);
-        out[first + 3] = ActiveHitbox::new(TORNADO_AIR_HIGH_LOOP, start, start + 1.0);
-        i += 1;
-    }
-    out[56] = ActiveHitbox::new(TORNADO_AIR_SIDE_FINISH, 43.0, 47.0);
-    out[57] = ActiveHitbox::new(
-        Hitbox {
-            offset: Vec3::new(0.0, 300.0, -150.0),
-            ..TORNADO_AIR_SIDE_FINISH
-        },
-        43.0,
-        47.0,
-    );
-    out[58] = ActiveHitbox::new(TORNADO_AIR_LOW_FINISH, 43.0, 47.0);
-    out[59] = ActiveHitbox::new(TORNADO_AIR_HIGH_FINISH, 43.0, 47.0);
-    out
-}
-
-pub static MARIO_TORNADO_GROUND_HITBOXES: [ActiveHitbox; 31] = tornado_ground_hitboxes();
-pub static MARIO_TORNADO_AIR_HITBOXES: [ActiveHitbox; 60] = tornado_air_hitboxes();
-
-/// Mario's grounded and aerial Tornado scripts. Their hitbox sequences
-/// differ after the opening, while the grounded one is selected only after a
-/// landing transition preserves the action's current animation frame.
-pub static MARIO_TORNADO_GROUND: MoveData = MoveData {
-    hitboxes: &MARIO_TORNADO_GROUND_HITBOXES,
-    length_frames: crate::status::MARIO_TORNADO_GROUND_LENGTH_FRAMES,
-    landing_lag_percent: None,
-};
-pub static MARIO_TORNADO_AIR: MoveData = MoveData {
-    hitboxes: &MARIO_TORNADO_AIR_HITBOXES,
-    length_frames: crate::status::MARIO_TORNADO_AIR_LENGTH_FRAMES,
-    landing_lag_percent: None,
-};
-
-/// Mario's neutral aerial — `dMarioMainMotion_AttackAirN`. Three
-/// simultaneous hitboxes (`jid` 25/20/5 — both feet share one descriptor,
-/// plus a wider body box), each replaced by a weaker phase after frame 11.
-/// `WaitAsync(3)` + 3×`MakeAttackColl`, `Wait(8)` + 3× weaker
-/// `MakeAttackColl`, `Wait(26)` + `ClearAttackCollAll` — total
-/// `3 + 8 + 26 = 37`.
-pub static MARIO_AIR_N: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 14,
-                offset: Vec3::new(10.0, 0.0, 0.0),
-                radius: 240.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 15,
-            },
-            3.0,
-            11.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 14,
-                offset: Vec3::new(10.0, 0.0, 0.0),
-                radius: 240.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 15,
-            },
-            3.0,
-            11.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 14,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 260.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 15,
-            },
-            3.0,
-            11.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 11,
-                offset: Vec3::new(10.0, 0.0, 0.0),
-                radius: 240.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            11.0,
-            37.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 11,
-                offset: Vec3::new(10.0, 0.0, 0.0),
-                radius: 240.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            11.0,
-            37.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 11,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 260.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            11.0,
-            37.0,
-        ),
-    ],
-    length_frames: 37.0,
-    landing_lag_percent: Some(50),
-};
-
-/// Mario's forward aerial — `dMarioMainMotion_AttackAirF`. Two hitboxes
-/// (`jid` 25 twice, different `oy`), weaker after frame 15.
-/// `WaitAsync(11)` then two `MakeAttackColl`s, `Wait(4)` then two weaker
-/// ones, `Wait(12)` then `ClearAttackCollAll` — total `11 + 4 + 12 = 27`.
-pub static MARIO_AIR_F: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 16,
-                offset: Vec3::new(-30.0, 45.0, 0.0),
-                radius: 220.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            11.0,
-            15.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 16,
-                offset: Vec3::new(80.0, 30.0, 0.0),
-                radius: 270.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            11.0,
-            15.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(-30.0, 45.0, 0.0),
-                radius: 220.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            15.0,
-            27.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(80.0, 30.0, 0.0),
-                radius: 270.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            15.0,
-            27.0,
-        ),
-    ],
-    length_frames: 27.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's back aerial — `dMarioMainMotion_AttackAirB`. Weaker phase also
-/// shrinks the hitboxes (`220`/`270` vs `240`/`290`), not just damage/KBB.
-/// `WaitAsync(10)` + 2×`MakeAttackColl`, `Wait(4)` + 2× weaker, `Wait(6)` +
-/// `ClearAttackCollAll` — total `10 + 4 + 6 = 20`.
-pub static MARIO_AIR_B: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 16,
-                offset: Vec3::new(-30.0, 45.0, 0.0),
-                radius: 240.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            10.0,
-            14.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 16,
-                offset: Vec3::new(80.0, 30.0, 0.0),
-                radius: 290.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            10.0,
-            14.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(-30.0, 45.0, 0.0),
-                radius: 220.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            14.0,
-            20.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(80.0, 30.0, 0.0),
-                radius: 270.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            14.0,
-            20.0,
-        ),
-    ],
-    length_frames: 20.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's up aerial — `dMarioMainMotion_AttackAirU`. A literal (non-Sakurai)
-/// launch angle, `80°` then `70°` in the weaker phase. `WaitAsync(2)` +
-/// 2×`MakeAttackColl`, `Wait(3)` + 2× weaker, `Wait(7)` +
-/// `ClearAttackCollAll` — total `2 + 3 + 7 = 12`.
-pub static MARIO_AIR_HI: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 12,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 220.0 / 2.0,
-                angle: 80,
-                kb_scale: 120,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            2.0,
-            5.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 12,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 250.0 / 2.0,
-                angle: 80,
-                kb_scale: 120,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            2.0,
-            5.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 9,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 220.0 / 2.0,
-                angle: 70,
-                kb_scale: 120,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            12.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 9,
-                offset: Vec3::new(0.0, 0.0, 0.0),
-                radius: 250.0 / 2.0,
-                angle: 70,
-                kb_scale: 120,
-                kb_weight: 0,
-                kb_base: 0,
-            },
-            5.0,
-            12.0,
-        ),
-    ],
-    length_frames: 12.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's down aerial — `dMarioMainMotion_AttackAirD`. A literal `-70°`
-/// downward launch, and a real *pulsing* hitbox: `MakeAttackColl` at frame
-/// 10, then `LoopBegin(7) { Wait(2); ClearAttackCollAll(); Wait(1);
-/// RefreshAttackCollID }`, so it is on for 2 frames and off for 1, eight
-/// times over (the initial hit plus seven refreshes), before a final
-/// `Wait(2)` and `ClearAttackCollAll`. Windows: `[10,12)`, `[13,15)`,
-/// `[16,18)`, `[19,21)`, `[22,24)`, `[25,27)`, `[28,30)`, `[31,33)` — total
-/// `10 + 8×3 + 2 = 33`. Not simplified to one wide window: landing during a
-/// 1-frame gap between pulses is a real way to avoid this hitbox in the
-/// original, and collapsing the gaps would take that away.
-pub static MARIO_AIR_LW: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 10.0, 12.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 10.0, 12.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 13.0, 15.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 13.0, 15.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 16.0, 18.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 16.0, 18.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 19.0, 21.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 19.0, 21.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 22.0, 24.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 22.0, 24.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 25.0, 27.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 25.0, 27.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 28.0, 30.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 28.0, 30.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(-30.0, 45.0), 31.0, 33.0),
-        ActiveHitbox::new(mario_air_lw_hitbox(50.0, 30.0), 31.0, 33.0),
-    ],
-    length_frames: 33.0,
-    landing_lag_percent: None,
-};
-
-const fn mario_air_lw_hitbox(ox: f32, oy: f32) -> Hitbox {
-    Hitbox {
-        damage: 3,
-        offset: Vec3::new(ox, oy, 0.0),
-        radius: 350.0 / 2.0,
-        angle: -70,
-        kb_scale: 100,
-        kb_weight: 30,
-        kb_base: 0,
-    }
-}
-
-/// Builds one of Mario's five forward-smash `MoveData`s
-/// (`dMarioMainMotion_FSmashHigh`/`MidHigh`/`FSmash`/`MidLow`/`Low`). Same
-/// macro-not-`const-fn` reason as [`mario_ftilt`]. `MidLow` and `Low` are
-/// numerically identical in the original (`FSmashMidLow`'s and `FSmashLow`'s
-/// `MakeAttackColl` calls have the same arguments) — not a transcription
-/// mistake here, the decomp source really does repeat them.
-/// `WaitAsync(4)` then `WaitAsync(16)` then two `MakeAttackColl`s,
-/// `Wait(5)` then `ClearAttackCollAll` — total `4 + 16 + 5 = 25`.
-macro_rules! mario_fsmash {
-    ($damage:expr, $ox2:expr) => {
-        MoveData {
-            hitboxes: &[
-                ActiveHitbox::new(
-                    Hitbox {
-                        damage: $damage,
-                        offset: Vec3::new(0.0, 0.0, 0.0),
-                        radius: 180.0 / 2.0,
-                        angle: 361,
-                        kb_scale: 100,
-                        kb_weight: 0,
-                        kb_base: 30,
-                    },
-                    20.0,
-                    25.0,
-                ),
-                ActiveHitbox::new(
-                    Hitbox {
-                        damage: $damage,
-                        offset: Vec3::new($ox2, 0.0, 0.0),
-                        radius: 240.0 / 2.0,
-                        angle: 361,
-                        kb_scale: 100,
-                        kb_weight: 0,
-                        kb_base: 30,
-                    },
-                    20.0,
-                    25.0,
-                ),
-            ],
-            length_frames: 25.0,
-            landing_lag_percent: None,
-        }
-    };
-}
-/// `dMarioMainMotion_FSmashHigh`.
-pub static MARIO_FSMASH_HI: MoveData = mario_fsmash!(18, 60.0);
-/// `dMarioMainMotion_FSmashMidHigh`.
-pub static MARIO_FSMASH_HI_S: MoveData = mario_fsmash!(18, 50.0);
-/// `dMarioMainMotion_FSmash`.
-pub static MARIO_FSMASH: MoveData = mario_fsmash!(17, 50.0);
-/// `dMarioMainMotion_FSmashMidLow`.
-pub static MARIO_FSMASH_LOW_S: MoveData = mario_fsmash!(16, 50.0);
-/// `dMarioMainMotion_FSmashLow`.
-pub static MARIO_FSMASH_LOW: MoveData = mario_fsmash!(16, 50.0);
-
-/// Mario's up smash — `dMarioMainMotion_USmash`. A literal `85°` launch
-/// angle. `WaitAsync(7)` + `MakeAttackColl`, `Wait(4)` + `Wait(5)` then
-/// `ClearAttackCollAll` — total `7 + 4 + 5 = 16`.
-pub static MARIO_USMASH: MoveData = MoveData {
-    hitboxes: &[ActiveHitbox::new(
-        Hitbox {
-            damage: 19,
-            offset: Vec3::new(0.0, 100.0, 0.0),
-            radius: 380.0 / 2.0,
-            angle: 85,
-            kb_scale: 120,
-            kb_weight: 0,
-            kb_base: 26,
-        },
-        7.0,
-        16.0,
-    )],
-    length_frames: 16.0,
-    landing_lag_percent: None,
-};
-
-/// Mario's down smash — `dMarioMainMotion_DSmash`. Four `MakeAttackColl`s:
-/// the same two boxes on `jid` 25 and again on `jid` 20 (front and back
-/// foot). `WaitAsync(4)` then `WaitAsync(8)` then the four boxes,
-/// `Wait(15)` then `Wait(7)` then `ClearAttackCollAll` — total
-/// `4 + 8 + 15 + 7 = 34`.
-pub static MARIO_DSMASH: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 17,
-                offset: Vec3::new(0.0, 0.0, 20.0),
-                radius: 170.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 20,
-            },
-            12.0,
-            34.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 17,
-                offset: Vec3::new(120.0, 0.0, 50.0),
-                radius: 210.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 20,
-            },
-            12.0,
-            34.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 17,
-                offset: Vec3::new(0.0, 0.0, 20.0),
-                radius: 170.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 20,
-            },
-            12.0,
-            34.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 17,
-                offset: Vec3::new(120.0, 0.0, 50.0),
-                radius: 210.0 / 2.0,
-                angle: 361,
-                kb_scale: 100,
-                kb_weight: 0,
-                kb_base: 20,
-            },
-            12.0,
-            34.0,
-        ),
-    ],
-    length_frames: 34.0,
-    landing_lag_percent: None,
-};
-
-/// The attack data for `status`, under `kind` — every per-character motion
-/// script's `MakeAttackColl` argument list, transcribed field-for-field (see
-/// each `MoveData` constant's own doc comment for its source line). `None`
-/// for a status/fighter whose motion data has not been ported. Fox's normal
-/// attacks are in `fox_attack`; the fighter's extended statuses are still
-/// being translated as part of the current `P2` batch.
-pub fn move_data(
-    kind: crate::fighter::FighterKind,
-    status: AnyStatus,
-) -> Option<&'static MoveData> {
-    use crate::fighter::FighterKind;
-    match (kind, status) {
-        // `dFTCommonMoveset_DamageBumpHit`, in every fighter's motion table.
-        (_, AnyStatus::Common(Status::ThrownKirbyStar)) => Some(&crate::kirby_attack::STAR_MOVE),
-        (
-            FighterKind::Pikachu,
-            AnyStatus::Pikachu(
-                crate::status::PikachuStatus::SpecialLwHit
-                | crate::status::PikachuStatus::SpecialAirLwHit,
-            ),
-        ) => Some(&crate::pikachu_attack::THUNDERHIT),
-        (FighterKind::Ness, s) => crate::ness::move_data(s),
-        (FighterKind::Pikachu, AnyStatus::Common(s)) => crate::pikachu::move_data(s),
-        (FighterKind::Purin, s @ (AnyStatus::Common(_) | AnyStatus::Purin(_))) => {
-            crate::purin::move_data(s)
-        }
-        (FighterKind::Kirby, AnyStatus::Kirby(s)) => {
-            use crate::status::KirbyStatus as K;
-            match s {
-                K::Attack100Loop => Some(&crate::kirby_attack::RAPID_LOOP_FIRST),
-                K::ThrowFLanding => Some(&crate::kirby_attack::THROWF_LANDING),
-                K::SpecialHi | K::SpecialAirHi => Some(&crate::kirby_attack::FINAL_CUTTER),
-                K::SpecialLwUnk | K::SpecialAirLwHold | K::SpecialAirLwFall => {
-                    Some(&crate::kirby_attack::STONE)
-                }
-                K::CopyDonkeySpecialNEnd | K::CopyDonkeySpecialAirNEnd => {
-                    Some(&crate::kirby_attack::COPY_GIANT_PUNCH)
-                }
-                K::CopyDonkeySpecialNFull | K::CopyDonkeySpecialAirNFull => {
-                    Some(&crate::kirby_attack::COPY_GIANT_PUNCH_FULL)
-                }
-                K::CopyPurinSpecialN | K::CopyPurinSpecialAirN => {
-                    Some(&crate::purin_attack::COPY_POUND)
-                }
-                K::CopyCaptainSpecialN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH),
-                K::CopyCaptainSpecialAirN => Some(&crate::kirby_attack::COPY_FALCON_PUNCH_AIR),
-                _ => None,
-            }
-        }
-        (FighterKind::Kirby, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::kirby_attack::JAB1),
-            Status::Attack12 => Some(&crate::kirby_attack::JAB2),
-            Status::AttackDash => Some(&crate::kirby_attack::DASH),
-            Status::AttackS3Hi => Some(&crate::kirby_attack::FTILT_HI),
-            Status::AttackS3 => Some(&crate::kirby_attack::FTILT),
-            Status::AttackS3Lw => Some(&crate::kirby_attack::FTILT_LW),
-            Status::AttackHi3 => Some(&crate::kirby_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::kirby_attack::DTILT),
-            Status::AttackS4 => Some(&crate::kirby_attack::FSMASH),
-            Status::AttackHi4 => Some(&crate::kirby_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::kirby_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::kirby_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::kirby_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::kirby_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::kirby_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::kirby_attack::AIR_LW),
-            Status::LandingAirF => Some(&crate::kirby_attack::LANDING_AIR_F),
-            Status::LandingAirNull => Some(&crate::kirby_attack::LANDING_AIR_NULL),
-            _ => None,
-        },
-        (FighterKind::Captain, AnyStatus::Captain(s)) => {
-            use crate::status::CaptainStatus;
-            match s {
-                CaptainStatus::Attack13 => Some(&crate::captain_attack::JAB3),
-                CaptainStatus::Attack100Loop => Some(&crate::captain_attack::RAPID_LOOP),
-                CaptainStatus::SpecialN => Some(&crate::captain_attack::PUNCH_GROUND),
-                CaptainStatus::SpecialAirN => Some(&crate::captain_attack::PUNCH_AIR),
-                CaptainStatus::SpecialLw => Some(&crate::captain_attack::KICK),
-                CaptainStatus::SpecialAirLw => Some(&crate::captain_attack::KICK_AIR),
-                CaptainStatus::SpecialLwLanding => Some(&crate::captain_attack::KICK_LANDING),
-                _ => None,
-            }
-        }
-        (FighterKind::Captain, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::captain_attack::JAB1),
-            Status::Attack12 => Some(&crate::captain_attack::JAB2),
-            Status::AttackDash => Some(&crate::captain_attack::DASH),
-            Status::AttackS3Hi => Some(&crate::captain_attack::FTILT_HI),
-            Status::AttackS3HiS => Some(&crate::captain_attack::FTILT_HIS),
-            Status::AttackS3 => Some(&crate::captain_attack::FTILT),
-            Status::AttackS3LwS => Some(&crate::captain_attack::FTILT_LWS),
-            Status::AttackS3Lw => Some(&crate::captain_attack::FTILT_LW),
-            Status::AttackHi3 => Some(&crate::captain_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::captain_attack::DTILT),
-            Status::AttackS4Hi => Some(&crate::captain_attack::FSMASH_HI),
-            Status::AttackS4 => Some(&crate::captain_attack::FSMASH),
-            Status::AttackS4Lw => Some(&crate::captain_attack::FSMASH_LW),
-            Status::AttackHi4 => Some(&crate::captain_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::captain_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::captain_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::captain_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::captain_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::captain_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::captain_attack::AIR_LW),
-            _ => None,
-        },
-        (FighterKind::Yoshi, AnyStatus::Yoshi(s)) => {
-            use crate::status::YoshiStatus;
-            match s {
-                YoshiStatus::SpecialLwStart => Some(&crate::yoshi_attack::BOMB_GROUND_START),
-                YoshiStatus::SpecialAirLwStart => Some(&crate::yoshi_attack::BOMB_AIR_START),
-                YoshiStatus::SpecialAirLwLoop => Some(&crate::yoshi_attack::BOMB_LOOP),
-                _ => None,
-            }
-        }
-        (FighterKind::Yoshi, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::yoshi_attack::JAB1),
-            Status::Attack12 => Some(&crate::yoshi_attack::JAB2),
-            Status::AttackDash => Some(&crate::yoshi_attack::DASH),
-            Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw => {
-                Some(&crate::yoshi_attack::FTILT)
-            }
-            Status::AttackHi3 => Some(&crate::yoshi_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::yoshi_attack::DTILT),
-            Status::AttackS4Hi | Status::AttackS4 | Status::AttackS4Lw => {
-                Some(&crate::yoshi_attack::FSMASH)
-            }
-            Status::AttackHi4 => Some(&crate::yoshi_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::yoshi_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::yoshi_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::yoshi_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::yoshi_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::yoshi_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::yoshi_attack::AIR_LW),
-            _ => None,
-        },
-        (FighterKind::Link, AnyStatus::Link(s)) => {
-            use crate::status::LinkStatus;
-            match s {
-                LinkStatus::Attack13 => Some(&crate::link_attack::JAB3),
-                LinkStatus::Attack100Loop => Some(&crate::link_attack::RAPID_LOOP),
-                LinkStatus::SpecialHi => Some(&crate::link_attack::SPIN_GROUND),
-                LinkStatus::SpecialAirHi => Some(&crate::link_attack::SPIN_AIR),
-                _ => None,
-            }
-        }
-        (FighterKind::Link, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::link_attack::JAB1),
-            Status::Attack12 => Some(&crate::link_attack::JAB2),
-            Status::AttackDash => Some(&crate::link_attack::DASH),
-            Status::AttackS3 => Some(&crate::link_attack::FTILT),
-            Status::AttackHi3 => Some(&crate::link_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::link_attack::DTILT),
-            Status::AttackS4 => Some(&crate::link_attack::FSMASH),
-            Status::AttackHi4 => Some(&crate::link_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::link_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::link_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::link_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::link_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::link_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::link_attack::AIR_LW),
-            _ => None,
-        },
-        (FighterKind::Luigi, AnyStatus::Mario(s)) => match s {
-            MarioStatus::Attack13 => Some(&crate::luigi_attack::JAB3),
-            MarioStatus::SpecialHi => Some(&crate::luigi_attack::SUPERJUMP_GROUND),
-            MarioStatus::SpecialAirHi => Some(&crate::luigi_attack::SUPERJUMP_AIR),
-            MarioStatus::SpecialLw => Some(&crate::luigi_attack::CYCLONE_GROUND),
-            MarioStatus::SpecialAirLw => Some(&crate::luigi_attack::CYCLONE_AIR),
-            MarioStatus::SpecialN | MarioStatus::SpecialAirN => None,
-        },
-        (FighterKind::Luigi, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::luigi_attack::JAB1),
-            Status::Attack12 => Some(&crate::luigi_attack::JAB2),
-            Status::AttackDash => Some(&crate::luigi_attack::DASH),
-            Status::AttackS3Hi => Some(&crate::luigi_attack::FTILT_HI),
-            Status::AttackS3 => Some(&crate::luigi_attack::FTILT),
-            Status::AttackS3Lw => Some(&crate::luigi_attack::FTILT_LW),
-            Status::AttackHi3 => Some(&crate::luigi_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::luigi_attack::DTILT),
-            Status::AttackS4Hi => Some(&crate::luigi_attack::FSMASH_HI),
-            Status::AttackS4HiS => Some(&crate::luigi_attack::FSMASH_HI_S),
-            Status::AttackS4 => Some(&crate::luigi_attack::FSMASH),
-            Status::AttackS4LwS => Some(&crate::luigi_attack::FSMASH_LW_S),
-            Status::AttackS4Lw => Some(&crate::luigi_attack::FSMASH_LW),
-            Status::AttackHi4 => Some(&crate::luigi_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::luigi_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::luigi_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::luigi_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::luigi_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::luigi_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::luigi_attack::AIR_LW),
-            _ => None,
-        },
-        (FighterKind::Samus, AnyStatus::Samus(crate::status::SamusStatus::SpecialHi)) => {
-            Some(&crate::samus_attack::SCREW_GROUND)
-        }
-        (FighterKind::Samus, AnyStatus::Samus(crate::status::SamusStatus::SpecialAirHi)) => {
-            Some(&crate::samus_attack::SCREW_AIR)
-        }
-        (FighterKind::Samus, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::samus_attack::JAB1),
-            Status::Attack12 => Some(&crate::samus_attack::JAB2),
-            Status::AttackDash => Some(&crate::samus_attack::DASH),
-            Status::AttackS3Hi => Some(&crate::samus_attack::FTILT_HI),
-            Status::AttackS3HiS => Some(&crate::samus_attack::FTILT_HI_S),
-            Status::AttackS3 => Some(&crate::samus_attack::FTILT),
-            Status::AttackS3LwS => Some(&crate::samus_attack::FTILT_LW_S),
-            Status::AttackS3Lw => Some(&crate::samus_attack::FTILT_LW),
-            Status::AttackHi3 => Some(&crate::samus_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::samus_attack::DTILT),
-            Status::AttackS4Hi => Some(&crate::samus_attack::FSMASH_HI),
-            Status::AttackS4HiS => Some(&crate::samus_attack::FSMASH_HI_S),
-            Status::AttackS4 => Some(&crate::samus_attack::FSMASH),
-            Status::AttackS4LwS => Some(&crate::samus_attack::FSMASH_LW_S),
-            Status::AttackS4Lw => Some(&crate::samus_attack::FSMASH_LW),
-            Status::AttackHi4 => Some(&crate::samus_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::samus_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::samus_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::samus_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::samus_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::samus_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::samus_attack::AIR_LW),
-            _ => None,
-        },
-        (FighterKind::Mario, AnyStatus::Common(Status::ThrowB)) => Some(&MARIO_THROW_B),
-        (FighterKind::Fox, AnyStatus::Common(Status::ThrowB)) => Some(&FOX_THROW_B),
-        (
-            FighterKind::Donkey,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialNEnd
-                | crate::status::DonkeyStatus::SpecialAirNEnd,
-            ),
-        ) => Some(&crate::donkey_attack::PUNCH),
-        (
-            FighterKind::Donkey,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialNFull
-                | crate::status::DonkeyStatus::SpecialAirNFull,
-            ),
-        ) => Some(&crate::donkey_attack::PUNCH_FULL),
-        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialHi)) => {
-            Some(&crate::donkey_attack::SPIN_GROUND)
-        }
-        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi)) => {
-            Some(&crate::donkey_attack::SPIN_AIR)
-        }
-        (FighterKind::Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialLwLoop)) => {
-            Some(&crate::donkey_attack::HAND_SLAP)
-        }
-        (FighterKind::Donkey, AnyStatus::Common(status)) => match status {
-            Status::Attack11 => Some(&crate::donkey_attack::JAB1),
-            Status::Attack12 => Some(&crate::donkey_attack::JAB2),
-            Status::AttackDash => Some(&crate::donkey_attack::DASH),
-            Status::AttackS3Hi => Some(&crate::donkey_attack::FTILT_HI),
-            Status::AttackS3 => Some(&crate::donkey_attack::FTILT),
-            Status::AttackS3Lw => Some(&crate::donkey_attack::FTILT_LW),
-            Status::AttackHi3 => Some(&crate::donkey_attack::UTILT),
-            Status::AttackLw3 => Some(&crate::donkey_attack::DTILT),
-            Status::AttackS4Hi => Some(&crate::donkey_attack::FSMASH_HI),
-            Status::AttackS4HiS => Some(&crate::donkey_attack::FSMASH_HI_S),
-            Status::AttackS4 => Some(&crate::donkey_attack::FSMASH),
-            Status::AttackS4LwS => Some(&crate::donkey_attack::FSMASH_LW_S),
-            Status::AttackS4Lw => Some(&crate::donkey_attack::FSMASH_LW),
-            Status::AttackHi4 => Some(&crate::donkey_attack::USMASH),
-            Status::AttackLw4 => Some(&crate::donkey_attack::DSMASH),
-            Status::AttackAirN => Some(&crate::donkey_attack::AIR_N),
-            Status::AttackAirF => Some(&crate::donkey_attack::AIR_F),
-            Status::AttackAirB => Some(&crate::donkey_attack::AIR_B),
-            Status::AttackAirHi => Some(&crate::donkey_attack::AIR_HI),
-            Status::AttackAirLw => Some(&crate::donkey_attack::AIR_LW),
-            _ => None,
-        },
-        (
-            FighterKind::Fox,
-            AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart),
-        ) => Some(&crate::fox_attack::FOX_REFLECTOR_START),
-        (FighterKind::Fox, AnyStatus::Fox(FoxStatus::Attack100Loop)) => {
-            Some(&crate::fox_attack::FOX_JABLOOP)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::Attack11)) => {
-            Some(&crate::fox_attack::FOX_JAB1)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::Attack12)) => {
-            Some(&crate::fox_attack::FOX_JAB2)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackDash)) => {
-            Some(&crate::fox_attack::FOX_DASHATTACK)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3Hi)) => {
-            Some(&crate::fox_attack::FOX_FTILTHIGH)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3HiS)) => {
-            Some(&crate::fox_attack::FOX_FTILTMIDHIGH)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3)) => {
-            Some(&crate::fox_attack::FOX_FTILT)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3LwS)) => {
-            Some(&crate::fox_attack::FOX_FTILTMIDLOW)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS3Lw)) => {
-            Some(&crate::fox_attack::FOX_FTILTLOW)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackHi3)) => {
-            Some(&crate::fox_attack::FOX_UTILT)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackLw3)) => {
-            Some(&crate::fox_attack::FOX_DTILT)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackS4)) => {
-            Some(&crate::fox_attack::FOX_FSMASH)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackHi4)) => {
-            Some(&crate::fox_attack::FOX_USMASH)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackLw4)) => {
-            Some(&crate::fox_attack::FOX_DSMASH)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirN)) => {
-            Some(&crate::fox_attack::FOX_ATTACKAIRN)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirF)) => {
-            Some(&crate::fox_attack::FOX_ATTACKAIRF)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirB)) => {
-            Some(&crate::fox_attack::FOX_ATTACKAIRB)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirHi)) => {
-            Some(&crate::fox_attack::FOX_ATTACKAIRU)
-        }
-        (FighterKind::Fox, AnyStatus::Common(Status::AttackAirLw)) => {
-            Some(&crate::fox_attack::FOX_ATTACKAIRD)
-        }
-        (FighterKind::Mario, AnyStatus::Common(Status::Attack11)) => Some(&MARIO_JAB1),
-        (FighterKind::Mario, AnyStatus::Common(Status::Attack12)) => Some(&MARIO_JAB2),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackDash)) => Some(&MARIO_DASH_ATTACK),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3Hi)) => Some(&MARIO_FTILT_HI),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3)) => Some(&MARIO_FTILT),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS3Lw)) => Some(&MARIO_FTILT_LOW),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackHi3)) => Some(&MARIO_UTILT),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackLw3)) => Some(&MARIO_DTILT),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirN)) => Some(&MARIO_AIR_N),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirF)) => Some(&MARIO_AIR_F),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirB)) => Some(&MARIO_AIR_B),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirHi)) => Some(&MARIO_AIR_HI),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackAirLw)) => Some(&MARIO_AIR_LW),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4Hi)) => Some(&MARIO_FSMASH_HI),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4HiS)) => Some(&MARIO_FSMASH_HI_S),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4)) => Some(&MARIO_FSMASH),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4LwS)) => Some(&MARIO_FSMASH_LOW_S),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackS4Lw)) => Some(&MARIO_FSMASH_LOW),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackHi4)) => Some(&MARIO_USMASH),
-        (FighterKind::Mario, AnyStatus::Common(Status::AttackLw4)) => Some(&MARIO_DSMASH),
-        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::Attack13)) => Some(&MARIO_JAB3),
-        (
-            FighterKind::Mario,
-            AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi),
-        ) => Some(&MARIO_SUPERJUMP),
-        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::SpecialLw)) => {
-            Some(&MARIO_TORNADO_GROUND)
-        }
-        (FighterKind::Mario, AnyStatus::Mario(MarioStatus::SpecialAirLw)) => {
-            Some(&MARIO_TORNADO_AIR)
-        }
-        _ => None,
-    }
-}
-
-/// Mario's back throw — `dMarioMainMotion_ThrowB`,
-/// `relocData/202_MarioMainMotion.c`. `Wait(4)`, `WaitAsync(10)`, `Wait(8)`,
-/// then `MakeAttackColl(0, 0, 10, 10, 0, 0, 300, 120, 0, 0, 361, 80, 0, 3, 1,
-/// 2, 0, 30)`; two `Wait(14)` loops reach `ClearAttackCollAll` at frame 46.
-/// The swing only reaches bystanders: the held fighter is skipped
-/// ([`apply_hit_from`]).
-pub static MARIO_THROW_B: MoveData = MoveData {
-    hitboxes: &[ActiveHitbox::new(
-        Hitbox {
-            damage: 10,
-            offset: Vec3::new(120.0, 0.0, 0.0),
-            radius: 300.0 / 2.0,
-            angle: 361,
-            kb_scale: 80,
-            kb_weight: 0,
-            kb_base: 30,
-        },
-        18.0,
-        46.0,
-    )],
-    length_frames: 67.0,
-    landing_lag_percent: None,
-};
-
-/// Fox's back throw — `dFoxMainMotion_ThrowB`,
-/// `relocData/208_FoxMainMotion.c`. At `WaitAsync(11)`:
-/// `MakeAttackColl(0, 0, 20, 10, 0, 0, 230, 140, 0, 0, 361, 90, 0, 3, 1, 2,
-/// 1, 10)` and the same box at offset zero (`aid` 1); `WaitAsync(13)` and
-/// `Wait(6)` reach `ClearAttackCollAll` at frame 19.
-pub static FOX_THROW_B: MoveData = MoveData {
-    hitboxes: &[
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::new(140.0, 0.0, 0.0),
-                radius: 230.0 / 2.0,
-                angle: 361,
-                kb_scale: 90,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            11.0,
-            19.0,
-        ),
-        ActiveHitbox::new(
-            Hitbox {
-                damage: 10,
-                offset: Vec3::ZERO,
-                radius: 230.0 / 2.0,
-                angle: 361,
-                kb_scale: 90,
-                kb_weight: 0,
-                kb_base: 10,
-            },
-            11.0,
-            19.0,
-        ),
-    ],
-    length_frames: 40.0,
-    landing_lag_percent: None,
-};
 
 /// `FTCOMMON_DAMAGE_SAKURAI_*` — `ft/ftcommon.h`.
 const SAKURAI_KNOCKBACK_LOW: f32 = 32.0;
@@ -1903,7 +107,7 @@ pub fn sakurai_angle_radians(angle_i: i32, target_airborne: bool, knockback: f32
 
 /// `ftParamGetCommonKnockback` @ `ftparam.c:1451` for a hitbox, with
 /// `recent_damage == 0`. A landed hit passes its own damage as
-/// `recent_damage` instead ([`apply_hitbox_dir`]).
+/// `recent_damage` instead ([`crate::combat::proc_params`]).
 pub fn common_knockback(
     defender_damage_percent: u16,
     hitbox: &Hitbox,
@@ -1961,7 +165,7 @@ pub fn knockback(
 /// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, for callers that
 /// already know the knockback and direction (throws, grab escapes, the cargo
 /// stagger). It adds `damage` to the percent first and reads as a middle
-/// (`N`) hit; see [`set_damage_status`] for the rest.
+/// (`N`) hit; see [`init_damage_vars_full`] for the rest.
 pub fn init_damage_vars(
     f: &mut Fighter,
     status_replace: Option<AnyStatus>,
@@ -1969,9 +173,19 @@ pub fn init_damage_vars(
     knockback: f32,
     angle_i: i32,
     lr: f32,
+    allow_losecopy: bool,
 ) {
     f.add_damage(damage);
-    set_damage_status(f, status_replace, knockback, angle_i, lr, DAMAGE_INDEX_N);
+    init_damage_vars_full(
+        f,
+        status_replace,
+        knockback,
+        angle_i,
+        lr,
+        DAMAGE_INDEX_N,
+        crate::combat::Element::Normal,
+        allow_losecopy,
+    );
 }
 
 /// `FTDamageColl::placement`: which column of the damage status tables a
@@ -1980,21 +194,16 @@ pub const DAMAGE_INDEX_LW: usize = 0;
 pub const DAMAGE_INDEX_N: usize = 1;
 pub const DAMAGE_INDEX_HI: usize = 2;
 
-/// `cos(100deg)`: a tumble whose velocity points more than 100 degrees away
-/// from the floor normal bounces off it (`ftCommonDamageInitDamageVars`).
-const DAMAGE_BOUNCE_COS: f32 = -0.173_648_18;
+/// `F_CST_DTOR32(100.0F)`: a tumble whose velocity points more than 100
+/// degrees away from the floor normal bounces off it.
+const DAMAGE_BOUNCE_ANGLE: f32 = 1.745_329_3;
+/// `F_CST_DTOR32(90.0F)`.
+const DAMAGE_LAUNCH_ANGLE: f32 = core::f32::consts::FRAC_PI_2;
+/// `FTCOMMON_DAMAGE_FIGHTER_FLYROLL_*`.
+const FLYROLL_DAMAGE_MIN: u16 = 100;
+const FLYROLL_RANDOM_CHANCE: f32 = 0.5;
 
-/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, without the
-/// percent update. The fighter turns to `lr` and enters the status from the
-/// air or ground table (`damage_index` column, [`damage_status`]).
-///
-/// On the ground, a knockback vector with any component along the floor
-/// normal launches the fighter into the air with its ground-table status
-/// (`angle_diff < 90`); a tumble always launches, bouncing off the floor
-/// at 0.8 of its vertical speed when it points more than 100 degrees into
-/// it; anything else slides along the floor through `vel_damage_ground`.
-/// `DamageFlyRoll`'s coin flip is not ported, so a sideways tumble at 100%
-/// or more reads as `DamageFlyN`.
+/// [`init_damage_vars_full`] for a normal-element hit.
 pub fn set_damage_status(
     f: &mut Fighter,
     status_replace: Option<AnyStatus>,
@@ -2003,12 +212,59 @@ pub fn set_damage_status(
     lr: f32,
     damage_index: usize,
 ) {
+    init_damage_vars_full(
+        f,
+        status_replace,
+        knockback,
+        angle_i,
+        lr,
+        damage_index,
+        crate::combat::Element::Normal,
+        false,
+    );
+}
+
+/// `syVectorAngleDiff3D`: the angle between two vectors.
+fn angle_between(a: Vec3, b: Vec3) -> f32 {
+    let la = a.length();
+    let lb = b.length();
+    if la == 0.0 || lb == 0.0 {
+        return 0.0;
+    }
+    let c = ((a.x * b.x + a.y * b.y + a.z * b.z) / (la * lb)).clamp(-1.0, 1.0);
+    ssb_engine::math::atan2(ssb_engine::math::sqrt(1.0 - c * c), c)
+}
+
+/// `ftCommonDamageInitDamageVars` @ `ftcommondamage.c:473`, without the
+/// percent update. `allow_losecopy` is the source's last argument. The fighter turns to `lr` and enters the status from the
+/// air or ground table (`damage_index` column, [`damage_status`]).
+///
+/// On the ground, knockback less than 90 degrees from the floor normal
+/// launches the fighter with the ground-table status; a tumble always
+/// launches, bouncing off the floor at 0.8 of its vertical speed when it
+/// points more than 100 degrees into it; anything else slides along the
+/// floor through `vel_damage_ground`. An airborne tumble between 70 and 110
+/// degrees is `DamageFlyTop`; otherwise, at 100% or more, a coin flip on the
+/// shared generator picks `DamageFlyRoll`. An electric hit first plays
+/// `DamageE1`/`E2`, entering the real status when hitlag ends.
+#[allow(clippy::too_many_arguments)]
+pub fn init_damage_vars_full(
+    f: &mut Fighter,
+    status_replace: Option<AnyStatus>,
+    knockback: f32,
+    angle_i: i32,
+    lr: f32,
+    damage_index: usize,
+    element: crate::combat::Element,
+    allow_losecopy: bool,
+) {
     let airborne = !f.is_grounded();
     let angle = sakurai_angle_radians(angle_i, airborne, knockback);
     let (sin, cos) = sin_cos(angle);
     let vel_x = cos * knockback;
     let vel_y = sin * knockback;
     let hitstun_f = hitstun_frames(knockback);
+    let hitstun = (hitstun_f as i32).max(1) as u16;
     let level = if status_replace.is_some() {
         3
     } else {
@@ -2029,14 +285,13 @@ pub fn set_damage_status(
             .floor
             .map(|floor| floor.normal)
             .unwrap_or(ssb_engine::math::Vec2::new(0.0, 1.0));
-        let dot = normal.x * vel.x + normal.y * vel.y;
-        let len = ssb_engine::math::sqrt(vel.x * vel.x + vel.y * vel.y);
-        if dot > 0.0 {
+        let angle_diff = angle_between(Vec3::new(normal.x, normal.y, 0.0), vel);
+        if angle_diff < DAMAGE_LAUNCH_ANGLE {
             launch = true;
             (vel, 0.0)
         } else if level == 3 {
             launch = true;
-            if len > 0.0 && dot < len * DAMAGE_BOUNCE_COS {
+            if angle_diff > DAMAGE_BOUNCE_ANGLE {
                 (Vec3::new(vel.x, -vel.y * 0.8, 0.0), 0.0)
             } else {
                 (vel, 0.0)
@@ -2050,10 +305,6 @@ pub fn set_damage_status(
         }
     };
     let mut status = damage_status(level, airborne, damage_index);
-    if level == 3 && angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
-        status = Status::DamageFlyTop;
-    }
-    let status = status_replace.unwrap_or(status.into());
     if launch {
         // `mpCommonSetFighterAir`.
         f.become_airborne();
@@ -2061,13 +312,87 @@ pub fn set_damage_status(
         f.physics.jumps_used = 1;
         f.pos.z = 0.0;
     }
-    status::set_any_status(f, status, 0.0, StatusTiming::unknown());
+    if level == 3 && !f.is_grounded() {
+        if angle > FLYTOP_ANGLE_LOW && angle < FLYTOP_ANGLE_HIGH {
+            status = Status::DamageFlyTop;
+        } else if f.damage >= FLYROLL_DAMAGE_MIN && crate::rng::rand_float() < FLYROLL_RANDOM_CHANCE
+        {
+            status = Status::DamageFlyRoll;
+        }
+    }
+    // `ftKirbySpecialNDamageCheckLoseCopy`: a tumble-level hit costs Kirby
+    // its copy one time in twelve.
+    if level == 3 && allow_losecopy {
+        crate::kirby::damage_check_lose_copy(f);
+    }
+    let mut status_set: AnyStatus = status_replace.unwrap_or(status.into());
+    let mut status_var = status_set;
+    if element == crate::combat::Element::Electric {
+        if let AnyStatus::Common(s) = status_set {
+            if (Status::DamageHi1..=Status::WallDamage).contains(&s) {
+                status_var = status_set;
+                status_set = if level == 3 {
+                    Status::DamageE2.into()
+                } else {
+                    Status::DamageE1.into()
+                };
+            }
+        }
+    }
+    let timing = anim_timing(f, status_set);
+    status::set_any_status(f, status_set, 0.0, timing);
+    status::play_anim_events(f);
+    f.damage_e_status = if matches!(
+        f.status.status,
+        AnyStatus::Common(Status::DamageE1 | Status::DamageE2)
+    ) {
+        Some(status_var)
+    } else {
+        None
+    };
     f.physics.vel_ground = Vec3::ZERO;
     f.physics.vel_air = Vec3::ZERO;
     f.physics.is_fastfall = false;
     f.physics.vel_knockback = vel_damage;
     f.physics.vel_damage_ground = vel_damage_ground;
-    f.hitstun = (hitstun_f as u16).max(1);
+    f.hitstun = hitstun;
+    f.stick.tap_x = crate::status::STICKBUFFER_MAX;
+    f.stick.tap_y = crate::status::STICKBUFFER_MAX;
+    f.damage_knockback_stack = knockback;
+    f.tics_since_last_z = crate::status::ZTRIGLAST_TICS_MAX;
+    f.is_smash_di = true;
+}
+
+/// A status's figatree length as its timing.
+fn anim_timing(f: &Fighter, status: AnyStatus) -> StatusTiming {
+    match crate::motion::anim_length(f.kind, status) {
+        Some(len) => StatusTiming::frames(len),
+        None => StatusTiming::unknown(),
+    }
+}
+
+/// `ftCommonDamageSetStatus`, the `proc_passive` an electric hit leaves: once
+/// hitlag is over, `DamageE1`/`E2` hands over to the status the hit chose.
+pub fn update_damage_e(f: &mut Fighter) {
+    if f.hitlag > 0 {
+        return;
+    }
+    let Some(status) = f.damage_e_status.take() else {
+        return;
+    };
+    // `ftMainSetStatus` keeps the damage velocity and hitstun (status
+    // variables), and clears `damage_knockback_stack`.
+    let (vel, ground, hitstun) = (
+        f.physics.vel_knockback,
+        f.physics.vel_damage_ground,
+        f.hitstun,
+    );
+    let timing = anim_timing(f, status);
+    status::set_any_status(f, status, 0.0, timing);
+    status::play_anim_events(f);
+    f.physics.vel_knockback = vel;
+    f.physics.vel_damage_ground = ground;
+    f.hitstun = hitstun;
 }
 
 /// `ftParamGetHitStun` @ `ftparam.c:1505`.
@@ -2215,11 +540,6 @@ pub fn resolve_hit_with_knockback(
     }
 }
 
-/// Whether `anim_frame` falls within `Jab1`'s active hitbox window.
-pub fn jab1_hitbox_active(anim_frame: f32) -> bool {
-    (MARIO_JAB1_HITBOX_START..MARIO_JAB1_HITBOX_END).contains(&anim_frame)
-}
-
 /// A swept-free sphere-vs-sphere overlap test —
 /// `gmCollisionCheckAttackInFighterRange`'s shape, without the swept
 /// previous-position term (module docs).
@@ -2229,426 +549,24 @@ pub fn spheres_overlap(a_pos: Vec3, a_radius: f32, b_pos: Vec3, b_radius: f32) -
     d.length_squared() <= r * r
 }
 
-/// `jid` arguments of the US `MakeAttackColl` motion commands. The arrays are
-/// in the order of each ported `MoveData`'s boxes; repeated pulse scripts use
-/// the same joint pattern each cycle. The data comes from Mario/Fox/Donkey/
-/// Samus/Luigi/Link/Yoshi `MainMotion.c`, not from the visual model's node
-/// order.
-fn attack_joint(kind: crate::fighter::FighterKind, status: AnyStatus, index: usize) -> u8 {
-    use crate::fighter::FighterKind::{Captain, Donkey, Fox, Link, Luigi, Mario, Samus, Yoshi};
-    if status == AnyStatus::Common(Status::ThrownKirbyStar) {
-        return 0;
-    }
-    if kind == crate::fighter::FighterKind::Pikachu {
-        return crate::pikachu_attack::joints(status, index);
-    }
-    if kind == crate::fighter::FighterKind::Ness {
-        return crate::ness_attack::joints(status, index);
-    }
-    if kind == crate::fighter::FighterKind::Purin {
-        return crate::purin_attack::joints(status, index);
-    }
-    if kind == crate::fighter::FighterKind::Kirby {
-        return crate::kirby_attack::joints(status, index).unwrap_or(0);
-    }
-    if kind == Donkey
-        && matches!(
-            status,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialHi | crate::status::DonkeyStatus::SpecialAirHi
-            )
-        )
-    {
-        return if index < 2 {
-            [8, 14][index]
-        } else {
-            [8, 14, 21][(index - 2) % 3]
-        };
-    }
-    let ids: &[u8] = match (kind, status) {
-        (Captain, AnyStatus::Common(Status::Attack11)) => &[9, 8, 8],
-        (Captain, AnyStatus::Common(Status::Attack12)) => &[15, 14],
-        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::Attack13)) => &[26],
-        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::Attack100Loop)) => &[14],
-        (Captain, AnyStatus::Common(Status::AttackDash)) => &[14],
-        (
-            Captain,
-            AnyStatus::Common(
-                Status::AttackS3Hi
-                | Status::AttackS3HiS
-                | Status::AttackS3
-                | Status::AttackS3LwS
-                | Status::AttackS3Lw,
-            ),
-        ) => &[21, 21, 20],
-        (Captain, AnyStatus::Common(Status::AttackHi3 | Status::AttackLw4)) => &[26],
-        (Captain, AnyStatus::Common(Status::AttackLw3)) => &[21],
-        (Captain, AnyStatus::Common(Status::AttackAirHi)) => &[21],
-        (
-            Captain,
-            AnyStatus::Common(Status::AttackS4Hi | Status::AttackS4 | Status::AttackS4Lw),
-        ) => &[26, 26, 5],
-        (Captain, AnyStatus::Common(Status::AttackHi4)) => &[14],
-        (Captain, AnyStatus::Common(Status::AttackAirN)) => &[20, 26],
-        (Captain, AnyStatus::Common(Status::AttackAirF)) => &[26, 26, 21, 21],
-        (Captain, AnyStatus::Common(Status::AttackAirLw)) => &[26, 5],
-        (Captain, AnyStatus::Common(Status::AttackAirB)) => &[8],
-        (
-            Captain,
-            AnyStatus::Captain(
-                crate::status::CaptainStatus::SpecialN | crate::status::CaptainStatus::SpecialAirN,
-            ),
-        ) => &[16, 14, 14],
-        (
-            Captain,
-            AnyStatus::Captain(
-                crate::status::CaptainStatus::SpecialLw
-                | crate::status::CaptainStatus::SpecialAirLw,
-            ),
-        ) => &[21, 21, 20],
-        (Captain, AnyStatus::Captain(crate::status::CaptainStatus::SpecialLwLanding)) => &[0],
-        (Yoshi, AnyStatus::Common(Status::Attack11)) => &[23, 25],
-        (
-            Yoshi,
-            AnyStatus::Common(
-                Status::Attack12 | Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw,
-            ),
-        ) => &[28, 30],
-        (
-            Yoshi,
-            AnyStatus::Common(
-                Status::AttackHi3
-                | Status::AttackS4Hi
-                | Status::AttackS4
-                | Status::AttackS4Lw
-                | Status::AttackHi4
-                | Status::AttackAirF,
-            ),
-        ) => &[7, 6],
-        (Yoshi, AnyStatus::Common(Status::AttackLw3 | Status::AttackLw4 | Status::AttackAirHi)) => {
-            &[19, 20]
-        }
-        (Yoshi, AnyStatus::Common(Status::AttackAirN)) => &[28, 23, 5],
-        (Yoshi, AnyStatus::Common(Status::AttackAirB)) => &[28],
-        (Yoshi, AnyStatus::Common(Status::AttackAirLw)) => &[28, 23],
-        (Yoshi, AnyStatus::Common(Status::AttackDash) | AnyStatus::Yoshi(_)) => &[0],
-        // Link's sword: joint 11 carries the blade box, joint 10 the hilt.
-        (
-            Link,
-            AnyStatus::Common(
-                Status::Attack11
-                | Status::Attack12
-                | Status::AttackDash
-                | Status::AttackS3
-                | Status::AttackHi3
-                | Status::AttackLw3
-                | Status::AttackHi4
-                | Status::AttackLw4
-                | Status::AttackAirF
-                | Status::AttackAirHi
-                | Status::AttackAirLw,
-            )
-            | AnyStatus::Link(
-                crate::status::LinkStatus::Attack13
-                | crate::status::LinkStatus::Attack100Loop
-                | crate::status::LinkStatus::SpecialHi
-                | crate::status::LinkStatus::SpecialAirHi,
-            ),
-        ) => &[11, 10],
-        (Link, AnyStatus::Common(Status::AttackS4)) => &[11, 11, 10],
-        (Link, AnyStatus::Common(Status::AttackAirN)) => &[32, 27, 5],
-        (Link, AnyStatus::Common(Status::AttackAirB)) => {
-            if index % 6 < 3 {
-                &[27, 27, 5]
-            } else {
-                &[32, 32, 5]
-            }
-        }
-        (Luigi, AnyStatus::Common(Status::Attack11)) => &[10, 9],
-        (Luigi, AnyStatus::Common(Status::Attack12)) => &[16, 15],
-        (Luigi, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 27, 25],
-        (Luigi, AnyStatus::Common(Status::AttackDash)) => &[16, 10],
-        (Luigi, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
-            &[24, 25]
-        }
-        (Luigi, AnyStatus::Common(Status::AttackHi3)) => &[14, 15],
-        (Luigi, AnyStatus::Common(Status::AttackLw3)) => &[19, 20],
-        (
-            Luigi,
-            AnyStatus::Common(
-                Status::AttackS4Hi
-                | Status::AttackS4HiS
-                | Status::AttackS4
-                | Status::AttackS4LwS
-                | Status::AttackS4Lw,
-            ),
-        ) => &[14, 15],
-        (Luigi, AnyStatus::Common(Status::AttackHi4)) => &[12],
-        (Luigi, AnyStatus::Common(Status::AttackLw4)) => &[25, 25, 20, 20],
-        (Luigi, AnyStatus::Common(Status::AttackAirN)) => &[25, 20, 5],
-        (Luigi, AnyStatus::Common(Status::AttackAirHi)) => &[25, 27],
-        (
-            Luigi,
-            AnyStatus::Common(Status::AttackAirF | Status::AttackAirB | Status::AttackAirLw),
-        ) => &[25],
-        (Luigi, AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi)) => &[12, 15],
-        (Luigi, AnyStatus::Mario(MarioStatus::SpecialLw | MarioStatus::SpecialAirLw)) => &[0],
-        (Mario, AnyStatus::Common(Status::ThrowB)) => &[10],
-        (Fox, AnyStatus::Common(Status::ThrowB)) => &[20, 20],
-        (Mario, AnyStatus::Common(Status::Attack11)) => &[10, 9],
-        (Mario, AnyStatus::Common(Status::Attack12)) => &[16, 15],
-        (Mario, AnyStatus::Mario(MarioStatus::Attack13)) => &[25, 25, 27],
-        (Mario, AnyStatus::Common(Status::AttackDash)) => &[5],
-        (Mario, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
-            &[24, 25]
-        }
-        (Mario, AnyStatus::Common(Status::AttackHi3)) => &[14, 15],
-        (Mario, AnyStatus::Common(Status::AttackLw3)) => &[24, 25],
-        (
-            Mario,
-            AnyStatus::Common(
-                Status::AttackS4Hi
-                | Status::AttackS4HiS
-                | Status::AttackS4
-                | Status::AttackS4LwS
-                | Status::AttackS4Lw,
-            ),
-        ) => &[14, 15],
-        (Mario, AnyStatus::Common(Status::AttackHi4)) => &[12],
-        (Mario, AnyStatus::Common(Status::AttackLw4)) => &[25, 25, 20, 20],
-        (Mario, AnyStatus::Common(Status::AttackAirN)) => &[25, 20, 5],
-        (
-            Mario,
-            AnyStatus::Common(Status::AttackAirF | Status::AttackAirB | Status::AttackAirLw),
-        ) => &[25],
-        (Mario, AnyStatus::Common(Status::AttackAirHi)) => &[25, 27],
-        (Mario, AnyStatus::Mario(MarioStatus::SpecialHi | MarioStatus::SpecialAirHi)) => &[12, 15],
-        (Mario, AnyStatus::Mario(MarioStatus::SpecialLw | MarioStatus::SpecialAirLw)) => &[0],
-
-        (Fox, AnyStatus::Fox(FoxStatus::SpecialLwStart | FoxStatus::SpecialAirLwStart)) => &[0],
-        (Fox, AnyStatus::Fox(FoxStatus::Attack100Loop)) => &[19, 20],
-        (Fox, AnyStatus::Common(Status::Attack11)) => &[8],
-        (Fox, AnyStatus::Common(Status::Attack12)) => &[14],
-        (Fox, AnyStatus::Common(Status::AttackDash)) => &[20],
-        (
-            Fox,
-            AnyStatus::Common(
-                Status::AttackS3Hi
-                | Status::AttackS3HiS
-                | Status::AttackS3
-                | Status::AttackS3LwS
-                | Status::AttackS3Lw
-                | Status::AttackHi3,
-            ),
-        ) => &[24, 25],
-        (Fox, AnyStatus::Common(Status::AttackLw3)) => &[29],
-        (Fox, AnyStatus::Common(Status::AttackS4)) => &[20],
-        (Fox, AnyStatus::Common(Status::AttackHi4)) => &[25],
-        (Fox, AnyStatus::Common(Status::AttackLw4)) => &[25, 20],
-        (Fox, AnyStatus::Common(Status::AttackAirN)) => &[5, 20, 25],
-        (Fox, AnyStatus::Common(Status::AttackAirF)) => &[25],
-        (Fox, AnyStatus::Common(Status::AttackAirB)) => &[5, 25, 20],
-        (Fox, AnyStatus::Common(Status::AttackAirHi)) => &[5, 25],
-        (Fox, AnyStatus::Common(Status::AttackAirLw)) => &[20],
-
-        (Donkey, AnyStatus::Common(Status::Attack11)) => &[9],
-        (Donkey, AnyStatus::Common(Status::Attack12)) => &[15],
-        (Donkey, AnyStatus::Common(Status::AttackDash)) => &[21],
-        (Donkey, AnyStatus::Common(Status::AttackS3Hi | Status::AttackS3 | Status::AttackS3Lw)) => {
-            &[14, 15, 14]
-        }
-        (Donkey, AnyStatus::Common(Status::AttackHi3)) => &[8, 9],
-        (Donkey, AnyStatus::Common(Status::AttackLw3)) => &[14, 15],
-        (
-            Donkey,
-            AnyStatus::Common(
-                Status::AttackS4Hi
-                | Status::AttackS4HiS
-                | Status::AttackS4
-                | Status::AttackS4LwS
-                | Status::AttackS4Lw,
-            ),
-        ) => &[14, 15, 14],
-        (Donkey, AnyStatus::Common(Status::AttackHi4)) => &[15, 9],
-        (Donkey, AnyStatus::Common(Status::AttackLw4)) => &[26, 21],
-        (Donkey, AnyStatus::Common(Status::AttackAirN)) => &[15, 9, 5],
-        (Donkey, AnyStatus::Common(Status::AttackAirF)) => &[15, 14, 8],
-        (Donkey, AnyStatus::Common(Status::AttackAirB)) => &[0],
-        (Donkey, AnyStatus::Common(Status::AttackAirHi)) => &[8, 9],
-        (Donkey, AnyStatus::Common(Status::AttackAirLw)) => &[26, 21],
-        (
-            Donkey,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialNEnd
-                | crate::status::DonkeyStatus::SpecialAirNEnd,
-            ),
-        ) => &[14],
-        (
-            Donkey,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialNFull
-                | crate::status::DonkeyStatus::SpecialAirNFull,
-            ),
-        ) => &[14, 14, 5],
-        (Donkey, AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialLwLoop)) => &[0],
-
-        (Samus, AnyStatus::Common(Status::Attack11)) => &[9, 8, 8],
-        (Samus, AnyStatus::Common(Status::Attack12 | Status::AttackDash)) => &[16],
-        (
-            Samus,
-            AnyStatus::Common(
-                Status::AttackS3Hi
-                | Status::AttackS3HiS
-                | Status::AttackS3
-                | Status::AttackS3LwS
-                | Status::AttackS3Lw,
-            ),
-        ) => &[32, 33, 33],
-        (Samus, AnyStatus::Common(Status::AttackHi3 | Status::AttackLw3 | Status::AttackLw4)) => {
-            &[33]
-        }
-        (
-            Samus,
-            AnyStatus::Common(
-                Status::AttackS4Hi
-                | Status::AttackS4HiS
-                | Status::AttackS4
-                | Status::AttackS4LwS
-                | Status::AttackS4Lw,
-            ),
-        ) => &[16, 16, 8],
-        (
-            Samus,
-            AnyStatus::Common(Status::AttackHi4 | Status::AttackAirF | Status::AttackAirLw),
-        ) => &[16],
-        (Samus, AnyStatus::Common(Status::AttackAirN)) => &[27, 33],
-        (Samus, AnyStatus::Common(Status::AttackAirB)) => &[33],
-        (Samus, AnyStatus::Common(Status::AttackAirHi)) => &[28],
-        (
-            Samus,
-            AnyStatus::Samus(
-                crate::status::SamusStatus::SpecialHi | crate::status::SamusStatus::SpecialAirHi,
-            ),
-        ) => &[0],
-        _ => unreachable!("ported move lacks source joint IDs"),
-    };
-    ids[index % ids.len()]
-}
-
-/// `F1` criterion 5: tests `attacker`'s active hitboxes against `defender` and
-/// applies the hit. `hit_record` is the caller's per-target hit-suppression
-/// state — the fixed-size Training stand-in for the original's per-attack
-/// `GMAttackRecord` hit list. It is re-armed at a sourced
-/// `ClearAttackCollAll`, including a clear/recreate boundary with no idle
-/// animation frame between them. Returns whether a hit registered, which
-/// runs the attacker's `proc_hit` ([`crate::link::on_attack_hit`]).
-///
-/// `ftMainSearchFighterAttack` skips the defender's own catcher
-/// (`other_gobj == this_fp->capture_gobj`), so a throw's attack boxes only
-/// reach bystanders. A registered hit stales the box's damage by the
-/// attacker's queue and records the move in it (`ftParamUpdateStaleQueue`).
-pub fn apply_hit_from(
-    attacker: &mut Fighter,
-    defender: &mut Fighter,
-    hit_record: &mut HitRecord,
-) -> bool {
-    let Some(move_data) = crate::kirby::move_data(attacker)
-        .or_else(|| move_data(attacker.kind, attacker.status.status))
-    else {
-        *hit_record = HitRecord::default();
-        return false;
-    };
-    // `throw_gobj`: a spat-out star never hits the Kirby that spat it.
-    if attacker.status.status == Status::ThrownKirbyStar
-        && attacker.kirby_capture.thrower == Some(defender.port)
-    {
-        return false;
-    }
-    // Link's down air after `ftCommonAttackAirLwProcHit` cleared its boxes.
-    if crate::link::attack_colls_cleared(attacker) {
-        *hit_record = HitRecord::default();
-        return false;
-    }
-    if defender.grab.capture == Some(attacker.port) {
-        return false;
-    }
-    let mut has_active_hitbox = false;
-    for (index, active) in move_data
-        .hitboxes
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| h.is_active(attacker.status.anim_frame))
-    {
-        has_active_hitbox = true;
-        if hit_record.hit_generation == Some(active.hit_generation) {
-            continue;
-        }
-        // `ftMainSearchFighterAttack`: `is_hit_air` / `is_hit_ground`.
-        if (defender.is_grounded() && !active.hits_ground)
-            || (!defender.is_grounded() && !active.hits_air)
-        {
-            continue;
-        }
-        let mut hitbox = active.hitbox;
-        if matches!(
-            attacker.status.status,
-            AnyStatus::Donkey(
-                crate::status::DonkeyStatus::SpecialNEnd
-                    | crate::status::DonkeyStatus::SpecialAirNEnd
-            )
-        ) {
-            hitbox.damage += i32::from(attacker.donkey_special_n.attack_charge) * 2;
-        }
-        hitbox.damage += crate::kirby_copy::giant_punch_bonus(attacker);
-        if attacker.status.status == Status::ThrownKirbyStar {
-            // `ftCommonThrownKirbyStarSetStatus` writes the star damage.
-            hitbox.damage = crate::kirby_attack::star_damage(attacker.kind);
-        }
-        hitbox.damage = crate::stale::staled_damage(attacker, hitbox.damage);
-        let joint = attack_joint(attacker.kind, attacker.status.status, index);
-        let hitbox_pos = attacker.joint_world(joint, hitbox.offset);
-        let captured = captured_damage(defender, hitbox.damage);
-        match apply_hitbox_at_element(
-            &hitbox,
-            hitbox_pos,
-            attacker.handicap,
-            defender,
-            active.sleep,
-        ) {
-            HitOutcome::Missed => continue,
-            outcome => {
-                if outcome == HitOutcome::Damaged {
-                    crate::stale::record_hit(attacker, defender.port);
-                }
-                // `ftMainProcParams`: `attack_damage` (the captured damage)
-                // or `attack_shield_push` freezes the attacker too.
-                let lag_damage = if outcome == HitOutcome::Damaged {
-                    captured
-                } else {
-                    hitbox.damage
-                };
-                attacker.hitlag = hitlag_frames(lag_damage, attacker.status.status);
-                hit_record.hit_generation = Some(active.hit_generation);
-                crate::capture_kirby::on_star_hit(attacker);
-                return true;
-            }
-        }
-    }
-    if !has_active_hitbox {
-        // `ClearAttackCollAll` ends the current attack record in the source.
-        // A later pulse in a multi-hit script is a new collision opportunity.
-        *hit_record = HitRecord::default();
-    }
-    false
+/// One attacker against one defender for one frame, through the whole hit
+/// pipeline ([`crate::combat`]): attack positions, both searches, the hit
+/// logs and both fighters' `ftMainProcParams`. Returns whether the
+/// attacker's attack landed (`proc_hit`, which has already run). The match
+/// loop drives [`crate::combat`] directly so weapons join the same frame.
+pub fn apply_hit_from(attacker: &mut Fighter, defender: &mut Fighter) -> bool {
+    crate::combat::resolve_frame(&mut [attacker, defender])[0]
 }
 
 /// What one hitbox did to a defender.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitOutcome {
-    /// No contact, or an invincible target: the box may still connect later.
+    /// No contact: the box may still connect later.
     Missed,
     /// The shield took it.
     Shielded,
+    /// A hurtbox was touched but the defender is invincible there.
+    Touched,
     /// Damage registered (`ftMainCheckGetUpdateDamage`).
     Damaged,
 }
@@ -2669,13 +587,13 @@ pub fn capture_keep_hold(damage_queue: i32) -> bool {
 }
 
 /// `ftParamGetCapturedDamage` @ 0x800EA40C: a held fighter takes half,
-/// rounded up, then `damage_mul` (always `1.0` for the ported fighters).
+/// rounded up, then `damage_mul` (0.5 while knocked down).
 pub fn captured_damage(defender: &Fighter, damage: i32) -> i32 {
     let mut damage = damage;
     if defender.grab.capture.is_some() {
         damage = (damage as f32 * 0.5 + 0.999) as i32;
     }
-    (damage as f32 * 1.0 + 0.999) as i32
+    (damage as f32 * defender.damage_mul + 0.999) as i32
 }
 
 /// Which way a registered hit pushes the defender (`damage_lr`) and which
@@ -2714,265 +632,65 @@ impl HitDirection {
     }
 }
 
-/// Applies an already-positioned hitbox to a defender. Fighter moves obtain
-/// their position from a joint-relative offset; a weapon owns its world
-/// position directly. Keeping collision resolution here preserves one damage,
-/// shield, knockback, and invincibility path for both. `attack_handicap` is
-/// the attacker's (a weapon's is its owner's).
-///
-/// An invincible target returns [`HitOutcome::Missed`], so a live weapon may
-/// contact it again when its invincibility ends.
+/// Registers a positioned hitbox (a weapon, or a host test's stand-in) in
+/// the defender's frame without resolving it: the damage lands in the
+/// defender's `ftMainProcParams` ([`crate::combat::proc_params`]).
+pub fn register_hitbox(
+    hitbox: &Hitbox,
+    pos_curr: Vec3,
+    pos_prev: Vec3,
+    source: crate::combat::HitSource,
+    attack_handicap: u8,
+    defender: &mut Fighter,
+) -> HitOutcome {
+    let contact = crate::combat::weapon_hit(
+        defender,
+        crate::combat::WeaponAttack {
+            hitbox: *hitbox,
+            pos_curr,
+            pos_prev,
+            source,
+            handicap: attack_handicap,
+            can_shield: true,
+        },
+    );
+    match contact {
+        crate::combat::WeaponContact::Missed => HitOutcome::Missed,
+        crate::combat::WeaponContact::Shielded => HitOutcome::Shielded,
+        crate::combat::WeaponContact::Hurt(false) => HitOutcome::Touched,
+        crate::combat::WeaponContact::Hurt(true) => HitOutcome::Damaged,
+    }
+}
+
+/// Applies one already-positioned hitbox to a defender at once: registers
+/// it, then runs the defender's hit processing and `ftMainProcParams`. For
+/// callers outside the frame pipeline (grab releases, host tests).
 pub fn apply_hitbox_at(
     hitbox: &Hitbox,
     attacker_pos: Vec3,
     attack_handicap: u8,
     defender: &mut Fighter,
 ) -> HitOutcome {
-    apply_hitbox_at_element(hitbox, attacker_pos, attack_handicap, defender, false)
-}
-
-/// [`apply_hitbox_at`] with the box's sleep element.
-pub fn apply_hitbox_at_element(
-    hitbox: &Hitbox,
-    attacker_pos: Vec3,
-    attack_handicap: u8,
-    defender: &mut Fighter,
-    sleep: bool,
-) -> HitOutcome {
-    let direction = HitDirection::from_position(defender.pos, attacker_pos);
-    apply_hitbox_dir_element(
+    let outcome = register_hitbox(
         hitbox,
         attacker_pos,
-        direction,
-        attack_handicap,
-        defender,
-        sleep,
-    )
-}
-
-/// [`apply_hitbox_at`] with an explicit push direction (weapons,
-/// [`HitDirection::from_weapon`]).
-///
-/// The damage path follows `ftMainUpdateDamageStatFighter` and
-/// `ftMainProcParams` for a frame with one hit: the captured-halved damage is
-/// the frame's `damage_queue`, which `ftParamGetCommonKnockback` receives as
-/// `recent_damage` on top of the percent the defender had before the hit.
-/// Crouching takes two thirds of the knockback, then the status's
-/// resistance comes off; the percent is always added.
-pub fn apply_hitbox_dir(
-    hitbox: &Hitbox,
-    attacker_pos: Vec3,
-    direction: HitDirection,
-    attack_handicap: u8,
-    defender: &mut Fighter,
-) -> HitOutcome {
-    apply_hitbox_dir_element(
-        hitbox,
         attacker_pos,
-        direction,
+        crate::combat::HitSource::Position,
         attack_handicap,
         defender,
-        false,
-    )
-}
-
-fn apply_hitbox_dir_element(
-    hitbox: &Hitbox,
-    attacker_pos: Vec3,
-    direction: HitDirection,
-    attack_handicap: u8,
-    defender: &mut Fighter,
-    sleep: bool,
-) -> HitOutcome {
-    let status_before = defender.status.status;
-    let captured = captured_damage(defender, hitbox.damage);
-    let outcome = resolve_hitbox(
-        hitbox,
-        attacker_pos,
-        direction,
-        attack_handicap,
-        defender,
-        sleep,
     );
-    // `ftMainProcParams`: `damage_lag` or `shield_damage` freezes the
-    // defender, measured against the status the hit found it in.
-    let lag_damage = match outcome {
-        HitOutcome::Missed => None,
-        HitOutcome::Shielded => Some(hitbox.damage),
-        HitOutcome::Damaged if status_before == AnyStatus::Common(Status::YoshiEgg) => None,
-        HitOutcome::Damaged => Some(captured),
-    };
-    if let Some(damage) = lag_damage {
-        defender.hitlag = hitlag_frames(damage, status_before);
-    }
+    crate::combat::process_hit_collision(defender);
+    crate::combat::proc_params(defender);
     outcome
 }
 
-fn resolve_hitbox(
-    hitbox: &Hitbox,
-    attacker_pos: Vec3,
-    direction: HitDirection,
-    attack_handicap: u8,
-    defender: &mut Fighter,
-    sleep: bool,
-) -> HitOutcome {
-    let Some(damage_index) = crate::hurtbox::hit_index(defender, attacker_pos, hitbox.radius)
-    else {
-        return HitOutcome::Missed;
-    };
-    if crate::capture_kirby::is_intangible(defender) || crate::purin::is_intangible(defender) {
-        return HitOutcome::Missed;
-    }
-    if defender.invincible_frames > 0 || crate::ness::is_invincible(defender) {
-        // `nGMHitStatusInvincible`: the hitbox simply does not register —
-        // the hit record is left alone so the same active window
-        // can still connect once invincibility ends.
-        return HitOutcome::Missed;
-    }
-    if is_shielding(defender.status.status) {
-        apply_shield_damage(hitbox.damage, direction.shield_lr, defender);
-        return HitOutcome::Shielded;
-    }
-    if defender.status.status == Status::YoshiEgg {
-        crate::capture_yoshi::on_hit(defender, hitbox.damage);
-        return HitOutcome::Damaged;
-    }
-    let mut damage = captured_damage(defender, hitbox.damage);
-    // `ftMainCheckGetUpdateDamage`: Kirby's Stone soaks the hit, and only
-    // the overflow of its health goes through.
-    let resisting = defender.kirby.is_damage_resist;
-    if !crate::kirby::absorb_damage(defender, &mut damage) {
-        return HitOutcome::Damaged;
-    }
-    let reduced;
-    let hitbox = if resisting {
-        reduced = Hitbox { damage, ..*hitbox };
-        &reduced
-    } else {
-        hitbox
-    };
-    if sleep {
-        // `ftCommonDamageUpdateMain`: a sleep hit always leaves the current
-        // status, even without knockback, and a held fighter loses the hold
-        // (`ftCommonDamageCheckCatchResist`). Percent still takes the damage.
-        defender.add_damage(damage);
-        if defender.grab.capture.is_some() {
-            crate::grab::release_on_capture_hit(defender);
-        } else if defender.grab.catch.is_some() {
-            crate::grab::release_on_hit(defender);
-        }
-        status::set_fura_sleep(defender);
-        return HitOutcome::Damaged;
-    }
-    // `ftMainUpdateDamageStatFighter`: the status's knockback resistance
-    // comes off first, and a hit left with no knockback only flashes
-    // (`ftCommonDamageSetDamageColAnim`): no damage status, no `proc_damage`.
-    let mut knockback = knockback(
-        defender.damage,
-        damage,
-        hitbox.damage,
-        hitbox.kb_weight,
-        hitbox.kb_scale,
-        hitbox.kb_base,
-        defender.attributes.weight,
-        attack_handicap,
-        defender.handicap,
-    );
-    if matches!(
-        defender.status.status,
-        AnyStatus::Common(Status::Squat | Status::SquatWait)
-    ) {
-        knockback *= 2.0 / 3.0;
-    }
-    // `ftMainProcParams`: the status's knockback resistance comes off, and a
-    // hit left with no knockback only flashes (`ftCommonDamageSetDamageColAnim`):
-    // no damage status, no `proc_damage`.
-    let knockback = (knockback - defender.knockback_resist).max(0.0);
-    defender.add_damage(damage);
-    if knockback == 0.0 {
-        return HitOutcome::Damaged;
-    }
-    let lr = direction.damage_lr;
-    if defender.kind == crate::fighter::FighterKind::Donkey {
-        defender.donkey_special_n.charge_level = 0;
-    }
-    if defender.kind == crate::fighter::FighterKind::Samus {
-        crate::samus::on_damage(defender);
-    }
-    if defender.kind == crate::fighter::FighterKind::Link {
-        crate::link::on_damage(defender);
-    }
-    crate::yoshi::on_damage(defender);
-    crate::pikachu::on_damage(defender);
-    if crate::kirby::is_kirby(defender.kind) {
-        crate::kirby_copy::on_damage(defender);
-    }
-    if defender.grab.capture.is_some() {
-        // `ftCommonDamageUpdateMain`'s `capture_gobj` branch.
-        if capture_keep_hold(damage) {
-            // The hold survives; only the catcher's hitlag (not ported)
-            // and the colour animation react.
-            return HitOutcome::Damaged;
-        }
-        // `ftCommonThrownDecideFighterLoseGrip(catcher, held)`, then the
-        // catcher's `ftCommonThrownSetStatusNoDamageRelease` (delivered by
-        // `grab::exchange`) and this fighter's normal damage status below.
-        crate::grab::release_on_capture_hit(defender);
-        set_damage_status(defender, None, knockback, hitbox.angle, lr, damage_index);
-        return HitOutcome::Damaged;
-    }
-    if defender.grab.catch.is_some() {
-        // `ftCommonDamageSetDamageStatus`'s `catch_gobj` branch: the cargo
-        // stance absorbs anything below a tumble; otherwise the held fighter
-        // is dropped with the throw descriptor's `[1]` knockback.
-        if crate::grab::cargo_resists(defender, knockback) {
-            crate::grab::set_donkey_throwf_damage(defender, knockback, hitbox.angle, lr);
-            return HitOutcome::Damaged;
-        }
-        crate::grab::release_on_hit(defender);
-    }
-    set_damage_status(defender, None, knockback, hitbox.angle, lr, damage_index);
-    HitOutcome::Damaged
-}
-
-/// Whether a hit landing on this status should be redirected into
-/// [`apply_shield_hit`] rather than the normal Damage-family path — the
-/// statuses `ftMainUpdateShieldStatFighter`'s caller treats as "currently
-/// shielding" (`ftmain.c`'s hit-search gates a shield hit on `fp->is_shield`,
-/// which these three statuses hold for the whole time they are active).
+/// Whether a hit landing on this status meets the shield — the statuses in
+/// which `fp->is_shield` is set.
 pub fn is_shielding(status: AnyStatus) -> bool {
     matches!(
         status,
         AnyStatus::Common(Status::GuardOn | Status::Guard | Status::GuardSetOff)
     )
-}
-
-/// `ftMainUpdateShieldStatFighter` @ `ftmain.c:2059`, reduced to the
-/// single-hit case (module docs: no `shield_damage_total` multi-hit
-/// accumulation) — a hit landing on a shield deals no damage/knockback/
-/// hitstun at all, only shield health loss and a `GuardSetOff` pushback.
-pub fn apply_shield_hit(hitbox: &Hitbox, attacker: &Fighter, defender: &mut Fighter) {
-    apply_shield_hit_at(hitbox, attacker.pos, defender);
-}
-
-/// [`apply_shield_hit`] for a world-space attack source.
-pub fn apply_shield_hit_at(hitbox: &Hitbox, attacker_pos: Vec3, defender: &mut Fighter) {
-    let shield_lr = damage_lr(defender.pos, attacker_pos);
-    apply_shield_damage(hitbox.damage, shield_lr, defender);
-}
-
-/// `ftMainProcParams`' shield half: the hit comes off the shield's health
-/// first, and a shield taken to zero breaks at once
-/// (`ftCommonShieldBreakFlyCommonSetStatus`) instead of being pushed back.
-/// The motion command's own `shield_damage` term is not carried by
-/// [`Hitbox`], so only the hit's damage counts.
-fn apply_shield_damage(damage: i32, shield_lr: f32, defender: &mut Fighter) {
-    defender.guard.shield_health -= damage as f32;
-    if defender.guard.shield_health <= 0.0 {
-        status::set_shield_break_fly(defender);
-    } else {
-        status::set_guard_set_off(defender, damage as f32, shield_lr);
-    }
 }
 
 #[cfg(test)]
@@ -3057,12 +775,14 @@ mod tests {
         assert_eq!(result.status, Status::DamageN1);
     }
 
-    #[test]
-    fn hitbox_window_is_two_frames_starting_at_frame_two() {
-        assert!(!jab1_hitbox_active(1.99));
-        assert!(jab1_hitbox_active(2.0));
-        assert!(jab1_hitbox_active(3.99));
-        assert!(!jab1_hitbox_active(4.0));
+    /// Enters `status` and runs its motion script `frames` frames in, as
+    /// the status machine would.
+    fn at_frame(f: &mut Fighter, status: AnyStatus, frames: u32) {
+        status::set_any_status(f, status, 0.0, StatusTiming::unknown());
+        for _ in 0..frames {
+            f.status.anim_frame += 1.0;
+            crate::motion::advance(f);
+        }
     }
 
     #[test]
@@ -3070,8 +790,7 @@ mod tests {
         use crate::fighter::{FighterKind, JointTransform};
         let mut attacker = Fighter::new(FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(FighterKind::Mario, 1, 3);
-        attacker.status.status = Status::Attack11.into();
-        attacker.status.anim_frame = 2.0;
+        at_frame(&mut attacker, Status::Attack11.into(), 2);
         attacker.joint_transforms[10] = Some(JointTransform {
             axes: [
                 Vec3::new(1.0, 0.0, 0.0),
@@ -3081,8 +800,7 @@ mod tests {
             origin: Vec3::new(500.0, 0.0, 0.0),
         });
         defender.pos = Vec3::new(500.0, 0.0, 0.0);
-        let mut record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut record);
+        apply_hit_from(&mut attacker, &mut defender);
         assert_eq!(defender.damage, 2);
     }
 
@@ -3184,26 +902,25 @@ mod tests {
         attacker.pos = Vec3::new(0.0, 0.0, 0.0);
         defender.pos = Vec3::new(10.0, 0.0, 0.0);
         defender.situation = crate::fighter::Situation::Ground;
-        status::set_status(
-            &mut attacker,
-            Status::Attack11,
-            3.0,
-            StatusTiming::unknown(),
-        );
+        at_frame(&mut attacker, Status::Attack11.into(), 2);
 
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
+        assert!(apply_hit_from(&mut attacker, &mut defender));
 
         assert_eq!(defender.status.status, Status::DamageN1);
-        assert!(hit_record.hit_generation.is_some());
         assert!(defender.hitstun > 0);
+        // The attack's record keeps it from hitting again.
+        assert!(!apply_hit_from(&mut attacker, &mut defender));
+        assert_eq!(defender.damage, 2);
 
-        // Hitlag, then hitstun, running out returns the defender to Wait.
+        // Hitlag, then hitstun and the reaction clip, return the defender
+        // to Wait.
         assert!(defender.hitlag > 0 && attacker.hitlag > 0);
-        for _ in 0..defender.hitstun + defender.hitlag {
+        for _ in 0..60 {
             defender.tick_timers();
+            if !defender.is_in_hitlag() {
+                crate::status::update(&mut defender);
+            }
         }
-        crate::status::update(&mut defender);
         assert_eq!(defender.status.status, Status::Wait);
     }
 
@@ -3217,17 +934,11 @@ mod tests {
         attacker.pos = Vec3::new(0.0, 0.0, 0.0);
         defender.pos = Vec3::new(10.0, 0.0, 0.0);
         defender.situation = crate::fighter::Situation::Ground;
-        status::set_status(&mut defender, Status::Guard, 0.0, StatusTiming::unknown());
+        status::set_guard(&mut defender);
         let starting_health = defender.guard.shield_health;
-        status::set_status(
-            &mut attacker,
-            Status::Attack11,
-            3.0,
-            StatusTiming::unknown(),
-        );
+        at_frame(&mut attacker, Status::Attack11.into(), 2);
 
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
+        apply_hit_from(&mut attacker, &mut defender);
 
         assert_eq!(defender.status.status, Status::GuardSetOff);
         assert_eq!(defender.damage, 0);
@@ -3242,15 +953,12 @@ mod tests {
     #[test]
     fn a_hit_breaking_the_shield_goes_straight_to_shield_break() {
         let mut defender = grounded_mario();
-        status::set_status(&mut defender, Status::Guard, 0.0, StatusTiming::unknown());
+        status::set_guard(&mut defender);
         defender.guard.shield_health = 2.0;
         let outcome = apply_hitbox_at(&MARIO_JAB1_HITBOX, Vec3::ZERO, 9, &mut defender);
         assert_eq!(outcome, HitOutcome::Shielded);
         assert_eq!(defender.status.status, Status::ShieldBreakFly);
-        assert_eq!(
-            defender.guard.shield_health,
-            status::GUARD_HEALTH_BREAK_RESPAWN
-        );
+        assert_eq!(defender.guard.shield_health, 30.0);
     }
 
     /// `ftMainProcessHitCollisionStatsMain` passes the frame's
@@ -3265,6 +973,8 @@ mod tests {
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         };
         let mut defender = grounded_mario();
         defender.damage = 50;
@@ -3286,6 +996,8 @@ mod tests {
             kb_scale: 100,
             kb_weight: 0,
             kb_base: 0,
+            element: crate::combat::Element::Normal,
+            shield_damage: 0,
         };
         let mut defender = grounded_mario();
         status::set_status(
@@ -3305,6 +1017,11 @@ mod tests {
         assert_eq!(hitlag_frames(2, Status::Wait.into()), 5);
         assert_eq!(hitlag_frames(12, Status::Wait.into()), 9);
         assert_eq!(hitlag_frames(12, Status::Squat.into()), 6);
+        // An electric hit's 1.5x applies to the truncated count.
+        assert_eq!(
+            crate::combat::hitlag_frames(12, Status::Wait.into(), 1.5),
+            13
+        );
     }
 
     #[test]
@@ -3334,6 +1051,7 @@ mod tests {
         assert_eq!(f.status.status, Status::DamageAir2);
         assert!(!f.is_grounded());
         f.hitstun = 0;
+        f.status.anim_frame = 1000.0;
         status::update(&mut f);
         assert_eq!(f.status.status, Status::Fall);
 
@@ -3346,624 +1064,31 @@ mod tests {
     }
 
     /// `nGMHitStatusInvincible`: a post-respawn invincible defender takes no
-    /// hit at all, not even the shield-block path.
+    /// damage, but the attack still connects: its record is spent and the
+    /// attacker takes hitlag.
     #[test]
-    fn an_invincible_defender_is_not_hit() {
+    fn an_invincible_defender_is_touched_but_not_hurt() {
         let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
         attacker.pos = Vec3::new(0.0, 0.0, 0.0);
         defender.pos = Vec3::new(10.0, 0.0, 0.0);
         defender.situation = crate::fighter::Situation::Ground;
         defender.invincible_frames = 10;
-        status::set_status(
-            &mut attacker,
-            Status::Attack11,
-            3.0,
-            StatusTiming::unknown(),
-        );
+        at_frame(&mut attacker, Status::Attack11.into(), 2);
 
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
+        assert!(apply_hit_from(&mut attacker, &mut defender));
 
-        assert_eq!(defender.status.status, Status::Wait);
+        assert_ne!(defender.status.status, Status::DamageN1);
         assert_eq!(defender.damage, 0);
-        assert!(hit_record.hit_generation.is_none());
-    }
-
-    #[test]
-    fn move_data_is_none_for_an_unported_fighter_or_status() {
-        assert!(move_data(crate::fighter::FighterKind::Fox, Status::HammerWait.into()).is_none());
-        assert!(move_data(
-            crate::fighter::FighterKind::Mario,
-            Status::HammerWait.into()
-        )
-        .is_none());
-    }
-
-    #[test]
-    fn fox_reflector_startup_hitbox_expires_after_two_frames() {
-        for status in [FoxStatus::SpecialLwStart, FoxStatus::SpecialAirLwStart] {
-            let move_data = move_data(crate::fighter::FighterKind::Fox, AnyStatus::Fox(status))
-                .expect("Reflector startup has a sourced hitbox");
-            assert_eq!(move_data.hitboxes.len(), 1);
-            assert_eq!(move_data.hitboxes[0].hitbox.damage, 5);
-            assert_eq!(move_data.hitboxes[0].hitbox.radius, 180.0);
-            assert!(move_data.hitboxes[0].is_active(1.0));
-            assert!(!move_data.hitboxes[0].is_active(2.0));
-        }
-    }
-
-    #[test]
-    fn fox_down_air_rearms_each_source_pulse() {
-        let data = move_data(crate::fighter::FighterKind::Fox, Status::AttackAirLw.into())
-            .expect("Fox down air is ported");
-        assert_eq!(data.hitboxes.len(), 14);
-        assert_eq!(data.length_frames, 24.0);
-        for (pulse, pair) in data.hitboxes.as_chunks::<2>().0.iter().enumerate() {
-            assert_eq!(pair[0].hit_generation, pulse as u8);
-            assert_eq!(pair[1].hit_generation, pulse as u8);
-            assert_eq!(pair[0].start, 4.0 + 3.0 * pulse as f32);
-            assert_eq!(pair[0].end, 6.0 + 3.0 * pulse as f32);
-        }
-    }
-
-    #[test]
-    fn super_jump_motion_script_has_its_real_open_close_and_finish_windows() {
-        let data = move_data(
-            crate::fighter::FighterKind::Mario,
-            AnyStatus::Mario(MarioStatus::SpecialAirHi),
-        )
-        .expect("Mario Super Jump Punch has sourced motion data");
-        assert!(data
-            .hitboxes
-            .iter()
-            .any(|h| h.is_active(2.0) && h.hitbox.damage == 5));
-        assert!(!data.hitboxes.iter().any(|h| h.is_active(3.0)));
-        assert!(data
-            .hitboxes
-            .iter()
-            .any(|h| h.is_active(9.0) && h.hitbox.damage == 1));
-        assert!(!data
-            .hitboxes
-            .iter()
-            .any(|h| h.is_active(25.0) && h.hitbox.damage == 1));
-        assert!(data
-            .hitboxes
-            .iter()
-            .any(|h| h.is_active(25.0) && h.hitbox.damage == 3));
-        assert_eq!(
-            data.length_frames,
-            crate::status::MARIO_SUPERJUMP_LENGTH_FRAMES
-        );
-    }
-
-    /// Every `SuperJumpPunch` loop body clears its old attack collisions
-    /// before recreating them. The windows meet at their frame boundary, so a
-    /// plain "currently hit" bool never observes an inactive frame to reset.
-    #[test]
-    fn super_jump_clear_rearms_the_next_coin_hit_generation() {
+        assert!(attacker.hitlag > 0);
+        assert!(attacker.attack_colls[0].records[0].is_interact_hurt);
+        // An intangible defender is not touched at all.
         let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
         let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::ZERO;
-        attacker.status.status = AnyStatus::Mario(MarioStatus::SpecialAirHi);
-        defender.pos = Vec3::new(0.0, 0.0, 60.0);
-
-        let mut hit_record = HitRecord::default();
-        attacker.status.anim_frame = 9.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 1);
-        assert_eq!(hit_record.hit_generation, Some(1));
-
-        // Still inside the same `MakeAttackColl` lifetime: one target once.
-        attacker.status.anim_frame = 10.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 1);
-
-        // Frame 11 is the immediately recreated next loop collision, not a
-        // gap, and is therefore a distinct legal hit.
-        attacker.status.anim_frame = 11.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 2);
-        assert_eq!(hit_record.hit_generation, Some(2));
-    }
-
-    #[test]
-    fn tornado_motion_scripts_keep_their_thirteen_one_frame_pulses() {
-        let ground = move_data(
-            crate::fighter::FighterKind::Mario,
-            AnyStatus::Mario(MarioStatus::SpecialLw),
-        )
-        .unwrap();
-        let air = move_data(
-            crate::fighter::FighterKind::Mario,
-            AnyStatus::Mario(MarioStatus::SpecialAirLw),
-        )
-        .unwrap();
-        assert_eq!(ground.hitboxes.len(), 31);
-        assert_eq!(air.hitboxes.len(), 60);
-        assert!(ground.hitboxes.iter().any(|h| h.is_active(4.0)));
-        assert!(!ground.hitboxes.iter().any(|h| h.is_active(5.0)));
-        assert!(ground.hitboxes.iter().any(|h| h.is_active(40.0)));
-        assert!(ground.hitboxes.iter().any(|h| h.is_active(43.0)));
-        assert!(air.hitboxes.iter().any(|h| h.is_active(46.0)));
-        assert!(!air.hitboxes.iter().any(|h| h.is_active(47.0)));
-    }
-
-    #[test]
-    fn tornado_clear_gap_rearms_its_next_pulse() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.status.status = AnyStatus::Mario(MarioStatus::SpecialLw);
-        // The loop's side hitbox at frame 4 is rooted at this exact
-        // authored offset; the root hurtbox approximation then exercises the
-        // same Training bridge as the live dummy.
-        defender.pos = Vec3::new(150.0, 280.0, 0.0);
-
-        let mut hit_record = HitRecord::default();
-        attacker.status.anim_frame = 4.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 1);
-
-        attacker.status.anim_frame = 5.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(hit_record, HitRecord::default());
-
-        attacker.status.anim_frame = 7.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 2);
-    }
-
-    #[test]
-    fn pikachu_forward_air_rearms_each_of_seven_source_pulses() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Pikachu, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.status.status = AnyStatus::Common(Status::AttackAirF);
-        defender.pos = Vec3::new(0.0, 65.0, 0.0);
-        let mut record = HitRecord::default();
-        for pulse in 0..7 {
-            attacker.status.anim_frame = 7.0 + 3.0 * pulse as f32;
-            apply_hit_from(&mut attacker, &mut defender, &mut record);
-            let damage = defender.damage;
-            assert!(damage > 0);
-            assert_eq!(record.hit_generation, Some(pulse));
-            apply_hit_from(&mut attacker, &mut defender, &mut record);
-            assert_eq!(defender.damage, damage);
-            attacker.status.anim_frame += 2.0;
-            apply_hit_from(&mut attacker, &mut defender, &mut record);
-            assert_eq!(record, HitRecord::default());
-        }
-        assert!(defender.damage >= 14);
-    }
-
-    /// `DashAttack`'s single hitbox slot gets weaker after frame 11 —
-    /// `MARIO_DASH_ATTACK`'s own doc comment.
-    #[test]
-    fn dash_attack_is_stronger_in_its_first_window_than_its_second() {
-        let sweet = &MARIO_DASH_ATTACK.hitboxes[0];
-        let sour = &MARIO_DASH_ATTACK.hitboxes[1];
-        assert_eq!(sweet.hitbox.damage, 12);
-        assert_eq!(sweet.hitbox.kb_base, 16);
-        assert_eq!(sour.hitbox.damage, 10);
-        assert_eq!(sour.hitbox.kb_base, 10);
-        assert!(sweet.is_active(10.0));
-        assert!(!sour.is_active(10.0));
-        assert!(!sweet.is_active(15.0));
-        assert!(sour.is_active(15.0));
-    }
-
-    #[test]
-    fn a_sourspot_replacement_without_clear_does_not_rearm_a_target() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::ZERO;
-        attacker.status.status = Status::AttackDash.into();
-        defender.pos = Vec3::new(40.0, 0.0, 0.0);
-
-        let mut hit_record = HitRecord::default();
-        attacker.status.anim_frame = 10.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 12);
-
-        attacker.status.anim_frame = 15.0;
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 12);
-    }
-
-    /// A forward tilt's second hitbox reaches further out along the swing
-    /// (`ox = 90`, vs. the first's `20`) — mirrored by facing, since it is a
-    /// joint-space offset in the original, not a world-space one.
-    #[test]
-    fn a_forward_tilts_far_hitbox_mirrors_with_facing() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::ZERO;
-        attacker.facing = crate::fighter::Facing::Left;
-        defender.pos = Vec3::new(-90.0, 0.0, 0.0);
-        defender.situation = crate::fighter::Situation::Ground;
-        status::set_status(
-            &mut attacker,
-            Status::AttackS3,
-            10.0,
-            StatusTiming::unknown(),
-        );
-
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-
-        // Only reachable if the offset flipped to -90 with facing; at +90 the
-        // defender at x=-90 would be 180 units away, past even the 115-unit
-        // far-hitbox radius.
-        assert!(hit_record.hit_generation.is_some());
-        assert_eq!(defender.damage, 13);
-    }
-
-    /// `AttackAirD`'s pulsing hitbox is on 2 frames, off 1, eight times —
-    /// `MARIO_AIR_LW`'s own doc comment. Landing in a gap is a real way to
-    /// dodge it, so the windows must not merge into one wide range.
-    #[test]
-    fn down_aerial_pulses_on_and_off_rather_than_staying_active() {
-        // Boundaries of the first two windows: [10,12) on, [12,13) off, [13,15) on.
-        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(10.0)));
-        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(11.9)));
-        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(12.0)));
-        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(12.9)));
-        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(13.0)));
-        // Last window ends exactly at the move's own length.
-        assert!(MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(32.9)));
-        assert!(!MARIO_AIR_LW.hitboxes.iter().any(|h| h.is_active(33.0)));
-    }
-
-    /// Neutral aerial's three simultaneous hitboxes all weaken together
-    /// after frame 11 — `MARIO_AIR_N`'s own doc comment.
-    #[test]
-    fn neutral_aerial_has_three_hitboxes_that_weaken_together() {
-        let strong: Vec<_> = MARIO_AIR_N
-            .hitboxes
-            .iter()
-            .filter(|h| h.is_active(5.0))
-            .collect();
-        let weak: Vec<_> = MARIO_AIR_N
-            .hitboxes
-            .iter()
-            .filter(|h| h.is_active(20.0))
-            .collect();
-        assert_eq!(strong.len(), 3); // `jid` 25, 20 and 5 share a window
-        assert_eq!(weak.len(), 3);
-        assert!(strong.iter().all(|h| h.hitbox.damage == 14));
-        assert!(weak.iter().all(|h| h.hitbox.damage == 11));
-    }
-
-    /// RE-332's condensed boxes: every source `MakeAttackColl` is present
-    /// and reads its own `jid`.
-    #[test]
-    fn same_valued_boxes_keep_their_own_joints() {
-        use crate::fighter::FighterKind::{Fox, Mario};
-        let joints = |kind, status: Status| {
-            let data = move_data(kind, status.into()).unwrap();
-            (0..data.hitboxes.len())
-                .map(|i| attack_joint(kind, status.into(), i))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(joints(Mario, Status::AttackLw4), [25, 25, 20, 20]);
-        assert_eq!(joints(Mario, Status::AttackAirN), [25, 20, 5, 25, 20, 5]);
-        assert_eq!(joints(Fox, Status::AttackLw4), [25, 20]);
-    }
-
-    /// `move_data` finds `Attack13`'s data through the extended-status path
-    /// too, not just common ones — `MARIO_JAB3`'s doc comment.
-    #[test]
-    fn attack13_hitbox_grows_mid_swing_without_a_damage_change() {
-        let data = move_data(
-            crate::fighter::FighterKind::Mario,
-            AnyStatus::Mario(MarioStatus::Attack13),
-        )
-        .expect("Mario's Attack13 has real MoveData");
-        assert!(data.hitboxes.iter().all(|h| h.hitbox.damage == 4));
-        let small: Vec<_> = data.hitboxes.iter().filter(|h| h.is_active(4.0)).collect();
-        let grown: Vec<_> = data.hitboxes.iter().filter(|h| h.is_active(6.0)).collect();
-        assert!(small.iter().any(|h| h.hitbox.radius == 75.0));
-        assert!(grown.iter().all(|h| h.hitbox.radius != 75.0));
-    }
-
-    /// A jab that connects, chains into `Attack12`, and would chain into
-    /// `Attack13` still resolves each hit through the same generic
-    /// `apply_hit_from` — the extended status is just another key into
-    /// `move_data`.
-    #[test]
-    fn attack13_lands_a_real_hit_through_apply_hit_from() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Mario, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::new(0.0, 0.0, 0.0);
-        defender.pos = Vec3::new(0.0, 0.0, 0.0);
-        defender.situation = crate::fighter::Situation::Ground;
-        status::set_any_status(
-            &mut attacker,
-            AnyStatus::Mario(MarioStatus::Attack13),
-            4.0,
-            StatusTiming::unknown(),
-        );
-
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-
-        assert!(hit_record.hit_generation.is_some());
-        assert_eq!(defender.damage, 4);
-    }
-
-    #[test]
-    fn donkey_motion_windows_and_charge_damage_feed_hit_resolution() {
-        let normal = move_data(
-            crate::fighter::FighterKind::Donkey,
-            Status::AttackAirLw.into(),
-        )
-        .unwrap();
-        assert_eq!(normal.length_frames, 60.0);
-        assert_eq!(
-            normal
-                .hitboxes
-                .iter()
-                .find(|h| h.is_active(6.0))
-                .unwrap()
-                .hitbox
-                .damage,
-            13
-        );
-        assert_eq!(
-            normal
-                .hitboxes
-                .iter()
-                .find(|h| h.is_active(12.0))
-                .unwrap()
-                .hitbox
-                .damage,
-            10
-        );
-
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::ZERO;
-        defender.pos = Vec3::ZERO;
-        attacker.donkey_special_n.attack_charge = 4;
-        status::set_any_status(
-            &mut attacker,
-            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialNEnd),
-            9.0,
-            StatusTiming::frames(80.0),
-        );
-        apply_hit_from(&mut attacker, &mut defender, &mut HitRecord::default());
-        assert_eq!(defender.damage, 22); // script base 14 + 4 * 2
-        let spin = move_data(
-            crate::fighter::FighterKind::Donkey,
-            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialAirHi),
-        )
-        .unwrap();
-        assert_eq!(spin.hitboxes.iter().filter(|h| h.is_active(3.0)).count(), 2);
-        assert_eq!(
-            spin.hitboxes.iter().filter(|h| h.is_active(17.0)).count(),
-            3
-        );
-        assert_eq!(
-            spin.hitboxes.iter().filter(|h| h.is_active(49.0)).count(),
-            3
-        );
-        assert!(spin
-            .hitboxes
-            .iter()
-            .filter(|h| h.is_active(49.0))
-            .all(|h| h.hitbox.damage == 3));
-    }
-
-    #[test]
-    fn donkey_punch_reaches_with_its_second_hitbox_when_the_first_misses() {
-        let mut attacker = Fighter::new(crate::fighter::FighterKind::Donkey, 0, 3);
-        let mut defender = Fighter::new(crate::fighter::FighterKind::Mario, 1, 3);
-        attacker.pos = Vec3::ZERO;
-        defender.pos = Vec3::new(400.0, 0.0, 0.0);
-        status::set_any_status(
-            &mut attacker,
-            AnyStatus::Donkey(crate::status::DonkeyStatus::SpecialNEnd),
-            9.0,
-            StatusTiming::frames(80.0),
-        );
-        let mut hit_record = HitRecord::default();
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 14);
-        assert_eq!(hit_record.hit_generation, Some(0));
-
-        apply_hit_from(&mut attacker, &mut defender, &mut hit_record);
-        assert_eq!(defender.damage, 14);
-    }
-
-    #[test]
-    fn every_link_move_has_source_joints() {
-        use crate::fighter::FighterKind;
-        use crate::status::LinkStatus;
-        let statuses: [AnyStatus; 18] = [
-            Status::Attack11.into(),
-            Status::Attack12.into(),
-            Status::AttackDash.into(),
-            Status::AttackS3.into(),
-            Status::AttackHi3.into(),
-            Status::AttackLw3.into(),
-            Status::AttackS4.into(),
-            Status::AttackHi4.into(),
-            Status::AttackLw4.into(),
-            Status::AttackAirN.into(),
-            Status::AttackAirF.into(),
-            Status::AttackAirB.into(),
-            Status::AttackAirHi.into(),
-            Status::AttackAirLw.into(),
-            AnyStatus::Link(LinkStatus::Attack13),
-            AnyStatus::Link(LinkStatus::Attack100Loop),
-            AnyStatus::Link(LinkStatus::SpecialHi),
-            AnyStatus::Link(LinkStatus::SpecialAirHi),
-        ];
-        for status in statuses {
-            let data = move_data(FighterKind::Link, status).expect("ported");
-            for index in 0..data.hitboxes.len() {
-                attack_joint(FighterKind::Link, status, index);
-            }
-        }
-        // One forward tilt and one forward smash.
-        assert!(move_data(FighterKind::Link, Status::AttackS3Hi.into()).is_none());
-        assert!(move_data(FighterKind::Link, Status::AttackS4Lw.into()).is_none());
-        // The back air's second swing moves from joint 27 to joint 32.
-        assert_eq!(
-            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 0),
-            27
-        );
-        assert_eq!(
-            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 3),
-            32
-        );
-        assert_eq!(
-            attack_joint(FighterKind::Link, Status::AttackAirB.into(), 5),
-            5
-        );
-        // Five rapid pulses, each its own hit record.
-        let rapid = move_data(
-            FighterKind::Link,
-            AnyStatus::Link(LinkStatus::Attack100Loop),
-        )
-        .unwrap();
-        for (pulse, start) in [3.0, 10.0, 17.0, 24.0, 31.0].into_iter().enumerate() {
-            let active: Vec<_> = rapid
-                .hitboxes
-                .iter()
-                .filter(|h| h.is_active(start))
-                .collect();
-            assert_eq!(active.len(), 2);
-            assert!(active.iter().all(|h| h.hit_generation == pulse as u8));
-        }
-        // The Spin Attack's sweet spot and its weaker phase share a record.
-        let spin = move_data(FighterKind::Link, AnyStatus::Link(LinkStatus::SpecialHi)).unwrap();
-        assert!(spin.hitboxes.iter().all(|h| h.hit_generation == 0));
-        assert_eq!(spin.hitboxes[0].hitbox.damage, 16);
-        assert!(spin.hitboxes[2].is_active(39.0) && !spin.hitboxes[2].is_active(40.0));
-    }
-
-    #[test]
-    fn yoshi_down_air_refreshes_fourteen_hit_records_and_bomb_holds_its_box() {
-        use crate::fighter::FighterKind;
-        use crate::status::YoshiStatus;
-
-        for status in [
-            Status::Attack11,
-            Status::Attack12,
-            Status::AttackDash,
-            Status::AttackS3Hi,
-            Status::AttackS3,
-            Status::AttackS3Lw,
-            Status::AttackHi3,
-            Status::AttackLw3,
-            Status::AttackS4Hi,
-            Status::AttackS4,
-            Status::AttackS4Lw,
-            Status::AttackHi4,
-            Status::AttackLw4,
-            Status::AttackAirN,
-            Status::AttackAirF,
-            Status::AttackAirB,
-            Status::AttackAirHi,
-            Status::AttackAirLw,
-        ] {
-            let data = move_data(FighterKind::Yoshi, status.into()).expect("Yoshi normal");
-            for index in 0..data.hitboxes.len() {
-                attack_joint(FighterKind::Yoshi, status.into(), index);
-            }
-        }
-        let down_air = move_data(FighterKind::Yoshi, Status::AttackAirLw.into()).unwrap();
-        for pulse in 0..14 {
-            let active: Vec<_> = down_air
-                .hitboxes
-                .iter()
-                .filter(|hit| hit.is_active(4.0 + pulse as f32 * 2.0))
-                .collect();
-            assert_eq!(active.len(), 2);
-            assert!(active.iter().all(|hit| hit.hit_generation == pulse));
-        }
-        let bomb = move_data(
-            FighterKind::Yoshi,
-            AnyStatus::Yoshi(YoshiStatus::SpecialAirLwLoop),
-        )
-        .unwrap();
-        assert!(bomb.hitboxes[0].is_active(100.0));
-    }
-
-    #[test]
-    fn every_luigi_move_has_source_joints() {
-        use crate::fighter::FighterKind;
-        let mut statuses: [AnyStatus; 25] = [Status::Attack11.into(); 25];
-        let common = [
-            Status::Attack11,
-            Status::Attack12,
-            Status::AttackDash,
-            Status::AttackS3Hi,
-            Status::AttackS3,
-            Status::AttackS3Lw,
-            Status::AttackHi3,
-            Status::AttackLw3,
-            Status::AttackS4Hi,
-            Status::AttackS4HiS,
-            Status::AttackS4,
-            Status::AttackS4LwS,
-            Status::AttackS4Lw,
-            Status::AttackHi4,
-            Status::AttackLw4,
-            Status::AttackAirN,
-            Status::AttackAirF,
-            Status::AttackAirB,
-            Status::AttackAirHi,
-            Status::AttackAirLw,
-        ];
-        for (slot, status) in statuses.iter_mut().zip(common) {
-            *slot = status.into();
-        }
-        statuses[20] = AnyStatus::Mario(MarioStatus::Attack13);
-        statuses[21] = AnyStatus::Mario(MarioStatus::SpecialHi);
-        statuses[22] = AnyStatus::Mario(MarioStatus::SpecialAirHi);
-        statuses[23] = AnyStatus::Mario(MarioStatus::SpecialLw);
-        statuses[24] = AnyStatus::Mario(MarioStatus::SpecialAirLw);
-        for status in statuses {
-            let data = move_data(FighterKind::Luigi, status).expect("ported");
-            for index in 0..data.hitboxes.len() {
-                attack_joint(FighterKind::Luigi, status, index);
-            }
-        }
-        // Luigi has no mid-angle forward tilts.
-        assert!(move_data(FighterKind::Luigi, Status::AttackS3HiS.into()).is_none());
-        assert_eq!(
-            attack_joint(
-                FighterKind::Luigi,
-                AnyStatus::Mario(MarioStatus::Attack13),
-                2
-            ),
-            25
-        );
-    }
-
-    #[test]
-    fn samus_pulses_follow_their_clears_and_refreshes() {
-        use crate::fighter::FighterKind;
-        let usmash = move_data(FighterKind::Samus, Status::AttackHi4.into()).unwrap();
-        let starts: [f32; 5] = [17.0, 21.0, 25.0, 29.0, 33.0];
-        for (pulse, start) in starts.iter().enumerate() {
-            let active = || usmash.hitboxes.iter().filter(|h| h.is_active(*start));
-            assert_eq!(active().count(), 2);
-            assert!(active().all(|h| h.hit_generation == pulse as u8));
-        }
-        assert!(usmash.hitboxes.iter().all(|h| !h.is_active(20.0)));
-        assert!(usmash.hitboxes.iter().all(|h| !h.is_active(35.0)));
-
-        let air_hi = move_data(FighterKind::Samus, Status::AttackAirHi.into()).unwrap();
-        assert!(air_hi.hitboxes.iter().all(|h| h.hitbox.damage == 2));
-        assert!(air_hi.hitboxes.iter().all(|h| !h.is_active(20.0)));
-
-        let mut samus = Fighter::new(FighterKind::Samus, 0, 3);
-        samus.anim.landing = 10.0;
-        status::set_air_attack(&mut samus, Status::AttackAirF);
-        status::set_landing_or_landing_air(&mut samus);
-        assert_eq!(samus.status.status, Status::LandingAirNull);
-        assert_eq!(samus.status.timing.anim_length, Some(2.0));
+        defender.pos = Vec3::new(10.0, 0.0, 0.0);
+        defender.intangible_frames = 10;
+        at_frame(&mut attacker, Status::Attack11.into(), 2);
+        assert!(!apply_hit_from(&mut attacker, &mut defender));
+        assert_eq!(attacker.hitlag, 0);
     }
 }

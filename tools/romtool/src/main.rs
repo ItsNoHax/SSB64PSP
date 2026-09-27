@@ -6953,16 +6953,17 @@ fn jumptest(path: &Path, opts: &[&str]) -> Res {
         f.set_input(input, tapped, released);
         f.tick(floors);
 
-        let hitbox_active = ssb_game::attack::jab1_hitbox_active(f.status.anim_frame)
-            && f.status.status == ssb_game::status::Status::Attack11;
-        let hitbox_pos = f.pos + ssb_game::attack::MARIO_JAB1_HITBOX.offset;
-        let overlap = hitbox_active
-            && ssb_game::attack::spheres_overlap(
-                hitbox_pos,
-                ssb_game::attack::MARIO_JAB1_HITBOX.radius,
-                dummy.pos,
-                ssb_game::attack::MARIO_HURTBOX_RADIUS,
-            );
+        // The jab's live attack collisions, from its motion script.
+        ssb_game::combat::update_attack_positions(&mut f);
+        let overlap = f.attack_colls.iter().any(|c| {
+            c.state != ssb_game::combat::AttackState::Off
+                && ssb_game::attack::spheres_overlap(
+                    c.pos_curr,
+                    c.size,
+                    dummy.pos,
+                    ssb_game::attack::MARIO_HURTBOX_RADIUS,
+                )
+        });
 
         let dx = f.pos.x - dummy.pos.x;
         let dy = f.pos.y - dummy.pos.y;

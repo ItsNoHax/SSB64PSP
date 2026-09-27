@@ -180,6 +180,8 @@ pub const MARIO_FIREBALL_HITBOX: Hitbox = Hitbox {
     kb_scale: 25,
     kb_weight: 0,
     kb_base: 10,
+    element: crate::combat::Element::Fire,
+    shield_damage: 1,
 };
 
 /// Fox Special1's US `WPAttributes` and `WPBLASTER_VEL_X`.
@@ -187,11 +189,14 @@ pub const FOX_BLASTER_SPEED: f32 = 160.0;
 pub const FOX_BLASTER_HITBOX: Hitbox = Hitbox {
     damage: 6,
     offset: Vec3::ZERO,
-    radius: 40.0,
+    // `wpManagerMakeWeapon` halves the attributes' size of 40.
+    radius: 20.0,
     angle: 10,
     kb_scale: 100,
     kb_weight: 1,
     kb_base: 0,
+    element: crate::combat::Element::Normal,
+    shield_damage: 1,
 };
 pub const FOX_BLASTER_MAP_COLL: BodyColl = BodyColl {
     top: 10.0,
@@ -262,6 +267,8 @@ pub const SAMUS_CHARGE_SHOT_HITBOX: Hitbox = Hitbox {
     kb_scale: 100,
     kb_weight: 0,
     kb_base: 0,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 
 /// Source `wpSamusChargeShot` after release: a straight shot that ends on
@@ -348,6 +355,8 @@ pub const SAMUS_BOMB_HITBOX: Hitbox = Hitbox {
     kb_scale: 65,
     kb_weight: 0,
     kb_base: 10,
+    element: crate::combat::Element::Fire,
+    shield_damage: 1,
 };
 pub const SAMUS_BOMB_MAP_COLL: BodyColl = BodyColl {
     top: 75.0,
@@ -537,6 +546,8 @@ pub const LINK_BOOMERANG_HITBOX: Hitbox = Hitbox {
     kb_scale: 30,
     kb_weight: 0,
     kb_base: 55,
+    element: crate::combat::Element::Normal,
+    shield_damage: 1,
 };
 pub const LINK_BOOMERANG_MAP_COLL: BodyColl = BodyColl {
     top: 150.0,
@@ -843,6 +854,8 @@ pub const YOSHI_EGG_HITBOX: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 50,
+    element: crate::combat::Element::Normal,
+    shield_damage: 6,
 };
 pub const YOSHI_EGG_MAP_COLL: BodyColl = BodyColl {
     top: 150.0,
@@ -997,6 +1010,8 @@ pub const YOSHI_STAR_HITBOX: Hitbox = Hitbox {
     kb_scale: 100,
     kb_weight: 30,
     kb_base: 0,
+    element: crate::combat::Element::Normal,
+    shield_damage: -3,
 };
 
 /// Source `wpYoshiStar`: it slows down and is gone after 16 frames or on a
@@ -1083,6 +1098,8 @@ pub const KIRBY_CUTTER_HITBOX: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 70,
+    element: crate::combat::Element::Slash,
+    shield_damage: 1,
 };
 pub const KIRBY_CUTTER_MAP_COLL: BodyColl = BodyColl {
     top: 220.0,
@@ -1319,8 +1336,6 @@ pub struct WeaponPool {
     landed: [Option<(u8, crate::stale::MotionAttackId, u16)>; MAX_WEAPONS],
 }
 
-/// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, the
-/// shared hit path, and the landed motion for the owner's stale queue.
 fn reflector_contact(f: &Fighter, position: Vec3, radius: f32) -> bool {
     let fox = f.kind == crate::fighter::FighterKind::Fox
         && matches!(
@@ -1341,11 +1356,16 @@ fn reflector_hit(f: &mut Fighter) {
         crate::status::set_fox_special_lw_hit(f);
     }
 }
-/// `velocity_x` picks the push direction ([`attack::HitDirection::from_weapon`]).
+/// One weapon hitbox against one fighter: `wpMainGetStaledDamage`, then
+/// `ftMainSearchHitWeapon`'s shield and hurtbox tests. The hit is recorded in
+/// the fighter's frame ([`crate::combat`]) and lands in its
+/// `ftMainProcParams`; the weapon reacts now. `velocity` also sweeps the
+/// hitbox back to where it was last frame and picks the push direction
+/// ([`attack::HitDirection::from_weapon`]).
 fn stale_hit(
     hitbox: &Hitbox,
     position: Vec3,
-    velocity_x: f32,
+    velocity: Vec3,
     stale: crate::stale::WeaponStale,
     defender: &mut Fighter,
     landed: &mut Option<(u8, crate::stale::MotionAttackId, u16)>,
@@ -1353,12 +1373,12 @@ fn stale_hit(
 ) -> attack::HitOutcome {
     let mut hitbox = *hitbox;
     hitbox.damage = stale.damage(hitbox.damage);
-    let direction = attack::HitDirection::from_weapon(defender.pos, position, velocity_x);
     // `wp->handicap` is the owner's; every Training player has the default.
-    let outcome = attack::apply_hitbox_dir(
+    let outcome = attack::register_hitbox(
         &hitbox,
         position,
-        direction,
+        position - velocity,
+        crate::combat::HitSource::Weapon { vel_x: velocity.x },
         crate::stale::HANDICAP_DEFAULT,
         defender,
     );
@@ -1455,7 +1475,7 @@ impl WeaponPool {
                     if stale_hit(
                         &ness::TRAIL_HIT,
                         t.hit_position(),
-                        0.0,
+                        Vec3::ZERO,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1492,7 +1512,7 @@ impl WeaponPool {
                     let outcome = stale_hit(
                         &hit,
                         spark.position,
-                        spark.velocity.x,
+                        spark.velocity,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1536,7 +1556,7 @@ impl WeaponPool {
                     if stale_hit(
                         &hit,
                         h.position,
-                        h.velocity.x,
+                        h.velocity,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1849,7 +1869,7 @@ impl WeaponPool {
                     if stale_hit(
                         &pikachu::TRAIL_HIT,
                         t.position + Vec3::new(0.0, y, 0.0),
-                        0.0,
+                        Vec3::ZERO,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1864,28 +1884,25 @@ impl WeaponPool {
                 }
                 continue;
             }
-            let (owner, mut hitbox, position, velocity_x) = match weapon {
+            let (owner, mut hitbox, position, velocity) = match weapon {
                 Weapon::Jolt(j) => {
                     let (hit, pos) = j.hit();
-                    (j.owner_port, hit, pos, j.velocity.x)
+                    (j.owner_port, hit, pos, j.velocity)
                 }
                 Weapon::PKFire(_) | Weapon::PKThunder(_) | Weapon::PKTrail(_) => {
                     unreachable!("handled separately")
                 }
                 Weapon::Thunder(_) | Weapon::Trail(_) => unreachable!("handled above"),
-                Weapon::Fireball(f) => (
-                    f.owner_port,
-                    MARIO_FIREBALL_HITBOX,
-                    f.position,
-                    f.velocity.x,
-                ),
-                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position, b.velocity.x),
-                Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity.x),
-                Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity.x),
-                Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity.x),
-                Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity.x),
-                Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity.x),
-                Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity.x),
+                Weapon::Fireball(f) => {
+                    (f.owner_port, MARIO_FIREBALL_HITBOX, f.position, f.velocity)
+                }
+                Weapon::Blaster(b) => (b.owner_port, FOX_BLASTER_HITBOX, b.position, b.velocity),
+                Weapon::ChargeShot(c) => (c.owner_port, c.hitbox(), c.position, c.velocity),
+                Weapon::Bomb(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+                Weapon::Boomerang(b) => (b.owner_port, b.hitbox(), b.position, b.velocity),
+                Weapon::Egg(e) => (e.owner_port, e.hitbox(), e.position, e.velocity),
+                Weapon::Star(s) => (s.owner_port, s.hitbox(), s.position, s.velocity),
+                Weapon::Cutter(c) => (c.owner_port, KIRBY_CUTTER_HITBOX, c.position, c.velocity),
             };
             if owner == defender.port {
                 continue;
@@ -1923,7 +1940,7 @@ impl WeaponPool {
                     if stale_hit(
                         &hitbox,
                         position,
-                        velocity_x,
+                        velocity,
                         self.stale[i],
                         defender,
                         &mut self.landed[i],
@@ -1944,7 +1961,7 @@ impl WeaponPool {
                 if stale_hit(
                     &hitbox,
                     position,
-                    velocity_x,
+                    velocity,
                     self.stale[i],
                     defender,
                     &mut self.landed[i],
@@ -2018,7 +2035,7 @@ impl WeaponPool {
             if stale_hit(
                 &hitbox,
                 position,
-                velocity_x,
+                velocity,
                 self.stale[i],
                 defender,
                 &mut self.landed[i],
@@ -2329,6 +2346,7 @@ mod tests {
         target.pos = egg.position;
         target.situation = Situation::Ground;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 14);
         let egg = weapons.eggs().next().unwrap();
         assert!(egg.exploded);
@@ -2380,6 +2398,7 @@ mod tests {
         target.pos = egg.position;
         target.situation = Situation::Ground;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         // 14 * 0.75 + 0.999 = 11.499.
         assert_eq!(target.damage, 11);
         weapons.record_landed(&mut target);
@@ -2409,11 +2428,13 @@ mod tests {
         let mut owner = Fighter::new(FighterKind::Fox, 0, 3);
         owner.pos = shot.position;
         weapons.apply_hits(&mut owner);
+        crate::combat::resolve(&mut owner);
         assert_eq!(weapons.active_count(), 1);
         let mut target = Fighter::new(FighterKind::Mario, 1, 3);
         target.pos = shot.position;
         target.situation = Situation::Ground;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 6);
         assert_eq!(weapons.active_count(), 0);
     }
@@ -2439,6 +2460,7 @@ mod tests {
             crate::status::StatusTiming::unknown(),
         );
         weapons.apply_hits(&mut fox);
+        crate::combat::resolve(&mut fox);
         let fireball = weapons.first_fireball().unwrap();
         assert_eq!(fireball.owner_port, fox.port);
         assert!(fireball.velocity.x > 0.0);
@@ -2466,8 +2488,11 @@ mod tests {
         target.situation = Situation::Ground;
 
         weapons.apply_hits(&mut owner);
+
+        crate::combat::resolve(&mut owner);
         assert_eq!(weapons.active_count(), 1);
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 7);
         assert_eq!(weapons.active_count(), 0);
     }
@@ -2515,8 +2540,10 @@ mod tests {
         target.pos = bomb.position + Vec3::new(150.0, 0.0, 0.0);
         target.situation = Situation::Ground;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 9);
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 9);
         for _ in 0..5 {
             weapons.tick(open_air);
@@ -2616,6 +2643,7 @@ mod tests {
         target.situation = Situation::Ground;
         target.pos = weapons.boomerangs().next().unwrap().position;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 9);
         let b = weapons.boomerangs().next().unwrap();
         assert!(b.is_return);
@@ -2623,6 +2651,7 @@ mod tests {
         assert_eq!(b.lr, -1.0);
         target.hitlag = 0;
         weapons.apply_hits(&mut target);
+        crate::combat::resolve(&mut target);
         assert_eq!(target.damage, 9, "the record keeps the target");
     }
 

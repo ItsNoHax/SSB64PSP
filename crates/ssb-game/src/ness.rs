@@ -1,6 +1,7 @@
 //! Ness's US callbacks from `ftnessspecial{n,hi,lw}.c` and
 //! `ftNessJumpAerialProcPhysics`. Update precedes physics and map.
-//! Map responses use the shared fighter solver. Part intangibility, sound
+//! Map responses use the shared fighter solver; hit status (including part
+//! intangibility) comes from the motion scripts. Sound
 //! and effects await their shared systems.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
@@ -340,19 +341,6 @@ pub fn absorbing(f: &Fighter) -> bool {
         )
     )
 }
-/// Whole-body `SetHitStatusAll(2)` in the US blast and throws.
-pub fn is_invincible(f: &Fighter) -> bool {
-    if !is_ness(f.kind) {
-        return false;
-    }
-    match f.status.status {
-        AnyStatus::Ness(N::SpecialHiJibaku | N::SpecialAirHiJibaku) => f.status.anim_frame < 10.0,
-        AnyStatus::Common(Status::ThrowF | Status::ThrowB) => {
-            (3.0..27.0).contains(&f.status.anim_frame)
-        }
-        _ => false,
-    }
-}
 /// `FTSpecialColl` on TopN: source offset {300,195,0}, radii 430 (US).
 pub(crate) fn absorb_contact(f: &Fighter, pos: Vec3, radius: f32) -> bool {
     if !absorbing(f) {
@@ -493,9 +481,7 @@ pub(crate) fn update_dtilt(f: &mut Fighter) {
     if f.status.animation_ended() {
         status::set_status(f, Status::SquatWait, 0.0, StatusTiming::unknown());
         f.is_special_interrupt = true;
-    } else if ssb_engine::input::newly_pressed(f.prev_input.buttons, f.input.buttons)
-        .contains(N64Buttons::A)
-    {
+    } else if f.button_tap().contains(N64Buttons::A) {
         if flag {
             status::set_dtilt(f);
         } else {
@@ -677,67 +663,4 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
         switch(f, ground);
     }
     true
-}
-pub fn set_landing_air(f: &mut Fighter) -> bool {
-    if !is_ness(f.kind) {
-        return false;
-    }
-    let AnyStatus::Common(s) = f.status.status else {
-        return false;
-    };
-    let frame = f.status.anim_frame;
-    let active = match s {
-        Status::AttackAirN => (5.0..38.0).contains(&frame),
-        Status::AttackAirF => (10.0..27.0).contains(&frame),
-        Status::AttackAirB => (10.0..20.0).contains(&frame),
-        Status::AttackAirHi | Status::AttackAirLw => false,
-        _ => return false,
-    };
-    if !active {
-        if f.physics.vel_air.y > -20.0 {
-            status::set_wait(f);
-        } else {
-            status::set_landing(f);
-        }
-    } else {
-        match s {
-            Status::AttackAirF => {
-                status::set_status(f, Status::LandingAirF, 0.0, StatusTiming::frames(16.0))
-            }
-            Status::AttackAirB => {
-                status::set_status(f, Status::LandingAirB, 0.0, StatusTiming::frames(15.0))
-            }
-            _ => status::set_landing_air_null(f, 50),
-        }
-    }
-    true
-}
-pub fn move_data(s: AnyStatus) -> Option<&'static crate::attack::MoveData> {
-    use crate::ness_attack as a;
-    Some(match s {
-        AnyStatus::Common(s) => match s {
-            Status::Attack11 => &a::ATTACK11,
-            Status::Attack12 => &a::ATTACK12,
-            Status::AttackDash => &a::ATTACKDASH,
-            Status::AttackS3Hi => &a::ATTACKS3HI,
-            Status::AttackS3 => &a::ATTACKS3,
-            Status::AttackS3Lw => &a::ATTACKS3LW,
-            Status::AttackHi3 => &a::ATTACKHI3,
-            Status::AttackLw3 => &a::ATTACKLW3,
-            Status::AttackS4 => &a::ATTACKS4,
-            Status::AttackHi4 => &a::ATTACKHI4,
-            Status::AttackLw4 => &a::ATTACKLW4,
-            Status::AttackAirN => &a::ATTACKAIRN,
-            Status::AttackAirF => &a::ATTACKAIRF,
-            Status::AttackAirB => &a::ATTACKAIRB,
-            Status::AttackAirHi => &a::ATTACKAIRHI,
-            Status::AttackAirLw => &a::ATTACKAIRLW,
-            Status::ThrowF => &a::THROWF,
-            Status::ThrowB => &a::THROWB,
-            _ => return None,
-        },
-        AnyStatus::Ness(N::Attack13) => &a::ATTACK13,
-        AnyStatus::Ness(N::SpecialHiJibaku | N::SpecialAirHiJibaku) => &a::PKJIBAKU,
-        _ => return None,
-    })
 }

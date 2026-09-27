@@ -115,6 +115,7 @@ fn set_egg(f: &mut Fighter) {
         StatusTiming {
             anim_length: None,
             anim_speed: 0.0,
+            looping: false,
         },
     );
     f.egg.escape_wait = ESCAPE_WAIT_MAX;

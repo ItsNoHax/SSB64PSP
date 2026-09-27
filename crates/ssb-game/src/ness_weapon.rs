@@ -13,6 +13,8 @@ pub const SPARK_HIT: Hitbox = Hitbox {
     kb_scale: 50,
     kb_weight: 0,
     kb_base: 40,
+    element: crate::combat::Element::Fire,
+    shield_damage: 1,
 };
 pub const HEAD_HIT: Hitbox = Hitbox {
     damage: 6,
@@ -22,6 +24,8 @@ pub const HEAD_HIT: Hitbox = Hitbox {
     kb_scale: 30,
     kb_weight: 0,
     kb_base: 50,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 pub const TRAIL_HIT: Hitbox = Hitbox {
     damage: 3,
@@ -31,6 +35,8 @@ pub const TRAIL_HIT: Hitbox = Hitbox {
     kb_scale: 30,
     kb_weight: 0,
     kb_base: 50,
+    element: crate::combat::Element::Electric,
+    shield_damage: 1,
 };
 pub const PILLAR_HIT: Hitbox = Hitbox {
     damage: 3,
@@ -40,6 +46,8 @@ pub const PILLAR_HIT: Hitbox = Hitbox {
     kb_scale: 10,
     kb_weight: 0,
     kb_base: 4,
+    element: crate::combat::Element::Fire,
+    shield_damage: 0,
 };
 
 /// `ITEM_ALLOC_MAX`, independent of the weapon manager's capacity.
@@ -97,7 +105,7 @@ impl PKFireItems {
                 if super::stale_hit(
                     &hit,
                     p.position + Vec3::new(0.0, y * p.scale, 0.0),
-                    p.velocity.x,
+                    p.velocity,
                     item.stale,
                     defender,
                     &mut item.landed,

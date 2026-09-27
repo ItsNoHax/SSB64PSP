@@ -26,7 +26,7 @@
 //! * **Ledges.** Falcon Punch's and Egg Lay's aerial statuses catch ledges
 //!   in the source; fighter map collision resolves floors only.
 
-use ssb_engine::input::{newly_pressed, N64Buttons};
+use ssb_engine::input::N64Buttons;
 use ssb_engine::math::{sin_cos, Vec3};
 
 use crate::attack::Hitbox;
@@ -167,7 +167,7 @@ fn set(f: &mut Fighter, s: K, frame: f32, timing: StatusTiming) {
 }
 
 fn taps(f: &Fighter) -> N64Buttons {
-    newly_pressed(f.prev_input.buttons, f.input.buttons)
+    f.button_tap()
 }
 
 /// The copy statuses this module owns.
@@ -940,8 +940,17 @@ pub fn update(f: &mut Fighter) {
         | K::CopyDonkeySpecialAirNEnd
         | K::CopyDonkeySpecialNFull
         | K::CopyDonkeySpecialAirNFull => {
+            // `ftKirbyCopyDonkeySpecialNEndProcUpdate`: the charge adds to
+            // each collision the script makes.
             if f.status.animation_ended() {
                 status::set_wait_or_fall(f);
+            } else {
+                let bonus = giant_punch_bonus(f);
+                for coll in &mut f.attack_colls {
+                    if coll.state == crate::combat::AttackState::New {
+                        coll.damage += bonus;
+                    }
+                }
             }
         }
         K::CopyLinkSpecialN => {
@@ -1647,9 +1656,7 @@ mod tests {
         assert!((f.physics.vel_air.x - x).abs() < 1e-3);
         assert!(on_landing(&mut f, 0.0));
         assert_eq!(status(&f), K::CopyPurinSpecialN);
-        assert!(core::ptr::eq(
-            crate::attack::move_data(FighterKind::Kirby, f.status.status).unwrap(),
-            &crate::purin_attack::COPY_POUND
-        ));
+        // `dKirbyMainMotion_Pound` drives the grounded half too.
+        assert!(crate::motion::motion_desc(FighterKind::Kirby, f.status.status).is_some());
     }
 }
