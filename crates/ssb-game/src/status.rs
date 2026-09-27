@@ -513,13 +513,6 @@ impl Status {
             Status::Fall => 17,
             Status::FallAerial => 18,
             Status::SquatWait => 19,
-            // No `Attack11` (jab) animation is extracted yet — `crate::attack`'s
-            // module docs cover why. Standing in with Wait's slot keeps the
-            // pose rather than guessing a clip; `tick_skeleton_animation`
-            // already treats "the pack lacks this slot's data" as "keep the
-            // current pose", so this is the same fallback other unextracted
-            // animations get, not a special case.
-            Status::Attack11 => Status::Wait.anim_slot(),
             // Shared grab slots (`ssb_rom::anim::SLOT_CATCH` on). `CatchWait`
             // and `CaptureWait` have no motion of their own (script id -2):
             // they hold the pose the pull ended on, so they map to the pull.
@@ -573,10 +566,27 @@ impl Status {
             {
                 471 + s as usize - Status::CliffCatch as usize
             }
-            // Every other status (the bulk of the just-added common table,
-            // `Status` doc comment): no animation is extracted for it yet.
-            // Same fallback as `Attack11` — keep the current pose rather than
-            // guess a clip.
+            // The shared damage slots (`ssb_rom::anim::SLOT_DAMAGE_HI1` on):
+            // `DamageHi1`..`DamageFlyRoll`, then `DamageFall`, `FallSpecial`
+            // and `LandingFallSpecial`.
+            s if (Status::DamageHi1 as u16..=Status::DamageFlyRoll as u16)
+                .contains(&(s as u16)) =>
+            {
+                487 + s as usize - Status::DamageHi1 as usize
+            }
+            Status::DamageFall => 506,
+            Status::FallSpecial => 507,
+            Status::LandingFallSpecial => 508,
+            // The shared attack slots (`ssb_rom::anim::SLOT_APPEAL` on),
+            // `Appeal` through `LandingAirNull` in status order. A fighter
+            // without the motion has no clip there and keeps its pose.
+            s if (Status::Appeal as u16..=Status::LandingAirNull as u16).contains(&(s as u16)) => {
+                509 + s as usize - Status::Appeal as usize
+            }
+            // Every other status: no animation is extracted for it yet. Keep
+            // the current pose rather than guess a clip —
+            // `tick_skeleton_animation` treats a slot the pack lacks as "keep
+            // the current pose".
             _ => Status::Wait.anim_slot(),
         }
     }
@@ -1228,7 +1238,8 @@ impl AnyStatus {
             AnyStatus::Mario(MarioStatus::SpecialAirHi) => 23,
             AnyStatus::Mario(MarioStatus::SpecialLw) => 24,
             AnyStatus::Mario(MarioStatus::SpecialAirLw) => 25,
-            AnyStatus::Mario(MarioStatus::Attack13) => Status::Wait.anim_slot(),
+            // `ssb_rom::anim::SLOT_MARIO_ATTACK13`.
+            AnyStatus::Mario(MarioStatus::Attack13) => 540,
             AnyStatus::Fox(s) => match s {
                 FoxStatus::Attack100Start => 28,
                 FoxStatus::Attack100Loop => 29,
@@ -3781,10 +3792,8 @@ pub fn set_landing(f: &mut Fighter) {
 }
 
 /// `ftCommonLandingAirSetStatus`, for a fighter with a dedicated
-/// `LandingAirX` motion file for the aerial they landed out of. No
-/// animation length is extracted for it (module docs), so — like
-/// [`set_guard_on`] — it resolves into `Wait` on its very next update tick
-/// rather than holding for its real multi-frame recovery.
+/// `LandingAirX` motion file for the aerial they landed out of. The status
+/// lasts that motion's length (`motion::anim_length`).
 fn set_landing_air(f: &mut Fighter, status: Status) {
     let t = match crate::motion::anim_length(f.kind, status.into()) {
         Some(len) => StatusTiming::frames(len),
@@ -3805,6 +3814,18 @@ pub(crate) fn set_landing_air_null(f: &mut Fighter, anim_speed: f32) {
         0.0,
         StatusTiming::at_speed(len, anim_speed),
     );
+}
+
+/// The playback rate the fighter's current clip starts at. This is
+/// [`AnyStatus::anim_speed`], except for [`Status::LandingAirNull`], whose
+/// rate is the aerial's landing-lag flag and so lives only in the timing
+/// [`set_landing_air_null`] stored.
+pub fn clip_speed(f: &Fighter) -> f32 {
+    if f.status.status == Status::LandingAirNull {
+        f.status.timing.anim_speed
+    } else {
+        f.status.status.anim_speed()
+    }
 }
 
 /// The landing callback for every airborne status that lands into a

@@ -204,7 +204,10 @@ pub const MAGIC: u32 = 0x5342_5350;
 // 471; a v38 runtime rejects the new slots, and a v39 runtime reading a v38
 // pack would find no clip for them.
 // 40 adds sixteen cliff clips per playable fighter (slots 471..487).
-pub const VERSION: u32 = 40;
+// 41 adds the shared damage and attack slots (`anim::SLOT_DAMAGE_HI1` and
+// `anim::SLOT_APPEAL`, 487..540) for all twelve fighters and Mario's
+// `Attack13` (540).
+pub const VERSION: u32 = 41;
 
 /// FNV-1a over a texture's source tile bytes: the identity
 /// [`TextureDesc::source_digest`] records (RE-336).

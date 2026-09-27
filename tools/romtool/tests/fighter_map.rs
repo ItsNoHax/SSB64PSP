@@ -25,7 +25,7 @@ fn cliff_rom_joint_inventory() {
             fighter.attributes.cliff_air_mask,
             if matches!(kind, 0 | 3 | 4 | 11) { 2 } else { 0 }
         );
-        for slot in ssb_rom::anim::SLOT_CLIFF_CATCH..ssb_rom::anim::SLOT_COUNT {
+        for slot in ssb_rom::anim::SLOT_CLIFF_CATCH..ssb_rom::anim::SLOT_DAMAGE_HI1 {
             let file = archive.load(entry.files[slot] as u32).unwrap();
             let count = ssb_rom::anim::joint_table_len(&file.data).unwrap();
             assert!(ssb_rom::anim::LEADING_RUNTIME_JOINT[kind as usize][slot]);

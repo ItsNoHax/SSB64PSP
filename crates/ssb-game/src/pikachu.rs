@@ -2,7 +2,7 @@
 //! Quick Attack's wall/ceiling cancellation consumes the shared map normals.
 use crate::fighter::{Facing, Fighter, FighterKind};
 use crate::physics;
-use crate::status::{self, AnyStatus, PikachuStatus as P, Status, StatusTiming};
+use crate::status::{self, AnyStatus, PikachuStatus as P, StatusTiming};
 use crate::weapon::{WeaponKind, WeaponSpawn};
 use ssb_engine::math::{atan2, sin_cos, Vec2, Vec3};
 
@@ -468,33 +468,12 @@ pub fn on_landing(f: &mut Fighter, y: f32, normal: Vec2) -> bool {
     }
     true
 }
-pub fn common_anim_slot(s: Status) -> Option<usize> {
-    const STATUSES: [Status; 17] = [
-        Status::Attack11,
-        Status::AttackDash,
-        Status::AttackS3Hi,
-        Status::AttackS3,
-        Status::AttackS3Lw,
-        Status::AttackHi3,
-        Status::AttackLw3,
-        Status::AttackS4,
-        Status::AttackHi4,
-        Status::AttackLw4,
-        Status::AttackAirN,
-        Status::AttackAirF,
-        Status::AttackAirB,
-        Status::AttackAirHi,
-        Status::AttackAirLw,
-        Status::LandingAirF,
-        Status::LandingAirLw,
-    ];
-    STATUSES.iter().position(|&x| x == s).map(|i| 342 + i)
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::fighter::{JointTransform, Situation};
+    use crate::status::Status;
     use ssb_engine::input::{ControllerState, N64Buttons};
 
     fn pikachu(ground: bool) -> Fighter {

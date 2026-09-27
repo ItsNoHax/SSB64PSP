@@ -28,7 +28,7 @@ use ssb_engine::math::sin_cos;
 
 use crate::fighter::{Fighter, FighterKind};
 use crate::physics;
-use crate::status::{self, AnyStatus, PurinStatus as P, Status, StatusTiming};
+use crate::status::{self, AnyStatus, PurinStatus as P, StatusTiming};
 
 /// `FTPURIN_JUMPAERIAL_VEL_MUL` and `dFTPurinJumpAerialFVelocities`.
 pub const JUMPAERIAL_VEL_MUL: f32 = 0.8;
@@ -86,32 +86,6 @@ pub fn anim_slot(s: P) -> usize {
         P::SpecialHi | P::SpecialAirHi => B + 7,
         P::SpecialLw | P::SpecialAirLw => B + 8,
     }
-}
-
-/// `ssb_rom::anim::SLOT_PURIN_ATTACK11` onward: the common attacks and the
-/// two dedicated aerial landings.
-pub fn common_anim_slot(s: Status) -> Option<usize> {
-    const STATUSES: [Status; 18] = [
-        Status::Attack11,
-        Status::Attack12,
-        Status::AttackDash,
-        Status::AttackS3Hi,
-        Status::AttackS3,
-        Status::AttackS3Lw,
-        Status::AttackHi3,
-        Status::AttackLw3,
-        Status::AttackS4,
-        Status::AttackHi4,
-        Status::AttackLw4,
-        Status::AttackAirN,
-        Status::AttackAirF,
-        Status::AttackAirB,
-        Status::AttackAirHi,
-        Status::AttackAirLw,
-        Status::LandingAirF,
-        Status::LandingAirB,
-    ];
-    STATUSES.iter().position(|&x| x == s).map(|i| 375 + i)
 }
 
 fn set(f: &mut Fighter, s: P, frame: f32, length: f32) {
@@ -428,6 +402,7 @@ mod tests {
     use super::*;
     use crate::attack::apply_hit_from;
     use crate::fighter::Facing;
+    use crate::status::Status;
     use ssb_engine::input::ControllerState;
 
     fn purin(ground: bool) -> Fighter {

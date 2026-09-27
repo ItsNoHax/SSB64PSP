@@ -117,9 +117,20 @@ pub const SLOT_KIRBY_COPY_NESS_SPECIAL_N: usize = 444;
 /// `ReboundWait` (which keep the previous motion), then `EscapeF` through
 /// `FuraFura`, in `ftCommonStatus` order.
 pub const SLOT_WALL_DAMAGE: usize = 446;
-/// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
+/// First of the 16 shared cliff slots, `CliffCatch` through
+/// `CliffEscapeSlow2`.
 pub const SLOT_CLIFF_CATCH: usize = 471;
-pub const SLOT_COUNT: usize = 487;
+/// First of the 22 shared damage slots: `DamageHi1` through `DamageFlyRoll`,
+/// then `DamageFall`, `FallSpecial` and `LandingFallSpecial`.
+pub const SLOT_DAMAGE_HI1: usize = 487;
+/// First of the 31 shared attack slots, `Appeal` through `LandingAirNull` in
+/// `ftCommonStatus` order. A fighter without a motion (a mid-angle tilt it
+/// does not have, a null `LandingAirX`) has no file in that slot.
+pub const SLOT_APPEAL: usize = 509;
+/// Mario's jab finisher (`MarioStatus::Attack13`).
+pub const SLOT_MARIO_ATTACK13: usize = 540;
+/// Number of statuses [`FIGHTER_ANIMS`] carries an animation for.
+pub const SLOT_COUNT: usize = 541;
 
 /// Slot index of each status, matching [`SLOT_NAMES`].
 ///
@@ -582,24 +593,39 @@ mod tests {
             .iter()
             .map(|a| a.files.iter().filter(|&&f| f == 0).count())
             .sum();
-        // The 25 reaction slots exist for all twelve, and for none of the
-        // other fifteen rows.
+        // The reaction, cliff and damage slots exist for all twelve and for
+        // none of the other fifteen rows. The attack slots lack the 106
+        // motions the twelve do not have (mid-angle tilts and smashes,
+        // `AttackHi3F`/`B`, null `LandingAirX`), and only Mario and Luigi have
+        // `MarioAttack13`.
         assert_eq!(
             missing,
-            10950 + 15 * (SLOT_COUNT - SLOT_WALL_DAMAGE),
-            "Twelve ported fighters have character, grab and reaction slots"
+            10950 + 15 * (SLOT_COUNT - SLOT_WALL_DAMAGE) + 106 + 10,
+            "Twelve ported fighters have character, grab, reaction and move slots"
         );
         for a in &FIGHTER_ANIMS[..12] {
-            for (file, name) in a.files[SLOT_WALL_DAMAGE..]
+            for (file, name) in a.files[SLOT_WALL_DAMAGE..SLOT_APPEAL]
                 .iter()
-                .zip(&SLOT_NAMES[SLOT_WALL_DAMAGE..])
+                .zip(&SLOT_NAMES[SLOT_WALL_DAMAGE..SLOT_APPEAL])
             {
                 assert_ne!(*file, 0, "{} has no {}", a.name, name);
+            }
+            // Everyone has a jab, a neutral air and a taunt.
+            for slot in [SLOT_APPEAL, SLOT_APPEAL + 1, SLOT_APPEAL + 20] {
+                assert_ne!(a.files[slot], 0, "{} has no {}", a.name, SLOT_NAMES[slot]);
             }
         }
         assert_eq!(SLOT_NAMES[SLOT_WALL_DAMAGE], "WallDamage");
         assert_eq!(SLOT_NAMES[SLOT_CLIFF_CATCH - 1], "FuraFura");
-        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "CliffEscapeSlow2");
+        assert_eq!(SLOT_NAMES[SLOT_DAMAGE_HI1 - 1], "CliffEscapeSlow2");
+        assert_eq!(SLOT_NAMES[SLOT_DAMAGE_HI1], "DamageHi1");
+        assert_eq!(SLOT_NAMES[SLOT_DAMAGE_HI1 + 18], "DamageFlyRoll");
+        assert_eq!(SLOT_NAMES[SLOT_APPEAL - 1], "LandingFallSpecial");
+        assert_eq!(SLOT_NAMES[SLOT_APPEAL], "Appeal");
+        assert_eq!(SLOT_NAMES[SLOT_APPEAL + 1], "Attack11");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_ATTACK13 - 1], "LandingAirNull");
+        assert_eq!(SLOT_NAMES[SLOT_MARIO_ATTACK13], "MarioAttack13");
+        assert_eq!(SLOT_NAMES[SLOT_COUNT - 1], "MarioAttack13");
         let mario = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Mario")
@@ -630,6 +656,13 @@ mod tests {
         assert_eq!(luigi.files[SLOT_LUIGI_ATTACK11 + 11], 1112); // FSmash
         assert_eq!(luigi.files[SLOT_MARIO_SPECIAL_HI], 637);
         assert_eq!(luigi.files[SLOT_CATCH], 561);
+        // Mario's own attack slots name the files Luigi borrows.
+        assert_eq!(mario.files[SLOT_APPEAL + 1], 606); // Jab1
+        assert_eq!(
+            mario.files[SLOT_MARIO_ATTACK13],
+            luigi.files[SLOT_LUIGI_ATTACK11 + 2]
+        );
+        assert_eq!(luigi.files[SLOT_APPEAL + 1], 606);
         let link = FIGHTER_ANIMS
             .iter()
             .find(|fighter| fighter.name == "Link")
